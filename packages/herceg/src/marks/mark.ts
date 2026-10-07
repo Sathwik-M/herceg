@@ -111,10 +111,11 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
   /** Gap between bands, as a fraction of each band's step. */
   readonly bandPadding?: number;
   /**
-   * Pixels the mark's glyphs reach past their data position, such as a
-   * point's radius. Automatic domains leave this much room at the plot edges.
+   * Pixels the mark's glyphs reach past their data position along each
+   * axis, such as a point's radius. Automatic domains leave this much room
+   * at the plot edges.
    */
-  readonly inset?: number;
+  readonly inset?: { readonly x: number; readonly y: number };
   /**
    * How tooltips find this mark's data. "x", "y", and "point" choose the
    * chart's default mode (along x, along y, or nearest point) when the chart

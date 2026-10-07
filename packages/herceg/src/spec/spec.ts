@@ -170,7 +170,8 @@ export type MarkSpec =
   | TextSpec
   | BarSpec
   | PointSpec
-  | HeatmapSpec;
+  | HeatmapSpec
+  | ErrorBarSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -304,6 +305,32 @@ export interface BarSpec extends MarkBase {
    * are left out.
    */
   labels?: boolean | Intl.NumberFormatOptions;
+}
+
+/**
+ * Error bars: vertical intervals at each `x`, from `y1` to `y2` or from
+ * `y - yError` to `y + yError`; or horizontal intervals at each `y`, from
+ * `x1` to `x2` or `x ± xError`. Positions may be category, number, or time
+ * fields; ends, centers, and errors are number or time fields.
+ */
+export interface ErrorBarSpec extends MarkBase {
+  type: "errorbar";
+  x?: Field;
+  y?: Field;
+  x1?: Field;
+  x2?: Field;
+  y1?: Field;
+  y2?: Field;
+  /** Symmetric error around the center `y`, for vertical intervals. */
+  yError?: Field;
+  /** Symmetric error around the center `x`, for horizontal intervals. */
+  xError?: Field;
+  series?: Field;
+  stroke?: string;
+  strokeWidth?: number;
+  /** Width of the caps at each end in pixels; 0 for none. Default 8. */
+  cap?: number;
+  label?: string;
 }
 
 /** Points at (x, y): scatter plots. */

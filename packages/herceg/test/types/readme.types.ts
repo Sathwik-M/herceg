@@ -5,6 +5,7 @@ import {
   createChart,
   custom,
   encodedCategory,
+  errorBar,
   fromRows,
   heatmap,
   line,
@@ -130,6 +131,9 @@ const regionSales = table({ region: regions, q1: q1Sales, q2: q2Sales });
 bar(regionSales, { x: "region", y: ["q1", "q2"] });
 bar(requests, { x: "time", y: "latency" });
 point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
+const stats = table({ group: regions, low: q1Sales, high: q2Sales });
+errorBar(stats, { x: "group", y1: "low", y2: "high" });
+errorBar(stats, { x: "group", y: "low", yError: "high" });
 const hostLoad = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(hostLoad, { x: "hour", y: "host", value: "cpu" });
 
@@ -149,3 +153,10 @@ custom(metrics, {
 custom(sales, { x: "region", draw() {} });
 // @ts-expect-error marks without a table have none in their context
 custom({ draw: ({ table: none }) => none });
+
+// Error bars
+errorBar(sales, { x: "region", y1: "q1", y2: "q2" });
+errorBar(sales, { y: "region", x1: "q1", x2: "q2", cap: 0 });
+errorBar(sales, { x: "region", y: "q1", yError: "q2" });
+// @ts-expect-error interval ends are number or time fields
+errorBar(sales, { x: "region", y1: "team", y2: "q2" });

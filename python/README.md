@@ -23,6 +23,7 @@ hg.area(df, x="time", y=["user", "system"], stack=True)
 hg.bar(sales, x="region", y=["q1", "q2"])
 hg.bar(sales, x="q1", y="region")  # a category y gives horizontal bars
 hg.bar(sales, x="region", y="q1", labels=True)  # values at the bar ends
+hg.Chart(stats).bar(x="group", y="mean").error_bar(x="group", y="mean", y_error="se")
 hg.scatter(cars, x="weight", y="mpg", series="origin", r=3)
 hg.heatmap(load, x="hour", y="host", value="cpu")
 ```

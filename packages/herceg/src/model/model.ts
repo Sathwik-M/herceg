@@ -243,7 +243,7 @@ export class ChartModel {
    * series so toggling one does not shift the axis.
    */
   #xSeries(mark: Mark, series: Series[]): Series[] {
-    return mark.zero === "x" ? series.filter((s) => !this.hidden.has(s.key)) : series;
+    return mark.tooltip === "y" ? series.filter((s) => !this.hidden.has(s.key)) : series;
   }
 
   #pooled<T>(pool: Map<string, T>, key: string, create: () => T): T {
@@ -315,7 +315,8 @@ export class ChartModel {
 
     const drawn = marks.filter(({ series }) => series.length > 0);
     // Room for glyphs that reach past their data position at the plot edges.
-    const inset = Math.max(0, ...drawn.map(({ mark }) => mark.inset ?? 0));
+    const inset = (axis: "x" | "y") =>
+      Math.max(0, ...drawn.map(({ mark }) => mark.inset?.[axis] ?? 0));
     // An x axis measuring bar lengths gets the y axis' defaults: zero, round
     // ends, and grid lines.
     const xMeasures = drawn.some(({ mark }) => mark.zero === "x");
@@ -444,7 +445,7 @@ export class ChartModel {
               plotHeight,
               yType,
             ),
-            inset,
+            inset("y"),
             plotHeight,
             yType,
           );
@@ -484,7 +485,7 @@ export class ChartModel {
               plotWidth,
               xType,
             ),
-            inset,
+            inset("x"),
             plotWidth,
             xType,
           );
@@ -593,7 +594,15 @@ export class ChartModel {
           : xType === "time"
             ? valueFormatter(xContext, timeValueFormatter(timeUnitFor(x, plot.width), zone, locale))
             : valueFormatter(xContext, formatNumbers),
-      formatY: yType === "band" ? categoryOf(y) : valueFormatter(yContext, formatNumbers),
+      formatY:
+        yType === "band"
+          ? categoryOf(y)
+          : yType === "time"
+            ? valueFormatter(
+                yContext,
+                timeValueFormatter(timeUnitFor(y, plot.height), zone, locale),
+              )
+            : valueFormatter(yContext, formatNumbers),
       formatValue: formatNumbers,
     };
 
@@ -774,20 +783,32 @@ export class ChartModel {
    * outside the plot.
    */
   #drawn(s: Series, row: number, last: LastFrame): boolean {
-    const { x, y } = last.frame;
+    if (!this.#placeable(s, row, last)) return false;
+    const { x } = last.frame;
     const end = s.x[row]!;
-    if (
-      !Number.isFinite(s.values[row]!) ||
-      !Number.isFinite(x.map(end)) ||
-      !Number.isFinite(y.map(s.y[row]!))
-    )
-      return false;
     const mark = last.markOf.get(s);
     if (mark?.tooltip !== "y") return true;
     const base = s.x0 ? s.x0[row]! : mark.zero === "x" ? 0 : end;
     const lo = Math.min(x.domain[0], x.domain[1]);
     const hi = Math.max(x.domain[0], x.domain[1]);
     return Math.max(base, end) >= lo && Math.min(base, end) <= hi;
+  }
+
+  /**
+   * Whether a point can be placed: its value is finite, both scales place
+   * it (rows without a band, index -1, have no place), and so does the low
+   * end of a range.
+   */
+  #placeable(s: Series, row: number, last: LastFrame): boolean {
+    const { x, y } = last.frame;
+    const placed = (scale: PositionScale, value: number) =>
+      Number.isFinite(scale.map(value)) && !(scale.type === "band" && value < 0);
+    if (!Number.isFinite(s.values[row]!) || !placed(x, s.x[row]!) || !placed(y, s.y[row]!))
+      return false;
+    if (!s.range) return true;
+    const along = last.markOf.get(s)?.tooltip === "y";
+    const low = (along ? s.x0 : s.y0)?.[row];
+    return low !== undefined && placed(along ? x : y, low);
   }
 
   #nearest(px: number, py: number, last: LastFrame): Hit | undefined {
@@ -837,6 +858,7 @@ export class ChartModel {
     const series = this.#visibleSeries(last, () => true);
     const anchor = series.find((s) => s.key === seriesKey);
     if (!anchor || position < 0 || position >= anchor.length) return undefined;
+    if (!this.#placeable(anchor, rowOf(anchor, position), last)) return undefined;
     const axis = last.markOf.get(anchor)?.tooltip === "y" ? "y" : "x";
     const along = this.#visibleSeries(last, (mark) => mark.tooltip === axis);
     return this.#inspectAt(
@@ -892,26 +914,26 @@ export class ChartModel {
     const { x, y } = last.frame;
     const row = rowOf(s, position);
     const value = s.values[row]!;
+    // What a scale cannot place (log axes, missing ends) is not drawn, so not reported.
+    if (!this.#placeable(s, row, last)) return undefined;
     const px = x.map(s.x[row]!);
     const py = y.map(s.y[row]!);
-    // Values a scale cannot place (log axes) are not drawn, so not reported.
-    if (!(Number.isFinite(value) && Number.isFinite(px) && Number.isFinite(py))) return undefined;
     const tooltip = last.markOf.get(s)?.tooltip;
     // A cell's label is its y category and its value a measure; marks
     // inspected along y (horizontal bars) measure their values on x.
-    const low = s.range ? s.y0![row]! : Number.NaN;
+    const along = tooltip === "y";
+    const formatValue = along ? last.formatX : last.formatY;
+    const low = s.range ? (along ? s.x0 : s.y0)![row]! : Number.NaN;
     return {
       key: s.key,
       label: tooltip === "cell" ? last.formatY(s.y[row]!) : s.label,
       color: s.color,
       value,
       text: s.range
-        ? `${last.formatY(low)} – ${last.formatY(value)}`
+        ? `${formatValue(low)} – ${formatValue(value)}`
         : tooltip === "cell"
           ? last.formatValue(value)
-          : tooltip === "y"
-            ? last.formatX(value)
-            : last.formatY(value),
+          : formatValue(value),
       px,
       py,
     };

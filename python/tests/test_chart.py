@@ -173,3 +173,22 @@ def test_bars_write_their_values():
     assert spec["marks"][0]["labels"] == {}
     svg = hg.bar(DATA, x="host", y="p50", labels=True, width=300, height=150).to_svg()
     assert ">1</text>" in svg and ">2</text>" in svg
+
+
+def test_error_bars_go_either_way():
+    spec, _ = hg.Chart(DATA).error_bar(x="t", y1="p50", y2="p99", cap=4).to_spec()
+    assert spec["marks"][0] == {
+        "type": "errorbar",
+        "x": "t",
+        "y1": "p50",
+        "y2": "p99",
+        "cap": 4,
+        "data": "data",
+    }
+    svg = hg.Chart(DATA, width=300, height=150).error_bar(y="host", x1="p50", x2="p99").to_svg()
+    assert "<path" in svg
+    with pytest.raises(ValueError, match="x with y1 and y2"):
+        hg.Chart(DATA).error_bar(x="t", y1="p50")
+    symmetric, buffers = hg.Chart(DATA).error_bar(x="t", y="p50", y_error="p99").to_spec()
+    assert symmetric["marks"][0]["yError"] == "p99"
+    assert sorted(symmetric["data"]["data"]["columns"]) == ["p50", "p99", "t"]

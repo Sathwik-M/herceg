@@ -176,6 +176,16 @@ export interface TextGeometry extends Geometry {
   count: number;
 }
 
+/** Line segments of one series, such as error bars: x1, y1, x2, y2 per segment. */
+export interface SegmentGeometry extends Geometry {
+  kind: "segments";
+  draw: Drawing<SegmentGeometry>;
+  stroke: string;
+  strokeWidth: number;
+  coords: Float32Array;
+  count: number;
+}
+
 /** Rectangles of one series, such as bars: x, y, width, height per rectangle. */
 export interface RectGeometry extends Geometry {
   kind: "rect";
@@ -284,7 +294,8 @@ export type MarkGeometry =
   | RectGeometry
   | PointGeometry
   | RasterGeometry
-  | ShapesGeometry;
+  | ShapesGeometry
+  | SegmentGeometry;
 
 export interface AxisTick {
   /** Pixel position along the axis. */

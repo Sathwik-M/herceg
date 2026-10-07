@@ -253,6 +253,76 @@ class Chart:
             table,
         )
 
+    def error_bar(
+        self,
+        *,
+        x: str | None = None,
+        y: str | None = None,
+        x1: str | None = None,
+        x2: str | None = None,
+        y1: str | None = None,
+        y2: str | None = None,
+        x_error: str | None = None,
+        y_error: str | None = None,
+        series: str | None = None,
+        data: Any = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
+        cap: float | None = None,
+        label: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """Error bars at each ``x``, from ``y1`` to ``y2`` or ``y`` ± ``y_error``; or, at each
+        ``y``, from ``x1`` to ``x2`` or ``x`` ± ``x_error``.
+
+        ``cap`` is the width of the end caps in pixels (0 for none). Add points or bars
+        to show the center.
+        """
+        vertical = y_error is not None or (y1 is not None and y2 is not None)
+        horizontal = x_error is not None or (x1 is not None and x2 is not None)
+        if vertical == horizontal:
+            raise ValueError(
+                "error_bar needs x with y1 and y2 or with y and y_error (vertical), "
+                "or y with x1 and x2 or with x and x_error (horizontal)"
+            )
+        table = self._mark_table(data)
+        along, other = ("y", "x") if horizontal else ("x", "y")
+        position = y if horizontal else x
+        if position is None:
+            raise ValueError(f"error_bar needs {along}")
+        self._require(table, position, ("number", "time", "category"), f"error_bar {along}")
+        error = x_error if horizontal else y_error
+        if error is not None:
+            center = x if horizontal else y
+            if center is None:
+                raise ValueError(f"error_bar with {other}_error needs {other}")
+            self._require(table, center, _NUMERIC, f"error_bar {other}")
+            self._require(table, error, _NUMERIC, f"error_bar {other}_error")
+        else:
+            self._require(table, x1 if horizontal else y1, _NUMERIC, f"error_bar {other}1")
+            self._require(table, x2 if horizontal else y2, _NUMERIC, f"error_bar {other}2")
+        self._require(table, series, ("category",), "error_bar series")
+        return self._add(
+            {
+                "type": "errorbar",
+                "x": x,
+                "y": y,
+                "x1": x1,
+                "x2": x2,
+                "y1": y1,
+                "y2": y2,
+                "xError": x_error,
+                "yError": y_error,
+                "series": series,
+                "stroke": stroke,
+                "strokeWidth": stroke_width,
+                "cap": cap,
+                "label": label,
+                "id": id,
+            },
+            table,
+        )
+
     def point(
         self,
         x: str,
@@ -566,7 +636,7 @@ def _table_name(index: int) -> str:
 
 def _fields(spec: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
-    for key in ("x", "y", "x1", "x2", "y1", "y2", "series", "value", "text"):
+    for key in ("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"):
         value = spec.get(key)
         if isinstance(value, str):
             fields.add(value)

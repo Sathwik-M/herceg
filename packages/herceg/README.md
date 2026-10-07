@@ -101,7 +101,7 @@ when the data is on a canvas, and with a halo so text stays readable over
 lines. Annotations outside the view are left out. Text is meant for
 annotations, not for labeling every point of a large series.
 
-Bars, points, and heatmaps:
+Bars, points, error bars, and heatmaps:
 
 ```ts
 const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
@@ -111,6 +111,8 @@ bar(requests, { x: "time", y: "latency" }); // number or time x: bars centered o
 bar(sales, { x: "region", y: "q1", labels: true }); // values at bar ends; Intl options format them
 
 point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
+errorBar(stats, { x: "group", y1: "low", y2: "high" }); // y, x1, x2 for horizontal ones
+errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
 const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(load, { x: "hour", y: "host", value: "cpu" });

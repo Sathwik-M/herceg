@@ -9,6 +9,8 @@ import {
   type CustomDataOptions,
   type CustomOptions,
   custom,
+  type ErrorBarOptions,
+  errorBar,
   type HeatmapOptions,
   heatmap,
   type LineOptions,
@@ -84,6 +86,12 @@ export const Point = /* @__PURE__ */ markElement(
   "Point",
   ({ data, ...options }: WithData<PointOptions<Schema>, Schema>) => point(data, options),
 ) as unknown as <S extends Schema>(props: WithData<PointOptions<S>, S>) => null;
+
+/** Error bars: `x`, `y1`, `y2` (vertical) or `y`, `x1`, `x2` (horizontal). */
+export const ErrorBar = /* @__PURE__ */ markElement(
+  "ErrorBar",
+  ({ data, ...options }: WithData<ErrorBarOptions<Schema>, Schema>) => errorBar(data, options),
+) as unknown as <S extends Schema>(props: WithData<ErrorBarOptions<S>, S>) => null;
 
 /** A grid of colored cells. */
 export const Heatmap = /* @__PURE__ */ markElement(

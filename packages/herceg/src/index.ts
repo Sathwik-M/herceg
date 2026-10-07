@@ -37,6 +37,13 @@ export {
   type ShapeStyle,
   type TextShapeStyle,
 } from "./marks/custom.ts";
+export {
+  type ErrorBarMark,
+  type ErrorBarOptions,
+  errorBar,
+  type HorizontalErrorBarOptions,
+  type VerticalErrorBarOptions,
+} from "./marks/errorbar.ts";
 export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
 export type { Mark, MarkIdentity } from "./marks/mark.ts";

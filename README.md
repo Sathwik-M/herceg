@@ -37,21 +37,24 @@ reproducible benchmark suite.
 ## Roadmap
 
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
-(vertical and horizontal), point, and heatmap marks, rule, region, and text
-annotations from constants or data, custom marks drawing through the same
-renderers, level of detail, streaming updates, shared
-scheduler, browser interaction, static SVG, React adapter, min/max indexes
-for zooming large line series, WebGL drawing of large point series, chart
-specs with binary columns, Python package.
+(vertical and horizontal, with value labels), point, heatmap, and error bar
+marks, rule, region, and text annotations from constants or data, custom
+marks drawing through the same renderers, level of detail, streaming
+updates, shared scheduler, browser interaction (tooltips, zoom, brushing,
+events, synced charts), static SVG, React adapter, min/max indexes for
+zooming large line series, WebGL drawing of large point series, chart specs
+with binary columns, Python package.
 
 Next:
 
-1. Error bars.
-2. Min/max indexes that update incrementally while very large series stream,
+1. Min/max indexes that update incrementally while very large series stream,
    and indexes for areas.
-3. Live notebook charts (a widget that streams updates from Python) and PDF
+2. Multiple y axes and small multiples.
+3. More chart types: histograms (binning), box plots, candlesticks, pie and
+   donut charts.
+4. Live notebook charts (a widget that streams updates from Python) and PDF
    export.
-4. Other framework adapters (Vue, Svelte).
+5. Other framework adapters (Vue, Svelte).
 
 ## Development
 

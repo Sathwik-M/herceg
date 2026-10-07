@@ -45,7 +45,7 @@ export class PointMark implements Mark<PointSpec> {
   readonly spec: PointSpec;
   readonly table: Table<Schema>;
   readonly tooltip = "point";
-  readonly inset: number;
+  readonly inset: { x: number; y: number };
   readonly #split: SeriesSplitter;
   /** Pick indexes per frame (charts sharing this mark have separate frames), per series key. */
   readonly #indexes = new WeakMap<Frame, Map<string, GridIndex>>();
@@ -57,7 +57,8 @@ export class PointMark implements Mark<PointSpec> {
     requireField(table, spec.y, NUMERIC, "point y");
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "point series");
     this.#split = new SeriesSplitter(table, spec.x, [spec.y], spec.series, spec.label);
-    this.inset = spec.r ?? DEFAULT_RADIUS;
+    const radius = spec.r ?? DEFAULT_RADIUS;
+    this.inset = { x: radius, y: radius };
   }
 
   channelKind(axis: "x" | "y") {

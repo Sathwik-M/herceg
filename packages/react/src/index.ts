@@ -5,6 +5,7 @@ export {
   Area,
   Bar,
   Custom,
+  ErrorBar,
   Heatmap,
   Line,
   Point,
