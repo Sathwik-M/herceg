@@ -397,6 +397,49 @@ class Chart:
             table,
         )
 
+    def histogram(
+        self,
+        x: str,
+        *,
+        bins: int | dict[str, float] | None = None,
+        series: str | None = None,
+        normalize: Literal["count", "percent", "density"] | None = None,
+        stack: bool = False,
+        data: Any = None,
+        fill: str | None = None,
+        fill_opacity: float | None = None,
+        label: str | None = None,
+        axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
+        id: str | None = None,
+    ) -> Chart:
+        """Counts of ``x``'s values in round bins.
+
+        ``bins`` is about how many bins, or ``{"step": width, "start": edge}``;
+        by default the count follows the data size. ``normalize`` measures
+        ``"percent"`` of each series' values or ``"density"`` instead of counts.
+        """
+        table = self._mark_table(data)
+        self._require(table, x, _NUMERIC, "histogram x")
+        self._require(table, series, ("category",), "histogram series")
+        return self._add(
+            {
+                "type": "histogram",
+                "x": x,
+                "bins": dict(bins) if isinstance(bins, dict) else bins,
+                "series": series,
+                "normalize": normalize,
+                "stack": stack or None,
+                "fill": fill,
+                "fillOpacity": fill_opacity,
+                "label": label,
+                "axis": axis,
+                "facet": "repeat" if repeat else None,
+                "id": id,
+            },
+            table,
+        )
+
     def candlestick(
         self,
         x: str,
@@ -734,7 +777,7 @@ class Chart:
         if self._facet is not None and table is not None and spec.get("facet") is None:
             self._require(table, self._facet, ("category",), "facet")
             kind = spec["type"]
-            if kind in ("heatmap", "rule", "region", "text") or (
+            if kind in ("heatmap", "histogram", "rule", "region", "text") or (
                 kind == "bar" and spec.get("stack")
             ):
                 name = "stacked bar" if kind == "bar" else kind
@@ -848,6 +891,22 @@ def scatter(
 def heatmap(data: Any, x: str, y: str, value: str, **options: Any) -> Chart:
     """A heatmap."""
     return Chart(data, **options).heatmap(x, y, value)
+
+
+def histogram(
+    data: Any,
+    x: str,
+    *,
+    bins: int | dict[str, float] | None = None,
+    series: str | None = None,
+    normalize: Literal["count", "percent", "density"] | None = None,
+    stack: bool = False,
+    **options: Any,
+) -> Chart:
+    """A histogram of ``x``'s values."""
+    return Chart(data, **options).histogram(
+        x, bins=bins, series=series, normalize=normalize, stack=stack
+    )
 
 
 def candlestick(

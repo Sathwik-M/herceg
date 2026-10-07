@@ -10,6 +10,7 @@ import {
   facet,
   fromRows,
   heatmap,
+  histogram,
   line,
   point,
   region,
@@ -199,6 +200,12 @@ const prices = table({
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
 // @ts-expect-error prices are number fields
 candlestick(prices, { x: "day", open: "name", high: "high", low: "low", close: "close" });
+
+// Histograms
+histogram(metrics, { x: "p50" });
+histogram(metrics, { x: "time", bins: { step: 3_600_000 }, normalize: "percent" });
+// @ts-expect-error histogram values are number or time fields
+histogram(sales, { x: "region" });
 
 // Error bars
 errorBar(sales, { x: "region", y1: "q1", y2: "q2" });

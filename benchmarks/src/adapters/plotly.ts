@@ -1,5 +1,12 @@
 import Plotly from "plotly.js-dist-min";
-import type { CandleData, CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
+import type {
+  CandleData,
+  CategoryData,
+  GridData,
+  PointData,
+  SampleData,
+  SeriesData,
+} from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartOptions } from "../page/adapter.ts";
 import { clientPoint, color, FALL, RISE } from "../page/adapter.ts";
 
@@ -63,6 +70,19 @@ function candleTraces(data: CandleData): Partial<Plotly.Data>[] {
       close: data.close as unknown as number[],
       increasing: { line: { color: RISE }, fillcolor: "rgba(0,0,0,0)" },
       decreasing: { line: { color: FALL }, fillcolor: FALL },
+    } as Partial<Plotly.Data>,
+  ];
+}
+
+// Plotly's histogram trace bins the values itself, on the fixed grid every
+// library is given: 5 wide from 25 (values lie within about 25 to 175).
+function histogramTraces(data: SampleData): Partial<Plotly.Data>[] {
+  return [
+    {
+      type: "histogram",
+      x: data.values as unknown as number[],
+      xbins: { start: 25, end: 175, size: 5 },
+      marker: { color: color(0) },
     } as Partial<Plotly.Data>,
   ];
 }
@@ -243,6 +263,19 @@ export const adapter: Adapter = {
       return handle<CandleData>(
         root,
         (next) => Plotly.react(root, candleTraces(next), plotLayout, config(options)),
+        plotLayout,
+      );
+    },
+  },
+  histogram: {
+    prepare: histogramTraces,
+    async create(container, data, options) {
+      // The x range every library is given.
+      const plotLayout = layout(options, { bargap: 0.02, xaxis: { range: [25, 175] } });
+      const root = await mount(container, histogramTraces(data), plotLayout, options);
+      return handle<SampleData>(
+        root,
+        (next) => Plotly.react(root, histogramTraces(next), plotLayout, config(options)),
         plotLayout,
       );
     },

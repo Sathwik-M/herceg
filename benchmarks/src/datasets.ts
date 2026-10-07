@@ -36,6 +36,11 @@ export interface CandleData {
   close: Float64Array;
 }
 
+/** Values to bin, for histograms. */
+export interface SampleData {
+  values: Float64Array;
+}
+
 export const START_TIME = Date.UTC(2026, 0, 1);
 export const STEP_MS = 1000;
 
@@ -159,6 +164,14 @@ export function candles(points: number, seed = 1): CandleData {
     low[i] = Math.min(open[i]!, price) - next() * 0.8;
   }
   return { x, open, high, low, close };
+}
+
+/** Normally distributed values around 100, for histograms. */
+export function samples(points: number, seed = 1): SampleData {
+  const next = random(seed);
+  const values = new Float64Array(points);
+  for (let i = 0; i < points; i++) values[i] = 100 + gaussian(next) * 15;
+  return { values };
 }
 
 /** Bytes of numeric payload, used to report memory amplification. */

@@ -232,7 +232,13 @@ export function niceTimeDomain(
   const lo = fromWall(zone, floorWall(toWall(zone, start), interval));
   let hiWall = floorWall(toWall(zone, stop), interval);
   if (fromWall(zone, hiWall) < stop) hiWall = addWall(hiWall, interval, 1);
-  return [lo, fromWall(zone, hiWall)];
+  let hi = fromWall(zone, hiWall);
+  // In a repeated hour (DST ending), a wall time names its earlier instant,
+  // so a wall boundary may still fall before `stop`. Intervals shorter than
+  // a day are fixed lengths of time: step in absolute time instead.
+  const size = UNIT_MS[interval.unit] * interval.step;
+  if (hi < stop && size < DAY) hi += Math.ceil((stop - hi) / size) * size;
+  return [lo, Math.max(hi, stop)];
 }
 
 export const TIME_UNIT_MS = UNIT_MS;

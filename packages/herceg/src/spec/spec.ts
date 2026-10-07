@@ -193,7 +193,8 @@ export type MarkSpec =
   | PointSpec
   | HeatmapSpec
   | ErrorBarSpec
-  | CandlestickSpec;
+  | CandlestickSpec
+  | HistogramSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -381,6 +382,25 @@ export interface CandlestickSpec extends MarkBase {
   rise?: string;
   /** Color of candles closing below their open; the theme's `fall` by default. */
   fall?: string;
+  label?: string;
+}
+
+/**
+ * Bars counting how many values of `x` fall in each bin. Bins are shared by
+ * every series: round edges covering the field's values.
+ */
+export interface HistogramSpec extends MarkBase {
+  type: "histogram";
+  x: Field;
+  /** About how many bins, or a bin width and where bins start; by default from the data size. */
+  bins?: number | { step: number; start?: number };
+  /** Category field: one histogram per value, overlaid or stacked. */
+  series?: Field;
+  /** What bars measure: "count" (default), "percent" of the series' values, or "density". */
+  normalize?: "count" | "percent" | "density";
+  stack?: boolean;
+  fill?: string;
+  fillOpacity?: number;
   label?: string;
 }
 

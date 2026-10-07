@@ -266,3 +266,21 @@ def test_candlesticks_send_their_four_prices():
     assert "<path" in chart.to_svg()
     with pytest.raises(TypeError, match="candlestick close"):
         hg.Chart(prices).candlestick("day", "o", "h", "l", "note")
+
+
+def test_histograms_bin_a_column():
+    values = {"ms": np.array([1.0, 2.0, 2.5, 9.0]), "region": ["a", "a", "b", "b"]}
+    chart = hg.histogram(values, "ms", bins={"step": 5}, series="region", stack=True)
+    spec, _ = chart.to_spec()
+    assert spec["marks"][0] == {
+        "type": "histogram",
+        "x": "ms",
+        "bins": {"step": 5},
+        "series": "region",
+        "stack": True,
+        "data": "data",
+    }
+    assert sorted(spec["data"]["data"]["columns"]) == ["ms", "region"]
+    assert "<path" in hg.Chart(values, width=300, height=150).histogram("ms").to_svg()
+    with pytest.raises(TypeError, match="histogram x"):
+        hg.Chart(values).histogram("region")

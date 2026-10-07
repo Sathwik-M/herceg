@@ -19,7 +19,17 @@ Charts display in notebooks, save as HTML, SVG, or PNG, and serialize to the
 portable herceg chart spec shared with the TypeScript library.
 """
 
-from ._chart import Axis, Chart, area, bar, candlestick, heatmap, line, scatter
+from ._chart import Axis, Chart, area, bar, candlestick, heatmap, histogram, line, scatter
 
-__all__ = ["Axis", "Chart", "area", "bar", "candlestick", "heatmap", "line", "scatter"]
+__all__ = [
+    "Axis",
+    "Chart",
+    "area",
+    "bar",
+    "candlestick",
+    "heatmap",
+    "histogram",
+    "line",
+    "scatter",
+]
 __version__ = "0.0.0"

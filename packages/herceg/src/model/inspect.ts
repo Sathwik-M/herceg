@@ -300,17 +300,24 @@ export class Inspector {
     const series = this.#visibleSeries(() => true);
     const anchor = series.find((s) => s.key === seriesKey);
     if (!anchor || position < 0 || position >= anchor.length) return undefined;
-    if (!this.#placeable(anchor, rowOf(anchor, position))) return undefined;
     const axis = this.#markOf.get(anchor)?.tooltip === "y" ? "y" : "x";
+    const value = anchor[axis][rowOf(anchor, position)]!;
+    // The cursor needs a place along its axis; a point that is not drawn
+    // there (a zero on a log axis, say) leaves the other series' points.
+    const scale = this.frame[axis];
+    if (!Number.isFinite(scale.map(value)) || (scale.type === "band" && value < 0))
+      return undefined;
     const along = this.#visibleSeries((mark) => mark.tooltip === axis);
-    return this.#inspectAt(
+    const inspection = this.#inspectAt(
       axis,
-      anchor[axis][rowOf(anchor, position)]!,
+      value,
       along.includes(anchor) ? along : [anchor],
       this.#left,
       anchor,
       position,
     );
+    // Nothing drawn at this position: no tooltip rather than an empty one.
+    return inspection.points.length > 0 ? inspection : undefined;
   }
 
   /** Every series' point at `value` on `axis` (for "y", a value of `yAxis`). */
@@ -380,7 +387,7 @@ export class Inspector {
       color: s.color,
       value,
       text: mark?.pointText
-        ? mark.pointText(s, row, formatValue)
+        ? mark.pointText(s, row, { x: this.formatX, y: this.#axisOf(s).formatY })
         : s.range
           ? `${formatValue(low)} – ${formatValue(value)}`
           : tooltip === "cell"

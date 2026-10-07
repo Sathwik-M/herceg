@@ -254,6 +254,24 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       label: string,
     },
   },
+  histogram: {
+    required: ["x"],
+    checks: {
+      x: field,
+      bins: (v, path) => {
+        if (typeof v === "number") return count(v, path);
+        object(v, path);
+        required(v as Record<string, unknown>, path, ["step"]);
+        properties(v as Record<string, unknown>, path, { step: positive, start: finite });
+      },
+      series: field,
+      normalize: oneOf("count", "percent", "density"),
+      stack: boolean,
+      fill: string,
+      fillOpacity: fraction,
+      label: string,
+    },
+  },
   candlestick: {
     required: ["x", "open", "high", "low", "close"],
     checks: {

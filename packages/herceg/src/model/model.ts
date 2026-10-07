@@ -7,6 +7,7 @@ import { type Formatter, formatNumber, timeValueFormatter } from "../format/form
 import { fitText, type MeasureText } from "../layout/text.ts";
 import { Polyline } from "../lod/polyline.ts";
 import {
+  type AxisFormat,
   type BandContext,
   type BandList,
   type Bands,
@@ -880,12 +881,16 @@ export class ChartModel {
 
   /** Sentences describing marks without series (annotations), as of the last scene. */
   annotationSummaries(): string[] {
+    return this.#config.marks.flatMap(
+      (mark) => mark.describe?.(this.formatsOf(mark), this.#config.locale) ?? [],
+    );
+  }
+
+  /** How the last scene formats x values and a mark's y values, as tooltips do. */
+  formatsOf(mark: Mark): AxisFormat {
     const last = this.#views[0]?.inspector;
     const fallback = (value: number) => formatNumber(value, this.#config.locale);
-    return this.#config.marks.flatMap((mark) => {
-      const format = { x: last?.formatX ?? fallback, y: last?.axisOf(mark).formatY ?? fallback };
-      return mark.describe?.(format, this.#config.locale) ?? [];
-    });
+    return { x: last?.formatX ?? fallback, y: last?.axisOf(mark).formatY ?? fallback };
   }
 
   /** Whether a series of the last scene is on the right y axis. */

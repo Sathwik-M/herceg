@@ -8,6 +8,7 @@ export {
   Custom,
   ErrorBar,
   Heatmap,
+  Histogram,
   Line,
   Point,
   Region,

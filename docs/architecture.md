@@ -12,7 +12,7 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -145,6 +145,13 @@ million-point window takes a median of about 1.5 ms instead of 2.7 ms (p95
 rebuild its index and take up to about 5 ms instead of 4 ms. Bands, stacked
 areas, and long-format series (row subsets) are not indexed.
 
+Histograms keep their bins, not their values: whenever the table changes,
+one pass finds the extremes and another counts each series' values (by
+division for evenly spaced edges, binary search for calendar ones), and at
+most a thousand bars are drawn, whatever the data size. Series split by a
+category field also keep their row indexes (4 bytes per row), as long-format
+series do. Streaming recounts every value on each change.
+
 Candlesticks merge rather than sample: with more candles in view than the
 plot has pixel columns, each column draws one candle with the open of its
 earliest candle, the close of its latest, and its highest high and lowest low,
@@ -193,8 +200,9 @@ computed in one pass per series and kept until its table changes, with
 sortedness checked per panel. Series keep their keys, so colors, legend
 entries, and hidden state are shared across panels. Splitting after series
 are resolved is right for marks whose series are row-aligned (lines, points,
-bands and stacks of several fields, unstacked bars, error bars); stacked bars
-and heatmaps, whose geometry combines rows, refuse facets until they split
+bands and stacks of several fields, unstacked bars, error bars, candlesticks);
+stacked bars, heatmaps, and histograms, whose geometry combines rows, refuse
+facets until they split
 before combining. Continuous domains come from every panel's series, so rows
 without a facet value are left out of them; category bands still come from
 whole tables. Each panel gets a frame whose scales are the
@@ -471,7 +479,7 @@ the DOM, creating an offscreen canvas in that canvas' document when
 
 ## Known limits
 
-- Mark types: line, area, bar, point, heatmap, error bar, candlestick, the rule, region,
+- Mark types: line, area, bar, point, heatmap, error bar, candlestick, histogram, the rule, region,
   and text annotations, and custom marks. Horizontal bars need a category y;
   bars along a number or time y are not supported. Error bars stand at the
   center of their position, not beside grouped bars; horizontal ones at y
@@ -487,7 +495,7 @@ the DOM, creating an offscreen canvas in that canvas' document when
   placed along y (horizontal bars and error bars) only on the left.
 - Facets wrap one category field into a grid with shared scales: no row by
   column facets, independent scales, or right axes in faceted charts, and
-  heatmaps, stacked bars, and annotations or custom marks over a table can
+  heatmaps, histograms, stacked bars, and annotations or custom marks over a table can
   only repeat in every panel. Panel splits are recomputed whenever their
   table changes, and rows of a faceted large line do not use its min/max
   index. A category whose rows all lack a facet value still gets an (empty)

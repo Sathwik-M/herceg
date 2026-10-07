@@ -2,12 +2,12 @@ import type { NumericArray } from "../data/column.ts";
 import type { FieldName, NumericField, Schema, Table } from "../data/table.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { segmentDrawing } from "../draw/segments.ts";
-import { type Formatter, formatNumber } from "../format/format.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry, SegmentGeometry } from "../scene/scene.ts";
 import type { CandlestickSpec } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
+  type AxisFormat,
   type BandContext,
   type BandList,
   type Bands,
@@ -22,6 +22,7 @@ import {
   type Palette,
   requireField,
   SeriesSplitter,
+  type SummaryContext,
 } from "./mark.ts";
 import { rowOf, type Series, visibleRange, xExtent } from "./series.ts";
 import { FILL, Slots } from "./slots.ts";
@@ -349,20 +350,15 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
   }
 
   /** The candle's four prices, high and low widened as drawn. */
-  pointText(_series: Series, row: number, format: Formatter): string {
+  pointText(_series: Series, row: number, format: AxisFormat): string {
     const candle = this.#candle;
     if (!candleOf(this.#prices(), row, false, candle)) return "";
-    const [open, high, low, close] = Array.from(candle, format);
+    const [open, high, low, close] = Array.from(candle, format.y);
     return `open ${open}, high ${high}, low ${low}, close ${close}`;
   }
 
   /** Candles, their price range, and the latest candle, over a series' parts in every panel. */
-  summarize(
-    parts: readonly Series[],
-    name: string,
-    locale: string | undefined,
-    log: boolean,
-  ): string {
+  summarize(parts: readonly Series[], name: string, { format, log }: SummaryContext): string {
     const prices = this.#prices();
     const candle = this.#candle;
     let count = 0;
@@ -389,7 +385,7 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
       }
     }
     if (count === 0 || latest < 0) return `${name}: no candles`;
-    const f = (value: number) => formatNumber(value, locale);
+    const f = format.y;
     candleOf(prices, latest, log, candle);
     const [o, h, l, c] = candle;
     return `${name}: ${count} ${count === 1 ? "candle" : "candles"}, prices from ${f(low)} to ${f(high)}; the last opened at ${f(o!)}, ranged from ${f(l!)} to ${f(h!)}, and closed at ${f(c!)}`;

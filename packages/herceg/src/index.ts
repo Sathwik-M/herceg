@@ -50,6 +50,7 @@ export {
   type VerticalErrorBarOptions,
 } from "./marks/errorbar.ts";
 export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
+export { type HistogramMark, type HistogramOptions, histogram } from "./marks/histogram.ts";
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
 export type { Mark, MarkIdentity } from "./marks/mark.ts";
 export { type PointMark, type PointOptions, point } from "./marks/point.ts";

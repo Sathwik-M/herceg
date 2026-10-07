@@ -14,7 +14,9 @@ import {
   type ErrorBarOptions,
   errorBar,
   type HeatmapOptions,
+  type HistogramOptions,
   heatmap,
+  histogram,
   type LineOptions,
   line,
   type Mark,
@@ -101,6 +103,12 @@ export const Candlestick = /* @__PURE__ */ markElement(
   ({ data, ...options }: WithData<CandlestickOptions<Schema>, Schema>) =>
     candlestick(data, options),
 ) as unknown as <S extends Schema>(props: WithData<CandlestickOptions<S>, S>) => null;
+
+/** Counts of a field's values in round bins: `x`, and optionally `bins` and `series`. */
+export const Histogram = /* @__PURE__ */ markElement(
+  "Histogram",
+  ({ data, ...options }: WithData<HistogramOptions<Schema>, Schema>) => histogram(data, options),
+) as unknown as <S extends Schema>(props: WithData<HistogramOptions<S>, S>) => null;
 
 /** A grid of colored cells. */
 export const Heatmap = /* @__PURE__ */ markElement(

@@ -101,7 +101,7 @@ when the data is on a canvas, and with a halo so text stays readable over
 lines. Annotations outside the view are left out. Text is meant for
 annotations, not for labeling every point of a large series.
 
-Bars, points, error bars, heatmaps, and candlesticks:
+Bars, points, error bars, heatmaps, candlesticks, and histograms:
 
 ```ts
 const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
@@ -118,6 +118,9 @@ const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(load, { x: "hour", y: "host", value: "cpu" });
 
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
+
+histogram(requests, { x: "latency" }); // counts in round bins
+histogram(requests, { x: "latency", series: "region", bins: { step: 10 }, normalize: "percent" });
 ```
 
 Bar labels go past each bar's end, or for stacks inside each segment in a
@@ -139,6 +142,21 @@ and close. When more candles are in view than the plot has pixels, each pixel
 column's candles merge into one: the open of its earliest candle, the close
 of its latest, and its highest high and lowest low. Merged candles are too
 thin to show hollow bodies, so there direction is shown by color only.
+
+Histograms count values in bins shared by all their series. Bin edges are
+round numbers (multiples of 1, 2, or 5 times a power of ten) or, for times,
+calendar intervals in the chart's time zone; by default there are about
+log2(n) + 1 of them for n values, at most 1,000. `bins` takes an approximate
+count, or `{ step, start }` for fixed widths (milliseconds for times); values
+below an explicit `start` are left out, as with Plotly's `xbins.start`. Each
+bin holds values from its left edge up to its right one, the last also its
+right edge. Several series overlay translucently, or stack with `stack: true`.
+`normalize: "percent"` measures percent of each series' counted values
+(stacked percentages need not total 100), and `"density"` that share per unit
+of x (per millisecond for times), so each series' bars cover an area of 1, like
+Plotly's "probability density". Tooltips report a bin's range and its bar;
+a bin is inspected through its center, so one zoomed so far that its center
+is out of view has no tooltip.
 
 Marks are drawn in array order; rules and text always draw above other marks.
 
@@ -191,7 +209,7 @@ which the table must have, unless they have `facet: "repeat"`; marks without
 a table repeat. x labels go under the lowest panel of each column and y labels
 beside the first. Pointer, brush, and zoom work in any panel and act on the
 shared x; the arrow keys step through a panel and Up and Down move between
-panels. Heatmaps, stacked bars, and annotations or custom marks over a table
+panels. Heatmaps, histograms, stacked bars, and annotations or custom marks over a table
 can only repeat for now, and charts with facets have no right axis. A chart
 too small for its panels (under 20 pixels a side) throws an error naming the
 grid; give it more room or fewer columns.

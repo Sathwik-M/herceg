@@ -1,4 +1,11 @@
-import type { CandleData, CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
+import type {
+  CandleData,
+  CategoryData,
+  GridData,
+  PointData,
+  SampleData,
+  SeriesData,
+} from "../datasets.ts";
 
 export interface ChartOptions {
   width: number;
@@ -73,6 +80,7 @@ export interface Adapter {
   scatter?: ChartKind<PointData>;
   heatmap?: ChartKind<GridData>;
   candlestick?: ChartKind<CandleData>;
+  histogram?: ChartKind<SampleData>;
 }
 
 /** Candlestick colors: rising (hollow) and falling (filled) candles. */

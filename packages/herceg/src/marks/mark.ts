@@ -66,6 +66,13 @@ export interface Frame {
   bytes(seriesKey: string, stage: string, length: number): Uint8ClampedArray<ArrayBuffer>;
 }
 
+/** What a mark's summary sentence is written with. */
+export interface SummaryContext {
+  format: AxisFormat;
+  locale: string | undefined;
+  log: boolean;
+}
+
 /** How the chart formats single x and y values, as in tooltips. */
 export interface AxisFormat {
   x: (value: number) => string;
@@ -161,9 +168,10 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
   pick?(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined;
   /**
    * Tooltip text for a row of a series, for marks that show more than one
-   * value per point (candlesticks); `format` formats values of its y axis.
+   * value per point (candlesticks, histogram bins); `format` formats values
+   * of the x axis and of the series' y axis.
    */
-  pointText?(series: Series, row: number, format: Formatter): string;
+  pointText?(series: Series, row: number, format: AxisFormat): string;
   /**
    * Whether the mark draws a row, for marks reading more fields than their
    * series holds (candlesticks); inspection skips rows it does not draw.
@@ -171,15 +179,10 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
   shows?(series: Series, row: number, y: PositionScale): boolean;
   /**
    * The text alternative's sentence for a series, over its parts in every
-   * panel, for marks whose values say more than one number (candlesticks);
-   * `log` says whether its y axis is logarithmic.
+   * panel, for marks whose values say more than one number (candlesticks,
+   * histograms). `context.log` says whether the series' y axis is logarithmic.
    */
-  summarize?(
-    parts: readonly Series[],
-    name: string,
-    locale: string | undefined,
-    log: boolean,
-  ): string;
+  summarize?(parts: readonly Series[], name: string, context: SummaryContext): string;
   /**
    * A sentence describing what the mark shows, for marks without series
    * (annotations), which the chart's data summary would otherwise leave out.

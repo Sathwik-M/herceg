@@ -28,7 +28,7 @@ export function facet(field: string, options: FacetOptions = {}): Facet {
 }
 
 /** Marks that cannot split their rows into panels yet; they can repeat in every panel. */
-const UNSPLIT = new Set(["heatmap", "rule", "region", "text", "custom"]);
+const UNSPLIT = new Set(["heatmap", "histogram", "rule", "region", "text", "custom"]);
 
 export class Facet {
   readonly field: string;

@@ -5,12 +5,20 @@ import {
   candlestick,
   createChart,
   heatmap,
+  histogram,
   line,
   point,
   table,
   time,
 } from "herceg";
-import type { CandleData, CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
+import type {
+  CandleData,
+  CategoryData,
+  GridData,
+  PointData,
+  SampleData,
+  SeriesData,
+} from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartKind, ChartOptions } from "../page/adapter.ts";
 import { clientPoint } from "../page/adapter.ts";
 
@@ -181,6 +189,24 @@ export const adapter: Adapter = {
         marks: [candlestick(source, { x: "t", open: "o", high: "h", low: "l", close: "c" })],
       });
       return { ...common(chart), setData: (next) => source.reset(candleColumns(next)) };
+    },
+  },
+  histogram: {
+    prepare: (data) => table({ v: data.values }),
+    create(container, data, options) {
+      const source = table({ v: data.values });
+      const chart = createChart(container, {
+        width: options.width,
+        height: options.height,
+        tooltip: options.tooltip,
+        // The fixed grid and x range every library is given: 5 wide from 25 to 175.
+        x: { domain: [25, 175] },
+        marks: [histogram(source, { x: "v", bins: { step: 5, start: 25 } })],
+      });
+      return {
+        ...common(chart),
+        setData: (next: SampleData) => source.reset({ v: next.values }),
+      };
     },
   },
 };

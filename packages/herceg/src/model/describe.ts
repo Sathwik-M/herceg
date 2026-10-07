@@ -89,7 +89,11 @@ export function describeChart(model: ChartModel): string {
     const mark = model.markOf(s);
     const y = model.onRight(s) ? model.yRightScale() : model.yScale();
     const sentence = mark?.summarize
-      ? mark.summarize(drawn, name(s), config.locale, y?.type === "log")
+      ? mark.summarize(drawn, name(s), {
+          format: model.formatsOf(mark),
+          locale: config.locale,
+          log: y?.type === "log",
+        })
       : summarize(drawn, name(s), config.locale);
     parts.push(`${sentence}.`);
   }

@@ -10,6 +10,7 @@ import { BarMark } from "../marks/bar.ts";
 import { CandlestickMark } from "../marks/candlestick.ts";
 import { ErrorBarMark } from "../marks/errorbar.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
+import { HistogramMark } from "../marks/histogram.ts";
 import { LineMark } from "../marks/line.ts";
 import type { Mark } from "../marks/mark.ts";
 import { PointMark } from "../marks/point.ts";
@@ -235,6 +236,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new ErrorBarMark(spec, source);
       case "candlestick":
         return new CandlestickMark(spec, source);
+      case "histogram":
+        return new HistogramMark(spec, source);
       default:
         throw new TypeError(
           `unknown mark type ${JSON.stringify((spec as { type: unknown }).type)}`,

@@ -19,7 +19,9 @@ import {
   grid,
   type PointData,
   random,
+  type SampleData,
   type SeriesData,
+  samples,
   scatterPoints,
   timeSeries,
 } from "../datasets.ts";
@@ -37,7 +39,7 @@ export interface PageResult {
   metrics: Record<string, Metric>;
 }
 
-type AnyData = SeriesData | PointData | CategoryData | GridData | CandleData;
+type AnyData = SeriesData | PointData | CategoryData | GridData | CandleData | SampleData;
 type AnyHandle = ChartHandle<AnyData>;
 
 const WIDTH = 800;
@@ -89,6 +91,8 @@ function makeData(s: Scenario, seed: number): AnyData {
     }
     case "candlestick":
       return candles(s.points, seed);
+    case "histogram":
+      return samples(s.points, seed);
   }
 }
 

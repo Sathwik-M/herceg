@@ -253,6 +253,19 @@ describe("time ticks", () => {
     expect(new Date(hi).toISOString()).toBe("2026-01-01T01:00:00.000Z");
   });
 
+  it("encloses times in the hour repeated when daylight saving time ends", () => {
+    const zone = "America/New_York";
+    // 06:00Z and 06:15Z are 01:00 and 01:15 EST, the second 1 o'clock hour.
+    for (const [start, stop] of [
+      ["2026-11-01T06:00:00", "2026-11-01T06:15:00"],
+      ["2026-11-01T06:10:00", "2026-11-01T06:10:30"],
+    ] as const) {
+      const [lo, hi] = niceTimeDomain(utc(start), utc(stop), 6, zone);
+      expect(lo).toBeLessThanOrEqual(utc(start));
+      expect(hi).toBeGreaterThanOrEqual(utc(stop));
+    }
+  });
+
   it("uses year ticks for long spans", () => {
     const scale = new TimeScale(
       [utc("1900-01-01T00:00:00"), utc("2000-01-01T00:00:00")],

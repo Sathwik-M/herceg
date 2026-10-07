@@ -37,8 +37,8 @@ reproducible benchmark suite.
 ## Roadmap
 
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
-(vertical and horizontal, with value labels), point, heatmap, error bar, and
-candlestick marks, rule, region, and text annotations from constants or data, custom
+(vertical and horizontal, with value labels), point, heatmap, error bar,
+candlestick, and histogram marks, rule, region, and text annotations from constants or data, custom
 marks drawing through the same renderers, level of detail, streaming
 updates, shared scheduler, browser interaction (tooltips, zoom, brushing,
 events, synced charts), static SVG, React adapter, min/max indexes for
@@ -47,7 +47,7 @@ with binary columns, Python package, a second y axis, small multiples.
 
 Next:
 
-1. More chart types: histograms (binning), box plots, pie and donut charts.
+1. More chart types: box plots, pie and donut charts.
 2. Live notebook charts (a widget that streams updates from Python) and PDF
    export.
 3. Other framework adapters (Vue, Svelte).
