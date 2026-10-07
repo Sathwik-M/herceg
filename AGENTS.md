@@ -18,7 +18,7 @@ engineering decisions.
 | --- | --- |
 | `packages/herceg` | (In development) The `herceg` npm package: portable spec types, data model, scales, marks, LOD, scene, SVG and Canvas renderers, DOM runtime. Optional pieces are subpath exports. |
 | `packages/react` | `@herceg/react`, the React adapter: `<Chart>` and mark elements over the same engine. |
-| `python/` | The `herceg` Python package (planned). |
+| `python/` | The `herceg` Python package: a Pythonic chart builder that emits the portable spec, data conversion, HTML, notebook, SVG, and PNG output. |
 | `benchmarks/` | Benchmark harness, competitor adapters, scenarios, and committed results in `benchmarks/results/`. |
 | `docs/` | Permanent documentation: architecture, vocabulary, comparison, benchmark methodology. |
 | `tmp/` | Gitignored scratch space. Never commit anything from here. |
@@ -47,6 +47,9 @@ npm run bench:size       # bundle size benchmark
 npm run bench            # browser benchmark suite (Chrome); see benchmarks/README.md
 npm run bench:react      # herceg vs herceg through @herceg/react
 npm run bench:report     # regenerate result tables in docs/comparison.md
+npm run build:python     # bundle herceg's JavaScript into the Python package
+npm run test:python      # build:python, then pytest (uv environment in python/)
+npm run lint:python      # ruff check and format check of the Python package
 ```
 
 Keep this list in sync with `package.json` as build, test, and Python commands

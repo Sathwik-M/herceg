@@ -1,0 +1,106 @@
+import datetime as dt
+
+import numpy as np
+import pytest
+
+import herceg as hg
+
+DATA = {
+    "t": np.array(["2026-01-01T00:00", "2026-01-01T00:01"], dtype="datetime64[ms]"),
+    "p50": np.array([1.0, 2.0]),
+    "p99": np.array([3.0, 4.0]),
+    "host": ["a", "b"],
+    "unused": np.array([9.0, 9.0]),
+}
+
+
+def test_spec_uses_the_portable_format():
+    chart = (
+        hg.Chart(
+            DATA, title="Latency", y=hg.Axis(label="ms", type="log"), time_zone="UTC", zoom=True
+        )
+        .line(x="t", y=["p50", "p99"], stroke_width=2)
+        .rule(y=250, label="SLO")
+    )
+    spec, buffers = chart.to_spec()
+    assert spec["version"] == 1
+    assert spec["title"] == "Latency"
+    assert spec["timeZone"] == "UTC"
+    assert spec["y"] == {"type": "log", "label": "ms"}
+    assert spec["interaction"] == {"zoom": True}
+    assert spec["marks"] == [
+        {"type": "line", "x": "t", "y": ["p50", "p99"], "strokeWidth": 2, "data": "data"},
+        {"type": "rule", "y": 250, "label": "SLO"},
+    ]
+    # Only the columns marks use travel, as binary buffers.
+    columns = spec["data"]["data"]["columns"]
+    assert sorted(columns) == ["p50", "p99", "t"]
+    assert columns["t"] == {"type": "time", "dtype": "float64", "buffer": columns["t"]["buffer"]}
+    assert len(buffers) == 3
+    assert np.frombuffer(buffers[columns["p99"]["buffer"]], dtype="<f8").tolist() == [3.0, 4.0]
+
+
+def test_categories_travel_as_codes_and_dictionary():
+    spec, buffers = hg.Chart(DATA).bar(x="host", y="p50").to_spec()
+    host = spec["data"]["data"]["columns"]["host"]
+    assert host["type"] == "category" and host["dictionary"] == ["a", "b"]
+    assert np.frombuffer(buffers[host["codes"]], dtype="<i4").tolist() == [0, 1]
+
+
+def test_marks_with_their_own_data_get_their_own_table():
+    other = {"x": [1, 2], "y": [3, 4]}
+    spec, _ = hg.Chart(DATA).line(x="t", y="p50").point(x="x", y="y", data=other).to_spec()
+    assert [mark["data"] for mark in spec["marks"]] == ["data", "data2"]
+    assert sorted(spec["data"]) == ["data", "data2"]
+
+
+def test_fields_are_checked_with_readable_errors():
+    with pytest.raises(KeyError, match="no column 'p90'; the data has 't', 'p50'"):
+        hg.Chart(DATA).line(x="t", y="p90")
+    with pytest.raises(TypeError, match="line y: column 'host' holds category values"):
+        hg.Chart(DATA).line(x="t", y="host")
+    with pytest.raises(ValueError, match="exactly one of x or y"):
+        hg.Chart(DATA).rule()
+    with pytest.raises(ValueError, match="Pass data"):
+        hg.Chart().line(x="t", y="p50")
+
+
+def test_express_helpers_and_rules_at_datetimes():
+    spec, _ = hg.scatter(DATA, x="p50", y="p99", series="host", r=3, title="S").to_spec()
+    assert spec["title"] == "S"
+    assert spec["marks"][0] == {
+        "type": "point",
+        "x": "p50",
+        "y": "p99",
+        "series": "host",
+        "r": 3,
+        "data": "data",
+    }
+    spec, _ = hg.Chart(DATA).rule(x=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)).to_spec()
+    assert spec["marks"][0]["x"] == 1_767_225_600_000
+    for helper, args in [
+        (hg.line, ("t", "p50")),
+        (hg.area, ("t", "p50")),
+        (hg.bar, ("host", "p50")),
+        (hg.heatmap, ("t", "host", "p50")),
+    ]:
+        assert helper(DATA, *args).to_spec()[0]["marks"][0]["type"] == helper.__name__
+
+
+def test_unused_columns_are_never_converted():
+    import polars as pl
+
+    frame = pl.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0], "tags": [["a"], ["b"]]})
+    spec, _ = hg.line(frame, x="x", y="y").to_spec()
+    assert sorted(spec["data"]["data"]["columns"]) == ["x", "y"]
+
+
+def test_area_and_series_options_are_checked_like_the_spec_loader():
+    with pytest.raises(ValueError, match="y, or y1 and y2, not both"):
+        hg.Chart(DATA).area(x="t", y="p50", y1="p50", y2="p99")
+    with pytest.raises(ValueError, match="needs both y1 and y2"):
+        hg.Chart(DATA).area(x="t", y1="p50")
+    with pytest.raises(ValueError, match="not a series column"):
+        hg.Chart(DATA).area(x="t", y="p50", series="host", stack=True)
+    with pytest.raises(ValueError, match="several y columns or a series column"):
+        hg.Chart(DATA).line(x="t", y=["p50", "p99"], series="host")

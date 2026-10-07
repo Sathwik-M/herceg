@@ -1,0 +1,50 @@
+[project]
+name = "herceg"
+version = "0.0.0"
+description = "Fast, columnar charts for Python, rendered by the herceg engine."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+pandas = ["pandas>=2.0"]
+polars = ["polars>=1.0"]
+arrow = ["pyarrow>=14"]
+export = ["mini-racer>=0.12", "resvg-py>=0.1"]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+  "pandas>=2.0",
+  "polars>=1.0",
+  "pyarrow>=14",
+  "mini-racer>=0.12",
+  "resvg-py>=0.1",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/herceg"]
+# The JavaScript bundles are build outputs (npm run build:python), so they
+# are not tracked by git but must ship in every distribution.
+artifacts = ["src/herceg/static/*.js"]
+
+[tool.hatch.build.targets.sdist]
+artifacts = ["src/herceg/static/*.js"]
+
+# hatch_build.py: fails the build when the bundles are missing.
+[tool.hatch.build.hooks.custom]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning:py_mini_racer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

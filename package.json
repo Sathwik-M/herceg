@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "build": "npm run build -w herceg && npm run build -w @herceg/react",
-    "typecheck": "tsc -p benchmarks && tsc -p packages/herceg && tsc -p packages/react",
+    "typecheck": "tsc -p benchmarks && tsc -p packages/herceg && tsc -p packages/react && tsc -p python/js",
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "npm test -w herceg",
@@ -17,7 +17,10 @@
     "bench:core": "npm run bench -w herceg",
     "bench:size": "npm run size -w herceg-benchmarks --",
     "bench:react": "npm run react -w herceg-benchmarks",
-    "bench:report": "npm run report -w herceg-benchmarks"
+    "bench:report": "npm run report -w herceg-benchmarks",
+    "build:python": "node python/js/build.mjs",
+    "test:python": "npm run build:python && cd python && uv run --extra dev pytest",
+    "lint:python": "cd python && uv run --extra dev ruff check src tests && uv run --extra dev ruff format --check src tests"
   },
   "engines": {
     "node": ">=22.12"

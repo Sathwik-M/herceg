@@ -22,3 +22,22 @@ jobs:
       # Browser tests use the Chrome preinstalled on GitHub's Ubuntu runners.
       - run: npm run test:browser
       - run: npm run bench:size
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: astral-sh/setup-uv@v6
+      - run: npm ci
+      - run: npm run lint:python
+      - run: npm run test:python
+      # The built wheel must carry the JavaScript bundles and work outside the checkout.
+      - run: cd python && uv build
+      - run: |
+          uv venv /tmp/wheel
+          uv pip install --python /tmp/wheel/bin/python "$(ls python/dist/*.whl)[export]"
+          cd /tmp && /tmp/wheel/bin/python -c "import herceg as hg; c = hg.line({'x': [1, 2], 'y': [3, 4]}, x='x', y='y'); assert c.to_svg().startswith('<svg') and 'hercegPython' in c.to_html()"

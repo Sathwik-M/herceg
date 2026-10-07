@@ -9,7 +9,8 @@
       "!tmp",
       "!benchmarks/results",
       "!benchmarks/.build",
-      "!python"
+      "!python/.venv",
+      "!python/src/herceg/static"
     ]
   },
   "formatter": {
