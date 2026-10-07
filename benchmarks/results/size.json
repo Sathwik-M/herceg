@@ -1,0 +1,103 @@
+{
+ "schema": 1,
+ "date": "2026-10-07T05:05:25.787Z",
+ "commit": {
+  "sha": "none",
+  "dirty": true
+ },
+ "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production; gzip level 9; brotli quality 11; required CSS reported separately",
+ "environment": {
+  "os": "Darwin 27.0.0",
+  "cpu": "Apple M6",
+  "cores": 12,
+  "memoryGB": 32,
+  "node": "v22.23.3",
+  "esbuild": "0.28.2"
+ },
+ "results": [
+  {
+   "entry": "chartjs-auto",
+   "package": "chart.js",
+   "version": "4.5.1",
+   "raw": 555997,
+   "minified": 252729,
+   "gzip": 81773,
+   "brotli": 70974,
+   "css": null
+  },
+  {
+   "entry": "chartjs-line",
+   "package": "chart.js",
+   "version": "4.5.1",
+   "raw": 442394,
+   "minified": 201092,
+   "gzip": 65269,
+   "brotli": 57317,
+   "css": null
+  },
+  {
+   "entry": "echarts-full",
+   "package": "echarts",
+   "version": "6.1.0",
+   "raw": 2872169,
+   "minified": 1134462,
+   "gzip": 379440,
+   "brotli": 309575,
+   "css": null
+  },
+  {
+   "entry": "echarts-line",
+   "package": "echarts",
+   "version": "6.1.0",
+   "raw": 1261982,
+   "minified": 502515,
+   "gzip": 170848,
+   "brotli": 146089,
+   "css": null
+  },
+  {
+   "entry": "plotly-basic",
+   "package": "plotly.js-basic-dist-min",
+   "version": "4.1.2",
+   "raw": 1800233,
+   "minified": 1212674,
+   "gzip": 400788,
+   "brotli": 333024,
+   "css": null
+  },
+  {
+   "entry": "plotly-full",
+   "package": "plotly.js-dist-min",
+   "version": "4.1.2",
+   "raw": 7063586,
+   "minified": 4812436,
+   "gzip": 1467113,
+   "brotli": 1110545,
+   "css": null
+  },
+  {
+   "entry": "tanstack-line",
+   "package": "@tanstack/charts",
+   "version": "1.0.0",
+   "raw": 294699,
+   "minified": 128551,
+   "gzip": 45458,
+   "brotli": 40317,
+   "css": null
+  },
+  {
+   "entry": "uplot",
+   "package": "uplot",
+   "version": "1.6.32",
+   "raw": 137728,
+   "minified": 52097,
+   "gzip": 23072,
+   "brotli": 20931,
+   "css": {
+    "minified": 1627,
+    "gzip": 694,
+    "brotli": 550
+   }
+  }
+ ]
+}

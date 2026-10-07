@@ -1,0 +1,27 @@
+{
+  "name": "herceg-benchmarks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node --experimental-strip-types src/runner/run.ts",
+    "size": "node --experimental-strip-types src/size/size.ts",
+    "report": "node --experimental-strip-types src/report.ts"
+  },
+  "devDependencies": {
+    "@types/d3-interpolate": "3.0.4",
+    "@types/d3-scale": "4.0.9",
+    "@types/plotly.js": "3.0.14"
+  },
+  "dependencies": {
+    "@tanstack/charts": "1.0.0",
+    "chart.js": "4.5.1",
+    "chartjs-adapter-date-fns": "3.0.0",
+    "d3-interpolate": "3.0.1",
+    "d3-scale": "4.0.2",
+    "date-fns": "4.1.0",
+    "echarts": "6.1.0",
+    "plotly.js-basic-dist-min": "4.1.2",
+    "plotly.js-dist-min": "4.1.2",
+    "uplot": "1.6.32"
+  }
+}

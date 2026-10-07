@@ -1,0 +1,27 @@
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+
+# Temporary work: plans, experiments, profiles, screenshots, one-off scripts
+tmp/
+
+# Browser test and benchmark artifacts
+test-results/
+playwright-report/
+benchmarks/.build/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+python/**/build/
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
