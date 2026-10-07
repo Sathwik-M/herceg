@@ -26,7 +26,7 @@ import {
   type Rect,
   type Scene,
 } from "../scene/scene.ts";
-import type { ChartSpec } from "../spec/spec.ts";
+import type { AxisSpec, ChartSpec } from "../spec/spec.ts";
 import { resolveTheme, type Theme } from "../theme.ts";
 import {
   type AxisContext,
@@ -71,6 +71,7 @@ export class ChartModel {
   #bytes = new Map<string, Uint8ClampedArray<ArrayBuffer>>();
   #used = new Set<string>();
   #left = 0;
+  #right = 0;
   #layoutKey = "";
   #bands: Bands = {};
   #last: Inspector | undefined;
@@ -135,14 +136,20 @@ export class ChartModel {
    * Axis type from the declared type or the marks' fields: a categorical
    * channel gives a band axis, a time field a time axis.
    */
-  #axisType(axis: "x" | "y"): AxisType {
+  #axisType(axis: "x" | "y" | "yRight"): AxisType {
     const declared = this.#config[axis]?.type;
-    const kinds = this.#config.marks.map((mark) => mark.channelKind(axis));
+    const channel = axis === "x" ? "x" : "y";
+    // The y axes take the marks on their side.
+    const marks = this.#config.marks.filter(
+      (mark) => axis === "x" || (sideOf(mark) === "right") === (axis === "yRight"),
+    );
+    const kinds = marks.map((mark) => mark.channelKind(channel));
     if (kinds.includes("category")) {
+      if (axis === "yRight") throw new Error("Category y values cannot go on the right axis");
       // Every mark with a field on this channel must band it.
       const index = kinds.findIndex((kind) => kind !== undefined && kind !== "category");
       if (index >= 0) {
-        const mark = this.#config.marks[index]!;
+        const mark = marks[index]!;
         throw new Error(
           `A ${mark.spec.type} mark with a numeric ${axis} cannot share a categorical ${axis} axis`,
         );
@@ -201,6 +208,29 @@ export class ChartModel {
    */
   #xSeries(mark: Mark, series: Series[]): Series[] {
     return mark.tooltip === "y" ? series.filter((s) => !this.hidden.has(s.key)) : series;
+  }
+
+  /**
+   * The extent of the y values `marks` show inside the x range [x0, x1], of
+   * visible series only, with zero when the axis asks for it or a mark
+   * stands on it; undefined when they show none.
+   */
+  #yData(
+    marks: readonly MarkSeries[],
+    type: AxisType,
+    spec: AxisSpec | undefined,
+    x0: number,
+    x1: number,
+  ): [number, number] | undefined {
+    const log = type === "log";
+    const visible = marks.map(({ mark, series }) => ({
+      mark,
+      series: series.filter((s) => !this.hidden.has(s.key)),
+    }));
+    const data = unionExtent(visible.map(({ mark, series }) => mark.yExtent(series, x0, x1, log)));
+    const zero =
+      spec?.zero ?? visible.some(({ mark, series }) => mark.zero === "y" && series.length > 0);
+    return zero && !log && data ? unionExtent([data, [0, 0]]) : data;
   }
 
   #pooled<T>(pool: Map<string, T>, key: string, create: () => T): T {
@@ -272,16 +302,16 @@ export class ChartModel {
 
     const drawn = marks.filter(({ series }) => series.length > 0);
     // Room for glyphs that reach past their data position at the plot edges.
-    const inset = (axis: "x" | "y") =>
-      Math.max(0, ...drawn.map(({ mark }) => mark.inset?.[axis] ?? 0));
+    const inset = (axis: "x" | "y", among = drawn) =>
+      Math.max(0, ...among.map(({ mark }) => mark.inset?.[axis] ?? 0));
     // An x axis measuring bar lengths gets the y axis' defaults: zero, round
     // ends, and grid lines.
     const xMeasures = drawn.some(({ mark }) => mark.zero === "x");
     // Room past the far ends of value axes for what marks draw there (bar labels).
-    const headroom = (axis: "x" | "y") =>
+    const headroom = (axis: "x" | "y", among = drawn) =>
       Math.max(
         0,
-        ...drawn
+        ...among
           .filter(({ mark }) => mark.zero === axis && mark.headroom)
           .map(({ mark, series }) =>
             mark.headroom!(
@@ -309,28 +339,30 @@ export class ChartModel {
     const autoX = xType !== "band" && !this.#viewport && !config.x?.domain;
     const dataXDomain = xDomain;
 
-    // y domain from data visible in the x domain, unless it is fixed.
+    // y domains from data visible in the x domain, unless they are fixed;
+    // marks with `axis: "right"` have their own.
+    const leftMarks = marks.filter(({ mark }) => sideOf(mark) === "left");
+    const rightMarks = marks.filter(({ mark }) => sideOf(mark) === "right");
+    const [x0, x1] =
+      xType === "band" ? [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY] : xDomain;
+    // A y axis is shown when one of its marks places values along y, and
+    // the left one also when the right one is not.
+    const placesY = (side: readonly MarkSeries[]) => side.some(({ mark }) => usesY(mark));
+    const rightUsed = placesY(rightMarks);
+    const yRightType = rightUsed ? this.#axisType("yRight") : "linear";
     let yBase: [number, number] = [0, 1];
+    let leftUsed = true;
+    // Whether the left axis has anything to label: a band axis may have no bands.
+    let leftData = true;
     if (yType === "band") {
-      hasData &&= (bands.y?.keys.length ?? 0) > 0;
-    } else if (config.y?.domain) {
-      yBase = usableDomain(config.y.domain, yType);
+      leftData = (bands.y?.keys.length ?? 0) > 0;
+      hasData &&= leftData || rightUsed;
     } else {
-      const yLog = yType === "log";
-      const visible = marks.map(({ mark, series }) => ({
-        mark,
-        series: series.filter((s) => !this.hidden.has(s.key)),
-      }));
-      const [x0, x1] =
-        xType === "band" ? [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY] : xDomain;
-      let yData = unionExtent(
-        visible.map(({ mark, series }) => mark.yExtent(series, x0, x1, yLog)),
+      leftUsed = !rightUsed || placesY(leftMarks);
+      yBase = usableDomain(
+        config.y?.domain ?? this.#yData(leftMarks, yType, config.y, x0, x1),
+        yType,
       );
-      const zero =
-        config.y?.zero ??
-        visible.some(({ mark, series }) => mark.zero === "y" && series.length > 0);
-      if (zero && !yLog) yData = unionExtent([yData, [0, 0]]);
-      yBase = usableDomain(yData, yType);
     }
 
     // Vertical layout depends only on fonts, titles, and the legends.
@@ -376,6 +408,30 @@ export class ChartModel {
       : 4;
     const plotHeight = Math.max(10, height - top - bottom);
     const measureLabel = (label: string) => measure(label, font);
+    /** A continuous y axis for the marks on one side, from their data domain `base`. */
+    const planValueAxis = (
+      axisContext: AxisContext,
+      base: [number, number],
+      sideMarks: readonly MarkSeries[],
+    ): AxisPlan => {
+      const spec = axisContext.spec;
+      const count = spec?.ticks ?? Math.max(2, Math.round(plotHeight / 45));
+      const sideDrawn = sideMarks.filter(({ series }) => series.length > 0);
+      const domain = spec?.domain
+        ? base
+        : insetDomain(
+            headroomDomain(
+              niceAxisDomain(base, axisContext, count, spec?.nice ?? true),
+              headroom("y", sideDrawn),
+              plotHeight,
+              axisContext.type,
+            ),
+            inset("y", sideDrawn),
+            plotHeight,
+            axisContext.type,
+          );
+      return planAxis(axisContext, domain, [top + plotHeight, top], count);
+    };
 
     // y ticks decide the left margin.
     let yPlan: AxisPlan;
@@ -392,35 +448,45 @@ export class ChartModel {
       const room = Math.max(48, Math.round(width * 0.3));
       yPlan.labels = yPlan.labels.map((label) => fitText(label, room, measure, font));
     } else {
-      const yCount = config.y?.ticks ?? Math.max(2, Math.round(plotHeight / 45));
-      const yDomain = config.y?.domain
-        ? yBase
-        : insetDomain(
-            headroomDomain(
-              niceAxisDomain(yBase, yContext, yCount, config.y?.nice ?? true),
-              headroom("y"),
-              plotHeight,
-              yType,
-            ),
-            inset("y"),
-            plotHeight,
-            yType,
-          );
-      yPlan = planAxis(yContext, yDomain, [top + plotHeight, top], yCount);
+      yPlan = planValueAxis(yContext, yBase, leftMarks);
     }
-    const yLabels = hasData ? yPlan.labels : [];
+    const yRightContext: AxisContext = { type: yRightType, spec: config.yRight, zone, locale };
+    const yRightPlan = rightUsed
+      ? planValueAxis(
+          yRightContext,
+          usableDomain(
+            config.yRight?.domain ?? this.#yData(rightMarks, yRightType, config.yRight, x0, x1),
+            yRightType,
+          ),
+          rightMarks,
+        )
+      : undefined;
+    const showLeft = showY && leftUsed;
+    const yLabels = hasData && showLeft && leftData ? yPlan.labels : [];
     const labelWidth = Math.max(0, ...yLabels.map(measureLabel));
-    let left = showY ? Math.ceil(labelWidth) + GAP + 2 : 8;
-    if (config.y?.label) left += lineHeight + GAP;
-    // Avoid layout jitter while data streams: the margin grows at once but
-    // only shrinks when the size or configuration changes.
+    let left = showLeft ? Math.ceil(labelWidth) + GAP + 2 : 8;
+    if (showLeft && config.y?.label) left += lineHeight + GAP;
+    // Avoid layout jitter while data streams: margins grow at once but only
+    // shrink when the size or configuration changes.
     const layoutKey = `${width}x${height}`;
-    if (layoutKey === this.#layoutKey) left = Math.max(left, this.#left);
-    this.#left = left;
+    const sameLayout = layoutKey === this.#layoutKey;
+    if (sameLayout) left = Math.max(left, this.#left);
     this.#layoutKey = layoutKey;
 
-    // x ticks; widen the margins if the first or last label would be clipped.
+    // The right axis' labels decide the right margin, as the left one's do the left.
+    const showRight = yRightPlan !== undefined && (config.yRight?.axis ?? true);
+    const yRightLabels = showRight && hasData ? yRightPlan.labels : [];
     let right = 12;
+    if (showRight) {
+      right = Math.ceil(Math.max(0, ...yRightLabels.map(measureLabel))) + GAP + 2;
+      if (config.yRight?.label) right += lineHeight + GAP;
+    }
+    if (sameLayout) right = Math.max(right, this.#right);
+
+    // x ticks; widen the margins if the first or last label would be clipped,
+    // by up to a quarter of the width a side: labels that cannot fit must not
+    // squeeze the plot away.
+    const edgeRoom = Math.floor(width / 4);
     let xPlan: AxisPlan = planBandAxis([], [0, 1], 0, () => 0);
     for (let pass = 0; pass < 3; pass++) {
       const plotWidth = Math.max(10, width - left - right);
@@ -455,9 +521,13 @@ export class ChartModel {
       const overflowRight = xPlan.scale.map(xPlan.ticks[last]!) + half(last) - (width - 2);
       const overflowLeft = 2 - (xPlan.scale.map(xPlan.ticks[0]!) - half(0));
       if (overflowRight <= 0.5 && overflowLeft <= 0.5) break;
-      if (overflowRight > 0.5) right += Math.ceil(overflowRight);
-      if (overflowLeft > 0.5) left += Math.ceil(overflowLeft);
+      if (overflowRight > 0.5)
+        right = Math.max(right, Math.min(right + Math.ceil(overflowRight), edgeRoom));
+      if (overflowLeft > 0.5)
+        left = Math.max(left, Math.min(left + Math.ceil(overflowLeft), edgeRoom));
     }
+    this.#left = left;
+    this.#right = right;
     const plot: Rect = {
       x: left,
       y: top,
@@ -483,19 +553,35 @@ export class ChartModel {
           : undefined,
       });
     }
-    if (showY) {
-      axes.push({
-        orient: "left",
-        offset: plot.x,
-        start: plot.y + plot.height,
-        end: plot.y,
-        line: false,
-        ticks: yLabels.map((label, i) => ({ position: y.map(yPlan.ticks[i]!), label })),
-        title: config.y?.label
-          ? { text: config.y.label, x: lineHeight / 2 + 2, y: plot.y + plot.height / 2 }
-          : undefined,
-      });
+    // A y axis along one edge of the plot, its title outside the labels.
+    const yAxis = (
+      orient: "left" | "right",
+      plan: AxisPlan,
+      labels: string[],
+      title: string | undefined,
+      titleX: number,
+    ): AxisGeometry => ({
+      orient,
+      offset: orient === "left" ? plot.x : plot.x + plot.width,
+      start: plot.y + plot.height,
+      end: plot.y,
+      line: false,
+      ticks: labels.map((label, i) => ({ position: plan.scale.map(plan.ticks[i]!), label })),
+      title: title ? { text: title, x: titleX, y: plot.y + plot.height / 2 } : undefined,
+    });
+    if (showLeft) {
+      axes.push(yAxis("left", yPlan, yLabels, config.y?.label, lineHeight / 2 + 2));
     }
+    if (showRight) {
+      axes.push(
+        yAxis("right", yRightPlan, yRightLabels, config.yRight?.label, width - lineHeight / 2 - 2),
+      );
+    }
+
+    // Horizontal grid lines follow the left axis, or the right one when the left is unused.
+    const gridPlan = leftUsed
+      ? yType !== "band" && (config.y?.grid ?? true) && yPlan
+      : (config.yRight?.grid ?? true) && yRightPlan;
 
     this.#used.clear();
     const frame: Frame = {
@@ -512,8 +598,11 @@ export class ChartModel {
       floats: this.#floatBuffer,
       bytes: this.#byteBuffer,
     };
+    // Marks on the right axis draw with its scale.
+    const rightFrame: Frame | undefined = yRightPlan && { ...frame, y: yRightPlan.scale };
+    const frameOf = (mark: Mark) => (sideOf(mark) === "right" && rightFrame) || frame;
     const geometry = marks.flatMap(({ mark, series }, index) =>
-      mark.geometry(series, frame, mark.spec.id ?? index),
+      mark.geometry(series, frameOf(mark), mark.spec.id ?? index),
     );
     // Drop buffers of series that no longer exist.
     for (const pool of [this.#polylines, this.#floats, this.#bytes] as Map<string, unknown>[]) {
@@ -538,9 +627,18 @@ export class ChartModel {
         ? "nearest"
         : ((typeof tooltip === "object" ? tooltip.mode : undefined) ??
           (only === "x" ? "nearest-x" : only === "y" ? "nearest-y" : "nearest"));
+    const valueFormat = (context: AxisContext, scale: PositionScale): Formatter =>
+      context.type === "time"
+        ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale, plot.height), zone, locale))
+        : valueFormatter(context, formatNumbers);
     this.#last = new Inspector({
       marks,
       frame,
+      right: rightFrame && {
+        marks: new Set(rightMarks.map(({ mark }) => mark)),
+        frame: rightFrame,
+        formatY: valueFormat(yRightContext, rightFrame.y),
+      },
       mode,
       hidden: this.hidden,
       formatX:
@@ -549,15 +647,7 @@ export class ChartModel {
           : xType === "time"
             ? valueFormatter(xContext, timeValueFormatter(timeUnitFor(x, plot.width), zone, locale))
             : valueFormatter(xContext, formatNumbers),
-      formatY:
-        yType === "band"
-          ? categoryOf(y)
-          : yType === "time"
-            ? valueFormatter(
-                yContext,
-                timeValueFormatter(timeUnitFor(y, plot.height), zone, locale),
-              )
-            : valueFormatter(yContext, formatNumbers),
+      formatY: yType === "band" ? categoryOf(y) : valueFormat(yContext, y),
       formatValue: formatNumbers,
     });
 
@@ -573,10 +663,7 @@ export class ChartModel {
           hasData && xType !== "band" && (config.x?.grid ?? xMeasures)
             ? xPlan.ticks.map((t) => x.map(t))
             : [],
-        y:
-          hasData && yType !== "band" && (config.y?.grid ?? true)
-            ? yPlan.ticks.map((t) => y.map(t))
-            : [],
+        y: hasData && gridPlan ? gridPlan.ticks.map((t) => gridPlan.scale.map(t)) : [],
       },
       axes,
       legend,
@@ -618,6 +705,11 @@ export class ChartModel {
     return this.#last?.frame.y;
   }
 
+  /** Scale of the right y axis in the last scene, when marks use it. */
+  yRightScale(): PositionScale | undefined {
+    return this.#last?.rightFrame?.y;
+  }
+
   /**
    * The axis data is placed along, which a cursor follows: y when marks are
    * placed along y (horizontal bars), otherwise x.
@@ -636,8 +728,15 @@ export class ChartModel {
   annotationSummaries(): string[] {
     const last = this.#last;
     const fallback = (value: number) => formatNumber(value, this.#config.locale);
-    const format = { x: last?.formatX ?? fallback, y: last?.formatY ?? fallback };
-    return this.#config.marks.flatMap((mark) => mark.describe?.(format, this.#config.locale) ?? []);
+    return this.#config.marks.flatMap((mark) => {
+      const format = { x: last?.formatX ?? fallback, y: last?.axisOf(mark).formatY ?? fallback };
+      return mark.describe?.(format, this.#config.locale) ?? [];
+    });
+  }
+
+  /** Whether a series of the last scene is on the right y axis. */
+  onRight(series: Series): boolean {
+    return this.#last?.onRight(series) ?? false;
   }
 
   /** Series of the last scene, for legends, tooltips, and summaries. */
@@ -677,10 +776,28 @@ function timeUnitFor(scale: PositionScale, pixels: number): TimeUnit {
   return "day";
 }
 
-/** Rejects configurations whose mark identities would collide. */
+/** The y axis a mark's values are on. */
+function sideOf(mark: Mark): "left" | "right" {
+  return mark.spec.axis === "right" ? "right" : "left";
+}
+
+/**
+ * Whether a mark places values along y: a y position in its spec or a y
+ * field, whatever its data and the view. Vertical rules and custom marks
+ * without fields do not.
+ */
+function usesY(mark: Mark): boolean {
+  const { y, y1, y2 } = mark.spec as { y?: unknown; y1?: unknown; y2?: unknown };
+  return y !== undefined || y1 !== undefined || y2 !== undefined || !!mark.channelKind("y");
+}
+
+/** Rejects configurations whose mark identities would collide or cannot be laid out. */
 function validate(config: ChartConfig): void {
   const ids = new Set<string>();
   for (const mark of config.marks) {
+    // The right axis measures values; marks placed along y belong on the left.
+    if (sideOf(mark) === "right" && (mark.tooltip === "y" || mark.tooltip === "cell"))
+      throw new Error(`A ${mark.spec.type} mark placed along y cannot use the right axis`);
     const id = mark.spec.id;
     if (id === undefined) continue;
     if (ids.has(id)) throw new Error(`Duplicate mark id "${id}"`);

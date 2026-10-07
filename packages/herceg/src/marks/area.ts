@@ -20,6 +20,8 @@ import { type Series, TableCache, xExtent, yExtent } from "./series.ts";
 import { IndexUse, traceBand, tracePath, unionExtent } from "./trace.ts";
 
 interface AreaCommon {
+  /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
+  axis?: "left" | "right";
   /** Constant fill color for every area of the mark. */
   fill?: string;
   fillOpacity?: number;
@@ -247,6 +249,7 @@ export function area<S extends Schema>(table: Table<S>, options: AreaOptions<S>)
       "curve",
       "label",
       "id",
+      "axis",
     ]),
   };
   if ("y1" in options) {

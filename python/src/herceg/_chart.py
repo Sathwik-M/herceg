@@ -76,6 +76,7 @@ class Chart:
         height: int | None = None,
         x: Axis | dict[str, Any] | None = None,
         y: Axis | dict[str, Any] | None = None,
+        y_right: Axis | dict[str, Any] | None = None,
         legend: bool | None = None,
         tooltip: bool | Tooltip = True,
         zoom: bool = False,
@@ -96,6 +97,7 @@ class Chart:
             "height": height,
             "x": _axis(x),
             "y": _axis(y),
+            "yRight": _axis(y_right),
             "legend": legend,
             "tooltip": tooltip if isinstance(tooltip, bool) else {"mode": tooltip},
             "interaction": {
@@ -124,6 +126,7 @@ class Chart:
         dash: Sequence[float] | None = None,
         curve: Curve | None = None,
         label: str | None = None,
+        axis: Literal["left", "right"] | None = None,
         id: str | None = None,
     ) -> Chart:
         """Lines through x and y fields; several y fields or a series field give several lines."""
@@ -143,6 +146,7 @@ class Chart:
                 "dash": list(dash) if dash is not None else None,
                 "curve": curve,
                 "label": label,
+                "axis": axis,
                 "id": id,
             },
             table,
@@ -163,6 +167,7 @@ class Chart:
         line: bool | None = None,
         curve: Curve | None = None,
         label: str | None = None,
+        axis: Literal["left", "right"] | None = None,
         id: str | None = None,
     ) -> Chart:
         """Filled areas: down to zero, stacked, or the band between ``y1`` and ``y2``."""
@@ -199,6 +204,7 @@ class Chart:
                 "line": line,
                 "curve": curve,
                 "label": label,
+                "axis": axis,
                 "id": id,
             },
             table,
@@ -216,6 +222,7 @@ class Chart:
         fill_opacity: float | None = None,
         label: str | None = None,
         labels: bool | dict[str, Any] = False,
+        axis: Literal["left", "right"] | None = None,
         id: str | None = None,
     ) -> Chart:
         """Bars: one band per category of x, or bars centered on number or time x.
@@ -226,6 +233,8 @@ class Chart:
         """
         table = self._mark_table(data)
         if isinstance(y, str) and self._kind(table, y) == "category":
+            if axis == "right":
+                raise ValueError("horizontal bars cannot use the right axis")
             xs = self._require_many(table, x, _NUMERIC, "horizontal bar x")
             self._single_or_series(xs, series, "bar")
             ys: str | list[str] = y
@@ -248,6 +257,7 @@ class Chart:
                 "fillOpacity": fill_opacity,
                 "label": label,
                 "labels": None if labels is False else labels,
+                "axis": axis,
                 "id": id,
             },
             table,
@@ -270,6 +280,7 @@ class Chart:
         stroke_width: float | None = None,
         cap: float | None = None,
         label: str | None = None,
+        axis: Literal["left", "right"] | None = None,
         id: str | None = None,
     ) -> Chart:
         """Error bars at each ``x``, from ``y1`` to ``y2`` or ``y`` ± ``y_error``; or, at each
@@ -285,6 +296,8 @@ class Chart:
                 "error_bar needs x with y1 and y2 or with y and y_error (vertical), "
                 "or y with x1 and x2 or with x and x_error (horizontal)"
             )
+        if horizontal and axis == "right":
+            raise ValueError("horizontal error bars cannot use the right axis")
         table = self._mark_table(data)
         along, other = ("y", "x") if horizontal else ("x", "y")
         position = y if horizontal else x
@@ -318,6 +331,7 @@ class Chart:
                 "strokeWidth": stroke_width,
                 "cap": cap,
                 "label": label,
+                "axis": axis,
                 "id": id,
             },
             table,
@@ -334,6 +348,7 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
+        axis: Literal["left", "right"] | None = None,
         id: str | None = None,
     ) -> Chart:
         """Scatter points."""
@@ -351,6 +366,7 @@ class Chart:
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "label": label,
+                "axis": axis,
                 "id": id,
             },
             table,
@@ -396,6 +412,7 @@ class Chart:
         stroke: str | None = None,
         stroke_width: float | None = None,
         dash: Sequence[float] | None = None,
+        axis: Literal["left", "right"] | None = None,
         id: str | None = None,
     ) -> Chart:
         """Reference lines: horizontal at ``y`` or vertical at ``x``.
@@ -416,6 +433,7 @@ class Chart:
                 "dash": list(dash) if dash is not None else None,
                 "label": label,
                 "text": text,
+                "axis": axis,
                 "id": id,
             },
             table,
@@ -433,6 +451,7 @@ class Chart:
         data: Any = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
+        axis: Literal["left", "right"] | None = None,
         id: str | None = None,
     ) -> Chart:
         """Shaded regions: from ``x1`` to ``x2``, from ``y1`` to ``y2``, or both.
@@ -441,9 +460,9 @@ class Chart:
         row. Add regions before the marks they highlight to draw them
         underneath.
         """
-        for start, end, axis in ((x1, x2, "x"), (y1, y2, "y")):
+        for start, end, name in ((x1, x2, "x"), (y1, y2, "y")):
             if (start is None) != (end is None):
-                raise ValueError(f"region needs both {axis}1 and {axis}2, or neither")
+                raise ValueError(f"region needs both {name}1 and {name}2, or neither")
         if x1 is None and y1 is None:
             raise ValueError("region needs x1 and x2, y1 and y2, or both")
         table = self._annotation_table(
@@ -460,6 +479,7 @@ class Chart:
                 "fillOpacity": fill_opacity,
                 "label": label,
                 "text": text,
+                "axis": axis,
                 "id": id,
             },
             table,
@@ -477,6 +497,7 @@ class Chart:
         anchor: Literal["start", "middle", "end"] | None = None,
         dx: float | None = None,
         dy: float | None = None,
+        axis: Literal["left", "right"] | None = None,
         id: str | None = None,
     ) -> Chart:
         """Text at ``(x, y)``: ``label`` for constant text, or ``text`` naming a column.
@@ -498,6 +519,7 @@ class Chart:
                 "anchor": anchor,
                 "dx": dx,
                 "dy": dy,
+                "axis": axis,
                 "id": id,
             },
             table,
@@ -626,6 +648,8 @@ class Chart:
         return table
 
     def _add(self, spec: dict[str, Any], table: int | None) -> Chart:
+        if spec.get("axis") not in (None, "left", "right"):
+            raise ValueError(f"axis must be 'left' or 'right', not {spec['axis']!r}")
         self._marks.append((spec, table))
         return self
 

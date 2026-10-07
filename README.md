@@ -47,7 +47,7 @@ with binary columns, Python package.
 
 Next:
 
-1. Multiple y axes and small multiples.
+1. Small multiples.
 2. More chart types: histograms (binning), box plots, candlesticks, pie and
    donut charts.
 3. Live notebook charts (a widget that streams updates from Python) and PDF

@@ -17,6 +17,8 @@ import { type Series, xExtent, yExtent } from "./series.ts";
 import { IndexUse, tracePath, unionExtent } from "./trace.ts";
 
 export interface LineOptions<S extends Schema> {
+  /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
+  axis?: "left" | "right";
   x: NumericField<S>;
   /** One field, or several fields drawn as separate lines sharing x. */
   y: NumericField<S> | readonly NumericField<S>[];
@@ -114,7 +116,16 @@ export function line<S extends Schema>(table: Table<S>, options: LineOptions<S>)
     type: "line",
     x: options.x,
     y: typeof options.y === "string" ? options.y : [...options.y],
-    ...definedFields(options, ["series", "stroke", "strokeWidth", "dash", "curve", "label", "id"]),
+    ...definedFields(options, [
+      "series",
+      "stroke",
+      "strokeWidth",
+      "dash",
+      "curve",
+      "label",
+      "id",
+      "axis",
+    ]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

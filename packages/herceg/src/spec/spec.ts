@@ -26,6 +26,11 @@ export interface ChartSpec {
   marks: MarkSpec[];
   x?: AxisSpec;
   y?: AxisSpec;
+  /**
+   * A second y axis on the right, for marks with `axis: "right"`, with its
+   * own scale and domain. Grid lines follow it only when no mark uses the left axis.
+   */
+  yRight?: AxisSpec;
   legend?: boolean;
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
@@ -178,6 +183,11 @@ interface MarkBase {
   data?: string;
   /** Stable identity, used for legend state and updates. */
   id?: string;
+  /**
+   * The y axis the mark's values are on: "left" (the default) or "right",
+   * the chart's `yRight` axis. Category y values stay on the left.
+   */
+  axis?: "left" | "right";
 }
 
 export type Curve = "linear" | "step" | "step-before" | "step-after";

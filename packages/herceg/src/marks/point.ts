@@ -21,6 +21,8 @@ import { rowOf, type Series, visibleRange, xExtent, yExtent } from "./series.ts"
 import { unionExtent } from "./trace.ts";
 
 export interface PointOptions<S extends Schema> {
+  /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
+  axis?: "left" | "right";
   x: NumericField<S>;
   y: NumericField<S>;
   /** Category field: one colored point series per value. */
@@ -225,7 +227,16 @@ export function point<S extends Schema>(table: Table<S>, options: PointOptions<S
     type: "point",
     x: options.x,
     y: options.y,
-    ...definedFields(options, ["series", "r", "fill", "fillOpacity", "sampling", "label", "id"]),
+    ...definedFields(options, [
+      "series",
+      "r",
+      "fill",
+      "fillOpacity",
+      "sampling",
+      "label",
+      "id",
+      "axis",
+    ]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

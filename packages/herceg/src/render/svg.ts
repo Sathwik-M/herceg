@@ -44,15 +44,20 @@ export function axisElements(axes: readonly AxisGeometry[], theme: Theme): strin
         out += `<text x="${n(tick.position)}" y="${n(y + 8)}" text-anchor="middle" dominant-baseline="hanging">${escapeXml(tick.label)}</text>`;
       }
     } else {
+      // Labels sit outside the plot: left of a left axis, right of a right one.
+      const left = axis.orient === "left";
+      const x = left ? axis.offset - 8 : axis.offset + 8;
+      const anchor = left ? "end" : "start";
       for (const tick of axis.ticks) {
-        out += `<text x="${n(axis.offset - 8)}" y="${n(tick.position)}" text-anchor="end" dominant-baseline="middle">${escapeXml(tick.label)}</text>`;
+        out += `<text x="${n(x)}" y="${n(tick.position)}" text-anchor="${anchor}" dominant-baseline="middle">${escapeXml(tick.label)}</text>`;
       }
     }
     if (axis.title) {
-      const rotate =
-        axis.orient === "left"
-          ? ` transform="rotate(-90 ${n(axis.title.x)} ${n(axis.title.y)})"`
-          : "";
+      // Vertical titles read bottom to top on the left and top to bottom on the right.
+      const angle = axis.orient === "left" ? -90 : axis.orient === "right" ? 90 : 0;
+      const rotate = angle
+        ? ` transform="rotate(${angle} ${n(axis.title.x)} ${n(axis.title.y)})"`
+        : "";
       out += `<text x="${n(axis.title.x)}" y="${n(axis.title.y)}" text-anchor="middle" dominant-baseline="middle" fill="${escapeXml(theme.text)}"${rotate}>${escapeXml(axis.title.text)}</text>`;
     }
   }

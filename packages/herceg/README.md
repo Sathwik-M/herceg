@@ -130,6 +130,30 @@ color legend instead of series entries; `colors` takes a ramp of `#rgb` or
 
 Marks are drawn in array order; rules and text always draw above other marks.
 
+### A second y axis
+
+Marks with `axis: "right"` use a second y scale, drawn on the right and
+configured by the chart's `yRight` option (the same options as `y`):
+
+```ts
+createChart(element, {
+  marks: [
+    line(traffic, { x: "time", y: "latency" }),
+    line(traffic, { x: "time", y: "requests", axis: "right" }),
+    rule({ y: 5000, label: "capacity", axis: "right" }),
+  ],
+  y: { label: "ms" },
+  yRight: { label: "requests/s" },
+});
+```
+
+Each axis fits its own marks, and tooltips format each value by its axis.
+Grid lines follow the left axis (the right one when every mark is on the
+right). Category values and marks placed along y (horizontal bars and error
+bars) stay on the left; custom marks take `axis` too. Two scales in one plot invite comparisons between
+heights that mean different things; for unrelated measures, two charts
+sharing x through `interaction: { sync }` are often easier to read.
+
 ### Custom marks
 
 When no mark fits, `custom` draws shapes with the chart's scales on every
@@ -171,6 +195,7 @@ entries or tooltips, and are meant for shapes in the thousands, not millions.
 | `title`, `description` | Accessible name and description; the title is drawn. |
 | `width`, `height` | Fixed size; omitted dimensions follow the container. |
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`. |
+| `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
 | `interaction` | `{ zoom: true }` for wheel zoom and drag pan; `{ brush: "x" }` to select an x range by dragging (with `zoom`, the brush zooms instead and Shift-drag pans); `{ sync: "name" }` to share cursor and zoom with other charts. |

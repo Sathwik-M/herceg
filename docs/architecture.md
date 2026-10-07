@@ -33,7 +33,7 @@ ChartModel (DOM-free)
   axes       categorical channels give band axes, time fields time axes
   series     resolve fields, split long-format rows, map categories to
              band indices, assign palette colors
-  domains    x from data or viewport; y from data visible in x
+  domains    x from data or viewport; y from data visible in x, per y axis
   layout     ticks, labels, margins, legend placement
   geometry   per mark, level-of-detail reduction into reused buffers
         |
@@ -157,6 +157,24 @@ unchanged. Heatmaps also band number and time fields, one band per distinct
 value. Band labels are thinned to every k-th band when neighbors would
 overlap. A categorical axis cannot be shared with marks that need a numeric
 axis (lines, areas); the chart rejects that combination.
+
+## Two y axes
+
+A mark's spec names its y axis (`axis: "right"`; left by default). The model
+computes each side's domain from its own marks' visible data, plans ticks and
+margins per side, and gives every mark a frame whose `y` is its side's scale,
+so mark geometry, picking, and custom marks do not know which side they are
+on. Tooltips look up each series through its mark's frame and format values
+with its axis' formatter; "nearest-y" tooltips compare values within one
+axis (the left, or the right when only it has series). Marks whose positions
+run along y (category y, horizontal bars and error bars) are inspected by
+the pointer's y in one scale, so they stay on the left; the model refuses
+them on the right. An axis is shown when one of its marks places values
+along y (a y position or field in its spec), whatever the data, the view, or
+hidden series, so the layout stays put while they change; a configured
+domain alone adds no axis. The text alternative names each series' axis when
+both have series. Zoom, pan, and brushing act on x only, so both sides follow the
+same viewport.
 
 ## Points and rasters
 
@@ -439,11 +457,13 @@ the DOM, creating an offscreen canvas in that canvas' document when
   labels estimate text widths from the font size to decide what fits.
 - Continuous color only for heatmaps; points cannot be colored by a numeric
   field.
-- One x and one y axis per chart.
+- One x axis and at most two y axes per chart; category values and marks
+  placed along y (horizontal bars and error bars) only on the left. No small
+  multiples or facets.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
-- The model always carries band-axis, color-legend, and inspection-along-y
-  logic, so a line-only bundle includes some bar and heatmap support it does
-  not use.
+- The model always carries band-axis, color-legend, inspection-along-y, and
+  right-axis logic, so a line-only bundle includes some bar, heatmap, and
+  second-axis support it does not use.
 - Bands, stacked areas, log scales, and long-format series re-scan the
   visible range on every frame; only whole-column lines and areas filled to
   zero on linear scales use the min/max index.

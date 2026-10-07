@@ -7,6 +7,7 @@ import { n } from "../draw/markup.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import type { PathShape, Rect, ShapesGeometry, TextShape } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
+import { definedFields } from "./line.ts";
 import { type Frame, type Mark, type MarkKey, NUMERIC, requireField, seriesKey } from "./mark.ts";
 import { unionExtent } from "./trace.ts";
 
@@ -61,6 +62,8 @@ export interface DataDrawContext<S extends Schema> extends DrawContext {
 interface CustomBase {
   /** A sentence for the chart's text alternative, saying what the mark shows. */
   description?: string;
+  /** The y axis `y` maps to: "left" (default) or "right", the chart's `yRight`. */
+  axis?: "left" | "right";
   id?: string;
 }
 
@@ -81,6 +84,7 @@ export interface CustomDataOptions<S extends Schema> extends CustomBase {
 export interface CustomSpec {
   type: "custom";
   id?: string;
+  axis?: "left" | "right";
 }
 
 /** [min, max] of a field's finite values (cached by the table); positive ones on log axes. */
@@ -112,7 +116,7 @@ export class CustomMark implements Mark<CustomSpec> {
   readonly #description: string | undefined;
 
   constructor(table: Table | undefined, options: CustomDataOptions<Schema>) {
-    this.spec = options.id === undefined ? { type: "custom" } : { type: "custom", id: options.id };
+    this.spec = { type: "custom", ...definedFields(options, ["id", "axis"]) };
     this.table = table;
     const list = (fields: string | readonly string[] | undefined) =>
       fields === undefined ? [] : typeof fields === "string" ? [fields] : [...fields];

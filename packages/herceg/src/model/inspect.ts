@@ -43,10 +43,19 @@ export interface MarkSeries {
   series: Series[];
 }
 
+/** A y axis: the frame its marks draw with and the formatter of its values. */
+export interface YAxisView {
+  frame: Frame;
+  formatY: Formatter;
+}
+
 /** What an Inspector needs from the scene it inspects. */
 export interface DrawnScene {
   marks: MarkSeries[];
+  /** The frame of marks on the left y axis; its x scale is every mark's. */
   frame: Frame;
+  /** The right y axis and the marks on it, when any are. */
+  right?: (YAxisView & { marks: ReadonlySet<Mark> }) | undefined;
   mode: TooltipMode;
   /** Series the user hid; they are never inspected. */
   hidden: ReadonlySet<string>;
@@ -63,6 +72,13 @@ export class Inspector {
   readonly formatY: Formatter;
   readonly formatValue: Formatter;
   readonly #hidden: ReadonlySet<string>;
+  readonly #left: YAxisView;
+  readonly #right: DrawnScene["right"];
+
+  /** The frame of marks on the right y axis, when any are. */
+  get rightFrame(): Frame | undefined {
+    return this.#right?.frame;
+  }
   /** The mark of each series, for how its points are inspected and formatted. */
   readonly #markOf = new Map<Series, Mark>();
 
@@ -74,6 +90,8 @@ export class Inspector {
     this.formatY = scene.formatY;
     this.formatValue = scene.formatValue;
     this.#hidden = scene.hidden;
+    this.#left = { frame: scene.frame, formatY: scene.formatY };
+    this.#right = scene.right;
     for (const { mark, series } of scene.marks) for (const s of series) this.#markOf.set(s, mark);
   }
 
@@ -98,7 +116,7 @@ export class Inspector {
     const requested = mode ?? this.mode;
     // Cells are always found under the pointer, so with nothing placed along
     // an axis (heatmaps only) every mode inspects the nearest cell.
-    const series = this.#visibleSeries((mark) => mark.tooltip !== "cell");
+    let series = this.#visibleSeries((mark) => mark.tooltip !== "cell");
     if (requested === "nearest" || series.length === 0) {
       const hit = this.#nearest(px, py);
       if (!hit) return undefined;
@@ -110,9 +128,16 @@ export class Inspector {
       return this.#inspection(axis, hit.series[axis][rowOf(hit.series, hit.position)]!, [point]);
     }
     // Snap to the data value nearest the pointer across every visible
-    // series, among points drawn in view.
+    // series, among points drawn in view. Values along y compare within one
+    // y axis: the left one, or the right one when only it has series.
     const axis = requested === "nearest-y" ? "y" : "x";
-    const scale = this.frame[axis];
+    let yAxis = this.#left;
+    if (axis === "y" && this.#right) {
+      const left = series.filter((s) => this.#axisOf(s) === this.#left);
+      if (left.length > 0) series = left;
+      else yAxis = this.#right;
+    }
+    const scale = yAxis.frame[axis];
     const target = scale.invert(axis === "x" ? px : py);
     const lo = Math.min(scale.domain[0], scale.domain[1]);
     const hi = Math.max(scale.domain[0], scale.domain[1]);
@@ -128,7 +153,7 @@ export class Inspector {
         snapped = value;
     }
     if (!Number.isFinite(snapped)) return undefined;
-    return this.#inspectAt(axis, snapped, series);
+    return this.#inspectAt(axis, snapped, series, yAxis);
   }
 
   /**
@@ -151,6 +176,24 @@ export class Inspector {
       bestDistance = distance;
     }
     return best;
+  }
+
+  /** The y axis a mark is on. */
+  axisOf(mark: Mark | undefined): YAxisView {
+    return mark && this.#right?.marks.has(mark) ? this.#right : this.#left;
+  }
+
+  #axisOf(s: Series): YAxisView {
+    return this.axisOf(this.#markOf.get(s));
+  }
+
+  #yOf(s: Series): PositionScale {
+    return this.#axisOf(s).frame.y;
+  }
+
+  /** Whether a series is on the right y axis. */
+  onRight(s: Series): boolean {
+    return this.#axisOf(s) !== this.#left;
   }
 
   /**
@@ -177,7 +220,8 @@ export class Inspector {
    * end of a range.
    */
   #placeable(s: Series, row: number): boolean {
-    const { x, y } = this.frame;
+    const { x } = this.frame;
+    const y = this.#yOf(s);
     const placed = (scale: PositionScale, value: number) =>
       Number.isFinite(scale.map(value)) && !(scale.type === "band" && value < 0);
     if (!Number.isFinite(s.values[row]!) || !placed(x, s.x[row]!) || !placed(y, s.y[row]!))
@@ -189,12 +233,11 @@ export class Inspector {
   }
 
   #nearest(px: number, py: number): Hit | undefined {
-    const { frame } = this;
-    const { x, y } = frame;
+    const { x } = this.frame;
     let best: Hit | undefined;
     const consider = (s: Series, k: number) => {
       const row = rowOf(s, k);
-      const distance = Math.hypot(x.map(s.x[row]!) - px, y.map(s.y[row]!) - py);
+      const distance = Math.hypot(x.map(s.x[row]!) - px, this.#yOf(s).map(s.y[row]!) - py);
       if (distance < (best?.distance ?? Infinity) && this.#drawn(s, row))
         best = { series: s, position: k, distance };
     };
@@ -203,7 +246,7 @@ export class Inspector {
       const visible = series.filter((s) => !this.#hidden.has(s.key) && s.length > 0);
       if (mark.pick) {
         // Ties go to later marks, which are drawn on top.
-        const hit = mark.pick(visible, px, py, frame);
+        const hit = mark.pick(visible, px, py, this.axisOf(mark).frame);
         if (hit && hit.distance <= (best?.distance ?? Infinity)) best = hit;
         continue;
       }
@@ -240,16 +283,18 @@ export class Inspector {
       axis,
       anchor[axis][rowOf(anchor, position)]!,
       along.includes(anchor) ? along : [anchor],
+      this.#left,
       anchor,
       position,
     );
   }
 
-  /** Every series' point at `value` on `axis`. */
+  /** Every series' point at `value` on `axis` (for "y", a value of `yAxis`). */
   #inspectAt(
     axis: "x" | "y",
     value: number,
     series: readonly Series[],
+    yAxis = this.#left,
     anchor?: Series,
     anchorPosition?: number,
   ): Inspection {
@@ -260,7 +305,7 @@ export class Inspector {
       const point = this.#point(s, position);
       if (point) points.push(point);
     }
-    return this.#inspection(axis, value, points);
+    return this.#inspection(axis, value, points, yAxis);
   }
 
   /** Position of a drawn point of `s` at `value` on `axis`, or -1. */
@@ -272,18 +317,24 @@ export class Inspector {
     return this.#scanNearest(s, axis, value, value, value);
   }
 
-  #inspection(axis: "x" | "y", value: number, points: InspectedPoint[]): Inspection {
+  #inspection(
+    axis: "x" | "y",
+    value: number,
+    points: InspectedPoint[],
+    yAxis = this.#left,
+  ): Inspection {
     return {
       axis,
       value,
-      position: this.frame[axis].map(value),
-      label: axis === "x" ? this.formatX(value) : this.formatY(value),
+      position: yAxis.frame[axis].map(value),
+      label: axis === "x" ? this.formatX(value) : yAxis.formatY(value),
       points,
     };
   }
 
   #point(s: Series, position: number): InspectedPoint | undefined {
-    const { x, y } = this.frame;
+    const { x } = this.frame;
+    const y = this.#yOf(s);
     const row = rowOf(s, position);
     const value = s.values[row]!;
     // What a scale cannot place (log axes, missing ends) is not drawn, so not reported.
@@ -294,7 +345,7 @@ export class Inspector {
     // A cell's label is its y category and its value a measure; marks
     // inspected along y (horizontal bars) measure their values on x.
     const along = tooltip === "y";
-    const formatValue = along ? this.formatX : this.formatY;
+    const formatValue = along ? this.formatX : this.#axisOf(s).formatY;
     const low = s.range ? (along ? s.x0 : s.y0)![row]! : Number.NaN;
     return {
       key: s.key,

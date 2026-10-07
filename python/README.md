@@ -40,6 +40,7 @@ chart = (
 
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 (`hg.Axis(type="log", domain=(0, 100), label="ms", ...)` or a dict),
+`y_right` (the axis for marks added with `axis="right"`),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`,
 `brush` (`"x"`: drag to select a range; with `zoom=True`, drag to zoom),
 `sync` (charts with the same name on one HTML page share cursor and zoom;

@@ -285,7 +285,7 @@ const mark: Check = (v, path) => {
       spec.type,
     );
   required(spec, path, kind.required);
-  properties(spec, path, { ...kind.checks, data: field, id: string });
+  properties(spec, path, { ...kind.checks, data: field, id: string, axis: oneOf("left", "right") });
 };
 
 /** Throws a TypeError naming the first property of `spec` that is not valid. */
@@ -308,6 +308,7 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     },
     x: axis,
     y: axis,
+    yRight: axis,
     legend: boolean,
     tooltip: (t, path) => {
       if (typeof t === "boolean") return;

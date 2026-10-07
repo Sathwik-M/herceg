@@ -37,6 +37,8 @@ import { rowOf, type Series, TableCache, visibleRange, xExtent, yExtent } from "
 import { unionExtent } from "./trace.ts";
 
 interface BarStyle<S extends Schema> {
+  /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
+  axis?: "left" | "right";
   /** Category field: one bar series per value. */
   series?: CategoryField<S>;
   /** Stack series instead of placing them side by side. */
@@ -66,6 +68,8 @@ export interface HorizontalBarOptions<S extends Schema> extends BarStyle<S> {
   /** Bar lengths: one field, or several fields drawn side by side or stacked. */
   x: NumericField<S> | readonly NumericField<S>[];
   y: CategoryField<S>;
+  /** Positions along y are on the left axis; only vertical bars use the right one. */
+  axis?: "left";
 }
 
 /** A category `y` makes bars horizontal; otherwise they are vertical. */
@@ -682,7 +686,16 @@ export function bar<S extends Schema>(table: Table<S>, options: BarOptions<S>): 
     type: "bar",
     x: fields(options.x),
     y: fields(options.y),
-    ...definedFields(options, ["series", "stack", "fill", "fillOpacity", "label", "labels", "id"]),
+    ...definedFields(options, [
+      "series",
+      "stack",
+      "fill",
+      "fillOpacity",
+      "label",
+      "labels",
+      "id",
+      "axis",
+    ]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

@@ -26,12 +26,12 @@ function valueRange(series: Series): [number, number, number] | undefined {
   return [min, max, last];
 }
 
-function summarize(series: Series, locale: string | undefined): string {
+function summarize(series: Series, name: string, locale: string | undefined): string {
   const range = valueRange(series);
-  if (!range) return `${series.label}: no data`;
+  if (!range) return `${name}: no data`;
   const [min, max, last] = range;
   const f = (v: number) => formatNumber(v, locale);
-  return `${series.label}: ${series.length} points, from ${f(min)} to ${f(max)}, last ${f(last)}`;
+  return `${name}: ${series.length} points, from ${f(min)} to ${f(max)}, last ${f(last)}`;
 }
 
 /**
@@ -52,7 +52,18 @@ export function describeChart(model: ChartModel): string {
   if (kinds) {
     parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
   }
-  for (const s of series.slice(0, MAX_SERIES)) parts.push(`${summarize(s, config.locale)}.`);
+  // With series on both y axes, each one's name says which it is on.
+  const right = series.filter((s) => model.onRight(s));
+  const sides = right.length > 0 && right.length < series.length;
+  const name = (s: Series) => {
+    if (!sides) return s.label;
+    const onRight = right.includes(s);
+    const unit = (onRight ? config.yRight : config.y)?.label;
+    return `${s.label} (${onRight ? "right" : "left"} axis${unit ? `, ${unit}` : ""})`;
+  };
+  for (const s of series.slice(0, MAX_SERIES)) {
+    parts.push(`${summarize(s, name(s), config.locale)}.`);
+  }
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
   parts.push(...model.annotationSummaries());
   return parts.join(" ");

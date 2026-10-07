@@ -304,8 +304,8 @@ export interface AxisTick {
 }
 
 export interface AxisGeometry {
-  orient: "bottom" | "left";
-  /** The axis line: y for a bottom axis, x for a left axis. */
+  orient: "bottom" | "left" | "right";
+  /** The axis line: y for a bottom axis, x for a left or right axis. */
   offset: number;
   /** Extent along the axis direction. */
   start: number;

@@ -96,6 +96,8 @@ export interface ColorRamp {
 export interface MarkIdentity {
   readonly type: string;
   readonly id?: string | undefined;
+  /** The y axis the mark's values are on; "left" when absent. */
+  readonly axis?: "left" | "right" | undefined;
 }
 
 export interface Mark<S extends MarkIdentity = MarkIdentity> {

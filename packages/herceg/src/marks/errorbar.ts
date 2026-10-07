@@ -25,6 +25,8 @@ import { lowerPosition, rowOf, type Series, TableCache, visibleRange, xExtent } 
 import { unionExtent } from "./trace.ts";
 
 interface ErrorBarStyle<S extends Schema> {
+  /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
+  axis?: "left" | "right";
   /** Category field: one series of error bars per value. */
   series?: CategoryField<S>;
   stroke?: string;
@@ -54,6 +56,8 @@ export interface HorizontalErrorBarOptions<S extends Schema> extends ErrorBarSty
   y: FieldName<S>;
   x1: NumericField<S>;
   x2: NumericField<S>;
+  /** Positions along y are on the left axis; only vertical error bars use the right one. */
+  axis?: "left";
 }
 
 /** Horizontal error bars at each `y`, from `x - xError` to `x + xError`. */
@@ -61,6 +65,8 @@ export interface HorizontalSymmetricErrorBarOptions<S extends Schema> extends Er
   y: FieldName<S>;
   x: NumericField<S>;
   xError: NumericField<S>;
+  /** Positions along y are on the left axis; only vertical error bars use the right one. */
+  axis?: "left";
 }
 
 export type ErrorBarOptions<S extends Schema> =
@@ -428,6 +434,7 @@ export function errorBar<S extends Schema>(
       "cap",
       "label",
       "id",
+      "axis",
     ]) as Omit<ErrorBarSpec, "type">),
   };
   if (table.name !== undefined) spec.data = table.name;

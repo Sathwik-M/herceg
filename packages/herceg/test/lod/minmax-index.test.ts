@@ -149,7 +149,13 @@ describe("incremental index boundaries", () => {
 
 describe("line indexes", () => {
   function chart(data: ReturnType<typeof stream>, y: "linear" | "log" = "linear") {
-    const model = new ChartModel({ marks: [line(data, { x: "x", y: "y" })], y: { type: y } });
+    // No x axis: labels at its ends would widen the margins of a streaming
+    // chart, which keeps that room, and not those of the oracle drawn fresh.
+    const model = new ChartModel({
+      marks: [line(data, { x: "x", y: "y" })],
+      x: { axis: false },
+      y: { type: y },
+    });
     model.setSize(600, 300, 1);
     return model;
   }

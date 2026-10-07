@@ -94,6 +94,20 @@ text(deploys, { x: "at", y: "build" });
 // Server rendering
 renderToSVG({ width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] });
 
+// A second y axis
+const traffic = table({ time: time(timestamps), latency: latencies, requests: p50Latency });
+createChart(element, {
+  marks: [
+    line(traffic, { x: "time", y: "latency" }),
+    line(traffic, { x: "time", y: "requests", axis: "right" }),
+    rule({ y: 5000, label: "capacity", axis: "right" }),
+  ],
+  y: { label: "ms" },
+  yRight: { label: "requests/s" },
+});
+// @ts-expect-error marks go on the left or right axis
+line(traffic, { x: "time", y: "requests", axis: "top" });
+
 // Bars, points, heatmaps
 const sales = table({ region: ["N", "S"], q1: [1, 2], q2: [3, 4], team: ["a", "b"] });
 bar(sales, { x: "region", y: ["q1", "q2"] });
@@ -107,6 +121,8 @@ bar(sales, { x: ["q1", "q2"], y: "region", stack: true });
 bar(sales, { x: "team", y: "region" });
 // @ts-expect-error several length fields on x need a category y
 bar(sales, { x: ["q1", "q2"], y: "q1" });
+// @ts-expect-error horizontal bars have no right axis
+bar(sales, { x: "q1", y: "region", axis: "right" });
 point(metrics, { x: "p50", y: "p99", r: 3 });
 // @ts-expect-error point x must be numeric
 point(sales, { x: "region", y: "q1" });
@@ -160,3 +176,5 @@ errorBar(sales, { y: "region", x1: "q1", x2: "q2", cap: 0 });
 errorBar(sales, { x: "region", y: "q1", yError: "q2" });
 // @ts-expect-error interval ends are number or time fields
 errorBar(sales, { x: "region", y1: "team", y2: "q2" });
+// @ts-expect-error horizontal error bars have no right axis
+errorBar(sales, { y: "region", x1: "q1", x2: "q2", axis: "right" });

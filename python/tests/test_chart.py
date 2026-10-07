@@ -192,3 +192,22 @@ def test_error_bars_go_either_way():
     symmetric, buffers = hg.Chart(DATA).error_bar(x="t", y="p50", y_error="p99").to_spec()
     assert symmetric["marks"][0]["yError"] == "p99"
     assert sorted(symmetric["data"]["data"]["columns"]) == ["p50", "p99", "t"]
+
+
+def test_marks_go_on_the_right_axis():
+    chart = (
+        hg.Chart(DATA, y_right=hg.Axis(label="p99"), width=300, height=150)
+        .line(x="t", y="p50")
+        .line(x="t", y="p99", axis="right")
+        .rule(y=5, axis="right")
+    )
+    spec, _ = chart.to_spec()
+    assert spec["yRight"] == {"label": "p99"}
+    assert [mark.get("axis") for mark in spec["marks"]] == [None, "right", "right"]
+    assert 'transform="rotate(90 ' in chart.to_svg()
+    with pytest.raises(ValueError, match="horizontal bars cannot use the right axis"):
+        hg.Chart(DATA).bar(x="p50", y="host", axis="right")
+    with pytest.raises(ValueError, match="horizontal error bars"):
+        hg.Chart(DATA).error_bar(y="host", x1="p50", x2="p99", axis="right")
+    with pytest.raises(ValueError, match="axis must be 'left' or 'right'"):
+        hg.Chart(DATA).line(x="t", y="p50", axis="middle")  # type: ignore[arg-type]
