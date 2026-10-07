@@ -33,6 +33,8 @@ function lineKind(fill: boolean): ChartKind<SeriesData> {
       const handle: ChartHandle<SeriesData> = {
         setData: (next) => source.reset(columnsOf(next)),
         append: (x, ys, keep) => appendTo(source, x, ys, keep),
+        // The adapter exposes the chart through `ref` for imperative calls.
+        setViewport: (x0, x1) => chart().setViewport([x0, x1]),
         pixelOf: (_series, _index, x, y) =>
           clientPoint(chart().root, chart().model.xScale()!.map(x), chart().model.yScale()!.map(y)),
         resize: (width, height) => render(width, height),

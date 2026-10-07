@@ -176,7 +176,13 @@ function reactTable(react: BrowserResults): string {
     if (m.droppedFrames) {
       return `${m.droppedFrames.summary.median} dropped, ${m.achievedRate!.summary.median.toFixed(0)} Hz`;
     }
-    const timing = ["timeToFrame", "tickToFrame", "pointerToFrame", "resizeToFrame"]
+    const timing = [
+      "timeToFrame",
+      "tickToFrame",
+      "pointerToFrame",
+      "viewportToFrame",
+      "resizeToFrame",
+    ]
       .map((name) => m[name])
       .find((metric) => metric !== undefined);
     if (timing)
@@ -228,6 +234,11 @@ const sections: Record<string, string> = {
     timingTable(
       ids.filter((id) => id.startsWith("hover-")),
       "pointerToFrame",
+    ),
+    "",
+    timingTable(
+      ids.filter((id) => id.startsWith("zoom-")),
+      "viewportToFrame",
     ),
     "",
     timingTable(

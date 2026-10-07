@@ -111,7 +111,7 @@ function chartSize(s: Scenario): { width: number; height: number } {
 }
 
 function optionsFor(s: Scenario): ChartOptions {
-  return { ...chartSize(s), tooltip: s.tooltip, large: s.large };
+  return { ...chartSize(s), tooltip: s.tooltip, large: s.large, zoom: s.operation === "zoom" };
 }
 
 function clearStage() {
@@ -417,6 +417,47 @@ async function runIngest(
   }
 }
 
+/**
+ * Zoomed-in x ranges: 50%, 10%, and 1% of the data in turn, each centered a
+ * little further along, so consecutive ranges both zoom and pan.
+ */
+function zoomWindows(x0: number, x1: number, count: number): [number, number][] {
+  const span = x1 - x0;
+  const fractions = [0.5, 0.1, 0.01];
+  return Array.from({ length: count }, (_, i) => {
+    const width = span * fractions[i % fractions.length]!;
+    const center = x0 + span * (0.3 + 0.4 * ((i * 0.618) % 1));
+    return [center - width / 2, center + width / 2];
+  });
+}
+
+async function runZoom(
+  adapter: Adapter,
+  kind: ChartKind<AnyData>,
+  s: Scenario,
+): Promise<PageResult> {
+  const data = makeData(s, 1) as SeriesData;
+  const handle = await create(kind, data, optionsFor(s));
+  if (!handle.setViewport) {
+    handle.destroy();
+    clearStage();
+    return { supported: false, reason: `${adapter.id} adapter has no zoom path`, metrics: {} };
+  }
+  const windows = zoomWindows(data.x[0]!, data.x[data.x.length - 1]!, s.warmup + s.samples);
+  const frame = metric("ms");
+  for (let i = 0; i < windows.length; i++) {
+    const [x0, x1] = windows[i]!;
+    const elapsed = await timed(
+      () => handle.setViewport!(x0, x1),
+      () => handle,
+    );
+    if (i >= s.warmup) frame.samples.push(elapsed.complete);
+  }
+  handle.destroy();
+  clearStage();
+  return { supported: true, metrics: { viewportToFrame: frame } };
+}
+
 async function runResize(kind: ChartKind<AnyData>, s: Scenario): Promise<PageResult> {
   const options = optionsFor(s);
   const handle = await create(kind, makeData(s, 1), options);
@@ -544,6 +585,8 @@ export function installHarness(adapter: Adapter): void {
           return runIngest(adapter, kind, s);
         case "resize":
           return runResize(kind, s);
+        case "zoom":
+          return runZoom(adapter, kind, s);
         case "dashboard":
           return runDashboard(kind, s);
         default:

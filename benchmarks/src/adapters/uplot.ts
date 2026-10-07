@@ -57,6 +57,7 @@ function lineKind(fill: boolean) {
           });
           plot.setData(rolling as uPlot.AlignedData);
         },
+        setViewport: (x0, x1) => plot.setScale("x", { min: x0, max: x1 }),
         pixelOf: (_series, _index, x, y) =>
           clientPoint(plot.over, plot.valToPos(x, "x"), plot.valToPos(y, "y")),
         resize: (width, height) => plot.setSize({ width, height }),

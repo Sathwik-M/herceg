@@ -10,6 +10,8 @@ export interface ChartOptions {
    * WebGL traces, Canvas renderer, ...). Each adapter comments what it changes.
    */
   large: boolean;
+  /** Configure the library's zoom interaction (zoom scenarios only). */
+  zoom: boolean;
 }
 
 export interface Point {
@@ -40,6 +42,11 @@ export interface ChartHandle<T> {
    * only; omitted when the library has no such path.
    */
   append?(x: Float64Array, ys: Float64Array[], keep: number): void | Promise<void>;
+  /**
+   * Show only x values in [x0, x1], through the library's documented zoom or
+   * axis-range path. Line charts only; omitted when the library has none.
+   */
+  setViewport?(x0: number, x1: number): void | Promise<void>;
 }
 
 export interface ChartKind<T> {

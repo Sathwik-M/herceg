@@ -2,12 +2,12 @@
 //
 //   npm run bench -- [--lib echarts,uplot] [--scenario line-small-init,...]
 //                    [--filter line-] [--out results/name.json] [--headless]
-//                    [--sample-scale 0.5]
+//                    [--sample-scale 0.5] [--timeout 120]
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { type CDPSession, chromium, type Page } from "playwright";
+import { type BrowserContext, type CDPSession, chromium, type Page } from "playwright";
 import type { Bench, Metric, PageResult } from "../page/harness.ts";
 import { SCENARIOS, type Scenario } from "../scenarios.ts";
 import { buildPage, ROOT, serve } from "./build.ts";
@@ -22,6 +22,8 @@ const { values: args } = parseArgs({
     out: { type: "string" },
     headless: { type: "boolean", default: false },
     "sample-scale": { type: "string", default: "1" },
+    /** Seconds before a library's scenario is abandoned; overrides scenario timeouts. */
+    timeout: { type: "string" },
   },
 });
 
@@ -49,7 +51,26 @@ const scenarios = SCENARIOS.filter(
   ...s,
   samples: Math.max(1, Math.round(s.samples * sampleScale)),
   warmup: Math.round(s.warmup * Math.min(1, sampleScale)),
+  // The limit actually applied, so recorded scenarios show it.
+  timeout: Number(args.timeout ?? s.timeout ?? 600),
 }));
+
+/** Waits for `promise` at most `ms`, ignoring its outcome. */
+function bounded(promise: Promise<unknown>, ms = 10_000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    promise.then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+    );
+  });
+}
 
 interface ResultRow {
   scenario: string;
@@ -158,8 +179,9 @@ async function main() {
     });
     return { browser, context };
   };
-  const latency = await launch(LATENCY_ARGS);
-  const realtime = scenarios.some((s) => s.operation === "ingest")
+  let latency = await launch(LATENCY_ARGS);
+  const browserVersion = latency.browser.version();
+  let realtime = scenarios.some((s) => s.operation === "ingest")
     ? await launch(REALTIME_ARGS)
     : latency;
 
@@ -168,61 +190,125 @@ async function main() {
   let gpu = "unknown";
   let userAgent = "";
 
-  for (const library of libraries) {
-    for (const s of scenarios) {
-      const { context } = s.operation === "ingest" ? realtime : latency;
-      const page = await context.newPage();
-      await page.goto(`${origin}/${library}.html`);
-      await page.waitForFunction(() => window.bench !== undefined);
-      renderers[library] ??= await page.evaluate(() => window.bench.renderer);
-      if (gpu === "unknown") gpu = await page.evaluate(() => window.bench.gpu());
-      userAgent ||= await page.evaluate(() => navigator.userAgent);
-      const cdp = await context.newCDPSession(page);
-      const started = performance.now();
-      let result: PageResult;
-      try {
-        if (s.operation === "memory") result = await runMemory(page, cdp, s);
-        else if (s.operation === "hover") result = await runHover(page, s);
-        else result = await page.evaluate((scenario) => window.bench.run(scenario), s);
-      } catch (error) {
-        result = {
-          supported: false,
-          reason: `error: ${(error as Error).message.split("\n")[0]}`,
-          metrics: {},
-        };
+  /**
+   * Runs one scenario in a fresh page, from page creation to measurement,
+   * within the scenario's time limit. Resources it created are left in
+   * `opened` for the caller to clean up.
+   */
+  const measure = async (
+    context: BrowserContext,
+    library: string,
+    s: Scenario,
+    opened: { page?: Page; cdp?: CDPSession },
+  ): Promise<PageResult> => {
+    const page = await context.newPage();
+    opened.page = page;
+    await page.goto(`${origin}/${library}.html`);
+    await page.waitForFunction(() => window.bench !== undefined);
+    renderers[library] ??= await page.evaluate(() => window.bench.renderer);
+    if (gpu === "unknown") gpu = await page.evaluate(() => window.bench.gpu());
+    userAgent ||= await page.evaluate(() => navigator.userAgent);
+    const cdp = await context.newCDPSession(page);
+    opened.cdp = cdp;
+    if (s.operation === "memory") return runMemory(page, cdp, s);
+    if (s.operation === "hover") return runHover(page, s);
+    return page.evaluate((scenario) => window.bench.run(scenario), s);
+  };
+
+  let complete = false;
+  try {
+    for (const library of libraries) {
+      for (const s of scenarios) {
+        const ingest = s.operation === "ingest";
+        const { context } = ingest ? realtime : latency;
+        const started = performance.now();
+        const opened: { page?: Page; cdp?: CDPSession } = {};
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let result: PageResult;
+        try {
+          result = await Promise.race([
+            measure(context, library, s, opened),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error(`timed out after ${s.timeout} s`)),
+                (s.timeout ?? 600) * 1000,
+              );
+            }),
+          ]);
+        } catch (error) {
+          result = {
+            supported: false,
+            reason: `error: ${(error as Error).message.split("\n")[0]}`,
+            metrics: {},
+          };
+        } finally {
+          clearTimeout(timer);
+          // A page still running a timed-out scenario, or a crashed one, may
+          // never answer; cleaning it up must not stall the run.
+          if (opened.cdp) await bounded(opened.cdp.detach());
+          if (opened.page) await bounded(opened.page.close({ runBeforeUnload: false }));
+        }
+        if (result.reason?.startsWith("error")) {
+          // A crashed or stuck page can leave its browser unable to open tabs.
+          // Later scenarios get a fresh browser once the old one has exited;
+          // closing it waits for Playwright to force-kill it if needed.
+          const shared = realtime === latency;
+          const failed = ingest ? realtime : latency;
+          await failed.browser.close().catch(() => {});
+          const fresh = await launch(ingest && !shared ? REALTIME_ARGS : LATENCY_ARGS);
+          if (ingest && !shared) realtime = fresh;
+          else {
+            latency = fresh;
+            if (shared) realtime = fresh;
+          }
+        }
+        const metrics = Object.fromEntries(
+          Object.entries(result.metrics).map(([name, m]) => [
+            name,
+            { ...m, summary: summarize(m.samples) },
+          ]),
+        );
+        rows.push({
+          scenario: s.id,
+          library,
+          supported: result.supported,
+          reason: result.reason,
+          metrics,
+        });
+        const headline = Object.entries(metrics)[0];
+        const text = result.supported
+          ? `${headline?.[0]} median ${headline?.[1].summary.median.toFixed(2)} ${headline?.[1].unit}`
+          : `skipped (${result.reason})`;
+        const seconds = ((performance.now() - started) / 1000).toFixed(1);
+        console.log(`${library.padEnd(9)} ${s.id.padEnd(24)} ${text} [${seconds}s]`);
       }
-      await cdp.detach();
-      await page.close();
-      const metrics = Object.fromEntries(
-        Object.entries(result.metrics).map(([name, m]) => [
-          name,
-          { ...m, summary: summarize(m.samples) },
-        ]),
-      );
-      rows.push({
-        scenario: s.id,
-        library,
-        supported: result.supported,
-        reason: result.reason,
-        metrics,
-      });
-      const headline = Object.entries(metrics)[0];
-      const text = result.supported
-        ? `${headline?.[0]} median ${headline?.[1].summary.median.toFixed(2)} ${headline?.[1].unit}`
-        : `skipped (${result.reason})`;
-      const seconds = ((performance.now() - started) / 1000).toFixed(1);
-      console.log(`${library.padEnd(9)} ${s.id.padEnd(24)} ${text} [${seconds}s]`);
     }
+
+    complete = true;
+  } finally {
+    // Results gathered so far are written even if the run cannot continue.
+    await latency.browser.close().catch(() => {});
+    if (realtime !== latency) await realtime.browser.close().catch(() => {});
+    server.close();
+    writeResults({ rows, renderers, gpu, userAgent, browserVersion, complete });
   }
+}
 
-  await latency.browser.close();
-  if (realtime !== latency) await realtime.browser.close();
-  server.close();
-
+function writeResults(run: {
+  rows: ResultRow[];
+  renderers: Record<string, unknown>;
+  gpu: string;
+  userAgent: string;
+  browserVersion: string;
+  complete: boolean;
+}) {
+  const { rows, renderers, gpu, userAgent, browserVersion, complete } = run;
   const output = {
     schema: 1,
     date: new Date().toISOString(),
     commit: commit(),
+    /** False when the run stopped early; the results cover what finished. */
+    complete,
     method: {
       timing:
         "operation start until rendering finished and the next frame was produced (rAF + MessageChannel); frame rate limit disabled except for ingest scenarios",
@@ -232,7 +318,7 @@ async function main() {
     },
     environment: {
       ...machine(),
-      browser: `Chrome ${latency.browser.version()}`,
+      browser: `Chrome ${browserVersion}`,
       userAgent,
       gpu,
       headless: args.headless,

@@ -1,5 +1,10 @@
 import { BarChart, HeatmapChart, LineChart, ScatterChart } from "echarts/charts";
-import { GridComponent, TooltipComponent, VisualMapComponent } from "echarts/components";
+import {
+  DataZoomComponent,
+  GridComponent,
+  TooltipComponent,
+  VisualMapComponent,
+} from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import type { CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
@@ -14,6 +19,7 @@ echarts.use([
   GridComponent,
   TooltipComponent,
   VisualMapComponent,
+  DataZoomComponent,
   CanvasRenderer,
 ]);
 
@@ -44,6 +50,8 @@ function lineOption(
     ...base(options, "axis"),
     xAxis: { type: "time" as const },
     yAxis: { type: "value" as const, scale: true },
+    // Zoom goes through ECharts' documented dataZoom component.
+    dataZoom: options.zoom ? [{ type: "inside" as const, xAxisIndex: 0 }] : undefined,
     series: pairs.map((points, s) => ({
       type: "line" as const,
       name: data.names[s],
@@ -58,7 +66,12 @@ function lineOption(
   };
 }
 
-type EChartsHandle<T> = ChartHandle<T> & { apply(next: object): void };
+type EChartsHandle<T> = ChartHandle<T> & {
+  apply(next: object): void;
+  /** Runs a change and tracks rendering until ECharts emits `finished`. */
+  track(change: () => void): void;
+  chart: echarts.ECharts;
+};
 
 /**
  * Creates a chart the harness can wait on: scatter and heatmap series render
@@ -77,7 +90,7 @@ function mount<T>(
     height: options.height,
   });
   let pending: Promise<void> | undefined;
-  const apply = (next: object) => {
+  const track = (change: () => void) => {
     const promise = new Promise<void>((resolve) => {
       const done = () => {
         chart.off("finished", done);
@@ -87,11 +100,14 @@ function mount<T>(
       chart.on("finished", done);
     });
     pending = promise;
-    chart.setOption(next as echarts.EChartsCoreOption);
+    change();
   };
+  const apply = (next: object) => track(() => chart.setOption(next as echarts.EChartsCoreOption));
   apply(option);
   return {
     apply,
+    track,
+    chart,
     setData: (data) => apply(update(data)),
     rendered: () => pending,
     pixelOf(_series, _index, x, y) {
@@ -135,6 +151,11 @@ function lineKind(area: boolean) {
             if (points.length > keep) points.splice(0, points.length - keep);
           });
           chart.apply({ series: rolling.map((points) => ({ data: points })) });
+        },
+        setViewport(x0, x1) {
+          chart.track(() =>
+            chart.chart.dispatchAction({ type: "dataZoom", startValue: x0, endValue: x1 }),
+          );
         },
       };
     },

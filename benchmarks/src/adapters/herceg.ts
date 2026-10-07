@@ -56,6 +56,7 @@ function lineKind(fill: boolean): ChartKind<SeriesData> {
       return {
         setData: (next) => source.reset(columnsOf(next)),
         append: (x, ys, keep) => appendTo(source, x, ys, keep),
+        setViewport: (x0, x1) => chart.setViewport([x0, x1]),
         pixelOf(_series, _index, x, y) {
           return clientPoint(
             chart.root,

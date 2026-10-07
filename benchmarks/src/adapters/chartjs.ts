@@ -144,6 +144,14 @@ function lineKind(fill: boolean) {
           });
           assign();
         },
+        // Axis limits are Chart.js' documented way to set the visible range;
+        // decimation then works on the visible points.
+        setViewport(x0, x1) {
+          const x = chart.options.scales!.x!;
+          x.min = x0;
+          x.max = x1;
+          chart.update("none");
+        },
       };
     },
   };

@@ -73,15 +73,40 @@ function handle<T>(
   };
 }
 
-function lineDefinition(rows: Point[][], options: ChartOptions, fill: boolean): Definition {
+/**
+ * The rows a window shows, plus one on each side so lines reach the edges.
+ * TanStack's zoom guide leaves visible-row filtering to the application.
+ */
+function visibleRows(series: Point[], x0: number, x1: number): Point[] {
+  const firstAtOrAfter = (value: number) => {
+    let lo = 0;
+    let hi = series.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (series[mid]!.t.getTime() < value) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  return series.slice(Math.max(0, firstAtOrAfter(x0) - 1), firstAtOrAfter(x1) + 1);
+}
+
+function lineDefinition(
+  rows: Point[][],
+  options: ChartOptions,
+  fill: boolean,
+  window?: [number, number],
+): Definition {
+  const shown = window ? rows.map((series) => visibleRows(series, ...window)) : rows;
   return defineChart({
-    marks: rows.map((series, s) =>
+    marks: shown.map((series, s) =>
       fill
         ? areaY(series, { x: "t", y2: "v", y1: 0, fill: color(s), fillOpacity: 0.25 })
         : lineY(series, { x: "t", y: "v", stroke: color(s), strokeWidth: 1.5 }),
     ),
     scales: {
-      x: { scale: scaleUtc },
+      // A zoomed chart's x scale is bound to the window, as in TanStack's zoom guide.
+      x: { scale: window ? scaleUtc().domain(window.map((t) => new Date(t))) : scaleUtc },
       y: { scale: scaleLinear, nice: true },
     },
     focus: options.tooltip ? "group-x" : false,
@@ -114,6 +139,7 @@ function lineKind(fill: boolean) {
           });
           host.update(lineDefinition(rows, options, fill));
         },
+        setViewport: (x0, x1) => host.update(lineDefinition(rows, options, fill, [x0, x1])),
       };
     },
   };

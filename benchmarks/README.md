@@ -91,6 +91,7 @@ allocation and GC behavior as one the library retains.
 | `ingest` | A timer appends data at a fixed rate (10, 60, or 100 Hz) for five seconds of wall-clock time while the display runs at its normal refresh rate. Records frame intervals, dropped frames (each frame interval spanning k refresh periods counts k - 1), long animation frames (over 50 ms), time spent inside append calls, and the ingestion rate actually achieved: a library that blocks the main thread receives fewer ticks. |
 | `hover` | Real pointer moves dispatched through the DevTools Protocol, aimed at data points (mapped to pixels through each library's own coordinate API) so every library has a point to hit, to the next frame. Moves are spaced 70 ms apart so throttled hover handlers run for every event. |
 | `resize` | Toggle the container between 800x400 and 600x300. |
+| `zoom` | Show a sequence of x ranges covering 50%, 10%, and 1% of the data in turn, each centered further along (so ranges both zoom and pan), to the next frame. Each adapter uses the library's documented zoom or axis-range path: ECharts `dataZoom` (an `inside` component, `dispatchAction`), Chart.js scale `min`/`max` with `update('none')`, Plotly `relayout` of `xaxis.range`, uPlot `setScale`, TanStack Charts a new definition whose x scale is bound to the window with visible rows filtered (its zoom guide leaves filtering to the application), Herceg `setViewport`. |
 | `dashboard` | Mount ten 600x250 line charts (15 series x 3,000 points each), then refresh all ten in one task. |
 | `memory` | See below. |
 
@@ -128,12 +129,23 @@ The sampling options reduce the number of drawn points with different bucket
 rules (ECharts buckets by index, Chart.js by pixel). Their visual equivalence
 to the full data has not been verified here.
 
+Massive scenarios (10,000,000-point line, 1,000,000-point scatter) use the
+same configurations. Libraries that run out of memory or time are recorded as
+errors (`Target crashed`, `timed out after N s`) rather than left out; each
+massive scenario gives a library 240 seconds (`--timeout` overrides every
+scenario's limit). After an error the runner starts a fresh browser, since a
+crashed tab can leave the old one unable to open pages.
+
 ### Fairness notes
 
 - Libraries without a built-in chart type are reported as `n/a` (Chart.js
   heatmap, uPlot bar/scatter/heatmap) rather than benchmarked through
   third-party plugins.
 - uPlot has no tooltip; its cursor and live legend are its hover readout.
+- When zooming, Plotly keeps the y range it computed for all data, while the
+  other libraries rescale y to the visible points (ECharts, Chart.js,
+  TanStack Charts, uPlot, and Herceg recompute it), so Plotly does less work
+  per zoom step.
 - Canvas and SVG libraries are compared as they are. The renderer used by each
   configuration is recorded with the results.
 - Results are from one machine. Compare libraries within a run, not across

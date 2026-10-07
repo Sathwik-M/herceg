@@ -15,6 +15,8 @@ export type Operation =
   | "hover"
   /** Toggle the container size. */
   | "resize"
+  /** Show a sequence of x ranges (zoomed in, panning), waiting for each frame. */
+  | "zoom"
   /** Retained heap, DOM nodes, and canvas pixels after creating the chart(s). */
   | "memory"
   /** Create `charts` line charts at once (dashboard), then refresh them all. */
@@ -40,6 +42,8 @@ export interface Scenario {
   durationMs?: number;
   /** Measured samples; the runner may override. */
   samples: number;
+  /** Seconds before the runner gives up on a library (default 600). */
+  timeout?: number;
   warmup: number;
   description: string;
 }
@@ -167,6 +171,35 @@ export const SCENARIOS: Scenario[] = [
     samples: 5,
     warmup: 1,
     description: "500 x 500 cells",
+  }),
+
+  // Massive data: only libraries with a documented large-data path are
+  // expected to finish; the others are recorded as errors or timeouts.
+  s({
+    id: "line-massive-init",
+    chart: "line",
+    operation: "init",
+    series: 1,
+    points: 10_000_000,
+    large: true,
+    tooltip: true,
+    samples: 5,
+    warmup: 1,
+    timeout: 240,
+    description: "1 series x 10,000,000 points",
+  }),
+  s({
+    id: "scatter-massive-init",
+    chart: "scatter",
+    operation: "init",
+    series: 1,
+    points: 1_000_000,
+    large: true,
+    tooltip: true,
+    samples: 5,
+    warmup: 1,
+    timeout: 240,
+    description: "1,000,000 points",
   }),
 
   // Full data replacement
@@ -373,6 +406,31 @@ export const SCENARIOS: Scenario[] = [
     samples: 60,
     warmup: 10,
     description: "pointer moves over 10,000 points",
+  }),
+  s({
+    id: "zoom-line-large",
+    chart: "line",
+    operation: "zoom",
+    series: 1,
+    points: 1_000_000,
+    large: true,
+    tooltip: true,
+    samples: 30,
+    warmup: 6,
+    description: "x ranges of 50%, 10%, and 1% of 1,000,000 points, panning",
+  }),
+  s({
+    id: "zoom-line-massive",
+    chart: "line",
+    operation: "zoom",
+    series: 1,
+    points: 10_000_000,
+    large: true,
+    tooltip: true,
+    samples: 15,
+    warmup: 3,
+    timeout: 240,
+    description: "x ranges of 50%, 10%, and 1% of 10,000,000 points, panning",
   }),
   s({
     id: "resize-line-medium",

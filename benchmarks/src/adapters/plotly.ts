@@ -118,6 +118,9 @@ function lineKind(fill: boolean) {
             keep,
           );
         },
+        async setViewport(x0, x1) {
+          await Plotly.relayout(root, { "xaxis.range": [x0, x1] });
+        },
       };
     },
   };
