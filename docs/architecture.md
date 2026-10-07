@@ -118,6 +118,20 @@ point by point without reduction.
 The y domain comes from the same visible range: sorted series are trimmed to
 the points inside it, so whole columns reduce to a plain min/max scan.
 
+Line series of at least 262,144 points get a min/max index once a chart
+draws the same table version a second time, as when zooming or panning; data
+that changes before every draw does not build one. Indexes belong to the
+table version and its columns, so charts sharing a mark or a table share
+them. The index stores the positions of the
+lowest and highest finite values of every 64-value block and of every 512,
+4,096, ... values above that, plus whether a block holds a gap: about 1.4 MB
+for ten million points, built in ~1.3 ms per million. With it, M4 finds each
+pixel column's end by binary search and its extremes by an index query
+instead of scanning, and the y domain is an index query too. Pixel columns
+that contain gaps are scanned, and data where most blocks hold gaps skips the
+index for reduction; the output is identical either way. Zooming into ten million points takes about 1.4 ms
+instead of 3 ms. Areas and long-format series (row subsets) are not indexed.
+
 ## Band axes
 
 A mark reports the kind of field on each position channel. A categorical
@@ -185,7 +199,9 @@ never repaints data. Scheduled frames avoid reading layout, which would force
 the browser to lay out the previous frame's DOM writes: the container size is
 measured when a `ResizeObserver` reports a change (layout is current then),
 for the first frame, and on explicit `render()` and `toSVG()` calls. Legend
-entries are rewritten only when what they show changes.
+entries are rewritten only when what they show changes, and the data summary
+for assistive technology only when the data or options change, not when the
+view zooms or pans.
 
 The `renderer` option chooses where marks go. `auto` (the default) uses SVG
 until a scene has more than 4,000 drawn points (line vertices, bars, points,
@@ -284,8 +300,9 @@ frame scheduler, without rendering React. A test
 - Renderers draw every geometry kind themselves, and the model always carries
   band-axis and color-legend layout, so a line-only bundle includes bar, point,
   and heatmap support it does not use (about 3 KiB gzip).
-- Level of detail re-scans the visible range on every frame; there is no
-  precomputed min/max pyramid.
+- Areas, log scales, and long-format line series re-scan the visible range on
+  every frame; only whole-column line series on linear scales use the min/max
+  index.
 - Renderer thresholds are not tuned.
 - Rules are always drawn above lines and areas, regardless of mark order.
 - No Python package, GPU renderer, or adapters for frameworks other than

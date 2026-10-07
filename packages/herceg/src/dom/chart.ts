@@ -75,6 +75,8 @@ export class Chart implements Scheduled, SyncMember {
   /** Keyboard cursor: a series and a position in it. */
   #keyboard: { key: string; position: number } | null = null;
   #describedAt = -Infinity;
+  /** What the current summary was written from; zooming and hovering do not change it. */
+  #described: { config: unknown; key: string } | undefined;
   #describeTimer: ReturnType<typeof setTimeout> | 0 = 0;
   #drag: { x: number; scale: PositionScale } | null = null;
   readonly #cleanup: (() => void)[] = [];
@@ -306,6 +308,9 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   #describe() {
+    const { config } = this.model;
+    const key = `${config.marks.map((mark) => mark.table?.version ?? 0).join(",")}|${[...this.model.hidden].join(",")}`;
+    if (this.#described?.config === config && this.#described.key === key) return;
     // Summaries scan the data, so streaming charts refresh them at most once
     // a second; a trailing refresh picks up the last change.
     const wait = this.#describedAt + 1000 - performance.now();
@@ -313,12 +318,15 @@ export class Chart implements Scheduled, SyncMember {
       if (this.#describeTimer === 0) {
         this.#describeTimer = setTimeout(() => {
           this.#describeTimer = 0;
-          this.#describe();
+          // The summary reads the last drawn series; with a draw pending (an
+          // offscreen chart, say), that draw writes the summary instead.
+          if (!this.#dirty) this.#describe();
         }, wait);
       }
       return;
     }
     this.#describedAt = performance.now();
+    this.#described = { config, key };
     this.#description.textContent = `${describeChart(this.model)} Focus the chart and use the arrow keys to read values.`;
   }
 

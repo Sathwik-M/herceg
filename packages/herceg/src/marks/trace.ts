@@ -3,6 +3,7 @@
 
 import type { NumericArray } from "../data/column.ts";
 import { type Mapping, m4, polylineAll } from "../lod/m4.ts";
+import type { MinMaxIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { Curve } from "../spec/spec.ts";
 import { stepPolyline } from "./curve.ts";
@@ -19,11 +20,15 @@ function reduce(
   end: number,
   frame: Frame,
   out: Polyline,
+  index?: MinMaxIndex,
 ) {
   const xMap = frame.x.mapping();
   const yMap = frame.y.mapping();
-  if (series.sorted) m4(series.x, y, start, end, xMap, yMap, frame.pixelRatio, out, series.rows);
-  else polylineAll(series.x, y, start, end, xMap, yMap, out, series.rows);
+  if (series.sorted) {
+    m4(series.x, y, start, end, xMap, yMap, frame.pixelRatio, out, series.rows, index);
+  } else {
+    polylineAll(series.x, y, start, end, xMap, yMap, out, series.rows);
+  }
 }
 
 function curved(
@@ -39,18 +44,22 @@ function curved(
   return stepped;
 }
 
-/** Traces one edge of a series (`y`, or a band edge) as a polyline in pixels. */
+/**
+ * Traces one edge of a series (`y`, or a band edge) as a polyline in pixels.
+ * `index`, a min/max index of `y`, speeds up dense ranges.
+ */
 export function tracePath(
   series: Series,
   y: NumericArray,
   frame: Frame,
   stage: Stage,
   curve: Curve | undefined,
+  index?: MinMaxIndex,
 ): Polyline {
   const path = frame.polyline(series.key, stage);
   path.reset();
   const [start, end] = visibleRange(series, frame.x.domain[0], frame.x.domain[1]);
-  reduce(series, y, start, end, frame, path);
+  reduce(series, y, start, end, frame, path, index);
   return curved(path, frame, series.key, stage, curve);
 }
 

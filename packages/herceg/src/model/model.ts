@@ -487,6 +487,7 @@ export class ChartModel {
       pixelRatio: this.pixelRatio,
       theme,
       hidden: this.hidden,
+      owner: this,
       polyline: this.#polyline,
       floats: this.#floatBuffer,
       bytes: this.#byteBuffer,

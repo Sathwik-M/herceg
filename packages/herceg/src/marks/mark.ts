@@ -48,6 +48,8 @@ export interface Frame {
   pixelRatio: number;
   theme: Theme;
   hidden: ReadonlySet<string>;
+  /** The chart drawing this frame, for caches that count each chart's redraws. */
+  owner: object;
   /**
    * A polyline buffer reused across frames, one per series key and stage
    * (for example "line", "upper", "upper-step").

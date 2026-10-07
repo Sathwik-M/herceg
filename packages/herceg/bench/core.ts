@@ -4,6 +4,7 @@
 
 import { table } from "../src/data/table.ts";
 import { m4 } from "../src/lod/m4.ts";
+import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
 import { LinearScale } from "../src/scale/scale.ts";
 
@@ -41,6 +42,14 @@ const gapped = y.map((value, i) => (i % 100 === 99 ? Number.NaN : value));
 measure("m4: 1M points with a gap every 100, 800 px at 2x", () => {
   out.reset();
   m4(x, gapped, 0, N, full, yMap, 2, out);
+});
+measure("min/max index: build over 1M points", () => {
+  new MinMaxIndex(y);
+});
+const index = new MinMaxIndex(y);
+measure("m4 with index: 1M points, 800 px at 2x", () => {
+  out.reset();
+  m4(x, y, 0, N, full, yMap, 2, out, undefined, index);
 });
 const zoomed = new LinearScale([x[400_000]!, x[410_000]!], [0, 800]).mapping();
 measure("m4: 10k visible of 1M, 800 px at 2x", () => {

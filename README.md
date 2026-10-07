@@ -31,13 +31,15 @@ Chart.js, Plotly, and uPlot in a reproducible benchmark suite.
 
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar,
 point, heatmap, and rule marks, level of detail, streaming updates, shared
-scheduler, browser interaction, static SVG, React adapter.
+scheduler, browser interaction, static SVG, React adapter, min/max indexes
+for zooming large line series.
 
 Next:
 
 1. Annotations, horizontal bars, error bars, and custom marks with pluggable
    geometry drawing (which also keeps unused mark kinds out of bundles).
-2. A min/max pyramid for zooming and streaming over very large series.
+2. Min/max indexes that update incrementally while very large series stream,
+   and indexes for areas.
 3. GPU rendering for massive data, kept only where benchmarks justify it.
 4. Python bindings sharing the chart specification, with notebook support and
    static export.

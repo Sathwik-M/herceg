@@ -1,4 +1,6 @@
+import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import { MinMaxIndex } from "../lod/minmax-index.ts";
 import type { LineGeometry } from "../scene/scene.ts";
 import type { Curve, LineSpec } from "../spec/spec.ts";
 import {
@@ -12,7 +14,7 @@ import {
   requireField,
   SeriesSplitter,
 } from "./mark.ts";
-import { type Series, xExtent, yExtent } from "./series.ts";
+import { type Series, TableCache, xExtent, yExtent } from "./series.ts";
 import { tracePath, unionExtent } from "./trace.ts";
 
 export interface LineOptions<S extends Schema> {
@@ -33,12 +35,23 @@ export interface LineOptions<S extends Schema> {
 
 const DEFAULT_WIDTH = 1.5;
 
+/** Series of at least this many points get a min/max index when redrawn unchanged. */
+const INDEXED_POINTS = 1 << 18;
+
+/** Min/max indexes for one table version, and how often each chart drew it. */
+interface Indexes {
+  draws: WeakMap<object, number>;
+  /** By y column, so charts and positions sharing a column share its index. */
+  byColumn: Map<NumericArray, MinMaxIndex>;
+}
+
 export class LineMark implements Mark<LineSpec> {
   readonly spec: LineSpec;
   readonly table: Table<Schema>;
   readonly zero = false;
   readonly tooltip = "x";
   readonly #split: SeriesSplitter;
+  readonly #indexes = new TableCache<Indexes>();
 
   constructor(spec: LineSpec, table: Table<Schema>) {
     this.spec = spec;
@@ -64,11 +77,36 @@ export class LineMark implements Mark<LineSpec> {
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
-    return unionExtent(series.map((s) => yExtent(s, x0, x1, s.y, log)));
+    return unionExtent(series.map((s) => yExtent(s, x0, x1, s.y, log, this.#index(s))));
+  }
+
+  /**
+   * The min/max index of a large series. A chart builds one on its second
+   * draw of the same table version, so data that changes every frame
+   * (streaming) does not pay for one, while zooming and panning unchanged
+   * data stops rescanning it. `owner` is the drawing chart, or undefined to
+   * only look up an existing index.
+   */
+  #index(s: Series, owner?: object): MinMaxIndex | undefined {
+    if (s.rows !== undefined || !s.sorted || s.length < INDEXED_POINTS) return undefined;
+    const indexes = this.#cached();
+    let index = indexes.byColumn.get(s.y);
+    if (index?.length !== s.y.length) index = undefined;
+    if (!index && owner && (indexes.draws.get(owner) ?? 0) >= 2) {
+      index = new MinMaxIndex(s.y);
+      indexes.byColumn.set(s.y, index);
+    }
+    return index;
+  }
+
+  #cached(): Indexes {
+    return this.#indexes.get(this.table, () => ({ draws: new WeakMap(), byColumn: new Map() }));
   }
 
   geometry(series: readonly Series[], frame: Frame): LineGeometry[] {
     const out: LineGeometry[] = [];
+    const { draws } = this.#cached();
+    draws.set(frame.owner, (draws.get(frame.owner) ?? 0) + 1);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       out.push({
@@ -77,7 +115,7 @@ export class LineMark implements Mark<LineSpec> {
         stroke: s.color,
         strokeWidth: this.spec.strokeWidth ?? DEFAULT_WIDTH,
         dash: this.spec.dash,
-        path: tracePath(s, s.y, frame, "line", this.spec.curve),
+        path: tracePath(s, s.y, frame, "line", this.spec.curve, this.#index(s, frame.owner)),
       });
     }
     return out;

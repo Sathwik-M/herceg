@@ -47,6 +47,27 @@ describe("runtime regressions", () => {
     chart.destroy();
   });
 
+  it("summarizes the data drawn last, not data changed while offscreen", async () => {
+    const data = table({ x: [0, 1, 2], y: [10, 20, 30] });
+    const chart = createChart(host, { marks: [line(data, { x: "x", y: "y" })] });
+    // A second change within the throttle window schedules a delayed summary.
+    data.appendRow({ x: 3, y: 40 });
+    chart.render();
+    host.style.cssText = "position:absolute;top:-10000px;width:600px;height:300px";
+    await frame();
+    await frame();
+    data.appendRow({ x: 4, y: 50 });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    host.style.cssText = "width:600px;height:300px";
+    await frame();
+    await frame();
+    await frame();
+    const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
+    expect(description.textContent).toContain("5 points");
+    expect(description.textContent).toContain("last 50");
+    chart.destroy();
+  });
+
   it("uses the current container size for an explicit render", async () => {
     const data = table({ x: [0, 1], y: [0, 1] });
     const chart = createChart(host, { marks: [line(data, { x: "x", y: "y" })] });

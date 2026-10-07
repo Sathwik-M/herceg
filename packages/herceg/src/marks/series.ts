@@ -1,5 +1,6 @@
 import type { NumericArray } from "../data/column.ts";
 import { scanExtent, type Table } from "../data/table.ts";
+import type { MinMaxIndex, RangeExtremes } from "../lod/minmax-index.ts";
 
 /**
  * One drawable series: x and y columns, optionally restricted to a subset of
@@ -106,6 +107,7 @@ export function yExtent(
   x1: number,
   y: Series["y"] = series.y,
   log = false,
+  index?: MinMaxIndex,
 ): [number, number] | undefined {
   const lo = Math.min(x0, x1);
   const hi = Math.max(x0, x1);
@@ -116,11 +118,14 @@ export function yExtent(
     while (start < end && xAt(series, start) < lo) start++;
     while (end > start && xAt(series, end - 1) > hi) end--;
   }
-  // The common case, a whole sorted column, is a plain scan.
-  const inside =
-    series.rows === undefined && series.sorted && !log
-      ? scanExtent(y, start, end)
-      : scanPositions(series, y, start, end, lo, hi, log);
+  // The common case, a whole sorted column, is a plain scan, or an index
+  // query when the column has a min/max index.
+  const whole = series.rows === undefined && series.sorted && !log;
+  const inside = !whole
+    ? scanPositions(series, y, start, end, lo, hi, log)
+    : index && index.length === y.length
+      ? indexedExtent(index, y, start, end)
+      : scanExtent(y, start, end);
   let [min, max] = inside ?? [Infinity, -Infinity];
   if (series.sorted) {
     for (const edge of [lo, hi]) {
@@ -131,6 +136,18 @@ export function yExtent(
     }
   }
   return min <= max ? [min, max] : undefined;
+}
+
+const extremes: RangeExtremes = { low: -1, high: -1, gap: false };
+
+function indexedExtent(
+  index: MinMaxIndex,
+  y: Series["y"],
+  start: number,
+  end: number,
+): [number, number] | undefined {
+  const { low, high } = index.query(y, start, end, extremes);
+  return low < 0 ? undefined : [y[low]!, y[high]!];
 }
 
 /** [min, max] of usable y values at positions [start, end) whose x is in [lo, hi]. */

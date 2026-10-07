@@ -1,4 +1,5 @@
 import type { NumericArray } from "../data/column.ts";
+import type { MinMaxIndex, RangeExtremes } from "./minmax-index.ts";
 import type { Polyline } from "./polyline.ts";
 
 /**
@@ -38,7 +39,9 @@ function unmappable(mapping: Mapping, value: number): boolean {
  * run and leave a gap. `pixelRatio` sets the column width (1 / pixelRatio CSS
  * pixels). When `rows` is given, positions `start..end` index into it and the
  * point at position k is row `rows[k]`; this draws one group of a long-format
- * table without copying it.
+ * table without copying it. An `index` of `y` lets dense ranges skip the
+ * scan: each column's extremes are read from it, unless gaps are so common
+ * that most columns would be scanned anyway.
  */
 export function m4(
   x: NumericArray,
@@ -50,9 +53,16 @@ export function m4(
   pixelRatio: number,
   out: Polyline,
   rows?: Uint32Array,
+  index?: MinMaxIndex,
 ): void {
   if (rows === undefined && !xMap.log && !yMap.log && xMap.factor > 0) {
-    m4Columns(x, y, start, end, xMap, yMap, pixelRatio, out);
+    // Index queries cost about as much as scanning 200 points.
+    const columns = (x[end - 1]! - x[start]!) * xMap.factor * pixelRatio;
+    if (index && index.gapShare < 0.1 && end - start > 200 * Math.max(1, columns)) {
+      m4Indexed(x, y, start, end, xMap, yMap, pixelRatio, out, index);
+    } else {
+      m4Columns(x, y, start, end, xMap, yMap, pixelRatio, out);
+    }
   } else {
     m4Points(x, y, start, end, xMap, yMap, pixelRatio, out, rows);
   }
@@ -126,6 +136,61 @@ function m4Columns(
     // Points from k on start the next column, or are a gap that the outer
     // loop turns into a break.
     emitColumn(x, y, first, low, high, k - 1, xMap, yMap, out, undefined);
+  }
+}
+
+const extremes: RangeExtremes = { low: -1, high: -1, gap: false };
+
+/**
+ * M4 for dense ranges with a min/max index of `y`: each column's end is found
+ * by binary search (column membership only changes once along sorted x, by
+ * the same exact test as `m4Columns`) and its extremes by an index query.
+ * Columns with gaps are scanned by `m4Columns`. Output is identical to
+ * `m4Points`.
+ */
+function m4Indexed(
+  x: NumericArray,
+  y: NumericArray,
+  start: number,
+  end: number,
+  xMap: Mapping,
+  yMap: Mapping,
+  pixelRatio: number,
+  out: Polyline,
+  index: MinMaxIndex,
+): void {
+  const xo = xMap.offset * pixelRatio;
+  const xf = xMap.factor * pixelRatio;
+  const xOrigin = xMap.origin;
+  if (!(Number.isFinite(xo) && Number.isFinite(xf) && Number.isFinite(xOrigin))) {
+    m4Points(x, y, start, end, xMap, yMap, pixelRatio, out);
+    return;
+  }
+  let k = start;
+  while (k < end) {
+    const firstX = x[k]!;
+    if (!(Number.isFinite(firstX) && Number.isFinite(y[k]!))) {
+      out.break();
+      k++;
+      continue;
+    }
+    const c = Math.floor(xo + (firstX - xOrigin) * xf);
+    // First position past the column: x not finite, or mapped to another column.
+    let lo = k + 1;
+    let hi = end;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      const xv = x[mid]!;
+      if (!Number.isFinite(xv) || Math.floor(xo + (xv - xOrigin) * xf) !== c) hi = mid;
+      else lo = mid + 1;
+    }
+    index.query(y, k, lo, extremes);
+    if (extremes.gap) {
+      m4Columns(x, y, k, lo, xMap, yMap, pixelRatio, out);
+    } else {
+      emitColumn(x, y, k, extremes.low, extremes.high, lo - 1, xMap, yMap, out, undefined);
+    }
+    k = lo;
   }
 }
 
