@@ -51,6 +51,96 @@ export function m4(
   out: Polyline,
   rows?: Uint32Array,
 ): void {
+  if (rows === undefined && !xMap.log && !yMap.log && xMap.factor > 0) {
+    m4Columns(x, y, start, end, xMap, yMap, pixelRatio, out);
+  } else {
+    m4Points(x, y, start, end, xMap, yMap, pixelRatio, out, rows);
+  }
+}
+
+/**
+ * M4 for a whole column on linear scales, column by column: each pixel
+ * column's points are found by comparing x with a threshold left of the
+ * column's right edge instead of mapping every point, and its extremes by
+ * plain comparisons. The threshold is checked with the exact column formula;
+ * since the floating-point mapping never decreases, every x below it maps to
+ * the same column, and points at or past it get the exact test. Output is
+ * identical to `m4Points`, including gaps for values the scale cannot place.
+ */
+function m4Columns(
+  x: NumericArray,
+  y: NumericArray,
+  start: number,
+  end: number,
+  xMap: Mapping,
+  yMap: Mapping,
+  pixelRatio: number,
+  out: Polyline,
+): void {
+  const xo = xMap.offset * pixelRatio;
+  const xf = xMap.factor * pixelRatio;
+  const xOrigin = xMap.origin;
+  if (!(Number.isFinite(xo) && Number.isFinite(xf) && Number.isFinite(xOrigin))) {
+    m4Points(x, y, start, end, xMap, yMap, pixelRatio, out);
+    return;
+  }
+  let k = start;
+  while (k < end) {
+    const first = k;
+    const firstX = x[k]!;
+    let lowValue = y[k]!;
+    if (!(Number.isFinite(firstX) && Number.isFinite(lowValue))) {
+      // A value the scale cannot place ends the run, as in `m4Points`.
+      out.break();
+      k++;
+      continue;
+    }
+    const c = Math.floor(xo + (firstX - xOrigin) * xf);
+    let highValue = lowValue;
+    let low = k;
+    let high = k;
+    // A millionth of a column left of the edge, verified to map to c.
+    const edge = xOrigin + (c + 1 - xo) / xf;
+    let safe = edge - (1e-6 / xf + Math.abs(edge) * 1e-15);
+    if (!(Math.floor(xo + (safe - xOrigin) * xf) === c)) safe = Number.NEGATIVE_INFINITY;
+    k++;
+    for (; k < end; k++) {
+      const xv = x[k]!;
+      // Next column, or an x the scale cannot place (NaN fails `<`).
+      if (!(xv < safe) && (!Number.isFinite(xv) || Math.floor(xo + (xv - xOrigin) * xf) !== c))
+        break;
+      const value = y[k]!;
+      // NaN fails both comparisons, so only then is it tested for.
+      if (value < lowValue) {
+        if (value === Number.NEGATIVE_INFINITY) break;
+        low = k;
+        lowValue = value;
+      } else if (value > highValue) {
+        if (value === Number.POSITIVE_INFINITY) break;
+        high = k;
+        highValue = value;
+      } else if (Number.isNaN(value)) {
+        break;
+      }
+    }
+    // Points from k on start the next column, or are a gap that the outer
+    // loop turns into a break.
+    emitColumn(x, y, first, low, high, k - 1, xMap, yMap, out, undefined);
+  }
+}
+
+/** M4 point by point, for log scales, row subsets, and columns with gaps. */
+function m4Points(
+  x: NumericArray,
+  y: NumericArray,
+  start: number,
+  end: number,
+  xMap: Mapping,
+  yMap: Mapping,
+  pixelRatio: number,
+  out: Polyline,
+  rows?: Uint32Array,
+): void {
   // Column math runs in device pixels.
   const xo = xMap.offset * pixelRatio;
   const xf = xMap.factor * pixelRatio;
@@ -109,14 +199,25 @@ function emitColumn(
   out: Polyline,
   rows: Uint32Array | undefined,
 ) {
-  const row = (k: number) => (rows === undefined ? k : rows[k]!);
-  const push = (k: number) => out.push(mapValue(xMap, x[row(k)]!), mapValue(yMap, y[row(k)]!));
   const a = low < high ? low : high;
   const b = low < high ? high : low;
-  push(first);
-  if (a !== first && a !== last) push(a);
-  if (b !== first && b !== last && b !== a) push(b);
-  if (last !== first) push(last);
+  emitPoint(x, y, first, xMap, yMap, out, rows);
+  if (a !== first && a !== last) emitPoint(x, y, a, xMap, yMap, out, rows);
+  if (b !== first && b !== last && b !== a) emitPoint(x, y, b, xMap, yMap, out, rows);
+  if (last !== first) emitPoint(x, y, last, xMap, yMap, out, rows);
+}
+
+function emitPoint(
+  x: NumericArray,
+  y: NumericArray,
+  position: number,
+  xMap: Mapping,
+  yMap: Mapping,
+  out: Polyline,
+  rows: Uint32Array | undefined,
+): void {
+  const row = rows === undefined ? position : rows[position]!;
+  out.push(mapValue(xMap, x[row]!), mapValue(yMap, y[row]!));
 }
 
 /** Writes every point without reduction, for unsorted x. */

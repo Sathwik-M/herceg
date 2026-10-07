@@ -18,6 +18,48 @@ afterEach(() => host.remove());
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 describe("runtime regressions", () => {
+  it("sizes to the container's border box, whatever its writing mode", async () => {
+    const data = table({ x: [0, 1], y: [0, 1] });
+    host.style.cssText = "width:600px;height:300px;border:10px solid transparent";
+    const chart = createChart(host, { marks: [line(data, { x: "x", y: "y" })] });
+    await frame();
+    await frame();
+    expect([chart.model.width, chart.model.height]).toEqual([620, 320]);
+    host.style.cssText = "width:600px;height:300px;writing-mode:vertical-rl";
+    await frame();
+    await frame();
+    expect([chart.model.width, chart.model.height]).toEqual([600, 300]);
+    chart.destroy();
+  });
+
+  it("follows an inline host, which gets no resize notifications", async () => {
+    const data = table({ x: [0, 1], y: [0, 1] });
+    const span = document.createElement("span");
+    host.append(span);
+    const chart = createChart(span, { marks: [line(data, { x: "x", y: "y" })] });
+    await frame();
+    await frame();
+    expect(chart.model.width).toBe(600);
+    host.style.width = "800px";
+    chart.update({});
+    await frame();
+    expect(chart.model.width).toBe(800);
+    chart.destroy();
+  });
+
+  it("uses the current container size for an explicit render", async () => {
+    const data = table({ x: [0, 1], y: [0, 1] });
+    const chart = createChart(host, { marks: [line(data, { x: "x", y: "y" })] });
+    await frame();
+    await frame();
+    host.style.width = "450px";
+    chart.render();
+    expect(chart.model.width).toBe(450);
+    host.style.width = "500px";
+    expect(chart.toSVG()).toContain('width="500"');
+    chart.destroy();
+  });
+
   it("keeps the value under the pointer fixed when zooming a log axis", () => {
     const data = table({ x: [1, 10, 100], y: [1, 2, 3] });
     const chart = createChart(host, {

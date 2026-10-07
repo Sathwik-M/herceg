@@ -1,21 +1,35 @@
+import { scanExtent } from "../data/table.ts";
 import { formatNumber } from "../format/format.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import type { ChartModel } from "./model.ts";
 
 const MAX_SERIES = 20;
 
-function summarize(series: Series, locale: string | undefined): string {
+/** [min, max] and the last finite value of a series. */
+function valueRange(series: Series): [number, number, number] | undefined {
+  const { values, rows, length } = series;
+  let last = Number.NaN;
+  for (let k = length - 1; k >= 0 && !Number.isFinite(last); k--) last = values[rowOf(series, k)]!;
+  if (!Number.isFinite(last)) return undefined;
+  // A whole column is one plain scan; subsets of rows go through their index.
+  if (rows === undefined) {
+    const extent = scanExtent(values, 0, length);
+    return extent && [extent[0], extent[1], last];
+  }
   let min = Infinity;
   let max = -Infinity;
-  let last = Number.NaN;
-  for (let k = 0; k < series.length; k++) {
-    const value = series.values[rowOf(series, k)]!;
-    if (!Number.isFinite(value)) continue;
-    if (value < min) min = value;
-    if (value > max) max = value;
-    last = value;
+  for (let k = 0; k < length; k++) {
+    const value = values[rows[k]!]!;
+    if (value < min && value > -Infinity) min = value;
+    if (value > max && value < Infinity) max = value;
   }
-  if (!(min <= max)) return `${series.label}: no data`;
+  return [min, max, last];
+}
+
+function summarize(series: Series, locale: string | undefined): string {
+  const range = valueRange(series);
+  if (!range) return `${series.label}: no data`;
+  const [min, max, last] = range;
   const f = (v: number) => formatNumber(v, locale);
   return `${series.label}: ${series.length} points, from ${f(min)} to ${f(max)}, last ${f(last)}`;
 }

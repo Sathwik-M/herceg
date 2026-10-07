@@ -17,6 +17,89 @@ function seeded(seed: number) {
 }
 
 describe("m4", () => {
+  it("matches point-by-point reduction exactly when scanning by column", () => {
+    const next = seeded(11);
+    const cases: { n: number; origin: number; step: number; width: number; from: number }[] = [
+      { n: 50_000, origin: 0, step: 1, width: 800, from: 0 },
+      // Epoch milliseconds, the whole range and a zoom far below one second.
+      { n: 50_000, origin: 1_767_225_600_000, step: 1000, width: 640, from: 0 },
+      { n: 20_000, origin: 1_767_225_600_000, step: 0.25, width: 500, from: 9_000 },
+      // Repeated x values and steps that are not representable exactly.
+      { n: 30_000, origin: -3.7, step: 0.1, width: 333, from: 0 },
+    ];
+    for (const { n, origin, step, width, from } of cases) {
+      const x = new Float64Array(n);
+      const y = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        // Every x value three times, so columns hold repeated x.
+        x[i] = origin + Math.floor(i / 3) * step;
+        const r = next();
+        y[i] =
+          r < 0.002
+            ? Number.NaN
+            : r < 0.003
+              ? Number.POSITIVE_INFINITY
+              : r < 0.004
+                ? Number.NEGATIVE_INFINITY
+                : Math.sin(i / 300) * 50 + next() * 10;
+      }
+      const lo = x[from]!;
+      const hi = x[n - 1]!;
+      const xMap: Mapping = { origin: lo, offset: 40, factor: width / (hi - lo), log: false };
+      const yMap: Mapping = { origin: 0, offset: 200, factor: -2, log: false };
+      const columns = new Polyline();
+      m4(x, y, from, n, xMap, yMap, 2, columns);
+      // Passing every row explicitly forces the point-by-point path.
+      const identity = Uint32Array.from({ length: n }, (_, i) => i);
+      const pointwise = new Polyline();
+      m4(x, y, from, n, xMap, yMap, 2, pointwise, identity);
+      expect(columns.count).toBe(pointwise.count);
+      expect(columns.starts).toEqual(pointwise.starts);
+      expect(Array.from(columns.coords.subarray(0, columns.count * 2))).toEqual(
+        Array.from(pointwise.coords.subarray(0, pointwise.count * 2)),
+      );
+    }
+  });
+
+  it("matches point-by-point reduction at extreme magnitudes", () => {
+    const compare = (xs: number[], ys: number[], xMap: Mapping, ratio: number) => {
+      const x = Float64Array.from(xs);
+      const y = Float64Array.from(ys);
+      const columns = new Polyline();
+      m4(x, y, 0, x.length, xMap, identity, ratio, columns);
+      const pointwise = new Polyline();
+      const rows = Uint32Array.from(xs, (_, i) => i);
+      m4(x, y, 0, x.length, xMap, identity, ratio, pointwise, rows);
+      expect(points(columns)).toEqual(points(pointwise));
+      expect(columns.starts).toEqual(pointwise.starts);
+    };
+    // The right edge of the last column overflows; Infinity must break the run.
+    const max = Number.MAX_VALUE;
+    compare(
+      [0, max, Infinity],
+      [0, 1, 2],
+      { origin: 0, offset: 40, factor: 760 / max, log: false },
+      1,
+    );
+    // A finite x whose column overflows to Infinity, followed by Infinity.
+    compare([1, max, Infinity], [1, 2, 3], { origin: 0, offset: 0, factor: 2, log: false }, 1);
+    // A large pixel offset rounds the column edge.
+    compare(
+      [0, 0.9999985, 0.9999986, 0.9999987, 0.9999988, 1],
+      [0, 10, 9, 8, 7, 0],
+      { origin: 0, offset: 2 ** 34, factor: 1, log: false },
+      1,
+    );
+    // A large origin cancels most of each x value's digits.
+    const origin = 2 ** 52;
+    compare(
+      Array.from({ length: 200 }, (_, i) => origin + i),
+      Array.from({ length: 200 }, (_, i) => Math.sin(i)),
+      { origin: origin + 0.5, offset: 3, factor: 0.37, log: false },
+      2,
+    );
+  });
+
   it("keeps sparse data unchanged", () => {
     const x = new Float64Array([0, 1, 2, 3]);
     const y = new Float64Array([5, 1, 4, 2]);

@@ -50,6 +50,12 @@ export class Chart implements Scheduled, SyncMember {
   readonly root: HTMLDivElement;
   #options: ChartOptions;
   readonly #container: HTMLElement;
+  /**
+   * Container size, measured when the resize observer reports a change (when
+   * layout is already current) and on explicit renders, so scheduled frames
+   * need not read layout after the previous frame's DOM writes.
+   */
+  #containerSize: { width: number; height: number } | undefined;
   readonly #id = `herceg-${++nextId}`;
   readonly #svg: SvgLayer;
   readonly #legend: Legend;
@@ -119,10 +125,11 @@ export class Chart implements Scheduled, SyncMember {
       if (typeof ResizeObserver !== "undefined") {
         // Observers report once on attach; only real size changes re-render.
         const observer = new ResizeObserver(() => {
+          this.#remember();
           const { width, height } = this.#size();
           if (width !== this.model.width || height !== this.model.height) this.#invalidate();
         });
-        observer.observe(container);
+        observer.observe(container, { box: "border-box" });
         this.#cleanup.push(() => observer.disconnect());
       }
       // The first frame renders synchronously so the chart is never blank.
@@ -155,14 +162,17 @@ export class Chart implements Scheduled, SyncMember {
 
   /** Renders now instead of on the next frame. */
   render(): void {
+    // The container may have changed since the observer last reported.
+    this.#remember();
     this.#dirty = true;
     this.flush();
   }
 
   /** Standalone SVG of the current state, for export. */
   toSVG(): string {
-    // Apply pending changes first, so the export reflects the latest options.
-    this.flush();
+    // Apply pending changes and the current container size first, so the
+    // export reflects the latest state.
+    this.render();
     const document = this.root.ownerDocument;
     return renderSvg(this.model.scene(measurer(document)), {
       idPrefix: `${this.#id}-export`,
@@ -238,9 +248,21 @@ export class Chart implements Scheduled, SyncMember {
     this.#leaveSync = sync ? join(sync, this) : undefined;
   }
 
+  /** Measures the container and caches the size where the observer keeps it current. */
+  #remember(): { width: number; height: number } {
+    const container = this.#container;
+    const { width, height } = container.getBoundingClientRect();
+    // Inline hosts have no box of their own and get no resize notifications
+    // when they reflow, so they are measured on every frame instead.
+    const display = container.ownerDocument.defaultView?.getComputedStyle(container).display;
+    const observed = display !== "inline" && display !== "contents";
+    this.#containerSize = observed ? { width, height } : undefined;
+    return { width, height };
+  }
+
   #size(): { width: number; height: number } {
     const { width, height } = this.#options;
-    const box = this.#container.getBoundingClientRect();
+    const box = this.#containerSize ?? this.#remember();
     return {
       width: Math.round(width ?? (box.width || 640)),
       height: Math.round(height ?? (box.height || DEFAULT_HEIGHT)),

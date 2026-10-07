@@ -105,8 +105,18 @@ that are reduced separately, so data that alternates between values and gaps
 can still produce one run per few points.
 
 The reduction scans the visible index range (found by binary search) on every
-frame: O(visible points), about 3 ms for one million points
-(`npm run bench:core`). Unsorted x is drawn point by point without reduction.
+frame: O(visible points), about 0.8 ms for one million points
+(`npm run bench:core`). On linear scales a whole column of the table is
+scanned pixel column by pixel column: x is compared with a threshold just
+left of the column's right edge rather than mapped. The threshold is checked
+with the exact column formula, and points at or past it get the exact test;
+because the floating-point mapping never decreases, the result is identical
+to mapping every point. Gaps end a column in the same pass. Log scales and
+row subsets of long-format tables use a per-point loop. Unsorted x is drawn
+point by point without reduction.
+
+The y domain comes from the same visible range: sorted series are trimmed to
+the points inside it, so whole columns reduce to a plain min/max scan.
 
 ## Band axes
 
@@ -171,7 +181,11 @@ In the browser the layers are, bottom to top: an optional canvas for marks,
 the SVG layer (grid and marks when not on canvas, rules, axes, title, pointer
 overlay), the HTML legend, the tooltip, and visually hidden text for
 assistive technology. Pointer feedback only touches the overlay, so hovering
-never repaints data.
+never repaints data. Scheduled frames avoid reading layout, which would force
+the browser to lay out the previous frame's DOM writes: the container size is
+measured when a `ResizeObserver` reports a change (layout is current then),
+for the first frame, and on explicit `render()` and `toSVG()` calls. Legend
+entries are rewritten only when what they show changes.
 
 The `renderer` option chooses where marks go. `auto` (the default) uses SVG
 until a scene has more than 4,000 drawn points (line vertices, bars, points,

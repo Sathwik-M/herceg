@@ -23,9 +23,9 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 
 | Area | Herceg | ECharts | TanStack Charts | Chart.js | Plotly |
 | --- | --- | --- | --- | --- | --- |
-| Initial render | Measured. Fast at every size measured: ~0.6 ms for 4 x 200 line points, ~2.1 ms for 10 x 5,000, ~13 ms for 1M points (uPlot: ~7 ms). Bars ~0.8 ms for 100 x 4; scatter ~1.8 ms for 10k points and ~28 ms for 200k (every point drawn on Canvas); heatmaps ~1.3 ms for 100 x 100 and ~12 ms for 500 x 500 cells, drawn as one image. Lines are reduced to at most four points per pixel column; SVG below 4,000 drawn points or cells, Canvas above. | Measured. Canvas; fast for small charts, ~190 ms for a 1M-point line with `minmax` sampling. Scatter and heatmap series render progressively: a 500x500 heatmap shows its first frame after ~60 ms and completes after ~9 s. | Measured. Fast small SVG charts; cost grows with rows because every row becomes a scene node (~0.8 s for 1M points on Canvas). | Measured. Fast for small and medium charts; min-max decimation makes 1M points cheap once the `{x, y}` objects exist. | Measured. Slowest small charts; SVG scatter is expensive at 10k points, WebGL traces handle large data. |
-| Incremental update | Measured. Tables support append, drop, range replace, and reset; charts re-render once on the next frame. Replacing 10 x 5,000 line points takes ~1.5 ms, 10k scatter points ~1.6 ms, 100 x 100 heatmap cells ~0.6 ms. | Measured. `setOption` re-processes the series; no rolling-window append. | Measured. Updates rebuild the definition and scene. | Measured. Mutate arrays and `update('none')`; cheap. | Measured. `extendTraces` with `maxPoints` gives a documented rolling window, but each tick costs 20–30 ms here. |
-| Streaming | Measured. ~1.6 ms per tick for 15 series x 3,000 points (uPlot: ~0.9 ms); keeps up in every paced scenario, including the ten-chart dashboard at 10 Hz. Rolling windows via `maxRows`. | Measured. ~11 ms per tick for 15 series x 3,000 points; keeps up with 100 Hz ingestion for one chart but drops frames for a 10-chart dashboard at 10 Hz. | Measured. ~31 ms per tick; at 60–100 Hz ingestion only ~33 updates per second get through. | Measured. ~3.5 ms per tick; keeps up in every paced scenario. | Measured. ~20 ms per tick; ~54 updates per second at 100 Hz, ~6 Hz for the 10-chart dashboard. |
+| Initial render | Measured. Fast at every size measured: ~0.5 ms for 4 x 200 line points, ~1.8 ms for 10 x 5,000, ~5 ms for 1M points (uPlot: ~6 ms). Bars ~0.7 ms for 100 x 4; scatter ~1.8 ms for 10k points and ~27 ms for 200k (every point drawn on Canvas); heatmaps ~1.1 ms for 100 x 100 and ~13 ms for 500 x 500 cells, drawn as one image. Lines are reduced to at most four points per pixel column; SVG below 4,000 drawn points or cells, Canvas above. | Measured. Canvas; fast for small charts, ~190 ms for a 1M-point line with `minmax` sampling. Scatter and heatmap series render progressively: a 500x500 heatmap shows its first frame after ~60 ms and completes after ~9 s. | Measured. Fast small SVG charts; cost grows with rows because every row becomes a scene node (~0.8 s for 1M points on Canvas). | Measured. Fast for small and medium charts; min-max decimation makes 1M points cheap once the `{x, y}` objects exist. | Measured. Slowest small charts; SVG scatter is expensive at 10k points, WebGL traces handle large data. |
+| Incremental update | Measured. Tables support append, drop, range replace, and reset; charts re-render once on the next frame. Replacing 10 x 5,000 line points takes ~1.0 ms, 1M points ~3.5 ms (uPlot ~5.6 ms), 10k scatter points ~1.7 ms, 100 x 100 heatmap cells ~0.7 ms. | Measured. `setOption` re-processes the series; no rolling-window append. | Measured. Updates rebuild the definition and scene. | Measured. Mutate arrays and `update('none')`; cheap. | Measured. `extendTraces` with `maxPoints` gives a documented rolling window, but each tick costs 20–30 ms here. |
+| Streaming | Measured. ~1.0 ms per tick for 15 series x 3,000 points (uPlot: ~0.9 ms); keeps up in every paced scenario, including the ten-chart dashboard at 10 Hz. Rolling windows via `maxRows`. | Measured. ~11 ms per tick for 15 series x 3,000 points; keeps up with 100 Hz ingestion for one chart but drops frames for a 10-chart dashboard at 10 Hz. | Measured. ~31 ms per tick; at 60–100 Hz ingestion only ~33 updates per second get through. | Measured. ~3.5 ms per tick; keeps up in every paced scenario. | Measured. ~20 ms per tick; ~54 updates per second at 100 Hz, ~6 Hz for the 10-chart dashboard. |
 | Memory | Measured. ~0.2 MB retained for 1M points: source typed arrays are used in place and geometry buffers are bounded. Ten-chart dashboard ~7 MB (uPlot ~3 MB); 100 small charts ~8 MB and no canvas backing stores, because small charts render to SVG. | Measured. ~240 MB retained for 1M points (internal storage plus per-point structures). | Measured. ~600 MB retained for 1M points (row objects, Dates, scene nodes). | Measured. ~49 MB for 1M points (one `{x, y}` object per point). | Measured. ~110 MB for 1M points with WebGL. |
 | Bundle size (line chart, gzip) | Measured. ~21 KiB for a time-series line chart with tooltip. The renderers and chart model include bar, point, and heatmap support that a line-only bundle cannot drop yet (~3 KiB). | Measured. ~167 KiB tree-shaken, ~371 KiB full. | Measured. ~44 KiB including `d3-scale` for time. | Measured. ~64 KiB with time scale and date adapter. | Measured. ~391 KiB basic bundle, ~1.4 MiB full. |
 | Line | Line, step lines, several y fields or a long-format series field, gaps for missing values, log and time axes, level of detail for large series. Area (stacked, band) and rule marks. | Documented. Time axes, sampling, area fill, step lines. | Documented. `lineY`/`lineX`, gaps, curves. | Documented. Line, stepped, filled; decimation plugin. | Documented. `scatter`/`scattergl` lines, rich hover. |
@@ -33,7 +33,7 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 | Heatmap | Heatmap mark over category, number, or time fields, drawn as one image (Canvas `drawImage`, PNG inside SVG), with a color legend and cell tooltips. Up to 4,194,304 cells; no binning transform or calendar layout. | Documented. Heatmap series, calendar heatmap. | Documented. `cell` mark with a D3 color scale. | No built-in heatmap (third-party `chartjs-chart-matrix`). | Documented. Heatmap traces rendered as an image. |
 | Composition | Line, area, bar, point, heatmap, and rule marks share scales, axes, tooltip, and legend in one chart. No custom marks, horizontal bars, annotations beyond rules, or multiple axes yet. | Documented. Many series types in one grid, `markLine`/`markArea`, `custom` series. | Documented. Grammar of marks; strongest composition model of the group. | Documented. Mixed chart types; annotations via plugin. | Documented. Traces, layout shapes and annotations, subplots. |
 | TypeScript | Field options are typed from the table schema: a categorical field passed as a numeric encoding is a compile error. Compile-time tests guard this. | Documented. Large option types; tree-shaken `ComposeOption` types. | Documented. Fields and callbacks inferred from row types. | Documented. Typed configuration generics. | Community `@types/plotly.js`, not first-party. |
-| React | First-party `@herceg/react`: `<Chart>` with mark elements typed against the table's schema; no React element per data point, and data updates go through tables without rendering React. Measured: mounting, streaming, and hover are within noise of plain herceg; each chart's React root retains ~25 KB; the adapter adds ~0.6 KiB gzip. | Community wrappers (for example `echarts-for-react`). | First-party adapters for React and other frameworks. | Community `react-chartjs-2`. | `react-plotly.js`. |
+| React | First-party `@herceg/react`: `<Chart>` with mark elements typed against the table's schema; no React element per data point, and data updates go through tables without rendering React. Measured: mounting adds ~0.1–0.4 ms per chart, streaming and hover are within noise of plain herceg, each chart's React root retains ~25 KB, and the adapter adds ~0.6 KiB gzip. | Community wrappers (for example `echarts-for-react`). | First-party adapters for React and other frameworks. | Community `react-chartjs-2`. | `react-plotly.js`. |
 | Python | Not implemented. | Community `pyecharts`. | None. | None. | First-class Plotly Python and Plotly Express. |
 | Accessibility | Focusable figure with a generated data summary, arrow-key navigation announced through a live region, legend entries as toggle buttons, `title`/`desc` in static SVG. Not yet tested with screen readers. | Documented. `aria` option generates descriptions; decal patterns. | Documented. Required accessible name, keyboard focus navigation. | Canvas only; the application supplies fallback content. | Limited; no keyboard navigation of data. |
 | Export | Standalone SVG in the browser (`toSVG`) and without a DOM (`renderToSVG`, heatmaps embedded as PNG). No PNG or PDF export of whole charts yet. | Documented. PNG/SVG from the browser, server-side SVG strings. | Documented. Static SVG, SSR, browser raster export. | PNG via `toBase64Image`. | Documented. PNG/SVG/JPEG/WebP; Kaleido for Python. |
@@ -42,11 +42,11 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 ## Environment
 
 <!-- results:environment -->
-- Date: 2026-10-07, commit bc502d2 (uncommitted changes)
+- Date: 2026-10-07, commit 52eeb9a (uncommitted changes)
 - Machine: Apple M6, 12 cores, 32 GB, Darwin 27.0.0
 - Browser: Chrome 154.0.8037.99, GPU ANGLE (Apple, ANGLE Metal Renderer: Apple M6, Unspecified Version), headed
 - Viewport 1280x1400, device pixel ratio 2
-- Libraries: herceg 0.0.0 (bc502d2), echarts 6.1.0, chartjs 4.5.1, plotly 4.1.2, tanstack 1.0.0, uplot 1.6.32
+- Libraries: herceg 0.0.0 (52eeb9a), echarts 6.1.0, chartjs 4.5.1, plotly 4.1.2, tanstack 1.0.0, uplot 1.6.32
 - Renderers (normal / large config): herceg: auto (svg below 4,000 drawn points, canvas above) / auto; echarts: canvas / canvas (sampling: minmax, large: true); chartjs: canvas / canvas (parsing: false, min-max decimation); plotly: svg / webgl (scattergl); tanstack: svg / canvas (mountCanvasChart); uplot: canvas / canvas
 <!-- /results:environment -->
 
@@ -64,8 +64,8 @@ React DOM out, since an application using the adapter already ships them.
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - |
-| herceg-line | 0.0.0 (3665282) | 59.2 | 21.3 | 19.3 | - |
-| herceg-react-line | 0.0.0 (3665282) | 60.6 | 21.9 | 19.8 | - |
+| herceg-line | 0.0.0 (52eeb9a) | 60.9 | 21.9 | 19.8 | - |
+| herceg-react-line | 0.0.0 (52eeb9a) | 62.5 | 22.6 | 20.4 | - |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - |
@@ -86,16 +86,16 @@ much lower than the time to complete rendering.
 <!-- results:init -->
 | Scenario (ms, median ± MAD) | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| line-small-init (4 series x 200 points) | 0.57 ± 0.05 | 1.36 ± 0.24 | 1.53 ± 0.17 | 3.03 ± 0.35 | 1.25 ± 0.23 | 0.47 ± 0.09 |
-| line-medium-init (10 series x 5,000 points) | 2.08 ± 0.30 | 11.8 ± 1.41 | 6.25 ± 1.09 | 23.8 ± 3.15 | 38.9 ± 2.08 | 2.41 ± 0.28 |
-| line-large-init (1 series x 1,000,000 points) | 13.1 ± 0.43 | 177 ± 10.9 | 15.6 ± 0.96 | 323 ± 15.7 | 787 ± 31.5 | 7.19 ± 0.90 |
-| area-medium-init (3 filled series x 5,000 points) | 1.16 ± 0.02 | 5.46 ± 0.33 | 3.05 ± 0.17 | 10.6 ± 0.45 | 15.4 ± 0.95 | 1.05 ± 0.10 |
-| bar-small-init (12 categories x 3 series) | 0.51 ± 0.11 | 1.33 ± 0.32 | 0.86 ± 0.19 | 2.69 ± 0.26 | 0.69 ± 0.16 | n/a |
-| bar-medium-init (100 categories x 4 series) | 0.81 ± 0.15 | 2.85 ± 0.16 | 2.25 ± 0.42 | 6.93 ± 0.65 | 2.79 ± 0.22 | n/a |
-| scatter-medium-init (10,000 points) | 1.83 ± 0.04 | 78.5 ± 2.81 (first frame 5.53) | 4.37 ± 0.47 | 76.7 ± 1.65 | 26.6 ± 1.28 | n/a |
-| scatter-large-init (200,000 points) | 27.5 ± 0.71 | 55.6 ± 6.32 (first frame 36.2) | 71.2 ± 7.33 | 50.1 ± 4.97 | 241 ± 13.4 | n/a |
-| heatmap-medium-init (100 x 100 cells) | 1.28 ± 0.10 | 34.1 ± 2.44 (first frame 5.12) | n/a | 3.77 ± 0.14 | 35.4 ± 2.13 | n/a |
-| heatmap-large-init (500 x 500 cells) | 11.9 ± 1.31 | 9021 ± 79.5 (first frame 61.0) | n/a | 29.9 ± 3.11 | 446 ± 15.9 | n/a |
+| line-small-init (4 series x 200 points) | 0.49 ± 0.08 | 1.41 ± 0.20 | 1.57 ± 0.22 | 3.31 ± 0.24 | 1.21 ± 0.23 | 0.48 ± 0.10 |
+| line-medium-init (10 series x 5,000 points) | 1.75 ± 0.09 | 12.3 ± 1.27 | 6.17 ± 0.84 | 21.8 ± 1.92 | 37.3 ± 2.05 | 2.39 ± 0.13 |
+| line-large-init (1 series x 1,000,000 points) | 5.31 ± 0.22 | 182 ± 21.3 | 14.7 ± 0.84 | 317 ± 9.32 | 790 ± 70.5 | 6.10 ± 0.34 |
+| area-medium-init (3 filled series x 5,000 points) | 1.06 ± 0.17 | 6.01 ± 0.49 | 3.24 ± 0.29 | 10.3 ± 0.67 | 16.5 ± 0.95 | 1.12 ± 0.19 |
+| bar-small-init (12 categories x 3 series) | 0.55 ± 0.06 | 1.47 ± 0.27 | 0.81 ± 0.17 | 2.92 ± 0.23 | 0.65 ± 0.08 | n/a |
+| bar-medium-init (100 categories x 4 series) | 0.72 ± 0.08 | 2.88 ± 0.25 | 2.13 ± 0.22 | 7.13 ± 0.39 | 2.86 ± 0.22 | n/a |
+| scatter-medium-init (10,000 points) | 1.83 ± 0.32 | 83.5 ± 1.14 (first frame 4.80) | 3.87 ± 0.32 | 76.8 ± 2.76 | 27.1 ± 1.37 | n/a |
+| scatter-large-init (200,000 points) | 27.1 ± 1.31 | 57.2 ± 7.11 (first frame 40.1) | 70.4 ± 1.78 | 47.8 ± 4.31 | 239 ± 9.89 | n/a |
+| heatmap-medium-init (100 x 100 cells) | 1.05 ± 0.09 | 32.2 ± 1.78 (first frame 5.27) | n/a | 3.82 ± 0.41 | 34.3 ± 1.34 | n/a |
+| heatmap-large-init (500 x 500 cells) | 12.8 ± 1.37 | 9120 ± 23.1 (first frame 63.5) | n/a | 29.5 ± 0.95 | 453 ± 7.20 | n/a |
 <!-- /results:init -->
 
 ## Full data replacement
@@ -103,11 +103,11 @@ much lower than the time to complete rendering.
 <!-- results:update -->
 | Scenario (ms, median ± MAD) | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| line-medium-update (replace 10 x 5,000 points) | 1.49 ± 0.17 | 13.1 ± 1.55 | 4.08 ± 0.32 | 20.1 ± 0.89 | 37.3 ± 2.24 | 1.18 ± 0.30 |
-| line-large-update (replace 1,000,000 points) | 7.37 ± 1.04 | 203 ± 10.2 | 14.7 ± 0.43 | 284 ± 3.52 | 742 ± 56.2 | 5.92 ± 0.49 |
-| bar-medium-update (replace 100 x 4 bars) | 0.51 ± 0.05 | 2.36 ± 0.40 | 1.49 ± 0.13 | 6.11 ± 0.72 | 2.87 ± 0.31 | n/a |
-| scatter-medium-update (replace 10,000 points) | 1.55 ± 0.09 | 93.6 ± 1.10 (first frame 19.5) | 4.15 ± 0.41 | 67.6 ± 3.57 | 41.2 ± 1.41 | n/a |
-| heatmap-medium-update (replace 100 x 100 cells) | 0.61 ± 0.06 | 43.9 ± 1.25 (first frame 19.5) | n/a | 3.72 ± 0.49 | 47.7 ± 2.03 | n/a |
+| line-medium-update (replace 10 x 5,000 points) | 1.04 ± 0.08 | 12.8 ± 1.26 | 4.24 ± 0.52 | 19.7 ± 0.73 | 36.6 ± 2.05 | 1.33 ± 0.27 |
+| line-large-update (replace 1,000,000 points) | 3.52 ± 0.24 | 200 ± 10.9 | 14.3 ± 0.36 | 280 ± 4.41 | 729 ± 54.4 | 5.64 ± 0.65 |
+| bar-medium-update (replace 100 x 4 bars) | 0.44 ± 0.07 | 2.18 ± 0.30 | 1.56 ± 0.16 | 5.76 ± 0.58 | 2.90 ± 0.31 | n/a |
+| scatter-medium-update (replace 10,000 points) | 1.69 ± 0.12 | 92.2 ± 3.81 (first frame 19.8) | 4.06 ± 0.34 | 70.8 ± 2.24 | 39.9 ± 0.94 | n/a |
+| heatmap-medium-update (replace 100 x 100 cells) | 0.65 ± 0.12 | 45.2 ± 1.90 (first frame 19.4) | n/a | 3.50 ± 0.16 | 46.6 ± 2.31 | n/a |
 <!-- /results:update -->
 
 ## Streaming
@@ -121,8 +121,8 @@ live-data path: `setOption` (ECharts), array mutation plus `update('none')`
 <!-- results:stream -->
 | Scenario (ms, median ± MAD) | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| stream-dashboard-chart (15 series, 3,000-point window, +1 point per tick) | 1.48 ± 0.10 | 10.6 ± 0.45 | 3.29 ± 0.29 | 19.7 ± 0.66 | 30.7 ± 1.32 | 0.86 ± 0.06 |
-| stream-large (1 series, 100,000-point window, +100 points per tick) | 1.21 ± 0.13 | 18.2 ± 1.98 | 2.97 ± 0.21 | 29.9 ± 0.58 | 55.9 ± 2.65 | 0.90 ± 0.07 |
+| stream-dashboard-chart (15 series, 3,000-point window, +1 point per tick) | 0.97 ± 0.12 | 10.6 ± 0.75 | 3.40 ± 0.41 | 19.7 ± 0.79 | 30.7 ± 1.32 | 0.86 ± 0.06 |
+| stream-large (1 series, 100,000-point window, +100 points per tick) | 0.92 ± 0.10 | 18.1 ± 1.79 | 2.99 ± 0.31 | 29.9 ± 0.62 | 57.5 ± 3.78 | 0.89 ± 0.06 |
 <!-- /results:stream -->
 
 ### Paced ingestion
@@ -136,11 +136,11 @@ ingestion rate drops below the target.
 <!-- results:ingest -->
 | Scenario (frame interval p50 / p95 / p99, dropped frames, achieved ingest rate) | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| ingest-chart-10hz (15 series, 3,000-point window, +1 point at 10 Hz) | 16.7 / 17.7 / 18.5 ms, 0 dropped, 10 Hz | 16.7 / 17.9 / 18.6 ms, 0 dropped, 10 Hz | 16.7 / 17.9 / 18.5 ms, 0 dropped, 10 Hz | 16.7 / 17.6 / 18.3 ms, 1 dropped, 10 Hz | 16.7 / 17.6 / 18.1 ms, 2 dropped, 10 Hz | 16.7 / 17.7 / 18.4 ms, 0 dropped, 10 Hz |
-| ingest-chart-60hz (15 series, 3,000-point window, +1 point at 60 Hz) | 16.7 / 17.9 / 18.4 ms, 0 dropped, 62 Hz | 16.7 / 17.6 / 18.4 ms, 0 dropped, 62 Hz | 16.7 / 17.6 / 17.9 ms, 0 dropped, 62 Hz | 16.7 / 33.3 / 34.2 ms, 26 dropped, 54 Hz | 33.3 / 34.2 / 49.7 ms, 132 dropped, 33 Hz | 16.7 / 17.9 / 18.5 ms, 0 dropped, 62 Hz |
-| ingest-chart-100hz (15 series, 3,000-point window, +1 point at 100 Hz) | 16.7 / 17.7 / 18.4 ms, 0 dropped, 100 Hz | 16.7 / 17.6 / 18.0 ms, 0 dropped, 100 Hz | 16.7 / 17.6 / 18.2 ms, 0 dropped, 100 Hz | 16.7 / 33.3 / 34.2 ms, 25 dropped, 55 Hz | 33.3 / 34.2 / 35.0 ms, 133 dropped, 33 Hz | 16.7 / 17.8 / 18.5 ms, 0 dropped, 100 Hz |
-| ingest-large-100hz (1 series, 100,000-point window, +10 points at 100 Hz) | 16.7 / 18.1 / 18.5 ms, 0 dropped, 100 Hz | 16.7 / 17.6 / 17.6 ms, 0 dropped, 61 Hz | 16.7 / 17.7 / 18.6 ms, 0 dropped, 100 Hz | 33.3 / 34.2 / 34.2 ms, 126 dropped, 34 Hz | 50.0 / 67.6 / 83.3 ms, 211.5 dropped, 18 Hz | 16.7 / 17.9 / 18.5 ms, 0 dropped, 100 Hz |
-| ingest-dashboard-10hz (10 charts x 15 series x 3,000 points, +1 point per series at 10 Hz) | 16.7 / 17.6 / 18.5 ms, 0.5 dropped, 10 Hz | 17.6 / 87.9 / 100 ms, 173.5 dropped, 10 Hz | 16.7 / 17.6 / 18.5 ms, 1.5 dropped, 10 Hz | 167 / 183 / 184 ms, 269 dropped, 6 Hz | 284 / 343 / 351 ms, 293 dropped, 3 Hz | 16.7 / 17.7 / 18.4 ms, 0 dropped, 10 Hz |
+| ingest-chart-10hz (15 series, 3,000-point window, +1 point at 10 Hz) | 16.7 / 17.8 / 18.4 ms, 0 dropped, 10 Hz | 16.7 / 17.7 / 18.5 ms, 0 dropped, 10 Hz | 16.7 / 18.1 / 18.5 ms, 0 dropped, 10 Hz | 16.7 / 17.6 / 18.6 ms, 1 dropped, 10 Hz | 16.7 / 17.6 / 18.6 ms, 3 dropped, 10 Hz | 16.7 / 17.9 / 18.5 ms, 0 dropped, 10 Hz |
+| ingest-chart-60hz (15 series, 3,000-point window, +1 point at 60 Hz) | 16.7 / 17.9 / 18.5 ms, 0 dropped, 62 Hz | 16.7 / 17.6 / 18.6 ms, 0 dropped, 62 Hz | 16.7 / 17.6 / 18.2 ms, 0 dropped, 62 Hz | 16.7 / 33.3 / 34.2 ms, 26.5 dropped, 54 Hz | 33.3 / 34.2 / 44.3 ms, 132.5 dropped, 33 Hz | 16.7 / 17.8 / 18.6 ms, 0 dropped, 62 Hz |
+| ingest-chart-100hz (15 series, 3,000-point window, +1 point at 100 Hz) | 16.7 / 17.8 / 18.5 ms, 0 dropped, 100 Hz | 16.7 / 17.6 / 18.1 ms, 0 dropped, 100 Hz | 16.7 / 17.6 / 17.7 ms, 0 dropped, 100 Hz | 16.7 / 33.3 / 34.2 ms, 22 dropped, 55 Hz | 33.3 / 34.2 / 44.5 ms, 132.5 dropped, 33 Hz | 16.7 / 17.8 / 18.4 ms, 0 dropped, 100 Hz |
+| ingest-large-100hz (1 series, 100,000-point window, +10 points at 100 Hz) | 16.7 / 17.9 / 18.4 ms, 0 dropped, 100 Hz | 16.7 / 17.6 / 18.4 ms, 0 dropped, 60 Hz | 16.7 / 17.6 / 18.5 ms, 0 dropped, 100 Hz | 33.3 / 34.2 / 34.3 ms, 126.5 dropped, 34 Hz | 50.9 / 67.6 / 83.3 ms, 210.5 dropped, 18 Hz | 16.7 / 17.9 / 18.5 ms, 0 dropped, 100 Hz |
+| ingest-dashboard-10hz (10 charts x 15 series x 3,000 points, +1 point per series at 10 Hz) | 16.7 / 17.8 / 18.5 ms, 0 dropped, 10 Hz | 17.5 / 84.2 / 101 ms, 174 dropped, 10 Hz | 16.7 / 17.6 / 18.3 ms, 1.5 dropped, 10 Hz | 167 / 183 / 183 ms, 269 dropped, 6 Hz | 283 / 334 / 350 ms, 284.5 dropped, 3 Hz | 16.7 / 17.7 / 18.4 ms, 0 dropped, 10 Hz |
 <!-- /results:ingest -->
 
 ## Interaction
@@ -152,13 +152,13 @@ so throttled hover handlers run for each event.
 <!-- results:interaction -->
 | Scenario (ms, median ± MAD) | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| hover-line-medium (pointer moves over 10 x 5,000 points) | 0.72 ± 0.26 | 10.2 ± 1.71 | 0.98 ± 0.50 | 8.69 ± 3.08 | 9.85 ± 5.91 | 0.52 ± 0.27 |
-| hover-line-large (pointer moves over 1,000,000 points) | 0.40 ± 0.05 | 0.85 ± 0.27 | 0.48 ± 0.12 | 443 ± 182 | 92.6 ± 1.29 | 0.24 ± 0.03 |
-| hover-scatter-medium (pointer moves over 10,000 points) | 0.45 ± 0.24 | 6.74 ± 2.55 | 1.90 ± 0.71 | 14.3 ± 3.14 | 5.09 ± 2.91 | n/a |
+| hover-line-medium (pointer moves over 10 x 5,000 points) | 0.79 ± 0.38 | 9.79 ± 2.41 | 0.92 ± 0.43 | 8.75 ± 2.83 | 10.1 ± 6.02 | 0.54 ± 0.29 |
+| hover-line-large (pointer moves over 1,000,000 points) | 0.37 ± 0.06 | 0.86 ± 0.25 | 0.44 ± 0.12 | 436 ± 181 | 93.1 ± 1.86 | 0.24 ± 0.02 |
+| hover-scatter-medium (pointer moves over 10,000 points) | 0.47 ± 0.27 | 6.44 ± 2.75 | 1.92 ± 0.70 | 5.41 ± 2.70 | 3.64 ± 0.90 | n/a |
 
 | Scenario (ms, median ± MAD) | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| resize-line-medium (resize 800x400 <-> 600x300) | 1.55 ± 0.17 | 3.21 ± 0.34 | 4.03 ± 0.42 | 10.1 ± 0.89 | 35.3 ± 1.01 | 1.41 ± 0.36 |
+| resize-line-medium (resize 800x400 <-> 600x300) | 1.21 ± 0.12 | 3.47 ± 0.33 | 3.99 ± 0.50 | 11.1 ± 1.69 | 35.0 ± 1.45 | 1.52 ± 0.35 |
 <!-- /results:interaction -->
 
 ## Dashboard
@@ -169,11 +169,11 @@ Ten 600x250 line charts, each with 15 series of 3,000 points (450,000 points).
 <!-- results:dashboard -->
 | Mount all charts (ms, median ± MAD) | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| dashboard (10 charts x 15 series x 3,000 points) | 19.0 ± 0.70 | 97.7 ± 1.81 | 48.3 ± 1.78 | 182 ± 7.76 | 317 ± 11.0 | 15.9 ± 1.37 |
+| dashboard (10 charts x 15 series x 3,000 points) | 16.2 ± 0.98 | 91.3 ± 4.44 | 53.6 ± 6.40 | 180 ± 4.98 | 318 ± 7.51 | 16.9 ± 1.07 |
 
 | Refresh all charts (ms, median ± MAD) | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| dashboard (10 charts x 15 series x 3,000 points) | 14.1 ± 0.84 | 105 ± 4.46 | 37.3 ± 2.12 | 176 ± 4.54 | 320 ± 14.3 | 10.0 ± 1.21 |
+| dashboard (10 charts x 15 series x 3,000 points) | 8.69 ± 0.25 | 111 ± 2.51 | 37.5 ± 1.01 | 176 ± 3.36 | 338 ± 29.6 | 9.76 ± 0.32 |
 <!-- /results:dashboard -->
 
 ## Memory
@@ -188,7 +188,7 @@ included.
 | Scenario | herceg | echarts | chartjs | plotly | tanstack | uplot |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | memory-line-large (1 chart, 1,000,000 points; source 16 MB) | 0.2 MB heap, 5.1 MB canvas, 34 nodes | 243 MB heap, 5.1 MB canvas, 4 nodes | 49 MB heap, 5.1 MB canvas, 3 nodes | 111 MB heap, 15 MB canvas, 135 nodes | 600 MB heap, 26 MB canvas, 8 nodes | 0.2 MB heap, 5.1 MB canvas, 24 nodes |
-| memory-dashboard (10 charts x 15 series x 3,000 points; source 3.9 MB) | 7.1 MB heap, 24 MB canvas, 752 nodes | 115 MB heap, 24 MB canvas, 40 nodes | 57 MB heap, 24 MB canvas, 30 nodes | 48 MB heap, 0.0 MB canvas, 2257 nodes | 273 MB heap, 0.0 MB canvas, 814 nodes | 2.8 MB heap, 24 MB canvas, 1080 nodes |
+| memory-dashboard (10 charts x 15 series x 3,000 points; source 3.9 MB) | 7.2 MB heap, 24 MB canvas, 752 nodes | 115 MB heap, 24 MB canvas, 40 nodes | 57 MB heap, 24 MB canvas, 30 nodes | 48 MB heap, 0.0 MB canvas, 2257 nodes | 273 MB heap, 0.0 MB canvas, 814 nodes | 2.8 MB heap, 24 MB canvas, 1080 nodes |
 | memory-small-100 (100 charts x 2 series x 100 points; source 0.3 MB) | 8.5 MB heap, 0.0 MB canvas, 3437 nodes | 24 MB heap, 72 MB canvas, 400 nodes | 31 MB heap, 72 MB canvas, 300 nodes | 28 MB heap, 0.0 MB canvas, 13061 nodes | 21 MB heap, 0.0 MB canvas, 2274 nodes | 11 MB heap, 72 MB canvas, 3000 nodes |
 <!-- /results:memory -->
 
@@ -201,29 +201,29 @@ per-root setup is counted for every chart. The React wrappers of the other
 libraries are not measured.
 
 <!-- results:react -->
-Measured 2026-10-07 at commit 3665282 (uncommitted changes) with react 19.3.0, react-dom 19.3.0, same environment as above.
+Measured 2026-10-07 at commit 52eeb9a (uncommitted changes) with react 19.3.0, react-dom 19.3.0, same environment as above.
 
 | Scenario (median) | herceg | herceg via @herceg/react |
 | --- | ---: | ---: |
-| line-small-init (4 series x 200 points) | 0.58 ± 0.08 ms | 0.65 ± 0.14 ms |
-| line-medium-init (10 series x 5,000 points) | 2.24 ± 0.31 ms | 2.25 ± 0.33 ms |
-| line-large-init (1 series x 1,000,000 points) | 12.0 ± 1.34 ms | 11.5 ± 0.39 ms |
-| area-medium-init (3 filled series x 5,000 points) | 1.49 ± 0.20 ms | 1.51 ± 0.22 ms |
-| line-medium-update (replace 10 x 5,000 points) | 1.55 ± 0.11 ms | 1.41 ± 0.17 ms |
-| line-large-update (replace 1,000,000 points) | 7.88 ± 0.52 ms | 8.33 ± 0.71 ms |
-| stream-dashboard-chart (15 series, 3,000-point window, +1 point per tick) | 1.41 ± 0.09 ms | 1.41 ± 0.13 ms |
-| stream-large (1 series, 100,000-point window, +100 points per tick) | 1.31 ± 0.10 ms | 1.25 ± 0.13 ms |
+| line-small-init (4 series x 200 points) | 0.49 ± 0.06 ms | 0.58 ± 0.09 ms |
+| line-medium-init (10 series x 5,000 points) | 1.49 ± 0.09 ms | 1.73 ± 0.05 ms |
+| line-large-init (1 series x 1,000,000 points) | 4.99 ± 0.17 ms | 5.43 ± 0.30 ms |
+| area-medium-init (3 filled series x 5,000 points) | 1.09 ± 0.24 ms | 1.25 ± 0.20 ms |
+| line-medium-update (replace 10 x 5,000 points) | 1.21 ± 0.12 ms | 0.97 ± 0.08 ms |
+| line-large-update (replace 1,000,000 points) | 3.17 ± 0.12 ms | 3.73 ± 0.17 ms |
+| stream-dashboard-chart (15 series, 3,000-point window, +1 point per tick) | 1.06 ± 0.09 ms | 0.94 ± 0.10 ms |
+| stream-large (1 series, 100,000-point window, +100 points per tick) | 0.83 ± 0.07 ms | 0.66 ± 0.08 ms |
 | ingest-chart-10hz (15 series, 3,000-point window, +1 point at 10 Hz) | 0 dropped, 10 Hz | 0 dropped, 10 Hz |
 | ingest-chart-60hz (15 series, 3,000-point window, +1 point at 60 Hz) | 0 dropped, 62 Hz | 0 dropped, 62 Hz |
 | ingest-chart-100hz (15 series, 3,000-point window, +1 point at 100 Hz) | 0 dropped, 100 Hz | 0 dropped, 100 Hz |
 | ingest-large-100hz (1 series, 100,000-point window, +10 points at 100 Hz) | 0 dropped, 100 Hz | 0 dropped, 100 Hz |
-| ingest-dashboard-10hz (10 charts x 15 series x 3,000 points, +1 point per series at 10 Hz) | 1.5 dropped, 10 Hz | 1 dropped, 10 Hz |
-| hover-line-medium (pointer moves over 10 x 5,000 points) | 0.69 ± 0.32 ms | 0.69 ± 0.31 ms |
-| hover-line-large (pointer moves over 1,000,000 points) | 0.36 ± 0.05 ms | 0.41 ± 0.06 ms |
-| resize-line-medium (resize 800x400 <-> 600x300) | 1.58 ± 0.19 ms | 1.49 ± 0.12 ms |
-| dashboard (10 charts x 15 series x 3,000 points) | mount 19.8 ms, refresh 12.9 ms | mount 19.7 ms, refresh 13.5 ms |
+| ingest-dashboard-10hz (10 charts x 15 series x 3,000 points, +1 point per series at 10 Hz) | 0 dropped, 10 Hz | 0 dropped, 10 Hz |
+| hover-line-medium (pointer moves over 10 x 5,000 points) | 0.69 ± 0.37 ms | 0.76 ± 0.42 ms |
+| hover-line-large (pointer moves over 1,000,000 points) | 0.36 ± 0.03 ms | 0.39 ± 0.07 ms |
+| resize-line-medium (resize 800x400 <-> 600x300) | 1.13 ± 0.13 ms | 1.06 ± 0.17 ms |
+| dashboard (10 charts x 15 series x 3,000 points) | mount 15.6 ms, refresh 8.82 ms | mount 17.3 ms, refresh 8.64 ms |
 | memory-line-large (1 chart, 1,000,000 points) | 0.2 MB heap, 34 nodes | 0.3 MB heap, 35 nodes |
-| memory-dashboard (10 charts x 15 series x 3,000 points) | 7.1 MB heap, 752 nodes | 7.4 MB heap, 762 nodes |
+| memory-dashboard (10 charts x 15 series x 3,000 points) | 7.2 MB heap, 752 nodes | 7.4 MB heap, 762 nodes |
 | memory-small-100 (100 charts x 2 series x 100 points) | 8.5 MB heap, 3437 nodes | 11 MB heap, 3537 nodes |
 <!-- /results:react -->
 
@@ -232,9 +232,11 @@ Measured 2026-10-07 at commit 3665282 (uncommitted changes) with react 19.3.0, r
 - uPlot sets the bar for time-series speed and memory: it renders typed arrays
   in place, so retained memory for 1M points is a fraction of a megabyte, and
   it keeps up with every paced ingestion scenario. Herceg matches its memory
-  for large series and its pacing under streaming, is roughly even for small
-  and medium charts, and is slower at 1M points (~13 ms vs ~7 ms to mount) and
-  per streaming tick (~1.5 ms vs ~0.9 ms).
+  for large series and its pacing under streaming, mounts and replaces line
+  charts slightly faster (1M points: ~5 ms vs ~6 ms to mount, ~3.5 ms vs
+  ~5.6 ms to replace), and is within ~0.1 ms per streaming tick (~1.0 ms vs
+  ~0.9 ms). uPlot is still ahead on hover (~0.5 ms vs ~0.8 ms over
+  10 x 5,000 points) and on dashboard memory (~3 MB vs ~7 MB for ten charts).
 - Scatter from typed columns: Herceg draws all 200,000 points on Canvas in
   ~28 ms. ECharts completes its progressive render in ~56 ms (first frame
   ~36 ms), Plotly's WebGL `scattergl` takes ~50 ms, and Chart.js ~71 ms. At
@@ -249,10 +251,10 @@ Measured 2026-10-07 at commit 3665282 (uncommitted changes) with react 19.3.0, r
 - Bars at these sizes (up to 400 bars) take 0.5–7 ms in every library;
   differences are not noticeable to users.
 - Going through `@herceg/react` costs little because React only describes
-  the chart: mounting is within ~0.1 ms of plain herceg per chart, and
-  streaming, data replacement, and hover never render React. The measurable
-  cost is memory for React roots: 100 small charts, each its own root, retain
-  ~11 MB instead of ~8.5 MB.
+  the chart: mounting adds ~0.1–0.4 ms per chart, and streaming, data
+  replacement, and hover never render React. The other measurable cost is
+  memory for React roots: 100 small charts, each its own root, retain ~11 MB
+  instead of ~8.5 MB.
 - Small charts rendered as SVG avoid canvas backing stores entirely: Herceg's
   100 small charts use ~8 MB of heap and no canvas memory, while the Canvas
   libraries need ~72 MB of canvas pixels for the same charts.

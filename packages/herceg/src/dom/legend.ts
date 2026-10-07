@@ -5,6 +5,8 @@ interface Entry {
   button: HTMLButtonElement;
   swatch: HTMLSpanElement;
   label: HTMLSpanElement;
+  /** What the entry last showed, to skip rewriting unchanged entries. */
+  shown: string;
 }
 
 /**
@@ -37,16 +39,16 @@ export class Legend {
         const label = document.createElement("span");
         button.append(swatch, label);
         button.addEventListener("click", () => this.#toggle(item.key));
-        entry = { button, swatch, label };
+        entry = { button, swatch, label, shown: "" };
         this.#entries.set(item.key, entry);
       }
-      const { button, swatch, label } = entry;
-      button.setAttribute("aria-pressed", String(!item.hidden));
-      button.title = item.hidden ? `Show ${item.label}` : `Hide ${item.label}`;
-      button.style.cssText = `position:absolute;left:${item.x}px;top:${item.y}px;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding:0;border:0;background:none;cursor:pointer;color:${theme.text};font:${theme.fontSize}px ${theme.font};opacity:${item.hidden ? 0.45 : 1}`;
-      swatch.style.background = item.color;
-      label.textContent = item.label;
-      label.style.textDecoration = item.hidden ? "line-through" : "";
+      // Rewriting styles every frame would make the browser recompute them.
+      const shown = `${item.x}|${item.y}|${item.hidden}|${item.color}|${item.label}|${theme.text}|${theme.fontSize}|${theme.font}`;
+      if (shown !== entry.shown) {
+        entry.shown = shown;
+        show(entry, item, theme);
+      }
+      const { button } = entry;
       // Keep document (tab) order equal to legend order.
       const expected: Element | null = previous
         ? previous.nextElementSibling
@@ -60,4 +62,13 @@ export class Legend {
       this.#entries.delete(key);
     }
   }
+}
+
+function show({ button, swatch, label }: Entry, item: LegendItem, theme: Theme): void {
+  button.setAttribute("aria-pressed", String(!item.hidden));
+  button.title = item.hidden ? `Show ${item.label}` : `Hide ${item.label}`;
+  button.style.cssText = `position:absolute;left:${item.x}px;top:${item.y}px;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding:0;border:0;background:none;cursor:pointer;color:${theme.text};font:${theme.fontSize}px ${theme.font};opacity:${item.hidden ? 0.45 : 1}`;
+  swatch.style.background = item.color;
+  label.textContent = item.label;
+  label.style.textDecoration = item.hidden ? "line-through" : "";
 }

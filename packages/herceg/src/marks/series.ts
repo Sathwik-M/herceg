@@ -1,5 +1,5 @@
 import type { NumericArray } from "../data/column.ts";
-import type { Table } from "../data/table.ts";
+import { scanExtent, type Table } from "../data/table.ts";
 
 /**
  * One drawable series: x and y columns, optionally restricted to a subset of
@@ -107,23 +107,54 @@ export function yExtent(
   y: Series["y"] = series.y,
   log = false,
 ): [number, number] | undefined {
-  const [start, end] = visibleRange(series, x0, x1);
   const lo = Math.min(x0, x1);
   const hi = Math.max(x0, x1);
+  let [start, end] = visibleRange(series, x0, x1);
+  // Sorted series (which never hold NaN x) are trimmed to the positions
+  // inside [lo, hi], so their points need no x test.
+  if (series.sorted) {
+    while (start < end && xAt(series, start) < lo) start++;
+    while (end > start && xAt(series, end - 1) > hi) end--;
+  }
+  // The common case, a whole sorted column, is a plain scan.
+  const inside =
+    series.rows === undefined && series.sorted && !log
+      ? scanExtent(y, start, end)
+      : scanPositions(series, y, start, end, lo, hi, log);
+  let [min, max] = inside ?? [Infinity, -Infinity];
+  if (series.sorted) {
+    for (const edge of [lo, hi]) {
+      const value = interpolateAt(series, y, edge);
+      if (!usable(value, log)) continue;
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+  }
+  return min <= max ? [min, max] : undefined;
+}
+
+/** [min, max] of usable y values at positions [start, end) whose x is in [lo, hi]. */
+function scanPositions(
+  series: Series,
+  y: Series["y"],
+  start: number,
+  end: number,
+  lo: number,
+  hi: number,
+  log: boolean,
+): [number, number] | undefined {
   let min = Infinity;
   let max = -Infinity;
-  const include = (value: number) => {
-    if (!usable(value, log)) return;
-    if (value < min) min = value;
-    if (value > max) max = value;
-  };
   for (let k = start; k < end; k++) {
     const row = rowOf(series, k);
-    const x = series.x[row]!;
-    if (x >= lo && x <= hi) include(y[row]!);
-  }
-  if (series.sorted) {
-    for (const edge of [lo, hi]) include(interpolateAt(series, y, edge));
+    if (!series.sorted) {
+      const x = series.x[row]!;
+      if (!(x >= lo && x <= hi)) continue;
+    }
+    const value = y[row]!;
+    if (!usable(value, log)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
   }
   return min <= max ? [min, max] : undefined;
 }

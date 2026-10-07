@@ -37,6 +37,11 @@ measure("m4: 1M points, 800 px at 2x", () => {
   out.reset();
   m4(x, y, 0, N, full, yMap, 2, out);
 });
+const gapped = y.map((value, i) => (i % 100 === 99 ? Number.NaN : value));
+measure("m4: 1M points with a gap every 100, 800 px at 2x", () => {
+  out.reset();
+  m4(x, gapped, 0, N, full, yMap, 2, out);
+});
 const zoomed = new LinearScale([x[400_000]!, x[410_000]!], [0, 800]).mapping();
 measure("m4: 10k visible of 1M, 800 px at 2x", () => {
   out.reset();
