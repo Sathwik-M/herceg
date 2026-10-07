@@ -10,6 +10,7 @@ tmp/
 # Browser test and benchmark artifacts
 test-results/
 playwright-report/
+.vitest/
 benchmarks/.build/
 
 # Python

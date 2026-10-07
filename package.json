@@ -7,10 +7,13 @@
     "benchmarks"
   ],
   "scripts": {
-    "typecheck": "tsc -p benchmarks",
+    "build": "npm run build -w herceg",
+    "typecheck": "tsc -p benchmarks && tsc -p packages/herceg",
     "lint": "biome check .",
     "format": "biome check --write .",
+    "test": "npm test -w herceg",
     "bench": "npm run bench -w herceg-benchmarks --",
+    "bench:core": "npm run bench -w herceg",
     "bench:size": "npm run size -w herceg-benchmarks --",
     "bench:report": "npm run report -w herceg-benchmarks"
   },

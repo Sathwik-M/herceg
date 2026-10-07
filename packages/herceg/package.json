@@ -1,0 +1,23 @@
+{
+  "name": "herceg",
+  "version": "0.0.0",
+  "description": "Framework-independent charting engine with columnar data, streaming updates, and SVG/Canvas rendering.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "bench": "node --experimental-strip-types bench/core.ts"
+  }
+}

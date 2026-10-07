@@ -36,9 +36,12 @@ Run from the repository root.
 
 ```sh
 npm install              # install workspace dependencies
+npm run build            # build the herceg package (tsc)
 npm run lint             # biome lint + format check
 npm run format           # apply biome formatting and safe fixes
-npm run typecheck        # type check all TypeScript
+npm run typecheck        # type check all TypeScript, including compile-time tests
+npm test                 # unit tests (vitest, Node)
+npm run bench:core       # engine microbenchmarks (Node)
 npm run bench:size       # bundle size benchmark
 npm run bench            # browser benchmark suite (Chrome); see benchmarks/README.md
 npm run bench:report     # regenerate result tables in docs/comparison.md
