@@ -352,6 +352,8 @@ export interface Panel {
   axes: AxisGeometry[];
   /** Geometry in drawing order; guides among it are drawn above the rest. */
   marks: Geometry[];
+  /** The panel's facet value, drawn above its plot, in charts with facets. */
+  title?: { text: string; x: number; y: number } | undefined;
 }
 
 export interface Scene {

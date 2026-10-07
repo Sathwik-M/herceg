@@ -19,6 +19,8 @@ import { IndexUse, tracePath, unionExtent } from "./trace.ts";
 export interface LineOptions<S extends Schema> {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
+  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
+  facet?: "repeat";
   x: NumericField<S>;
   /** One field, or several fields drawn as separate lines sharing x. */
   y: NumericField<S> | readonly NumericField<S>[];
@@ -74,7 +76,7 @@ export class LineMark implements Mark<LineSpec> {
 
   geometry(series: readonly Series[], frame: Frame): LineGeometry[] {
     const out: LineGeometry[] = [];
-    this.#indexes.drew(frame.owner, this.table);
+    this.#indexes.drew(frame.owner, frame.scene, this.table);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       out.push({
@@ -125,6 +127,7 @@ export function line<S extends Schema>(table: Table<S>, options: LineOptions<S>)
       "label",
       "id",
       "axis",
+      "facet",
     ]),
   };
   if (table.name !== undefined) spec.data = table.name;

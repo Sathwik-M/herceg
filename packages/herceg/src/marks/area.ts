@@ -22,6 +22,8 @@ import { IndexUse, traceBand, tracePath, unionExtent } from "./trace.ts";
 interface AreaCommon {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
+  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
+  facet?: "repeat";
   /** Constant fill color for every area of the mark. */
   fill?: string;
   fillOpacity?: number;
@@ -157,7 +159,7 @@ export class AreaMark implements Mark<AreaSpec> {
       ? Math.min(Math.max(zero, frame.plot.y), bottom)
       : bottom;
     const out: AreaGeometry[] = [];
-    this.#indexes.drew(frame.owner, this.table);
+    this.#indexes.drew(frame.owner, frame.scene, this.table);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       // Areas filled to zero read their field's index; bands and stacks scan.
@@ -250,6 +252,7 @@ export function area<S extends Schema>(table: Table<S>, options: AreaOptions<S>)
       "label",
       "id",
       "axis",
+      "facet",
     ]),
   };
   if ("y1" in options) {

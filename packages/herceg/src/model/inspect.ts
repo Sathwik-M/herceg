@@ -33,6 +33,8 @@ export interface Inspection {
   position: number;
   label: string;
   points: InspectedPoint[];
+  /** In charts with facets, the facet value of the panel inspected. */
+  panel?: string;
 }
 
 export type TooltipMode = "nearest-x" | "nearest-y" | "nearest";
@@ -189,11 +191,6 @@ export class Inspector {
 
   #yOf(s: Series): PositionScale {
     return this.#axisOf(s).frame.y;
-  }
-
-  /** Whether a series is on the right y axis. */
-  onRight(s: Series): boolean {
-    return this.#axisOf(s) !== this.#left;
   }
 
   /**

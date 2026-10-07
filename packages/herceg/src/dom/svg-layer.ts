@@ -1,5 +1,11 @@
 import { canvasRasterUrl } from "../render/canvas.ts";
-import { axisElements, colorLegendElement, gridPath, titleElement } from "../render/svg.ts";
+import {
+  axisElements,
+  colorLegendElement,
+  gridPath,
+  panelTitleElements,
+  titleElement,
+} from "../render/svg.ts";
 import type { Geometry, Panel, Scene, SvgContext, SvgElement } from "../scene/scene.ts";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -161,6 +167,7 @@ export class SvgLayer {
     }
     const axes = scene.panels.flatMap((panel) => panel.axes);
     let markup = `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
+    markup += panelTitleElements(scene.panels, theme);
     markup += titleElement(scene);
     if (scene.colorLegend)
       markup += colorLegendElement(scene.colorLegend, theme, `${this.#id}-ramp`);

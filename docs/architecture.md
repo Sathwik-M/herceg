@@ -177,6 +177,25 @@ domain alone adds no axis. The text alternative names each series' axis when
 both have series. Zoom, pan, and brushing act on x only, so both sides follow the
 same viewport.
 
+## Small multiples
+
+With `facet`, the model draws a panel per value of a category field, in
+order of first appearance across the tables of the marks that split. Rows
+are split after series are resolved: a facet split of a series is the same
+columns read through a list of the rows in each panel (4 bytes per row),
+computed in one pass per series and kept until its table changes, with
+sortedness checked per panel. Series keep their keys, so colors, legend
+entries, and hidden state are shared across panels. Splitting after series
+are resolved is right for marks whose series are row-aligned (lines, points,
+bands and stacks of several fields, unstacked bars, error bars); stacked bars
+and heatmaps, whose geometry combines rows, refuse facets until they split
+before combining. Continuous domains come from every panel's series, so rows
+without a facet value are left out of them; category bands still come from
+whole tables. Each panel gets a frame whose scales are the
+shared plans moved to its row and column, and whose buffer pools are its
+own, so geometry code is the same as for one panel; each has its own
+inspector, and the chart routes the pointer to the panel under it.
+
 ## Points and rasters
 
 Points are drawn per series into a packed coordinate buffer. Opaque points
@@ -459,8 +478,15 @@ the DOM, creating an offscreen canvas in that canvas' document when
 - Continuous color only for heatmaps; points cannot be colored by a numeric
   field.
 - One x axis and at most two y axes per chart; category values and marks
-  placed along y (horizontal bars and error bars) only on the left. No small
-  multiples or facets.
+  placed along y (horizontal bars and error bars) only on the left.
+- Facets wrap one category field into a grid with shared scales: no row by
+  column facets, independent scales, or right axes in faceted charts, and
+  heatmaps, stacked bars, and annotations or custom marks over a table can
+  only repeat in every panel. Panel splits are recomputed whenever their
+  table changes, and rows of a faceted large line do not use its min/max
+  index. A category whose rows all lack a facet value still gets an (empty)
+  band. Panels smaller than 20 pixels a side are refused with an error
+  rather than drawn.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
 - The model always carries band-axis, color-legend, inspection-along-y, and
   right-axis logic, so a line-only bundle includes some bar, heatmap, and

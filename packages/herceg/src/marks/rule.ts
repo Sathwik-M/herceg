@@ -9,6 +9,8 @@ import type { AxisFormat, Frame, Mark, MarkKey } from "./mark.ts";
 interface RuleStyle {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
+  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
+  facet?: "repeat";
   stroke?: string;
   strokeWidth?: number;
   dash?: readonly number[];
@@ -136,7 +138,7 @@ export function rule<S extends Schema>(
         y: position(options.y),
         dash: options.dash && [...options.dash],
       },
-      ["id", "x", "y", "stroke", "strokeWidth", "dash", "label", "text", "axis"],
+      ["id", "x", "y", "stroke", "strokeWidth", "dash", "label", "text", "axis", "facet"],
     ) as Omit<RuleSpec, "type">),
   };
   if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.text)) spec.data = table.name;

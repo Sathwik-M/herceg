@@ -27,6 +27,8 @@ import { unionExtent } from "./trace.ts";
 interface ErrorBarStyle<S extends Schema> {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
+  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
+  facet?: "repeat";
   /** Category field: one series of error bars per value. */
   series?: CategoryField<S>;
   stroke?: string;
@@ -435,6 +437,7 @@ export function errorBar<S extends Schema>(
       "label",
       "id",
       "axis",
+      "facet",
     ]) as Omit<ErrorBarSpec, "type">),
   };
   if (table.name !== undefined) spec.data = table.name;

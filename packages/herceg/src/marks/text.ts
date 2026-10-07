@@ -9,6 +9,8 @@ import { type AxisFormat, type Frame, type Mark, type MarkKey, seriesKey } from 
 interface TextStyle {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
+  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
+  facet?: "repeat";
   /** Defaults to the theme's text color. */
   fill?: string;
   /** Which end of the text is at the point. Default "middle". */
@@ -153,7 +155,17 @@ export function text<S extends Schema>(
     type: "text",
     x: position(options.x),
     y: position(options.y),
-    ...definedFields(options, ["id", "label", "text", "fill", "anchor", "dx", "dy", "axis"]),
+    ...definedFields(options, [
+      "id",
+      "label",
+      "text",
+      "fill",
+      "anchor",
+      "dx",
+      "dy",
+      "axis",
+      "facet",
+    ]),
   };
   if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.text)) {
     spec.data = table.name;

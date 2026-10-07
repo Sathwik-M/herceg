@@ -1,4 +1,11 @@
-import { custom, type Chart as HercegChart, type Mark as HercegMark, line, table } from "herceg";
+import {
+  custom,
+  facet,
+  type Chart as HercegChart,
+  type Mark as HercegMark,
+  line,
+  table,
+} from "herceg";
 import { act, StrictMode, Suspense, startTransition, use, useLayoutEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -187,6 +194,30 @@ describe("<Chart>", () => {
       update(options);
     };
     act(() => root.render(view(2)));
+    expect(updates).toBe(0);
+  });
+
+  it("draws a panel per facet value and keeps equal facets without updating", () => {
+    const sales = table({ t: [0, 1, 0, 1], v: [1, 2, 3, 4], region: ["N", "N", "S", "S"] });
+    const ref: { current: HercegChart | null } = { current: null };
+    function App({ field }: { field: string }) {
+      return (
+        <Chart ref={ref} facet={facet(field)}>
+          <Line data={sales} x="t" y="v" />
+        </Chart>
+      );
+    }
+    act(() => root.render(<App field="region" />));
+    const chart = ref.current!;
+    expect(chart.model.panels().map((p) => p.key)).toEqual(["N", "S"]);
+    let updates = 0;
+    const update = chart.update.bind(chart);
+    chart.update = (options) => {
+      updates++;
+      update(options);
+    };
+    // A new facet object for the same field is the same option.
+    act(() => root.render(<App field="region" />));
     expect(updates).toBe(0);
   });
 

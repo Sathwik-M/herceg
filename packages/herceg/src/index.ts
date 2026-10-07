@@ -56,6 +56,7 @@ export {
 } from "./marks/region.ts";
 export { type RuleDataOptions, type RuleMark, type RuleOptions, rule } from "./marks/rule.ts";
 export { type TextDataOptions, type TextMark, type TextOptions, text } from "./marks/text.ts";
+export { type Facet, type FacetOptions, facet } from "./model/facet.ts";
 export type { ChartConfig, InspectedPoint, Inspection } from "./model/model.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
 export type * from "./spec/spec.ts";

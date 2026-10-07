@@ -51,6 +51,8 @@ export interface Frame {
   hidden: ReadonlySet<string>;
   /** The chart drawing this frame, for caches that count each chart's redraws. */
   owner: object;
+  /** The owner's count of scenes drawn; the panels of one scene share it. */
+  scene: number;
   /** Large point series may be left to a GPU painter as clouds. */
   clouds: boolean;
   /**
@@ -98,6 +100,8 @@ export interface MarkIdentity {
   readonly id?: string | undefined;
   /** The y axis the mark's values are on; "left" when absent. */
   readonly axis?: "left" | "right" | undefined;
+  /** "repeat" draws all of the mark's rows in every panel of a faceted chart. */
+  readonly facet?: "repeat" | undefined;
 }
 
 export interface Mark<S extends MarkIdentity = MarkIdentity> {

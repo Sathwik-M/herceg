@@ -6,6 +6,7 @@ import {
   custom,
   encodedCategory,
   errorBar,
+  facet,
   fromRows,
   heatmap,
   line,
@@ -107,6 +108,21 @@ createChart(element, {
 });
 // @ts-expect-error marks go on the left or right axis
 line(traffic, { x: "time", y: "requests", axis: "top" });
+
+// Small multiples
+declare const targets: Float64Array;
+const regional = table({ week: timestamps, units: latencies, region: serviceNames });
+const goals = table({ week: timestamps, target: targets });
+createChart(element, {
+  marks: [
+    line(regional, { x: "week", y: "units" }),
+    line(goals, { x: "week", y: "target", facet: "repeat" }),
+    rule({ y: 100, label: "goal" }),
+  ],
+  facet: facet("region", { columns: 3 }),
+});
+// @ts-expect-error marks can only repeat
+line(regional, { x: "week", y: "units", facet: "split" });
 
 // Bars, points, heatmaps
 const sales = table({ region: ["N", "S"], q1: [1, 2], q2: [3, 4], team: ["a", "b"] });

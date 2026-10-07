@@ -211,3 +211,30 @@ def test_marks_go_on_the_right_axis():
         hg.Chart(DATA).error_bar(y="host", x1="p50", x2="p99", axis="right")
     with pytest.raises(ValueError, match="axis must be 'left' or 'right'"):
         hg.Chart(DATA).line(x="t", y="p50", axis="middle")  # type: ignore[arg-type]
+
+
+def test_facets_split_marks_into_panels():
+    chart = (
+        hg.Chart(DATA, facet="host", facet_columns=2, width=400, height=200)
+        .line(x="t", y="p50")
+        .rule(y=2, label="limit")
+        .line(x="t", y="p99", data={"t": DATA["t"], "p99": DATA["p99"]}, repeat=True)
+    )
+    spec, _ = chart.to_spec()
+    assert spec["facet"] == {"field": "host", "columns": 2}
+    # The facet column travels with the data of marks it splits, and only those.
+    assert sorted(spec["data"]["data"]["columns"]) == ["host", "p50", "t"]
+    assert sorted(spec["data"]["data2"]["columns"]) == ["p99", "t"]
+    assert spec["marks"][2]["facet"] == "repeat"
+    svg = chart.to_svg()
+    assert ">a</text>" in svg and ">b</text>" in svg
+    with pytest.raises(KeyError, match="facet: no column 'region'"):
+        hg.Chart(DATA, facet="region").line(x="t", y="p50")
+    with pytest.raises(ValueError, match="pass repeat=True"):
+        hg.Chart(DATA, facet="host").rule(x="t")
+    with pytest.raises(ValueError, match="facet_columns needs facet"):
+        hg.Chart(DATA, facet_columns=2)
+    with pytest.raises(ValueError, match="whole number"):
+        hg.Chart(DATA, facet="host", facet_columns=True)
+    with pytest.raises(ValueError, match="cannot use the right axis"):
+        hg.Chart(DATA, facet="host").rule(y=1, axis="right")

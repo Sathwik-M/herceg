@@ -26,15 +26,23 @@ const INDEXED_POINTS = 1 << 18;
  * replaced every frame never pays for one.
  */
 export class IndexUse {
-  readonly #draws = new WeakMap<object, { count: number; version: number; previous: number }>();
+  readonly #draws = new WeakMap<
+    object,
+    { count: number; version: number; previous: number; scene: number }
+  >();
 
-  /** Counts a draw of `table` by the chart `owner`; call before `index` in each draw. */
-  drew(owner: object, table: Table): void {
+  /**
+   * Counts a draw of `table` in the chart `owner`'s scene `scene`; call
+   * before `index` in each draw. Panels drawing the mark in one scene count once.
+   */
+  drew(owner: object, scene: number, table: Table): void {
     const last = this.#draws.get(owner);
+    if (last?.scene === scene) return;
     this.#draws.set(owner, {
       count: (last?.count ?? 0) + 1,
       version: table.version,
       previous: last?.version ?? -1,
+      scene,
     });
   }
 

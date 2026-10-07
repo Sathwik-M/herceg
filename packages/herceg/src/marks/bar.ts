@@ -39,6 +39,8 @@ import { unionExtent } from "./trace.ts";
 interface BarStyle<S extends Schema> {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
+  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
+  facet?: "repeat";
   /** Category field: one bar series per value. */
   series?: CategoryField<S>;
   /** Stack series instead of placing them side by side. */
@@ -695,6 +697,7 @@ export function bar<S extends Schema>(table: Table<S>, options: BarOptions<S>): 
       "labels",
       "id",
       "axis",
+      "facet",
     ]),
   };
   if (table.name !== undefined) spec.data = table.name;

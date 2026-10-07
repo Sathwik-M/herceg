@@ -77,6 +77,8 @@ class Chart:
         x: Axis | dict[str, Any] | None = None,
         y: Axis | dict[str, Any] | None = None,
         y_right: Axis | dict[str, Any] | None = None,
+        facet: str | None = None,
+        facet_columns: int | None = None,
         legend: bool | None = None,
         tooltip: bool | Tooltip = True,
         zoom: bool = False,
@@ -87,6 +89,18 @@ class Chart:
         locale: str | None = None,
         time_zone: str | None = None,
     ) -> None:
+        if facet_columns is not None and facet is None:
+            raise ValueError("facet_columns needs facet")
+        # bool is an int in Python, but True columns would be meaningless.
+        if facet_columns is not None and not (
+            isinstance(facet_columns, int)
+            and not isinstance(facet_columns, bool)
+            and facet_columns >= 1
+        ):
+            raise ValueError(
+                f"facet_columns must be a whole number of at least 1, not {facet_columns!r}"
+            )
+        self._facet = facet
         self._tables: list[tuple[Any, Table]] = []
         self._default = self._table(data) if data is not None else None
         self._marks: list[tuple[dict[str, Any], int | None]] = []
@@ -98,6 +112,7 @@ class Chart:
             "x": _axis(x),
             "y": _axis(y),
             "yRight": _axis(y_right),
+            "facet": {"field": facet, "columns": facet_columns} if facet is not None else None,
             "legend": legend,
             "tooltip": tooltip if isinstance(tooltip, bool) else {"mode": tooltip},
             "interaction": {
@@ -127,6 +142,7 @@ class Chart:
         curve: Curve | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """Lines through x and y fields; several y fields or a series field give several lines."""
@@ -147,6 +163,7 @@ class Chart:
                 "curve": curve,
                 "label": label,
                 "axis": axis,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -168,6 +185,7 @@ class Chart:
         curve: Curve | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """Filled areas: down to zero, stacked, or the band between ``y1`` and ``y2``."""
@@ -205,6 +223,7 @@ class Chart:
                 "curve": curve,
                 "label": label,
                 "axis": axis,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -223,6 +242,7 @@ class Chart:
         label: str | None = None,
         labels: bool | dict[str, Any] = False,
         axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """Bars: one band per category of x, or bars centered on number or time x.
@@ -258,6 +278,7 @@ class Chart:
                 "label": label,
                 "labels": None if labels is False else labels,
                 "axis": axis,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -281,6 +302,7 @@ class Chart:
         cap: float | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """Error bars at each ``x``, from ``y1`` to ``y2`` or ``y`` ± ``y_error``; or, at each
@@ -332,6 +354,7 @@ class Chart:
                 "cap": cap,
                 "label": label,
                 "axis": axis,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -349,6 +372,7 @@ class Chart:
         fill_opacity: float | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """Scatter points."""
@@ -367,6 +391,7 @@ class Chart:
                 "fillOpacity": fill_opacity,
                 "label": label,
                 "axis": axis,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -381,6 +406,7 @@ class Chart:
         data: Any = None,
         colors: Sequence[str] | None = None,
         label: str | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """A grid of cells colored by ``value``; one column or row per distinct x or y."""
@@ -396,6 +422,7 @@ class Chart:
                 "value": value,
                 "colors": list(colors) if colors is not None else None,
                 "label": label,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -413,6 +440,7 @@ class Chart:
         stroke_width: float | None = None,
         dash: Sequence[float] | None = None,
         axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """Reference lines: horizontal at ``y`` or vertical at ``x``.
@@ -434,6 +462,7 @@ class Chart:
                 "label": label,
                 "text": text,
                 "axis": axis,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -452,6 +481,7 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """Shaded regions: from ``x1`` to ``x2``, from ``y1`` to ``y2``, or both.
@@ -480,6 +510,7 @@ class Chart:
                 "label": label,
                 "text": text,
                 "axis": axis,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -498,6 +529,7 @@ class Chart:
         dx: float | None = None,
         dy: float | None = None,
         axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
         """Text at ``(x, y)``: ``label`` for constant text, or ``text`` naming a column.
@@ -520,6 +552,7 @@ class Chart:
                 "dx": dx,
                 "dy": dy,
                 "axis": axis,
+                "facet": "repeat" if repeat else None,
                 "id": id,
             },
             table,
@@ -533,7 +566,10 @@ class Chart:
         used: dict[int, set[str]] = {}
         for spec, table in self._marks:
             if table is not None:
-                used.setdefault(table, set()).update(_fields(spec))
+                fields = used.setdefault(table, set())
+                fields.update(_fields(spec))
+                if self._facet is not None and spec.get("facet") is None:
+                    fields.add(self._facet)
         data = {}
         for table, fields in used.items():
             source = self._tables[table][1]
@@ -650,6 +686,19 @@ class Chart:
     def _add(self, spec: dict[str, Any], table: int | None) -> Chart:
         if spec.get("axis") not in (None, "left", "right"):
             raise ValueError(f"axis must be 'left' or 'right', not {spec['axis']!r}")
+        if self._facet is not None and spec.get("axis") == "right":
+            raise ValueError("charts with facets cannot use the right axis yet")
+        if self._facet is not None and table is not None and spec.get("facet") is None:
+            self._require(table, self._facet, ("category",), "facet")
+            kind = spec["type"]
+            if kind in ("heatmap", "rule", "region", "text") or (
+                kind == "bar" and spec.get("stack")
+            ):
+                name = "stacked bar" if kind == "bar" else kind
+                raise ValueError(
+                    f"{name} marks over a table cannot be split into panels yet; "
+                    "pass repeat=True to draw them whole in every panel"
+                )
         self._marks.append((spec, table))
         return self
 

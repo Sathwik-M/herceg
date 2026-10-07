@@ -23,6 +23,8 @@ import { unionExtent } from "./trace.ts";
 export interface PointOptions<S extends Schema> {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
+  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
+  facet?: "repeat";
   x: NumericField<S>;
   y: NumericField<S>;
   /** Category field: one colored point series per value. */
@@ -236,6 +238,7 @@ export function point<S extends Schema>(table: Table<S>, options: PointOptions<S
       "label",
       "id",
       "axis",
+      "facet",
     ]),
   };
   if (table.name !== undefined) spec.data = table.name;

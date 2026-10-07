@@ -40,7 +40,9 @@ chart = (
 
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 (`hg.Axis(type="log", domain=(0, 100), label="ms", ...)` or a dict),
-`y_right` (the axis for marks added with `axis="right"`),
+`y_right` (the axis for marks added with `axis="right"`), `facet` and
+`facet_columns` (a panel per value of a category column; marks with
+`repeat=True` draw all their rows in every panel),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`,
 `brush` (`"x"`: drag to select a range; with `zoom=True`, drag to zoom),
 `sync` (charts with the same name on one HTML page share cursor and zoom;

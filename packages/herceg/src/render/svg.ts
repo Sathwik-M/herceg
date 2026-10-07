@@ -96,6 +96,16 @@ export function colorLegendElement(legend: ColorLegend, theme: Theme, id: string
   );
 }
 
+/** Each panel's facet value above its plot. */
+export function panelTitleElements(panels: readonly Panel[], theme: Theme): string {
+  let out = "";
+  for (const { title } of panels) {
+    if (!title) continue;
+    out += `<text x="${n(title.x)}" y="${n(title.y)}" dominant-baseline="middle" font-weight="600" fill="${escapeXml(theme.text)}">${escapeXml(title.text)}</text>`;
+  }
+  return out;
+}
+
 export function titleElement(scene: Scene): string {
   if (!scene.title) return "";
   const { theme } = scene;
@@ -144,6 +154,7 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   for (const panel of scene.panels) out += guideElements(panel.marks, context);
   const axes = scene.panels.flatMap((panel) => panel.axes);
   out += `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
+  out += panelTitleElements(scene.panels, theme);
   out += titleElement(scene);
   if (options.legend ?? true) out += legendElements(scene.legend, theme);
   if (scene.colorLegend) out += colorLegendElement(scene.colorLegend, theme, `${id}-ramp`);

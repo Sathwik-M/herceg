@@ -31,6 +31,8 @@ export interface ChartSpec {
    * own scale and domain. Grid lines follow it only when no mark uses the left axis.
    */
   yRight?: AxisSpec;
+  /** Small multiples: the chart drawn once per value of a category field. */
+  facet?: FacetSpec;
   legend?: boolean;
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
@@ -41,6 +43,17 @@ export interface ChartSpec {
   locale?: string;
   /** "local" (default), "UTC", or an IANA zone for time axes and labels. */
   timeZone?: string;
+}
+
+/**
+ * Panels by the values of a category field, in order of first appearance,
+ * sharing their x and y scales. Every mark over a table splits its rows by
+ * the field unless it has `facet: "repeat"`; marks without a table repeat.
+ */
+export interface FacetSpec {
+  field: Field;
+  /** Panels per row; by default about as many columns as rows. */
+  columns?: number;
 }
 
 export type RendererName = "auto" | "svg" | "canvas";
@@ -188,6 +201,11 @@ interface MarkBase {
    * the chart's `yRight` axis. Category y values stay on the left.
    */
   axis?: "left" | "right";
+  /**
+   * With the chart's `facet`, "repeat" draws all of the mark's rows in every
+   * panel instead of splitting them by the facet field.
+   */
+  facet?: "repeat";
 }
 
 export type Curve = "linear" | "step" | "step-before" | "step-after";

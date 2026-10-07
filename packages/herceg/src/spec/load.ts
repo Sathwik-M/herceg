@@ -15,6 +15,7 @@ import { PointMark } from "../marks/point.ts";
 import { RegionMark } from "../marks/region.ts";
 import { RuleMark } from "../marks/rule.ts";
 import { TextMark } from "../marks/text.ts";
+import { Facet } from "../model/facet.ts";
 import type { ChartConfig } from "../model/model.ts";
 import {
   type BinaryType,
@@ -71,8 +72,9 @@ export function loadSpec(spec: ChartSpec, buffers: readonly SpecBuffer[] = []): 
     tables.set(name, loadTable(name, data, buffers));
   }
   const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));
-  const { data: _data, marks: _marks, version: _version, ...options } = spec;
-  return { config: { ...options, marks }, tables };
+  const { data: _data, marks: _marks, version: _version, facet: panels, ...options } = spec;
+  const facet = panels && new Facet(panels.field, panels.columns);
+  return { config: { ...options, marks, ...(facet && { facet }) }, tables };
 }
 
 function loadTable(name: string, data: DataSpec, buffers: readonly SpecBuffer[]): Table {

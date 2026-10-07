@@ -8,12 +8,13 @@
 
 import type { Table } from "../data/table.ts";
 import { canvasMeasurer, estimateText, type MeasureText } from "../layout/text.ts";
+import { rowOf, type Series } from "../marks/series.ts";
 import { describeChart } from "../model/describe.ts";
-import { type ChartConfig, ChartModel, type Inspection } from "../model/model.ts";
+import { type ChartConfig, ChartModel, type Inspection, type PanelInfo } from "../model/model.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { CloudPainter, Panel, PointGeometry, Scene } from "../scene/scene.ts";
+import type { CloudPainter, PointGeometry, Rect, Scene } from "../scene/scene.ts";
 import { ascending, Brush, DRAG_THRESHOLD, normalize } from "./brush.ts";
 import { type ChartEvents, type ChartListener, Emitter } from "./events.ts";
 import { Legend } from "./legend.ts";
@@ -65,7 +66,8 @@ export class Chart implements Scheduled, SyncMember {
   readonly #tooltip: Tooltip;
   readonly #description: HTMLDivElement;
   readonly #live: HTMLDivElement;
-  readonly #crosshair: SVGLineElement;
+  /** A crosshair per panel shown; the first stays, hidden, when none is. */
+  readonly #crosshairs: SVGLineElement[];
   readonly #dots: SVGGElement;
   #canvas: HTMLCanvasElement | null = null;
   #onCanvas = false;
@@ -78,19 +80,20 @@ export class Chart implements Scheduled, SyncMember {
   #destroyed = false;
   #pointer: { x: number; y: number } | null = null;
   #syncedX: number | null = null;
-  /** Keyboard cursor: a series and a position in it. */
-  #keyboard: { key: string; position: number } | null = null;
+  /** Keyboard cursor: a panel, a series, and a position in the series' part in the panel. */
+  #keyboard: { panel: string; key: string; position: number } | null = null;
   #describedAt = -Infinity;
   /** What the current summary was written from; zooming and hovering do not change it. */
   #described: { config: unknown; key: string } | undefined;
   #describeTimer: ReturnType<typeof setTimeout> | 0 = 0;
   /**
-   * A primary-button press on the plot until release: where it started, the
-   * x scale it started with, and what dragging does.
+   * A primary-button press on a plot until release: where it started, the
+   * panel and x scale it started in, and what dragging does.
    */
   #press: {
     x: number;
     y: number;
+    plot: Rect;
     scale: PositionScale;
     mode: "pan" | "brush" | "click";
     moved: boolean;
@@ -116,10 +119,12 @@ export class Chart implements Scheduled, SyncMember {
     this.root.tabIndex = 0;
     this.root.setAttribute("role", "figure");
     this.#svg = new SvgLayer(document, this.#id);
-    this.#crosshair = svgElement(document, "line", { "stroke-width": "1", visibility: "hidden" });
+    this.#crosshairs = [
+      svgElement(document, "line", { "stroke-width": "1", visibility: "hidden" }),
+    ];
     this.#dots = svgElement(document, "g");
-    this.#brush = new Brush(svgElement(document, "rect", { visibility: "hidden" }));
-    this.#svg.overlay.append(this.#brush.element, this.#crosshair, this.#dots);
+    this.#brush = new Brush(svgElement(document, "g"));
+    this.#svg.overlay.append(this.#brush.element, ...this.#crosshairs, this.#dots);
     this.#legend = new Legend(document, (key) => {
       if (this.model.hidden.has(key)) this.model.hidden.delete(key);
       else this.model.hidden.add(key);
@@ -440,19 +445,28 @@ export class Chart implements Scheduled, SyncMember {
     this.#description.textContent = `${describeChart(this.model)} Focus the chart and use the arrow keys to read values.`;
   }
 
+  /** The point the pointer or the keyboard is on. */
   #inspection(): Inspection | undefined {
-    const scene = this.#scene;
-    if (!scene) return undefined;
+    if (!this.#scene) return undefined;
     // The model applies the configured tooltip mode.
     if (this.#pointer) return this.model.inspect(this.#pointer.x, this.#pointer.y);
-    if (this.#keyboard)
-      return this.model.inspectPosition(this.#keyboard.key, this.#keyboard.position);
+    const keyboard = this.#keyboard;
+    if (keyboard)
+      return this.model.inspectPosition(keyboard.key, keyboard.position, keyboard.panel);
+    return undefined;
+  }
+
+  /** Each panel's points at the x another chart's cursor shares. */
+  #synced(): Inspection[] {
     const x = this.#syncedX;
-    if (x === null || !this.#sharesCursor()) return undefined;
-    const px = this.model.series().length > 0 ? this.#xToPixel(x) : undefined;
-    if (px === undefined) return undefined;
-    const { plot } = onlyPanel(scene);
-    return this.model.inspect(px, plot.y + plot.height / 2, "nearest-x");
+    if (x === null || !this.#sharesCursor() || this.model.series().length === 0) return [];
+    return this.model.panels().flatMap(({ plot, x: scale }) => {
+      // Outside a panel's x range, the pixel would land in a neighboring panel.
+      const px = scale.map(x);
+      if (!(px >= plot.x && px <= plot.x + plot.width)) return [];
+      const inspection = this.model.inspect(px, plot.y + plot.height / 2, "nearest-x");
+      return inspection ? [inspection] : [];
+    });
   }
 
   /**
@@ -463,76 +477,82 @@ export class Chart implements Scheduled, SyncMember {
     return this.model.cursorAxis() === "x";
   }
 
-  #xToPixel(x: number): number | undefined {
-    const px = this.model.xScale()?.map(x);
-    return px !== undefined && Number.isFinite(px) ? px : undefined;
-  }
-
   #drawOverlay() {
     const scene = this.#scene;
     if (!scene) return;
     const { theme } = scene;
-    const { plot } = onlyPanel(scene);
-    const x = this.model.xScale();
-    if (x) this.#brush.draw(x, plot, theme);
+    const panels = this.model.panels();
+    this.#brush.draw(panels, theme);
     const showTooltip = this.#options.tooltip ?? true;
     // Hover listeners get the inspection even without the built-in tooltip,
     // which is how applications draw their own.
     const hovering = this.#events.has("hover");
-    const inspection = showTooltip || hovering ? this.#inspection() : undefined;
+    const active = showTooltip || hovering ? this.#inspection() : undefined;
+    // A cursor another chart shares shows in every panel, without a tooltip.
+    const shown = active ? [active] : showTooltip || hovering ? this.#synced() : [];
     if (hovering) {
-      const key = inspectionKey(inspection);
+      const key = inspectionKey(shown[0]);
       if (key !== this.#hovered) {
         this.#hovered = key;
-        this.#events.emit("hover", { inspection });
+        this.#events.emit("hover", { inspection: shown[0] });
       }
     }
     const document = this.root.ownerDocument;
-    if (!inspection || !showTooltip) {
-      this.#crosshair.setAttribute("visibility", "hidden");
-      this.#dots.replaceChildren();
-      this.#tooltip.hide();
-      return;
+    const lines = this.#crosshairs;
+    const drawn = showTooltip ? shown : [];
+    while (lines.length < drawn.length) {
+      const line = svgElement(document, "line", { "stroke-width": "1" });
+      this.#dots.before(line);
+      lines.push(line);
     }
-    // The crosshair crosses the plot at the inspected position: a vertical
-    // line for x, a horizontal one for y.
-    const at = String(Math.round(inspection.position) + 0.5);
-    const vertical = inspection.axis === "x";
-    this.#crosshair.setAttribute("x1", vertical ? at : String(plot.x));
-    this.#crosshair.setAttribute("x2", vertical ? at : String(plot.x + plot.width));
-    this.#crosshair.setAttribute("y1", vertical ? String(plot.y) : at);
-    this.#crosshair.setAttribute("y2", vertical ? String(plot.y + plot.height) : at);
-    this.#crosshair.setAttribute("stroke", theme.axis);
-    this.#crosshair.setAttribute("visibility", "visible");
-    // A bar may end outside the plot; its marker would land on the axes.
-    const inside = (point: { px: number; py: number }) =>
-      point.px >= plot.x - 0.5 &&
-      point.px <= plot.x + plot.width + 0.5 &&
-      point.py >= plot.y - 0.5 &&
-      point.py <= plot.y + plot.height + 0.5;
-    this.#dots.replaceChildren(
-      ...inspection.points.filter(inside).map((point) =>
-        svgElement(document, "circle", {
-          cx: String(point.px),
-          cy: String(point.py),
-          r: "3.5",
-          fill: point.color,
-          stroke: theme.background === "transparent" ? "#ffffff" : theme.background,
-          "stroke-width": "1.5",
-        }),
-      ),
-    );
-    // Synced charts show the cursor; only the chart being used shows a tooltip.
-    if (this.#pointer || this.#keyboard) {
-      const anchor =
-        this.#pointer ??
-        (vertical
-          ? { x: inspection.position, y: plot.y + plot.height / 2 }
-          : { x: plot.x + plot.width / 2, y: inspection.position });
-      this.#tooltip.show(inspection, theme, anchor, { width: scene.width, height: scene.height });
-    } else {
-      this.#tooltip.hide();
+    const dots: SVGCircleElement[] = [];
+    for (const [i, line] of lines.entries()) {
+      const inspection = drawn[i];
+      if (!inspection) {
+        line.setAttribute("visibility", "hidden");
+        continue;
+      }
+      const { plot } = panels.find(({ key }) => key === (inspection.panel ?? "")) ?? panels[0]!;
+      // The crosshair crosses the plot at the inspected position: a vertical
+      // line for x, a horizontal one for y.
+      const at = String(Math.round(inspection.position) + 0.5);
+      const vertical = inspection.axis === "x";
+      line.setAttribute("x1", vertical ? at : String(plot.x));
+      line.setAttribute("x2", vertical ? at : String(plot.x + plot.width));
+      line.setAttribute("y1", vertical ? String(plot.y) : at);
+      line.setAttribute("y2", vertical ? String(plot.y + plot.height) : at);
+      line.setAttribute("stroke", theme.axis);
+      line.setAttribute("visibility", "visible");
+      // A bar may end outside the plot; its marker would land on the axes.
+      const inside = (point: { px: number; py: number }) =>
+        point.px >= plot.x - 0.5 &&
+        point.px <= plot.x + plot.width + 0.5 &&
+        point.py >= plot.y - 0.5 &&
+        point.py <= plot.y + plot.height + 0.5;
+      for (const point of inspection.points.filter(inside)) {
+        dots.push(
+          svgElement(document, "circle", {
+            cx: String(point.px),
+            cy: String(point.py),
+            r: "3.5",
+            fill: point.color,
+            stroke: theme.background === "transparent" ? "#ffffff" : theme.background,
+            "stroke-width": "1.5",
+          }),
+        );
+      }
+      // Only the chart being used shows a tooltip.
+      if (inspection === active) {
+        const anchor =
+          this.#pointer ??
+          (vertical
+            ? { x: inspection.position, y: plot.y + plot.height / 2 }
+            : { x: plot.x + plot.width / 2, y: inspection.position });
+        this.#tooltip.show(inspection, theme, anchor, { width: scene.width, height: scene.height });
+      }
     }
+    this.#dots.replaceChildren(...dots);
+    if (!active || !showTooltip) this.#tooltip.hide();
   }
 
   #listen() {
@@ -555,25 +575,26 @@ export class Chart implements Scheduled, SyncMember {
       this.#keyboard = null;
       this.#brushAnchor = null;
       const press = this.#press;
+      const { x, y } = this.#pointer;
       if (press) {
-        const { x, y } = this.#pointer;
         press.moved ||= Math.hypot(x - press.x, y - press.y) >= DRAG_THRESHOLD;
         if (press.moved && press.mode === "pan") {
           this.#pan(press, x);
           return;
         }
-        const plot = this.#scene && onlyPanel(this.#scene).plot;
-        if (press.moved && press.mode === "brush" && plot) {
-          if (!this.#brush.dragging) this.#brush.start(press.x, plot);
-          this.#brush.move(x, plot);
+        if (press.moved && press.mode === "brush") {
+          if (!this.#brush.dragging)
+            this.#brush.start(press.x, { plot: press.plot, x: press.scale });
+          this.#brush.move(x);
         }
       }
       schedule(this);
       const sync = this.#options.interaction?.sync;
-      const scale = this.model.xScale();
-      // Share the data x under the pointer.
-      if (sync && scale && this.#sharesCursor())
-        broadcastCursor(sync, this, scale.invert(this.#pointer.x));
+      // Share the data x under the pointer; over no panel, none.
+      if (sync && this.#sharesCursor()) {
+        const panel = this.#panelAt(x, y);
+        broadcastCursor(sync, this, panel ? panel.x.invert(x) : null);
+      }
     });
     on("pointerleave", () => {
       this.#pointer = null;
@@ -590,12 +611,13 @@ export class Chart implements Scheduled, SyncMember {
       (event) => {
         if (!this.#options.interaction?.zoom || !this.#scene) return;
         event.preventDefault();
-        const scale = this.model.xScale();
-        if (!scale) return;
+        const point = local(event);
+        const panel = this.#panelAt(point.x, point.y) ?? this.model.panels()[0];
+        if (!panel) return;
         // Zoom in pixel space and invert, so the value under the pointer stays
         // put on any scale type, including log.
-        const { plot } = onlyPanel(this.#scene);
-        const px = Math.min(plot.x + plot.width, Math.max(plot.x, local(event).x));
+        const { plot, x: scale } = panel;
+        const px = Math.min(plot.x + plot.width, Math.max(plot.x, point.x));
         const factor = Math.exp(event.deltaY * 0.002);
         this.setViewport([
           scale.invert(px - (px - plot.x) * factor),
@@ -605,18 +627,16 @@ export class Chart implements Scheduled, SyncMember {
       { passive: false },
     );
     on("pointerdown", (event) => {
-      const scene = this.#scene;
-      const scale = this.model.xScale();
-      if (event.button !== 0 || !scene || !scale) return;
+      if (event.button !== 0 || !this.#scene) return;
       const { x, y } = local(event);
-      const { plot } = onlyPanel(scene);
-      // Presses on the axes, title, or legend are not on the data.
-      if (x < plot.x || x > plot.x + plot.width || y < plot.y || y > plot.y + plot.height) return;
+      // Presses on the axes, titles, gaps, or legend are not on the data.
+      const panel = this.#panelAt(x, y);
+      if (!panel) return;
       // Dragging brushes when brushing is on (Shift pans instead when zoom is
       // on too), pans when only zoom is on, and otherwise does nothing.
       const { brush, zoom } = this.#options.interaction ?? {};
       const mode = brush && !(zoom && event.shiftKey) ? "brush" : zoom ? "pan" : "click";
-      this.#press = { x, y, scale, mode, moved: false };
+      this.#press = { x, y, plot: panel.plot, scale: panel.x, mode, moved: false };
       if (mode !== "click") root.setPointerCapture?.(event.pointerId);
     });
     on("pointerup", (event) => {
@@ -629,9 +649,8 @@ export class Chart implements Scheduled, SyncMember {
       }
       if (press.mode !== "brush") return;
       // The release point ends the brush, wherever the last move was.
-      const plot = this.#scene && onlyPanel(this.#scene).plot;
-      if (plot) this.#brush.move(local(event).x, plot);
-      const range = this.#brush.end(press.scale);
+      this.#brush.move(local(event).x);
+      const range = this.#brush.end();
       // The drag band goes, whether or not the brush selects anything.
       schedule(this);
       if (!range) return;
@@ -660,12 +679,10 @@ export class Chart implements Scheduled, SyncMember {
     });
   }
 
-  #pan(press: { x: number; scale: PositionScale }, x: number) {
-    const scene = this.#scene;
-    if (!scene) return;
-    // Shift in pixels and invert through the scale the drag started with.
+  #pan(press: { x: number; plot: Rect; scale: PositionScale }, x: number) {
+    // Shift in pixels and invert through the panel and scale the drag started with.
     const shift = press.x - x;
-    const { plot } = onlyPanel(scene);
+    const { plot } = press;
     this.setViewport([
       press.scale.invert(plot.x + shift),
       press.scale.invert(plot.x + plot.width + shift),
@@ -680,6 +697,16 @@ export class Chart implements Scheduled, SyncMember {
     return Boolean(this.#options.interaction?.zoom) && scale.type !== "band";
   }
 
+  /** The panel whose plot holds a point of the chart. */
+  #panelAt(x: number, y: number): PanelInfo | undefined {
+    return this.model
+      .panels()
+      .find(
+        ({ plot }) =>
+          x >= plot.x && x <= plot.x + plot.width && y >= plot.y && y <= plot.y + plot.height,
+      );
+  }
+
   /** A press released without dragging: clears the selection and reports the data there. */
   #click(point: { x: number; y: number }) {
     if (this.#options.interaction?.brush) this.select(null);
@@ -690,8 +717,10 @@ export class Chart implements Scheduled, SyncMember {
   /**
    * Arrow keys step through the points of the first visible series. The
    * cursor keeps its position in the series, so repeated x values are each
-   * reachable. With brushing on, Shift extends a selection from where the
-   * cursor started, Enter zooms to it when zoom is on, and Escape clears it.
+   * reachable. In charts with facets, the cursor is in one panel; the Up and
+   * Down arrows move it to the previous or next panel, near the same x. With
+   * brushing on, Shift extends a selection from where the cursor started,
+   * Enter zooms to it when zoom is on, and Escape clears it.
    */
   #key(event: KeyboardEvent) {
     // Controls inside the chart (legend buttons) keep their own keys.
@@ -706,8 +735,25 @@ export class Chart implements Scheduled, SyncMember {
       "Escape",
       "Enter",
     ];
-    if (!keys.includes(event.key)) return;
-    const series = this.model.series().find((s) => !this.model.hidden.has(s.key) && s.length > 0);
+    const panels = this.model.panels();
+    const across = panels.length > 1 && (event.key === "ArrowUp" || event.key === "ArrowDown");
+    if (!keys.includes(event.key) && !across) return;
+    // The first visible series with points in a panel.
+    const firstIn = (panel: string) =>
+      this.model.panelSeries(panel).find((s) => !this.model.hidden.has(s.key) && s.length > 0);
+    let index = Math.max(
+      0,
+      panels.findIndex(({ key }) => key === this.#keyboard?.panel),
+    );
+    if (across) {
+      const step = event.key === "ArrowUp" ? -1 : 1;
+      let next = index + step;
+      while (next >= 0 && next < panels.length && !firstIn(panels[next]!.key)) next += step;
+      if (next < 0 || next >= panels.length) return;
+      index = next;
+    }
+    const panel = panels[index]?.key ?? "";
+    const series = firstIn(panel);
     if (!series) return;
     const brush = this.#options.interaction?.brush;
     if (event.key === "Enter") {
@@ -730,22 +776,27 @@ export class Chart implements Scheduled, SyncMember {
       return;
     }
     const before = this.#keyboard ? this.#inspection() : undefined;
-    const current = this.#keyboard?.key === series.key ? this.#keyboard.position : -1;
+    const keyboard = this.#keyboard;
+    const current =
+      keyboard?.key === series.key && keyboard.panel === panel ? keyboard.position : -1;
     const page = Math.max(1, Math.round(series.length / 10));
     let position = Math.max(0, current);
-    if (event.key === "ArrowLeft") position -= 1;
+    if (across) position = nearestTo(series, before?.axis === "x" ? before.value : undefined);
+    else if (event.key === "ArrowLeft") position -= 1;
     else if (event.key === "ArrowRight") position = current < 0 ? 0 : current + 1;
     else if (event.key === "PageUp") position -= page;
     else if (event.key === "PageDown") position += page;
     else if (event.key === "Home") position = 0;
     else if (event.key === "End") position = series.length - 1;
     position = Math.min(series.length - 1, Math.max(0, position));
-    this.#keyboard = { key: series.key, position };
+    this.#keyboard = { panel, key: series.key, position };
     this.#pointer = null;
     this.flush();
     const inspection = this.#inspection();
     if (!inspection) return;
     let text = describeInspection(inspection);
+    if (across || (inspection.panel !== undefined && before?.panel !== inspection.panel))
+      text = `${inspection.panel}: ${text}`;
     if (brush && event.shiftKey && inspection.axis === "x") {
       const start = before?.axis === "x" ? before : inspection;
       this.#brushAnchor ??= { value: start.value, label: start.label };
@@ -758,6 +809,21 @@ export class Chart implements Scheduled, SyncMember {
     }
     this.#live.textContent = text;
   }
+}
+
+/** Position of the point of `series` whose x is nearest `x`; the first without one. */
+function nearestTo(series: Series, x: number | undefined): number {
+  if (x === undefined) return 0;
+  let best = 0;
+  let distance = Infinity;
+  for (let k = 0; k < series.length; k++) {
+    const d = Math.abs(series.x[rowOf(series, k)]! - x);
+    if (d < distance) {
+      best = k;
+      distance = d;
+    }
+  }
+  return best;
 }
 
 /** Two ranges hold the same values, or are both null. */
@@ -785,9 +851,4 @@ function inspectionKey(inspection: Inspection | undefined): string {
  */
 export function createChart(container: HTMLElement, options: ChartOptions): Chart {
   return new Chart(container, options);
-}
-
-/** The panel of a scene; charts have one. */
-function onlyPanel(scene: Scene): Panel {
-  return scene.panels[0]!;
 }

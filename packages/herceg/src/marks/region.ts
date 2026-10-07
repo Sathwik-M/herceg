@@ -19,6 +19,8 @@ import { type AxisFormat, type Frame, type Mark, type MarkKey, seriesKey } from 
 interface RegionStyle {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
+  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
+  facet?: "repeat";
   fill?: string;
   fillOpacity?: number;
   /** Text drawn in the top left corner of every region. */
@@ -250,7 +252,7 @@ export function region<S extends Schema>(
         y1: position(options.y1),
         y2: position(options.y2),
       },
-      ["id", "x1", "x2", "y1", "y2", "fill", "fillOpacity", "label", "text", "axis"],
+      ["id", "x1", "x2", "y1", "y2", "fill", "fillOpacity", "label", "text", "axis", "facet"],
     ) as Omit<RegionSpec, "type">),
   };
   if (table?.name !== undefined && readsTable([spec.x1, spec.x2, spec.y1, spec.y2], spec.text)) {

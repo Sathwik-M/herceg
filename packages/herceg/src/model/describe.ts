@@ -5,16 +5,20 @@ import type { ChartModel } from "./model.ts";
 
 const MAX_SERIES = 20;
 
-/** [min, max] and the last finite value of a series. */
-function valueRange(series: Series): [number, number, number] | undefined {
+/** [min, max], the last finite value of a series, and its row. */
+function valueRange(series: Series): [number, number, number, number] | undefined {
   const { values, rows, length } = series;
   let last = Number.NaN;
-  for (let k = length - 1; k >= 0 && !Number.isFinite(last); k--) last = values[rowOf(series, k)]!;
+  let lastRow = -1;
+  for (let k = length - 1; k >= 0 && !Number.isFinite(last); k--) {
+    lastRow = rowOf(series, k);
+    last = values[lastRow]!;
+  }
   if (!Number.isFinite(last)) return undefined;
   // A whole column is one plain scan; subsets of rows go through their index.
   if (rows === undefined) {
     const extent = scanExtent(values, 0, length);
-    return extent && [extent[0], extent[1], last];
+    return extent && [extent[0], extent[1], last, lastRow];
   }
   let min = Infinity;
   let max = -Infinity;
@@ -23,15 +27,28 @@ function valueRange(series: Series): [number, number, number] | undefined {
     if (value < min && value > -Infinity) min = value;
     if (value > max && value < Infinity) max = value;
   }
-  return [min, max, last];
+  return [min, max, last, lastRow];
 }
 
-function summarize(series: Series, name: string, locale: string | undefined): string {
-  const range = valueRange(series);
-  if (!range) return `${name}: no data`;
-  const [min, max, last] = range;
+/** A series' points, range, and last value, over its parts in every panel. */
+function summarize(parts: readonly Series[], name: string, locale: string | undefined): string {
+  let points = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  let last = Number.NaN;
+  let lastRow = -1;
+  for (const part of parts) {
+    points += part.length;
+    const range = valueRange(part);
+    if (!range) continue;
+    min = Math.min(min, range[0]);
+    max = Math.max(max, range[1]);
+    // Parts keep their rows in order, so the latest row holds the last value.
+    if (range[3] > lastRow) [last, lastRow] = [range[2], range[3]];
+  }
+  if (lastRow < 0) return `${name}: no data`;
   const f = (v: number) => formatNumber(v, locale);
-  return `${name}: ${series.length} points, from ${f(min)} to ${f(max)}, last ${f(last)}`;
+  return `${name}: ${points} points, from ${f(min)} to ${f(max)}, last ${f(last)}`;
 }
 
 /**
@@ -52,6 +69,12 @@ export function describeChart(model: ChartModel): string {
   if (kinds) {
     parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
   }
+  if (config.facet) {
+    const panels = model.panels().map(({ key }) => key);
+    const named = panels.slice(0, MAX_SERIES).join(", ");
+    const more = panels.length > MAX_SERIES ? `, and ${panels.length - MAX_SERIES} more` : "";
+    parts.push(`Panels by ${config.facet.field}: ${named}${more}.`);
+  }
   // With series on both y axes, each one's name says which it is on.
   const right = series.filter((s) => model.onRight(s));
   const sides = right.length > 0 && right.length < series.length;
@@ -62,7 +85,7 @@ export function describeChart(model: ChartModel): string {
     return `${s.label} (${onRight ? "right" : "left"} axis${unit ? `, ${unit}` : ""})`;
   };
   for (const s of series.slice(0, MAX_SERIES)) {
-    parts.push(`${summarize(s, name(s), config.locale)}.`);
+    parts.push(`${summarize(model.parts(s), name(s), config.locale)}.`);
   }
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
   parts.push(...model.annotationSummaries());

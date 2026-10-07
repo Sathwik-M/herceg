@@ -38,20 +38,44 @@ import {
   niceAxisDomain,
   planAxis,
   planBandAxis,
+  shiftPlan,
   usableDomain,
   valueFormatter,
 } from "./axis.ts";
+import type { Facet, PanelSplit, Splitter } from "./facet.ts";
 
 /** Chart options with marks bound to their data. */
-export type ChartConfig = Omit<ChartSpec, "marks" | "data" | "width" | "height" | "version"> & {
+export type ChartConfig = Omit<
+  ChartSpec,
+  "marks" | "data" | "width" | "height" | "version" | "facet"
+> & {
   marks: readonly Mark[];
+  /** Small multiples: a panel per value of a category field (see `facet`). */
+  facet?: Facet | undefined;
 };
 
 import { type Inspection, Inspector, type MarkSeries, type TooltipMode } from "./inspect.ts";
 
+/** A panel of the last scene and what inspects it. */
+interface PanelView {
+  key: string;
+  plot: Rect;
+  inspector: Inspector;
+}
+
+/** A panel of the last scene, as the browser runtime reads it. */
+export interface PanelInfo {
+  /** The facet value; "" without facets. */
+  key: string;
+  plot: Rect;
+  x: PositionScale;
+}
+
 export type { InspectedPoint, Inspection, TooltipMode } from "./inspect.ts";
 
 const TICK = 5;
+/** Smallest plot side, in pixels, of a panel among several. */
+const MIN_PANEL = 20;
 const GAP = 6;
 const LEGEND_GAP = 16;
 /** Left inset of the title and legend. */
@@ -73,9 +97,19 @@ export class ChartModel {
   #used = new Set<string>();
   #left = 0;
   #right = 0;
+  #columnGap = 0;
   #layoutKey = "";
+  /** Scenes built so far. */
+  #scenes = 0;
   #bands: Bands = {};
-  #last: Inspector | undefined;
+  /** Splits series into the panels of the chart's facet. */
+  #splitter: { facet: Facet; splitter: Splitter } | undefined;
+  /** Each panel of the last scene, for inspection and scales. */
+  #views: PanelView[] = [];
+  /** Every mark's series in the last scene: those of all panels. */
+  #drawn: MarkSeries[] = [];
+  /** Every mark's series before facets split them, for legends and summaries. */
+  #base: MarkSeries[] | undefined;
   /** Palette slot per series key, assigned on first appearance and kept. */
   #slots = new Map<string, number>();
 
@@ -192,11 +226,23 @@ export class ChartModel {
     }));
   }
 
-  /** x extent of all data, ignoring the viewport. */
+  /** The chart's panels and what each draws: without facets, one panel with every series. */
+  #split(base: MarkSeries[]): PanelSplit {
+    const facet = this.#config.facet;
+    if (!facet) {
+      // A previous facet's splits would keep its tables alive.
+      this.#splitter = undefined;
+      return { keys: [""], panels: [base], all: base };
+    }
+    if (this.#splitter?.facet !== facet) this.#splitter = { facet, splitter: facet.splitter() };
+    return this.#splitter.splitter.split(base);
+  }
+
+  /** x extent of all data drawn, ignoring the viewport. */
   dataXExtent(): [number, number] | undefined {
     const type = this.#axisType("x");
     if (type === "band") return undefined;
-    const marks = this.#resolveSeries(this.#bands, this.#context());
+    const marks = this.#split(this.#resolveSeries(this.#bands, this.#context())).all;
     return unionExtent(
       marks.map(({ mark, series }) => mark.xExtent(this.#xSeries(mark, series), type === "log")),
     );
@@ -273,6 +319,22 @@ export class ChartModel {
   };
 
   /**
+   * Buffer pools for panel `index`: each panel draws into buffers of its own.
+   * Kept out of `scene` so frames, which inspectors keep, hold no scene state.
+   */
+  #pools(index: number): Pick<Frame, "polyline" | "floats" | "bytes"> {
+    if (index === 0) {
+      return { polyline: this.#polyline, floats: this.#floatBuffer, bytes: this.#byteBuffer };
+    }
+    const at = (stage: string) => `${stage}~${index}`;
+    return {
+      polyline: (key, stage) => this.#polyline(key, at(stage)),
+      floats: (key, stage, length) => this.#floatBuffer(key, at(stage), length),
+      bytes: (key, stage, length) => this.#byteBuffer(key, at(stage), length),
+    };
+  }
+
+  /**
    * Builds the scene for the current data, size, and view state. With
    * `clouds`, large point series are left to a GPU painter (see PointCloud).
    */
@@ -288,7 +350,10 @@ export class ChartModel {
     if (xType === "band") bands.x = this.#bandList("x", context);
     if (yType === "band") bands.y = this.#bandList("y", context);
     this.#bands = bands;
-    const marks = this.#resolveSeries(bands, context);
+    const base = this.#resolveSeries(bands, context);
+    const split = this.#split(base);
+    // Domains and layout consider what every panel draws.
+    const marks = split.all;
     const xContext: AxisContext = { type: xType, spec: config.x, zone, locale };
     const yContext: AxisContext = { type: yType, spec: config.y, zone, locale };
     const font = `${theme.fontSize}px ${theme.font}`;
@@ -367,10 +432,10 @@ export class ChartModel {
     }
 
     // Vertical layout depends only on fonts, titles, and the legends.
-    const ramp = marks
+    const ramp = base
       .map(({ mark, series }) => mark.colorRamp?.(series, theme))
       .find((r) => r !== undefined);
-    const legendItems = marks
+    const legendItems = base
       .filter(({ mark }) => !mark.colorRamp)
       .flatMap(({ series }) => series.map((s) => ({ key: s.key, label: s.label, color: s.color })));
     const showLegend = config.legend ?? legendItems.length > 1;
@@ -407,7 +472,22 @@ export class ChartModel {
     const bottom = showX
       ? TICK + GAP + lineHeight + (config.x?.label ? lineHeight + GAP : 0) + 2
       : 4;
-    const plotHeight = Math.max(10, height - top - bottom);
+    // Panels fill a grid of `columns`; without facets, one cell. Each facet
+    // panel has a header with its value, and rows leave room below for the
+    // x labels of panels above an empty cell.
+    const panelCount = split.keys.length;
+    const facet = config.facet;
+    const columns = facet
+      ? Math.min(panelCount, facet.columns ?? Math.ceil(Math.sqrt(panelCount)))
+      : 1;
+    const rows = Math.ceil(panelCount / columns);
+    const header = facet ? lineHeight + 4 : 0;
+    const rowGap = rows > 1 ? (showX ? TICK + GAP + lineHeight : 0) + 8 : 0;
+    const rowHeight = (height - top - bottom - (rows - 1) * rowGap) / rows - header;
+    if (panelCount > 1 && rowHeight < MIN_PANEL) throw tooSmall(panelCount, columns, width, height);
+    const plotHeight = Math.max(10, rowHeight);
+    const plotTop = top + header;
+    const rowOffset = (row: number) => row * (header + plotHeight + rowGap);
     const measureLabel = (label: string) => measure(label, font);
     /** A continuous y axis for the marks on one side, from their data domain `base`. */
     const planValueAxis = (
@@ -431,7 +511,7 @@ export class ChartModel {
             plotHeight,
             axisContext.type,
           );
-      return planAxis(axisContext, domain, [top + plotHeight, top], count);
+      return planAxis(axisContext, domain, [plotTop + plotHeight, plotTop], count);
     };
 
     // y ticks decide the left margin.
@@ -441,7 +521,7 @@ export class ChartModel {
       const upward = bands.y !== undefined && numericBands(bands.y);
       yPlan = planBandAxis(
         bands.y?.labels ?? [],
-        upward ? [top + plotHeight, top] : [top, top + plotHeight],
+        upward ? [plotTop + plotHeight, plotTop] : [plotTop, plotTop + plotHeight],
         padding("y"),
         () => lineHeight,
       );
@@ -485,78 +565,91 @@ export class ChartModel {
     if (sameLayout) right = Math.max(right, this.#right);
 
     // x ticks; widen the margins if the first or last label would be clipped,
-    // by up to a quarter of the width a side: labels that cannot fit must not
-    // squeeze the plot away.
+    // and the gap between columns of panels if labels at the edges of
+    // neighboring panels would meet, by up to a quarter of the width each:
+    // labels that cannot fit must not squeeze the plots away.
     const edgeRoom = Math.floor(width / 4);
-    let xPlan: AxisPlan = planBandAxis([], [0, 1], 0, () => 0);
-    for (let pass = 0; pass < 3; pass++) {
-      const plotWidth = Math.max(10, width - left - right);
+    let columnGap = columns > 1 ? Math.max(16, sameLayout ? this.#columnGap : 0) : 0;
+    const widthOf = () => (width - left - right - (columns - 1) * columnGap) / columns;
+    // The x plan for panels `plotWidth` wide, the first starting at `left`.
+    const planX = (plotWidth: number): AxisPlan => {
       if (xType === "band") {
-        xPlan = planBandAxis(
+        return planBandAxis(
           bands.x?.labels ?? [],
           [left, left + plotWidth],
           padding("x"),
           measureLabel,
         );
-      } else {
-        const xCount =
-          config.x?.ticks ?? Math.max(2, Math.round(plotWidth / (xType === "time" ? 100 : 80)));
-        if (autoX) {
-          xDomain = insetDomain(
-            headroomDomain(
-              niceAxisDomain(dataXDomain, xContext, xCount, config.x?.nice ?? xMeasures),
-              headroom("x"),
-              plotWidth,
-              xType,
-            ),
-            inset("x"),
+      }
+      const xCount =
+        config.x?.ticks ?? Math.max(2, Math.round(plotWidth / (xType === "time" ? 100 : 80)));
+      if (autoX) {
+        xDomain = insetDomain(
+          headroomDomain(
+            niceAxisDomain(dataXDomain, xContext, xCount, config.x?.nice ?? xMeasures),
+            headroom("x"),
             plotWidth,
             xType,
-          );
-        }
-        xPlan = planAxis(xContext, xDomain, [left, left + plotWidth], xCount);
+          ),
+          inset("x"),
+          plotWidth,
+          xType,
+        );
       }
+      return planAxis(xContext, xDomain, [left, left + plotWidth], xCount);
+    };
+    let plotWidth = Math.max(10, widthOf());
+    let xPlan = planX(plotWidth);
+    // Widen until the labels fit or the limits are reached. Whatever still
+    // needs more after a few passes goes straight to its limit, so the margins
+    // kept for the next scene are ones that scene keeps too.
+    for (let pass = 0; pass < 10; pass++) {
       const last = xPlan.ticks.length - 1;
       if (last < 0 || !hasData || !showX) break;
       const half = (index: number) => measure(xPlan.labels[index]!, font) / 2;
-      const overflowRight = xPlan.scale.map(xPlan.ticks[last]!) + half(last) - (width - 2);
-      const overflowLeft = 2 - (xPlan.scale.map(xPlan.ticks[0]!) - half(0));
-      if (overflowRight <= 0.5 && overflowLeft <= 0.5) break;
-      if (overflowRight > 0.5)
-        right = Math.max(right, Math.min(right + Math.ceil(overflowRight), edgeRoom));
-      if (overflowLeft > 0.5)
-        left = Math.max(left, Math.min(left + Math.ceil(overflowLeft), edgeRoom));
+      const lastEnd = xPlan.scale.map(xPlan.ticks[last]!) + half(last);
+      const firstStart = xPlan.scale.map(xPlan.ticks[0]!) - half(0);
+      const overflowRight = lastEnd + (columns - 1) * (plotWidth + columnGap) - (width - 2);
+      const overflowLeft = 2 - firstStart;
+      // How far labels reach past a panel's sides, into the gap between columns.
+      const spill = Math.max(0, lastEnd - (left + plotWidth)) + Math.max(0, left - firstStart);
+      const widen = (current: number, need: number) =>
+        need <= current
+          ? current
+          : Math.max(current, pass < 3 ? Math.min(need, edgeRoom) : edgeRoom);
+      const nextLeft = overflowLeft > 0.5 ? widen(left, left + Math.ceil(overflowLeft)) : left;
+      const nextRight =
+        overflowRight > 0.5 ? widen(right, right + Math.ceil(overflowRight)) : right;
+      const nextGap = columns > 1 ? widen(columnGap, Math.ceil(spill) + 8) : 0;
+      if (nextLeft === left && nextRight === right && nextGap === columnGap) break;
+      left = nextLeft;
+      right = nextRight;
+      columnGap = nextGap;
+      plotWidth = Math.max(10, widthOf());
+      xPlan = planX(plotWidth);
     }
+    if (panelCount > 1 && widthOf() < MIN_PANEL) throw tooSmall(panelCount, columns, width, height);
     this.#left = left;
     this.#right = right;
-    const plot: Rect = {
-      x: left,
-      y: top,
-      width: Math.max(10, width - left - right),
-      height: plotHeight,
-    };
-    const x = xPlan.scale;
-    const y = yPlan.scale;
+    this.#columnGap = columnGap;
+    const columnOffset = (column: number) => column * (plotWidth + columnGap);
 
-    const axes: AxisGeometry[] = [];
-    if (showX) {
-      axes.push({
-        orient: "bottom",
-        offset: plot.y + plot.height,
-        start: plot.x,
-        end: plot.x + plot.width,
-        line: true,
-        ticks: hasData
-          ? xPlan.ticks.map((t, i) => ({ position: x.map(t), label: xPlan.labels[i]! }))
-          : [],
-        title: config.x?.label
-          ? { text: config.x.label, x: plot.x + plot.width / 2, y: height - lineHeight / 2 - 2 }
-          : undefined,
-      });
-    }
-    // A y axis along one edge of the plot, its title outside the labels.
+    // Every panel shares the x and y plans, moved to its column and row.
+    const xPlans = Array.from({ length: columns }, (_, c) =>
+      shiftPlan(xPlan, xContext, columnOffset(c)),
+    );
+    const yPlans = Array.from({ length: rows }, (_, r) => shiftPlan(yPlan, yContext, rowOffset(r)));
+    const gridWidth = columns * plotWidth + (columns - 1) * columnGap;
+    const gridHeight = rows * (header + plotHeight) + (rows - 1) * rowGap;
+    const xGrid = hasData && xType !== "band" && (config.x?.grid ?? xMeasures);
+    // Horizontal grid lines follow the left axis, or the right one when the left is unused.
+    const gridPlan = leftUsed
+      ? yType !== "band" && (config.y?.grid ?? true) && yPlan
+      : (config.yRight?.grid ?? true) && yRightPlan;
+    // A y axis along one side of a plot, its title outside the labels, centered on the grid.
     const yAxis = (
       orient: "left" | "right",
+      plot: Rect,
       plan: AxisPlan,
       labels: string[],
       title: string | undefined,
@@ -568,56 +661,11 @@ export class ChartModel {
       end: plot.y,
       line: false,
       ticks: labels.map((label, i) => ({ position: plan.scale.map(plan.ticks[i]!), label })),
-      title: title ? { text: title, x: titleX, y: plot.y + plot.height / 2 } : undefined,
+      title: title ? { text: title, x: titleX, y: top + gridHeight / 2 } : undefined,
     });
-    if (showLeft) {
-      axes.push(yAxis("left", yPlan, yLabels, config.y?.label, lineHeight / 2 + 2));
-    }
-    if (showRight) {
-      axes.push(
-        yAxis("right", yRightPlan, yRightLabels, config.yRight?.label, width - lineHeight / 2 - 2),
-      );
-    }
 
-    // Horizontal grid lines follow the left axis, or the right one when the left is unused.
-    const gridPlan = leftUsed
-      ? yType !== "band" && (config.y?.grid ?? true) && yPlan
-      : (config.yRight?.grid ?? true) && yRightPlan;
-
-    this.#used.clear();
-    const frame: Frame = {
-      x,
-      y,
-      plot,
-      pixelRatio: this.pixelRatio,
-      theme,
-      locale,
-      hidden: this.hidden,
-      owner: this,
-      clouds,
-      polyline: this.#polyline,
-      floats: this.#floatBuffer,
-      bytes: this.#byteBuffer,
-    };
-    // Marks on the right axis draw with its scale.
-    const rightFrame: Frame | undefined = yRightPlan && { ...frame, y: yRightPlan.scale };
-    const frameOf = (mark: Mark) => (sideOf(mark) === "right" && rightFrame) || frame;
-    const geometry = marks.flatMap(({ mark, series }, index) =>
-      mark.geometry(series, frameOf(mark), mark.spec.id ?? index),
-    );
-    // Drop buffers of series that no longer exist.
-    for (const pool of [this.#polylines, this.#floats, this.#bytes] as Map<string, unknown>[]) {
-      for (const key of pool.keys()) if (!this.#used.has(key)) pool.delete(key);
-    }
-
-    let vertices = 0;
-    for (const item of geometry) vertices += item.draw.size(item);
-
-    const formatNumbers: Formatter = (v) => formatNumber(v, locale);
-    const categoryOf =
-      (scale: PositionScale): Formatter =>
-      (v) =>
-        scale.categories?.[Math.round(v)] ?? "";
+    // Inspectors keep these formatters, so they come from outside this scope.
+    const formatNumbers = numberFormatter(locale);
     const tooltip = config.tooltip;
     // Cells are always found under the pointer, so charts of cells only
     // (heatmaps) inspect the nearest cell whatever mode is requested.
@@ -630,48 +678,129 @@ export class ChartModel {
           (only === "x" ? "nearest-x" : only === "y" ? "nearest-y" : "nearest"));
     const valueFormat = (context: AxisContext, scale: PositionScale): Formatter =>
       context.type === "time"
-        ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale, plot.height), zone, locale))
+        ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale, plotHeight), zone, locale))
         : valueFormatter(context, formatNumbers);
-    this.#last = new Inspector({
-      marks,
-      frame,
-      right: rightFrame && {
-        marks: new Set(rightMarks.map(({ mark }) => mark)),
-        frame: rightFrame,
-        formatY: valueFormat(yRightContext, rightFrame.y),
-      },
-      mode,
-      hidden: this.hidden,
-      formatX:
-        xType === "band"
-          ? categoryOf(x)
-          : xType === "time"
-            ? valueFormatter(xContext, timeValueFormatter(timeUnitFor(x, plot.width), zone, locale))
-            : valueFormatter(xContext, formatNumbers),
-      formatY: yType === "band" ? categoryOf(y) : valueFormat(yContext, y),
-      formatValue: formatNumbers,
-    });
+    const formatX =
+      xType === "band"
+        ? categoryOf(xPlan.scale)
+        : xType === "time"
+          ? valueFormatter(
+              xContext,
+              timeValueFormatter(timeUnitFor(xPlan.scale, plotWidth), zone, locale),
+            )
+          : valueFormatter(xContext, formatNumbers);
+    const formatY = yType === "band" ? categoryOf(yPlan.scale) : valueFormat(yContext, yPlan.scale);
+    const formatRight = yRightPlan && valueFormat(yRightContext, yRightPlan.scale);
+    const rightSet = new Set(rightMarks.map(({ mark }) => mark));
 
-    const panel: Panel = {
-      key: "",
-      plot,
-      grid: {
-        x:
-          hasData && xType !== "band" && (config.x?.grid ?? xMeasures)
-            ? xPlan.ticks.map((t) => x.map(t))
+    this.#used.clear();
+    const scene = ++this.#scenes;
+    const views: PanelView[] = [];
+    const panels = split.keys.map((key, i): Panel => {
+      const row = Math.floor(i / columns);
+      const column = i % columns;
+      const xAt = xPlans[column]!;
+      const yAt = yPlans[row]!;
+      const x = xAt.scale;
+      const plot: Rect = {
+        x: left + columnOffset(column),
+        y: plotTop + rowOffset(row),
+        width: plotWidth,
+        height: plotHeight,
+      };
+      const axes: AxisGeometry[] = [];
+      // x labels go under the lowest panel of each column, the x title once under them all.
+      if (showX && i + columns >= panelCount) {
+        axes.push({
+          orient: "bottom",
+          offset: plot.y + plot.height,
+          start: plot.x,
+          end: plot.x + plot.width,
+          line: true,
+          ticks: hasData
+            ? xAt.ticks.map((t, k) => ({ position: x.map(t), label: xAt.labels[k]! }))
             : [],
-        y: hasData && gridPlan ? gridPlan.ticks.map((t) => gridPlan.scale.map(t)) : [],
-      },
-      axes,
-      marks: geometry,
-    };
+          title:
+            config.x?.label && i === panelCount - 1
+              ? { text: config.x.label, x: left + gridWidth / 2, y: height - lineHeight / 2 - 2 }
+              : undefined,
+        });
+      }
+      if (showLeft && column === 0) {
+        const title = i === 0 ? config.y?.label : undefined;
+        axes.push(yAxis("left", plot, yAt, yLabels, title, lineHeight / 2 + 2));
+      }
+      if (showRight) {
+        const title = i === 0 ? config.yRight?.label : undefined;
+        axes.push(
+          yAxis("right", plot, yRightPlan, yRightLabels, title, width - lineHeight / 2 - 2),
+        );
+      }
+      const gridAt = gridPlan === yPlan ? yAt : gridPlan;
+
+      const frame: Frame = {
+        x,
+        y: yAt.scale,
+        plot,
+        pixelRatio: this.pixelRatio,
+        theme,
+        locale,
+        hidden: this.hidden,
+        owner: this,
+        scene,
+        clouds,
+        ...this.#pools(i),
+      };
+      // Marks on the right axis draw with its scale.
+      const rightFrame: Frame | undefined = yRightPlan && { ...frame, y: yRightPlan.scale };
+      const frameOf = (mark: Mark) => (sideOf(mark) === "right" && rightFrame) || frame;
+      const panelMarks = split.panels[i]!;
+      const geometry = panelMarks.flatMap(({ mark, series }, index) =>
+        mark.geometry(series, frameOf(mark), mark.spec.id ?? index),
+      );
+      const inspector = new Inspector({
+        marks: panelMarks,
+        frame,
+        right: rightFrame && { marks: rightSet, frame: rightFrame, formatY: formatRight! },
+        mode,
+        hidden: this.hidden,
+        formatX,
+        formatY,
+        formatValue: formatNumbers,
+      });
+      views.push({ key, plot, inspector });
+      return {
+        key,
+        plot,
+        grid: {
+          x: xGrid ? xAt.ticks.map((t) => x.map(t)) : [],
+          y: hasData && gridAt ? gridAt.ticks.map((t) => gridAt.scale.map(t)) : [],
+        },
+        axes,
+        marks: geometry,
+        title: facet
+          ? { text: fitText(key, plotWidth, measure, font), x: plot.x, y: plot.y - header / 2 }
+          : undefined,
+      };
+    });
+    // Drop buffers of series that no longer exist.
+    for (const pool of [this.#polylines, this.#floats, this.#bytes] as Map<string, unknown>[]) {
+      for (const key of pool.keys()) if (!this.#used.has(key)) pool.delete(key);
+    }
+    this.#views = views;
+    this.#drawn = marks;
+    this.#base = base;
+
+    let vertices = 0;
+    for (const panel of panels) for (const item of panel.marks) vertices += item.draw.size(item);
+
     return {
       width,
       height,
       pixelRatio: this.pixelRatio,
       theme,
       title: config.title ? { text: config.title, x: EDGE, y: lineHeight / 2 + 6 } : undefined,
-      panels: [panel],
+      panels,
       legend,
       colorLegend,
       vertices,
@@ -700,19 +829,38 @@ export class ChartModel {
     return out;
   }
 
-  /** x scale of the last scene, for mapping between data and pixels. */
+  /** x scale of the last scene's first panel (the only one without facets). */
   xScale(): PositionScale | undefined {
-    return this.#last?.frame.x;
+    return this.#views[0]?.inspector.frame.x;
   }
 
-  /** y scale of the last scene. */
+  /** y scale of the last scene's first panel. */
   yScale(): PositionScale | undefined {
-    return this.#last?.frame.y;
+    return this.#views[0]?.inspector.frame.y;
   }
 
   /** Scale of the right y axis in the last scene, when marks use it. */
   yRightScale(): PositionScale | undefined {
-    return this.#last?.rightFrame?.y;
+    return this.#views[0]?.inspector.rightFrame?.y;
+  }
+
+  /** The last scene's panels: each one's key, plot, and x scale. */
+  panels(): PanelInfo[] {
+    return this.#views.map(({ key, plot, inspector }) => ({ key, plot, x: inspector.frame.x }));
+  }
+
+  /** The series a panel of the last scene draws; with facets, the parts of series in it. */
+  panelSeries(panel: string): Series[] {
+    const view = this.#views.find(({ key }) => key === panel);
+    return view ? view.inspector.marks.flatMap(({ series }) => series) : [];
+  }
+
+  /** The panel whose plot holds a pixel, if any. */
+  #viewAt(px: number, py: number): PanelView | undefined {
+    return this.#views.find(
+      ({ plot }) =>
+        px >= plot.x && px <= plot.x + plot.width && py >= plot.y && py <= plot.y + plot.height,
+    );
   }
 
   /**
@@ -720,18 +868,19 @@ export class ChartModel {
    * placed along y (horizontal bars), otherwise x.
    */
   cursorAxis(): "x" | "y" {
-    const marks = this.#last?.marks ?? [];
-    return marks.some(({ mark, series }) => mark.tooltip === "y" && series.length > 0) ? "y" : "x";
+    return this.#drawn.some(({ mark, series }) => mark.tooltip === "y" && series.length > 0)
+      ? "y"
+      : "x";
   }
 
   /** Tooltip mode of the last scene: the chart's, or one suited to its marks. */
   tooltipMode(): TooltipMode {
-    return this.#last?.mode ?? "nearest-x";
+    return this.#views[0]?.inspector.mode ?? "nearest-x";
   }
 
   /** Sentences describing marks without series (annotations), as of the last scene. */
   annotationSummaries(): string[] {
-    const last = this.#last;
+    const last = this.#views[0]?.inspector;
     const fallback = (value: number) => formatNumber(value, this.#config.locale);
     return this.#config.marks.flatMap((mark) => {
       const format = { x: last?.formatX ?? fallback, y: last?.axisOf(mark).formatY ?? fallback };
@@ -741,26 +890,47 @@ export class ChartModel {
 
   /** Whether a series of the last scene is on the right y axis. */
   onRight(series: Series): boolean {
-    return this.#last?.onRight(series) ?? false;
+    const owner = this.#base?.find((entry) => entry.series.some((s) => s.key === series.key));
+    return owner !== undefined && sideOf(owner.mark) === "right";
   }
 
-  /** Series of the last scene, for legends, tooltips, and summaries. */
+  /** The parts of a series drawn in the last scene: one per panel with facets, else itself. */
+  parts(series: Series): Series[] {
+    if (!this.#base) return [series];
+    return this.#drawn.flatMap((entry) => entry.series.filter((s) => s.key === series.key));
+  }
+
+  /**
+   * Series of the last scene, for legends, tooltips, and summaries; with
+   * facets, each series whole, before panels split it.
+   */
   series(): Series[] {
-    const marks = this.#last?.marks ?? this.#resolveSeries(this.#bands, this.#context());
+    const marks = this.#base ?? this.#resolveSeries(this.#bands, this.#context());
     return marks.flatMap(({ series }) => series);
   }
 
   /**
-   * Finds the data under a pointer position for tooltips; see
-   * `Inspector.inspect`.
+   * Finds the data under a pointer position for tooltips, in the panel under
+   * it; see `Inspector.inspect`.
    */
   inspect(px: number, py: number, mode?: TooltipMode): Inspection | undefined {
-    return this.#last?.inspect(px, py, mode);
+    const view = this.#viewAt(px, py);
+    return view && this.#inPanel(view, view.inspector.inspect(px, py, mode));
   }
 
-  /** Inspects one point of a series by position; see `Inspector.inspectPosition`. */
-  inspectPosition(seriesKey: string, position: number): Inspection | undefined {
-    return this.#last?.inspectPosition(seriesKey, position);
+  /**
+   * Inspects one point of a series by its position in a panel (the first by
+   * default); see `Inspector.inspectPosition`.
+   */
+  inspectPosition(seriesKey: string, position: number, panel?: string): Inspection | undefined {
+    const view =
+      panel === undefined ? this.#views[0] : this.#views.find(({ key }) => key === panel);
+    return view && this.#inPanel(view, view.inspector.inspectPosition(seriesKey, position));
+  }
+
+  /** With facets, the inspection names its panel. */
+  #inPanel(view: PanelView, inspection: Inspection | undefined): Inspection | undefined {
+    return inspection && this.#config.facet ? { ...inspection, panel: view.key } : inspection;
   }
 
   /** Releases geometry buffers. */
@@ -768,8 +938,28 @@ export class ChartModel {
     this.#polylines.clear();
     this.#floats.clear();
     this.#bytes.clear();
-    this.#last = undefined;
+    this.#views = [];
+    this.#drawn = [];
+    this.#base = undefined;
+    this.#splitter = undefined;
   }
+}
+
+/** Refuses a grid of panels the chart has no room for. */
+function tooSmall(panels: number, columns: number, width: number, height: number): RangeError {
+  const rows = Math.ceil(panels / columns);
+  return new RangeError(
+    `${panels} panels in ${rows} rows of ${columns} do not fit a ${width}×${height} chart; make it larger or set the facet's columns`,
+  );
+}
+
+function numberFormatter(locale: string | undefined): Formatter {
+  return (value) => formatNumber(value, locale);
+}
+
+/** The category at a band index. */
+function categoryOf(scale: PositionScale): Formatter {
+  return (value) => scale.categories?.[Math.round(value)] ?? "";
 }
 
 /** Precision for x values in tooltips: finer when each pixel covers less time. */
@@ -808,4 +998,5 @@ function validate(config: ChartConfig): void {
     if (ids.has(id)) throw new Error(`Duplicate mark id "${id}"`);
     ids.add(id);
   }
+  config.facet?.check(config.marks);
 }

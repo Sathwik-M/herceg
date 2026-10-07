@@ -43,6 +43,8 @@ export interface HeatmapOptions<S extends Schema> {
   /** Color ramp from low to high values. Defaults to the theme's sequential ramp. */
   colors?: readonly string[];
   label?: string;
+  /** With the chart's `facet`, draw all cells in every panel; heatmaps cannot be split yet. */
+  facet?: "repeat";
   id?: string;
 }
 
@@ -239,7 +241,7 @@ export function heatmap<S extends Schema>(
     x: options.x,
     y: options.y,
     value: options.value,
-    ...definedFields(options, ["label", "id"]),
+    ...definedFields(options, ["label", "id", "facet"]),
   };
   if (options.colors) spec.colors = [...options.colors];
   if (table.name !== undefined) spec.data = table.name;

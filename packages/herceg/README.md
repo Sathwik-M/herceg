@@ -154,6 +154,36 @@ bars) stay on the left; custom marks take `axis` too. Two scales in one plot inv
 heights that mean different things; for unrelated measures, two charts
 sharing x through `interaction: { sync }` are often easier to read.
 
+### Small multiples
+
+`facet` draws the chart once per value of a category field, in a grid of
+panels that share their x and y scales:
+
+```ts
+import { facet } from "herceg";
+
+createChart(element, {
+  marks: [
+    line(sales, { x: "week", y: "units" }), // one line per panel: that region's rows
+    line(targets, { x: "week", y: "target", facet: "repeat" }), // whole, in every panel
+    rule({ y: 100, label: "goal" }), // constants repeat
+  ],
+  facet: facet("region", { columns: 3 }), // in a spec: { field: "region", columns: 3 }
+});
+```
+
+Panels follow the order in which values first appear in the data; rows
+without a value are left out (though their categories still get a band on a
+category axis). Marks over a table split its rows by the field,
+which the table must have, unless they have `facet: "repeat"`; marks without
+a table repeat. x labels go under the lowest panel of each column and y labels
+beside the first. Pointer, brush, and zoom work in any panel and act on the
+shared x; the arrow keys step through a panel and Up and Down move between
+panels. Heatmaps, stacked bars, and annotations or custom marks over a table
+can only repeat for now, and charts with facets have no right axis. A chart
+too small for its panels (under 20 pixels a side) throws an error naming the
+grid; give it more room or fewer columns.
+
 ### Custom marks
 
 When no mark fits, `custom` draws shapes with the chart's scales on every
@@ -196,6 +226,7 @@ entries or tooltips, and are meant for shapes in the thousands, not millions.
 | `width`, `height` | Fixed size; omitted dimensions follow the container. |
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`. |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
+| `facet` | `facet(field, { columns? })`: a panel per value of a category field (see Small multiples). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
 | `interaction` | `{ zoom: true }` for wheel zoom and drag pan; `{ brush: "x" }` to select an x range by dragging (with `zoom`, the brush zooms instead and Shift-drag pans); `{ sync: "name" }` to share cursor and zoom with other charts. |

@@ -48,6 +48,10 @@ const finite: Check = (v, path) => {
 const positive: Check = (v, path) => {
   if (typeof v !== "number" || !(v > 0) || !Number.isFinite(v)) fail(path, "a positive number", v);
 };
+const count: Check = (v, path) => {
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 1)
+    fail(path, "a whole number of at least 1", v);
+};
 /** A constant position or a field name. */
 const position: Check = (v, path) => {
   if (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v)))
@@ -285,7 +289,13 @@ const mark: Check = (v, path) => {
       spec.type,
     );
   required(spec, path, kind.required);
-  properties(spec, path, { ...kind.checks, data: field, id: string, axis: oneOf("left", "right") });
+  properties(spec, path, {
+    ...kind.checks,
+    data: field,
+    id: string,
+    axis: oneOf("left", "right"),
+    facet: oneOf("repeat"),
+  });
 };
 
 /** Throws a TypeError naming the first property of `spec` that is not valid. */
@@ -309,6 +319,11 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     x: axis,
     y: axis,
     yRight: axis,
+    facet: (f, path) => {
+      object(f, path);
+      required(f as Record<string, unknown>, path, ["field"]);
+      properties(f as Record<string, unknown>, path, { field, columns: count });
+    },
     legend: boolean,
     tooltip: (t, path) => {
       if (typeof t === "boolean") return;

@@ -43,16 +43,16 @@ marks drawing through the same renderers, level of detail, streaming
 updates, shared scheduler, browser interaction (tooltips, zoom, brushing,
 events, synced charts), static SVG, React adapter, min/max indexes for
 zooming and streaming large line series, WebGL drawing of large point series, chart specs
-with binary columns, Python package.
+with binary columns, Python package, a second y axis, small multiples.
 
 Next:
 
-1. Small multiples.
-2. More chart types: histograms (binning), box plots, candlesticks, pie and
+1. More chart types: histograms (binning), box plots, candlesticks, pie and
    donut charts.
-3. Live notebook charts (a widget that streams updates from Python) and PDF
+2. Live notebook charts (a widget that streams updates from Python) and PDF
    export.
-4. Other framework adapters (Vue, Svelte).
+3. Other framework adapters (Vue, Svelte).
+4. Facets by row and column, and independent panel scales.
 
 ## Development
 

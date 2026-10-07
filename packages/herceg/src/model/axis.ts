@@ -145,6 +145,18 @@ export function planAxis(
   return { scale, ticks, labels };
 }
 
+/** `plan` for a panel `offset` pixels along: the same ticks and labels on a moved range. */
+export function shiftPlan(plan: AxisPlan, context: AxisContext, offset: number): AxisPlan {
+  if (offset === 0) return plan;
+  const { scale } = plan;
+  const range: [number, number] = [scale.range[0] + offset, scale.range[1] + offset];
+  const moved =
+    scale instanceof BandScale
+      ? new BandScale(scale.categories, range, scale.padding)
+      : createScale(context, scale.domain, range);
+  return { ...plan, scale: moved };
+}
+
 /** Formatter for single values on this axis, as shown in tooltips. */
 export function valueFormatter(context: AxisContext, fallback: Formatter): Formatter {
   const format = context.spec?.format;
