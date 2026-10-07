@@ -34,6 +34,8 @@ const ENTRY_PACKAGES: Record<string, string> = {
 interface Bundle {
   js: Uint8Array;
   css: Uint8Array | undefined;
+  /** Chunks the entry imports dynamically, loaded only when needed. */
+  lazy: Uint8Array[];
 }
 
 /** Shared by the whole application, so React adapter entries leave them out. */
@@ -49,15 +51,23 @@ async function bundle(entry: string, minify: boolean, external: string[]): Promi
     write: false,
     outdir: "out",
     format: "esm",
+    // Dynamic imports become separate chunks, as with application bundlers.
+    splitting: true,
     target: "es2022",
     platform: "browser",
     define: { "process.env.NODE_ENV": '"production"' },
     alias: HERCEG_ALIAS,
     logLevel: "error",
   });
-  const file = (extension: string) =>
-    result.outputFiles.find((output) => output.path.endsWith(extension));
-  return { js: file(".js")!.contents, css: file(".css")?.contents };
+  const name = basename(entry).replace(/\.tsx?$/, "");
+  const js = result.outputFiles.filter((output) => output.path.endsWith(".js"));
+  const main = js.find((output) => basename(output.path) === `${name}.js`)!;
+  const css = result.outputFiles.find((output) => output.path.endsWith(".css"));
+  return {
+    js: main.contents,
+    css: css?.contents,
+    lazy: js.filter((output) => output !== main).map((output) => output.contents),
+  };
 }
 
 const gzip = (bytes: Uint8Array) => gzipSync(bytes, { level: 9 }).byteLength;
@@ -84,6 +94,13 @@ for (const file of readdirSync(ENTRIES).sort()) {
     brotli: brotli(minified.js),
     // Stylesheets the library requires, reported separately from JavaScript.
     css: css ? { minified: css.byteLength, gzip: gzip(css), brotli: brotli(css) } : null,
+    // Code split off for on-demand loading, such as Herceg's GPU painter.
+    lazy: minified.lazy.length
+      ? {
+          minified: minified.lazy.reduce((sum, chunk) => sum + chunk.byteLength, 0),
+          gzip: minified.lazy.reduce((sum, chunk) => sum + gzip(chunk), 0),
+        }
+      : null,
   });
 }
 
@@ -105,7 +122,7 @@ if (args.out) {
     date: new Date().toISOString(),
     commit: commit(),
     method:
-      "esbuild bundle, ESM, es2022, minified, NODE_ENV=production; gzip level 9; brotli quality 11; required CSS reported separately",
+      "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; the entry chunk is measured, chunks loaded on demand and required CSS are reported separately; gzip level 9; brotli quality 11",
     environment: { ...machine(), esbuild: esbuild.version },
     results: rows,
   };

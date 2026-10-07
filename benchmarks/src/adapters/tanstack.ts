@@ -183,11 +183,17 @@ function scatterRows(data: PointData): XYRow[] {
   return rows;
 }
 
-function scatterDefinition(rows: XYRow[], options: ChartOptions): Definition {
+function scatterDefinition(
+  rows: XYRow[],
+  options: ChartOptions,
+  window?: [number, number],
+): Definition {
+  // As for lines, a zoomed window filters rows and binds the x scale.
+  const shown = window ? rows.filter((row) => row.x >= window[0] && row.x <= window[1]) : rows;
   return defineChart({
-    marks: [dot(rows, { x: "x", y: "y", r: 1.5, fill: color(0) })],
+    marks: [dot(shown, { x: "x", y: "y", r: 1.5, fill: color(0) })],
     scales: {
-      x: { scale: scaleLinear, nice: true },
+      x: window ? { scale: scaleLinear().domain(window) } : { scale: scaleLinear, nice: true },
       y: { scale: scaleLinear, nice: true },
     },
     focus: options.tooltip ? "nearest" : false,
@@ -244,10 +250,15 @@ export const adapter: Adapter = {
   scatter: {
     prepare: scatterRows,
     create(container, data, options) {
-      const host = mount(container, scatterDefinition(scatterRows(data), options), options);
-      return handle<PointData>(container, host, (next) =>
-        scatterDefinition(scatterRows(next), options),
-      );
+      let rows = scatterRows(data);
+      const host = mount(container, scatterDefinition(rows, options), options);
+      return {
+        ...handle<PointData>(container, host, (next) => {
+          rows = scatterRows(next);
+          return scatterDefinition(rows, options);
+        }),
+        setViewport: (x0, x1) => host.update(scatterDefinition(rows, options, [x0, x1])),
+      };
     },
   },
   heatmap: {

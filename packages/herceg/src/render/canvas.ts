@@ -2,16 +2,19 @@
 // overlays stay in SVG above the canvas, so text is crisp and accessible and
 // pointer feedback never repaints the data.
 
+import { mapValue } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type {
   AreaGeometry,
   MarkGeometry,
   PointGeometry,
   RasterGeometry,
+  Rect,
   RectGeometry,
   RuleGeometry,
   Scene,
 } from "../scene/scene.ts";
+import type { CloudPainter } from "./webgl.ts";
 
 export function traceLine(context: CanvasRenderingContext2D, path: Polyline): void {
   const c = path.coords;
@@ -164,11 +167,53 @@ export function drawMark(context: CanvasRenderingContext2D, mark: MarkGeometry):
   }
 }
 
+/** How `paintCanvas` draws point clouds. */
+export interface CloudOptions {
+  /** GPU painter; without one, or where it declines, points are placed on the CPU. */
+  painter?: CloudPainter | undefined;
+  /** The chart painting, which owns the painter's uploads. */
+  owner?: object;
+  /** Leave clouds out, as while the painter is still loading. */
+  defer?: boolean;
+}
+
+/**
+ * Places a cloud's points on the CPU: the fallback when no GPU painter can
+ * draw it. Points whose disc misses the plot are left out, as by the mark.
+ */
+export function placeCloud(mark: PointGeometry, plot: Rect): PointGeometry {
+  const cloud = mark.cloud!;
+  const { x, y, rows, start, end, xMap, yMap } = cloud;
+  const coords = new Float32Array((end - start) * 2);
+  const r = mark.radius;
+  let count = 0;
+  for (let k = start; k < end; k++) {
+    const row = rows ? rows[k]! : k;
+    const vx = x[row]!;
+    const vy = y[row]!;
+    if (!(Number.isFinite(vx) && Number.isFinite(vy))) continue;
+    if ((xMap.log && vx <= 0) || (yMap.log && vy <= 0)) continue;
+    const px = mapValue(xMap, vx);
+    const py = mapValue(yMap, vy);
+    if (px < plot.x - r || px > plot.x + plot.width + r) continue;
+    if (py < plot.y - r || py > plot.y + plot.height + r) continue;
+    coords[count * 2] = px;
+    coords[count * 2 + 1] = py;
+    count++;
+  }
+  const { cloud: _, ...placed } = mark;
+  return { ...placed, coords, count };
+}
+
 /**
  * Paints the scene's grid and marks. The canvas backing store is sized to the
  * scene times its pixel ratio; drawing happens in CSS pixels.
  */
-export function paintCanvas(canvas: HTMLCanvasElement, scene: Scene): void {
+export function paintCanvas(
+  canvas: HTMLCanvasElement,
+  scene: Scene,
+  clouds: CloudOptions = {},
+): void {
   const ratio = scene.pixelRatio;
   const width = Math.round(scene.width * ratio);
   const height = Math.round(scene.height * ratio);
@@ -210,7 +255,17 @@ export function paintCanvas(canvas: HTMLCanvasElement, scene: Scene): void {
   context.beginPath();
   context.rect(plot.x, plot.y, plot.width, plot.height);
   context.clip();
-  for (const mark of scene.marks) if (mark.kind !== "rule") drawMark(context, mark);
+  for (const mark of scene.marks) {
+    if (mark.kind === "rule") continue;
+    if (mark.kind === "point" && mark.cloud) {
+      if (clouds.defer) continue;
+      const { painter, owner = canvas } = clouds;
+      if (!painter?.paint(context, mark, plot, ratio, owner))
+        drawMark(context, placeCloud(mark, plot));
+    } else {
+      drawMark(context, mark);
+    }
+  }
   context.restore();
   pruneRasters(context, scene);
 }

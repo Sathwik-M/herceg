@@ -436,14 +436,21 @@ async function runZoom(
   kind: ChartKind<AnyData>,
   s: Scenario,
 ): Promise<PageResult> {
-  const data = makeData(s, 1) as SeriesData;
+  const data = makeData(s, 1) as SeriesData | PointData;
   const handle = await create(kind, data, optionsFor(s));
   if (!handle.setViewport) {
     handle.destroy();
     clearStage();
     return { supported: false, reason: `${adapter.id} adapter has no zoom path`, metrics: {} };
   }
-  const windows = zoomWindows(data.x[0]!, data.x[data.x.length - 1]!, s.warmup + s.samples);
+  // Scatter x values are unsorted, so the extent comes from a scan.
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  for (const x of data.x) {
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+  }
+  const windows = zoomWindows(x0, x1, s.warmup + s.samples);
   const frame = metric("ms");
   for (let i = 0; i < windows.length; i++) {
     const [x0, x1] = windows[i]!;

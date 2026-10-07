@@ -7,7 +7,8 @@ applications. Today it provides:
 - a serializable chart specification (`ChartSpec`);
 - columnar, typed-array tables with streaming updates and rolling windows;
 - line, area, bar, scatter, heatmap, and rule marks that compose in one chart;
-- SVG and Canvas rendering, chosen per chart by how much it draws;
+- SVG and Canvas rendering, chosen per chart by how much it draws, and WebGL
+  for large point series, loaded only when a chart needs it;
 - level-of-detail reduction for large line and area series;
 - keyboard navigation, generated data summaries, and static SVG export;
 - React components (`@herceg/react`) whose data updates bypass React.
@@ -32,7 +33,7 @@ Chart.js, Plotly, and uPlot in a reproducible benchmark suite.
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar,
 point, heatmap, and rule marks, level of detail, streaming updates, shared
 scheduler, browser interaction, static SVG, React adapter, min/max indexes
-for zooming large line series.
+for zooming large line series, WebGL drawing of large point series.
 
 Next:
 
@@ -40,10 +41,9 @@ Next:
    geometry drawing (which also keeps unused mark kinds out of bundles).
 2. Min/max indexes that update incrementally while very large series stream,
    and indexes for areas.
-3. GPU rendering for massive data, kept only where benchmarks justify it.
-4. Python bindings sharing the chart specification, with notebook support and
+3. Python bindings sharing the chart specification, with notebook support and
    static export.
-5. Other framework adapters (Vue, Svelte).
+4. Other framework adapters (Vue, Svelte).
 
 ## Development
 

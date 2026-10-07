@@ -43,6 +43,7 @@ interface SizeResults {
     gzip: number;
     brotli: number;
     css: { gzip: number } | null;
+    lazy?: { gzip: number } | null;
   }[];
 }
 
@@ -135,7 +136,15 @@ function memoryTable(): string {
 
 function sizeTable(): string {
   return table(
-    ["Entry", "Version", "Minified KiB", "Gzip KiB", "Brotli KiB", "Required CSS, gzip KiB"],
+    [
+      "Entry",
+      "Version",
+      "Minified KiB",
+      "Gzip KiB",
+      "Brotli KiB",
+      "Required CSS, gzip KiB",
+      "Loaded on demand, gzip KiB",
+    ],
     size.results.map((r) => [
       r.entry,
       r.version,
@@ -143,6 +152,7 @@ function sizeTable(): string {
       kib(r.gzip),
       kib(r.brotli),
       r.css ? kib(r.css.gzip) : "-",
+      r.lazy ? kib(r.lazy.gzip) : "-",
     ]),
   );
 }

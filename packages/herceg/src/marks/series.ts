@@ -162,11 +162,23 @@ function scanPositions(
 ): [number, number] | undefined {
   let min = Infinity;
   let max = -Infinity;
+  const { rows, x } = series;
+  if (rows === undefined && !series.sorted && !log) {
+    // A whole unsorted column (scatter plots): one tight loop.
+    for (let k = start; k < end; k++) {
+      const at = x[k]!;
+      if (!(at >= lo && at <= hi)) continue;
+      const value = y[k]!;
+      if (value < min && value > -Infinity) min = value;
+      if (value > max && value < Infinity) max = value;
+    }
+    return min <= max ? [min, max] : undefined;
+  }
   for (let k = start; k < end; k++) {
     const row = rowOf(series, k);
     if (!series.sorted) {
-      const x = series.x[row]!;
-      if (!(x >= lo && x <= hi)) continue;
+      const at = x[row]!;
+      if (!(at >= lo && at <= hi)) continue;
     }
     const value = y[row]!;
     if (!usable(value, log)) continue;
@@ -204,6 +216,9 @@ export function xExtent(series: Series, log = false): [number, number] | undefin
       const x = xAt(series, k);
       if (Number.isFinite(x)) max = x;
     }
+  } else if (series.rows === undefined && !log) {
+    // A whole unsorted column, as in a scatter plot: a plain scan.
+    return scanExtent(series.x, 0, series.length);
   } else {
     for (let k = 0; k < series.length; k++) {
       const x = xAt(series, k);

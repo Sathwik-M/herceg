@@ -191,11 +191,16 @@ export const adapter: Adapter = {
     async create(container, data, options) {
       const plotLayout = layout(options, { hovermode: options.tooltip ? "closest" : false });
       const root = await mount(container, scatterTraces(data, options), plotLayout, options);
-      return handle<PointData>(
-        root,
-        (next) => Plotly.react(root, scatterTraces(next, options), plotLayout, config(options)),
-        plotLayout,
-      );
+      return {
+        ...handle<PointData>(
+          root,
+          (next) => Plotly.react(root, scatterTraces(next, options), plotLayout, config(options)),
+          plotLayout,
+        ),
+        async setViewport(x0, x1) {
+          await Plotly.relayout(root, { "xaxis.range": [x0, x1] });
+        },
+      };
     },
   },
   heatmap: {

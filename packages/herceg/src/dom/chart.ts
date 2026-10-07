@@ -11,6 +11,7 @@ import { describeChart } from "../model/describe.ts";
 import { type ChartConfig, ChartModel, type Inspection } from "../model/model.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
+import type { CloudPainter } from "../render/webgl.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { Scene } from "../scene/scene.ts";
 import { Legend } from "./legend.ts";
@@ -66,6 +67,9 @@ export class Chart implements Scheduled, SyncMember {
   readonly #dots: SVGGElement;
   #canvas: HTMLCanvasElement | null = null;
   #onCanvas = false;
+  /** GPU painter for large point series once loaded; null when unavailable. */
+  #clouds: CloudPainter | null | undefined;
+  #cloudsLoading: Promise<void> | undefined;
   #scene: Scene | undefined;
   #visible = true;
   #dirty = true;
@@ -162,6 +166,14 @@ export class Chart implements Scheduled, SyncMember {
     if (sync) broadcastViewport(sync, this, domain);
   }
 
+  /**
+   * Pending while the chart loads its GPU painter for large point series,
+   * which it draws once loaded; undefined when nothing is pending.
+   */
+  get loading(): Promise<void> | undefined {
+    return this.#cloudsLoading;
+  }
+
   /** Renders now instead of on the next frame. */
   render(): void {
     // The container may have changed since the observer last reported.
@@ -191,6 +203,7 @@ export class Chart implements Scheduled, SyncMember {
     for (const stop of this.#cleanup) stop();
     for (const stop of this.#tables.values()) stop();
     this.#tables.clear();
+    this.#clouds?.release(this);
     this.model.dispose();
     this.root.remove();
   }
@@ -271,14 +284,42 @@ export class Chart implements Scheduled, SyncMember {
     };
   }
 
+  /**
+   * Whether scenes may leave large point series to the GPU painter: unless
+   * WebGL2 is unavailable or SVG is forced. The painter is loaded the first
+   * time a scene holds a cloud, so other charts never download it.
+   */
+  #cloudsAllowed(): boolean {
+    if (this.#options.renderer === "svg" || this.#clouds === null) return false;
+    // After a lost context, a fresh painter is loaded.
+    if (this.#clouds && !this.#clouds.usable) this.#clouds = undefined;
+    return true;
+  }
+
+  #loadClouds(): void {
+    if (this.#cloudsLoading) return;
+    this.#cloudsLoading = import("../render/webgl.ts")
+      .then((module) => module.cloudPainter() ?? null)
+      .catch(() => null)
+      .then((painter) => {
+        this.#clouds = painter;
+        this.#cloudsLoading = undefined;
+        // Draw at once, so `loading` settles with the points on screen.
+        this.#dirty = true;
+        this.flush();
+      });
+  }
+
   #draw() {
     const { width, height } = this.#size();
     const window = this.root.ownerDocument.defaultView;
     this.model.setSize(width, height, window?.devicePixelRatio ?? 1);
     this.root.style.width = `${width}px`;
     this.root.style.height = `${height}px`;
-    const scene = this.model.scene(measurer(this.root.ownerDocument));
+    const scene = this.model.scene(measurer(this.root.ownerDocument), this.#cloudsAllowed());
     this.#scene = scene;
+    const clouds = scene.marks.some((mark) => mark.kind === "point" && mark.cloud !== undefined);
+    if (clouds && !this.#clouds) this.#loadClouds();
 
     const renderer = this.#options.renderer ?? "auto";
     this.#onCanvas =
@@ -294,7 +335,13 @@ export class Chart implements Scheduled, SyncMember {
       }
       this.#canvas.style.width = `${width}px`;
       this.#canvas.style.height = `${height}px`;
-      paintCanvas(this.#canvas, scene);
+      // Until the painter has loaded, clouds are left out rather than drawn
+      // slowly on the CPU; `loading` settles once they are on screen.
+      paintCanvas(this.#canvas, scene, {
+        painter: this.#clouds ?? undefined,
+        owner: this,
+        defer: clouds && !this.#clouds,
+      });
     } else if (this.#canvas) {
       // Release the backing store when marks move back to SVG.
       this.#canvas.width = 0;
@@ -302,6 +349,8 @@ export class Chart implements Scheduled, SyncMember {
       this.#canvas.remove();
       this.#canvas = null;
     }
+    // Uploads this chart no longer draws are released.
+    this.#clouds?.endFrame(this);
     this.#svg.render(scene, { marks: !this.#onCanvas });
     this.#legend.update(scene.legend, scene.theme);
     this.#describe();

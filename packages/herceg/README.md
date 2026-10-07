@@ -112,7 +112,8 @@ Marks are drawn in array order; rules always draw above other marks.
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 
 The returned `Chart` has `update(options)`, `setViewport([from, to] | null)`,
-`render()`, `toSVG()`, and `destroy()`.
+`render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
+painter for large point series loads, otherwise undefined).
 
 ## Server rendering
 
@@ -126,7 +127,10 @@ const svg = renderToSVG({ width: 640, height: 320, marks: [line(metrics, { x: "t
 
 ## Large data
 
-Every point is drawn by default. With `sampling: "pixel"`, opaque points
+Every point is drawn by default. In the browser, point series of 100,000
+points or more are drawn with WebGL2, loaded on demand the first time a chart
+needs it; `chart.loading` settles once they are on screen. With
+`sampling: "pixel"`, opaque points
 whose centers land on the same device pixel are drawn once (above 4,096
 points per series), which is faster for dense scatter plots but can drop
 subpixel edge coverage. Tooltips find the nearest point through a spatial

@@ -259,8 +259,11 @@ export class ChartModel {
     return buffer;
   };
 
-  /** Builds the scene for the current data, size, and view state. */
-  scene(measure: MeasureText): Scene {
+  /**
+   * Builds the scene for the current data, size, and view state. With
+   * `clouds`, large point series are left to a GPU painter (see PointCloud).
+   */
+  scene(measure: MeasureText, clouds = false): Scene {
     const config = this.#config;
     const theme = this.#theme;
     const { width, height } = this;
@@ -488,6 +491,7 @@ export class ChartModel {
       theme,
       hidden: this.hidden,
       owner: this,
+      clouds,
       polyline: this.#polyline,
       floats: this.#floatBuffer,
       bytes: this.#byteBuffer,

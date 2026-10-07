@@ -1,7 +1,7 @@
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { GridIndex } from "../lod/grid-index.ts";
 import { isOpaqueColor } from "../scale/color.ts";
-import type { PointGeometry } from "../scene/scene.ts";
+import { CLOUD_POINTS, type PointGeometry } from "../scene/scene.ts";
 import type { PointSpec } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -38,6 +38,7 @@ export interface PointOptions<S extends Schema> {
 }
 
 const DEFAULT_RADIUS = 2.5;
+const NO_COORDS = new Float32Array(0);
 
 export class PointMark implements Mark<PointSpec> {
   readonly spec: PointSpec;
@@ -96,6 +97,29 @@ export class PointMark implements Mark<PointSpec> {
       // overlapping translucent points look different from one point.
       const sample = this.spec.sampling === "pixel" && opaque;
       const [start, end] = visibleRange(s, frame.x.domain[0], frame.x.domain[1]);
+      if (frame.clouds && !sample && end - start >= CLOUD_POINTS) {
+        out.push({
+          kind: "point",
+          key: s.key,
+          fill: s.color,
+          fillOpacity: opacity,
+          opaque,
+          radius,
+          coords: NO_COORDS,
+          count: end - start,
+          cloud: {
+            x: s.x,
+            y: s.y,
+            rows: s.rows,
+            start,
+            end,
+            xMap: frame.x.mapping(),
+            yMap: frame.y.mapping(),
+            version: this.table.version,
+          },
+        });
+        continue;
+      }
       const coords = frame.floats(s.key, "point", (end - start) * 2);
       const occupied = sample ? frame.bytes(s.key, "occupied", columns * rows) : undefined;
       occupied?.fill(0);

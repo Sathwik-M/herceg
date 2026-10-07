@@ -63,8 +63,14 @@ This includes deferred work scheduled with `requestAnimationFrame` or
 `ResizeObserver`. Libraries that render progressively over several frames
 (ECharts scatter and heatmap series) expose completion through their adapter
 (`finished` event), so timings cover the complete render, not the first
-partial frame. GPU rasterization happens off the main thread and is not
-included.
+partial frame. Herceg's large point series wait for its on-demand WebGL
+painter the same way (`chart.loading`).
+
+GPU rasterization happens off the main thread and is not included. For
+WebGL paths (Plotly `scattergl`, Herceg point clouds) that leaves out the GPU
+executing the draw: forcing completion with a pixel read adds about 4 ms to
+Herceg's 1,000,000-point scatter mount on the benchmark machine. Plotly's
+WebGL timings have the same limitation.
 
 Animations are disabled in every library, including ECharts' tooltip
 transition. Tooltips are enabled unless a scenario says otherwise.

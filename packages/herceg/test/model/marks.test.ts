@@ -219,6 +219,30 @@ describe("point", () => {
     }
   });
 
+  it("leaves large series to a GPU painter only when asked", () => {
+    const n = 120_000;
+    const big = table({
+      x: Float64Array.from({ length: n }, (_, i) => i % 1000),
+      y: Float64Array.from({ length: n }, (_, i) => i % 7),
+    });
+    const small = table({ x: [1, 2], y: [3, 4] });
+    const model = new ChartModel({
+      locale: "en-US",
+      marks: [point(big, { x: "x", y: "y" }), point(small, { x: "x", y: "y", id: "small" })],
+    });
+    model.setSize(600, 300, 1);
+    const [cloud, few] = model.scene(estimateText, true).marks as PointGeometry[];
+    expect(cloud!.cloud).toMatchObject({ start: 0, end: n, version: big.version });
+    expect(cloud!.coords).toHaveLength(0);
+    expect(cloud!.count).toBe(n);
+    expect(few!.cloud).toBeUndefined();
+    expect(few!.count).toBe(2);
+    // Without clouds (static rendering, export), every point is placed.
+    const [placed] = model.scene(estimateText).marks as PointGeometry[];
+    expect(placed!.cloud).toBeUndefined();
+    expect(placed!.count).toBe(n);
+  });
+
   it("samples opaque points per device pixel only when asked", () => {
     const n = 20_000;
     const dense = table({

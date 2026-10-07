@@ -1,7 +1,11 @@
 // The scene is the render plan: everything a renderer needs, in CSS pixels,
-// with no reference to data, scales, or the DOM. Mark geometry is packed
-// (polylines in Float32Arrays) rather than one object per data point.
+// with no reference to scales or the DOM. Mark geometry is packed (polylines
+// in Float32Arrays) rather than one object per data point. The exception is
+// a point cloud, which keeps references to its source columns so a GPU
+// painter can upload them once and redraw them as the view changes.
 
+import type { NumericArray } from "../data/column.ts";
+import type { Mapping } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { Theme } from "../theme.ts";
 
@@ -72,8 +76,32 @@ export interface PointGeometry {
    */
   opaque: boolean;
   radius: number;
+  /** x, y per point in CSS pixels; empty for a cloud. */
   coords: Float32Array;
   count: number;
+  /** Set when the series is left to a GPU painter instead of `coords`. */
+  cloud?: PointCloud;
+}
+
+/** Point series with at least this many points may be drawn as clouds. */
+export const CLOUD_POINTS = 100_000;
+
+/**
+ * A large point series for a GPU painter: its source columns and how they
+ * map to pixels. Positions [start, end) are drawn; values a scale cannot
+ * place are skipped.
+ */
+export interface PointCloud {
+  x: NumericArray;
+  y: NumericArray;
+  /** Rows of a long-format series; undefined when the series is whole columns. */
+  rows: Uint32Array | undefined;
+  start: number;
+  end: number;
+  xMap: Mapping;
+  yMap: Mapping;
+  /** Table version of the columns: with their identity, it tells whether uploaded copies are current. */
+  version: number;
 }
 
 /**

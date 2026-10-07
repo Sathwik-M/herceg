@@ -50,6 +50,8 @@ export interface Frame {
   hidden: ReadonlySet<string>;
   /** The chart drawing this frame, for caches that count each chart's redraws. */
   owner: object;
+  /** Large point series may be left to a GPU painter as clouds. */
+  clouds: boolean;
   /**
    * A polyline buffer reused across frames, one per series key and stage
    * (for example "line", "upper", "upper-step").

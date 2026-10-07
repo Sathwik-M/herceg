@@ -161,6 +161,26 @@ leave room for the point radius at the plot edges: after rounding to nice
 values, the domain widens by the radius in pixels, so points at the data
 extremes are drawn whole and ticks stay round.
 
+Point series of at least 100,000 visible points are drawn by the GPU in the
+browser. The point mark then emits a point cloud instead of pixel
+coordinates: references to its source columns, the axis mappings, and the
+table version. A WebGL2 painter, loaded with a dynamic `import()` the first
+time a scene holds a cloud (so other charts never download it), uploads each
+cloud once per table version: every coordinate normalized to [0, 1] over its
+axis's data range, then split into a float32 and its float32 remainder (about
+48 bits). Zooming and panning then only change shader uniforms. One WebGL
+context serves every chart on the page, since browsers allow only a few; each
+cloud is drawn into its plot-sized canvas and copied into the chart's 2D
+canvas at the mark's place in drawing order. Uploads (16 bytes per point)
+belong to the charts that draw them and are released when a chart stops
+drawing them or is destroyed. Until the painter has loaded, cloud series are
+not drawn (`chart.loading` settles once they are). The CPU places the points
+instead when the painter cannot represent them faithfully (a data range that
+overflows, position error above a quarter pixel at the current zoom, points
+larger than the device's largest point sprite), without WebGL2, after a lost
+context, with `renderer: "svg"`, and in `toSVG()` and `renderToSVG`. Picking
+still uses the CPU grid index.
+
 Bars on number or time x are 80% as wide as the smallest gap between
 neighboring distinct x values in view, across all series (capped at 64 px).
 Those distinct values are sorted once per table version. Stacked series split
@@ -189,7 +209,7 @@ Each scene can be drawn three ways:
   Axes and grid are rebuilt only when their markup changes. Bars and points
   are one `path` element per series, not one element per data point.
 - `paintCanvas` redraws grid and marks into a canvas sized to the device pixel
-  ratio.
+  ratio, handing point clouds to the WebGL painter when one is loaded.
 
 In the browser the layers are, bottom to top: an optional canvas for marks,
 the SVG layer (grid and marks when not on canvas, rules, axes, title, pointer
@@ -305,5 +325,7 @@ frame scheduler, without rendering React. A test
   index.
 - Renderer thresholds are not tuned.
 - Rules are always drawn above lines and areas, regardless of mark order.
-- No Python package, GPU renderer, or adapters for frameworks other than
-  React. See the roadmap in the repository README.
+- The GPU draws only large point series; lines, areas, bars, and heatmaps use
+  Canvas or SVG. Uploads are not incremental: streaming a large point series
+  uploads it again on every change.
+- No Python package or adapters for frameworks other than React. See the roadmap in the repository README.

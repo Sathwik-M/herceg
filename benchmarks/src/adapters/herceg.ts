@@ -71,12 +71,16 @@ function lineKind(fill: boolean): ChartKind<SeriesData> {
   };
 }
 
-function common(chart: Chart): Pick<ChartHandle<unknown>, "pixelOf" | "resize" | "destroy"> {
+function common(
+  chart: Chart,
+): Pick<ChartHandle<unknown>, "pixelOf" | "resize" | "destroy" | "rendered"> {
   return {
     pixelOf: (_series, _index, x, y) =>
       clientPoint(chart.root, chart.model.xScale()!.map(x), chart.model.yScale()!.map(y)),
     resize: (width, height) => chart.update({ width, height }),
     destroy: () => chart.destroy(),
+    // Large point series wait for the GPU painter, which loads on demand.
+    rendered: () => chart.loading,
   };
 }
 
@@ -132,6 +136,7 @@ export const adapter: Adapter = {
       return {
         ...common(chart),
         setData: (next: PointData) => source.reset({ x: next.x, y: next.y }),
+        setViewport: (x0, x1) => chart.setViewport([x0, x1]),
       };
     },
   },

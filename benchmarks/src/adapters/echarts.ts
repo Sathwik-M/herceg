@@ -220,13 +220,14 @@ export const adapter: Adapter = {
   scatter: {
     prepare: scatterPairs,
     create(container, data, options) {
-      return mount<PointData>(
+      const chart = mount<PointData>(
         container,
         options,
         {
           ...base(options, "item"),
           xAxis: { type: "value", scale: true },
           yAxis: { type: "value", scale: true },
+          dataZoom: options.zoom ? [{ type: "inside" as const, xAxisIndex: 0 }] : undefined,
           series: [
             {
               type: "scatter",
@@ -240,6 +241,14 @@ export const adapter: Adapter = {
         },
         (next) => ({ series: [{ data: scatterPairs(next) }] }),
       );
+      return {
+        ...chart,
+        setViewport(x0, x1) {
+          chart.track(() =>
+            chart.chart.dispatchAction({ type: "dataZoom", startValue: x0, endValue: x1 }),
+          );
+        },
+      };
     },
   },
   heatmap: {

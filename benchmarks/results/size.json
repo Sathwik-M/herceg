@@ -1,11 +1,11 @@
 {
  "schema": 1,
- "date": "2026-10-07T07:25:24.095Z",
+ "date": "2026-10-07T10:38:32.298Z",
  "commit": {
-  "sha": "52eeb9a",
+  "sha": "413a800",
   "dirty": true
  },
- "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production; gzip level 9; brotli quality 11; required CSS reported separately",
+ "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; the entry chunk is measured, chunks loaded on demand and required CSS are reported separately; gzip level 9; brotli quality 11",
  "environment": {
   "os": "Darwin 27.0.0",
   "cpu": "Apple M6",
@@ -23,7 +23,8 @@
    "minified": 252729,
    "gzip": 81773,
    "brotli": 70974,
-   "css": null
+   "css": null,
+   "lazy": null
   },
   {
    "entry": "chartjs-line",
@@ -33,7 +34,8 @@
    "minified": 201092,
    "gzip": 65269,
    "brotli": 57317,
-   "css": null
+   "css": null,
+   "lazy": null
   },
   {
    "entry": "echarts-full",
@@ -43,7 +45,8 @@
    "minified": 1134462,
    "gzip": 379440,
    "brotli": 309575,
-   "css": null
+   "css": null,
+   "lazy": null
   },
   {
    "entry": "echarts-line",
@@ -53,27 +56,36 @@
    "minified": 502515,
    "gzip": 170848,
    "brotli": 146089,
-   "css": null
+   "css": null,
+   "lazy": null
   },
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (52eeb9a)",
-   "raw": 124558,
-   "minified": 62334,
-   "gzip": 22434,
-   "brotli": 20311,
-   "css": null
+   "version": "0.0.0 (413a800)",
+   "raw": 134420,
+   "minified": 66517,
+   "gzip": 24057,
+   "brotli": 21769,
+   "css": null,
+   "lazy": {
+    "minified": 5842,
+    "gzip": 2817
+   }
   },
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (52eeb9a)",
-   "raw": 127752,
-   "minified": 64032,
-   "gzip": 23151,
-   "brotli": 20930,
-   "css": null
+   "version": "0.0.0 (413a800)",
+   "raw": 137614,
+   "minified": 68215,
+   "gzip": 24820,
+   "brotli": 22446,
+   "css": null,
+   "lazy": {
+    "minified": 5842,
+    "gzip": 2817
+   }
   },
   {
    "entry": "plotly-basic",
@@ -83,7 +95,8 @@
    "minified": 1212674,
    "gzip": 400788,
    "brotli": 333024,
-   "css": null
+   "css": null,
+   "lazy": null
   },
   {
    "entry": "plotly-full",
@@ -93,7 +106,8 @@
    "minified": 4812436,
    "gzip": 1467113,
    "brotli": 1110545,
-   "css": null
+   "css": null,
+   "lazy": null
   },
   {
    "entry": "tanstack-line",
@@ -103,7 +117,8 @@
    "minified": 128551,
    "gzip": 45458,
    "brotli": 40317,
-   "css": null
+   "css": null,
+   "lazy": null
   },
   {
    "entry": "uplot",
@@ -117,7 +132,8 @@
     "minified": 1627,
     "gzip": 694,
     "brotli": 550
-   }
+   },
+   "lazy": null
   }
  ]
 }

@@ -5,6 +5,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { point } from "../../src/marks/point.ts";
+import { cloudPainter } from "../../src/render/webgl.ts";
 
 let host: HTMLDivElement;
 
@@ -149,6 +150,155 @@ describe("new marks in the browser", () => {
     // One point at 50% is about 128; two coincident ones composite to about 191.
     expect(alphaAt(2, 2)).toBeCloseTo(128, -1);
     expect(alphaAt(1, 1)).toBeCloseTo(191, -1);
+    chart.destroy();
+  });
+});
+
+describe("point clouds on the GPU", () => {
+  const cloudTable = (n: number, scale = 1) => {
+    // Most points at (1, 1); two at (8, 8) for overlap; one alone at (5, 5).
+    const x = new Float64Array(n).fill(scale);
+    const y = new Float64Array(n).fill(1);
+    x[0] = 5 * scale;
+    y[0] = 5;
+    x[1] = x[2] = 8 * scale;
+    y[1] = y[2] = 8;
+    return table({ x, y });
+  };
+  const pixel = (chart: ReturnType<typeof createChart>, x: number, y: number) => {
+    const canvas = chart.root.querySelector("canvas")!;
+    const ratio = canvas.width / canvas.clientWidth;
+    return canvas
+      .getContext("2d")!
+      .getImageData(
+        Math.round(chart.model.xScale()!.map(x) * ratio),
+        Math.round(chart.model.yScale()!.map(y) * ratio),
+        1,
+        1,
+      ).data;
+  };
+  const painter = cloudPainter()!;
+  let paints: boolean[] = [];
+  const paint = painter.paint.bind(painter);
+  beforeEach(() => {
+    paints = [];
+    painter.paint = (...args) => {
+      const drawn = paint(...args);
+      paints.push(drawn);
+      return drawn;
+    };
+  });
+  afterEach(() => {
+    painter.paint = paint;
+  });
+
+  it("draws large point series with WebGL once the painter has loaded", async () => {
+    const chart = createChart(host, {
+      x: { domain: [0, 10], grid: false },
+      y: { domain: [0, 10], grid: false },
+      marks: [
+        point(cloudTable(150_000), { x: "x", y: "y", r: 6, fill: "#000000", fillOpacity: 0.5 }),
+      ],
+    });
+    // The painter loads on demand; until then the cloud is not drawn.
+    expect(chart.loading).toBeDefined();
+    expect(pixel(chart, 5, 5)[3]).toBe(0);
+    await chart.loading;
+    expect(paints).toEqual([true]);
+    // One point at (5, 5); two coincident ones at (8, 8) blend to ~75%.
+    expect(pixel(chart, 5, 5)[3]).toBeCloseTo(128, -1);
+    expect(pixel(chart, 8, 8)[3]).toBeCloseTo(191, -1);
+    expect(pixel(chart, 3, 3)[3]).toBe(0);
+    chart.destroy();
+  });
+
+  it("releases uploads when the chart is destroyed", async () => {
+    const before = painter.bytes;
+    const chart = createChart(host, { marks: [point(cloudTable(150_000), { x: "x", y: "y" })] });
+    await chart.loading;
+    chart.render();
+    expect(painter.bytes).toBe(before + 150_000 * 16);
+    chart.destroy();
+    expect(painter.bytes).toBe(before);
+  });
+
+  it("keeps precision for extreme values and resolves any CSS color", async () => {
+    const chart = createChart(host, {
+      x: { domain: [0, 10e100], grid: false },
+      y: { domain: [0, 10], grid: false },
+      marks: [
+        point(cloudTable(150_000, 1e100), { x: "x", y: "y", r: 4, fill: "color(srgb 1 0 0)" }),
+      ],
+    });
+    await chart.loading;
+    expect(paints).toEqual([true]);
+    expect(Array.from(pixel(chart, 5e100, 5))).toEqual([255, 0, 0, 255]);
+    chart.destroy();
+  });
+
+  it("places points on the CPU when the GPU would lose precision or overflow", async () => {
+    // One far-away point makes the data's span huge; zoomed near zero, the
+    // GPU representation is too coarse, so the CPU draws the points.
+    const far = cloudTable(150_000);
+    far.set("x", 3, -1e16);
+    const zoomed = createChart(host, {
+      x: { domain: [4, 6], grid: false },
+      y: { domain: [0, 10], grid: false },
+      marks: [point(far, { x: "x", y: "y", r: 4, fill: "#000000" })],
+    });
+    await zoomed.loading;
+    expect(paints).toEqual([false]);
+    expect(pixel(zoomed, 5, 5)[3]).toBe(255);
+    zoomed.destroy();
+    paints = [];
+    const huge = cloudTable(150_000);
+    huge.set("x", 3, -1e308);
+    huge.set("x", 4, 1e308);
+    const overflow = createChart(host, {
+      x: { domain: [0, 10], grid: false },
+      y: { domain: [0, 10], grid: false },
+      marks: [point(huge, { x: "x", y: "y", r: 4, fill: "#000000" })],
+    });
+    await overflow.loading;
+    expect(paints).toEqual([false]);
+    expect(pixel(overflow, 5, 5)[3]).toBe(255);
+    overflow.destroy();
+  });
+
+  it("places points on the CPU when the GPU cannot draw them", async () => {
+    const chart = createChart(host, {
+      x: { domain: [0, 10], grid: false },
+      y: { domain: [0, 10], grid: false },
+      // Larger than any device's largest point sprite.
+      marks: [point(cloudTable(150_000), { x: "x", y: "y", r: 600, fill: "#000000" })],
+    });
+    await chart.loading;
+    expect(paints).toEqual([false]);
+    expect(pixel(chart, 5, 5)[3]).toBe(255);
+    chart.destroy();
+  });
+
+  it("does not load the painter when no series becomes a cloud", () => {
+    const chart = createChart(host, {
+      marks: [point(cloudTable(150_000), { x: "x", y: "y", sampling: "pixel" })],
+    });
+    expect(chart.loading).toBeUndefined();
+    chart.destroy();
+  });
+
+  it("finds points under the pointer and exports them as SVG", async () => {
+    const chart = createChart(host, {
+      x: { domain: [0, 10] },
+      y: { domain: [0, 10] },
+      marks: [point(cloudTable(150_000), { x: "x", y: "y" })],
+    });
+    await chart.loading;
+    const inspection = chart.model.inspect(
+      chart.model.xScale()!.map(5),
+      chart.model.yScale()!.map(5),
+    );
+    expect(inspection?.x).toBe(5);
+    expect(chart.toSVG()).toContain("<path");
     chart.destroy();
   });
 });

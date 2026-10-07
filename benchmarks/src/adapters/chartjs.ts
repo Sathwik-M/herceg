@@ -220,10 +220,18 @@ export const adapter: Adapter = {
           plugins: { tooltip: { enabled: options.tooltip } },
         },
       });
-      return handle<PointData>(chart, (next) => {
-        chart.data.datasets[0]!.data = scatterPoints(next);
-        chart.update("none");
-      });
+      return {
+        ...handle<PointData>(chart, (next) => {
+          chart.data.datasets[0]!.data = scatterPoints(next);
+          chart.update("none");
+        }),
+        setViewport(x0, x1) {
+          const x = chart.options.scales!.x!;
+          x.min = x0;
+          x.max = x1;
+          chart.update("none");
+        },
+      };
     },
   },
   // Chart.js has no built-in heatmap; chartjs-chart-matrix is a third-party plugin.
