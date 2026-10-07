@@ -12,7 +12,6 @@ export type RuleOptions = Omit<RuleSpec, "type">;
 export class RuleMark implements Mark<RuleSpec> {
   readonly spec: RuleSpec;
   readonly table = undefined;
-  readonly zero = false;
   readonly tooltip = "x";
 
   constructor(spec: RuleSpec) {

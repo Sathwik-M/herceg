@@ -193,7 +193,7 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
   bar: {
     required: ["x", "y"],
     checks: {
-      x: field,
+      x: fields,
       y: fields,
       series: field,
       stack: boolean,
@@ -261,7 +261,9 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     tooltip: (t, path) => {
       if (typeof t === "boolean") return;
       object(t, path);
-      properties(t as Record<string, unknown>, path, { mode: oneOf("nearest-x", "nearest") });
+      properties(t as Record<string, unknown>, path, {
+        mode: oneOf("nearest-x", "nearest-y", "nearest"),
+      });
     },
     interaction: (i, path) => {
       object(i, path);

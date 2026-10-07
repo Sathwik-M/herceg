@@ -35,16 +35,16 @@ reproducible benchmark suite.
 
 ## Roadmap
 
-Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar,
-point, heatmap, and rule marks, level of detail, streaming updates, shared
+Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
+(vertical and horizontal), point, heatmap, and rule marks, level of detail, streaming updates, shared
 scheduler, browser interaction, static SVG, React adapter, min/max indexes
 for zooming large line series, WebGL drawing of large point series, chart
 specs with binary columns, Python package.
 
 Next:
 
-1. Annotations, horizontal bars, error bars, and custom marks with pluggable
-   geometry drawing (which also keeps unused mark kinds out of bundles).
+1. Annotations, error bars, and custom marks with pluggable geometry drawing
+   (which also keeps unused mark kinds out of bundles).
 2. Min/max indexes that update incrementally while very large series stream,
    and indexes for areas.
 3. Live notebook charts (a widget that streams updates from Python) and PDF

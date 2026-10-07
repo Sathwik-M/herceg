@@ -53,7 +53,7 @@ export class AreaMark implements Mark<AreaSpec> {
   readonly table: Table<Schema>;
   readonly #split: SeriesSplitter | undefined;
   readonly #stacks = new TableCache<Map<string, StackLayers>>();
-  readonly zero: boolean;
+  readonly zero: "y" | undefined;
 
   constructor(spec: AreaSpec, table: Table<Schema>) {
     this.spec = spec;
@@ -78,7 +78,7 @@ export class AreaMark implements Mark<AreaSpec> {
       }
       this.#split = new SeriesSplitter(table, spec.x, ys, spec.series, spec.label);
     }
-    this.zero = !band;
+    this.zero = band ? undefined : "y";
   }
 
   readonly tooltip = "x";

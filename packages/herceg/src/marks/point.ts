@@ -43,7 +43,6 @@ const NO_COORDS = new Float32Array(0);
 export class PointMark implements Mark<PointSpec> {
   readonly spec: PointSpec;
   readonly table: Table<Schema>;
-  readonly zero = false;
   readonly tooltip = "point";
   readonly inset: number;
   readonly #split: SeriesSplitter;

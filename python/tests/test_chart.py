@@ -102,5 +102,22 @@ def test_area_and_series_options_are_checked_like_the_spec_loader():
         hg.Chart(DATA).area(x="t", y1="p50")
     with pytest.raises(ValueError, match="not a series column"):
         hg.Chart(DATA).area(x="t", y="p50", series="host", stack=True)
-    with pytest.raises(ValueError, match="several y columns or a series column"):
+    with pytest.raises(ValueError, match="several value columns or a series column"):
         hg.Chart(DATA).line(x="t", y=["p50", "p99"], series="host")
+
+
+def test_a_category_y_makes_bars_horizontal():
+    spec, _ = hg.bar(DATA, x=["p50", "p99"], y="host", stack=True).to_spec()
+    assert spec["marks"][0] == {
+        "type": "bar",
+        "x": ["p50", "p99"],
+        "y": "host",
+        "stack": True,
+        "data": "data",
+    }
+    with pytest.raises(ValueError, match="need a category y"):
+        hg.bar(DATA, x=["p50", "p99"], y="p50")
+    with pytest.raises(TypeError, match="horizontal bar x"):
+        hg.bar(DATA, x="host", y="host")
+    svg = hg.bar(DATA, x="p50", y="host", width=300, height=150).to_svg()
+    assert svg.count('Z" fill') == 1

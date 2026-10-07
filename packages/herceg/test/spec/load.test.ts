@@ -159,9 +159,30 @@ describe("loadSpec", () => {
     expect(check({ y: { format: { maximumFractionDigits: -1 } }, marks: [] })).toThrow(
       /spec\.y\.format: /,
     );
+    expect(
+      check({
+        data: { t: { columns: { v: [1], name: ["a"] } } },
+        marks: [{ type: "bar", x: [], y: "name" }],
+      }),
+    ).toThrow(/marks\[0\]\.x: expected at least one field name/);
+    expect(check({ tooltip: { mode: "nearest-z" }, marks: [] })).toThrow(/spec\.tooltip\.mode/);
     // Valid edge cases the TypeScript API produces still load.
     expect(check({ marks: [{ type: "rule", y: 1, strokeWidth: 0 }] })).not.toThrow();
     expect(check({ x: { type: "time", format: { hour: "2-digit" } }, marks: [] })).not.toThrow();
+  });
+
+  it("draws horizontal bars from a category y", () => {
+    const svg = specToSVG(
+      {
+        data: { sales: { columns: { region: ["N", "S"], q1: [1, 2], q2: [3, 4] } } },
+        marks: [{ type: "bar", x: ["q1", "q2"], y: "region", stack: true }],
+        tooltip: { mode: "nearest-y" },
+        width: 400,
+        height: 200,
+      },
+      [],
+    );
+    expect(svg.match(/<path d="M[^"]*Z" fill/g)).toHaveLength(2);
   });
 
   it("keeps fields named like object internals", () => {

@@ -18,7 +18,7 @@ function build(config: ChartConfig, width = 600, height = 300) {
 
 const rects = (scene: Scene) => scene.marks.filter((m): m is RectGeometry => m.kind === "rect");
 const rect = (geometry: RectGeometry, i: number) =>
-  Array.from(geometry.rects.subarray(i * 4, i * 4 + 4));
+  Array.from(geometry.rects.subarray(i * 4, i * 4 + 4)) as [number, number, number, number];
 
 describe("bar", () => {
   const sales = table({ region: ["N", "S", "E"], q1: [10, 20, 30], q2: [5, -10, 15] });
@@ -191,6 +191,186 @@ describe("bar", () => {
   });
 });
 
+describe("horizontal bar", () => {
+  const sales = table({ region: ["N", "S", "E"], q1: [10, 20, 30], q2: [5, -10, 15] });
+  const left = (scene: Scene) => scene.axes.find((a) => a.orient === "left")!;
+
+  it("puts categories on y, top to bottom, and lengths on x from zero", () => {
+    const { scene, model } = build({ marks: [bar(sales, { x: "q1", y: "region" })] });
+    const x = model.xScale()!;
+    expect(model.yScale()!.type).toBe("band");
+    expect(left(scene).ticks.map((t) => t.label)).toEqual(["N", "S", "E"]);
+    const [n, s] = left(scene).ticks;
+    expect(n!.position).toBeLessThan(s!.position);
+    const [q1] = rects(scene);
+    for (let i = 0; i < 3; i++) {
+      const [rx, ry, rw, rh] = rect(q1!, i);
+      expect(rx).toBeCloseTo(x.map(0), 3);
+      expect(rx + rw).toBeCloseTo(x.map(sales.numbers("q1")[i]!), 3);
+      expect(ry + rh / 2).toBeCloseTo(left(scene).ticks[i]!.position, 3);
+    }
+    // The x axis measures lengths: it starts at zero, ends on a round tick, and has grid lines.
+    expect(x.domain).toEqual([0, 30]);
+    expect(scene.grid.x.length).toBeGreaterThan(0);
+    expect(scene.grid.y).toEqual([]);
+  });
+
+  it("groups series top to bottom within each band", () => {
+    const { scene } = build({ marks: [bar(sales, { x: ["q1", "q2"], y: "region" })] });
+    const [q1, q2] = rects(scene);
+    for (let i = 0; i < 3; i++) {
+      const [, y1, , h1] = rect(q1!, i);
+      const [, y2] = rect(q2!, i);
+      expect(y1 + h1).toBeLessThanOrEqual(y2);
+    }
+  });
+
+  it("stacks positive values rightward and negative values leftward", () => {
+    const { scene, model } = build({
+      marks: [bar(sales, { x: ["q1", "q2"], y: "region", stack: true })],
+    });
+    const x = model.xScale()!;
+    const [q1, q2] = rects(scene);
+    // N: q2 starts where q1 ends.
+    expect(rect(q2!, 0)[0]).toBeCloseTo(rect(q1!, 0)[0]! + rect(q1!, 0)[2]!, 3);
+    // S: q2 is negative, so it grows left from zero.
+    const [sx, , sw] = rect(q2!, 1);
+    expect(sx + sw).toBeCloseTo(x.map(0), 3);
+    expect(sx).toBeCloseTo(x.map(-10), 3);
+    expect(x.domain[0]).toBeLessThanOrEqual(-10);
+    expect(x.domain[1]).toBeGreaterThanOrEqual(45);
+  });
+
+  it("reports every series in the band nearest the pointer", () => {
+    const { scene, model } = build({ marks: [bar(sales, { x: ["q1", "q2"], y: "region" })] });
+    expect(model.tooltipMode()).toBe("nearest-y");
+    const s = left(scene).ticks[1]!.position;
+    const inspection = model.inspect(scene.plot.x + 5, s + 2)!;
+    expect(inspection.axis).toBe("y");
+    expect(inspection.label).toBe("S");
+    expect(inspection.position).toBeCloseTo(s, 3);
+    expect(inspection.points.map((p) => [p.label, p.text])).toEqual([
+      ["q1", "20"],
+      ["q2", "-10"],
+    ]);
+    const key = model.series()[1]!.key;
+    const keyboard = model.inspectPosition(key, 2)!;
+    expect([keyboard.axis, keyboard.label, keyboard.points.length]).toEqual(["y", "E", 2]);
+  });
+
+  it("reports stacked values, not stack ends", () => {
+    const { scene, model } = build({
+      marks: [bar(sales, { x: ["q1", "q2"], y: "region", stack: true })],
+    });
+    const n = left(scene).ticks[0]!.position;
+    const inspection = model.inspect(scene.plot.x + 5, n)!;
+    expect(inspection.points.map((p) => p.text)).toEqual(["10", "5"]);
+    // The marker sits at the end of each segment.
+    expect(inspection.points[1]!.px).toBeCloseTo(model.xScale()!.map(15), 3);
+  });
+
+  it("grows bars from the left edge of a log x axis", () => {
+    const positive = table({ name: ["a", "b"], v: [10, 1000] });
+    const { scene } = build({
+      marks: [bar(positive, { x: "v", y: "name" })],
+      x: { type: "log" },
+    });
+    const [bars] = rects(scene);
+    expect(rect(bars!, 0)[0]).toBeCloseTo(scene.plot.x, 3);
+    expect(rect(bars!, 1)[0]).toBeCloseTo(scene.plot.x, 3);
+  });
+
+  it("shortens long category labels instead of squeezing the plot", () => {
+    const long = table({ name: ["x".repeat(200), "short"], v: [1, 2] });
+    const { scene } = build({ marks: [bar(long, { x: "v", y: "name" })] });
+    const labels = left(scene).ticks.map((t) => t.label);
+    expect(labels[0]!.endsWith("…")).toBe(true);
+    expect(labels[1]).toBe("short");
+    expect(estimateText(labels[0]!, "12px sans-serif")).toBeLessThanOrEqual(600 * 0.3);
+    expect(scene.plot.width).toBeGreaterThan(300);
+  });
+
+  it("leaves rows without a category out of the x domain", () => {
+    const partial = table({ name: ["a", null], v: [1, 1_000_000] });
+    const { model } = build({ marks: [bar(partial, { x: "v", y: "name" })] });
+    expect(model.xScale()!.domain).toEqual([0, 1]);
+  });
+
+  it("fits the x domain to visible series", () => {
+    const uneven = table({ name: ["a", "b"], small: [1, 2], large: [1000, 2000] });
+    const { model } = build({ marks: [bar(uneven, { x: ["small", "large"], y: "name" })] });
+    model.hidden.add(model.series()[1]!.key);
+    model.scene(estimateText);
+    expect(model.xScale()!.domain[1]).toBe(2);
+  });
+
+  it("reports only bars drawn in view", () => {
+    const lengths = table({ name: ["a", "b"], v: [1, 10] });
+    const { model } = build({ marks: [bar(lengths, { x: "v", y: "name" })] });
+    model.setViewport([5, 8]);
+    const scene = model.scene(estimateText);
+    const y = model.yScale()!;
+    // Bar a ends at 1, left of the view; bar b crosses the whole view.
+    const a = model.inspect(scene.plot.x + 5, y.map(0));
+    expect(a?.label).toBe("b");
+    const b = model.inspect(scene.plot.x + 5, y.map(1))!;
+    expect(b.points.map((p) => p.text)).toEqual(["10"]);
+    // The nearest-point mode skips the clipped bar too.
+    expect(model.inspect(scene.plot.x + 1, y.map(0), "nearest")?.label).toBe("b");
+  });
+
+  it("does not report lengths a log axis cannot place", () => {
+    const signed = table({ name: ["a", "b"], v: [-5, 10] });
+    const { scene, model } = build({
+      marks: [bar(signed, { x: "v", y: "name" })],
+      x: { type: "log" },
+    });
+    const inspection = model.inspect(scene.plot.x + 5, model.yScale()!.map(0));
+    expect(inspection?.label).toBe("b");
+    expect(inspection?.points.every((p) => Number.isFinite(p.px))).toBe(true);
+  });
+
+  it("finds the bar of a category whose first row is missing", () => {
+    const repeated = table({ name: ["a", "a"], v: [Number.NaN, 10] });
+    const { scene, model } = build({ marks: [bar(repeated, { x: "v", y: "name" })] });
+    const inspection = model.inspect(scene.plot.x + 5, model.yScale()!.map(0))!;
+    expect(inspection.points.map((p) => p.text)).toEqual(["10"]);
+    const vertical = build({ marks: [bar(repeated, { x: "name", y: "v" })] });
+    const plot = vertical.scene.plot;
+    const column = vertical.model.inspect(vertical.model.xScale()!.map(0), plot.y + 5)!;
+    expect(column.points.map((p) => p.text)).toEqual(["10"]);
+    // A row a log axis cannot place is skipped the same way.
+    const signed = table({ name: ["a", "a"], v: [-1, 10] });
+    const log = build({ marks: [bar(signed, { x: "name", y: "v" })], y: { type: "log" } });
+    const logColumn = log.model.inspect(log.model.xScale()!.map(0), log.scene.plot.y + 5)!;
+    expect(logColumn.points.map((p) => p.text)).toEqual(["10"]);
+  });
+
+  it("places the cursor along y whatever the tooltip mode", () => {
+    for (const mode of ["nearest-y", "nearest", "nearest-x"] as const) {
+      const { model } = build({ marks: [bar(sales, { x: "q1", y: "region" })], tooltip: { mode } });
+      expect(model.cursorAxis()).toBe("y");
+    }
+    expect(build({ marks: [bar(sales, { x: "region", y: "q1" })] }).model.cursorAxis()).toBe("x");
+  });
+
+  it("names the category in nearest-point tooltips", () => {
+    const { scene, model } = build({
+      marks: [bar(sales, { x: "q1", y: "region" })],
+      tooltip: { mode: "nearest" },
+    });
+    const x = model.xScale()!;
+    const inspection = model.inspect(x.map(20) - 2, left(scene).ticks[1]!.position)!;
+    expect([inspection.axis, inspection.label]).toEqual(["y", "S"]);
+    expect(inspection.points.map((p) => p.text)).toEqual(["20"]);
+  });
+
+  it("needs a category y for several x fields", () => {
+    const options = { x: ["q1", "q2"], y: "q1" } as never;
+    expect(() => bar(sales, options)).toThrow(/several x fields/);
+  });
+});
+
 describe("point", () => {
   it("draws every point and picks the nearest through its index", () => {
     const pts = table({ x: [0, 1, 2, 3], y: [0, 1, 0, 1], kind: ["a", "b", "a", "b"] });
@@ -200,7 +380,7 @@ describe("point", () => {
     expect(model.tooltipMode()).toBe("nearest");
     const target = model.xScale()!.map(2);
     const inspection = model.inspect(target + 2, model.yScale()!.map(0) - 1)!;
-    expect(inspection.x).toBe(2);
+    expect(inspection.value).toBe(2);
     expect(inspection.points[0]!.label).toBe("a");
   });
 
@@ -269,7 +449,7 @@ describe("point", () => {
     build({ marks: [mark] }, 600, 300);
     const { model } = build({ marks: [mark] }, 300, 150);
     const inspection = model.inspect(model.xScale()!.map(10), model.yScale()!.map(10))!;
-    expect(inspection.x).toBe(10);
+    expect(inspection.value).toBe(10);
   });
 
   it("does not pick points clipped out of view", () => {
@@ -279,7 +459,7 @@ describe("point", () => {
     const scene = model.scene(estimateText);
     expect((scene.marks[0] as PointGeometry).count).toBe(1);
     const inspection = model.inspect(scene.plot.x, model.yScale()!.map(5))!;
-    expect(inspection.x).toBe(1);
+    expect(inspection.value).toBe(1);
   });
 
   it("snaps nearest-x tooltips to points inside the x domain", () => {
@@ -290,13 +470,13 @@ describe("point", () => {
     });
     model.setViewport([0, 10]);
     const scene = model.scene(estimateText);
-    expect(model.inspect(scene.plot.x, scene.plot.y + 5)!.x).toBe(1);
+    expect(model.inspect(scene.plot.x, scene.plot.y + 5)!.value).toBe(1);
     // Sorted series too: the nearest x inside [2.5, 5] to 2.5 is 3, not 2.
     const steps = table({ x: [0, 1, 2, 3, 4, 5, 6], v: [0, 1, 2, 3, 4, 5, 6] });
     const lines = build({ marks: [line(steps, { x: "x", y: "v" })] }).model;
     lines.setViewport([2.5, 5]);
     const plot = lines.scene(estimateText).plot;
-    expect(lines.inspect(plot.x, plot.y + 5)!.x).toBe(3);
+    expect(lines.inspect(plot.x, plot.y + 5)!.value).toBe(3);
   });
 
   it("honors an explicit nearest-x tooltip mode", () => {
@@ -308,7 +488,7 @@ describe("point", () => {
     expect(model.tooltipMode()).toBe("nearest-x");
     // Far below the point, but at its x.
     const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(3))!;
-    expect(inspection.x).toBe(1);
+    expect(inspection.value).toBe(1);
     expect(inspection.points[0]!.value).toBe(4);
   });
 });
@@ -320,16 +500,31 @@ describe("heatmap", () => {
     v: [0, 1, 2, Number.NaN],
   });
 
-  it("rasterizes cells with the first row at the bottom", () => {
+  it("rasterizes category rows top to bottom, in step with the axis", () => {
     const { scene } = build({ marks: [heatmap(cells, { x: "col", y: "row", value: "v" })] });
     const raster = scene.marks[0] as RasterGeometry;
     expect([raster.columns, raster.rows]).toEqual([2, 2]);
     const alpha = (c: number, r: number) => raster.pixels[(r * 2 + c) * 4 + 3];
-    // Raster row 1 is the bottom band ("low"); the missing cell is transparent.
-    expect(alpha(0, 1)).toBe(255);
-    expect(alpha(1, 0)).toBe(0);
+    // "low" is the first category, so the top row; the missing cell (b, high) is transparent.
+    const ticks = scene.axes.find((a) => a.orient === "left")!.ticks;
+    expect(ticks.map((t) => t.label)).toEqual(["low", "high"]);
+    expect(ticks[0]!.position).toBeLessThan(raster.y + raster.height / 2);
+    expect(alpha(1, 0)).toBe(255);
+    expect(alpha(1, 1)).toBe(0);
     expect(raster.width).toBeCloseTo(scene.plot.width, 0);
     expect(raster.height).toBeCloseTo(scene.plot.height, 0);
+  });
+
+  it("rasterizes rows of numbers bottom to top, like a numeric axis", () => {
+    const grid = table({ x: ["a", "a"], y: [1, 2], v: [Number.NaN, 5] });
+    const { scene } = build({ marks: [heatmap(grid, { x: "x", y: "y", value: "v" })] });
+    const raster = scene.marks[0] as RasterGeometry;
+    const ticks = scene.axes.find((a) => a.orient === "left")!.ticks;
+    expect(ticks.map((t) => t.label)).toEqual(["1", "2"]);
+    expect(ticks[0]!.position).toBeGreaterThan(ticks[1]!.position);
+    // y = 2 (the only value) is the top raster row.
+    expect(raster.pixels[3]).toBe(255);
+    expect(raster.pixels[7]).toBe(0);
   });
 
   it("uses distinct numbers as ordered columns", () => {

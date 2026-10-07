@@ -119,7 +119,6 @@ describe("domains", () => {
     const counting: Mark = {
       spec: inner.spec,
       table: inner.table,
-      zero: inner.zero,
       tooltip: inner.tooltip,
       channelKind: (axis) => inner.channelKind(axis),
       series: (key, palette) => inner.series(key, palette),
@@ -183,7 +182,7 @@ describe("inspect", () => {
       scene.plot.y + scene.plot.height - 1,
       "nearest",
     )!;
-    expect(inspection.x).toBe(3);
+    expect(inspection.value).toBe(3);
   });
 
   it("reaches every point by position, including repeated x values", () => {
@@ -191,6 +190,6 @@ describe("inspect", () => {
     const { model } = build({ marks: [line(data, { x: "x", y: "y" })] });
     const key = model.series()[0]!.key;
     expect(model.inspectPosition(key, 1)!.points[0]!.value).toBe(6);
-    expect(model.inspectPosition(key, 2)!.x).toBe(1);
+    expect(model.inspectPosition(key, 2)!.value).toBe(1);
   });
 });

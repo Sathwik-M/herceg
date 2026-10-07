@@ -48,7 +48,6 @@ interface Indexes {
 export class LineMark implements Mark<LineSpec> {
   readonly spec: LineSpec;
   readonly table: Table<Schema>;
-  readonly zero = false;
   readonly tooltip = "x";
   readonly #split: SeriesSplitter;
   readonly #indexes = new TableCache<Indexes>();

@@ -9,7 +9,7 @@ from typing import Any, Literal
 from . import _render
 from ._data import Column, Table
 
-Tooltip = Literal["nearest-x", "nearest"]
+Tooltip = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after"]
 
 _NUMERIC = ("number", "time")
@@ -197,7 +197,7 @@ class Chart:
 
     def bar(
         self,
-        x: str,
+        x: str | Sequence[str],
         y: str | Sequence[str],
         *,
         series: str | None = None,
@@ -208,16 +208,27 @@ class Chart:
         label: str | None = None,
         id: str | None = None,
     ) -> Chart:
-        """Vertical bars: one band per category of x, or bars centered on number or time x."""
+        """Bars: one band per category of x, or bars centered on number or time x.
+
+        A category ``y`` makes the bars horizontal, with lengths in ``x``.
+        """
         table = self._mark_table(data)
-        self._require(table, x, ("number", "time", "category"), "bar x")
-        ys = self._require_many(table, y, _NUMERIC, "bar y")
+        if isinstance(y, str) and self._kind(table, y) == "category":
+            xs = self._require_many(table, x, _NUMERIC, "horizontal bar x")
+            self._single_or_series(xs, series, "bar")
+            ys: str | list[str] = y
+        else:
+            if not isinstance(x, str):
+                raise ValueError("bar: several x columns need a category y (horizontal bars)")
+            self._require(table, x, ("number", "time", "category"), "bar x")
+            xs = x
+            ys = self._require_many(table, y, _NUMERIC, "bar y")
+            self._single_or_series(ys, series, "bar")
         self._require(table, series, ("category",), "bar series")
-        self._single_or_series(ys, series, "bar")
         return self._add(
             {
                 "type": "bar",
-                "x": x,
+                "x": xs,
                 "y": ys,
                 "series": series,
                 "stack": stack or None,
@@ -412,9 +423,13 @@ class Chart:
                 f"{role}: column {field!r} holds {kind} values; expected {' or '.join(kinds)}"
             )
 
-    def _single_or_series(self, ys: str | list[str], series: str | None, role: str) -> None:
-        if series is not None and not isinstance(ys, str):
-            raise ValueError(f"{role}: use several y columns or a series column, not both")
+    def _kind(self, table: int, field: str) -> str | None:
+        source = self._tables[table][1]
+        return source.column(field).kind if field in source.names else None
+
+    def _single_or_series(self, fields: str | list[str], series: str | None, role: str) -> None:
+        if series is not None and not isinstance(fields, str):
+            raise ValueError(f"{role}: use several value columns or a series column, not both")
 
     def _require_many(
         self, table: int, fields: str | Sequence[str], kinds: tuple[str, ...], role: str
@@ -504,14 +519,14 @@ def area(
 
 def bar(
     data: Any,
-    x: str,
+    x: str | Sequence[str],
     y: str | Sequence[str],
     *,
     series: str | None = None,
     stack: bool = False,
     **options: Any,
 ) -> Chart:
-    """A bar chart, grouped or stacked."""
+    """A bar chart, grouped or stacked; horizontal when ``y`` is a category."""
     return Chart(data, **options).bar(x, y, series=series, stack=stack)
 
 

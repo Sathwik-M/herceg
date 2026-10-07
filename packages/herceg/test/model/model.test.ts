@@ -243,7 +243,7 @@ describe("inspect", () => {
     const { model, scene } = sceneOf({ marks: [line(data, { x: "x", y: ["a", "b"] })] });
     const px = scene.plot.x + scene.plot.width * 0.36; // nearest to x = 10
     const inspection = model.inspect(px, scene.plot.y + 20)!;
-    expect(inspection.x).toBe(10);
+    expect(inspection.value).toBe(10);
     expect(inspection.points.map((p) => [p.label, p.value])).toEqual([
       ["a", 2],
       ["b", 3],

@@ -101,13 +101,16 @@ export interface AxisSpec {
   type?: "linear" | "log" | "time";
   /** Fixed domain. Time domains are epoch milliseconds. */
   domain?: [number, number];
-  /** Extend the domain to round tick values. Default true for y. */
+  /**
+   * Extend the domain to round tick values. Default true for y, and for x
+   * when it measures horizontal bars.
+   */
   nice?: boolean;
-  /** Include zero in the domain. Default true for areas. */
+  /** Include zero in the domain. Default true for the value axis of areas and bars. */
   zero?: boolean;
   /** Axis title. */
   label?: string;
-  /** Grid lines across the plot. Default true for y. */
+  /** Grid lines across the plot. Default true for y, and for x when it measures horizontal bars. */
   grid?: boolean;
   /** Approximate number of ticks. */
   ticks?: number;
@@ -120,9 +123,11 @@ export interface AxisSpec {
 export interface TooltipSpec {
   /**
    * "nearest-x": every series at the x position nearest the pointer.
+   * "nearest-y": every series at the y position nearest the pointer (the
+   * default for horizontal bars).
    * "nearest": the single nearest point.
    */
-  mode?: "nearest-x" | "nearest";
+  mode?: "nearest-x" | "nearest-y" | "nearest";
 }
 
 export interface InteractionSpec {
@@ -213,12 +218,14 @@ export interface RuleSpec {
 }
 
 /**
- * Vertical bars. A category `x` gives one band per category; a number or time
- * `x` centers bars on their values.
+ * Bars. Vertical by default: a category `x` gives one band per category, a
+ * number or time `x` centers bars on its values, and `y` holds bar lengths.
+ * A category `y` makes them horizontal, with lengths in `x`. Several length
+ * fields are drawn side by side or stacked.
  */
 export interface BarSpec extends MarkBase {
   type: "bar";
-  x: Field;
+  x: Field | Field[];
   y: Field | Field[];
   series?: Field;
   /** Stack series instead of placing them side by side. */

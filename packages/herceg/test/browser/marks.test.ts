@@ -104,6 +104,55 @@ describe("new marks in the browser", () => {
     chart.destroy();
   });
 
+  it("follows the pointer along y over horizontal bars", async () => {
+    const sales = table({ region: ["North", "South"], a: [1, 2], b: [3, 4] });
+    const chart = createChart(host, { marks: [bar(sales, { x: ["a", "b"], y: "region" })] });
+    const y = chart.model.yScale()!;
+    const [left, right] = chart.model.xScale()!.range;
+    hover(chart.root, right - 4, y.map(1) + 3);
+    await frame();
+    const tooltip = tooltipOf(chart.root);
+    expect(tooltip.style.display).toBe("block");
+    expect(tooltip.textContent).toBe("Southa2b4");
+    // The crosshair runs across the plot through the band's center.
+    const crosshair = chart.root.querySelector("svg line[visibility=visible]")!;
+    expect(Number(crosshair.getAttribute("y1"))).toBeCloseTo(Math.round(y.map(1)) + 0.5, 3);
+    expect(crosshair.getAttribute("y1")).toBe(crosshair.getAttribute("y2"));
+    expect(Number(crosshair.getAttribute("x1"))).toBe(left);
+    expect(Number(crosshair.getAttribute("x2"))).toBe(right);
+    chart.destroy();
+  });
+
+  it("keeps horizontal bar charts out of shared x cursors", async () => {
+    const other = document.createElement("div");
+    other.style.cssText = "width:600px;height:300px";
+    document.body.append(other);
+    const sales = table({ region: ["North", "South"], a: [1, 2] });
+    const series = table({ t: [0, 1, 2], v: [1, 2, 3] });
+    const interaction = { sync: "hbar" };
+    // An explicit nearest-point mode keeps the bars' cursor along y.
+    const bars = createChart(host, {
+      marks: [bar(sales, { x: "a", y: "region" })],
+      interaction,
+      tooltip: { mode: "nearest" },
+    });
+    const lines = createChart(other, { marks: [line(series, { x: "t", y: "v" })], interaction });
+    const visibleCrosshair = (root: Element) => root.querySelector("svg line[visibility=visible]");
+    hover(bars.root, bars.model.xScale()!.map(1), bars.model.yScale()!.map(0));
+    await frame();
+    expect(visibleCrosshair(bars.root)).not.toBeNull();
+    expect(visibleCrosshair(lines.root)).toBeNull();
+    hover(lines.root, lines.model.xScale()!.map(1), 100);
+    await frame();
+    expect(visibleCrosshair(lines.root)).not.toBeNull();
+    bars.root.dispatchEvent(new PointerEvent("pointerleave"));
+    await frame();
+    expect(visibleCrosshair(bars.root)).toBeNull();
+    bars.destroy();
+    lines.destroy();
+    other.remove();
+  });
+
   it("replaces SVG nodes when a series changes from a line to points", () => {
     const data = table({ x: [0, 1, 2], v: [1, 3, 2] });
     const chart = createChart(host, {
@@ -297,7 +346,7 @@ describe("point clouds on the GPU", () => {
       chart.model.xScale()!.map(5),
       chart.model.yScale()!.map(5),
     );
-    expect(inspection?.x).toBe(5);
+    expect(inspection?.value).toBe(5);
     expect(chart.toSVG()).toContain("<path");
     chart.destroy();
   });

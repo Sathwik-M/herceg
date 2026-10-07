@@ -387,10 +387,18 @@ export class Chart implements Scheduled, SyncMember {
     if (this.#keyboard)
       return this.model.inspectPosition(this.#keyboard.key, this.#keyboard.position);
     const x = this.#syncedX;
-    if (x === null) return undefined;
+    if (x === null || !this.#sharesCursor()) return undefined;
     const px = this.model.series().length > 0 ? this.#xToPixel(x) : undefined;
     if (px === undefined) return undefined;
     return this.model.inspect(px, scene.plot.y + scene.plot.height / 2, "nearest-x");
+  }
+
+  /**
+   * Synced cursors are x positions. Charts whose data is placed along y
+   * (horizontal bars) measure values on x, so they neither share nor follow them.
+   */
+  #sharesCursor(): boolean {
+    return this.model.cursorAxis() === "x";
   }
 
   #xToPixel(x: number): number | undefined {
@@ -411,15 +419,24 @@ export class Chart implements Scheduled, SyncMember {
       this.#tooltip.hide();
       return;
     }
-    const x = String(Math.round(inspection.px) + 0.5);
-    this.#crosshair.setAttribute("x1", x);
-    this.#crosshair.setAttribute("x2", x);
-    this.#crosshair.setAttribute("y1", String(plot.y));
-    this.#crosshair.setAttribute("y2", String(plot.y + plot.height));
+    // The crosshair crosses the plot at the inspected position: a vertical
+    // line for x, a horizontal one for y.
+    const at = String(Math.round(inspection.position) + 0.5);
+    const vertical = inspection.axis === "x";
+    this.#crosshair.setAttribute("x1", vertical ? at : String(plot.x));
+    this.#crosshair.setAttribute("x2", vertical ? at : String(plot.x + plot.width));
+    this.#crosshair.setAttribute("y1", vertical ? String(plot.y) : at);
+    this.#crosshair.setAttribute("y2", vertical ? String(plot.y + plot.height) : at);
     this.#crosshair.setAttribute("stroke", theme.axis);
     this.#crosshair.setAttribute("visibility", "visible");
+    // A bar may end outside the plot; its marker would land on the axes.
+    const inside = (point: { px: number; py: number }) =>
+      point.px >= plot.x - 0.5 &&
+      point.px <= plot.x + plot.width + 0.5 &&
+      point.py >= plot.y - 0.5 &&
+      point.py <= plot.y + plot.height + 0.5;
     this.#dots.replaceChildren(
-      ...inspection.points.map((point) =>
+      ...inspection.points.filter(inside).map((point) =>
         svgElement(document, "circle", {
           cx: String(point.px),
           cy: String(point.py),
@@ -432,7 +449,11 @@ export class Chart implements Scheduled, SyncMember {
     );
     // Synced charts show the cursor; only the chart being used shows a tooltip.
     if (this.#pointer || this.#keyboard) {
-      const anchor = this.#pointer ?? { x: inspection.px, y: plot.y + plot.height / 2 };
+      const anchor =
+        this.#pointer ??
+        (vertical
+          ? { x: inspection.position, y: plot.y + plot.height / 2 }
+          : { x: plot.x + plot.width / 2, y: inspection.position });
       this.#tooltip.show(inspection, theme, anchor, { width: scene.width, height: scene.height });
     } else {
       this.#tooltip.hide();
@@ -465,7 +486,8 @@ export class Chart implements Scheduled, SyncMember {
       const sync = this.#options.interaction?.sync;
       const scale = this.model.xScale();
       // Share the data x under the pointer.
-      if (sync && scale) broadcastCursor(sync, this, scale.invert(this.#pointer.x));
+      if (sync && scale && this.#sharesCursor())
+        broadcastCursor(sync, this, scale.invert(this.#pointer.x));
     });
     on("pointerleave", () => {
       this.#pointer = null;

@@ -135,7 +135,7 @@ instead of 3 ms. Areas and long-format series (row subsets) are not indexed.
 ## Band axes
 
 A mark reports the kind of field on each position channel. A categorical
-field (bar x, heatmap x and y) puts the axis on a band scale whose values are
+field (bar x or y, heatmap x and y) puts the axis on a band scale whose values are
 category indices; the category labels are the union of what the marks on that
 axis contribute, in order of appearance. Bands are identified by raw value
 (a category, or a number's full-precision key), so values whose formatted
@@ -180,6 +180,15 @@ overflows, position error above a quarter pixel at the current zoom, points
 larger than the device's largest point sprite), without WebGL2, after a lost
 context, with `renderer: "svg"`, and in `toSVG()` and `renderToSVG`. Picking
 still uses the CPU grid index.
+
+Bars are horizontal when their `y` is a category, as in Plotly Express: the
+mark keeps series in chart coordinates (lengths in `x`, band indices in `y`,
+stack bases in `x0`), so the model's extents, picking, and inspection need
+no notion of orientation. An x axis that measures bar lengths takes the y
+axis' defaults: it includes zero, rounds its ends, and draws grid lines.
+Categories on a y axis run top to bottom, in reading order; bands of numbers
+and times run bottom to top like a numeric axis. Category labels longer than
+30% of the chart's width are shortened with an ellipsis.
 
 Bars on number or time x are 80% as wide as the smallest gap between
 neighboring distinct x values in view, across all series (capped at 64 px).
@@ -242,7 +251,9 @@ viewport (IntersectionObserver) stay dirty and render when they become
 visible. A chart's first frame renders synchronously when it is created.
 
 Charts that set the same `interaction.sync` name share the cursor x and the
-viewport.
+viewport. Charts inspected along y (horizontal bars) measure values on x, so
+they neither share nor follow the cursor; linking them by category is not
+supported.
 
 ## Identity and color
 
@@ -261,8 +272,12 @@ visible series at that x, "nearest" the closest point on screen (searching
 outward from the nearest x until points are farther away horizontally than
 the best match). Points and heatmaps answer "nearest" queries with their own
 index. "nearest-x" only snaps to points inside the visible x range, since
-clipped points are not drawn. Marks only choose the default mode: "nearest-x"
-when every mark is drawn along x (lines, areas, bars) and "nearest" otherwise.
+clipped points are not drawn. "nearest-y" does the same along y for
+horizontal bars, scanning each series (bars on a band axis are few) and
+reporting only bars with some part inside the x domain. Marks
+only choose the default mode: "nearest-x" when every mark is drawn along x
+(lines, areas, vertical bars), "nearest-y" when every mark is drawn along y
+(horizontal bars), and "nearest" otherwise.
 An explicit mode applies to every mark except heatmaps, which always report
 the cell under the pointer; when cells overlap, the mark drawn last wins. With zoom enabled, the wheel zooms x around the pointer,
 dragging pans, and double-click resets the viewport; both work in pixel space
@@ -325,8 +340,9 @@ frame scheduler, without rendering React. A test
 
 ## Known limits
 
-- Mark types: line, area, bar (vertical), point, heatmap, rule. No horizontal
-  bars, error bars, or custom marks.
+- Mark types: line, area, bar, point, heatmap, rule. No error bars, text
+  annotations, or custom marks. Horizontal bars need a category y; bars
+  along a number or time y are not supported.
 - Continuous color only for heatmaps; points cannot be colored by a numeric
   field.
 - One x and one y axis per chart.
@@ -342,4 +358,4 @@ frame scheduler, without rendering React. A test
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use
   Canvas or SVG. Uploads are not incremental: streaming a large point series
   uploads it again on every change.
-- No Python package or adapters for frameworks other than React. See the roadmap in the repository README.
+- No adapters for frameworks other than React. See the roadmap in the repository README.

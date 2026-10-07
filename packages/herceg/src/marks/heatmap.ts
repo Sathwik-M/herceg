@@ -35,7 +35,7 @@ export interface HeatmapOptions<S extends Schema> {
    * time fields give one column per distinct value, in ascending order.
    */
   x: FieldName<S>;
-  /** Row field, like `x`. The first row is at the bottom. */
+  /** Row field, like `x`. Categories run top to bottom, numbers and times bottom to top. */
   y: FieldName<S>;
   /** Cell value, mapped to color. */
   value: NumericField<S>;
@@ -64,7 +64,6 @@ interface CellLookup {
 export class HeatmapMark implements Mark<HeatmapSpec> {
   readonly spec: HeatmapSpec;
   readonly table: Table<Schema>;
-  readonly zero = false;
   readonly tooltip = "cell";
   readonly bandPadding = 0;
   /** Cell-to-row lookups, keyed by the column-index array they were built from. */
@@ -148,6 +147,9 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
     const colors = new SequentialScale(domain, this.spec.colors ?? frame.theme.sequential);
     const pixels = frame.bytes(s.key, "raster", columns * rows * 4);
     pixels.fill(0);
+    // Raster row 0 is the top. Bands of numbers rise from the bottom, so
+    // their band 0 is the last raster row; category bands start at the top.
+    const upward = frame.y.bandwidth! < 0;
     // Missing values leave their cell transparent rather than erasing an
     // earlier value for the same cell; the cell lookup agrees.
     for (let row = 0; row < s.length; row++) {
@@ -155,21 +157,20 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
       const r = s.y[row]!;
       const value = s.values[row]!;
       if (c < 0 || r < 0 || !Number.isFinite(value)) continue;
-      // Raster row 0 is the top; band 0 of the y axis is the bottom.
-      colors.write(value, pixels, ((rows - 1 - r) * columns + c) * 4);
+      colors.write(value, pixels, ((upward ? rows - 1 - r : r) * columns + c) * 4);
     }
     const left = frame.x.start!(0);
     const right = frame.x.start!(columns - 1) + frame.x.bandwidth!;
-    const bottom = frame.y.start!(0);
-    const top = frame.y.start!(rows - 1) + frame.y.bandwidth!;
+    const first = frame.y.start!(0);
+    const last = frame.y.start!(rows - 1) + frame.y.bandwidth!;
     return [
       {
         kind: "raster",
         key: s.key,
         x: Math.min(left, right),
-        y: Math.min(top, bottom),
+        y: Math.min(first, last),
         width: Math.abs(right - left),
-        height: Math.abs(bottom - top),
+        height: Math.abs(last - first),
         columns,
         rows,
         pixels: pixels.subarray(0, columns * rows * 4),

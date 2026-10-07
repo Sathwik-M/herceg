@@ -21,6 +21,7 @@ One call makes a chart of one kind:
 hg.line(df, x="time", y="latency", series="service")
 hg.area(df, x="time", y=["user", "system"], stack=True)
 hg.bar(sales, x="region", y=["q1", "q2"])
+hg.bar(sales, x="q1", y="region")  # a category y gives horizontal bars
 hg.scatter(cars, x="weight", y="mpg", series="origin", r=3)
 hg.heatmap(load, x="hour", y="host", value="cpu")
 ```
@@ -37,7 +38,7 @@ chart = (
 
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 (`hg.Axis(type="log", domain=(0, 100), label="ms", ...)` or a dict),
-`legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest"`), `zoom`,
+`legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`,
 `sync` (charts with the same name on one HTML page share cursor and zoom;
 notebook outputs are separate iframes, so `sync` does not reach across
 cells), `renderer`, `theme` (`"light"`, `"dark"`, or a dict), `locale`, and

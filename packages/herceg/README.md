@@ -83,6 +83,7 @@ Bars, points, and heatmaps:
 ```ts
 const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
 bar(sales, { x: "region", y: ["q1", "q2"] }); // grouped; stack: true stacks them
+bar(sales, { x: "q1", y: "region" }); // a category y gives horizontal bars
 bar(requests, { x: "time", y: "latency" }); // number or time x: bars centered on values
 
 point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
@@ -91,8 +92,10 @@ const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(load, { x: "hour", y: "host", value: "cpu" });
 ```
 
-A category field on `x` (bars) or on `x` and `y` (heatmaps) gives a band axis.
-Heatmaps also accept number and time fields, with one column or row per
+A category field on `x` or `y` (bars) or on `x` and `y` (heatmaps) gives a
+band axis. Categories on a y axis run top to bottom; long names are shortened
+with an ellipsis. Horizontal bars default to "nearest-y" tooltips, which
+report every series in the band under the pointer. Heatmaps also accept number and time fields, with one column or row per
 distinct value, up to 4,194,304 cells (bin finer data first). Heatmaps show a
 color legend instead of series entries; `colors` takes a ramp of `#rgb` or
 `#rrggbb` colors from low to high.
@@ -108,7 +111,7 @@ Marks are drawn in array order; rules always draw above other marks.
 | `width`, `height` | Fixed size; omitted dimensions follow the container. |
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`. |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
-| `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest" }`. |
+| `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
 | `interaction` | `{ zoom: true }` for wheel zoom and drag pan; `{ sync: "name" }` to share cursor and zoom with other charts. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | `"light"`, `"dark"`, or an object overriding colors and fonts. |

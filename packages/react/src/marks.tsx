@@ -63,7 +63,7 @@ export const Area = /* @__PURE__ */ markElement(
     area(data, options as AreaOptions<Schema>),
 ) as unknown as <S extends Schema>(props: WithData<AreaOptions<S>, S>) => null;
 
-/** Vertical bars. */
+/** Bars: vertical, or horizontal when `y` is a category. */
 export const Bar = /* @__PURE__ */ markElement(
   "Bar",
   ({ data, ...options }: WithData<BarOptions<Schema>, Schema>) => bar(data, options),

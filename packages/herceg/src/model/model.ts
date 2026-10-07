@@ -4,9 +4,17 @@
 // buffers, the zoomed x range, hidden series, and layout hysteresis.
 
 import { type Formatter, formatNumber, timeValueFormatter } from "../format/format.ts";
-import type { MeasureText } from "../layout/text.ts";
+import { fitText, type MeasureText } from "../layout/text.ts";
 import { Polyline } from "../lod/polyline.ts";
-import type { BandContext, BandList, Bands, Frame, Hit, Mark } from "../marks/mark.ts";
+import {
+  type BandContext,
+  type BandList,
+  type Bands,
+  type Frame,
+  type Hit,
+  type Mark,
+  numericBands,
+} from "../marks/mark.ts";
 import {
   nearestPosition,
   nearestPositionWithin,
@@ -56,14 +64,17 @@ export interface InspectedPoint {
 }
 
 export interface Inspection {
-  /** Data x of the inspected position, snapped to the nearest data point. */
-  x: number;
-  px: number;
+  /** The axis the inspection follows: "y" in nearest-y mode, otherwise "x". */
+  axis: "x" | "y";
+  /** Data value on that axis, snapped to the nearest data point. */
+  value: number;
+  /** Pixel position of `value` on that axis. */
+  position: number;
   label: string;
   points: InspectedPoint[];
 }
 
-export type TooltipMode = "nearest-x" | "nearest";
+export type TooltipMode = "nearest-x" | "nearest-y" | "nearest";
 
 interface MarkSeries {
   mark: Mark;
@@ -72,6 +83,8 @@ interface MarkSeries {
 
 interface LastFrame {
   marks: MarkSeries[];
+  /** The mark of each series, for how its points are inspected and formatted. */
+  markOf: Map<Series, Mark>;
   frame: Frame;
   mode: TooltipMode;
   formatX: Formatter;
@@ -218,7 +231,18 @@ export class ChartModel {
     const type = this.#axisType("x");
     if (type === "band") return undefined;
     const marks = this.#resolveSeries(this.#bands, this.#context());
-    return unionExtent(marks.map(({ mark, series }) => mark.xExtent(series, type === "log")));
+    return unionExtent(
+      marks.map(({ mark, series }) => mark.xExtent(this.#xSeries(mark, series), type === "log")),
+    );
+  }
+
+  /**
+   * Series that set a mark's x extent. An x axis measuring values (bar
+   * lengths) follows visible series, as y does; other x extents keep hidden
+   * series so toggling one does not shift the axis.
+   */
+  #xSeries(mark: Mark, series: Series[]): Series[] {
+    return mark.zero === "x" ? series.filter((s) => !this.hidden.has(s.key)) : series;
   }
 
   #pooled<T>(pool: Map<string, T>, key: string, create: () => T): T {
@@ -288,11 +312,12 @@ export class ChartModel {
           .map(({ mark }) => mark.bandPadding ?? 0.2),
       );
 
+    const drawn = marks.filter(({ series }) => series.length > 0);
     // Room for glyphs that reach past their data position at the plot edges.
-    const inset = Math.max(
-      0,
-      ...marks.filter(({ series }) => series.length > 0).map(({ mark }) => mark.inset ?? 0),
-    );
+    const inset = Math.max(0, ...drawn.map(({ mark }) => mark.inset ?? 0));
+    // An x axis measuring bar lengths gets the y axis' defaults: zero, round
+    // ends, and grid lines.
+    const xMeasures = drawn.some(({ mark }) => mark.zero === "x");
 
     // x domain: viewport, explicit domain, or data extent. Log axes only
     // consider positive values. Band axes take their categories instead.
@@ -302,8 +327,10 @@ export class ChartModel {
       hasData = (bands.x?.keys.length ?? 0) > 0;
     } else {
       const xLog = xType === "log";
-      let dataX = unionExtent(marks.map(({ mark, series }) => mark.xExtent(series, xLog)));
-      if (config.x?.zero && !xLog) dataX = unionExtent([dataX, [0, 0]]);
+      let dataX = unionExtent(
+        marks.map(({ mark, series }) => mark.xExtent(this.#xSeries(mark, series), xLog)),
+      );
+      if ((config.x?.zero ?? xMeasures) && !xLog) dataX = unionExtent([dataX, [0, 0]]);
       hasData = dataX !== undefined;
       xDomain = usableDomain(this.#viewport ?? config.x?.domain ?? dataX, xType);
     }
@@ -328,7 +355,8 @@ export class ChartModel {
         visible.map(({ mark, series }) => mark.yExtent(series, x0, x1, yLog)),
       );
       const zero =
-        config.y?.zero ?? visible.some(({ mark, series }) => mark.zero && series.length > 0);
+        config.y?.zero ??
+        visible.some(({ mark, series }) => mark.zero === "y" && series.length > 0);
       if (zero && !yLog) yData = unionExtent([yData, [0, 0]]);
       yBase = usableDomain(yData, yType);
     }
@@ -380,12 +408,17 @@ export class ChartModel {
     // y ticks decide the left margin.
     let yPlan: AxisPlan;
     if (yType === "band") {
+      // Categories read top to bottom; bands of numbers rise like a numeric axis.
+      const upward = bands.y !== undefined && numericBands(bands.y);
       yPlan = planBandAxis(
         bands.y?.labels ?? [],
-        [top + plotHeight, top],
+        upward ? [top + plotHeight, top] : [top, top + plotHeight],
         padding("y"),
         () => lineHeight,
       );
+      // Long category names are shortened rather than squeezing the plot.
+      const room = Math.max(48, Math.round(width * 0.3));
+      yPlan.labels = yPlan.labels.map((label) => fitText(label, room, measure, font));
     } else {
       const yCount = config.y?.ticks ?? Math.max(2, Math.round(plotHeight / 45));
       const yDomain = config.y?.domain
@@ -426,7 +459,7 @@ export class ChartModel {
           config.x?.ticks ?? Math.max(2, Math.round(plotWidth / (xType === "time" ? 100 : 80)));
         if (autoX) {
           xDomain = insetDomain(
-            niceAxisDomain(dataXDomain, xContext, xCount, config.x?.nice ?? false),
+            niceAxisDomain(dataXDomain, xContext, xCount, config.x?.nice ?? xMeasures),
             inset,
             plotWidth,
             xType,
@@ -518,14 +551,18 @@ export class ChartModel {
     const tooltip = config.tooltip;
     // Cells are always found under the pointer, so charts of cells only
     // (heatmaps) inspect the nearest cell whatever mode is requested.
-    const drawn = marks.filter(({ series }) => series.length > 0);
-    const cellsOnly = drawn.length > 0 && drawn.every(({ mark }) => mark.tooltip === "cell");
-    const mode: TooltipMode = cellsOnly
-      ? "nearest"
-      : ((typeof tooltip === "object" ? tooltip.mode : undefined) ??
-        (marks.every(({ mark }) => mark.tooltip === "x") ? "nearest-x" : "nearest"));
+    const kinds = new Set(drawn.map(({ mark }) => mark.tooltip));
+    const only = kinds.size === 1 ? [...kinds][0] : kinds.size === 0 ? "x" : undefined;
+    const mode: TooltipMode =
+      only === "cell"
+        ? "nearest"
+        : ((typeof tooltip === "object" ? tooltip.mode : undefined) ??
+          (only === "x" ? "nearest-x" : only === "y" ? "nearest-y" : "nearest"));
+    const markOf = new Map<Series, Mark>();
+    for (const { mark, series } of marks) for (const s of series) markOf.set(s, mark);
     this.#last = {
       marks,
+      markOf,
       frame,
       mode,
       formatX:
@@ -546,7 +583,10 @@ export class ChartModel {
       plot,
       title: config.title ? { text: config.title, x: EDGE, y: lineHeight / 2 + 6 } : undefined,
       grid: {
-        x: hasData && xType !== "band" && config.x?.grid ? xPlan.ticks.map((t) => x.map(t)) : [],
+        x:
+          hasData && xType !== "band" && (config.x?.grid ?? xMeasures)
+            ? xPlan.ticks.map((t) => x.map(t))
+            : [],
         y:
           hasData && yType !== "band" && (config.y?.grid ?? true)
             ? yPlan.ticks.map((t) => y.map(t))
@@ -592,6 +632,15 @@ export class ChartModel {
     return this.#last?.frame.y;
   }
 
+  /**
+   * The axis data is placed along, which a cursor follows: y when marks are
+   * placed along y (horizontal bars), otherwise x.
+   */
+  cursorAxis(): "x" | "y" {
+    const marks = this.#last?.marks ?? [];
+    return marks.some(({ mark, series }) => mark.tooltip === "y" && series.length > 0) ? "y" : "x";
+  }
+
   /** Tooltip mode of the last scene: the chart's, or one suited to its marks. */
   tooltipMode(): TooltipMode {
     return this.#last?.mode ?? "nearest-x";
@@ -612,43 +661,103 @@ export class ChartModel {
 
   /**
    * Finds the data under a pointer position for tooltips. "nearest-x" reports
-   * every visible series at the data x nearest the pointer; "nearest" reports
-   * the single closest point. Sorted series use binary search; marks with
-   * their own lookup (grid indexes, cell tables) use it.
+   * every visible series at the data x nearest the pointer, "nearest-y" the
+   * same along y; "nearest" reports the single closest point. Sorted series
+   * use binary search; marks with their own lookup (grid indexes, cell
+   * tables) use it.
    */
   inspect(px: number, py: number, mode?: TooltipMode): Inspection | undefined {
     const last = this.#last;
     if (!last) return undefined;
-    const { plot, x } = last.frame;
+    const { plot } = last.frame;
     if (px < plot.x || px > plot.x + plot.width || py < plot.y || py > plot.y + plot.height)
       return undefined;
+    const requested = mode ?? last.mode;
     // Cells are always found under the pointer, so with nothing placed along
-    // x (heatmaps only) every mode inspects the nearest cell.
+    // an axis (heatmaps only) every mode inspects the nearest cell.
     const series = this.#visibleSeries(last, (mark) => mark.tooltip !== "cell");
-    if ((mode ?? last.mode) === "nearest" || series.length === 0) {
+    if (requested === "nearest" || series.length === 0) {
       const hit = this.#nearest(px, py, last);
       if (!hit) return undefined;
-      const xValue = xAt(hit.series, hit.position);
       const point = this.#point(hit.series, hit.position, last);
-      return point
-        ? { x: xValue, px: x.map(xValue), label: last.formatX(xValue), points: [point] }
-        : undefined;
+      if (!point) return undefined;
+      // The heading names where the point is placed: its x, or its y
+      // category for marks along y.
+      const axis = last.markOf.get(hit.series)?.tooltip === "y" ? "y" : "x";
+      return this.#inspection(axis, hit.series[axis][rowOf(hit.series, hit.position)]!, [point]);
     }
-    // Snap to the data x nearest the pointer across every visible series,
-    // among points inside the x domain (clipped points are not drawn).
-    const target = x.invert(px);
-    const lo = Math.min(x.domain[0], x.domain[1]);
-    const hi = Math.max(x.domain[0], x.domain[1]);
+    // Snap to the data value nearest the pointer across every visible
+    // series, among points drawn in view.
+    const axis = requested === "nearest-y" ? "y" : "x";
+    const scale = last.frame[axis];
+    const target = scale.invert(axis === "x" ? px : py);
+    const lo = Math.min(scale.domain[0], scale.domain[1]);
+    const hi = Math.max(scale.domain[0], scale.domain[1]);
     let snapped = Number.NaN;
     for (const s of series) {
-      const position = nearestPositionWithin(s, target, lo, hi);
+      const position =
+        axis === "x"
+          ? nearestPositionWithin(s, target, lo, hi)
+          : this.#scanNearest(s, "y", target, lo, hi, last);
       if (position < 0) continue;
-      const value = xAt(s, position);
+      const value = s[axis][rowOf(s, position)]!;
       if (Number.isNaN(snapped) || Math.abs(value - target) < Math.abs(snapped - target))
         snapped = value;
     }
     if (!Number.isFinite(snapped)) return undefined;
-    return this.#inspectAt(snapped, series, last);
+    return this.#inspectAt(axis, snapped, series, last);
+  }
+
+  /**
+   * Position of the point nearest `target` among those whose value on `axis`
+   * is in [lo, hi] and that are drawn, by a scan; -1 when none is. Unsorted
+   * series may hold several rows at one position (long-format bars), some of
+   * them missing, so every row is checked.
+   */
+  #scanNearest(
+    s: Series,
+    axis: "x" | "y",
+    target: number,
+    lo: number,
+    hi: number,
+    last: LastFrame,
+  ): number {
+    const column = s[axis];
+    let best = -1;
+    let bestDistance = Infinity;
+    for (let k = 0; k < s.length; k++) {
+      const row = rowOf(s, k);
+      const at = column[row]!;
+      if (!(at >= lo && at <= hi)) continue;
+      const distance = Math.abs(at - target);
+      if (distance >= bestDistance || !this.#drawn(s, row, last)) continue;
+      best = k;
+      bestDistance = distance;
+    }
+    return best;
+  }
+
+  /**
+   * Whether a point is drawn: its value is finite and both scales can place
+   * it. A point of a mark inspected along y (a horizontal bar) also needs
+   * part of it, from base to end, inside the x domain; its end may lie
+   * outside the plot.
+   */
+  #drawn(s: Series, row: number, last: LastFrame): boolean {
+    const { x, y } = last.frame;
+    const end = s.x[row]!;
+    if (
+      !Number.isFinite(s.values[row]!) ||
+      !Number.isFinite(x.map(end)) ||
+      !Number.isFinite(y.map(s.y[row]!))
+    )
+      return false;
+    const mark = last.markOf.get(s);
+    if (mark?.tooltip !== "y") return true;
+    const base = s.x0 ? s.x0[row]! : mark.zero === "x" ? 0 : end;
+    const lo = Math.min(x.domain[0], x.domain[1]);
+    const hi = Math.max(x.domain[0], x.domain[1]);
+    return Math.max(base, end) >= lo && Math.min(base, end) <= hi;
   }
 
   #nearest(px: number, py: number, last: LastFrame): Hit | undefined {
@@ -658,7 +767,8 @@ export class ChartModel {
     const consider = (s: Series, k: number) => {
       const row = rowOf(s, k);
       const distance = Math.hypot(x.map(s.x[row]!) - px, y.map(s.y[row]!) - py);
-      if (distance < (best?.distance ?? Infinity)) best = { series: s, position: k, distance };
+      if (distance < (best?.distance ?? Infinity) && this.#drawn(s, row, last))
+        best = { series: s, position: k, distance };
     };
     const target = x.invert(px);
     for (const { mark, series } of last.marks) {
@@ -688,8 +798,8 @@ export class ChartModel {
 
   /**
    * Inspects one point of a series, identified by position, plus the other
-   * visible series at its x. Used by keyboard navigation, which must reach
-   * every point even when x values repeat.
+   * visible series at its x (or its y, for marks inspected along y). Used by
+   * keyboard navigation, which must reach every point even when values repeat.
    */
   inspectPosition(seriesKey: string, position: number): Inspection | undefined {
     const last = this.#last;
@@ -697,18 +807,22 @@ export class ChartModel {
     const series = this.#visibleSeries(last, () => true);
     const anchor = series.find((s) => s.key === seriesKey);
     if (!anchor || position < 0 || position >= anchor.length) return undefined;
-    const alongX = this.#visibleSeries(last, (mark) => mark.tooltip === "x");
+    const axis = last.markOf.get(anchor)?.tooltip === "y" ? "y" : "x";
+    const along = this.#visibleSeries(last, (mark) => mark.tooltip === axis);
     return this.#inspectAt(
-      xAt(anchor, position),
-      alongX.includes(anchor) ? alongX : [anchor],
+      axis,
+      anchor[axis][rowOf(anchor, position)]!,
+      along.includes(anchor) ? along : [anchor],
       last,
       anchor,
       position,
     );
   }
 
+  /** Every series' point at `value` on `axis`. */
   #inspectAt(
-    x: number,
+    axis: "x" | "y",
+    value: number,
     series: readonly Series[],
     last: LastFrame,
     anchor?: Series,
@@ -716,34 +830,60 @@ export class ChartModel {
   ): Inspection {
     const points: InspectedPoint[] = [];
     for (const s of series) {
-      const position = s === anchor ? anchorPosition! : nearestPosition(s, x);
-      if (xAt(s, position) !== x) continue;
+      const position = s === anchor ? anchorPosition! : this.#positionAt(s, axis, value, last);
+      if (position < 0) continue;
       const point = this.#point(s, position, last);
       if (point) points.push(point);
     }
-    return { x, px: last.frame.x.map(x), label: last.formatX(x), points };
+    return this.#inspection(axis, value, points);
+  }
+
+  /** Position of a drawn point of `s` at `value` on `axis`, or -1. */
+  #positionAt(s: Series, axis: "x" | "y", value: number, last: LastFrame): number {
+    if (axis === "x" && s.sorted) {
+      const k = nearestPosition(s, value);
+      return k >= 0 && xAt(s, k) === value ? k : -1;
+    }
+    return this.#scanNearest(s, axis, value, value, value, last);
+  }
+
+  #inspection(axis: "x" | "y", value: number, points: InspectedPoint[]): Inspection {
+    const last = this.#last!;
+    return {
+      axis,
+      value,
+      position: last.frame[axis].map(value),
+      label: axis === "x" ? last.formatX(value) : last.formatY(value),
+      points,
+    };
   }
 
   #point(s: Series, position: number, last: LastFrame): InspectedPoint | undefined {
     const { x, y } = last.frame;
     const row = rowOf(s, position);
     const value = s.values[row]!;
-    if (!Number.isFinite(value)) return undefined;
-    // On a band y axis (heatmaps) the point's y is a category and its value a measure.
-    const bandY = y.type === "band";
+    const px = x.map(s.x[row]!);
+    const py = y.map(s.y[row]!);
+    // Values a scale cannot place (log axes) are not drawn, so not reported.
+    if (!(Number.isFinite(value) && Number.isFinite(px) && Number.isFinite(py))) return undefined;
+    const tooltip = last.markOf.get(s)?.tooltip;
+    // A cell's label is its y category and its value a measure; marks
+    // inspected along y (horizontal bars) measure their values on x.
     const low = s.range ? s.y0![row]! : Number.NaN;
     return {
       key: s.key,
-      label: bandY ? last.formatY(s.y[row]!) : s.label,
+      label: tooltip === "cell" ? last.formatY(s.y[row]!) : s.label,
       color: s.color,
       value,
       text: s.range
         ? `${last.formatY(low)} – ${last.formatY(value)}`
-        : bandY
+        : tooltip === "cell"
           ? last.formatValue(value)
-          : last.formatY(value),
-      px: x.map(s.x[row]!),
-      py: y.map(s.y[row]!),
+          : tooltip === "y"
+            ? last.formatX(value)
+            : last.formatY(value),
+      px,
+      py,
     };
   }
 

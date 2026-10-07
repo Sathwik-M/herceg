@@ -75,6 +75,12 @@ bar(sales, { x: "region", y: ["q1", "q2"] });
 bar(sales, { x: "region", y: "q1", series: "team", stack: true });
 // @ts-expect-error bar heights must be numeric
 bar(sales, { x: "region", y: "team" });
+bar(sales, { x: "q1", y: "region" });
+bar(sales, { x: ["q1", "q2"], y: "region", stack: true });
+// @ts-expect-error horizontal bar lengths must be numeric
+bar(sales, { x: "team", y: "region" });
+// @ts-expect-error several length fields on x need a category y
+bar(sales, { x: ["q1", "q2"], y: "q1" });
 point(metrics, { x: "p50", y: "p99", r: 3 });
 // @ts-expect-error point x must be numeric
 point(sales, { x: "region", y: "q1" });

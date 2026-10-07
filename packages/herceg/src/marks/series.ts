@@ -19,6 +19,8 @@ export interface Series {
   y: NumericArray;
   /** Bottom of a stack or band, when the series has one. */
   y0: NumericArray | undefined;
+  /** Left end of a horizontal stack (horizontal bars), when the series has one. */
+  x0?: NumericArray | undefined;
   /** Values reported in tooltips (differs from `y` for stacks). */
   values: NumericArray;
   /** The series is a band from `y0` to `y`; tooltips show both ends. */

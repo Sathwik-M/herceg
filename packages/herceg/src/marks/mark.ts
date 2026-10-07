@@ -100,11 +100,12 @@ export interface Mark<S extends MarkSpec = MarkSpec> {
    */
   readonly inset?: number;
   /**
-   * How tooltips find this mark's data. "x" and "point" choose the chart's
-   * default mode (by x, or nearest point) when the chart does not set one;
-   * "cell" marks always report the cell under the pointer, in every mode.
+   * How tooltips find this mark's data. "x", "y", and "point" choose the
+   * chart's default mode (along x, along y, or nearest point) when the chart
+   * does not set one; "cell" marks always report the cell under the pointer,
+   * in every mode.
    */
-  readonly tooltip: "x" | "point" | "cell";
+  readonly tooltip: "x" | "y" | "point" | "cell";
   /**
    * Resolves series for the current data. `key` prefixes series keys,
    * `palette` returns the color for a series key, `hidden` holds keys of
@@ -117,8 +118,8 @@ export interface Mark<S extends MarkSpec = MarkSpec> {
     bands: Bands,
     context: BandContext,
   ): Series[];
-  /** Include zero in the y domain. */
-  readonly zero: boolean;
+  /** The axis whose domain includes zero, for marks drawn from a zero baseline. */
+  readonly zero?: "x" | "y" | undefined;
   /** x extent; with `log`, of positive values only. */
   xExtent(series: readonly Series[], log: boolean): readonly [number, number] | undefined;
   /** y extent of what the x range [x0, x1] shows; with `log`, of positive values only. */
@@ -345,6 +346,11 @@ function valueLabels(values: Float64Array, isTime: boolean, context: BandContext
   const unit = units.find((u) => spacing >= TIME_UNIT_MS[u]) ?? "millisecond";
   const interval = { unit, step: 1, duration: TIME_UNIT_MS[unit] };
   return timeTickLabels(Array.from(values), interval, context.zone, context.locale);
+}
+
+/** Bands made from numbers or times, which run upward on a y axis; categories run downward. */
+export function numericBands(list: BandList): boolean {
+  return list.keys.length > 0 && list.keys.every((key) => key.startsWith("n:"));
 }
 
 /** The bands a field contributes to an axis. */
