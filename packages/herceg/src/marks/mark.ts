@@ -282,6 +282,7 @@ export function buildSeries(
       y,
       y0: undefined,
       values: y,
+      field: source.y,
       range: false,
       rows: source.rows,
       length: source.rows?.length ?? y.length,

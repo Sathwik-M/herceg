@@ -17,7 +17,7 @@ import {
   seriesKey,
 } from "./mark.ts";
 import { type Series, TableCache, xExtent, yExtent } from "./series.ts";
-import { traceBand, tracePath, unionExtent } from "./trace.ts";
+import { IndexUse, traceBand, tracePath, unionExtent } from "./trace.ts";
 
 interface AreaCommon {
   /** Constant fill color for every area of the mark. */
@@ -54,6 +54,7 @@ export class AreaMark implements Mark<AreaSpec> {
   readonly table: Table<Schema>;
   readonly #split: SeriesSplitter | undefined;
   readonly #stacks = new TableCache<Map<string, StackLayers>>();
+  readonly #indexes = new IndexUse();
   readonly zero: "y" | undefined;
 
   constructor(spec: AreaSpec, table: Table<Schema>) {
@@ -136,7 +137,7 @@ export class AreaMark implements Mark<AreaSpec> {
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
     return unionExtent(
       series.flatMap((s) => [
-        yExtent(s, x0, x1, s.y, log),
+        yExtent(s, x0, x1, s.y, log, this.#indexes.index(this.table, s)),
         s.y0 ? yExtent(s, x0, x1, s.y0, log) : undefined,
       ]),
     );
@@ -154,11 +155,28 @@ export class AreaMark implements Mark<AreaSpec> {
       ? Math.min(Math.max(zero, frame.plot.y), bottom)
       : bottom;
     const out: AreaGeometry[] = [];
+    this.#indexes.drew(frame.owner, this.table);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
+      // Areas filled to zero read their field's index; bands and stacks scan.
       const edges = s.y0
         ? traceBand(s, s.y, s.y0, frame, spec.curve)
-        : { upper: tracePath(s, s.y, frame, "upper", spec.curve), lower: null };
+        : {
+            upper: tracePath(
+              s,
+              s.y,
+              frame,
+              "upper",
+              spec.curve,
+              this.#indexes.index(
+                this.table,
+                s,
+                frame.owner,
+                frame.x.type !== "log" && frame.y.type !== "log",
+              ),
+            ),
+            lower: null,
+          };
       out.push({
         kind: "area",
         draw: areaDrawing,

@@ -1,5 +1,5 @@
 import type { NumericArray } from "../data/column.ts";
-import type { MinMaxIndex, RangeExtremes } from "./minmax-index.ts";
+import type { RangeExtremes, RangeIndex } from "./minmax-index.ts";
 import type { Polyline } from "./polyline.ts";
 
 /**
@@ -53,7 +53,7 @@ export function m4(
   pixelRatio: number,
   out: Polyline,
   rows?: Uint32Array,
-  index?: MinMaxIndex,
+  index?: RangeIndex,
 ): void {
   if (rows === undefined && !xMap.log && !yMap.log && xMap.factor > 0) {
     // Index queries cost about as much as scanning 200 points.
@@ -157,7 +157,7 @@ function m4Indexed(
   yMap: Mapping,
   pixelRatio: number,
   out: Polyline,
-  index: MinMaxIndex,
+  index: RangeIndex,
 ): void {
   const xo = xMap.offset * pixelRatio;
   const xf = xMap.factor * pixelRatio;

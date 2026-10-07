@@ -1,6 +1,6 @@
 import type { NumericArray } from "../data/column.ts";
 import { scanExtent, type Table } from "../data/table.ts";
-import type { MinMaxIndex, RangeExtremes } from "../lod/minmax-index.ts";
+import type { RangeExtremes, RangeIndex } from "../lod/minmax-index.ts";
 
 /**
  * One drawable series: x and y columns, optionally restricted to a subset of
@@ -23,6 +23,11 @@ export interface Series {
   x0?: NumericArray | undefined;
   /** Values reported in tooltips (differs from `y` for stacks). */
   values: NumericArray;
+  /**
+   * The table field `values` were read from, so indexes of that field can
+   * serve `y` while it still is that column.
+   */
+  field?: string | undefined;
   /** The series is a band from `y0` to `y`; tooltips show both ends. */
   range: boolean;
   rows: Uint32Array | undefined;
@@ -109,7 +114,7 @@ export function yExtent(
   x1: number,
   y: Series["y"] = series.y,
   log = false,
-  index?: MinMaxIndex,
+  index?: RangeIndex,
 ): [number, number] | undefined {
   const lo = Math.min(x0, x1);
   const hi = Math.max(x0, x1);
@@ -143,7 +148,7 @@ export function yExtent(
 const extremes: RangeExtremes = { low: -1, high: -1, gap: false };
 
 function indexedExtent(
-  index: MinMaxIndex,
+  index: RangeIndex,
   y: Series["y"],
   start: number,
   end: number,

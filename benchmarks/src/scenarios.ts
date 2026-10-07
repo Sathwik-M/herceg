@@ -291,6 +291,21 @@ export const SCENARIOS: Scenario[] = [
     warmup: 5,
     description: "1 series, 100,000-point window, +100 points per tick",
   }),
+  s({
+    id: "stream-massive",
+    chart: "line",
+    operation: "stream",
+    series: 1,
+    points: 1_000_000,
+    append: 10_000,
+    large: true,
+    tooltip: true,
+    // Enough ticks to cover several moves of the window's storage, which a
+    // library may pay for every so many appended points.
+    samples: 150,
+    warmup: 5,
+    description: "1 series, 1,000,000-point window, +10,000 points per tick",
+  }),
 
   // Paced ingestion with normal frame scheduling
   {

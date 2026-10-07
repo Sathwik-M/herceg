@@ -118,19 +118,31 @@ point by point without reduction.
 The y domain comes from the same visible range: sorted series are trimmed to
 the points inside it, so whole columns reduce to a plain min/max scan.
 
-Line series of at least 262,144 points get a min/max index once a chart
-draws the same table version a second time, as when zooming or panning; data
-that changes before every draw does not build one. Indexes belong to the
-table version and its columns, so charts sharing a mark or a table share
-them. The index stores the positions of the
-lowest and highest finite values of every 64-value block and of every 512,
-4,096, ... values above that, plus whether a block holds a gap: about 1.4 MB
-for ten million points, built in ~1.3 ms per million. With it, M4 finds each
-pixel column's end by binary search and its extremes by an index query
-instead of scanning, and the y domain is an index query too. Pixel columns
-that contain gaps are scanned, and data where most blocks hold gaps skips the
-index for reduction; the output is identical either way. Zooming into ten million points takes about 1.4 ms
-instead of 3 ms. Areas and long-format series (row subsets) are not indexed.
+Line series, and areas filled to zero, of at least 262,144 points use a
+min/max index of their y field. The table owns the index and keeps it
+current: appends recompute only the trailing blocks, drops leave it valid
+(it covers the column's whole buffer, so positions do not move), small
+in-place updates recompute their blocks, and when the table moves its rows
+(compaction or growth, once per many appended rows) it rebuilds the index,
+which averages O(1) per appended row. A reset, or a replace of at least a
+quarter of the rows, drops it. A mark asks for a new index when a chart
+redraws it and nothing replaced the data wholesale since that chart's
+previous draw: zooming, panning, and streaming build one; data replaced
+before every draw never does. Charts sharing a table share its indexes.
+
+The index stores the positions of the lowest and highest finite values of
+every 64-value block and of every 512, 4,096, ... values above that, plus
+whether a block holds a gap: about 1.4 MB for ten million points, built in
+~1.3 ms per million. With it, M4 finds each pixel column's end by binary
+search and its extremes by an index query instead of scanning, and the y
+domain is an index query too. Pixel columns that contain gaps are scanned,
+and data where most blocks hold gaps skips the index for reduction; the
+output is identical either way. Zooming into ten million points takes about
+1.3 ms instead of 3 ms. Streaming 10,000 points per tick into a
+million-point window takes a median of about 1.5 ms instead of 2.7 ms (p95
+2.0 instead of 3.4 ms); the ticks that move the window's storage also
+rebuild its index and take up to about 5 ms instead of 4 ms. Bands, stacked
+areas, and long-format series (row subsets) are not indexed.
 
 ## Band axes
 
@@ -432,9 +444,9 @@ the DOM, creating an offscreen canvas in that canvas' document when
 - The model always carries band-axis, color-legend, and inspection-along-y
   logic, so a line-only bundle includes some bar and heatmap support it does
   not use.
-- Areas, log scales, and long-format line series re-scan the visible range on
-  every frame; only whole-column line series on linear scales use the min/max
-  index.
+- Bands, stacked areas, log scales, and long-format series re-scan the
+  visible range on every frame; only whole-column lines and areas filled to
+  zero on linear scales use the min/max index.
 - Renderer thresholds are not tuned.
 - Rules and text are always drawn above other marks, regardless of mark order.
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use

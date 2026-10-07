@@ -1,3 +1,4 @@
+import { MinMaxIndex, type RangeIndex } from "../lod/minmax-index.ts";
 import {
   type CategoryColumn,
   type CategoryInput,
@@ -136,6 +137,14 @@ export class Table<S extends Schema = Schema> {
   /** Cached extents; null records that a field has no finite values. */
   #extents = new Map<string, readonly [number, number] | null>();
   #listeners = new Set<Listener>();
+  /**
+   * Min/max indexes by field, over each column's whole buffer so drops leave
+   * them valid; dropped when the table moves its storage.
+   */
+  #indexes = new Map<string, MinMaxIndex>();
+  #indexViews = new Map<string, RangeIndex>();
+  /** Version of the last change that replaced values wholesale. */
+  #replaced = 0;
 
   constructor(columns: Record<string, ColumnInput>, options: TableOptions = {}) {
     this.name = options.name;
@@ -231,6 +240,57 @@ export class Table<S extends Schema = Schema> {
     return Number.isNaN(raw) ? null : raw;
   }
 
+  /**
+   * Version of the last change that replaced values wholesale: a reset, or
+   * a `replace` of at least a quarter of the rows. Derived data built since
+   * then is likely to stay useful; before then, it would be rebuilt each time.
+   */
+  get replacedVersion(): number {
+    return this.#replaced;
+  }
+
+  /** Whether the field has a min/max index, kept current by every change since it was built. */
+  hasMinMaxIndex(field: NumericField<S>): boolean {
+    return this.#indexes.has(field);
+  }
+
+  /**
+   * A min/max index of a number or time field, answering range queries by
+   * positions of `numbers(field)`. Built on first request, then kept current
+   * as rows are appended, dropped, moved, or updated in small ranges; a
+   * reset or a large replace drops it. Like `numbers()`, what it returns is
+   * only valid for the current version: ask again after a change.
+   */
+  minMaxIndex(field: NumericField<S>): RangeIndex {
+    let view = this.#indexViews.get(field);
+    if (view) return view;
+    const column = this.#column(field);
+    if (column.kind === "category") throw new TypeError(`Field "${field}" is not numeric`);
+    const buffer = column.buffer;
+    let index = this.#indexes.get(field);
+    if (!index) {
+      index = new MinMaxIndex(buffer, this.#start + this.#length);
+      this.#indexes.set(field, index);
+    }
+    const covered = index;
+    const start = this.#start;
+    const version = this.#version;
+    view = {
+      length: this.#length,
+      gapShare: covered.gapShare,
+      query: (_values, from, to, out) => {
+        if (this.#version !== version)
+          throw new Error(`The min/max index of "${field}" was read before the table changed`);
+        covered.query(buffer, start + from, start + to, out);
+        if (out.low >= 0) out.low -= start;
+        if (out.high >= 0) out.high -= start;
+        return out;
+      },
+    };
+    this.#indexViews.set(field, view);
+    return view;
+  }
+
   /** True when the field has no NaN and never decreases, enabling binary search. */
   isSorted(field: NumericField<S>): boolean {
     let sorted = this.#sorted.get(field);
@@ -285,6 +345,8 @@ export class Table<S extends Schema = Schema> {
     for (const [field, values] of entries) writeValues(this.#columns.get(field)!, at, values, skip);
     this.#length += kept;
     this.#rowOffset += skip;
+    for (const [field, index] of this.#indexes)
+      index.extend(this.#columns.get(field)!.buffer, this.#start + this.#length);
     for (const [field, column] of this.#columns) {
       if (column.kind === "category") continue;
       this.#extendDerived(field, column.buffer, at, kept, dropped > 0);
@@ -334,6 +396,16 @@ export class Table<S extends Schema = Schema> {
     if (isNumericArray(input) && this.#ownsBuffer(input.buffer)) input = input.slice();
     if (!column.owned) this.#reallocate(this.#capacity);
     writeValues(column, this.#start + start, input, 0);
+    // Updating an index costs as much as rebuilding it for large ranges, and
+    // data replaced in bulk is often replaced again before it pays off.
+    if (count * 4 >= this.#length) {
+      this.#indexes.delete(field);
+      this.#replaced = this.#version + 1;
+    } else {
+      this.#indexes
+        .get(field)
+        ?.update(column.buffer, this.#start + start, this.#start + start + count);
+    }
     this.#sorted.delete(field);
     this.#extents.delete(field);
     this.#changed({
@@ -385,6 +457,8 @@ export class Table<S extends Schema = Schema> {
     this.#rowOffset = 0;
     this.#sorted.clear();
     this.#extents.clear();
+    this.#indexes.clear();
+    this.#replaced = this.#version + 1;
     if (this.#length > this.maxRows) this.#dropFront(this.#length - this.maxRows);
     this.#changed({ dropped: 0, appended: 0, updated: null, fields: [], reset: true });
   }
@@ -422,7 +496,11 @@ export class Table<S extends Schema = Schema> {
     this.#start += count;
     this.#length -= count;
     this.#rowOffset += count;
-    if (this.#length === 0) this.#start = 0;
+    if (this.#length === 0) {
+      // Storage starts over at position 0.
+      this.#start = 0;
+      this.#rebuildIndexes();
+    }
     if (count === 0) return;
     // Dropping rows can remove the inversion that made a field unsorted, and
     // can remove the rows that held an extreme.
@@ -478,6 +556,7 @@ export class Table<S extends Schema = Schema> {
         column.buffer.copyWithin(0, this.#start, this.#start + this.#length);
       }
       this.#start = 0;
+      this.#rebuildIndexes();
       return;
     }
     this.#reallocate(Math.max(MIN_CAPACITY, Math.ceil(required * GROWTH)));
@@ -496,6 +575,21 @@ export class Table<S extends Schema = Schema> {
     }
     this.#start = 0;
     this.#capacity = capacity;
+    this.#rebuildIndexes();
+  }
+
+  /**
+   * Rebuilds indexes after rows moved within or between buffers. Moves
+   * happen once per many appended rows, so this costs O(1) per row on
+   * average and keeps streaming charts indexed.
+   */
+  #rebuildIndexes() {
+    for (const field of this.#indexes.keys()) {
+      this.#indexes.set(
+        field,
+        new MinMaxIndex(this.#columns.get(field)!.buffer, this.#start + this.#length),
+      );
+    }
   }
 
   /**
@@ -523,6 +617,7 @@ export class Table<S extends Schema = Schema> {
   #changed(change: TableChange) {
     this.#version++;
     this.#views.clear();
+    this.#indexViews.clear();
     for (const listener of this.#listeners) listener(change);
   }
 }

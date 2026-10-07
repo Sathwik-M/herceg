@@ -2,8 +2,9 @@
 // level-of-detail reduction, and step curves.
 
 import type { NumericArray } from "../data/column.ts";
+import type { Table } from "../data/table.ts";
 import { type Mapping, m4, polylineAll } from "../lod/m4.ts";
-import type { MinMaxIndex } from "../lod/minmax-index.ts";
+import type { RangeIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { Curve } from "../spec/spec.ts";
 import { stepPolyline } from "./curve.ts";
@@ -13,6 +14,48 @@ import { rowOf, type Series, visibleRange } from "./series.ts";
 /** Buffer stages; a series' buffers are keyed by stage and series key. */
 export type Stage = "line" | "upper" | "lower";
 
+/** Series of at least this many points read a min/max index once they are redrawn. */
+const INDEXED_POINTS = 1 << 18;
+
+/**
+ * When a mark's large series read their table's min/max index for level of
+ * detail and extents. An index the table already keeps is always used. A
+ * new one is built when a chart redraws the mark and nothing replaced the
+ * data wholesale since its previous draw: the data is being zoomed, panned,
+ * or streamed, and the table keeps the index current from then on. Data
+ * replaced every frame never pays for one.
+ */
+export class IndexUse {
+  readonly #draws = new WeakMap<object, { count: number; version: number; previous: number }>();
+
+  /** Counts a draw of `table` by the chart `owner`; call before `index` in each draw. */
+  drew(owner: object, table: Table): void {
+    const last = this.#draws.get(owner);
+    this.#draws.set(owner, {
+      count: (last?.count ?? 0) + 1,
+      version: table.version,
+      previous: last?.version ?? -1,
+    });
+  }
+
+  /**
+   * The index serving `s` (whole, sorted, large, and still reading its
+   * field's column), or undefined. `owner` is the drawing chart, and
+   * `linear` whether its scales are ones the index serves (log scales are
+   * not); without both, only an index the table already keeps is served.
+   */
+  index(table: Table, s: Series, owner?: object, linear = false): RangeIndex | undefined {
+    const field = s.field;
+    if (field === undefined || s.rows !== undefined || !s.sorted || s.length < INDEXED_POINTS)
+      return undefined;
+    if (table.numbers(field as never) !== s.y) return undefined;
+    if (table.hasMinMaxIndex(field as never)) return table.minMaxIndex(field as never);
+    const draw = owner && linear && this.#draws.get(owner);
+    if (!draw || draw.count < 2 || table.replacedVersion > draw.previous) return undefined;
+    return table.minMaxIndex(field as never);
+  }
+}
+
 function reduce(
   series: Series,
   y: NumericArray,
@@ -20,7 +63,7 @@ function reduce(
   end: number,
   frame: Frame,
   out: Polyline,
-  index?: MinMaxIndex,
+  index?: RangeIndex,
 ) {
   const xMap = frame.x.mapping();
   const yMap = frame.y.mapping();
@@ -54,7 +97,7 @@ export function tracePath(
   frame: Frame,
   stage: Stage,
   curve: Curve | undefined,
-  index?: MinMaxIndex,
+  index?: RangeIndex,
 ): Polyline {
   const path = frame.polyline(series.key, stage);
   path.reset();

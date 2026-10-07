@@ -7,6 +7,8 @@ const FANOUT = 8;
 interface Level {
   /** Values per block. */
   size: number;
+  /** Blocks in use; the arrays may hold more for growth. */
+  count: number;
   /** Position of the first lowest finite value per block, -1 when there is none. */
   low: Int32Array;
   /** Position of the first highest finite value per block, -1 when there is none. */
@@ -25,6 +27,19 @@ export interface RangeExtremes {
   gap: boolean;
 }
 
+/** Range extremes over a value array, as level of detail and extents query them. */
+export interface RangeIndex {
+  /** Values covered, from position 0. */
+  readonly length: number;
+  /**
+   * Share of 64-value blocks that hold a gap. Where most do, most queries
+   * end in a scan anyway, so reducing by scanning directly is faster.
+   */
+  readonly gapShare: number;
+  /** Extremes of `values[from, to)`, by their positions in `values`. */
+  query(values: NumericArray, from: number, to: number, out: RangeExtremes): RangeExtremes;
+}
+
 /**
  * Block summaries of a value array for range minimum and maximum queries:
  * the positions of the first lowest and highest finite values of each block
@@ -33,31 +48,68 @@ export interface RangeExtremes {
  * reads at most about 2 * 64 values and 2 * 8 blocks per level instead of all
  * n. Memory is about 9 bytes per 64 values, 1.15 times that with all levels.
  *
- * The index describes the values at the time it was built; its owner must
- * rebuild it when they change.
+ * The index covers `values[0, length)`. Values appended after that are taken
+ * in with `extend`, and values changed in place with `update`, each
+ * recomputing only the blocks they touch.
  */
-export class MinMaxIndex {
-  readonly length: number;
+export class MinMaxIndex implements RangeIndex {
+  #length = 0;
+  #gaps = 0;
+  readonly #levels: Level[] = [];
+
+  constructor(values: NumericArray, length = values.length) {
+    this.extend(values, length);
+  }
+
+  get length(): number {
+    return this.#length;
+  }
+
   /**
    * Share of 64-value blocks that hold a gap. Where most do, most queries
    * end in a scan anyway, so reducing by scanning directly is faster.
    */
-  readonly gapShare: number;
-  readonly #levels: Level[] = [];
+  get gapShare(): number {
+    const blocks = Math.ceil(this.#length / BLOCK);
+    return blocks > 0 ? this.#gaps / blocks : 0;
+  }
 
-  constructor(values: NumericArray) {
-    this.length = values.length;
-    const leaves = leafLevel(values);
-    this.#levels.push(leaves);
-    let gaps = 0;
-    for (const gap of leaves.gap) gaps += gap;
-    this.gapShare = leaves.gap.length > 0 ? gaps / leaves.gap.length : 0;
-    while (this.#levels.at(-1)!.low.length > FANOUT) {
-      this.#levels.push(parentLevel(values, this.#levels.at(-1)!));
+  /** Takes in `values[this.length, length)`, appended since the last call. */
+  extend(values: NumericArray, length: number): void {
+    const from = this.#length;
+    this.#length = Math.max(from, length);
+    this.update(values, from, this.#length);
+  }
+
+  /** Recomputes the blocks holding `values[from, to)` after they changed in place. */
+  update(values: NumericArray, from: number, to: number): void {
+    if (to <= from) return;
+    let first = Math.floor(from / BLOCK);
+    let last = Math.ceil(Math.min(to, this.#length) / BLOCK);
+    for (let depth = 0; ; depth++) {
+      const below = this.#levels[depth - 1];
+      // A level of at most FANOUT blocks is one query step; none is needed above it.
+      if (below && below.count <= FANOUT) {
+        this.#levels.length = depth;
+        break;
+      }
+      const blocks = below ? Math.ceil(below.count / FANOUT) : Math.ceil(this.#length / BLOCK);
+      // A level created now summarizes every block below, not only the changed ones.
+      if (!this.#levels[depth]) {
+        first = 0;
+        last = blocks;
+      }
+      const level = this.#level(depth, blocks);
+      for (let b = first; b < last; b++) {
+        if (depth === 0) this.#leaf(values, level, b);
+        else summarize(values, this.#levels[depth - 1]!, level, b);
+      }
+      first = Math.floor(first / FANOUT);
+      last = Math.ceil(last / FANOUT);
     }
   }
 
-  /** Extremes of `values[from, to)`; `values` must be the array the index was built from. */
+  /** Extremes of `values[from, to)`; `values` must be the array the index covers. */
   query(values: NumericArray, from: number, to: number, out: RangeExtremes): RangeExtremes {
     out.low = -1;
     out.high = -1;
@@ -85,6 +137,44 @@ export class MinMaxIndex {
     for (; i < to; i++) includeValue(values, i, out);
     return out;
   }
+
+  /** Level `depth` with room for `blocks` blocks, grown by doubling. */
+  #level(depth: number, blocks: number): Level {
+    let level = this.#levels[depth];
+    if (!level) {
+      level = {
+        size: BLOCK * FANOUT ** depth,
+        low: new Int32Array(Math.max(blocks, 4)),
+        high: new Int32Array(Math.max(blocks, 4)),
+        gap: new Uint8Array(Math.max(blocks, 4)),
+        count: 0,
+      };
+      this.#levels[depth] = level;
+    }
+    if (blocks > level.low.length) {
+      const capacity = Math.max(blocks, level.low.length * 2);
+      level.low = grow(level.low, new Int32Array(capacity));
+      level.high = grow(level.high, new Int32Array(capacity));
+      level.gap = grow(level.gap, new Uint8Array(capacity));
+    }
+    level.count = blocks;
+    return level;
+  }
+
+  #leaf(values: NumericArray, level: Level, b: number): void {
+    const out: RangeExtremes = { low: -1, high: -1, gap: false };
+    const end = Math.min(this.#length, (b + 1) * BLOCK);
+    for (let i = b * BLOCK; i < end; i++) includeValue(values, i, out);
+    this.#gaps += Number(out.gap) - level.gap[b]!;
+    level.low[b] = out.low;
+    level.high[b] = out.high;
+    level.gap[b] = out.gap ? 1 : 0;
+  }
+}
+
+function grow<T extends Int32Array | Uint8Array>(from: T, to: T): T {
+  to.set(from);
+  return to;
 }
 
 function includeValue(values: NumericArray, i: number, out: RangeExtremes): void {
@@ -108,50 +198,16 @@ function includeExtreme(values: NumericArray, at: number, out: RangeExtremes, lo
   }
 }
 
-function leafLevel(values: NumericArray): Level {
-  const blocks = Math.ceil(values.length / BLOCK);
-  const level: Level = {
-    size: BLOCK,
-    low: new Int32Array(blocks),
-    high: new Int32Array(blocks),
-    gap: new Uint8Array(blocks),
-  };
+/** Summarizes block `b` of `level` from its FANOUT children in `child`. */
+function summarize(values: NumericArray, child: Level, level: Level, b: number): void {
   const out: RangeExtremes = { low: -1, high: -1, gap: false };
-  for (let b = 0; b < blocks; b++) {
-    out.low = -1;
-    out.high = -1;
-    out.gap = false;
-    const end = Math.min(values.length, (b + 1) * BLOCK);
-    for (let i = b * BLOCK; i < end; i++) includeValue(values, i, out);
-    level.low[b] = out.low;
-    level.high[b] = out.high;
-    level.gap[b] = out.gap ? 1 : 0;
+  const end = Math.min(child.count, (b + 1) * FANOUT);
+  for (let c = b * FANOUT; c < end; c++) {
+    if (child.gap[c]) out.gap = true;
+    includeExtreme(values, child.low[c]!, out, true);
+    includeExtreme(values, child.high[c]!, out, false);
   }
-  return level;
-}
-
-function parentLevel(values: NumericArray, child: Level): Level {
-  const blocks = Math.ceil(child.low.length / FANOUT);
-  const level: Level = {
-    size: child.size * FANOUT,
-    low: new Int32Array(blocks),
-    high: new Int32Array(blocks),
-    gap: new Uint8Array(blocks),
-  };
-  const out: RangeExtremes = { low: -1, high: -1, gap: false };
-  for (let b = 0; b < blocks; b++) {
-    out.low = -1;
-    out.high = -1;
-    out.gap = false;
-    const end = Math.min(child.low.length, (b + 1) * FANOUT);
-    for (let c = b * FANOUT; c < end; c++) {
-      if (child.gap[c]) out.gap = true;
-      includeExtreme(values, child.low[c]!, out, true);
-      includeExtreme(values, child.high[c]!, out, false);
-    }
-    level.low[b] = out.low;
-    level.high[b] = out.high;
-    level.gap[b] = out.gap ? 1 : 0;
-  }
-  return level;
+  level.low[b] = out.low;
+  level.high[b] = out.high;
+  level.gap[b] = out.gap ? 1 : 0;
 }
