@@ -1,7 +1,7 @@
 import Plotly from "plotly.js-dist-min";
-import type { CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
+import type { CandleData, CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartOptions } from "../page/adapter.ts";
-import { clientPoint, color } from "../page/adapter.ts";
+import { clientPoint, color, FALL, RISE } from "../page/adapter.ts";
 
 type Root = Plotly.PlotlyHTMLElement;
 
@@ -49,6 +49,22 @@ function lineTraces(
     line: { color: color(s), width: 1.5 },
     fill: fill ? "tozeroy" : "none",
   }));
+}
+
+// Plotly's candlestick trace takes the four price columns; rising candles are hollow by default.
+function candleTraces(data: CandleData): Partial<Plotly.Data>[] {
+  return [
+    {
+      type: "candlestick",
+      x: data.x as unknown as number[],
+      open: data.open as unknown as number[],
+      high: data.high as unknown as number[],
+      low: data.low as unknown as number[],
+      close: data.close as unknown as number[],
+      increasing: { line: { color: RISE }, fillcolor: "rgba(0,0,0,0)" },
+      decreasing: { line: { color: FALL }, fillcolor: FALL },
+    } as Partial<Plotly.Data>,
+  ];
 }
 
 async function mount(
@@ -211,6 +227,22 @@ export const adapter: Adapter = {
       return handle<GridData>(
         root,
         (next) => Plotly.react(root, heatmapTraces(next), plotLayout, config(options)),
+        plotLayout,
+      );
+    },
+  },
+  candlestick: {
+    prepare: candleTraces,
+    async create(container, data, options) {
+      // Plotly adds a range slider under candlestick charts; the others have
+      // none. Times are epoch milliseconds, so the axis is declared a date axis.
+      const plotLayout = layout(options, {
+        xaxis: { type: "date", rangeslider: { visible: false } },
+      });
+      const root = await mount(container, candleTraces(data), plotLayout, options);
+      return handle<CandleData>(
+        root,
+        (next) => Plotly.react(root, candleTraces(next), plotLayout, config(options)),
         plotLayout,
       );
     },

@@ -238,3 +238,31 @@ def test_facets_split_marks_into_panels():
         hg.Chart(DATA, facet="host", facet_columns=True)
     with pytest.raises(ValueError, match="cannot use the right axis"):
         hg.Chart(DATA, facet="host").rule(y=1, axis="right")
+
+
+def test_candlesticks_send_their_four_prices():
+    prices = {
+        "day": np.array(["2026-01-05", "2026-01-06"], dtype="datetime64[ms]"),
+        "o": [10.0, 12.0],
+        "h": [13.0, 12.5],
+        "l": [9.0, 8.0],
+        "c": [12.0, 9.0],
+        "note": ["a", "b"],
+    }
+    chart = hg.candlestick(prices, "day", "o", "h", "l", "c", width=300, height=150)
+    spec, _ = chart.to_spec()
+    assert spec["marks"][0] == {
+        "type": "candlestick",
+        "x": "day",
+        "open": "o",
+        "high": "h",
+        "low": "l",
+        "close": "c",
+        "data": "data",
+    }
+    assert sorted(spec["data"]["data"]["columns"]) == ["c", "day", "h", "l", "o"]
+    colored, _ = hg.candlestick(prices, "day", "o", "h", "l", "c", rise="#000000").to_spec()
+    assert colored["marks"][0]["rise"] == "#000000"
+    assert "<path" in chart.to_svg()
+    with pytest.raises(TypeError, match="candlestick close"):
+        hg.Chart(prices).candlestick("day", "o", "h", "l", "note")

@@ -155,6 +155,8 @@ const theme: Check = (v, path) => {
     fontSize: positive,
     palette: strings,
     sequential: strings,
+    rise: string,
+    fall: string,
   });
 };
 
@@ -249,6 +251,19 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       fill: string,
       fillOpacity: fraction,
       sampling: oneOf("none", "pixel"),
+      label: string,
+    },
+  },
+  candlestick: {
+    required: ["x", "open", "high", "low", "close"],
+    checks: {
+      x: field,
+      open: field,
+      high: field,
+      low: field,
+      close: field,
+      rise: string,
+      fall: string,
       label: string,
     },
   },

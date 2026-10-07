@@ -397,6 +397,49 @@ class Chart:
             table,
         )
 
+    def candlestick(
+        self,
+        x: str,
+        open: str,
+        high: str,
+        low: str,
+        close: str,
+        *,
+        data: Any = None,
+        rise: str | None = None,
+        fall: str | None = None,
+        label: str | None = None,
+        axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
+        id: str | None = None,
+    ) -> Chart:
+        """Open-high-low-close candles at each ``x``, as for prices.
+
+        Candles closing at or above their open are hollow in the ``rise``
+        color, others filled in ``fall``; both default to the theme's.
+        """
+        table = self._mark_table(data)
+        self._require(table, x, ("number", "time", "category"), "candlestick x")
+        for role, field in (("open", open), ("high", high), ("low", low), ("close", close)):
+            self._require(table, field, _NUMERIC, f"candlestick {role}")
+        return self._add(
+            {
+                "type": "candlestick",
+                "x": x,
+                "open": open,
+                "high": high,
+                "low": low,
+                "close": close,
+                "rise": rise,
+                "fall": fall,
+                "label": label,
+                "axis": axis,
+                "facet": "repeat" if repeat else None,
+                "id": id,
+            },
+            table,
+        )
+
     def heatmap(
         self,
         x: str,
@@ -709,7 +752,10 @@ def _table_name(index: int) -> str:
 
 def _fields(spec: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
-    for key in ("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"):
+    for key in (
+        *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"),
+        *("open", "high", "low", "close"),
+    ):
         value = spec.get(key)
         if isinstance(value, str):
             fields.add(value)
@@ -802,3 +848,22 @@ def scatter(
 def heatmap(data: Any, x: str, y: str, value: str, **options: Any) -> Chart:
     """A heatmap."""
     return Chart(data, **options).heatmap(x, y, value)
+
+
+def candlestick(
+    data: Any,
+    x: str,
+    open: str,
+    high: str,
+    low: str,
+    close: str,
+    *,
+    rise: str | None = None,
+    fall: str | None = None,
+    label: str | None = None,
+    **options: Any,
+) -> Chart:
+    """A candlestick chart of open, high, low, and close prices."""
+    return Chart(data, **options).candlestick(
+        x, open, high, low, close, rise=rise, fall=fall, label=label
+    )

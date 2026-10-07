@@ -178,6 +178,9 @@ export interface ThemeSpec {
   palette?: string[];
   /** Ramp for continuous color (heatmaps), from low to high values. */
   sequential?: string[];
+  /** Colors of candlesticks that close at or above, and below, their open. */
+  rise?: string;
+  fall?: string;
 }
 
 export type MarkSpec =
@@ -189,7 +192,8 @@ export type MarkSpec =
   | BarSpec
   | PointSpec
   | HeatmapSpec
-  | ErrorBarSpec;
+  | ErrorBarSpec
+  | CandlestickSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -358,6 +362,25 @@ export interface ErrorBarSpec extends MarkBase {
   strokeWidth?: number;
   /** Width of the caps at each end in pixels; 0 for none. Default 8. */
   cap?: number;
+  label?: string;
+}
+
+/**
+ * Candles at each `x` from open to close, with wicks from low to high.
+ * Candles that close at or above their open are drawn hollow in the rise
+ * color, others filled in the fall color, so direction never rests on color alone.
+ */
+export interface CandlestickSpec extends MarkBase {
+  type: "candlestick";
+  x: Field;
+  open: Field;
+  high: Field;
+  low: Field;
+  close: Field;
+  /** Color of candles closing at or above their open; the theme's `rise` by default. */
+  rise?: string;
+  /** Color of candles closing below their open; the theme's `fall` by default. */
+  fall?: string;
   label?: string;
 }
 

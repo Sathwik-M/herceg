@@ -272,6 +272,34 @@ describe("inspect", () => {
     const { model } = sceneOf({ marks: [line(data, { x: "x", y: "a" })] });
     expect(model.inspect(1, 1)).toBeUndefined();
   });
+
+  it("snap along x to the nearest point drawn, skipping missing values", () => {
+    const at = (x: number[], v: number[], value: number, config: Partial<ChartConfig> = {}) => {
+      const { model, scene } = sceneOf({
+        marks: [line(table({ x, v }), { x: "x", y: "v" })],
+        ...config,
+      });
+      const hit = model.inspect(model.xScale()!.map(value), scene.panels[0]!.plot.y + 5);
+      return hit && [hit.value, hit.points.map((p) => p.value)];
+    };
+    const gap = Number.NaN;
+    // Measured from the pointer: at 6, 10 is nearer than 0.
+    expect(at([0, 5, 10], [1, gap, 2], 6)).toEqual([10, [2]]);
+    // Unsorted rows: at 5, 9 is nearer than 0.
+    expect(at([9, 5, 0], [1, gap, 2], 5)).toEqual([9, [1]]);
+    expect(at([1, 20, 5, -10, 9], [1, 1, gap, 1, 1], 5, { x: { domain: [0, 10] } })).toEqual([
+      1,
+      [1],
+    ]);
+    // Of several points at one x, the one drawn.
+    expect(at([0, 1, 1, 2], [1, gap, 2, 3], 1)).toEqual([1, [2]]);
+    // In the middle of a long gap, nothing is near enough.
+    const n = 5000;
+    const xs = Array.from({ length: n }, (_, i) => i);
+    const vs = xs.map((i) => (i === 0 || i === n - 1 ? 1 : gap));
+    expect(at(xs, vs, n / 2)).toBeUndefined();
+    expect(at(xs, vs, 3)).toEqual([0, [1]]);
+  });
 });
 
 describe("level of detail", () => {

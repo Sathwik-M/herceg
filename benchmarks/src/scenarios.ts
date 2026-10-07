@@ -1,6 +1,6 @@
 // Scenario catalog shared by the browser harness and the Node runner.
 
-export type ChartType = "line" | "area" | "bar" | "scatter" | "heatmap";
+export type ChartType = "line" | "area" | "bar" | "scatter" | "heatmap" | "candlestick";
 
 export type Operation =
   /** Create the chart and wait for the first frame. */
@@ -171,6 +171,30 @@ export const SCENARIOS: Scenario[] = [
     samples: 5,
     warmup: 1,
     description: "500 x 500 cells",
+  }),
+  s({
+    id: "candlestick-small-init",
+    chart: "candlestick",
+    operation: "init",
+    series: 1,
+    points: 200,
+    large: false,
+    tooltip: true,
+    samples: 10,
+    warmup: 3,
+    description: "200 candles, each drawn by every library",
+  }),
+  s({
+    id: "candlestick-large-init",
+    chart: "candlestick",
+    operation: "init",
+    series: 1,
+    points: 100_000,
+    large: true,
+    tooltip: true,
+    samples: 5,
+    warmup: 1,
+    description: "100,000 candles; each library's large-data strategy",
   }),
 
   // Massive data: only libraries with a documented large-data path are

@@ -4,8 +4,9 @@ Charts for pandas, Polars, PyArrow, and NumPy data, rendered by the
 [herceg](../README.md) engine: the same charts, tooltips, zooming, and
 large-data handling as the TypeScript library.
 
-> Early development. Line, area, bar, scatter, and heatmap marks, rule, region,
-> and text annotations; HTML, notebook, SVG, and PNG output.
+> Early development. Line, area, bar, scatter, heatmap, error bar, and
+> candlestick marks, rule, region, and text annotations; small multiples;
+> HTML, notebook, SVG, and PNG output.
 
 ```python
 import herceg as hg
@@ -26,6 +27,7 @@ hg.bar(sales, x="region", y="q1", labels=True)  # values at the bar ends
 hg.Chart(stats).bar(x="group", y="mean").error_bar(x="group", y="mean", y_error="se")
 hg.scatter(cars, x="weight", y="mpg", series="origin", r=3)
 hg.heatmap(load, x="hour", y="host", value="cpu")
+hg.candlestick(prices, x="day", open="open", high="high", low="low", close="close")
 ```
 
 `hg.Chart` composes marks on shared axes; each mark method returns the chart:

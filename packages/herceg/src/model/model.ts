@@ -890,8 +890,13 @@ export class ChartModel {
 
   /** Whether a series of the last scene is on the right y axis. */
   onRight(series: Series): boolean {
-    const owner = this.#base?.find((entry) => entry.series.some((s) => s.key === series.key));
-    return owner !== undefined && sideOf(owner.mark) === "right";
+    const mark = this.markOf(series);
+    return mark !== undefined && sideOf(mark) === "right";
+  }
+
+  /** The mark a series of the last scene belongs to. */
+  markOf(series: Series): Mark | undefined {
+    return this.#base?.find((entry) => entry.series.some((s) => s.key === series.key))?.mark;
   }
 
   /** The parts of a series drawn in the last scene: one per panel with facets, else itself. */

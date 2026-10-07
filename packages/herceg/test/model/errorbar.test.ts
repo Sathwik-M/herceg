@@ -122,7 +122,9 @@ describe("error bars", () => {
       logged.scene.panels[0]!.plot.y + 10,
       "nearest-x",
     );
-    expect(logAt?.points ?? []).toHaveLength(0);
+    // The interval at x = 1 cannot be placed; the tooltip moves to the nearest one drawn.
+    expect(logAt?.value).toBe(2);
+    expect(logAt?.points.map((p) => p.text)).toEqual(["1 – 10"]);
     // Keyboard navigation does not land on a row without a category.
     const missing = table({ g: ["a", null], lo: [1, 2], hi: [2, 3] });
     const { model: keyed } = build({ marks: [errorBar(missing, { x: "g", y1: "lo", y2: "hi" })] });

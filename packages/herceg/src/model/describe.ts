@@ -48,7 +48,7 @@ function summarize(parts: readonly Series[], name: string, locale: string | unde
   }
   if (lastRow < 0) return `${name}: no data`;
   const f = (v: number) => formatNumber(v, locale);
-  return `${name}: ${points} points, from ${f(min)} to ${f(max)}, last ${f(last)}`;
+  return `${name}: ${points} ${points === 1 ? "point" : "points"}, from ${f(min)} to ${f(max)}, last ${f(last)}`;
 }
 
 /**
@@ -85,7 +85,13 @@ export function describeChart(model: ChartModel): string {
     return `${s.label} (${onRight ? "right" : "left"} axis${unit ? `, ${unit}` : ""})`;
   };
   for (const s of series.slice(0, MAX_SERIES)) {
-    parts.push(`${summarize(model.parts(s), name(s), config.locale)}.`);
+    const drawn = model.parts(s);
+    const mark = model.markOf(s);
+    const y = model.onRight(s) ? model.yRightScale() : model.yScale();
+    const sentence = mark?.summarize
+      ? mark.summarize(drawn, name(s), config.locale, y?.type === "log")
+      : summarize(drawn, name(s), config.locale);
+    parts.push(`${sentence}.`);
   }
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
   parts.push(...model.annotationSummaries());

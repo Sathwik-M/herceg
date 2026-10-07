@@ -34,6 +34,7 @@ import {
   SeriesSplitter,
 } from "./mark.ts";
 import { rowOf, type Series, TableCache, visibleRange, xExtent, yExtent } from "./series.ts";
+import { Slots } from "./slots.ts";
 import { unionExtent } from "./trace.ts";
 
 interface BarStyle<S extends Schema> {
@@ -77,19 +78,8 @@ export interface HorizontalBarOptions<S extends Schema> extends BarStyle<S> {
 /** A category `y` makes bars horizontal; otherwise they are vertical. */
 export type BarOptions<S extends Schema> = VerticalBarOptions<S> | HorizontalBarOptions<S>;
 
-/** Fraction of the spacing between numeric x values that bars fill. */
-const FILL = 0.8;
 /** Gap between grouped bars, as a fraction of each bar's slot. */
 const GROUP_GAP = 0.1;
-const MAX_WIDTH = 64;
-
-interface Positions {
-  /** Distinct finite x values, ascending. */
-  values: Float64Array;
-  /** Smallest gap between neighboring values, linear and in log10 units. */
-  gap: number;
-  logGap: number;
-}
 
 interface Stack {
   tops: Float64Array[];
@@ -109,7 +99,8 @@ export class BarMark implements Mark<BarSpec> {
   readonly #categorical: boolean;
   readonly #split: SeriesSplitter;
   readonly #stacks = new TableCache<Map<string, Stack>>();
-  readonly #positions = new TableCache<Positions>();
+  /** Slots of bars on a number or time position axis. */
+  #slots: Slots | undefined;
   #formatter: { locale: string | undefined; format: Formatter } | undefined;
 
   constructor(spec: BarSpec, table: Table<Schema>) {
@@ -210,16 +201,8 @@ export class BarMark implements Mark<BarSpec> {
     }
     if (this.#categorical) return undefined;
     const extent = unionExtent(series.map((s) => xExtent(s, log)));
-    if (!extent) return undefined;
-    // Leave half a bar slot of room at each end, measured on the axis's own
-    // scale so log axes keep positive bounds.
-    const { gap, logGap } = this.#xPositions();
-    const [lo, hi] = log ? [Math.log10(extent[0]), Math.log10(extent[1])] : extent;
-    const half = ((log ? logGap : gap) || hi - lo || 1) / 2;
-    const [start, end] = log ? [10 ** (lo - half), 10 ** (hi + half)] : [lo - half, hi + half];
-    // Padding that overflows or underflows keeps the data's own end.
-    const usable = (value: number) => Number.isFinite(value) && (!log || value > 0);
-    return [usable(start) ? start : extent[0], usable(end) ? end : extent[1]] as const;
+    // Leave half a bar slot of room at each end.
+    return extent && this.#slotsOf().pad(extent, log);
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
@@ -243,9 +226,7 @@ export class BarMark implements Mark<BarSpec> {
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
     // Each position gets a slot; grouped series split it, stacked ones share it.
-    const slot = this.#categorical
-      ? Math.abs(along.bandwidth ?? 0)
-      : Math.min(MAX_WIDTH, this.#pixelGap(along) * FILL);
+    const slot = this.#categorical ? Math.abs(along.bandwidth ?? 0) : this.#slotsOf().width(along);
     const groups = this.spec.stack ? 1 : Math.max(1, visible.length);
     const share = slot / groups;
     const width = groups > 1 ? share * (1 - GROUP_GAP) : share;
@@ -263,7 +244,7 @@ export class BarMark implements Mark<BarSpec> {
         ? share
         : this.#categorical
           ? Math.abs(along.map(1) - along.map(0))
-          : this.#pixelGap(along);
+          : this.#slotsOf().pixelGap(along);
     const opacity = this.spec.fillOpacity ?? 1;
     visible.forEach((s, group) => {
       const labeled = labels?.fits(width, spacing, Boolean(this.spec.stack)) ? labels : undefined;
@@ -354,40 +335,9 @@ export class BarMark implements Mark<BarSpec> {
   }
 
   /** Distinct x values of the table and their spacing, which bar widths follow. */
-  #xPositions(): Positions {
-    return this.#positions.get(this.table, () => {
-      const x = this.table.numbers(this.#position as never);
-      const sorted = Float64Array.from(x);
-      if (!this.table.isSorted(this.#position as never)) sorted.sort();
-      let count = 0;
-      for (const value of sorted) {
-        if (Number.isFinite(value) && (count === 0 || value !== sorted[count - 1])) {
-          sorted[count++] = value;
-        }
-      }
-      const values = sorted.subarray(0, count);
-      return { values, gap: minGap(values, false), logGap: minGap(values, true) };
-    });
-  }
-
-  /** Smallest pixel distance between neighboring x positions in view. */
-  #pixelGap(x: PositionScale): number {
-    const positions = this.#xPositions().values;
-    const lo = Math.min(x.domain[0], x.domain[1]);
-    const hi = Math.max(x.domain[0], x.domain[1]);
-    // One neighbor past each edge, so zooming onto one bar keeps its width.
-    const start = Math.max(0, lowerBound(positions, lo) - 1);
-    const end = Math.min(positions.length, upperBound(positions, hi) + 1);
-    let best = Infinity;
-    let previous = Number.NaN;
-    for (let i = start; i < end; i++) {
-      const pixel = x.map(positions[i]!);
-      if (!Number.isFinite(pixel)) continue;
-      const gap = Math.abs(pixel - previous);
-      if (gap < best) best = gap;
-      previous = pixel;
-    }
-    return best > 0 && Number.isFinite(best) ? best : MAX_WIDTH / FILL;
+  #slotsOf(): Slots {
+    this.#slots ??= new Slots(this.table, this.#position);
+    return this.#slots;
   }
 }
 
@@ -621,19 +571,6 @@ class BarLabels {
     }
     group.items.push({ x, y, text });
   }
-}
-
-/** Smallest gap between neighboring positions, in log10 units on log axes. */
-function minGap(positions: Float64Array, log: boolean): number {
-  let best = Infinity;
-  let previous = Number.NaN;
-  for (const position of positions) {
-    if (log && !(position > 0)) continue;
-    const value = log ? Math.log10(position) : position;
-    if (value - previous < best) best = value - previous;
-    previous = value;
-  }
-  return Number.isFinite(best) ? best : 0;
 }
 
 /**

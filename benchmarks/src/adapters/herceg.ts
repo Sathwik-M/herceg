@@ -1,5 +1,16 @@
-import { area, bar, type Chart, createChart, heatmap, line, point, table, time } from "herceg";
-import type { CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
+import {
+  area,
+  bar,
+  type Chart,
+  candlestick,
+  createChart,
+  heatmap,
+  line,
+  point,
+  table,
+  time,
+} from "herceg";
+import type { CandleData, CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartKind, ChartOptions } from "../page/adapter.ts";
 import { clientPoint } from "../page/adapter.ts";
 
@@ -92,6 +103,10 @@ function barColumns(data: CategoryData) {
   return columns;
 }
 
+function candleColumns(data: CandleData) {
+  return { t: time(data.x), o: data.open, h: data.high, l: data.low, c: data.close };
+}
+
 // Heatmap cells as one row each: column index, row index, value.
 function gridColumns(data: GridData) {
   const count = data.columns * data.rows;
@@ -153,6 +168,19 @@ export const adapter: Adapter = {
         marks: [heatmap(source, { x: "c", y: "r", value: "v", colors: ["#f7fbff", "#08306b"] })],
       });
       return { ...common(chart), setData: (next) => source.reset(gridColumns(next)) };
+    },
+  },
+  candlestick: {
+    prepare: (data) => table(candleColumns(data)),
+    create(container, data, options) {
+      const source = table(candleColumns(data));
+      const chart = createChart(container, {
+        width: options.width,
+        height: options.height,
+        tooltip: options.tooltip,
+        marks: [candlestick(source, { x: "t", open: "o", high: "h", low: "l", close: "c" })],
+      });
+      return { ...common(chart), setData: (next) => source.reset(candleColumns(next)) };
     },
   },
 };

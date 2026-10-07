@@ -10,7 +10,9 @@
 // ingestion scenarios run with normal vsync instead.
 
 import {
+  type CandleData,
   type CategoryData,
+  candles,
   categories,
   continueSeries,
   type GridData,
@@ -35,7 +37,7 @@ export interface PageResult {
   metrics: Record<string, Metric>;
 }
 
-type AnyData = SeriesData | PointData | CategoryData | GridData;
+type AnyData = SeriesData | PointData | CategoryData | GridData | CandleData;
 type AnyHandle = ChartHandle<AnyData>;
 
 const WIDTH = 800;
@@ -85,6 +87,8 @@ function makeData(s: Scenario, seed: number): AnyData {
       const side = Math.round(Math.sqrt(s.points));
       return grid(side, side, seed);
     }
+    case "candlestick":
+      return candles(s.points, seed);
   }
 }
 

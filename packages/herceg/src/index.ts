@@ -27,6 +27,11 @@ export type { TextField } from "./marks/annotation.ts";
 export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";
 export { type BarMark, type BarOptions, bar } from "./marks/bar.ts";
 export {
+  type CandlestickMark,
+  type CandlestickOptions,
+  candlestick,
+} from "./marks/candlestick.ts";
+export {
   type CustomDataOptions,
   type CustomMark,
   type CustomOptions,

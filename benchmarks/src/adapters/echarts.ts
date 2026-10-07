@@ -1,4 +1,4 @@
-import { BarChart, HeatmapChart, LineChart, ScatterChart } from "echarts/charts";
+import { BarChart, CandlestickChart, HeatmapChart, LineChart, ScatterChart } from "echarts/charts";
 import {
   DataZoomComponent,
   GridComponent,
@@ -7,15 +7,16 @@ import {
 } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
-import type { CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
+import type { CandleData, CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartOptions } from "../page/adapter.ts";
-import { clientPoint, color } from "../page/adapter.ts";
+import { clientPoint, color, FALL, RISE } from "../page/adapter.ts";
 
 echarts.use([
   LineChart,
   BarChart,
   ScatterChart,
   HeatmapChart,
+  CandlestickChart,
   GridComponent,
   TooltipComponent,
   VisualMapComponent,
@@ -170,6 +171,15 @@ function scatterPairs(data: PointData): [number, number][] {
   return pairs;
 }
 
+// ECharts' documented candlestick item on a time axis: [time, open, close, low, high].
+function candleRows(data: CandleData): number[][] {
+  const rows: number[][] = new Array(data.x.length);
+  for (let i = 0; i < data.x.length; i++) {
+    rows[i] = [data.x[i]!, data.open[i]!, data.close[i]!, data.low[i]!, data.high[i]!];
+  }
+  return rows;
+}
+
 function heatmapTriples(data: GridData): [number, number, number][] {
   const out: [number, number, number][] = new Array(data.values.length);
   for (let r = 0; r < data.rows; r++) {
@@ -266,6 +276,38 @@ export const adapter: Adapter = {
           series: [{ type: "heatmap", data: heatmapTriples(data) }],
         },
         (next) => ({ series: [{ data: heatmapTriples(next) }] }),
+      );
+    },
+  },
+  candlestick: {
+    prepare: candleRows,
+    create(container, data, options) {
+      return mount<CandleData>(
+        container,
+        options,
+        {
+          ...base(options, "axis"),
+          xAxis: { type: "time" },
+          yAxis: { type: "value", scale: true },
+          series: [
+            {
+              type: "candlestick",
+              data: candleRows(data),
+              // Documented large-data mode for candlesticks: it draws each
+              // candle as a high-low line without a body.
+              large: options.large,
+              // Rising candles hollow, falling ones filled, as the others draw
+              // them (outside the large mode).
+              itemStyle: {
+                color: "transparent",
+                color0: FALL,
+                borderColor: RISE,
+                borderColor0: FALL,
+              },
+            },
+          ],
+        },
+        (next) => ({ series: [{ data: candleRows(next) }] }),
       );
     },
   },

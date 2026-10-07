@@ -1,6 +1,6 @@
 import type { FieldKind, NumericArray } from "../data/column.ts";
 import { lowerBound, type Schema, type Table } from "../data/table.ts";
-import { formatNumber, timeTickLabels } from "../format/format.ts";
+import { type Formatter, formatNumber, timeTickLabels } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -159,6 +159,27 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
   geometry(series: readonly Series[], frame: Frame, key: MarkKey): Geometry[];
   /** Nearest point to a pixel, for marks with a faster lookup than the chart's generic search. */
   pick?(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined;
+  /**
+   * Tooltip text for a row of a series, for marks that show more than one
+   * value per point (candlesticks); `format` formats values of its y axis.
+   */
+  pointText?(series: Series, row: number, format: Formatter): string;
+  /**
+   * Whether the mark draws a row, for marks reading more fields than their
+   * series holds (candlesticks); inspection skips rows it does not draw.
+   */
+  shows?(series: Series, row: number, y: PositionScale): boolean;
+  /**
+   * The text alternative's sentence for a series, over its parts in every
+   * panel, for marks whose values say more than one number (candlesticks);
+   * `log` says whether its y axis is logarithmic.
+   */
+  summarize?(
+    parts: readonly Series[],
+    name: string,
+    locale: string | undefined,
+    log: boolean,
+  ): string;
   /**
    * A sentence describing what the mark shows, for marks without series
    * (annotations), which the chart's data summary would otherwise leave out.

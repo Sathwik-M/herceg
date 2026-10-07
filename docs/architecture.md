@@ -12,7 +12,7 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -20,7 +20,7 @@ One name per concept, used the same way in code and docs.
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars), points, a raster (heatmaps), rules, text, or shapes (custom marks). |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), rules, text, or shapes (custom marks). |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
@@ -144,6 +144,12 @@ million-point window takes a median of about 1.5 ms instead of 2.7 ms (p95
 2.0 instead of 3.4 ms); the ticks that move the window's storage also
 rebuild its index and take up to about 5 ms instead of 4 ms. Bands, stacked
 areas, and long-format series (row subsets) are not indexed.
+
+Candlesticks merge rather than sample: with more candles in view than the
+plot has pixel columns, each column draws one candle with the open of its
+earliest candle, the close of its latest, and its highest high and lowest low,
+so no price extreme is lost. The merge works in any row order, and the
+geometry buffers hold at most one candle per column.
 
 ## Band axes
 
@@ -465,7 +471,7 @@ the DOM, creating an offscreen canvas in that canvas' document when
 
 ## Known limits
 
-- Mark types: line, area, bar, point, heatmap, error bar, the rule, region,
+- Mark types: line, area, bar, point, heatmap, error bar, candlestick, the rule, region,
   and text annotations, and custom marks. Horizontal bars need a category y;
   bars along a number or time y are not supported. Error bars stand at the
   center of their position, not beside grouped bars; horizontal ones at y

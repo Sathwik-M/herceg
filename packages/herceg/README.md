@@ -101,7 +101,7 @@ when the data is on a canvas, and with a halo so text stays readable over
 lines. Annotations outside the view are left out. Text is meant for
 annotations, not for labeling every point of a large series.
 
-Bars, points, error bars, and heatmaps:
+Bars, points, error bars, heatmaps, and candlesticks:
 
 ```ts
 const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
@@ -116,6 +116,8 @@ errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
 const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(load, { x: "hour", y: "host", value: "cpu" });
+
+candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
 ```
 
 Bar labels go past each bar's end, or for stacks inside each segment in a
@@ -127,6 +129,16 @@ report every series in the band under the pointer. Heatmaps also accept number a
 distinct value, up to 4,194,304 cells (bin finer data first). Heatmaps show a
 color legend instead of series entries; `colors` takes a ramp of `#rgb` or
 `#rrggbb` colors from low to high.
+
+Candlesticks that close at or above their open are hollow, in the theme's
+`rise` color (or the mark's `rise`); others are filled in `fall`, so direction
+does not rest on color alone while candles are a few pixels wide. Tooltips
+report all four prices, and the nearest-point search measures from the
+close. Rows missing a price are left out; high and low widen to cover open
+and close. When more candles are in view than the plot has pixels, each pixel
+column's candles merge into one: the open of its earliest candle, the close
+of its latest, and its highest high and lowest low. Merged candles are too
+thin to show hollow bodies, so there direction is shown by color only.
 
 Marks are drawn in array order; rules and text always draw above other marks.
 

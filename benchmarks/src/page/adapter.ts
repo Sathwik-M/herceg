@@ -1,4 +1,4 @@
-import type { CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
+import type { CandleData, CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
 
 export interface ChartOptions {
   width: number;
@@ -72,7 +72,12 @@ export interface Adapter {
   bar?: ChartKind<CategoryData>;
   scatter?: ChartKind<PointData>;
   heatmap?: ChartKind<GridData>;
+  candlestick?: ChartKind<CandleData>;
 }
+
+/** Candlestick colors: rising (hollow) and falling (filled) candles. */
+export const RISE = "#1baf7a";
+export const FALL = "#e34948";
 
 export const PALETTE = [
   "#2563eb",

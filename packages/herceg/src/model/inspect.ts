@@ -37,6 +37,9 @@ export interface Inspection {
   panel?: string;
 }
 
+/** Points a nearest-x search steps over to leave a gap of points not drawn. */
+const GAP_WALK = 1024;
+
 export type TooltipMode = "nearest-x" | "nearest-y" | "nearest";
 
 /** A mark and the series it resolved for a scene. */
@@ -147,7 +150,9 @@ export class Inspector {
     for (const s of series) {
       const position =
         axis === "x"
-          ? nearestPositionWithin(s, target, lo, hi)
+          ? s.sorted
+            ? this.#drawnNear(s, nearestPositionWithin(s, target, lo, hi), target, lo, hi)
+            : this.#scanNearest(s, "x", target, lo, hi)
           : this.#scanNearest(s, "y", target, lo, hi);
       if (position < 0) continue;
       const value = s[axis][rowOf(s, position)]!;
@@ -156,6 +161,26 @@ export class Inspector {
     }
     if (!Number.isFinite(snapped)) return undefined;
     return this.#inspectAt(axis, snapped, series, yAxis);
+  }
+
+  /**
+   * In a sorted series, `position`, or when its point is not drawn (a
+   * missing value, a candle missing a price), the drawn point nearest
+   * `target` in x within [lo, hi], looking at most GAP_WALK points either
+   * way; -1 for none. Inside a longer gap no point is near enough.
+   */
+  #drawnNear(s: Series, position: number, target: number, lo: number, hi: number): number {
+    if (position < 0 || this.#drawn(s, rowOf(s, position))) return position;
+    const usable = (k: number) =>
+      k >= 0 && k < s.length && xAt(s, k) >= lo && xAt(s, k) <= hi && this.#drawn(s, rowOf(s, k));
+    let left = position - 1;
+    while (left >= 0 && position - left <= GAP_WALK && !usable(left)) left--;
+    let right = position + 1;
+    while (right < s.length && right - position <= GAP_WALK && !usable(right)) right++;
+    const [l, r] = [usable(left), usable(right)];
+    if (!l) return r ? right : -1;
+    if (!r) return left;
+    return target - xAt(s, left) <= xAt(s, right) - target ? left : right;
   }
 
   /**
@@ -223,8 +248,10 @@ export class Inspector {
       Number.isFinite(scale.map(value)) && !(scale.type === "band" && value < 0);
     if (!Number.isFinite(s.values[row]!) || !placed(x, s.x[row]!) || !placed(y, s.y[row]!))
       return false;
+    const mark = this.#markOf.get(s);
+    if (mark?.shows && !mark.shows(s, row, y)) return false;
     if (!s.range) return true;
-    const along = this.#markOf.get(s)?.tooltip === "y";
+    const along = mark?.tooltip === "y";
     const low = (along ? s.x0 : s.y0)?.[row];
     return low !== undefined && placed(along ? x : y, low);
   }
@@ -308,8 +335,10 @@ export class Inspector {
   /** Position of a drawn point of `s` at `value` on `axis`, or -1. */
   #positionAt(s: Series, axis: "x" | "y", value: number): number {
     if (axis === "x" && s.sorted) {
-      const k = nearestPosition(s, value);
-      return k >= 0 && xAt(s, k) === value ? k : -1;
+      let k = nearestPosition(s, value);
+      // Of several points at this x, the first one drawn.
+      while (k >= 0 && k < s.length && xAt(s, k) === value && !this.#drawn(s, rowOf(s, k))) k++;
+      return k >= 0 && k < s.length && xAt(s, k) === value ? k : -1;
     }
     return this.#scanNearest(s, axis, value, value, value);
   }
@@ -338,7 +367,8 @@ export class Inspector {
     if (!this.#placeable(s, row)) return undefined;
     const px = x.map(s.x[row]!);
     const py = y.map(s.y[row]!);
-    const tooltip = this.#markOf.get(s)?.tooltip;
+    const mark = this.#markOf.get(s);
+    const tooltip = mark?.tooltip;
     // A cell's label is its y category and its value a measure; marks
     // inspected along y (horizontal bars) measure their values on x.
     const along = tooltip === "y";
@@ -349,11 +379,13 @@ export class Inspector {
       label: tooltip === "cell" ? this.formatY(s.y[row]!) : s.label,
       color: s.color,
       value,
-      text: s.range
-        ? `${formatValue(low)} – ${formatValue(value)}`
-        : tooltip === "cell"
-          ? this.formatValue(value)
-          : formatValue(value),
+      text: mark?.pointText
+        ? mark.pointText(s, row, formatValue)
+        : s.range
+          ? `${formatValue(low)} – ${formatValue(value)}`
+          : tooltip === "cell"
+            ? this.formatValue(value)
+            : formatValue(value),
       px,
       py,
     };

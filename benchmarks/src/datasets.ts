@@ -27,6 +27,15 @@ export interface GridData {
   values: Float64Array;
 }
 
+/** Open, high, low, and close prices at regular times, for candlesticks. */
+export interface CandleData {
+  x: Float64Array;
+  open: Float64Array;
+  high: Float64Array;
+  low: Float64Array;
+  close: Float64Array;
+}
+
 export const START_TIME = Date.UTC(2026, 0, 1);
 export const STEP_MS = 1000;
 
@@ -130,6 +139,26 @@ export function grid(columns: number, rows: number, seed = 1): GridData {
     }
   }
   return { columns, rows, values };
+}
+
+/** A random-walk price with one candle per minute. */
+export function candles(points: number, seed = 1): CandleData {
+  const next = random(seed);
+  const x = new Float64Array(points);
+  const open = new Float64Array(points);
+  const high = new Float64Array(points);
+  const low = new Float64Array(points);
+  const close = new Float64Array(points);
+  let price = 100;
+  for (let i = 0; i < points; i++) {
+    x[i] = START_TIME + i * 60 * STEP_MS;
+    open[i] = price;
+    price = Math.max(1, price + gaussian(next));
+    close[i] = price;
+    high[i] = Math.max(open[i]!, price) + next() * 0.8;
+    low[i] = Math.min(open[i]!, price) - next() * 0.8;
+  }
+  return { x, open, high, low, close };
 }
 
 /** Bytes of numeric payload, used to report memory amplification. */

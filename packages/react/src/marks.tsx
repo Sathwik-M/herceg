@@ -6,8 +6,10 @@ import {
   area,
   type BarOptions,
   bar,
+  type CandlestickOptions,
   type CustomDataOptions,
   type CustomOptions,
+  candlestick,
   custom,
   type ErrorBarOptions,
   errorBar,
@@ -92,6 +94,13 @@ export const ErrorBar = /* @__PURE__ */ markElement(
   "ErrorBar",
   ({ data, ...options }: WithData<ErrorBarOptions<Schema>, Schema>) => errorBar(data, options),
 ) as unknown as <S extends Schema>(props: WithData<ErrorBarOptions<S>, S>) => null;
+
+/** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
+export const Candlestick = /* @__PURE__ */ markElement(
+  "Candlestick",
+  ({ data, ...options }: WithData<CandlestickOptions<Schema>, Schema>) =>
+    candlestick(data, options),
+) as unknown as <S extends Schema>(props: WithData<CandlestickOptions<S>, S>) => null;
 
 /** A grid of colored cells. */
 export const Heatmap = /* @__PURE__ */ markElement(

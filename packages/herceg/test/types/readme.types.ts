@@ -2,6 +2,7 @@
 import {
   area,
   bar,
+  candlestick,
   createChart,
   custom,
   encodedCategory,
@@ -185,6 +186,19 @@ custom(metrics, {
 custom(sales, { x: "region", draw() {} });
 // @ts-expect-error marks without a table have none in their context
 custom({ draw: ({ table: none }) => none });
+
+// Candlesticks
+const prices = table({
+  day: time(timestamps),
+  open: latencies,
+  high: latencies,
+  low: latencies,
+  close: latencies,
+  name: serviceNames,
+});
+candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
+// @ts-expect-error prices are number fields
+candlestick(prices, { x: "day", open: "name", high: "high", low: "low", close: "close" });
 
 // Error bars
 errorBar(sales, { x: "region", y1: "q1", y2: "q2" });
