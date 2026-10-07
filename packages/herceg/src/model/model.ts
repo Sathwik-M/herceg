@@ -11,17 +11,10 @@ import {
   type BandList,
   type Bands,
   type Frame,
-  type Hit,
   type Mark,
   numericBands,
 } from "../marks/mark.ts";
-import {
-  nearestPosition,
-  nearestPositionWithin,
-  rowOf,
-  type Series,
-  xAt,
-} from "../marks/series.ts";
+import type { Series } from "../marks/series.ts";
 import { unionExtent } from "../marks/trace.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
@@ -53,45 +46,9 @@ export type ChartConfig = Omit<ChartSpec, "marks" | "data" | "width" | "height" 
   marks: readonly Mark[];
 };
 
-export interface InspectedPoint {
-  key: string;
-  label: string;
-  color: string;
-  /** Formatted value, or "low – high" for bands. */
-  text: string;
-  value: number;
-  px: number;
-  py: number;
-}
+import { type Inspection, Inspector, type MarkSeries, type TooltipMode } from "./inspect.ts";
 
-export interface Inspection {
-  /** The axis the inspection follows: "y" in nearest-y mode, otherwise "x". */
-  axis: "x" | "y";
-  /** Data value on that axis, snapped to the nearest data point. */
-  value: number;
-  /** Pixel position of `value` on that axis. */
-  position: number;
-  label: string;
-  points: InspectedPoint[];
-}
-
-export type TooltipMode = "nearest-x" | "nearest-y" | "nearest";
-
-interface MarkSeries {
-  mark: Mark;
-  series: Series[];
-}
-
-interface LastFrame {
-  marks: MarkSeries[];
-  /** The mark of each series, for how its points are inspected and formatted. */
-  markOf: Map<Series, Mark>;
-  frame: Frame;
-  mode: TooltipMode;
-  formatX: Formatter;
-  formatY: Formatter;
-  formatValue: Formatter;
-}
+export type { InspectedPoint, Inspection, TooltipMode } from "./inspect.ts";
 
 const TICK = 5;
 const GAP = 6;
@@ -116,7 +73,7 @@ export class ChartModel {
   #left = 0;
   #layoutKey = "";
   #bands: Bands = {};
-  #last: LastFrame | undefined;
+  #last: Inspector | undefined;
   /** Palette slot per series key, assigned on first appearance and kept. */
   #slots = new Map<string, number>();
 
@@ -581,13 +538,11 @@ export class ChartModel {
         ? "nearest"
         : ((typeof tooltip === "object" ? tooltip.mode : undefined) ??
           (only === "x" ? "nearest-x" : only === "y" ? "nearest-y" : "nearest"));
-    const markOf = new Map<Series, Mark>();
-    for (const { mark, series } of marks) for (const s of series) markOf.set(s, mark);
-    this.#last = {
+    this.#last = new Inspector({
       marks,
-      markOf,
       frame,
       mode,
+      hidden: this.hidden,
       formatX:
         xType === "band"
           ? categoryOf(x)
@@ -604,7 +559,7 @@ export class ChartModel {
               )
             : valueFormatter(yContext, formatNumbers),
       formatValue: formatNumbers,
-    };
+    });
 
     return {
       width,
@@ -691,252 +646,17 @@ export class ChartModel {
     return marks.flatMap(({ series }) => series);
   }
 
-  #visibleSeries(last: LastFrame, filter: (mark: Mark) => boolean): Series[] {
-    return last.marks
-      .filter(({ mark }) => filter(mark))
-      .flatMap((entry) => entry.series)
-      .filter((s) => !this.hidden.has(s.key) && s.length > 0);
-  }
-
   /**
-   * Finds the data under a pointer position for tooltips. "nearest-x" reports
-   * every visible series at the data x nearest the pointer, "nearest-y" the
-   * same along y; "nearest" reports the single closest point. Sorted series
-   * use binary search; marks with their own lookup (grid indexes, cell
-   * tables) use it.
+   * Finds the data under a pointer position for tooltips; see
+   * `Inspector.inspect`.
    */
   inspect(px: number, py: number, mode?: TooltipMode): Inspection | undefined {
-    const last = this.#last;
-    if (!last) return undefined;
-    const { plot } = last.frame;
-    if (px < plot.x || px > plot.x + plot.width || py < plot.y || py > plot.y + plot.height)
-      return undefined;
-    const requested = mode ?? last.mode;
-    // Cells are always found under the pointer, so with nothing placed along
-    // an axis (heatmaps only) every mode inspects the nearest cell.
-    const series = this.#visibleSeries(last, (mark) => mark.tooltip !== "cell");
-    if (requested === "nearest" || series.length === 0) {
-      const hit = this.#nearest(px, py, last);
-      if (!hit) return undefined;
-      const point = this.#point(hit.series, hit.position, last);
-      if (!point) return undefined;
-      // The heading names where the point is placed: its x, or its y
-      // category for marks along y.
-      const axis = last.markOf.get(hit.series)?.tooltip === "y" ? "y" : "x";
-      return this.#inspection(axis, hit.series[axis][rowOf(hit.series, hit.position)]!, [point]);
-    }
-    // Snap to the data value nearest the pointer across every visible
-    // series, among points drawn in view.
-    const axis = requested === "nearest-y" ? "y" : "x";
-    const scale = last.frame[axis];
-    const target = scale.invert(axis === "x" ? px : py);
-    const lo = Math.min(scale.domain[0], scale.domain[1]);
-    const hi = Math.max(scale.domain[0], scale.domain[1]);
-    let snapped = Number.NaN;
-    for (const s of series) {
-      const position =
-        axis === "x"
-          ? nearestPositionWithin(s, target, lo, hi)
-          : this.#scanNearest(s, "y", target, lo, hi, last);
-      if (position < 0) continue;
-      const value = s[axis][rowOf(s, position)]!;
-      if (Number.isNaN(snapped) || Math.abs(value - target) < Math.abs(snapped - target))
-        snapped = value;
-    }
-    if (!Number.isFinite(snapped)) return undefined;
-    return this.#inspectAt(axis, snapped, series, last);
+    return this.#last?.inspect(px, py, mode);
   }
 
-  /**
-   * Position of the point nearest `target` among those whose value on `axis`
-   * is in [lo, hi] and that are drawn, by a scan; -1 when none is. Unsorted
-   * series may hold several rows at one position (long-format bars), some of
-   * them missing, so every row is checked.
-   */
-  #scanNearest(
-    s: Series,
-    axis: "x" | "y",
-    target: number,
-    lo: number,
-    hi: number,
-    last: LastFrame,
-  ): number {
-    const column = s[axis];
-    let best = -1;
-    let bestDistance = Infinity;
-    for (let k = 0; k < s.length; k++) {
-      const row = rowOf(s, k);
-      const at = column[row]!;
-      if (!(at >= lo && at <= hi)) continue;
-      const distance = Math.abs(at - target);
-      if (distance >= bestDistance || !this.#drawn(s, row, last)) continue;
-      best = k;
-      bestDistance = distance;
-    }
-    return best;
-  }
-
-  /**
-   * Whether a point is drawn: its value is finite and both scales can place
-   * it. A point of a mark inspected along y (a horizontal bar) also needs
-   * part of it, from base to end, inside the x domain; its end may lie
-   * outside the plot.
-   */
-  #drawn(s: Series, row: number, last: LastFrame): boolean {
-    if (!this.#placeable(s, row, last)) return false;
-    const { x } = last.frame;
-    const end = s.x[row]!;
-    const mark = last.markOf.get(s);
-    if (mark?.tooltip !== "y") return true;
-    const base = s.x0 ? s.x0[row]! : mark.zero === "x" ? 0 : end;
-    const lo = Math.min(x.domain[0], x.domain[1]);
-    const hi = Math.max(x.domain[0], x.domain[1]);
-    return Math.max(base, end) >= lo && Math.min(base, end) <= hi;
-  }
-
-  /**
-   * Whether a point can be placed: its value is finite, both scales place
-   * it (rows without a band, index -1, have no place), and so does the low
-   * end of a range.
-   */
-  #placeable(s: Series, row: number, last: LastFrame): boolean {
-    const { x, y } = last.frame;
-    const placed = (scale: PositionScale, value: number) =>
-      Number.isFinite(scale.map(value)) && !(scale.type === "band" && value < 0);
-    if (!Number.isFinite(s.values[row]!) || !placed(x, s.x[row]!) || !placed(y, s.y[row]!))
-      return false;
-    if (!s.range) return true;
-    const along = last.markOf.get(s)?.tooltip === "y";
-    const low = (along ? s.x0 : s.y0)?.[row];
-    return low !== undefined && placed(along ? x : y, low);
-  }
-
-  #nearest(px: number, py: number, last: LastFrame): Hit | undefined {
-    const { frame } = last;
-    const { x, y } = frame;
-    let best: Hit | undefined;
-    const consider = (s: Series, k: number) => {
-      const row = rowOf(s, k);
-      const distance = Math.hypot(x.map(s.x[row]!) - px, y.map(s.y[row]!) - py);
-      if (distance < (best?.distance ?? Infinity) && this.#drawn(s, row, last))
-        best = { series: s, position: k, distance };
-    };
-    const target = x.invert(px);
-    for (const { mark, series } of last.marks) {
-      const visible = series.filter((s) => !this.hidden.has(s.key) && s.length > 0);
-      if (mark.pick) {
-        // Ties go to later marks, which are drawn on top.
-        const hit = mark.pick(visible, px, py, frame);
-        if (hit && hit.distance <= (best?.distance ?? Infinity)) best = hit;
-        continue;
-      }
-      for (const s of visible) {
-        if (!s.sorted) {
-          for (let k = 0; k < s.length; k++) consider(s, k);
-          continue;
-        }
-        // Walk outward from the nearest x until points are horizontally
-        // farther than the best match.
-        const center = nearestPosition(s, target);
-        const within = (k: number) =>
-          Math.abs(x.map(xAt(s, k)) - px) <= (best?.distance ?? Infinity);
-        for (let k = center; k >= 0 && within(k); k--) consider(s, k);
-        for (let k = center + 1; k < s.length && within(k); k++) consider(s, k);
-      }
-    }
-    return best;
-  }
-
-  /**
-   * Inspects one point of a series, identified by position, plus the other
-   * visible series at its x (or its y, for marks inspected along y). Used by
-   * keyboard navigation, which must reach every point even when values repeat.
-   */
+  /** Inspects one point of a series by position; see `Inspector.inspectPosition`. */
   inspectPosition(seriesKey: string, position: number): Inspection | undefined {
-    const last = this.#last;
-    if (!last) return undefined;
-    const series = this.#visibleSeries(last, () => true);
-    const anchor = series.find((s) => s.key === seriesKey);
-    if (!anchor || position < 0 || position >= anchor.length) return undefined;
-    if (!this.#placeable(anchor, rowOf(anchor, position), last)) return undefined;
-    const axis = last.markOf.get(anchor)?.tooltip === "y" ? "y" : "x";
-    const along = this.#visibleSeries(last, (mark) => mark.tooltip === axis);
-    return this.#inspectAt(
-      axis,
-      anchor[axis][rowOf(anchor, position)]!,
-      along.includes(anchor) ? along : [anchor],
-      last,
-      anchor,
-      position,
-    );
-  }
-
-  /** Every series' point at `value` on `axis`. */
-  #inspectAt(
-    axis: "x" | "y",
-    value: number,
-    series: readonly Series[],
-    last: LastFrame,
-    anchor?: Series,
-    anchorPosition?: number,
-  ): Inspection {
-    const points: InspectedPoint[] = [];
-    for (const s of series) {
-      const position = s === anchor ? anchorPosition! : this.#positionAt(s, axis, value, last);
-      if (position < 0) continue;
-      const point = this.#point(s, position, last);
-      if (point) points.push(point);
-    }
-    return this.#inspection(axis, value, points);
-  }
-
-  /** Position of a drawn point of `s` at `value` on `axis`, or -1. */
-  #positionAt(s: Series, axis: "x" | "y", value: number, last: LastFrame): number {
-    if (axis === "x" && s.sorted) {
-      const k = nearestPosition(s, value);
-      return k >= 0 && xAt(s, k) === value ? k : -1;
-    }
-    return this.#scanNearest(s, axis, value, value, value, last);
-  }
-
-  #inspection(axis: "x" | "y", value: number, points: InspectedPoint[]): Inspection {
-    const last = this.#last!;
-    return {
-      axis,
-      value,
-      position: last.frame[axis].map(value),
-      label: axis === "x" ? last.formatX(value) : last.formatY(value),
-      points,
-    };
-  }
-
-  #point(s: Series, position: number, last: LastFrame): InspectedPoint | undefined {
-    const { x, y } = last.frame;
-    const row = rowOf(s, position);
-    const value = s.values[row]!;
-    // What a scale cannot place (log axes, missing ends) is not drawn, so not reported.
-    if (!this.#placeable(s, row, last)) return undefined;
-    const px = x.map(s.x[row]!);
-    const py = y.map(s.y[row]!);
-    const tooltip = last.markOf.get(s)?.tooltip;
-    // A cell's label is its y category and its value a measure; marks
-    // inspected along y (horizontal bars) measure their values on x.
-    const along = tooltip === "y";
-    const formatValue = along ? last.formatX : last.formatY;
-    const low = s.range ? (along ? s.x0 : s.y0)![row]! : Number.NaN;
-    return {
-      key: s.key,
-      label: tooltip === "cell" ? last.formatY(s.y[row]!) : s.label,
-      color: s.color,
-      value,
-      text: s.range
-        ? `${formatValue(low)} – ${formatValue(value)}`
-        : tooltip === "cell"
-          ? last.formatValue(value)
-          : formatValue(value),
-      px,
-      py,
-    };
+    return this.#last?.inspectPosition(seriesKey, position);
   }
 
   /** Releases geometry buffers. */
