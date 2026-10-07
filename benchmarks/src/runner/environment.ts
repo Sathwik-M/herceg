@@ -6,6 +6,7 @@ import { ROOT } from "./build.ts";
 
 /** npm package measured for each adapter id. */
 export const PACKAGES: Record<string, string> = {
+  herceg: "herceg",
   echarts: "echarts",
   chartjs: "chart.js",
   plotly: "plotly.js-dist-min",
@@ -14,12 +15,18 @@ export const PACKAGES: Record<string, string> = {
 };
 
 export function packageVersion(name: string): string {
+  if (name === "herceg")
+    return `${readVersion(join(ROOT, "..", "packages", "herceg"))} (${commit().sha})`;
   for (const base of [join(ROOT, "node_modules"), join(ROOT, "..", "node_modules")]) {
     try {
       return JSON.parse(readFileSync(join(base, name, "package.json"), "utf8")).version;
     } catch {}
   }
   return "unknown";
+}
+
+function readVersion(directory: string): string {
+  return JSON.parse(readFileSync(join(directory, "package.json"), "utf8")).version;
 }
 
 function git(command: string): string {

@@ -8,7 +8,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import * as esbuild from "esbuild";
-import { ROOT } from "../runner/build.ts";
+import { HERCEG_ALIAS, ROOT } from "../runner/build.ts";
 import { commit, machine, packageVersion } from "../runner/environment.ts";
 
 const { values: args } = parseArgs({
@@ -19,6 +19,7 @@ const ENTRIES = join(ROOT, "src", "size", "entries");
 
 /** The npm package each entry measures, for version reporting. */
 const ENTRY_PACKAGES: Record<string, string> = {
+  "herceg-line": "herceg",
   "echarts-line": "echarts",
   "echarts-full": "echarts",
   "chartjs-line": "chart.js",
@@ -45,6 +46,7 @@ async function bundle(entry: string, minify: boolean): Promise<Bundle> {
     target: "es2022",
     platform: "browser",
     define: { "process.env.NODE_ENV": '"production"' },
+    alias: HERCEG_ALIAS,
     logLevel: "error",
   });
   const file = (extension: string) =>

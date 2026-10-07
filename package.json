@@ -12,6 +12,7 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "npm test -w herceg",
+    "test:browser": "npm run test:browser -w herceg",
     "bench": "npm run bench -w herceg-benchmarks --",
     "bench:core": "npm run bench -w herceg",
     "bench:size": "npm run size -w herceg-benchmarks --",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@types/node": "^22.20.5",
+    "@vitest/browser-playwright": "^5.0.3",
     "esbuild": "^0.28.2",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",

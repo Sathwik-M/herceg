@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-07T05:05:25.787Z",
+ "date": "2026-10-07T05:37:00.607Z",
  "commit": {
-  "sha": "none",
+  "sha": "b78869f",
   "dirty": true
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production; gzip level 9; brotli quality 11; required CSS reported separately",
@@ -53,6 +53,16 @@
    "minified": 502515,
    "gzip": 170848,
    "brotli": 146089,
+   "css": null
+  },
+  {
+   "entry": "herceg-line",
+   "package": "herceg",
+   "version": "0.0.0 (b78869f)",
+   "raw": 102613,
+   "minified": 51536,
+   "gzip": 18714,
+   "brotli": 16862,
    "css": null
   },
   {

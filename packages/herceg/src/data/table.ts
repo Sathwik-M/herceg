@@ -287,12 +287,17 @@ export class Table<S extends Schema = Schema> {
     this.append(batch as unknown as Batch<S>);
   }
 
-  /** Drops the oldest `count` rows (all of them when `count` exceeds the length). */
+  /**
+   * Drops the oldest `count` rows (all of them when `count` exceeds the
+   * length). Buffers shrink when the drop leaves them less than a quarter full.
+   */
   dropFirst(count: number): void {
     requireCount(count, "dropFirst() count");
     const dropped = Math.min(count, this.#length);
     if (dropped === 0) return;
     this.#dropFront(dropped);
+    const target = Math.max(MIN_CAPACITY, Math.ceil(this.#length * GROWTH));
+    if (this.#capacity > 4 * target) this.#reallocate(target);
     this.#changed({ dropped, appended: 0, updated: null, fields: [], reset: false });
   }
 

@@ -4,7 +4,10 @@
     "noEmit": true,
     "exactOptionalPropertyTypes": false,
     "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "herceg": ["../packages/herceg/src/index.ts"]
+    }
   },
   "include": ["src"]
 }

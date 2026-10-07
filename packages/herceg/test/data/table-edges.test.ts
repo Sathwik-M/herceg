@@ -69,6 +69,15 @@ describe("validation", () => {
 });
 
 describe("drops", () => {
+  it("shrinks buffers after dropping most rows", () => {
+    const t = table({ x: Float64Array.from({ length: 10_000 }, (_, i) => i) });
+    t.append({ x: [10_000] });
+    expect(t.byteLength).toBeGreaterThan(80_000);
+    t.dropFirst(9_990);
+    expect(t.byteLength).toBeLessThanOrEqual(64 * 8);
+    expect(Array.from(t.numbers("x"))).toEqual(Array.from({ length: 11 }, (_, i) => 9_990 + i));
+  });
+
   it("re-evaluates sortedness after dropping an inversion", () => {
     const t = table({ x: [3, 1, 2] });
     expect(t.isSorted("x")).toBe(false);

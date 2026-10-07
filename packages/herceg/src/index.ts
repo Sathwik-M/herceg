@@ -20,3 +20,13 @@ export type {
   TableOptions,
 } from "./data/table.ts";
 export { fromRows, Table, table } from "./data/table.ts";
+export { type Chart, type ChartOptions, createChart } from "./dom/chart.ts";
+export type { MeasureText } from "./layout/text.ts";
+export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";
+export { type LineMark, type LineOptions, line } from "./marks/line.ts";
+export type { Mark } from "./marks/mark.ts";
+export { type RuleMark, type RuleOptions, rule } from "./marks/rule.ts";
+export type { ChartConfig, InspectedPoint, Inspection } from "./model/model.ts";
+export { renderToSVG, type StaticOptions } from "./render/static.ts";
+export type * from "./spec/spec.ts";
+export type { Theme } from "./theme.ts";
