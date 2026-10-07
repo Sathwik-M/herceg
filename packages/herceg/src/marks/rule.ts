@@ -1,4 +1,5 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
+import { ruleDrawing } from "../draw/rule.ts";
 import type { RuleGeometry } from "../scene/scene.ts";
 import type { RuleSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
@@ -91,6 +92,7 @@ export class RuleMark implements Mark<RuleSpec> {
       if (!Number.isFinite(at)) continue;
       out.push({
         kind: "rule",
+        draw: ruleDrawing,
         key: `${JSON.stringify(key)}:${i}`,
         stroke: spec.stroke ?? frame.theme.muted,
         strokeWidth: spec.strokeWidth ?? 1,

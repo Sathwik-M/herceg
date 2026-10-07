@@ -14,6 +14,22 @@ function files(directory: string): string[] {
 }
 
 describe("architecture", () => {
+  // Marks import their drawings, so drawings must load and write SVG without
+  // a DOM. Canvas painting reaches the DOM only through the canvas it is
+  // handed (rasters fall back to creating a canvas in its document).
+  it("src/draw renders SVG without a DOM and paints only through its canvas", () => {
+    for (const file of files(join(SRC, "draw"))) {
+      const source = readFileSync(file, "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
+      expect(DOM.test(source), `${file} uses a DOM global`).toBe(false);
+      expect(/from "\.\.\/(dom|render)\//.test(source), `${file} imports browser code`).toBe(false);
+      const reaches = source.match(/[\w.]*ownerDocument/g) ?? [];
+      for (const reach of reaches)
+        expect(reach, `${file} reaches the DOM other than through its canvas`).toBe(
+          "context.canvas.ownerDocument",
+        );
+    }
+  });
+
   for (const directory of CORE) {
     it(`src/${directory} does not use the DOM or import browser code`, () => {
       for (const file of files(join(SRC, directory))) {

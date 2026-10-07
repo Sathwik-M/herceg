@@ -6,6 +6,7 @@ import {
   scanExtent,
   type Table,
 } from "../data/table.ts";
+import { rasterDrawing } from "../draw/raster.ts";
 import { checkRamp, SequentialScale } from "../scale/color.ts";
 import type { RasterGeometry } from "../scene/scene.ts";
 import type { HeatmapSpec } from "../spec/spec.ts";
@@ -166,6 +167,7 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
     return [
       {
         kind: "raster",
+        draw: rasterDrawing,
         key: s.key,
         x: Math.min(left, right),
         y: Math.min(first, last),

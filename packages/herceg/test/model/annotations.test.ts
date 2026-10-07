@@ -12,7 +12,13 @@ import { text } from "../../src/marks/text.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
-import type { RectGeometry, RuleGeometry, Scene, TextGeometry } from "../../src/scene/scene.ts";
+import type {
+  MarkGeometry,
+  RectGeometry,
+  RuleGeometry,
+  Scene,
+  TextGeometry,
+} from "../../src/scene/scene.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -20,8 +26,8 @@ function build(config: ChartConfig, width = 600, height = 300) {
   return { model, scene: model.scene(estimateText) };
 }
 
-const of = <K extends Scene["marks"][number]["kind"]>(scene: Scene, kind: K) =>
-  scene.marks.filter((m) => m.kind === kind) as Extract<Scene["marks"][number], { kind: K }>[];
+const of = <K extends MarkGeometry["kind"]>(scene: Scene, kind: K) =>
+  scene.marks.filter((m) => m.kind === kind) as Extract<MarkGeometry, { kind: K }>[];
 
 const start = Date.UTC(2026, 0, 1);
 const hour = 3_600_000;

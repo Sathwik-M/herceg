@@ -1,4 +1,5 @@
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import { pointDrawing } from "../draw/point.ts";
 import { GridIndex } from "../lod/grid-index.ts";
 import { isOpaqueColor } from "../scale/color.ts";
 import { CLOUD_POINTS, type PointGeometry } from "../scene/scene.ts";
@@ -99,6 +100,7 @@ export class PointMark implements Mark<PointSpec> {
       if (frame.clouds && !sample && end - start >= CLOUD_POINTS) {
         out.push({
           kind: "point",
+          draw: pointDrawing,
           key: s.key,
           fill: s.color,
           fillOpacity: opacity,
@@ -142,6 +144,7 @@ export class PointMark implements Mark<PointSpec> {
       }
       out.push({
         kind: "point",
+        draw: pointDrawing,
         key: s.key,
         fill: s.color,
         fillOpacity: opacity,

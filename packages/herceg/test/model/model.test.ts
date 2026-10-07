@@ -6,7 +6,7 @@ import { area } from "../../src/marks/area.ts";
 import { line } from "../../src/marks/line.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
-import type { AreaGeometry, LineGeometry, Scene } from "../../src/scene/scene.ts";
+import type { AreaGeometry, LineGeometry, RuleGeometry, Scene } from "../../src/scene/scene.ts";
 
 function sceneOf(
   config: ChartConfig,
@@ -111,7 +111,8 @@ describe("domains", () => {
     expect(
       Math.max(...yAxis(scene).ticks.map((t) => Number(t.label.replace(/,/g, "")))),
     ).toBeGreaterThanOrEqual(2000);
-    expect(scene.marks.some((m) => m.kind === "rule" && m.label === "limit")).toBe(true);
+    const rules = scene.marks.filter((m): m is RuleGeometry => m.kind === "rule");
+    expect(rules.some((m) => m.label === "limit")).toBe(true);
   });
 
   it("respects explicit domains", () => {

@@ -7,31 +7,7 @@
 
 import type { NumericArray } from "../data/column.ts";
 import type { Mapping } from "../lod/m4.ts";
-import type { PointCloud, PointGeometry, Rect } from "../scene/scene.ts";
-
-export interface CloudPainter {
-  /**
-   * Draws a point geometry that has a cloud into `context`, over `plot`, for
-   * the chart `owner`. Returns false when it cannot represent the cloud
-   * (sizes or values beyond what the GPU path handles); the caller then
-   * places the points on the CPU.
-   */
-  paint(
-    context: CanvasRenderingContext2D,
-    mark: PointGeometry,
-    plot: Rect,
-    pixelRatio: number,
-    owner: object,
-  ): boolean;
-  /** Releases uploads `owner` did not paint since its last call (a frame). */
-  endFrame(owner: object): void;
-  /** Releases everything `owner` uploaded that no other chart uses. */
-  release(owner: object): void;
-  /** Bytes of point data currently uploaded. */
-  readonly bytes: number;
-  /** False once the browser has taken the GPU context away. */
-  readonly usable: boolean;
-}
+import type { CloudPainter, PointCloud, PointGeometry, Rect } from "../scene/scene.ts";
 
 /** Marks missing values; uploaded values otherwise lie in [0, 1]. */
 const MISSING = 3e38;

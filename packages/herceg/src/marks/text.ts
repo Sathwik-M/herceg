@@ -1,4 +1,5 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
+import { textDrawing } from "../draw/text.ts";
 import type { TextGeometry } from "../scene/scene.ts";
 import type { TextSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
@@ -116,6 +117,7 @@ export class TextMark implements Mark<TextSpec> {
     return [
       {
         kind: "text",
+        draw: textDrawing,
         key: id,
         fill: spec.fill ?? frame.theme.text,
         anchor: spec.anchor ?? "middle",

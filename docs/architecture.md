@@ -240,14 +240,28 @@ first band's center, -0.5 its edge).
 
 ## Rendering
 
-Each scene can be drawn three ways:
+Geometry carries its drawing (`Drawing` in `scene/scene.ts`, implementations
+in `src/draw/`): its SVG markup, optionally the same output as a few SVG
+elements with attributes, and its size (for choosing a renderer). Data
+drawings also paint on a canvas; guide drawings (rules, text) draw only in
+SVG, above the data. The mark that emits the geometry attaches the drawing,
+so renderers know no geometry kinds and a bundle only contains drawing code
+for the marks it imports (a line chart does not carry bar, point, raster,
+or text drawing). Each geometry type is checked against its drawing's type
+at compile time; the `Geometry` base type that renderers hold erases that
+pairing. Each scene
+can be drawn three ways:
 
 - `renderSvg` produces a standalone SVG document.
-- `SvgLayer` keeps SVG elements per geometry key and only updates attributes.
-  Axes and grid are rebuilt only when their markup changes. Bars and points
-  are one `path` element per series, not one element per data point.
+- `SvgLayer` keeps each geometry's nodes by key. Drawings that describe
+  themselves as elements (lines, areas, bars, opaque points, rasters) are
+  updated attribute by attribute, which costs several times less than
+  reparsing markup; others (translucent points, rules, text) are a group
+  whose markup is rewritten when its hash changes. Axes and grid are rebuilt
+  only when their markup changes. Bars and points are one `path` element per
+  series, not one element per data point.
 - `paintCanvas` redraws grid and marks into a canvas sized to the device pixel
-  ratio, handing point clouds to the WebGL painter when one is loaded.
+  ratio; point drawings hand clouds to the WebGL painter when one is loaded.
 
 In the browser the layers are, bottom to top: an optional canvas for marks,
 the SVG layer (grid and marks when not on canvas, guides, axes, title, pointer
@@ -365,7 +379,11 @@ identity, so their caches survive re-renders. Data changes go
 through the table and reach the chart through its own change events and
 frame scheduler, without rendering React. A test
 (`test/architecture.test.ts`) keeps the core directories (`data`, `scale`,
-`format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM access.
+`format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM access. Marks
+import their drawings (`draw`), which write SVG without a DOM and paint
+canvases through the context they are handed; only raster painting reaches
+the DOM, creating an offscreen canvas in that canvas' document when
+`OffscreenCanvas` is unavailable.
 
 ## Known limits
 
@@ -379,9 +397,9 @@ frame scheduler, without rendering React. A test
   field.
 - One x and one y axis per chart.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
-- Renderers draw every geometry kind themselves, and the model always carries
-  band-axis and color-legend layout, so a line-only bundle includes bar, point,
-  and heatmap support it does not use (about 3 KiB gzip).
+- The model always carries band-axis, color-legend, and inspection-along-y
+  logic, so a line-only bundle includes some bar and heatmap support it does
+  not use.
 - Areas, log scales, and long-format line series re-scan the visible range on
   every frame; only whole-column line series on linear scales use the min/max
   index.

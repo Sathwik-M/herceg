@@ -5,7 +5,7 @@ import type { TimeZone } from "../format/zone.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
-import type { MarkGeometry, Rect } from "../scene/scene.ts";
+import type { Geometry, Rect } from "../scene/scene.ts";
 import type { MarkSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { groupRows, isSortedSubset, type Series, TableCache } from "./series.ts";
@@ -141,7 +141,7 @@ export interface Mark<S extends MarkSpec = MarkSpec> {
    * The mark's part of the scene. `key` identifies the mark, for marks whose
    * geometry is not keyed by series (annotations).
    */
-  geometry(series: readonly Series[], frame: Frame, key: MarkKey): MarkGeometry[];
+  geometry(series: readonly Series[], frame: Frame, key: MarkKey): Geometry[];
   /** Nearest point to a pixel, for marks with a faster lookup than the chart's generic search. */
   pick?(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined;
   /**

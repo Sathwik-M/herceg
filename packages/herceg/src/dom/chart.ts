@@ -11,9 +11,8 @@ import { describeChart } from "../model/describe.ts";
 import { type ChartConfig, ChartModel, type Inspection } from "../model/model.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
-import type { CloudPainter } from "../render/webgl.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { Scene } from "../scene/scene.ts";
+import type { CloudPainter, PointGeometry, Scene } from "../scene/scene.ts";
 import { Legend } from "./legend.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
 import { SvgLayer, svgElement } from "./svg-layer.ts";
@@ -318,8 +317,11 @@ export class Chart implements Scheduled, SyncMember {
     this.root.style.height = `${height}px`;
     const scene = this.model.scene(measurer(this.root.ownerDocument), this.#cloudsAllowed());
     this.#scene = scene;
-    const clouds = scene.marks.some((mark) => mark.kind === "point" && mark.cloud !== undefined);
-    if (clouds && !this.#clouds) this.#loadClouds();
+    const clouds = scene.marks.some(
+      (mark) => mark.kind === "point" && (mark as unknown as PointGeometry).cloud !== undefined,
+    );
+    // A null painter means WebGL is unavailable; it is not loaded again.
+    if (clouds && this.#clouds === undefined) this.#loadClouds();
 
     const renderer = this.#options.renderer ?? "auto";
     this.#onCanvas =

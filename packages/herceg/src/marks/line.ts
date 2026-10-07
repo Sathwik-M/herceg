@@ -1,5 +1,6 @@
 import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import { lineDrawing } from "../draw/line.ts";
 import { MinMaxIndex } from "../lod/minmax-index.ts";
 import type { LineGeometry } from "../scene/scene.ts";
 import type { Curve, LineSpec } from "../spec/spec.ts";
@@ -110,6 +111,7 @@ export class LineMark implements Mark<LineSpec> {
       if (frame.hidden.has(s.key)) continue;
       out.push({
         kind: "line",
+        draw: lineDrawing,
         key: s.key,
         stroke: s.color,
         strokeWidth: this.spec.strokeWidth ?? DEFAULT_WIDTH,

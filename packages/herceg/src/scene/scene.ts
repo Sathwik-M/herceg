@@ -1,8 +1,10 @@
 // The scene is the render plan: everything a renderer needs, in CSS pixels,
 // with no reference to scales or the DOM. Mark geometry is packed (polylines
-// in Float32Arrays) rather than one object per data point. The exception is
-// a point cloud, which keeps references to its source columns so a GPU
-// painter can upload them once and redraw them as the view changes.
+// in Float32Arrays) rather than one object per data point, and carries the
+// drawing that renders it, so renderers know no geometry kinds. The
+// exception to packing is a point cloud, which keeps references to its
+// source columns so a GPU painter can upload them once and redraw them as
+// the view changes.
 
 import type { NumericArray } from "../data/column.ts";
 import type { Mapping } from "../lod/m4.ts";
@@ -16,19 +18,123 @@ export interface Rect {
   height: number;
 }
 
-export interface LineGeometry {
+/**
+ * How one kind of geometry is drawn. A mark attaches the drawing to the
+ * geometry it emits, so a bundle carries drawing code only for the marks it
+ * uses, and custom marks can bring their own. Members are function
+ * properties rather than methods so that a drawing only fits geometry of its
+ * own type.
+ */
+export type Drawing<G extends Geometry> = DataDrawing<G> | GuideDrawing<G>;
+
+interface DrawingBase<G extends Geometry> {
+  /** Points or cells drawn, for choosing between SVG and Canvas. */
+  readonly size: (geometry: G) => number;
+  /** SVG markup, for static output and for the live SVG layer without `elements`. */
+  readonly svg: (geometry: G, context: SvgContext) => string;
+  /**
+   * The same output as `svg`, as a few elements whose attributes the live SVG
+   * layer updates in place each frame; reparsing markup costs several times
+   * more. Drawings of many elements (one circle per point) leave it out.
+   */
+  readonly elements?: (geometry: G, context: SvgContext) => SvgElement[] | undefined;
+}
+
+/** Data, drawn with the other marks in SVG or on a canvas, clipped to the plot. */
+export interface DataDrawing<G extends Geometry> extends DrawingBase<G> {
+  readonly guide?: false;
+  /** Paints onto a canvas in CSS pixels, clipped to the plot. */
+  readonly canvas: (context: CanvasRenderingContext2D, geometry: G, options: CanvasOptions) => void;
+}
+
+/**
+ * Guides (rules, text) are drawn as SVG above the data, even when a canvas
+ * draws the data, so they stay crisp and readable. They are not clipped to
+ * the plot; their marks leave out what lies outside it.
+ */
+export interface GuideDrawing<G extends Geometry> extends DrawingBase<G> {
+  readonly guide: true;
+}
+
+/**
+ * A mark's part of the scene: an identity and the drawing that renders it.
+ * Each geometry type pairs itself with a drawing of its own type (see
+ * `LineGeometry`), which the compiler checks; `Geometry` erases that pairing
+ * so renderers can hold any geometry, so build geometry as its own type.
+ */
+export interface Geometry {
+  readonly kind: string;
+  /** Unique within the scene. */
+  readonly key: string;
+  // biome-ignore lint/suspicious/noExplicitAny: the erasure point described above.
+  readonly draw: Drawing<any>;
+}
+
+/** One SVG element: its tag and attribute values (unescaped). */
+export interface SvgElement {
+  tag: string;
+  attributes: Record<string, string>;
+}
+
+export interface SvgContext {
+  theme: Theme;
+  /** Encodes raster pixels as an image URL; rasters are left out without one. */
+  encodeRaster: ((raster: RasterGeometry) => string) | undefined;
+}
+
+export interface CanvasOptions {
+  plot: Rect;
+  pixelRatio: number;
+  clouds: CloudOptions;
+}
+
+/** How point clouds are painted on a canvas. */
+export interface CloudOptions {
+  /** GPU painter; without one, or where it declines, points are placed on the CPU. */
+  painter?: CloudPainter | undefined;
+  /** The chart painting, which owns the painter's uploads. */
+  owner?: object;
+  /** Leave clouds out, as while the painter is still loading. */
+  defer?: boolean;
+}
+
+/** Draws point clouds on the GPU (render/webgl.ts). */
+export interface CloudPainter {
+  /**
+   * Draws a point geometry that has a cloud into `context`, over `plot`, for
+   * the chart `owner`. Returns false when it cannot represent the cloud
+   * (sizes or values beyond what the GPU path handles); the caller then
+   * places the points on the CPU.
+   */
+  paint(
+    context: CanvasRenderingContext2D,
+    mark: PointGeometry,
+    plot: Rect,
+    pixelRatio: number,
+    owner: object,
+  ): boolean;
+  /** Releases uploads `owner` did not paint since its last call (a frame). */
+  endFrame(owner: object): void;
+  /** Releases everything `owner` uploaded that no other chart uses. */
+  release(owner: object): void;
+  /** Bytes of point data currently uploaded. */
+  readonly bytes: number;
+  /** False once the browser has taken the GPU context away. */
+  readonly usable: boolean;
+}
+
+export interface LineGeometry extends Geometry {
   kind: "line";
-  /** Series key, unique within the scene. */
-  key: string;
+  draw: Drawing<LineGeometry>;
   stroke: string;
   strokeWidth: number;
   dash: readonly number[] | undefined;
   path: Polyline;
 }
 
-export interface AreaGeometry {
+export interface AreaGeometry extends Geometry {
   kind: "area";
-  key: string;
+  draw: Drawing<AreaGeometry>;
   fill: string;
   fillOpacity: number;
   /** Top edge, left to right. */
@@ -41,9 +147,9 @@ export interface AreaGeometry {
   strokeWidth: number;
 }
 
-export interface RuleGeometry {
+export interface RuleGeometry extends Geometry {
   kind: "rule";
-  key: string;
+  draw: Drawing<RuleGeometry>;
   stroke: string;
   strokeWidth: number;
   dash: readonly number[] | undefined;
@@ -58,9 +164,9 @@ export interface RuleGeometry {
  * Text labels of one mark, each centered on (or starting or ending at) its
  * point, vertically centered: x, y per label.
  */
-export interface TextGeometry {
+export interface TextGeometry extends Geometry {
   kind: "text";
-  key: string;
+  draw: Drawing<TextGeometry>;
   fill: string;
   anchor: "start" | "middle" | "end";
   coords: Float32Array;
@@ -69,9 +175,9 @@ export interface TextGeometry {
 }
 
 /** Rectangles of one series, such as bars: x, y, width, height per rectangle. */
-export interface RectGeometry {
+export interface RectGeometry extends Geometry {
   kind: "rect";
-  key: string;
+  draw: Drawing<RectGeometry>;
   fill: string;
   fillOpacity: number;
   rects: Float32Array;
@@ -79,9 +185,9 @@ export interface RectGeometry {
 }
 
 /** Circles of one series, such as scatter points: x, y per point. */
-export interface PointGeometry {
+export interface PointGeometry extends Geometry {
   kind: "point";
-  key: string;
+  draw: Drawing<PointGeometry>;
   fill: string;
   fillOpacity: number;
   /**
@@ -122,9 +228,9 @@ export interface PointCloud {
  * A grid of colored cells drawn as an image: `columns x rows` RGBA pixels,
  * row 0 at the top, stretched over the destination rectangle.
  */
-export interface RasterGeometry {
+export interface RasterGeometry extends Geometry {
   kind: "raster";
-  key: string;
+  draw: Drawing<RasterGeometry>;
   x: number;
   y: number;
   width: number;
@@ -134,6 +240,7 @@ export interface RasterGeometry {
   pixels: Uint8ClampedArray<ArrayBuffer>;
 }
 
+/** The geometry of the built-in marks, for code that narrows by kind. */
 export type MarkGeometry =
   | LineGeometry
   | AreaGeometry
@@ -142,15 +249,6 @@ export type MarkGeometry =
   | RectGeometry
   | PointGeometry
   | RasterGeometry;
-
-/**
- * Guides (rules and text) are drawn as SVG above the data, even when a canvas
- * draws the data, so they stay crisp and readable. They are not clipped to
- * the plot; their marks leave out what lies outside it.
- */
-export function isGuide(mark: MarkGeometry): mark is RuleGeometry | TextGeometry {
-  return mark.kind === "rule" || mark.kind === "text";
-}
 
 export interface AxisTick {
   /** Pixel position along the axis. */
@@ -206,7 +304,7 @@ export interface Scene {
   axes: AxisGeometry[];
   legend: LegendItem[];
   colorLegend: ColorLegend | undefined;
-  marks: MarkGeometry[];
+  marks: Geometry[];
   /** Points in all mark geometry after level-of-detail reduction. */
   vertices: number;
 }

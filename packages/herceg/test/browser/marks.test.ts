@@ -4,6 +4,7 @@ import { createChart } from "../../src/dom/chart.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
+import type { Mark } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
 import { region } from "../../src/marks/region.ts";
 import { rule } from "../../src/marks/rule.ts";
@@ -380,6 +381,25 @@ describe("point clouds on the GPU", () => {
     const chart = createChart(host, {
       marks: [point(cloudTable(150_000), { x: "x", y: "y", sampling: "pixel" })],
     });
+    expect(chart.loading).toBeUndefined();
+    chart.destroy();
+  });
+
+  it("loads the painter only for point clouds, and not again once unavailable", () => {
+    // A geometry of another kind with a `cloud` field is not a point cloud.
+    const lines = line(table({ x: [0, 1], y: [0, 1] }), { x: "x", y: "y" });
+    const odd: Mark = {
+      spec: lines.spec,
+      table: lines.table,
+      tooltip: "x",
+      channelKind: (axis) => lines.channelKind(axis),
+      series: (key, palette) => lines.series(key, palette),
+      xExtent: (...args) => lines.xExtent(...args),
+      yExtent: (...args) => lines.yExtent(...args),
+      geometry: (series, frame) =>
+        lines.geometry(series, frame).map((g) => Object.assign(g, { cloud: false })),
+    };
+    const chart = createChart(host, { marks: [odd] });
     expect(chart.loading).toBeUndefined();
     chart.destroy();
   });

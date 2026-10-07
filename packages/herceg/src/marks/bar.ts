@@ -8,6 +8,7 @@ import {
   type Table,
   upperBound,
 } from "../data/table.ts";
+import { rectDrawing } from "../draw/rect.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry } from "../scene/scene.ts";
 import type { BarSpec } from "../spec/spec.ts";
@@ -272,6 +273,7 @@ export class BarMark implements Mark<BarSpec> {
       }
       out.push({
         kind: "rect",
+        draw: rectDrawing,
         key: s.key,
         fill: s.color,
         fillOpacity: this.spec.fillOpacity ?? 1,

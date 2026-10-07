@@ -1,4 +1,6 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
+import { rectDrawing } from "../draw/rect.ts";
+import { textDrawing } from "../draw/text.ts";
 import type { Formatter } from "../format/format.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
@@ -147,6 +149,7 @@ export class RegionMark implements Mark<RegionSpec> {
     const out: (RectGeometry | TextGeometry)[] = [
       {
         kind: "rect",
+        draw: rectDrawing,
         key: id,
         fill: this.spec.fill ?? theme.muted,
         fillOpacity: this.spec.fillOpacity ?? 0.15,
@@ -157,6 +160,7 @@ export class RegionMark implements Mark<RegionSpec> {
     if (labels.length > 0) {
       out.push({
         kind: "text",
+        draw: textDrawing,
         key: seriesKey(key, "region label"),
         fill: theme.text,
         anchor: "start",

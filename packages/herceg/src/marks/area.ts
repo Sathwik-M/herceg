@@ -1,5 +1,6 @@
 import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import { areaDrawing } from "../draw/area.ts";
 import type { AreaGeometry } from "../scene/scene.ts";
 import type { AreaSpec, Curve } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
@@ -160,6 +161,7 @@ export class AreaMark implements Mark<AreaSpec> {
         : { upper: tracePath(s, s.y, frame, "upper", spec.curve), lower: null };
       out.push({
         kind: "area",
+        draw: areaDrawing,
         key: s.key,
         fill: s.color,
         fillOpacity,

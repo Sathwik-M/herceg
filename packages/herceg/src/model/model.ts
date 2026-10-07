@@ -539,12 +539,7 @@ export class ChartModel {
     }
 
     let vertices = 0;
-    for (const item of geometry) {
-      if (item.kind === "line") vertices += item.path.count;
-      else if (item.kind === "area") vertices += item.upper.count + (item.lower?.count ?? 0);
-      else if (item.kind === "rect" || item.kind === "point") vertices += item.count;
-      else if (item.kind === "raster") vertices += item.columns * item.rows;
-    }
+    for (const item of geometry) vertices += item.draw.size(item);
 
     const formatNumbers: Formatter = (v) => formatNumber(v, locale);
     const categoryOf =

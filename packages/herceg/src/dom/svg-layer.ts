@@ -1,25 +1,6 @@
 import { canvasRasterUrl } from "../render/canvas.ts";
-import {
-  areaPath,
-  axisElements,
-  colorLegendElement,
-  gridPath,
-  linePath,
-  pointCircles,
-  pointPath,
-  rectPath,
-  ruleElement,
-  textElements,
-  titleElement,
-} from "../render/svg.ts";
-import {
-  isGuide,
-  type MarkGeometry,
-  type RuleGeometry,
-  type Scene,
-  type TextGeometry,
-} from "../scene/scene.ts";
-import type { Theme } from "../theme.ts";
+import { axisElements, colorLegendElement, gridPath, titleElement } from "../render/svg.ts";
+import type { Geometry, Scene, SvgContext, SvgElement } from "../scene/scene.ts";
 
 const NS = "http://www.w3.org/2000/svg";
 
@@ -33,14 +14,47 @@ function element<K extends keyof SVGElementTagNameMap>(
   return node;
 }
 
-function set(node: Element, name: string, value: string) {
+function set(node: Element, name: string, value: string): void {
   if (node.getAttribute(name) !== value) node.setAttribute(name, value);
 }
 
 /**
- * Retained SVG output. Mark paths are kept per geometry key and only their
- * attributes change between frames; axes and grid are rebuilt only when their
- * markup changes. The overlay group belongs to the pointer layer.
+ * What the layer keeps for one geometry: its elements, updated in place,
+ * or for drawings without elements, one group and a hash of its markup.
+ */
+interface Retained {
+  kind: string;
+  nodes: Element[];
+  /** Hash of the group's markup; undefined for elements. */
+  hash: number | undefined;
+  /** Attribute names last set on each element, to remove ones no longer set. */
+  names: string[][];
+}
+
+/**
+ * A 53-bit hash of a string (cyrb53). Groups remember the hash of their
+ * markup rather than the markup itself, which for path data would keep a
+ * second copy of every drawn path in memory; a collision, which would skip
+ * one update, is vanishingly unlikely at 53 bits.
+ */
+function hash(text: string): number {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
+/**
+ * Retained SVG output. Each geometry is a group per key whose markup (from
+ * the geometry's drawing) is rewritten only when it changes; axes and grid
+ * are rebuilt only when their markup changes. The overlay group belongs to
+ * the pointer layer.
  */
 export class SvgLayer {
   readonly svg: SVGSVGElement;
@@ -50,15 +64,12 @@ export class SvgLayer {
   readonly #background: SVGRectElement;
   readonly #grid: SVGPathElement;
   readonly #marks: SVGGElement;
-  /**
-   * Rules and text, one group per geometry key, each rewritten only when its
-   * markup changes: labels may change every frame.
-   */
+  /** Rules and text, above the data and unclipped. */
   readonly #annotations: SVGGElement;
-  readonly #annotationNodes = new Map<string, { node: SVGGElement; markup: string }>();
   /** Axes, title, and color legend. */
   readonly #guides: SVGGElement;
-  readonly #nodes = new Map<string, SVGElement[]>();
+  readonly #markNodes = new Map<string, Retained>();
+  readonly #annotationNodes = new Map<string, Retained>();
   readonly #id: string;
   #guideMarkup = "";
 
@@ -111,9 +122,15 @@ export class SvgLayer {
     set(this.#grid, "d", options.marks ? gridPath(scene) : "");
     set(this.#grid, "stroke", theme.grid);
 
-    this.#renderMarks(options.marks ? scene.marks.filter((mark) => !isGuide(mark)) : []);
-
-    this.#renderAnnotations(scene.marks.filter(isGuide), theme);
+    const document = this.#document;
+    const context: SvgContext = {
+      theme,
+      encodeRaster: (raster) => canvasRasterUrl(raster, document),
+    };
+    const data = options.marks ? scene.marks.filter((mark) => !mark.draw.guide) : [];
+    this.#renderKeyed(this.#marks, this.#markNodes, data, context);
+    const guides = scene.marks.filter((mark) => mark.draw.guide);
+    this.#renderKeyed(this.#annotations, this.#annotationNodes, guides, context);
     let markup = `<g style="font-variant-numeric:tabular-nums">${axisElements(scene.axes, theme)}</g>`;
     markup += titleElement(scene);
     if (scene.colorLegend)
@@ -124,60 +141,76 @@ export class SvgLayer {
     }
   }
 
-  #renderAnnotations(guides: readonly (RuleGeometry | TextGeometry)[], theme: Theme) {
+  /** Each geometry's nodes, in scene order; nodes of geometry no longer drawn go. */
+  #renderKeyed(
+    parent: SVGGElement,
+    retained: Map<string, Retained>,
+    geometry: readonly Geometry[],
+    context: SvgContext,
+  ) {
     const seen = new Set<string>();
     let previous: Element | null = null;
-    for (const guide of guides) {
-      seen.add(guide.key);
-      let entry = this.#annotationNodes.get(guide.key);
-      if (!entry) {
-        entry = { node: element(this.#document, "g"), markup: "" };
-        this.#annotationNodes.set(guide.key, entry);
+    for (const mark of geometry) {
+      seen.add(mark.key);
+      const old = retained.get(mark.key);
+      const elements = mark.draw.elements?.(mark, context);
+      const entry = elements
+        ? this.#updateElements(old, mark.kind, elements)
+        : this.#updateMarkup(old, mark.kind, mark.draw.svg(mark, context));
+      if (entry !== old) {
+        for (const node of old?.nodes ?? []) node.remove();
+        retained.set(mark.key, entry);
       }
-      const markup = guide.kind === "rule" ? ruleElement(guide, theme) : textElements(guide, theme);
-      if (markup !== entry.markup) {
-        entry.node.innerHTML = markup;
-        entry.markup = markup;
-      }
-      previous = keepOrder(this.#annotations, entry.node, previous);
+      for (const node of entry.nodes) previous = keepOrder(parent, node, previous);
     }
-    for (const [key, entry] of this.#annotationNodes) {
+    for (const [key, entry] of retained) {
       if (seen.has(key)) continue;
-      entry.node.remove();
-      this.#annotationNodes.delete(key);
+      for (const node of entry.nodes) node.remove();
+      retained.delete(key);
     }
   }
 
-  #renderMarks(marks: readonly MarkGeometry[]) {
-    const seen = new Set<string>();
-    let previous: Element | null = null;
-    for (const mark of marks) {
-      seen.add(mark.key);
-      const tag = elementTag(mark);
-      const count = mark.kind === "area" && mark.stroke ? 2 : 1;
-      let nodes = this.#nodes.get(mark.key);
-      // A different element (or a different kind of mark reusing the key)
-      // starts from fresh nodes, so no attributes carry over.
-      if (
-        !nodes ||
-        nodes.length !== count ||
-        nodes[0]!.tagName !== tag ||
-        nodes[0]!.dataset.kind !== mark.kind
-      ) {
-        for (const node of nodes ?? []) node.remove();
-        nodes = Array.from({ length: count }, () =>
-          element(this.#document, tag, { "data-kind": mark.kind }),
-        );
-        this.#nodes.set(mark.key, nodes);
-      }
-      updateMark(mark, nodes);
-      for (const node of nodes) previous = keepOrder(this.#marks, node, previous);
+  /** Updates elements in place; a different kind or set of elements starts from fresh nodes. */
+  #updateElements(old: Retained | undefined, kind: string, elements: SvgElement[]): Retained {
+    const reuse =
+      old?.hash === undefined &&
+      old?.kind === kind &&
+      old.nodes.length === elements.length &&
+      old.nodes.every((node, i) => node.tagName === elements[i]!.tag);
+    const entry: Retained = reuse
+      ? old
+      : {
+          kind,
+          nodes: elements.map(({ tag }) =>
+            element(this.#document, tag as keyof SVGElementTagNameMap, { "data-kind": kind }),
+          ),
+          hash: undefined,
+          names: elements.map(() => []),
+        };
+    elements.forEach(({ attributes }, i) => {
+      const node = entry.nodes[i]!;
+      const names = Object.keys(attributes);
+      for (const name of entry.names[i]!) if (!(name in attributes)) node.removeAttribute(name);
+      for (const name of names) set(node, name, attributes[name]!);
+      entry.names[i] = names;
+      // The layer's own attribute: drawings cannot change or remove it.
+      set(node, "data-kind", kind);
+    });
+    return entry;
+  }
+
+  /** Rewrites a group's markup when it changes. */
+  #updateMarkup(old: Retained | undefined, kind: string, markup: string): Retained {
+    const reuse = old?.hash !== undefined && old.kind === kind;
+    const entry: Retained = reuse
+      ? old
+      : { kind, nodes: [element(this.#document, "g", { "data-kind": kind })], hash: -1, names: [] };
+    const markupHash = hash(markup);
+    if (markupHash !== entry.hash) {
+      entry.nodes[0]!.innerHTML = markup;
+      entry.hash = markupHash;
     }
-    for (const [key, nodes] of this.#nodes) {
-      if (seen.has(key)) continue;
-      for (const node of nodes) node.remove();
-      this.#nodes.delete(key);
-    }
+    return entry;
   }
 }
 
@@ -186,63 +219,6 @@ function keepOrder(parent: Element, node: Element, previous: Element | null): El
   const expected = previous ? previous.nextSibling : parent.firstChild;
   if (node !== expected) parent.insertBefore(node, expected);
   return node;
-}
-
-function elementTag(mark: MarkGeometry): "path" | "image" | "g" {
-  if (mark.kind === "raster") return "image";
-  if (mark.kind === "point" && !mark.opaque) return "g";
-  return "path";
-}
-
-function updateMark(mark: MarkGeometry, nodes: SVGElement[]): void {
-  const [first, second] = nodes as [SVGElement, SVGElement | undefined];
-  switch (mark.kind) {
-    case "line":
-      set(first, "d", linePath(mark.path));
-      set(first, "fill", "none");
-      set(first, "stroke", mark.stroke);
-      set(first, "stroke-width", String(mark.strokeWidth));
-      set(first, "stroke-linejoin", "round");
-      set(first, "stroke-linecap", "round");
-      set(first, "stroke-dasharray", mark.dash?.join(" ") ?? "none");
-      return;
-    case "area":
-      set(first, "d", areaPath(mark));
-      set(first, "fill", mark.fill);
-      set(first, "fill-opacity", String(mark.fillOpacity));
-      set(first, "stroke", "none");
-      if (second && mark.stroke) {
-        set(second, "d", linePath(mark.upper));
-        set(second, "fill", "none");
-        set(second, "stroke", mark.stroke);
-        set(second, "stroke-width", String(mark.strokeWidth));
-        set(second, "stroke-linejoin", "round");
-      }
-      return;
-    case "rect":
-      set(first, "d", rectPath(mark));
-      set(first, "fill", mark.fill);
-      set(first, "fill-opacity", String(mark.fillOpacity));
-      return;
-    case "point":
-      set(first, "fill", mark.fill);
-      set(first, "fill-opacity", String(mark.fillOpacity));
-      if (!mark.opaque) first.innerHTML = pointCircles(mark);
-      else set(first, "d", pointPath(mark));
-      return;
-    case "raster":
-      set(first, "x", String(mark.x));
-      set(first, "y", String(mark.y));
-      set(first, "width", String(mark.width));
-      set(first, "height", String(mark.height));
-      set(first, "preserveAspectRatio", "none");
-      set(first, "style", "image-rendering:pixelated");
-      set(first, "href", canvasRasterUrl(mark, first.ownerDocument));
-      return;
-    case "rule":
-    case "text":
-      return;
-  }
 }
 
 export { element as svgElement };
