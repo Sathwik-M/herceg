@@ -42,7 +42,10 @@ requests.numbers("latency"); // Float64Array view of the live rows
 requests.categories("service"); // { codes: Int32Array, dictionary: string[] }
 ```
 
-Row objects can be converted with `fromRows(rows)`.
+Row objects can be converted with `fromRows(rows)`. Categories that are
+already dictionary-encoded (Arrow dictionaries, pandas categoricals) are used
+without decoding: `encodedCategory(codes, dictionary)` takes `Int32Array`
+codes (-1 for missing) and the dictionary.
 
 Tables are mutable and charts that read them re-render on the next animation
 frame, once per frame however many changes arrive:
@@ -124,6 +127,25 @@ import { renderToSVG } from "herceg";
 
 const svg = renderToSVG({ width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] });
 ```
+
+## Charts from specs
+
+Charts described as JSON, such as those the Python package writes, load
+through the `herceg/spec` entry point:
+
+```ts
+import { chartFromSpec, specToSVG } from "herceg/spec";
+
+chartFromSpec(element, spec, buffers); // buffers: ArrayBuffers for binary columns
+const svg = specToSVG(spec, buffers);
+```
+
+A spec's `data` holds tables whose columns are JSON arrays,
+`{ type: "time", values }`, binary columns (`{ type: "number" | "time",
+dtype: "float64" | "float32" | "int32" | ..., buffer: <index> }`), or
+dictionary-encoded categories (`{ type: "category", codes, dictionary }`).
+Marks are the same objects as a TypeScript mark's `spec`, with `data` naming
+their table.
 
 ## Large data
 

@@ -150,7 +150,13 @@ export class Table<S extends Schema = Schema> {
     }
     let length: number | undefined;
     for (const [field, input] of Object.entries(columns)) {
-      const column = createColumn(input);
+      let column: Column;
+      try {
+        column = createColumn(input);
+      } catch (error) {
+        const Kind = error instanceof RangeError ? RangeError : TypeError;
+        throw new Kind(`Column "${field}": ${(error as Error).message}`);
+      }
       if (length !== undefined && column.buffer.length !== length) {
         throw new RangeError(
           `Column "${field}" has ${column.buffer.length} rows, expected ${length}`,
@@ -435,6 +441,9 @@ export class Table<S extends Schema = Schema> {
    */
   #compactDictionary(column: CategoryColumn) {
     if (column.dictionary.length <= 2 * this.#length + 64) return;
+    // Codes borrowed from the caller (encodedCategory) are copied before
+    // they are renumbered.
+    if (!column.owned) this.#reallocate(this.#capacity);
     const end = this.#start + this.#length;
     const remap = new Int32Array(column.dictionary.length).fill(-1);
     for (let i = this.#start; i < end; i++) {

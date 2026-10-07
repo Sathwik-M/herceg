@@ -7,7 +7,7 @@ export type {
   NumericArray,
   TimeInput,
 } from "./data/column.ts";
-export { category, time } from "./data/column.ts";
+export { category, encodedCategory, time } from "./data/column.ts";
 export type {
   Batch,
   CategoryField,

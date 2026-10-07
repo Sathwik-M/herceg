@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./spec": {
+      "types": "./dist/from-spec.d.ts",
+      "import": "./dist/from-spec.js"
     }
   },
   "files": [

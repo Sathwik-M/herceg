@@ -3,6 +3,7 @@ import {
   area,
   bar,
   createChart,
+  encodedCategory,
   fromRows,
   heatmap,
   line,
@@ -40,6 +41,8 @@ const requests = table({ time: time(timestamps), latency: latencies, service: se
 requests.numbers("latency");
 requests.categories("service");
 fromRows([{ at: new Date(), value: 1 }]);
+const encoded = table({ host: encodedCategory(new Int32Array([0, -1]), ["web"]), v: [1, 2] });
+line(encoded, { x: "v", y: "v", series: "host" });
 
 const live = table({ time: time([]), cpu: [] as number[] }, { maxRows: 3_000 });
 live.append({ time: [Date.now()], cpu: [0.42] });

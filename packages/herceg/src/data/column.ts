@@ -48,14 +48,33 @@ export function time(values: TimeInput["values"]): TimeInput {
   return { kind: "time", values };
 }
 
-/** Marks a string list as a category column, needed when it may start empty. */
-export interface CategoryInput {
-  readonly kind: "category";
-  readonly values: readonly (string | null | undefined)[];
+/**
+ * A category column: a string list (tagged, as needed when it may start
+ * empty), or dictionary codes with their dictionary.
+ */
+export type CategoryInput =
+  | {
+      readonly kind: "category";
+      readonly values: readonly (string | null | undefined)[];
+    }
+  | {
+      readonly kind: "category";
+      /** Index into `dictionary` per row; -1 for missing values. */
+      readonly codes: Int32Array;
+      /** Distinct values. */
+      readonly dictionary: readonly string[];
+    };
+
+export function category(values: readonly (string | null | undefined)[]): CategoryInput {
+  return { kind: "category", values };
 }
 
-export function category(values: CategoryInput["values"]): CategoryInput {
-  return { kind: "category", values };
+/**
+ * Dictionary-encoded categories, as delivered by Arrow, pandas, or Polars.
+ * The codes are used without copying until the table writes to them.
+ */
+export function encodedCategory(codes: Int32Array, dictionary: readonly string[]): CategoryInput {
+  return { kind: "category", codes, dictionary };
 }
 
 export type ColumnInput =
@@ -84,6 +103,27 @@ function firstPresent(values: ArrayLike<unknown>): unknown {
     if (values[i] != null) return values[i];
   }
   return undefined;
+}
+
+function createEncodedCategory(codes: Int32Array, dictionary: readonly string[]): CategoryColumn {
+  const lookup = new Map<string, number>();
+  dictionary.forEach((entry, code) => {
+    if (lookup.has(entry)) throw new RangeError(`Category dictionary repeats "${entry}"`);
+    lookup.set(entry, code);
+  });
+  for (let i = 0; i < codes.length; i++) {
+    const code = codes[i]!;
+    if (code < -1 || code >= dictionary.length) {
+      throw new RangeError(`Category code ${code} at row ${i} is outside the dictionary`);
+    }
+  }
+  return {
+    kind: "category",
+    buffer: codes,
+    owned: false,
+    dictionary: [...dictionary],
+    codes: lookup,
+  };
 }
 
 export function createCategory(values: ArrayLike<string | null | undefined>): CategoryColumn {
@@ -122,7 +162,11 @@ export function createColumn(input: ColumnInput): Column {
   if (isNumericArray(input)) return { kind: "number", buffer: input, owned: false };
   if (!Array.isArray(input)) {
     const tagged = input as TimeInput | CategoryInput;
-    if (tagged.kind === "category") return createCategory(tagged.values);
+    if (tagged.kind === "category") {
+      return "codes" in tagged
+        ? createEncodedCategory(tagged.codes, tagged.dictionary)
+        : createCategory(tagged.values);
+    }
     const timed = tagged;
     if (isNumericArray(timed.values)) return { kind: "time", buffer: timed.values, owned: false };
     const buffer = Float64Array.from(timed.values as ArrayLike<Date | number>, toMilliseconds);

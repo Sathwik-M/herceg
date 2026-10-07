@@ -3,7 +3,8 @@
 // Everything here is plain JSON: no functions, DOM objects, typed arrays, or
 // class instances. The TypeScript API builds these objects, the Python
 // package emits them, and serialized charts store them. Field references are
-// column names of a table; constant colors use `stroke` / `fill`.
+// column names of a table; constant colors use `stroke` / `fill`. Large
+// columns can travel as binary buffers next to the JSON (see `BinaryColumnSpec`).
 
 export const SPEC_VERSION = 1;
 
@@ -40,20 +41,58 @@ export interface ChartSpec {
 export type RendererName = "auto" | "svg" | "canvas";
 export type ThemeName = "light" | "dark";
 
-/** Inline columnar data. */
+/** Columnar data: every column has the same length. */
 export interface DataSpec {
   columns: Record<Field, ColumnSpec>;
 }
 
 /**
- * Column values. Numbers may be null for missing values. A `time` column holds
- * epoch milliseconds or ISO 8601 strings.
+ * Column values: a JSON array (numbers with null for missing values, or
+ * strings for categories), a time column, or a binary column.
  */
-export type ColumnSpec = (number | null)[] | (string | null)[] | TimeColumnSpec;
+export type ColumnSpec =
+  | (number | null)[]
+  | (string | null)[]
+  | TimeColumnSpec
+  | BinaryColumnSpec
+  | CategoryColumnSpec;
 
+/** Epoch milliseconds or ISO 8601 strings; null for missing values. */
 export interface TimeColumnSpec {
   type: "time";
   values: (number | string | null)[];
+}
+
+/** Element types of binary columns, stored little-endian. */
+export type BinaryType =
+  | "float64"
+  | "float32"
+  | "int32"
+  | "uint32"
+  | "int16"
+  | "uint16"
+  | "int8"
+  | "uint8";
+
+/**
+ * Numbers or times (epoch milliseconds) read from a binary buffer delivered
+ * with the spec: `buffer` indexes the list of buffers that travels next to
+ * the JSON. NaN marks missing values in float columns.
+ */
+export interface BinaryColumnSpec {
+  type: "number" | "time";
+  dtype: BinaryType;
+  buffer: number;
+}
+
+/**
+ * Dictionary-encoded categories: int32 codes into `dictionary`, -1 for
+ * missing values. `codes` is a buffer index or an inline JSON array.
+ */
+export interface CategoryColumnSpec {
+  type: "category";
+  codes: number | number[];
+  dictionary: string[];
 }
 
 /** Scale and axis options for one position channel. */

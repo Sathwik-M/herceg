@@ -289,6 +289,20 @@ objects rather than looked up in a registry, so unused mark types are tree
 shaken away. Field options are typed from the table schema: numeric encodings
 only accept number or time fields, `series` only accepts category fields.
 
+Specs written elsewhere (the Python package, stored JSON) are loaded by
+`herceg/spec`, a separate entry point so applications built with the
+TypeScript API do not bundle it. `loadSpec(spec, buffers)` first checks the
+spec at runtime, since the type checker cannot see specs from other
+languages: structure, enumerations, booleans, finite numbers, field
+references, and column payloads, with errors that give the property path
+(`marks[2].strokeWidth`) or the table and column at fault. It then builds
+tables from `data` and marks from `marks`. Columns are JSON arrays or binary: numbers and times as
+little-endian typed buffers (`{ type, dtype, buffer }`, where `buffer`
+indexes the buffers delivered next to the JSON) and categories as int32
+dictionary codes. Binary columns become typed-array views of the delivered
+bytes, copied only when misaligned, so large data never passes through JSON
+number lists. `chartFromSpec` and `specToSVG` render a loaded spec.
+
 ## Package layout
 
 The `herceg` npm package contains the engine, renderers, and browser runtime
