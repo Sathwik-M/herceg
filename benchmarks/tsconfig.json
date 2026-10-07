@@ -5,8 +5,10 @@
     "exactOptionalPropertyTypes": false,
     "allowImportingTsExtensions": true,
     "types": ["node"],
+    "jsx": "react-jsx",
     "paths": {
-      "herceg": ["../packages/herceg/src/index.ts"]
+      "herceg": ["../packages/herceg/src/index.ts"],
+      "@herceg/react": ["../packages/react/src/index.ts"]
     }
   },
   "include": ["src"]

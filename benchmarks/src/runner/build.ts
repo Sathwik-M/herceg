@@ -6,7 +6,10 @@ import * as esbuild from "esbuild";
 
 export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 /** Herceg is bundled from source so benchmarks always measure the working tree. */
-export const HERCEG_ALIAS = { herceg: join(ROOT, "..", "packages", "herceg", "src", "index.ts") };
+export const HERCEG_ALIAS = {
+  herceg: join(ROOT, "..", "packages", "herceg", "src", "index.ts"),
+  "@herceg/react": join(ROOT, "..", "packages", "react", "src", "index.ts"),
+};
 const OUT = join(ROOT, ".build");
 
 /** Production bundle of the harness plus one adapter, so each page loads one library. */
@@ -15,7 +18,7 @@ export async function buildPage(library: string): Promise<void> {
   await esbuild.build({
     stdin: {
       contents: [
-        `import { adapter } from "./src/adapters/${library}.ts";`,
+        `import { adapter } from "./src/adapters/${library}";`,
         `import { installHarness } from "./src/page/harness.ts";`,
         "installHarness(adapter);",
       ].join("\n"),
@@ -29,6 +32,7 @@ export async function buildPage(library: string): Promise<void> {
     target: "es2022",
     outfile: join(OUT, `${library}.js`),
     define: { "process.env.NODE_ENV": '"production"' },
+    jsx: "automatic",
     alias: HERCEG_ALIAS,
     logLevel: "warning",
   });

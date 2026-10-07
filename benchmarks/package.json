@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "bench": "node --experimental-strip-types src/runner/run.ts",
+    "react": "node --experimental-strip-types src/runner/run.ts --lib herceg,herceg-react --out results/react.json",
     "size": "node --experimental-strip-types src/size/size.ts",
     "report": "node --experimental-strip-types src/report.ts"
   },

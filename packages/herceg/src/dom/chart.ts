@@ -161,7 +161,8 @@ export class Chart implements Scheduled, SyncMember {
 
   /** Standalone SVG of the current state, for export. */
   toSVG(): string {
-    if (!this.#scene) this.flush();
+    // Apply pending changes first, so the export reflects the latest options.
+    this.flush();
     const document = this.root.ownerDocument;
     return renderSvg(this.model.scene(measurer(document)), {
       idPrefix: `${this.#id}-export`,

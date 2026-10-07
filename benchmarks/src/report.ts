@@ -3,7 +3,7 @@
 //
 //   npm run report
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "./runner/build.ts";
 
@@ -23,7 +23,14 @@ interface BrowserResults {
   date: string;
   commit: { sha: string; dirty: boolean };
   environment: Record<string, unknown> & { viewport: { width: number; height: number } };
-  libraries: Record<string, { version: string; renderer: { normal: string; large: string } }>;
+  libraries: Record<
+    string,
+    {
+      version: string;
+      renderer: { normal: string; large: string };
+      runtime?: Record<string, string>;
+    }
+  >;
   scenarios: Record<string, { description: string; large: boolean }>;
   results: Row[];
 }
@@ -51,8 +58,8 @@ const ms = (s: Summary) =>
 const mb = (bytes: number) => (bytes / 1e6).toFixed(bytes >= 1e7 ? 0 : 1);
 const kib = (bytes: number) => (bytes / 1024).toFixed(1);
 
-function find(scenario: string, library: string): Row | undefined {
-  return browser.results.find((row) => row.scenario === scenario && row.library === library);
+function find(scenario: string, library: string, results = browser): Row | undefined {
+  return results.results.find((row) => row.scenario === scenario && row.library === library);
 }
 
 function table(header: string[], rows: string[][]): string {
@@ -153,6 +160,53 @@ function environment(): string {
   ].join("\n");
 }
 
+/**
+ * Herceg through @herceg/react next to plain herceg, measured in one session
+ * (`results/react.json`), for every scenario the React adapter supports.
+ */
+function reactTable(react: BrowserResults): string {
+  const failed = (row: Row | undefined) => row?.reason?.startsWith("error") ?? false;
+  const cell = (row: Row | undefined): string => {
+    if (failed(row)) return row!.reason!;
+    if (!row?.supported) return "n/a";
+    const m = row.metrics;
+    if (m.retainedBytes) {
+      return `${mb(m.retainedBytes.summary.median)} MB heap, ${m.domNodes!.summary.median} nodes`;
+    }
+    if (m.droppedFrames) {
+      return `${m.droppedFrames.summary.median} dropped, ${m.achievedRate!.summary.median.toFixed(0)} Hz`;
+    }
+    const timing = ["timeToFrame", "tickToFrame", "pointerToFrame", "resizeToFrame"]
+      .map((name) => m[name])
+      .find((metric) => metric !== undefined);
+    if (timing)
+      return `${ms(timing.summary)} ± ${ms({ ...timing.summary, median: timing.summary.mad })} ms`;
+    const mount = m.initAllToFrame!.summary;
+    const refresh = m.updateAllToFrame!.summary;
+    return `mount ${ms(mount)} ms, refresh ${ms(refresh)} ms`;
+  };
+  // Scenarios the adapter supports, including any that failed.
+  const rows = Object.keys(react.scenarios)
+    .filter((id) => {
+      const row = find(id, "herceg-react", react);
+      return row?.supported || failed(row);
+    })
+    .map((id) => [
+      `${id} (${react.scenarios[id]?.description})`,
+      cell(find(id, "herceg", react)),
+      cell(find(id, "herceg-react", react)),
+    ]);
+  const { sha, dirty } = react.commit;
+  const runtime = Object.entries(react.libraries["herceg-react"]?.runtime ?? {})
+    .map(([name, version]) => `${name} ${version}`)
+    .join(", ");
+  return [
+    `Measured ${react.date.slice(0, 10)} at commit ${sha}${dirty ? " (uncommitted changes)" : ""} with ${runtime || "unrecorded React versions"}, same environment as above.`,
+    "",
+    table(["Scenario (median)", "herceg", "herceg via @herceg/react"], rows),
+  ].join("\n");
+}
+
 const ids = Object.keys(browser.scenarios);
 const sections: Record<string, string> = {
   environment: environment(),
@@ -191,6 +245,10 @@ const sections: Record<string, string> = {
   ].join("\n"),
   memory: memoryTable(),
 };
+const reactResults = join(RESULTS, "react.json");
+if (existsSync(reactResults)) {
+  sections.react = reactTable(JSON.parse(readFileSync(reactResults, "utf8")));
+}
 
 let doc = readFileSync(DOC, "utf8");
 for (const [name, content] of Object.entries(sections)) {

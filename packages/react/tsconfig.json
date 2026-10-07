@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
+    "types": [],
+    "paths": { "herceg": ["../herceg/src/index.ts"] }
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}

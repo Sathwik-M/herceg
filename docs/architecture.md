@@ -244,7 +244,18 @@ only accept number or time fields, `series` only accepts category fields.
 The `herceg` npm package contains the engine, renderers, and browser runtime
 as ES modules with `sideEffects: false`; bundlers drop what a chart does not
 use. Framework adapters live in separate packages because their dependencies
-differ. One package avoids version skew between engine pieces. A test
+differ. One package avoids version skew between engine pieces.
+
+`@herceg/react` is a thin layer over the same engine. `<Chart>` creates one
+chart in a layout effect and destroys it on unmount; mark elements (`<Line>`,
+`<Bar>`, ...) render nothing and are read as mark specs, so there is no React
+element per data point. Props are the whole configuration: changes reach the
+chart through `chart.update` in a layout effect, with removed options reset
+to their defaults, and are skipped when no mark's spec or table and no option
+changed (compared as JSON with sorted keys). Unchanged marks keep their
+identity, so their caches survive re-renders. Data changes go
+through the table and reach the chart through its own change events and
+frame scheduler, without rendering React. A test
 (`test/architecture.test.ts`) keeps the core directories (`data`, `scale`,
 `format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM access.
 
@@ -263,5 +274,5 @@ differ. One package avoids version skew between engine pieces. A test
   precomputed min/max pyramid.
 - Renderer thresholds are not tuned.
 - Rules are always drawn above lines and areas, regardless of mark order.
-- No React adapter, Python package, or GPU renderer. See the roadmap in the
-  repository README.
+- No Python package, GPU renderer, or adapters for frameworks other than
+  React. See the roadmap in the repository README.

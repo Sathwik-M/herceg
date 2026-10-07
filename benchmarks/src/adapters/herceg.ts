@@ -6,7 +6,7 @@ import { clientPoint } from "../page/adapter.ts";
 // Herceg reads the benchmark's typed arrays in place: a table wraps them
 // without copying. The table's maxRows makes it a rolling window, which is
 // Herceg's documented streaming path.
-function seriesTable(data: SeriesData) {
+export function seriesTable(data: SeriesData) {
   const columns: Record<string, Float64Array | ReturnType<typeof time>> = { t: time(data.x) };
   data.ys.forEach((y, s) => {
     columns[`s${s}`] = y;
@@ -14,12 +14,27 @@ function seriesTable(data: SeriesData) {
   return table(columns, { maxRows: data.x.length });
 }
 
-function columnsOf(data: SeriesData) {
+export function columnsOf(data: SeriesData) {
   const columns: Record<string, Float64Array> = { t: data.x };
   data.ys.forEach((y, s) => {
     columns[`s${s}`] = y;
   });
   return columns;
+}
+
+/** Streaming: append a batch to every series and keep the newest `keep` rows. */
+export function appendTo(
+  source: ReturnType<typeof seriesTable>,
+  x: Float64Array,
+  ys: Float64Array[],
+  keep: number,
+): void {
+  const batch: Record<string, Float64Array> = { t: x };
+  ys.forEach((y, s) => {
+    batch[`s${s}`] = y;
+  });
+  source.append(batch);
+  if (source.length > keep) source.dropFirst(source.length - keep);
 }
 
 function lineKind(fill: boolean): ChartKind<SeriesData> {
@@ -40,14 +55,7 @@ function lineKind(fill: boolean): ChartKind<SeriesData> {
       });
       return {
         setData: (next) => source.reset(columnsOf(next)),
-        append(x, ys, keep) {
-          const batch: Record<string, Float64Array> = { t: x };
-          ys.forEach((y, s) => {
-            batch[`s${s}`] = y;
-          });
-          source.append(batch);
-          if (source.length > keep) source.dropFirst(source.length - keep);
-        },
+        append: (x, ys, keep) => appendTo(source, x, ys, keep),
         pixelOf(_series, _index, x, y) {
           return clientPoint(
             chart.root,

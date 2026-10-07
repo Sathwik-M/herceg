@@ -20,6 +20,7 @@ const ENTRIES = join(ROOT, "src", "size", "entries");
 /** The npm package each entry measures, for version reporting. */
 const ENTRY_PACKAGES: Record<string, string> = {
   "herceg-line": "herceg",
+  "herceg-react-line": "@herceg/react",
   "echarts-line": "echarts",
   "echarts-full": "echarts",
   "chartjs-line": "chart.js",
@@ -35,8 +36,13 @@ interface Bundle {
   css: Uint8Array | undefined;
 }
 
-async function bundle(entry: string, minify: boolean): Promise<Bundle> {
+/** Shared by the whole application, so React adapter entries leave them out. */
+const REACT = ["react", "react-dom", "react/jsx-runtime"];
+
+async function bundle(entry: string, minify: boolean, external: string[]): Promise<Bundle> {
   const result = await esbuild.build({
+    external,
+    jsx: "automatic",
     entryPoints: [entry],
     bundle: true,
     minify,
@@ -60,11 +66,12 @@ const brotli = (bytes: Uint8Array) =>
 
 const rows = [];
 for (const file of readdirSync(ENTRIES).sort()) {
-  const name = basename(file, ".ts");
+  const name = basename(file).replace(/\.tsx?$/, "");
   if (args.filter && !name.includes(args.filter)) continue;
   const entry = join(ENTRIES, file);
-  const raw = await bundle(entry, false);
-  const minified = await bundle(entry, true);
+  const external = name.includes("react") ? REACT : [];
+  const raw = await bundle(entry, false, external);
+  const minified = await bundle(entry, true, external);
   const css = minified.css;
   const pkg = ENTRY_PACKAGES[name] ?? name;
   rows.push({

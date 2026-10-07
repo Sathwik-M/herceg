@@ -17,7 +17,7 @@ engineering decisions.
 | Path | Purpose |
 | --- | --- |
 | `packages/herceg` | (In development) The `herceg` npm package: portable spec types, data model, scales, marks, LOD, scene, SVG and Canvas renderers, DOM runtime. Optional pieces are subpath exports. |
-| `packages/react` | `@herceg/react`, the React adapter (planned). |
+| `packages/react` | `@herceg/react`, the React adapter: `<Chart>` and mark elements over the same engine. |
 | `python/` | The `herceg` Python package (planned). |
 | `benchmarks/` | Benchmark harness, competitor adapters, scenarios, and committed results in `benchmarks/results/`. |
 | `docs/` | Permanent documentation: architecture, vocabulary, comparison, benchmark methodology. |
@@ -36,15 +36,16 @@ Run from the repository root.
 
 ```sh
 npm install              # install workspace dependencies
-npm run build            # build the herceg package (tsc)
+npm run build            # build herceg and @herceg/react (tsc)
 npm run lint             # biome lint + format check
 npm run format           # apply biome formatting and safe fixes
 npm run typecheck        # type check all TypeScript, including compile-time tests
 npm test                 # unit tests (vitest, Node)
-npm run test:browser     # browser tests (vitest browser mode, local Chrome)
+npm run test:browser     # browser tests for herceg and @herceg/react (local Chrome)
 npm run bench:core       # engine microbenchmarks (Node)
 npm run bench:size       # bundle size benchmark
 npm run bench            # browser benchmark suite (Chrome); see benchmarks/README.md
+npm run bench:react      # herceg vs herceg through @herceg/react
 npm run bench:report     # regenerate result tables in docs/comparison.md
 ```
 

@@ -11,7 +11,7 @@ import { type CDPSession, chromium, type Page } from "playwright";
 import type { Bench, Metric, PageResult } from "../page/harness.ts";
 import { SCENARIOS, type Scenario } from "../scenarios.ts";
 import { buildPage, ROOT, serve } from "./build.ts";
-import { commit, machine, PACKAGES, packageVersion } from "./environment.ts";
+import { COMPARED, commit, machine, PACKAGES, packageVersion, RUNTIMES } from "./environment.ts";
 import { type Summary, summarize } from "./stats.ts";
 
 const { values: args } = parseArgs({
@@ -39,7 +39,7 @@ const COMMON_ARGS = [
 const LATENCY_ARGS = [...COMMON_ARGS, "--disable-frame-rate-limit", "--disable-gpu-vsync"];
 const REALTIME_ARGS = COMMON_ARGS;
 
-const libraries = args.lib ? args.lib.split(",") : Object.keys(PACKAGES);
+const libraries = args.lib ? args.lib.split(",") : COMPARED;
 const sampleScale = Number(args["sample-scale"]);
 const scenarios = SCENARIOS.filter(
   (s) =>
@@ -247,6 +247,9 @@ async function main() {
           package: PACKAGES[id] ?? id,
           version: packageVersion(PACKAGES[id] ?? id),
           renderer: renderers[id],
+          runtime: Object.fromEntries(
+            (RUNTIMES[id] ?? []).map((name) => [name, packageVersion(name)]),
+          ),
         },
       ]),
     ),

@@ -33,7 +33,7 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 | Heatmap | Heatmap mark over category, number, or time fields, drawn as one image (Canvas `drawImage`, PNG inside SVG), with a color legend and cell tooltips. Up to 4,194,304 cells; no binning transform or calendar layout. | Documented. Heatmap series, calendar heatmap. | Documented. `cell` mark with a D3 color scale. | No built-in heatmap (third-party `chartjs-chart-matrix`). | Documented. Heatmap traces rendered as an image. |
 | Composition | Line, area, bar, point, heatmap, and rule marks share scales, axes, tooltip, and legend in one chart. No custom marks, horizontal bars, annotations beyond rules, or multiple axes yet. | Documented. Many series types in one grid, `markLine`/`markArea`, `custom` series. | Documented. Grammar of marks; strongest composition model of the group. | Documented. Mixed chart types; annotations via plugin. | Documented. Traces, layout shapes and annotations, subplots. |
 | TypeScript | Field options are typed from the table schema: a categorical field passed as a numeric encoding is a compile error. Compile-time tests guard this. | Documented. Large option types; tree-shaken `ComposeOption` types. | Documented. Fields and callbacks inferred from row types. | Documented. Typed configuration generics. | Community `@types/plotly.js`, not first-party. |
-| React | Not implemented. | Community wrappers (for example `echarts-for-react`). | First-party adapters for React and other frameworks. | Community `react-chartjs-2`. | `react-plotly.js`. |
+| React | First-party `@herceg/react`: `<Chart>` with mark elements typed against the table's schema; no React element per data point, and data updates go through tables without rendering React. Measured: mounting, streaming, and hover are within noise of plain herceg; each chart's React root retains ~25 KB; the adapter adds ~0.6 KiB gzip. | Community wrappers (for example `echarts-for-react`). | First-party adapters for React and other frameworks. | Community `react-chartjs-2`. | `react-plotly.js`. |
 | Python | Not implemented. | Community `pyecharts`. | None. | None. | First-class Plotly Python and Plotly Express. |
 | Accessibility | Focusable figure with a generated data summary, arrow-key navigation announced through a live region, legend entries as toggle buttons, `title`/`desc` in static SVG. Not yet tested with screen readers. | Documented. `aria` option generates descriptions; decal patterns. | Documented. Required accessible name, keyboard focus navigation. | Canvas only; the application supplies fallback content. | Limited; no keyboard navigation of data. |
 | Export | Standalone SVG in the browser (`toSVG`) and without a DOM (`renderToSVG`, heatmaps embedded as PNG). No PNG or PDF export of whole charts yet. | Documented. PNG/SVG from the browser, server-side SVG strings. | Documented. Static SVG, SSR, browser raster export. | PNG via `toBase64Image`. | Documented. PNG/SVG/JPEG/WebP; Kaleido for Python. |
@@ -54,6 +54,8 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 
 Each entry renders the same time-series line chart with a tooltip and is
 bundled for production with tree shaking (`benchmarks/src/size/entries/`).
+`herceg-react-line` renders it through `@herceg/react` and leaves React and
+React DOM out, since an application using the adapter already ships them.
 
 <!-- results:size -->
 | Entry | Version | Minified KiB | Gzip KiB | Brotli KiB | Required CSS, gzip KiB |
@@ -62,7 +64,8 @@ bundled for production with tree shaking (`benchmarks/src/size/entries/`).
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - |
-| herceg-line | 0.0.0 (bc502d2) | 59.2 | 21.3 | 19.3 | - |
+| herceg-line | 0.0.0 (3665282) | 59.2 | 21.3 | 19.3 | - |
+| herceg-react-line | 0.0.0 (3665282) | 60.6 | 21.9 | 19.8 | - |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - |
@@ -189,6 +192,41 @@ included.
 | memory-small-100 (100 charts x 2 series x 100 points; source 0.3 MB) | 8.5 MB heap, 0.0 MB canvas, 3437 nodes | 24 MB heap, 72 MB canvas, 400 nodes | 31 MB heap, 72 MB canvas, 300 nodes | 28 MB heap, 0.0 MB canvas, 13061 nodes | 21 MB heap, 0.0 MB canvas, 2274 nodes | 11 MB heap, 72 MB canvas, 3000 nodes |
 <!-- /results:memory -->
 
+## React integration
+
+Herceg through `@herceg/react` next to plain herceg, from `npm run bench:react`.
+Mounting and resizing go through React props; data replacement and streaming
+change the table and bypass React. Each chart is its own React root, so
+per-root setup is counted for every chart. The React wrappers of the other
+libraries are not measured.
+
+<!-- results:react -->
+Measured 2026-10-07 at commit 3665282 (uncommitted changes) with react 19.3.0, react-dom 19.3.0, same environment as above.
+
+| Scenario (median) | herceg | herceg via @herceg/react |
+| --- | ---: | ---: |
+| line-small-init (4 series x 200 points) | 0.58 ± 0.08 ms | 0.65 ± 0.14 ms |
+| line-medium-init (10 series x 5,000 points) | 2.24 ± 0.31 ms | 2.25 ± 0.33 ms |
+| line-large-init (1 series x 1,000,000 points) | 12.0 ± 1.34 ms | 11.5 ± 0.39 ms |
+| area-medium-init (3 filled series x 5,000 points) | 1.49 ± 0.20 ms | 1.51 ± 0.22 ms |
+| line-medium-update (replace 10 x 5,000 points) | 1.55 ± 0.11 ms | 1.41 ± 0.17 ms |
+| line-large-update (replace 1,000,000 points) | 7.88 ± 0.52 ms | 8.33 ± 0.71 ms |
+| stream-dashboard-chart (15 series, 3,000-point window, +1 point per tick) | 1.41 ± 0.09 ms | 1.41 ± 0.13 ms |
+| stream-large (1 series, 100,000-point window, +100 points per tick) | 1.31 ± 0.10 ms | 1.25 ± 0.13 ms |
+| ingest-chart-10hz (15 series, 3,000-point window, +1 point at 10 Hz) | 0 dropped, 10 Hz | 0 dropped, 10 Hz |
+| ingest-chart-60hz (15 series, 3,000-point window, +1 point at 60 Hz) | 0 dropped, 62 Hz | 0 dropped, 62 Hz |
+| ingest-chart-100hz (15 series, 3,000-point window, +1 point at 100 Hz) | 0 dropped, 100 Hz | 0 dropped, 100 Hz |
+| ingest-large-100hz (1 series, 100,000-point window, +10 points at 100 Hz) | 0 dropped, 100 Hz | 0 dropped, 100 Hz |
+| ingest-dashboard-10hz (10 charts x 15 series x 3,000 points, +1 point per series at 10 Hz) | 1.5 dropped, 10 Hz | 1 dropped, 10 Hz |
+| hover-line-medium (pointer moves over 10 x 5,000 points) | 0.69 ± 0.32 ms | 0.69 ± 0.31 ms |
+| hover-line-large (pointer moves over 1,000,000 points) | 0.36 ± 0.05 ms | 0.41 ± 0.06 ms |
+| resize-line-medium (resize 800x400 <-> 600x300) | 1.58 ± 0.19 ms | 1.49 ± 0.12 ms |
+| dashboard (10 charts x 15 series x 3,000 points) | mount 19.8 ms, refresh 12.9 ms | mount 19.7 ms, refresh 13.5 ms |
+| memory-line-large (1 chart, 1,000,000 points) | 0.2 MB heap, 34 nodes | 0.3 MB heap, 35 nodes |
+| memory-dashboard (10 charts x 15 series x 3,000 points) | 7.1 MB heap, 752 nodes | 7.4 MB heap, 762 nodes |
+| memory-small-100 (100 charts x 2 series x 100 points) | 8.5 MB heap, 3437 nodes | 11 MB heap, 3537 nodes |
+<!-- /results:react -->
+
 ## Findings so far
 
 - uPlot sets the bar for time-series speed and memory: it renders typed arrays
@@ -210,6 +248,11 @@ included.
   complete its progressive render.
 - Bars at these sizes (up to 400 bars) take 0.5–7 ms in every library;
   differences are not noticeable to users.
+- Going through `@herceg/react` costs little because React only describes
+  the chart: mounting is within ~0.1 ms of plain herceg per chart, and
+  streaming, data replacement, and hover never render React. The measurable
+  cost is memory for React roots: 100 small charts, each its own root, retain
+  ~11 MB instead of ~8.5 MB.
 - Small charts rendered as SVG avoid canvas backing stores entirely: Herceg's
   100 small charts use ~8 MB of heap and no canvas memory, while the Canvas
   libraries need ~72 MB of canvas pixels for the same charts.

@@ -12,11 +12,24 @@ export const PACKAGES: Record<string, string> = {
   plotly: "plotly.js-dist-min",
   tanstack: "@tanstack/charts",
   uplot: "uplot",
+  "herceg-react": "@herceg/react",
 };
 
+/** Runtime packages an adapter's results depend on, recorded with their versions. */
+export const RUNTIMES: Record<string, string[]> = { "herceg-react": ["react", "react-dom"] };
+
+/**
+ * Libraries in the main comparison. `herceg-react` is measured separately
+ * against plain herceg (`npm run bench:react`).
+ */
+export const COMPARED = ["herceg", "echarts", "chartjs", "plotly", "tanstack", "uplot"];
+
+/** Workspace packages are measured from source at the current commit. */
+const WORKSPACE: Record<string, string> = { herceg: "herceg", "@herceg/react": "react" };
+
 export function packageVersion(name: string): string {
-  if (name === "herceg")
-    return `${readVersion(join(ROOT, "..", "packages", "herceg"))} (${commit().sha})`;
+  const directory = WORKSPACE[name];
+  if (directory) return `${readVersion(join(ROOT, "..", "packages", directory))} (${commit().sha})`;
   for (const base of [join(ROOT, "node_modules"), join(ROOT, "..", "node_modules")]) {
     try {
       return JSON.parse(readFileSync(join(base, name, "package.json"), "utf8")).version;

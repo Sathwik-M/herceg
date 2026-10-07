@@ -9,6 +9,7 @@ npm run bench                        # full browser suite -> tmp/benchmarks/benc
 npm run bench -- --lib echarts,uplot --filter line- --sample-scale 0.5
 npm run bench -- --out results/browser.json   # refresh the committed results
 npm run bench:size -- --out results/size.json # bundle sizes
+npm run bench:react                  # herceg vs herceg through @herceg/react -> results/react.json
 npm run bench:report                 # regenerate the tables in docs/comparison.md
 ```
 
@@ -137,3 +138,18 @@ to the full data has not been verified here.
   configuration is recorded with the results.
 - Results are from one machine. Compare libraries within a run, not across
   machines.
+
+### React integration
+
+`npm run bench:react` runs plain `herceg` and `herceg-react` (the same charts
+through `@herceg/react`) in one session and writes `results/react.json`; it
+is not part of the main comparison. The React adapter supports the line and
+area scenarios. Mounting and resizing go through React props, rendered
+synchronously with `flushSync`; data replacement and streaming change the
+table directly, the adapter's documented path for live data. Each chart is
+its own React root here, so per-root setup (event delegation on the
+container) is counted once per chart; an application with one root pays it
+once.
+
+The `herceg-react-line` size entry leaves React and React DOM out of the
+bundle, since an application using the adapter already ships them.
