@@ -1,4 +1,11 @@
-import { type ChartOptions, createChart, type Chart as HercegChart, type Mark } from "herceg";
+import {
+  type ChartEvents,
+  type ChartListener,
+  type ChartOptions,
+  createChart,
+  type Chart as HercegChart,
+  type Mark,
+} from "herceg";
 import {
   Children,
   type CSSProperties,
@@ -6,6 +13,7 @@ import {
   isValidElement,
   type ReactNode,
   type Ref,
+  type RefObject,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -22,6 +30,36 @@ export interface ChartProps extends Omit<ChartOptions, "marks"> {
   style?: CSSProperties;
   /** The underlying chart, for imperative calls such as `setViewport` or `toSVG`. */
   ref?: Ref<HercegChart | null>;
+  /** The visible x range changed (zoom, pan, reset, sync); null when fitted to the data. */
+  onViewportChange?: ChartListener<"viewport">;
+  /** The brushed x range changed (`interaction.brush`); null when cleared. */
+  onSelect?: ChartListener<"select">;
+  /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
+  onHover?: ChartListener<"hover">;
+  /** The plot was clicked, with the data under the pointer. */
+  onClick?: ChartListener<"click">;
+}
+
+/**
+ * Subscribes to a chart event while `handler` is given. The handler of the
+ * last committed render is called, so passing a new function each render
+ * does not resubscribe, and renders React discards never take effect.
+ */
+function useChartEvent<K extends keyof ChartEvents>(
+  chart: RefObject<HercegChart | null>,
+  type: K,
+  handler: ChartListener<K> | undefined,
+): void {
+  const latest = useRef(handler);
+  useLayoutEffect(() => {
+    latest.current = handler;
+  });
+  const present = handler !== undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resubscribes only when a handler appears or goes
+  useLayoutEffect(() => {
+    if (!present || !chart.current) return;
+    return chart.current.on(type, (event) => latest.current?.(event));
+  }, [present]);
 }
 
 function marksFrom(children: ReactNode, out: Mark[] = []): Mark[] {
@@ -88,6 +126,10 @@ export function Chart({
   className,
   style,
   ref,
+  onViewportChange,
+  onSelect,
+  onHover,
+  onClick,
   ...options
 }: ChartProps) {
   const container = useRef<HTMLDivElement>(null);
@@ -128,6 +170,11 @@ export function Chart({
     applied.current = { marks: next, options, key: optionsKey };
     chart.current.update({ ...reset, ...options, marks: next } as ChartOptions);
   });
+
+  useChartEvent(chart, "viewport", onViewportChange);
+  useChartEvent(chart, "select", onSelect);
+  useChartEvent(chart, "hover", onHover);
+  useChartEvent(chart, "click", onClick);
 
   useImperativeHandle<HercegChart | null, HercegChart | null>(ref, () => chart.current, []);
 

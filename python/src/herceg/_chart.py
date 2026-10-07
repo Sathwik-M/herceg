@@ -79,6 +79,7 @@ class Chart:
         legend: bool | None = None,
         tooltip: bool | Tooltip = True,
         zoom: bool = False,
+        brush: Literal["x"] | None = None,
         sync: str | None = None,
         renderer: Literal["auto", "svg", "canvas"] | None = None,
         theme: Literal["light", "dark"] | dict[str, Any] | None = None,
@@ -98,7 +99,9 @@ class Chart:
             "legend": legend,
             "tooltip": tooltip if isinstance(tooltip, bool) else {"mode": tooltip},
             "interaction": {
-                key: value for key, value in {"zoom": zoom or None, "sync": sync}.items() if value
+                key: value
+                for key, value in {"zoom": zoom or None, "brush": brush, "sync": sync}.items()
+                if value
             }
             or None,
             "renderer": renderer,

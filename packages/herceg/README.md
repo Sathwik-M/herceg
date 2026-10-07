@@ -168,14 +168,32 @@ entries or tooltips, and are meant for shapes in the thousands, not millions.
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`. |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
-| `interaction` | `{ zoom: true }` for wheel zoom and drag pan; `{ sync: "name" }` to share cursor and zoom with other charts. |
+| `interaction` | `{ zoom: true }` for wheel zoom and drag pan; `{ brush: "x" }` to select an x range by dragging (with `zoom`, the brush zooms instead and Shift-drag pans); `{ sync: "name" }` to share cursor and zoom with other charts. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | `"light"`, `"dark"`, or an object overriding colors and fonts. |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 
 The returned `Chart` has `update(options)`, `setViewport([from, to] | null)`,
-`render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
-painter for large point series loads, otherwise undefined).
+`select([from, to] | null)` and `selection` (the brushed range), `on(event,
+listener)`, `render()`, `toSVG()`, `destroy()`, and `loading` (a promise
+while the GPU painter for large point series loads, otherwise undefined).
+
+## Events
+
+`on` returns a function that stops listening:
+
+```ts
+const stop = chart.on("select", ({ x }) => {
+  if (x) detail.setViewport(x); // show the brushed range in another chart
+});
+chart.on("viewport", ({ domain }) => saveView(domain)); // zoom, pan, reset, sync
+chart.on("hover", ({ inspection }) => showOwnTooltip(inspection)); // with tooltip: false
+chart.on("click", ({ inspection }) => openDetails(inspection?.points[0]));
+```
+
+Events report changes only: a re-inspected point or an unchanged range does
+not repeat them. Keyboard users select a range with Shift and the arrow keys
+(Enter zooms to it when zoom is on; Escape clears it).
 
 ## Server rendering
 

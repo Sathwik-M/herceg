@@ -1,5 +1,5 @@
 import { custom, type Chart as HercegChart, type Mark as HercegMark, line, table } from "herceg";
-import { act, StrictMode, useLayoutEffect, useRef } from "react";
+import { act, StrictMode, Suspense, startTransition, use, useLayoutEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Bar, Chart, Custom, Line, Region, Rule, Text } from "../src/index.ts";
@@ -102,6 +102,51 @@ describe("<Chart>", () => {
     act(() => root.render(view("second")));
     await frame();
     expect(labels()).toEqual(["second"]);
+  });
+
+  it("calls the latest event handlers without resubscribing", () => {
+    let chart: HercegChart | null = null;
+    const seen: string[] = [];
+    function App({ name }: { name: string }) {
+      const ref = useRef<HercegChart | null>(null);
+      chart = ref.current ?? chart;
+      return (
+        <Chart ref={ref} onSelect={({ x }) => seen.push(`${name}:${x?.join("-")}`)}>
+          <Line data={metrics} x="t" y="a" />
+        </Chart>
+      );
+    }
+    act(() => root.render(<App name="one" />));
+    act(() => root.render(<App name="two" />));
+    act(() => (chart as unknown as HercegChart).select([1, 2]));
+    expect(seen).toEqual(["two:1-2"]);
+  });
+
+  it("keeps the committed handler while a transition is suspended", async () => {
+    let chart: HercegChart | null = null;
+    const seen: string[] = [];
+    const pending = new Promise<never>(() => {});
+    function Waits({ wait }: { wait: boolean }) {
+      if (wait) use(pending);
+      return null;
+    }
+    function App({ name, wait }: { name: string; wait: boolean }) {
+      const ref = useRef<HercegChart | null>(null);
+      chart = ref.current ?? chart;
+      return (
+        <Suspense fallback={null}>
+          <Chart ref={ref} onSelect={() => seen.push(name)}>
+            <Line data={metrics} x="t" y="a" />
+          </Chart>
+          <Waits wait={wait} />
+        </Suspense>
+      );
+    }
+    act(() => root.render(<App name="one" wait={false} />));
+    // The transition suspends, so React keeps showing render "one".
+    act(() => startTransition(() => root.render(<App name="two" wait />)));
+    act(() => (chart as unknown as HercegChart).select([1, 2]));
+    expect(seen).toEqual(["one"]);
   });
 
   it("applies prop changes to the same chart", () => {

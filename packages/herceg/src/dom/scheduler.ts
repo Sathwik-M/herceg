@@ -29,7 +29,8 @@ function run() {
   }
 }
 
-function report(error: unknown) {
+/** Reports an error without stopping the code that ran into it. */
+export function report(error: unknown): void {
   if (typeof reportError === "function") reportError(error);
   else console.error(error);
 }

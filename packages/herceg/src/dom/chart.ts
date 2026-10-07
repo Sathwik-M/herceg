@@ -1,5 +1,6 @@
 // Browser runtime: mounts a chart into an element, renders through the
-// shared scheduler, and handles pointer, keyboard, legend, zoom, and sync.
+// shared scheduler, handles pointer, keyboard, legend, zoom, brushing, and
+// sync, and emits events to the application.
 //
 // Layers, bottom to top: a canvas for dense marks (only when used), the SVG
 // layer (grid and marks when not on canvas, rules, axes, title, pointer
@@ -13,6 +14,8 @@ import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { CloudPainter, PointGeometry, Scene } from "../scene/scene.ts";
+import { ascending, Brush, DRAG_THRESHOLD, normalize } from "./brush.ts";
+import { type ChartEvents, type ChartListener, Emitter } from "./events.ts";
 import { Legend } from "./legend.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
 import { SvgLayer, svgElement } from "./svg-layer.ts";
@@ -81,7 +84,23 @@ export class Chart implements Scheduled, SyncMember {
   /** What the current summary was written from; zooming and hovering do not change it. */
   #described: { config: unknown; key: string } | undefined;
   #describeTimer: ReturnType<typeof setTimeout> | 0 = 0;
-  #drag: { x: number; scale: PositionScale } | null = null;
+  /**
+   * A primary-button press on the plot until release: where it started, the
+   * x scale it started with, and what dragging does.
+   */
+  #press: {
+    x: number;
+    y: number;
+    scale: PositionScale;
+    mode: "pan" | "brush" | "click";
+    moved: boolean;
+  } | null = null;
+  readonly #brush: Brush;
+  /** Where a keyboard selection (Shift + arrows) started: data x and its label. */
+  #brushAnchor: { value: number; label: string } | null = null;
+  readonly #events = new Emitter();
+  /** What the last hover event reported, to emit only changes. */
+  #hovered = "";
   readonly #cleanup: (() => void)[] = [];
   readonly #tables = new Map<Table, () => void>();
   #leaveSync: (() => void) | undefined;
@@ -99,7 +118,8 @@ export class Chart implements Scheduled, SyncMember {
     this.#svg = new SvgLayer(document, this.#id);
     this.#crosshair = svgElement(document, "line", { "stroke-width": "1", visibility: "hidden" });
     this.#dots = svgElement(document, "g");
-    this.#svg.overlay.append(this.#crosshair, this.#dots);
+    this.#brush = new Brush(svgElement(document, "rect", { visibility: "hidden" }));
+    this.#svg.overlay.append(this.#brush.element, this.#crosshair, this.#dots);
     this.#legend = new Legend(document, (key) => {
       if (this.model.hidden.has(key)) this.model.hidden.delete(key);
       else this.model.hidden.add(key);
@@ -161,8 +181,38 @@ export class Chart implements Scheduled, SyncMember {
   /** Shows an x range (epoch ms for time axes), or null to fit the data. */
   setViewport(domain: readonly [number, number] | null): void {
     this.syncViewport(domain);
+    // A viewport listener may have changed the viewport again; share where
+    // it ended up, not the request.
     const sync = this.#options.interaction?.sync;
-    if (sync) broadcastViewport(sync, this, domain);
+    if (sync) broadcastViewport(sync, this, this.model.viewport);
+  }
+
+  /**
+   * Calls `listener` on every `type` event until the returned function is
+   * called.
+   *
+   * ```ts
+   * chart.on("select", ({ x }) => x && other.setViewport(x));
+   * ```
+   */
+  on<K extends keyof ChartEvents>(type: K, listener: ChartListener<K>): () => void {
+    return this.#events.on(type, listener);
+  }
+
+  /** The brushed x range (epoch ms for time axes), or null. */
+  get selection(): readonly [number, number] | null {
+    return this.#brush.selection;
+  }
+
+  /** Sets or clears (null) the brushed x range, as if the user had brushed it. */
+  select(range: readonly [number, number] | null): void {
+    const scale = this.model.xScale();
+    const next = range && (scale ? normalize(scale, range[0], range[1]) : ascending(...range));
+    if (!next) this.#brushAnchor = null;
+    if (sameRange(next, this.#brush.selection)) return;
+    this.#brush.selection = next;
+    schedule(this);
+    this.#events.emit("select", { x: next });
   }
 
   /**
@@ -203,6 +253,7 @@ export class Chart implements Scheduled, SyncMember {
     for (const stop of this.#tables.values()) stop();
     this.#tables.clear();
     this.#clouds?.release(this);
+    this.#events.clear();
     this.model.dispose();
     this.root.remove();
   }
@@ -223,8 +274,11 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   syncViewport(domain: readonly [number, number] | null): void {
+    const before = this.model.viewport;
     this.model.setViewport(domain);
     this.#invalidate();
+    const after = this.model.viewport;
+    if (!sameRange(before, after)) this.#events.emit("viewport", { domain: after });
   }
 
   #invalidate() {
@@ -260,6 +314,9 @@ export class Chart implements Scheduled, SyncMember {
     const sync = options.interaction?.sync;
     this.#leaveSync?.();
     this.#leaveSync = sync ? join(sync, this) : undefined;
+    // Horizontal drags pan or brush; the page still scrolls vertically.
+    const drags = options.interaction?.zoom || options.interaction?.brush;
+    this.root.style.touchAction = drags ? "pan-y" : "";
   }
 
   /** Measures the container and caches the size where the observer keeps it current. */
@@ -411,11 +468,23 @@ export class Chart implements Scheduled, SyncMember {
   #drawOverlay() {
     const scene = this.#scene;
     if (!scene) return;
-    const showTooltip = this.#options.tooltip ?? true;
-    const inspection = showTooltip ? this.#inspection() : undefined;
     const { theme, plot } = scene;
+    const x = this.model.xScale();
+    if (x) this.#brush.draw(x, plot, theme);
+    const showTooltip = this.#options.tooltip ?? true;
+    // Hover listeners get the inspection even without the built-in tooltip,
+    // which is how applications draw their own.
+    const hovering = this.#events.has("hover");
+    const inspection = showTooltip || hovering ? this.#inspection() : undefined;
+    if (hovering) {
+      const key = inspectionKey(inspection);
+      if (key !== this.#hovered) {
+        this.#hovered = key;
+        this.#events.emit("hover", { inspection });
+      }
+    }
     const document = this.root.ownerDocument;
-    if (!inspection) {
+    if (!inspection || !showTooltip) {
       this.#crosshair.setAttribute("visibility", "hidden");
       this.#dots.replaceChildren();
       this.#tooltip.hide();
@@ -480,9 +549,20 @@ export class Chart implements Scheduled, SyncMember {
     on("pointermove", (event) => {
       this.#pointer = local(event);
       this.#keyboard = null;
-      if (this.#drag) {
-        this.#pan(this.#pointer.x);
-        return;
+      this.#brushAnchor = null;
+      const press = this.#press;
+      if (press) {
+        const { x, y } = this.#pointer;
+        press.moved ||= Math.hypot(x - press.x, y - press.y) >= DRAG_THRESHOLD;
+        if (press.moved && press.mode === "pan") {
+          this.#pan(press, x);
+          return;
+        }
+        const plot = this.#scene?.plot;
+        if (press.moved && press.mode === "brush" && plot) {
+          if (!this.#brush.dragging) this.#brush.start(press.x, plot);
+          this.#brush.move(x, plot);
+        }
       }
       schedule(this);
       const sync = this.#options.interaction?.sync;
@@ -493,7 +573,9 @@ export class Chart implements Scheduled, SyncMember {
     });
     on("pointerleave", () => {
       this.#pointer = null;
-      this.#drag = null;
+      // A captured drag leaves only when released; any other press ends here.
+      this.#press = null;
+      this.#brush.cancel();
       schedule(this);
       const sync = this.#options.interaction?.sync;
       if (sync) broadcastCursor(sync, this, null);
@@ -519,14 +601,48 @@ export class Chart implements Scheduled, SyncMember {
       { passive: false },
     );
     on("pointerdown", (event) => {
-      if (!this.#options.interaction?.zoom || event.button !== 0) return;
+      const scene = this.#scene;
       const scale = this.model.xScale();
-      if (!scale) return;
-      this.#drag = { x: local(event).x, scale };
-      root.setPointerCapture?.(event.pointerId);
+      if (event.button !== 0 || !scene || !scale) return;
+      const { x, y } = local(event);
+      const { plot } = scene;
+      // Presses on the axes, title, or legend are not on the data.
+      if (x < plot.x || x > plot.x + plot.width || y < plot.y || y > plot.y + plot.height) return;
+      // Dragging brushes when brushing is on (Shift pans instead when zoom is
+      // on too), pans when only zoom is on, and otherwise does nothing.
+      const { brush, zoom } = this.#options.interaction ?? {};
+      const mode = brush && !(zoom && event.shiftKey) ? "brush" : zoom ? "pan" : "click";
+      this.#press = { x, y, scale, mode, moved: false };
+      if (mode !== "click") root.setPointerCapture?.(event.pointerId);
     });
-    on("pointerup", () => {
-      this.#drag = null;
+    on("pointerup", (event) => {
+      const press = this.#press;
+      this.#press = null;
+      if (!press) return;
+      if (!press.moved) {
+        this.#click(local(event));
+        return;
+      }
+      if (press.mode !== "brush") return;
+      // The release point ends the brush, wherever the last move was.
+      const plot = this.#scene?.plot;
+      if (plot) this.#brush.move(local(event).x, plot);
+      const range = this.#brush.end(press.scale);
+      // The drag band goes, whether or not the brush selects anything.
+      schedule(this);
+      if (!range) return;
+      if (this.#zoomsToBrush(press.scale)) this.setViewport(range);
+      else this.select(range);
+    });
+    // The browser took the pointer (a touch turned into scrolling, say).
+    const cancel = () => {
+      this.#press = null;
+      this.#brush.cancel();
+      schedule(this);
+    };
+    on("pointercancel", cancel);
+    on("lostpointercapture", () => {
+      if (this.#press) cancel();
     });
     on("dblclick", () => {
       if (this.#options.interaction?.zoom) this.setViewport(null);
@@ -535,40 +651,81 @@ export class Chart implements Scheduled, SyncMember {
     on("keydown", (event) => this.#key(event));
     on("blur", () => {
       this.#keyboard = null;
+      this.#brushAnchor = null;
       schedule(this);
     });
   }
 
-  #pan(x: number) {
-    const drag = this.#drag;
+  #pan(press: { x: number; scale: PositionScale }, x: number) {
     const scene = this.#scene;
-    if (!drag || !scene) return;
+    if (!scene) return;
     // Shift in pixels and invert through the scale the drag started with.
-    const shift = drag.x - x;
+    const shift = press.x - x;
     const { plot } = scene;
     this.setViewport([
-      drag.scale.invert(plot.x + shift),
-      drag.scale.invert(plot.x + plot.width + shift),
+      press.scale.invert(plot.x + shift),
+      press.scale.invert(plot.x + plot.width + shift),
     ]);
+  }
+
+  /**
+   * With zoom on, a brush zooms to its range rather than selecting it;
+   * category axes cannot zoom, so their brushes select.
+   */
+  #zoomsToBrush(scale: PositionScale): boolean {
+    return Boolean(this.#options.interaction?.zoom) && scale.type !== "band";
+  }
+
+  /** A press released without dragging: clears the selection and reports the data there. */
+  #click(point: { x: number; y: number }) {
+    if (this.#options.interaction?.brush) this.select(null);
+    if (this.#events.has("click"))
+      this.#events.emit("click", { inspection: this.model.inspect(point.x, point.y) });
   }
 
   /**
    * Arrow keys step through the points of the first visible series. The
    * cursor keeps its position in the series, so repeated x values are each
-   * reachable.
+   * reachable. With brushing on, Shift extends a selection from where the
+   * cursor started, Enter zooms to it when zoom is on, and Escape clears it.
    */
   #key(event: KeyboardEvent) {
-    const keys = ["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "Escape"];
+    // Controls inside the chart (legend buttons) keep their own keys.
+    if (event.target !== this.root) return;
+    const keys = [
+      "ArrowLeft",
+      "ArrowRight",
+      "Home",
+      "End",
+      "PageUp",
+      "PageDown",
+      "Escape",
+      "Enter",
+    ];
     if (!keys.includes(event.key)) return;
     const series = this.model.series().find((s) => !this.model.hidden.has(s.key) && s.length > 0);
     if (!series) return;
+    const brush = this.#options.interaction?.brush;
+    if (event.key === "Enter") {
+      const range = this.#brush.selection;
+      const scale = this.model.xScale();
+      if (!brush || !range || !scale || !this.#zoomsToBrush(scale)) return;
+      event.preventDefault();
+      this.#brushAnchor = null;
+      this.select(null);
+      this.setViewport(range);
+      return;
+    }
     event.preventDefault();
     if (event.key === "Escape") {
       this.#keyboard = null;
+      this.#brushAnchor = null;
       this.#live.textContent = "";
+      if (brush) this.select(null);
       schedule(this);
       return;
     }
+    const before = this.#keyboard ? this.#inspection() : undefined;
     const current = this.#keyboard?.key === series.key ? this.#keyboard.position : -1;
     const page = Math.max(1, Math.round(series.length / 10));
     let position = Math.max(0, current);
@@ -583,8 +740,33 @@ export class Chart implements Scheduled, SyncMember {
     this.#pointer = null;
     this.flush();
     const inspection = this.#inspection();
-    if (inspection) this.#live.textContent = describeInspection(inspection);
+    if (!inspection) return;
+    let text = describeInspection(inspection);
+    if (brush && event.shiftKey && inspection.axis === "x") {
+      const start = before?.axis === "x" ? before : inspection;
+      this.#brushAnchor ??= { value: start.value, label: start.label };
+      this.select([this.#brushAnchor.value, inspection.value]);
+      const scale = this.model.xScale();
+      const hint = scale && this.#zoomsToBrush(scale) ? " Press Enter to zoom to it." : "";
+      text = `Selected ${this.#brushAnchor.label} to ${inspection.label}.${hint} ${text}`;
+    } else {
+      this.#brushAnchor = null;
+    }
+    this.#live.textContent = text;
   }
+}
+
+/** Two ranges hold the same values, or are both null. */
+function sameRange(
+  a: readonly [number, number] | null,
+  b: readonly [number, number] | null,
+): boolean {
+  return a === b || (a !== null && b !== null && a[0] === b[0] && a[1] === b[1]);
+}
+
+/** What a hover event reports, as a key that changes when any of it does. */
+function inspectionKey(inspection: Inspection | undefined): string {
+  return inspection ? JSON.stringify(inspection) : "";
 }
 
 /**

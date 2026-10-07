@@ -131,8 +131,14 @@ export interface TooltipSpec {
 }
 
 export interface InteractionSpec {
-  /** Wheel zoom and drag pan along x. */
+  /** Wheel zoom and drag pan along x; double-click resets. */
   zoom?: boolean;
+  /**
+   * Drag along x to select a range, shown as a band and reported as a
+   * `select` event; a click clears it. With `zoom` on too, a brush zooms to
+   * its range instead (Shift-drag pans).
+   */
+  brush?: "x";
   /** Charts with the same sync name share their cursor and x range. */
   sync?: string;
 }

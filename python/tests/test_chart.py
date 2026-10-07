@@ -28,6 +28,8 @@ def test_spec_uses_the_portable_format():
     assert spec["timeZone"] == "UTC"
     assert spec["y"] == {"type": "log", "label": "ms"}
     assert spec["interaction"] == {"zoom": True}
+    brushed, _ = hg.Chart(DATA, brush="x", zoom=True).line(x="t", y="p50").to_spec()
+    assert brushed["interaction"] == {"zoom": True, "brush": "x"}
     assert spec["marks"] == [
         {"type": "line", "x": "t", "y": ["p50", "p99"], "strokeWidth": 2, "data": "data"},
         {"type": "rule", "y": 250, "label": "SLO"},

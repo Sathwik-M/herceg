@@ -39,6 +39,7 @@ chart = (
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 (`hg.Axis(type="log", domain=(0, 100), label="ms", ...)` or a dict),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`,
+`brush` (`"x"`: drag to select a range; with `zoom=True`, drag to zoom),
 `sync` (charts with the same name on one HTML page share cursor and zoom;
 notebook outputs are separate iframes, so `sync` does not reach across
 cells), `renderer`, `theme` (`"light"`, `"dark"`, or a dict), `locale`, and

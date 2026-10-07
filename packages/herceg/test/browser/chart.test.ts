@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
+import { area } from "../../src/marks/area.ts";
+import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { rule } from "../../src/marks/rule.ts";
 
@@ -241,6 +243,306 @@ describe("interaction", () => {
     a.destroy();
     b.destroy();
     other.remove();
+  });
+});
+
+describe("events and brushing", () => {
+  function press(target: Element, type: string, x: number, y: number, shiftKey = false) {
+    const rect = target.getBoundingClientRect();
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        clientX: rect.left + x,
+        clientY: rect.top + y,
+        shiftKey,
+        pointerId: 1,
+      }),
+    );
+  }
+  function drag(chart: Chart, from: number, to: number, shiftKey = false) {
+    const x = chart.model.xScale()!;
+    const y = chart.model.yScale()!;
+    const py = (y.range[0] + y.range[1]) / 2;
+    press(chart.root, "pointerdown", x.map(from), py, shiftKey);
+    press(chart.root, "pointermove", x.map((from + to) / 2), py, shiftKey);
+    press(chart.root, "pointermove", x.map(to), py, shiftKey);
+    press(chart.root, "pointerup", x.map(to), py, shiftKey);
+  }
+  const band = (chart: Chart) => chart.root.querySelector("svg rect[fill-opacity]");
+
+  it("selects an x range by brushing and clears it with a click", async () => {
+    const chart = createChart(host, {
+      interaction: { brush: "x" },
+      marks: [line(series(100), { x: "t", y: "s0" })],
+    });
+    const selections: (readonly [number, number] | null)[] = [];
+    chart.on("select", ({ x }) => selections.push(x));
+    drag(chart, 60_000, 20_000);
+    await frame();
+    const [lo, hi] = chart.selection!;
+    expect(lo).toBeCloseTo(20_000, -3);
+    expect(hi).toBeCloseTo(60_000, -3);
+    expect(selections).toEqual([chart.selection]);
+    expect(band(chart)!.getAttribute("visibility")).toBe("visible");
+    // A brush selects; it does not zoom.
+    expect(chart.model.viewport).toBeNull();
+    const x = chart.model.xScale()!;
+    press(chart.root, "pointerdown", x.map(80_000), 150);
+    press(chart.root, "pointerup", x.map(80_000), 150);
+    await frame();
+    expect(chart.selection).toBeNull();
+    expect(selections.at(-1)).toBeNull();
+    expect(band(chart)!.getAttribute("visibility")).toBe("hidden");
+    chart.destroy();
+  });
+
+  it("zooms to a brushed range when zoom is on too, and pans with Shift", () => {
+    const chart = createChart(host, {
+      interaction: { brush: "x", zoom: true },
+      marks: [line(series(100), { x: "t", y: "s0" })],
+    });
+    const viewports: (readonly [number, number] | null)[] = [];
+    chart.on("viewport", ({ domain }) => viewports.push(domain));
+    drag(chart, 20_000, 60_000);
+    const [lo, hi] = chart.model.viewport!;
+    expect(lo).toBeCloseTo(20_000, -3);
+    expect(hi).toBeCloseTo(60_000, -3);
+    expect(chart.selection).toBeNull();
+    expect(viewports).toHaveLength(1);
+    chart.render();
+    drag(chart, 30_000, 40_000, true);
+    const [panLo, panHi] = chart.model.viewport!;
+    expect(panHi - panLo).toBeCloseTo(hi - lo, 0);
+    expect(panLo).toBeLessThan(lo);
+    chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(viewports.at(-1)).toBeNull();
+    chart.destroy();
+  });
+
+  it("selects with Shift and the arrow keys, and zooms on Enter", () => {
+    const data = table({ t: [0, 1, 2, 3], v: [10, 20, 30, 40] });
+    const chart = createChart(host, {
+      interaction: { brush: "x", zoom: true },
+      marks: [line(data, { x: "t", y: "v" })],
+    });
+    chart.root.focus();
+    const key = (k: string, shiftKey = false) =>
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true }));
+    key("ArrowRight");
+    key("ArrowRight", true);
+    key("ArrowRight", true);
+    expect(chart.selection).toEqual([0, 2]);
+    const live = chart.root.querySelector("[aria-live]")!;
+    expect(live.textContent).toContain("Selected 0 to 2. Press Enter to zoom to it.");
+    key("Enter");
+    expect(chart.model.viewport).toEqual([0, 2]);
+    expect(chart.selection).toBeNull();
+    key("ArrowLeft", true);
+    key("Escape");
+    expect(chart.selection).toBeNull();
+    chart.destroy();
+  });
+
+  it("reports hover changes without the built-in tooltip, and clicks", async () => {
+    const data = table({ t: [0, 1, 2], v: [10, 20, 30] });
+    const chart = createChart(host, { tooltip: false, marks: [line(data, { x: "t", y: "v" })] });
+    const hovers: (number | undefined)[] = [];
+    chart.on("hover", ({ inspection }) => hovers.push(inspection?.value));
+    const clicks: (number | undefined)[] = [];
+    chart.on("click", ({ inspection }) => clicks.push(inspection?.value));
+    const x = chart.model.xScale()!;
+    press(chart.root, "pointermove", x.map(1), 150);
+    await frame();
+    press(chart.root, "pointermove", x.map(1) + 1, 150);
+    await frame();
+    press(chart.root, "pointermove", x.map(2), 150);
+    await frame();
+    // The second move inspects the same point, so it reports nothing new.
+    expect(hovers).toEqual([1, 2]);
+    expect(chart.root.querySelector("svg line")!.getAttribute("visibility")).toBe("hidden");
+    press(chart.root, "pointerdown", x.map(2), 150);
+    press(chart.root, "pointerup", x.map(2), 150);
+    expect(clicks).toEqual([2]);
+    press(chart.root, "pointerleave", 0, 0);
+    await frame();
+    expect(hovers.at(-1)).toBeUndefined();
+    chart.destroy();
+  });
+
+  it("keeps brushed ranges inside the plot and cancels them with the browser", () => {
+    const chart = createChart(host, {
+      interaction: { brush: "x" },
+      marks: [line(table({ t: [0, 1, 2, 3], v: [1, 2, 3, 4] }), { x: "t", y: "v" })],
+      x: { domain: [0, 3] },
+    });
+    expect(chart.root.style.touchAction).toBe("pan-y");
+    const x = chart.model.xScale()!;
+    press(chart.root, "pointerdown", x.map(1), 150);
+    press(chart.root, "pointermove", x.map(2), 150);
+    press(chart.root, "pointermove", x.range[1] + 200, 150);
+    press(chart.root, "pointerup", x.range[1] + 200, 150);
+    expect(chart.selection![1]).toBeCloseTo(3, 6);
+    press(chart.root, "pointerdown", x.map(0.5), 150);
+    press(chart.root, "pointermove", x.map(2.5), 150);
+    press(chart.root, "pointercancel", x.map(2.5), 150);
+    press(chart.root, "pointerup", x.map(2.5), 150);
+    expect(chart.selection![0]).toBeCloseTo(1, 6);
+    chart.destroy();
+  });
+
+  it("brushes whole categories, which selects even with zoom on", async () => {
+    const sales = table({ region: ["N", "S", "E", "W"], v: [1, 2, 3, 4] });
+    const chart = createChart(host, {
+      interaction: { brush: "x", zoom: true },
+      marks: [bar(sales, { x: "region", y: "v" })],
+    });
+    const x = chart.model.xScale()!;
+    // From inside the first category to inside the third.
+    press(chart.root, "pointerdown", x.map(0) + 5, 150);
+    press(chart.root, "pointermove", x.map(1), 150);
+    press(chart.root, "pointerup", x.map(2) - 5, 150);
+    expect(chart.selection).toEqual([0, 2]);
+    expect(chart.model.viewport).toBeNull();
+    chart.select([1, 1]);
+    await frame();
+    const rect = band(chart)!;
+    expect(rect.getAttribute("visibility")).toBe("visible");
+    expect(Number(rect.getAttribute("width"))).toBeGreaterThan(Math.abs(x.bandwidth!));
+    chart.destroy();
+  });
+
+  it("starts keyboard selections over after the pointer or a clear", () => {
+    const data = table({ t: [0, 1, 2, 3], v: [10, 20, 30, 40] });
+    const chart = createChart(host, {
+      interaction: { brush: "x" },
+      marks: [line(data, { x: "t", y: "v" })],
+    });
+    chart.root.focus();
+    const key = (k: string, shiftKey = false) =>
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true }));
+    key("ArrowRight");
+    key("ArrowRight", true);
+    expect(chart.selection).toEqual([0, 1]);
+    chart.select(null);
+    key("ArrowRight", true);
+    expect(chart.selection).toEqual([1, 2]);
+    press(chart.root, "pointermove", 300, 150);
+    key("ArrowRight");
+    key("ArrowRight", true);
+    expect(chart.selection![0]).toBe(chart.selection![1] - 1);
+    chart.destroy();
+  });
+
+  it("leaves keys on legend buttons to the buttons", () => {
+    const chart = createChart(host, {
+      interaction: { brush: "x", zoom: true },
+      marks: [line(series(20), { x: "t", y: ["s0", "s1"] })],
+    });
+    chart.select([1000, 5000]);
+    const button = chart.root.querySelector("button")!;
+    button.focus();
+    button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(chart.model.viewport).toBeNull();
+    expect(chart.selection).toEqual([1000, 5000]);
+    chart.destroy();
+  });
+
+  it("reports hover again when what it shows changes under a still pointer", async () => {
+    const band = table({ t: [0, 1, 2], lo: [2, 2, 2], hi: [20, 20, 20] });
+    const chart = createChart(host, {
+      marks: [area(band, { x: "t", y1: "lo", y2: "hi" })],
+      y: { domain: [0, 30] },
+    });
+    const texts: (string | undefined)[] = [];
+    chart.on("hover", ({ inspection }) => texts.push(inspection?.points[0]?.text));
+    press(chart.root, "pointermove", chart.model.xScale()!.map(1), 150);
+    await frame();
+    band.set("lo", 1, 7);
+    await frame();
+    expect(texts).toEqual(["2 – 20", "7 – 20"]);
+    chart.destroy();
+  });
+
+  it("shares the final viewport when a listener changes it again", () => {
+    const other = document.createElement("div");
+    other.style.cssText = "width:600px;height:300px";
+    document.body.append(other);
+    const data = series(100);
+    const interaction = { sync: "reentrant", zoom: true };
+    const a = createChart(host, { interaction, marks: [line(data, { x: "t", y: "s0" })] });
+    const b = createChart(other, { interaction, marks: [line(data, { x: "t", y: "s1" })] });
+    // A clamps every viewport to at most 1,000 wide.
+    a.on("viewport", ({ domain }) => {
+      if (domain && domain[1] - domain[0] > 1000) a.setViewport([domain[0], domain[0] + 1000]);
+    });
+    a.setViewport([0, 2000]);
+    expect(a.model.viewport).toEqual([0, 1000]);
+    expect(b.model.viewport).toEqual([0, 1000]);
+    a.destroy();
+    b.destroy();
+    other.remove();
+  });
+
+  it("stops an older viewport broadcast once a member starts a newer one", () => {
+    const hosts = [host, document.createElement("div"), document.createElement("div")];
+    for (const element of hosts.slice(1)) {
+      element.style.cssText = "width:600px;height:300px";
+      document.body.append(element);
+    }
+    const data = series(100);
+    const interaction = { sync: "three", zoom: true };
+    const [a, b, c] = hosts.map((element) =>
+      createChart(element, { interaction, marks: [line(data, { x: "t", y: "s0" })] }),
+    ) as [Chart, Chart, Chart];
+    // B clamps the range it receives and shares the result.
+    b.on("viewport", ({ domain }) => {
+      if (domain && domain[1] - domain[0] > 1000) b.setViewport([domain[0], domain[0] + 1000]);
+    });
+    a.setViewport([0, 2000]);
+    for (const chart of [a, b, c]) expect(chart.model.viewport).toEqual([0, 1000]);
+    for (const chart of [a, b, c]) chart.destroy();
+    for (const element of hosts.slice(1)) element.remove();
+  });
+
+  it("removes the drag band when a brush ends without a range", async () => {
+    const chart = createChart(host, {
+      interaction: { brush: "x" },
+      marks: [line(table({ t: [0, 1, 2, 3], v: [1, 2, 3, 4] }), { x: "t", y: "v" })],
+    });
+    chart.select([1, 2]);
+    const x = chart.model.xScale()!;
+    press(chart.root, "pointerdown", x.map(0.5), 150);
+    press(chart.root, "pointermove", x.map(0.5) + 40, 150);
+    await frame();
+    press(chart.root, "pointerup", x.map(0.5) + 1, 150);
+    await frame();
+    expect(chart.selection).toEqual([1, 2]);
+    expect(Number(band(chart)!.getAttribute("x"))).toBeCloseTo(x.map(1), 3);
+    chart.destroy();
+  });
+
+  it("emits only changes, and keeps going when a listener throws", () => {
+    const chart = createChart(host, { marks: [line(series(10), { x: "t", y: "s0" })] });
+    const seen: unknown[] = [];
+    chart.on("select", () => {
+      throw new Error("listener failed");
+    });
+    const stop = chart.on("select", ({ x }) => seen.push(x));
+    const errors: unknown[] = [];
+    const reportError = globalThis.reportError;
+    globalThis.reportError = (error) => errors.push(error);
+    try {
+      chart.select([5, 1]);
+      chart.select([1, 5]);
+      stop();
+      chart.select(null);
+    } finally {
+      globalThis.reportError = reportError;
+    }
+    expect(seen).toEqual([[1, 5]]);
+    expect(errors).toHaveLength(2);
+    chart.setViewport([0, 1000]);
+    chart.destroy();
   });
 });
 

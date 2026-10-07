@@ -299,7 +299,11 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     },
     interaction: (i, path) => {
       object(i, path);
-      properties(i as Record<string, unknown>, path, { zoom: boolean, sync: string });
+      properties(i as Record<string, unknown>, path, {
+        zoom: boolean,
+        brush: oneOf("x"),
+        sync: string,
+      });
     },
     renderer: oneOf("auto", "svg", "canvas"),
     theme,

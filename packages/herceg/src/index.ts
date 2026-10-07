@@ -21,6 +21,7 @@ export type {
 } from "./data/table.ts";
 export { fromRows, Table, table } from "./data/table.ts";
 export { type Chart, type ChartOptions, createChart } from "./dom/chart.ts";
+export type { ChartEvents, ChartListener } from "./dom/events.ts";
 export type { MeasureText } from "./layout/text.ts";
 export type { TextField } from "./marks/annotation.ts";
 export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";

@@ -169,6 +169,9 @@ describe("loadSpec", () => {
       }),
     ).toThrow(/marks\[0\]\.x: expected at least one field name/);
     expect(check({ tooltip: { mode: "nearest-z" }, marks: [] })).toThrow(/spec\.tooltip\.mode/);
+    expect(check({ interaction: { brush: "y" }, marks: [] })).toThrow(
+      /spec\.interaction\.brush: expected "x"/,
+    );
     // Valid edge cases the TypeScript API produces still load.
     expect(check({ marks: [{ type: "rule", y: 1, strokeWidth: 0 }] })).not.toThrow();
     expect(check({ x: { type: "time", format: { hour: "2-digit" } }, marks: [] })).not.toThrow();

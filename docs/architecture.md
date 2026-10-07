@@ -341,6 +341,20 @@ dragging pans, and double-click resets the viewport; both work in pixel space
 through the scale, so they behave the same on log axes. Keyboard navigation
 keeps a position within a series, so repeated x values are each reachable.
 
+A press on the plot becomes one of three gestures once it moves 3 px: a
+brush (with `interaction.brush`), a pan (with zoom only, or Shift with
+both), or nothing; a press that does not move is a click. A brush is drawn
+as a band in the pointer overlay and kept in data values, so it stays on
+its data while the chart zooms or resizes; with zoom on, releasing it sets
+the viewport instead. Shift with the arrow keys brushes from where the
+keyboard cursor started, and the live region announces the range.
+
+Charts emit `viewport`, `select`, `hover`, and `click` events. Each reports
+changes only (hover compares the inspected values), and a listener that
+throws is reported without stopping the others or the chart. Hover listeners
+receive inspections even with the built-in tooltip off, which is how an
+application draws its own.
+
 ## Accessibility
 
 - The chart root is a focusable `figure` named by the title, described by a

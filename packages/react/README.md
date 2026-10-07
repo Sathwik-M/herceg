@@ -29,7 +29,9 @@ with herceg's functions can also be passed as a `marks` prop.
 
 The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or `style` says otherwise. A `ref` gives the underlying chart for imperative
-calls (`setViewport`, `toSVG`).
+calls (`setViewport`, `select`, `toSVG`). Chart events are props:
+`onViewportChange`, `onSelect`, `onHover`, and `onClick`; the latest handler
+is called, so inline functions do not resubscribe.
 
 ## Live data
 
