@@ -5,6 +5,9 @@ import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { point } from "../../src/marks/point.ts";
+import { region } from "../../src/marks/region.ts";
+import { rule } from "../../src/marks/rule.ts";
+import { text } from "../../src/marks/text.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 
 let host: HTMLDivElement;
@@ -151,6 +154,52 @@ describe("new marks in the browser", () => {
     bars.destroy();
     lines.destroy();
     other.remove();
+  });
+
+  it("draws regions with the data and text in the SVG overlay", () => {
+    const series = table({ t: [0, 1, 2, 3], v: [1, 3, 2, 4] });
+    const marks = [
+      region({ x1: 1, x2: 2, label: "window" }),
+      line(series, { x: "t", y: "v" }),
+      text({ x: 3, y: 4, label: "last", anchor: "end", dx: -6 }),
+    ];
+    const svgChart = createChart(host, { marks, renderer: "svg" });
+    const clipped = svgChart.root.querySelector("svg g[clip-path]")!;
+    expect([...clipped.children].map((node) => node.getAttribute("data-kind"))).toEqual([
+      "rect",
+      "line",
+    ]);
+    const labels = () => [...host.querySelectorAll("svg text")].map((node) => node.textContent);
+    expect(labels()).toEqual(expect.arrayContaining(["window", "last"]));
+    svgChart.destroy();
+    // On canvas the region is painted with the data; labels stay in SVG.
+    const canvasChart = createChart(host, { marks, renderer: "canvas" });
+    expect(canvasChart.root.querySelector("svg g[clip-path]")!.children).toHaveLength(0);
+    expect(labels()).toEqual(expect.arrayContaining(["window", "last"]));
+    canvasChart.destroy();
+  });
+
+  it("updates annotation text without rebuilding the axes or other annotations", () => {
+    const series = table({ t: [0, 1, 2, 3], v: [1, 3, 2, 4] });
+    const latest = table({ t: [3], v: [4] });
+    const chart = createChart(host, {
+      marks: [
+        line(series, { x: "t", y: "v" }),
+        rule({ y: 2, label: "limit" }),
+        text(latest, { x: "t", y: "v", text: "v" }),
+      ],
+      y: { domain: [0, 5] },
+    });
+    const find = (label: string) =>
+      [...host.querySelectorAll("svg text")].find((node) => node.textContent === label)!;
+    const tick = find("5");
+    const limit = find("limit");
+    latest.set("v", 0, 3.5);
+    chart.render();
+    expect(find("3.5")).toBeDefined();
+    expect(tick.isConnected).toBe(true);
+    expect(limit.isConnected).toBe(true);
+    chart.destroy();
   });
 
   it("replaces SVG nodes when a series changes from a line to points", () => {

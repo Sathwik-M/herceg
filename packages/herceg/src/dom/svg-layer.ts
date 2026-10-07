@@ -9,9 +9,17 @@ import {
   pointPath,
   rectPath,
   ruleElement,
+  textElements,
   titleElement,
 } from "../render/svg.ts";
-import type { MarkGeometry, Scene } from "../scene/scene.ts";
+import {
+  isGuide,
+  type MarkGeometry,
+  type RuleGeometry,
+  type Scene,
+  type TextGeometry,
+} from "../scene/scene.ts";
+import type { Theme } from "../theme.ts";
 
 const NS = "http://www.w3.org/2000/svg";
 
@@ -42,6 +50,13 @@ export class SvgLayer {
   readonly #background: SVGRectElement;
   readonly #grid: SVGPathElement;
   readonly #marks: SVGGElement;
+  /**
+   * Rules and text, one group per geometry key, each rewritten only when its
+   * markup changes: labels may change every frame.
+   */
+  readonly #annotations: SVGGElement;
+  readonly #annotationNodes = new Map<string, { node: SVGGElement; markup: string }>();
+  /** Axes, title, and color legend. */
   readonly #guides: SVGGElement;
   readonly #nodes = new Map<string, SVGElement[]>();
   readonly #id: string;
@@ -60,9 +75,18 @@ export class SvgLayer {
     this.#background = element(document, "rect", { fill: "none" });
     this.#grid = element(document, "path", { fill: "none" });
     this.#marks = element(document, "g", { "clip-path": `url(#${id}-clip)` });
+    this.#annotations = element(document, "g");
     this.#guides = element(document, "g");
     this.overlay = element(document, "g", { "pointer-events": "none" });
-    this.svg.append(defs, this.#background, this.#grid, this.#marks, this.#guides, this.overlay);
+    this.svg.append(
+      defs,
+      this.#background,
+      this.#grid,
+      this.#marks,
+      this.#annotations,
+      this.#guides,
+      this.overlay,
+    );
   }
 
   /** Draws the scene. With `marks: false` the canvas owns grid and data. */
@@ -87,17 +111,40 @@ export class SvgLayer {
     set(this.#grid, "d", options.marks ? gridPath(scene) : "");
     set(this.#grid, "stroke", theme.grid);
 
-    this.#renderMarks(options.marks ? scene.marks.filter((mark) => mark.kind !== "rule") : []);
+    this.#renderMarks(options.marks ? scene.marks.filter((mark) => !isGuide(mark)) : []);
 
-    let markup = "";
-    for (const mark of scene.marks) if (mark.kind === "rule") markup += ruleElement(mark, theme);
-    markup += `<g style="font-variant-numeric:tabular-nums">${axisElements(scene.axes, theme)}</g>`;
+    this.#renderAnnotations(scene.marks.filter(isGuide), theme);
+    let markup = `<g style="font-variant-numeric:tabular-nums">${axisElements(scene.axes, theme)}</g>`;
     markup += titleElement(scene);
     if (scene.colorLegend)
       markup += colorLegendElement(scene.colorLegend, theme, `${this.#id}-ramp`);
     if (markup !== this.#guideMarkup) {
       this.#guides.innerHTML = markup;
       this.#guideMarkup = markup;
+    }
+  }
+
+  #renderAnnotations(guides: readonly (RuleGeometry | TextGeometry)[], theme: Theme) {
+    const seen = new Set<string>();
+    let previous: Element | null = null;
+    for (const guide of guides) {
+      seen.add(guide.key);
+      let entry = this.#annotationNodes.get(guide.key);
+      if (!entry) {
+        entry = { node: element(this.#document, "g"), markup: "" };
+        this.#annotationNodes.set(guide.key, entry);
+      }
+      const markup = guide.kind === "rule" ? ruleElement(guide, theme) : textElements(guide, theme);
+      if (markup !== entry.markup) {
+        entry.node.innerHTML = markup;
+        entry.markup = markup;
+      }
+      previous = keepOrder(this.#annotations, entry.node, previous);
+    }
+    for (const [key, entry] of this.#annotationNodes) {
+      if (seen.has(key)) continue;
+      entry.node.remove();
+      this.#annotationNodes.delete(key);
     }
   }
 
@@ -124,14 +171,7 @@ export class SvgLayer {
         this.#nodes.set(mark.key, nodes);
       }
       updateMark(mark, nodes);
-      // Keep document order equal to scene order.
-      for (const node of nodes) {
-        const expected: Element | null = previous
-          ? (previous.nextSibling as Element | null)
-          : (this.#marks.firstChild as Element | null);
-        if (node !== expected) this.#marks.insertBefore(node, expected);
-        previous = node;
-      }
+      for (const node of nodes) previous = keepOrder(this.#marks, node, previous);
     }
     for (const [key, nodes] of this.#nodes) {
       if (seen.has(key)) continue;
@@ -139,6 +179,13 @@ export class SvgLayer {
       this.#nodes.delete(key);
     }
   }
+}
+
+/** Places `node` right after `previous` (first when null), keeping document order equal to scene order. */
+function keepOrder(parent: Element, node: Element, previous: Element | null): Element {
+  const expected = previous ? previous.nextSibling : parent.firstChild;
+  if (node !== expected) parent.insertBefore(node, expected);
+  return node;
 }
 
 function elementTag(mark: MarkGeometry): "path" | "image" | "g" {
@@ -193,6 +240,7 @@ function updateMark(mark: MarkGeometry, nodes: SVGElement[]): void {
       set(first, "href", canvasRasterUrl(mark, first.ownerDocument));
       return;
     case "rule":
+    case "text":
       return;
   }
 }

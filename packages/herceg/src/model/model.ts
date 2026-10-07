@@ -522,6 +522,7 @@ export class ChartModel {
       plot,
       pixelRatio: this.pixelRatio,
       theme,
+      locale,
       hidden: this.hidden,
       owner: this,
       clouds,
@@ -529,7 +530,9 @@ export class ChartModel {
       floats: this.#floatBuffer,
       bytes: this.#byteBuffer,
     };
-    const geometry = marks.flatMap(({ mark, series }) => mark.geometry(series, frame));
+    const geometry = marks.flatMap(({ mark, series }, index) =>
+      mark.geometry(series, frame, mark.spec.id ?? index),
+    );
     // Drop buffers of series that no longer exist.
     for (const pool of [this.#polylines, this.#floats, this.#bytes] as Map<string, unknown>[]) {
       for (const key of pool.keys()) if (!this.#used.has(key)) pool.delete(key);
@@ -644,6 +647,14 @@ export class ChartModel {
   /** Tooltip mode of the last scene: the chart's, or one suited to its marks. */
   tooltipMode(): TooltipMode {
     return this.#last?.mode ?? "nearest-x";
+  }
+
+  /** Sentences describing marks without series (annotations), as of the last scene. */
+  annotationSummaries(): string[] {
+    const last = this.#last;
+    const fallback = (value: number) => formatNumber(value, this.#config.locale);
+    const format = { x: last?.formatX ?? fallback, y: last?.formatY ?? fallback };
+    return this.#config.marks.flatMap((mark) => mark.describe?.(format, this.#config.locale) ?? []);
   }
 
   /** Series of the last scene, for legends, tooltips, and summaries. */

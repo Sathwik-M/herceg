@@ -47,6 +47,8 @@ export interface Frame {
   plot: Rect;
   pixelRatio: number;
   theme: Theme;
+  /** Locale for numbers the mark formats as text; undefined uses the runtime's. */
+  locale: string | undefined;
   hidden: ReadonlySet<string>;
   /** The chart drawing this frame, for caches that count each chart's redraws. */
   owner: object;
@@ -61,6 +63,12 @@ export interface Frame {
   floats(seriesKey: string, stage: string, length: number): Float32Array;
   /** A byte array of at least `length` items, reused across frames. */
   bytes(seriesKey: string, stage: string, length: number): Uint8ClampedArray<ArrayBuffer>;
+}
+
+/** How the chart formats single x and y values, as in tooltips. */
+export interface AxisFormat {
+  x: (value: number) => string;
+  y: (value: number) => string;
 }
 
 /** A point found by a mark's own lookup: series, position in it, pixel distance. */
@@ -129,9 +137,18 @@ export interface Mark<S extends MarkSpec = MarkSpec> {
     x1: number,
     log: boolean,
   ): readonly [number, number] | undefined;
-  geometry(series: readonly Series[], frame: Frame): MarkGeometry[];
+  /**
+   * The mark's part of the scene. `key` identifies the mark, for marks whose
+   * geometry is not keyed by series (annotations).
+   */
+  geometry(series: readonly Series[], frame: Frame, key: MarkKey): MarkGeometry[];
   /** Nearest point to a pixel, for marks with a faster lookup than the chart's generic search. */
   pick?(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined;
+  /**
+   * A sentence describing what the mark shows, for marks without series
+   * (annotations), which the chart's data summary would otherwise leave out.
+   */
+  describe?(format: AxisFormat, locale: string | undefined): string | undefined;
   /** The continuous color scale the mark draws with, if any. */
   colorRamp?(series: readonly Series[], theme: Theme): ColorRamp | undefined;
 }

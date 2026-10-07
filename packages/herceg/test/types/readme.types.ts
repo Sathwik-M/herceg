@@ -8,9 +8,11 @@ import {
   heatmap,
   line,
   point,
+  region,
   renderToSVG,
   rule,
   table,
+  text,
   time,
 } from "../../src/index.ts";
 
@@ -65,6 +67,27 @@ rule({ x: deployTime });
 line(requests, { x: "time", y: "latency", series: "latency" });
 // @ts-expect-error y must be numeric
 line(requests, { x: "time", y: "service" });
+
+// Annotations
+const deploys = table({ at: time([Date.now()]), version: ["v2"], build: [42] });
+rule({ y: 250, label: "SLO" });
+rule({ x: new Date(), label: "now" });
+rule(deploys, { x: "at", text: "version" });
+rule(deploys, { x: "at", text: "build" });
+// @ts-expect-error rule positions are number or time fields
+rule(deploys, { x: "version" });
+// @ts-expect-error times cannot be drawn as text
+rule(deploys, { x: "at", text: "at" });
+region({ x1: new Date(0), x2: new Date(), label: "window" });
+region(deploys, { x1: "at", x2: Date.now(), text: "version" });
+text({ x: 1, y: 2, label: "note" });
+text(deploys, { x: "at", y: "build", text: "version", dy: -8 });
+// @ts-expect-error constant text needs a label
+text({ x: 1, y: 2 });
+// @ts-expect-error text from data takes a label or a text field, not both
+text(deploys, { x: "at", y: "build", label: "a", text: "version" });
+// @ts-expect-error text from data needs a label or a text field
+text(deploys, { x: "at", y: "build" });
 
 // Server rendering
 renderToSVG({ width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] });

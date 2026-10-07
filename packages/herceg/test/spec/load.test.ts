@@ -143,8 +143,11 @@ describe("loadSpec", () => {
   it("checks options with the path of the bad property", () => {
     const check = (spec: unknown) => () => loadSpec(spec as ChartSpec);
     expect(check({ width: "bad", marks: [] })).toThrow(/spec\.width: expected a positive number/);
-    expect(check({ marks: [{ type: "rule", y: "a" }] })).toThrow(
-      /marks\[0\]\.y: expected a finite number/,
+    expect(check({ marks: [{ type: "rule", y: true }] })).toThrow(
+      /marks\[0\]\.y: expected a finite number or a field name/,
+    );
+    expect(check({ marks: [{ type: "text", x: 1, y: 2, anchor: "left", label: "a" }] })).toThrow(
+      /marks\[0\]\.anchor: expected "start" or "middle" or "end"/,
     );
     expect(check({ marks: [null] })).toThrow(/marks\[0\]: expected an object, got null/);
     expect(check({ x: { type: "polar" }, marks: [] })).toThrow(/spec\.x\.type: expected "linear"/);
@@ -183,6 +186,50 @@ describe("loadSpec", () => {
       [],
     );
     expect(svg.match(/<path d="M[^"]*Z" fill/g)).toHaveLength(2);
+  });
+
+  it("loads annotations from constants and from table fields", () => {
+    const { config } = loadSpec({
+      data: {
+        metrics: {
+          columns: { t: { type: "time", values: [start, start + 3_600_000] }, v: [1, 2] },
+        },
+        deploys: {
+          columns: { at: { type: "time", values: [start + 1_800_000] }, version: ["v2"] },
+        },
+      },
+      marks: [
+        { type: "line", data: "metrics", x: "t", y: "v" },
+        { type: "rule", data: "deploys", x: "at", text: "version" },
+        { type: "rule", y: 1.5, label: "limit" },
+        { type: "region", x1: start, x2: start + 600_000, label: "warmup" },
+        { type: "text", data: "metrics", x: "t", y: "v", text: "v", dy: -8 },
+      ],
+    });
+    // Constant annotations read no table, even when the spec has several.
+    expect(config.marks.map((mark) => mark.table?.name)).toEqual([
+      "metrics",
+      "deploys",
+      undefined,
+      undefined,
+      "metrics",
+    ]);
+    const svg = specToSVG({
+      data: { d: { columns: { x: [0, 10], y: [0, 10] } } },
+      marks: [
+        { type: "region", y1: 2, y2: 4, label: "band" },
+        { type: "line", x: "x", y: "y" },
+        { type: "text", x: 5, y: 5, label: "mid" },
+      ],
+    });
+    expect(svg).toContain(">band</text>");
+    expect(svg).toContain(">mid</text>");
+    expect(() =>
+      loadSpec({
+        data: { a: { columns: { x: [1] } }, b: { columns: { x: [1] } } },
+        marks: [{ type: "rule", x: "x" }],
+      }),
+    ).toThrow(/Mark 0 \(rule\): set `data`/);
   });
 
   it("keeps fields named like object internals", () => {

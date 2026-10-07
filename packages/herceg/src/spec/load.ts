@@ -4,13 +4,16 @@
 
 import { type ColumnInput, encodedCategory, type NumericArray, time } from "../data/column.ts";
 import { type Table, table } from "../data/table.ts";
+import { readsTable } from "../marks/annotation.ts";
 import { AreaMark } from "../marks/area.ts";
 import { BarMark } from "../marks/bar.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
 import { LineMark } from "../marks/line.ts";
 import type { Mark } from "../marks/mark.ts";
 import { PointMark } from "../marks/point.ts";
+import { RegionMark } from "../marks/region.ts";
 import { RuleMark } from "../marks/rule.ts";
+import { TextMark } from "../marks/text.ts";
 import type { ChartConfig } from "../model/model.ts";
 import {
   type BinaryType,
@@ -200,7 +203,18 @@ function swapped(Typed: (typeof TYPED)[BinaryType], bytes: Uint8Array): NumericA
 
 function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Mark {
   try {
-    if (spec.type === "rule") return new RuleMark(spec);
+    // Annotations read a table only when a position or their text is a field.
+    switch (spec.type) {
+      case "rule":
+        return new RuleMark(spec, annotationTable(spec, [spec.x, spec.y], tables));
+      case "region":
+        return new RegionMark(
+          spec,
+          annotationTable(spec, [spec.x1, spec.x2, spec.y1, spec.y2], tables),
+        );
+      case "text":
+        return new TextMark(spec, annotationTable(spec, [spec.x, spec.y], tables));
+    }
     const source = tableFor(spec.data, tables);
     switch (spec.type) {
       case "line":
@@ -221,6 +235,14 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
   } catch (error) {
     throw new Error(`Mark ${index} (${String(spec?.type)}): ${(error as Error).message}`);
   }
+}
+
+function annotationTable(
+  spec: { data?: string; text?: string },
+  positions: readonly (number | string | undefined)[],
+  tables: Map<string, Table>,
+): Table | undefined {
+  return readsTable(positions, spec.text) ? tableFor(spec.data, tables) : undefined;
 }
 
 function tableFor(name: string | undefined, tables: Map<string, Table>): Table {

@@ -48,6 +48,11 @@ const finite: Check = (v, path) => {
 const positive: Check = (v, path) => {
   if (typeof v !== "number" || !(v > 0) || !Number.isFinite(v)) fail(path, "a positive number", v);
 };
+/** A constant position or a field name. */
+const position: Check = (v, path) => {
+  if (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v)))
+    fail(path, "a finite number or a field name", v);
+};
 const width: Check = (v, path) => {
   if (typeof v !== "number" || !(v >= 0) || !Number.isFinite(v))
     fail(path, "a number of at least 0", v);
@@ -182,12 +187,39 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
   rule: {
     required: [],
     checks: {
-      x: finite,
-      y: finite,
+      x: position,
+      y: position,
       stroke: string,
       strokeWidth: width,
       dash: numbers,
       label: string,
+      text: field,
+    },
+  },
+  region: {
+    required: [],
+    checks: {
+      x1: position,
+      x2: position,
+      y1: position,
+      y2: position,
+      fill: string,
+      fillOpacity: fraction,
+      label: string,
+      text: field,
+    },
+  },
+  text: {
+    required: ["x", "y"],
+    checks: {
+      x: position,
+      y: position,
+      label: string,
+      text: field,
+      fill: string,
+      anchor: oneOf("start", "middle", "end"),
+      dx: finite,
+      dy: finite,
     },
   },
   bar: {

@@ -127,7 +127,7 @@ describe("domains", () => {
         scans++;
         return inner.yExtent(...args);
       },
-      geometry: (...args) => inner.geometry(...args),
+      geometry: (series, frame) => inner.geometry(series, frame),
     };
     build({ marks: [counting], y: { domain: [0, 10] } });
     expect(scans).toBe(0);

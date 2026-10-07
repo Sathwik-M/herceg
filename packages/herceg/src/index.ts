@@ -22,13 +22,21 @@ export type {
 export { fromRows, Table, table } from "./data/table.ts";
 export { type Chart, type ChartOptions, createChart } from "./dom/chart.ts";
 export type { MeasureText } from "./layout/text.ts";
+export type { TextField } from "./marks/annotation.ts";
 export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";
 export { type BarMark, type BarOptions, bar } from "./marks/bar.ts";
 export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
 export type { Mark } from "./marks/mark.ts";
 export { type PointMark, type PointOptions, point } from "./marks/point.ts";
-export { type RuleMark, type RuleOptions, rule } from "./marks/rule.ts";
+export {
+  type RegionDataOptions,
+  type RegionMark,
+  type RegionOptions,
+  region,
+} from "./marks/region.ts";
+export { type RuleDataOptions, type RuleMark, type RuleOptions, rule } from "./marks/rule.ts";
+export { type TextDataOptions, type TextMark, type TextOptions, text } from "./marks/text.ts";
 export type { ChartConfig, InspectedPoint, Inspection } from "./model/model.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
 export type * from "./spec/spec.ts";

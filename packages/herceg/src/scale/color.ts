@@ -29,6 +29,40 @@ export function isOpaqueColor(color: string): boolean {
   return /^[a-z]+$/.test(c) && c !== "transparent" && c !== "currentcolor";
 }
 
+/**
+ * Whether a color is light (its channels sum to more than half), for hex,
+ * `rgb()`, and `hsl()` colors; undefined for other syntaxes such as names,
+ * which would need the full CSS color table.
+ */
+export function isLightColor(color: string): boolean | undefined {
+  const rgb = parseColor(color.trim().toLowerCase());
+  return rgb && rgb[0] + rgb[1] + rgb[2] > 382;
+}
+
+function parseColor(c: string): [number, number, number] | undefined {
+  if (HEX.test(c)) return parseHex(c);
+  const match = /^(rgb|hsl)a?\(([^)]*)\)$/.exec(c);
+  if (!match) return undefined;
+  const parts = match[2]!.split(/[\s,/]+/).filter(Boolean);
+  if (parts.length < 3) return undefined;
+  const value = (part: string, scale: number) =>
+    part.endsWith("%") ? (Number.parseFloat(part) / 100) * scale : Number.parseFloat(part);
+  if (match[1] === "rgb") {
+    const rgb = parts.slice(0, 3).map((part) => value(part, 255)) as [number, number, number];
+    return rgb.every(Number.isFinite) ? rgb : undefined;
+  }
+  const h = Number.parseFloat(parts[0]!);
+  const s = value(parts[1]!, 1);
+  const l = value(parts[2]!, 1);
+  if (![h, s, l].every(Number.isFinite)) return undefined;
+  // HSL to RGB, per CSS Color 4.
+  const channel = (n: number) => {
+    const k = (n + h / 30) % 12;
+    return 255 * (l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)));
+  };
+  return [channel(0), channel(8), channel(4)];
+}
+
 function parseHex(hex: string): [number, number, number] {
   const value = hex.slice(1);
   const full = value.length === 3 ? [...value].map((c) => c + c).join("") : value;

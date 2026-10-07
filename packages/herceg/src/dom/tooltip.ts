@@ -1,13 +1,6 @@
 import type { Inspection } from "../model/model.ts";
+import { isLightColor } from "../scale/color.ts";
 import type { Theme } from "../theme.ts";
-
-function isDark(theme: Theme): boolean {
-  // Light text implies a dark theme.
-  const hex = theme.text.replace("#", "");
-  if (hex.length !== 6) return false;
-  const value = Number.parseInt(hex, 16);
-  return ((value >> 16) & 255) + ((value >> 8) & 255) + (value & 255) > 382;
-}
 
 export class Tooltip {
   readonly element: HTMLDivElement;
@@ -25,7 +18,8 @@ export class Tooltip {
     bounds: { width: number; height: number },
   ) {
     const { element } = this;
-    const dark = isDark(theme);
+    // Light text implies a dark theme.
+    const dark = isLightColor(theme.text) ?? false;
     element.style.background = dark ? "#262624" : "#ffffff";
     element.style.color = theme.text;
     element.style.border = `1px solid ${dark ? "rgba(255,255,255,0.12)" : "rgba(11,11,11,0.12)"}`;

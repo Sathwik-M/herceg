@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as _dt
+import numbers
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -13,6 +15,10 @@ Tooltip = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after"]
 
 _NUMERIC = ("number", "time")
+
+# An annotation position: a column name, a number, or a date or datetime
+# (pandas Timestamps and NumPy datetime64 values work too).
+Position = str | float | _dt.date
 
 
 @dataclass
@@ -305,29 +311,119 @@ class Chart:
     def rule(
         self,
         *,
-        x: float | None = None,
-        y: float | None = None,
+        x: Position | None = None,
+        y: Position | None = None,
+        label: str | None = None,
+        text: str | None = None,
+        data: Any = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
         dash: Sequence[float] | None = None,
-        label: str | None = None,
         id: str | None = None,
     ) -> Chart:
-        """A reference line: horizontal at ``y`` or vertical at ``x``."""
+        """Reference lines: horizontal at ``y`` or vertical at ``x``.
+
+        A number or datetime draws one rule; a column name draws one rule per
+        row, with ``text`` naming a column of labels.
+        """
         if (x is None) == (y is None):
             raise ValueError("rule needs exactly one of x or y")
+        table = self._annotation_table(data, {"x": x, "y": y}, text, "rule")
         return self._add(
             {
                 "type": "rule",
-                "x": _time_or_number(x),
-                "y": _time_or_number(y),
+                "x": _position(x),
+                "y": _position(y),
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "dash": list(dash) if dash is not None else None,
                 "label": label,
+                "text": text,
                 "id": id,
             },
-            None,
+            table,
+        )
+
+    def region(
+        self,
+        *,
+        x1: Position | None = None,
+        x2: Position | None = None,
+        y1: Position | None = None,
+        y2: Position | None = None,
+        label: str | None = None,
+        text: str | None = None,
+        data: Any = None,
+        fill: str | None = None,
+        fill_opacity: float | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """Shaded regions: from ``x1`` to ``x2``, from ``y1`` to ``y2``, or both.
+
+        Numbers or datetimes shade one region; column names shade one per
+        row. Add regions before the marks they highlight to draw them
+        underneath.
+        """
+        for start, end, axis in ((x1, x2, "x"), (y1, y2, "y")):
+            if (start is None) != (end is None):
+                raise ValueError(f"region needs both {axis}1 and {axis}2, or neither")
+        if x1 is None and y1 is None:
+            raise ValueError("region needs x1 and x2, y1 and y2, or both")
+        table = self._annotation_table(
+            data, {"x1": x1, "x2": x2, "y1": y1, "y2": y2}, text, "region"
+        )
+        return self._add(
+            {
+                "type": "region",
+                "x1": _position(x1),
+                "x2": _position(x2),
+                "y1": _position(y1),
+                "y2": _position(y2),
+                "fill": fill,
+                "fillOpacity": fill_opacity,
+                "label": label,
+                "text": text,
+                "id": id,
+            },
+            table,
+        )
+
+    def text(
+        self,
+        *,
+        x: Position,
+        y: Position,
+        label: str | None = None,
+        text: str | None = None,
+        data: Any = None,
+        fill: str | None = None,
+        anchor: Literal["start", "middle", "end"] | None = None,
+        dx: float | None = None,
+        dy: float | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """Text at ``(x, y)``: ``label`` for constant text, or ``text`` naming a column.
+
+        Column names for ``x`` or ``y`` draw one label per row. ``dx`` and
+        ``dy`` offset labels in pixels; positive ``dy`` moves down.
+        """
+        if (label is None) == (text is None):
+            raise ValueError("text needs exactly one of label or text")
+        table = self._annotation_table(data, {"x": x, "y": y}, text, "text")
+        return self._add(
+            {
+                "type": "text",
+                "x": _position(x),
+                "y": _position(y),
+                "label": label,
+                "text": text,
+                "fill": fill,
+                "anchor": anchor,
+                "dx": dx,
+                "dy": dy,
+                "id": id,
+            },
+            table,
         )
 
     # Output ----------------------------------------------------------------
@@ -439,6 +535,19 @@ class Chart:
             self._require(table, name, kinds, role)
         return names[0] if len(names) == 1 else names
 
+    def _annotation_table(
+        self, data: Any, positions: dict[str, Any], text: str | None, role: str
+    ) -> int | None:
+        """The table an annotation reads, when a position or its text is a column."""
+        fields = {name: value for name, value in positions.items() if isinstance(value, str)}
+        if not fields and text is None:
+            return None
+        table = self._mark_table(data)
+        for name, field in fields.items():
+            self._require(table, field, _NUMERIC, f"{role} {name}")
+        self._require(table, text, ("category", "number"), f"{role} text")
+        return table
+
     def _add(self, spec: dict[str, Any], table: int | None) -> Chart:
         self._marks.append((spec, table))
         return self
@@ -450,7 +559,7 @@ def _table_name(index: int) -> str:
 
 def _fields(spec: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
-    for key in ("x", "y", "y1", "y2", "series", "value"):
+    for key in ("x", "y", "x1", "x2", "y1", "y2", "series", "value", "text"):
         value = spec.get(key)
         if isinstance(value, str):
             fields.add(value)
@@ -485,10 +594,12 @@ def _theme(theme: str | dict[str, Any] | None) -> Any:
     return {_THEME_KEYS.get(key, key): value for key, value in theme.items()}
 
 
-def _time_or_number(value: Any) -> float | None:
-    """Rules at a datetime are placed at its epoch milliseconds."""
-    if value is None or isinstance(value, (int, float)):
+def _position(value: Any) -> str | float | None:
+    """Column names pass through; datetimes become epoch milliseconds."""
+    if value is None or isinstance(value, str):
         return value
+    if isinstance(value, numbers.Real):
+        return float(value)
     from ._data import _time_ms
 
     return _time_ms(value)

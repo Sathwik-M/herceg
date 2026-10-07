@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { numberTickLabels, timeTickLabels } from "../../src/format/format.ts";
 import { fromWall, toWall, zoneOffset } from "../../src/format/zone.ts";
+import { isLightColor } from "../../src/scale/color.ts";
 import { BandScale, LinearScale, LogScale, niceLogDomain } from "../../src/scale/scale.ts";
 import { linearTicks, niceDomain, tickStep } from "../../src/scale/ticks.ts";
 import { chooseInterval, niceTimeDomain, TimeScale, timeTicks } from "../../src/scale/time.ts";
@@ -293,5 +294,19 @@ describe("tick labels", () => {
     expect(
       timeTickLabels(months, { unit: "month", step: 1, duration: 30 * 86_400_000 }, "UTC", "en-US"),
     ).toEqual(["Nov", "Dec", "2026"]);
+  });
+});
+
+describe("isLightColor", () => {
+  it("reads hex, rgb(), and hsl() colors and leaves names undecided", () => {
+    expect(isLightColor("#fff")).toBe(true);
+    expect(isLightColor("#0b0b0b")).toBe(false);
+    expect(isLightColor("rgb(255, 255, 255)")).toBe(true);
+    expect(isLightColor("rgb(255 255 255 / 50%)")).toBe(true);
+    expect(isLightColor("rgba(10, 10, 10, 0.5)")).toBe(false);
+    expect(isLightColor("rgb(100%, 100%, 100%)")).toBe(true);
+    expect(isLightColor("hsl(60, 100%, 50%)")).toBe(true);
+    expect(isLightColor("hsl(240 100% 25%)")).toBe(false);
+    expect(isLightColor("white")).toBeUndefined();
   });
 });

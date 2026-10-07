@@ -6,7 +6,8 @@ applications. Today it provides:
 - a framework-independent engine whose core runs without a DOM;
 - a serializable chart specification (`ChartSpec`);
 - columnar, typed-array tables with streaming updates and rolling windows;
-- line, area, bar, scatter, heatmap, and rule marks that compose in one chart;
+- line, area, bar, scatter, and heatmap marks, plus rule, region, and text
+  annotations, that compose in one chart;
 - SVG and Canvas rendering, chosen per chart by how much it draws, and WebGL
   for large point series, loaded only when a chart needs it;
 - level-of-detail reduction for large line and area series;
@@ -18,7 +19,7 @@ applications. Today it provides:
 ## Status
 
 Early development. The `herceg` package renders line, area, bar, scatter,
-heatmap, and rule marks with SVG or Canvas, streams data through columnar
+and heatmap marks and annotations with SVG or Canvas, streams data through columnar
 tables, and renders static SVG without a DOM. `@herceg/react` wraps it in
 React components, and the Python package builds the same charts from
 dataframes through the portable chart spec. The libraries are measured
@@ -36,15 +37,16 @@ reproducible benchmark suite.
 ## Roadmap
 
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
-(vertical and horizontal), point, heatmap, and rule marks, level of detail, streaming updates, shared
+(vertical and horizontal), point, and heatmap marks, rule, region, and text
+annotations from constants or data, level of detail, streaming updates, shared
 scheduler, browser interaction, static SVG, React adapter, min/max indexes
 for zooming large line series, WebGL drawing of large point series, chart
 specs with binary columns, Python package.
 
 Next:
 
-1. Annotations, error bars, and custom marks with pluggable geometry drawing
-   (which also keeps unused mark kinds out of bundles).
+1. Error bars, value labels on bars, and custom marks with pluggable geometry
+   drawing (which also keeps unused mark kinds out of bundles).
 2. Min/max indexes that update incrementally while very large series stream,
    and indexes for areas.
 3. Live notebook charts (a widget that streams updates from Python) and PDF

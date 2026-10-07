@@ -3,8 +3,9 @@
 Framework-independent charts for analytics: columnar data, streaming updates,
 level-of-detail rendering, SVG and Canvas output.
 
-> Early development. Line, area, bar, point (scatter), heatmap, and rule marks
-> are available; the API may change before 1.0.
+> Early development. Line, area, bar, point (scatter), and heatmap marks, and
+> rule, region, and text annotations are available; the API may change before
+> 1.0.
 
 ## Quick start
 
@@ -74,9 +75,31 @@ area(usage, { x: "time", y: "user" }); // filled to zero
 area(usage, { x: "time", y: ["user", "system"], stack: true });
 area(metrics, { x: "time", y1: "p50", y2: "p99" }); // band between two fields
 
-rule({ y: 250, label: "SLO" }); // horizontal reference line
-rule({ x: deployTime }); // vertical
 ```
+
+Annotations take constant positions (numbers, or `Date`s on time axes), or
+draw one item per row of a table when a position is a field. `label` is
+constant text; `text` names a category or number field with each item's text.
+
+```ts
+rule({ y: 250, label: "SLO" }); // horizontal reference line
+rule(deploys, { x: "time", text: "version" }); // a vertical rule per deploy
+
+region({ x1: start, x2: end, label: "Maintenance" }); // shaded x range
+region(incidents, { x1: "start", x2: "end", text: "title" });
+region({ y1: 200, y2: 300 }); // shaded y range; with x1/x2 too, a rectangle
+
+text({ x: launch, y: 120, label: "Launch", anchor: "start", dx: 6 });
+text(peaks, { x: "time", y: "value", text: "value", dy: -10 });
+```
+
+Annotation positions count toward the axis domains, so thresholds and events
+stay in view; on a category axis, a constant position is a band index (0 is
+the first band, -0.5 its edge). Regions are drawn in mark order (list them first to shade
+underneath the data); rules and text are drawn above the data, as SVG even
+when the data is on a canvas, and with a halo so text stays readable over
+lines. Annotations outside the view are left out. Text is meant for
+annotations, not for labeling every point of a large series.
 
 Bars, points, and heatmaps:
 
@@ -100,7 +123,7 @@ distinct value, up to 4,194,304 cells (bin finer data first). Heatmaps show a
 color legend instead of series entries; `colors` takes a ramp of `#rgb` or
 `#rrggbb` colors from low to high.
 
-Marks are drawn in array order; rules always draw above other marks.
+Marks are drawn in array order; rules and text always draw above other marks.
 
 ## Chart options
 

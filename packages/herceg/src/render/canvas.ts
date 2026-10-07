@@ -14,6 +14,7 @@ import type {
   RuleGeometry,
   Scene,
 } from "../scene/scene.ts";
+import { isGuide } from "../scene/scene.ts";
 import type { CloudPainter } from "./webgl.ts";
 
 export function traceLine(context: CanvasRenderingContext2D, path: Polyline): void {
@@ -162,7 +163,7 @@ export function drawMark(context: CanvasRenderingContext2D, mark: MarkGeometry):
     drawPoints(context, mark);
   } else if (mark.kind === "raster") {
     drawRaster(context, mark);
-  } else {
+  } else if (mark.kind === "rule") {
     drawRule(context, mark);
   }
 }
@@ -256,7 +257,8 @@ export function paintCanvas(
   context.rect(plot.x, plot.y, plot.width, plot.height);
   context.clip();
   for (const mark of scene.marks) {
-    if (mark.kind === "rule") continue;
+    // Guides are drawn by the SVG layer above the canvas.
+    if (isGuide(mark)) continue;
     if (mark.kind === "point" && mark.cloud) {
       if (clouds.defer) continue;
       const { painter, owner = canvas } = clouds;

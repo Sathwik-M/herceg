@@ -4,8 +4,8 @@ Charts for pandas, Polars, PyArrow, and NumPy data, rendered by the
 [herceg](../README.md) engine: the same charts, tooltips, zooming, and
 large-data handling as the TypeScript library.
 
-> Early development. Line, area, bar, scatter, heatmap, and rule marks; HTML,
-> notebook, SVG, and PNG output.
+> Early development. Line, area, bar, scatter, and heatmap marks, rule, region,
+> and text annotations; HTML, notebook, SVG, and PNG output.
 
 ```python
 import herceg as hg

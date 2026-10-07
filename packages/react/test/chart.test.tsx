@@ -2,7 +2,7 @@ import { type Chart as HercegChart, table } from "herceg";
 import { act, StrictMode, useLayoutEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Bar, Chart, Line, Rule } from "../src/index.ts";
+import { Bar, Chart, Line, Region, Rule, Text } from "../src/index.ts";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -41,6 +41,25 @@ describe("<Chart>", () => {
     expect(paths()).toHaveLength(2);
     expect(host.querySelector('[role="figure"]')!.getAttribute("aria-label")).toBe("Load");
     expect(host.textContent).toContain("limit");
+  });
+
+  it("builds annotations from constants or from their own data", () => {
+    const events = table({ at: [1, 2], name: ["deploy", "rollback"] });
+    act(() =>
+      root.render(
+        <Chart>
+          <Region x1={0.5} x2={1.5} />
+          <Line data={metrics} x="t" y="a" />
+          <Rule data={events} x="at" text="name" />
+          <Text x={3} y={4} label="peak" />
+        </Chart>,
+      ),
+    );
+    // The region and the line; rules and text are drawn as guides.
+    expect(paths()).toHaveLength(2);
+    expect(host.textContent).toContain("deploy");
+    expect(host.textContent).toContain("rollback");
+    expect(host.textContent).toContain("peak");
   });
 
   it("applies prop changes to the same chart", () => {

@@ -12,14 +12,14 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `rule`). A mark pairs a portable spec with the table it reads. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, and the annotations `rule`, `region`, `text`). A mark pairs a portable spec with the table it reads. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
 | **Viewport** | The visible x range when zoomed; null means "fit the data". |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: packed geometry in CSS pixels, axes, legend, no data references. |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars), points, a raster (heatmaps), or rules. |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), points, a raster (heatmaps), rules, or text. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
@@ -209,6 +209,35 @@ the legend read them the same way. A heatmap draws at most 4,194,304 cells
 (16 MB of pixels plus 16 MB of lookup); larger grids are rejected with an
 error asking for binning.
 
+## Annotations
+
+Rules, regions, and text share one model (`marks/annotation.ts`): each
+position is a constant (a number; times in epoch milliseconds) or a number or
+time field. With constants only, the mark draws one item and reads no table;
+when any position or its `text` is a field, it draws one item per row of its
+table. `label` is constant text and `text` a category or number field
+(numbers formatted for the chart's locale). The spec loader only binds a
+table to annotations that read one, so a constant rule in a spec with several
+tables needs no `data`.
+
+Annotation positions are part of the axis extents, so thresholds and events
+stay in view; rectangles and text count toward y only where they overlap the
+visible x range. Regions are rectangles drawn with the data in mark order and
+clipped to the plot. Rules and text are guides: drawn as SVG above the data
+(over a canvas when the data is on one), not clipped, and left out when they
+fall outside the view. Text has a halo in the background color (white or
+black, by the text color, when the background is transparent) so it stays
+readable over lines (fills given by name, which would need the full CSS
+color table to classify, get the halo for the theme's text color). The SVG
+layer keeps each annotation's nodes by geometry key, so a changing label
+rebuilds neither the axes nor other annotations. Annotations have no series, so
+they appear in neither legends nor tooltips; the chart's text alternative
+lists them (up to ten items each, with positions formatted as in tooltips)
+after the series summaries. `Mark.geometry` receives the mark's key so their
+geometry and buffers stay distinct per mark. Fields must be numbers or
+times; on a category axis a constant is a band index, as in Plotly (0 is the
+first band's center, -0.5 its edge).
+
 ## Rendering
 
 Each scene can be drawn three ways:
@@ -221,7 +250,7 @@ Each scene can be drawn three ways:
   ratio, handing point clouds to the WebGL painter when one is loaded.
 
 In the browser the layers are, bottom to top: an optional canvas for marks,
-the SVG layer (grid and marks when not on canvas, rules, axes, title, pointer
+the SVG layer (grid and marks when not on canvas, guides, axes, title, pointer
 overlay), the HTML legend, the tooltip, and visually hidden text for
 assistive technology. Pointer feedback only touches the overlay, so hovering
 never repaints data. Scheduled frames avoid reading layout, which would force
@@ -340,9 +369,12 @@ frame scheduler, without rendering React. A test
 
 ## Known limits
 
-- Mark types: line, area, bar, point, heatmap, rule. No error bars, text
-  annotations, or custom marks. Horizontal bars need a category y; bars
-  along a number or time y are not supported.
+- Mark types: line, area, bar, point, heatmap, and the rule, region, and text
+  annotations. No error bars or custom marks. Horizontal bars need a category
+  y; bars along a number or time y are not supported.
+- Annotation fields cannot be categories (constants on a category axis are
+  band indices), so bars have no value labels yet; text has no collision
+  avoidance or connectors.
 - Continuous color only for heatmaps; points cannot be colored by a numeric
   field.
 - One x and one y axis per chart.
@@ -354,7 +386,7 @@ frame scheduler, without rendering React. A test
   every frame; only whole-column line series on linear scales use the min/max
   index.
 - Renderer thresholds are not tuned.
-- Rules are always drawn above lines and areas, regardless of mark order.
+- Rules and text are always drawn above other marks, regardless of mark order.
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use
   Canvas or SVG. Uploads are not incremental: streaming a large point series
   uploads it again on every change.

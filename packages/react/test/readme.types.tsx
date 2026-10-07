@@ -1,7 +1,7 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
 import { table, time } from "herceg";
 import { useEffect, useMemo } from "react";
-import { Chart, Line, Rule } from "../src/index.ts";
+import { Chart, Line, Region, Rule, Text } from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -40,6 +40,26 @@ export function Checked() {
     <Chart>
       {/* @ts-expect-error fields are checked against the element's data */}
       <Line data={metrics} x="time" y="missing" />
+    </Chart>
+  );
+}
+
+const deploys = table({ at: time([Date.now()]), version: ["v2"] });
+
+export function Annotated() {
+  return (
+    <Chart>
+      <Region x1={new Date(0)} x2={new Date()} label="window" />
+      <Line data={metrics} x="time" y="p50" />
+      <Rule data={deploys} x="at" text="version" />
+      <Text x={Date.now()} y={100} label="now" anchor="end" />
+      <Text data={deploys} x="at" y={120} text="version" />
+      {/* @ts-expect-error rule positions from data are number or time fields */}
+      <Rule data={deploys} x="version" />
+      {/* @ts-expect-error constant text needs a label */}
+      <Text x={1} y={2} />
+      {/* @ts-expect-error text from data needs a label or a text field */}
+      <Text data={deploys} x="at" y={1} />
     </Chart>
   );
 }

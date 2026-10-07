@@ -21,8 +21,10 @@ export function Latency() {
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 children are mark elements: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
-`<Heatmap>`, and `<Rule>`. Each mark element takes the table it reads as
-`data`, so field names are checked against that table's columns. Marks built
+`<Heatmap>`, `<Rule>`, `<Region>`, and `<Text>`. Each mark element takes the
+table it reads as `data`, so field names are checked against that table's
+columns. Annotations (`<Rule>`, `<Region>`, `<Text>`) take `data` only when
+they draw one item per row: `<Rule data={deploys} x="time" text="version" />`. Marks built
 with herceg's functions can also be passed as a `marks` prop.
 
 The chart fills its container's width and is 320 px tall unless `width`,

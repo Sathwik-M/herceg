@@ -2,10 +2,12 @@
 // exports) and piecewise by the live SVG renderer.
 
 import type { Polyline } from "../lod/polyline.ts";
+import { isLightColor } from "../scale/color.ts";
 import {
   type AreaGeometry,
   type AxisGeometry,
   type ColorLegend,
+  isGuide,
   LEGEND_SWATCH,
   type LegendItem,
   type LineGeometry,
@@ -15,6 +17,7 @@ import {
   type RectGeometry,
   type RuleGeometry,
   type Scene,
+  type TextGeometry,
 } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 
@@ -94,6 +97,35 @@ export function ruleElement(rule: RuleGeometry, theme: Theme): string {
   return out;
 }
 
+/**
+ * Labels of a text mark, each with a halo so it stays readable over lines
+ * and fills: the background color, or without one, white behind dark text
+ * and black behind light text. Fills given by name are taken to be as light
+ * as the theme's text.
+ */
+export function textElements(mark: TextGeometry, theme: Theme): string {
+  const opaque = theme.background !== "transparent";
+  const light = isLightColor(mark.fill) ?? isLightColor(theme.text);
+  const color = opaque ? theme.background : light ? "#000000" : "#ffffff";
+  const halo = ` stroke="${escapeXml(color)}" stroke-opacity="${opaque ? 1 : 0.85}" stroke-width="3" stroke-linejoin="round" paint-order="stroke"`;
+  const c = mark.coords;
+  let out = `<g fill="${escapeXml(mark.fill)}" text-anchor="${mark.anchor}"${halo}>`;
+  for (let i = 0; i < mark.count; i++) {
+    out += `<text x="${n(c[i * 2]!)}" y="${n(c[i * 2 + 1]!)}" dominant-baseline="middle">${escapeXml(mark.labels[i]!)}</text>`;
+  }
+  return `${out}</g>`;
+}
+
+/** Guides drawn above the data: rules and their labels, then text marks. */
+export function guideElements(marks: readonly MarkGeometry[], theme: Theme): string {
+  let out = "";
+  for (const mark of marks) {
+    if (mark.kind === "rule") out += ruleElement(mark, theme);
+    else if (mark.kind === "text") out += textElements(mark, theme);
+  }
+  return out;
+}
+
 /** All rectangles of a series as one path. */
 export function rectPath(mark: RectGeometry): string {
   const r = mark.rects;
@@ -160,6 +192,8 @@ export function markElement(mark: MarkGeometry, theme: Theme, encode: RasterEnco
       return rasterElement(mark, encode);
     case "rule":
       return ruleElement(mark, theme);
+    case "text":
+      return textElements(mark, theme);
   }
 }
 
@@ -270,12 +304,11 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   out += `<g clip-path="url(#${id}-clip)">`;
   const encode = options.encodeRaster;
   for (const mark of scene.marks) {
-    if (mark.kind === "rule" || (mark.kind === "raster" && !encode)) continue;
+    if (isGuide(mark) || (mark.kind === "raster" && !encode)) continue;
     out += markElement(mark, theme, encode!);
   }
   out += "</g>";
-  // Rules and their labels draw above the data and are not clipped.
-  for (const mark of scene.marks) if (mark.kind === "rule") out += ruleElement(mark, theme);
+  out += guideElements(scene.marks, theme);
   out += `<g style="font-variant-numeric:tabular-nums">${axisElements(scene.axes, theme)}</g>`;
   out += titleElement(scene);
   if (options.legend ?? true) out += legendElements(scene.legend, theme);

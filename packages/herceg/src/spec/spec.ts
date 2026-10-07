@@ -156,7 +156,15 @@ export interface ThemeSpec {
   sequential?: string[];
 }
 
-export type MarkSpec = LineSpec | AreaSpec | RuleSpec | BarSpec | PointSpec | HeatmapSpec;
+export type MarkSpec =
+  | LineSpec
+  | AreaSpec
+  | RuleSpec
+  | RegionSpec
+  | TextSpec
+  | BarSpec
+  | PointSpec
+  | HeatmapSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -205,16 +213,67 @@ export interface AreaSpec extends MarkBase {
   label?: string;
 }
 
-/** A horizontal (y) or vertical (x) reference line at a constant value. */
-export interface RuleSpec {
+/**
+ * A position of an annotation: a number (times in epoch milliseconds), or a
+ * number or time field of the mark's table. An annotation with a field draws
+ * one item per row; with numbers only, one item.
+ */
+export type Position = number | Field;
+
+/** Horizontal (y) or vertical (x) reference lines. */
+export interface RuleSpec extends MarkBase {
   type: "rule";
-  id?: string;
-  x?: number;
-  y?: number;
+  x?: Position;
+  y?: Position;
   stroke?: string;
   strokeWidth?: number;
   dash?: number[];
+  /** Text drawn by every rule. */
   label?: string;
+  /** Category or number field with each rule's text, for rules from data. */
+  text?: Field;
+}
+
+/**
+ * Shaded regions: from `x1` to `x2` across the plot's height, from `y1` to
+ * `y2` across its width, or rectangles with both. Drawn in mark order, so
+ * list them before the marks they highlight to draw them underneath.
+ */
+export interface RegionSpec extends MarkBase {
+  type: "region";
+  x1?: Position;
+  x2?: Position;
+  y1?: Position;
+  y2?: Position;
+  /** Defaults to the theme's muted color. */
+  fill?: string;
+  /** Default 0.15. */
+  fillOpacity?: number;
+  /** Text drawn in the top left corner of every region. */
+  label?: string;
+  /** Category or number field with each region's text. */
+  text?: Field;
+}
+
+/**
+ * Text at (x, y): `label` for one constant text, or `text` for a field with
+ * each row's text. Labels are drawn above the data and left out when their
+ * point is outside the plot.
+ */
+export interface TextSpec extends MarkBase {
+  type: "text";
+  x: Position;
+  y: Position;
+  label?: string;
+  /** Category or number field with each label's text. */
+  text?: Field;
+  /** Defaults to the theme's text color. */
+  fill?: string;
+  /** Which end of the text is at the point. Default "middle". */
+  anchor?: "start" | "middle" | "end";
+  /** Pixel offsets from the point; positive dy moves down. */
+  dx?: number;
+  dy?: number;
 }
 
 /**

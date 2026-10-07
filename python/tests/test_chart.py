@@ -121,3 +121,43 @@ def test_a_category_y_makes_bars_horizontal():
         hg.bar(DATA, x="host", y="host")
     svg = hg.bar(DATA, x="p50", y="host", width=300, height=150).to_svg()
     assert svg.count('Z" fill') == 1
+
+
+def test_annotations_take_constants_or_columns():
+    events = {"at": np.array(["2026-01-01T00:00:30"], dtype="datetime64[ms]"), "name": ["deploy"]}
+    chart = (
+        hg.Chart(DATA, time_zone="UTC")
+        .region(x1=dt.datetime(2026, 1, 1), x2=dt.datetime(2026, 1, 1, 0, 0, 20), label="warmup")
+        .line(x="t", y="p50")
+        .rule(x="at", text="name", data=events)
+        .rule(y=np.float32(2.5), label="limit")
+        .text(x="t", y="p99", text="host", dy=-8)
+    )
+    spec, _ = chart.to_spec()
+    marks = spec["marks"]
+    assert marks[0] == {
+        "type": "region",
+        "x1": 1767225600000.0,
+        "x2": 1767225620000.0,
+        "label": "warmup",
+    }
+    assert marks[2] == {"type": "rule", "x": "at", "text": "name", "data": "data2"}
+    assert marks[3] == {"type": "rule", "y": 2.5, "label": "limit"}
+    assert (marks[4]["data"], marks[4]["text"]) == ("data", "host")
+    assert sorted(spec["data"]["data"]["columns"]) == ["host", "p50", "p99", "t"]
+    svg = chart.to_svg()
+    for label in ("warmup", "deploy", "limit", "a", "b"):
+        assert f">{label}</text>" in svg
+
+
+def test_annotation_options_are_checked():
+    with pytest.raises(ValueError, match="exactly one of label or text"):
+        hg.Chart(DATA).text(x=1, y=2)
+    with pytest.raises(ValueError, match="both x1 and x2"):
+        hg.Chart(DATA).region(x1=1)
+    with pytest.raises(TypeError, match="rule x: column 'host'"):
+        hg.Chart(DATA).rule(x="host")
+    with pytest.raises(TypeError, match="text text: column 't'"):
+        hg.Chart(DATA).text(x="t", y="p50", text="t")
+    with pytest.raises(ValueError, match="Pass data"):
+        hg.Chart().rule(x="at")

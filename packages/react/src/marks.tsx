@@ -13,10 +13,17 @@ import {
   type Mark,
   type PointOptions,
   point,
+  type RegionDataOptions,
+  type RegionOptions,
+  type RuleDataOptions,
   type RuleOptions,
+  region,
   rule,
   type Schema,
   type Table,
+  type TextDataOptions,
+  type TextOptions,
+  text,
 } from "herceg";
 
 /** Props of a mark element: the mark's options plus the table it reads. */
@@ -81,5 +88,32 @@ export const Heatmap = /* @__PURE__ */ markElement(
   ({ data, ...options }: WithData<HeatmapOptions<Schema>, Schema>) => heatmap(data, options),
 ) as unknown as <S extends Schema>(props: WithData<HeatmapOptions<S>, S>) => null;
 
-/** A horizontal (`y`) or vertical (`x`) reference line. */
-export const Rule = /* @__PURE__ */ markElement("Rule", (options: RuleOptions) => rule(options));
+/** Horizontal (`y`) or vertical (`x`) reference lines, constant or one per row of `data`. */
+export const Rule = /* @__PURE__ */ markElement(
+  "Rule",
+  ({ data, ...options }: RuleOptions & { data?: Table<Schema> }) =>
+    data ? rule(data, options as RuleDataOptions<Schema>) : rule(options),
+) as unknown as {
+  (props: RuleOptions): null;
+  <S extends Schema>(props: WithData<RuleDataOptions<S>, S>): null;
+};
+
+/** Shaded x or y ranges, constant or one per row of `data`. */
+export const Region = /* @__PURE__ */ markElement(
+  "Region",
+  ({ data, ...options }: RegionOptions & { data?: Table<Schema> }) =>
+    data ? region(data, options as RegionDataOptions<Schema>) : region(options),
+) as unknown as {
+  (props: RegionOptions): null;
+  <S extends Schema>(props: WithData<RegionDataOptions<S>, S>): null;
+};
+
+/** Text labels, constant or one per row of `data`. */
+export const Text = /* @__PURE__ */ markElement(
+  "Text",
+  ({ data, ...options }: TextOptions & { data?: Table<Schema> }) =>
+    data ? text(data, options as TextDataOptions<Schema>) : text(options),
+) as unknown as {
+  (props: TextOptions): null;
+  <S extends Schema>(props: WithData<TextDataOptions<S>, S>): null;
+};

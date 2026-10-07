@@ -54,6 +54,20 @@ export interface RuleGeometry {
   label: string | undefined;
 }
 
+/**
+ * Text labels of one mark, each centered on (or starting or ending at) its
+ * point, vertically centered: x, y per label.
+ */
+export interface TextGeometry {
+  kind: "text";
+  key: string;
+  fill: string;
+  anchor: "start" | "middle" | "end";
+  coords: Float32Array;
+  labels: string[];
+  count: number;
+}
+
 /** Rectangles of one series, such as bars: x, y, width, height per rectangle. */
 export interface RectGeometry {
   kind: "rect";
@@ -124,9 +138,19 @@ export type MarkGeometry =
   | LineGeometry
   | AreaGeometry
   | RuleGeometry
+  | TextGeometry
   | RectGeometry
   | PointGeometry
   | RasterGeometry;
+
+/**
+ * Guides (rules and text) are drawn as SVG above the data, even when a canvas
+ * draws the data, so they stay crisp and readable. They are not clipped to
+ * the plot; their marks leave out what lies outside it.
+ */
+export function isGuide(mark: MarkGeometry): mark is RuleGeometry | TextGeometry {
+  return mark.kind === "rule" || mark.kind === "text";
+}
 
 export interface AxisTick {
   /** Pixel position along the axis. */

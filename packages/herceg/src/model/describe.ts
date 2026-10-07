@@ -42,14 +42,18 @@ function summarize(series: Series, locale: string | undefined): string {
 export function describeChart(model: ChartModel): string {
   const { config } = model;
   const series = model.series();
-  const kinds = [...new Set(config.marks.map((mark) => mark.spec.type))].join(" and ");
+  // Annotations describe themselves; the chart kind names the data marks.
+  const kinds = [
+    ...new Set(config.marks.filter((mark) => !mark.describe).map((mark) => mark.spec.type)),
+  ].join(" and ");
   const parts: string[] = [];
   if (config.title) parts.push(config.title);
   if (config.description) parts.push(config.description);
-  parts.push(
-    `${kinds[0]?.toUpperCase() ?? ""}${kinds.slice(1)} chart with ${series.length} series.`,
-  );
+  if (kinds) {
+    parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
+  }
   for (const s of series.slice(0, MAX_SERIES)) parts.push(`${summarize(s, config.locale)}.`);
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
+  parts.push(...model.annotationSummaries());
   return parts.join(" ");
 }
