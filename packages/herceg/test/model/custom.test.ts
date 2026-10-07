@@ -48,7 +48,7 @@ describe("custom marks", () => {
     const [lo, hi] = model.yScale()!.domain;
     expect(lo).toBeLessThanOrEqual(9);
     expect(hi).toBeGreaterThanOrEqual(20);
-    const shapes = (scene.marks[0] as ShapesGeometry).shapes as PathShape[];
+    const shapes = (scene.panels[0]!.marks[0] as ShapesGeometry).shapes as PathShape[];
     expect(shapes).toHaveLength(3);
     const x = model.xScale()!;
     const y = model.yScale()!;
@@ -72,7 +72,8 @@ describe("custom marks", () => {
     });
     const { scene } = build({ marks: [bar(sales, { x: "region", y: "v" }), markers] });
     expect(bandwidth).toBeGreaterThan(0);
-    const shapes = (scene.marks.find((m) => m.kind === "shapes") as ShapesGeometry).shapes;
+    const shapes = (scene.panels[0]!.marks.find((m) => m.kind === "shapes") as ShapesGeometry)
+      .shapes;
     expect((shapes[0] as PathShape).fill).toBe("#e34948");
     expect((shapes[1] as TextShape).text).toBe("top");
   });
@@ -120,7 +121,8 @@ describe("custom marks", () => {
         }),
       ],
     });
-    const shapes = (scene.marks.find((m) => m.kind === "shapes") as ShapesGeometry).shapes;
+    const shapes = (scene.panels[0]!.marks.find((m) => m.kind === "shapes") as ShapesGeometry)
+      .shapes;
     expect(shapes).toHaveLength(3);
     const [none, zero, opaque] = shapes as PathShape[];
     expect([none!.stroke, none!.fill]).toEqual([undefined, scene.theme.text]);

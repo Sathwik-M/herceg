@@ -17,7 +17,7 @@ function build(config: ChartConfig, width = 600, height = 300) {
 }
 
 const segments = (scene: Scene) =>
-  scene.marks.filter((m): m is SegmentGeometry => m.kind === "segments");
+  scene.panels[0]!.marks.filter((m): m is SegmentGeometry => m.kind === "segments");
 const segment = (geometry: SegmentGeometry, i: number) =>
   Array.from(geometry.coords.subarray(i * 4, i * 4 + 4));
 
@@ -47,7 +47,7 @@ describe("error bars", () => {
     const { scene, model } = build({
       marks: [errorBar(stats, { x: "group", y1: "low", y2: "high" })],
     });
-    const inspection = model.inspect(model.xScale()!.map(1), scene.plot.y + 10)!;
+    const inspection = model.inspect(model.xScale()!.map(1), scene.panels[0]!.plot.y + 10)!;
     expect(inspection.points.map((p) => p.text)).toEqual(["4 – 9"]);
   });
 
@@ -63,7 +63,7 @@ describe("error bars", () => {
     expect(x1).toBeCloseTo(x.map(4), 3);
     expect(x2).toBeCloseTo(x.map(9), 3);
     expect(model.tooltipMode()).toBe("nearest-y");
-    const inspection = model.inspect(scene.plot.x + 5, model.yScale()!.map(1))!;
+    const inspection = model.inspect(scene.panels[0]!.plot.x + 5, model.yScale()!.map(1))!;
     expect(inspection.points.map((p) => p.text)).toEqual(["4 – 9"]);
   });
 
@@ -110,7 +110,7 @@ describe("error bars", () => {
     const { scene, model } = build({ marks: [errorBar(partial, { x: "x", y1: "lo", y2: "hi" })] });
     expect(model.yScale()!.domain[1]).toBeLessThan(10);
     expect(segments(scene)[0]!.count).toBe(3);
-    const at = model.inspect(model.xScale()!.map(2), scene.plot.y + 10);
+    const at = model.inspect(model.xScale()!.map(2), scene.panels[0]!.plot.y + 10);
     expect(at?.points.map((p) => p.text)).not.toContain("NaN – 1,000,000");
     const log = table({ x: [1, 2], lo: [-1, 1], hi: [5, 10] });
     const logged = build({
@@ -119,7 +119,7 @@ describe("error bars", () => {
     });
     const logAt = logged.model.inspect(
       logged.model.xScale()!.map(1),
-      logged.scene.plot.y + 10,
+      logged.scene.panels[0]!.plot.y + 10,
       "nearest-x",
     );
     expect(logAt?.points ?? []).toHaveLength(0);
@@ -144,7 +144,8 @@ describe("error bars", () => {
       marks: [errorBar(windows, { x: "g", y1: "from", y2: "to" })],
     });
     expect(model.yScale()!.type).toBe("time");
-    const text = model.inspect(model.xScale()!.map(0), scene.plot.y + 10)!.points[0]!.text;
+    const text = model.inspect(model.xScale()!.map(0), scene.panels[0]!.plot.y + 10)!.points[0]!
+      .text;
     expect(text).toMatch(/\d{2}:\d{2}.*–.*\d{2}:\d{2}/);
   });
 
@@ -190,7 +191,10 @@ describe("error bars", () => {
       x: { domain: [10, 20] },
     });
     // Near the top left of the plot, the clipped interval at x = 9 is not drawn.
-    const at = view.model.inspect(view.model.xScale()!.map(10) + 1, view.scene.plot.y + 2)!;
+    const at = view.model.inspect(
+      view.model.xScale()!.map(10) + 1,
+      view.scene.panels[0]!.plot.y + 2,
+    )!;
     expect(at.points[0]!.text).toBe("0 – 1");
   });
 

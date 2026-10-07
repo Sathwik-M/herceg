@@ -18,7 +18,7 @@ function build(config: ChartConfig, width = 600, height = 300) {
 }
 
 const yLabels = (scene: Scene) =>
-  scene.axes.find((a) => a.orient === "left")!.ticks.map((t) => t.label);
+  scene.panels[0]!.axes.find((a) => a.orient === "left")!.ticks.map((t) => t.label);
 
 describe("areas with gaps", () => {
   it("closes band edges over intervals where both edges exist", () => {
@@ -28,7 +28,7 @@ describe("areas with gaps", () => {
       high: [2, 2, 2, 2, 2],
     });
     const { scene } = build({ marks: [area(data, { x: "x", y1: "low", y2: "high" })] });
-    const band = scene.marks[0] as AreaGeometry;
+    const band = scene.panels[0]!.marks[0] as AreaGeometry;
     expect(band.upper.starts.length).toBe(2);
     expect(band.lower!.starts.length).toBe(2);
     expect(band.upper.count).toBe(4);
@@ -38,7 +38,7 @@ describe("areas with gaps", () => {
   it("keeps layers above a missing value continuous", () => {
     const data = table({ x: [0, 1, 2], a: [1, 1, 1], b: [1, Number.NaN, 1], c: [1, 1, 1] });
     const { scene } = build({ marks: [area(data, { x: "x", y: ["a", "b", "c"], stack: true })] });
-    const [, b, c] = scene.marks as AreaGeometry[];
+    const [, b, c] = scene.panels[0]!.marks as AreaGeometry[];
     expect(b!.upper.starts.length).toBe(2);
     expect(c!.upper.starts.length).toBe(1);
     expect(c!.upper.count).toBe(3);
@@ -51,7 +51,7 @@ describe("identities", () => {
     const { scene } = build({
       marks: [line(data, { x: "x", y: ["y", "y:step"], curve: "step-after" })],
     });
-    const [first, second] = scene.marks as LineGeometry[];
+    const [first, second] = scene.panels[0]!.marks as LineGeometry[];
     expect(first!.path).not.toBe(second!.path);
     expect(first!.path.coords[1]).not.toBe(second!.path.coords[1]);
   });
@@ -109,7 +109,7 @@ describe("domains", () => {
   it("includes zero on x when asked", () => {
     const data = table({ x: [100, 200], y: [1, 2] });
     const { scene } = build({ marks: [line(data, { x: "x", y: "y" })], x: { zero: true } });
-    expect(scene.axes.find((a) => a.orient === "bottom")!.ticks[0]!.label).toBe("0");
+    expect(scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks[0]!.label).toBe("0");
   });
 
   it("does not scan data for y when the domain is fixed", () => {
@@ -143,7 +143,7 @@ describe("layout", () => {
       x: { format: { year: "numeric", month: "long", day: "numeric" } },
       y: { axis: false },
     });
-    const first = scene.axes.find((a) => a.orient === "bottom")!.ticks[0]!;
+    const first = scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks[0]!;
     expect(
       first.position - estimateText(first.label, "12px sans-serif") / 2,
     ).toBeGreaterThanOrEqual(0);
@@ -153,7 +153,7 @@ describe("layout", () => {
     const data = table({ x: [0, 10], y: [0, 1] });
     const { model } = build({ marks: [line(data, { x: "x", y: "y" }), rule({ x: 0 })] });
     model.setViewport([2, 10]);
-    expect(model.scene(estimateText).marks.some((m) => m.kind === "rule")).toBe(false);
+    expect(model.scene(estimateText).panels[0]!.marks.some((m) => m.kind === "rule")).toBe(false);
   });
 
   it("omits categories without rows", () => {
@@ -178,8 +178,8 @@ describe("inspect", () => {
     });
     // Pointer at the bottom-left corner: (3, 0) is much closer than (0, 100).
     const inspection = model.inspect(
-      scene.plot.x + 1,
-      scene.plot.y + scene.plot.height - 1,
+      scene.panels[0]!.plot.x + 1,
+      scene.panels[0]!.plot.y + scene.panels[0]!.plot.height - 1,
       "nearest",
     )!;
     expect(inspection.value).toBe(3);

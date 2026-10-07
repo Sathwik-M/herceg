@@ -23,6 +23,7 @@ import {
   type ColorLegend,
   LEGEND_SWATCH,
   type LegendItem,
+  type Panel,
   type Rect,
   type Scene,
 } from "../scene/scene.ts";
@@ -651,13 +652,9 @@ export class ChartModel {
       formatValue: formatNumbers,
     });
 
-    return {
-      width,
-      height,
-      pixelRatio: this.pixelRatio,
-      theme,
+    const panel: Panel = {
+      key: "",
       plot,
-      title: config.title ? { text: config.title, x: EDGE, y: lineHeight / 2 + 6 } : undefined,
       grid: {
         x:
           hasData && xType !== "band" && (config.x?.grid ?? xMeasures)
@@ -666,9 +663,17 @@ export class ChartModel {
         y: hasData && gridPlan ? gridPlan.ticks.map((t) => gridPlan.scale.map(t)) : [],
       },
       axes,
+      marks: geometry,
+    };
+    return {
+      width,
+      height,
+      pixelRatio: this.pixelRatio,
+      theme,
+      title: config.title ? { text: config.title, x: EDGE, y: lineHeight / 2 + 6 } : undefined,
+      panels: [panel],
       legend,
       colorLegend,
-      marks: geometry,
       vertices,
     };
   }

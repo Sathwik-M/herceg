@@ -18,9 +18,10 @@ function sceneOf(
   return { model, scene: model.scene(estimateText) };
 }
 
-const yAxis = (scene: Scene) => scene.axes.find((axis) => axis.orient === "left")!;
-const xAxis = (scene: Scene) => scene.axes.find((axis) => axis.orient === "bottom")!;
-const lines = (scene: Scene) => scene.marks.filter((m): m is LineGeometry => m.kind === "line");
+const yAxis = (scene: Scene) => scene.panels[0]!.axes.find((axis) => axis.orient === "left")!;
+const xAxis = (scene: Scene) => scene.panels[0]!.axes.find((axis) => axis.orient === "bottom")!;
+const lines = (scene: Scene) =>
+  scene.panels[0]!.marks.filter((m): m is LineGeometry => m.kind === "line");
 
 describe("ChartModel layout", () => {
   const data = table({ x: [0, 1, 2, 3, 4], a: [1, 3, 2, 5, 4], b: [2, 2, 3, 3, 9] });
@@ -28,13 +29,15 @@ describe("ChartModel layout", () => {
   it("fits a nice y domain and lays out axes inside the chart", () => {
     const { scene } = sceneOf({ marks: [line(data, { x: "x", y: ["a", "b"] })] });
     expect(yAxis(scene).ticks.map((t) => t.label)).toEqual(["0", "2", "4", "6", "8", "10"]);
-    expect(scene.plot.x).toBeGreaterThan(10);
-    expect(scene.plot.x + scene.plot.width).toBeLessThanOrEqual(600);
-    expect(scene.plot.y + scene.plot.height).toBeLessThan(300);
+    expect(scene.panels[0]!.plot.x).toBeGreaterThan(10);
+    expect(scene.panels[0]!.plot.x + scene.panels[0]!.plot.width).toBeLessThanOrEqual(600);
+    expect(scene.panels[0]!.plot.y + scene.panels[0]!.plot.height).toBeLessThan(300);
     // Ticks lie inside the plot.
     for (const tick of xAxis(scene).ticks) {
-      expect(tick.position).toBeGreaterThanOrEqual(scene.plot.x - 0.01);
-      expect(tick.position).toBeLessThanOrEqual(scene.plot.x + scene.plot.width + 0.01);
+      expect(tick.position).toBeGreaterThanOrEqual(scene.panels[0]!.plot.x - 0.01);
+      expect(tick.position).toBeLessThanOrEqual(
+        scene.panels[0]!.plot.x + scene.panels[0]!.plot.width + 0.01,
+      );
     }
   });
 
@@ -74,11 +77,11 @@ describe("ChartModel layout", () => {
   it("does not shrink the y label margin while the size is unchanged", () => {
     const live = table({ x: [0, 1], y: [0, 100_000] });
     const { model, scene } = sceneOf({ marks: [line(live, { x: "x", y: "y" })] });
-    const wide = scene.plot.x;
+    const wide = scene.panels[0]!.plot.x;
     live.setColumn("y", [0, 1]);
-    expect(model.scene(estimateText).plot.x).toBe(wide);
+    expect(model.scene(estimateText).panels[0]!.plot.x).toBe(wide);
     model.setSize(500, 300);
-    expect(model.scene(estimateText).plot.x).toBeLessThan(wide);
+    expect(model.scene(estimateText).panels[0]!.plot.x).toBeLessThan(wide);
   });
 });
 
@@ -111,7 +114,7 @@ describe("domains", () => {
     expect(
       Math.max(...yAxis(scene).ticks.map((t) => Number(t.label.replace(/,/g, "")))),
     ).toBeGreaterThanOrEqual(2000);
-    const rules = scene.marks.filter((m): m is RuleGeometry => m.kind === "rule");
+    const rules = scene.panels[0]!.marks.filter((m): m is RuleGeometry => m.kind === "rule");
     expect(rules.some((m) => m.label === "limit")).toBe(true);
   });
 
@@ -197,7 +200,8 @@ describe("areas", () => {
     low: [0, 1, 2],
     high: [2, 3, 4],
   });
-  const areas = (scene: Scene) => scene.marks.filter((m): m is AreaGeometry => m.kind === "area");
+  const areas = (scene: Scene) =>
+    scene.panels[0]!.marks.filter((m): m is AreaGeometry => m.kind === "area");
 
   it("includes zero and closes at the baseline", () => {
     const { scene } = sceneOf({
@@ -206,7 +210,7 @@ describe("areas", () => {
     expect(yAxis(scene).ticks[0]!.label).toBe("0");
     const geometry = areas(scene)[0]!;
     expect(geometry.lower).toBeNull();
-    expect(geometry.baseline).toBeCloseTo(scene.plot.y + scene.plot.height);
+    expect(geometry.baseline).toBeCloseTo(scene.panels[0]!.plot.y + scene.panels[0]!.plot.height);
   });
 
   it("stacks layers and treats missing values as zero for layers above", () => {
@@ -228,7 +232,10 @@ describe("areas", () => {
   it("draws bands between two fields", () => {
     const { scene, model } = sceneOf({ marks: [area(usage, { x: "t", y1: "low", y2: "high" })] });
     expect(areas(scene)[0]!.lower).not.toBeNull();
-    const inspection = model.inspect(scene.plot.x + scene.plot.width / 2, scene.plot.y + 10)!;
+    const inspection = model.inspect(
+      scene.panels[0]!.plot.x + scene.panels[0]!.plot.width / 2,
+      scene.panels[0]!.plot.y + 10,
+    )!;
     expect(inspection.points[0]!.text).toBe("1 – 3");
   });
 
@@ -242,8 +249,8 @@ describe("inspect", () => {
 
   it("reports every series at the nearest x", () => {
     const { model, scene } = sceneOf({ marks: [line(data, { x: "x", y: ["a", "b"] })] });
-    const px = scene.plot.x + scene.plot.width * 0.36; // nearest to x = 10
-    const inspection = model.inspect(px, scene.plot.y + 20)!;
+    const px = scene.panels[0]!.plot.x + scene.panels[0]!.plot.width * 0.36; // nearest to x = 10
+    const inspection = model.inspect(px, scene.panels[0]!.plot.y + 20)!;
     expect(inspection.value).toBe(10);
     expect(inspection.points.map((p) => [p.label, p.value])).toEqual([
       ["a", 2],
@@ -254,7 +261,7 @@ describe("inspect", () => {
   it("finds the single nearest point", () => {
     const { model, scene } = sceneOf({ marks: [line(data, { x: "x", y: ["a", "b"] })] });
     const target = model
-      .inspect(scene.plot.x + 1, scene.plot.y + 1, "nearest-x")!
+      .inspect(scene.panels[0]!.plot.x + 1, scene.panels[0]!.plot.y + 1, "nearest-x")!
       .points.find((p) => p.label === "b")!;
     const inspection = model.inspect(target.px, target.py, "nearest")!;
     expect(inspection.points).toHaveLength(1);
@@ -275,8 +282,8 @@ describe("level of detail", () => {
       y: Float64Array.from({ length: n }, (_, i) => Math.sin(i)),
     });
     const { scene } = sceneOf({ marks: [line(big, { x: "x", y: "y" })] });
-    expect(scene.vertices).toBeLessThanOrEqual(4 * scene.plot.width + 8);
-    expect(scene.vertices).toBeGreaterThan(scene.plot.width);
+    expect(scene.vertices).toBeLessThanOrEqual(4 * scene.panels[0]!.plot.width + 8);
+    expect(scene.vertices).toBeGreaterThan(scene.panels[0]!.plot.width);
   });
 
   it("draws step lines", () => {

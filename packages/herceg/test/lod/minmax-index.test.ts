@@ -169,7 +169,9 @@ describe("line indexes", () => {
     );
   }
   const path = (model: ChartModel) => {
-    const { coords, count, starts } = (model.scene(estimateText).marks[0] as LineGeometry).path;
+    const { coords, count, starts } = (
+      model.scene(estimateText).panels[0]!.marks[0] as LineGeometry
+    ).path;
     return { starts: [...starts], coords: Array.from(coords.subarray(0, count * 2)) };
   };
   /**

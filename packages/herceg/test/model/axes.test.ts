@@ -22,7 +22,7 @@ function build(config: ChartConfig, width = 600, height = 300) {
 }
 
 const axis = (scene: Scene, orient: "left" | "right") =>
-  scene.axes.find((a) => a.orient === orient);
+  scene.panels[0]!.axes.find((a) => a.orient === orient);
 
 const traffic = table({
   t: [0, 1, 2, 3],
@@ -44,14 +44,14 @@ describe("right y axis", () => {
     expect(left.domain[1]).toBeLessThan(100);
     expect(right.domain[1]).toBeGreaterThanOrEqual(4800);
     const rightAxis = axis(scene, "right")!;
-    expect(rightAxis.offset).toBe(scene.plot.x + scene.plot.width);
+    expect(rightAxis.offset).toBe(scene.panels[0]!.plot.x + scene.panels[0]!.plot.width);
     expect(rightAxis.ticks.map((t) => t.label)).toContain("4,000");
     expect(rightAxis.title?.text).toBe("req/s");
     // The right series is drawn with the right scale.
-    const [, requests] = scene.marks as LineGeometry[];
+    const [, requests] = scene.panels[0]!.marks as LineGeometry[];
     expect(requests!.path.coords[1]).toBeCloseTo(right.map(1200), 3);
     // Grid lines follow the left axis.
-    expect(scene.grid.y).toEqual(axis(scene, "left")!.ticks.map((t) => t.position));
+    expect(scene.panels[0]!.grid.y).toEqual(axis(scene, "left")!.ticks.map((t) => t.position));
   });
 
   it("formats each series' tooltip values by its own axis", () => {
@@ -62,7 +62,7 @@ describe("right y axis", () => {
       ],
       yRight: { format: { notation: "compact" } },
     });
-    const inspection = model.inspect(model.xScale()!.map(1), scene.plot.y + 10)!;
+    const inspection = model.inspect(model.xScale()!.map(1), scene.panels[0]!.plot.y + 10)!;
     expect(inspection.points.map((p) => p.text)).toEqual(["18", "4.8K"]);
     expect(inspection.points[1]!.py).toBeCloseTo(model.yRightScale()!.map(4800), 3);
   });
@@ -72,8 +72,8 @@ describe("right y axis", () => {
       marks: [line(traffic, { x: "t", y: "requests", axis: "right" })],
     });
     expect(axis(scene, "left")).toBeUndefined();
-    expect(scene.grid.y.length).toBeGreaterThan(0);
-    expect(scene.grid.y[0]).toBeCloseTo(axis(scene, "right")!.ticks[0]!.position, 3);
+    expect(scene.panels[0]!.grid.y.length).toBeGreaterThan(0);
+    expect(scene.panels[0]!.grid.y[0]).toBeCloseTo(axis(scene, "right")!.ticks[0]!.position, 3);
     expect(model.yRightScale()!.domain[1]).toBeGreaterThanOrEqual(4800);
   });
 
@@ -87,7 +87,7 @@ describe("right y axis", () => {
     });
     expect(model.yRightScale()!.domain[1]).toBeGreaterThanOrEqual(9000);
     expect(model.yScale()!.domain[1]).toBeLessThan(100);
-    const capacity = scene.marks.find((m): m is RuleGeometry => m.kind === "rule")!;
+    const capacity = scene.panels[0]!.marks.find((m): m is RuleGeometry => m.kind === "rule")!;
     expect(capacity.y1).toBeCloseTo(model.yRightScale()!.map(9000), 3);
   });
 
@@ -113,7 +113,7 @@ describe("right y axis", () => {
     for (const keys of [[0], [1], [0, 1]]) {
       model.hidden.clear();
       for (const i of keys) model.hidden.add(model.series()[i]!.key);
-      const orients = model.scene(estimateText).axes.map((a) => a.orient);
+      const orients = model.scene(estimateText).panels[0]!.axes.map((a) => a.orient);
       expect(orients).toEqual(["bottom", "left", "right"]);
     }
   });
@@ -122,7 +122,7 @@ describe("right y axis", () => {
     const { scene } = build({
       marks: [line(traffic, { x: "t", y: "latency" }), rule({ x: 2, axis: "right" })],
     });
-    expect(scene.axes.map((a) => a.orient)).toEqual(["bottom", "left"]);
+    expect(scene.panels[0]!.axes.map((a) => a.orient)).toEqual(["bottom", "left"]);
   });
 
   it("widen the right margin at once and narrow it only on resize", () => {
@@ -130,7 +130,7 @@ describe("right y axis", () => {
     const { model, scene } = build({
       marks: [line(live, { x: "t", y: "v", axis: "right" })],
     });
-    const margin = (s: Scene) => s.width - s.plot.x - s.plot.width;
+    const margin = (s: Scene) => s.width - s.panels[0]!.plot.x - s.panels[0]!.plot.width;
     const narrow = margin(scene);
     live.reset({ t: [0, 1], v: [1, 2_000_000] });
     const wide = margin(model.scene(estimateText));
@@ -208,7 +208,9 @@ describe("right y axis", () => {
       ],
     });
     expect(axis(scene, "right")!.ticks.length).toBeGreaterThan(0);
-    expect(scene.axes.find((a) => a.orient === "bottom")!.ticks.length).toBeGreaterThan(0);
+    expect(scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks.length).toBeGreaterThan(
+      0,
+    );
     expect(axis(scene, "left")!.ticks).toEqual([]);
   });
 
@@ -234,7 +236,7 @@ describe("right y axis", () => {
   it("keep room x labels took at the right edge until a resize", () => {
     const live = table({ t: [0, 100_000_000], v: [1, 2] });
     const { model, scene } = build({ marks: [line(live, { x: "t", y: "v" })] });
-    const margin = (s: Scene) => s.width - s.plot.x - s.plot.width;
+    const margin = (s: Scene) => s.width - s.panels[0]!.plot.x - s.panels[0]!.plot.width;
     const wide = margin(scene);
     expect(wide).toBeGreaterThan(12);
     live.reset({ t: [0, 1], v: [1, 2] });
@@ -300,7 +302,7 @@ describe("right y axis", () => {
   it("give edge labels bounded room that does not grow on redraws", () => {
     const long = table({ c: ["A moderately long category"], v: [1] });
     const { model, scene } = build({ marks: [bar(long, { x: "c", y: "v" })] }, 100, 100);
-    const margin = (s: Scene) => s.width - s.plot.x - s.plot.width;
+    const margin = (s: Scene) => s.width - s.panels[0]!.plot.x - s.panels[0]!.plot.width;
     const first = margin(scene);
     expect(first).toBeLessThanOrEqual(25);
     for (let i = 0; i < 3; i++) expect(margin(model.scene(estimateText))).toBe(first);
@@ -327,7 +329,7 @@ describe("right y axis", () => {
     // labels the value with its format.
     model.hidden.add(model.series()[0]!.key);
     model.scene(estimateText);
-    const along = model.inspect(scene.plot.x + 5, right.map(3100), "nearest-y")!;
+    const along = model.inspect(scene.panels[0]!.plot.x + 5, right.map(3100), "nearest-y")!;
     expect(along.label).toBe("3.1K");
     expect(along.points.map((p) => p.text)).toEqual(["3.1K"]);
   });

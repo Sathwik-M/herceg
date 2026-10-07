@@ -338,20 +338,32 @@ export interface ColorLegend {
   ramp: { x: number; width: number };
 }
 
+/**
+ * One plotting area: its data, clipped to `plot`, its guides (rules and
+ * text, drawn above all data and not clipped), and the grid and axes around it.
+ */
+export interface Panel {
+  /** Unique within a scene and the same from one scene to the next. */
+  key: string;
+  /** Area inside the axes, where data is clipped. */
+  plot: Rect;
+  /** Pixel positions of vertical and horizontal grid lines. */
+  grid: { x: number[]; y: number[] };
+  axes: AxisGeometry[];
+  /** Geometry in drawing order; guides among it are drawn above the rest. */
+  marks: Geometry[];
+}
+
 export interface Scene {
   width: number;
   height: number;
   pixelRatio: number;
   theme: Theme;
-  /** Area inside the axes, where marks are clipped. */
-  plot: Rect;
   title: { text: string; x: number; y: number } | undefined;
-  /** Pixel positions of vertical and horizontal grid lines. */
-  grid: { x: number[]; y: number[] };
-  axes: AxisGeometry[];
+  /** Plotting areas; a chart without facets has one. */
+  panels: Panel[];
   legend: LegendItem[];
   colorLegend: ColorLegend | undefined;
-  marks: Geometry[];
   /** Points in all mark geometry after level-of-detail reduction. */
   vertices: number;
 }

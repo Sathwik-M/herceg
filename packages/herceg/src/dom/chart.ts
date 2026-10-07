@@ -13,7 +13,7 @@ import { type ChartConfig, ChartModel, type Inspection } from "../model/model.ts
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { CloudPainter, PointGeometry, Scene } from "../scene/scene.ts";
+import type { CloudPainter, Panel, PointGeometry, Scene } from "../scene/scene.ts";
 import { ascending, Brush, DRAG_THRESHOLD, normalize } from "./brush.ts";
 import { type ChartEvents, type ChartListener, Emitter } from "./events.ts";
 import { Legend } from "./legend.ts";
@@ -374,8 +374,10 @@ export class Chart implements Scheduled, SyncMember {
     this.root.style.height = `${height}px`;
     const scene = this.model.scene(measurer(this.root.ownerDocument), this.#cloudsAllowed());
     this.#scene = scene;
-    const clouds = scene.marks.some(
-      (mark) => mark.kind === "point" && (mark as unknown as PointGeometry).cloud !== undefined,
+    const clouds = scene.panels.some((panel) =>
+      panel.marks.some(
+        (mark) => mark.kind === "point" && (mark as unknown as PointGeometry).cloud !== undefined,
+      ),
     );
     // A null painter means WebGL is unavailable; it is not loaded again.
     if (clouds && this.#clouds === undefined) this.#loadClouds();
@@ -449,7 +451,8 @@ export class Chart implements Scheduled, SyncMember {
     if (x === null || !this.#sharesCursor()) return undefined;
     const px = this.model.series().length > 0 ? this.#xToPixel(x) : undefined;
     if (px === undefined) return undefined;
-    return this.model.inspect(px, scene.plot.y + scene.plot.height / 2, "nearest-x");
+    const { plot } = onlyPanel(scene);
+    return this.model.inspect(px, plot.y + plot.height / 2, "nearest-x");
   }
 
   /**
@@ -468,7 +471,8 @@ export class Chart implements Scheduled, SyncMember {
   #drawOverlay() {
     const scene = this.#scene;
     if (!scene) return;
-    const { theme, plot } = scene;
+    const { theme } = scene;
+    const { plot } = onlyPanel(scene);
     const x = this.model.xScale();
     if (x) this.#brush.draw(x, plot, theme);
     const showTooltip = this.#options.tooltip ?? true;
@@ -558,7 +562,7 @@ export class Chart implements Scheduled, SyncMember {
           this.#pan(press, x);
           return;
         }
-        const plot = this.#scene?.plot;
+        const plot = this.#scene && onlyPanel(this.#scene).plot;
         if (press.moved && press.mode === "brush" && plot) {
           if (!this.#brush.dragging) this.#brush.start(press.x, plot);
           this.#brush.move(x, plot);
@@ -590,7 +594,7 @@ export class Chart implements Scheduled, SyncMember {
         if (!scale) return;
         // Zoom in pixel space and invert, so the value under the pointer stays
         // put on any scale type, including log.
-        const { plot } = this.#scene;
+        const { plot } = onlyPanel(this.#scene);
         const px = Math.min(plot.x + plot.width, Math.max(plot.x, local(event).x));
         const factor = Math.exp(event.deltaY * 0.002);
         this.setViewport([
@@ -605,7 +609,7 @@ export class Chart implements Scheduled, SyncMember {
       const scale = this.model.xScale();
       if (event.button !== 0 || !scene || !scale) return;
       const { x, y } = local(event);
-      const { plot } = scene;
+      const { plot } = onlyPanel(scene);
       // Presses on the axes, title, or legend are not on the data.
       if (x < plot.x || x > plot.x + plot.width || y < plot.y || y > plot.y + plot.height) return;
       // Dragging brushes when brushing is on (Shift pans instead when zoom is
@@ -625,7 +629,7 @@ export class Chart implements Scheduled, SyncMember {
       }
       if (press.mode !== "brush") return;
       // The release point ends the brush, wherever the last move was.
-      const plot = this.#scene?.plot;
+      const plot = this.#scene && onlyPanel(this.#scene).plot;
       if (plot) this.#brush.move(local(event).x, plot);
       const range = this.#brush.end(press.scale);
       // The drag band goes, whether or not the brush selects anything.
@@ -661,7 +665,7 @@ export class Chart implements Scheduled, SyncMember {
     if (!scene) return;
     // Shift in pixels and invert through the scale the drag started with.
     const shift = press.x - x;
-    const { plot } = scene;
+    const { plot } = onlyPanel(scene);
     this.setViewport([
       press.scale.invert(plot.x + shift),
       press.scale.invert(plot.x + plot.width + shift),
@@ -781,4 +785,9 @@ function inspectionKey(inspection: Inspection | undefined): string {
  */
 export function createChart(container: HTMLElement, options: ChartOptions): Chart {
   return new Chart(container, options);
+}
+
+/** The panel of a scene; charts have one. */
+function onlyPanel(scene: Scene): Panel {
+  return scene.panels[0]!;
 }

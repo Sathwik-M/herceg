@@ -29,12 +29,13 @@ export function paintCanvas(
   context.lineJoin = "round";
   context.lineCap = "round";
 
-  const { plot, grid, theme } = scene;
+  const { theme } = scene;
   if (theme.background !== "transparent") {
     context.fillStyle = theme.background;
     context.fillRect(0, 0, scene.width, scene.height);
   }
-  if (grid.x.length + grid.y.length > 0) {
+  for (const { plot, grid } of scene.panels) {
+    if (grid.x.length + grid.y.length === 0) continue;
     context.beginPath();
     for (const y of grid.y) {
       const snapped = (Math.round(y * ratio) + 0.5) / ratio;
@@ -51,17 +52,19 @@ export function paintCanvas(
     context.stroke();
   }
 
-  context.save();
-  context.beginPath();
-  context.rect(plot.x, plot.y, plot.width, plot.height);
-  context.clip();
-  const options = { plot, pixelRatio: ratio, clouds };
-  for (const mark of scene.marks) {
-    const draw = mark.draw;
-    // Guides are drawn by the SVG layer above the canvas.
-    if (!draw.guide) draw.canvas(context, mark, options);
+  for (const { plot, marks } of scene.panels) {
+    context.save();
+    context.beginPath();
+    context.rect(plot.x, plot.y, plot.width, plot.height);
+    context.clip();
+    const options = { plot, pixelRatio: ratio, clouds };
+    for (const mark of marks) {
+      const draw = mark.draw;
+      // Guides are drawn by the SVG layer above the canvas.
+      if (!draw.guide) draw.canvas(context, mark, options);
+    }
+    context.restore();
   }
-  context.restore();
 }
 
 /** Raster pixels as a PNG data URL, encoded by the browser through a canvas. */

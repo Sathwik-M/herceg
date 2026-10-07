@@ -9,6 +9,7 @@ import {
   type Geometry,
   LEGEND_SWATCH,
   type LegendItem,
+  type Panel,
   type Scene,
   type SvgContext,
 } from "../scene/scene.ts";
@@ -21,9 +22,9 @@ export function guideElements(marks: readonly Geometry[], context: SvgContext): 
   return out;
 }
 
-/** Grid lines as one path. */
-export function gridPath(scene: Scene): string {
-  const { plot, grid } = scene;
+/** A panel's grid lines as one path. */
+export function gridPath(panel: Panel): string {
+  const { plot, grid } = panel;
   let d = "";
   for (const y of grid.y) d += `M${n(plot.x)} ${n(Math.round(y) + 0.5)}H${n(plot.x + plot.width)}`;
   for (const x of grid.x) d += `M${n(Math.round(x) + 0.5)} ${n(plot.y)}V${n(plot.y + plot.height)}`;
@@ -115,7 +116,7 @@ export interface SvgOptions {
 
 /** Complete, standalone SVG document for a scene. */
 export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
-  const { theme, plot, width, height } = scene;
+  const { theme, width, height } = scene;
   const id = options.idPrefix ?? "herceg";
   const title = options.title ?? scene.title?.text;
   const labelled = [title ? `${id}-title` : "", options.description ? `${id}-desc` : ""]
@@ -124,18 +125,25 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   let out = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img"${labelled ? ` aria-labelledby="${labelled}"` : ""} font-family="${escapeXml(theme.font)}" font-size="${theme.fontSize}" fill="${escapeXml(theme.muted)}">`;
   if (title) out += `<title id="${id}-title">${escapeXml(title)}</title>`;
   if (options.description) out += `<desc id="${id}-desc">${escapeXml(options.description)}</desc>`;
-  out += `<defs><clipPath id="${id}-clip"><rect x="${n(plot.x)}" y="${n(plot.y)}" width="${n(plot.width)}" height="${n(plot.height)}"/></clipPath></defs>`;
+  out += "<defs>";
+  scene.panels.forEach(({ plot }, i) => {
+    out += `<clipPath id="${id}-clip-${i}"><rect x="${n(plot.x)}" y="${n(plot.y)}" width="${n(plot.width)}" height="${n(plot.height)}"/></clipPath>`;
+  });
+  out += "</defs>";
   if (theme.background !== "transparent") {
     out += `<rect width="${width}" height="${height}" fill="${escapeXml(theme.background)}"/>`;
   }
-  const grid = gridPath(scene);
+  const grid = scene.panels.map(gridPath).join("");
   if (grid) out += `<path d="${grid}" stroke="${escapeXml(theme.grid)}" fill="none"/>`;
-  out += `<g clip-path="url(#${id}-clip)">`;
   const context: SvgContext = { theme, encodeRaster: options.encodeRaster };
-  for (const mark of scene.marks) if (!mark.draw.guide) out += mark.draw.svg(mark, context);
-  out += "</g>";
-  out += guideElements(scene.marks, context);
-  out += `<g style="font-variant-numeric:tabular-nums">${axisElements(scene.axes, theme)}</g>`;
+  scene.panels.forEach(({ marks }, i) => {
+    out += `<g clip-path="url(#${id}-clip-${i})">`;
+    for (const mark of marks) if (!mark.draw.guide) out += mark.draw.svg(mark, context);
+    out += "</g>";
+  });
+  for (const panel of scene.panels) out += guideElements(panel.marks, context);
+  const axes = scene.panels.flatMap((panel) => panel.axes);
+  out += `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
   out += titleElement(scene);
   if (options.legend ?? true) out += legendElements(scene.legend, theme);
   if (scene.colorLegend) out += colorLegendElement(scene.colorLegend, theme, `${id}-ramp`);

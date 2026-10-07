@@ -18,7 +18,8 @@ One name per concept, used the same way in code and docs.
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
 | **Viewport** | The visible x range when zoomed; null means "fit the data". |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
-| **Scene** | The render plan for one frame: packed geometry in CSS pixels, axes, legend, no data references. |
+| **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
+| **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
 | **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars), points, a raster (heatmaps), rules, text, or shapes (custom marks). |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |

@@ -1,6 +1,6 @@
 import { canvasRasterUrl } from "../render/canvas.ts";
 import { axisElements, colorLegendElement, gridPath, titleElement } from "../render/svg.ts";
-import type { Geometry, Scene, SvgContext, SvgElement } from "../scene/scene.ts";
+import type { Geometry, Panel, Scene, SvgContext, SvgElement } from "../scene/scene.ts";
 
 const NS = "http://www.w3.org/2000/svg";
 
@@ -50,6 +50,18 @@ function hash(text: string): number {
   return 4294967296 * (2097151 & h2) + (h1 >>> 0);
 }
 
+/** What the layer keeps for one panel: its clip, and its data and annotation groups. */
+interface PanelNodes {
+  clip: SVGClipPathElement;
+  clipRect: SVGRectElement;
+  /** Data, clipped to the panel's plot. */
+  marks: SVGGElement;
+  /** Rules and text, above the data and unclipped. */
+  annotations: SVGGElement;
+  markNodes: Map<string, Retained>;
+  annotationNodes: Map<string, Retained>;
+}
+
 /**
  * Retained SVG output. Each geometry is a group per key whose markup (from
  * the geometry's drawing) is rewritten only when it changes; axes and grid
@@ -60,17 +72,16 @@ export class SvgLayer {
   readonly svg: SVGSVGElement;
   readonly overlay: SVGGElement;
   readonly #document: Document;
-  readonly #clipRect: SVGRectElement;
+  readonly #defs: SVGDefsElement;
   readonly #background: SVGRectElement;
+  /** Followed by each panel's data group, then each panel's annotation group. */
   readonly #grid: SVGPathElement;
-  readonly #marks: SVGGElement;
-  /** Rules and text, above the data and unclipped. */
-  readonly #annotations: SVGGElement;
   /** Axes, title, and color legend. */
   readonly #guides: SVGGElement;
-  readonly #markNodes = new Map<string, Retained>();
-  readonly #annotationNodes = new Map<string, Retained>();
+  readonly #panels = new Map<string, PanelNodes>();
   readonly #id: string;
+  /** Clip paths made so far, for unique ids. */
+  #clips = 0;
   #guideMarkup = "";
 
   constructor(document: Document, id: string) {
@@ -78,48 +89,51 @@ export class SvgLayer {
     this.#id = id;
     this.svg = element(document, "svg", { "aria-hidden": "true" });
     this.svg.style.cssText = "position:absolute;left:0;top:0;overflow:visible";
-    const defs = element(document, "defs");
-    const clip = element(document, "clipPath", { id: `${id}-clip` });
-    this.#clipRect = element(document, "rect");
-    clip.append(this.#clipRect);
-    defs.append(clip);
+    this.#defs = element(document, "defs");
     this.#background = element(document, "rect", { fill: "none" });
     this.#grid = element(document, "path", { fill: "none" });
-    this.#marks = element(document, "g", { "clip-path": `url(#${id}-clip)` });
-    this.#annotations = element(document, "g");
     this.#guides = element(document, "g");
     this.overlay = element(document, "g", { "pointer-events": "none" });
-    this.svg.append(
-      defs,
-      this.#background,
-      this.#grid,
-      this.#marks,
-      this.#annotations,
-      this.#guides,
-      this.overlay,
-    );
+    this.svg.append(this.#defs, this.#background, this.#grid, this.#guides, this.overlay);
+  }
+
+  #panelNodes(key: string): PanelNodes {
+    let nodes = this.#panels.get(key);
+    if (nodes) return nodes;
+    const document = this.#document;
+    const id = `${this.#id}-clip-${this.#clips++}`;
+    const clip = element(document, "clipPath", { id });
+    const clipRect = element(document, "rect");
+    clip.append(clipRect);
+    this.#defs.append(clip);
+    nodes = {
+      clip,
+      clipRect,
+      marks: element(document, "g", { "clip-path": `url(#${id})` }),
+      annotations: element(document, "g"),
+      markNodes: new Map(),
+      annotationNodes: new Map(),
+    };
+    this.#panels.set(key, nodes);
+    return nodes;
   }
 
   /** Draws the scene. With `marks: false` the canvas owns grid and data. */
   render(scene: Scene, options: { marks: boolean }): void {
     const { svg } = this;
-    const { width, height, plot, theme } = scene;
+    const { width, height, theme } = scene;
     set(svg, "width", String(width));
     set(svg, "height", String(height));
     set(svg, "viewBox", `0 0 ${width} ${height}`);
     set(svg, "font-family", theme.font);
     set(svg, "font-size", String(theme.fontSize));
     set(svg, "fill", theme.muted);
-    set(this.#clipRect, "x", String(plot.x));
-    set(this.#clipRect, "y", String(plot.y));
-    set(this.#clipRect, "width", String(plot.width));
-    set(this.#clipRect, "height", String(plot.height));
 
     const background = options.marks && theme.background !== "transparent";
     set(this.#background, "width", background ? String(width) : "0");
     set(this.#background, "height", background ? String(height) : "0");
     set(this.#background, "fill", background ? theme.background : "none");
-    set(this.#grid, "d", options.marks ? gridPath(scene) : "");
+    set(this.#grid, "d", options.marks ? scene.panels.map(gridPath).join("") : "");
     set(this.#grid, "stroke", theme.grid);
 
     const document = this.#document;
@@ -127,11 +141,26 @@ export class SvgLayer {
       theme,
       encodeRaster: (raster) => canvasRasterUrl(raster, document),
     };
-    const data = options.marks ? scene.marks.filter((mark) => !mark.draw.guide) : [];
-    this.#renderKeyed(this.#marks, this.#markNodes, data, context);
-    const guides = scene.marks.filter((mark) => mark.draw.guide);
-    this.#renderKeyed(this.#annotations, this.#annotationNodes, guides, context);
-    let markup = `<g style="font-variant-numeric:tabular-nums">${axisElements(scene.axes, theme)}</g>`;
+    const seen = new Set<string>();
+    const panels = scene.panels.map((panel) => {
+      seen.add(panel.key);
+      const nodes = this.#panelNodes(panel.key);
+      this.#renderPanel(nodes, panel, options.marks, context);
+      return nodes;
+    });
+    // Data groups follow the grid in panel order, annotation groups follow them.
+    let previous: Element = this.#grid;
+    for (const nodes of panels) previous = keepOrder(svg, nodes.marks, previous);
+    for (const nodes of panels) previous = keepOrder(svg, nodes.annotations, previous);
+    for (const [key, nodes] of this.#panels) {
+      if (seen.has(key)) continue;
+      nodes.clip.remove();
+      nodes.marks.remove();
+      nodes.annotations.remove();
+      this.#panels.delete(key);
+    }
+    const axes = scene.panels.flatMap((panel) => panel.axes);
+    let markup = `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
     markup += titleElement(scene);
     if (scene.colorLegend)
       markup += colorLegendElement(scene.colorLegend, theme, `${this.#id}-ramp`);
@@ -139,6 +168,18 @@ export class SvgLayer {
       this.#guides.innerHTML = markup;
       this.#guideMarkup = markup;
     }
+  }
+
+  #renderPanel(nodes: PanelNodes, panel: Panel, marks: boolean, context: SvgContext): void {
+    const { plot } = panel;
+    set(nodes.clipRect, "x", String(plot.x));
+    set(nodes.clipRect, "y", String(plot.y));
+    set(nodes.clipRect, "width", String(plot.width));
+    set(nodes.clipRect, "height", String(plot.height));
+    const data = marks ? panel.marks.filter((mark) => !mark.draw.guide) : [];
+    this.#renderKeyed(nodes.marks, nodes.markNodes, data, context);
+    const guides = panel.marks.filter((mark) => mark.draw.guide);
+    this.#renderKeyed(nodes.annotations, nodes.annotationNodes, guides, context);
   }
 
   /** Each geometry's nodes, in scene order; nodes of geometry no longer drawn go. */

@@ -27,7 +27,7 @@ function build(config: ChartConfig, width = 600, height = 300) {
 }
 
 const of = <K extends MarkGeometry["kind"]>(scene: Scene, kind: K) =>
-  scene.marks.filter((m) => m.kind === kind) as Extract<MarkGeometry, { kind: K }>[];
+  scene.panels[0]!.marks.filter((m) => m.kind === kind) as Extract<MarkGeometry, { kind: K }>[];
 
 const start = Date.UTC(2026, 0, 1);
 const hour = 3_600_000;
@@ -53,7 +53,7 @@ describe("rule", () => {
     const rules = of(scene, "rule") as RuleGeometry[];
     expect(rules.map((r) => r.label)).toEqual(["v1", "v2", "v3"]);
     expect(rules[0]!.x1).toBeCloseTo(model.xScale()!.map(start + 2 * hour), 3);
-    expect(rules[0]!.y1).toBe(scene.plot.y);
+    expect(rules[0]!.y1).toBe(scene.panels[0]!.plot.y);
   });
 
   it("formats number text for the chart's locale and takes Date constants", () => {
@@ -89,13 +89,13 @@ describe("region", () => {
       ],
     });
     // Regions draw in mark order, so this one is underneath the line.
-    expect(scene.marks[0]!.kind).toBe("rect");
-    const shade = scene.marks[0] as RectGeometry;
+    expect(scene.panels[0]!.marks[0]!.kind).toBe("rect");
+    const shade = scene.panels[0]!.marks[0] as RectGeometry;
     const x = model.xScale()!;
     const [rx, ry, rw, rh] = Array.from(shade.rects.subarray(0, 4));
     expect(rx).toBeCloseTo(x.map(start + 2 * hour), 3);
     expect(rx! + rw!).toBeCloseTo(x.map(start + 4 * hour), 3);
-    expect([ry, rh]).toEqual([scene.plot.y, scene.plot.height]);
+    expect([ry, rh]).toEqual([scene.panels[0]!.plot.y, scene.panels[0]!.plot.height]);
     expect([shade.fill, shade.fillOpacity]).toEqual([scene.theme.muted, 0.15]);
     const label = of(scene, "text")[0] as TextGeometry;
     expect(label.labels).toEqual(["Maintenance"]);
@@ -119,7 +119,10 @@ describe("region", () => {
     const shade = of(scene, "rect")[0] as RectGeometry;
     expect(shade.count).toBe(2);
     // The second incident runs past the domain; it stops at the plot's edge.
-    expect(shade.rects[4]! + shade.rects[6]!).toBeCloseTo(scene.plot.x + scene.plot.width, 3);
+    expect(shade.rects[4]! + shade.rects[6]!).toBeCloseTo(
+      scene.panels[0]!.plot.x + scene.panels[0]!.plot.width,
+      3,
+    );
     expect((of(scene, "text")[0] as TextGeometry).labels).toEqual(["db", "network"]);
   });
 
@@ -129,7 +132,7 @@ describe("region", () => {
     });
     expect(model.yScale()!.domain[1]).toBeGreaterThanOrEqual(300);
     const [rx, , rw] = Array.from((of(scene, "rect")[0] as RectGeometry).rects.subarray(0, 4));
-    expect([rx, rw]).toEqual([scene.plot.x, scene.plot.width]);
+    expect([rx, rw]).toEqual([scene.panels[0]!.plot.x, scene.panels[0]!.plot.width]);
   });
 
   it("counts rectangles toward y only where they overlap the x view", () => {
@@ -148,7 +151,7 @@ describe("region", () => {
       y: { type: "log" },
     });
     const [, ry, , rh] = Array.from((of(scene, "rect")[0] as RectGeometry).rects.subarray(0, 4));
-    expect(ry! + rh!).toBeCloseTo(scene.plot.y + scene.plot.height, 3);
+    expect(ry! + rh!).toBeCloseTo(scene.panels[0]!.plot.y + scene.panels[0]!.plot.height, 3);
   });
 
   it("shades from the low end of a reversed log axis", () => {
