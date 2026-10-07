@@ -6,7 +6,6 @@ import type { Polyline } from "../lod/polyline.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
-import type { MarkSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { groupRows, isSortedSubset, type Series, TableCache } from "./series.ts";
 
@@ -90,7 +89,16 @@ export interface ColorRamp {
  * reads (if any) and holds caches that depend only on the data, so the same
  * mark can be shown by several charts.
  */
-export interface Mark<S extends MarkSpec = MarkSpec> {
+/**
+ * What charts read from any mark's spec: its type and identity. Built-in
+ * marks have portable specs (`MarkSpec`); custom marks only this.
+ */
+export interface MarkIdentity {
+  readonly type: string;
+  readonly id?: string | undefined;
+}
+
+export interface Mark<S extends MarkIdentity = MarkIdentity> {
   readonly spec: S;
   readonly table: Table | undefined;
   /**

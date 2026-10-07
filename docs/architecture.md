@@ -238,6 +238,20 @@ geometry and buffers stay distinct per mark. Fields must be numbers or
 times; on a category axis a constant is a band index, as in Plotly (0 is the
 first band's center, -0.5 its edge).
 
+## Custom marks
+
+`custom()` is the escape hatch for shapes no mark draws. Its `draw` function
+runs on every frame with the chart's scales and emits paths (SVG path
+syntax; rectangles, circles, and lines are written as paths), and text. They
+become one `shapes` geometry whose drawing writes SVG elements and paints a
+canvas through `Path2D`, so custom shapes follow the same renderer choice,
+clipping, and static export as other marks. Fields listed as `x` and `y`
+count toward the axis domains. A custom mark's spec holds only its type and
+id: functions cannot be serialized, so specs, and with them the Python
+package, cannot contain custom marks, and the React adapter rebuilds them on
+every render rather than comparing specs. Marks implement the `Mark`
+interface, whose spec only needs a type and an id (`MarkIdentity`).
+
 ## Rendering
 
 Geometry carries its drawing (`Drawing` in `scene/scene.ts`, implementations
@@ -387,9 +401,11 @@ the DOM, creating an offscreen canvas in that canvas' document when
 
 ## Known limits
 
-- Mark types: line, area, bar, point, heatmap, and the rule, region, and text
-  annotations. No error bars or custom marks. Horizontal bars need a category
-  y; bars along a number or time y are not supported.
+- Mark types: line, area, bar, point, heatmap, the rule, region, and text
+  annotations, and custom marks. No error bars. Horizontal bars need a
+  category y; bars along a number or time y are not supported.
+- Custom marks are JavaScript only, have no legend entries or tooltips, and
+  cannot bind category fields.
 - Annotation fields cannot be categories (constants on a category axis are
   band indices), so bars have no value labels yet; text has no collision
   avoidance or connectors.

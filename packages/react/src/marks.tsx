@@ -6,6 +6,9 @@ import {
   area,
   type BarOptions,
   bar,
+  type CustomDataOptions,
+  type CustomOptions,
+  custom,
   type HeatmapOptions,
   heatmap,
   type LineOptions,
@@ -116,4 +119,18 @@ export const Text = /* @__PURE__ */ markElement(
 ) as unknown as {
   (props: TextOptions): null;
   <S extends Schema>(props: WithData<TextDataOptions<S>, S>): null;
+};
+
+/**
+ * A custom mark: `draw` places shapes with the chart's scales, without
+ * `data` or over the fields of `data`. Rebuilt on every render, since
+ * `draw` may close over props or state.
+ */
+export const Custom = /* @__PURE__ */ markElement(
+  "Custom",
+  ({ data, ...options }: CustomOptions & { data?: Table<Schema> }) =>
+    data ? custom(data, options as CustomDataOptions<Schema>) : custom(options),
+) as unknown as {
+  (props: CustomOptions): null;
+  <S extends Schema>(props: WithData<CustomDataOptions<S>, S>): null;
 };

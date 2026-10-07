@@ -15,7 +15,7 @@ import { markBuilder } from "./marks.tsx";
 export interface ChartProps extends Omit<ChartOptions, "marks"> {
   /** Marks built with herceg's functions; mark elements among `children` are added after them. */
   marks?: readonly Mark[];
-  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <Rule>, <Region>, <Text>. */
+  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: ReactNode;
   className?: string;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -48,8 +48,17 @@ function canonical(value: unknown): string {
   );
 }
 
+/**
+ * Mark types whose spec and table describe them completely. Other marks
+ * (custom marks, whose `draw` may close over new props, and marks written
+ * against the `Mark` interface) are only the same mark as themselves.
+ */
+const PORTABLE = new Set(["line", "area", "bar", "point", "heatmap", "rule", "region", "text"]);
+
 /** Same mark when the spec and the table are unchanged, so caches survive re-renders. */
 function sameMark(a: Mark, b: Mark): boolean {
+  if (a === b) return true;
+  if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
   return a.table === b.table && canonical(a.spec) === canonical(b.spec);
 }
 

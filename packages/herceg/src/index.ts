@@ -25,9 +25,20 @@ export type { MeasureText } from "./layout/text.ts";
 export type { TextField } from "./marks/annotation.ts";
 export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";
 export { type BarMark, type BarOptions, bar } from "./marks/bar.ts";
+export {
+  type CustomDataOptions,
+  type CustomMark,
+  type CustomOptions,
+  type CustomSpec,
+  custom,
+  type DataDrawContext,
+  type DrawContext,
+  type ShapeStyle,
+  type TextShapeStyle,
+} from "./marks/custom.ts";
 export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
-export type { Mark } from "./marks/mark.ts";
+export type { Mark, MarkIdentity } from "./marks/mark.ts";
 export { type PointMark, type PointOptions, point } from "./marks/point.ts";
 export {
   type RegionDataOptions,

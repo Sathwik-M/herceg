@@ -3,6 +3,7 @@ import {
   area,
   bar,
   createChart,
+  custom,
   encodedCategory,
   fromRows,
   heatmap,
@@ -130,3 +131,20 @@ bar(requests, { x: "time", y: "latency" });
 point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
 const hostLoad = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(hostLoad, { x: "hour", y: "host", value: "cpu" });
+
+// Custom marks
+custom({ draw: ({ circle, plot }) => circle(plot.x, plot.y, 3) });
+custom(metrics, {
+  x: "time",
+  y: ["p50", "p99"],
+  draw({ table: data, x, y, line: segment }) {
+    const t = data.numbers("time");
+    const low = data.numbers("p50");
+    const high = data.numbers("p99");
+    for (let i = 0; i < t.length; i++) segment(x(t[i]!), y(low[i]!), x(t[i]!), y(high[i]!));
+  },
+});
+// @ts-expect-error custom fields are number or time fields of the table
+custom(sales, { x: "region", draw() {} });
+// @ts-expect-error marks without a table have none in their context
+custom({ draw: ({ table: none }) => none });

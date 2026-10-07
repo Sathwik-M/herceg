@@ -240,6 +240,39 @@ export interface RasterGeometry extends Geometry {
   pixels: Uint8ClampedArray<ArrayBuffer>;
 }
 
+/** One shape of a custom mark: path data in SVG syntax, with its style. */
+export interface PathShape {
+  d: string;
+  /** Fill color, or "none". */
+  fill: string;
+  /** Stroke color; undefined for none. */
+  stroke: string | undefined;
+  /** Positive when there is a stroke. */
+  strokeWidth: number;
+  /** From 0 to 1, applied to fill and stroke separately. */
+  opacity: number;
+  dash: readonly number[] | undefined;
+}
+
+/** A text shape of a custom mark: vertically centered on `y`. */
+export interface TextShape {
+  text: string;
+  x: number;
+  y: number;
+  fill: string;
+  anchor: "start" | "middle" | "end";
+}
+
+/** Shapes drawn by a custom mark, in drawing order, clipped to the plot. */
+export interface ShapesGeometry extends Geometry {
+  kind: "shapes";
+  draw: Drawing<ShapesGeometry>;
+  shapes: (PathShape | TextShape)[];
+  /** CSS font of text shapes, and its size in pixels. */
+  font: string;
+  fontSize: number;
+}
+
 /** The geometry of the built-in marks, for code that narrows by kind. */
 export type MarkGeometry =
   | LineGeometry
@@ -248,7 +281,8 @@ export type MarkGeometry =
   | TextGeometry
   | RectGeometry
   | PointGeometry
-  | RasterGeometry;
+  | RasterGeometry
+  | ShapesGeometry;
 
 export interface AxisTick {
   /** Pixel position along the axis. */

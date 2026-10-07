@@ -1,8 +1,8 @@
-import { type Chart as HercegChart, table } from "herceg";
+import { custom, type Chart as HercegChart, type Mark as HercegMark, line, table } from "herceg";
 import { act, StrictMode, useLayoutEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Bar, Chart, Line, Region, Rule, Text } from "../src/index.ts";
+import { Bar, Chart, Custom, Line, Region, Rule, Text } from "../src/index.ts";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -60,6 +60,48 @@ describe("<Chart>", () => {
     expect(host.textContent).toContain("deploy");
     expect(host.textContent).toContain("rollback");
     expect(host.textContent).toContain("peak");
+  });
+
+  it("rebuilds custom marks so their draw sees new props", async () => {
+    const labels = () =>
+      [...host.querySelectorAll('[data-kind="shapes"] text')].map((t) => t.textContent);
+    const view = (label: string) => (
+      <Chart>
+        <Line data={metrics} x="t" y="a" />
+        <Custom draw={({ text, x, y }) => text(x(1), y(2), label)} />
+      </Chart>
+    );
+    act(() => root.render(view("first")));
+    expect(labels()).toEqual(["first"]);
+    act(() => root.render(view("second")));
+    await frame();
+    expect(labels()).toEqual(["second"]);
+  });
+
+  it("keeps marks written against the Mark interface only while they are the same object", async () => {
+    // A mark whose spec does not describe what it draws.
+    const badge = (label: string): HercegMark => {
+      const inner = custom({ draw: ({ text, x, y }) => text(x(1), y(2), label) });
+      return {
+        spec: { type: "badge" },
+        table: undefined,
+        tooltip: "x",
+        channelKind: () => undefined,
+        series: () => [],
+        xExtent: () => undefined,
+        yExtent: () => undefined,
+        geometry: (series, frame, key) => inner.geometry(series, frame, key),
+      };
+    };
+    const labels = () =>
+      [...host.querySelectorAll('[data-kind="shapes"] text')].map((t) => t.textContent);
+    const view = (label: string) => (
+      <Chart marks={[line(metrics, { x: "t", y: "a" }), badge(label)]} />
+    );
+    act(() => root.render(view("first")));
+    act(() => root.render(view("second")));
+    await frame();
+    expect(labels()).toEqual(["second"]);
   });
 
   it("applies prop changes to the same chart", () => {

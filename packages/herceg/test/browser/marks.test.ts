@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { custom } from "../../src/marks/custom.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import type { Mark } from "../../src/marks/mark.ts";
@@ -200,6 +201,59 @@ describe("new marks in the browser", () => {
     expect(find("3.5")).toBeDefined();
     expect(tick.isConnected).toBe(true);
     expect(limit.isConnected).toBe(true);
+    chart.destroy();
+  });
+
+  it("paints custom shapes on a canvas and in SVG", () => {
+    const series = table({ x: [0, 10], y: [0, 10] });
+    const square = custom({
+      draw({ x, y, rect }) {
+        rect(x(4), y(6), x(6) - x(4), y(4) - y(6), { fill: "#ff0000" });
+      },
+    });
+    const marks = [line(series, { x: "x", y: "y" }), square];
+    const canvasChart = createChart(host, { marks, renderer: "canvas" });
+    const canvas = host.querySelector("canvas")!;
+    const ratio = canvas.width / canvasChart.root.clientWidth;
+    const px = canvasChart.model.xScale()!.map(5) * ratio;
+    const py = canvasChart.model.yScale()!.map(5) * ratio;
+    const pixel = canvas.getContext("2d")!.getImageData(Math.round(px), Math.round(py), 1, 1).data;
+    expect(Array.from(pixel)).toEqual([255, 0, 0, 255]);
+    canvasChart.destroy();
+    const svgChart = createChart(host, { marks, renderer: "svg" });
+    expect(host.querySelector('svg g[clip-path] [data-kind="shapes"] path')).not.toBeNull();
+    svgChart.destroy();
+  });
+
+  it("paints custom strokes with butt caps and opacity per paint, as SVG does", () => {
+    const series = table({ x: [0, 10], y: [0, 10] });
+    const shapes = custom({
+      draw({ x, y, line: segment, rect }) {
+        segment(x(2), y(7.3), x(4), y(7.3), { stroke: "#0000ff", strokeWidth: 10 });
+        rect(x(6), y(4), x(8) - x(6), y(2) - y(4), {
+          fill: "#ff0000",
+          stroke: "#ff0000",
+          strokeWidth: 6,
+          opacity: 0.5,
+        });
+      },
+    });
+    const chart = createChart(host, {
+      marks: [line(series, { x: "x", y: "y" }), shapes],
+      renderer: "canvas",
+    });
+    const canvas = host.querySelector("canvas")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    const alpha = (x: number, y: number) =>
+      canvas.getContext("2d")!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1)
+        .data[3];
+    const sx = chart.model.xScale()!;
+    const sy = chart.model.yScale()!;
+    // No round cap reaches past the line's end (y = 7.3 is between grid lines).
+    expect(alpha(sx.map(4) - 2, sy.map(7.3))).toBe(255);
+    expect(alpha(sx.map(4) + 3, sy.map(7.3))).toBe(0);
+    // Where stroke covers fill, each paints at half opacity: 1 - 0.5 * 0.5.
+    expect(alpha(sx.map(6), sy.map(3))).toBeCloseTo(191, -1);
     chart.destroy();
   });
 

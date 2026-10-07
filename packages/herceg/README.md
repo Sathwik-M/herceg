@@ -125,6 +125,39 @@ color legend instead of series entries; `colors` takes a ramp of `#rgb` or
 
 Marks are drawn in array order; rules and text always draw above other marks.
 
+### Custom marks
+
+When no mark fits, `custom` draws shapes with the chart's scales on every
+frame. Shapes render like other marks: in SVG or on a canvas, clipped to the
+plot, and in static SVG. With a table, the `x` and `y` fields count toward
+the axis domains.
+
+```ts
+custom(prices, {
+  x: "time",
+  y: ["low", "high"],
+  description: "Daily price ranges.", // for the chart's text alternative
+  draw({ table, x, y, line, circle }) {
+    const time = table.numbers("time");
+    const low = table.numbers("low");
+    const high = table.numbers("high");
+    for (let i = 0; i < time.length; i++) {
+      line(x(time[i]!), y(low[i]!), x(time[i]!), y(high[i]!), { stroke: "#2a78d6" });
+      circle(x(time[i]!), y(high[i]!), 3, { fill: "#2a78d6" });
+    }
+  },
+});
+```
+
+`draw` receives `x` and `y` (data value to pixel; band index on category
+axes), `domain`, `bandwidth`, `plot`, `theme`, and `path` (SVG
+path syntax), `rect`, `circle`, `line`, and `text`, each with an optional
+style (`fill`, `stroke`, `strokeWidth`, `opacity`, `dash`); they paint the same
+on a canvas as in SVG (butt caps, miter joins, opacity applied to fill and
+stroke separately). With a table, `draw` also gets it. Custom marks are
+JavaScript only (a chart spec cannot hold a function), have no legend
+entries or tooltips, and are meant for shapes in the thousands, not millions.
+
 ## Chart options
 
 | Option | Description |
