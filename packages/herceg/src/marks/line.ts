@@ -37,6 +37,7 @@ export class LineMark implements Mark<LineSpec> {
   readonly spec: LineSpec;
   readonly table: Table<Schema>;
   readonly zero = false;
+  readonly tooltip = "x";
   readonly #split: SeriesSplitter;
 
   constructor(spec: LineSpec, table: Table<Schema>) {
@@ -49,19 +50,13 @@ export class LineMark implements Mark<LineSpec> {
     this.#split = new SeriesSplitter(table, spec.x, ys, spec.series, spec.label);
   }
 
-  xKind() {
-    return this.table.kind(this.spec.x);
+  channelKind(axis: "x" | "y") {
+    return axis === "x" ? this.table.kind(this.spec.x) : "number";
   }
 
   series(key: MarkKey, palette: Palette) {
-    return buildSeries(
-      this.table,
-      this.#split.sources(),
-      this.spec.x,
-      key,
-      palette,
-      this.spec.stroke,
-    );
+    const x = this.table.numbers(this.spec.x as never);
+    return buildSeries(this.table, this.#split.sources(), x, key, palette, this.spec.stroke);
   }
 
   xExtent(series: readonly Series[], log: boolean) {

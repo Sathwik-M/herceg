@@ -120,7 +120,8 @@ describe("domains", () => {
       spec: inner.spec,
       table: inner.table,
       zero: inner.zero,
-      xKind: () => inner.xKind(),
+      tooltip: inner.tooltip,
+      channelKind: (axis) => inner.channelKind(axis),
       series: (key, palette) => inner.series(key, palette),
       xExtent: (...args) => inner.xExtent(...args),
       yExtent: (...args) => {

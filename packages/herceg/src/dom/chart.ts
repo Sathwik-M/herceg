@@ -9,9 +9,9 @@ import type { Table } from "../data/table.ts";
 import { canvasMeasurer, estimateText, type MeasureText } from "../layout/text.ts";
 import { describeChart } from "../model/describe.ts";
 import { type ChartConfig, ChartModel, type Inspection } from "../model/model.ts";
-import { paintCanvas } from "../render/canvas.ts";
+import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
-import type { ContinuousScale } from "../scale/scale.ts";
+import type { PositionScale } from "../scale/scale.ts";
 import type { Scene } from "../scene/scene.ts";
 import { Legend } from "./legend.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
@@ -70,7 +70,7 @@ export class Chart implements Scheduled, SyncMember {
   #keyboard: { key: string; position: number } | null = null;
   #describedAt = -Infinity;
   #describeTimer: ReturnType<typeof setTimeout> | 0 = 0;
-  #drag: { x: number; scale: ContinuousScale } | null = null;
+  #drag: { x: number; scale: PositionScale } | null = null;
   readonly #cleanup: (() => void)[] = [];
   readonly #tables = new Map<Table, () => void>();
   #leaveSync: (() => void) | undefined;
@@ -162,8 +162,10 @@ export class Chart implements Scheduled, SyncMember {
   /** Standalone SVG of the current state, for export. */
   toSVG(): string {
     if (!this.#scene) this.flush();
-    return renderSvg(this.model.scene(measurer(this.root.ownerDocument)), {
+    const document = this.root.ownerDocument;
+    return renderSvg(this.model.scene(measurer(document)), {
       idPrefix: `${this.#id}-export`,
+      encodeRaster: (mark) => canvasRasterUrl(mark, document),
       ...(this.#options.description ? { description: this.#options.description } : {}),
     });
   }
@@ -300,8 +302,8 @@ export class Chart implements Scheduled, SyncMember {
   #inspection(): Inspection | undefined {
     const scene = this.#scene;
     if (!scene) return undefined;
-    const mode = typeof this.#options.tooltip === "object" ? this.#options.tooltip.mode : undefined;
-    if (this.#pointer) return this.model.inspect(this.#pointer.x, this.#pointer.y, mode);
+    // The model applies the configured tooltip mode.
+    if (this.#pointer) return this.model.inspect(this.#pointer.x, this.#pointer.y);
     if (this.#keyboard)
       return this.model.inspectPosition(this.#keyboard.key, this.#keyboard.position);
     const x = this.#syncedX;

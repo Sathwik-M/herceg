@@ -3,7 +3,15 @@
 // pointer feedback never repaints the data.
 
 import type { Polyline } from "../lod/polyline.ts";
-import type { AreaGeometry, MarkGeometry, RuleGeometry, Scene } from "../scene/scene.ts";
+import type {
+  AreaGeometry,
+  MarkGeometry,
+  PointGeometry,
+  RasterGeometry,
+  RectGeometry,
+  RuleGeometry,
+  Scene,
+} from "../scene/scene.ts";
 
 export function traceLine(context: CanvasRenderingContext2D, path: Polyline): void {
   const c = path.coords;
@@ -49,6 +57,79 @@ function drawRule(context: CanvasRenderingContext2D, rule: RuleGeometry): void {
   context.setLineDash([]);
 }
 
+function drawRects(context: CanvasRenderingContext2D, mark: RectGeometry): void {
+  const r = mark.rects;
+  context.beginPath();
+  for (let i = 0; i < mark.count; i++)
+    context.rect(r[i * 4]!, r[i * 4 + 1]!, r[i * 4 + 2]!, r[i * 4 + 3]!);
+  context.globalAlpha = mark.fillOpacity;
+  context.fillStyle = mark.fill;
+  context.fill();
+  context.globalAlpha = 1;
+}
+
+function drawPoints(context: CanvasRenderingContext2D, mark: PointGeometry): void {
+  const c = mark.coords;
+  const r = mark.radius;
+  context.globalAlpha = mark.fillOpacity;
+  context.fillStyle = mark.fill;
+  if (!mark.opaque) {
+    // One fill per point so overlapping translucent points darken, as in SVG.
+    for (let i = 0; i < mark.count; i++) {
+      context.beginPath();
+      context.arc(c[i * 2]!, c[i * 2 + 1]!, r, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.globalAlpha = 1;
+    return;
+  }
+  context.beginPath();
+  for (let i = 0; i < mark.count; i++) {
+    const x = c[i * 2]!;
+    const y = c[i * 2 + 1]!;
+    context.moveTo(x + r, y);
+    context.arc(x, y, r, 0, Math.PI * 2);
+  }
+  context.fill();
+  context.globalAlpha = 1;
+}
+
+/** Offscreen canvases holding raster pixels, reused per raster key. */
+const rasterCanvases = new WeakMap<
+  CanvasRenderingContext2D,
+  Map<string, HTMLCanvasElement | OffscreenCanvas>
+>();
+
+function drawRaster(context: CanvasRenderingContext2D, mark: RasterGeometry): void {
+  let byKey = rasterCanvases.get(context);
+  if (!byKey) {
+    byKey = new Map();
+    rasterCanvases.set(context, byKey);
+  }
+  let source = byKey.get(mark.key);
+  if (!source || source.width !== mark.columns || source.height !== mark.rows) {
+    source =
+      typeof OffscreenCanvas !== "undefined"
+        ? new OffscreenCanvas(mark.columns, mark.rows)
+        : Object.assign(context.canvas.ownerDocument.createElement("canvas"), {
+            width: mark.columns,
+            height: mark.rows,
+          });
+    byKey.set(mark.key, source);
+  }
+  const target = source.getContext("2d") as
+    | CanvasRenderingContext2D
+    | OffscreenCanvasRenderingContext2D
+    | null;
+  if (!target) return;
+  target.putImageData(new ImageData(mark.pixels, mark.columns, mark.rows), 0, 0);
+  // Cells are flat colors; smoothing would blur their edges.
+  const smoothing = context.imageSmoothingEnabled;
+  context.imageSmoothingEnabled = false;
+  context.drawImage(source, mark.x, mark.y, mark.width, mark.height);
+  context.imageSmoothingEnabled = smoothing;
+}
+
 export function drawMark(context: CanvasRenderingContext2D, mark: MarkGeometry): void {
   if (mark.kind === "line") {
     context.beginPath();
@@ -72,6 +153,12 @@ export function drawMark(context: CanvasRenderingContext2D, mark: MarkGeometry):
       context.lineWidth = mark.strokeWidth;
       context.stroke();
     }
+  } else if (mark.kind === "rect") {
+    drawRects(context, mark);
+  } else if (mark.kind === "point") {
+    drawPoints(context, mark);
+  } else if (mark.kind === "raster") {
+    drawRaster(context, mark);
   } else {
     drawRule(context, mark);
   }
@@ -125,4 +212,22 @@ export function paintCanvas(canvas: HTMLCanvasElement, scene: Scene): void {
   context.clip();
   for (const mark of scene.marks) if (mark.kind !== "rule") drawMark(context, mark);
   context.restore();
+  pruneRasters(context, scene);
+}
+
+/** Drops the offscreen canvases of rasters the scene no longer has. */
+function pruneRasters(context: CanvasRenderingContext2D, scene: Scene): void {
+  const byKey = rasterCanvases.get(context);
+  if (!byKey || byKey.size === 0) return;
+  const live = new Set(scene.marks.flatMap((m) => (m.kind === "raster" ? [m.key] : [])));
+  for (const key of byKey.keys()) if (!live.has(key)) byKey.delete(key);
+}
+
+/** Raster pixels as a PNG data URL, encoded by the browser through a canvas. */
+export function canvasRasterUrl(mark: RasterGeometry, document: Document): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = mark.columns;
+  canvas.height = mark.rows;
+  canvas.getContext("2d")?.putImageData(new ImageData(mark.pixels, mark.columns, mark.rows), 0, 0);
+  return canvas.toDataURL();
 }

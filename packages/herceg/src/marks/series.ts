@@ -189,6 +189,41 @@ export function nearestPosition(series: Series, value: number): number {
   return best;
 }
 
+/**
+ * Position of the point nearest `value` among those with x in [lo, hi], or
+ * -1 when none is.
+ */
+export function nearestPositionWithin(
+  series: Series,
+  value: number,
+  lo: number,
+  hi: number,
+): number {
+  if (!series.sorted) {
+    let best = -1;
+    let bestDistance = Infinity;
+    for (let k = 0; k < series.length; k++) {
+      const x = xAt(series, k);
+      if (!(x >= lo && x <= hi)) continue;
+      const distance = Math.abs(x - value);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = k;
+      }
+    }
+    return best;
+  }
+  let k = nearestPosition(series, value);
+  if (k < 0) return -1;
+  if (xAt(series, k) < lo) k = lowerPosition(series, lo);
+  else if (xAt(series, k) > hi) {
+    k = lowerPosition(series, hi);
+    if (k >= series.length || xAt(series, k) > hi) k--;
+  }
+  const x = k >= 0 && k < series.length ? xAt(series, k) : Number.NaN;
+  return x >= lo && x <= hi ? k : -1;
+}
+
 /** Caches a computation until the table changes. */
 export class TableCache<T> {
   #version = -1;

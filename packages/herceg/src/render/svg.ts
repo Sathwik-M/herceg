@@ -5,10 +5,14 @@ import type { Polyline } from "../lod/polyline.ts";
 import {
   type AreaGeometry,
   type AxisGeometry,
+  type ColorLegend,
   LEGEND_SWATCH,
   type LegendItem,
   type LineGeometry,
   type MarkGeometry,
+  type PointGeometry,
+  type RasterGeometry,
+  type RectGeometry,
   type RuleGeometry,
   type Scene,
 } from "../scene/scene.ts";
@@ -90,10 +94,73 @@ export function ruleElement(rule: RuleGeometry, theme: Theme): string {
   return out;
 }
 
-export function markElement(mark: MarkGeometry, theme: Theme): string {
-  if (mark.kind === "line") return lineElement(mark);
-  if (mark.kind === "area") return areaElement(mark);
-  return ruleElement(mark, theme);
+/** All rectangles of a series as one path. */
+export function rectPath(mark: RectGeometry): string {
+  const r = mark.rects;
+  let d = "";
+  for (let i = 0; i < mark.count; i++) {
+    const x = r[i * 4]!;
+    const y = r[i * 4 + 1]!;
+    const w = r[i * 4 + 2]!;
+    const h = r[i * 4 + 3]!;
+    d += `M${n(x)} ${n(y)}h${n(w)}v${n(h)}h${n(-w)}Z`;
+  }
+  return d;
+}
+
+/**
+ * Circles of a translucent series, one element each so overlaps composite;
+ * the inherited `fill-opacity` of their group applies to each circle.
+ */
+export function pointCircles(mark: PointGeometry): string {
+  const c = mark.coords;
+  const r = n(mark.radius);
+  let out = "";
+  for (let i = 0; i < mark.count; i++)
+    out += `<circle cx="${n(c[i * 2]!)}" cy="${n(c[i * 2 + 1]!)}" r="${r}"/>`;
+  return out;
+}
+
+/** All circles of an opaque series as one path of arcs. */
+export function pointPath(mark: PointGeometry): string {
+  const c = mark.coords;
+  const r = n(mark.radius);
+  const d2 = n(mark.radius * 2);
+  let d = "";
+  for (let i = 0; i < mark.count; i++) {
+    d += `M${n(c[i * 2]! - mark.radius)} ${n(c[i * 2 + 1]!)}a${r} ${r} 0 1 0 ${d2} 0a${r} ${r} 0 1 0 -${d2} 0`;
+  }
+  return d;
+}
+
+/**
+ * Encodes raster pixels as an image URL. Browsers use a canvas (native PNG
+ * encoding); servers pass the bundled encoder from `render/png.ts`, which
+ * keeps that encoder out of browser bundles.
+ */
+export type RasterEncoder = (mark: RasterGeometry) => string;
+
+export function rasterElement(mark: RasterGeometry, encode: RasterEncoder): string {
+  return `<image x="${n(mark.x)}" y="${n(mark.y)}" width="${n(mark.width)}" height="${n(mark.height)}" preserveAspectRatio="none" style="image-rendering:pixelated" href="${encode(mark)}"/>`;
+}
+
+export function markElement(mark: MarkGeometry, theme: Theme, encode: RasterEncoder): string {
+  switch (mark.kind) {
+    case "line":
+      return lineElement(mark);
+    case "area":
+      return areaElement(mark);
+    case "rect":
+      return `<path d="${rectPath(mark)}" fill="${escapeXml(mark.fill)}" fill-opacity="${mark.fillOpacity}"/>`;
+    case "point":
+      return !mark.opaque
+        ? `<g fill="${escapeXml(mark.fill)}" fill-opacity="${mark.fillOpacity}">${pointCircles(mark)}</g>`
+        : `<path d="${pointPath(mark)}" fill="${escapeXml(mark.fill)}"/>`;
+    case "raster":
+      return rasterElement(mark, encode);
+    case "rule":
+      return ruleElement(mark, theme);
+  }
 }
 
 /** Grid lines as one path. */
@@ -145,6 +212,26 @@ export function legendElements(legend: readonly LegendItem[], theme: Theme): str
   return out;
 }
 
+/** Continuous color legend; `id` must be unique in the document (for the gradient). */
+export function colorLegendElement(legend: ColorLegend, theme: Theme, id: string): string {
+  const stops = legend.stops
+    .map(
+      (color, i) =>
+        `<stop offset="${n((i / Math.max(1, legend.stops.length - 1)) * 100)}%" stop-color="${escapeXml(color)}"/>`,
+    )
+    .join("");
+  const y = legend.y;
+  const text = (item: { text: string; x: number }, fill: string) =>
+    `<text x="${n(item.x)}" y="${n(y)}" dominant-baseline="middle" fill="${escapeXml(fill)}">${escapeXml(item.text)}</text>`;
+  return (
+    `<defs><linearGradient id="${id}">${stops}</linearGradient></defs>` +
+    text(legend.title, theme.text) +
+    text(legend.low, theme.muted) +
+    `<rect x="${n(legend.ramp.x)}" y="${n(y - LEGEND_SWATCH / 2)}" width="${n(legend.ramp.width)}" height="${LEGEND_SWATCH}" rx="2" fill="url(#${id})"/>` +
+    text(legend.high, theme.muted)
+  );
+}
+
 export function titleElement(scene: Scene): string {
   if (!scene.title) return "";
   const { theme } = scene;
@@ -152,6 +239,8 @@ export function titleElement(scene: Scene): string {
 }
 
 export interface SvgOptions {
+  /** Raster image encoder; rasters are omitted without one. */
+  encodeRaster?: RasterEncoder;
   /** Prefix for element ids, unique per document. */
   idPrefix?: string;
   /** Accessible name; defaults to the scene title. */
@@ -179,12 +268,17 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   const grid = gridPath(scene);
   if (grid) out += `<path d="${grid}" stroke="${escapeXml(theme.grid)}" fill="none"/>`;
   out += `<g clip-path="url(#${id}-clip)">`;
-  for (const mark of scene.marks) if (mark.kind !== "rule") out += markElement(mark, theme);
+  const encode = options.encodeRaster;
+  for (const mark of scene.marks) {
+    if (mark.kind === "rule" || (mark.kind === "raster" && !encode)) continue;
+    out += markElement(mark, theme, encode!);
+  }
   out += "</g>";
   // Rules and their labels draw above the data and are not clipped.
   for (const mark of scene.marks) if (mark.kind === "rule") out += ruleElement(mark, theme);
   out += `<g style="font-variant-numeric:tabular-nums">${axisElements(scene.axes, theme)}</g>`;
   out += titleElement(scene);
   if (options.legend ?? true) out += legendElements(scene.legend, theme);
+  if (scene.colorLegend) out += colorLegendElement(scene.colorLegend, theme, `${id}-ramp`);
   return `${out}</svg>`;
 }

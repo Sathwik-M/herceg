@@ -13,6 +13,7 @@ export class RuleMark implements Mark<RuleSpec> {
   readonly spec: RuleSpec;
   readonly table = undefined;
   readonly zero = false;
+  readonly tooltip = "x";
 
   constructor(spec: RuleSpec) {
     this.spec = spec;
@@ -20,7 +21,7 @@ export class RuleMark implements Mark<RuleSpec> {
       throw new Error("A rule needs exactly one of x or y");
   }
 
-  xKind() {
+  channelKind() {
     return undefined;
   }
 

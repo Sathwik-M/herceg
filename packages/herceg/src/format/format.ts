@@ -25,7 +25,8 @@ export function numberFormatter(options: NumberFormat, locale?: string): Formatt
   const format = cached(
     numberFormats,
     `${locale}|${JSON.stringify(options)}`,
-    () => new Intl.NumberFormat(locale, options),
+    // Values that round to zero, and -0 itself, print without a minus sign.
+    () => new Intl.NumberFormat(locale, { signDisplay: "negative", ...options }),
   );
   return (value) => format.format(value);
 }

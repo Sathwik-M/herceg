@@ -1,5 +1,6 @@
 import { estimateText, type MeasureText } from "../layout/text.ts";
 import { type ChartConfig, ChartModel } from "../model/model.ts";
+import { pngDataUrl } from "./png.ts";
 import { renderSvg } from "./svg.ts";
 
 export interface StaticOptions extends ChartConfig {
@@ -26,6 +27,7 @@ export function renderToSVG(options: StaticOptions): string {
   const scene = model.scene(options.measureText ?? estimateText);
   return renderSvg(scene, {
     idPrefix: options.idPrefix ?? `herceg-svg-${++renders}`,
+    encodeRaster: (mark) => pngDataUrl(mark.columns, mark.rows, mark.pixels),
     ...(options.description ? { description: options.description } : {}),
   });
 }

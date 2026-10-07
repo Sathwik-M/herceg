@@ -3,8 +3,8 @@
 Framework-independent charts for analytics: columnar data, streaming updates,
 level-of-detail rendering, SVG and Canvas output.
 
-> Early development. Line, area, and rule marks are available; the API may
-> change before 1.0.
+> Early development. Line, area, bar, point (scatter), heatmap, and rule marks
+> are available; the API may change before 1.0.
 
 ## Quick start
 
@@ -75,7 +75,26 @@ rule({ y: 250, label: "SLO" }); // horizontal reference line
 rule({ x: deployTime }); // vertical
 ```
 
-Marks are drawn in array order; rules always draw above lines and areas.
+Bars, points, and heatmaps:
+
+```ts
+const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
+bar(sales, { x: "region", y: ["q1", "q2"] }); // grouped; stack: true stacks them
+bar(requests, { x: "time", y: "latency" }); // number or time x: bars centered on values
+
+point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
+
+const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
+heatmap(load, { x: "hour", y: "host", value: "cpu" });
+```
+
+A category field on `x` (bars) or on `x` and `y` (heatmaps) gives a band axis.
+Heatmaps also accept number and time fields, with one column or row per
+distinct value, up to 4,194,304 cells (bin finer data first). Heatmaps show a
+color legend instead of series entries; `colors` takes a ramp of `#rgb` or
+`#rrggbb` colors from low to high.
+
+Marks are drawn in array order; rules always draw above other marks.
 
 ## Chart options
 
@@ -106,6 +125,12 @@ const svg = renderToSVG({ width: 640, height: 320, marks: [line(metrics, { x: "t
 ```
 
 ## Large data
+
+Every point is drawn by default. With `sampling: "pixel"`, opaque points
+whose centers land on the same device pixel are drawn once (above 4,096
+points per series), which is faster for dense scatter plots but can drop
+subpixel edge coverage. Tooltips find the nearest point through a spatial
+grid index. Heatmaps are drawn as one image.
 
 Lines and areas over sorted x are reduced before drawing (M4): within each
 device-pixel column, only the first, lowest, highest, and last points of an

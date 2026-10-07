@@ -12,25 +12,27 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `rule`). A mark pairs a portable spec with the table it reads. |
-| **Series** | One drawn line or area within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
-| **Scale** | Maps data values to pixels (linear, log, time). |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `rule`). A mark pairs a portable spec with the table it reads. |
+| **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
+| **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
 | **Viewport** | The visible x range when zoomed; null means "fit the data". |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: packed geometry in CSS pixels, axes, legend, no data references. |
-| **Geometry** | A mark's part of the scene (`LineGeometry`, `AreaGeometry`, `RuleGeometry`). |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars), points, a raster (heatmaps), or rules. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
 ## Pipeline
 
 ```
-TypeScript API: line(table, {...}), area(...), rule(...)        (Python and JSON specs later)
+TypeScript API: line(table, {...}), bar(...), point(...), heatmap(...), ...
         |  marks = portable spec + bound table
         v
 ChartModel (DOM-free)
-  series     resolve fields, split long-format rows, assign palette colors
+  axes       categorical channels give band axes, time fields time axes
+  series     resolve fields, split long-format rows, map categories to
+             band indices, assign palette colors
   domains    x from data or viewport; y from data visible in x
   layout     ticks, labels, margins, legend placement
   geometry   per mark, level-of-detail reduction into reused buffers
@@ -106,13 +108,62 @@ The reduction scans the visible index range (found by binary search) on every
 frame: O(visible points), about 3 ms for one million points
 (`npm run bench:core`). Unsorted x is drawn point by point without reduction.
 
+## Band axes
+
+A mark reports the kind of field on each position channel. A categorical
+field (bar x, heatmap x and y) puts the axis on a band scale whose values are
+category indices; the category labels are the union of what the marks on that
+axis contribute, in order of appearance. Bands are identified by raw value
+(a category, or a number's full-precision key), so values whose formatted
+labels coincide stay separate. Each row's band index is computed
+once per table version (4 bytes per row) and reused while the band list is
+unchanged. Heatmaps also band number and time fields, one band per distinct
+value. Band labels are thinned to every k-th band when neighbors would
+overlap. A categorical axis cannot be shared with marks that need a numeric
+axis (lines, areas); the chart rejects that combination.
+
+## Points and rasters
+
+Points are drawn per series into a packed coordinate buffer. Opaque points
+(a hex, `rgb()`, `hsl()`, or named fill with `fillOpacity` 1) are filled as one
+path per series; other points are filled one by one so overlaps darken as
+they should. With `sampling: "pixel"`, above 4,096
+points per series, opaque points whose centers fall in the same device pixel
+are drawn once, through a reusable occupancy buffer. Tooltips for points use
+a uniform grid index over the points drawn inside the plot (two
+`Uint32Array`s), built on the first pointer query after each frame and cached
+per frame, so charts sharing a mark keep separate indexes. Automatic domains
+leave room for the point radius at the plot edges: after rounding to nice
+values, the domain widens by the radius in pixels, so points at the data
+extremes are drawn whole and ticks stay round.
+
+Bars on number or time x are 80% as wide as the smallest gap between
+neighboring distinct x values in view, across all series (capped at 64 px).
+Those distinct values are sorted once per table version. Stacked series split
+by a category field share one pair of table-sized top and base arrays, since
+each row belongs to one series.
+
+Heatmaps are rasterized: each cell is one pixel of an RGBA image (colors from
+a 256-entry lookup table), and renderers stretch the image over the plot.
+Canvas draws it with `drawImage`; SVG embeds it as a PNG. In the browser the
+canvas encodes the PNG; `renderToSVG` uses a small bundled encoder, which only
+server-side bundles include. Tooltips look cells up in a cell-to-row table,
+rebuilt when the table or the band order changes. When several rows fall in
+one cell, the last row with a value wins; missing values leave a cell
+transparent. Ramps are `#rgb` or
+`#rrggbb` colors, checked when the mark or theme is created, so the raster and
+the legend read them the same way. A heatmap draws at most 4,194,304 cells
+(16 MB of pixels plus 16 MB of lookup); larger grids are rejected with an
+error asking for binning.
+
 ## Rendering
 
 Each scene can be drawn three ways:
 
 - `renderSvg` produces a standalone SVG document.
 - `SvgLayer` keeps SVG elements per geometry key and only updates attributes.
-  Axes and grid are rebuilt only when their markup changes.
+  Axes and grid are rebuilt only when their markup changes. Bars and points
+  are one `path` element per series, not one element per data point.
 - `paintCanvas` redraws grid and marks into a canvas sized to the device pixel
   ratio.
 
@@ -123,7 +174,8 @@ assistive technology. Pointer feedback only touches the overlay, so hovering
 never repaints data.
 
 The `renderer` option chooses where marks go. `auto` (the default) uses SVG
-until a scene has more than 4,000 drawn points after level of detail and
+until a scene has more than 4,000 drawn points (line vertices, bars, points,
+or heatmap cells) after level of detail and
 returns to SVG below 2,000; the gap prevents flapping while data streams. SVG
 keeps small charts crisp, accessible, and free of canvas backing stores,
 which dominate memory for many small charts. How many points a chart draws
@@ -157,7 +209,12 @@ Tooltips use the model's `inspect()`: for sorted series the nearest x is
 found by binary search (O(log n) per series); "nearest-x" reports every
 visible series at that x, "nearest" the closest point on screen (searching
 outward from the nearest x until points are farther away horizontally than
-the best match). With zoom enabled, the wheel zooms x around the pointer,
+the best match). Points and heatmaps answer "nearest" queries with their own
+index. "nearest-x" only snaps to points inside the visible x range, since
+clipped points are not drawn. Marks only choose the default mode: "nearest-x"
+when every mark is drawn along x (lines, areas, bars) and "nearest" otherwise.
+An explicit mode applies to every mark except heatmaps, which always report
+the cell under the pointer; when cells overlap, the mark drawn last wins. With zoom enabled, the wheel zooms x around the pointer,
 dragging pans, and double-click resets the viewport; both work in pixel space
 through the scale, so they behave the same on log axes. Keyboard navigation
 keeps a position within a series, so repeated x values are each reachable.
@@ -193,8 +250,15 @@ differ. One package avoids version skew between engine pieces. A test
 
 ## Known limits
 
-- Mark types: line, area, rule.
+- Mark types: line, area, bar (vertical), point, heatmap, rule. No horizontal
+  bars, error bars, or custom marks.
+- Continuous color only for heatmaps; points cannot be colored by a numeric
+  field.
 - One x and one y axis per chart.
+- Heatmaps are limited to 4,194,304 cells and have no built-in binning.
+- Renderers draw every geometry kind themselves, and the model always carries
+  band-axis and color-legend layout, so a line-only bundle includes bar, point,
+  and heatmap support it does not use (about 3 KiB gzip).
 - Level of detail re-scans the visible range on every frame; there is no
   precomputed min/max pyramid.
 - Renderer thresholds are not tuned.

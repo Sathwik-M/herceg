@@ -36,6 +36,12 @@ describe("linear ticks", () => {
     expect(linearTicks(0, 3e-9, 3)).toEqual([0, 1e-9, 2e-9, 3e-9]);
   });
 
+  it("labels a zero tick without a minus sign", () => {
+    // Math.ceil(-0.25) is -0, so ticks across zero can start at negative zero.
+    const ticks = linearTicks(-0.5, 21.5, 10);
+    expect(numberTickLabels(ticks, "en-US")[0]).toBe("0");
+  });
+
   it("extends domains to nice values", () => {
     expect(niceDomain(0.13, 9.7, 10)).toEqual([0, 10]);
     expect(niceDomain(-12, 87, 5)).toEqual([-20, 100]);
@@ -105,9 +111,18 @@ describe("BandScale", () => {
     expect(scale.bandwidth).toBeCloseTo(90);
     expect(scale.start(0)).toBeCloseTo(10);
     expect(scale.start(2) + scale.bandwidth).toBeCloseTo(300);
-    expect(scale.invert(55)).toBe(0);
-    expect(scale.invert(150)).toBe(1);
-    expect(scale.invert(400)).toBe(-1);
+    expect(scale.map(1)).toBeCloseTo(155);
+    expect(scale.index(55)).toBe(0);
+    expect(scale.index(150)).toBe(1);
+    expect(scale.index(400)).toBe(-1);
+    expect(scale.invert(scale.map(2))).toBeCloseTo(2);
+  });
+
+  it("works on reversed ranges and thins ticks", () => {
+    const scale = new BandScale(["a", "b", "c", "d"], [400, 0], 0);
+    expect(scale.map(0)).toBeCloseTo(350);
+    expect(scale.index(10)).toBe(3);
+    expect(new BandScale(Array.from({ length: 100 }, String), [0, 1]).ticks(10)).toHaveLength(10);
   });
 });
 

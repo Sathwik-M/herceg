@@ -1,9 +1,12 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
 import {
   area,
+  bar,
   createChart,
   fromRows,
+  heatmap,
   line,
+  point,
   renderToSVG,
   rule,
   table,
@@ -62,3 +65,36 @@ line(requests, { x: "time", y: "service" });
 
 // Server rendering
 renderToSVG({ width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] });
+
+// Bars, points, heatmaps
+const sales = table({ region: ["N", "S"], q1: [1, 2], q2: [3, 4], team: ["a", "b"] });
+bar(sales, { x: "region", y: ["q1", "q2"] });
+bar(sales, { x: "region", y: "q1", series: "team", stack: true });
+// @ts-expect-error bar heights must be numeric
+bar(sales, { x: "region", y: "team" });
+point(metrics, { x: "p50", y: "p99", r: 3 });
+// @ts-expect-error point x must be numeric
+point(sales, { x: "region", y: "q1" });
+const load = table({ hour: time(timestamps), host: serviceNames, cpu: latencies });
+heatmap(load, { x: "hour", y: "host", value: "cpu" });
+// @ts-expect-error heatmap values must be numeric
+heatmap(load, { x: "hour", y: "host", value: "host" });
+
+// README: bars, points, heatmaps
+declare const regions: string[];
+declare const q1Sales: number[];
+declare const q2Sales: number[];
+declare const hours: Float64Array;
+declare const hostNames: string[];
+declare const cpuValues: Float64Array;
+declare const cars: import("../../src/index.ts").Table<{
+  weight: "number";
+  mpg: "number";
+  origin: "category";
+}>;
+const regionSales = table({ region: regions, q1: q1Sales, q2: q2Sales });
+bar(regionSales, { x: "region", y: ["q1", "q2"] });
+bar(requests, { x: "time", y: "latency" });
+point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
+const hostLoad = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
+heatmap(hostLoad, { x: "hour", y: "host", value: "cpu" });

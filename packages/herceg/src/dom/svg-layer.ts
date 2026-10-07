@@ -1,8 +1,13 @@
+import { canvasRasterUrl } from "../render/canvas.ts";
 import {
   areaPath,
   axisElements,
+  colorLegendElement,
   gridPath,
   linePath,
+  pointCircles,
+  pointPath,
+  rectPath,
   ruleElement,
   titleElement,
 } from "../render/svg.ts";
@@ -39,10 +44,12 @@ export class SvgLayer {
   readonly #marks: SVGGElement;
   readonly #guides: SVGGElement;
   readonly #nodes = new Map<string, SVGElement[]>();
+  readonly #id: string;
   #guideMarkup = "";
 
   constructor(document: Document, id: string) {
     this.#document = document;
+    this.#id = id;
     this.svg = element(document, "svg", { "aria-hidden": "true" });
     this.svg.style.cssText = "position:absolute;left:0;top:0;overflow:visible";
     const defs = element(document, "defs");
@@ -86,6 +93,8 @@ export class SvgLayer {
     for (const mark of scene.marks) if (mark.kind === "rule") markup += ruleElement(mark, theme);
     markup += `<g style="font-variant-numeric:tabular-nums">${axisElements(scene.axes, theme)}</g>`;
     markup += titleElement(scene);
+    if (scene.colorLegend)
+      markup += colorLegendElement(scene.colorLegend, theme, `${this.#id}-ramp`);
     if (markup !== this.#guideMarkup) {
       this.#guides.innerHTML = markup;
       this.#guideMarkup = markup;
@@ -97,11 +106,21 @@ export class SvgLayer {
     let previous: Element | null = null;
     for (const mark of marks) {
       seen.add(mark.key);
+      const tag = elementTag(mark);
       const count = mark.kind === "area" && mark.stroke ? 2 : 1;
       let nodes = this.#nodes.get(mark.key);
-      if (!nodes || nodes.length !== count) {
+      // A different element (or a different kind of mark reusing the key)
+      // starts from fresh nodes, so no attributes carry over.
+      if (
+        !nodes ||
+        nodes.length !== count ||
+        nodes[0]!.tagName !== tag ||
+        nodes[0]!.dataset.kind !== mark.kind
+      ) {
         for (const node of nodes ?? []) node.remove();
-        nodes = Array.from({ length: count }, () => element(this.#document, "path"));
+        nodes = Array.from({ length: count }, () =>
+          element(this.#document, tag, { "data-kind": mark.kind }),
+        );
         this.#nodes.set(mark.key, nodes);
       }
       updateMark(mark, nodes);
@@ -120,6 +139,12 @@ export class SvgLayer {
       this.#nodes.delete(key);
     }
   }
+}
+
+function elementTag(mark: MarkGeometry): "path" | "image" | "g" {
+  if (mark.kind === "raster") return "image";
+  if (mark.kind === "point" && !mark.opaque) return "g";
+  return "path";
 }
 
 function updateMark(mark: MarkGeometry, nodes: SVGElement[]): void {
@@ -146,6 +171,26 @@ function updateMark(mark: MarkGeometry, nodes: SVGElement[]): void {
         set(second, "stroke-width", String(mark.strokeWidth));
         set(second, "stroke-linejoin", "round");
       }
+      return;
+    case "rect":
+      set(first, "d", rectPath(mark));
+      set(first, "fill", mark.fill);
+      set(first, "fill-opacity", String(mark.fillOpacity));
+      return;
+    case "point":
+      set(first, "fill", mark.fill);
+      set(first, "fill-opacity", String(mark.fillOpacity));
+      if (!mark.opaque) first.innerHTML = pointCircles(mark);
+      else set(first, "d", pointPath(mark));
+      return;
+    case "raster":
+      set(first, "x", String(mark.x));
+      set(first, "y", String(mark.y));
+      set(first, "width", String(mark.width));
+      set(first, "height", String(mark.height));
+      set(first, "preserveAspectRatio", "none");
+      set(first, "style", "image-rendering:pixelated");
+      set(first, "href", canvasRasterUrl(mark, first.ownerDocument));
       return;
     case "rule":
       return;

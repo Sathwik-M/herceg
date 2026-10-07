@@ -1,0 +1,418 @@
+// Bars, points, and heatmaps: geometry, band axes, picking, and legends.
+import { describe, expect, it } from "vitest";
+import { time } from "../../src/data/column.ts";
+import { table } from "../../src/data/table.ts";
+import { estimateText } from "../../src/layout/text.ts";
+import { bar } from "../../src/marks/bar.ts";
+import { heatmap, MAX_CELLS } from "../../src/marks/heatmap.ts";
+import { line } from "../../src/marks/line.ts";
+import { type PointOptions, point } from "../../src/marks/point.ts";
+import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import type { PointGeometry, RasterGeometry, RectGeometry, Scene } from "../../src/scene/scene.ts";
+
+function build(config: ChartConfig, width = 600, height = 300) {
+  const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
+  model.setSize(width, height, 1);
+  return { model, scene: model.scene(estimateText) };
+}
+
+const rects = (scene: Scene) => scene.marks.filter((m): m is RectGeometry => m.kind === "rect");
+const rect = (geometry: RectGeometry, i: number) =>
+  Array.from(geometry.rects.subarray(i * 4, i * 4 + 4));
+
+describe("bar", () => {
+  const sales = table({ region: ["N", "S", "E"], q1: [10, 20, 30], q2: [5, -10, 15] });
+
+  it("groups series side by side within each category band", () => {
+    const { scene, model } = build({ marks: [bar(sales, { x: "region", y: ["q1", "q2"] })] });
+    const [q1, q2] = rects(scene);
+    expect(q1!.count).toBe(3);
+    const x = model.xScale()!;
+    expect(x.type).toBe("band");
+    expect(scene.axes.find((a) => a.orient === "bottom")!.ticks.map((t) => t.label)).toEqual([
+      "N",
+      "S",
+      "E",
+    ]);
+    // q2 sits right of q1 in every band, both inside the band.
+    for (let i = 0; i < 3; i++) {
+      const [x1, , w1] = rect(q1!, i);
+      const [x2, , w2] = rect(q2!, i);
+      expect(x2!).toBeGreaterThan(x1! + w1! - 0.01);
+      expect(x1!).toBeGreaterThanOrEqual(x.start!(i) - 0.01);
+      expect(x2! + w2!).toBeLessThanOrEqual(x.start!(i) + x.bandwidth! + 0.01);
+    }
+    // Negative values extend below the zero line.
+    const zero = model.yScale()!.map(0);
+    const [, ySouth, , hSouth] = rect(q2!, 1);
+    expect(ySouth).toBeCloseTo(zero, 1);
+    expect(hSouth!).toBeGreaterThan(0);
+  });
+
+  it("stacks positive and negative values separately", () => {
+    const { model } = build({ marks: [bar(sales, { x: "region", y: ["q1", "q2"], stack: true })] });
+    const [q1, q2] = model.series();
+    expect(Array.from(q2!.y0!)).toEqual([10, 0, 30]);
+    expect(Array.from(q2!.y)).toEqual([15, -10, 45]);
+    expect(Array.from(q1!.y)).toEqual([10, 20, 30]);
+  });
+
+  it("uses the full band for each stacked layer", () => {
+    const { scene } = build({ marks: [bar(sales, { x: "region", y: ["q1", "q2"], stack: true })] });
+    const [q1, q2] = rects(scene);
+    expect(rect(q1!, 0)[0]).toBeCloseTo(rect(q2!, 0)[0]!);
+    expect(rect(q1!, 0)[2]).toBeCloseTo(rect(q2!, 0)[2]!);
+  });
+
+  it("centers bars on time values with room at both ends", () => {
+    const start = Date.UTC(2026, 0, 1);
+    const counts = table({ t: time([start, start + 60_000, start + 120_000]), n: [1, 2, 3] });
+    const { scene, model } = build({ marks: [bar(counts, { x: "t", y: "n" })] });
+    const [bars] = rects(scene);
+    const x = model.xScale()!;
+    const spacing = x.map(start + 60_000) - x.map(start);
+    // 80% of the spacing, capped so sparse data does not draw giant bars.
+    expect(rect(bars!, 0)[2]).toBeCloseTo(Math.min(64, spacing * 0.8), 1);
+    expect(rect(bars!, 0)[0]!).toBeGreaterThanOrEqual(scene.plot.x - 0.01);
+    expect(rect(bars!, 2)[0]! + rect(bars!, 2)[2]!).toBeLessThanOrEqual(
+      scene.plot.x + scene.plot.width + 0.01,
+    );
+  });
+
+  it("regroups when a series is hidden", () => {
+    const { model } = build({ marks: [bar(sales, { x: "region", y: ["q1", "q2"] })] });
+    model.hidden.add(model.series()[1]!.key);
+    const [only] = rects(model.scene(estimateText));
+    expect(rect(only!, 0)[2]).toBeCloseTo(Math.abs(model.xScale()!.bandwidth!), 1);
+  });
+
+  it("reports every series in a category for tooltips", () => {
+    const { scene, model } = build({ marks: [bar(sales, { x: "region", y: ["q1", "q2"] })] });
+    const inspection = model.inspect(model.xScale()!.map(2), scene.plot.y + 10)!;
+    expect(inspection.label).toBe("E");
+    expect(inspection.points.map((p) => p.value)).toEqual([30, 15]);
+  });
+
+  it("thins category labels that would overlap", () => {
+    const many = table({
+      name: Array.from({ length: 200 }, (_, i) => `category ${i}`),
+      v: new Float64Array(200).fill(1),
+    });
+    const { scene } = build({ marks: [bar(many, { x: "name", y: "v" })] });
+    const ticks = scene.axes.find((a) => a.orient === "bottom")!.ticks;
+    expect(ticks.length).toBeLessThan(20);
+    for (let i = 1; i < ticks.length; i++) {
+      const gap = ticks[i]!.position - ticks[i - 1]!.position;
+      expect(gap).toBeGreaterThan(estimateText(ticks[i - 1]!.label, "12px sans-serif"));
+    }
+  });
+
+  it("cannot share a categorical axis with numeric marks", () => {
+    const mixed = table({ name: ["a"], x: [1], v: [1] });
+    expect(() =>
+      build({ marks: [bar(mixed, { x: "name", y: "v" }), line(mixed, { x: "x", y: "v" })] }),
+    ).toThrow(/cannot share a categorical x axis/);
+    expect(() =>
+      build({ marks: [bar(mixed, { x: "name", y: "v" }), bar(mixed, { x: "x", y: "v" })] }),
+    ).toThrow(/cannot share a categorical x axis/);
+    expect(() =>
+      build({
+        marks: [
+          heatmap(mixed, { x: "name", y: "x", value: "v" }),
+          bar(mixed, { x: "name", y: "v" }),
+        ],
+      }),
+    ).toThrow(/cannot share a categorical y axis/);
+  });
+
+  it("rejects a y field listed twice", () => {
+    expect(() => bar(sales, { x: "region", y: ["q1", "q1"], stack: true })).toThrow(
+      /"q1" is listed twice/,
+    );
+  });
+
+  it("leaves rows without a category out of the y domain", () => {
+    const partial = table({ x: ["a", null], v: [1, 1_000_000] });
+    const { model } = build({ marks: [bar(partial, { x: "x", y: "v" })] });
+    expect(model.yScale()!.domain[1]).toBeLessThan(10);
+  });
+
+  it("keeps log x domains finite at extreme magnitudes", () => {
+    const wide = table({ x: [1e-200, 1e200], v: [1, 2] });
+    const { model } = build({ x: { type: "log" }, marks: [bar(wide, { x: "x", y: "v" })] });
+    const [lo, hi] = model.xScale()!.domain;
+    expect(lo).toBeGreaterThan(0);
+    expect(Number.isFinite(hi)).toBe(true);
+  });
+
+  it("shares stack arrays across series split by a category", () => {
+    const long = table({ x: ["a", "a", "b", "b"], v: [1, 2, 3, 4], g: ["p", "q", "p", "q"] });
+    const { model } = build({ marks: [bar(long, { x: "x", y: "v", series: "g", stack: true })] });
+    const [p, q] = model.series();
+    // Each row belongs to one series, so one table-sized array holds every top.
+    expect(p!.y).toBe(q!.y);
+    expect(Array.from(q!.y)).toEqual([1, 3, 3, 7]);
+    expect(Array.from(q!.y0!)).toEqual([0, 1, 0, 3]);
+  });
+
+  it("pads log x domains in log space", () => {
+    const counts = table({ x: [1, 10], v: [1, 2] });
+    const { model, scene } = build({
+      x: { type: "log" },
+      marks: [bar(counts, { x: "x", y: "v" })],
+    });
+    const [lo, hi] = model.xScale()!.domain;
+    expect(lo).toBeGreaterThan(0);
+    expect(lo).toBeLessThan(1);
+    expect(hi).toBeGreaterThan(10);
+    expect(rects(scene)[0]!.count).toBe(2);
+  });
+
+  it("draws stacked bars on a log y axis from the bottom of the plot", () => {
+    const { scene } = build({
+      y: { type: "log" },
+      marks: [bar(sales, { x: "region", y: "q1", stack: true })],
+    });
+    const [bars] = rects(scene);
+    expect(bars!.count).toBe(3);
+    const [, top, , height] = rect(bars!, 0);
+    expect(top! + height!).toBeCloseTo(scene.plot.y + scene.plot.height, 1);
+  });
+
+  it("sizes numeric bars by the gap between neighbors of any series", () => {
+    const interleaved = table({ x: [0, 1, 100, 101], v: [1, 1, 1, 1], g: ["a", "b", "a", "b"] });
+    const { scene, model } = build({ marks: [bar(interleaved, { x: "x", y: "v", series: "g" })] });
+    const x = model.xScale()!;
+    const [a, b] = rects(scene);
+    // Positions 0 and 1 are neighbors: their slot is 80% of that gap, split in two.
+    const gap = x.map(1) - x.map(0);
+    expect(rect(a!, 0)[2]).toBeCloseTo(((gap * 0.8) / 2) * 0.9, 1);
+    expect(rect(b!, 1)[2]).toBeCloseTo(((gap * 0.8) / 2) * 0.9, 1);
+  });
+});
+
+describe("point", () => {
+  it("draws every point and picks the nearest through its index", () => {
+    const pts = table({ x: [0, 1, 2, 3], y: [0, 1, 0, 1], kind: ["a", "b", "a", "b"] });
+    const { scene, model } = build({ marks: [point(pts, { x: "x", y: "y", series: "kind" })] });
+    const geometry = scene.marks as PointGeometry[];
+    expect(geometry.map((g) => g.count)).toEqual([2, 2]);
+    expect(model.tooltipMode()).toBe("nearest");
+    const target = model.xScale()!.map(2);
+    const inspection = model.inspect(target + 2, model.yScale()!.map(0) - 1)!;
+    expect(inspection.x).toBe(2);
+    expect(inspection.points[0]!.label).toBe("a");
+  });
+
+  it("leaves room for whole points at the plot edges", () => {
+    const pts = table({ x: [0, 10, 3], y: [0, 7, 7], kind: ["a", "a", "b"] });
+    const { scene } = build({ marks: [point(pts, { x: "x", y: "y", series: "kind", r: 4 })] });
+    const { plot } = scene;
+    for (const g of scene.marks as PointGeometry[]) {
+      for (let i = 0; i < g.count; i++) {
+        const [px, py] = [g.coords[i * 2]!, g.coords[i * 2 + 1]!];
+        expect(px - 4).toBeGreaterThanOrEqual(plot.x - 0.01);
+        expect(px + 4).toBeLessThanOrEqual(plot.x + plot.width + 0.01);
+        expect(py - 4).toBeGreaterThanOrEqual(plot.y - 0.01);
+        expect(py + 4).toBeLessThanOrEqual(plot.y + plot.height + 0.01);
+      }
+    }
+  });
+
+  it("samples opaque points per device pixel only when asked", () => {
+    const n = 20_000;
+    const dense = table({
+      x: Float64Array.from({ length: n }, (_, i) => i % 10),
+      y: Float64Array.from({ length: n }, (_, i) => i % 7),
+    });
+    const count = (options: Partial<PointOptions<{ x: "number"; y: "number" }>>) =>
+      (
+        build({ marks: [point(dense, { x: "x", y: "y", ...options })] }).scene
+          .marks[0] as PointGeometry
+      ).count;
+    expect(count({})).toBe(n);
+    expect(count({ sampling: "pixel" })).toBe(70);
+    // Overlapping translucent points darken, so sampling must keep them all,
+    // whether the opacity comes from fillOpacity or from the color.
+    expect(count({ sampling: "pixel", fillOpacity: 0.5 })).toBe(n);
+    expect(count({ sampling: "pixel", fill: "rgba(0, 0, 0, 0.5)" })).toBe(n);
+    expect(count({ sampling: "pixel", fill: "#123456" })).toBe(70);
+  });
+
+  it("picks from each chart's own index when charts share a mark", () => {
+    const pts = table({ x: [0, 10], y: [0, 10] });
+    const mark = point(pts, { x: "x", y: "y" });
+    build({ marks: [mark] }, 600, 300);
+    const { model } = build({ marks: [mark] }, 300, 150);
+    const inspection = model.inspect(model.xScale()!.map(10), model.yScale()!.map(10))!;
+    expect(inspection.x).toBe(10);
+  });
+
+  it("does not pick points clipped out of view", () => {
+    const pts = table({ x: [-1, 1], y: [5, 5] });
+    const { model } = build({ marks: [point(pts, { x: "x", y: "y" })] });
+    model.setViewport([0, 10]);
+    const scene = model.scene(estimateText);
+    expect((scene.marks[0] as PointGeometry).count).toBe(1);
+    const inspection = model.inspect(scene.plot.x, model.yScale()!.map(5))!;
+    expect(inspection.x).toBe(1);
+  });
+
+  it("snaps nearest-x tooltips to points inside the x domain", () => {
+    const pts = table({ x: [-1, 1], y: [5, 5] });
+    const { model } = build({
+      tooltip: { mode: "nearest-x" },
+      marks: [point(pts, { x: "x", y: "y" })],
+    });
+    model.setViewport([0, 10]);
+    const scene = model.scene(estimateText);
+    expect(model.inspect(scene.plot.x, scene.plot.y + 5)!.x).toBe(1);
+    // Sorted series too: the nearest x inside [2.5, 5] to 2.5 is 3, not 2.
+    const steps = table({ x: [0, 1, 2, 3, 4, 5, 6], v: [0, 1, 2, 3, 4, 5, 6] });
+    const lines = build({ marks: [line(steps, { x: "x", y: "v" })] }).model;
+    lines.setViewport([2.5, 5]);
+    const plot = lines.scene(estimateText).plot;
+    expect(lines.inspect(plot.x, plot.y + 5)!.x).toBe(3);
+  });
+
+  it("honors an explicit nearest-x tooltip mode", () => {
+    const pts = table({ x: [0, 1, 2], y: [3, 4, 5] });
+    const { model } = build({
+      tooltip: { mode: "nearest-x" },
+      marks: [point(pts, { x: "x", y: "y" })],
+    });
+    expect(model.tooltipMode()).toBe("nearest-x");
+    // Far below the point, but at its x.
+    const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(3))!;
+    expect(inspection.x).toBe(1);
+    expect(inspection.points[0]!.value).toBe(4);
+  });
+});
+
+describe("heatmap", () => {
+  const cells = table({
+    col: ["a", "b", "a", "b"],
+    row: ["low", "low", "high", "high"],
+    v: [0, 1, 2, Number.NaN],
+  });
+
+  it("rasterizes cells with the first row at the bottom", () => {
+    const { scene } = build({ marks: [heatmap(cells, { x: "col", y: "row", value: "v" })] });
+    const raster = scene.marks[0] as RasterGeometry;
+    expect([raster.columns, raster.rows]).toEqual([2, 2]);
+    const alpha = (c: number, r: number) => raster.pixels[(r * 2 + c) * 4 + 3];
+    // Raster row 1 is the bottom band ("low"); the missing cell is transparent.
+    expect(alpha(0, 1)).toBe(255);
+    expect(alpha(1, 0)).toBe(0);
+    expect(raster.width).toBeCloseTo(scene.plot.width, 0);
+    expect(raster.height).toBeCloseTo(scene.plot.height, 0);
+  });
+
+  it("uses distinct numbers as ordered columns", () => {
+    const grid = table({ x: [3, 1, 2, 1], y: [0, 0, 0, 1], v: [1, 2, 3, 4] });
+    const { scene } = build({ marks: [heatmap(grid, { x: "x", y: "y", value: "v" })] });
+    expect(scene.axes.find((a) => a.orient === "bottom")!.ticks.map((t) => t.label)).toEqual([
+      "1",
+      "2",
+      "3",
+    ]);
+  });
+
+  it("finds the cell under the pointer", () => {
+    const { model } = build({ marks: [heatmap(cells, { x: "col", y: "row", value: "v" })] });
+    const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(0))!;
+    expect(inspection.label).toBe("b");
+    expect(inspection.points[0]).toMatchObject({ label: "low", value: 1, text: "1" });
+    expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(1))).toBeUndefined();
+  });
+
+  it("keeps numbers whose labels coincide in separate columns", () => {
+    const close = table({ x: [1.001, 1.002], y: [0, 0], v: [1, 2] });
+    const { scene } = build({ marks: [heatmap(close, { x: "x", y: "y", value: "v" })] });
+    expect((scene.marks[0] as RasterGeometry).columns).toBe(2);
+  });
+
+  it("finds cells after another mark changes the band order", () => {
+    const later = table({ col: ["b", "c"], row: ["r", "r"], v: [1, 2] });
+    const earlier = table({ col: ["a"], row: ["r"], v: [3] });
+    const mark = heatmap(later, { x: "col", y: "row", value: "v" });
+    const { model } = build({ marks: [mark] });
+    expect(model.inspect(model.xScale()!.map(0), model.yScale()!.map(0))!.label).toBe("b");
+    model.update({
+      locale: "en-US",
+      timeZone: "UTC",
+      marks: [heatmap(earlier, { x: "col", y: "row", value: "v" }), mark],
+    });
+    model.scene(estimateText);
+    const at = (column: number) =>
+      model.inspect(model.xScale()!.map(column), model.yScale()!.map(0))!;
+    expect(at(0).points.map((p) => p.value)).toEqual([3]);
+    expect(at(1)).toMatchObject({ label: "b", points: [{ value: 1 }] });
+  });
+
+  it("reports the cell under the pointer even in nearest-x mode", () => {
+    const column = table({ c: ["a", "a"], r: ["r1", "r2"], v: [Number.NaN, 10] });
+    const { model } = build({
+      tooltip: { mode: "nearest-x" },
+      marks: [heatmap(column, { x: "c", y: "r", value: "v" })],
+    });
+    expect(model.tooltipMode()).toBe("nearest");
+    const [px, py] = [model.xScale()!.map(0), model.yScale()!.map(1)];
+    for (const mode of [undefined, "nearest-x", "nearest"] as const) {
+      expect(model.inspect(px, py, mode)!.points).toMatchObject([{ label: "r2", value: 10 }]);
+    }
+  });
+
+  it("reports the visible layer of overlapping heatmaps", () => {
+    const below = table({ c: ["a", "b"], r: ["r", "r"], v: [1, 1] });
+    const above = table({ c: ["a", "b"], r: ["r", "r"], v: [2, Number.NaN] });
+    const { model } = build({
+      marks: [
+        heatmap(below, { x: "c", y: "r", value: "v" }),
+        heatmap(above, { x: "c", y: "r", value: "v" }),
+      ],
+    });
+    const at = (column: number) =>
+      model.inspect(model.xScale()!.map(column), model.yScale()!.map(0))!.points[0]!.value;
+    // The upper layer covers "a"; its missing "b" cell shows the layer below.
+    expect(at(0)).toBe(2);
+    expect(at(1)).toBe(1);
+  });
+
+  it("keeps an earlier value when a later row for the cell is missing", () => {
+    const repeated = table({ c: ["a", "a"], r: ["r", "r"], v: [5, Number.NaN] });
+    const { scene, model } = build({ marks: [heatmap(repeated, { x: "c", y: "r", value: "v" })] });
+    expect((scene.marks[0] as RasterGeometry).pixels[3]).toBe(255);
+    expect(model.inspect(model.xScale()!.map(0), model.yScale()!.map(0))!.points[0]!.value).toBe(5);
+  });
+
+  it("rejects colors the raster cannot read", () => {
+    expect(() =>
+      heatmap(cells, { x: "col", y: "row", value: "v", colors: ["white", "red"] }),
+    ).toThrow(/hex colors/);
+    expect(() => build({ theme: { sequential: ["#fff", "#0008"] }, marks: [] })).toThrow(
+      /hex colors/,
+    );
+  });
+
+  it("refuses grids beyond the cell limit", () => {
+    const side = Math.ceil(Math.sqrt(MAX_CELLS)) + 1;
+    const diagonal = Float64Array.from({ length: side }, (_, i) => i);
+    const sparse = table({ x: diagonal, y: diagonal, v: diagonal });
+    expect(() => build({ marks: [heatmap(sparse, { x: "x", y: "y", value: "v" })] })).toThrow(
+      /exceeds the limit/,
+    );
+  });
+
+  it("shows a color legend instead of series entries", () => {
+    const { scene } = build({
+      marks: [heatmap(cells, { x: "col", y: "row", value: "v", label: "Load" })],
+    });
+    expect(scene.legend).toEqual([]);
+    expect(scene.colorLegend).toMatchObject({
+      title: { text: "Load" },
+      low: { text: "0" },
+      high: { text: "2" },
+    });
+  });
+});

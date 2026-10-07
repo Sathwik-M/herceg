@@ -3,9 +3,12 @@ import { linearTicks, niceDomain } from "./ticks.ts";
 
 export type ScaleType = "linear" | "log" | "time" | "band";
 
-/** Maps numeric domain values to pixels. Time values are epoch milliseconds. */
-export interface ContinuousScale {
-  readonly type: "linear" | "log" | "time";
+/**
+ * Maps numeric domain values to pixels. Time values are epoch milliseconds;
+ * band scales map category indices (0, 1, 2, ...) to band centers.
+ */
+export interface PositionScale {
+  readonly type: ScaleType;
   readonly domain: readonly [number, number];
   readonly range: readonly [number, number];
   map(value: number): number;
@@ -13,6 +16,12 @@ export interface ContinuousScale {
   ticks(count: number): number[];
   /** Coefficients for inlining the mapping in hot loops. */
   mapping(): Mapping;
+  /** Band scales: category labels in index order. */
+  readonly categories?: readonly string[];
+  /** Band scales: width of each band in pixels (negative for reversed ranges). */
+  readonly bandwidth?: number;
+  /** Band scales: the band's start edge. */
+  start?(index: number): number;
 }
 
 /**
@@ -21,7 +30,7 @@ export interface ContinuousScale {
  * start keeps precision for narrow domains far from zero, such as a
  * millisecond-wide zoom into epoch timestamps.
  */
-export class LinearScale implements ContinuousScale {
+export class LinearScale implements PositionScale {
   readonly type: "linear" | "time" = "linear";
   readonly domain: readonly [number, number];
   readonly range: readonly [number, number];
@@ -59,7 +68,7 @@ export class LinearScale implements ContinuousScale {
 }
 
 /** Base-10 logarithmic scale. Domains must be finite and strictly positive. */
-export class LogScale implements ContinuousScale {
+export class LogScale implements PositionScale {
   readonly type = "log" as const;
   readonly domain: readonly [number, number];
   readonly range: readonly [number, number];
@@ -121,29 +130,32 @@ export function niceLogDomain(start: number, stop: number): [number, number] {
 export { niceDomain };
 
 /**
- * Evenly spaced bands for categories, for bars and heatmap cells.
- * `padding` is the fraction of each step left empty between bands.
+ * Evenly spaced bands for categories, for bars and heatmap cells. Values are
+ * category indices; `map` returns band centers. `padding` is the fraction of
+ * each step left empty between bands.
  */
-export class BandScale {
+export class BandScale implements PositionScale {
   readonly type = "band" as const;
-  readonly domain: readonly string[];
+  readonly categories: readonly string[];
+  readonly domain: readonly [number, number];
   readonly range: readonly [number, number];
   readonly padding: number;
   readonly step: number;
   readonly bandwidth: number;
   readonly #start: number;
 
-  constructor(domain: readonly string[], range: readonly [number, number], padding = 0.1) {
-    this.domain = domain;
+  constructor(categories: readonly string[], range: readonly [number, number], padding = 0.2) {
+    this.categories = categories;
+    this.domain = [-0.5, categories.length - 0.5];
     this.range = range;
     this.padding = padding;
-    const count = Math.max(1, domain.length);
+    const count = Math.max(1, categories.length);
     this.step = (range[1] - range[0]) / (count + padding);
     this.bandwidth = this.step * (1 - padding);
     this.#start = range[0] + this.step * padding;
   }
 
-  /** Left (or top) edge of the band at `index`. */
+  /** Start edge of the band at `index`. */
   start(index: number): number {
     return this.#start + index * this.step;
   }
@@ -153,11 +165,26 @@ export class BandScale {
     return this.start(index) + this.bandwidth / 2;
   }
 
-  /** Band index under a pixel, or -1. */
+  /** Fractional band index of a pixel; round it to get the nearest band. */
   invert(pixel: number): number {
-    const index = Math.floor((pixel - this.#start + (this.step - this.bandwidth) / 2) / this.step);
-    return index >= 0 && index < this.domain.length ? index : -1;
+    return (pixel - this.map(0)) / this.step;
+  }
+
+  /** Band index under a pixel, or -1 between or outside bands' slots. */
+  index(pixel: number): number {
+    const index = Math.round(this.invert(pixel));
+    return index >= 0 && index < this.categories.length ? index : -1;
+  }
+
+  /** Every k-th band, so at most about `count` ticks. */
+  ticks(count: number): number[] {
+    const every = Math.max(1, Math.ceil(this.categories.length / Math.max(1, count)));
+    const ticks: number[] = [];
+    for (let i = 0; i < this.categories.length; i += every) ticks.push(i);
+    return ticks;
+  }
+
+  mapping(): Mapping {
+    return { origin: 0, offset: this.map(0), factor: this.step, log: false };
   }
 }
-
-export type PositionScale = ContinuousScale | BandScale;

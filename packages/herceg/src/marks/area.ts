@@ -81,8 +81,10 @@ export class AreaMark implements Mark<AreaSpec> {
     this.zero = !band;
   }
 
-  xKind() {
-    return this.table.kind(this.spec.x);
+  readonly tooltip = "x";
+
+  channelKind(axis: "x" | "y") {
+    return axis === "x" ? this.table.kind(this.spec.x) : "number";
   }
 
   series(key: MarkKey, palette: Palette, hidden: ReadonlySet<string>) {
@@ -105,7 +107,8 @@ export class AreaMark implements Mark<AreaSpec> {
       };
       return [series];
     }
-    const series = buildSeries(table, this.#split.sources(), spec.x, key, palette, spec.fill);
+    const x = table.numbers(spec.x as never);
+    const series = buildSeries(table, this.#split.sources(), x, key, palette, spec.fill);
     if (spec.stack) {
       // Hidden layers drop out of the stack, so the layers above settle down.
       const shown = series.map((s) => !hidden.has(s.key));

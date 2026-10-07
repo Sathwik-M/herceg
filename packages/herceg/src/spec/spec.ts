@@ -108,9 +108,11 @@ export interface ThemeSpec {
   fontSize?: number;
   /** Categorical colors in assignment order. */
   palette?: string[];
+  /** Ramp for continuous color (heatmaps), from low to high values. */
+  sequential?: string[];
 }
 
-export type MarkSpec = LineSpec | AreaSpec | RuleSpec;
+export type MarkSpec = LineSpec | AreaSpec | RuleSpec | BarSpec | PointSpec | HeatmapSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -168,5 +170,50 @@ export interface RuleSpec {
   stroke?: string;
   strokeWidth?: number;
   dash?: number[];
+  label?: string;
+}
+
+/**
+ * Vertical bars. A category `x` gives one band per category; a number or time
+ * `x` centers bars on their values.
+ */
+export interface BarSpec extends MarkBase {
+  type: "bar";
+  x: Field;
+  y: Field | Field[];
+  series?: Field;
+  /** Stack series instead of placing them side by side. */
+  stack?: boolean;
+  fill?: string;
+  fillOpacity?: number;
+  label?: string;
+}
+
+/** Points at (x, y): scatter plots. */
+export interface PointSpec extends MarkBase {
+  type: "point";
+  x: Field;
+  y: Field;
+  series?: Field;
+  /** Radius in pixels. */
+  r?: number;
+  fill?: string;
+  fillOpacity?: number;
+  /** "pixel" draws opaque points sharing a device pixel once. Default "none". */
+  sampling?: "none" | "pixel";
+  label?: string;
+}
+
+/**
+ * A grid of cells colored by `value`. Category fields give one column (or
+ * row) per category; number and time fields one per distinct value.
+ */
+export interface HeatmapSpec extends MarkBase {
+  type: "heatmap";
+  x: Field;
+  y: Field;
+  value: Field;
+  /** Color ramp from low to high values; defaults to the theme's. */
+  colors?: string[];
   label?: string;
 }

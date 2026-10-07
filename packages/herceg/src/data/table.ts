@@ -39,14 +39,19 @@ type KindOfInput<V> = V extends TimeInput
 /** Schema inferred from the columns passed to `table()`. */
 export type SchemaOf<T> = { [K in keyof T & string]: KindOfInput<T[K]> };
 
-/** Fields usable as numeric positions (numbers and times). */
-export type NumericField<S extends Schema> = {
-  [K in keyof S & string]: S[K] extends "number" | "time" ? K : never;
-}[keyof S & string];
+/**
+ * Fields usable as numeric positions (numbers and times). Tables whose field
+ * names are only known at runtime (a string index signature) accept any
+ * string; marks check those fields when they are created.
+ */
+export type NumericField<S extends Schema> = string extends keyof S
+  ? string
+  : { [K in keyof S & string]: S[K] extends "number" | "time" ? K : never }[keyof S & string];
 
-export type CategoryField<S extends Schema> = {
-  [K in keyof S & string]: S[K] extends "category" ? K : never;
-}[keyof S & string];
+/** Category fields, with the same fallback for runtime field names. */
+export type CategoryField<S extends Schema> = string extends keyof S
+  ? string
+  : { [K in keyof S & string]: S[K] extends "category" ? K : never }[keyof S & string];
 
 export type FieldName<S extends Schema> = keyof S & string;
 

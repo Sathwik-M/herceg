@@ -1,5 +1,5 @@
-import { area, createChart, line, table, time } from "herceg";
-import type { SeriesData } from "../datasets.ts";
+import { area, bar, type Chart, createChart, heatmap, line, point, table, time } from "herceg";
+import type { CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartKind, ChartOptions } from "../page/adapter.ts";
 import { clientPoint } from "../page/adapter.ts";
 
@@ -62,9 +62,83 @@ function lineKind(fill: boolean): ChartKind<SeriesData> {
   };
 }
 
+function common(chart: Chart): Pick<ChartHandle<unknown>, "pixelOf" | "resize" | "destroy"> {
+  return {
+    pixelOf: (_series, _index, x, y) =>
+      clientPoint(chart.root, chart.model.xScale()!.map(x), chart.model.yScale()!.map(y)),
+    resize: (width, height) => chart.update({ width, height }),
+    destroy: () => chart.destroy(),
+  };
+}
+
+function barColumns(data: CategoryData) {
+  const columns: Record<string, Float64Array | string[]> = { category: data.categories };
+  data.series.forEach((s, i) => {
+    columns[`s${i}`] = s.values;
+  });
+  return columns;
+}
+
+// Heatmap cells as one row each: column index, row index, value.
+function gridColumns(data: GridData) {
+  const count = data.columns * data.rows;
+  const c = new Float64Array(count);
+  const r = new Float64Array(count);
+  for (let i = 0; i < count; i++) {
+    c[i] = i % data.columns;
+    r[i] = Math.floor(i / data.columns);
+  }
+  return { c, r, v: data.values };
+}
+
 export const adapter: Adapter = {
   id: "herceg",
   renderer: { normal: "auto (svg below 4,000 drawn points, canvas above)", large: "auto" },
   line: lineKind(false),
   area: lineKind(true),
+  bar: {
+    prepare: (data) => table(barColumns(data)),
+    create(container, data, options) {
+      const source = table(barColumns(data));
+      const fields = data.series.map((_, i) => `s${i}`);
+      const chart = createChart(container, {
+        width: options.width,
+        height: options.height,
+        tooltip: options.tooltip,
+        marks: [bar(source, { x: "category", y: fields })],
+      });
+      return { ...common(chart), setData: (next) => source.reset(barColumns(next)) };
+    },
+  },
+  scatter: {
+    prepare: (data) => table({ x: data.x, y: data.y }),
+    create(container, data, options) {
+      const source = table({ x: data.x, y: data.y });
+      const chart = createChart(container, {
+        width: options.width,
+        height: options.height,
+        tooltip: options.tooltip,
+        marks: [point(source, { x: "x", y: "y", r: 1.5 })],
+      });
+      return {
+        ...common(chart),
+        setData: (next: PointData) => source.reset({ x: next.x, y: next.y }),
+      };
+    },
+  },
+  heatmap: {
+    prepare: (data) => table(gridColumns(data)),
+    create(container, data, options) {
+      const source = table(gridColumns(data));
+      const chart = createChart(container, {
+        width: options.width,
+        height: options.height,
+        tooltip: options.tooltip,
+        // Same ramp and no color legend, as configured for the other libraries.
+        legend: false,
+        marks: [heatmap(source, { x: "c", y: "r", value: "v", colors: ["#f7fbff", "#08306b"] })],
+      });
+      return { ...common(chart), setData: (next) => source.reset(gridColumns(next)) };
+    },
+  },
 };

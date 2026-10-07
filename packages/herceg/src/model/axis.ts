@@ -7,19 +7,20 @@ import {
 } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
 import {
-  type ContinuousScale,
+  BandScale,
   LinearScale,
   LogScale,
   niceDomain,
   niceLogDomain,
+  type PositionScale,
 } from "../scale/scale.ts";
 import { niceTimeDomain, TimeScale } from "../scale/time.ts";
 import type { AxisSpec } from "../spec/spec.ts";
 
-export type AxisType = "linear" | "log" | "time";
+export type AxisType = "linear" | "log" | "time" | "band";
 
 export interface AxisPlan {
-  scale: ContinuousScale;
+  scale: PositionScale;
   ticks: number[];
   labels: string[];
 }
@@ -45,6 +46,32 @@ export function usableDomain(
   return [lo - pad, lo + pad];
 }
 
+/**
+ * Widens an automatic domain so glyphs reaching `inset` pixels past their
+ * data position stay inside a plot `pixels` long. Applied after rounding to
+ * nice values, so ticks stay round and the axis ends just past them. Log
+ * domains widen in log space.
+ */
+export function insetDomain(
+  domain: [number, number],
+  inset: number,
+  pixels: number,
+  type: AxisType,
+): [number, number] {
+  // Tiny plots keep the data domain rather than shrinking the data to a point.
+  if (!(inset > 0) || pixels <= 4 * inset) return domain;
+  const log = type === "log";
+  const lo = log ? Math.log10(domain[0]) : domain[0];
+  const hi = log ? Math.log10(domain[1]) : domain[1];
+  const pad = ((hi - lo) * inset) / (pixels - 2 * inset);
+  const widened: [number, number] = log
+    ? [10 ** (lo - pad), 10 ** (hi + pad)]
+    : [lo - pad, hi + pad];
+  // Domains near the limits of floating point keep their data ends.
+  const usable = widened.every((v) => Number.isFinite(v) && (!log || v > 0));
+  return usable ? widened : domain;
+}
+
 /** Applies the axis' nice option to a domain. */
 export function niceAxisDomain(
   domain: [number, number],
@@ -62,7 +89,7 @@ export function createScale(
   context: AxisContext,
   domain: readonly [number, number],
   range: readonly [number, number],
-): ContinuousScale {
+): PositionScale {
   if (context.type === "log") return new LogScale(domain, range);
   if (context.type === "time") return new TimeScale(domain, range, context.zone);
   return new LinearScale(domain, range);
@@ -99,4 +126,23 @@ export function valueFormatter(context: AxisContext, fallback: Formatter): Forma
   return context.type === "time"
     ? timeFormatter(format as Intl.DateTimeFormatOptions, context.zone, context.locale)
     : numberFormatter(format as Intl.NumberFormatOptions, context.locale);
+}
+
+/**
+ * A band axis. Labels are thinned to every k-th band so neighbors do not
+ * overlap: horizontal labels need their width, vertical ones a line height.
+ */
+export function planBandAxis(
+  categories: readonly string[],
+  range: readonly [number, number],
+  padding: number,
+  labelSize: (label: string) => number,
+): AxisPlan {
+  const scale = new BandScale(categories, range, padding);
+  let size = 0;
+  for (const label of categories) size = Math.max(size, labelSize(label));
+  const every = Math.max(1, Math.ceil((size + 6) / Math.max(1e-9, Math.abs(scale.step))));
+  const ticks: number[] = [];
+  for (let i = 0; i < categories.length; i += every) ticks.push(i);
+  return { scale, ticks, labels: ticks.map((i) => categories[i]!) };
 }

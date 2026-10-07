@@ -54,3 +54,8 @@ rows.numbers("value");
 rows.categories("name");
 // @ts-expect-error booleans are not fields
 rows.numbers("flag");
+
+// Field names known only at runtime fall back to strings checked at runtime.
+declare const dynamic: Record<string, Float64Array>;
+const runtime = table(dynamic);
+runtime.numbers("anything");
