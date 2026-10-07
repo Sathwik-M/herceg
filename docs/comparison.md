@@ -64,8 +64,8 @@ React DOM out, since an application using the adapter already ships them.
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-line | 0.0.0 (413a800) | 65.0 | 23.5 | 21.3 | - | 2.8 |
-| herceg-react-line | 0.0.0 (413a800) | 66.6 | 24.2 | 21.9 | - | 2.8 |
+| herceg-line | 0.0.0 (bffe8c1) | 65.5 | 23.7 | 21.4 | - | 2.8 |
+| herceg-react-line | 0.0.0 (bffe8c1) | 67.1 | 24.4 | 22.0 | - | 2.8 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |
