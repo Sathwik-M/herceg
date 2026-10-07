@@ -232,6 +232,7 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       fill: string,
       fillOpacity: fraction,
       label: string,
+      labels: (v, path) => (typeof v === "boolean" ? undefined : format("linear")(v, path)),
     },
   },
   point: {

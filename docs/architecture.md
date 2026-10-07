@@ -421,8 +421,8 @@ the DOM, creating an offscreen canvas in that canvas' document when
 - Custom marks are JavaScript only, have no legend entries or tooltips, and
   cannot bind category fields.
 - Annotation fields cannot be categories (constants on a category axis are
-  band indices), so bars have no value labels yet; text has no collision
-  avoidance or connectors.
+  band indices); text has no collision avoidance or connectors. Bar value
+  labels estimate text widths from the font size to decide what fits.
 - Continuous color only for heatmaps; points cannot be colored by a numeric
   field.
 - One x and one y axis per chart.

@@ -108,6 +108,7 @@ const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
 bar(sales, { x: "region", y: ["q1", "q2"] }); // grouped; stack: true stacks them
 bar(sales, { x: "q1", y: "region" }); // a category y gives horizontal bars
 bar(requests, { x: "time", y: "latency" }); // number or time x: bars centered on values
+bar(sales, { x: "region", y: "q1", labels: true }); // values at bar ends; Intl options format them
 
 point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
 
@@ -115,7 +116,9 @@ const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(load, { x: "hour", y: "host", value: "cpu" });
 ```
 
-A category field on `x` or `y` (bars) or on `x` and `y` (heatmaps) gives a
+Bar labels go past each bar's end, or for stacks inside each segment in a
+color that contrasts with it; labels that do not fit are left out. A category
+field on `x` or `y` (bars) or on `x` and `y` (heatmaps) gives a
 band axis. Categories on a y axis run top to bottom; long names are shortened
 with an ellipsis. Horizontal bars default to "nearest-y" tooltips, which
 report every series in the band under the pointer. Heatmaps also accept number and time fields, with one column or row per

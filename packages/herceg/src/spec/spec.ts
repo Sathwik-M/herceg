@@ -298,6 +298,12 @@ export interface BarSpec extends MarkBase {
   fill?: string;
   fillOpacity?: number;
   label?: string;
+  /**
+   * Write each bar's value at its end (or, stacked, inside each segment), as
+   * a number or with these Intl.NumberFormat options. Labels that do not fit
+   * are left out.
+   */
+  labels?: boolean | Intl.NumberFormatOptions;
 }
 
 /** Points at (x, y): scatter plots. */

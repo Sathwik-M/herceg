@@ -161,6 +161,7 @@ export class RegionMark implements Mark<RegionSpec> {
       out.push({
         kind: "text",
         draw: textDrawing,
+        halo: true,
         key: seriesKey(key, "region label"),
         fill: theme.text,
         anchor: "start",

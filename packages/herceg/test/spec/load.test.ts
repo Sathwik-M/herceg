@@ -169,6 +169,12 @@ describe("loadSpec", () => {
       }),
     ).toThrow(/marks\[0\]\.x: expected at least one field name/);
     expect(check({ tooltip: { mode: "nearest-z" }, marks: [] })).toThrow(/spec\.tooltip\.mode/);
+    expect(
+      check({
+        data: { t: { columns: { c: ["a"], v: [1] } } },
+        marks: [{ type: "bar", x: "c", y: "v", labels: { maximumFractionDigits: -1 } }],
+      }),
+    ).toThrow(/marks\[0\]\.labels: /);
     expect(check({ interaction: { brush: "y" }, marks: [] })).toThrow(
       /spec\.interaction\.brush: expected "x"/,
     );

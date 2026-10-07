@@ -1,5 +1,5 @@
 // Bars, points, and heatmaps: geometry, band axes, picking, and legends.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
@@ -8,7 +8,13 @@ import { heatmap, MAX_CELLS } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { type PointOptions, point } from "../../src/marks/point.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
-import type { PointGeometry, RasterGeometry, RectGeometry, Scene } from "../../src/scene/scene.ts";
+import type {
+  PointGeometry,
+  RasterGeometry,
+  RectGeometry,
+  Scene,
+  TextGeometry,
+} from "../../src/scene/scene.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -188,6 +194,205 @@ describe("bar", () => {
     const gap = x.map(1) - x.map(0);
     expect(rect(a!, 0)[2]).toBeCloseTo(((gap * 0.8) / 2) * 0.9, 1);
     expect(rect(b!, 1)[2]).toBeCloseTo(((gap * 0.8) / 2) * 0.9, 1);
+  });
+});
+
+describe("bar labels", () => {
+  const sales = table({ region: ["N", "S", "E"], q1: [10, 20, 30], q2: [5, -10, 15] });
+  const texts = (scene: Scene) => scene.marks.filter((m): m is TextGeometry => m.kind === "text");
+
+  it("write values past the ends of bars, below for negative ones", () => {
+    const { scene, model } = build({ marks: [bar(sales, { x: "region", y: "q2", labels: true })] });
+    const [label] = texts(scene);
+    expect(label!.labels).toEqual(["5", "-10", "15"]);
+    expect([label!.anchor, label!.halo]).toEqual(["middle", true]);
+    const y = model.yScale()!;
+    expect(label!.coords[1]).toBeLessThan(y.map(5));
+    expect(label!.coords[3]).toBeGreaterThan(y.map(-10));
+  });
+
+  it("write values after horizontal bars, before negative ones, with Intl options", () => {
+    const { scene } = build({
+      marks: [bar(sales, { x: "q2", y: "region", labels: { minimumFractionDigits: 1 } })],
+    });
+    const [after, before] = texts(scene);
+    expect([after!.anchor, after!.labels]).toEqual(["start", ["5.0", "15.0"]]);
+    expect([before!.anchor, before!.labels]).toEqual(["end", ["-10.0"]]);
+  });
+
+  it("label stacked segments inside, in a contrasting color, when they fit", () => {
+    const stacked = table({ region: ["N", "S"], a: [100, 100], b: [1, 50] });
+    const { scene } = build({
+      marks: [bar(stacked, { x: "region", y: ["a", "b"], stack: true, labels: true })],
+      theme: { palette: ["#0d366b", "#cde2fb"] },
+    });
+    const [a, b] = texts(scene);
+    expect(a!.labels).toEqual(["100", "100"]);
+    expect([a!.fill, a!.halo]).toEqual(["#ffffff", false]);
+    // The 1-high segment has no room for its label.
+    expect(b!.labels).toEqual(["50"]);
+    expect(b!.fill).toBe("#000000");
+  });
+
+  it("choose text by contrast with the fill as painted, and keep a halo for unknown colors", () => {
+    const stacked = table({ region: ["N"], a: [100], b: [100], c: [100] });
+    const marks = (fill: string, fillOpacity = 1) => [
+      bar(stacked, {
+        x: "region",
+        y: ["a", "b", "c"],
+        stack: true,
+        labels: true,
+        fill,
+        fillOpacity,
+      }),
+    ];
+    const first = (fill: string, opacity?: number) =>
+      texts(build({ marks: marks(fill, opacity) }).scene)[0]!;
+    // Bright green reads better with black text, whatever its channel sum.
+    expect(first("#00ff00").fill).toBe("#000000");
+    // Half-transparent navy over a light page is light.
+    expect(first("#000080", 0.2).fill).toBe("#000000");
+    expect(first("#000080").fill).toBe("#ffffff");
+    const named = first("white");
+    expect([named.fill, named.halo]).toEqual(["#0b0b0b", true]);
+  });
+
+  it("leave room for labels in automatic domains", () => {
+    const tall = table({ x: ["a", "b"], v: [10, 20] });
+    const { scene } = build({ marks: [bar(tall, { x: "x", y: "v", labels: true })] }, 300, 150);
+    const [label] = texts(scene);
+    expect(label!.labels).toEqual(["10", "20"]);
+    expect(label!.coords[3]! - scene.theme.fontSize / 2).toBeGreaterThanOrEqual(scene.plot.y);
+  });
+
+  it("move labels that would leave the plot inside their bars", () => {
+    const tall = table({ x: ["a", "b"], v: [10, 20] });
+    const { scene } = build(
+      { marks: [bar(tall, { x: "x", y: "v", labels: true })], y: { domain: [0, 20] } },
+      300,
+      150,
+    );
+    const labels = texts(scene);
+    const inside = labels.find((l) => !l.halo)!;
+    expect(inside.labels).toEqual(["20"]);
+    for (const label of labels)
+      for (let i = 0; i < label.count; i++)
+        expect(label.coords[i * 2 + 1]! - scene.theme.fontSize / 2).toBeGreaterThanOrEqual(
+          scene.plot.y,
+        );
+  });
+
+  it("leave out labels wider than their neighbors' spacing, and do not format them", () => {
+    const dense = table({
+      x: Array.from({ length: 24 }, (_, i) => `c${i}`),
+      a: Array.from({ length: 24 }, () => 11),
+      b: Array.from({ length: 24 }, () => 11),
+    });
+    const { scene } = build({ marks: [bar(dense, { x: "x", y: ["a", "b"], labels: true })] });
+    expect(texts(scene)).toHaveLength(0);
+    // `format` is a getter that every formatting call reads.
+    const many = table({
+      x: Float64Array.from({ length: 20_000 }, (_, i) => i),
+      v: new Float64Array(20_000).fill(5),
+    });
+    const counting = bar(many, { x: "x", y: "v", labels: { maximumFractionDigits: 0 } });
+    const prototype = Intl.NumberFormat.prototype as unknown as { readonly format: unknown };
+    const format = vi.spyOn(prototype, "format", "get");
+    try {
+      build({ marks: [counting] });
+      expect(format.mock.calls.length).toBeLessThan(50);
+    } finally {
+      format.mockRestore();
+    }
+  });
+
+  it("measure wide digits as wide", () => {
+    const stacked = table({ region: ["N"], a: [11111], b: [1] });
+    const { scene } = build(
+      {
+        marks: [
+          bar(stacked, {
+            x: "region",
+            y: ["a", "b"],
+            stack: true,
+            labels: { numberingSystem: "fullwide", useGrouping: false } as Intl.NumberFormatOptions,
+          }),
+        ],
+      },
+      120,
+      300,
+    );
+    for (const label of texts(scene)) expect(label.labels).not.toContain("１１１１１");
+  });
+
+  it("keep the baseline where it is when labels need room", () => {
+    const values = table({ x: [1, 2], v: [10, 20] });
+    const zeroAt = (labels: boolean) => {
+      const { model } = build({
+        marks: [bar(values, { x: "x", y: "v", labels }), point(values, { x: "x", y: "v", r: 3 })],
+      });
+      return model.yScale()!.map(0);
+    };
+    expect(zeroAt(true)).toBeCloseTo(zeroAt(false), 6);
+  });
+
+  it("reserve no room for hidden bars", () => {
+    const values = table({ x: [1, 2], v: [100, 50] });
+    const marks = [bar(values, { x: "x", y: "v", labels: true }), line(values, { x: "x", y: "v" })];
+    const plain = build({ marks: [line(values, { x: "x", y: "v" })] }).model.yScale()!.domain;
+    const { model } = build({ marks });
+    model.hidden.add(model.series()[0]!.key);
+    model.scene(estimateText);
+    expect(model.yScale()!.domain[1]).toBe(plain[1]);
+  });
+
+  it("space grouped labels by their own bars, and keep them inside the plot", () => {
+    const wide = table({ x: [1, 2], a: [11111, 11111], b: [11111, 11111] });
+    const grouped = build({ marks: [bar(wide, { x: "x", y: ["a", "b"], labels: true })] }, 200);
+    expect(texts(grouped.scene)).toHaveLength(0);
+    const narrow = table({ x: [1, 2], a: [5, 6], b: [7, 8] });
+    const { scene } = build({
+      marks: [bar(narrow, { x: "x", y: ["a", "b"], labels: true })],
+      x: { domain: [1, 2] },
+    });
+    for (const label of texts(scene))
+      for (let i = 0; i < label.count; i++) {
+        const x = label.coords[i * 2]!;
+        expect(x).toBeGreaterThanOrEqual(scene.plot.x);
+        expect(x).toBeLessThanOrEqual(scene.plot.x + scene.plot.width);
+      }
+  });
+
+  it("center stacked labels in the visible part of a segment", () => {
+    const stacked = table({ name: ["a"], v: [100], w: [10] });
+    const { scene, model } = build({
+      marks: [bar(stacked, { x: ["v", "w"], y: "name", stack: true, labels: true })],
+      x: { domain: [50, 150] },
+    });
+    const [label] = texts(scene);
+    const x = model.xScale()!;
+    expect(label!.coords[0]).toBeCloseTo((x.map(50) + x.map(100)) / 2, 3);
+  });
+
+  it("read the alpha of CSS colors when choosing text", () => {
+    const stacked = table({ region: ["N"], a: [100], b: [100], c: [100] });
+    const marks = [
+      bar(stacked, {
+        x: "region",
+        y: ["a", "b", "c"],
+        stack: true,
+        labels: true,
+        fill: "rgba(0, 0, 128, 0.2)",
+      }),
+    ];
+    expect(texts(build({ marks }).scene)[0]!.fill).toBe("#000000");
+  });
+
+  it("format values without a chart locale", () => {
+    const model = new ChartModel({ marks: [bar(sales, { x: "region", y: "q1", labels: true })] });
+    model.setSize(600, 300, 1);
+    const [label] = texts(model.scene(estimateText));
+    expect(label!.labels).toHaveLength(3);
   });
 });
 

@@ -163,3 +163,13 @@ def test_annotation_options_are_checked():
         hg.Chart(DATA).text(x="t", y="p50", text="t")
     with pytest.raises(ValueError, match="Pass data"):
         hg.Chart().rule(x="at")
+
+
+def test_bars_write_their_values():
+    spec, _ = hg.bar(DATA, x="host", y="p50", labels={"maximumFractionDigits": 1}).to_spec()
+    assert spec["marks"][0]["labels"] == {"maximumFractionDigits": 1}
+    # Empty Intl options still turn labels on, as in the spec.
+    spec, _ = hg.bar(DATA, x="host", y="p50", labels={}).to_spec()
+    assert spec["marks"][0]["labels"] == {}
+    svg = hg.bar(DATA, x="host", y="p50", labels=True, width=300, height=150).to_svg()
+    assert ">1</text>" in svg and ">2</text>" in svg

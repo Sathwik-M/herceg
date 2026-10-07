@@ -39,6 +39,7 @@ import {
   type AxisContext,
   type AxisPlan,
   type AxisType,
+  headroomDomain,
   insetDomain,
   niceAxisDomain,
   planAxis,
@@ -318,6 +319,19 @@ export class ChartModel {
     // An x axis measuring bar lengths gets the y axis' defaults: zero, round
     // ends, and grid lines.
     const xMeasures = drawn.some(({ mark }) => mark.zero === "x");
+    // Room past the far ends of value axes for what marks draw there (bar labels).
+    const headroom = (axis: "x" | "y") =>
+      Math.max(
+        0,
+        ...drawn
+          .filter(({ mark }) => mark.zero === axis && mark.headroom)
+          .map(({ mark, series }) =>
+            mark.headroom!(
+              series.filter((s) => !this.hidden.has(s.key)),
+              context,
+            ),
+          ),
+      );
 
     // x domain: viewport, explicit domain, or data extent. Log axes only
     // consider positive values. Band axes take their categories instead.
@@ -424,7 +438,12 @@ export class ChartModel {
       const yDomain = config.y?.domain
         ? yBase
         : insetDomain(
-            niceAxisDomain(yBase, yContext, yCount, config.y?.nice ?? true),
+            headroomDomain(
+              niceAxisDomain(yBase, yContext, yCount, config.y?.nice ?? true),
+              headroom("y"),
+              plotHeight,
+              yType,
+            ),
             inset,
             plotHeight,
             yType,
@@ -459,7 +478,12 @@ export class ChartModel {
           config.x?.ticks ?? Math.max(2, Math.round(plotWidth / (xType === "time" ? 100 : 80)));
         if (autoX) {
           xDomain = insetDomain(
-            niceAxisDomain(dataXDomain, xContext, xCount, config.x?.nice ?? xMeasures),
+            headroomDomain(
+              niceAxisDomain(dataXDomain, xContext, xCount, config.x?.nice ?? xMeasures),
+              headroom("x"),
+              plotWidth,
+              xType,
+            ),
             inset,
             plotWidth,
             xType,

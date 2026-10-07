@@ -157,6 +157,12 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
    * (annotations), which the chart's data summary would otherwise leave out.
    */
   describe?(format: AxisFormat, locale: string | undefined): string | undefined;
+  /**
+   * Pixels the mark draws past its data at the ends of its value axis (the
+   * `zero` axis) that lie away from zero, such as bar labels; automatic
+   * domains leave that much room.
+   */
+  headroom?(series: readonly Series[], context: BandContext): number;
   /** The continuous color scale the mark draws with, if any. */
   colorRamp?(series: readonly Series[], theme: Theme): ColorRamp | undefined;
 }

@@ -9,8 +9,12 @@ import {
   upperBound,
 } from "../data/table.ts";
 import { rectDrawing } from "../draw/rect.ts";
+import { textDrawing } from "../draw/text.ts";
+import { type Formatter, numberFormatter } from "../format/format.ts";
+import { estimateText } from "../layout/text.ts";
+import { contrastingText, isLightColor } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { RectGeometry } from "../scene/scene.ts";
+import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { BarSpec } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -40,6 +44,12 @@ interface BarStyle<S extends Schema> {
   fill?: string;
   fillOpacity?: number;
   label?: string;
+  /**
+   * Write each bar's value at its end (or, stacked, inside each segment), as
+   * a number or with these Intl.NumberFormat options. Labels that do not fit
+   * are left out.
+   */
+  labels?: boolean | Intl.NumberFormatOptions;
   id?: string;
 }
 
@@ -94,6 +104,7 @@ export class BarMark implements Mark<BarSpec> {
   readonly #split: SeriesSplitter;
   readonly #stacks = new TableCache<Map<string, Stack>>();
   readonly #positions = new TableCache<Positions>();
+  #formatter: { locale: string | undefined; format: Formatter } | undefined;
 
   constructor(spec: BarSpec, table: Table<Schema>) {
     this.spec = spec;
@@ -219,7 +230,7 @@ export class BarMark implements Mark<BarSpec> {
     );
   }
 
-  geometry(series: readonly Series[], frame: Frame): RectGeometry[] {
+  geometry(series: readonly Series[], frame: Frame): (RectGeometry | TextGeometry)[] {
     const visible = series.filter((s) => !frame.hidden.has(s.key));
     const horizontal = this.#horizontal;
     // `along` places bars; `across` measures their lengths.
@@ -234,8 +245,22 @@ export class BarMark implements Mark<BarSpec> {
     const width = groups > 1 ? share * (1 - GROUP_GAP) : share;
     // A zero base has no place on a log axis; bars grow from its low end.
     const zero = across.type === "log" ? across.range[0] : across.map(0);
-    const out: RectGeometry[] = [];
+    const out: (RectGeometry | TextGeometry)[] = [];
+    const labels = this.spec.labels
+      ? new BarLabels(this.#format(frame.locale), frame, horizontal)
+      : undefined;
+    // The closest neighboring bar centers: within a group, a share apart;
+    // with one series, a position step apart.
+    const spacing = !labels
+      ? 0
+      : groups > 1
+        ? share
+        : this.#categorical
+          ? Math.abs(along.map(1) - along.map(0))
+          : this.#pixelGap(along);
+    const opacity = this.spec.fillOpacity ?? 1;
     visible.forEach((s, group) => {
+      const labeled = labels?.fits(width, spacing, Boolean(this.spec.stack)) ? labels : undefined;
       // Stacked series share the whole slot; grouped ones take their share of it.
       const offset = this.spec.stack ? -slot / 2 : -slot / 2 + share * group + (share - width) / 2;
       const [start, end] = horizontal
@@ -270,18 +295,56 @@ export class BarMark implements Mark<BarSpec> {
           rects[i + 3] = Math.abs(root - tip);
         }
         count++;
+        if (labeled) {
+          const middle = center + offset + width / 2;
+          const value = s.values[row]!;
+          if (this.spec.stack) labeled.inside(value, middle, root, tip, width, s.color, opacity);
+          else labeled.outside(value, middle, root, tip, spacing, s.color, opacity);
+        }
       }
       out.push({
         kind: "rect",
         draw: rectDrawing,
         key: s.key,
         fill: s.color,
-        fillOpacity: this.spec.fillOpacity ?? 1,
+        fillOpacity: opacity,
         rects,
         count,
       });
+      if (labeled) out.push(...labeled.flush(s.key));
     });
     return out;
+  }
+
+  /** Room past the bars' ends for their labels; stacked labels sit inside. */
+  headroom(series: readonly Series[], context: BandContext): number {
+    if (!this.spec.labels || this.spec.stack || series.length === 0) return 0;
+    const size = context.theme.fontSize;
+    if (!this.#horizontal) return size + LABEL_GAP + 2;
+    // Horizontal labels are as wide as their text: judge by the extremes.
+    const extent = this.xExtent(series, false);
+    if (!extent) return 0;
+    const format = this.#format(context.locale);
+    const font = `${size}px ${context.theme.font}`;
+    return Math.max(...extent.map((value) => estimateText(format(value), font))) + LABEL_GAP + 2;
+  }
+
+  /** The value formatter for labels, kept while the locale stays the same. */
+  #format(locale: string | undefined): Formatter {
+    let cached = this.#formatter;
+    if (!cached || cached.locale !== locale) {
+      const options = this.spec.labels;
+      // The default formatting of `formatNumber`, without its lookups per value.
+      const whole = numberFormatter({ maximumFractionDigits: 2 }, locale);
+      const small = numberFormatter({ maximumSignificantDigits: 3 }, locale);
+      const format =
+        typeof options === "object"
+          ? numberFormatter(options, locale)
+          : (value: number) => (Math.abs(value) >= 1 || value === 0 ? whole(value) : small(value));
+      cached = { locale, format };
+      this.#formatter = cached;
+    }
+    return cached.format;
   }
 
   /** Distinct x values of the table and their spacing, which bar widths follow. */
@@ -337,6 +400,221 @@ function lengthExtent(s: Series, values: NumericArray, log: boolean): [number, n
     if (value > max) max = value;
   }
   return min <= max ? [min, max] : undefined;
+}
+
+/** Pixels between a bar's end and its label. */
+const LABEL_GAP = 4;
+
+interface LabelGroup {
+  anchor: TextGeometry["anchor"];
+  fill: string;
+  halo: boolean;
+  items: { x: number; y: number; text: string }[];
+}
+
+/**
+ * Value labels of one bar mark, collected per series: past each bar's end,
+ * or inside it when that would leave the plot, or for stacks centered in
+ * each segment. Widths are estimated from font metrics, since geometry is
+ * built without measuring text; labels that do not fit are left out, and
+ * values are only formatted for bars that could show them.
+ */
+class BarLabels {
+  readonly #format: Formatter;
+  readonly #frame: Frame;
+  readonly #horizontal: boolean;
+  readonly #size: number;
+  readonly #font: string;
+  /** What text inside a bar contrasts with: the background, or a page of the theme's kind. */
+  readonly #backdrop: string;
+  #groups = new Map<string, LabelGroup>();
+
+  constructor(format: Formatter, frame: Frame, horizontal: boolean) {
+    const { theme } = frame;
+    this.#format = format;
+    this.#frame = frame;
+    this.#horizontal = horizontal;
+    this.#size = theme.fontSize;
+    this.#font = `${theme.fontSize}px ${theme.font}`;
+    this.#backdrop =
+      theme.background !== "transparent"
+        ? theme.background
+        : isLightColor(theme.text)
+          ? "#000000"
+          : "#ffffff";
+  }
+
+  /**
+   * Whether bars `width` thick, with neighbors `spacing` apart, can carry
+   * any label, so series that cannot are skipped without formatting.
+   */
+  fits(width: number, spacing: number, stacked: boolean): boolean {
+    if (this.#horizontal) return width >= this.#size * (stacked ? 1 : 0.9);
+    const digit = this.#width("0");
+    return stacked ? width >= digit + 2 : spacing >= digit + LABEL_GAP;
+  }
+
+  /**
+   * A label past the bar's end, or just inside it when past would leave the
+   * plot. `middle` is the bar's center across its thickness; `spacing` the
+   * distance to the neighboring bars' centers.
+   */
+  outside(
+    value: number,
+    middle: number,
+    root: number,
+    tip: number,
+    spacing: number,
+    fill: string,
+    opacity: number,
+  ) {
+    const size = this.#size;
+    if (!this.#horizontal) {
+      if (!this.#inPlot(middle, tip)) return;
+      const text = this.#format(value);
+      const width = this.#width(text);
+      // Wider labels would run into the neighboring bars' labels.
+      if (width + LABEL_GAP > spacing) return;
+      const up = tip <= root;
+      const past = up ? tip - LABEL_GAP - size / 2 : tip + LABEL_GAP + size / 2;
+      if (this.#fits(middle - width / 2, past - size / 2, width, size)) {
+        this.#add("middle", this.#frame.theme.text, true, middle, past, text);
+        return;
+      }
+      const inside = up ? tip + LABEL_GAP + size / 2 : tip - LABEL_GAP - size / 2;
+      if (
+        Math.abs(tip - root) >= size + 2 * LABEL_GAP &&
+        this.#fits(middle - width / 2, inside - size / 2, width, size)
+      )
+        this.#inside("middle", fill, opacity, middle, inside, text);
+      return;
+    }
+    if (!this.#inPlot(tip, middle)) return;
+    const text = this.#format(value);
+    const width = this.#width(text);
+    const forward = tip >= root;
+    const past = forward ? tip + LABEL_GAP : tip - LABEL_GAP;
+    const top = middle - size / 2;
+    if (this.#fits(forward ? past : past - width, top, width, size)) {
+      this.#add(forward ? "start" : "end", this.#frame.theme.text, true, past, middle, text);
+      return;
+    }
+    const inside = forward ? tip - LABEL_GAP : tip + LABEL_GAP;
+    if (
+      Math.abs(tip - root) >= width + 2 * LABEL_GAP &&
+      this.#fits(forward ? inside - width : inside, top, width, size)
+    )
+      this.#inside(forward ? "end" : "start", fill, opacity, inside, middle, text);
+  }
+
+  /**
+   * A label centered in the visible part of a stacked segment, when it has
+   * room there.
+   */
+  inside(
+    value: number,
+    middle: number,
+    root: number,
+    tip: number,
+    width: number,
+    fill: string,
+    opacity: number,
+  ) {
+    const { plot } = this.#frame;
+    const [min, max] = this.#horizontal
+      ? [plot.x, plot.x + plot.width]
+      : [plot.y, plot.y + plot.height];
+    const a = Math.max(min, Math.min(root, tip));
+    const b = Math.min(max, Math.max(root, tip));
+    const length = b - a;
+    if (length <= 0 || (!this.#horizontal && length < this.#size + 2)) return;
+    const center = (a + b) / 2;
+    const [x, y] = this.#horizontal ? [center, middle] : [middle, center];
+    const text = this.#format(value);
+    const textWidth = this.#width(text);
+    const room = this.#horizontal ? length - LABEL_GAP : width - 2;
+    if (textWidth > room) return;
+    if (this.#fits(x - textWidth / 2, y - this.#size / 2, textWidth, this.#size))
+      this.#inside("middle", fill, opacity, x, y, text);
+  }
+
+  /** The labels' geometry for the series `key`; starts the next series. */
+  flush(key: string): TextGeometry[] {
+    const out: TextGeometry[] = [];
+    for (const [stage, group] of this.#groups) {
+      const coords = this.#frame.floats(key, stage, group.items.length * 2);
+      group.items.forEach((item, i) => {
+        coords[i * 2] = item.x;
+        coords[i * 2 + 1] = item.y;
+      });
+      out.push({
+        kind: "text",
+        draw: textDrawing,
+        key: `${key}|${stage}`,
+        fill: group.fill,
+        anchor: group.anchor,
+        halo: group.halo,
+        coords,
+        labels: group.items.map((item) => item.text),
+        count: group.items.length,
+      });
+    }
+    this.#groups = new Map();
+    return out;
+  }
+
+  #width(text: string): number {
+    return estimateText(text, this.#font);
+  }
+
+  #inPlot(x: number, y: number): boolean {
+    const { plot } = this.#frame;
+    return x >= plot.x && x <= plot.x + plot.width && y >= plot.y && y <= plot.y + plot.height;
+  }
+
+  /** Whether a label's box lies inside the plot. */
+  #fits(x: number, y: number, width: number, height: number): boolean {
+    const { plot } = this.#frame;
+    return (
+      x >= plot.x &&
+      x + width <= plot.x + plot.width &&
+      y >= plot.y &&
+      y + height <= plot.y + plot.height
+    );
+  }
+
+  /**
+   * Text on a bar contrasts with the bar's color over the backdrop; colors
+   * it cannot read get the theme's text color with a halo.
+   */
+  #inside(
+    anchor: TextGeometry["anchor"],
+    fill: string,
+    opacity: number,
+    x: number,
+    y: number,
+    text: string,
+  ) {
+    const color = contrastingText(fill, opacity, this.#backdrop);
+    this.#add(anchor, color ?? this.#frame.theme.text, color === undefined, x, y, text);
+  }
+
+  #add(
+    anchor: TextGeometry["anchor"],
+    fill: string,
+    halo: boolean,
+    x: number,
+    y: number,
+    text: string,
+  ) {
+    const stage = `labels ${anchor} ${fill} ${halo}`;
+    let group = this.#groups.get(stage);
+    if (!group) {
+      group = { anchor, fill, halo, items: [] };
+      this.#groups.set(stage, group);
+    }
+    group.items.push({ x, y, text });
+  }
 }
 
 /** Smallest gap between neighboring positions, in log10 units on log axes. */
@@ -404,7 +682,7 @@ export function bar<S extends Schema>(table: Table<S>, options: BarOptions<S>): 
     type: "bar",
     x: fields(options.x),
     y: fields(options.y),
-    ...definedFields(options, ["series", "stack", "fill", "fillOpacity", "label", "id"]),
+    ...definedFields(options, ["series", "stack", "fill", "fillOpacity", "label", "labels", "id"]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

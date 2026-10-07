@@ -118,6 +118,7 @@ export class TextMark implements Mark<TextSpec> {
       {
         kind: "text",
         draw: textDrawing,
+        halo: true,
         key: id,
         fill: spec.fill ?? frame.theme.text,
         anchor: spec.anchor ?? "middle",

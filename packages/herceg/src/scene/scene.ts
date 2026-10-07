@@ -169,6 +169,8 @@ export interface TextGeometry extends Geometry {
   draw: Drawing<TextGeometry>;
   fill: string;
   anchor: "start" | "middle" | "end";
+  /** Outline each label in the background color, for text drawn over data. */
+  halo: boolean;
   coords: Float32Array;
   labels: string[];
   count: number;

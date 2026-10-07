@@ -100,6 +100,7 @@ bar(sales, { x: "region", y: "q1", series: "team", stack: true });
 // @ts-expect-error bar heights must be numeric
 bar(sales, { x: "region", y: "team" });
 bar(sales, { x: "q1", y: "region" });
+bar(sales, { x: "region", y: "q1", labels: { style: "percent" } });
 bar(sales, { x: ["q1", "q2"], y: "region", stack: true });
 // @ts-expect-error horizontal bar lengths must be numeric
 bar(sales, { x: "team", y: "region" });

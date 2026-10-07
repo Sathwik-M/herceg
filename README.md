@@ -46,7 +46,7 @@ specs with binary columns, Python package.
 
 Next:
 
-1. Error bars and value labels on bars.
+1. Error bars.
 2. Min/max indexes that update incrementally while very large series stream,
    and indexes for areas.
 3. Live notebook charts (a widget that streams updates from Python) and PDF

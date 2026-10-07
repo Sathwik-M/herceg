@@ -72,6 +72,32 @@ export function insetDomain(
   return usable ? widened : domain;
 }
 
+/**
+ * Widens the ends of an automatic domain that lie away from zero (on log
+ * axes, the high end) so marks drawing `pixels` past their data there, such
+ * as bar labels, stay inside a plot `plotPixels` long. A zero end stays put,
+ * so bars keep their baseline on the axis.
+ */
+export function headroomDomain(
+  domain: [number, number],
+  pixels: number,
+  plotPixels: number,
+  type: AxisType,
+): [number, number] {
+  if (!(pixels > 0)) return domain;
+  const log = type === "log";
+  const low = !log && domain[0] < 0;
+  const high = log || domain[1] > 0;
+  const sides = Number(low) + Number(high);
+  if (sides === 0 || plotPixels <= 4 * sides * pixels) return domain;
+  const lo = log ? Math.log10(domain[0]) : domain[0];
+  const hi = log ? Math.log10(domain[1]) : domain[1];
+  const pad = ((hi - lo) * pixels) / (plotPixels - sides * pixels);
+  const ends: [number, number] = [low ? lo - pad : lo, high ? hi + pad : hi];
+  const widened: [number, number] = log ? [10 ** ends[0], 10 ** ends[1]] : ends;
+  return widened.every((v) => Number.isFinite(v) && (!log || v > 0)) ? widened : domain;
+}
+
 /** Applies the axis' nice option to a domain. */
 export function niceAxisDomain(
   domain: [number, number],

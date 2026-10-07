@@ -215,11 +215,14 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
+        labels: bool | dict[str, Any] = False,
         id: str | None = None,
     ) -> Chart:
         """Bars: one band per category of x, or bars centered on number or time x.
 
         A category ``y`` makes the bars horizontal, with lengths in ``x``.
+        ``labels=True`` writes each value at its bar's end (inside each segment
+        when stacked); a dict of Intl.NumberFormat options formats them.
         """
         table = self._mark_table(data)
         if isinstance(y, str) and self._kind(table, y) == "category":
@@ -244,6 +247,7 @@ class Chart:
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "label": label,
+                "labels": None if labels is False else labels,
                 "id": id,
             },
             table,
@@ -638,10 +642,11 @@ def bar(
     *,
     series: str | None = None,
     stack: bool = False,
+    labels: bool | dict[str, Any] = False,
     **options: Any,
 ) -> Chart:
     """A bar chart, grouped or stacked; horizontal when ``y`` is a category."""
-    return Chart(data, **options).bar(x, y, series=series, stack=stack)
+    return Chart(data, **options).bar(x, y, series=series, stack=stack, labels=labels)
 
 
 def scatter(

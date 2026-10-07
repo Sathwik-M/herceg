@@ -30,26 +30,57 @@ export function isOpaqueColor(color: string): boolean {
 }
 
 /**
- * Whether a color is light (its channels sum to more than half), for hex,
- * `rgb()`, and `hsl()` colors; undefined for other syntaxes such as names,
- * which would need the full CSS color table.
+ * Whether a color is light: black text on it contrasts more than white
+ * (WCAG relative luminance above 0.179). Reads hex, `rgb()`, and `hsl()`
+ * colors; undefined for other syntaxes such as names, which would need the
+ * full CSS color table.
  */
 export function isLightColor(color: string): boolean | undefined {
-  const rgb = parseColor(color.trim().toLowerCase());
-  return rgb && rgb[0] + rgb[1] + rgb[2] > 382;
+  const rgba = parseColor(color.trim().toLowerCase());
+  return rgba && luminance([rgba[0], rgba[1], rgba[2]]) > 0.179;
 }
 
-function parseColor(c: string): [number, number, number] | undefined {
-  if (HEX.test(c)) return parseHex(c);
+/**
+ * Black or white text, whichever contrasts more with `fill` painted at
+ * `opacity` (times the color's own alpha) over `backdrop`; undefined when
+ * either color cannot be read or the backdrop is translucent.
+ */
+export function contrastingText(
+  fill: string,
+  opacity: number,
+  backdrop: string,
+): "#000000" | "#ffffff" | undefined {
+  const top = parseColor(fill.trim().toLowerCase());
+  const bottom = parseColor(backdrop.trim().toLowerCase());
+  if (!top || !bottom || bottom[3] < 1) return undefined;
+  const alpha = opacity * top[3];
+  const mixed = [0, 1, 2].map((i) => top[i]! * alpha + bottom[i]! * (1 - alpha));
+  return luminance(mixed as [number, number, number]) > 0.179 ? "#000000" : "#ffffff";
+}
+
+/** WCAG relative luminance of an sRGB color with channels from 0 to 255. */
+function luminance([r, g, b]: [number, number, number]): number {
+  const linear = (c: number) => {
+    const v = c / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+}
+
+/** Channels from 0 to 255 and alpha from 0 to 1 of a hex, `rgb()`, or `hsl()` color. */
+function parseColor(c: string): [number, number, number, number] | undefined {
+  if (HEX.test(c)) return [...parseHex(c), 1];
   const match = /^(rgb|hsl)a?\(([^)]*)\)$/.exec(c);
   if (!match) return undefined;
   const parts = match[2]!.split(/[\s,/]+/).filter(Boolean);
   if (parts.length < 3) return undefined;
   const value = (part: string, scale: number) =>
     part.endsWith("%") ? (Number.parseFloat(part) / 100) * scale : Number.parseFloat(part);
+  const alpha = parts[3] === undefined ? 1 : value(parts[3], 1);
+  if (!(alpha >= 0 && alpha <= 1)) return undefined;
   if (match[1] === "rgb") {
-    const rgb = parts.slice(0, 3).map((part) => value(part, 255)) as [number, number, number];
-    return rgb.every(Number.isFinite) ? rgb : undefined;
+    const rgb = parts.slice(0, 3).map((part) => value(part, 255));
+    return rgb.every(Number.isFinite) ? [rgb[0]!, rgb[1]!, rgb[2]!, alpha] : undefined;
   }
   const h = Number.parseFloat(parts[0]!);
   const s = value(parts[1]!, 1);
@@ -60,7 +91,7 @@ function parseColor(c: string): [number, number, number] | undefined {
     const k = (n + h / 30) % 12;
     return 255 * (l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1)));
   };
-  return [channel(0), channel(8), channel(4)];
+  return [channel(0), channel(8), channel(4), alpha];
 }
 
 function parseHex(hex: string): [number, number, number] {
