@@ -519,7 +519,7 @@ createChart(element, {
       { id: "latency", title: "Latency", y: { label: "ms" } },
       { id: "traffic", title: "Requests", y: { type: "log" } },
     ],
-    { columns: 1 }, // in a spec: "grid": { "columns": 1 }
+    { columns: 1, rowHeights: [2, 1] }, // in a spec: "grid": { "columns": 1, "rowHeights": [2, 1] }
   ),
 });
 ```
@@ -527,7 +527,8 @@ createChart(element, {
 Each mark names the panel it draws in with `panel`, or `"*"` for all of
 them; in a chart with panels, a mark without one is an error rather than
 drawn everywhere by accident. Panels fill rows of `columns` (one by default)
-in order, with their titles above them. They share the x axis, labeled under
+in order, with their titles above them; `rowHeights` gives the rows' heights
+relative to each other. They share the x axis, labeled under
 the lowest panel of each column, and each has a y scale of its own, from its
 marks; `resolve: { y: "shared" }` (or `"rows"`, `"columns"`) shares it
 instead, when the panels sharing it agree on its type, domain, `zero`, and

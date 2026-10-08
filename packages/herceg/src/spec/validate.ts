@@ -607,7 +607,13 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     },
     grid: (g, path) => {
       object(g, path);
-      properties(g as Record<string, unknown>, path, { columns: count });
+      properties(g as Record<string, unknown>, path, {
+        columns: count,
+        rowHeights: (v, at) => {
+          if (!Array.isArray(v) || v.length === 0) fail(at, "a list of relative heights", v);
+          for (const [i, height] of v.entries()) positive(height, `${at}[${i}]`);
+        },
+      });
     },
     resolve: (r, path) => {
       object(r, path);
