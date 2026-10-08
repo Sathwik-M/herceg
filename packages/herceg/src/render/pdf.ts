@@ -27,6 +27,7 @@ import {
   type Rect,
   rampOffsets,
   type Scene,
+  tickLabelGap,
 } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 import { cssColor } from "./css-color.ts";
@@ -554,8 +555,9 @@ export function renderPdf(scene: Scene, info: DocumentInfo = {}): Uint8Array {
         }
         paint(page, line, { stroke: theme.axis });
       }
+      const below = y + tickLabelGap(theme.fontSize);
       for (const tick of axis.ticks)
-        text(page, tick.label, tick.position, y + 8, {
+        text(page, tick.label, tick.position, below, {
           ...label,
           anchor: "middle",
           baseline: "hanging",

@@ -15,6 +15,7 @@ import {
   type Scene,
   type SceneText,
   type SvgContext,
+  tickLabelGap,
 } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 
@@ -44,8 +45,9 @@ export function axisElements(axes: readonly AxisGeometry[], theme: Theme): strin
         for (const tick of axis.ticks) d += `M${n(Math.round(tick.position) + 0.5)} ${n(y)}v5`;
         out += `<path d="${d}" stroke="${escapeXml(theme.axis)}" fill="none"/>`;
       }
+      const below = y + tickLabelGap(theme.fontSize);
       for (const tick of axis.ticks) {
-        out += `<text x="${n(tick.position)}" y="${n(y + 8)}" text-anchor="middle" dominant-baseline="hanging">${escapeXml(tick.label)}</text>`;
+        out += `<text x="${n(tick.position)}" y="${n(below)}" text-anchor="middle" dominant-baseline="hanging">${escapeXml(tick.label)}</text>`;
       }
     } else {
       // Labels sit outside the plot: left of a left axis, right of a right one.

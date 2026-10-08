@@ -179,4 +179,28 @@ describe("runtime regressions", () => {
     expect(chart.root.querySelector("svg g[clip-path] path")!.getAttribute("d")).not.toBe(before);
     chart.destroy();
   });
+
+  it("keeps the lowest y label clear of the first x label in large text", () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      theme: { fontSize: 24 },
+      x: { domain: [1000, 2000], ticks: 2 },
+      y: { format: { minimumFractionDigits: 4 } },
+      marks: [line(table({ x: [1000, 2000], y: [10000, 20000] }), { x: "x", y: "y" })],
+    });
+    const boxes = (selector: string) =>
+      [...chart.root.querySelectorAll(`svg text[${selector}]`)].map((text) =>
+        (text as SVGGraphicsElement).getBBox(),
+      );
+    const xLabels = boxes('dominant-baseline="hanging"');
+    const yLabels = boxes('text-anchor="end"');
+    expect(xLabels.length * yLabels.length).toBeGreaterThan(0);
+    const meet = (p: DOMRect, q: DOMRect) =>
+      p.x < q.x + q.width && q.x < p.x + p.width && p.y < q.y + q.height && q.y < p.y + p.height;
+    expect(xLabels.some((p) => yLabels.some((q) => meet(p, q)))).toBe(false);
+    // The x labels still fit inside the chart.
+    const bottom = Math.max(...xLabels.map((b) => b.y + b.height));
+    expect(bottom).toBeLessThanOrEqual(host.getBoundingClientRect().height);
+    chart.destroy();
+  });
 });
