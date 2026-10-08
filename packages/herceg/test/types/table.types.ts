@@ -4,6 +4,7 @@ import { time } from "../../src/data/column.ts";
 import {
   type CategoryField,
   fromRows,
+  type NumberField,
   type NumericField,
   type Schema,
   type Table,
@@ -28,6 +29,7 @@ expectTypeOf<S>().toEqualTypeOf<{
   host: "category";
 }>();
 expectTypeOf<NumericField<S>>().toEqualTypeOf<"when" | "dates" | "latency" | "count">();
+expectTypeOf<NumberField<S>>().toEqualTypeOf<"latency" | "count">();
 expectTypeOf<CategoryField<S>>().toEqualTypeOf<"host">();
 
 t.numbers("latency");

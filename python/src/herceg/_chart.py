@@ -583,6 +583,88 @@ class Chart:
             table,
         )
 
+    def gauge(
+        self,
+        value: str,
+        *,
+        data: Any = None,
+        min: float | None = None,
+        max: float | None = None,
+        bands: Sequence[float | tuple[float, str]] | None = None,
+        label: str | None = None,
+        format: dict[str, Any] | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A gauge: the last finite value of the ``value`` column on a dial
+        from ``min`` to ``max`` (0 to 100 by default), so rows appended to a
+        live chart move it.
+
+        ``bands`` color ranges of the dial by their upper ends, ascending,
+        above ``min`` and at most ``max``: numbers, or ``(to, color)`` pairs.
+        Each starts where the previous one ends, the first at ``min``; colors
+        default to the theme's palette. ``format`` takes Intl.NumberFormat
+        options for the value and the dial's ends. A gauge has its chart to
+        itself.
+        """
+        self._layout_alone("gauge")
+        table = self._mark_table(data)
+        self._require(table, value, ("number",), "gauge value")
+        low = 0.0 if min is None else min
+        high = 100.0 if max is None else max
+        if not (_finite(low) and _finite(high) and low < high):
+            raise ValueError(
+                f"gauge min must be below max, and both finite, not {low!r} and {high!r}"
+            )
+        return self._add(
+            {
+                "type": "gauge",
+                "value": value,
+                "min": None if min is None else float(min),
+                "max": None if max is None else float(max),
+                "bands": _gauge_bands(bands, low, high),
+                "label": label,
+                "format": format,
+                "id": id,
+            },
+            table,
+        )
+
+    def funnel(
+        self,
+        category: str,
+        value: str | None = None,
+        *,
+        data: Any = None,
+        sort: Literal["input", "value"] | None = None,
+        labels: bool | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A funnel: a centered bar per value of ``category``, top to bottom,
+        as wide as the sum of ``value`` over its rows (or their count) is to
+        the largest stage's. Missing, negative, and infinite values count as
+        nothing.
+
+        Stages keep the column's order unless ``sort="value"`` puts the
+        largest first. ``labels=False`` leaves out the stage names and the
+        values with their share of the first stage. A funnel has its chart to
+        itself.
+        """
+        self._layout_alone("funnel")
+        table = self._mark_table(data)
+        self._require(table, category, ("category",), "funnel category")
+        self._require(table, value, ("number",), "funnel value")
+        return self._add(
+            {
+                "type": "funnel",
+                "category": category,
+                "value": value,
+                "sort": sort,
+                "labels": labels,
+                "id": id,
+            },
+            table,
+        )
+
     def boxplot(
         self,
         x: str,
@@ -775,7 +857,8 @@ class Chart:
         )
 
     def _layout_alone(self, kind: str) -> None:
-        """Layout marks (pies, treemaps, sunbursts) have no axes to facet or zoom."""
+        """Layout marks (pies, treemaps, sunbursts, gauges, funnels) have no axes
+        to facet or zoom."""
         if self._facet is not None:
             raise ValueError(f"charts of a {kind} cannot have facets yet")
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
@@ -1168,7 +1251,7 @@ class Chart:
 
 
 #: Marks that lay out their own chart, with no axes.
-_LAYOUT_MARKS = ("pie", "treemap", "sunburst")
+_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel")
 
 
 #: Chart options a live chart can change after display: all but data and facets,
@@ -1343,6 +1426,40 @@ def _range(
     return [low, high]
 
 
+def _finite(value: Any) -> bool:
+    """A real, finite number; booleans are not numbers here."""
+    return isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _gauge_bands(
+    bands: Sequence[float | tuple[float, str]] | None, low: float, high: float
+) -> list[dict[str, Any]] | None:
+    """Gauge bands as the spec takes them, checked as the engine checks them."""
+    if bands is None:
+        return None
+    out: list[dict[str, Any]] = []
+    previous = low
+    for band in bands:
+        if isinstance(band, (tuple, list)):
+            if len(band) != 2:
+                raise ValueError(f"gauge bands are numbers or (to, color) pairs, not {band!r}")
+            to, color = band
+        else:
+            to, color = band, None
+        if not (_finite(to) and low < to <= high):
+            raise ValueError(
+                f"gauge bands must end above min ({low:g}) and at most at max ({high:g}), "
+                f"not at {to!r}"
+            )
+        if not to > previous:
+            raise ValueError(
+                f"gauge bands must end in ascending order, not {to:g} after {previous:g}"
+            )
+        out.append({"to": float(to)} if color is None else {"to": float(to), "color": color})
+        previous = to
+    return out
+
+
 def _midpoint(
     midpoint: float | None, domain: tuple[float, float] | None, role: str
 ) -> float | None:
@@ -1483,6 +1600,36 @@ def pie(
     return Chart(data, **options).pie(
         category, value, inner_radius=inner_radius, sort=sort, labels=labels
     )
+
+
+def gauge(
+    data: Any,
+    value: str,
+    *,
+    min: float | None = None,
+    max: float | None = None,
+    bands: Sequence[float | tuple[float, str]] | None = None,
+    label: str | None = None,
+    format: dict[str, Any] | None = None,
+    **options: Any,
+) -> Chart:
+    """A gauge of the last finite value of ``value``, on a dial from ``min`` to ``max``."""
+    return Chart(data, **options).gauge(
+        value, min=min, max=max, bands=bands, label=label, format=format
+    )
+
+
+def funnel(
+    data: Any,
+    category: str,
+    value: str | None = None,
+    *,
+    sort: Literal["input", "value"] | None = None,
+    labels: bool | None = None,
+    **options: Any,
+) -> Chart:
+    """A funnel of ``value`` (or row counts) per stage of ``category``, top to bottom."""
+    return Chart(data, **options).funnel(category, value, sort=sort, labels=labels)
 
 
 def boxplot(

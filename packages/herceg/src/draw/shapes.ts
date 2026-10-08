@@ -22,12 +22,15 @@ function isText(shape: PathShape | TextShape): shape is TextShape {
  */
 export const shapesDrawing: Drawing<ShapesGeometry> = {
   size: (mark) => mark.shapes.length,
-  svg(mark) {
+  svg(mark, { theme }) {
     const baseline = mark.fontSize * MIDDLE_TO_BASELINE;
+    // Text inherits the chart's font, unless it is larger or bolder.
+    let font = mark.fontSize === theme.fontSize ? "" : ` font-size="${n(mark.fontSize)}"`;
+    if (mark.bold) font += ' font-weight="600"';
     let out = "";
     for (const shape of mark.shapes) {
       if (isText(shape)) {
-        out += `<text x="${n(shape.x)}" y="${n(shape.y + baseline)}" fill="${escapeXml(shape.fill)}" text-anchor="${shape.anchor}">${escapeXml(shape.text)}</text>`;
+        out += `<text x="${n(shape.x)}" y="${n(shape.y + baseline)}" fill="${escapeXml(shape.fill)}" text-anchor="${shape.anchor}"${font}>${escapeXml(shape.text)}</text>`;
         continue;
       }
       out += `<path d="${escapeXml(shape.d)}" fill="${escapeXml(shape.fill)}"`;

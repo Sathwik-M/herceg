@@ -411,6 +411,41 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       labels: boolean,
     },
   },
+  gauge: {
+    required: ["value"],
+    checks: {
+      value: field,
+      min: finite,
+      max: finite,
+      bands: (v, path) => {
+        if (!Array.isArray(v)) fail(path, "a list of bands", v);
+        // Bands must also lie within the dial, which the mark checks.
+        let previous = Number.NEGATIVE_INFINITY;
+        for (const [i, item] of v.entries()) {
+          const at = `${path}[${i}]`;
+          object(item, at);
+          const band = item as Record<string, unknown>;
+          required(band, at, ["to"]);
+          properties(band, at, { to: finite, color: string });
+          const to = band.to as number;
+          if (!(to > previous))
+            fail(`${at}.to`, `an end above the previous band's (${previous})`, to);
+          previous = to;
+        }
+      },
+      label: string,
+      format: format("linear"),
+    },
+  },
+  funnel: {
+    required: ["category"],
+    checks: {
+      category: field,
+      value: field,
+      sort: oneOf("input", "value"),
+      labels: boolean,
+    },
+  },
   boxplot: {
     required: ["x", "y"],
     checks: {
