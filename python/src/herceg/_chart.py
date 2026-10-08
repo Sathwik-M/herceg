@@ -586,6 +586,56 @@ class Chart:
             table,
         )
 
+    def boxplot(
+        self,
+        x: str,
+        y: str,
+        *,
+        data: Any = None,
+        series: str | None = None,
+        fill_opacity: float | None = None,
+        label: str | None = None,
+        axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
+        id: str | None = None,
+    ) -> Chart:
+        """Box plots of a number column's values per category.
+
+        One of ``x`` and ``y`` is a category column, the other the values:
+        a category ``y`` lays the boxes along the y axis. Boxes span the
+        quartiles with a line at the median; whiskers reach the most extreme
+        values within 1.5 interquartile ranges, and values beyond are dots.
+        ``series`` puts a box per value of a category column side by side.
+        """
+        table = self._mark_table(data)
+        horizontal = self._kind(table, y) == "category" and self._kind(table, x) != "category"
+        category, values = (y, x) if horizontal else (x, y)
+        self._require(table, category, ("category",), f"boxplot {'y' if horizontal else 'x'}")
+        self._require(table, values, _NUMERIC, f"boxplot {'x' if horizontal else 'y'}")
+        self._require(table, series, ("category",), "boxplot series")
+        if horizontal and axis == "right":
+            raise ValueError("horizontal box plots cannot use the right axis")
+        if fill_opacity is not None and not (
+            isinstance(fill_opacity, numbers.Real)
+            and not isinstance(fill_opacity, bool)
+            and 0 <= fill_opacity <= 1
+        ):
+            raise ValueError(f"fill_opacity must be from 0 to 1, not {fill_opacity!r}")
+        return self._add(
+            {
+                "type": "boxplot",
+                "x": x,
+                "y": y,
+                "series": series,
+                "fillOpacity": fill_opacity,
+                "label": label,
+                "axis": axis,
+                "facet": "repeat" if repeat else None,
+                "id": id,
+            },
+            table,
+        )
+
     def heatmap(
         self,
         x: str,
@@ -959,7 +1009,7 @@ class Chart:
         if self._facet is not None and table is not None and spec.get("facet") is None:
             self._require(table, self._facet, ("category",), "facet")
             kind = spec["type"]
-            if kind in ("heatmap", "histogram", "rule", "region", "text") or (
+            if kind in ("heatmap", "histogram", "boxplot", "rule", "region", "text") or (
                 kind == "bar" and spec.get("stack")
             ):
                 name = "stacked bar" if kind == "bar" else kind
@@ -1282,6 +1332,18 @@ def pie(
     return Chart(data, **options).pie(
         category, value, inner_radius=inner_radius, sort=sort, labels=labels
     )
+
+
+def boxplot(
+    data: Any,
+    x: str,
+    y: str,
+    *,
+    series: str | None = None,
+    **options: Any,
+) -> Chart:
+    """Box plots of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
+    return Chart(data, **options).boxplot(x, y, series=series)
 
 
 def candlestick(

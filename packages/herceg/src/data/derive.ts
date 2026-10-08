@@ -28,6 +28,7 @@ import {
   type Fields,
   type KindOf,
 } from "./expression.ts";
+import { quantile } from "./quantile.ts";
 import {
   type CategoryField,
   type FieldName,
@@ -444,15 +445,6 @@ function aggregateOp(
     }
   }
   throw new TypeError(`Unknown aggregate "${op as string}"`);
-}
-
-/** The p-quantile of ascending values, interpolating linearly between ranks (as NumPy and pandas do). */
-export function quantile(sorted: readonly number[], p: number): number {
-  if (sorted.length === 0) return Number.NaN;
-  const rank = (sorted.length - 1) * p;
-  const below = Math.floor(rank);
-  const above = Math.min(sorted.length - 1, below + 1);
-  return sorted[below]! + (sorted[above]! - sorted[below]!) * (rank - below);
 }
 
 function rolling(

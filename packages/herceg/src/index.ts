@@ -45,6 +45,7 @@ export type { MeasureText } from "./layout/text.ts";
 export type { TextField } from "./marks/annotation.ts";
 export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";
 export { type BarMark, type BarOptions, bar } from "./marks/bar.ts";
+export { type BoxPlotMark, type BoxPlotOptions, boxplot } from "./marks/boxplot.ts";
 export {
   type CandlestickMark,
   type CandlestickOptions,

@@ -188,6 +188,13 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
   /** The color a row is drawn in, for marks coloring rows by a field rather than by series. */
   pointColor?(series: Series, row: number, theme: Theme): string;
   /**
+   * The values a row's drawing covers along the axis its values are on,
+   * for marks drawing more than their series value (box plots, from
+   * whisker to whisker); inspection along y treats rows with any of it in
+   * view as visible.
+   */
+  span?(series: Series, row: number): readonly [number, number];
+  /**
    * Whether the mark draws a row, for marks reading more fields than their
    * series holds (candlesticks); inspection skips rows it does not draw.
    */

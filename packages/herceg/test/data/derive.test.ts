@@ -15,12 +15,12 @@ import {
   min,
   q1,
   q3,
-  quantile,
   stdev,
   sum,
   variance,
 } from "../../src/data/derive.ts";
 import { col, compileExpression, type Expression, when } from "../../src/data/expression.ts";
+import { quantile } from "../../src/data/quantile.ts";
 import { type Schema, type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { ChartModel } from "../../src/model/model.ts";
