@@ -21,6 +21,7 @@ const ENTRIES = join(ROOT, "src", "size", "entries");
 const ENTRY_PACKAGES: Record<string, string> = {
   "herceg-line": "herceg",
   "herceg-react-line": "@herceg/react",
+  "herceg-vue-line": "@herceg/vue",
   "echarts-line": "echarts",
   "echarts-full": "echarts",
   "chartjs-line": "chart.js",
@@ -38,8 +39,11 @@ interface Bundle {
   lazy: Uint8Array[];
 }
 
-/** Shared by the whole application, so React adapter entries leave them out. */
-const REACT = ["react", "react-dom", "react/jsx-runtime"];
+/** Frameworks are shared by the whole application, so adapter entries leave them out. */
+const FRAMEWORKS: Record<string, string[]> = {
+  "herceg-react-line": ["react", "react-dom", "react/jsx-runtime"],
+  "herceg-vue-line": ["vue"],
+};
 
 async function bundle(entry: string, minify: boolean, external: string[]): Promise<Bundle> {
   const result = await esbuild.build({
@@ -79,7 +83,7 @@ for (const file of readdirSync(ENTRIES).sort()) {
   const name = basename(file).replace(/\.tsx?$/, "");
   if (args.filter && !name.includes(args.filter)) continue;
   const entry = join(ENTRIES, file);
-  const external = name.includes("react") ? REACT : [];
+  const external = FRAMEWORKS[name] ?? [];
   const raw = await bundle(entry, false, external);
   const minified = await bundle(entry, true, external);
   const css = minified.css;

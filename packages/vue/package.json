@@ -1,0 +1,31 @@
+{
+  "name": "@herceg/vue",
+  "version": "0.0.0",
+  "description": "Vue components for herceg charts.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test:browser": "vitest run"
+  },
+  "dependencies": {
+    "herceg": "0.0.0"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "vue": "3.5.43"
+  }
+}

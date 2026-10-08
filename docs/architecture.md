@@ -312,8 +312,8 @@ canvas through `Path2D`, so custom shapes follow the same renderer choice,
 clipping, and static export as other marks. Fields listed as `x` and `y`
 count toward the axis domains. A custom mark's spec holds only its type and
 id: functions cannot be serialized, so specs, and with them the Python
-package, cannot contain custom marks, and the React adapter rebuilds them on
-every render rather than comparing specs. Marks implement the `Mark`
+package, cannot contain custom marks, and the framework adapters rebuild them
+on every render rather than comparing specs. Marks implement the `Mark`
 interface, whose spec only needs a type and an id (`MarkIdentity`).
 
 ## Rendering
@@ -469,13 +469,32 @@ to their defaults, and are skipped when no mark's spec or table and no option
 changed (compared as JSON with sorted keys). Unchanged marks keep their
 identity, so their caches survive re-renders. Data changes go
 through the table and reach the chart through its own change events and
-frame scheduler, without rendering React. A test
-(`test/architecture.test.ts`) keeps the core directories (`data`, `scale`,
-`format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM access. Marks
-import their drawings (`draw`), which write SVG without a DOM and paint
-canvases through the context they are handed; only raster painting reaches
-the DOM, creating an offscreen canvas in that canvas' document when
-`OffscreenCanvas` is unavailable.
+frame scheduler, without rendering React.
+
+`@herceg/vue` follows the same model in Vue's terms. `<Chart>` reads its
+mark components from the default slot during render, without mounting them,
+so Vue tracks the state that options and marks read and re-renders the chart
+when it changes; the chart is created in `onMounted` and updated in
+`onUpdated` with the same comparison as in React. Option arrays and objects
+are copied out of Vue's reactive proxies as they are read, so in-place
+changes of reactive state are seen and tables are used unwrapped (their
+private fields cannot be reached through a proxy). Errors building marks
+are caught during render and thrown again from those hooks, because a render
+that throws makes Vue replace the container, and the chart with it. Chart
+events are declared with `emits`; since Vue does not tell a component which
+listeners it has, the chart always listens, and unlike the React adapter it
+has hover and click payloads computed even when nobody listens. Annotation
+and custom mark components are generic in the table rather than in its
+schema, so vue-tsc infers the table from `data` before typing `draw`, and
+reports a wrong field on its attribute; with overloads, as in React, the
+template checker would drop the error.
+
+A test (`test/architecture.test.ts`) keeps the core directories (`data`,
+`scale`, `format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM
+access. Marks import their drawings (`draw`), which write SVG without a DOM
+and paint canvases through the context they are handed; only raster
+painting reaches the DOM, creating an offscreen canvas in that canvas'
+document when `OffscreenCanvas` is unavailable.
 
 ## Known limits
 
@@ -513,4 +532,5 @@ the DOM, creating an offscreen canvas in that canvas' document when
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use
   Canvas or SVG. Uploads are not incremental: streaming a large point series
   uploads it again on every change.
-- No adapters for frameworks other than React. See the roadmap in the repository README.
+- No adapters for frameworks other than React and Vue. See the roadmap in the
+  repository README.

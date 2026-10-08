@@ -9,6 +9,7 @@ export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 export const HERCEG_ALIAS = {
   herceg: join(ROOT, "..", "packages", "herceg", "src", "index.ts"),
   "@herceg/react": join(ROOT, "..", "packages", "react", "src", "index.ts"),
+  "@herceg/vue": join(ROOT, "..", "packages", "vue", "src", "index.ts"),
 };
 const OUT = join(ROOT, ".build");
 

@@ -12,7 +12,8 @@ applications. Today it provides:
   for large point series, loaded only when a chart needs it;
 - level-of-detail reduction for large line and area series;
 - keyboard navigation, generated data summaries, and static SVG export;
-- React components (`@herceg/react`) whose data updates bypass React;
+- React and Vue components (`@herceg/react`, `@herceg/vue`) whose data
+  updates bypass the framework;
 - a Python package (`python/`) for pandas, Polars, PyArrow, and NumPy data,
   with notebook, HTML, SVG, and PNG output.
 
@@ -20,14 +21,15 @@ applications. Today it provides:
 
 Early development. The `herceg` package renders line, area, bar, scatter,
 and heatmap marks and annotations with SVG or Canvas, streams data through columnar
-tables, and renders static SVG without a DOM. `@herceg/react` wraps it in
-React components, and the Python package builds the same charts from
-dataframes through the portable chart spec. The libraries are measured
-against Apache ECharts, TanStack Charts, Chart.js, Plotly, and uPlot in a
-reproducible benchmark suite.
+tables, and renders static SVG without a DOM. `@herceg/react` and
+`@herceg/vue` wrap it in React and Vue components, and the Python package
+builds the same charts from dataframes through the portable chart spec. The
+libraries are measured against Apache ECharts, TanStack Charts, Chart.js,
+Plotly, and uPlot in a reproducible benchmark suite.
 
 - [packages/herceg](packages/herceg/README.md): usage.
 - [packages/react](packages/react/README.md): React components.
+- [packages/vue](packages/vue/README.md): Vue components.
 - [python](python/README.md): the Python package.
 - [docs/architecture.md](docs/architecture.md): how it works and why.
 - [docs/comparison.md](docs/comparison.md): feature and benchmark comparison.
@@ -41,7 +43,7 @@ Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
 candlestick, and histogram marks, rule, region, and text annotations from constants or data, custom
 marks drawing through the same renderers, level of detail, streaming
 updates, shared scheduler, browser interaction (tooltips, zoom, brushing,
-events, synced charts), static SVG, React adapter, min/max indexes for
+events, synced charts), static SVG, React and Vue adapters, min/max indexes for
 zooming and streaming large line series, WebGL drawing of large point series, chart specs
 with binary columns, Python package, a second y axis, small multiples.
 
@@ -50,7 +52,7 @@ Next:
 1. More chart types: box plots, pie and donut charts.
 2. Live notebook charts (a widget that streams updates from Python) and PDF
    export.
-3. Other framework adapters (Vue, Svelte).
+3. A Svelte adapter.
 4. Facets by row and column, and independent panel scales.
 
 ## Development
