@@ -213,6 +213,39 @@ describe("<Chart>", () => {
     expect(labels()).toEqual(["second"]);
   });
 
+  it("passes series options to custom marks, which then have legend entries and tooltips", () => {
+    let chart: HercegChart | null = null;
+    const drawn: string[][] = [];
+    function App() {
+      const ref = useRef<HercegChart | null>(null);
+      chart = ref.current ?? chart;
+      return (
+        <Chart ref={ref}>
+          <Custom
+            data={metrics}
+            x="t"
+            y={["a", "b"]}
+            pointText={(row, format, s) => `${format.y(s.y[row]!)} req`}
+            draw={({ series, circle, x, y }) => {
+              drawn.push(series.map((s) => s.label));
+              for (const s of series) circle(x(s.x[0]!), y(s.y[0]!), 3, { fill: s.color });
+            }}
+          />
+        </Chart>
+      );
+    }
+    act(() => root.render(<App />));
+    act(() => root.render(<App />));
+    const buttons = host.querySelectorAll("button");
+    expect([...buttons].map((button) => button.textContent)).toEqual(["a", "b"]);
+    const model = (chart as unknown as HercegChart).model;
+    const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))!;
+    expect(inspection.points.map((p) => p.text)).toEqual(["2 req", "3 req"]);
+    act(() => buttons[0]!.click());
+    (chart as unknown as HercegChart).render();
+    expect(drawn.at(-1)).toEqual(["b"]);
+  });
+
   it("keeps marks written against the Mark interface only while they are the same object", async () => {
     // A mark whose spec does not describe what it draws.
     const badge = (label: string): HercegMark => {

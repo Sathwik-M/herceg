@@ -218,6 +218,15 @@ export const Text = /* @__PURE__ */ markElement(
   <S extends Schema>(props: WithData<TextDataOptions<S>, S>): null;
 };
 
+// Generic in the table rather than in its schema, unlike the annotations'
+// overloads: a function prop such as `draw` takes its parameter types from
+// the first overload TypeScript tries, so with overloads `draw` would never
+// see the table or its series. The table is inferred from the optional
+// `data`, and required once the props are those of a mark over it.
+type CustomProps<T> = { data?: T } & (T extends Table<infer S extends Schema>
+  ? CustomDataOptions<S> & { data: T }
+  : CustomOptions & { data?: undefined });
+
 /**
  * A custom mark: `draw` places shapes with the chart's scales, without
  * `data` or over the fields of `data`. Rebuilt on every render, since
@@ -227,7 +236,4 @@ export const Custom = /* @__PURE__ */ markElement(
   "Custom",
   ({ data, ...options }: CustomOptions & { data?: Table<Schema> }) =>
     data ? custom(data, options as CustomDataOptions<Schema>) : custom(options),
-) as unknown as {
-  (props: CustomOptions): null;
-  <S extends Schema>(props: WithData<CustomDataOptions<S>, S>): null;
-};
+) as unknown as <T = undefined>(props: CustomProps<T>) => null;

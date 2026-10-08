@@ -479,8 +479,20 @@ syntax; rectangles, circles, and lines are written as paths), and text. They
 become one `shapes` geometry whose drawing writes SVG elements and paints a
 canvas through `Path2D`, so custom shapes follow the same renderer choice,
 clipping, and static export as other marks. Fields listed as `x` and `y`
-count toward the axis domains. A custom mark's spec holds only its type and
-id: functions cannot be serialized, so specs, and with them the Python
+count toward the axis domains. Over one x field and y fields, a custom mark
+builds series as a line does (`SeriesSplitter`, `buildSeries`), so the
+legend, hiding, tooltips, events, keyboard navigation, facet splits, y
+domains that follow the view, and text summaries all come from the chart's
+own code for series; there is no inspection code for custom marks. `draw`
+receives the series it should draw (hidden ones left out, facet panels'
+row subsets) as read-only views, and an optional `pointText` writes their
+tooltip text. Since the shapes between points are unknown, y extents take
+in the points just past the view's edges (as for monotone curves) rather
+than interpolating straight segments. With `series: false` (glyphs from
+several fields of a row, such as ranges), or fields other than one x and y
+fields, the fields only count toward the domains; such marks have no
+series, and in charts with facets must repeat. A custom mark's spec holds its type, id, and the fields of its
+series: functions cannot be serialized, so specs, and with them the Python
 package, cannot contain custom marks, and the framework adapters rebuild them
 whenever they render them again rather than comparing specs. Marks implement
 the `Mark` interface, whose spec only needs a type and an id (`MarkIdentity`).
@@ -779,8 +791,9 @@ document when `OffscreenCanvas` is unavailable.
   bars along a number or time y are not supported. Error bars stand at the
   center of their position, not beside grouped bars; horizontal ones at y
   positions a log axis cannot place still count toward the x domain.
-- Custom marks are JavaScript only, have no legend entries or tooltips, and
-  cannot bind category fields.
+- Custom marks are JavaScript only, cannot bind category fields other than
+  `series`, and are inspected at their series' points, not by the shapes
+  they draw; custom marks without series have no legend entries or tooltips.
 - Annotation fields cannot be categories (constants on a category axis are
   band indices); text has no collision avoidance or connectors. Bar value
   labels estimate text widths from the font size to decide what fits.
@@ -795,8 +808,9 @@ document when `OffscreenCanvas` is unavailable.
   two, sharing x; y is shared or resolved per panel, row, or column, for
   continuous axes only. No independent x scales, y zoom with independent y,
   or right axes in faceted charts, and
-  heatmaps, histograms, box plots, violins, stacked bars, and annotations or custom marks over a table can
-  only repeat in every panel. Panel splits are recomputed whenever their
+  heatmaps, histograms, box plots, violins, stacked bars, annotations over a
+  table, and custom marks over a table without series can only repeat in
+  every panel. Panel splits are recomputed whenever their
   table changes, and rows of a faceted large line do not use its min/max
   index. A category whose rows all lack a facet value still gets an (empty)
   band. Panels smaller than 20 pixels a side are refused with an error

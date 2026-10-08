@@ -6,6 +6,7 @@
 // list of the rows in that panel.
 
 import type { Table } from "../data/table.ts";
+import type { CustomSpec } from "../marks/custom.ts";
 import type { Mark } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
@@ -51,16 +52,7 @@ export function facet(by: string | FacetGrid, options: FacetOptions = {}): Facet
 }
 
 /** Marks that cannot split their rows into panels yet; they can repeat in every panel. */
-const UNSPLIT = new Set([
-  "heatmap",
-  "histogram",
-  "boxplot",
-  "violin",
-  "rule",
-  "region",
-  "text",
-  "custom",
-]);
+const UNSPLIT = new Set(["heatmap", "histogram", "boxplot", "violin", "rule", "region", "text"]);
 
 export class Facet implements PanelLayout {
   /** The field whose values wrap into rows of `columns` panels. */
@@ -132,6 +124,11 @@ export class Facet implements PanelLayout {
       }
       if (UNSPLIT.has(type))
         throw new Error(`A ${type} mark over a table cannot be split into panels yet; ${repeat}`);
+      // Custom marks split the rows of the series they show. Those without
+      // series (which need one x field and y fields) have no rows to split:
+      // their `draw` reads the table whole.
+      if (type === "custom" && (mark.spec as CustomSpec).y === undefined)
+        throw new Error(`A custom mark without series cannot be split into panels; ${repeat}`);
       if (type === "bar" && (mark.spec as { stack?: boolean }).stack)
         throw new Error(`Stacked bars cannot be split into panels yet; ${repeat}`);
     }

@@ -1,14 +1,14 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
 import { table, time } from "herceg";
 import { useEffect, useMemo } from "react";
-import { Chart, Line, Region, Rule, Text } from "../src/index.ts";
+import { Chart, Custom, Line, Region, Rule, Text } from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
 declare const p99: Float64Array;
 declare function readCpu(): number;
 
-const metrics = table({ time: time(timestamps), p50, p99 });
+const metrics = table({ time: time(timestamps), p50, p99, service: ["api", "db"] });
 
 export function Latency() {
   return (
@@ -60,6 +60,32 @@ export function Annotated() {
       <Text x={1} y={2} />
       {/* @ts-expect-error text from data needs a label or a text field */}
       <Text data={deploys} x="at" y={1} />
+    </Chart>
+  );
+}
+
+export function Drawn() {
+  return (
+    <Chart>
+      <Custom draw={({ text, x, y }) => text(x(1), y(2), "label")} />
+      <Custom data={metrics} x="time" draw={({ table: data }) => void data.numbers("p50")} />
+      <Custom
+        data={metrics}
+        x="time"
+        y="p50"
+        series="service"
+        pointText={(row, format, s) => format.y(s.y[row]!)}
+        draw={({ series, circle, x, y }) => {
+          for (const s of series) circle(x(s.x[0]!), y(s.y[0]!), 3, { fill: s.color });
+        }}
+      />
+      {/* @ts-expect-error without data, draw gets no table */}
+      <Custom draw={({ table: none }) => none} />
+      {/* @ts-expect-error a custom mark's series field is a category field */}
+      <Custom data={metrics} x="time" y="p50" series="p99" draw={() => {}} />
+      {/* @ts-expect-error a draw that reads the table needs the table as data */}
+      <Custom<typeof metrics> draw={({ table: data }) => void data.numbers("p50")} />
+      <Custom data={metrics} x="time" y={["p50", "p99"]} series={false} draw={() => {}} />
     </Chart>
   );
 }
