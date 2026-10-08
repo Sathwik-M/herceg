@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 
 import numpy as np
 import pytest
@@ -124,3 +125,66 @@ def test_review_fixes_hold():
     assert labels.columns["hot"] == "category"
     with pytest.raises(ValueError, match="bin count"):
         hg.derive(READINGS).bin("temp", count=0)
+
+
+def _labelled(derived: hg.Derived, column: str) -> str:
+    """SVG labelling each row with ``column``, as the chart's JavaScript computes it."""
+    return hg.Chart(derived, width=200, height=100).text(x=0, y=0, text=column).to_svg()
+
+
+def test_counts_keep_the_source_rows_through_calculated_columns():
+    # The steps read only a column they made, yet the count needs the source's rows.
+    ones = hg.derive({"x": [1, 2, 3]}).calculate("one", 1).aggregate(n=("one", "sum"))
+    spec, _ = hg.Chart(ones).text(x=0, y=0, text="n").to_spec()
+    assert list(spec["data"]["data"]["columns"]) == ["x"]
+    assert ">3</text>" in _labelled(ones, "n")
+    # A source column a step replaces is never converted, nor sent.
+    data = {"blob": [{}, {}], "x": [1, 2]}
+    replaced = hg.derive(data).calculate("blob", 1).aggregate(n=("blob", "sum"))
+    spec, _ = hg.Chart(replaced).text(x=0, y=0, text="n").to_spec()
+    assert list(spec["data"]["data"]["columns"]) == ["x"]
+    assert ">2</text>" in _labelled(replaced, "n")
+    doubled = hg.derive(data).calculate("blob", hg.col("x") * 2)
+    spec, _ = hg.Chart(doubled).line(x="x", y="blob").to_spec()
+    assert list(spec["data"]["data"]["columns"]) == ["x"]
+
+
+def test_missing_branches_take_the_other_branch_type():
+    data = {"x": [1.0, 2.0, 3.0]}
+    for then, otherwise in ((None, "low"), ("low", None)):
+        labels = hg.derive(data).calculate("label", hg.when(hg.col("x") > 1, then, otherwise))
+        assert labels.columns["label"] == "category"
+        assert ">low</text>" in _labelled(labels, "label")
+
+
+def test_calculated_time_copies_are_numbers_as_in_the_chart():
+    days = np.array(["2026-01-01", "2026-01-02", "2026-01-03"], dtype="datetime64[ms]")
+    copied = hg.derive({"t": days, "y": [1.0, 2.0, 3.0]}).calculate("copy", hg.col("t"))
+    assert copied.columns == {"t": "time", "y": "number", "copy": "number"}
+
+    def axis(x: str) -> str:
+        return hg.Chart(copied, width=400, height=200).line(x=x, y="y").to_svg()
+
+    # The chart formats the time column's ticks as dates, and the copy's as numbers.
+    assert "Jan 2" in axis("t")
+    assert "Jan 2" not in axis("copy")
+
+
+def test_membership_needs_literal_candidates():
+    with pytest.raises(TypeError, match="'in' needs a value and at least one candidate"):
+        hg.derive(READINGS).filter(hg.col("temp").is_in())
+    with pytest.raises(TypeError, match="'in' candidates must be number literals"):
+        hg.derive(READINGS).calculate("same", hg.col("temp").is_in(hg.col("hour")))
+    # None is a candidate: it matches missing values.
+    hg.derive(READINGS).filter(hg.col("site").is_in("n", None))
+
+
+def test_bin_options_are_numbers_not_booleans():
+    with pytest.raises(ValueError, match="bin step must be a positive number, not True"):
+        hg.derive(READINGS).bin("temp", step=True)
+    with pytest.raises(ValueError, match="bin start must be a finite number, not True"):
+        hg.derive(READINGS).bin("temp", step=5, start=True)
+    # NumPy numbers become JSON numbers.
+    binned = hg.derive(READINGS).bin("temp", step=np.int64(5), start=np.float32(2.5))
+    assert binned.steps[-1] == {"bin": "temp", "step": 5, "start": 2.5}
+    json.dumps(binned.steps[-1])

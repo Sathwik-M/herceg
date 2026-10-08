@@ -147,7 +147,11 @@ function compile(e: Expression, table: Fields): Compiled {
     const test = typed(condition!, "boolean", op, table).at;
     // A null branch is missing in the other branch's type: NaN or no category.
     const then = yes === null ? undefined : compile(yes!, table);
-    const otherwise = no === null ? undefined : typed(no!, then?.type ?? "number", op, table);
+    const otherwise = no === null ? undefined : compile(no!, table);
+    if (then && otherwise && then.type !== otherwise.type)
+      throw new TypeError(
+        `"if" branches give ${then.type} and ${otherwise.type}; they need one type`,
+      );
     const type = then?.type ?? otherwise?.type ?? "number";
     const missing = type === "string" ? null : Number.NaN;
     const a = then ? then.at : () => missing;

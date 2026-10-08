@@ -93,19 +93,21 @@ to them are replaced when the source changes. Expressions
 are portable JSON trees, as specs carry them (`[">", ["field", "temp"], 30]`;
 not Vega-Lite's expression strings). Missing values (NaN, missing
 categories) compare false except as unequal, and `null` in a `when` branch
-is missing in the other branch's type. Ungrouped aggregates give one row
-even for no rows (a count of 0, missing statistics). Aggregates are `count`, `sum`,
-`mean`, `median`, `min`, `max`, `q1`, `q3`, `stdev`, `variance` (sample
-statistics), `distinct`, `first`, and `last`, over finite values; quantiles
-interpolate as NumPy and pandas do. Rolling windows are trailing windows of
-rows (within `groupby` groups), with `count`, `sum`, `mean`, `min`, `max`,
-and `stdev`. Bins hold their start: `step` wide from `start`, or about
-`count` round bins (default 10; 1 wide when all values are equal); time
-fields bin by a step in milliseconds. Rolling statistics combine partial
-aggregates rather than subtracting values that leave the window, so huge
-values do not swamp small ones. Loading specs (`herceg/spec`) includes the
-transforms, about 4.6 KiB gzip; charts built in TypeScript bundle them only
-when they call `derive`.
+is missing in the other branch's type. Calculated fields are categories
+when they give text and numbers otherwise, even a copy of a time field.
+Ungrouped aggregates give one row even for no rows (a count of 0, missing
+statistics). Aggregates are `count`, `sum`, `mean`, `median`, `min`, `max`,
+`q1`, `q3`, `stdev`, `variance` (sample statistics), `distinct`, `first`,
+and `last`, over finite values; quantiles interpolate as NumPy and pandas
+do. Rolling windows are trailing windows of rows (within `groupby` groups),
+with `count`, `sum`, `mean`, `min`, `max`, and `stdev`. Bins hold their
+start: `step` wide from `start` (by default at multiples of the step), or
+about `count` round bins (default 10; 1 wide when all values are equal);
+time fields bin by a step in milliseconds. Rolling statistics combine
+partial aggregates rather than subtracting values that leave the window, so
+huge values do not swamp small ones. Loading specs (`herceg/spec`) includes
+the transforms, about 4.9 KiB gzip; charts built in TypeScript bundle them
+only when they call `derive`.
 
 ## Marks
 

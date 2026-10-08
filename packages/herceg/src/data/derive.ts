@@ -5,7 +5,7 @@
 // own, and drops remove the rows they produced; any other change, or any
 // other pipeline, recomputes the table.
 
-import { stepDecimals, tickStep } from "../scale/ticks.ts";
+import { tickStep } from "../scale/ticks.ts";
 import type {
   AggregateOp,
   AggregateSpec,
@@ -207,6 +207,12 @@ function bin(
   const kind = rows.kind(step.bin);
   if (kind === "category")
     throw new TypeError(`Field "${step.bin}" is a category; bins need numbers or times`);
+  if (step.count !== undefined && !(Number.isInteger(step.count) && step.count >= 1))
+    throw new RangeError(`Bin count must be a whole number of at least 1, not ${step.count}`);
+  if (step.step !== undefined && !(step.step > 0 && Number.isFinite(step.step)))
+    throw new RangeError(`Bin step must be a positive number, not ${step.step}`);
+  if (step.start !== undefined && !Number.isFinite(step.start))
+    throw new RangeError(`Bin start must be a finite number, not ${step.start}`);
   const values = rows.numbers(step.bin);
   const extent = scanExtent(values, 0, values.length);
   // Without a spread of values (none, or one), bins are 1 wide.
@@ -214,12 +220,13 @@ function bin(
     extent && extent[1] > extent[0] ? tickStep(extent[0], extent[1], step.count ?? BINS) : 1;
   const width = step.step ?? automatic;
   if (!(width > 0 && Number.isFinite(width)))
-    throw new RangeError(`Bin step must be positive, not ${width}`);
-  const start = step.start ?? (extent ? Math.floor(extent[0] / width) * width : 0);
-  // Edges rounded to the decimals of the step and start, so 0.3 is an edge
-  // of 0.1 bins, while integer edges (epoch milliseconds) stay exact.
-  const decimals = Math.max(stepDecimals(width), stepDecimals(Math.abs(start)));
-  const edge = (k: number) => Number((start + k * width).toFixed(decimals));
+    throw new RangeError(
+      `No bin step fits values from ${extent![0]} to ${extent![1]}; give a step`,
+    );
+  // Without a start, edges are multiples of the step, the same for every
+  // batch of appended rows.
+  const edge = binEdges(step.start ?? 0, width);
+  const start = edge(0);
   const out = new Float64Array(rows.length);
   for (let i = 0; i < rows.length; i++) {
     const value = values[i]!;
@@ -228,12 +235,42 @@ function bin(
       out[i] = Number.NaN;
       continue;
     }
-    // Division can put a value on an edge just below it (0.3 / 0.1 is 2.999…).
+    // A value belongs to the bin whose edges hold it; division can put one
+    // just below an edge it is on (0.3 / 0.1 is 2.999…).
     if (edge(k + 1) <= value) k++;
     else if (edge(k) > value) k--;
     out[i] = edge(k);
   }
   return rows.with(step.as ?? step.bin, { kind, values: out, owned: true });
+}
+
+/**
+ * The edges `start + k × width` of bins. When the start and width are short
+ * decimals, edges are counted in units of their last decimal, so 0.3 is an
+ * edge of 0.1 bins and 1000000000.25 one of bins starting there; otherwise
+ * (widths such as 1/3 or 1e-300) they are computed directly.
+ */
+function binEdges(start: number, width: number): (k: number) => number {
+  const decimals = Math.max(decimalsOf(start), decimalsOf(width));
+  // 10 ** 22 is the largest power of ten a double holds exactly.
+  if (decimals > 22) return (k) => start + k * width;
+  const scale = 10 ** decimals;
+  const first = Math.round(start * scale);
+  const unit = Math.round(width * scale);
+  return (k) => {
+    const units = first + k * unit;
+    return Number.isSafeInteger(units) ? units / scale : start + k * width;
+  };
+}
+
+/** The decimals of `x` written as a short decimal (1 for 0.1, 2 for -0.25), or Infinity past 22. */
+function decimalsOf(x: number): number {
+  for (let decimals = 0; decimals <= 22; decimals++) {
+    const scaled = x * 10 ** decimals;
+    if (Math.abs(scaled - Math.round(scaled)) <= 4 * Number.EPSILON * Math.abs(scaled))
+      return decimals;
+  }
+  return Number.POSITIVE_INFINITY;
 }
 
 /** Rows grouped by `fields`: each row's group, and each group's first row, in order of appearance. */
@@ -528,10 +565,21 @@ function reset(m: Moments): void {
 /** Combines another aggregate into `m` (Chan, Golub, and LeVeque's pairwise update). */
 function add(m: Moments, n: number, mean: number, m2: number, min: number, max: number): void {
   if (n === 0) return;
+  if (m.n === 0) {
+    // Copied: the update would square the mean, which overflows for huge values.
+    m.n = n;
+    m.mean = mean;
+    m.m2 = m2;
+    m.min = min;
+    m.max = max;
+    return;
+  }
   const total = m.n + n;
   const delta = mean - m.mean;
-  m.mean += (delta * n) / total;
-  m.m2 += m2 + (delta * delta * m.n * n) / total;
+  // The weight first, so products of huge values and counts do not overflow.
+  const weight = n / total;
+  m.mean += delta * weight;
+  m.m2 += m2 + delta * delta * (m.n * weight);
   m.n = total;
   if (min < m.min) m.min = min;
   if (max > m.max) m.max = max;
@@ -763,7 +811,7 @@ export class Derivation<S extends Schema> {
   >(options: {
     groupby?: readonly G[];
     ops: O;
-  }): Derivation<Pick<S, G> & { [P in keyof O & string]: ResultKind<S, O[P]> }> {
+  }): Derivation<Omit<Pick<S, G>, keyof O> & { [P in keyof O & string]: ResultKind<S, O[P]> }> {
     return this.#then({
       aggregate: Object.entries(options.ops).map(([as, { op, field }]) =>
         field === undefined ? { op, as } : { op, field, as },

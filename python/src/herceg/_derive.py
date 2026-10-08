@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import numbers
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from typing import Any
 
 import numpy as np
@@ -274,9 +274,13 @@ def _type(json: Any, kinds: _Kinds) -> str:
             typed(arg, "number")
         return "number"
     if op == "in":
+        if len(args) < 2:
+            raise TypeError("'in' needs a value and at least one candidate")
         value = _type(args[0], kinds)
         for candidate in args[1:]:
-            if candidate is not None and _type(candidate, kinds) != value:
+            if isinstance(candidate, list) or (
+                candidate is not None and _type(candidate, kinds) != value
+            ):
                 raise TypeError(f"'in' candidates must be {value} literals")
         return "boolean"
     if op == "missing":
@@ -304,10 +308,16 @@ def _fields_of(json: Any) -> set[str]:
 
 
 def _value_kind(json: Any, kinds: _Kinds) -> str:
-    """The kind of column an expression's values make: text makes categories."""
-    if isinstance(json, list) and json and json[0] == "field":
-        return kinds[json[1]]
+    """The kind of column an expression's values make: text makes categories, and
+    anything else numbers, as in the chart (a copy of a time column too)."""
     return "category" if _type(json, kinds) == "string" else "number"
+
+
+def _real(value: Any) -> bool:
+    """Whether a value is a finite number, and not True or False."""
+    return (
+        isinstance(value, numbers.Real) and not isinstance(value, bool) and bool(np.isfinite(value))
+    )
 
 
 class Derived:
@@ -378,14 +388,16 @@ class Derived:
         """Replaces a number or time column (or adds ``name``) with the start of its bin:
         ``step`` wide from ``start``, or about ``count`` round bins (default 10)."""
         self._require(column, "bin", ("number", "time"))
-        if step is not None and not (np.isfinite(step) and step > 0):
+        if step is not None and not (_real(step) and step > 0):
             raise ValueError(f"bin step must be a positive number, not {step!r}")
         if count is not None and not (
             isinstance(count, int) and not isinstance(count, bool) and count >= 1
         ):
             raise ValueError(f"bin count must be a whole number of at least 1, not {count!r}")
-        if start is not None and not np.isfinite(start):
+        if start is not None and not _real(start):
             raise ValueError(f"bin start must be a finite number, not {start!r}")
+        # NumPy numbers as JSON numbers.
+        step, start = _literal(step), _literal(start)
         spec = {"bin": column, "as": name, "step": step, "count": count, "start": start}
         kinds = self._kinds.adding({name or column: self._kinds[column]})
         return self._then({k: v for k, v in spec.items() if v is not None}, kinds)
@@ -446,21 +458,43 @@ class Derived:
             {"sort": column, "order": "descending" if descending else "ascending"}, self._kinds
         )
 
-    def source_columns(self) -> set[str]:
-        """Columns of the source the steps read."""
-        used: set[str] = set()
+    def source_columns(self, used: Iterable[str] = ()) -> set[str]:
+        """Columns of the source the steps read, and those of ``used`` (columns read
+        from the derived rows) that come from the source unchanged. A column read
+        after a step made or replaced it is not the source's."""
+        needs: set[str] = set()
+        made: set[str] = set()
         for step in self.steps:
-            for key in ("filter", "calculate"):
-                if key in step:
-                    used |= _fields_of(step[key])
-            for key in ("bin", "sort"):
-                if key in step:
-                    used.add(step[key])
-            used |= set(step.get("groupby", []))
-            for operation in step.get("aggregate", []) + step.get("rolling", []):
-                if "field" in operation:
-                    used.add(operation["field"])
-        return used
+            needs |= _reads(step) - made
+            made |= _writes(step)
+        return needs | ({name for name in used if name in self._kinds} - made)
+
+
+def _reads(step: dict[str, Any]) -> set[str]:
+    """The columns a step reads."""
+    reads: set[str] = set()
+    for key in ("filter", "calculate"):
+        if key in step:
+            reads |= _fields_of(step[key])
+    for key in ("bin", "sort"):
+        if key in step:
+            reads.add(step[key])
+    reads |= set(step.get("groupby", []))
+    for operation in step.get("aggregate", []) + step.get("rolling", []):
+        if "field" in operation:
+            reads.add(operation["field"])
+    return reads
+
+
+def _writes(step: dict[str, Any]) -> set[str]:
+    """The columns a step makes or replaces: an aggregate makes every column of its rows."""
+    if "calculate" in step:
+        return {step["as"]}
+    if "bin" in step:
+        return {step.get("as", step["bin"])}
+    if "aggregate" in step:
+        return {*step.get("groupby", []), *(operation["as"] for operation in step["aggregate"])}
+    return {operation["as"] for operation in step.get("rolling", [])}
 
 
 def _checked(json: Any, kinds: _Kinds, role: str) -> str:

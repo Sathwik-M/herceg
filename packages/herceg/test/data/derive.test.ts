@@ -23,7 +23,6 @@ import {
 import { col, compileExpression, type Expression, when } from "../../src/data/expression.ts";
 import { type Schema, type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
-import { bar } from "../../src/marks/bar.ts";
 import { ChartModel } from "../../src/model/model.ts";
 import type { RectGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
@@ -105,6 +104,9 @@ describe("expressions", () => {
       /needs boolean operands/,
     );
     expect(() => compileExpression(["sqrt"], t)).toThrow(/takes 1 operand/);
+    expect(() => compileExpression(when(true, "a", 1).toJSON(), t)).toThrow(
+      /branches give string and number/,
+    );
     expect(() => compileExpression(["frobnicate", 1] as never, t)).toThrow(
       /Unknown expression operator/,
     );
@@ -112,6 +114,15 @@ describe("expressions", () => {
 });
 
 describe("transforms", () => {
+  it("calculates numbers, not times, from time fields", () => {
+    const t = table({ at: time([0, 60_000]) });
+    const copied = derive(t)
+      .calculate("copy", col("at"))
+      .calculate("later", col("at").add(1))
+      .table();
+    expect([copied.kind("copy"), copied.kind("later")]).toEqual(["number", "number"]);
+  });
+
   it("filters and calculates", () => {
     const warm = derive(readings)
       .filter(col("temp").gt(12))
@@ -211,6 +222,11 @@ describe("transforms", () => {
         .table().length,
     ).toBe(3);
     expect(quantile([1, 2, 3, 4], 0.5)).toBe(2.5);
+    // An operation named as a grouping field replaces it.
+    const counted = derive(t)
+      .aggregate({ groupby: ["g"], ops: { g: count() } })
+      .table();
+    expect(values(counted, "g")).toEqual([3, 3]);
   });
 
   it("rolls trailing windows within groups", () => {
@@ -261,6 +277,43 @@ describe("transforms", () => {
 });
 
 describe("edge cases", () => {
+  it("bins from fractional starts and by tiny steps", () => {
+    const offset = table({ v: [1000000000.25, 1000000001.25, 1000000001.75] });
+    expect(values(derive(offset).bin("v", { step: 1, start: 1000000000.25 }).table(), "v")).toEqual(
+      [1000000000.25, 1000000001.25, 1000000001.25],
+    );
+    const tiny = table({ v: [1e-16, 2e-16, 3e-16, 3.5e-16] });
+    expect(values(derive(tiny).bin("v", { step: 1e-16 }).table(), "v")).toEqual([
+      1e-16, 2e-16, 3e-16, 3e-16,
+    ]);
+    const tinier = table({ v: [1e-300, 2.5e-300] });
+    expect(values(derive(tinier).bin("v", { step: 1e-300 }).table(), "v")).toEqual([
+      1e-300, 2e-300,
+    ]);
+    // Steps that are not short decimals keep their own edges.
+    const thirds = table({ v: [0.5, 1, 1.5] });
+    expect(
+      values(
+        derive(thirds)
+          .bin("v", { step: 1 / 3 })
+          .table(),
+        "v",
+      ),
+    ).toEqual([1 / 3, 1, 4 / 3]);
+  });
+
+  it("rejects bin options the spec loader rejects", () => {
+    const t = table({ v: [1, 2, 3] });
+    const binned = (options: { step?: number; count?: number; start?: number }) => () =>
+      derive(t).bin("v", options).table();
+    expect(binned({ count: 0 })).toThrow(/Bin count must be a whole number of at least 1, not 0/);
+    expect(binned({ count: 2.5 })).toThrow(/Bin count/);
+    expect(binned({ step: 0 })).toThrow(/Bin step must be a positive number, not 0/);
+    expect(binned({ step: Number.POSITIVE_INFINITY })).toThrow(/Bin step/);
+    expect(binned({ start: Number.NaN })).toThrow(/Bin start must be a finite number, not NaN/);
+    expect(binned({ start: Number.POSITIVE_INFINITY })).toThrow(/Bin start/);
+  });
+
   it("bins exact integers and constant data", () => {
     const stamps = table({ at: time([1767225600001, 1767225600006, 1767225600011]) });
     expect(values(derive(stamps).bin("at", { step: 1 }).table(), "at")).toEqual([
@@ -303,6 +356,16 @@ describe("edge cases", () => {
       .rolling({ size: 2, ops: { s: { op: "sum", field: "v" } } })
       .table();
     expect(values(sums, "s")).toEqual([1e16, 1e16 + 1, 2, 2]);
+    // Squares and sums of huge values overflow; their spread and mean do not.
+    const huge = table({ v: [1e160, 1e160, 1e160], w: [1e308, 1e308, 1e308] });
+    const spread = derive(huge)
+      .rolling({
+        size: 2,
+        ops: { sd: { op: "stdev", field: "v" }, m: { op: "mean", field: "w" } },
+      })
+      .table();
+    expect(values(spread, "sd")).toEqual([null, 0, 0]);
+    expect(values(spread, "m")).toEqual([1e308, 1e308, 1e308]);
   });
 
   it("keeps one row for ungrouped aggregates of nothing", () => {
@@ -326,9 +389,11 @@ describe("edge cases", () => {
     expect(copy.length).toBe(3);
     const labels = derive(readings)
       .calculate("hot", when(col("temp").gt(15), "hot", null))
+      .calculate("cool", when(col("temp").gt(15), null, "cool"))
       .table();
-    expect(labels.kind("hot")).toBe("category");
+    expect([labels.kind("hot"), labels.kind("cool")]).toEqual(["category", "category"]);
     expect(values(labels, "hot")).toEqual([null, "hot", null, "hot", null, null]);
+    expect(values(labels, "cool")).toEqual(["cool", null, "cool", null, "cool", "cool"]);
     expect(() =>
       compileExpression(["constructor", 1, 2] as never, readings as unknown as Table),
     ).toThrow(/Unknown expression operator "constructor"/);
@@ -436,4 +501,10 @@ export function typeChecks() {
     .calculate("label", when(col("temp").gt(0), "a", "b"))
     .table()
     .categories("label");
+  const counted = derive(readings)
+    .aggregate({ groupby: ["site"], ops: { site: count() } })
+    .table();
+  counted.numbers("site");
+  // @ts-expect-error "site" holds counts, which replaced the grouping field.
+  counted.categories("site");
 }

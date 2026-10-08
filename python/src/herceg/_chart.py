@@ -796,13 +796,12 @@ class Chart:
             if table not in used:
                 continue
             source = self._derived[table]
-            derived = self._tables[table][0]
-            names = self._tables[source][1].names
+            columns = self._tables[source][1]
             needs = used.setdefault(source, set())
-            needs.update(derived.source_columns() | (used[table] & set(names)))
-            # A table without columns has no rows: send one, so counts survive.
-            if not needs and names:
-                needs.add(names[0])
+            needs.update(self._tables[table][0].source_columns(used[table]))
+            # A table sent without columns has no rows: send one, so counts survive.
+            if not needs & set(columns.names) and columns.names:
+                needs.add(_convertible(columns))
         return used
 
     def _used_columns(self) -> dict[str, dict[str, Column]]:
@@ -1001,6 +1000,19 @@ class _DerivedColumns:
         if name not in self._kinds:
             raise KeyError(name)
         return Column(self._kinds[name], np.empty(0))
+
+
+def _convertible(columns: Table | _DerivedColumns) -> str:
+    """The first of a table's columns that converts, to send for its rows alone."""
+    errors: list[Exception] = []
+    for name in columns.names:
+        try:
+            columns.column(name)
+        except (TypeError, ValueError) as error:
+            errors.append(error)
+            continue
+        return name
+    raise errors[0]
 
 
 def table_name(index: int) -> str:
