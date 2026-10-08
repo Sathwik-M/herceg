@@ -560,10 +560,7 @@ class Chart:
         donut. Slices go largest first, clockwise from the top, unless
         ``sort="input"``. A pie has its chart to itself.
         """
-        if self._facet is not None:
-            raise ValueError("charts of a pie cannot have facets yet")
-        if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
-            raise ValueError("charts of a pie have no x axis to zoom, brush, or sync")
+        self._layout_alone("pie")
         if inner_radius is not None and not (
             isinstance(inner_radius, numbers.Real)
             and not isinstance(inner_radius, bool)
@@ -635,6 +632,87 @@ class Chart:
             },
             table,
         )
+
+    def treemap(
+        self,
+        path: Sequence[str] | None = None,
+        value: str | None = None,
+        *,
+        node: str | None = None,
+        parent: str | None = None,
+        data: Any = None,
+        labels: bool | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A treemap: nested rectangles for a tree, each leaf's area its share
+        of the sum of ``value`` (or of the rows).
+
+        The tree is ``path``, category columns from the outermost group in, or
+        ``node`` and ``parent`` columns naming each row's node and its parent.
+        Leaves take their top-level group's color; the legend toggles groups.
+        A treemap has its chart to itself.
+        """
+        return self._tree("treemap", path, value, node, parent, data, labels, id)
+
+    def sunburst(
+        self,
+        path: Sequence[str] | None = None,
+        value: str | None = None,
+        *,
+        node: str | None = None,
+        parent: str | None = None,
+        data: Any = None,
+        labels: bool | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A sunburst: a tree as rings around a center, each node's angle its
+        share of its parent's; the tree as for ``treemap``. A sunburst has its
+        chart to itself."""
+        return self._tree("sunburst", path, value, node, parent, data, labels, id)
+
+    def _tree(
+        self,
+        kind: str,
+        path: Sequence[str] | None,
+        value: str | None,
+        node: str | None,
+        parent: str | None,
+        data: Any,
+        labels: bool | None,
+        id: str | None,
+    ) -> Chart:
+        self._layout_alone(kind)
+        table = self._mark_table(data)
+        if path is not None:
+            if isinstance(path, str) or len(path) == 0:
+                raise ValueError(f"{kind} path must be a list of at least one column")
+            for name in path:
+                self._require(table, name, ("category",), f"{kind} path")
+        elif node is not None and parent is not None:
+            self._require(table, node, ("category",), f"{kind} node")
+            self._require(table, parent, ("category",), f"{kind} parent")
+        else:
+            raise ValueError(f"{kind} needs a path of category columns, or node and parent")
+        self._require(table, value, ("number",), f"{kind} value")
+        return self._add(
+            {
+                "type": kind,
+                "path": list(path) if path is not None else None,
+                "node": node,
+                "parent": parent,
+                "value": value,
+                "labels": labels,
+                "id": id,
+            },
+            table,
+        )
+
+    def _layout_alone(self, kind: str) -> None:
+        """Layout marks (pies, treemaps, sunbursts) have no axes to facet or zoom."""
+        if self._facet is not None:
+            raise ValueError(f"charts of a {kind} cannot have facets yet")
+        if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
+            raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
 
     def heatmap(
         self,
@@ -999,9 +1077,10 @@ class Chart:
         return table
 
     def _add(self, spec: dict[str, Any], table: int | None) -> Chart:
-        pies = [mark for mark, _ in self._marks if mark["type"] == "pie"]
-        if pies or (spec["type"] == "pie" and self._marks):
-            raise ValueError("a pie has its chart to itself; draw other marks in another chart")
+        layouts = [mark["type"] for mark, _ in self._marks if mark["type"] in _LAYOUT_MARKS]
+        if layouts or (spec["type"] in _LAYOUT_MARKS and self._marks):
+            kind = layouts[0] if layouts else spec["type"]
+            raise ValueError(f"a {kind} has its chart to itself; draw other marks in another chart")
         if spec.get("axis") not in (None, "left", "right"):
             raise ValueError(f"axis must be 'left' or 'right', not {spec['axis']!r}")
         if self._facet is not None and spec.get("axis") == "right":
@@ -1019,6 +1098,10 @@ class Chart:
                 )
         self._marks.append((spec, table))
         return self
+
+
+#: Marks that lay out their own chart, with no axes.
+_LAYOUT_MARKS = ("pie", "treemap", "sunburst")
 
 
 #: Chart options a live chart can change after display: all but data and facets,
@@ -1125,6 +1208,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
     for key in (
         *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"),
         "category",
+        *("path", "node", "parent"),
         *("open", "high", "low", "close"),
         *("r", "fillOpacity", "color", "symbol"),
     ):
@@ -1344,6 +1428,34 @@ def boxplot(
 ) -> Chart:
     """Box plots of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
     return Chart(data, **options).boxplot(x, y, series=series)
+
+
+def treemap(
+    data: Any,
+    path: Sequence[str] | None = None,
+    value: str | None = None,
+    *,
+    node: str | None = None,
+    parent: str | None = None,
+    labels: bool | None = None,
+    **options: Any,
+) -> Chart:
+    """A treemap of a tree given by ``path`` columns, or ``node`` and ``parent``."""
+    return Chart(data, **options).treemap(path, value, node=node, parent=parent, labels=labels)
+
+
+def sunburst(
+    data: Any,
+    path: Sequence[str] | None = None,
+    value: str | None = None,
+    *,
+    node: str | None = None,
+    parent: str | None = None,
+    labels: bool | None = None,
+    **options: Any,
+) -> Chart:
+    """A sunburst of a tree given by ``path`` columns, or ``node`` and ``parent``."""
+    return Chart(data, **options).sunburst(path, value, node=node, parent=parent, labels=labels)
 
 
 def candlestick(

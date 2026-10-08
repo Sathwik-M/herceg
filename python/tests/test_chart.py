@@ -473,3 +473,28 @@ def test_boxplots_take_a_category_and_values_either_way():
         hg.Chart(data).boxplot(x="region", y="ms", fill_opacity=2)
     with pytest.raises(ValueError, match="cannot be split into panels"):
         hg.Chart(data, facet="v").boxplot(x="region", y="ms")
+
+
+def test_treemaps_and_sunbursts_send_their_tree():
+    sales = {
+        "region": ["Europe", "Europe", "Asia"],
+        "country": ["France", "Spain", "Japan"],
+        "revenue": [3.0, 2.0, 4.0],
+        "unused": [0, 0, 0],
+    }
+    chart = hg.treemap(sales, ["region", "country"], "revenue", width=300, height=200)
+    spec, _ = chart.to_spec()
+    assert spec["marks"] == [
+        {"type": "treemap", "data": "data", "path": ["region", "country"], "value": "revenue"}
+    ]
+    assert sorted(spec["data"]["data"]["columns"]) == ["country", "region", "revenue"]
+    assert "Japan" in chart.to_svg()
+    org = {"node": ["root", "a"], "up": [None, "root"]}
+    spec, _ = hg.sunburst(org, node="node", parent="up").to_spec()
+    assert spec["marks"][0] == {"type": "sunburst", "data": "data", "node": "node", "parent": "up"}
+    with pytest.raises(ValueError, match="needs a path of category columns"):
+        hg.Chart(sales).treemap()
+    with pytest.raises(ValueError, match="a treemap has its chart to itself"):
+        hg.Chart(sales).treemap(["region"]).pie("region")
+    with pytest.raises(TypeError, match="treemap path: column 'revenue' holds number"):
+        hg.Chart(sales).treemap(["revenue"])

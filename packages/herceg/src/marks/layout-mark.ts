@@ -47,8 +47,15 @@ export interface LayoutResult {
   geometry: Geometry[];
   /** The item under a pixel. */
   itemAt(px: number, py: number): LayoutItem | undefined;
-  /** Items in reading order, for keyboard navigation. */
-  items(): readonly LayoutItem[];
+  /**
+   * How many items the keyboard visits. Items are made when asked for, so
+   * charts of many items do not build them all.
+   */
+  readonly count: number;
+  /** The item at a place in reading order, from 0 to `count` - 1. */
+  item(index: number): LayoutItem;
+  /** The place in reading order of the item keyed `key`; -1 when it was not drawn. */
+  indexOf(key: string): number;
   /** A sentence or two describing what was drawn, for screen readers. */
   summary(): string;
 }

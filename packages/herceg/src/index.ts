@@ -89,7 +89,9 @@ export {
   region,
 } from "./marks/region.ts";
 export { type RuleDataOptions, type RuleMark, type RuleOptions, rule } from "./marks/rule.ts";
+export { type SunburstMark, type SunburstOptions, sunburst } from "./marks/sunburst.ts";
 export { type TextDataOptions, type TextMark, type TextOptions, text } from "./marks/text.ts";
+export { type TreemapMark, type TreemapOptions, treemap } from "./marks/treemap.ts";
 export { type Facet, type FacetOptions, facet } from "./model/facet.ts";
 export type {
   AxisInspection,

@@ -276,6 +276,34 @@ Tooltips, hover and click events, and the arrow keys report a slice's value
 and its share of the slices shown. A pie has its chart to itself: it cannot
 share one with other marks, have facets, or zoom, brush, or sync.
 
+### Treemaps and sunbursts
+
+```ts
+treemap(sales, { path: ["region", "country"], value: "revenue" });
+sunburst(sales, { path: ["region", "country", "city"], value: "revenue" });
+treemap(org, { node: "team", parent: "parentTeam", value: "cost" });
+```
+
+Both draw a tree. `path` names category fields from the outermost group in;
+a row ends at its first missing one, and its value belongs to the node there.
+`node` and `parent` name each row's node and its parent's instead; rows
+without a parent are top-level, and duplicate nodes, unknown parents, and
+cycles are errors. A node's value is the sum of `value` over its rows and
+its descendants' (or their count); missing values count as nothing, and
+negative or infinite values, or totals too large for a double, are errors.
+
+A treemap fills the room with nested rectangles, largest first and kept close
+to square (the squarified layout), 2 px apart; groups show their name in a
+strip along their top. A sunburst draws rings around a center, a ring per
+depth, each node's angle its share of its parent's, largest first clockwise
+from the top. Nodes take their top-level group's color, deeper rings of a
+sunburst lighter, and the legend toggles top-level groups, giving their room
+to the rest. Names go inside the shapes that have room for at least three
+characters. Tooltips report a node's path, value, and share of what is shown;
+the arrow keys visit the nodes drawn, depth first. Items keep their keys
+while the tree changes: a node's path, or with `node` and `parent` its name. Like a pie, each has its chart to
+itself.
+
 ### A second y axis
 
 Marks with `axis: "right"` use a second y scale, drawn on the right and

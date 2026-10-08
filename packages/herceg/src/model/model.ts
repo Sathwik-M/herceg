@@ -1032,7 +1032,8 @@ export class ChartModel {
 
   /** An item of the last scene's layout mark, by key. */
   inspectItem(key: string): Inspection | undefined {
-    return this.#item(this.#layout?.items().find((item) => item.key === key));
+    const at = this.#layout?.indexOf(key) ?? -1;
+    return at < 0 ? undefined : this.#item(this.#layout!.item(at));
   }
 
   /**
@@ -1041,11 +1042,11 @@ export class ChartModel {
    * count from before the first item, or after the last for negative ones.
    */
   stepItem(key: string | undefined, step: number): string | undefined {
-    const items = this.#layout?.items() ?? [];
-    if (items.length === 0) return undefined;
-    const at = items.findIndex((item) => item.key === key);
-    const from = at >= 0 ? at : step > 0 ? -1 : items.length;
-    return items[Math.min(items.length - 1, Math.max(0, from + step))]!.key;
+    const layout = this.#layout;
+    if (!layout || layout.count === 0) return undefined;
+    const at = key === undefined ? -1 : layout.indexOf(key);
+    const from = at >= 0 ? at : step > 0 ? -1 : layout.count;
+    return layout.item(Math.min(layout.count - 1, Math.max(0, from + step))).key;
   }
 
   /** A sentence describing the layout mark's last scene. */

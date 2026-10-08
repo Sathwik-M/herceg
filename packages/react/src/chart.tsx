@@ -23,7 +23,7 @@ import { markBuilder } from "./marks.tsx";
 export interface ChartProps extends Omit<ChartOptions, "marks"> {
   /** Marks built with herceg's functions; mark elements among `children` are added after them. */
   marks?: readonly ChartMark[];
-  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Rule>, <Region>, <Text>, <Custom>. */
+  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Treemap>, <Sunburst>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: ReactNode;
   className?: string;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -102,6 +102,8 @@ const PORTABLE = new Set([
   "histogram",
   "pie",
   "boxplot",
+  "treemap",
+  "sunburst",
   "rule",
   "region",
   "text",
