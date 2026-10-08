@@ -3,6 +3,7 @@
 
 import { type Chart, createChart } from "./dom/chart.ts";
 import type { MeasureText } from "./layout/text.ts";
+import { renderToPDF } from "./pdf.ts";
 import { renderToSVG } from "./render/static.ts";
 import { type LoadedSpec, loadSpec, type SpecBuffer } from "./spec/load.ts";
 import type { ChartSpec } from "./spec/spec.ts";
@@ -35,4 +36,10 @@ export function specToSVG(
     width: config.width ?? 640,
     height: config.height ?? 320,
   });
+}
+
+/** A one-page vector PDF for a spec (see `renderToPDF` in `herceg/pdf`), sized like `specToSVG`. */
+export function specToPDF(spec: ChartSpec, buffers: readonly SpecBuffer[] = []): Uint8Array {
+  const { config } = loadSpec(spec, buffers);
+  return renderToPDF({ ...config, width: config.width ?? 640, height: config.height ?? 320 });
 }

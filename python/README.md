@@ -6,7 +6,7 @@ large-data handling as the TypeScript library.
 
 > Early development. Line, area, bar, scatter, heatmap, error bar,
 > candlestick, and histogram marks, rule, region, and text annotations; small multiples;
-> HTML, notebook, SVG, and PNG output.
+> HTML, notebook, SVG, PNG, and PDF output.
 
 ```python
 import herceg as hg
@@ -96,17 +96,23 @@ chart.show()               # notebook display, or a browser tab outside notebook
 chart.save("chart.html")   # self-contained page: herceg and the data embedded
 chart.save("chart.svg")    # static SVG
 chart.save("chart.png")    # PNG at twice the chart size (scale=...)
+chart.save("chart.pdf")    # one-page vector PDF (chart.to_pdf() returns the bytes)
 chart.to_spec()            # (spec dict, list of binary buffers)
 ```
 
 HTML output and notebook display embed the herceg bundle (about 60 KiB), so
 they work offline. Notebooks show each chart in an isolated iframe.
 
-SVG and PNG export need the `export` extra (`pip install 'herceg[export]'`):
-SVG is rendered by the same DOM-free renderer as herceg's `renderToSVG`, run in
-an embedded V8 engine (`mini-racer`), so it matches the browser's chart
-except for text measurement, which uses fixed Helvetica metrics. PNG is
-rasterized from that SVG by `resvg`.
+SVG, PNG, and PDF export need the `export` extra (`pip install
+'herceg[export]'`): SVG is rendered by the same DOM-free renderer as herceg's
+`renderToSVG`, run in an embedded V8 engine (`mini-racer`), so it matches the
+browser's chart except for text measurement, which uses fixed Helvetica
+metrics. PNG is rasterized from that SVG by `resvg`. PDF comes from herceg's
+`renderToPDF` in the same engine, with the SVG's layout: vector marks, axes,
+and legends, heatmaps as images, and selectable text in the standard PDF
+fonts, which cover Windows-1252 (Latin-1 and common punctuation); other
+characters print as "?". Dark themes need a background color in PDFs, whose
+viewers show transparent pages as white.
 
 ## Development
 

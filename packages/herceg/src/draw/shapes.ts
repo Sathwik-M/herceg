@@ -8,7 +8,7 @@ const ALIGN = { start: "start", middle: "center", end: "end" } as const;
  * Both renderers place text on the alphabetic baseline at this offset, since
  * Canvas and SVG disagree about where the "middle" baseline is.
  */
-const MIDDLE_TO_BASELINE = 0.35;
+export const MIDDLE_TO_BASELINE = 0.35;
 
 function isText(shape: PathShape | TextShape): shape is TextShape {
   return "text" in shape;

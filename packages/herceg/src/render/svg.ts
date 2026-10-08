@@ -11,6 +11,7 @@ import {
   LEGEND_SWATCH,
   type LegendItem,
   type Panel,
+  rampOffsets,
   type Scene,
   type SvgContext,
 } from "../scene/scene.ts";
@@ -84,14 +85,9 @@ export function legendElements(legend: readonly LegendItem[], theme: Theme): str
 
 /** Continuous color legend; `id` must be unique in the document (for the gradient). */
 export function colorLegendElement(legend: ColorLegend, theme: Theme, id: string): string {
-  const middle = legend.middle ?? 0.5;
+  const offsets = rampOffsets(legend);
   const stops = legend.stops
-    .map((color, i) => {
-      // Even spacing, with the middle color moved to `middle`.
-      const t = i / Math.max(1, legend.stops.length - 1);
-      const offset = t <= 0.5 ? t * 2 * middle : middle + (t - 0.5) * 2 * (1 - middle);
-      return `<stop offset="${n(offset * 100)}%" stop-color="${escapeXml(color)}"/>`;
-    })
+    .map((color, i) => `<stop offset="${n(offsets[i]! * 100)}%" stop-color="${escapeXml(color)}"/>`)
     .join("");
   const y = legend.y;
   const text = (item: { text: string; x: number }, fill: string) =>

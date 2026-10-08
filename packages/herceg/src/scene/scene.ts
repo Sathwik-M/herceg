@@ -408,3 +408,13 @@ export interface Scene {
 }
 
 export const LEGEND_SWATCH = 10;
+
+/** Where each stop of a color legend sits along its ramp, from 0 to 1: evenly, with the middle stop at `middle`. */
+export function rampOffsets(legend: ColorLegend): number[] {
+  const middle = legend.middle ?? 0.5;
+  const last = Math.max(1, legend.stops.length - 1);
+  return legend.stops.map((_, i) => {
+    const t = i / last;
+    return t <= 0.5 ? t * 2 * middle : middle + (t - 0.5) * 2 * (1 - middle);
+  });
+}

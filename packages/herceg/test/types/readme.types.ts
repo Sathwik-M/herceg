@@ -20,6 +20,7 @@ import {
   text,
   time,
 } from "../../src/index.ts";
+import { renderToPDF } from "../../src/pdf.ts";
 
 declare const timestamps: Float64Array;
 declare const p50Latency: Float64Array;
@@ -94,8 +95,10 @@ text(deploys, { x: "at", y: "build", label: "a", text: "version" });
 // @ts-expect-error text from data needs a label or a text field
 text(deploys, { x: "at", y: "build" });
 
-// Server rendering
-renderToSVG({ width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] });
+// Export
+const exported = { width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] };
+export const svg: string = renderToSVG(exported);
+export const pdf: Uint8Array = renderToPDF(exported);
 
 // A second y axis
 const traffic = table({ time: time(timestamps), latency: latencies, requests: p50Latency });

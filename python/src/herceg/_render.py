@@ -1,4 +1,4 @@
-"""Output: HTML with herceg embedded, notebook display, and static SVG and PNG."""
+"""Output: HTML with herceg embedded, notebook display, and static SVG, PNG, and PDF."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def _engine() -> Any:
         from py_mini_racer import MiniRacer
     except ImportError as error:
         raise ImportError(
-            "Static SVG and PNG export need the `export` extra: pip install 'herceg[export]'"
+            "Static SVG, PNG, and PDF export need the `export` extra: pip install 'herceg[export]'"
         ) from error
     engine = MiniRacer()
     # V8's thread must be stopped before interpreter shutdown, which
@@ -99,6 +99,12 @@ def _engine() -> Any:
 def svg(spec: dict[str, Any], buffers: list[bytes]) -> str:
     """Standalone SVG, rendered by herceg's DOM-free renderer in an embedded V8."""
     return _engine().call("hercegStatic.svg", json.dumps(spec), _encoded(buffers))
+
+
+def pdf(spec: dict[str, Any], buffers: list[bytes]) -> bytes:
+    """One-page vector PDF, rendered by herceg's DOM-free PDF renderer in the same V8."""
+    encoded = _engine().call("hercegStatic.pdf", json.dumps(spec), _encoded(buffers))
+    return base64.b64decode(encoded)
 
 
 def png(svg_text: str, *, scale: float) -> bytes:
