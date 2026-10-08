@@ -10,6 +10,7 @@ export {
   Heatmap,
   Histogram,
   Line,
+  Pie,
   Point,
   Region,
   Rule,

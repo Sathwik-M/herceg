@@ -9,7 +9,7 @@ import { line } from "../../src/marks/line.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { text } from "../../src/marks/text.ts";
 import { describeChart } from "../../src/model/describe.ts";
-import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { type AxisInspection, type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { LineGeometry, RuleGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
@@ -185,7 +185,7 @@ describe("right y axis", () => {
     });
     const left = model.yScale()!;
     // b is 5 on the right axis, far below the pointer; only left values count.
-    const hit = model.inspect(model.xScale()!.map(1), left.map(5))!;
+    const hit = model.inspect(model.xScale()!.map(1), left.map(5)) as AxisInspection;
     expect(hit.points.map((p) => p.text)).toEqual(["4"]);
     expect(hit.position).toBeCloseTo(left.map(4), 3);
     // With every series on the right, the right axis is the one followed.
@@ -194,7 +194,7 @@ describe("right y axis", () => {
       tooltip: { mode: "nearest-y" },
     }).model;
     const right = only.yRightScale()!;
-    const along = only.inspect(only.xScale()!.map(1), right.map(500))!;
+    const along = only.inspect(only.xScale()!.map(1), right.map(500)) as AxisInspection;
     expect(along.points.map((p) => p.text)).toEqual(["500"]);
     expect(along.position).toBeCloseTo(right.map(500), 3);
   });

@@ -7,6 +7,7 @@ import {
   type BarOptions,
   bar,
   type CandlestickOptions,
+  type ChartMark,
   type CustomDataOptions,
   type CustomOptions,
   candlestick,
@@ -19,8 +20,9 @@ import {
   histogram,
   type LineOptions,
   line,
-  type Mark,
+  type PieOptions,
   type PointOptions,
+  pie,
   point,
   type RegionDataOptions,
   type RegionOptions,
@@ -64,7 +66,7 @@ type CustomProps<T> = { data?: T } & (T extends Table<infer S extends Schema>
 interface MarkComponent<P> {
   (props: P): null;
   displayName: string;
-  buildMark: (props: P) => Mark;
+  buildMark: (props: P) => ChartMark;
   /** Boolean options, which a template may write as bare attributes. */
   flags: readonly string[];
 }
@@ -76,7 +78,7 @@ interface MarkComponent<P> {
  */
 function markComponent<P>(
   name: string,
-  buildMark: (props: P) => Mark,
+  buildMark: (props: P) => ChartMark,
   flags: readonly string[] = [],
 ): MarkComponent<P> {
   const component = (() => null) as unknown as MarkComponent<P>;
@@ -112,7 +114,7 @@ export function plain(value: unknown): unknown {
  * template wrote them: kebab-case names are camelized and bare boolean
  * attributes (`<Area stack />`) read as true.
  */
-export function markBuilder(type: unknown): ((props: object | null) => Mark) | undefined {
+export function markBuilder(type: unknown): ((props: object | null) => ChartMark) | undefined {
   const component = type as Partial<MarkComponent<unknown>> | null;
   const build = component?.buildMark;
   if (typeof build !== "function") return undefined;
@@ -165,6 +167,13 @@ export const ErrorBar = /* @__PURE__ */ markComponent(
 ) as unknown as <S extends Schema>(props: WithData<ErrorBarOptions<S>, S>) => null;
 
 /** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
+/** A pie, or with `innerRadius` a donut; it has its chart to itself. */
+export const Pie = /* @__PURE__ */ markComponent(
+  "Pie",
+  ({ data, ...options }: WithData<PieOptions<Schema>, Schema>) => pie(data, options),
+  ["labels"],
+) as unknown as <S extends Schema>(props: WithData<PieOptions<S>, S>) => null;
+
 export const Candlestick = /* @__PURE__ */ markComponent(
   "Candlestick",
   ({ data, ...options }: WithData<CandlestickOptions<Schema>, Schema>) =>

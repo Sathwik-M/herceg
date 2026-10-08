@@ -2,9 +2,9 @@
 // element whose place in the document gives the marks their order.
 
 import type {
+  ChartMark,
   CustomDataOptions,
   CustomOptions,
-  Mark,
   RegionDataOptions,
   RegionOptions,
   RuleDataOptions,
@@ -44,7 +44,7 @@ export interface MarkEntry {
   /** The component's anchor element, in template order among the others. */
   readonly node: Element;
   /** The component's current mark; reading it tracks the component's props. */
-  readonly mark: Mark;
+  readonly mark: ChartMark;
 }
 
 export interface MarkList {
@@ -64,7 +64,7 @@ export function provideMarks(list: MarkList): void {
  * attachment's element is mounted. That empty element orders the marks as
  * the template does, also when `{#if}` or `{#each}` adds one later.
  */
-export function markAnchor(name: string, mark: () => Mark): Attachment {
+export function markAnchor(name: string, mark: () => ChartMark): Attachment {
   const list = getContext<MarkList | undefined>(MARKS);
   if (!list) throw new Error(`<${name}> must be inside a <Chart>`);
   return (node) => {

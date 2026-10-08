@@ -7,6 +7,7 @@ import {
   type BarOptions,
   bar,
   type CandlestickOptions,
+  type ChartMark,
   type CustomDataOptions,
   type CustomOptions,
   candlestick,
@@ -19,8 +20,9 @@ import {
   histogram,
   type LineOptions,
   line,
-  type Mark,
+  type PieOptions,
   type PointOptions,
+  pie,
   point,
   type RegionDataOptions,
   type RegionOptions,
@@ -42,7 +44,7 @@ export type WithData<O, S extends Schema> = O & { data: Table<S> };
 interface MarkElement<P> {
   (props: P): null;
   displayName: string;
-  buildMark: (props: P) => Mark;
+  buildMark: (props: P) => ChartMark;
 }
 
 /**
@@ -50,7 +52,7 @@ interface MarkElement<P> {
  * <Line> does not bundle bar, point, or heatmap code. Calls are marked pure
  * for the same reason.
  */
-function markElement<P>(name: string, buildMark: (props: P) => Mark): MarkElement<P> {
+function markElement<P>(name: string, buildMark: (props: P) => ChartMark): MarkElement<P> {
   const element = (() => null) as unknown as MarkElement<P>;
   element.displayName = name;
   element.buildMark = buildMark;
@@ -58,7 +60,7 @@ function markElement<P>(name: string, buildMark: (props: P) => Mark): MarkElemen
 }
 
 /** How <Chart> turns a child element into a mark; undefined for other elements. */
-export function markBuilder(type: unknown): ((props: unknown) => Mark) | undefined {
+export function markBuilder(type: unknown): ((props: unknown) => ChartMark) | undefined {
   const build = (type as Partial<MarkElement<unknown>> | null)?.buildMark;
   return typeof build === "function" ? build : undefined;
 }
@@ -98,6 +100,12 @@ export const ErrorBar = /* @__PURE__ */ markElement(
 ) as unknown as <S extends Schema>(props: WithData<ErrorBarOptions<S>, S>) => null;
 
 /** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
+/** A pie, or with `innerRadius` a donut; it has its chart to itself. */
+export const Pie = /* @__PURE__ */ markElement(
+  "Pie",
+  ({ data, ...options }: WithData<PieOptions<Schema>, Schema>) => pie(data, options),
+) as unknown as <S extends Schema>(props: WithData<PieOptions<S>, S>) => null;
+
 export const Candlestick = /* @__PURE__ */ markElement(
   "Candlestick",
   ({ data, ...options }: WithData<CandlestickOptions<Schema>, Schema>) =>

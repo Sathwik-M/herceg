@@ -12,7 +12,8 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`) place their own geometry instead of using x and y scales. |
+| **Item** | One thing a layout mark draws, such as a pie slice: what its legend entries, tooltips, and the keyboard visit. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -20,7 +21,7 @@ One name per concept, used the same way in code and docs.
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), rules, text, or shapes (custom marks). |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices), rules, text, or shapes (custom marks). |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
@@ -344,6 +345,29 @@ one path per color after a counting sort by color index, so a canvas fill
 or SVG element covers every point of a color; translucent ones are drawn
 one by one so overlaps darken, as plain translucent points are. Symbols are
 polygons of the same area as the circle of the same radius.
+
+## Layout marks
+
+Most marks place data along x and y scales. Layout marks (pies so far)
+place their own geometry in a panel instead: the chart model gives one the
+room below the title and legend (`LayoutFrame`: bounds, theme, text
+measurement, hidden keys, and stable colors per item key) and draws what it
+returns (`LayoutResult`: geometry, an item lookup by pixel, the items in
+reading order, and a summary). A chart holds marks along axes or one layout
+mark, never both, so the Cartesian layout code runs unchanged and a line
+chart carries only the small dispatch, not the pie.
+
+What a tooltip or keyboard cursor is on is an `Inspection`: an axis
+inspection (a position along x or y and each series' point there) or an item
+inspection (one slice: its key, value, label, and an SVG outline that the DOM
+chart draws as the hover highlight). Arrow keys step through items in
+reading order. Pie slices are arc geometry, six floats per sector (center,
+inner and outer radius, start and end angle); SVG draws them with `A`
+commands, Canvas with `arc`, and PDF with cubic curves of at most a quarter
+turn. Gaps between slices move each slice's straight sides inward, parallel
+to themselves, so they show whatever is behind the chart. Labels beside a pie
+are spread per side to keep their order without overlapping
+(`layout/pie-labels.ts`).
 
 ## Annotations
 
@@ -682,6 +706,8 @@ document when `OffscreenCanvas` is unavailable.
   band. Panels smaller than 20 pixels a side are refused with an error
   rather than drawn.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
+- A pie has its chart to itself: no other marks, facets, zoom, brushing, or
+  sync; labels go beside the pie only, never inside slices.
 - Rolling statistics over values whose differences exceed the largest double
   (about 1.8e308) overflow to Infinity.
 - Python derived tables count their source's rows through one of its

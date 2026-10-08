@@ -13,7 +13,8 @@ export interface RangePayload {
 }
 
 export interface InspectionPayload {
-  axis: "x" | "y";
+  /** "item" for a pie slice, whose value is the slice's. */
+  axis: "x" | "y" | "item";
   value: number | string | null;
   time: boolean;
   label: string;
@@ -50,7 +51,12 @@ export function inspectionPayload(
   inspection: Inspection | undefined,
 ): InspectionPayload | null {
   if (!inspection) return null;
-  const scale = inspection.axis === "x" ? chart.model.xScale() : chart.model.yScale();
+  const scale =
+    inspection.axis === "item"
+      ? undefined
+      : inspection.axis === "x"
+        ? chart.model.xScale()
+        : chart.model.yScale();
   const categories = scale?.type === "band" ? scale.categories : undefined;
   return {
     axis: inspection.axis,

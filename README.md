@@ -44,10 +44,14 @@ benchmark suite.
 
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
 (vertical and horizontal, with value labels), point (with size, color,
-opacity, and shape encoded by fields), heatmap, error bar, candlestick, and
-histogram marks, named color schemes and diverging color, rule, region, and
-text annotations from constants or data, custom marks drawing through the
-same renderers, level of detail, streaming updates, shared scheduler,
+opacity, and shape encoded by fields), heatmap, error bar, candlestick,
+histogram, and pie (and donut) marks, monotone curves, named color schemes and
+diverging color, built-in themes (light, dark, high contrast, and one that
+follows the page) with CSS-variable theming, rule, region, and text
+annotations from constants or data, custom marks drawing through the same
+renderers, derived tables (filter, calculate, bin, aggregate, rolling windows,
+sort) with portable expressions, level of detail, streaming updates, shared
+scheduler,
 browser interaction (tooltips, zoom, brushing, events, synced charts),
 static SVG and PDF export, React, Vue, and Svelte adapters, min/max indexes
 for zooming and streaming large line series, WebGL drawing of large point
@@ -57,20 +61,16 @@ Python and reports interaction back), and a Streamlit component.
 
 Next, in order:
 
-1. Theming (richer theme tokens, built-in themes, CSS variables) and smooth
-   curves.
-2. Data preparation in the spec: filter, bin, aggregate, rolling windows,
-   and portable expressions.
-3. Chart types: box plots and violins; pie, donut, and radar; treemap,
-   sunburst, Sankey, and graphs.
-4. Interaction: y and xy zoom, box and lasso selection, synced selections.
-5. Layout: facets by row and column, independent panel scales, subplots.
-6. Large data: incremental stacked and grouped updates, partial GPU uploads,
+1. Chart types: treemap and sunburst; box plots and violins; gauge, funnel,
+   and radar; Sankey and graphs.
+2. Interaction: y and xy zoom, box and lasso selection, synced selections.
+3. Layout: facets by row and column, independent panel scales, subplots.
+4. Large data: incremental stacked and grouped updates, partial GPU uploads,
    heatmaps beyond the cell limit.
-7. Custom marks with tooltips and legends; animation; label collision
+5. Custom marks with tooltips and legends; animation; label collision
    handling.
-8. Financial tools, geographic charts, and 3D.
-9. Screen-reader verification, benchmarks across browsers and machines, and
+6. Financial tools, geographic charts, and 3D.
+7. Screen-reader verification, benchmarks across browsers and machines, and
    an API review before a first release.
 
 ## Development

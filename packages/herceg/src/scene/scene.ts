@@ -303,7 +303,25 @@ export interface ShapesGeometry extends Geometry {
 }
 
 /** The geometry of the built-in marks, for code that narrows by kind. */
+/**
+ * Ring sectors, such as pie slices: center x and y, inner and outer radius,
+ * and start and end angle (radians, clockwise from +x) per sector.
+ */
+export interface ArcGeometry extends Geometry {
+  kind: "arc";
+  draw: Drawing<ArcGeometry>;
+  arcs: Float32Array;
+  count: number;
+  /** The colors sectors are filled with, and each sector's index into them. */
+  colors: readonly string[];
+  colorIndex: Uint32Array;
+  fillOpacity: number;
+  /** Space between neighboring sectors, in pixels. */
+  gap: number;
+}
+
 export type MarkGeometry =
+  | ArcGeometry
   | LineGeometry
   | AreaGeometry
   | RuleGeometry

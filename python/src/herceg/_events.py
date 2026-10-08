@@ -36,10 +36,11 @@ class Inspection:
     """The data under the pointer, as the tooltip shows it.
 
     ``value`` is the snapped position on the inspected axis: x, or y for
-    horizontal bars (``axis == "y"``).
+    horizontal bars (``axis == "y"``). For a pie slice (``axis == "item"``),
+    it is the slice's value, and ``label`` names what the values measure.
     """
 
-    axis: Literal["x", "y"]
+    axis: Literal["x", "y", "item"]
     value: Value | None
     #: ``value`` as the axis labels it.
     label: str

@@ -20,7 +20,7 @@ import {
   ref,
   shallowRef,
 } from "vue";
-import { Area, Bar, Chart, Custom, Line, Region, Rule, Text } from "../src/index.ts";
+import { Area, Bar, Chart, Custom, Line, Pie, Region, Rule, Text } from "../src/index.ts";
 
 let host: HTMLDivElement;
 let app: App | undefined;
@@ -40,7 +40,7 @@ afterEach(() => {
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
-const components = { Chart, Line, Area, Bar, Custom, Region, Rule, Text };
+const components = { Chart, Line, Area, Bar, Custom, Pie, Region, Rule, Text };
 
 /** Mounts a template; `setup` returns what it reads. */
 function mount(template: string, setup: () => object = () => ({})): App {
@@ -78,6 +78,34 @@ describe("<Chart>", () => {
     expect(paths()).toHaveLength(2);
     expect(host.querySelector('[role="figure"]')!.getAttribute("aria-label")).toBe("Load");
     expect(host.textContent).toContain("limit");
+  });
+
+  it("renders a pie from its component, a path of arcs per slice", () => {
+    const shares = table({ k: ["a", "b", "c"], v: [3, 2, 1] });
+    mount(
+      `<Chart title="Shares">
+        <Pie :data="shares" category="k" value="v" :innerRadius="0.5" />
+      </Chart>`,
+      () => ({ shares }),
+    );
+    const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
+    expect(slices).toHaveLength(3);
+  });
+
+  it("reads a bare labels attribute on <Pie> as true", () => {
+    const shares = table({ k: ["a", "b"], v: [3, 2] });
+    const labelsWith = (attribute: string) => {
+      mount(`<Chart><Pie :data="shares" category="k" value="v" ${attribute} /></Chart>`, () => ({
+        shares,
+      }));
+      const text = host.querySelector("svg")!.textContent ?? "";
+      app!.unmount();
+      app = undefined;
+      return text.includes("a") && text.includes("b");
+    };
+    expect(labelsWith("labels")).toBe(true);
+    expect(labelsWith(':labels="true"')).toBe(true);
+    expect(labelsWith(':labels="false"')).toBe(false);
   });
 
   it("builds annotations from constants or from their own data", () => {

@@ -13,6 +13,7 @@ import Annotations from "./Annotations.svelte";
 import Faulty from "./Faulty.svelte";
 import Lines from "./Lines.svelte";
 import Parent from "./Parent.svelte";
+import Pies from "./Pies.svelte";
 import Stray from "./Stray.svelte";
 
 let host: HTMLDivElement;
@@ -73,6 +74,12 @@ describe("<Chart>", () => {
     expect(paths()).toHaveLength(2);
     expect(host.querySelector('[role="figure"]')!.getAttribute("aria-label")).toBe("Load");
     expect(host.textContent).toContain("limit");
+  });
+
+  it("renders a pie from its component, a path of arcs per slice", () => {
+    render(Pies, { data: table({ k: ["a", "b", "c"], v: [3, 2, 1] }) });
+    const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
+    expect(slices).toHaveLength(3);
   });
 
   it("builds annotations from constants or from their own data", () => {

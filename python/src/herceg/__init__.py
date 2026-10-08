@@ -33,6 +33,7 @@ from ._chart import (
     heatmap,
     histogram,
     line,
+    pie,
     scatter,
 )
 from ._derive import Derived, Expr, col, derive, when
@@ -55,6 +56,7 @@ __all__ = [
     "heatmap",
     "histogram",
     "line",
+    "pie",
     "scatter",
     "when",
 ]

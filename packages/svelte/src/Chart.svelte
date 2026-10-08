@@ -7,10 +7,10 @@
   import {
     type ChartEvents,
     type ChartListener,
+    type ChartMark,
     type ChartOptions,
     createChart,
     type Chart as HercegChart,
-    type Mark,
   } from "herceg";
   import { untrack } from "svelte";
   import { type ChartProps, canonical, sameMark } from "./chart.js";
@@ -33,7 +33,7 @@
 
   /** What the chart shows, to skip updates when nothing changed. */
   interface View {
-    marks: readonly Mark[];
+    marks: readonly ChartMark[];
     options: Options;
     key: string;
   }

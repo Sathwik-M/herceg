@@ -282,7 +282,8 @@ export type MarkSpec =
   | HeatmapSpec
   | ErrorBarSpec
   | CandlestickSpec
-  | HistogramSpec;
+  | HistogramSpec
+  | PieSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -476,6 +477,29 @@ export interface CandlestickSpec extends MarkBase {
   /** Color of candles closing below their open; the theme's `fall` by default. */
   fall?: string;
   label?: string;
+}
+
+/**
+ * A pie or donut: a slice per category, its angle in proportion to the sum
+ * of `value` over the category's rows (or their count). Slices hidden
+ * through the legend leave the rest to fill the circle.
+ */
+export interface PieSpec {
+  type: "pie";
+  /** Name of the table in `ChartSpec.data`; defaults to the only table. */
+  data?: string;
+  /** Stable identity, used for legend state and updates. */
+  id?: string;
+  /** Category field: a slice per value. */
+  category: Field;
+  /** Number field summed per category; without it, slices count rows. */
+  value?: Field;
+  /** The hole's radius as a fraction of the pie's: 0 (the default) for a pie, about 0.6 for a donut. */
+  innerRadius?: number;
+  /** "value" (the default) orders slices largest first, clockwise from the top; "input" keeps the categories' order. */
+  sort?: "value" | "input";
+  /** Labels beside the slices, joined to them by lines; true by default. */
+  labels?: boolean;
 }
 
 /**

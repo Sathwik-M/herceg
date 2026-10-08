@@ -1,11 +1,11 @@
-import type { ChartListener, ChartOptions, Chart as HercegChart, Mark } from "herceg";
+import type { ChartListener, ChartMark, ChartOptions, Chart as HercegChart } from "herceg";
 import type { Snippet } from "svelte";
 import type { ClassValue } from "svelte/elements";
 
 export interface ChartProps extends Omit<ChartOptions, "marks"> {
   /** Marks built with herceg's functions; mark components among the children are added after them. */
-  marks?: readonly Mark[] | undefined;
-  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Rule>, <Region>, <Text>, <Custom>. */
+  marks?: readonly ChartMark[] | undefined;
+  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: Snippet | undefined;
   class?: ClassValue | undefined;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -45,13 +45,14 @@ const PORTABLE = new Set([
   "errorbar",
   "candlestick",
   "histogram",
+  "pie",
   "rule",
   "region",
   "text",
 ]);
 
 /** Same mark when the spec and the table are unchanged, so caches survive updates. */
-export function sameMark(a: Mark, b: Mark): boolean {
+export function sameMark(a: ChartMark, b: ChartMark): boolean {
   if (a === b) return true;
   if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
   return a.table === b.table && canonical(a.spec) === canonical(b.spec);
