@@ -57,13 +57,14 @@ function lineChart(title: string, events: Header["events"], options: Partial<Hea
 }
 
 /** Bars over categories, in dictionary order, with a brush the script reacts to. */
-function bars(dictionary: string[]) {
+function bars(dictionary: string[], brush: "x" | "lasso" = "x", title?: string) {
   return payload(
     {
+      ...(title && { title }),
       width: 400,
       height: 200,
       renderer: "svg",
-      interaction: { brush: "x" },
+      interaction: { brush },
       data: {
         data: {
           columns: {
@@ -108,19 +109,23 @@ function host(): HTMLElement {
 
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 const figure = (root: ParentNode) => root.querySelector('[role="figure"]')!;
-const band = (root: ParentNode) => root.querySelector("svg rect[fill-opacity]");
+const band = (root: ParentNode) => root.querySelector('svg path[fill-opacity="0.18"]');
 
-function press(root: ParentNode, type: string, fraction: number) {
+/** A pointer event at fractions of the chart's width and height. */
+function press(root: ParentNode, type: string, fraction: number, down = 0.5) {
   const target = figure(root);
   const rect = target.getBoundingClientRect();
+  const at = {
+    bubbles: true,
+    composed: true,
+    cancelable: true,
+    clientX: rect.left + rect.width * fraction,
+    clientY: rect.top + rect.height * down,
+  };
   target.dispatchEvent(
-    new PointerEvent(type, {
-      bubbles: true,
-      composed: true,
-      clientX: rect.left + rect.width * fraction,
-      clientY: rect.top + rect.height / 2,
-      pointerId: 1,
-    }),
+    type === "wheel"
+      ? new WheelEvent(type, { ...at, deltaY: -200 })
+      : new PointerEvent(type, { ...at, pointerId: 1 }),
   );
 }
 
@@ -194,6 +199,94 @@ describe("Streamlit component", () => {
     expect(band(parent)!.getAttribute("visibility")).toBe("visible");
     // Restoring the brush does not rerun the script.
     expect(next.state).toEqual([]);
+  });
+
+  it("redraws new bytes in place, keeping a rectangle and the y zoom", async () => {
+    const parent = host();
+    const options = { interaction: { brush: "xy", zoom: "y" } } as const;
+    run(parent, lineChart("Before", ["select"], options));
+    press(parent, "wheel", 0.5);
+    press(parent, "pointerdown", 0.3, 0.3);
+    press(parent, "pointermove", 0.5, 0.5);
+    press(parent, "pointerup", 0.7, 0.7);
+    await frame();
+    const drawn = () => ({
+      outline: band(parent)!.getAttribute("d"),
+      yLabels: [...parent.querySelectorAll('svg text[text-anchor="end"]')].map(
+        (t) => t.textContent,
+      ),
+    });
+    const before = drawn();
+    const next = run(parent, lineChart("After", ["select"], options));
+    await frame();
+    expect(figure(parent).getAttribute("aria-label")).toBe("After");
+    expect(drawn()).toEqual(before);
+    expect(next.state).toEqual([]);
+  });
+
+  it("keeps the zoom of both y axes on a redraw, even when the data changes", async () => {
+    const parent = host();
+    const chart = (title: string, right: number[]) =>
+      payload(
+        {
+          title,
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          interaction: { zoom: "xy" },
+          data: {
+            data: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                y: { type: "number", dtype: "float64", buffer: 1 },
+                r: { type: "number", dtype: "float64", buffer: 2 },
+              },
+            },
+          },
+          marks: [
+            { type: "line", x: "x", y: "y", data: "data" },
+            { type: "line", x: "x", y: "r", data: "data", axis: "right" },
+          ],
+        },
+        [new Float64Array([0, 1, 2]), new Float64Array([0, 5, 10]), new Float64Array(right)],
+        [],
+      );
+    // Every label but the title: the axes' ticks and the legend.
+    const labels = () =>
+      [...parent.querySelectorAll("svg text")]
+        .map((text) => text.textContent)
+        .filter((text) => text !== "Before" && text !== "After");
+    run(parent, chart("Before", [0, 50, 100]));
+    press(parent, "wheel", 0.5);
+    await frame();
+    const before = labels();
+    run(parent, chart("After", [0, 500, 1000]));
+    await frame();
+    expect(labels()).toEqual(before);
+  });
+
+  it("keeps a lasso over categories only while they stay where they were", async () => {
+    const parent = host();
+    run(parent, bars(["a", "b", "c"], "lasso"));
+    press(parent, "pointerdown", 0.2, 0.3);
+    for (const [x, y] of [
+      [0.5, 0.3],
+      [0.5, 0.8],
+      [0.2, 0.8],
+    ] as const)
+      press(parent, "pointermove", x, y);
+    press(parent, "pointerup", 0.2, 0.8);
+    await frame();
+    expect(band(parent)!.getAttribute("visibility")).toBe("visible");
+    // A new chart with the same categories, which redraws.
+    run(parent, bars(["a", "b", "c"], "lasso", "Again"));
+    await frame();
+    expect(band(parent)!.getAttribute("visibility")).toBe("visible");
+    // Reordered: the outline would cover other bars, so it goes.
+    const reordered = run(parent, bars(["c", "a", "b"], "lasso"));
+    await frame();
+    expect(band(parent)?.getAttribute("visibility") ?? "hidden").toBe("hidden");
+    expect(reordered.state).toEqual([["selection", null]]);
   });
 
   it("clears the script's selection when a new chart cannot keep the brush", async () => {

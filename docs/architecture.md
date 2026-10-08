@@ -17,7 +17,7 @@ One name per concept, used the same way in code and docs.
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
-| **Viewport** | The visible x range when zoomed; null means "fit the data". |
+| **Viewport** | The visible x range when zoomed, and the visible y ranges when zoomed along y; null means "fit the data". |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
@@ -242,8 +242,8 @@ them on the right. An axis is shown when one of its marks places values
 along y (a y position or field in its spec), whatever the data, the view, or
 hidden series, so the layout stays put while they change; a configured
 domain alone adds no axis. The text alternative names each series' axis when
-both have series. Zoom, pan, and brushing act on x only, so both sides follow the
-same viewport.
+both have series. Zooming and panning along y move both sides over the same
+pixels: the y viewport holds a range for each.
 
 ## Small multiples
 
@@ -546,18 +546,35 @@ only choose the default mode: "nearest-x" when every mark is drawn along x
 (lines, areas, vertical bars), "nearest-y" when every mark is drawn along y
 (horizontal bars), and "nearest" otherwise.
 An explicit mode applies to every mark except heatmaps, which always report
-the cell under the pointer; when cells overlap, the mark drawn last wins. With zoom enabled, the wheel zooms x around the pointer,
-dragging pans, and double-click resets the viewport; both work in pixel space
-through the scale, so they behave the same on log axes. Keyboard navigation
-keeps a position within a series, so repeated x values are each reachable.
+the cell under the pointer; when cells overlap, the mark drawn last wins.
+With zoom enabled along x (`true` or "x"), y ("y"), or both ("xy"), the
+wheel zooms those axes around the pointer, dragging pans them, and
+double-click resets both; all work in pixel space through the scales, so
+they behave the same on log axes. Category axes do not zoom. Viewports are
+kept ascending and shown the way the axis' configured domain runs, so
+reversed axes stay reversed. The y viewport is kept as domains for the left
+axis and, in charts with one, the right axis, each what the same pixels show
+on it. Keyboard navigation keeps a position within a series, so repeated x
+values are each reachable.
 
 A press on the plot becomes one of three gestures once it moves 3 px: a
 brush (with `interaction.brush`), a pan (with zoom only, or Shift with
-both), or nothing; a press that does not move is a click. A brush is drawn
-as a band in the pointer overlay and kept in data values, so it stays on
-its data while the chart zooms or resizes; with zoom on, releasing it sets
-the viewport instead. Shift with the arrow keys brushes from where the
-keyboard cursor started, and the live region announces the range.
+both), or nothing; a press that does not move is a click. A brush selects a
+range along x or y, a rectangle ("xy"), or a lasso (its outline, thinned
+past 400 points); rectangles and lassos need 3 px each way. A selection is
+kept in data values, so it stays on its data while the chart zooms or
+resizes, and drawn in the pointer overlay, clipped to each plot. When zoom
+is on along every axis a selection has a range on, releasing the brush (or
+Enter, for a selection made with the keyboard or received from a synced
+chart) sets the viewport instead; lassos never zoom. Synced charts share
+selections as data values (category indices on category axes), each drawing
+them on its own scales, so charts sharing a selection should have the same
+axis types and category order. Shift with the arrow keys selects a range
+from where the keyboard cursor started, along the axis it steps along (x for
+lines and vertical bars, y for horizontal bars): with brushes along that
+axis, and with rectangle and lasso brushes, which only the pointer draws.
+The live region announces selections made with the keyboard and the
+pointer.
 
 Charts emit `viewport`, `select`, `hover`, and `click` events. Each reports
 changes only (hover compares the inspected values), and a listener that
@@ -675,8 +692,9 @@ one binary payload: a uint32 header length, the JSON header (spec, buffer
 offsets, events the script reacts to), and the buffers at 8-byte aligned
 offsets, viewed in place as typed arrays. Streamlit calls the component
 again on every run and on theme changes; equal bytes keep the drawn chart,
-and changed bytes redraw it in place, keeping zoom and brush (as category
-labels on category axes). Charts without a theme read the app's from the
+and changed bytes redraw it in place, keeping the zoom along x and y and the
+whole selection (on category axes, by its categories' labels), though the
+script hears only of x ranges. Charts without a theme read the app's from the
 CSS variables Streamlit gives components, since Python may not know it.
 
 A test (`test/architecture.test.ts`) keeps the core directories (`data`,
@@ -721,6 +739,10 @@ document when `OffscreenCanvas` is unavailable.
   facets, zoom, brushing, or sync. Pie labels go beside the pie only; treemaps
   and sunbursts have no drill-down, and their pointer lookup scans each
   level's children.
+- Selections report ranges and lasso outlines, not the rows inside them.
+  Synced selections are data values, so charts with differently ordered
+  categories select different categories. The keyboard selects ranges only;
+  rectangles and lassos need a pointer.
 - Rolling statistics over values whose differences exceed the largest double
   (about 1.8e308) overflow to Infinity.
 - Python derived tables count their source's rows through one of its

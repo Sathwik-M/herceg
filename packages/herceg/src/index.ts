@@ -38,6 +38,7 @@ export type {
   TableOptions,
 } from "./data/table.ts";
 export { fromRows, Table, table } from "./data/table.ts";
+export type { Selection } from "./dom/brush.ts";
 export { type Chart, type ChartOptions, createChart } from "./dom/chart.ts";
 export type { ChartEvents, ChartListener } from "./dom/events.ts";
 export type { SymbolName } from "./draw/symbols.ts";

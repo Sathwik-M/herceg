@@ -5,12 +5,12 @@
 // Streamlit calls the default export on every script run, and when the app's
 // theme changes, with the same parent element while the component stays on
 // the page. A run that sends the same bytes keeps the chart as it is, zoom
-// and brush included; new bytes replace it, keeping the zoom, and the brush
-// where its values (or category labels) still are.
+// and brush included; new bytes replace it, keeping the zoom and the brush
+// where their values (or category labels) still are.
 
 import { type Chart, createChart, type ThemeName } from "herceg";
 import { type ChartSpec, loadSpec } from "herceg/spec";
-import { chartRange, inspectionPayload, rangePayload } from "./events.ts";
+import { inspectionPayload, rangePayload } from "./events.ts";
 
 /** What Streamlit passes the component, as far as it is used here. */
 export interface Component {
@@ -77,18 +77,39 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   if (!previous) component.parentElement.append(element);
   const followsApp = header.spec.theme === undefined;
   const theme = followsApp ? appTheme(element) : undefined;
-  // What the user had: the zoom, and the brush as values or category labels,
-  // which may sit at other positions in the new data.
+  // What the user had: the zoom and the whole selection, more than the
+  // script hears of.
   const kept = previous && {
-    scale: previous.chart.model.xScale()?.type,
+    x: previous.chart.model.xScale(),
+    y: previous.chart.model.yScale(),
+    yRight: previous.chart.model.yRightScale(),
     viewport: previous.chart.model.viewport,
-    selection: rangePayload(previous.chart, previous.chart.selection),
+    yViewport: previous.chart.model.yViewport,
+    selection: previous.chart.selection,
   };
   previous?.chart.destroy();
   const chart = createChart(element, theme ? { ...config, theme } : config);
-  if (kept && kept.scale === chart.model.xScale()?.type) {
-    chart.setViewport(kept.viewport);
-    chart.select(chartRange(chart, kept.selection?.x ?? null));
+  if (kept) {
+    const { model } = chart;
+    const x = (range: Range | null) => carry(range, kept.x, model.xScale());
+    const y = (range: Range | null) => carry(range, kept.y, model.yScale());
+    chart.setViewport(x(kept.viewport));
+    const left = y(kept.yViewport?.y ?? null);
+    const right = carry(kept.yViewport?.yRight ?? null, kept.yRight, model.yRightScale());
+    // Both axes keep their ranges, or neither: one alone would show other values.
+    chart.setYViewport(
+      left && (!kept.yViewport?.yRight || right) ? left : null,
+      right ?? undefined,
+    );
+    const { selection } = kept;
+    const next = selection && { x: x(selection.x), y: y(selection.y), lasso: selection.lasso };
+    // A selection keeps all its ranges or goes: part of a rectangle is another
+    // selection. A lasso's outline cannot follow categories that moved.
+    const whole = next && (!selection.x || next.x) && (!selection.y || next.y);
+    const moved =
+      selection?.lasso &&
+      (!sameCategories(kept.x, model.xScale()) || !sameCategories(kept.y, model.yScale()));
+    chart.select(whole && !moved ? next : null);
   }
   const instance: Instance = {
     bytes,
@@ -110,10 +131,39 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   return instance;
 }
 
+type Range = readonly [number, number];
+/** What `carry` reads of an axis' scale. */
+type Axis = { type: string; categories?: readonly string[] } | undefined;
+
+/**
+ * A range of an old chart's axis on the new chart's: on category axes, where
+ * its categories are now; on others, the same values. Null when the axes
+ * differ in type or the categories are gone.
+ */
+function carry(range: Range | null, from: Axis, to: Axis): Range | null {
+  if (!range || !from || !to || from.type !== to.type) return null;
+  const before = from.categories;
+  const after = to.categories;
+  if (!before || !after) return range;
+  const at = (index: number) => {
+    const label = before[Math.round(index)];
+    return label === undefined ? -1 : after.indexOf(label);
+  };
+  const [start, end] = [at(range[0]), at(range[1])];
+  return start >= 0 && end >= 0 ? [start, end] : null;
+}
+
+/** Whether two axes have the same categories in the same order, or none. */
+function sameCategories(from: Axis, to: Axis): boolean {
+  const [a, b] = [from?.categories, to?.categories];
+  if (!a || !b) return a === b;
+  return a.length === b.length && a.every((label, i) => label === b[i]);
+}
+
 /** Sends the chart's selection to the script, unless the script has it already. */
 function reportSelection(instance: Instance) {
   if (!instance.events.includes("select")) return;
-  const payload = rangePayload(instance.chart, instance.chart.selection);
+  const payload = rangePayload(instance.chart, instance.chart.selection?.x ?? null);
   const sent = JSON.stringify(payload);
   if (sent === instance.sent) return;
   instance.sent = sent;

@@ -1,33 +1,54 @@
-// Brushing: dragging across the plot selects an x range, drawn as a band in
-// the pointer overlay. The selection is kept in data values, so it stays on
-// its data as the chart zooms, pans, or resizes. On a category axis the
-// values are whole category indices, and the band covers their slots.
+// Brushing: dragging across the plot selects a range along x or y, a
+// rectangle, or a freehand region (a lasso), drawn in the pointer overlay.
+// The selection is kept in data values, so it stays on its data as the chart
+// zooms, pans, or resizes. On a category axis the values are whole category
+// indices, and the selection covers their slots.
 
 import type { PositionScale } from "../scale/scale.ts";
 import type { Rect } from "../scene/scene.ts";
+import type { BrushSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 
 /** Below this many pixels, a press is a click rather than a drag. */
 export const DRAG_THRESHOLD = 3;
 
-/** A plotting area the brush draws in: its plot and x scale. */
+/** A plotting area the brush draws in: its plot and scales. */
 export interface BrushPanel {
   plot: Rect;
   x: PositionScale;
+  y: PositionScale;
 }
 
-export class Brush {
-  /** Holds a band per panel. */
-  readonly element: SVGGElement;
-  /** The selected x range in data values, ascending, or null. */
-  selection: readonly [number, number] | null = null;
-  /** A drag in progress: its pixel ends in the panel it started in. */
-  #drag: { start: number; end: number; plot: Rect; scale: PositionScale } | null = null;
-  #bands: SVGRectElement[] = [];
-  #shown = false;
+/** What a brush selected, in data values. */
+export interface Selection {
+  /** The x range, ascending; null for brushes along y. */
+  x: readonly [number, number] | null;
+  /** The y range, ascending; null for brushes along x. */
+  y: readonly [number, number] | null;
+  /** A lasso's outline as x, y pairs; null for other brushes, whose ranges say it all. */
+  lasso: readonly (readonly [number, number])[] | null;
+}
 
-  constructor(element: SVGGElement) {
+/** Most points a lasso keeps; longer drags keep every other one, then every fourth... */
+const LASSO_POINTS = 400;
+
+const SVG = "http://www.w3.org/2000/svg";
+
+export class Brush {
+  /** Holds an outline per panel, each clipped to its plot. */
+  readonly element: SVGGElement;
+  mode: BrushSpec = "x";
+  selection: Selection | null = null;
+  /** A drag in progress: its pixel points in the panel it started in. */
+  #drag: { points: [number, number][]; panel: BrushPanel } | null = null;
+  #outlines: { path: SVGPathElement; clip: SVGRectElement }[] = [];
+  #shown = false;
+  /** Prefix of the clip paths' ids, unique in the page. */
+  readonly #id: string;
+
+  constructor(element: SVGGElement, id: string) {
     this.element = element;
+    this.#id = id;
   }
 
   get dragging(): boolean {
@@ -35,76 +56,148 @@ export class Brush {
   }
 
   /** Starts a drag at a pixel of a panel, kept inside its plot. */
-  start(px: number, panel: BrushPanel): void {
-    const at = clamp(px, panel.plot);
-    this.#drag = { start: at, end: at, plot: panel.plot, scale: panel.x };
+  start(px: number, py: number, panel: BrushPanel): void {
+    this.#drag = { points: [clamp(px, py, panel.plot)], panel };
   }
 
-  move(px: number): void {
-    if (this.#drag) this.#drag.end = clamp(px, this.#drag.plot);
+  move(px: number, py: number): void {
+    const drag = this.#drag;
+    if (!drag) return;
+    const point = clamp(px, py, drag.panel.plot);
+    // Ranges and rectangles need only their two corners; lassos their path.
+    if (this.mode !== "lasso") {
+      drag.points[1] = point;
+      return;
+    }
+    const [lx, ly] = drag.points[drag.points.length - 1]!;
+    if (Math.hypot(point[0] - lx, point[1] - ly) < 2) return;
+    if (drag.points.length >= LASSO_POINTS) drag.points = drag.points.filter((_, i) => i % 2 === 0);
+    drag.points.push(point);
   }
 
-  /** Ends a drag: the range it covers in data values, ascending, or null for none. */
-  end(): readonly [number, number] | null {
+  /** Ends a drag: what it selected, or null when it was too small to mean anything. */
+  end(): Selection | null {
     const drag = this.#drag;
     this.#drag = null;
-    if (!drag || Math.abs(drag.end - drag.start) < DRAG_THRESHOLD) return null;
-    const { scale } = drag;
-    return normalize(scale, scale.invert(drag.start), scale.invert(drag.end));
+    if (!drag) return null;
+    return selectionOf(drag.points, drag.panel, this.mode);
   }
 
   cancel(): void {
     this.#drag = null;
   }
 
-  /**
-   * Draws the drag in progress, or else the selection, in every panel (they
-   * share x), clamped to each plot.
-   */
+  /** Draws the drag in progress, or else the selection, in every panel (they share scales). */
   draw(panels: readonly BrushPanel[], theme: Theme): void {
     const drag = this.#drag;
-    const range = drag
-      ? [drag.scale.invert(drag.start), drag.scale.invert(drag.end)]
-      : this.selection;
-    if (!range) {
-      // Most frames have no brush: leave the hidden bands alone.
-      if (this.#shown) for (const band of this.#bands) band.setAttribute("visibility", "hidden");
+    const selection = drag ? selectionOf(drag.points, drag.panel, this.mode, true) : this.selection;
+    if (!selection) {
+      // Most frames have no brush: leave the hidden outlines alone.
+      if (this.#shown)
+        for (const { path } of this.#outlines) path.setAttribute("visibility", "hidden");
       this.#shown = false;
       return;
     }
     this.#shown = true;
     const document = this.element.ownerDocument;
-    while (this.#bands.length < panels.length) {
-      const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      this.#bands.push(band);
-      this.element.append(band);
+    while (this.#outlines.length < panels.length) {
+      const id = `${this.#id}-${this.#outlines.length}`;
+      const clipPath = document.createElementNS(SVG, "clipPath");
+      clipPath.setAttribute("id", id);
+      const clip = document.createElementNS(SVG, "rect");
+      clipPath.append(clip);
+      const path = document.createElementNS(SVG, "path");
+      path.setAttribute("clip-path", `url(#${id})`);
+      this.element.append(clipPath, path);
+      this.#outlines.push({ path, clip });
     }
-    this.#bands.forEach((band, i) => {
+    this.#outlines.forEach(({ path, clip }, i) => {
       const panel = panels[i];
-      const set = (name: string, value: string | number) => band.setAttribute(name, String(value));
-      if (!panel) {
-        set("visibility", "hidden");
+      const d = panel ? outlineOf(selection, panel, !drag) : "";
+      if (!panel || !d) {
+        path.setAttribute("visibility", "hidden");
         return;
       }
-      const { plot, x: scale } = panel;
-      // Category selections cover their slots, so one category shows a band.
-      const half = !drag && scale.type === "band" ? Math.abs(scale.map(1) - scale.map(0)) / 2 : 0;
-      const ends = [scale.map(range[0]!), scale.map(range[1]!)];
-      const a = Math.max(plot.x, Math.min(...ends) - half);
-      const b = Math.min(plot.x + plot.width, Math.max(...ends) + half);
-      if (!(b > a)) {
-        set("visibility", "hidden");
-        return;
-      }
-      set("x", a);
-      set("y", plot.y);
-      set("width", b - a);
-      set("height", plot.height);
-      set("fill", theme.muted);
-      set("fill-opacity", 0.18);
-      set("visibility", "visible");
+      const { plot } = panel;
+      clip.setAttribute("x", String(plot.x));
+      clip.setAttribute("y", String(plot.y));
+      clip.setAttribute("width", String(plot.width));
+      clip.setAttribute("height", String(plot.height));
+      path.setAttribute("d", d);
+      path.setAttribute("fill", theme.muted);
+      path.setAttribute("fill-opacity", "0.18");
+      path.setAttribute("stroke", selection.lasso ? theme.muted : "none");
+      path.setAttribute("stroke-opacity", "0.6");
+      path.setAttribute("visibility", "visible");
     });
   }
+}
+
+/**
+ * What pixel points select in a panel. Ranges need a drag of a few pixels
+ * along their axis, rectangles and lassos a few pixels each way (a flat one
+ * would select nothing, or zoom to nothing); `partial` keeps smaller ones,
+ * for drawing a drag as it starts.
+ */
+function selectionOf(
+  points: readonly [number, number][],
+  panel: BrushPanel,
+  mode: BrushSpec,
+  partial = false,
+): Selection | null {
+  const { x, y } = panel;
+  const [first] = points;
+  const last = points[points.length - 1]!;
+  if (!first) return null;
+  const big = (a: number, b: number) => partial || Math.abs(a - b) >= DRAG_THRESHOLD;
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  const along = {
+    x: () => normalize(x, x.invert(Math.min(...xs)), x.invert(Math.max(...xs))),
+    y: () => normalize(y, y.invert(Math.min(...ys)), y.invert(Math.max(...ys))),
+  };
+  if (mode === "x") return big(first[0], last[0]) ? { x: along.x(), y: null, lasso: null } : null;
+  if (mode === "y") return big(first[1], last[1]) ? { x: null, y: along.y(), lasso: null } : null;
+  if (!big(Math.min(...xs), Math.max(...xs)) || !big(Math.min(...ys), Math.max(...ys))) return null;
+  if (mode === "xy") return { x: along.x(), y: along.y(), lasso: null };
+  if (points.length < 3 && !partial) return null;
+  return {
+    x: along.x(),
+    y: along.y(),
+    lasso: points.map(([px, py]) => [x.invert(px), y.invert(py)] as const),
+  };
+}
+
+/**
+ * SVG path data of a selection in a panel. Ranges and rectangles end at the
+ * plot ("" when outside it); a lasso keeps its shape, for the clip to cut.
+ */
+function outlineOf(selection: Selection, panel: BrushPanel, settled: boolean): string {
+  const { plot, x, y } = panel;
+  if (selection.lasso) {
+    return `${selection.lasso
+      .map(([vx, vy], i) => `${i === 0 ? "M" : "L"}${x.map(vx).toFixed(1)} ${y.map(vy).toFixed(1)}`)
+      .join("")}Z`;
+  }
+  // A settled selection on a category axis covers its categories' slots.
+  const span = (
+    scale: PositionScale,
+    range: readonly [number, number] | null,
+    lo: number,
+    hi: number,
+  ) => {
+    if (!range) return [lo, hi] as const;
+    const half = settled && scale.type === "band" ? Math.abs(scale.map(1) - scale.map(0)) / 2 : 0;
+    const ends = [scale.map(range[0]), scale.map(range[1])];
+    return [
+      Math.max(lo, Math.min(...ends) - half),
+      Math.min(hi, Math.max(...ends) + half),
+    ] as const;
+  };
+  const [x0, x1] = span(x, selection.x, plot.x, plot.x + plot.width);
+  const [y0, y1] = span(y, selection.y, plot.y, plot.y + plot.height);
+  if (!(x1 > x0 && y1 > y0)) return "";
+  return `M${x0.toFixed(1)} ${y0.toFixed(1)}H${x1.toFixed(1)}V${y1.toFixed(1)}H${x0.toFixed(1)}Z`;
 }
 
 export function ascending(a: number, b: number): readonly [number, number] {
@@ -123,6 +216,9 @@ export function normalize(scale: PositionScale, a: number, b: number): readonly 
   return [index(lo), index(hi)];
 }
 
-function clamp(px: number, plot: Rect): number {
-  return Math.min(plot.x + plot.width, Math.max(plot.x, px));
+function clamp(px: number, py: number, plot: Rect): [number, number] {
+  return [
+    Math.min(plot.x + plot.width, Math.max(plot.x, px)),
+    Math.min(plot.y + plot.height, Math.max(plot.y, py)),
+  ];
 }

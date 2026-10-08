@@ -255,7 +255,7 @@ describe("<Chart>", () => {
     chart().select([1, 2]);
     // `click` is the chart's event, not the element's.
     host.firstElementChild!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(seen).toEqual([{ x: [0, 1] }]);
+    expect(seen).toEqual([{ x: [0, 1], y: null, lasso: null }]);
   });
 
   it("reports invalid marks and keeps the chart for when they are fixed", async () => {

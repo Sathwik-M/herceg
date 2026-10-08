@@ -4,6 +4,7 @@ import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
 import { line } from "../../src/marks/line.ts";
 import { facet } from "../../src/model/facet.ts";
+import { bandBox } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -82,15 +83,15 @@ describe("facets in the browser", () => {
     pointer(chart.root, "pointermove", b!.x.map(4), y);
     // Past the panel's edge, the drag stops at it.
     pointer(chart.root, "pointerup", b!.plot.x + b!.plot.width + 30, y);
-    expect(chart.selection![0]).toBeCloseTo(2, 6);
-    expect(chart.selection![1]).toBeCloseTo(9, 6);
+    expect(chart.selection!.x![0]).toBeCloseTo(2, 6);
+    expect(chart.selection!.x![1]).toBeCloseTo(9, 6);
     await frame();
-    const bands = [...chart.root.querySelectorAll("svg rect[fill-opacity]")].filter(
+    const bands = [...chart.root.querySelectorAll('svg path[fill-opacity="0.18"]')].filter(
       (r) => r.getAttribute("visibility") === "visible",
     );
-    expect(bands.map((r) => Number(r.getAttribute("x")))).toEqual([
-      expect.closeTo(a!.x.map(2), 3),
-      expect.closeTo(b!.x.map(2), 3),
+    expect(bands.map((r) => bandBox(r).x)).toEqual([
+      expect.closeTo(a!.x.map(2), 1),
+      expect.closeTo(b!.x.map(2), 1),
     ]);
     chart.destroy();
   });

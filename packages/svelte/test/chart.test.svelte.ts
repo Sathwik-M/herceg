@@ -193,7 +193,7 @@ describe("<Chart>", () => {
     props.onselect = undefined;
     flushSync();
     props.chart.select([2, 3]);
-    expect(seen).toEqual([{ x: [1, 2] }]);
+    expect(seen).toEqual([{ x: [1, 2], y: null, lasso: null }]);
   });
 
   it("applies prop changes to the same chart", () => {

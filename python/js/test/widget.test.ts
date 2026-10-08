@@ -132,7 +132,7 @@ const figure = (host: HTMLElement) => host.querySelector('[role="figure"]')!;
 /** Points of the drawn line: one path command per vertex. */
 const vertices = (host: HTMLElement) =>
   host.querySelector("svg g[clip-path] path")!.getAttribute("d")!.match(/[ML]/g)!.length;
-const band = (host: HTMLElement) => host.querySelector("svg rect[fill-opacity]");
+const band = (host: HTMLElement) => host.querySelector('svg path[fill-opacity="0.18"]');
 
 function press(host: HTMLElement, type: string, fraction: number) {
   const rect = figure(host).getBoundingClientRect();
@@ -396,7 +396,13 @@ describe("notebook widget", () => {
         },
         [new Int32Array([0, 1]), new Float64Array([1, 2])],
       );
-    const left = () => Number(band(host!)!.getAttribute("x"));
+    // The outline's first point: its left edge.
+    const left = () =>
+      Number(
+        band(host!)!
+          .getAttribute("d")!
+          .match(/-?[\d.]+/)![0],
+      );
     model.receive({ type: "select", revision: 1, x: ["a", "a"] });
     await frame();
     const before = left();
