@@ -16,7 +16,8 @@ applications. Today it provides:
 - React, Vue, and Svelte components (`@herceg/react`, `@herceg/vue`,
   `@herceg/svelte`) whose data updates bypass the framework;
 - a Python package (`python/`) for pandas, Polars, PyArrow, and NumPy data,
-  with notebook, HTML, SVG, PNG, and PDF output.
+  with notebook, HTML, SVG, PNG, and PDF output, live notebook charts, and a
+  Streamlit component.
 
 ## Status
 
@@ -42,19 +43,35 @@ benchmark suite.
 ## Roadmap
 
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
-(vertical and horizontal, with value labels), point, heatmap, error bar,
-candlestick, and histogram marks, rule, region, and text annotations from constants or data, custom
-marks drawing through the same renderers, level of detail, streaming
-updates, shared scheduler, browser interaction (tooltips, zoom, brushing,
-events, synced charts), static SVG, PDF export, React, Vue, and Svelte adapters, min/max indexes for
-zooming and streaming large line series, WebGL drawing of large point series, chart specs
-with binary columns, Python package, a second y axis, small multiples.
+(vertical and horizontal, with value labels), point (with size, color,
+opacity, and shape encoded by fields), heatmap, error bar, candlestick, and
+histogram marks, named color schemes and diverging color, rule, region, and
+text annotations from constants or data, custom marks drawing through the
+same renderers, level of detail, streaming updates, shared scheduler,
+browser interaction (tooltips, zoom, brushing, events, synced charts),
+static SVG and PDF export, React, Vue, and Svelte adapters, min/max indexes
+for zooming and streaming large line series, WebGL drawing of large point
+series, chart specs with binary columns, Python package, a second y axis,
+small multiples, live notebook charts (a widget that streams updates from
+Python and reports interaction back), and a Streamlit component.
 
-Next:
+Next, in order:
 
-1. More chart types: box plots, pie and donut charts.
-2. Live notebook charts (a widget that streams updates from Python).
-3. Facets by row and column, and independent panel scales.
+1. Theming (richer theme tokens, built-in themes, CSS variables) and smooth
+   curves.
+2. Data preparation in the spec: filter, bin, aggregate, rolling windows,
+   and portable expressions.
+3. Chart types: box plots and violins; pie, donut, and radar; treemap,
+   sunburst, Sankey, and graphs.
+4. Interaction: y and xy zoom, box and lasso selection, synced selections.
+5. Layout: facets by row and column, independent panel scales, subplots.
+6. Large data: incremental stacked and grouped updates, partial GPU uploads,
+   heatmaps beyond the cell limit.
+7. Custom marks with tooltips and legends; animation; label collision
+   handling.
+8. Financial tools, geographic charts, and 3D.
+9. Screen-reader verification, benchmarks across browsers and machines, and
+   an API review before a first release.
 
 ## Development
 

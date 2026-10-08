@@ -555,6 +555,30 @@ given. The package is built with `svelte-package` and checked with
 svelte-check, which need TypeScript's JavaScript API: the package keeps
 TypeScript 6 for them, next to the repository's TypeScript 7.
 
+The Python package (`python/`) emits specs with binary buffers and ships
+bundles of the engine built by `npm run build:python`: a classic script for
+HTML output, a DOM-free script for SVG export in an embedded V8, and ES
+modules for live charts. A live notebook chart (`chart.widget()`, an
+anywidget) keeps the current data in Python and sends each change as one
+message: appended or replaced columns as binary buffers, changed options as
+JSON. Messages carry a revision number. A browser that connects late,
+reloads, or misses a message asks for the whole chart, which Python builds
+from the current data when it is sent (holding the lock that orders
+updates); it is not stored in the widget state, so updates never re-send
+it. A range brushed or zoomed in one browser goes through Python to the
+others, marked with its origin; a range report made before a newer change
+from elsewhere is dropped. Views of one widget share its tables and marks
+in the browser, so an update is decoded once however many outputs show it.
+The Streamlit component (`herceg.streamlit.chart`, components v2) has no
+connection that outlives a script run, so every run sends the whole chart as
+one binary payload: a uint32 header length, the JSON header (spec, buffer
+offsets, events the script reacts to), and the buffers at 8-byte aligned
+offsets, viewed in place as typed arrays. Streamlit calls the component
+again on every run and on theme changes; equal bytes keep the drawn chart,
+and changed bytes redraw it in place, keeping zoom and brush (as category
+labels on category axes). Charts without a theme read the app's from the
+CSS variables Streamlit gives components, since Python may not know it.
+
 A test (`test/architecture.test.ts`) keeps the core directories (`data`,
 `scale`, `format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM
 access. Marks import their drawings (`draw`), which write SVG without a DOM

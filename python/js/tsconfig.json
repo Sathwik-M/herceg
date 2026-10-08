@@ -4,7 +4,10 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "types": [],
-    "paths": { "herceg/spec": ["../../packages/herceg/src/from-spec.ts"] }
+    "paths": {
+      "herceg": ["../../packages/herceg/src/index.ts"],
+      "herceg/spec": ["../../packages/herceg/src/from-spec.ts"]
+    }
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "test"]
 }

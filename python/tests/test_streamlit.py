@@ -1,0 +1,147 @@
+import datetime as dt
+import json
+import struct
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+import herceg as hg
+
+pytest.importorskip("streamlit")
+
+from streamlit.testing.v1 import AppTest  # noqa: E402
+
+import herceg.streamlit as hst  # noqa: E402
+
+EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "streamlit_app.py"
+T0 = dt.datetime(2026, 1, 1)
+MS0 = (T0 - dt.datetime(1970, 1, 1)).total_seconds() * 1000
+
+
+def read(data: bytes):
+    """Splits a payload as the browser does: header length, header, aligned buffers."""
+    (length,) = struct.unpack_from("<I", data)
+    header = json.loads(data[4 : 4 + length])
+    start = -(-(4 + length) // 8) * 8
+    buffers = [data[start + offset : start + offset + size] for offset, size in header["buffers"]]
+    return header, buffers, start
+
+
+def chart():
+    data = {
+        "t": np.array(["2026-01-01T00:00", "2026-01-01T00:01"], dtype="datetime64[ms]"),
+        "v": np.array([1.0, 2.0], dtype="float32"),
+        "host": ["a", "b"],
+    }
+    return hg.Chart(data, brush="x").line(x="t", y="v", series="host")
+
+
+def test_the_payload_is_the_spec_then_aligned_buffers():
+    spec, buffers = chart().to_spec()
+    data = hst._payload(spec, buffers, ["select"])
+    header, decoded, start = read(data)
+    assert header == {
+        "spec": spec,
+        "buffers": header["buffers"],
+        "events": ["select"],
+    }
+    assert decoded == buffers
+    # Every buffer starts at a multiple of 8 bytes, so typed arrays view it in place.
+    assert all((start + offset) % 8 == 0 for offset, _ in header["buffers"])
+    assert len(data) % 8 == 0
+    with pytest.raises(ValueError, match="JSON"):
+        hst._payload({"marks": [], "title": float("nan")}, [], [])
+
+
+def test_the_result_decodes_to_python_values():
+    state = hst._state(
+        {
+            "selection": {"x": [MS0, MS0 + 60_000], "time": True},
+            "click": {
+                "axis": "x",
+                "value": MS0,
+                "time": True,
+                "label": "00:00",
+                "points": [{"series": "a", "value": 1.0, "text": "1"}],
+            },
+        }
+    )
+    assert state.selection == (T0, T0 + dt.timedelta(minutes=1))
+    assert state.click == hg.Inspection(
+        axis="x", value=T0, label="00:00", points=(hg.InspectedPoint("a", 1.0, "1"),)
+    )
+    assert hst._state({}) == hst.ChartState(selection=None, click=None)
+
+
+def test_reactions_are_checked():
+    with pytest.raises(ValueError, match="on_select must be 'ignore', 'rerun', or a function"):
+        hst.chart(chart(), on_select="always")
+
+
+def test_outside_a_running_app_the_chart_has_no_state():
+    assert hst.chart(chart(), on_select="rerun") == hst.ChartState()
+
+
+def app():
+    import numpy as np
+    import streamlit as st
+
+    import herceg as hg
+    import herceg.streamlit as hst
+
+    data = {"x": np.arange(3.0), "y": np.array([1.0, 3.0, 2.0])}
+    chart = hg.Chart(data, brush="x").line(x="x", y="y")
+    state = hst.chart(chart, key="chart", on_select="rerun", on_click=lambda: None)
+    st.json({"selection": state.selection, "click": state.click and state.click.label})
+    hst.chart(hg.Chart(data, theme="dark").point(x="x", y="y"), key="other")
+
+
+def test_an_app_sends_the_chart_and_reads_its_selection():
+    at = AppTest.from_function(app, default_timeout=60).run()
+    assert not at.exception
+    first, second = (element.proto for element in at.main if element.type == "bidi_component")
+    assert first.component_name == "herceg.chart" and first.js_content
+    header, buffers, _ = read(first.bytes)
+    assert header["events"] == ["select", "click"]
+    assert header["spec"]["marks"] == [{"type": "line", "x": "x", "y": "y", "data": "data"}]
+    assert np.frombuffer(buffers[1], dtype="<f8").tolist() == [1.0, 3.0, 2.0]
+    assert read(second.bytes)[0]["events"] == []
+    # A chart's own theme travels; without one, the browser follows the app's.
+    assert "theme" not in header["spec"]
+    assert read(second.bytes)[0]["spec"]["theme"] == "dark"
+    # The browser reports a brushed range: the next run returns it.
+    at.session_state["chart"] = {"selection": {"x": [0.5, 1.5], "time": False}}
+    at.run()
+    assert json.loads(at.json[0].proto.body) == {"selection": [0.5, 1.5], "click": None}
+
+
+def form_app():
+    import numpy as np
+    import streamlit as st
+
+    import herceg as hg
+    import herceg.streamlit as hst
+
+    chart = hg.Chart({"x": np.arange(3.0), "y": np.arange(3.0)}, brush="x").line(x="x", y="y")
+    with st.form("brushes"):
+        hst.chart(chart, key="brushed", on_select="rerun")
+        st.form_submit_button()
+    with st.form("clicks"):
+        hst.chart(chart, key="clicked", on_click="rerun")
+        st.form_submit_button()
+
+
+def test_clicks_cannot_react_inside_forms():
+    # Streamlit drops clicks (trigger values) sent from inside a form.
+    at = AppTest.from_function(form_app, default_timeout=60).run()
+    [error] = at.exception
+    assert "on_click cannot react inside st.form" in error.message
+    # A selection in a form is fine: it arrives when the form is submitted.
+    assert len(at.get("bidi_component")) == 1
+
+
+def test_the_example_app_runs():
+    at = AppTest.from_file(str(EXAMPLE), default_timeout=60).run()
+    assert not at.exception
+    assert any(element.type == "bidi_component" for element in at.main)

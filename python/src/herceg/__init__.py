@@ -17,6 +17,9 @@ or compose several marks on one chart::
 
 Charts display in notebooks, save as HTML, SVG, or PNG, and serialize to the
 portable herceg chart spec shared with the TypeScript library.
+``chart.widget()`` makes a live notebook chart that Python can update and
+observe (the ``notebook`` extra); ``herceg.streamlit.chart(chart)`` shows one
+in a Streamlit app (the ``streamlit`` extra).
 """
 
 from ._chart import (
@@ -32,12 +35,15 @@ from ._chart import (
     line,
     scatter,
 )
+from ._events import InspectedPoint, Inspection
 
 __all__ = [
     "SCHEMES",
     "SYMBOLS",
     "Axis",
     "Chart",
+    "InspectedPoint",
+    "Inspection",
     "area",
     "bar",
     "candlestick",
