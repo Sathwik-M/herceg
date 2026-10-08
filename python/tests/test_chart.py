@@ -398,3 +398,54 @@ def test_theme_keys_and_names_match_typescript():
     body = source[source.index("export interface ThemeSpec") :]
     keys = re.findall(r"^  (\w+)\?:", body[: body.index("\n}")], re.MULTILINE)
     assert {key for key in keys if not key.islower()} == set(_THEME_KEYS.values())
+
+
+def test_pies_send_their_fields_and_have_their_chart_to_themselves():
+    sales = {
+        "region": ["n", "s", "n", "e"],
+        "revenue": [3.0, 2.0, 1.0, 4.0],
+        "unused": [0, 0, 0, 0],
+    }
+    chart = hg.pie(sales, "region", "revenue", inner_radius=0.6, width=300, height=200)
+    spec, _ = chart.to_spec()
+    assert spec["marks"] == [
+        {
+            "type": "pie",
+            "data": "data",
+            "category": "region",
+            "value": "revenue",
+            "innerRadius": 0.6,
+        }
+    ]
+    assert sorted(spec["data"]["data"]["columns"]) == ["region", "revenue"]
+    svg = chart.to_svg()
+    # Three slices, each a path of arcs in its own color.
+    assert len(re.findall(r'<path d="M[^"]*A[^"]*Z" fill="#', svg)) == 3
+    assert "n" in svg and "e" in svg
+    with pytest.raises(ValueError, match="has its chart to itself"):
+        hg.Chart(sales).pie("region").line(x="revenue", y="revenue")
+    with pytest.raises(ValueError, match="has its chart to itself"):
+        hg.Chart(sales).bar(x="region", y="revenue").pie("region")
+    with pytest.raises(ValueError, match="inner_radius"):
+        hg.Chart(sales).pie("region", inner_radius=1)
+    with pytest.raises(TypeError, match="pie value: column 'region' holds category"):
+        hg.Chart(sales).pie("region", "region")
+    with pytest.raises(ValueError, match="no x axis"):
+        hg.Chart(sales, zoom=True).pie("region")
+
+
+def test_pie_slices_decode_as_item_inspections():
+    from herceg._events import decode_inspection
+
+    inspection = decode_inspection(
+        {
+            "axis": "item",
+            "value": 40,
+            "time": False,
+            "label": "revenue",
+            "points": [{"series": "North", "value": 40, "text": "40 (40%)"}],
+        }
+    )
+    assert inspection.axis == "item"
+    assert inspection.value == 40
+    assert inspection.points[0].series == "North"

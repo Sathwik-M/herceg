@@ -17,6 +17,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
+import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { type PdfOptions, renderToPDF } from "../../src/pdf.ts";
@@ -394,6 +395,27 @@ describe("renderToPDF", () => {
     );
     // Three segments, each one curve (nothing else in the chart is curved).
     expect(content.match(/ c\n/g)).toHaveLength(3);
+  });
+
+  it("draws pie slices as cubic curves of at most a quarter turn, on the circle", () => {
+    const halves = table({ k: ["a", "b"], v: [1, 1] });
+    const { content } = readPdf(
+      renderToPDF({
+        width: 300,
+        height: 200,
+        legend: false,
+        marks: [pie(halves, { category: "k", value: "v", innerRadius: 0.5, labels: false })],
+      }),
+    );
+    // Each half: two quarter turns outside, two inside.
+    const ends = [...content.matchAll(/(-?[\d.]+) (-?[\d.]+) c\n/g)].map(([, x, y]) => [
+      Number(x),
+      Number(y),
+    ]);
+    expect(ends).toHaveLength(8);
+    // The pie fills the room below the 8 px header: centered at (150, 100), radii 90 and 45.
+    const radii = ends.map(([x, y]) => Math.round(Math.hypot(x! - 150, y! - 100)));
+    expect([...new Set(radii)].sort()).toEqual([45, 90]);
   });
 
   it("embeds heatmaps as compressed images, with a soft mask for missing cells", () => {

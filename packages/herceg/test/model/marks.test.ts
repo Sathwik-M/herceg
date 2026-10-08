@@ -7,7 +7,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { heatmap, MAX_CELLS } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { type PointOptions, point } from "../../src/marks/point.ts";
-import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { type AxisInspection, type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import type {
   PointGeometry,
   RasterGeometry,
@@ -472,7 +472,7 @@ describe("horizontal bar", () => {
     const { scene, model } = build({ marks: [bar(sales, { x: ["q1", "q2"], y: "region" })] });
     expect(model.tooltipMode()).toBe("nearest-y");
     const s = left(scene).ticks[1]!.position;
-    const inspection = model.inspect(scene.panels[0]!.plot.x + 5, s + 2)!;
+    const inspection = model.inspect(scene.panels[0]!.plot.x + 5, s + 2) as AxisInspection;
     expect(inspection.axis).toBe("y");
     expect(inspection.label).toBe("S");
     expect(inspection.position).toBeCloseTo(s, 3);

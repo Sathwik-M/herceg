@@ -9,6 +9,7 @@
 // checked against `MarkGeometry` at compile time, and other kinds (from
 // third-party drawings) are refused with an error.
 
+import { arcSweep, sectorsByColor, traceArcs } from "../draw/arc.ts";
 import { traceArea } from "../draw/area.ts";
 import { traceLine } from "../draw/line.ts";
 import { KAPPA, type PathSink } from "../draw/markup.ts";
@@ -42,9 +43,16 @@ const MAX_IMAGE_PIXELS = 4_194_304;
 class PathBuilder {
   operators = "";
   #move = "";
+  /** The current point and where its subpath started, as arcs need them. */
+  #x = Number.NaN;
+  #y = Number.NaN;
+  #startX = Number.NaN;
+  #startY = Number.NaN;
 
   moveTo(x: number, y: number): void {
     this.#move = `${num(x)} ${num(y)} m\n`;
+    this.#x = this.#startX = x;
+    this.#y = this.#startY = y;
   }
 
   #segment(operators: string): void {
@@ -54,21 +62,54 @@ class PathBuilder {
 
   lineTo(x: number, y: number): void {
     this.#segment(`${num(x)} ${num(y)} l\n`);
+    this.#x = x;
+    this.#y = y;
   }
 
   bezierCurveTo(x1: number, y1: number, x2: number, y2: number, x: number, y: number): void {
     this.#segment(`${num(x1)} ${num(y1)} ${num(x2)} ${num(y2)} ${num(x)} ${num(y)} c\n`);
+    this.#x = x;
+    this.#y = y;
   }
 
   closePath(): void {
     // A subpath of one point stays empty rather than becoming a dot.
     if (this.#move) this.#move = "";
     else if (this.operators) this.operators += "h\n";
+    this.#x = this.#startX;
+    this.#y = this.#startY;
   }
 
   rect(x: number, y: number, width: number, height: number): void {
     this.#move = "";
     this.operators += `${num(x)} ${num(y)} ${num(width)} ${num(height)} re\n`;
+    this.#x = this.#startX = x;
+    this.#y = this.#startY = y;
+  }
+
+  /** A circular arc as on a canvas, in cubic curves of at most a quarter turn. */
+  arc(cx: number, cy: number, r: number, a0: number, a1: number, counterclockwise = false): void {
+    const x = cx + r * Math.cos(a0);
+    const y = cy + r * Math.sin(a0);
+    if (Number.isNaN(this.#x)) this.moveTo(x, y);
+    else if (Math.abs(x - this.#x) > 0.01 || Math.abs(y - this.#y) > 0.01) this.lineTo(x, y);
+    const sweep = arcSweep(a0, a1, counterclockwise);
+    const parts = Math.ceil(sweep / (Math.PI / 2));
+    const step = (counterclockwise ? -sweep : sweep) / parts;
+    // Control points along the tangents, 4/3 tan(step / 4) radii away.
+    const k = (4 / 3) * Math.tan(step / 4);
+    for (let i = 0; i < parts; i++) {
+      const [c0, s0] = [Math.cos(a0 + step * i), Math.sin(a0 + step * i)];
+      const [c1, s1] = [Math.cos(a0 + step * (i + 1)), Math.sin(a0 + step * (i + 1))];
+      this.bezierCurveTo(
+        cx + r * (c0 - k * s0),
+        cy + r * (s0 + k * c0),
+        cx + r * (c1 + k * s1),
+        cy + r * (s1 - k * c1),
+        cx + r * c1,
+        cy + r * s1,
+      );
+    }
   }
 
   circle(x: number, y: number, r: number): void {
@@ -365,6 +406,16 @@ function paintGeometry(
         paint(page, top, { stroke: mark.stroke, strokeWidth: mark.strokeWidth, join: "round" });
       }
       return;
+    case "arc": {
+      // One path per color, as SVG and canvas draw them.
+      const groups = sectorsByColor(mark);
+      mark.colors.forEach((fill, color) => {
+        const sectors = new PathBuilder();
+        traceArcs(sectors, mark, groups[color]!);
+        paint(page, sectors, { fill, fillOpacity: mark.fillOpacity });
+      });
+      return;
+    }
     case "rect": {
       traceRects(path, mark);
       paint(page, path, { fill: mark.fill, fillOpacity: mark.fillOpacity });

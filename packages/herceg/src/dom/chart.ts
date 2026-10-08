@@ -84,6 +84,8 @@ export class Chart implements Scheduled, SyncMember {
   #syncedX: number | null = null;
   /** Keyboard cursor: a panel, a series, and a position in the series' part in the panel. */
   #keyboard: { panel: string; key: string; position: number } | null = null;
+  /** Outlines the item inspected in charts of a layout mark (a pie slice). */
+  readonly #outline: SVGPathElement;
   #describedAt = -Infinity;
   /** What the current summary was written from; zooming and hovering do not change it. */
   #described: { config: unknown; key: string } | undefined;
@@ -100,6 +102,8 @@ export class Chart implements Scheduled, SyncMember {
     mode: "pan" | "brush" | "click";
     moved: boolean;
   } | null = null;
+  /** A press in a chart of a layout mark, which has nothing to drag: a click if released in place. */
+  #tap: { x: number; y: number; moved: boolean } | null = null;
   readonly #brush: Brush;
   /** Where a keyboard selection (Shift + arrows) started: data x and its label. */
   #brushAnchor: { value: number; label: string } | null = null;
@@ -128,8 +132,14 @@ export class Chart implements Scheduled, SyncMember {
       svgElement(document, "line", { "stroke-width": "1", visibility: "hidden" }),
     ];
     this.#dots = svgElement(document, "g");
+    this.#outline = svgElement(document, "path", {
+      fill: "none",
+      "stroke-width": "2",
+      "stroke-linejoin": "round",
+      visibility: "hidden",
+    });
     this.#brush = new Brush(svgElement(document, "g"));
-    this.#svg.overlay.append(this.#brush.element, ...this.#crosshairs, this.#dots);
+    this.#svg.overlay.append(this.#brush.element, ...this.#crosshairs, this.#dots, this.#outline);
     this.#legend = new Legend(document, (key) => {
       if (this.model.hidden.has(key)) this.model.hidden.delete(key);
       else this.model.hidden.add(key);
@@ -474,6 +484,7 @@ export class Chart implements Scheduled, SyncMember {
     // The model applies the configured tooltip mode.
     if (this.#pointer) return this.model.inspect(this.#pointer.x, this.#pointer.y);
     const keyboard = this.#keyboard;
+    if (keyboard && this.model.layout) return this.model.inspectItem(keyboard.key);
     if (keyboard)
       return this.model.inspectPosition(keyboard.key, keyboard.position, keyboard.panel);
     return undefined;
@@ -529,10 +540,23 @@ export class Chart implements Scheduled, SyncMember {
       lines.push(line);
     }
     const dots: SVGCircleElement[] = [];
+    this.#outline.setAttribute("visibility", "hidden");
     for (const [i, line] of lines.entries()) {
       const inspection = drawn[i];
-      if (!inspection) {
-        line.setAttribute("visibility", "hidden");
+      if (!inspection || inspection.axis === "item") line.setAttribute("visibility", "hidden");
+      if (!inspection) continue;
+      // Items are outlined instead of crossed, and their tooltip points at them.
+      if (inspection.axis === "item") {
+        this.#outline.setAttribute("d", inspection.outline);
+        this.#outline.setAttribute("stroke", theme.text);
+        this.#outline.setAttribute("visibility", "visible");
+        const [item] = inspection.points;
+        const anchor = this.#pointer ?? { x: item!.px, y: item!.py };
+        if (inspection === active)
+          this.#tooltip.show(inspection, theme, anchor, {
+            width: scene.width,
+            height: scene.height,
+          });
         continue;
       }
       const { plot } = panels.find(({ key }) => key === (inspection.panel ?? "")) ?? panels[0]!;
@@ -599,6 +623,9 @@ export class Chart implements Scheduled, SyncMember {
       this.#brushAnchor = null;
       const press = this.#press;
       const { x, y } = this.#pointer;
+      const tap = this.#tap;
+      // A press that strays is not a click, even if it comes back.
+      if (tap) tap.moved ||= Math.hypot(x - tap.x, y - tap.y) >= DRAG_THRESHOLD;
       if (press) {
         press.moved ||= Math.hypot(x - press.x, y - press.y) >= DRAG_THRESHOLD;
         if (press.moved && press.mode === "pan") {
@@ -623,6 +650,7 @@ export class Chart implements Scheduled, SyncMember {
       this.#pointer = null;
       // A captured drag leaves only when released; any other press ends here.
       this.#press = null;
+      this.#tap = null;
       this.#brush.cancel();
       schedule(this);
       const sync = this.#options.interaction?.sync;
@@ -652,6 +680,10 @@ export class Chart implements Scheduled, SyncMember {
     on("pointerdown", (event) => {
       if (event.button !== 0 || !this.#scene) return;
       const { x, y } = local(event);
+      if (this.model.layout) {
+        this.#tap = { x, y, moved: false };
+        return;
+      }
       // Presses on the axes, titles, gaps, or legend are not on the data.
       const panel = this.#panelAt(x, y);
       if (!panel) return;
@@ -663,6 +695,12 @@ export class Chart implements Scheduled, SyncMember {
       if (mode !== "click") root.setPointerCapture?.(event.pointerId);
     });
     on("pointerup", (event) => {
+      const tap = this.#tap;
+      this.#tap = null;
+      if (tap) {
+        if (!tap.moved) this.#click(local(event));
+        return;
+      }
       const press = this.#press;
       this.#press = null;
       if (!press) return;
@@ -683,6 +721,7 @@ export class Chart implements Scheduled, SyncMember {
     // The browser took the pointer (a touch turned into scrolling, say).
     const cancel = () => {
       this.#press = null;
+      this.#tap = null;
       this.#brush.cancel();
       schedule(this);
     };
@@ -748,6 +787,10 @@ export class Chart implements Scheduled, SyncMember {
   #key(event: KeyboardEvent) {
     // Controls inside the chart (legend buttons) keep their own keys.
     if (event.target !== this.root) return;
+    if (this.model.layout) {
+      this.#itemKey(event);
+      return;
+    }
     const keys = [
       "ArrowLeft",
       "ArrowRight",
@@ -832,7 +875,39 @@ export class Chart implements Scheduled, SyncMember {
     }
     this.#live.textContent = text;
   }
+  /** Arrow keys step through a layout mark's items, in reading order; Escape leaves them. */
+  #itemKey(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.#keyboard = null;
+      this.#live.textContent = "";
+      schedule(this);
+      return;
+    }
+    const step = ITEM_STEPS[event.key];
+    if (step === undefined) return;
+    event.preventDefault();
+    const key = this.model.stepItem(this.#keyboard?.key, step);
+    if (key === undefined) return;
+    this.#keyboard = { panel: "", key, position: 0 };
+    this.#pointer = null;
+    this.flush();
+    const inspection = this.#inspection();
+    if (inspection) this.#live.textContent = describeInspection(inspection);
+  }
 }
+
+/** Steps for the keys that move through the items of a layout mark. */
+const ITEM_STEPS: Record<string, number> = {
+  ArrowRight: 1,
+  ArrowDown: 1,
+  ArrowLeft: -1,
+  ArrowUp: -1,
+  PageDown: 5,
+  PageUp: -5,
+  Home: -Infinity,
+  End: Infinity,
+};
 
 /** Position of the point of `series` whose x is nearest `x`; the first without one. */
 function nearestTo(series: Series, x: number | undefined): number {

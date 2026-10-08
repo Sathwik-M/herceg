@@ -542,6 +542,50 @@ class Chart:
             table,
         )
 
+    def pie(
+        self,
+        category: str,
+        value: str | None = None,
+        *,
+        data: Any = None,
+        inner_radius: float | None = None,
+        sort: Literal["value", "input"] | None = None,
+        labels: bool | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A pie: a slice per value of ``category``, sized by the sum of
+        ``value`` over its rows, or their count without it.
+
+        ``inner_radius``, a fraction of the pie's radius below 1, makes a
+        donut. Slices go largest first, clockwise from the top, unless
+        ``sort="input"``. A pie has its chart to itself.
+        """
+        if self._facet is not None:
+            raise ValueError("charts of a pie cannot have facets yet")
+        if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
+            raise ValueError("charts of a pie have no x axis to zoom, brush, or sync")
+        if inner_radius is not None and not (
+            isinstance(inner_radius, numbers.Real)
+            and not isinstance(inner_radius, bool)
+            and 0 <= inner_radius < 1
+        ):
+            raise ValueError(f"inner_radius must be at least 0 and below 1, not {inner_radius!r}")
+        table = self._mark_table(data)
+        self._require(table, category, ("category",), "pie category")
+        self._require(table, value, ("number",), "pie value")
+        return self._add(
+            {
+                "type": "pie",
+                "category": category,
+                "value": value,
+                "innerRadius": inner_radius,
+                "sort": sort,
+                "labels": labels,
+                "id": id,
+            },
+            table,
+        )
+
     def heatmap(
         self,
         x: str,
@@ -905,6 +949,9 @@ class Chart:
         return table
 
     def _add(self, spec: dict[str, Any], table: int | None) -> Chart:
+        pies = [mark for mark, _ in self._marks if mark["type"] == "pie"]
+        if pies or (spec["type"] == "pie" and self._marks):
+            raise ValueError("a pie has its chart to itself; draw other marks in another chart")
         if spec.get("axis") not in (None, "left", "right"):
             raise ValueError(f"axis must be 'left' or 'right', not {spec['axis']!r}")
         if self._facet is not None and spec.get("axis") == "right":
@@ -1027,6 +1074,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
     for key in (
         *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"),
+        "category",
         *("open", "high", "low", "close"),
         *("r", "fillOpacity", "color", "symbol"),
     ):
@@ -1217,6 +1265,22 @@ def histogram(
     """A histogram of ``x``'s values."""
     return Chart(data, **options).histogram(
         x, bins=bins, series=series, normalize=normalize, stack=stack
+    )
+
+
+def pie(
+    data: Any,
+    category: str,
+    value: str | None = None,
+    *,
+    inner_radius: float | None = None,
+    sort: Literal["value", "input"] | None = None,
+    labels: bool | None = None,
+    **options: Any,
+) -> Chart:
+    """A pie, or with ``inner_radius`` a donut, of ``value`` per ``category``."""
+    return Chart(data, **options).pie(
+        category, value, inner_radius=inner_radius, sort=sort, labels=labels
     )
 
 

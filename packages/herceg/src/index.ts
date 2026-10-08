@@ -70,8 +70,16 @@ export {
 } from "./marks/errorbar.ts";
 export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
 export { type HistogramMark, type HistogramOptions, histogram } from "./marks/histogram.ts";
+export type {
+  ChartMark,
+  LayoutFrame,
+  LayoutItem,
+  LayoutMark,
+  LayoutResult,
+} from "./marks/layout-mark.ts";
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
 export type { Mark, MarkIdentity } from "./marks/mark.ts";
+export { type PieMark, type PieOptions, pie } from "./marks/pie.ts";
 export { type PointMark, type PointOptions, point } from "./marks/point.ts";
 export {
   type RegionDataOptions,
@@ -82,7 +90,13 @@ export {
 export { type RuleDataOptions, type RuleMark, type RuleOptions, rule } from "./marks/rule.ts";
 export { type TextDataOptions, type TextMark, type TextOptions, text } from "./marks/text.ts";
 export { type Facet, type FacetOptions, facet } from "./model/facet.ts";
-export type { ChartConfig, InspectedPoint, Inspection } from "./model/model.ts";
+export type {
+  AxisInspection,
+  ChartConfig,
+  InspectedPoint,
+  Inspection,
+  ItemInspection,
+} from "./model/model.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
 export * from "./scale/schemes.ts";
 export type * from "./spec/spec.ts";

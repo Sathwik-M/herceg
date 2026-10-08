@@ -12,8 +12,10 @@ import { CandlestickMark } from "../marks/candlestick.ts";
 import { ErrorBarMark } from "../marks/errorbar.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
 import { HistogramMark } from "../marks/histogram.ts";
+import type { LayoutMark } from "../marks/layout-mark.ts";
 import { LineMark } from "../marks/line.ts";
 import type { Mark } from "../marks/mark.ts";
+import { PieMark } from "../marks/pie.ts";
 import { PointMark } from "../marks/point.ts";
 import { RegionMark } from "../marks/region.ts";
 import { RuleMark } from "../marks/rule.ts";
@@ -241,7 +243,7 @@ function swapped(Typed: (typeof TYPED)[BinaryType], bytes: Uint8Array): NumericA
   return new Typed(copy.buffer, 0, copy.length / size);
 }
 
-function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Mark {
+function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Mark | LayoutMark {
   try {
     // Annotations read a table only when a position or their text is a field.
     switch (spec.type) {
@@ -273,6 +275,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new CandlestickMark(spec, source);
       case "histogram":
         return new HistogramMark(spec, source);
+      case "pie":
+        return new PieMark(spec, source);
       default:
         throw new TypeError(
           `unknown mark type ${JSON.stringify((spec as { type: unknown }).type)}`,

@@ -24,7 +24,11 @@ export interface InspectedPoint {
   py: number;
 }
 
-export interface Inspection {
+/** What a tooltip, hover event, or keyboard cursor is on. */
+export type Inspection = AxisInspection | ItemInspection;
+
+/** Points at a position along an axis, in charts with axes. */
+export interface AxisInspection {
   /** The axis the inspection follows: "y" in nearest-y mode, otherwise "x". */
   axis: "x" | "y";
   /** Data value on that axis, snapped to the nearest data point. */
@@ -34,6 +38,21 @@ export interface Inspection {
   label: string;
   points: InspectedPoint[];
   /** In charts with facets, the facet value of the panel inspected. */
+  panel?: string;
+}
+
+/** One item of a chart without axes, such as a pie slice. */
+export interface ItemInspection {
+  axis: "item";
+  key: string;
+  /** The item's value. */
+  value: number;
+  /** What the values measure: the value field, or "Count". */
+  label: string;
+  /** The item, as one point. */
+  points: InspectedPoint[];
+  /** SVG path data outlining the item. */
+  outline: string;
   panel?: string;
 }
 
@@ -114,7 +133,7 @@ export class Inspector {
    * use binary search; marks with their own lookup (grid indexes, cell
    * tables) use it.
    */
-  inspect(px: number, py: number, mode?: TooltipMode): Inspection | undefined {
+  inspect(px: number, py: number, mode?: TooltipMode): AxisInspection | undefined {
     const { plot } = this.frame;
     if (px < plot.x || px > plot.x + plot.width || py < plot.y || py > plot.y + plot.height)
       return undefined;
@@ -296,7 +315,7 @@ export class Inspector {
    * visible series at its x (or its y, for marks inspected along y). Used by
    * keyboard navigation, which must reach every point even when values repeat.
    */
-  inspectPosition(seriesKey: string, position: number): Inspection | undefined {
+  inspectPosition(seriesKey: string, position: number): AxisInspection | undefined {
     const series = this.#visibleSeries(() => true);
     const anchor = series.find((s) => s.key === seriesKey);
     if (!anchor || position < 0 || position >= anchor.length) return undefined;
@@ -328,7 +347,7 @@ export class Inspector {
     yAxis = this.#left,
     anchor?: Series,
     anchorPosition?: number,
-  ): Inspection {
+  ): AxisInspection {
     const points: InspectedPoint[] = [];
     for (const s of series) {
       const position = s === anchor ? anchorPosition! : this.#positionAt(s, axis, value);
@@ -355,7 +374,7 @@ export class Inspector {
     value: number,
     points: InspectedPoint[],
     yAxis = this.#left,
-  ): Inspection {
+  ): AxisInspection {
     return {
       axis,
       value,

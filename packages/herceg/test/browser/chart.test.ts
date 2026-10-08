@@ -5,6 +5,7 @@ import { type Chart, createChart } from "../../src/dom/chart.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
+import { pie } from "../../src/marks/pie.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { resolveTheme } from "../../src/theme.ts";
 
@@ -705,3 +706,120 @@ describe("themes that follow the page", () => {
     }
   });
 });
+
+describe("pies", () => {
+  const sales = table({ region: ["North", "South", "East"], revenue: [50, 30, 20] });
+  const pointer = (target: Element, type: string, x: number, y: number) => {
+    const rect = target.getBoundingClientRect();
+    target.dispatchEvent(
+      new PointerEvent(type, { bubbles: true, clientX: rect.left + x, clientY: rect.top + y }),
+    );
+  };
+
+  it("outline the slice under the pointer and show its share", async () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [pie(sales, { category: "region", value: "revenue" })],
+    });
+    // North fills the first half, clockwise from the top: right of the center.
+    const { x, y, width, height } = planOf(chart);
+    pointer(chart.root, "pointermove", x + width / 2 + 40, y + height / 2);
+    await frame();
+    const tooltip = [...chart.root.children].find(
+      (el) => (el as HTMLElement).style.pointerEvents === "none" && el.tagName === "DIV",
+    ) as HTMLElement;
+    expect(tooltip.style.display).toBe("block");
+    expect(tooltip.textContent).toContain("revenue");
+    expect(tooltip.textContent).toContain("North");
+    expect(tooltip.textContent).toContain("50 (50%)");
+    const outline = chart.root.querySelector("svg path[stroke-linejoin='round'][fill='none']")!;
+    expect(outline.getAttribute("visibility")).toBe("visible");
+    expect(outline.getAttribute("d")).toMatch(/A/);
+    // No crosshair in a pie.
+    expect(
+      [...chart.root.querySelectorAll("svg line")].every(
+        (l) => l.getAttribute("visibility") === "hidden",
+      ),
+    ).toBe(true);
+    pointer(chart.root, "pointerleave", 0, 0);
+    await frame();
+    expect(outline.getAttribute("visibility")).toBe("hidden");
+    chart.destroy();
+  });
+
+  it("report the slice clicked", () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [pie(sales, { category: "region", value: "revenue" })],
+    });
+    const clicks: (string | undefined)[] = [];
+    chart.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.label));
+    const { x, y, width, height } = planOf(chart);
+    for (const type of ["pointerdown", "pointerup"]) {
+      const rect = chart.root.getBoundingClientRect();
+      chart.root.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: rect.left + x + width / 2 + 40,
+          clientY: rect.top + y + height / 2,
+        }),
+      );
+    }
+    expect(clicks).toEqual(["North"]);
+    // A press that strays and comes back is a drag, not a click.
+    const rect = chart.root.getBoundingClientRect();
+    const at = (type: string, dx: number) =>
+      chart.root.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: rect.left + x + width / 2 + 40 + dx,
+          clientY: rect.top + y + height / 2,
+        }),
+      );
+    at("pointerdown", 0);
+    at("pointermove", 60);
+    at("pointermove", 0);
+    at("pointerup", 0);
+    expect(clicks).toEqual(["North"]);
+    chart.destroy();
+  });
+
+  it("read slices with the keyboard, and toggle them from the legend", () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [pie(sales, { category: "region", value: "revenue" })],
+    });
+    chart.root.focus();
+    const key = (k: string) =>
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    const live = chart.root.querySelector("[aria-live]")!;
+    key("ArrowRight");
+    expect(live.textContent).toBe("revenue. North: 50 (50%)");
+    key("ArrowRight");
+    expect(live.textContent).toBe("revenue. South: 30 (30%)");
+    key("End");
+    expect(live.textContent).toBe("revenue. East: 20 (20%)");
+    key("Home");
+    expect(live.textContent).toContain("North");
+    // Hiding North leaves the others the whole circle.
+    chart.root.querySelectorAll("button")[0]!.click();
+    chart.render();
+    key("ArrowRight");
+    expect(live.textContent).toBe("revenue. South: 30 (60%)");
+    expect(chart.root.getAttribute("aria-describedby")).toBeTruthy();
+    chart.destroy();
+  });
+});
+
+/** The room a pie chart's mark has: its one panel. */
+function planOf(chart: Chart) {
+  const svg = chart.toSVG();
+  const clip =
+    /<clipPath id="[^"]+"><rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(
+      svg,
+    )!;
+  const [x, y, width, height] = clip.slice(1).map(Number) as [number, number, number, number];
+  return { x, y, width, height };
+}

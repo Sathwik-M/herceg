@@ -241,6 +241,26 @@ is out of view has no tooltip.
 
 Marks are drawn in array order; rules and text always draw above other marks.
 
+### Pies and donuts
+
+```ts
+pie(sales, { category: "region", value: "revenue" });
+pie(sales, { category: "region", value: "revenue", innerRadius: 0.6 }); // a donut
+pie(visits, { category: "browser" }); // counts rows
+```
+
+A pie has a slice per category, sized by the sum of `value` over the
+category's rows, or their count without `value`; negative and missing values
+count as nothing. Slices go largest first, clockwise from the top
+(`sort: "input"` keeps the categories' order), with 2 px between them (less
+for slices too thin for that), and
+are labeled beside the pie with lines to them when there is room
+(`labels: false` turns that off); labels that do not fit, smallest slices
+first, are left out. The legend toggles slices, and the rest fill the circle.
+Tooltips, hover and click events, and the arrow keys report a slice's value
+and its share of the slices shown. A pie has its chart to itself: it cannot
+share one with other marks, have facets, or zoom, brush, or sync.
+
 ### A second y axis
 
 Marks with `axis: "right"` use a second y scale, drawn on the right and
@@ -412,7 +432,9 @@ chart.on("click", ({ inspection }) => openDetails(inspection?.points[0]));
 ```
 
 Events report changes only: a re-inspected point or an unchanged range does
-not repeat them. Keyboard users select a range with Shift and the arrow keys
+not repeat them. An inspection's `axis` says what it is on: `"x"` or `"y"`
+for a position along that axis (with its `position` in pixels), `"item"` for
+a pie slice, whose `value` is the slice's and whose one point names it. Keyboard users select a range with Shift and the arrow keys
 (Enter zooms to it when zoom is on; Escape clears it).
 
 ## Export

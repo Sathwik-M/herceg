@@ -1,10 +1,10 @@
 import {
   type ChartEvents,
   type ChartListener,
+  type ChartMark,
   type ChartOptions,
   createChart,
   type Chart as HercegChart,
-  type Mark,
 } from "herceg";
 import {
   Children,
@@ -22,8 +22,8 @@ import { markBuilder } from "./marks.tsx";
 
 export interface ChartProps extends Omit<ChartOptions, "marks"> {
   /** Marks built with herceg's functions; mark elements among `children` are added after them. */
-  marks?: readonly Mark[];
-  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Rule>, <Region>, <Text>, <Custom>. */
+  marks?: readonly ChartMark[];
+  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: ReactNode;
   className?: string;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -62,7 +62,7 @@ function useChartEvent<K extends keyof ChartEvents>(
   }, [present]);
 }
 
-function marksFrom(children: ReactNode, out: Mark[] = []): Mark[] {
+function marksFrom(children: ReactNode, out: ChartMark[] = []): ChartMark[] {
   for (const child of Children.toArray(children)) {
     if (!isValidElement(child)) continue;
     const props = child.props as { children?: ReactNode };
@@ -100,13 +100,14 @@ const PORTABLE = new Set([
   "errorbar",
   "candlestick",
   "histogram",
+  "pie",
   "rule",
   "region",
   "text",
 ]);
 
 /** Same mark when the spec and the table are unchanged, so caches survive re-renders. */
-function sameMark(a: Mark, b: Mark): boolean {
+function sameMark(a: ChartMark, b: ChartMark): boolean {
   if (a === b) return true;
   if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
   return a.table === b.table && canonical(a.spec) === canonical(b.spec);
@@ -115,7 +116,7 @@ function sameMark(a: Mark, b: Mark): boolean {
 type Options = Omit<ChartOptions, "marks">;
 
 interface Applied {
-  marks: readonly Mark[];
+  marks: readonly ChartMark[];
   options: Options;
   key: string;
 }

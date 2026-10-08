@@ -157,7 +157,7 @@ describe("loadSpec", () => {
         marks: [{ type: "line", x: "v", y: "v", strokeWidth: -1 }],
       }),
     ).toThrow(/marks\[0\]\.strokeWidth/);
-    expect(check({ marks: [{ type: "pie" }] })).toThrow(/marks\[0\]\.type/);
+    expect(check({ marks: [{ type: "chord" }] })).toThrow(/marks\[0\]\.type/);
     expect(check({ marks: [{ type: "constructor" }] })).toThrow(/marks\[0\]\.type/);
     expect(check({ y: { format: { maximumFractionDigits: -1 } }, marks: [] })).toThrow(
       /spec\.y\.format: /,

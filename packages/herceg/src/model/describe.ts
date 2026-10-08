@@ -58,10 +58,18 @@ function summarize(parts: readonly Series[], name: string, locale: string | unde
  */
 export function describeChart(model: ChartModel): string {
   const { config } = model;
+  const layout = model.layoutSummary();
+  if (layout !== undefined) {
+    return [config.title, config.description, layout].filter(Boolean).join(" ");
+  }
   const series = model.series();
   // Annotations describe themselves; the chart kind names the data marks.
   const kinds = [
-    ...new Set(config.marks.filter((mark) => !mark.describe).map((mark) => mark.spec.type)),
+    ...new Set(
+      config.marks
+        .filter((mark) => !("describe" in mark && mark.describe))
+        .map((mark) => mark.spec.type),
+    ),
   ].join(" and ");
   const parts: string[] = [];
   if (config.title) parts.push(config.title);

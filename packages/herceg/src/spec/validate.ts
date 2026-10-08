@@ -382,6 +382,19 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       label: string,
     },
   },
+  pie: {
+    required: ["category"],
+    checks: {
+      category: field,
+      value: field,
+      innerRadius: (v, path) => {
+        if (typeof v !== "number" || !(v >= 0 && v < 1))
+          fail(path, "a fraction at least 0 and below 1", v);
+      },
+      sort: oneOf("value", "input"),
+      labels: boolean,
+    },
+  },
   candlestick: {
     required: ["x", "open", "high", "low", "close"],
     checks: {

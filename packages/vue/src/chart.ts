@@ -1,9 +1,9 @@
 import {
   type ChartEvents,
+  type ChartMark,
   type ChartOptions,
   createChart,
   type Chart as HercegChart,
-  type Mark,
 } from "herceg";
 import {
   Comment,
@@ -69,7 +69,7 @@ const emits = {
   click: (_: ChartEvents["click"]) => true,
 };
 
-function collectMarks(children: unknown, out: Mark[]): Mark[] {
+function collectMarks(children: unknown, out: ChartMark[]): ChartMark[] {
   if (Array.isArray(children)) {
     for (const child of children) collectMarks(child, out);
     return out;
@@ -106,13 +106,14 @@ const PORTABLE = new Set([
   "errorbar",
   "candlestick",
   "histogram",
+  "pie",
   "rule",
   "region",
   "text",
 ]);
 
 /** Same mark when the spec and the table are unchanged, so caches survive re-renders. */
-function sameMark(a: Mark, b: Mark): boolean {
+function sameMark(a: ChartMark, b: ChartMark): boolean {
   if (a === b) return true;
   if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
   return a.table === b.table && canonical(a.spec) === canonical(b.spec);
@@ -120,7 +121,7 @@ function sameMark(a: Mark, b: Mark): boolean {
 
 /** What a render describes, and later what the chart shows. */
 interface View {
-  marks: readonly Mark[];
+  marks: readonly ChartMark[];
   options: Options;
   key: string;
 }
@@ -144,11 +145,11 @@ export const Chart = defineComponent({
   props: {
     ...optionProps,
     /** Marks built with herceg's functions; mark components in the slot are added after them. */
-    marks: Array as PropType<readonly Mark[]>,
+    marks: Array as PropType<readonly ChartMark[]>,
   },
   emits,
   slots: Object as SlotsType<{
-    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Rule>, <Region>, <Text>, <Custom>. */
+    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <Rule>, <Region>, <Text>, <Custom>. */
     default?: () => VNode[];
   }>,
   expose: ["chart"],
