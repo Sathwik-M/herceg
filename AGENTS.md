@@ -18,7 +18,8 @@ engineering decisions.
 | --- | --- |
 | `packages/herceg` | (In development) The `herceg` npm package: portable spec types, data model, scales, marks, LOD, scene, SVG and Canvas renderers, DOM runtime. Optional pieces are subpath exports. |
 | `packages/react` | `@herceg/react`, the React adapter: `<Chart>` and mark elements over the same engine. |
-| `python/` | The `herceg` Python package: a Pythonic chart builder that emits the portable spec, data conversion, HTML, notebook, SVG, and PNG output. |
+| `packages/vue`, `packages/svelte` | `@herceg/vue` and `@herceg/svelte`, the Vue and Svelte adapters, in the same model. |
+| `python/` | The `herceg` Python package: a Pythonic chart builder that emits the portable spec, data conversion, HTML, notebook, SVG, PNG, and PDF output, live notebook widgets, and a Streamlit component. |
 | `benchmarks/` | Benchmark harness, competitor adapters, scenarios, and committed results in `benchmarks/results/`. |
 | `docs/` | Permanent documentation: architecture, vocabulary, comparison, benchmark methodology. |
 | `tmp/` | Gitignored scratch space. Never commit anything from here. |
@@ -27,8 +28,8 @@ The suggested package split (`@herceg/core`, `@herceg/svg`, `@herceg/canvas`,
 `@herceg/line`, ...) is implemented as subpath modules of one `herceg` package
 rather than separate npm packages: one version, no internal version skew, and
 tree shaking at module granularity gives the same bundle benefit. Packages are
-split only where dependencies differ (React, Python, optional third-party
-peers).
+split only where dependencies differ (React, Vue, Svelte, Python, optional
+third-party peers).
 
 ### Commands
 
@@ -36,12 +37,12 @@ Run from the repository root.
 
 ```sh
 npm install              # install workspace dependencies
-npm run build            # build herceg and @herceg/react (tsc)
+npm run build            # build herceg and the React, Vue, and Svelte adapters
 npm run lint             # biome lint + format check
 npm run format           # apply biome formatting and safe fixes
 npm run typecheck        # type check all TypeScript, including compile-time tests
 npm test                 # unit tests (vitest, Node)
-npm run test:browser     # browser tests for herceg, @herceg/react, and python/js (local Chrome)
+npm run test:browser     # browser tests: herceg, the adapters, and python/js (local Chrome)
 npm run bench:core       # engine microbenchmarks (Node)
 npm run bench:size       # bundle size benchmark
 npm run bench            # browser benchmark suite (Chrome); see benchmarks/README.md
