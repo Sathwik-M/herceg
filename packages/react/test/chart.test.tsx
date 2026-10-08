@@ -9,7 +9,18 @@ import {
 import { act, StrictMode, Suspense, startTransition, use, useLayoutEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Bar, Chart, Custom, Line, Pie, Region, Rule, Text } from "../src/index.ts";
+import {
+  Bar,
+  Chart,
+  Custom,
+  Line,
+  Pie,
+  Region,
+  Rule,
+  Sunburst,
+  Text,
+  Treemap,
+} from "../src/index.ts";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -62,6 +73,28 @@ describe("<Chart>", () => {
     const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
     expect(slices).toHaveLength(3);
     expect(host.textContent).toContain("Shares");
+  });
+
+  it("renders treemaps and sunbursts from their elements", async () => {
+    const sales = table({ region: ["a", "a", "b"], country: ["x", "y", "z"], v: [1, 2, 3] });
+    act(() =>
+      root.render(
+        <Chart>
+          <Treemap data={sales} path={["region", "country"]} value="v" />
+        </Chart>,
+      ),
+    );
+    expect(host.textContent).toContain("z");
+    act(() =>
+      root.render(
+        <Chart>
+          <Sunburst data={sales} path={["region", "country"]} value="v" />
+        </Chart>,
+      ),
+    );
+    // A new mark draws on the next frame.
+    await frame();
+    expect([...paths()].some((path) => /A/.test(path.getAttribute("d") ?? ""))).toBe(true);
   });
 
   it("builds annotations from constants or from their own data", () => {

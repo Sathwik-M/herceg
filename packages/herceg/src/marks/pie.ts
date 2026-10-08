@@ -164,26 +164,27 @@ export class PieMark implements LayoutMark {
 
     const percent = numberFormatter({ style: "percent", maximumFractionDigits: 1 }, locale);
     const middle = (r0 + r) / 2 || r * 0.6;
-    let items: LayoutItem[] | undefined;
-    const itemsOf = () => {
-      items ??= slices.map((slice, i) => {
-        const a0 = angle(i > 0 ? ends[i - 1]! : 0);
-        const a1 = angle(ends[i]!);
-        const outline = new ArcPath();
-        traceSector(outline, cx, cy, r0, r, a0, a1, 0);
-        const mid = (a0 + a1) / 2;
-        return {
-          key: slice.key,
-          label: slice.label,
-          color: sliceColors[i]!,
-          value: slice.value,
-          text: `${formatNumber(slice.value, locale)} (${percent(share(slice.value))})`,
-          px: cx + middle * Math.cos(mid),
-          py: cy + middle * Math.sin(mid),
-          outline: outline.d,
-        };
-      });
-      return items;
+    const items: LayoutItem[] = [];
+    const itemOf = (i: number): LayoutItem => {
+      const cached = items[i];
+      if (cached) return cached;
+      const slice = slices[i]!;
+      const a0 = angle(i > 0 ? ends[i - 1]! : 0);
+      const a1 = angle(ends[i]!);
+      const outline = new ArcPath();
+      traceSector(outline, cx, cy, r0, r, a0, a1, gap);
+      const mid = (a0 + a1) / 2;
+      items[i] = {
+        key: slice.key,
+        label: slice.label,
+        color: sliceColors[i]!,
+        value: slice.value,
+        text: `${formatNumber(slice.value, locale)} (${percent(share(slice.value))})`,
+        px: cx + middle * Math.cos(mid),
+        py: cy + middle * Math.sin(mid),
+        outline: outline.d,
+      };
+      return items[i];
     };
     return {
       geometry,
@@ -203,9 +204,11 @@ export class PieMark implements LayoutMark {
         // As drawn: not in the gaps between slices, nor in slices too thin to show.
         const a0 = angle(lo > 0 ? ends[lo - 1]! : 0);
         const a1 = angle(ends[lo]!);
-        return inSector(px, py, cx, cy, r0, r, a0, a1, gap) ? itemsOf()[lo] : undefined;
+        return inSector(px, py, cx, cy, r0, r, a0, a1, gap) ? itemOf(lo) : undefined;
       },
-      items: itemsOf,
+      count: slices.length,
+      item: itemOf,
+      indexOf: (key) => slices.findIndex((slice) => slice.key === key),
       summary: () => this.#summary(slices, largest * relative, share, locale, percent),
     };
   }

@@ -15,6 +15,8 @@ export {
   Point,
   Region,
   Rule,
+  Sunburst,
   Text,
+  Treemap,
   type WithData,
 } from "./marks.tsx";

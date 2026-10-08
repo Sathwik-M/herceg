@@ -33,10 +33,14 @@ import {
   region,
   rule,
   type Schema,
+  type SunburstOptions,
+  sunburst,
   type Table,
   type TextDataOptions,
   type TextOptions,
+  type TreemapOptions,
   text,
+  treemap,
 } from "herceg";
 
 /** Props of a mark element: the mark's options plus the table it reads. */
@@ -113,6 +117,18 @@ export const BoxPlot = /* @__PURE__ */ markElement(
   "BoxPlot",
   ({ data, ...options }: WithData<BoxPlotOptions<Schema>, Schema>) => boxplot(data, options),
 ) as unknown as <S extends Schema>(props: WithData<BoxPlotOptions<S>, S>) => null;
+
+/** A treemap of a tree given by `path` fields, or `node` and `parent`; it has its chart to itself. */
+export const Treemap = /* @__PURE__ */ markElement(
+  "Treemap",
+  ({ data, ...options }: WithData<TreemapOptions<Schema>, Schema>) => treemap(data, options),
+) as unknown as <S extends Schema>(props: WithData<TreemapOptions<S>, S>) => null;
+
+/** A sunburst of a tree given by `path` fields, or `node` and `parent`; it has its chart to itself. */
+export const Sunburst = /* @__PURE__ */ markElement(
+  "Sunburst",
+  ({ data, ...options }: WithData<SunburstOptions<Schema>, Schema>) => sunburst(data, options),
+) as unknown as <S extends Schema>(props: WithData<SunburstOptions<S>, S>) => null;
 
 export const Candlestick = /* @__PURE__ */ markElement(
   "Candlestick",

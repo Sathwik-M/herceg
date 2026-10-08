@@ -264,6 +264,20 @@ const theme: Check = (v, path) => {
   });
 };
 
+/** A tree's fields: a path of category fields, or node and parent fields. */
+function hierarchyChecks(): Record<string, Check> {
+  return {
+    path: (v, path) => {
+      if (!Array.isArray(v) || v.length === 0) fail(path, "a list of at least one field", v);
+      for (const [i, item] of (v as unknown[]).entries()) field(item, `${path}[${i}]`);
+    },
+    node: field,
+    parent: field,
+    value: field,
+    labels: boolean,
+  };
+}
+
 const MARKS: Record<string, { required: string[]; checks: Record<string, Check> }> = {
   line: {
     required: ["x", "y"],
@@ -382,6 +396,8 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       label: string,
     },
   },
+  treemap: { required: [], checks: hierarchyChecks() },
+  sunburst: { required: [], checks: hierarchyChecks() },
   pie: {
     required: ["category"],
     checks: {

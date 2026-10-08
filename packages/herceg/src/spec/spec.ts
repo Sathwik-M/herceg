@@ -284,7 +284,9 @@ export type MarkSpec =
   | CandlestickSpec
   | HistogramSpec
   | PieSpec
-  | BoxPlotSpec;
+  | BoxPlotSpec
+  | TreemapSpec
+  | SunburstSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -518,6 +520,42 @@ export interface BoxPlotSpec extends MarkBase {
   /** Opacity of the boxes' fill; 0.25 by default. */
   fillOpacity?: number;
   label?: string;
+}
+
+/**
+ * A treemap: nested rectangles for a tree whose leaves' areas are their
+ * share of `value` (or of the rows), as the portable spec describes it.
+ */
+export interface TreemapSpec {
+  type: "treemap";
+  data?: string;
+  id?: string;
+  /** Category fields from the outermost group in; or `node` and `parent`. */
+  path?: string[];
+  /** Category field naming each row's node, with `parent` naming its parent's. */
+  node?: string;
+  parent?: string;
+  value?: string;
+  /** Names inside the rectangles that have room for them; true by default. */
+  labels?: boolean;
+}
+
+/**
+ * A sunburst: a tree as rings around a center, each node's angle its share
+ * of its parent's, deeper levels further out.
+ */
+export interface SunburstSpec {
+  type: "sunburst";
+  data?: string;
+  id?: string;
+  /** Category fields from the outermost group in; or `node` and `parent`. */
+  path?: string[];
+  /** Category field naming each row's node, with `parent` naming its parent's. */
+  node?: string;
+  parent?: string;
+  value?: string;
+  /** Names inside the sectors that have room for them; true by default. */
+  labels?: boolean;
 }
 
 /**

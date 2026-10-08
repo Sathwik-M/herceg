@@ -36,6 +36,8 @@ from ._chart import (
     line,
     pie,
     scatter,
+    sunburst,
+    treemap,
 )
 from ._derive import Derived, Expr, col, derive, when
 from ._events import InspectedPoint, Inspection
@@ -60,6 +62,8 @@ __all__ = [
     "line",
     "pie",
     "scatter",
+    "sunburst",
+    "treemap",
     "when",
 ]
 __version__ = "0.0.0"

@@ -7,6 +7,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { treemap } from "../../src/marks/treemap.ts";
 import { resolveTheme } from "../../src/theme.ts";
 
 let host: HTMLDivElement;
@@ -809,6 +810,43 @@ describe("pies", () => {
     key("ArrowRight");
     expect(live.textContent).toBe("revenue. South: 30 (60%)");
     expect(chart.root.getAttribute("aria-describedby")).toBeTruthy();
+    chart.destroy();
+  });
+});
+
+describe("treemaps", () => {
+  it("outline the node under the pointer and report its path", async () => {
+    const sales = table({
+      region: ["Europe", "Europe", "Asia"],
+      country: ["France", "Spain", "Japan"],
+      revenue: [3, 2, 5],
+    });
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [treemap(sales, { path: ["region", "country"], value: "revenue" })],
+    });
+    const hovers: (string | undefined)[] = [];
+    chart.on("hover", ({ inspection }) => hovers.push(inspection?.points[0]?.label));
+    const { x, y, width, height } = planOf(chart);
+    const rect = chart.root.getBoundingClientRect();
+    for (const [px, py] of [
+      [x + width * 0.25, y + height * 0.6],
+      [x + width * 0.75, y + height * 0.6],
+    ] as const) {
+      chart.root.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          clientX: rect.left + px,
+          clientY: rect.top + py,
+        }),
+      );
+      await frame();
+    }
+    // Europe and Asia are equal halves, Europe on the left.
+    expect(hovers).toContain("Asia / Japan");
+    expect(hovers.some((label) => label?.startsWith("Europe / "))).toBe(true);
+    const outline = chart.root.querySelector("svg path[stroke-linejoin='round'][fill='none']")!;
+    expect(outline.getAttribute("visibility")).toBe("visible");
     chart.destroy();
   });
 });

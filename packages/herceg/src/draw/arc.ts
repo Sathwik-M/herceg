@@ -183,10 +183,18 @@ export const arcDrawing: Drawing<ArcGeometry> = {
   },
 };
 
+/** Whether `traceSector` draws anything of a sector. */
+export function sectorPaints(r0: number, r1: number, sweep: number, gap: number): boolean {
+  if (!(sweep > 0 && r1 > r0)) return false;
+  if (sweep >= TAU - 1e-9) return true;
+  const half = sectorGap(gap, sweep, r1) / 2;
+  return Math.max(r0, half > 0 ? half / Math.sin(Math.min(sweep, Math.PI) / 2) : 0) < r1;
+}
+
 /**
  * Whether (px, py) is in the sector as `traceSector` draws it: within its
- * radii, between its sides moved in by half its gap, and not at its point.
- * The point must already be within the sector's angles.
+ * radii and angles, between its sides moved in by half its gap, and not at
+ * its point.
  */
 export function inSector(
   px: number,
@@ -204,6 +212,9 @@ export function inSector(
   const distance = Math.hypot(dx, dy);
   const sweep = a1 - a0;
   if (sweep >= TAU - 1e-9) return distance >= r0 && distance <= r1;
+  // The point's angle, measured from the sector's start.
+  const turn = Math.atan2(dy, dx) - a0;
+  if (turn - TAU * Math.floor(turn / TAU) > sweep) return false;
   const half = sectorGap(gap, sweep, r1) / 2;
   const inner = Math.max(r0, half > 0 ? half / Math.sin(Math.min(sweep, Math.PI) / 2) : 0);
   if (!(distance >= inner && distance <= r1)) return false;
