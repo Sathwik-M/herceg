@@ -53,8 +53,22 @@ Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 `brush` (`"x"`: drag to select a range; with `zoom=True`, drag to zoom),
 `sync` (charts with the same name on one HTML page share cursor and zoom;
 notebook outputs are separate iframes, so `sync` does not reach across
-cells), `renderer`, `theme` (`"light"`, `"dark"`, or a dict), `locale`, and
-`time_zone`.
+cells), `renderer`, `theme` (below), `locale`, and `time_zone`.
+
+`theme` is `"light"` (the default), `"dark"`, `"high-contrast"`,
+`"high-contrast-dark"`, `"auto"` (light or dark to match the surface the chart
+is drawn on, in HTML output; light in static files), or a dict that overrides a
+theme's tokens: `extends`, `background`, `text`, `muted`, `grid`, `axis`,
+`font`, `font_size`, `title_size`, `grid_dash`, `line_width`, `bar_radius`,
+`tooltip_background`, `tooltip_border`, `palette`, `sequential`, `diverging`,
+`rise`, and `fall`. Colors may be CSS variables such as
+`"var(--brand, #3266d6)"`, which charts read from the HTML page that draws
+them. Notebook outputs are isolated frames that do not see the notebook's
+variables, and static output has no page: both use the fallback.
+
+```python
+hg.Chart(data, theme={"extends": "dark", "bar_radius": 0, "palette": ["#5b8def", "#dc6f3a"]})
+```
 
 Mark methods take column names; `series` names a category column that splits
 rows into one series per value. A mark can read other data with `data=`.

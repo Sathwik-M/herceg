@@ -297,7 +297,7 @@ describe("annotations in static SVG", () => {
     const clipped = svg.slice(svg.indexOf("<g clip-path"), svg.indexOf("</g>"));
     expect(clipped.indexOf('fill-opacity="0.15"')).toBeLessThan(clipped.indexOf('fill="none"'));
     expect(svg).toMatch(
-      /<g fill="#0b0b0b" text-anchor="middle" stroke="#ffffff" stroke-opacity="0.85"[^>]*paint-order="stroke">/,
+      /<g fill="#1c2333" text-anchor="middle" stroke="#ffffff" stroke-opacity="0.85"[^>]*paint-order="stroke">/,
     );
     expect(svg).toContain(">a &#60; b</text>");
   });

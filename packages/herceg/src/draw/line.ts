@@ -1,26 +1,6 @@
 import type { Polyline } from "../lod/polyline.ts";
 import type { Drawing, LineGeometry, SvgElement } from "../scene/scene.ts";
-import { markupOf, n } from "./markup.ts";
-
-/** What paths are traced into: a canvas context, or a builder of SVG or PDF path data. */
-export type PathSink = Pick<CanvasPath, "moveTo" | "lineTo" | "bezierCurveTo" | "closePath">;
-
-/** Builds SVG path data from the calls that trace a path on a canvas. */
-export class SvgPath implements PathSink {
-  d = "";
-  moveTo(x: number, y: number): void {
-    this.d += `M${n(x)} ${n(y)}`;
-  }
-  lineTo(x: number, y: number): void {
-    this.d += `L${n(x)} ${n(y)}`;
-  }
-  bezierCurveTo(ax: number, ay: number, bx: number, by: number, x: number, y: number): void {
-    this.d += `C${n(ax)} ${n(ay)} ${n(bx)} ${n(by)} ${n(x)} ${n(y)}`;
-  }
-  closePath(): void {
-    this.d += "Z";
-  }
-}
+import { markupOf, type PathSink, SvgPath } from "./markup.ts";
 
 /**
  * Traces points [start, end) of a polyline into `sink`, from the first to

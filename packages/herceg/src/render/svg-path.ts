@@ -2,8 +2,10 @@
 // for output formats without SVG's other commands (PDF). Custom marks write
 // their shapes as SVG path data.
 
-/** Receives a path; a canvas context or `Path2D` is one. */
-export type PathSink = Pick<CanvasPath, "moveTo" | "lineTo" | "bezierCurveTo" | "closePath">;
+import type { PathSink } from "../draw/markup.ts";
+
+/** Path data needs no rectangles. */
+type Sink = Omit<PathSink, "rect">;
 
 const NUMBER = /[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/iy;
 const SEPARATOR = /[\s,]*/y;
@@ -13,7 +15,7 @@ const PARAMETERS: Record<string, number> = { m: 2, l: 2, h: 1, v: 1, c: 6, s: 4,
  * Sends `d` to `sink`. Quadratic curves and arcs become cubic curves. As in
  * browsers, drawing stops at the first error in the data.
  */
-export function tracePath(d: string, sink: PathSink): void {
+export function tracePath(d: string, sink: Sink): void {
   let at = 0;
   const skip = () => {
     SEPARATOR.lastIndex = at;
@@ -167,7 +169,7 @@ export function tracePath(d: string, sink: PathSink): void {
  * notes, F.6.5 and F.6.6).
  */
 function arc(
-  sink: PathSink,
+  sink: Sink,
   x1: number,
   y1: number,
   rxIn: number,

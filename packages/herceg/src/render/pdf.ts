@@ -11,7 +11,9 @@
 
 import { traceArea } from "../draw/area.ts";
 import { traceLine } from "../draw/line.ts";
+import { KAPPA, type PathSink } from "../draw/markup.ts";
 import { placeCloud } from "../draw/point.ts";
+import { traceRects } from "../draw/rect.ts";
 import { ruleLabel } from "../draw/rule.ts";
 import { MIDDLE_TO_BASELINE } from "../draw/shapes.ts";
 import { SYMBOLS, symbolPath } from "../draw/symbols.ts";
@@ -29,10 +31,9 @@ import type { Theme } from "../theme.ts";
 import { cssColor } from "./css-color.ts";
 import { type DocumentInfo, literal, num, PdfPage } from "./pdf-document.ts";
 import { encodeText, type PdfFont, standardFont, textWidth } from "./pdf-fonts.ts";
-import { type PathSink, tracePath } from "./svg-path.ts";
+import { tracePath } from "./svg-path.ts";
 
 /** Bézier control distance for a quarter circle of radius 1. */
-const KAPPA = 0.5522847498;
 
 /** Most pixels a heatmap image grows to when its cells are repeated (as many as heatmaps have cells). */
 const MAX_IMAGE_PIXELS = 4_194_304;
@@ -238,6 +239,7 @@ function shifted(sink: PathBuilder, dx: number, dy: number): PathSink {
     bezierCurveTo: (x1, y1, x2, y2, x, y) =>
       sink.bezierCurveTo(x1 + dx, y1 + dy, x2 + dx, y2 + dy, x + dx, y + dy),
     closePath: () => sink.closePath(),
+    rect: (x, y, width, height) => sink.rect(x + dx, y + dy, width, height),
   };
 }
 
@@ -364,9 +366,7 @@ function paintGeometry(
       }
       return;
     case "rect": {
-      const r = mark.rects;
-      for (let i = 0; i < mark.count; i++)
-        path.rect(r[i * 4]!, r[i * 4 + 1]!, r[i * 4 + 2]!, r[i * 4 + 3]!);
+      traceRects(path, mark);
       paint(page, path, { fill: mark.fill, fillOpacity: mark.fillOpacity });
       return;
     }
@@ -478,7 +478,7 @@ export function renderPdf(scene: Scene, info: DocumentInfo = {}): Uint8Array {
       grid.lineTo(Math.round(x) + 0.5, plot.y + plot.height);
     }
   }
-  paint(page, grid, { stroke: theme.grid });
+  paint(page, grid, { stroke: theme.grid, dash: theme.gridDash });
 
   for (const { plot, marks } of scene.panels) {
     page.write(`q ${num(plot.x)} ${num(plot.y)} ${num(plot.width)} ${num(plot.height)} re W n\n`);
@@ -545,7 +545,7 @@ export function renderPdf(scene: Scene, info: DocumentInfo = {}): Uint8Array {
   if (scene.title) {
     text(page, scene.title.text, scene.title.x, scene.title.y, {
       font: bold,
-      size: size + 2,
+      size: theme.titleSize,
       fill: theme.text,
       baseline: "middle",
     });

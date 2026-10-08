@@ -168,6 +168,7 @@ export class AreaMark implements Mark<AreaSpec> {
       ? Math.min(Math.max(zero, frame.plot.y), bottom)
       : bottom;
     const out: AreaGeometry[] = [];
+    const style = { baseline, fillOpacity, outline, strokeWidth: frame.theme.lineWidth };
     this.#indexes.drew(frame.owner, frame.scene, this.table);
     // Bands and stacks curve all their boundaries together, so layers share
     // edges and never overlap. When they cannot (log y, or too dense), every
@@ -181,7 +182,7 @@ export class AreaMark implements Mark<AreaSpec> {
       const visible = series.filter((s) => !frame.hidden.has(s.key));
       const layers = visible.map((s) => ({ series: s, top: s.y, bottom: s.y0 }));
       const edges = traceCurvedLayers(layers, frame, rows, stacked);
-      return visible.map((s, i) => this.#area(s, edges[i]!, baseline, fillOpacity, outline));
+      return visible.map((s, i) => this.#area(s, edges[i]!, style));
     }
     const curve = spec.curve === "monotone" && layered ? "linear" : spec.curve;
     for (const s of series) {
@@ -205,7 +206,7 @@ export class AreaMark implements Mark<AreaSpec> {
             ),
             lower: null,
           };
-      out.push(this.#area(s, edges, baseline, fillOpacity, outline));
+      out.push(this.#area(s, edges, style));
     }
     return out;
   }
@@ -213,10 +214,9 @@ export class AreaMark implements Mark<AreaSpec> {
   #area(
     s: Series,
     edges: { upper: Polyline; lower: Polyline | null },
-    baseline: number,
-    fillOpacity: number,
-    outline: boolean,
+    style: { baseline: number; fillOpacity: number; outline: boolean; strokeWidth: number },
   ): AreaGeometry {
+    const { baseline, fillOpacity, outline, strokeWidth } = style;
     return {
       kind: "area",
       draw: areaDrawing,
@@ -227,7 +227,7 @@ export class AreaMark implements Mark<AreaSpec> {
       lower: edges.lower,
       baseline,
       stroke: outline ? s.color : null,
-      strokeWidth: 1.5,
+      strokeWidth,
     };
   }
 }

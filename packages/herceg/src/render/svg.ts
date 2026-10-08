@@ -130,7 +130,7 @@ export function panelTitleElements(panels: readonly Panel[], theme: Theme): stri
 export function titleElement(scene: Scene): string {
   if (!scene.title) return "";
   const { theme } = scene;
-  return `<text x="${n(scene.title.x)}" y="${n(scene.title.y)}" dominant-baseline="middle" font-size="${theme.fontSize + 2}" font-weight="600" fill="${escapeXml(theme.text)}">${escapeXml(scene.title.text)}</text>`;
+  return `<text x="${n(scene.title.x)}" y="${n(scene.title.y)}" dominant-baseline="middle" font-size="${theme.titleSize}" font-weight="600" fill="${escapeXml(theme.text)}">${escapeXml(scene.title.text)}</text>`;
 }
 
 export interface SvgOptions {
@@ -165,7 +165,8 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
     out += `<rect width="${width}" height="${height}" fill="${escapeXml(theme.background)}"/>`;
   }
   const grid = scene.panels.map(gridPath).join("");
-  if (grid) out += `<path d="${grid}" stroke="${escapeXml(theme.grid)}" fill="none"/>`;
+  const dash = theme.gridDash.length > 0 ? ` stroke-dasharray="${theme.gridDash.join(" ")}"` : "";
+  if (grid) out += `<path d="${grid}" stroke="${escapeXml(theme.grid)}"${dash} fill="none"/>`;
   const context: SvgContext = { theme, encodeRaster: options.encodeRaster };
   scene.panels.forEach(({ marks }, i) => {
     out += `<g clip-path="url(#${id}-clip-${i})">`;

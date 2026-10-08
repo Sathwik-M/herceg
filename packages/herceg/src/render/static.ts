@@ -1,5 +1,6 @@
 import { estimateText, type MeasureText } from "../layout/text.ts";
 import { type ChartConfig, ChartModel } from "../model/model.ts";
+import { NO_PAGE } from "./fallbacks.ts";
 import { pngDataUrl } from "./png.ts";
 import { renderSvg } from "./svg.ts";
 
@@ -22,7 +23,7 @@ let renders = 0;
 
 /** Renders a chart to a standalone SVG string. Needs no DOM. */
 export function renderToSVG(options: StaticOptions): string {
-  const model = new ChartModel(options);
+  const model = new ChartModel(options, NO_PAGE);
   model.setSize(options.width, options.height, 1);
   const scene = model.scene(options.measureText ?? estimateText);
   return renderSvg(scene, {

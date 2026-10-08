@@ -15,9 +15,11 @@ import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { CloudPainter, PointGeometry, Rect, Scene } from "../scene/scene.ts";
+import { themeReadsPage } from "../theme.ts";
 import { ascending, Brush, DRAG_THRESHOLD, normalize } from "./brush.ts";
 import { type ChartEvents, type ChartListener, Emitter } from "./events.ts";
 import { Legend } from "./legend.ts";
+import { readPage, watchPage } from "./page-theme.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
 import { SvgLayer, svgElement } from "./svg-layer.ts";
 import { broadcastCursor, broadcastViewport, join, type SyncMember } from "./sync.ts";
@@ -107,12 +109,15 @@ export class Chart implements Scheduled, SyncMember {
   readonly #cleanup: (() => void)[] = [];
   readonly #tables = new Map<Table, () => void>();
   #leaveSync: (() => void) | undefined;
+  #unwatchPage: (() => void) | undefined;
+  /** The page changed since its theme was last read; read again on the next frame. */
+  #pageChanged = false;
 
   constructor(container: HTMLElement, options: ChartOptions) {
     const document = container.ownerDocument;
     this.#container = container;
     this.#options = options;
-    this.model = new ChartModel(options);
+    this.model = readPage(container, (page) => new ChartModel(options, page));
 
     this.root = document.createElement("div");
     this.root.style.cssText = "position:relative;overflow:hidden;outline-offset:2px";
@@ -178,7 +183,9 @@ export class Chart implements Scheduled, SyncMember {
   /** Replaces options. Unspecified keys keep their current values. */
   update(options: Partial<ChartOptions>): void {
     this.#options = { ...this.#options, ...options };
-    this.model.update(this.#options);
+    readPage(this.#container, (page) => this.model.update(this.#options, page));
+    // The page was just read; a change it had is in the theme now.
+    this.#pageChanged = false;
     this.#applyOptions();
     this.#invalidate();
   }
@@ -255,6 +262,7 @@ export class Chart implements Scheduled, SyncMember {
     unschedule(this);
     if (this.#describeTimer !== 0) clearTimeout(this.#describeTimer);
     for (const stop of this.#cleanup) stop();
+    this.#unwatchPage?.();
     for (const stop of this.#tables.values()) stop();
     this.#tables.clear();
     this.#clouds?.release(this);
@@ -266,6 +274,10 @@ export class Chart implements Scheduled, SyncMember {
   /** Called by the scheduler. */
   flush(): void {
     if (this.#destroyed) return;
+    if (this.#pageChanged) {
+      this.#pageChanged = false;
+      if (readPage(this.#container, (page) => this.model.refreshTheme(page))) this.#dirty = true;
+    }
     if (this.#dirty) {
       this.#dirty = false;
       this.#draw();
@@ -293,7 +305,7 @@ export class Chart implements Scheduled, SyncMember {
 
   #setVisible(visible: boolean) {
     this.#visible = visible;
-    if (visible && this.#dirty) schedule(this);
+    if (visible && (this.#dirty || this.#pageChanged)) schedule(this);
   }
 
   #applyOptions() {
@@ -322,6 +334,17 @@ export class Chart implements Scheduled, SyncMember {
     // Horizontal drags pan or brush; the page still scrolls vertically.
     const drags = options.interaction?.zoom || options.interaction?.brush;
     this.root.style.touchAction = drags ? "pan-y" : "";
+    // Themes that follow the page re-read it when it may have switched themes.
+    const follows = themeReadsPage(options.theme);
+    if (follows && !this.#unwatchPage) {
+      this.#unwatchPage = watchPage(this.#container.ownerDocument, () => {
+        this.#pageChanged = true;
+        schedule(this);
+      });
+    } else if (!follows && this.#unwatchPage) {
+      this.#unwatchPage();
+      this.#unwatchPage = undefined;
+    }
   }
 
   /** Measures the container and caches the size where the observer keeps it current. */

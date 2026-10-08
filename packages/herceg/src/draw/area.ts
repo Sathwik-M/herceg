@@ -1,6 +1,6 @@
 import type { AreaGeometry, Drawing, SvgElement } from "../scene/scene.ts";
-import { linePath, type PathSink, SvgPath, traceLine, traceRun } from "./line.ts";
-import { markupOf } from "./markup.ts";
+import { linePath, traceLine, traceRun } from "./line.ts";
+import { markupOf, type PathSink, SvgPath } from "./markup.ts";
 
 /** Adds an area's outline to `sink`: per run, the top edge, then the bottom edge back. */
 export function traceArea(sink: PathSink, area: AreaGeometry): void {

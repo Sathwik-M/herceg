@@ -6,6 +6,7 @@ import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { resolveTheme } from "../../src/theme.ts";
 
 let host: HTMLDivElement;
 
@@ -558,5 +559,149 @@ describe("export", () => {
     const parsed = new DOMParser().parseFromString(svg, "image/svg+xml");
     expect(parsed.querySelector("parsererror")).toBeNull();
     chart.destroy();
+  });
+});
+
+describe("themes that follow the page", () => {
+  it("read CSS colors and variables, and re-render when the page switches themes", async () => {
+    const style = document.createElement("style");
+    style.textContent =
+      ":root { --chart-ink: #223344; --chart-one: oklch(0.6 0.15 250); } " +
+      ":root.night { --chart-ink: rgb(230, 230, 230); --chart-one: #ff8800; }";
+    document.head.append(style);
+    const chart = createChart(host, {
+      theme: { text: "var(--chart-ink)", palette: ["var(--chart-one)", "oklch(0.7 0.1 150)"] },
+      marks: [bar(table({ k: ["a", "b"], v: [1, 2] }), { x: "k", y: "v" })],
+    });
+    try {
+      expect(chart.model.theme.text).toBe("#223344");
+      // Colors in any syntax arrive as sRGB hex, which ramps and contrast checks read.
+      expect(chart.model.theme.palette[0]).toMatch(/^#[0-9a-f]{6}$/);
+      expect(chart.model.theme.palette[1]).toMatch(/^#[0-9a-f]{6}$/);
+      expect(host.querySelector("span")).toBeNull();
+      document.documentElement.classList.add("night");
+      // The chart reads the page again on its next frame.
+      await frame();
+      await frame();
+      expect(chart.model.theme.text).toBe("#e6e6e6");
+      expect(chart.model.theme.palette[0]).toBe("#ff8800");
+      // Light text on a light theme gets a dark tooltip.
+      expect(chart.model.theme.tooltipBackground).toBe(resolveTheme("dark").tooltipBackground);
+      expect(markPaths(chart)[0]!.getAttribute("fill")).toBe("#ff8800");
+    } finally {
+      chart.destroy();
+      document.documentElement.classList.remove("night");
+      style.remove();
+    }
+  });
+
+  it("choose light or dark with auto by the surface the chart sits on", () => {
+    const light = resolveTheme("light").text;
+    const dark = resolveTheme("dark").text;
+    host.style.background = "#101418";
+    const chart = createChart(host, {
+      theme: "auto",
+      marks: [line(series(10), { x: "t", y: "s0" })],
+    });
+    expect(chart.model.theme.text).toBe(dark);
+    host.style.background = "#fafafa";
+    chart.update({});
+    expect(chart.model.theme.text).toBe(light);
+    chart.destroy();
+  });
+
+  it("find the surface through translucent layers and shadow roots", async () => {
+    const dark = resolveTheme("dark").text;
+    const light = resolveTheme("light").text;
+    const marks = [line(series(10), { x: "t", y: "s0" })];
+    const textOn = (container: HTMLElement) => {
+      const chart = createChart(container, { theme: "auto", marks });
+      const text = chart.model.theme.text;
+      chart.destroy();
+      return text;
+    };
+    // A faint dark tint over white is still light; a faint light one over black is dark.
+    host.style.background = "white";
+    const tint = document.createElement("div");
+    tint.style.cssText = "width:600px;height:300px;background:rgba(0,0,0,0.05)";
+    host.append(tint);
+    expect(textOn(tint)).toBe(light);
+    host.style.background = "black";
+    tint.style.background = "rgba(255,255,255,0.05)";
+    expect(textOn(tint)).toBe(dark);
+    tint.remove();
+    // Inside a shadow root, the host's background counts.
+    host.style.background = "black";
+    const shadow = document.createElement("div");
+    host.append(shadow);
+    const inner = document.createElement("div");
+    inner.style.cssText = "width:600px;height:300px";
+    shadow.attachShadow({ mode: "open" }).append(inner);
+    expect(textOn(inner)).toBe(dark);
+    shadow.remove();
+    // A chart in a frame judges the frame's own page.
+    const frame = document.createElement("iframe");
+    frame.style.cssText = "width:600px;height:300px;border:0";
+    host.append(frame);
+    await new Promise((resolve) => setTimeout(resolve));
+    const inFrame = frame.contentDocument!.createElement("div");
+    inFrame.style.cssText = "width:600px;height:300px";
+    frame.contentDocument!.body.append(inFrame);
+    expect(textOn(inFrame)).toBe(light);
+    frame.remove();
+  });
+
+  it("follow the current color of the page", async () => {
+    document.body.style.color = "rgb(10, 20, 30)";
+    try {
+      const chart = createChart(host, {
+        theme: { text: "currentColor" },
+        marks: [line(series(10), { x: "t", y: "s0" })],
+      });
+      expect(chart.model.theme.text).toBe("#0a141e");
+      document.body.style.color = "rgb(200, 210, 220)";
+      await frame();
+      await frame();
+      expect(chart.model.theme.text).toBe("#c8d2dc");
+      chart.destroy();
+    } finally {
+      document.body.style.color = "";
+    }
+  });
+
+  it("follow the user's color scheme with auto on pages that allow dark", () => {
+    const { matchMedia } = window;
+    let prefersDark = true;
+    const listeners = new Set<() => void>();
+    window.matchMedia = ((query: string) => ({
+      get matches() {
+        return query.includes("dark") && prefersDark;
+      },
+      addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+    })) as unknown as typeof window.matchMedia;
+    const root = document.documentElement.style;
+    try {
+      root.colorScheme = "light dark";
+      const chart = createChart(host, {
+        theme: "auto",
+        marks: [line(series(10), { x: "t", y: "s0" })],
+      });
+      expect(chart.model.theme.text).toBe(resolveTheme("dark").text);
+      prefersDark = false;
+      for (const listener of listeners) listener();
+      chart.render();
+      expect(chart.model.theme.text).toBe(resolveTheme("light").text);
+      // A theme that stops following the page stops listening.
+      chart.update({ theme: "dark" });
+      expect(listeners.size).toBe(0);
+      chart.update({ theme: { extends: "auto", lineWidth: 3 } });
+      expect(listeners.size).toBe(1);
+      chart.destroy();
+      expect(listeners.size).toBe(0);
+    } finally {
+      window.matchMedia = matchMedia;
+      root.colorScheme = "";
+    }
   });
 });

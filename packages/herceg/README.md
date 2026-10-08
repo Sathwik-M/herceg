@@ -294,13 +294,61 @@ entries or tooltips, and are meant for shapes in the thousands, not millions.
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
 | `interaction` | `{ zoom: true }` for wheel zoom and drag pan; `{ brush: "x" }` to select an x range by dragging (with `zoom`, the brush zooms instead and Shift-drag pans); `{ sync: "name" }` to share cursor and zoom with other charts. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
-| `theme` | `"light"`, `"dark"`, or an object overriding colors and fonts. |
+| `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 
 The returned `Chart` has `update(options)`, `setViewport([from, to] | null)`,
 `select([from, to] | null)` and `selection` (the brushed range), `on(event,
 listener)`, `render()`, `toSVG()`, `destroy()`, and `loading` (a promise
 while the GPU painter for large point series loads, otherwise undefined).
+
+### Themes
+
+The built-in themes are `"light"` (the default), `"dark"`, `"high-contrast"`,
+and `"high-contrast-dark"`. Light and dark have transparent backgrounds and
+take the page's; the high-contrast themes paint white or black surfaces of
+their own. `"auto"` is light or dark to match the surface the chart sits on:
+the background colors around it (through translucent layers and shadow
+roots), or, on a page without one, the user's `prefers-color-scheme` when the
+page's `color-scheme` allows dark. It switches when that changes. A chart in a
+frame judges the frame's own page; give it a theme or background when the page
+around the frame is dark. The categorical palettes keep adjacent series
+apart for the common forms of color blindness, and the high-contrast palettes
+reach 4.5:1 against their surfaces.
+
+An object overrides any of a theme's tokens, starting from `extends`:
+
+```ts
+createChart(element, {
+  theme: {
+    extends: "auto",
+    background: "transparent",
+    text: "var(--ink, #1c2333)",
+    palette: ["var(--brand)", "#ec6a2c", "#109e7f"],
+    barRadius: 0,
+  },
+  marks: [bar(sales, { x: "region", y: "total" })],
+});
+```
+
+| Token | Description |
+| --- | --- |
+| `background`, `text`, `muted`, `grid`, `axis` | Chart surface, titles and legend text, tick labels, grid lines, axis lines. |
+| `font`, `fontSize`, `titleSize` | Font family, label size, and title size in px. |
+| `gridDash` | Grid line dash pattern, such as `[2, 3]`; `[]` for solid lines. |
+| `lineWidth` | Width of lines and area outlines that set none. |
+| `barRadius` | Corner radius at the value end of unstacked bars; `0` for square bars. |
+| `tooltipBackground`, `tooltipBorder` | Tooltip surface and border. |
+| `palette` | Series colors, assigned in order. |
+| `sequential`, `diverging` | Hex ramps for color scales, low to high. |
+| `rise`, `fall` | Candlestick colors. |
+
+Colors and the font may use CSS variables. Charts in a page read them, and
+colors in any CSS syntax, from the page; they read the page again when the
+class, style, or data attributes of its root or body element change (call
+`update({})` after other theme changes). Static output (`renderToSVG`, PNG,
+and PDF) has no page: each variable takes its fallback, and `"auto"` is light.
+PDF output reads hex, `rgb()`, `hsl()`, and named colors.
 
 ## Events
 

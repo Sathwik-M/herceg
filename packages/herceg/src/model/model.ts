@@ -22,7 +22,7 @@ import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import type { AxisGeometry, Panel, Rect, Scene } from "../scene/scene.ts";
 import type { AxisSpec, ChartSpec } from "../spec/spec.ts";
-import { resolveTheme, type Theme } from "../theme.ts";
+import { resolveTheme, type Theme, type ThemeEnvironment } from "../theme.ts";
 import {
   type AxisContext,
   type AxisPlan,
@@ -105,10 +105,11 @@ export class ChartModel {
   /** Palette slot per series key, assigned on first appearance and kept. */
   #slots = new Map<string, number>();
 
-  constructor(config: ChartConfig) {
+  /** `page` resolves themes that follow the page: "auto" and CSS variables. */
+  constructor(config: ChartConfig, page?: ThemeEnvironment) {
     validate(config);
     this.#config = config;
-    this.#theme = resolveTheme(config.theme);
+    this.#theme = resolveTheme(config.theme, page);
   }
 
   get config(): ChartConfig {
@@ -119,10 +120,19 @@ export class ChartModel {
     return this.#theme;
   }
 
-  update(config: ChartConfig): void {
+  /** Resolves a theme that follows the page again; whether it changed. */
+  refreshTheme(page: ThemeEnvironment): boolean {
+    const theme = resolveTheme(this.#config.theme, page);
+    if (JSON.stringify(theme) === JSON.stringify(this.#theme)) return false;
+    this.#theme = theme;
+    this.#layoutKey = "";
+    return true;
+  }
+
+  update(config: ChartConfig, page?: ThemeEnvironment): void {
     validate(config);
     this.#config = config;
-    this.#theme = resolveTheme(config.theme);
+    this.#theme = resolveTheme(config.theme, page);
     this.#layoutKey = "";
   }
 
@@ -443,7 +453,9 @@ export class ChartModel {
     );
     const legends = config.legend ?? true;
     const format = (value: number) => formatNumber(value, locale);
-    let top = config.title ? lineHeight + 14 : Math.ceil(theme.fontSize / 2) + 2;
+    // A title larger than two pixels over the text size takes the extra room.
+    const titleExtra = Math.max(0, Math.round((theme.titleSize - theme.fontSize - 2) * 1.25));
+    let top = config.title ? lineHeight + 14 + titleExtra : Math.ceil(theme.fontSize / 2) + 2;
     const {
       legend,
       colorLegends,
@@ -542,7 +554,8 @@ export class ChartModel {
     const showLeft = showY && leftUsed;
     const yLabels = hasData && showLeft && leftData ? yPlan.labels : [];
     const labelWidth = Math.max(0, ...yLabels.map(measureLabel));
-    let left = showLeft ? Math.ceil(labelWidth) + GAP + 2 : 8;
+    // The widest label starts at the chart's edge inset, in line with the title.
+    let left = showLeft ? Math.ceil(labelWidth) + GAP + 2 + EDGE : EDGE;
     if (showLeft && config.y?.label) left += lineHeight + GAP;
     // Avoid layout jitter while data streams: margins grow at once but only
     // shrink when the size or configuration changes.
@@ -556,7 +569,7 @@ export class ChartModel {
     const yRightLabels = showRight && hasData ? yRightPlan.labels : [];
     let right = 12;
     if (showRight) {
-      right = Math.ceil(Math.max(0, ...yRightLabels.map(measureLabel))) + GAP + 2;
+      right = Math.ceil(Math.max(0, ...yRightLabels.map(measureLabel))) + GAP + 2 + EDGE;
       if (config.yRight?.label) right += lineHeight + GAP;
     }
     if (sameLayout) right = Math.max(right, this.#right);
@@ -796,7 +809,9 @@ export class ChartModel {
       height,
       pixelRatio: this.pixelRatio,
       theme,
-      title: config.title ? { text: config.title, x: EDGE, y: lineHeight / 2 + 6 } : undefined,
+      title: config.title
+        ? { text: config.title, x: EDGE, y: (lineHeight + titleExtra) / 2 + 6 }
+        : undefined,
       panels,
       legend,
       colorLegends,

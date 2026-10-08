@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 Tooltip = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after", "monotone"]
+ThemeName = Literal["light", "dark", "high-contrast", "high-contrast-dark", "auto"]
 
 _NUMERIC = ("number", "time")
 
@@ -100,7 +101,7 @@ class Chart:
         brush: Literal["x"] | None = None,
         sync: str | None = None,
         renderer: Literal["auto", "svg", "canvas"] | None = None,
-        theme: Literal["light", "dark"] | dict[str, Any] | None = None,
+        theme: ThemeName | dict[str, Any] | None = None,
         locale: str | None = None,
         time_zone: str | None = None,
     ) -> None:
@@ -978,7 +979,15 @@ def _axis(axis: Axis | dict[str, Any] | None) -> dict[str, Any] | None:
     return axis._spec() or None
 
 
-_THEME_KEYS = {"font_size": "fontSize"}
+_THEME_KEYS = {
+    "font_size": "fontSize",
+    "title_size": "titleSize",
+    "grid_dash": "gridDash",
+    "line_width": "lineWidth",
+    "bar_radius": "barRadius",
+    "tooltip_background": "tooltipBackground",
+    "tooltip_border": "tooltipBorder",
+}
 
 
 def _theme(theme: str | dict[str, Any] | None) -> Any:

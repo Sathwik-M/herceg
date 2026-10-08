@@ -379,3 +379,22 @@ def test_scheme_and_symbol_names_match_typescript():
     symbols = (root / "draw" / "symbols.ts").read_text()
     order = symbols[symbols.index("export const SYMBOLS") :]
     assert tuple(re.findall(r'^  "([\w-]+)",$', order, re.MULTILINE)) == hg.SYMBOLS
+
+
+def test_theme_keys_and_names_match_typescript():
+    from typing import get_args
+
+    from herceg._chart import _THEME_KEYS, ThemeName
+
+    theme = {"extends": "high-contrast", "bar_radius": 0, "tooltip_border": "#000"}
+    spec, _ = hg.Chart(DATA, theme=theme).line(x="t", y="p50").to_spec()
+    assert spec["theme"] == {"extends": "high-contrast", "barRadius": 0, "tooltipBorder": "#000"}
+    root = Path(__file__).resolve().parents[2] / "packages" / "herceg" / "src"
+    if not root.exists():
+        pytest.skip("needs a source checkout")
+    source = (root / "spec" / "spec.ts").read_text()
+    names = re.search(r"export type ThemeName =([^;]+);", source)[1]
+    assert tuple(re.findall(r'"([\w-]+)"', names)) == get_args(ThemeName)
+    body = source[source.index("export interface ThemeSpec") :]
+    keys = re.findall(r"^  (\w+)\?:", body[: body.index("\n}")], re.MULTILINE)
+    assert {key for key in keys if not key.islower()} == set(_THEME_KEYS.values())
