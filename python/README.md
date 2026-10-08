@@ -102,6 +102,27 @@ float yourself to accept that), columns mixing strings, numbers, and dates,
 and column names or category labels that collide once read as text (such as
 `1` and `"1"`).
 
+`hg.derive` prepares data in the chart itself, in the portable spec: the
+browser computes the rows, so a chart can send raw data once and aggregate
+it there, and live charts aggregate rows as they stream in.
+
+```python
+hourly = (
+    hg.derive(df)
+    .filter((hg.col("temp") > -40) & (hg.col("site") != "test"))
+    .calculate("f", hg.col("temp") * 1.8 + 32)
+    .bin("time", step=3_600_000, name="hour")
+    .aggregate(by=["hour", "site"], mean=("f", "mean"), n="count")
+)
+hg.line(hourly, x="hour", y="mean", series="site")
+hg.derive(prices).rolling(20, ma=("close", "mean"))
+```
+
+Expressions use Python operators (`&`, `|`, and `~` combine conditions),
+`is_in`, `is_missing`, `when`, and math methods; aggregations name their
+results as pandas' named aggregation does. Each step checks the columns it
+reads, and only the source columns that steps and marks use are sent.
+
 ## Output
 
 ```python

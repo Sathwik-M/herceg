@@ -3,6 +3,7 @@
 // TypeScript (the Python package, saved specs) reach the engine.
 
 import { type ColumnInput, encodedCategory, type NumericArray, time } from "../data/column.ts";
+import { deriveTable } from "../data/derive.ts";
 import { type Table, table } from "../data/table.ts";
 import { readsTable } from "../marks/annotation.ts";
 import { AreaMark } from "../marks/area.ts";
@@ -24,6 +25,7 @@ import {
   type BinaryType,
   type ChartSpec,
   type ColumnSpec,
+  type ColumnsSpec,
   type DataSpec,
   type MarkSpec,
   SPEC_VERSION,
@@ -70,17 +72,49 @@ export function loadSpec(spec: ChartSpec, buffers: readonly SpecBuffer[] = []): 
     );
   }
   validateSpec(spec);
-  const tables = new Map<string, Table>();
-  for (const [name, data] of Object.entries(spec.data ?? {})) {
-    tables.set(name, loadTable(name, data, buffers));
-  }
+  const tables = loadTables(spec.data ?? {}, buffers);
   const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));
   const { data: _data, marks: _marks, version: _version, facet: panels, ...options } = spec;
   const facet = panels && new Facet(panels.field, panels.columns);
   return { config: { ...options, marks, ...(facet && { facet }) }, tables };
 }
 
-function loadTable(name: string, data: DataSpec, buffers: readonly SpecBuffer[]): Table {
+/** Every table of the spec; derived tables after the tables they derive from. */
+function loadTables(
+  data: Record<string, DataSpec>,
+  buffers: readonly SpecBuffer[],
+): Map<string, Table> {
+  const tables = new Map<string, Table>();
+  const loading = new Set<string>();
+  const load = (name: string): Table => {
+    const done = tables.get(name);
+    if (done) return done;
+    const entry = data[name];
+    if (!entry) throw new Error(`Unknown table "${name}"`);
+    if (!("source" in entry)) {
+      const loaded = loadTable(name, entry, buffers);
+      tables.set(name, loaded);
+      return loaded;
+    }
+    if (loading.has(name)) throw new Error(`Table "${name}" derives from itself`);
+    loading.add(name);
+    if (!Object.hasOwn(data, entry.source))
+      throw new Error(`Table "${name}" derives from unknown table "${entry.source}"`);
+    const source = load(entry.source);
+    let derived: Table;
+    try {
+      derived = deriveTable(source, entry.transform, { name });
+    } catch (error) {
+      throw new Error(`Table "${name}": ${(error as Error).message}`);
+    }
+    tables.set(name, derived);
+    return derived;
+  };
+  for (const name of Object.keys(data)) load(name);
+  return tables;
+}
+
+function loadTable(name: string, data: ColumnsSpec, buffers: readonly SpecBuffer[]): Table {
   // A null-prototype record keeps fields such as "__proto__" ordinary keys.
   const columns: Record<string, ColumnInput> = Object.create(null);
   for (const [field, column] of Object.entries(data.columns)) {

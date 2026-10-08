@@ -91,6 +91,36 @@ live rows until an explicit drop shrinks the buffer), 4 bytes per row for long-f
 layer for stacked areas (top and base), and geometry buffers bounded by the
 plot width.
 
+## Derived tables
+
+Data preparation is part of the spec: a data entry with `source` and
+`transform` derives rows from another table (`data/derive.ts`). Expressions
+are JSON trees with the operator first (`[">", ["field", "temp"], 30]`), so
+specs stay plain data and Python builds them with operators; they compile
+once per evaluation against the rows' columns into closures, comparing a
+category field with a string literal by dictionary code. Steps run over
+columns, not row objects: filters and sorts gather rows into new typed
+arrays, calculations add columns, bins replace values with their bin's
+start, aggregates group by field values (codes for categories) in order of
+appearance, and rolling windows keep a two-stack sliding window of partial
+aggregates (count, mean, squared deviations, minimum, maximum) combined
+with Chan's pairwise update, O(1) amortized per row and without the
+cancellation of running sums. Columns still read from the source are copied at the
+end, so the derived table never shares a buffer the source may overwrite.
+
+A derived table is an ordinary `Table`, which charts and marks use as any
+other. It follows its source through `subscribe`: when every step works row
+by row (filters, calculations, bins with a fixed step), appended source rows
+run through the steps on their own and are appended, and each derived row
+remembers its source row's identity (`rowOffset + index`) so drops remove
+exactly the rows they produced; any other change or pipeline recomputes the
+table with `reset`. A derived table keeps its source alive (a `WeakMap` from
+derived to source), so chains hold together; the source's subscription
+holds the derived table weakly (`WeakRef`) and is removed when it is
+collected (`FinalizationRegistry`). The spec
+loader loads tables in dependency order and rejects unknown sources and
+cycles.
+
 ## Level of detail
 
 Lines and areas over sorted x use M4 aggregation: within each device-pixel

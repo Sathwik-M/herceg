@@ -6,6 +6,10 @@
 // column names of a table; constant colors use `stroke` / `fill`. Large
 // columns can travel as binary buffers next to the JSON (see `BinaryColumnSpec`).
 
+import type { Expression } from "../data/expression.ts";
+
+export type { Expression, Operator } from "../data/expression.ts";
+
 export const SPEC_VERSION = 1;
 
 /** Column name in a table. */
@@ -64,9 +68,71 @@ export type RendererName = "auto" | "svg" | "canvas";
 export type ThemeName = "light" | "dark" | "high-contrast" | "high-contrast-dark" | "auto";
 
 /** Columnar data: every column has the same length. */
-export interface DataSpec {
+/** A table: its columns, or rows derived from another table of the spec. */
+export type DataSpec = ColumnsSpec | DerivedSpec;
+
+export interface ColumnsSpec {
   columns: Record<Field, ColumnSpec>;
 }
+
+/**
+ * Rows computed from the table `source` by `transform`, in order. Charts
+ * built from the spec keep it current as the source changes.
+ */
+export interface DerivedSpec {
+  source: string;
+  transform: TransformSpec[];
+}
+
+/**
+ * One step of a derivation:
+ * - `filter`: keeps rows where the expression is true.
+ * - `calculate`: adds (or replaces) the field `as` with the expression's value.
+ * - `bin`: replaces a number or time field (or adds `as`) with the start of
+ *   its bin: `step` wide from `start`, or about `count` round bins.
+ * - `aggregate`: one row per group of `groupby` values (one row without),
+ *   with the group's fields and each operation's result.
+ * - `rolling`: adds each operation over the trailing `size` rows (within
+ *   each `groupby` group), in row order.
+ * - `sort`: orders rows by a field, stably.
+ */
+export type TransformSpec =
+  | { filter: Expression }
+  | { calculate: Expression; as: Field }
+  | { bin: Field; as?: Field; step?: number; count?: number; start?: number }
+  | { aggregate: AggregateSpec[]; groupby?: Field[] }
+  | { rolling: RollingSpec[]; size: number; groupby?: Field[] }
+  | { sort: Field; order?: "ascending" | "descending" };
+
+/** An aggregate: its operation, the number field it reads (none for count), and its name. */
+export interface AggregateSpec {
+  op: AggregateOp;
+  field?: Field;
+  as: Field;
+}
+
+export type AggregateOp =
+  | "count"
+  | "sum"
+  | "mean"
+  | "median"
+  | "min"
+  | "max"
+  | "q1"
+  | "q3"
+  | "stdev"
+  | "variance"
+  | "distinct"
+  | "first"
+  | "last";
+
+export interface RollingSpec {
+  op: RollingOp;
+  field: Field;
+  as: Field;
+}
+
+export type RollingOp = "count" | "sum" | "mean" | "min" | "max" | "stdev";
 
 /**
  * Column values: a JSON array (numbers with null for missing values, or

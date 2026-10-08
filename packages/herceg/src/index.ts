@@ -8,6 +8,24 @@ export type {
   TimeInput,
 } from "./data/column.ts";
 export { category, encodedCategory, time } from "./data/column.ts";
+export {
+  count,
+  Derivation,
+  derive,
+  distinct,
+  first,
+  last,
+  max,
+  mean,
+  median,
+  min,
+  q1,
+  q3,
+  stdev,
+  sum,
+  variance,
+} from "./data/derive.ts";
+export { col, Expr, type Operand, when } from "./data/expression.ts";
 export type {
   Batch,
   CategoryField,

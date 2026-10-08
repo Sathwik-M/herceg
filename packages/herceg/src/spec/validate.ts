@@ -113,6 +113,84 @@ function required(value: Record<string, unknown>, path: string, keys: readonly s
 
 const curve = oneOf("linear", "step", "step-before", "step-after", "monotone");
 
+/** A portable expression: a literal, or an array of an operator and its operands. */
+const expression: Check = (v, path) => {
+  if (v === null || typeof v === "number" || typeof v === "string" || typeof v === "boolean")
+    return;
+  if (!Array.isArray(v) || typeof v[0] !== "string")
+    fail(path, 'an expression: a literal or ["operator", ...operands]', v);
+  for (let i = 1; i < v.length; i++) expression(v[i], `${path}[${i}]`);
+};
+
+const AGGREGATE_OPS = [
+  "count",
+  "sum",
+  "mean",
+  "median",
+  "min",
+  "max",
+  "q1",
+  "q3",
+  "stdev",
+  "variance",
+  "distinct",
+  "first",
+  "last",
+] as const;
+const ROLLING_OPS = ["count", "sum", "mean", "min", "max", "stdev"] as const;
+
+/** A list of operations, each `{ op, field?, as }`. */
+function operations(ops: readonly string[], needsField: boolean): Check {
+  return (v, path) => {
+    if (!Array.isArray(v)) fail(path, "a list of operations", v);
+    for (const [i, item] of v.entries()) {
+      const at = `${path}[${i}]`;
+      object(item, at);
+      const operation = item as Record<string, unknown>;
+      required(operation, at, needsField ? ["op", "field", "as"] : ["op", "as"]);
+      properties(operation, at, { op: oneOf(...ops), field, as: field });
+    }
+  };
+}
+
+/** The keys a transform of each kind takes. */
+const TRANSFORMS: Record<string, { required: string[]; checks: Record<string, Check> }> = {
+  filter: { required: [], checks: { filter: expression } },
+  calculate: { required: ["as"], checks: { calculate: expression, as: field } },
+  bin: {
+    required: [],
+    checks: { bin: field, as: field, step: positive, count, start: finite },
+  },
+  aggregate: {
+    required: [],
+    checks: { aggregate: operations(AGGREGATE_OPS, false), groupby: fields },
+  },
+  rolling: {
+    required: ["size"],
+    checks: { rolling: operations(ROLLING_OPS, true), size: count, groupby: fields },
+  },
+  sort: { required: [], checks: { sort: field, order: oneOf("ascending", "descending") } },
+};
+
+/** The steps of a derived table. */
+const transforms: Check = (v, path) => {
+  if (!Array.isArray(v)) fail(path, "a list of transforms", v);
+  for (const [i, item] of v.entries()) {
+    const at = `${path}[${i}]`;
+    object(item, at);
+    const step = item as Record<string, unknown>;
+    const kind = Object.keys(TRANSFORMS).find((name) => step[name] !== undefined);
+    if (!kind) fail(at, `a transform (${Object.keys(TRANSFORMS).join(", ")})`, item);
+    const { required: keys, checks } = TRANSFORMS[kind]!;
+    required(step, at, keys);
+    for (const key of Object.keys(step)) {
+      if (!(key in checks))
+        throw new TypeError(`${at}.${key}: not an option of a ${kind} transform`);
+    }
+    properties(step, at, checks);
+  }
+};
+
 /** Options only number or only date formatting reads, to tell which a format is for. */
 const NUMBER_FORMAT =
   /^(m(ax|in)imum|notation|style|currency|unit|compactDisplay|signDisplay|useGrouping|roundingMode)/;
@@ -385,8 +463,15 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     data: (data, path) => {
       object(data, path);
       for (const [name, table] of Object.entries(data as Record<string, unknown>)) {
-        object(table, `${path}.${name}`);
-        object((table as Record<string, unknown>).columns, `${path}.${name}.columns`);
+        const at = `${path}.${name}`;
+        object(table, at);
+        const entry = table as Record<string, unknown>;
+        if (entry.source !== undefined) {
+          required(entry, at, ["transform"]);
+          properties(entry, at, { source: string, transform: transforms });
+        } else {
+          object(entry.columns, `${at}.columns`);
+        }
       }
     },
     x: axis,
