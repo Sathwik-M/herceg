@@ -398,6 +398,17 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
   },
   treemap: { required: [], checks: hierarchyChecks() },
   sunburst: { required: [], checks: hierarchyChecks() },
+  sankey: {
+    required: ["source", "target"],
+    checks: {
+      source: field,
+      target: field,
+      value: field,
+      labels: boolean,
+      nodeWidth: positive,
+      sort: oneOf("input", "value"),
+    },
+  },
   pie: {
     required: ["category"],
     checks: {

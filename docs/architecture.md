@@ -12,8 +12,8 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`) place their own geometry instead of using x and y scales. |
-| **Item** | One thing a layout mark draws, such as a pie slice or a tree's node: what its tooltips and the keyboard visit. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`, `sankey`) place their own geometry instead of using x and y scales. |
+| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, or a Sankey diagram's node or link: what its tooltips and the keyboard visit. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -349,7 +349,7 @@ polygons of the same area as the circle of the same radius.
 ## Layout marks
 
 Most marks place data along x and y scales. Layout marks (pies, treemaps,
-and sunbursts) place their own geometry in a panel instead: the chart model gives one the
+sunbursts, and Sankey diagrams) place their own geometry in a panel instead: the chart model gives one the
 room below the title and legend (`LayoutFrame`: bounds, theme, text
 measurement, hidden keys, and stable colors per item key) and draws what it
 returns (`LayoutResult`: geometry, an item lookup by pixel, the items in
@@ -377,6 +377,23 @@ back up that order. Treemaps lay out with the squarified algorithm
 (`layout/treemap.ts`), sunbursts with an adjacency partition
 (`layout/partition.ts`); both write packed boxes or spans per node, and the
 tree is rebuilt only when its table changes.
+
+A Sankey diagram's graph is built in one pass over its table: each category
+code of the source and target fields is mapped to a node by name once, and
+rows with the same source and target add to one link. The layout
+(`layout/sankey.ts`) follows d3-sankey: a depth-first search drops links
+that close cycles, columns come from longest paths (sinks justified to the
+last column), and six passes of relaxation move nodes toward the weighted
+average of where their links would run level, then push each column's nodes
+apart. Unlike d3-sankey, the link stacks at the moved nodes' neighbors
+re-sort once per column rather than after each node, and each link keeps its
+offset in both stacks, so a hub of thousands of links costs milliseconds
+rather than quadratic time. It works on values as fractions of the largest
+drawn link, so sums near the largest double stay finite, and writes packed
+boxes per node and band ends per link. The graph is rebuilt when the table changes and the layout
+when the table or the room does. Links are filled bands of two cubic curves,
+drawn as shapes geometry; the pointer finds a band by solving its curve's
+x for the curve parameter with a few Newton steps.
 
 ## Annotations
 
@@ -738,10 +755,15 @@ document when `OffscreenCanvas` is unavailable.
   charts with facets rather than splitting. On a log axis, a box or violin
   whose median is zero or below has no tooltip or keyboard stop, though
   its positive part is drawn.
-- A pie, treemap, or sunburst has its chart to itself: no other marks,
-  facets, zoom, brushing, or sync. Pie labels go beside the pie only; treemaps
-  and sunbursts have no drill-down, and their pointer lookup scans each
-  level's children.
+- A pie, treemap, sunburst, or Sankey diagram has its chart to itself: no
+  other marks, facets, zoom, brushing, or sync. Pie labels go beside the pie
+  only; treemaps and sunbursts have no drill-down, and their pointer lookup
+  scans each level's children.
+- Sankey diagrams leave out links that close cycles rather than drawing
+  them looping back, and links spanning several columns pass behind the
+  nodes between. Nodes cannot be dragged or placed by hand, and there is no
+  highlighting of a node's links on hover. The whole layout is recomputed
+  when the table changes, and the pointer lookup scans every node and link.
 - Selections report ranges and lasso outlines, not the rows inside them.
   Synced selections are data values, so charts with differently ordered
   categories select different categories. The keyboard selects ranges only;

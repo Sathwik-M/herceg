@@ -10,7 +10,6 @@ import {
   subtreeValues,
 } from "../data/hierarchy.ts";
 import type { Table } from "../data/table.ts";
-import { fitText, type MeasureText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { LayoutItem, LayoutResult } from "./layout-mark.ts";
 import { CATEGORY, requireField } from "./mark.ts";
@@ -202,15 +201,6 @@ export class TreeData {
     }
     return count;
   }
-}
-
-/**
- * A node's name fitted to `width` pixels, or "" when shortening it would
- * leave fewer than three characters, which say too little to be worth it.
- */
-export function labelFor(name: string, width: number, measure: MeasureText, font: string): string {
-  const text = fitText(name, width, measure, font);
-  return text === name || Array.from(text).length >= 4 ? text : "";
 }
 
 /** "1 group", "2 groups". */

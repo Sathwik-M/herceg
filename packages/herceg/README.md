@@ -318,6 +318,44 @@ the arrow keys visit the nodes drawn, depth first. Items keep their keys
 while the tree changes: a node's path, or with `node` and `parent` its name. Like a pie, each has its chart to
 itself.
 
+### Sankey diagrams
+
+```ts
+sankey(energy, { source: "from", target: "to", value: "twh" });
+sankey(sessions, { source: "page", target: "next" }); // counts rows
+```
+
+A Sankey diagram draws flows between nodes from a table with a row per flow.
+Nodes are the names in `source` and `target`; a name in both is one node. A
+link joins each source and target, as thick as the sum of `value` over their
+rows, or their count without `value`. Rows with a missing name, or with a
+missing, zero, negative, or infinite value, are left out, and so are links
+from a node to itself. Links that would close a cycle are left out too (the
+search starts from the nodes nothing flows into, so it is the link back
+toward the start of a loop that goes), as are links whose total is too large
+for a double; the chart's description says how many.
+
+Nodes stand in columns by their longest path from a node nothing flows into,
+with nodes nothing flows out of in the last column, as d3-sankey's "justify"
+alignment does. A node is as tall as the larger of its inflow and outflow, on
+one scale for the whole diagram that fits the fullest column with 10 px
+between nodes (less when a column has too many nodes for that). Nodes settle
+near the nodes they connect to, in an order chosen to keep links short and
+crossings few, unless `sort: "input"` keeps the order in which nodes first
+appear or `sort: "value"` puts the largest first. Links are translucent bands
+in their source's color, stacked at each node in the order of the nodes at
+their other ends. `nodeWidth` sets the bars' width (12 px by default).
+
+Labels show a node's name and value beside it, inside the diagram: right of
+the nodes in the left half of the columns, left of the rest. Values go first
+when a label does not fit, then the name is shortened, and labels that would
+overlap a larger node's are left out (`labels: false` turns them off). There
+is no legend. Tooltips, hover and click events, and the arrow keys report a
+node's inflow and outflow or a link's value, nodes first (column by column,
+top to bottom), then links (by source, then target). The layout is computed
+again whenever the table changes, so streamed rows redraw the whole diagram.
+Like a pie, a Sankey diagram has its chart to itself.
+
 ### A second y axis
 
 Marks with `axis: "right"` use a second y scale, drawn on the right and

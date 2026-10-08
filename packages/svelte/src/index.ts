@@ -16,6 +16,7 @@ export { default as Pie } from "./Pie.svelte";
 export { default as Point } from "./Point.svelte";
 export { default as Region } from "./Region.svelte";
 export { default as Rule } from "./Rule.svelte";
+export { default as Sankey } from "./Sankey.svelte";
 export { default as Sunburst } from "./Sunburst.svelte";
 export { default as Text } from "./Text.svelte";
 export { default as Treemap } from "./Treemap.svelte";

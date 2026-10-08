@@ -517,3 +517,46 @@ def test_treemaps_and_sunbursts_send_their_tree():
         hg.Chart(sales).treemap(["region"]).pie("region")
     with pytest.raises(TypeError, match="treemap path: column 'revenue' holds number"):
         hg.Chart(sales).treemap(["revenue"])
+
+
+def test_sankey_diagrams_send_their_flows():
+    energy = {
+        "from": ["coal", "coal", "power"],
+        "to": ["power", "steel", "homes"],
+        "twh": [5.0, 2.0, 4.0],
+        "unused": [0, 0, 0],
+    }
+    chart = hg.sankey(energy, "from", "to", "twh", node_width=10, width=400, height=240)
+    spec, _ = chart.to_spec()
+    assert spec["marks"] == [
+        {
+            "type": "sankey",
+            "data": "data",
+            "source": "from",
+            "target": "to",
+            "value": "twh",
+            "nodeWidth": 10,
+        }
+    ]
+    assert sorted(spec["data"]["data"]["columns"]) == ["from", "to", "twh"]
+    svg = chart.to_svg()
+    assert "coal 7" in svg
+    spec, _ = hg.Chart(energy).sankey("from", "to", sort="value", labels=False).to_spec()
+    assert spec["marks"][0] == {
+        "type": "sankey",
+        "data": "data",
+        "source": "from",
+        "target": "to",
+        "labels": False,
+        "sort": "value",
+    }
+    with pytest.raises(TypeError, match="sankey target: column 'twh' holds number"):
+        hg.Chart(energy).sankey("from", "twh")
+    with pytest.raises(ValueError, match="node_width must be a positive number"):
+        hg.Chart(energy).sankey("from", "to", node_width=0)
+    with pytest.raises(ValueError, match="sort must be 'input' or 'value'"):
+        hg.Chart(energy).sankey("from", "to", sort="size")
+    with pytest.raises(ValueError, match="a sankey has its chart to itself"):
+        hg.Chart(energy).sankey("from", "to").pie("from")
+    with pytest.raises(ValueError, match="charts of a sankey have no x axis"):
+        hg.Chart(energy, zoom=True).sankey("from", "to")

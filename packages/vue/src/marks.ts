@@ -32,8 +32,10 @@ import {
   type RuleOptions,
   region,
   rule,
+  type SankeyOptions,
   type Schema,
   type SunburstOptions,
+  sankey,
   sunburst,
   type Table,
   type TextDataOptions,
@@ -207,6 +209,13 @@ export const Sunburst = /* @__PURE__ */ markComponent(
   ({ data, ...options }: WithData<SunburstOptions<Schema>, Schema>) => sunburst(data, options),
   ["labels"],
 ) as unknown as <S extends Schema>(props: WithData<SunburstOptions<S>, S>) => null;
+
+/** A Sankey diagram of flows from `source` to `target` nodes; it has its chart to itself. */
+export const Sankey = /* @__PURE__ */ markComponent(
+  "Sankey",
+  ({ data, ...options }: WithData<SankeyOptions<Schema>, Schema>) => sankey(data, options),
+  ["labels"],
+) as unknown as <S extends Schema>(props: WithData<SankeyOptions<S>, S>) => null;
 
 export const Candlestick = /* @__PURE__ */ markComponent(
   "Candlestick",

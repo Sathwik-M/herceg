@@ -774,8 +774,58 @@ class Chart:
             table,
         )
 
+    def sankey(
+        self,
+        source: str,
+        target: str,
+        value: str | None = None,
+        *,
+        data: Any = None,
+        labels: bool | None = None,
+        node_width: float | None = None,
+        sort: Literal["input", "value"] | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A Sankey diagram: a row per flow, from the node named in ``source``
+        to the one named in ``target``, each link as thick as the sum of
+        ``value`` over its rows, or their count without it.
+
+        A name in both columns is one node. Rows without a positive value,
+        links from a node to itself, and links that would close a cycle are
+        left out. Nodes are ordered in their column to keep links short and
+        crossings few, unless ``sort="input"`` keeps the order they first
+        appear in or ``sort="value"`` puts the largest first. ``node_width``
+        is in pixels. A Sankey diagram has its chart to itself.
+        """
+        self._layout_alone("sankey")
+        if node_width is not None and not (
+            isinstance(node_width, numbers.Real)
+            and not isinstance(node_width, bool)
+            and 0 < node_width < math.inf
+        ):
+            raise ValueError(f"node_width must be a positive number of pixels, not {node_width!r}")
+        if sort not in (None, "input", "value"):
+            raise ValueError(f"sort must be 'input' or 'value', not {sort!r}")
+        table = self._mark_table(data)
+        self._require(table, source, ("category",), "sankey source")
+        self._require(table, target, ("category",), "sankey target")
+        self._require(table, value, ("number",), "sankey value")
+        return self._add(
+            {
+                "type": "sankey",
+                "source": source,
+                "target": target,
+                "value": value,
+                "labels": labels,
+                "nodeWidth": node_width,
+                "sort": sort,
+                "id": id,
+            },
+            table,
+        )
+
     def _layout_alone(self, kind: str) -> None:
-        """Layout marks (pies, treemaps, sunbursts) have no axes to facet or zoom."""
+        """Layout marks (pies, treemaps, sunbursts, Sankey diagrams) have no axes."""
         if self._facet is not None:
             raise ValueError(f"charts of a {kind} cannot have facets yet")
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
@@ -1168,7 +1218,7 @@ class Chart:
 
 
 #: Marks that lay out their own chart, with no axes.
-_LAYOUT_MARKS = ("pie", "treemap", "sunburst")
+_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "sankey")
 
 
 #: Chart options a live chart can change after display: all but data and facets,
@@ -1275,7 +1325,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
     for key in (
         *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"),
         "category",
-        *("path", "node", "parent"),
+        *("path", "node", "parent", "source", "target"),
         *("open", "high", "low", "close"),
         *("r", "fillOpacity", "color", "symbol"),
     ):
@@ -1536,6 +1586,23 @@ def sunburst(
 ) -> Chart:
     """A sunburst of a tree given by ``path`` columns, or ``node`` and ``parent``."""
     return Chart(data, **options).sunburst(path, value, node=node, parent=parent, labels=labels)
+
+
+def sankey(
+    data: Any,
+    source: str,
+    target: str,
+    value: str | None = None,
+    *,
+    labels: bool | None = None,
+    node_width: float | None = None,
+    sort: Literal["input", "value"] | None = None,
+    **options: Any,
+) -> Chart:
+    """A Sankey diagram of flows from ``source`` to ``target``, sized by ``value``."""
+    return Chart(data, **options).sankey(
+        source, target, value, labels=labels, node_width=node_width, sort=sort
+    )
 
 
 def candlestick(

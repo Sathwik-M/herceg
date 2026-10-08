@@ -4,13 +4,14 @@ import { ArcPath, arcDrawing, inSector, sectorPaints, traceSector } from "../dra
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
 import { layoutPartition } from "../layout/partition.ts";
+import { labelFor } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { ArcGeometry, Geometry, TextGeometry } from "../scene/scene.ts";
 import type { SunburstSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { type Branch, count, labelFor, TreeData } from "./tree-data.ts";
+import { type Branch, count, TreeData } from "./tree-data.ts";
 
 export type SunburstOptions<S extends Schema> = (
   | {

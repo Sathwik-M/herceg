@@ -15,6 +15,7 @@ export {
   Point,
   Region,
   Rule,
+  Sankey,
   Sunburst,
   Text,
   Treemap,

@@ -5,7 +5,7 @@ Charts for pandas, Polars, PyArrow, and NumPy data, rendered by the
 large-data handling as the TypeScript library.
 
 > Early development. Line, area, bar, scatter, heatmap, error bar,
-> candlestick, histogram, pie, box plot, violin, treemap, and sunburst marks, rule, region, and text annotations; small multiples;
+> candlestick, histogram, pie, box plot, violin, treemap, sunburst, and Sankey marks, rule, region, and text annotations; small multiples;
 > HTML, notebook, SVG, PNG, and PDF output; live notebook charts; Streamlit apps.
 
 ```python
@@ -37,6 +37,7 @@ hg.boxplot(requests, x="region", y="latency", series="version")
 hg.violin(requests, x="region", y="latency")  # kernel densities, quartiles inside
 hg.treemap(sales, ["region", "country"], "revenue")
 hg.sunburst(org, node="team", parent="parent_team", value="cost")
+hg.sankey(energy, "source", "target", "twh")  # flows between nodes; counts rows without a value
 ```
 
 `hg.Chart` composes marks on shared axes; each mark method returns the chart:

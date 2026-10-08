@@ -9,6 +9,7 @@ import type { Mark } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
 import { region } from "../../src/marks/region.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { sankey } from "../../src/marks/sankey.ts";
 import { text } from "../../src/marks/text.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
@@ -286,6 +287,29 @@ describe("new marks in the browser", () => {
     const svgChart = createChart(host, { marks, renderer: "svg" });
     expect(host.querySelector('svg g[clip-path] [data-kind="shapes"] path')).not.toBeNull();
     svgChart.destroy();
+  });
+
+  it("paints Sankey nodes and links on a canvas, with labels in SVG", () => {
+    const flows = table({ from: ["a", "a"], to: ["b", "c"], v: [3, 1] });
+    const chart = createChart(host, {
+      marks: [sankey(flows, { source: "from", target: "to", value: "v" })],
+      renderer: "canvas",
+      theme: { palette: ["#ff0000"] },
+    });
+    const canvas = host.querySelector("canvas")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    const pixel = (key: unknown[]) => {
+      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      const at = [Math.round(px * ratio), Math.round(py * ratio)] as const;
+      return Array.from(canvas.getContext("2d")!.getImageData(...at, 1, 1).data);
+    };
+    // Nodes are opaque; links are their source's color, translucent.
+    expect(pixel([0, "a"])).toEqual([255, 0, 0, 255]);
+    const [r, g, b, alpha] = pixel([0, "a", "b"]);
+    expect([r, g, b]).toEqual([255, 0, 0]);
+    expect(alpha! / 255).toBeCloseTo(0.35, 1);
+    expect(host.querySelector("svg g[text-anchor='start']")!.textContent).toBe("a 4");
+    chart.destroy();
   });
 
   it("paints custom strokes with butt caps and opacity per paint, as SVG does", () => {
