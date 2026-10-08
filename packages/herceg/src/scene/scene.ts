@@ -447,6 +447,15 @@ export interface Scene {
 
 export const LEGEND_SWATCH = 10;
 
+/**
+ * Pixels from an axis line to its tick labels' near edge. Larger text sits
+ * further out, so that the lowest y label, centered on the bottom of the
+ * plot, clears the x labels hanging below it.
+ */
+export function tickLabelGap(fontSize: number): number {
+  return Math.max(8, Math.round(fontSize * 0.65));
+}
+
 /** Where each stop of a color legend sits along its ramp, from 0 to 1: evenly, with the middle stop at `middle`. */
 export function rampOffsets(legend: ColorLegend): number[] {
   const middle = legend.middle ?? 0.5;

@@ -28,7 +28,14 @@ import type { Series } from "../marks/series.ts";
 import { unionExtent } from "../marks/trace.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
-import type { AxisGeometry, Panel, Rect, Scene, SceneText } from "../scene/scene.ts";
+import {
+  type AxisGeometry,
+  type Panel,
+  type Rect,
+  type Scene,
+  type SceneText,
+  tickLabelGap,
+} from "../scene/scene.ts";
 import type { AxisSpec, ChartSpec } from "../spec/spec.ts";
 import { resolveTheme, type Theme, type ThemeEnvironment } from "../theme.ts";
 import {
@@ -543,9 +550,10 @@ export class ChartModel {
     const top = head.top;
     const showX = config.x?.axis ?? true;
     const showY = config.y?.axis ?? true;
-    const bottom = showX
-      ? TICK + GAP + lineHeight + (config.x?.label ? lineHeight + GAP : 0) + 2
-      : 4;
+    // Room under the plot before the x labels' line of text: more for large
+    // text, whose labels sit further below the axis.
+    const xLabels = TICK + GAP + tickLabelGap(theme.fontSize) - tickLabelGap(0);
+    const bottom = showX ? xLabels + lineHeight + (config.x?.label ? lineHeight + GAP : 0) + 2 : 4;
     // Panels fill a grid of `columns`; without facets, one cell. A wrapped
     // facet's panels each have a header with their value, and rows leave
     // room below for the x labels of panels above an empty cell. A grid of
@@ -560,7 +568,7 @@ export class ChartModel {
     // for the y labels at their ends; wrapped panels may need x labels under
     // any row, above an empty cell.
     const rowGap =
-      rows <= 1 ? 0 : header ? (showX ? TICK + GAP + lineHeight : 0) + 8 : lineHeight + 10;
+      rows <= 1 ? 0 : header ? (showX ? xLabels + lineHeight : 0) + 8 : lineHeight + 10;
     const rowHeight = (height - top - bottom - columnHeader - (rows - 1) * rowGap) / rows - header;
     if (panelCount > 1 && rowHeight < MIN_PANEL)
       throw tooSmall(panelCount, columns, width, height, facet?.field !== undefined);
