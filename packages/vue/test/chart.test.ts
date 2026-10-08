@@ -20,7 +20,19 @@ import {
   ref,
   shallowRef,
 } from "vue";
-import { Area, Bar, Chart, Custom, Line, Pie, Region, Rule, Text } from "../src/index.ts";
+import {
+  Area,
+  Bar,
+  Chart,
+  Custom,
+  Funnel,
+  Gauge,
+  Line,
+  Pie,
+  Region,
+  Rule,
+  Text,
+} from "../src/index.ts";
 
 let host: HTMLDivElement;
 let app: App | undefined;
@@ -40,7 +52,7 @@ afterEach(() => {
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
-const components = { Chart, Line, Area, Bar, Custom, Pie, Region, Rule, Text };
+const components = { Chart, Line, Area, Bar, Custom, Pie, Gauge, Funnel, Region, Rule, Text };
 
 /** Mounts a template; `setup` returns what it reads. */
 function mount(template: string, setup: () => object = () => ({})): App {
@@ -90,6 +102,21 @@ describe("<Chart>", () => {
     );
     const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
     expect(slices).toHaveLength(3);
+  });
+
+  it("renders gauges and funnels from their components", () => {
+    const readings = table({ cpu: [12, 73] });
+    mount(`<Chart><Gauge :data="readings" value="cpu" :max="80" /></Chart>`, () => ({ readings }));
+    expect(host.textContent).toContain("73");
+    expect(host.textContent).toContain("80");
+    app!.unmount();
+    const stages = table({ stage: ["Visit", "Buy"], users: [2000, 300] });
+    mount(
+      `<Chart locale="en-US"><Funnel :data="stages" category="stage" value="users" /></Chart>`,
+      () => ({ stages }),
+    );
+    expect(host.textContent).toContain("Visit");
+    expect(host.textContent).toContain("2,000 · 100%");
   });
 
   it("reads a bare labels attribute on <Pie> as true", () => {

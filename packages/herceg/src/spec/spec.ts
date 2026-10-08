@@ -286,7 +286,9 @@ export type MarkSpec =
   | PieSpec
   | BoxPlotSpec
   | TreemapSpec
-  | SunburstSpec;
+  | SunburstSpec
+  | GaugeSpec
+  | FunnelSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -555,6 +557,54 @@ export interface SunburstSpec {
   parent?: string;
   value?: string;
   /** Names inside the sectors that have room for them; true by default. */
+  labels?: boolean;
+}
+
+/** A colored range of a gauge's dial: from the previous band's end, or `min`, up to `to`. */
+export interface GaugeBand {
+  to: number;
+  /** The band's color; the theme's palette, in order, by default. */
+  color?: string;
+}
+
+/**
+ * A gauge: the last finite value of a number field on a dial from `min` to
+ * `max`, so appending rows moves it. The dial is a 240-degree arc open at
+ * the bottom; bands color ranges of it.
+ */
+export interface GaugeSpec {
+  type: "gauge";
+  data?: string;
+  id?: string;
+  /** Number field whose last finite value the gauge shows. */
+  value: Field;
+  /** The ends of the dial; 0 and 100 by default. */
+  min?: number;
+  max?: number;
+  /** Colored ranges, by ascending ends above `min` and at most `max`. */
+  bands?: GaugeBand[];
+  /** Text under the value; the field's name by default. */
+  label?: string;
+  /** Intl.NumberFormat options for the value and the dial's ends. */
+  format?: Intl.NumberFormatOptions;
+}
+
+/**
+ * A funnel: a centered bar per category, top to bottom, its width in
+ * proportion to the sum of `value` over the category's rows (or their
+ * count), with faint connectors between neighboring bars.
+ */
+export interface FunnelSpec {
+  type: "funnel";
+  data?: string;
+  id?: string;
+  /** Category field: a stage per value. */
+  category: Field;
+  /** Number field summed per stage; without it, stages count rows. */
+  value?: Field;
+  /** "input" (the default) keeps the categories' order; "value" puts the largest stage first. */
+  sort?: "input" | "value";
+  /** Stage names beside the bars and values on them; true by default. */
   labels?: boolean;
 }
 

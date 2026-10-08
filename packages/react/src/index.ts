@@ -8,6 +8,8 @@ export {
   Candlestick,
   Custom,
   ErrorBar,
+  Funnel,
+  Gauge,
   Heatmap,
   Histogram,
   Line,

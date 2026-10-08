@@ -451,6 +451,77 @@ def test_pie_slices_decode_as_item_inspections():
     assert inspection.points[0].series == "North"
 
 
+def test_gauges_send_their_dial_and_bands():
+    readings = {"cpu": [12.0, 73.0], "unused": [0, 0]}
+    chart = hg.gauge(
+        readings,
+        "cpu",
+        max=120,
+        bands=[60, (100, "#e0464f")],
+        label="CPU",
+        format={"maximumFractionDigits": 0},
+        width=300,
+        height=200,
+    )
+    spec, _ = chart.to_spec()
+    assert spec["marks"] == [
+        {
+            "type": "gauge",
+            "data": "data",
+            "value": "cpu",
+            "max": 120.0,
+            "bands": [{"to": 60.0}, {"to": 100.0, "color": "#e0464f"}],
+            "label": "CPU",
+            "format": {"maximumFractionDigits": 0},
+        }
+    ]
+    assert list(spec["data"]["data"]["columns"]) == ["cpu"]
+    svg = chart.to_svg()
+    assert ">73</text>" in svg and "CPU" in svg and "#e0464f" in svg
+    assert chart.to_pdf().startswith(b"%PDF")
+    with pytest.raises(ValueError, match="min must be below max"):
+        hg.gauge(readings, "cpu", min=5, max=5)
+    with pytest.raises(ValueError, match="at most at max"):
+        hg.gauge(readings, "cpu", bands=[150])
+    with pytest.raises(ValueError, match="ascending order, not 40 after 50"):
+        hg.gauge(readings, "cpu", bands=[50, 40])
+    with pytest.raises(ValueError, match="numbers or"):
+        hg.gauge(readings, "cpu", bands=[(50, "red", "x")])
+    with pytest.raises(KeyError, match="gauge value: no column 'load'"):
+        hg.gauge(readings, "load")
+    with pytest.raises(ValueError, match="a gauge has its chart to itself"):
+        hg.Chart(readings).gauge("cpu").line(x="cpu", y="cpu")
+    with pytest.raises(ValueError, match="no x axis"):
+        hg.Chart(readings, zoom=True).gauge("cpu")
+
+
+def test_funnels_send_their_stages():
+    signups = {
+        "stage": ["Visit", "Cart", "Purchase"],
+        "users": [2000.0, 1200.0, 300.0],
+        "unused": [0, 0, 0],
+    }
+    chart = hg.funnel(signups, "stage", "users", sort="value", width=300, height=200)
+    spec, _ = chart.to_spec()
+    assert spec["marks"] == [
+        {"type": "funnel", "data": "data", "category": "stage", "value": "users", "sort": "value"}
+    ]
+    assert sorted(spec["data"]["data"]["columns"]) == ["stage", "users"]
+    svg = chart.to_svg()
+    assert "Purchase" in svg and "fill-opacity" in svg
+    spec, _ = hg.Chart(signups).funnel("stage", labels=False).to_spec()
+    assert spec["marks"][0] == {
+        "type": "funnel",
+        "data": "data",
+        "category": "stage",
+        "labels": False,
+    }
+    with pytest.raises(TypeError, match="funnel category: column 'users' holds number"):
+        hg.funnel(signups, "users")
+    with pytest.raises(ValueError, match="a funnel has its chart to itself"):
+        hg.Chart(signups).funnel("stage").pie("stage")
+
+
 def test_boxplots_take_a_category_and_values_either_way():
     data = {
         "region": ["n", "n", "s", "s"],

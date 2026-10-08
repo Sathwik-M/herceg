@@ -292,7 +292,7 @@ export interface TextShape {
   anchor: "start" | "middle" | "end";
 }
 
-/** Shapes drawn by a custom mark, in drawing order, clipped to the plot. */
+/** Paths and text, such as a custom mark's, in drawing order, clipped to the plot. */
 export interface ShapesGeometry extends Geometry {
   kind: "shapes";
   draw: Drawing<ShapesGeometry>;
@@ -300,6 +300,8 @@ export interface ShapesGeometry extends Geometry {
   /** CSS font of text shapes, and its size in pixels. */
   font: string;
   fontSize: number;
+  /** Text shapes are semibold (weight 600), which `font` must say too: SVG and PDF read this. */
+  bold?: boolean | undefined;
 }
 
 /** The geometry of the built-in marks, for code that narrows by kind. */

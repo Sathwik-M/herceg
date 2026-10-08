@@ -304,6 +304,42 @@ the arrow keys visit the nodes drawn, depth first. Items keep their keys
 while the tree changes: a node's path, or with `node` and `parent` its name. Like a pie, each has its chart to
 itself.
 
+### Gauges and funnels
+
+```ts
+gauge(metrics, { value: "cpu", label: "CPU", format: { style: "unit", unit: "percent" } });
+gauge(sensors, { value: "temp", max: 120, bands: [{ to: 60 }, { to: 90 }, { to: 120, color: "#e0464f" }] });
+funnel(signups, { category: "stage", value: "users" });
+```
+
+A gauge shows the last finite value of a number field, so appending rows to
+its table moves it. Its dial is a 240-degree arc open at the bottom, from
+`min` to `max` (0 to 100 by default, as in ECharts): a track, the value's arc
+along it in the color of the band the value falls in (the palette's first
+color without bands), the value in the middle with `label` (the field's
+name by default) under it, and the dial's ends under its ends. `format`
+takes Intl.NumberFormat options for the value and the ends. `bands` split
+the dial at ascending ends above `min` and at most `max`, each from the
+previous band's end; they show as a thin ring outside the track, colored by
+`color` or the palette in order, and the range past the last band's end has
+none (a value there takes the palette's first color). Values beyond the dial
+fill it to that end, while the text shows them as they are; without a
+finite value, the track is empty and the value reads "–". Tooltips and the
+keyboard report the value with the dial's range.
+
+A funnel draws a centered bar per category, top to bottom, in the field's
+order (`sort: "value"` puts the largest first). A stage's value is the sum of
+`value` over its rows, or their count; missing, negative, and infinite
+values count as nothing. Each bar is as wide as its value is to the largest
+stage's: widths carry the values, while the faint connectors between bars
+only lead the eye and their areas mean nothing. Stage names go left of the
+bars, shortened to fit at most 35% of the width, and each stage's value and
+share of the first stage go on its bar, or beside it when the bar is too
+narrow (`labels: false` leaves both out). Tooltips, events, and the arrow
+keys report a stage's value, share of the first stage, and share of the
+previous one. All stages take the palette's first color, and there is no
+legend. Like a pie, a gauge or a funnel has its chart to itself.
+
 ### A second y axis
 
 Marks with `axis: "right"` use a second y scale, drawn on the right and
@@ -477,7 +513,8 @@ chart.on("click", ({ inspection }) => openDetails(inspection?.points[0]));
 Events report changes only: a re-inspected point or an unchanged range does
 not repeat them. An inspection's `axis` says what it is on: `"x"` or `"y"`
 for a position along that axis (with its `position` in pixels), `"item"` for
-a pie slice, whose `value` is the slice's and whose one point names it. Keyboard users select a range with Shift and the arrow keys
+an item of a layout mark (a pie slice, a tree's node, a gauge's dial, a
+funnel's stage), whose `value` is the item's and whose one point names it. Keyboard users select a range with Shift and the arrow keys
 (Enter zooms to it when zoom is on; Escape clears it).
 
 ## Export

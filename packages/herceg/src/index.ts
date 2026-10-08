@@ -30,6 +30,7 @@ export type {
   Batch,
   CategoryField,
   FieldName,
+  NumberField,
   NumericField,
   Row,
   Schema,
@@ -69,6 +70,8 @@ export {
   type HorizontalErrorBarOptions,
   type VerticalErrorBarOptions,
 } from "./marks/errorbar.ts";
+export { type FunnelMark, type FunnelOptions, funnel } from "./marks/funnel.ts";
+export { type GaugeMark, type GaugeOptions, gauge } from "./marks/gauge.ts";
 export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
 export { type HistogramMark, type HistogramOptions, histogram } from "./marks/histogram.ts";
 export type {

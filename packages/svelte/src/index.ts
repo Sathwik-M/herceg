@@ -8,6 +8,8 @@ export { default as Chart } from "./Chart.svelte";
 export { default as Custom } from "./Custom.svelte";
 export type { ChartProps } from "./chart.js";
 export { default as ErrorBar } from "./ErrorBar.svelte";
+export { default as Funnel } from "./Funnel.svelte";
+export { default as Gauge } from "./Gauge.svelte";
 export { default as Heatmap } from "./Heatmap.svelte";
 export { default as Histogram } from "./Histogram.svelte";
 export { default as Line } from "./Line.svelte";

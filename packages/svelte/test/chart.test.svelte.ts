@@ -11,6 +11,7 @@ import { type Component, flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Annotations from "./Annotations.svelte";
 import Faulty from "./Faulty.svelte";
+import Gauges from "./Gauges.svelte";
 import Lines from "./Lines.svelte";
 import Parent from "./Parent.svelte";
 import Pies from "./Pies.svelte";
@@ -80,6 +81,16 @@ describe("<Chart>", () => {
     render(Pies, { data: table({ k: ["a", "b", "c"], v: [3, 2, 1] }) });
     const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
     expect(slices).toHaveLength(3);
+  });
+
+  it("renders gauges and funnels from their components", () => {
+    render(Gauges, {
+      readings: table({ cpu: [12, 73] }),
+      stages: table({ stage: ["Visit", "Buy"], users: [2000, 300] }),
+    });
+    expect(host.textContent).toContain("73");
+    expect(host.textContent).toContain("80");
+    expect(host.textContent).toContain("2,000 · 100%");
   });
 
   it("builds annotations from constants or from their own data", () => {

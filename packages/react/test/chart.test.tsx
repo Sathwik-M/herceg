@@ -5,6 +5,7 @@ import {
   type Mark as HercegMark,
   line,
   table,
+  time,
 } from "herceg";
 import { act, StrictMode, Suspense, startTransition, use, useLayoutEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -13,6 +14,8 @@ import {
   Bar,
   Chart,
   Custom,
+  Funnel,
+  Gauge,
   Line,
   Pie,
   Region,
@@ -95,6 +98,34 @@ describe("<Chart>", () => {
     // A new mark draws on the next frame.
     await frame();
     expect([...paths()].some((path) => /A/.test(path.getAttribute("d") ?? ""))).toBe(true);
+  });
+
+  it("renders gauges and funnels from their elements", async () => {
+    const timed = table({ at: time([0]), cpu: [1] });
+    // @ts-expect-error a gauge shows a number field, not a time field
+    expect(<Gauge data={timed} value="at" />).toBeTruthy();
+    const readings = table({ cpu: [12, 73] });
+    act(() =>
+      root.render(
+        <Chart locale="en-US">
+          <Gauge data={readings} value="cpu" label="CPU" bands={[{ to: 80 }, { to: 100 }]} />
+        </Chart>,
+      ),
+    );
+    expect(host.textContent).toContain("73");
+    expect(host.textContent).toContain("CPU");
+    const stages = table({ stage: ["Visit", "Buy"], users: [2000, 300] });
+    act(() =>
+      root.render(
+        <Chart locale="en-US">
+          <Funnel data={stages} category="stage" value="users" />
+        </Chart>,
+      ),
+    );
+    // A new mark draws on the next frame.
+    await frame();
+    expect(host.textContent).toContain("Visit");
+    expect(host.textContent).toContain("2,000 · 100%");
   });
 
   it("builds annotations from constants or from their own data", () => {

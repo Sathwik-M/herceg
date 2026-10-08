@@ -21,7 +21,7 @@ export function Latency() {
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 children are mark elements: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
-`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Treemap>`, `<Sunburst>`, `<Rule>`, `<Region>`, `<Text>`, and `<Custom>`. Each mark element takes the
+`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Rule>`, `<Region>`, `<Text>`, and `<Custom>`. Each mark element takes the
 table it reads as `data`, so field names are checked against that table's
 columns. Annotations (`<Rule>`, `<Region>`, `<Text>`) take `data` only when
 they draw one item per row: `<Rule data={deploys} x="time" text="version" />`. Marks built

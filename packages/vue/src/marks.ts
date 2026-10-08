@@ -16,6 +16,10 @@ import {
   custom,
   type ErrorBarOptions,
   errorBar,
+  type FunnelOptions,
+  funnel,
+  type GaugeOptions,
+  gauge,
   type HeatmapOptions,
   type HistogramOptions,
   heatmap,
@@ -172,7 +176,6 @@ export const ErrorBar = /* @__PURE__ */ markComponent(
   ({ data, ...options }: WithData<ErrorBarOptions<Schema>, Schema>) => errorBar(data, options),
 ) as unknown as <S extends Schema>(props: WithData<ErrorBarOptions<S>, S>) => null;
 
-/** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
 /** A pie, or with `innerRadius` a donut; it has its chart to itself. */
 export const Pie = /* @__PURE__ */ markComponent(
   "Pie",
@@ -200,6 +203,20 @@ export const Sunburst = /* @__PURE__ */ markComponent(
   ["labels"],
 ) as unknown as <S extends Schema>(props: WithData<SunburstOptions<S>, S>) => null;
 
+/** A gauge: the last finite value of `value` on a dial; it has its chart to itself. */
+export const Gauge = /* @__PURE__ */ markComponent(
+  "Gauge",
+  ({ data, ...options }: WithData<GaugeOptions<Schema>, Schema>) => gauge(data, options),
+) as unknown as <S extends Schema>(props: WithData<GaugeOptions<S>, S>) => null;
+
+/** A funnel: a centered bar per stage of `category`; it has its chart to itself. */
+export const Funnel = /* @__PURE__ */ markComponent(
+  "Funnel",
+  ({ data, ...options }: WithData<FunnelOptions<Schema>, Schema>) => funnel(data, options),
+  ["labels"],
+) as unknown as <S extends Schema>(props: WithData<FunnelOptions<S>, S>) => null;
+
+/** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
 export const Candlestick = /* @__PURE__ */ markComponent(
   "Candlestick",
   ({ data, ...options }: WithData<CandlestickOptions<Schema>, Schema>) =>

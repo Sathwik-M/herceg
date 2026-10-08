@@ -15,6 +15,8 @@ import { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
+import { funnel } from "../../src/marks/funnel.ts";
+import { gauge } from "../../src/marks/gauge.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
@@ -119,6 +121,15 @@ function readPdf(bytes: Uint8Array): ParsedPdf {
   const content = objects.get(ref(page, "Contents"))!.stream!.toString("latin1");
   const info = objects.get(ref(trailer, "Info"))!.dictionary;
   return { objects, trailer, content, page, catalog, info };
+}
+
+/** The standard font and size `text` is written in (it must appear once, in parentheses). */
+function fontOf(pdf: ParsedPdf, text: string): [string, number] {
+  const shown = new RegExp(`BT /(F\\d+) ([\\d.]+) Tf [^\\n]*\\(${text}\\) Tj ET`).exec(pdf.content);
+  expect(shown, text).not.toBeNull();
+  const id = new RegExp(`/${shown![1]} (\\d+) 0 R`).exec(pdf.page)![1];
+  const font = /\/BaseFont \/([\w-]+)/.exec(pdf.objects.get(Number(id))!.dictionary)![1]!;
+  return [font, Number(shown![2])];
 }
 
 /** Index just past the "Q" that restores the graphics state saved on the line at `at`. */
@@ -416,6 +427,41 @@ describe("renderToPDF", () => {
     // The pie fills the room below the 8 px header: centered at (150, 100), radii 90 and 45.
     const radii = ends.map(([x, y]) => Math.round(Math.hypot(x! - 150, y! - 100)));
     expect([...new Set(radii)].sort()).toEqual([45, 90]);
+  });
+
+  it("writes a gauge's value in bold, larger than its labels", () => {
+    const pdf = readPdf(
+      renderToPDF({
+        width: 300,
+        height: 200,
+        locale: "en-US",
+        marks: [gauge(table({ cpu: [61.5] }), { value: "cpu", label: "CPU" })],
+      }),
+    );
+    const [valueFont, valueSize] = fontOf(pdf, "61.5");
+    expect(valueFont).toBe("Helvetica-Bold");
+    expect(valueSize).toBeGreaterThan(30);
+    for (const label of ["CPU", "0", "100"]) expect(fontOf(pdf, label)).toEqual(["Helvetica", 12]);
+  });
+
+  it("writes a funnel's names and values, over faint connectors", () => {
+    const stages = table({ stage: ["Visit", "Cart", "Purchase"], users: [2000, 1200, 300] });
+    const pdf = readPdf(
+      renderToPDF({
+        width: 400,
+        height: 300,
+        locale: "en-US",
+        marks: [funnel(stages, { category: "stage", value: "users" })],
+      }),
+    );
+    for (const name of ["Visit", "Cart", "Purchase"])
+      expect(fontOf(pdf, name)).toEqual(["Helvetica", 12]);
+    // "2,000 · 100%", with the middle dot in WinAnsi (octal 267).
+    expect(pdf.content).toContain("(2,000 \\267 100%) Tj");
+    // The connectors are one fill in the bars' color at 15% opacity.
+    const state = /\/(GS\d+) << \/ca 0.15 /.exec(pdf.page)!;
+    expect(state).not.toBeNull();
+    expect(pdf.content).toMatch(new RegExp(`q /${state[1]} gs 0.196 0.4 0.839 rg\n`));
   });
 
   it("embeds heatmaps as compressed images, with a soft mask for missing cells", () => {

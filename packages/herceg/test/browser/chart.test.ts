@@ -2,12 +2,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
+import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { funnel } from "../../src/marks/funnel.ts";
+import { gauge } from "../../src/marks/gauge.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { treemap } from "../../src/marks/treemap.ts";
+import type { ArcGeometry, ShapesGeometry, TextShape } from "../../src/scene/scene.ts";
 import { resolveTheme } from "../../src/theme.ts";
 
 let host: HTMLDivElement;
@@ -847,6 +851,132 @@ describe("treemaps", () => {
     expect(hovers.some((label) => label?.startsWith("Europe / "))).toBe(true);
     const outline = chart.root.querySelector("svg path[stroke-linejoin='round'][fill='none']")!;
     expect(outline.getAttribute("visibility")).toBe("visible");
+    chart.destroy();
+  });
+});
+
+describe("gauges and funnels", () => {
+  const pointer = (chart: Chart, type: string, x: number, y: number) => {
+    const rect = chart.root.getBoundingClientRect();
+    chart.root.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        button: 0,
+        clientX: rect.left + x,
+        clientY: rect.top + y,
+      }),
+    );
+  };
+  const tooltipOf = (chart: Chart) =>
+    [...chart.root.children].find(
+      (el) => (el as HTMLElement).style.pointerEvents === "none" && el.tagName === "DIV",
+    ) as HTMLElement;
+  const key = (chart: Chart, k: string) =>
+    chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+
+  it("show a gauge's value on hover and to the keyboard, as it streams", async () => {
+    const cpu = table({ cpu: [40, 73] });
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [gauge(cpu, { value: "cpu", label: "CPU" })],
+    });
+    const { x, y, width, height } = planOf(chart);
+    pointer(chart, "pointermove", x + width / 2, y + height / 2);
+    await frame();
+    expect(tooltipOf(chart).textContent).toContain("73 of 0 to 100");
+    const outline = chart.root.querySelector("svg path[stroke-linejoin='round'][fill='none']")!;
+    expect(outline.getAttribute("visibility")).toBe("visible");
+    pointer(chart, "pointerleave", 0, 0);
+    await frame();
+    chart.root.focus();
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toBe("cpu. CPU: 73 of 0 to 100");
+    cpu.appendRow({ cpu: 120 });
+    chart.render();
+    key(chart, "ArrowRight");
+    expect(live.textContent).toBe("cpu. CPU: 120 of 0 to 100, above the maximum");
+    expect(chart.root.textContent).toContain("120");
+    chart.destroy();
+  });
+
+  it("paint a gauge's dial, bands, and value on a canvas", () => {
+    const chart = createChart(host, {
+      renderer: "canvas",
+      theme: "light",
+      marks: [
+        gauge(table({ cpu: [73] }), {
+          value: "cpu",
+          bands: [
+            { to: 50, color: "#00ff00" },
+            { to: 100, color: "#ff0000" },
+          ],
+        }),
+      ],
+    });
+    const canvas = chart.root.querySelector("canvas")!;
+    const context = canvas.getContext("2d")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    const pixel = (x: number, y: number) =>
+      Array.from(context.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data);
+    // The scene again, for positions: arcs do not depend on how text measures.
+    const marks = chart.model.scene(estimateText).panels[0]!.marks;
+    const arcs = (key: string) => (marks.find((m) => m.key === key) as ArcGeometry).arcs;
+    const [cx, cy, r0, r, start, end] = arcs("gauge-dial").subarray(6, 12) as unknown as number[];
+    const at = (angle: number, radius: number) =>
+      pixel(cx! + radius * Math.cos(angle), cy! + radius * Math.sin(angle));
+    const middle = (r0! + r!) / 2;
+    // The value's arc in its band's color, the track beyond it, the first band outside.
+    expect(at((start! + end!) / 2, middle)).toEqual([255, 0, 0, 255]);
+    expect(at((end! + start! + (4 / 3) * Math.PI) / 2, middle)).toEqual([232, 235, 240, 255]);
+    const [, , b0, b1, a0, a1] = arcs("gauge-bands").subarray(0, 6) as unknown as number[];
+    expect(at((a0! + a1!) / 2, (b0! + b1!) / 2)).toEqual([0, 255, 0, 255]);
+    // The value is painted on the canvas; the labels stay in SVG.
+    const value = marks.find((m) => m.kind === "shapes") as ShapesGeometry;
+    const { x, y } = value.shapes[0] as TextShape;
+    let inked = 0;
+    for (let dx = -value.fontSize; dx <= value.fontSize; dx++)
+      inked += +(pixel(x + dx, y)[3]! > 200);
+    expect(inked).toBeGreaterThan(4);
+    const svg = chart.root.querySelector("svg")!.textContent;
+    expect(svg).toContain("cpu");
+    expect(svg).not.toContain("73");
+    chart.destroy();
+  });
+
+  it("read funnel stages top to bottom, and report the one clicked", async () => {
+    const stages = table({ stage: ["Visit", "Cart", "Purchase"], users: [2000, 1200, 300] });
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [funnel(stages, { category: "stage", value: "users" })],
+    });
+    const clicks: (string | undefined)[] = [];
+    chart.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.label));
+    const { x, y, width, height } = planOf(chart);
+    // The middle of the last stage's row, right of its narrow bar.
+    const last = y + height - height / 3.6 / 2;
+    pointer(chart, "pointermove", x + width - 20, last);
+    await frame();
+    expect(tooltipOf(chart).textContent).toContain("Purchase");
+    expect(tooltipOf(chart).textContent).toContain(
+      "300, 15% of the first stage, 25% of the previous",
+    );
+    pointer(chart, "pointerdown", x + width - 20, last);
+    pointer(chart, "pointerup", x + width - 20, last);
+    expect(clicks).toEqual(["Purchase"]);
+    pointer(chart, "pointerleave", 0, 0);
+    chart.root.focus();
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowDown");
+    expect(live.textContent).toBe("users. Visit: 2,000");
+    key(chart, "ArrowDown");
+    expect(live.textContent).toBe("users. Cart: 1,200, 60% of the first stage");
+    key(chart, "End");
+    expect(live.textContent).toContain("Purchase");
+    const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
+    expect(description.textContent).toContain(
+      "Funnel of users by stage: 3 stages from 2,000 (Visit) to 300 (Purchase), 15% of the first.",
+    );
     chart.destroy();
   });
 });

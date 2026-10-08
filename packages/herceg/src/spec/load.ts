@@ -11,6 +11,8 @@ import { BarMark } from "../marks/bar.ts";
 import { BoxPlotMark } from "../marks/boxplot.ts";
 import { CandlestickMark } from "../marks/candlestick.ts";
 import { ErrorBarMark } from "../marks/errorbar.ts";
+import { FunnelMark } from "../marks/funnel.ts";
+import { GaugeMark } from "../marks/gauge.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
 import { HistogramMark } from "../marks/histogram.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
@@ -286,6 +288,10 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new TreemapMark(spec, source);
       case "sunburst":
         return new SunburstMark(spec, source);
+      case "gauge":
+        return new GaugeMark(spec, source);
+      case "funnel":
+        return new FunnelMark(spec, source);
       default:
         throw new TypeError(
           `unknown mark type ${JSON.stringify((spec as { type: unknown }).type)}`,

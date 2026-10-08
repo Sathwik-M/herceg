@@ -447,7 +447,7 @@ function paintGeometry(
       for (const shape of mark.shapes) {
         if ("text" in shape) {
           text(page, shape.text, shape.x, shape.y, {
-            font: standardFont(mark.font, false),
+            font: standardFont(mark.font, mark.bold ?? false),
             size: mark.fontSize,
             fill: shape.fill,
             anchor: shape.anchor,

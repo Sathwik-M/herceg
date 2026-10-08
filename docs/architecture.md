@@ -12,8 +12,8 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`) place their own geometry instead of using x and y scales. |
-| **Item** | One thing a layout mark draws, such as a pie slice or a tree's node: what its tooltips and the keyboard visit. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`) place their own geometry instead of using x and y scales. |
+| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, or a funnel's stage: what its tooltips and the keyboard visit. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -21,7 +21,7 @@ One name per concept, used the same way in code and docs.
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices), rules, text, or shapes (custom marks). |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), rules, text, or shapes (custom marks, a gauge's value, funnel connectors). |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
@@ -349,7 +349,7 @@ polygons of the same area as the circle of the same radius.
 ## Layout marks
 
 Most marks place data along x and y scales. Layout marks (pies, treemaps,
-and sunbursts) place their own geometry in a panel instead: the chart model gives one the
+sunbursts, gauges, and funnels) place their own geometry in a panel instead: the chart model gives one the
 room below the title and legend (`LayoutFrame`: bounds, theme, text
 measurement, hidden keys, and stable colors per item key) and draws what it
 returns (`LayoutResult`: geometry, an item lookup by pixel, the items in
@@ -377,6 +377,16 @@ back up that order. Treemaps lay out with the squarified algorithm
 (`layout/treemap.ts`), sunbursts with an adjacency partition
 (`layout/partition.ts`); both write packed boxes or spans per node, and the
 tree is rebuilt only when its table changes.
+
+A gauge reads its field's last finite value on every scene, scanning back
+from the last row, so a streaming table moves it without any state of its
+own. Its dial, value arc, and bands are arc geometry; the track is drawn only
+beyond the value, since antialiased edges of a track under the value's arc
+would fringe it. The large value is a shapes geometry, whose text can carry
+its own size and weight (`fontSize`, `bold`) in SVG, Canvas, and PDF. A funnel
+caches stage totals per table version, as a pie does, and draws its bars as
+one rectangle geometry over a shapes path of connectors; widths are
+proportional to values, and the connectors encode nothing.
 
 ## Annotations
 
@@ -717,10 +727,12 @@ document when `OffscreenCanvas` is unavailable.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
 - Box plots recompute every box's statistics when their table changes, and
   repeat in every panel of charts with facets rather than splitting.
-- A pie, treemap, or sunburst has its chart to itself: no other marks,
-  facets, zoom, brushing, or sync. Pie labels go beside the pie only; treemaps
-  and sunbursts have no drill-down, and their pointer lookup scans each
-  level's children.
+- A pie, treemap, sunburst, gauge, or funnel has its chart to itself: no
+  other marks, facets, zoom, brushing, or sync. Pie labels go beside the pie
+  only; treemaps and sunbursts have no drill-down, and their pointer lookup
+  scans each level's children. A gauge shows one value, with no needle, ticks,
+  or threshold marker; a funnel colors every stage alike and has no
+  trapezoid (area-proportional) layout.
 - Rolling statistics over values whose differences exceed the largest double
   (about 1.8e308) overflow to Infinity.
 - Python derived tables count their source's rows through one of its
