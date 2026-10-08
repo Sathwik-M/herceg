@@ -856,9 +856,85 @@ class Chart:
             table,
         )
 
+    def radar(
+        self,
+        category: str | None = None,
+        value: str | None = None,
+        *,
+        fields: Sequence[str] | None = None,
+        series: str | None = None,
+        data: Any = None,
+        domain: tuple[float, float] | None = None,
+        fill_opacity: float | None = None,
+        points: bool | None = None,
+        label: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A radar: spokes from a center, clockwise from the top, and a polygon
+        per series through its value on each spoke.
+
+        Spokes are the values of the ``category`` column, with ``value`` the
+        number on each, or the distinct number columns ``fields``, each row a
+        polygon named by its ``series`` value. A later row replaces an earlier
+        one's values for the same series (and spoke); without ``series``, all
+        rows are one polygon, so with ``fields`` the last row is drawn. A radar
+        draws 3 to 100 spokes. Every spoke shares one scale: from 0 (or the
+        smallest value) to a round number above the largest, or ``domain``;
+        values outside it are drawn at the rim or the center. A missing value
+        breaks the polygon's outline there and leaves it unfilled. A radar has
+        its chart to itself.
+        """
+        self._layout_alone("radar")
+        table = self._mark_table(data)
+        long = category is not None or value is not None
+        if long == (fields is not None) or (long and (category is None or value is None)):
+            raise ValueError(
+                "radar needs category and value columns (a spoke per category) "
+                "or fields (a spoke per column), not both"
+            )
+        if fields is not None:
+            if isinstance(fields, str):
+                raise ValueError("radar fields must be a list of columns")
+            for name in fields:
+                self._require(table, name, ("number",), "radar fields")
+            repeated = next((name for i, name in enumerate(fields) if name in fields[:i]), None)
+            if repeated is not None:
+                raise ValueError(f"radar fields must be distinct; {repeated!r} repeats")
+            _check_spokes(len(fields), "fields")
+        else:
+            self._require(table, category, ("category",), "radar category")
+            self._require(table, value, ("number",), "radar value")
+            codes = self._tables[table][1].column(category).values
+            # Derived tables have no rows here; their spokes are checked when drawn.
+            spokes = len(np.unique(codes[codes >= 0]))
+            if spokes > 0:
+                _check_spokes(spokes, repr(category))
+        self._require(table, series, ("category",), "radar series")
+        if fill_opacity is not None and not (
+            isinstance(fill_opacity, numbers.Real)
+            and not isinstance(fill_opacity, bool)
+            and 0 <= fill_opacity <= 1
+        ):
+            raise ValueError(f"fill_opacity must be from 0 to 1, not {fill_opacity!r}")
+        return self._add(
+            {
+                "type": "radar",
+                "category": category,
+                "value": value,
+                "fields": list(fields) if fields is not None else None,
+                "series": series,
+                "domain": _range(domain, "radar domain"),
+                "fillOpacity": fill_opacity,
+                "points": points,
+                "label": label,
+                "id": id,
+            },
+            table,
+        )
+
     def _layout_alone(self, kind: str) -> None:
-        """Layout marks (pies, treemaps, sunbursts, gauges, funnels) have no axes
-        to facet or zoom."""
+        """Layout marks (pies, treemaps, sunbursts, gauges, funnels, radars) have no
+        axes to facet or zoom."""
         if self._facet is not None:
             raise ValueError(f"charts of a {kind} cannot have facets yet")
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
@@ -1251,7 +1327,7 @@ class Chart:
 
 
 #: Marks that lay out their own chart, with no axes.
-_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel")
+_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel", "radar")
 
 
 #: Chart options a live chart can change after display: all but data and facets,
@@ -1349,6 +1425,14 @@ def _convertible(columns: Table) -> str:
     ) from errors[0]
 
 
+def _check_spokes(spokes: int, what: str) -> None:
+    """Refuses a radar of too few spokes to make a polygon, or too many to read."""
+    if spokes < 3:
+        raise ValueError(f"radar needs at least 3 spokes; {what} has {spokes}")
+    if spokes > 100:
+        raise ValueError(f"radar draws at most 100 spokes; {what} has {spokes}")
+
+
 def table_name(index: int) -> str:
     return "data" if index == 0 else f"data{index + 1}"
 
@@ -1357,7 +1441,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
     for key in (
         *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"),
-        "category",
+        *("category", "fields"),
         *("path", "node", "parent"),
         *("open", "high", "low", "close"),
         *("r", "fillOpacity", "color", "symbol"),
@@ -1683,6 +1767,32 @@ def sunburst(
 ) -> Chart:
     """A sunburst of a tree given by ``path`` columns, or ``node`` and ``parent``."""
     return Chart(data, **options).sunburst(path, value, node=node, parent=parent, labels=labels)
+
+
+def radar(
+    data: Any,
+    category: str | None = None,
+    value: str | None = None,
+    *,
+    fields: Sequence[str] | None = None,
+    series: str | None = None,
+    domain: tuple[float, float] | None = None,
+    fill_opacity: float | None = None,
+    points: bool | None = None,
+    label: str | None = None,
+    **options: Any,
+) -> Chart:
+    """A radar of ``value`` per ``category``, or of the columns ``fields`` per row."""
+    return Chart(data, **options).radar(
+        category,
+        value,
+        fields=fields,
+        series=series,
+        domain=domain,
+        fill_opacity=fill_opacity,
+        points=points,
+        label=label,
+    )
 
 
 def candlestick(

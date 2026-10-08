@@ -12,8 +12,8 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`) place their own geometry instead of using x and y scales. |
-| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, or a funnel's stage: what its tooltips and the keyboard visit. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`) place their own geometry instead of using x and y scales. |
+| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, or a radar's value on one spoke: what its tooltips and the keyboard visit. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -349,7 +349,7 @@ polygons of the same area as the circle of the same radius.
 ## Layout marks
 
 Most marks place data along x and y scales. Layout marks (pies, treemaps,
-sunbursts, gauges, and funnels) place their own geometry in a panel instead: the chart model gives one the
+sunbursts, gauges, funnels, and radars) place their own geometry in a panel instead: the chart model gives one the
 room below the title and legend (`LayoutFrame`: bounds, theme, text
 measurement, hidden keys, and stable colors per item key) and draws what it
 returns (`LayoutResult`: geometry, an item lookup by pixel, the items in
@@ -387,6 +387,20 @@ its own size and weight (`fontSize`, `bold`) in SVG, Canvas, and PDF. A funnel
 caches stage totals per table version, as a pie does, and draws its bars as
 one rectangle geometry over a shapes path of connectors; widths are
 proportional to values, and the connectors encode nothing.
+
+A radar reads its table into packed arrays of the values rows give, series
+by series in spoke order (each value's spoke and number, and where each
+series starts), rebuilt when the table changes: storage follows the rows
+however sparsely they fill the series and spokes, and only shown series are
+placed. A later row replaces an earlier one's value for the same series and
+spoke. It draws with existing geometry kinds, so SVG, Canvas, and PDF need
+no radar code: the rings and spokes are one line geometry, the fills one
+shapes geometry of SVG path data (drawn below every outline), each series'
+outline a line geometry whose runs break at missing values, and its dots a
+point geometry. The radius is the largest that leaves room outside the rim
+for the spoke labels (`layout/radar-labels.ts`): each label is a box that
+moves outward along its spoke as the radius grows, so each edge facing
+outward bounds the radius linearly.
 
 ## Annotations
 
@@ -748,12 +762,16 @@ document when `OffscreenCanvas` is unavailable.
   charts with facets rather than splitting. On a log axis, a box or violin
   whose median is zero or below has no tooltip or keyboard stop, though
   its positive part is drawn.
-- A pie, treemap, sunburst, gauge, or funnel has its chart to itself: no
+- A pie, treemap, sunburst, gauge, funnel, or radar has its chart to itself: no
   other marks, facets, zoom, brushing, or sync. Pie labels go beside the pie
   only; treemaps and sunbursts have no drill-down, and their pointer lookup
   scans each level's children. A gauge shows one value, with no needle, ticks,
   or threshold marker; a funnel colors every stage alike and has no
   trapezoid (area-proportional) layout.
+- Every spoke of a radar shares one scale: there are no per-spoke domains
+  (as ECharts' indicators have), log scales, circular grids, or labels on
+  the polygons' values. A radar draws at most 100 spokes, and its pointer
+  lookup scans every drawn value.
 - Selections report ranges and lasso outlines, not the rows inside them.
   Synced selections are data values, so charts with differently ordered
   categories select different categories. The keyboard selects ranges only;

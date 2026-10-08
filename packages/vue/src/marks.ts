@@ -30,10 +30,12 @@ import {
   type PointOptions,
   pie,
   point,
+  type RadarOptions,
   type RegionDataOptions,
   type RegionOptions,
   type RuleDataOptions,
   type RuleOptions,
+  radar,
   region,
   rule,
   type Schema,
@@ -223,6 +225,13 @@ export const Funnel = /* @__PURE__ */ markComponent(
   ({ data, ...options }: WithData<FunnelOptions<Schema>, Schema>) => funnel(data, options),
   ["labels"],
 ) as unknown as <S extends Schema>(props: WithData<FunnelOptions<S>, S>) => null;
+
+/** A radar: `category` and `value`, or a list of `fields`, a spoke each; it has its chart to itself. */
+export const Radar = /* @__PURE__ */ markComponent(
+  "Radar",
+  ({ data, ...options }: WithData<RadarOptions<Schema>, Schema>) => radar(data, options),
+  ["points"],
+) as unknown as <S extends Schema>(props: WithData<RadarOptions<S>, S>) => null;
 
 /** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
 export const Candlestick = /* @__PURE__ */ markComponent(

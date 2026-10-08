@@ -354,6 +354,40 @@ keys report a stage's value, share of the first stage, and share of the
 previous one. All stages take the palette's first color, and there is no
 legend. Like a pie, a gauge or a funnel has its chart to itself.
 
+### Radars
+
+```ts
+radar(scores, { category: "skill", value: "score", series: "player" });
+radar(players, { fields: ["speed", "power", "range", "stamina"], series: "name" });
+```
+
+A radar draws spokes from a center, evenly spaced clockwise from the top,
+and a polygon per series through its value on each spoke, filled at
+`fillOpacity` (0.15 by default) and with a dot at each value (`points:
+false` leaves them out). Spokes come from data in one of two shapes: the
+values of a `category` field, in its dictionary order, with `value` the
+number on each (a row per series and spoke), or distinct number `fields`, in
+order, each row a polygon named by its `series` value. Radar values are
+measurements, not counts: a later row replaces an earlier one's values for
+the same series (and spoke). Without `series`, every row belongs to one
+polygon, named `label`, so with `fields` the last row is drawn. A radar draws
+3 to 100 spokes; a table with more draws nothing, and its description says
+why.
+
+Every spoke shares one linear scale from the center: by default from 0 (or
+the smallest value, when negative) to a round number above the largest
+shown, or `domain: [low, high]`. Values beyond it are drawn at the rim or the
+center, and tooltips say so ("above the axis maximum of 10"). Rings mark
+round values, labeled along the first spoke where the labels fit. Spoke names go outside the rim;
+the radar shrinks to make room for them, down to 60% of its size, and names
+that still do not fit are shortened or left out. Missing, NaN, and infinite
+values leave their spoke's vertex out: the outline breaks there, and the
+polygon goes unfilled. The legend toggles series (a radar of one polygon
+shows one only with `legend: true`), and the scale fits what is shown. Tooltips, hover and click
+events, and the arrow keys report one value at a time, series by series and
+spoke by spoke; the pointer finds the nearest value within 24 pixels. Like a
+pie, a radar has its chart to itself.
+
 ### A second y axis
 
 Marks with `axis: "right"` use a second y scale, drawn on the right and

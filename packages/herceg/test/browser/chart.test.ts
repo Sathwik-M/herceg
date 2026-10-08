@@ -10,6 +10,7 @@ import { gauge } from "../../src/marks/gauge.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
+import { radar } from "../../src/marks/radar.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import type { ArcGeometry, ShapesGeometry, TextShape } from "../../src/scene/scene.ts";
@@ -1324,5 +1325,79 @@ describe("zooming and brushing in two dimensions", () => {
     chart.render();
     expect(chart.model.yRightScale()!.domain).toEqual([viewport.yRight![0], viewport.yRight![1]]);
     chart.destroy();
+  });
+});
+
+describe("radars", () => {
+  const players = table({ name: ["Ana", "Bo"], speed: [8, 4], power: [6, 9], range: [4, 2] });
+  const chart = () =>
+    createChart(host, {
+      locale: "en-US",
+      marks: [radar(players, { fields: ["speed", "power", "range"], series: "name" })],
+    });
+
+  it("outline the value nearest the pointer, show it, and report clicks", async () => {
+    const shown = chart();
+    const hovers: (string | undefined)[] = [];
+    const clicks: (string | undefined)[] = [];
+    shown.on("hover", ({ inspection }) => hovers.push(inspection?.points[0]?.text));
+    shown.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.label));
+    // Ana's speed, the first value.
+    const first = shown.model.inspectItem(shown.model.stepItem(undefined, 1)!)!.points[0]!;
+    const rect = shown.root.getBoundingClientRect();
+    const at = (type: string, px: number, py: number) =>
+      shown.root.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: rect.left + px,
+          clientY: rect.top + py,
+        }),
+      );
+    const top = { x: first.px, y: first.py };
+    at("pointermove", top.x + 3, top.y + 2);
+    await frame();
+    expect(hovers.at(-1)).toBe("speed: 8 (of 0 to 10)");
+    const outline = shown.root.querySelector("svg path[visibility][fill='none']")!;
+    expect(outline.getAttribute("visibility")).toBe("visible");
+    at("pointerdown", top.x, top.y);
+    at("pointerup", top.x, top.y);
+    expect(clicks).toEqual(["Ana"]);
+    shown.destroy();
+  });
+
+  it("paint on a canvas, with their labels in SVG", () => {
+    const painted = createChart(host, {
+      renderer: "canvas",
+      marks: [radar(players, { fields: ["speed", "power", "range"], series: "name" })],
+    });
+    const canvas = painted.root.querySelector("canvas")!;
+    const ratio = canvas.width / painted.root.clientWidth;
+    const { px, py } = painted.model.inspectItem(painted.model.stepItem(undefined, 1)!)!.points[0]!;
+    const pixel = canvas
+      .getContext("2d")!
+      .getImageData(Math.round(px * ratio), Math.round(py * ratio), 1, 1).data;
+    // An opaque dot at Ana's speed; the spokes' names stay text.
+    expect(pixel[3]).toBe(255);
+    expect(painted.root.querySelector("svg")!.textContent).toContain("power");
+    painted.destroy();
+  });
+
+  it("read values with the keyboard, series by series, and toggle series from the legend", () => {
+    const shown = chart();
+    shown.root.focus();
+    const key = (k: string) =>
+      shown.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    const live = shown.root.querySelector("[aria-live]")!;
+    key("ArrowRight");
+    expect(live.textContent).toBe("Value. Ana: speed: 8 (of 0 to 10)");
+    key("End");
+    expect(live.textContent).toBe("Value. Bo: range: 2 (of 0 to 10)");
+    // Hiding Bo leaves Ana's values, on a scale fitted to them.
+    shown.root.querySelectorAll("button")[1]!.click();
+    shown.render();
+    key("End");
+    expect(live.textContent).toBe("Value. Ana: range: 4 (of 0 to 8)");
+    shown.destroy();
   });
 });

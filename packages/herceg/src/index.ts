@@ -86,6 +86,7 @@ export { type LineMark, type LineOptions, line } from "./marks/line.ts";
 export type { Mark, MarkIdentity } from "./marks/mark.ts";
 export { type PieMark, type PieOptions, pie } from "./marks/pie.ts";
 export { type PointMark, type PointOptions, point } from "./marks/point.ts";
+export { type RadarMark, type RadarOptions, radar } from "./marks/radar.ts";
 export {
   type RegionDataOptions,
   type RegionMark,

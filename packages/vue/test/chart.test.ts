@@ -29,6 +29,7 @@ import {
   Gauge,
   Line,
   Pie,
+  Radar,
   Region,
   Rule,
   Text,
@@ -52,7 +53,20 @@ afterEach(() => {
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
-const components = { Chart, Line, Area, Bar, Custom, Pie, Gauge, Funnel, Region, Rule, Text };
+const components = {
+  Chart,
+  Line,
+  Area,
+  Bar,
+  Custom,
+  Pie,
+  Gauge,
+  Funnel,
+  Radar,
+  Region,
+  Rule,
+  Text,
+};
 
 /** Mounts a template; `setup` returns what it reads. */
 function mount(template: string, setup: () => object = () => ({})): App {
@@ -133,6 +147,28 @@ describe("<Chart>", () => {
     expect(labelsWith("labels")).toBe(true);
     expect(labelsWith(':labels="true"')).toBe(true);
     expect(labelsWith(':labels="false"')).toBe(false);
+  });
+
+  it("renders a radar from its component, and reads a bare points attribute as true", () => {
+    const players = table({ name: ["Ana", "Bo"], speed: [8, 5], power: [6, 9], range: [4, 7] });
+    const dots = (attribute: string) => {
+      mount(
+        `<Chart>
+          <Radar :data="players" :fields="['speed', 'power', 'range']" series="name" ${attribute} />
+        </Chart>`,
+        () => ({ players }),
+      );
+      expect(host.textContent).toContain("power");
+      const fills = [...paths()].filter((path) => path.getAttribute("fill-opacity") === "0.15");
+      expect(fills).toHaveLength(2);
+      // Dots are circles of two arcs each.
+      const count = [...paths()].filter((path) => /a3 3/.test(path.getAttribute("d") ?? "")).length;
+      app!.unmount();
+      app = undefined;
+      return count;
+    };
+    expect(dots("points")).toBe(2);
+    expect(dots(':points="false"')).toBe(0);
   });
 
   it("builds annotations from constants or from their own data", () => {

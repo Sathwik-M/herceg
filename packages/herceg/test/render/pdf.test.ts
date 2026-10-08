@@ -21,6 +21,7 @@ import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
+import { radar } from "../../src/marks/radar.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { type PdfOptions, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
@@ -462,6 +463,24 @@ describe("renderToPDF", () => {
     const state = /\/(GS\d+) << \/ca 0.15 /.exec(pdf.page)!;
     expect(state).not.toBeNull();
     expect(pdf.content).toMatch(new RegExp(`q /${state[1]} gs 0.196 0.4 0.839 rg\n`));
+  });
+
+  it("draws radars: spoke names and ring values as text, translucent fills under outlines", () => {
+    const players = table({ name: ["Ana", "Bo"], speed: [8, 5], power: [6, 9], range: [4, 7] });
+    const radarPdf = readPdf(
+      renderToPDF({
+        width: 400,
+        height: 300,
+        locale: "en-US",
+        marks: [radar(players, { fields: ["speed", "power", "range"], series: "name" })],
+      }),
+    );
+    for (const label of ["speed", "power", "range", "10", "Ana", "Bo"])
+      expect(radarPdf.content).toContain(`(${label}) Tj`);
+    // Each polygon closed and filled at 15% opacity, before any outline.
+    expect(radarPdf.page).toContain("/ca 0.15");
+    const fills = [...radarPdf.content.matchAll(/\/GS\d+ gs [\d. ]+ rg\n[^Q]*\nh\nf\nQ\n/g)];
+    expect(fills).toHaveLength(2);
   });
 
   it("embeds heatmaps as compressed images, with a soft mask for missing cells", () => {
