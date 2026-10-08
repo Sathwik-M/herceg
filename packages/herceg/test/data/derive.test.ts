@@ -302,6 +302,24 @@ describe("edge cases", () => {
     ).toEqual([1 / 3, 1, 4 / 3]);
   });
 
+  it("keeps every start as given", () => {
+    // None of these starts counts in safe decimal units; each still starts a bin.
+    for (const start of [0.12345678901234566, 1000000000000.0005, 1e15 + 0.25]) {
+      const t = table({ v: [start, start + 1, start + 1.5] });
+      expect(values(derive(t).bin("v", { step: 1, start }).table(), "v")).toEqual([
+        start,
+        start + 1,
+        start + 1,
+      ]);
+    }
+    // Round steps for small values are exact (0.0001, not 0.00009999999999999999).
+    const small = table({ v: [0.0001, 0.00035, 0.0009] });
+    expect(values(derive(small).bin("v").table(), "v")).toEqual([0.0001, 0.0003, 0.0009]);
+    // More bins from the start than doubles count exactly: each value starts its own.
+    const far = table({ v: [-1, 1] });
+    expect(values(derive(far).bin("v", { step: 1e-300 }).table(), "v")).toEqual([-1, 1]);
+  });
+
   it("rejects bin options the spec loader rejects", () => {
     const t = table({ v: [1, 2, 3] });
     const binned = (options: { step?: number; count?: number; start?: number }) => () =>
@@ -366,6 +384,19 @@ describe("edge cases", () => {
       .table();
     expect(values(spread, "sd")).toEqual([null, 0, 0]);
     expect(values(spread, "m")).toEqual([1e308, 1e308, 1e308]);
+    // Results a double holds stay finite on the way: the difference of these
+    // means, and the square of this spread, overflow before they shrink.
+    const wide = table({ v: [1e308, -1e308], w: [0, 1.4e154] });
+    const finite = derive(wide)
+      .rolling({
+        size: 2,
+        ops: { m: { op: "mean", field: "v" }, sd: { op: "stdev", field: "w" } },
+      })
+      .table();
+    expect(values(finite, "m")).toEqual([1e308, 0]);
+    const [none, deviation] = values(finite, "sd") as [null, number];
+    expect(none).toBeNull();
+    expect(deviation / (1.4e154 * Math.SQRT1_2)).toBeCloseTo(1, 12);
   });
 
   it("keeps one row for ungrouped aggregates of nothing", () => {

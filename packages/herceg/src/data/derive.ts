@@ -215,9 +215,13 @@ function bin(
     throw new RangeError(`Bin start must be a finite number, not ${step.start}`);
   const values = rows.numbers(step.bin);
   const extent = scanExtent(values, 0, values.length);
-  // Without a spread of values (none, or one), bins are 1 wide.
+  // Without a spread of values (none, or one), bins are 1 wide. Round steps
+  // have one significant digit; reading them back from it undoes the
+  // rounding of powers of ten (0.00009999999999999999 for 0.0001).
   const automatic =
-    extent && extent[1] > extent[0] ? tickStep(extent[0], extent[1], step.count ?? BINS) : 1;
+    extent && extent[1] > extent[0]
+      ? Number(tickStep(extent[0], extent[1], step.count ?? BINS).toPrecision(1))
+      : 1;
   const width = step.step ?? automatic;
   if (!(width > 0 && Number.isFinite(width)))
     throw new RangeError(
@@ -235,6 +239,12 @@ function bin(
       out[i] = Number.NaN;
       continue;
     }
+    // Past 2 ** 53 bins from the start, bin numbers are not exact: each value
+    // starts its own bin, so no bin starts above its values.
+    if (!Number.isSafeInteger(k)) {
+      out[i] = value;
+      continue;
+    }
     // A value belongs to the bin whose edges hold it; division can put one
     // just below an edge it is on (0.3 / 0.1 is 2.999…).
     if (edge(k + 1) <= value) k++;
@@ -245,30 +255,42 @@ function bin(
 }
 
 /**
- * The edges `start + k × width` of bins. When the start and width are short
- * decimals, edges are counted in units of their last decimal, so 0.3 is an
- * edge of 0.1 bins and 1000000000.25 one of bins starting there; otherwise
- * (widths such as 1/3 or 1e-300) they are computed directly.
+ * The edges `start + k × width` of bins, the first exactly `start`. When the
+ * start and width are exactly short decimals (0.1, 1000000000.25), edges are
+ * counted in whole units of their last decimal, so 0.3 is an edge of 0.1
+ * bins; otherwise (1/3, 1e-300, 0.12345678901234566) they are computed
+ * directly.
  */
 function binEdges(start: number, width: number): (k: number) => number {
+  const direct = (k: number) => start + k * width;
   const decimals = Math.max(decimalsOf(start), decimalsOf(width));
-  // 10 ** 22 is the largest power of ten a double holds exactly.
-  if (decimals > 22) return (k) => start + k * width;
+  if (decimals === Number.POSITIVE_INFINITY) return direct;
   const scale = 10 ** decimals;
   const first = Math.round(start * scale);
   const unit = Math.round(width * scale);
+  const exact =
+    Number.isSafeInteger(first) &&
+    Number.isSafeInteger(unit) &&
+    first / scale === start &&
+    unit / scale === width;
+  if (!exact) return direct;
   return (k) => {
     const units = first + k * unit;
-    return Number.isSafeInteger(units) ? units / scale : start + k * width;
+    return Number.isSafeInteger(units) ? units / scale : direct(k);
   };
 }
 
-/** The decimals of `x` written as a short decimal (1 for 0.1, 2 for -0.25), or Infinity past 22. */
+/**
+ * The fewest decimals that write `x` exactly (1 for 0.1, 2 for -0.25), or
+ * Infinity when none up to 22 do with a safe integer of units.
+ */
 function decimalsOf(x: number): number {
+  // 10 ** 22 is the largest power of ten a double holds exactly.
   for (let decimals = 0; decimals <= 22; decimals++) {
-    const scaled = x * 10 ** decimals;
-    if (Math.abs(scaled - Math.round(scaled)) <= 4 * Number.EPSILON * Math.abs(scaled))
-      return decimals;
+    const scale = 10 ** decimals;
+    const units = Math.round(x * scale);
+    if (!Number.isSafeInteger(units)) break;
+    if (units / scale === x) return decimals;
   }
   return Number.POSITIVE_INFINITY;
 }
@@ -447,9 +469,15 @@ function rolling(
   for (let i = 0; i < rows.length; i++) members[group[i]!]!.push(i);
   let out = rows;
   for (const spec of specs) {
-    const values = rows.numbers(spec.field);
+    let values = rows.numbers(spec.field);
+    // Means of values spread wider than the largest double can differ by
+    // more than it: such values are halved, and the results doubled back.
+    const extent = scanExtent(values, 0, values.length);
+    const halved = extent !== undefined && !Number.isFinite(extent[1] - extent[0]);
+    if (halved) values = Float64Array.from(values, (value) => value / 2);
     const result = new Float64Array(rows.length);
     for (const list of members) rollingOp(spec.op, values, list, size, result);
+    if (halved && spec.op !== "count") for (let i = 0; i < result.length; i++) result[i]! *= 2;
     const kind = KEEPS_KIND.has(spec.op) && rows.kind(spec.field) === "time" ? "time" : "number";
     out = out.with(spec.as, { kind, values: result, owned: true });
   }
@@ -576,10 +604,12 @@ function add(m: Moments, n: number, mean: number, m2: number, min: number, max: 
   }
   const total = m.n + n;
   const delta = mean - m.mean;
-  // The weight first, so products of huge values and counts do not overflow.
+  // Weights first, and products in this order, so squared deviations a double
+  // holds do not overflow on the way (1.4e154 squared does, before its weight
+  // of a half).
   const weight = n / total;
   m.mean += delta * weight;
-  m.m2 += m2 + delta * delta * (m.n * weight);
+  m.m2 += m2 + delta * (delta * (m.n * weight));
   m.n = total;
   if (min < m.min) m.min = min;
   if (max > m.max) m.max = max;

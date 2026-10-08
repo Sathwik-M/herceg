@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 from . import _render
-from ._data import Column, Table
+from ._data import ROWS, Column, Table, rows_column
 from ._derive import Derived
 
 if TYPE_CHECKING:
@@ -795,27 +795,24 @@ class Chart:
         for table in sorted(self._derived, reverse=True):
             if table not in used:
                 continue
-            source = self._derived[table]
-            columns = self._tables[source][1]
-            needs = used.setdefault(source, set())
+            needs = used.setdefault(self._derived[table], set())
             needs.update(self._tables[table][0].source_columns(used[table]))
-            # A table sent without columns has no rows: send one, so counts survive.
-            if not needs & set(columns.names) and columns.names:
-                needs.add(_convertible(columns))
         return used
 
     def _used_columns(self) -> dict[str, dict[str, Column]]:
         """The columns sent, by spec table name; other columns are never sent."""
-        return {
-            table_name(table): {
-                # A point's symbol may name a shape rather than a column.
-                field: self._tables[table][1].column(field)
-                for field in sorted(fields)
-                if field in self._tables[table][1].names
+        sent: dict[str, dict[str, Column]] = {}
+        for table, fields in self._used_fields().items():
+            if table in self._derived:
+                continue
+            source = self._tables[table][1]
+            # A point's symbol may name a shape rather than a column.
+            columns = {
+                field: source.column(field) for field in sorted(fields) if field in source.names
             }
-            for table, fields in self._used_fields().items()
-            if table not in self._derived
-        }
+            # A table without columns has no rows; derived tables may count them.
+            sent[table_name(table)] = columns or {ROWS: rows_column(source.rows())}
+        return sent
 
     def _derived_specs(self) -> dict[str, dict[str, Any]]:
         """The derived tables marks read, directly or through other derived tables."""
@@ -1002,19 +999,6 @@ class _DerivedColumns:
         return Column(self._kinds[name], np.empty(0))
 
 
-def _convertible(columns: Table | _DerivedColumns) -> str:
-    """The first of a table's columns that converts, to send for its rows alone."""
-    errors: list[Exception] = []
-    for name in columns.names:
-        try:
-            columns.column(name)
-        except (TypeError, ValueError) as error:
-            errors.append(error)
-            continue
-        return name
-    raise errors[0]
-
-
 def table_name(index: int) -> str:
     return "data" if index == 0 else f"data{index + 1}"
 
@@ -1039,8 +1023,7 @@ def _column_spec(column: Column, buffers: list[bytes]) -> dict[str, Any]:
     index = len(buffers) - 1
     if column.kind == "category":
         return {"type": "category", "codes": index, "dictionary": list(column.dictionary)}
-    dtype = "float32" if column.values.dtype.itemsize == 4 else "float64"
-    return {"type": column.kind, "dtype": dtype, "buffer": index}
+    return {"type": column.kind, "dtype": column.values.dtype.name, "buffer": index}
 
 
 def _axis(axis: Axis | dict[str, Any] | None) -> dict[str, Any] | None:
