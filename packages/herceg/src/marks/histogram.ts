@@ -46,6 +46,8 @@ export interface HistogramOptions<S extends Schema> {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel; histograms cannot be split yet. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   id?: string;
 }
 
@@ -506,6 +508,7 @@ export function histogram<S extends Schema>(
       "label",
       "axis",
       "facet",
+      "panel",
       "id",
     ]),
   };

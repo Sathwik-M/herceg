@@ -9,8 +9,16 @@ import type { Table } from "../data/table.ts";
 import type { Mark } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
-import type { ChartSpec, FacetSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisSpec, ChartSpec, FacetSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
+import {
+  type PanelCheck,
+  type PanelGrid,
+  type PanelLayout,
+  type PanelSplit,
+  yGroups,
+} from "./panel-layout.ts";
 
 export interface FacetOptions {
   /** Panels per row; by default about as many columns as rows. */
@@ -54,7 +62,7 @@ const UNSPLIT = new Set([
   "custom",
 ]);
 
-export class Facet {
+export class Facet implements PanelLayout {
   /** The field whose values wrap into rows of `columns` panels. */
   readonly field: string | undefined;
   readonly columns: number | undefined;
@@ -96,7 +104,10 @@ export class Facet {
    * Rejects marks that cannot be split by the fields, panels cannot draw
    * yet, and a y zoom over panels with y scales of their own.
    */
-  check(marks: readonly Mark[], options: Pick<ChartSpec, "resolve" | "interaction"> = {}): void {
+  check(
+    marks: readonly Mark[],
+    options: Pick<ChartSpec, "resolve" | "interaction" | "y"> = {},
+  ): void {
     const zoom = options.interaction?.zoom;
     if (
       (options.resolve?.y ?? "shared") !== "shared" &&
@@ -149,37 +160,37 @@ export class Facet {
     };
   }
 
-  /**
-   * The groups of a split's panels that share a y scale under `resolution`
-   * (each panel alone, or the panels of a row or of a column, in rows of
-   * `columns`): each panel's group, and what each group's panels draw.
-   */
+  get yDefault(): ScaleResolution {
+    return "shared";
+  }
+
+  /** A grid's rows and columns are its fields' values; wrapped panels can be rearranged. */
+  get remedy(): string {
+    return this.field !== undefined
+      ? "set the facet's columns"
+      : "facet by fields with fewer values";
+  }
+
+  /** Every panel's y axis is the chart's. */
+  groupAxis(
+    _index: number,
+    _drawn: readonly MarkSeries[],
+    chart: AxisSpec | undefined,
+    type: AxisType,
+  ): { type: AxisType; spec: AxisSpec | undefined } {
+    return { type, spec: chart };
+  }
+
+  panelAxis(_index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
+    return chart;
+  }
+
   yGroups(
     resolution: ScaleResolution,
     split: PanelSplit,
     columns: number,
   ): { groupOf: number[]; drawn: MarkSeries[][] } {
-    const groupOf = split.panels.map((_, i) =>
-      resolution === "independent"
-        ? i
-        : resolution === "rows"
-          ? Math.floor(i / columns)
-          : resolution === "columns"
-            ? i % columns
-            : 0,
-    );
-    const drawn: MarkSeries[][] = [];
-    split.panels.forEach((marks, i) => {
-      const at = groupOf[i]!;
-      drawn[at] ??= marks.map(({ mark }) => ({ mark, series: [] }));
-      const group = drawn[at];
-      // A mark with no rows in a panel adds nothing to its group, not even
-      // the zero a bar stands on.
-      marks.forEach(({ series }, m) => {
-        group[m]!.series.push(...series.filter((s) => s.length > 0));
-      });
-    });
-    return { groupOf, drawn };
+    return yGroups(resolution, split, columns);
   }
 
   /** How a split's panels are placed, with headers a line of text tall. */
@@ -202,6 +213,7 @@ export class Facet {
    * row's beside the last column, reading top to bottom.
    */
   headers(
+    _index: number,
     values: readonly string[],
     row: number,
     column: number,
@@ -243,29 +255,6 @@ export class Facet {
   }
 }
 
-/** Where a chart's panels go: a grid of `columns` by `rows`, and the room headers take. */
-export interface PanelGrid {
-  columns: number;
-  rows: number;
-  /** Above every panel, for wrapped panels. */
-  header: number;
-  /** Above the top row and beside the last column, for a grid's columns and rows. */
-  columnHeader: number;
-  rowHeader: number;
-}
-
-/** The panels of a scene: their keys, each one's marks and series, and every mark's across panels. */
-export interface PanelSplit {
-  keys: string[];
-  /** Each panel's value of each field that splits rows, in the facet's field order. */
-  values: string[][];
-  /** Each field's values in order of first appearance: a grid's rows, then its columns. */
-  dimensions: string[][];
-  panels: MarkSeries[][];
-  /** Each mark's series in all panels; marks that repeat, once. */
-  all: MarkSeries[];
-}
-
 /** A table's codes of a field in order of first appearance, as of a version. */
 interface Appearance {
   version: number;
@@ -288,9 +277,6 @@ interface Place {
   codes: ArrayLike<number>;
   place: Int32Array;
 }
-
-/** Sees a split's rows and columns of panels, and throws if the chart cannot draw them. */
-export type PanelCheck = (shape: { rows: number; columns: number }, panels: number) => void;
 
 /** A panel: its key, and its value of each field that splits rows. */
 interface PanelValues {

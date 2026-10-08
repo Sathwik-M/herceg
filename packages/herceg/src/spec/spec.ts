@@ -41,8 +41,18 @@ export interface ChartSpec {
   yRight?: AxisSpec;
   /** Small multiples: the chart drawn once per value of a category field. */
   facet?: FacetSpec;
-  /** Which facet panels share a y scale; all of them by default. */
+  /**
+   * Which panels share a y scale: all facet panels by default; each of the
+   * `panels` its own by default.
+   */
   resolve?: ResolveSpec;
+  /**
+   * Subplots: panels in a grid, each drawing the marks that name it in their
+   * `panel`, sharing x. Needs spec version 2; not with `facet`.
+   */
+  panels?: PanelSpec[];
+  /** How `panels` are placed: in rows of `columns` (1 by default), in order. */
+  grid?: GridSpec;
   legend?: boolean;
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
@@ -74,6 +84,23 @@ export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
 export interface ResolveSpec {
   /** A continuous y axis; category axes are always shared. */
   y?: ScaleResolution;
+}
+
+/** One of a chart's `panels`. */
+export interface PanelSpec {
+  /** Unique among the panels; marks name it in their `panel`. */
+  id: string;
+  /** Drawn above the panel. */
+  title?: string;
+  /**
+   * The panel's y axis: the chart's `y`, with these settings in place of
+   * its own (`format` replaces the chart's whole).
+   */
+  y?: AxisSpec;
+}
+
+export interface GridSpec {
+  columns?: number;
 }
 
 export interface WrappedFacetSpec {
@@ -342,6 +369,8 @@ interface MarkBase {
    * panel instead of splitting them by the facet field.
    */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel the mark draws in, or "*" for every panel. */
+  panel?: string;
 }
 
 /**

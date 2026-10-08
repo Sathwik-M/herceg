@@ -48,6 +48,8 @@ export type DistributionOptions<S extends Schema> = (
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   id?: string;
 };
 

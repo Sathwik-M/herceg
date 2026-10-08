@@ -275,6 +275,19 @@ shared plans moved to its row and column, and whose buffer pools are its
 own, so geometry code is the same as for one panel; each has its own
 inspector, and the chart routes the pointer to the panel under it.
 
+Subplots (`panels`) take the same path. A `PanelLayout` (`model/panel-layout.ts`)
+is what the model reads: a facet or a `Panels`, each loaded only with charts
+that use it. Where a facet splits each series' rows, subplots route whole
+marks: every panel's list holds every mark in the chart's order, with series
+only where the mark's `panel` names that panel (or is `"*"`), and a member
+mask so marks elsewhere are neither drawn nor inspected there. Marks keep
+their index in the chart as their identity in every panel, so series keys,
+colors, and legend state are the same as in one panel. Panels default to a y
+scale each (`resolve.y` "independent"); each group of panels sharing y plans
+it from what its panels draw, with the chart's `y` and its first panel's own
+settings, and subplots infer each group's type (linear or time) from their
+own marks.
+
 ## Points and rasters
 
 Points are drawn per series into a packed coordinate buffer. Opaque points
@@ -775,6 +788,9 @@ document when `OffscreenCanvas` is unavailable.
   field.
 - One x axis and at most two y axes per chart; category values and marks
   placed along y (horizontal bars and error bars) only on the left.
+- Subplots share x and route whole marks; they have no right axes, shared
+  category y only, x-only zoom and brushing, equal panel sizes (no weighted
+  rows or columns), and no facets inside a panel.
 - Facets wrap one category field into rows of panels, or lay out a grid by
   two, sharing x; y is shared or resolved per panel, row, or column, for
   continuous axes only. No independent x scales, y zoom with independent y,

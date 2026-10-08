@@ -29,6 +29,8 @@ interface ErrorBarStyle<S extends Schema> {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   /** Category field: one series of error bars per value. */
   series?: CategoryField<S>;
   stroke?: string;
@@ -438,6 +440,7 @@ export function errorBar<S extends Schema>(
       "id",
       "axis",
       "facet",
+      "panel",
     ]) as Omit<ErrorBarSpec, "type">),
   };
   if (table.name !== undefined) spec.data = table.name;

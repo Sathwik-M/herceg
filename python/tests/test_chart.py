@@ -763,3 +763,43 @@ def test_sankey_diagrams_send_their_flows():
         hg.Chart(energy).sankey("from", "to").pie("from")
     with pytest.raises(ValueError, match="charts of a sankey have no x axis"):
         hg.Chart(energy, zoom=True).sankey("from", "to")
+
+
+def test_panels_draw_the_marks_that_name_them():
+    chart = (
+        hg.Chart(
+            DATA,
+            panels=[hg.Panel("latency", title="Latency", y=hg.Axis(label="ms")), "spread"],
+            width=400,
+            height=300,
+        )
+        .line(x="t", y="p50", panel="latency")
+        .line(x="t", y="p99", panel="spread")
+        .rule(y=2, panel="*")
+    )
+    spec, _ = chart.to_spec()
+    assert spec["panels"] == [
+        {"id": "latency", "title": "Latency", "y": {"label": "ms"}},
+        {"id": "spread"},
+    ]
+    assert [mark["panel"] for mark in spec["marks"]] == ["latency", "spread", "*"]
+    assert "grid" not in spec
+    svg = chart.to_svg()
+    assert ">Latency</text>" in svg and ">ms</text>" in svg
+    wide_chart = hg.Chart(DATA, panels=["a", "b"], panel_columns=2)
+    wide, _ = wide_chart.line(x="t", y="p50", panel="a").to_spec()
+    assert wide["grid"] == {"columns": 2}
+    with pytest.raises(ValueError, match="needs panel="):
+        hg.Chart(DATA, panels=["a"]).line(x="t", y="p50")
+    with pytest.raises(ValueError, match="names the panel 'b'"):
+        hg.Chart(DATA, panels=["a"]).line(x="t", y="p50", panel="b")
+    with pytest.raises(ValueError, match="panel= needs a chart with panels"):
+        hg.Chart(DATA).line(x="t", y="p50", panel="a")
+    with pytest.raises(ValueError, match="panel ids must differ"):
+        hg.Chart(DATA, panels=["a", "a"])
+    with pytest.raises(ValueError, match="facets or panels, not both"):
+        hg.Chart(DATA, panels=["a"], facet="host")
+    with pytest.raises(ValueError, match="along x only"):
+        hg.Chart(DATA, panels=["a"], zoom="xy")
+    with pytest.raises(ValueError, match="panel_columns needs panels"):
+        hg.Chart(DATA, panel_columns=2)

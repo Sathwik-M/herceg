@@ -11,6 +11,8 @@ interface RuleStyle {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   stroke?: string;
   strokeWidth?: number;
   dash?: readonly number[];
@@ -138,7 +140,7 @@ export function rule<S extends Schema>(
         y: position(options.y),
         dash: options.dash && [...options.dash],
       },
-      ["id", "x", "y", "stroke", "strokeWidth", "dash", "label", "text", "axis", "facet"],
+      ["id", "x", "y", "stroke", "strokeWidth", "dash", "label", "text", "axis", "facet", "panel"],
     ) as Omit<RuleSpec, "type">),
   };
   if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.text)) spec.data = table.name;

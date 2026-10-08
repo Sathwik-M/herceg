@@ -69,6 +69,22 @@ class Axis:
         return {key: value for key, value in spec.items() if value is not None}
 
 
+@dataclass
+class Panel:
+    """One of a chart's ``panels``: marks with ``panel=id`` draw in it.
+
+    ``y`` sets the panel's own y axis over the chart's ``y``.
+    """
+
+    id: str
+    title: str | None = None
+    y: Axis | dict[str, Any] | None = None
+
+    def _spec(self) -> dict[str, Any]:
+        spec = {"id": self.id, "title": self.title, "y": _axis(self.y)}
+        return {key: value for key, value in spec.items() if value is not None}
+
+
 class Chart:
     """A chart: data, marks drawn in order, and options.
 
@@ -101,6 +117,8 @@ class Chart:
         facet_row: str | None = None,
         facet_col: str | None = None,
         resolve_y: Literal["shared", "independent", "rows", "columns"] | None = None,
+        panels: Sequence[Panel | str] | None = None,
+        panel_columns: int | None = None,
         legend: bool | None = None,
         tooltip: bool | Tooltip = True,
         zoom: bool | Literal["x", "y", "xy"] = False,
@@ -115,14 +133,36 @@ class Chart:
             raise ValueError("facet_columns needs facet")
         if facet is not None and (facet_row is not None or facet_col is not None):
             raise ValueError("use facet to wrap panels, or facet_row and facet_col, not both")
+        panel_list = [Panel(p) if isinstance(p, str) else p for p in panels or ()]
+        if panels is not None and not panel_list:
+            raise ValueError("panels needs at least one panel")
+        ids = [p.id for p in panel_list]
+        if any(not isinstance(i, str) or i in ("", "*") for i in ids):
+            raise ValueError('panel ids must be names other than "" and "*"')
+        if len(set(ids)) != len(ids):
+            raise ValueError("panel ids must differ")
+        if panel_columns is not None and not panel_list:
+            raise ValueError("panel_columns needs panels")
+        if panel_columns is not None and not (
+            isinstance(panel_columns, int)
+            and not isinstance(panel_columns, bool)
+            and panel_columns >= 1
+        ):
+            raise ValueError(
+                f"panel_columns must be a whole number of at least 1, not {panel_columns!r}"
+            )
+        if panel_list and (facet is not None or facet_row is not None or facet_col is not None):
+            raise ValueError("a chart has facets or panels, not both")
+        if panel_list and (zoom in ("y", "xy") or brush in ("y", "xy", "lasso")):
+            raise ValueError("charts with panels can zoom and brush along x only")
         if resolve_y not in (None, "shared", "independent", "rows", "columns"):
             raise ValueError(
                 "resolve_y must be 'shared', 'independent', 'rows', or 'columns', "
                 f"not {resolve_y!r}"
             )
         if resolve_y not in (None, "shared"):
-            if facet is None and facet_row is None and facet_col is None:
-                raise ValueError("resolve_y needs facet, or facet_row or facet_col")
+            if facet is None and facet_row is None and facet_col is None and not panel_list:
+                raise ValueError("resolve_y needs facet, facet_row, facet_col, or panels")
             if zoom in ("y", "xy"):
                 raise ValueError(
                     "charts whose panels have y scales of their own cannot zoom along y"
@@ -144,6 +184,8 @@ class Chart:
         self._facet_col = facet_col
         # The fields that split rows into panels.
         self._facets = [f for f in (facet, facet_row, facet_col) if f is not None]
+        self._panels = panel_list
+        self._panel_columns = panel_columns
         self._tables: list[tuple[Any, Table | _DerivedColumns]] = []
         # Derived tables by index, with the index of the table they derive from.
         self._derived: dict[int, int] = {}
@@ -187,6 +229,7 @@ class Chart:
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Lines through x and y fields; several y fields or a series field give several lines."""
@@ -208,6 +251,7 @@ class Chart:
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -230,6 +274,7 @@ class Chart:
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Filled areas: down to zero, stacked, or the band between ``y1`` and ``y2``."""
@@ -268,6 +313,7 @@ class Chart:
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -287,6 +333,7 @@ class Chart:
         labels: bool | dict[str, Any] = False,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Bars: one band per category of x, or bars centered on number or time x.
@@ -323,6 +370,7 @@ class Chart:
                 "labels": None if labels is False else labels,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -347,6 +395,7 @@ class Chart:
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Error bars at each ``x``, from ``y1`` to ``y2`` or ``y`` ± ``y_error``; or, at each
@@ -399,6 +448,7 @@ class Chart:
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -423,6 +473,7 @@ class Chart:
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Scatter points.
@@ -475,6 +526,7 @@ class Chart:
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -494,6 +546,7 @@ class Chart:
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Counts of ``x``'s values in round bins.
@@ -518,6 +571,7 @@ class Chart:
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -537,6 +591,7 @@ class Chart:
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Open-high-low-close candles at each ``x``, as for prices.
@@ -561,6 +616,7 @@ class Chart:
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -700,6 +756,7 @@ class Chart:
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Box plots of a number column's values per category.
@@ -711,7 +768,7 @@ class Chart:
         ``series`` puts a box per value of a category column side by side.
         """
         return self._distribution(
-            {"type": "boxplot"}, x, y, data, series, fill_opacity, label, axis, repeat, id
+            {"type": "boxplot"}, x, y, data, series, fill_opacity, label, axis, repeat, panel, id
         )
 
     def violin(
@@ -726,6 +783,7 @@ class Chart:
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Violins of a number column's values per category.
@@ -757,6 +815,7 @@ class Chart:
             label,
             axis,
             repeat,
+            panel,
             id,
         )
 
@@ -771,6 +830,7 @@ class Chart:
         label: str | None,
         axis: Literal["left", "right"] | None,
         repeat: bool,
+        panel: str | None,
         id: str | None,
     ) -> Chart:
         """Adds a box plot or violin mark: a category column on one axis, values on the other."""
@@ -801,6 +861,7 @@ class Chart:
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1009,8 +1070,8 @@ class Chart:
     def _layout_alone(self, kind: str) -> None:
         """Layout marks (pies, treemaps, sunbursts, gauges, funnels, radars, Sankey
         diagrams) have no axes to facet or zoom."""
-        if self._facets:
-            raise ValueError(f"charts of a {kind} cannot have facets yet")
+        if self._facets or self._panels:
+            raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
             raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
 
@@ -1026,6 +1087,7 @@ class Chart:
         color_midpoint: float | None = None,
         label: str | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A grid of cells colored by ``value``; one column or row per distinct x or y.
@@ -1049,6 +1111,7 @@ class Chart:
                 "colorMidpoint": _midpoint(color_midpoint, color_domain, "heatmap"),
                 "label": label,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1067,6 +1130,7 @@ class Chart:
         dash: Sequence[float] | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Reference lines: horizontal at ``y`` or vertical at ``x``.
@@ -1089,6 +1153,7 @@ class Chart:
                 "text": text,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1108,6 +1173,7 @@ class Chart:
         fill_opacity: float | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Shaded regions: from ``x1`` to ``x2``, from ``y1`` to ``y2``, or both.
@@ -1137,6 +1203,7 @@ class Chart:
                 "text": text,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1156,6 +1223,7 @@ class Chart:
         dy: float | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Text at ``(x, y)``: ``label`` for constant text, or ``text`` naming a column.
@@ -1179,6 +1247,7 @@ class Chart:
                 "dy": dy,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1190,7 +1259,7 @@ class Chart:
         """The portable chart spec and the binary buffers its columns reference."""
         return assemble_spec(
             self._options,
-            self._facet_spec(),
+            self._layout_spec(),
             self._used_columns(),
             self._mark_specs(),
             self._derived_specs(),
@@ -1248,12 +1317,18 @@ class Chart:
 
     # Internals -------------------------------------------------------------
 
-    def _facet_spec(self) -> dict[str, Any] | None:
+    def _layout_spec(self) -> dict[str, Any]:
+        """The spec's facet, or its panels and grid; nothing for one panel."""
         if self._facet is not None:
-            return {"field": self._facet, "columns": self._facet_columns}
+            return {"facet": {"field": self._facet, "columns": self._facet_columns}}
         if self._facets:
-            return {"row": self._facet_row, "column": self._facet_col}
-        return None
+            return {"facet": {"row": self._facet_row, "column": self._facet_col}}
+        if self._panels:
+            layout: dict[str, Any] = {"panels": [p._spec() for p in self._panels]}
+            if self._panel_columns is not None:
+                layout["grid"] = {"columns": self._panel_columns}
+            return layout
+        return {}
 
     def _used_fields(self) -> dict[int, set[str]]:
         """The columns each table must send: those marks read, and those derived
@@ -1387,6 +1462,22 @@ class Chart:
             raise ValueError(f"axis must be 'left' or 'right', not {spec['axis']!r}")
         if self._facets and spec.get("axis") == "right":
             raise ValueError("charts with facets cannot use the right axis yet")
+        if self._panels:
+            panel = spec.get("panel")
+            if panel is None:
+                raise ValueError(
+                    f"a {spec['type']} mark in a chart with panels needs panel=: "
+                    'the id of one, or "*" for every panel'
+                )
+            if panel != "*" and panel not in [p.id for p in self._panels]:
+                raise ValueError(
+                    f"a {spec['type']} mark names the panel {panel!r}, "
+                    "which the chart does not have"
+                )
+            if spec.get("axis") == "right":
+                raise ValueError("charts with panels cannot use the right axis yet")
+        elif spec.get("panel") is not None:
+            raise ValueError("panel= needs a chart with panels")
         if self._facets and table is not None and spec.get("facet") is None:
             for field in self._facets:
                 self._require(table, field, ("category",), "facet")
@@ -1449,7 +1540,7 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
 
 def assemble_spec(
     options: dict[str, Any],
-    facet: dict[str, Any] | None,
+    layout: dict[str, Any],
     tables: dict[str, dict[str, Column]],
     marks: list[dict[str, Any]],
     derived: dict[str, dict[str, Any]] | None = None,
@@ -1458,8 +1549,10 @@ def assemble_spec(
     specs, and derived tables by name."""
     buffers: list[bytes] = []
     spec: dict[str, Any] = {"version": 2, **options}
-    if facet is not None:
-        spec["facet"] = {key: value for key, value in facet.items() if value is not None}
+    for key, value in layout.items():
+        spec[key] = (
+            {k: v for k, v in value.items() if v is not None} if isinstance(value, dict) else value
+        )
     if tables or derived:
         spec["data"] = {
             name: {"columns": columns_spec(columns, buffers)} for name, columns in tables.items()

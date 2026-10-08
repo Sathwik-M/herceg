@@ -39,6 +39,7 @@ const optionProps = {
   y: Object as Option<"y">,
   yRight: Object as Option<"yRight">,
   facet: Object as Option<"facet">,
+  panels: Object as Option<"panels">,
   resolve: Object as Option<"resolve">,
   legend: { type: Boolean, default: undefined },
   tooltip: { type: [Boolean, Object] as Option<"tooltip">, default: undefined },

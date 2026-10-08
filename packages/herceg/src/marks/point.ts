@@ -38,6 +38,8 @@ export interface PointOptions<S extends Schema> {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   x: NumericField<S>;
   y: NumericField<S>;
   /** Category field: one colored point series per value. */
@@ -619,6 +621,7 @@ export function point<S extends Schema>(table: Table<S>, options: PointOptions<S
       "id",
       "axis",
       "facet",
+      "panel",
     ]),
   };
   if (options.rRange) spec.rRange = [options.rRange[0], options.rRange[1]];

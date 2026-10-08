@@ -30,6 +30,7 @@ import { TreemapMark } from "../marks/treemap.ts";
 import { ViolinMark } from "../marks/violin.ts";
 import { Facet } from "../model/facet.ts";
 import type { ChartConfig } from "../model/model.ts";
+import { Panels } from "../model/panels.ts";
 import { scheme } from "../scale/schemes.ts";
 import {
   type BinaryType,
@@ -81,15 +82,24 @@ export function loadSpec(spec: ChartSpec, buffers: readonly SpecBuffer[] = []): 
       `Unsupported spec version ${spec.version}; this herceg reads versions 1 to ${SPEC_VERSION}`,
     );
   }
-  // An older reader would draw shared axes; a spec asking otherwise says so.
-  if (spec.resolve !== undefined && spec.version !== 2)
-    throw new Error('"resolve" needs "version": 2, so that older readers refuse the spec');
   validateSpec(spec);
   const tables = loadTables(spec.data ?? {}, buffers);
   const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));
-  const { data: _data, marks: _marks, version: _version, facet: panels, ...options } = spec;
-  const facet = panels && new Facet(panels);
-  return { config: { ...options, marks, ...(facet && { facet }) }, tables };
+  const {
+    data: _data,
+    marks: _marks,
+    version: _version,
+    facet: split,
+    panels,
+    grid,
+    ...options
+  } = spec;
+  const facet = split && new Facet(split);
+  const subplots = panels && new Panels(panels, grid);
+  return {
+    config: { ...options, marks, ...(facet && { facet }), ...(subplots && { panels: subplots }) },
+    tables,
+  };
 }
 
 /** Every table of the spec; derived tables after the tables they derive from. */

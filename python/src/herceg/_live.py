@@ -25,7 +25,7 @@ class LiveChart:
     def __init__(self, chart: Chart) -> None:
         self._settings = dict(chart._settings)
         self._options = spec_options(self._settings)
-        self._facet = chart._facet_spec()
+        self._layout = chart._layout_spec()
         self._marks = chart._mark_specs()
         # Current columns by table name: only those marks read, as in the spec.
         self._tables = chart._used_columns()
@@ -34,7 +34,7 @@ class LiveChart:
         self._default = self._sources[chart._default][1] if chart._default is not None else None
 
     def to_spec(self) -> Message:
-        return assemble_spec(self._options, self._facet, self._tables, self._marks, self._derived)
+        return assemble_spec(self._options, self._layout, self._tables, self._marks, self._derived)
 
     def append(self, rows: Any, data: Any = None, max_rows: int | None = None) -> Message | None:
         """Adds rows to a table, keeping at most `max_rows` of them; None when there are none."""
