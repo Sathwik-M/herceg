@@ -4,6 +4,7 @@ import {
   type ChartOptions,
   createChart,
   type Chart as HercegChart,
+  tablesOf,
 } from "herceg";
 import {
   Comment,
@@ -116,16 +117,22 @@ const PORTABLE = new Set([
   "funnel",
   "radar",
   "sankey",
+  "graph",
   "rule",
   "region",
   "text",
 ]);
 
-/** Same mark when the spec and the table are unchanged, so caches survive re-renders. */
+/** Same mark when the spec and the tables are unchanged, so caches survive re-renders. */
 function sameMark(a: ChartMark, b: ChartMark): boolean {
   if (a === b) return true;
   if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
-  return a.table === b.table && canonical(a.spec) === canonical(b.spec);
+  const [tables, others] = [tablesOf(a), tablesOf(b)];
+  return (
+    tables.length === others.length &&
+    tables.every((table, i) => table === others[i]) &&
+    canonical(a.spec) === canonical(b.spec)
+  );
 }
 
 /** What a render describes, and later what the chart shows. */
@@ -158,7 +165,7 @@ export const Chart = defineComponent({
   },
   emits,
   slots: Object as SlotsType<{
-    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Rule>, <Region>, <Text>, <Custom>. */
+    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <Rule>, <Region>, <Text>, <Custom>. */
     default?: () => VNode[];
   }>,
   expose: ["chart"],

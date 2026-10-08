@@ -73,14 +73,16 @@ export {
 } from "./marks/errorbar.ts";
 export { type FunnelMark, type FunnelOptions, funnel } from "./marks/funnel.ts";
 export { type GaugeMark, type GaugeOptions, gauge } from "./marks/gauge.ts";
+export { type GraphMark, type GraphOptions, graph } from "./marks/graph.ts";
 export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
 export { type HistogramMark, type HistogramOptions, histogram } from "./marks/histogram.ts";
-export type {
-  ChartMark,
-  LayoutFrame,
-  LayoutItem,
-  LayoutMark,
-  LayoutResult,
+export {
+  type ChartMark,
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+  tablesOf,
 } from "./marks/layout-mark.ts";
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
 export type { Mark, MarkIdentity } from "./marks/mark.ts";

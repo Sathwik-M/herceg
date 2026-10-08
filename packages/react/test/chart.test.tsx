@@ -16,6 +16,7 @@ import {
   Custom,
   Funnel,
   Gauge,
+  Graph,
   Line,
   Pie,
   Radar,
@@ -176,6 +177,38 @@ describe("<Chart>", () => {
     expect(host.textContent).toContain("power");
     const fills = [...paths()].filter((path) => path.getAttribute("fill-opacity") === "0.15");
     expect(fills).toHaveLength(2);
+  });
+
+  it("renders a network from its element, and rebuilds it when its nodes table changes", async () => {
+    const talks = table({ from: ["Ana", "Ana", "Bo"], to: ["Bo", "Cy", "Cy"] });
+    const ref: { current: HercegChart | null } = { current: null };
+    const teams = table({ name: ["Ana", "Bo", "Cy"], team: ["Data", "Data", "Sales"] });
+    const alone = (people: typeof teams) => (
+      <Chart ref={ref} locale="en-US" title="Talks">
+        <Graph data={talks} source="from" target="to" nodes={people} node="name" group="team" />
+      </Chart>
+    );
+    act(() => root.render(alone(teams)));
+    const circles = [...paths()].filter((path) => / 0 1 0 /.test(path.getAttribute("d") ?? ""));
+    expect(circles).toHaveLength(3);
+    expect(host.textContent).toContain("Sales");
+    const chart = ref.current!;
+    const seen: (readonly unknown[])[] = [];
+    const update = chart.update.bind(chart);
+    chart.update = (options) => {
+      seen.push(options.marks ?? []);
+      update(options);
+    };
+    // Equal props over the same tables keep the mark, and with it the layout.
+    act(() => root.render(alone(teams)));
+    expect(seen).toHaveLength(0);
+    // Another nodes table, under the same props, is another mark.
+    const moved = table({ name: ["Ana", "Bo", "Cy"], team: ["Data", "Ops", "Ops"] });
+    act(() => root.render(alone(moved)));
+    expect(seen).toHaveLength(1);
+    await frame();
+    expect(host.textContent).toContain("Ops");
+    expect(host.textContent).not.toContain("Sales");
   });
 
   it("builds annotations from constants or from their own data", () => {

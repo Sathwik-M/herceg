@@ -409,6 +409,19 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       sort: oneOf("input", "value"),
     },
   },
+  graph: {
+    required: ["source", "target"],
+    checks: {
+      source: field,
+      target: field,
+      value: field,
+      nodes: string,
+      node: field,
+      group: field,
+      size: field,
+      labels: boolean,
+    },
+  },
   pie: {
     required: ["category"],
     checks: {

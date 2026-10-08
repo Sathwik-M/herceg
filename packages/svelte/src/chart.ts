@@ -1,11 +1,17 @@
-import type { ChartListener, ChartMark, ChartOptions, Chart as HercegChart } from "herceg";
+import {
+  type ChartListener,
+  type ChartMark,
+  type ChartOptions,
+  type Chart as HercegChart,
+  tablesOf,
+} from "herceg";
 import type { Snippet } from "svelte";
 import type { ClassValue } from "svelte/elements";
 
 export interface ChartProps extends Omit<ChartOptions, "marks"> {
   /** Marks built with herceg's functions; mark components among the children are added after them. */
   marks?: readonly ChartMark[] | undefined;
-  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Rule>, <Region>, <Text>, <Custom>. */
+  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: Snippet | undefined;
   class?: ClassValue | undefined;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -54,14 +60,20 @@ const PORTABLE = new Set([
   "funnel",
   "radar",
   "sankey",
+  "graph",
   "rule",
   "region",
   "text",
 ]);
 
-/** Same mark when the spec and the table are unchanged, so caches survive updates. */
+/** Same mark when the spec and the tables are unchanged, so caches survive updates. */
 export function sameMark(a: ChartMark, b: ChartMark): boolean {
   if (a === b) return true;
   if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
-  return a.table === b.table && canonical(a.spec) === canonical(b.spec);
+  const [tables, others] = [tablesOf(a), tablesOf(b)];
+  return (
+    tables.length === others.length &&
+    tables.every((table, i) => table === others[i]) &&
+    canonical(a.spec) === canonical(b.spec)
+  );
 }

@@ -45,7 +45,7 @@ benchmark suite.
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
 (vertical and horizontal, with value labels), point (with size, color,
 opacity, and shape encoded by fields), heatmap, error bar, candlestick,
-histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge, funnel, radar, and Sankey marks, monotone curves, named color schemes and
+histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge, funnel, radar, Sankey, and network (graph) marks, monotone curves, named color schemes and
 diverging color, built-in themes (light, dark, high contrast, and one that
 follows the page) with CSS-variable theming, rule, region, and text
 annotations from constants or data, custom marks drawing through the same
@@ -61,15 +61,14 @@ Python and reports interaction back), and a Streamlit component.
 
 Next, in order:
 
-1. Chart types: graphs.
-2. Interaction: y and xy zoom, box and lasso selection, synced selections.
-3. Layout: facets by row and column, independent panel scales, subplots.
-4. Large data: incremental stacked and grouped updates, partial GPU uploads,
+1. Interaction: y and xy zoom, box and lasso selection, synced selections.
+2. Layout: facets by row and column, independent panel scales, subplots.
+3. Large data: incremental stacked and grouped updates, partial GPU uploads,
    heatmaps beyond the cell limit.
-5. Custom marks with tooltips and legends; animation; label collision
+4. Custom marks with tooltips and legends; animation; label collision
    handling.
-6. Financial tools, geographic charts, and 3D.
-7. Screen-reader verification, benchmarks across browsers and machines, and
+5. Financial tools, geographic charts, and 3D.
+6. Screen-reader verification, benchmarks across browsers and machines, and
    an API review before a first release.
 
 ## Development
