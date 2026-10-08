@@ -13,6 +13,7 @@ export {
   Line,
   Pie,
   Point,
+  Radar,
   Region,
   Rule,
   Sunburst,

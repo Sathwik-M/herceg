@@ -15,6 +15,7 @@ import {
   Custom,
   Line,
   Pie,
+  Radar,
   Region,
   Rule,
   Sunburst,
@@ -95,6 +96,20 @@ describe("<Chart>", () => {
     // A new mark draws on the next frame.
     await frame();
     expect([...paths()].some((path) => /A/.test(path.getAttribute("d") ?? ""))).toBe(true);
+  });
+
+  it("renders a radar from its element, a filled polygon per series", () => {
+    const players = table({ name: ["Ana", "Bo"], speed: [8, 5], power: [6, 9], range: [4, 7] });
+    act(() =>
+      root.render(
+        <Chart>
+          <Radar data={players} fields={["speed", "power", "range"]} series="name" />
+        </Chart>,
+      ),
+    );
+    expect(host.textContent).toContain("power");
+    const fills = [...paths()].filter((path) => path.getAttribute("fill-opacity") === "0.15");
+    expect(fills).toHaveLength(2);
   });
 
   it("builds annotations from constants or from their own data", () => {

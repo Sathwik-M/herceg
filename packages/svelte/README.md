@@ -19,7 +19,7 @@ Svelte 5 components for [herceg](../herceg/README.md) charts.
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 children are mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
-`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Treemap>`, `<Sunburst>`, `<Rule>`,
+`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Treemap>`, `<Sunburst>`, `<Radar>`, `<Rule>`,
 `<Region>`, `<Text>`, and `<Custom>`, written directly, in `{#if}` and
 `{#each}` blocks, or in components of your own, and drawn in template order.
 Each mark component takes the table it reads as `data`, so svelte-check

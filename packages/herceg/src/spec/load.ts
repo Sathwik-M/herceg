@@ -18,6 +18,7 @@ import { LineMark } from "../marks/line.ts";
 import type { Mark } from "../marks/mark.ts";
 import { PieMark } from "../marks/pie.ts";
 import { PointMark } from "../marks/point.ts";
+import { RadarMark } from "../marks/radar.ts";
 import { RegionMark } from "../marks/region.ts";
 import { RuleMark } from "../marks/rule.ts";
 import { SunburstMark } from "../marks/sunburst.ts";
@@ -286,6 +287,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new TreemapMark(spec, source);
       case "sunburst":
         return new SunburstMark(spec, source);
+      case "radar":
+        return new RadarMark(spec, source);
       default:
         throw new TypeError(
           `unknown mark type ${JSON.stringify((spec as { type: unknown }).type)}`,

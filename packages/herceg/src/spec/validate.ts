@@ -411,6 +411,22 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       labels: boolean,
     },
   },
+  radar: {
+    required: [],
+    checks: {
+      category: field,
+      value: field,
+      fields: (v, path) => {
+        if (!Array.isArray(v)) fail(path, "a list of field names", v);
+        for (const [i, item] of v.entries()) field(item, `${path}[${i}]`);
+      },
+      series: field,
+      domain: range,
+      fillOpacity: fraction,
+      points: boolean,
+      label: string,
+    },
+  },
   boxplot: {
     required: ["x", "y"],
     checks: {

@@ -19,6 +19,7 @@ import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
+import { radar } from "../../src/marks/radar.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { type PdfOptions, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
@@ -416,6 +417,24 @@ describe("renderToPDF", () => {
     // The pie fills the room below the 8 px header: centered at (150, 100), radii 90 and 45.
     const radii = ends.map(([x, y]) => Math.round(Math.hypot(x! - 150, y! - 100)));
     expect([...new Set(radii)].sort()).toEqual([45, 90]);
+  });
+
+  it("draws radars: spoke names and ring values as text, translucent fills under outlines", () => {
+    const players = table({ name: ["Ana", "Bo"], speed: [8, 5], power: [6, 9], range: [4, 7] });
+    const radarPdf = readPdf(
+      renderToPDF({
+        width: 400,
+        height: 300,
+        locale: "en-US",
+        marks: [radar(players, { fields: ["speed", "power", "range"], series: "name" })],
+      }),
+    );
+    for (const label of ["speed", "power", "range", "10", "Ana", "Bo"])
+      expect(radarPdf.content).toContain(`(${label}) Tj`);
+    // Each polygon closed and filled at 15% opacity, before any outline.
+    expect(radarPdf.page).toContain("/ca 0.15");
+    const fills = [...radarPdf.content.matchAll(/\/GS\d+ gs [\d. ]+ rg\n[^Q]*\nh\nf\nQ\n/g)];
+    expect(fills).toHaveLength(2);
   });
 
   it("embeds heatmaps as compressed images, with a soft mask for missing cells", () => {

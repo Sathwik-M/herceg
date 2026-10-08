@@ -498,3 +498,100 @@ def test_treemaps_and_sunbursts_send_their_tree():
         hg.Chart(sales).treemap(["region"]).pie("region")
     with pytest.raises(TypeError, match="treemap path: column 'revenue' holds number"):
         hg.Chart(sales).treemap(["revenue"])
+
+
+def test_radars_send_long_or_wide_data():
+    scores = {
+        "player": ["Ana", "Ana", "Ana", "Bo", "Bo", "Bo"],
+        "skill": ["speed", "power", "range"] * 2,
+        "score": [8.0, 6.0, 4.0, 5.0, 9.0, 7.0],
+        "unused": [0, 0, 0, 0, 0, 0],
+    }
+    chart = hg.radar(scores, "skill", "score", series="player", domain=(0, 10), width=300)
+    spec, _ = chart.to_spec()
+    assert spec["marks"] == [
+        {
+            "type": "radar",
+            "data": "data",
+            "category": "skill",
+            "value": "score",
+            "series": "player",
+            "domain": [0.0, 10.0],
+        }
+    ]
+    assert sorted(spec["data"]["data"]["columns"]) == ["player", "score", "skill"]
+    assert "power" in chart.to_svg()
+    players = {
+        "name": ["Ana", "Bo"],
+        "speed": [8.0, 5.0],
+        "power": [6.0, 9.0],
+        "range": [4.0, float("nan")],
+        "unused": [0, 0],
+    }
+    wide = hg.Chart(players).radar(
+        fields=["speed", "power", "range"], series="name", fill_opacity=0.3, points=False
+    )
+    spec, _ = wide.to_spec()
+    assert spec["marks"][0] == {
+        "type": "radar",
+        "data": "data",
+        "fields": ["speed", "power", "range"],
+        "series": "name",
+        "fillOpacity": 0.3,
+        "points": False,
+    }
+    assert sorted(spec["data"]["data"]["columns"]) == ["name", "power", "range", "speed"]
+    assert "range" in wide.to_svg()
+    # Rows without a series are one polygon: the last row's values.
+    spec, _ = hg.Chart(players).radar(fields=["speed", "power", "range"]).to_spec()
+    assert spec["marks"][0] == {
+        "type": "radar",
+        "data": "data",
+        "fields": ["speed", "power", "range"],
+    }
+    helper = hg.radar(
+        players,
+        fields=["speed", "power", "range"],
+        series="name",
+        fill_opacity=0.3,
+        points=False,
+        label="Skill",
+        title="Players",
+    )
+    spec, _ = helper.to_spec()
+    assert spec["title"] == "Players"
+    assert spec["marks"][0] == {
+        "type": "radar",
+        "data": "data",
+        "fields": ["speed", "power", "range"],
+        "series": "name",
+        "fillOpacity": 0.3,
+        "points": False,
+        "label": "Skill",
+    }
+    with pytest.raises(ValueError, match="not both"):
+        hg.Chart(players).radar("name", "speed", fields=["speed", "power", "range"])
+    with pytest.raises(ValueError, match="not both"):
+        hg.Chart(scores).radar("skill")
+    with pytest.raises(ValueError, match="radar needs at least 3 spokes; fields has 2"):
+        hg.Chart(players).radar(fields=["speed", "power"], series="name")
+    with pytest.raises(ValueError, match="radar fields must be distinct; 'speed' repeats"):
+        hg.Chart(players).radar(fields=["speed", "power", "speed"], series="name")
+    many = {f"f{i}": [1.0] for i in range(101)}
+    with pytest.raises(ValueError, match="radar draws at most 100 spokes; fields has 101"):
+        hg.Chart(many).radar(fields=list(many))
+    spokes = {"k": [f"k{i}" for i in range(101)], "v": [1.0] * 101}
+    with pytest.raises(ValueError, match="radar draws at most 100 spokes; 'k' has 101"):
+        hg.Chart(spokes).radar("k", "v")
+    with pytest.raises(ValueError, match="radar needs at least 3 spokes; 'skill' has 2"):
+        hg.Chart({"skill": ["a", "b"], "v": [1.0, 2.0]}).radar("skill", "v")
+    with pytest.raises(TypeError, match="radar fields: column 'name' holds category"):
+        hg.Chart(players).radar(fields=["speed", "power", "name"], series="name")
+    with pytest.raises(ValueError, match="radar domain must be two finite numbers"):
+        hg.Chart(scores).radar("skill", "score", domain=(10, 0))
+    with pytest.raises(ValueError, match="fill_opacity must be from 0 to 1"):
+        hg.Chart(scores).radar("skill", "score", fill_opacity=1.5)
+    with pytest.raises(ValueError, match="charts of a radar have no x axis"):
+        hg.Chart(scores, zoom=True).radar("skill", "score")
+    with pytest.raises(ValueError, match="a radar has its chart to itself"):
+        hg.Chart(scores).radar("skill", "score").line(x="score", y="score")

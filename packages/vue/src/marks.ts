@@ -26,10 +26,12 @@ import {
   type PointOptions,
   pie,
   point,
+  type RadarOptions,
   type RegionDataOptions,
   type RegionOptions,
   type RuleDataOptions,
   type RuleOptions,
+  radar,
   region,
   rule,
   type Schema,
@@ -199,6 +201,13 @@ export const Sunburst = /* @__PURE__ */ markComponent(
   ({ data, ...options }: WithData<SunburstOptions<Schema>, Schema>) => sunburst(data, options),
   ["labels"],
 ) as unknown as <S extends Schema>(props: WithData<SunburstOptions<S>, S>) => null;
+
+/** A radar: `category` and `value`, or a list of `fields`, a spoke each; it has its chart to itself. */
+export const Radar = /* @__PURE__ */ markComponent(
+  "Radar",
+  ({ data, ...options }: WithData<RadarOptions<Schema>, Schema>) => radar(data, options),
+  ["points"],
+) as unknown as <S extends Schema>(props: WithData<RadarOptions<S>, S>) => null;
 
 export const Candlestick = /* @__PURE__ */ markComponent(
   "Candlestick",

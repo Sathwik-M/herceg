@@ -286,7 +286,8 @@ export type MarkSpec =
   | PieSpec
   | BoxPlotSpec
   | TreemapSpec
-  | SunburstSpec;
+  | SunburstSpec
+  | RadarSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -556,6 +557,34 @@ export interface SunburstSpec {
   value?: string;
   /** Names inside the sectors that have room for them; true by default. */
   labels?: boolean;
+}
+
+/**
+ * A radar: spokes from a center, evenly spaced clockwise from the top, and a
+ * polygon per series joining its value on each spoke. Spokes are the values
+ * of `category` (with `value` the number on each) or the number `fields`;
+ * one of the two forms, with 3 to 100 spokes. Every spoke shares one linear
+ * scale from the center.
+ */
+export interface RadarSpec {
+  type: "radar";
+  data?: string;
+  id?: string;
+  /** Category field: a spoke per value, with `value` the number on it. */
+  category?: Field;
+  value?: Field;
+  /** Distinct number fields, a spoke each, in order; each series' last row is its polygon. */
+  fields?: Field[];
+  /** Category field: a polygon per value. Without it, every row belongs to one polygon. */
+  series?: Field;
+  /** Values at the center and at the rim; from 0 (or the smallest value) to a round number above the largest by default. */
+  domain?: [number, number];
+  /** Opacity of the polygons' fill; 0.15 by default. */
+  fillOpacity?: number;
+  /** A dot at each value; true by default. */
+  points?: boolean;
+  /** Name of the polygon of a radar without `series`, and of its values in tooltips. */
+  label?: string;
 }
 
 /**

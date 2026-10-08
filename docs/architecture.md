@@ -12,8 +12,8 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`) place their own geometry instead of using x and y scales. |
-| **Item** | One thing a layout mark draws, such as a pie slice or a tree's node: what its tooltips and the keyboard visit. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`, `radar`) place their own geometry instead of using x and y scales. |
+| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, or a radar's value on one spoke: what its tooltips and the keyboard visit. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -349,7 +349,7 @@ polygons of the same area as the circle of the same radius.
 ## Layout marks
 
 Most marks place data along x and y scales. Layout marks (pies, treemaps,
-and sunbursts) place their own geometry in a panel instead: the chart model gives one the
+sunbursts, and radars) place their own geometry in a panel instead: the chart model gives one the
 room below the title and legend (`LayoutFrame`: bounds, theme, text
 measurement, hidden keys, and stable colors per item key) and draws what it
 returns (`LayoutResult`: geometry, an item lookup by pixel, the items in
@@ -377,6 +377,20 @@ back up that order. Treemaps lay out with the squarified algorithm
 (`layout/treemap.ts`), sunbursts with an adjacency partition
 (`layout/partition.ts`); both write packed boxes or spans per node, and the
 tree is rebuilt only when its table changes.
+
+A radar reads its table into packed arrays of the values rows give, series
+by series in spoke order (each value's spoke and number, and where each
+series starts), rebuilt when the table changes: storage follows the rows
+however sparsely they fill the series and spokes, and only shown series are
+placed. A later row replaces an earlier one's value for the same series and
+spoke. It draws with existing geometry kinds, so SVG, Canvas, and PDF need
+no radar code: the rings and spokes are one line geometry, the fills one
+shapes geometry of SVG path data (drawn below every outline), each series'
+outline a line geometry whose runs break at missing values, and its dots a
+point geometry. The radius is the largest that leaves room outside the rim
+for the spoke labels (`layout/radar-labels.ts`): each label is a box that
+moves outward along its spoke as the radius grows, so each edge facing
+outward bounds the radius linearly.
 
 ## Annotations
 
@@ -717,10 +731,14 @@ document when `OffscreenCanvas` is unavailable.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
 - Box plots recompute every box's statistics when their table changes, and
   repeat in every panel of charts with facets rather than splitting.
-- A pie, treemap, or sunburst has its chart to itself: no other marks,
+- A pie, treemap, sunburst, or radar has its chart to itself: no other marks,
   facets, zoom, brushing, or sync. Pie labels go beside the pie only; treemaps
   and sunbursts have no drill-down, and their pointer lookup scans each
   level's children.
+- Every spoke of a radar shares one scale: there are no per-spoke domains
+  (as ECharts' indicators have), log scales, circular grids, or labels on
+  the polygons' values. A radar draws at most 100 spokes, and its pointer
+  lookup scans every drawn value.
 - Rolling statistics over values whose differences exceed the largest double
   (about 1.8e308) overflow to Infinity.
 - Python derived tables count their source's rows through one of its
