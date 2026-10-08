@@ -13,6 +13,7 @@ import {
   type Panel,
   rampOffsets,
   type Scene,
+  type SceneText,
   type SvgContext,
 } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
@@ -117,12 +118,12 @@ export function glyphLegendElements(legends: readonly GlyphLegend[], theme: Them
   return out;
 }
 
-/** Each panel's facet value above its plot. */
-export function panelTitleElements(panels: readonly Panel[], theme: Theme): string {
+/** Facet headers: panels' values, or a grid's column and row values. */
+export function headerElements(headers: readonly SceneText[], theme: Theme): string {
   let out = "";
-  for (const { title } of panels) {
-    if (!title) continue;
-    out += `<text x="${n(title.x)}" y="${n(title.y)}" dominant-baseline="middle" font-weight="600" fill="${escapeXml(theme.text)}">${escapeXml(title.text)}</text>`;
+  for (const { text, x, y, anchor, angle } of headers) {
+    const rotate = angle ? ` transform="rotate(${angle} ${n(x)} ${n(y)})"` : "";
+    out += `<text x="${n(x)}" y="${n(y)}" text-anchor="${anchor}" dominant-baseline="middle" font-weight="600" fill="${escapeXml(theme.text)}"${rotate}>${escapeXml(text)}</text>`;
   }
   return out;
 }
@@ -176,7 +177,7 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   for (const panel of scene.panels) out += guideElements(panel.marks, context);
   const axes = scene.panels.flatMap((panel) => panel.axes);
   out += `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
-  out += panelTitleElements(scene.panels, theme);
+  out += headerElements(scene.headers, theme);
   out += titleElement(scene);
   if (options.legend ?? true) out += legendElements(scene.legend, theme);
   scene.colorLegends.forEach((legend, i) => {

@@ -50,14 +50,23 @@ export interface ChartSpec {
 }
 
 /**
- * Panels by the values of a category field, in order of first appearance,
- * sharing their x and y scales. Every mark over a table splits its rows by
- * the field unless it has `facet: "repeat"`; marks without a table repeat.
+ * Panels by the values of category fields, in order of first appearance,
+ * sharing their x and y scales: one field's values wrapped into rows of
+ * panels, or a grid with a row per value of `row` and a column per value of
+ * `column` (either may be left out). Every mark over a table splits its rows
+ * by the fields unless it has `facet: "repeat"`; marks without a table repeat.
  */
-export interface FacetSpec {
+export type FacetSpec = WrappedFacetSpec | GridFacetSpec;
+
+export interface WrappedFacetSpec {
   field: Field;
   /** Panels per row; by default about as many columns as rows. */
   columns?: number;
+}
+
+export interface GridFacetSpec {
+  row?: Field;
+  column?: Field;
 }
 
 export type RendererName = "auto" | "svg" | "canvas";

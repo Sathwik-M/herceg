@@ -37,7 +37,10 @@ export interface AxisInspection {
   position: number;
   label: string;
   points: InspectedPoint[];
-  /** In charts with facets, the facet value of the panel inspected. */
+  /**
+   * In charts with facets, the key of the panel inspected: its facet value,
+   * or with row and column facets both values as a JSON array.
+   */
   panel?: string;
 }
 

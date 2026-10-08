@@ -4,7 +4,7 @@ import {
   colorLegendElement,
   glyphLegendElements,
   gridPath,
-  panelTitleElements,
+  headerElements,
   titleElement,
 } from "../render/svg.ts";
 import type { Geometry, Panel, Scene, SvgContext, SvgElement } from "../scene/scene.ts";
@@ -169,7 +169,7 @@ export class SvgLayer {
     }
     const axes = scene.panels.flatMap((panel) => panel.axes);
     let markup = `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
-    markup += panelTitleElements(scene.panels, theme);
+    markup += headerElements(scene.headers, theme);
     markup += titleElement(scene);
     scene.colorLegends.forEach((legend, i) => {
       markup += colorLegendElement(legend, theme, `${this.#id}-ramp-${i}`);

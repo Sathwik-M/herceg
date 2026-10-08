@@ -98,6 +98,8 @@ class Chart:
         y_right: Axis | dict[str, Any] | None = None,
         facet: str | None = None,
         facet_columns: int | None = None,
+        facet_row: str | None = None,
+        facet_col: str | None = None,
         legend: bool | None = None,
         tooltip: bool | Tooltip = True,
         zoom: bool | Literal["x", "y", "xy"] = False,
@@ -110,6 +112,10 @@ class Chart:
     ) -> None:
         if facet_columns is not None and facet is None:
             raise ValueError("facet_columns needs facet")
+        if facet is not None and (facet_row is not None or facet_col is not None):
+            raise ValueError("use facet to wrap panels, or facet_row and facet_col, not both")
+        if facet_row is not None and facet_row == facet_col:
+            raise ValueError(f"facet_row and facet_col must differ, not both {facet_row!r}")
         # bool is an int in Python, but True columns would be meaningless.
         if facet_columns is not None and not (
             isinstance(facet_columns, int)
@@ -121,6 +127,10 @@ class Chart:
             )
         self._facet = facet
         self._facet_columns = facet_columns
+        self._facet_row = facet_row
+        self._facet_col = facet_col
+        # The fields that split rows into panels.
+        self._facets = [f for f in (facet, facet_row, facet_col) if f is not None]
         self._tables: list[tuple[Any, Table | _DerivedColumns]] = []
         # Derived tables by index, with the index of the table they derive from.
         self._derived: dict[int, int] = {}
@@ -776,7 +786,7 @@ class Chart:
 
     def _layout_alone(self, kind: str) -> None:
         """Layout marks (pies, treemaps, sunbursts) have no axes to facet or zoom."""
-        if self._facet is not None:
+        if self._facets:
             raise ValueError(f"charts of a {kind} cannot have facets yet")
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
             raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
@@ -1016,9 +1026,11 @@ class Chart:
     # Internals -------------------------------------------------------------
 
     def _facet_spec(self) -> dict[str, Any] | None:
-        if self._facet is None:
-            return None
-        return {"field": self._facet, "columns": self._facet_columns}
+        if self._facet is not None:
+            return {"field": self._facet, "columns": self._facet_columns}
+        if self._facets:
+            return {"row": self._facet_row, "column": self._facet_col}
+        return None
 
     def _used_fields(self) -> dict[int, set[str]]:
         """The columns each table must send: those marks read, and those derived
@@ -1028,8 +1040,8 @@ class Chart:
             if table is not None:
                 fields = used.setdefault(table, set())
                 fields.update(_fields(spec))
-                if self._facet is not None and spec.get("facet") is None:
-                    fields.add(self._facet)
+                if spec.get("facet") is None:
+                    fields.update(self._facets)
         # Later tables derive from earlier ones, so needs flow back in one pass.
         for table in sorted(self._derived, reverse=True):
             if table not in used:
@@ -1150,10 +1162,11 @@ class Chart:
             raise ValueError(f"a {kind} has its chart to itself; draw other marks in another chart")
         if spec.get("axis") not in (None, "left", "right"):
             raise ValueError(f"axis must be 'left' or 'right', not {spec['axis']!r}")
-        if self._facet is not None and spec.get("axis") == "right":
+        if self._facets and spec.get("axis") == "right":
             raise ValueError("charts with facets cannot use the right axis yet")
-        if self._facet is not None and table is not None and spec.get("facet") is None:
-            self._require(table, self._facet, ("category",), "facet")
+        if self._facets and table is not None and spec.get("facet") is None:
+            for field in self._facets:
+                self._require(table, field, ("category",), "facet")
             kind = spec["type"]
             if kind in ("heatmap", "histogram", "boxplot", "violin", "rule", "region", "text") or (
                 kind == "bar" and spec.get("stack")

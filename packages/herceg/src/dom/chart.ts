@@ -979,7 +979,7 @@ export class Chart implements Scheduled, SyncMember {
     if (!inspection) return;
     let text = describeInspection(inspection);
     if (across || (inspection.panel !== undefined && before?.panel !== inspection.panel))
-      text = `${inspection.panel}: ${text}`;
+      text = `${panels.find(({ key }) => key === inspection.panel)?.label ?? inspection.panel}: ${text}`;
     // Shift selects a range along the axis the cursor steps along: for
     // brushes along that axis, and for rectangles and lassos, which the
     // keyboard cannot draw.

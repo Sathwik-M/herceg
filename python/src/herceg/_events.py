@@ -45,7 +45,8 @@ class Inspection:
     #: ``value`` as the axis labels it.
     label: str
     points: tuple[InspectedPoint, ...]
-    #: The facet value of the panel, in charts with facets.
+    #: The facet value of the panel, in charts with facets; with ``facet_row``
+    #: and ``facet_col``, both values as a JSON array, as in ``'["North","A"]'``.
     panel: str | None = None
 
 

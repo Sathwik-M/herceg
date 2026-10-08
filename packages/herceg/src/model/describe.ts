@@ -78,10 +78,8 @@ export function describeChart(model: ChartModel): string {
     parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
   }
   if (config.facet) {
-    const panels = model.panels().map(({ key }) => key);
-    const named = panels.slice(0, MAX_SERIES).join(", ");
-    const more = panels.length > MAX_SERIES ? `, and ${panels.length - MAX_SERIES} more` : "";
-    parts.push(`Panels by ${config.facet.field}: ${named}${more}.`);
+    const panels = model.panels().map(({ label }) => label);
+    parts.push(config.facet.describe(panels, MAX_SERIES));
   }
   // With series on both y axes, each one's name says which it is on.
   const right = series.filter((s) => model.onRight(s));

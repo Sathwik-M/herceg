@@ -584,14 +584,15 @@ export function renderPdf(scene: Scene, info: DocumentInfo = {}): Uint8Array {
     }
   }
 
-  for (const { title } of scene.panels) {
-    if (title)
-      text(page, title.text, title.x, title.y, {
-        ...label,
-        font: bold,
-        fill: theme.text,
-        baseline: "middle",
-      });
+  for (const header of scene.headers) {
+    text(page, header.text, header.x, header.y, {
+      ...label,
+      font: bold,
+      fill: theme.text,
+      anchor: header.anchor,
+      baseline: "middle",
+      angle: header.angle,
+    });
   }
   if (scene.title) {
     text(page, scene.title.text, scene.title.x, scene.title.y, {

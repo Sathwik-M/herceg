@@ -409,8 +409,19 @@ export interface Panel {
   axes: AxisGeometry[];
   /** Geometry in drawing order; guides among it are drawn above the rest. */
   marks: Geometry[];
-  /** The panel's facet value, drawn above its plot, in charts with facets. */
-  title?: { text: string; x: number; y: number } | undefined;
+}
+
+/**
+ * A line of text the layout places, such as a facet header: vertically
+ * centered on `y`, starting at or centered on `x`, and turned `angle`
+ * degrees clockwise about that point.
+ */
+export interface SceneText {
+  text: string;
+  x: number;
+  y: number;
+  anchor: "start" | "middle";
+  angle: 0 | 90;
 }
 
 export interface Scene {
@@ -419,6 +430,8 @@ export interface Scene {
   pixelRatio: number;
   theme: Theme;
   title: { text: string; x: number; y: number } | undefined;
+  /** Facet headers: each panel's values above it, or a grid's column and row values. */
+  headers: SceneText[];
   /** Plotting areas; a chart without facets has one. */
   panels: Panel[];
   legend: LegendItem[];

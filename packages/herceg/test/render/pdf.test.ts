@@ -20,6 +20,7 @@ import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { facet } from "../../src/model/facet.ts";
 import { type PdfOptions, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
 import { cellRepeat, renderPdf } from "../../src/render/pdf.ts";
@@ -198,6 +199,7 @@ describe("renderPdf", () => {
     const scene: Scene = {
       width: 100,
       height: 50,
+      headers: [],
       pixelRatio: 1,
       theme: { ...LIGHT, background: "#ffffff" },
       title: undefined,
@@ -261,6 +263,7 @@ describe("renderPdf", () => {
     const scene = (marks: Geometry[]): Scene => ({
       width: 10,
       height: 10,
+      headers: [],
       pixelRatio: 1,
       theme: LIGHT,
       title: undefined,
@@ -302,6 +305,25 @@ describe("renderToPDF", () => {
     );
     expect(pdf.catalog).toContain("/Lang (en-US)");
     expect(pdf.catalog).toContain("/DisplayDocTitle true");
+  });
+
+  it("draws facet headers in bold, row headers reading top to bottom", () => {
+    const sales = table({
+      x: [0, 1, 0, 1],
+      y: [1, 2, 3, 4],
+      region: category(["North", "North", "South", "South"]),
+      product: category(["A", "B", "A", "B"]),
+    });
+    const { content } = readPdf(
+      renderToPDF({
+        marks: [line(sales, { x: "x", y: "y" })],
+        facet: facet({ row: "region", column: "product" }),
+        width: 400,
+        height: 300,
+      }),
+    );
+    expect(content).toMatch(/BT \/F2 12 Tf 0 Tr 1 0 0 -1 [\d.]+ [\d.]+ Tm \(A\) Tj ET/);
+    expect(content).toMatch(/BT \/F2 12 Tf 0 Tr 0 1 1 0 [\d.]+ [\d.]+ Tm \(North\) Tj ET/);
   });
 
   it("draws the chart as vector paths and real text", () => {
