@@ -495,8 +495,9 @@ when columns differ. Specs with `resolve` need `"version": 2`, so that
 readers from before it refuse them rather than draw shared axes; such charts
 cannot zoom along y or take a y viewport (`setYViewport`) yet. Pointer, brush, and zoom work in any panel and act on the
 shared x; the arrow keys step through a panel and Up and Down move between
-panels. Heatmaps, histograms, stacked bars, and annotations or custom marks over a table
-can only repeat for now, and charts with facets have no right axis. A chart
+panels. Heatmaps, histograms, stacked bars, annotations over a table, and
+custom marks over a table without series can only repeat for now, and
+charts with facets have no right axis. A chart
 too small for its panels (under 20 pixels a side) throws an error naming the
 grid; give it more room or fewer columns.
 
@@ -505,20 +506,27 @@ grid; give it more room or fewer columns.
 When no mark fits, `custom` draws shapes with the chart's scales on every
 frame. Shapes render like other marks: in SVG or on a canvas, clipped to the
 plot, and in static SVG. With a table, the `x` and `y` fields count toward
-the axis domains.
+the axis domains, and with one `x` field the `y` fields are series, as for
+`line`: one per field, or one per value of a `series` category field. Series
+have legend entries (which hide them), tooltips and hover and click events
+at the nearest x, keyboard stops, and sentences in the chart's text
+alternative, and in charts with facets they split by panel.
 
 ```ts
-custom(prices, {
+custom(requests, {
   x: "time",
-  y: ["low", "high"],
-  description: "Daily price ranges.", // for the chart's text alternative
-  draw({ table, x, y, line, circle }) {
-    const time = table.numbers("time");
-    const low = table.numbers("low");
-    const high = table.numbers("high");
-    for (let i = 0; i < time.length; i++) {
-      line(x(time[i]!), y(low[i]!), x(time[i]!), y(high[i]!), { stroke: "#2a78d6" });
-      circle(x(time[i]!), y(high[i]!), 3, { fill: "#2a78d6" });
+  y: "latency",
+  series: "service",
+  description: "Request latency per service.", // for the chart's text alternative
+  pointText: (row, format, s) => `${format.y(s.y[row]!)} ms`, // tooltip text; default: the y value
+  draw({ series, x, y, line, circle }) {
+    for (const s of series) {
+      for (let k = 0; k < s.length; k++) {
+        const row = s.rows ? s.rows[k]! : k;
+        const [px, py] = [x(s.x[row]!), y(s.y[row]!)];
+        line(px, y(0), px, py, { stroke: s.color });
+        circle(px, py, 4, { fill: s.color });
+      }
     }
   },
 });
@@ -529,9 +537,23 @@ axes), `domain`, `bandwidth`, `plot`, `theme`, and `path` (SVG
 path syntax), `rect`, `circle`, `line`, and `text`, each with an optional
 style (`fill`, `stroke`, `strokeWidth`, `opacity`, `dash`); they paint the same
 on a canvas as in SVG (butt caps, miter joins, opacity applied to fill and
-stroke separately). With a table, `draw` also gets it. Custom marks are
-JavaScript only (a chart spec cannot hold a function), have no legend
-entries or tooltips, and are meant for shapes in the thousands, not millions.
+stroke separately). With a table, `draw` also gets it, and `series`: the
+series to draw, without those hidden from the legend, each with its `label`,
+`color`, `x` and `y` columns, `length`, and `rows` (undefined when it holds
+every row; in a facet panel, that panel's rows). A `draw` that reads the
+table directly instead draws hidden series and every panel's rows. The y
+axis fits the series' values in view, and those of the points just past
+its edges, so shapes between neighboring points stay in view; give the
+chart `y: { zero: true }` for shapes drawn from zero.
+
+Glyphs drawn from several fields of a row, such as ranges from `low` to
+`high`, are not one series per field: give them `series: false`, and their
+fields only count toward the domains, as do fields other than one `x` and
+the `y` fields (both ends of horizontal spans, `x: ["start", "end"]`). Such
+marks have no series, and in charts with facets need `facet: "repeat"`.
+Custom marks are JavaScript only (a chart spec cannot hold a function), are
+found by their points rather than their shapes, and are meant for shapes in
+the thousands, not millions.
 
 ## Chart options
 

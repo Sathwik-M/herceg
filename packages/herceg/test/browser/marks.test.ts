@@ -344,6 +344,57 @@ describe("new marks in the browser", () => {
     chart.destroy();
   });
 
+  it("gives custom marks with series tooltips, keyboard stops, events, and legend toggles", async () => {
+    const load = table({
+      t: [0, 0, 1, 1, 2, 2],
+      cpu: [1, 4, 2, 5, 3, 6],
+      host: ["a", "b", "a", "b", "a", "b"],
+    });
+    const drawn: string[][] = [];
+    const lollipops = custom(load, {
+      x: "t",
+      y: "cpu",
+      series: "host",
+      pointText: (row, format, s) => `${format.y(s.y[row]!)}%`,
+      draw({ series, x, y, line: stem, circle }) {
+        drawn.push(series.map((s) => s.label));
+        for (const s of series) {
+          for (let k = 0; k < s.length; k++) {
+            const row = s.rows ? s.rows[k]! : k;
+            stem(x(s.x[row]!), y(0), x(s.x[row]!), y(s.y[row]!), { stroke: s.color });
+            circle(x(s.x[row]!), y(s.y[row]!), 4, { fill: s.color });
+          }
+        }
+      },
+    });
+    const chart = createChart(host, { renderer: "svg", marks: [lollipops] });
+    const hovers: (string | undefined)[] = [];
+    chart.on("hover", ({ inspection }) => hovers.push(inspection?.points[1]?.text));
+    hover(chart.root, chart.model.xScale()!.map(1) + 2, chart.model.yScale()!.map(3));
+    await frame();
+    expect(tooltipOf(chart.root).textContent).toBe("1a2%b5%");
+    expect(hovers).toEqual(["5%"]);
+    // The keyboard steps through the first series, reporting each series at its x.
+    chart.root.focus();
+    const key = (k: string) =>
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    key("ArrowRight");
+    key("ArrowRight");
+    const live = chart.root.querySelector("[aria-live]")!;
+    expect(live.textContent).toContain("a: 2%");
+    expect(live.textContent).toContain("b: 5%");
+    // Hiding b from the legend leaves it out of what draw receives.
+    const buttons = chart.root.querySelectorAll("button");
+    expect([...buttons].map((b) => b.textContent)).toEqual(["a", "b"]);
+    buttons[1]!.click();
+    chart.render();
+    expect(drawn.at(-1)).toEqual(["a"]);
+    expect(chart.root.querySelectorAll("svg g[clip-path] [data-kind='shapes'] path")).toHaveLength(
+      6,
+    );
+    chart.destroy();
+  });
+
   it("replaces SVG nodes when a series changes from a line to points", () => {
     const data = table({ x: [0, 1, 2], v: [1, 3, 2] });
     const chart = createChart(host, {

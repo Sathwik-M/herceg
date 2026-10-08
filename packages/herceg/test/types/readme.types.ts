@@ -180,6 +180,7 @@ custom({ draw: ({ circle, plot }) => circle(plot.x, plot.y, 3) });
 custom(metrics, {
   x: "time",
   y: ["p50", "p99"],
+  series: false,
   draw({ table: data, x, y, line: segment }) {
     const t = data.numbers("time");
     const low = data.numbers("p50");
@@ -187,10 +188,45 @@ custom(metrics, {
     for (let i = 0; i < t.length; i++) segment(x(t[i]!), y(low[i]!), x(t[i]!), y(high[i]!));
   },
 });
+custom(requests, {
+  x: "time",
+  y: "latency",
+  series: "service",
+  description: "Request latency per service.",
+  pointText: (row, format, s) => `${format.y(s.y[row]!)} ms`,
+  draw({ series, x, y, line, circle }) {
+    for (const s of series) {
+      for (let k = 0; k < s.length; k++) {
+        const row = s.rows ? s.rows[k]! : k;
+        const [px, py] = [x(s.x[row]!), y(s.y[row]!)];
+        line(px, y(0), px, py, { stroke: s.color });
+        circle(px, py, 4, { fill: s.color });
+      }
+    }
+  },
+});
+custom(requests, {
+  x: "time",
+  y: "latency",
+  draw({ series }) {
+    // @ts-expect-error series are read-only views of the table
+    series[0]!.y[0] = 0;
+  },
+});
 // @ts-expect-error custom fields are number or time fields of the table
 custom(sales, { x: "region", draw() {} });
+// @ts-expect-error y fields are number or time fields
+custom(requests, { x: "time", y: "service", draw() {} });
+// @ts-expect-error series fields are category fields
+custom(requests, { x: "time", y: "latency", series: "latency", draw() {} });
+// @ts-expect-error series is a category field or false
+custom(requests, { x: "time", y: "latency", series: true, draw() {} });
+// @ts-expect-error marks without a table have no series
+custom({ series: "service", draw() {} });
 // @ts-expect-error marks without a table have none in their context
 custom({ draw: ({ table: none }) => none });
+// @ts-expect-error nor series to draw
+custom({ draw: ({ series }) => series });
 
 // Candlesticks
 const prices = table({

@@ -1,10 +1,14 @@
 import {
+  type AxisFormat,
+  type CustomSeries,
   custom,
+  type DataDrawContext,
   type DrawContext,
   facet,
   type Chart as HercegChart,
   type Mark as HercegMark,
   line,
+  type Schema,
   table,
 } from "herceg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -262,6 +266,30 @@ describe("<Chart>", () => {
     await nextTick();
     await frame();
     expect(labels()).toEqual(["second"]);
+  });
+
+  it("passes series options to custom marks, which then have legend entries and tooltips", async () => {
+    const { view, chart } = chartRef();
+    const drawn: string[][] = [];
+    const draw = ({ series, circle, x, y }: DataDrawContext<Schema>) => {
+      drawn.push(series.map((s) => s.label));
+      for (const s of series) circle(x(s.x[0]!), y(s.y[0]!), 3, { fill: s.color });
+    };
+    const text = (row: number, format: AxisFormat, s: CustomSeries) => `${format.y(s.y[row]!)} req`;
+    mount(
+      `<Chart ref="view">
+        <Custom :data="metrics" x="t" :y="['a', 'b']" :point-text="text" :draw="draw" />
+      </Chart>`,
+      () => ({ metrics, view, draw, text }),
+    );
+    const buttons = host.querySelectorAll("button");
+    expect([...buttons].map((button) => button.textContent)).toEqual(["a", "b"]);
+    const { model } = chart();
+    const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))!;
+    expect(inspection.points.map((p) => p.text)).toEqual(["2 req", "3 req"]);
+    buttons[0]!.click();
+    chart().render();
+    expect(drawn.at(-1)).toEqual(["b"]);
   });
 
   it("keeps marks written against the Mark interface only while they are the same object", async () => {

@@ -57,6 +57,7 @@ export {
   type CustomDataOptions,
   type CustomMark,
   type CustomOptions,
+  type CustomSeries,
   type CustomSpec,
   custom,
   type DataDrawContext,
@@ -83,7 +84,7 @@ export type {
   LayoutResult,
 } from "./marks/layout-mark.ts";
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
-export type { Mark, MarkIdentity } from "./marks/mark.ts";
+export type { AxisFormat, Mark, MarkIdentity } from "./marks/mark.ts";
 export { type PieMark, type PieOptions, pie } from "./marks/pie.ts";
 export { type PointMark, type PointOptions, point } from "./marks/point.ts";
 export { type RadarMark, type RadarOptions, radar } from "./marks/radar.ts";

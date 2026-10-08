@@ -37,6 +37,16 @@ Text(internals, { data: deploys, x: "at", y: 1 });
 // `draw` is typed from the table when there is one.
 Custom(internals, { data: metrics, x: "time", draw: ({ table }) => table.numbers("p50") });
 Custom(internals, { draw: ({ text }) => text(1, 2, "label") });
+Custom(internals, {
+  data: metrics,
+  x: "time",
+  y: "p50",
+  series: "service",
+  pointText: (row, format, s) => format.y(s.y[row]!),
+  draw: ({ series }) => series.map((s) => s.color),
+});
+// @ts-expect-error a custom mark's series field is a category field
+Custom(internals, { data: metrics, x: "time", y: "p50", series: "p99", draw: () => {} });
 // @ts-expect-error x is a field of data
 Custom(internals, { data: metrics, x: "missing", draw: () => {} });
 // @ts-expect-error without data, draw gets no table

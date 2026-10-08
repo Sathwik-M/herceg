@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
+import { custom } from "../../src/marks/custom.ts";
 import type { ChartMark } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
 import { facet } from "../../src/model/facet.ts";
@@ -70,6 +71,38 @@ describe("facets in the browser", () => {
     pointer(chart.root, "pointermove", b!.plot.x - 4, b!.plot.y + 10);
     await frame();
     expect(visibleLines(chart)).toHaveLength(0);
+    chart.destroy();
+  });
+
+  it("split a custom mark's series by panel, with tooltips and keyboard stops in each", async () => {
+    const rows: number[] = [];
+    const ticks = custom(data, {
+      x: "t",
+      y: "v",
+      draw({ series, x, y, line: tick }) {
+        for (const s of series) {
+          rows.push(s.length);
+          for (let k = 0; k < s.length; k++) {
+            const row = s.rows ? s.rows[k]! : k;
+            tick(x(s.x[row]!) - 3, y(s.y[row]!), x(s.x[row]!) + 3, y(s.y[row]!));
+          }
+        }
+      },
+    });
+    const chart = createChart(host, { locale: "en-US", marks: [ticks], facet: facet("region") });
+    expect(rows).toEqual([10, 10]);
+    const [, b] = chart.model.panels();
+    pointer(chart.root, "pointermove", b!.x.map(4), b!.plot.y + 10);
+    await frame();
+    const tooltip = [...chart.root.children].find(
+      (el) => (el as HTMLElement).style.pointerEvents === "none" && el.tagName === "DIV",
+    ) as HTMLElement;
+    expect(tooltip.textContent).toBe("4v100");
+    chart.root.focus();
+    key(chart, "ArrowRight");
+    key(chart, "ArrowDown");
+    const live = chart.root.querySelector("[aria-live]")!;
+    expect(live.textContent).toBe("b: 0. v: 100");
     chart.destroy();
   });
 

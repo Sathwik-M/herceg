@@ -13,6 +13,7 @@ import Annotations from "./Annotations.svelte";
 import Faulty from "./Faulty.svelte";
 import Gauges from "./Gauges.svelte";
 import Lines from "./Lines.svelte";
+import Lollipops from "./Lollipops.svelte";
 import Parent from "./Parent.svelte";
 import Pies from "./Pies.svelte";
 import Stray from "./Stray.svelte";
@@ -152,6 +153,24 @@ describe("<Chart>", () => {
     flushSync();
     await frame();
     expect(labels()).toEqual(["second"]);
+  });
+
+  it("passes series options to custom marks, which then have legend entries and tooltips", () => {
+    const drawn: string[][] = [];
+    const props = $state({
+      data: metrics,
+      drawn: (labels: string[]) => drawn.push(labels),
+      chart: null as HercegChart | null,
+    });
+    render(Lollipops, props);
+    const buttons = host.querySelectorAll("button");
+    expect([...buttons].map((button) => button.textContent)).toEqual(["a", "b"]);
+    const { model } = props.chart!;
+    const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))!;
+    expect(inspection.points.map((p) => p.text)).toEqual(["2 req", "3 req"]);
+    buttons[0]!.click();
+    props.chart!.render();
+    expect(drawn.at(-1)).toEqual(["b"]);
   });
 
   it("keeps marks written against the Mark interface only while they are the same object", async () => {

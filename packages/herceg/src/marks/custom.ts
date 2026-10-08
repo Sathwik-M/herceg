@@ -1,14 +1,30 @@
 // Custom marks: a JavaScript `draw` function places shapes using the chart's
 // scales. They share axes, viewport, and rendering (SVG, Canvas, static SVG)
 // with built-in marks, but are not portable: a chart spec cannot hold one.
+// Over one x field and y fields, a custom mark shows series as a line does,
+// so tooltips, the keyboard, the legend, facets, and summaries reach it
+// through the chart's own machinery rather than code of their own.
 
-import type { NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { n } from "../draw/markup.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import type { PathShape, Rect, ShapesGeometry, TextShape } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 import { definedFields } from "./line.ts";
-import { type Frame, type Mark, type MarkKey, NUMERIC, requireField, seriesKey } from "./mark.ts";
+import {
+  type AxisFormat,
+  buildSeries,
+  CATEGORY,
+  type Frame,
+  type Mark,
+  type MarkKey,
+  NUMERIC,
+  type Palette,
+  requireField,
+  SeriesSplitter,
+  seriesKey,
+} from "./mark.ts";
+import { type Series, xExtent, yExtent } from "./series.ts";
 import { unionExtent } from "./trace.ts";
 
 /** Style of a shape. Without `fill` or `stroke`, shapes are filled with the theme's text color. */
@@ -54,9 +70,34 @@ export interface DrawContext {
   text(x: number, y: number, text: string, style?: TextShapeStyle): void;
 }
 
+/**
+ * A series a custom mark shows: one y field, or one value of the `series`
+ * field. Its points are rows of the mark's table.
+ */
+export interface CustomSeries {
+  /** Identifies the series in the chart, as in legend state and events. */
+  readonly key: string;
+  /** Its name in the legend and tooltips. */
+  readonly label: string;
+  /** The color of its legend entry and tooltip swatch. */
+  readonly color: string;
+  /** The x and y columns, indexed by row. */
+  readonly x: ArrayLike<number>;
+  readonly y: ArrayLike<number>;
+  /** The rows it holds, in table order; undefined when it holds every row. */
+  readonly rows: ArrayLike<number> | undefined;
+  /** How many rows it holds. */
+  readonly length: number;
+}
+
 /** The draw context of a custom mark over a table. */
 export interface DataDrawContext<S extends Schema> extends DrawContext {
   table: Table<S>;
+  /**
+   * The series to draw: those the legend has not hidden, each holding only
+   * this panel's rows in charts with facets. Empty for marks without series.
+   */
+  series: readonly CustomSeries[];
 }
 
 interface CustomBase {
@@ -74,20 +115,50 @@ export interface CustomOptions extends CustomBase {
   draw(context: DrawContext): void;
 }
 
-/** A custom mark over a table, whose fields count toward the axis domains. */
+/**
+ * A custom mark over a table, whose fields count toward the axis domains.
+ * With one `x` field and `y` fields, it shows series as a line does.
+ */
 export interface CustomDataOptions<S extends Schema> extends CustomBase {
   /** Fields whose values the mark places along x; a time field gives a time axis. */
   x?: NumericField<S> | readonly NumericField<S>[];
+  /**
+   * Fields whose values the mark places along y. With one `x` field, each
+   * is a series (or one field is split by `series`), with a legend entry,
+   * tooltips, and keyboard stops at its points.
+   */
   y?: NumericField<S> | readonly NumericField<S>[];
+  /**
+   * Category field: one series per value, for one `x` and one `y` field.
+   * `false`: no series; the fields only count toward the axis domains, for
+   * glyphs drawn from several fields of a row, such as ranges.
+   */
+  series?: CategoryField<S> | false;
+  /** Name of a single series in legends and tooltips. Defaults to the y field. */
+  label?: string;
+  /**
+   * Tooltip text for a row of a series, by default its y value; `format`
+   * formats values as the chart's x and y axes and other numbers.
+   */
+  pointText?(row: number, format: AxisFormat, series: CustomSeries): string;
   draw(context: DataDrawContext<S>): void;
 }
 
-/** A custom mark's spec: only its identity, since `draw` cannot be serialized. */
+/**
+ * A custom mark's spec: its identity and, when it shows series, their
+ * fields. `draw` and `pointText` cannot be serialized.
+ */
 export interface CustomSpec {
   type: "custom";
   id?: string;
   axis?: "left" | "right";
   facet?: "repeat";
+  /** The x field of the series. */
+  x?: string;
+  /** The y field of each series, or the one split by `series`. */
+  y?: string | string[];
+  series?: string;
+  label?: string;
 }
 
 /** [min, max] of a field's finite values (cached by the table); positive ones on log axes. */
@@ -115,11 +186,14 @@ export class CustomMark implements Mark<CustomSpec> {
   readonly tooltip = "x";
   readonly #x: readonly string[];
   readonly #y: readonly string[];
+  /** Splits the table into series, when the mark shows any. */
+  readonly #split: SeriesSplitter | undefined;
   readonly #draw: (context: DataDrawContext<Schema>) => void;
+  readonly #pointText: CustomDataOptions<Schema>["pointText"];
   readonly #description: string | undefined;
 
   constructor(table: Table | undefined, options: CustomDataOptions<Schema>) {
-    this.spec = { type: "custom", ...definedFields(options, ["id", "axis", "facet"]) };
+    const spec: CustomSpec = { type: "custom", ...definedFields(options, ["id", "axis", "facet"]) };
     this.table = table;
     const list = (fields: string | readonly string[] | undefined) =>
       fields === undefined ? [] : typeof fields === "string" ? [fields] : [...fields];
@@ -133,7 +207,25 @@ export class CustomMark implements Mark<CustomSpec> {
         throw new Error(`A custom mark with ${axis} fields needs a table`);
       for (const field of fields) requireField(table!, field, NUMERIC, `custom ${axis}`);
     }
+    // A point of a series is a row's (x, y). Other fields, such as both
+    // ends of horizontal spans, only count toward the axis domains, as do
+    // all fields with `series: false`.
+    const field = options.series === false ? undefined : options.series;
+    if (this.#x.length === 1 && this.#y.length > 0 && options.series !== false) {
+      if (field !== undefined) requireField(table!, field, CATEGORY, "custom series");
+      this.#split = new SeriesSplitter(table!, this.#x[0], this.#y, field, options.label);
+      spec.x = this.#x[0]!;
+      spec.y = typeof options.y === "string" ? options.y : [...this.#y];
+      if (field !== undefined) spec.series = field;
+      if (options.label !== undefined) spec.label = options.label;
+    } else if (field !== undefined || options.label !== undefined || options.pointText) {
+      throw new Error(
+        "A custom mark's series, label, and pointText need one x field and y fields, and no series: false",
+      );
+    }
+    this.spec = spec;
     this.#draw = options.draw;
+    this.#pointText = options.pointText;
     this.#description = options.description;
   }
 
@@ -143,23 +235,39 @@ export class CustomMark implements Mark<CustomSpec> {
     return fields.some((field) => this.table!.kind(field as never) === "time") ? "time" : "number";
   }
 
-  series() {
-    return [];
+  series(key: MarkKey, palette: Palette): Series[] {
+    if (!this.#split) return [];
+    const x = this.table!.numbers(this.#x[0] as never);
+    return buildSeries(this.table!, this.#split.sources(), x, key, palette, undefined);
   }
 
-  xExtent(_series: unknown, log: boolean): readonly [number, number] | undefined {
+  xExtent(series: readonly Series[], log: boolean): readonly [number, number] | undefined {
+    if (this.#split) return unionExtent(series.map((s) => xExtent(s, log)));
     return unionExtent(this.#x.map((field) => fieldExtent(this.table!, field, log)));
   }
 
-  yExtent(_series: unknown, _x0: number, _x1: number, log: boolean) {
-    return unionExtent(this.#y.map((field) => fieldExtent(this.table!, field, log)));
+  /**
+   * Series fit y to what the x range shows, taking in the points just past
+   * its edges: shapes between neighboring points may be steps or glyphs
+   * rather than straight segments, and staying between the neighbors'
+   * values keeps them in view. Other fields count whole.
+   */
+  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
+    if (!this.#split)
+      return unionExtent(this.#y.map((field) => fieldExtent(this.table!, field, log)));
+    return unionExtent(series.map((s) => yExtent(s, x0, x1, s.y, log, undefined, true)));
+  }
+
+  /** Tooltip text for a row: the `pointText` option's, or the series' value. */
+  pointText(series: Series, row: number, format: AxisFormat): string {
+    return this.#pointText ? this.#pointText(row, format, series) : format.y(series.values[row]!);
   }
 
   describe(): string | undefined {
     return this.#description;
   }
 
-  geometry(_series: unknown, frame: Frame, key: MarkKey): ShapesGeometry[] {
+  geometry(series: readonly Series[], frame: Frame, key: MarkKey): ShapesGeometry[] {
     const { theme } = frame;
     const shapes: (PathShape | TextShape)[] = [];
     const path = (d: string, style: ShapeStyle = {}) => {
@@ -182,6 +290,8 @@ export class CustomMark implements Mark<CustomSpec> {
     // Without a table, `table` is undefined; the table-free context's type has none.
     const context: DataDrawContext<Schema> = {
       table: this.table!,
+      // Hidden series are not drawn, as with other marks.
+      series: series.filter((s) => !frame.hidden.has(s.key)),
       x: (value) => frame.x.map(value),
       y: (value) => frame.y.map(value),
       domain: { x: frame.x.domain, y: frame.y.domain },
@@ -226,18 +336,24 @@ export class CustomMark implements Mark<CustomSpec> {
 /**
  * A custom mark: `draw` places shapes with the chart's scales on every
  * frame. With a table, the `x` and `y` fields count toward the axis
- * domains. JavaScript only: chart specs (and so the Python package) cannot
- * hold custom marks.
+ * domains; with one `x` field, the `y` fields are series, which `draw`
+ * receives, with legend entries and tooltips. JavaScript only: chart specs
+ * (and so the Python package) cannot hold custom marks.
  *
  * ```ts
- * custom(prices, {
+ * custom(load, {
  *   x: "time",
- *   y: ["low", "high"],
- *   draw({ table, x, y, line }) {
- *     const t = table.numbers("time");
- *     const low = table.numbers("low");
- *     const high = table.numbers("high");
- *     for (let i = 0; i < t.length; i++) line(x(t[i]!), y(low[i]!), x(t[i]!), y(high[i]!));
+ *   y: "cpu",
+ *   series: "host",
+ *   draw({ series, x, y, line, circle }) {
+ *     for (const s of series) {
+ *       for (let k = 0; k < s.length; k++) {
+ *         const row = s.rows ? s.rows[k]! : k;
+ *         const [px, py] = [x(s.x[row]!), y(s.y[row]!)];
+ *         line(px, y(0), px, py, { stroke: s.color });
+ *         circle(px, py, 4, { fill: s.color });
+ *       }
+ *     }
  *   },
  * })
  * ```
