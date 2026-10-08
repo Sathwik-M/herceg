@@ -171,4 +171,6 @@ once.
 
 The `herceg-react-line` size entry leaves React and React DOM out of the
 bundle, since an application using the adapter already ships them;
-`herceg-vue-line` leaves Vue out for the same reason.
+`herceg-vue-line` leaves Vue out and `herceg-svelte-line` Svelte's runtime
+for the same reason. The Svelte entry renders a component of its own,
+compiled with `svelte/compiler`, and that component is measured with it.

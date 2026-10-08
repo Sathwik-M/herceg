@@ -313,8 +313,8 @@ clipping, and static export as other marks. Fields listed as `x` and `y`
 count toward the axis domains. A custom mark's spec holds only its type and
 id: functions cannot be serialized, so specs, and with them the Python
 package, cannot contain custom marks, and the framework adapters rebuild them
-on every render rather than comparing specs. Marks implement the `Mark`
-interface, whose spec only needs a type and an id (`MarkIdentity`).
+whenever they render them again rather than comparing specs. Marks implement
+the `Mark` interface, whose spec only needs a type and an id (`MarkIdentity`).
 
 ## Rendering
 
@@ -489,6 +489,24 @@ schema, so vue-tsc infers the table from `data` before typing `draw`, and
 reports a wrong field on its attribute; with overloads, as in React, the
 template checker would drop the error.
 
+`@herceg/svelte` cannot read its children, since a Svelte snippet is opaque,
+so its mark components are mounted: each builds its mark in a `$derived`
+from its props and adds itself to the enclosing `<Chart>` through context.
+Each renders one empty `<template>` element, inside a hidden element of the
+chart, and the chart orders marks by the document position of those
+elements, so marks added later by `{#if}` or `{#each}`, or rendered by the
+application's own components, still draw in template order; a mutation
+observer on that hidden element re-sorts them when a keyed `{#each}` moves
+them without changing any. One effect reads
+the options and every mark, so it re-runs when any of them changes, and
+applies them with the same comparison as in React; the chart is created the
+first time it runs, after the mark components have added themselves.
+Options are copied out of `$state` proxies as they are read, as in Vue.
+Event handlers are callback props (`onselect`, ...), subscribed only while
+given. The package is built with `svelte-package` and checked with
+svelte-check, which need TypeScript's JavaScript API: the package keeps
+TypeScript 6 for them, next to the repository's TypeScript 7.
+
 A test (`test/architecture.test.ts`) keeps the core directories (`data`,
 `scale`, `format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM
 access. Marks import their drawings (`draw`), which write SVG without a DOM
@@ -532,5 +550,5 @@ document when `OffscreenCanvas` is unavailable.
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use
   Canvas or SVG. Uploads are not incremental: streaming a large point series
   uploads it again on every change.
-- No adapters for frameworks other than React and Vue. See the roadmap in the
-  repository README.
+- No adapters for frameworks other than React, Vue, and Svelte. See the
+  roadmap in the repository README.

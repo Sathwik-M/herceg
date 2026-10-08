@@ -1,6 +1,8 @@
 # Dependencies and build output
 node_modules/
 dist/
+# svelte-package's working directory
+.svelte-kit/
 *.tsbuildinfo
 coverage/
 

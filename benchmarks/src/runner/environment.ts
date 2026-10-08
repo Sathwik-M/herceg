@@ -29,6 +29,7 @@ const WORKSPACE: Record<string, string> = {
   herceg: "herceg",
   "@herceg/react": "react",
   "@herceg/vue": "vue",
+  "@herceg/svelte": "svelte",
 };
 
 export function packageVersion(name: string): string {

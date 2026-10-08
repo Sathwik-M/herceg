@@ -3,11 +3,12 @@
 //
 //   npm run size -- [--out results/size.json]
 
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import * as esbuild from "esbuild";
+import { compile } from "svelte/compiler";
 import { HERCEG_ALIAS, ROOT } from "../runner/build.ts";
 import { commit, machine, packageVersion } from "../runner/environment.ts";
 
@@ -22,6 +23,7 @@ const ENTRY_PACKAGES: Record<string, string> = {
   "herceg-line": "herceg",
   "herceg-react-line": "@herceg/react",
   "herceg-vue-line": "@herceg/vue",
+  "herceg-svelte-line": "@herceg/svelte",
   "echarts-line": "echarts",
   "echarts-full": "echarts",
   "chartjs-line": "chart.js",
@@ -43,6 +45,19 @@ interface Bundle {
 const FRAMEWORKS: Record<string, string[]> = {
   "herceg-react-line": ["react", "react-dom", "react/jsx-runtime"],
   "herceg-vue-line": ["vue"],
+  "herceg-svelte-line": ["svelte", "svelte/*"],
+};
+
+/** Compiles Svelte components for production, as an application's build would. */
+const svelte: esbuild.Plugin = {
+  name: "svelte",
+  setup(build) {
+    build.onLoad({ filter: /\.svelte$/ }, ({ path }) => ({
+      contents: compile(readFileSync(path, "utf8"), { filename: path }).js.code,
+      loader: "js",
+      resolveDir: dirname(path),
+    }));
+  },
 };
 
 async function bundle(entry: string, minify: boolean, external: string[]): Promise<Bundle> {
@@ -61,6 +76,7 @@ async function bundle(entry: string, minify: boolean, external: string[]): Promi
     platform: "browser",
     define: { "process.env.NODE_ENV": '"production"' },
     alias: HERCEG_ALIAS,
+    plugins: [svelte],
     logLevel: "error",
   });
   const name = basename(entry).replace(/\.tsx?$/, "");
@@ -79,7 +95,10 @@ const brotli = (bytes: Uint8Array) =>
   brotliCompressSync(bytes, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).byteLength;
 
 const rows = [];
-for (const file of readdirSync(ENTRIES).sort()) {
+// Entries are scripts; components they render sit next to them.
+for (const file of readdirSync(ENTRIES)
+  .filter((name) => /\.tsx?$/.test(name))
+  .sort()) {
   const name = basename(file).replace(/\.tsx?$/, "");
   if (args.filter && !name.includes(args.filter)) continue;
   const entry = join(ENTRIES, file);
