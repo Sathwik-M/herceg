@@ -264,7 +264,7 @@ describe("loadSpec", () => {
         marks: [{ type: "line", x: "x", y: "y" }],
       }),
     ).toThrow(/set `data` to one of "a", "b"/);
-    expect(() => loadSpec({ version: 2 as 1, marks: [] })).toThrow(/Unsupported spec version 2/);
+    expect(() => loadSpec({ version: 3 as 1, marks: [] })).toThrow(/Unsupported spec version 3/);
     expect(() => table({ c: encodedCategory(new Int32Array([2]), ["a"]) })).toThrow(
       /Column "c": Category code 2 at row 0 is outside the dictionary/,
     );

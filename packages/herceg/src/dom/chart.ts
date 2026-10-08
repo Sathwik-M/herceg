@@ -783,7 +783,10 @@ export class Chart implements Scheduled, SyncMember {
       }
       this.select(selection);
       const selected = this.#brush.selection;
-      if (selected) this.#live.textContent = describeSelection(selected, this.model.formatsOf());
+      if (selected) {
+        const format = this.model.formatsOf(undefined, press.panel.key);
+        this.#live.textContent = describeSelection(selected, format);
+      }
     });
     // The browser took the pointer (a touch turned into scrolling, say).
     const cancel = () => {

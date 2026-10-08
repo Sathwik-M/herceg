@@ -25,7 +25,7 @@ def test_spec_uses_the_portable_format():
         .rule(y=250, label="SLO")
     )
     spec, buffers = chart.to_spec()
-    assert spec["version"] == 1
+    assert spec["version"] == 2
     assert spec["title"] == "Latency"
     assert spec["timeZone"] == "UTC"
     assert spec["y"] == {"type": "log", "label": "ms"}
@@ -260,6 +260,21 @@ def test_facets_lay_panels_out_by_row_and_column():
         hg.Chart(data, facet_row="host", facet_col="host")
     with pytest.raises(KeyError, match="facet: no column 'region'"):
         hg.Chart(data, facet_row="host", facet_col="region").line(x="t", y="p50")
+
+
+def test_facet_panels_can_have_y_scales_of_their_own():
+    data = {**DATA, "zone": ["x", "y"]}
+    chart = hg.Chart(data, facet_col="zone", resolve_y="independent").line(x="t", y="p50")
+    spec, _ = chart.to_spec()
+    assert spec["resolve"] == {"y": "independent"}
+    assert spec["version"] == 2
+    assert "<svg" in chart.to_svg()
+    with pytest.raises(ValueError, match="resolve_y must be"):
+        hg.Chart(data, facet="host", resolve_y="free")
+    with pytest.raises(ValueError, match="resolve_y needs facet"):
+        hg.Chart(data, resolve_y="rows")
+    with pytest.raises(ValueError, match="cannot zoom along y"):
+        hg.Chart(data, facet="host", resolve_y="independent", zoom="xy")
 
 
 def test_candlesticks_send_their_four_prices():

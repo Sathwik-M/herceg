@@ -11,7 +11,7 @@ import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
-import type { LineGeometry, Panel, RectGeometry } from "../../src/scene/scene.ts";
+import type { LineGeometry, Panel, RectGeometry, Scene } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 
 function build(config: ChartConfig, width = 600, height = 400) {
@@ -540,5 +540,117 @@ describe("row and column facets", () => {
     const svg = renderToSVG({ ...config, width: 500, height: 300 });
     expect(svg).toContain(">Left</text>");
     expect(svg).toMatch(/<text [^>]*transform="rotate\(90 [^>]*>Up<\/text>/);
+  });
+});
+
+describe("facet panels with y scales of their own", () => {
+  // Two regions of very different sizes, in two products.
+  const sales = table({
+    t: [0, 1, 0, 1, 0, 1, 0, 1],
+    units: [1, 2, 3, 4, 100, 200, 300, 400],
+    region: ["small", "small", "small", "small", "large", "large", "large", "large"],
+    product: ["A", "A", "B", "B", "A", "A", "B", "B"],
+  });
+  const marks = [line(sales, { x: "t", y: "units" })];
+  const top = (model: ChartModel, i: number) => Math.max(...model.panels()[i]!.y.domain);
+  const labeled = (scene: Scene) => scene.panels.map((p) => axis(p, "left") !== undefined);
+
+  it("fit each panel's own data with independent scales, labeling every panel", () => {
+    const { model, scene } = build({
+      marks,
+      facet: facet({ row: "region", column: "product" }),
+      resolve: { y: "independent" },
+    });
+    expect([0, 1, 2, 3].map((i) => top(model, i))).toEqual([2, 4, 200, 400]);
+    expect(labeled(scene)).toEqual([true, true, true, true]);
+    // The gap between columns holds the second column's labels.
+    const [a, b] = scene.panels as Panel[];
+    expect(b!.plot.x - (a!.plot.x + a!.plot.width)).toBeGreaterThan(30);
+  });
+
+  it("share a scale along rows or columns", () => {
+    const rows = build({
+      marks,
+      facet: facet({ row: "region", column: "product" }),
+      resolve: { y: "rows" },
+    });
+    expect([0, 1, 2, 3].map((i) => top(rows.model, i))).toEqual([4, 4, 400, 400]);
+    expect(labeled(rows.scene)).toEqual([true, false, true, false]);
+    const columns = build({
+      marks,
+      facet: facet({ row: "region", column: "product" }),
+      resolve: { y: "columns" },
+    });
+    expect([0, 1, 2, 3].map((i) => top(columns.model, i))).toEqual([200, 400, 200, 400]);
+    expect(labeled(columns.scene)).toEqual([true, true, true, true]);
+    // Without facets, there is nothing to resolve.
+    const plain = build({ marks, resolve: { y: "independent" } });
+    expect(top(plain.model, 0)).toBe(400);
+  });
+
+  it("let each group's own marks decide its zero, insets, and labels", () => {
+    // Bars only in B: A's lines need not start at zero.
+    const lines = table({ t: [0, 1, 0, 1], v: [100, 200, 5, 6], g: ["A", "A", "B", "B"] });
+    const bars = table({ t: [0, 1], v: [5, 6], g: ["B", "B"] });
+    const { model } = build({
+      marks: [line(lines, { x: "t", y: "v" }), bar(bars, { x: "t", y: "v" })],
+      facet: facet("g"),
+      resolve: { y: "independent" },
+    });
+    expect(Math.min(...model.panels()[0]!.y.domain)).toBeGreaterThan(0);
+    expect(Math.min(...model.panels()[1]!.y.domain)).toBe(0);
+    // A panel without rows has no y labels, even on a fixed domain.
+    const sparse = table({ t: [0, 1], v: [1, 2], r: ["N", "N"], c: ["A", "A"] });
+    const sparseRows = table({ t: [0], v: [3], r: ["S"], c: ["B"] });
+    const fixed = build({
+      marks: [line(sparse, { x: "t", y: "v" }), line(sparseRows, { x: "t", y: "v" })],
+      facet: facet({ row: "r", column: "c" }),
+      resolve: { y: "independent" },
+      y: { domain: [0, 10] },
+    });
+    const labels = fixed.scene.panels.map((p) => axis(p, "left")?.ticks.length ?? 0);
+    expect(labels.map((n) => n > 0)).toEqual([true, false, false, true]);
+  });
+
+  it("let go of a y zoom when panels get y scales of their own", () => {
+    const model = new ChartModel({ marks, facet: facet("region") });
+    model.setYViewport({ y: [0, 50] });
+    expect(model.yViewport).not.toBeNull();
+    model.update({ marks, facet: facet("region"), resolve: { y: "independent" } });
+    expect(model.yViewport).toBeNull();
+    expect(() => model.setYViewport({ y: [0, 50] })).toThrow("no one y viewport");
+  });
+
+  it("refuse category y axes and y zoom, and need spec version 2", () => {
+    const bars = table({ c: ["a", "b"], v: [1, 2], p: ["P", "Q"] });
+    expect(() =>
+      build({
+        marks: [bar(bars, { x: "v", y: "c" })],
+        facet: facet("p"),
+        resolve: { y: "independent" },
+      }),
+    ).toThrow("Panels always share a category y axis");
+    expect(() =>
+      build({
+        marks,
+        facet: facet("region"),
+        resolve: { y: "independent" },
+        interaction: { zoom: "xy" },
+      }),
+    ).toThrow("cannot zoom along y");
+    const spec = (version: number | undefined) => () =>
+      loadSpec(
+        {
+          ...(version !== undefined && { version: version as 1 }),
+          data: { t: { columns: { x: [1, 2], y: [1, 2] } } },
+          marks: [{ type: "line", x: "x", y: "y" }],
+          resolve: { y: "independent" },
+        },
+        [],
+      );
+    expect(spec(1)).toThrow('"resolve" needs "version": 2');
+    expect(spec(undefined)).toThrow('"resolve" needs "version": 2');
+    expect(spec(2)).not.toThrow();
+    expect(spec(3)).toThrow("reads versions 1 to 2");
   });
 });

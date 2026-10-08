@@ -10,14 +10,18 @@ import type { Expression } from "../data/expression.ts";
 
 export type { Expression, Operator } from "../data/expression.ts";
 
-export const SPEC_VERSION = 1;
+/**
+ * The spec format this herceg writes. It reads version 1 too; version 2
+ * adds `resolve`, which a version 1 reader would ignore and draw shared axes.
+ */
+export const SPEC_VERSION = 2;
 
 /** Column name in a table. */
 export type Field = string;
 
 export interface ChartSpec {
   /** Spec format version; defaults to the current version. */
-  version?: 1;
+  version?: 1 | 2;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -37,6 +41,8 @@ export interface ChartSpec {
   yRight?: AxisSpec;
   /** Small multiples: the chart drawn once per value of a category field. */
   facet?: FacetSpec;
+  /** Which facet panels share a y scale; all of them by default. */
+  resolve?: ResolveSpec;
   legend?: boolean;
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
@@ -57,6 +63,18 @@ export interface ChartSpec {
  * by the fields unless it has `facet: "repeat"`; marks without a table repeat.
  */
 export type FacetSpec = WrappedFacetSpec | GridFacetSpec;
+
+/**
+ * How facet panels share a scale: "shared" by all (the default), each its
+ * own ("independent"), or shared by the panels of a row or of a column.
+ */
+export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
+
+/** Scale sharing between facet panels; needs spec version 2. */
+export interface ResolveSpec {
+  /** A continuous y axis; category axes are always shared. */
+  y?: ScaleResolution;
+}
 
 export interface WrappedFacetSpec {
   field: Field;
