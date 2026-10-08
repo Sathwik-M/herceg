@@ -208,6 +208,8 @@ class Chart:
         self._derived: dict[int, int] = {}
         self._default = self._table(data) if data is not None else None
         self._marks: list[tuple[dict[str, Any], int | None]] = []
+        # The nodes table of each network, by the network's place in `_marks`.
+        self._node_tables: dict[int, int] = {}
         # The keyword arguments as given, so live charts can change some later.
         self._settings: dict[str, Any] = {
             "title": title,
@@ -1084,9 +1086,118 @@ class Chart:
             table,
         )
 
+    def graph(
+        self,
+        source: str,
+        target: str,
+        value: str | None = None,
+        *,
+        nodes: Any = None,
+        node: str | None = None,
+        group: str | None = None,
+        size: str | None = None,
+        data: Any = None,
+        labels: bool | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A network: a row per link between the nodes named in ``source`` and
+        ``target``, placed by a force simulation, links as wide as the sum of
+        ``value`` over their rows when given.
+
+        Links have no direction: rows either way between two nodes are one
+        link. Rows without a positive value and links from a node to itself
+        are left out. ``nodes`` is a second data source with a row per node,
+        named in its ``node`` column, which adds nodes without links and
+        colors nodes by ``group`` (with a legend) or sizes them by ``size``;
+        nodes only links name have no group. A network draws at most 5,000
+        nodes and 20,000 links and has its chart to itself.
+        """
+        self._layout_alone("graph")
+        table = self._mark_table(data)
+        self._require(table, source, ("category",), "graph source")
+        self._require(table, target, ("category",), "graph target")
+        self._require(table, value, ("number",), "graph value")
+        node_table = None
+        if nodes is not None:
+            if node is None:
+                raise ValueError("graph nodes need node, the column naming each row's node")
+            node_table = self._table(nodes)
+            self._require(node_table, node, ("category",), "graph node")
+            self._require(node_table, group, ("category",), "graph group")
+            self._require(node_table, size, ("number",), "graph size")
+        elif node is not None or group is not None or size is not None:
+            raise ValueError("graph node, group, and size are columns of nodes, which is missing")
+        nodes_count, links_count = self._network_size(
+            table, source, target, value, node_table, node
+        )
+        if nodes_count > MAX_NODES or links_count > MAX_LINKS:
+            raise ValueError(
+                f"a graph draws at most {MAX_NODES:,} nodes and {MAX_LINKS:,} links; "
+                f"this network has {nodes_count:,} nodes and {links_count:,} links"
+            )
+        self._add(
+            {
+                "type": "graph",
+                "source": source,
+                "target": target,
+                "value": value,
+                "node": node,
+                "group": group,
+                "size": size,
+                "labels": labels,
+                "id": id,
+            },
+            table,
+        )
+        if node_table is not None:
+            self._node_tables[len(self._marks) - 1] = node_table
+        return self
+
+    def _network_size(
+        self,
+        table: int,
+        source: str,
+        target: str,
+        value: str | None,
+        node_table: int | None,
+        node: str | None,
+    ) -> tuple[int, int]:
+        """How many nodes and links a network draws, counted as the browser
+        counts them: the names in the nodes table and in rows the links keep,
+        and one link per pair of different names, either way round, whose
+        values sum to a finite total."""
+        links = self._tables[table][1]
+        ends = [links.column(source), links.column(target)]
+        keep = (ends[0].values >= 0) & (ends[1].values >= 0)
+        if value is not None:
+            values = links.column(value).values
+            keep &= (values > 0) & (values < math.inf)
+        # Derived tables have no rows here, and their empty codes are floats.
+        a, b = (
+            np.asarray(column.dictionary, dtype=object)[column.values[keep].astype(np.intp)]
+            for column in ends
+        )
+        names, ids = np.unique(np.concatenate([a, b]), return_inverse=True)
+        low = np.minimum(ids[: len(a)], ids[len(a) :])
+        high = np.maximum(ids[: len(a)], ids[len(a) :])
+        distinct = low != high
+        pairs, rows = np.unique((low * len(names) + high)[distinct], return_inverse=True)
+        links_count = len(pairs)
+        if value is not None:
+            # Pairs whose values sum past the largest double are left out, as in the browser.
+            with np.errstate(over="ignore"):
+                totals = np.bincount(rows, weights=values[keep][distinct], minlength=len(pairs))
+            links_count = int(np.count_nonzero(np.isfinite(totals)))
+        found = set(names)
+        if node_table is not None:
+            ids_column = self._tables[node_table][1].column(node)
+            codes = ids_column.values[ids_column.values >= 0].astype(np.intp)
+            found.update(np.asarray(ids_column.dictionary, dtype=object)[codes])
+        return len(found), links_count
+
     def _layout_alone(self, kind: str) -> None:
         """Layout marks (pies, treemaps, sunbursts, gauges, funnels, radars, Sankey
-        diagrams) have no axes to facet or zoom."""
+        diagrams, graphs) have no axes to facet or zoom."""
         if self._facets or self._panels:
             raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
@@ -1352,12 +1463,21 @@ class Chart:
         """The columns each table must send: those marks read, and those derived
         tables need from their sources."""
         used: dict[int, set[str]] = {}
-        for spec, table in self._marks:
+        for index, (spec, table) in enumerate(self._marks):
+            # A network's node fields are columns of its nodes, not of its links.
+            node_table = self._node_tables.get(index)
+            links = spec
+            if node_table is not None:
+                links = {key: value for key, value in spec.items() if key not in _NODE_FIELDS}
             if table is not None:
                 fields = used.setdefault(table, set())
-                fields.update(_fields(spec))
+                fields.update(_fields(links))
                 if spec.get("facet") is None:
                     fields.update(self._facets)
+            if node_table is not None:
+                used.setdefault(node_table, set()).update(
+                    spec[key] for key in _NODE_FIELDS if spec.get(key) is not None
+                )
         # Later tables derive from earlier ones, so needs flow back in one pass.
         for table in sorted(self._derived, reverse=True):
             if table not in used:
@@ -1402,8 +1522,13 @@ class Chart:
             {
                 **{key: value for key, value in mark.items() if value is not None},
                 **({"data": table_name(table)} if table is not None else {}),
+                **(
+                    {"nodes": table_name(self._node_tables[index])}
+                    if index in self._node_tables
+                    else {}
+                ),
             }
-            for mark, table in self._marks
+            for index, (mark, table) in enumerate(self._marks)
         ]
 
     def _table_names(self) -> list[tuple[Any, str]]:
@@ -1513,7 +1638,14 @@ class Chart:
 
 
 #: Marks that lay out their own chart, with no axes.
-_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey")
+_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey", "graph")
+
+#: The most nodes and links a graph lays out, as the browser enforces.
+MAX_NODES = 5000
+MAX_LINKS = 20_000
+
+#: A graph's fields that are columns of its nodes.
+_NODE_FIELDS = ("node", "group", "size")
 
 
 #: Chart options a live chart can change after display: all but data and facets,
@@ -1998,6 +2130,25 @@ def sankey(
     """A Sankey diagram of flows from ``source`` to ``target``, sized by ``value``."""
     return Chart(data, **options).sankey(
         source, target, value, labels=labels, node_width=node_width, sort=sort
+    )
+
+
+def graph(
+    data: Any,
+    source: str,
+    target: str,
+    value: str | None = None,
+    *,
+    nodes: Any = None,
+    node: str | None = None,
+    group: str | None = None,
+    size: str | None = None,
+    labels: bool | None = None,
+    **options: Any,
+) -> Chart:
+    """A network of links from ``source`` to ``target``, with ``nodes`` for groups and sizes."""
+    return Chart(data, **options).graph(
+        source, target, value, nodes=nodes, node=node, group=group, size=size, labels=labels
     )
 
 

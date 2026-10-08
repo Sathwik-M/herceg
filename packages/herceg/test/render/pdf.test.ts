@@ -17,6 +17,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
+import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
@@ -503,6 +504,41 @@ describe("renderToPDF", () => {
     expect(radarPdf.page).toContain("/ca 0.15");
     const fills = [...radarPdf.content.matchAll(/\/GS\d+ gs [\d. ]+ rg\n[^Q]*\nh\nf\nQ\n/g)];
     expect(fills).toHaveLength(2);
+  });
+
+  it("draws networks: translucent links, ringed circles as curves, and names with halos", () => {
+    const talks = table({ from: ["Ana", "Ana", "Bo"], to: ["Bo", "Cy", "Cy"], n: [1, 2, 3] });
+    const people = table({ name: ["Ana", "Bo", "Cy"], team: ["Data", "Data", "Sales"] });
+    const pdf = readPdf(
+      renderToPDF({
+        width: 400,
+        height: 300,
+        locale: "en-US",
+        marks: [
+          graph(talks, {
+            source: "from",
+            target: "to",
+            value: "n",
+            nodes: people,
+            node: "name",
+            group: "team",
+          }),
+        ],
+      }),
+    );
+    // Links stroke at 45% opacity: two muted between teams, one in Data's color.
+    const state = /\/(GS\d+) << \/ca [\d.]+ \/CA 0.45 >>/.exec(pdf.page)!;
+    expect(state).not.toBeNull();
+    expect(
+      pdf.content.match(new RegExp(`q /${state[1]} gs [\\d. ]+ RG [\\d.]+ w`, "g")),
+    ).toHaveLength(3);
+    // Each node: a circle of four curves, filled in its group's color, then ringed in white.
+    const nodes = [
+      ...pdf.content.matchAll(/q ([\d. ]+) rg 1 1 1 RG 1.5 w[^Q]*?h\nf\n[^Q]*?h\nS\nQ/g),
+    ];
+    expect(nodes).toHaveLength(3);
+    for (const [node] of nodes) expect(node.match(/ c\n/g)).toHaveLength(8);
+    for (const name of ["Ana", "Bo", "Cy"]) expect(fontOf(pdf, name)).toEqual(["Helvetica", 12]);
   });
 
   it("embeds heatmaps as compressed images, with a soft mask for missing cells", () => {

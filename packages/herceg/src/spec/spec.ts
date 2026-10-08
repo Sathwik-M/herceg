@@ -354,7 +354,8 @@ export type MarkSpec =
   | GaugeSpec
   | FunnelSpec
   | RadarSpec
-  | SankeySpec;
+  | SankeySpec
+  | GraphSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -755,6 +756,36 @@ export interface SankeySpec {
    * first appear in the table, "value" puts the largest first.
    */
   sort?: "input" | "value";
+}
+
+/**
+ * A network of nodes joined by links, laid out by a force simulation, from
+ * a table with a row per link. Nodes are the names in `source` and `target`
+ * and, with `nodes`, the rows of a table of nodes; links are undirected, as
+ * thick as the sum of `value` over their rows when there is one. Rows
+ * without a positive, finite value and links from a node to itself are left
+ * out. A network draws at most 5,000 nodes and 20,000 links.
+ */
+export interface GraphSpec {
+  type: "graph";
+  data?: string;
+  id?: string;
+  /** Category field naming one end of each row's link. */
+  source: Field;
+  /** Category field naming the other end; a name in both fields is one node. */
+  target: Field;
+  /** Number field summed per pair of nodes, setting links' widths; without it, links are alike. */
+  value?: Field;
+  /** Name of a table in `ChartSpec.data` with a row per node; needs `node`. */
+  nodes?: string;
+  /** Category field of `nodes` naming each row's node, as `source` and `target` do. */
+  node?: Field;
+  /** Category field of `nodes`: nodes are colored by it, with a legend. */
+  group?: Field;
+  /** Number field of `nodes` sizing nodes by area. */
+  size?: Field;
+  /** Names beside the most connected (or largest) nodes that have room; true by default. */
+  labels?: boolean;
 }
 
 /**

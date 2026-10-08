@@ -3,6 +3,7 @@ import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
+import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import type { Mark } from "../../src/marks/mark.ts";
@@ -309,6 +310,31 @@ describe("new marks in the browser", () => {
     expect([r, g, b]).toEqual([255, 0, 0]);
     expect(alpha! / 255).toBeCloseTo(0.35, 1);
     expect(host.querySelector("svg g[text-anchor='start']")!.textContent).toBe("a 4");
+    chart.destroy();
+  });
+
+  it("paints network nodes and links on a canvas, with names in SVG", () => {
+    // Equal values: both links are the widest, 6 px.
+    const links = table({ from: ["a", "b"], to: ["b", "c"], v: [1, 1] });
+    const chart = createChart(host, {
+      marks: [graph(links, { source: "from", target: "to", value: "v" })],
+      renderer: "canvas",
+      theme: { palette: ["#ff0000"], muted: "#0000ff" },
+    });
+    const canvas = host.querySelector("canvas")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    const pixel = (key: unknown[]) => {
+      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      const at = [Math.round(px * ratio), Math.round(py * ratio)] as const;
+      return Array.from(canvas.getContext("2d")!.getImageData(...at, 1, 1).data);
+    };
+    // Nodes are opaque; links are muted, translucent.
+    expect(pixel([0, "b"])).toEqual([255, 0, 0, 255]);
+    const [r, g, b, alpha] = pixel([0, "a", "b"]);
+    expect([r, g, b]).toEqual([0, 0, 255]);
+    expect(alpha! / 255).toBeCloseTo(0.45, 1);
+    const names = [...host.querySelectorAll("svg text")].map((text) => text.textContent);
+    expect(names).toEqual(expect.arrayContaining(["a", "b", "c"]));
     chart.destroy();
   });
 

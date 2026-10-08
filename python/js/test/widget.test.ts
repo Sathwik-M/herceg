@@ -191,6 +191,65 @@ describe("notebook widget", () => {
     expect(figure(host!).getAttribute("aria-label")).toBe("Chart");
   });
 
+  it("loads a network grown past its limit, and draws it once updates bring it back", async () => {
+    // A snapshot after Python streamed nodes in: 5,001 of them, one link.
+    const names = Array.from({ length: 5001 }, (_, i) => `n${i}`);
+    const model = new MockModel({
+      _chart: {
+        revision: 4,
+        spec: {
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          data: {
+            links: {
+              columns: {
+                from: { type: "category", codes: 0, dictionary: ["n0"] },
+                to: { type: "category", codes: 1, dictionary: ["n1"] },
+              },
+            },
+            nodes: { columns: { id: { type: "category", codes: 2, dictionary: names } } },
+          },
+          marks: [
+            {
+              type: "graph",
+              data: "links",
+              source: "from",
+              target: "to",
+              nodes: "nodes",
+              node: "id",
+            },
+          ],
+        },
+        buffers: [
+          new DataView(new Int32Array([0]).buffer),
+          new DataView(new Int32Array([0]).buffer),
+          new DataView(Int32Array.from(names, (_, i) => i).buffer),
+        ],
+        selection: null,
+        viewport: null,
+      } satisfies Snapshot,
+      _listening: [],
+    });
+    const [host] = mount(model);
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+    expect(host!.textContent).toContain("too many to lay out");
+    model.receive(
+      {
+        type: "replace",
+        revision: 5,
+        table: "nodes",
+        columns: { id: { type: "category", codes: 0, dictionary: ["n0", "n1", "n2"] } },
+      },
+      [new Int32Array([0, 1, 2])],
+    );
+    await frame();
+    // A link and three nodes, named beside them.
+    expect(host!.querySelectorAll("svg g[clip-path] path")).toHaveLength(4);
+    const labels = [...host!.querySelectorAll("svg text")].map((text) => text.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["n0", "n1", "n2"]));
+  });
+
   it("shows invalid options as an error and keeps the chart", () => {
     const model = new MockModel({ _chart: snapshot(), _listening: [] });
     const [host] = mount(model);

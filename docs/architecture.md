@@ -12,8 +12,8 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`) place their own geometry instead of using x and y scales. |
-| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, or a Sankey diagram's node or link: what its tooltips and the keyboard visit. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`) place their own geometry instead of using x and y scales. |
+| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, or a Sankey diagram's or network's node or link: what its tooltips and the keyboard visit. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -21,7 +21,7 @@ One name per concept, used the same way in code and docs.
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), rules, text, or shapes (custom marks, a gauge's value, funnel connectors). |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), rules, text, or shapes (custom marks, a gauge's value, funnel connectors, network nodes and links). |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
@@ -372,7 +372,7 @@ polygons of the same area as the circle of the same radius.
 ## Layout marks
 
 Most marks place data along x and y scales. Layout marks (pies, treemaps,
-sunbursts, gauges, funnels, radars, and Sankey diagrams) place their own geometry in a panel instead: the chart model gives one the
+sunbursts, gauges, funnels, radars, Sankey diagrams, and networks) place their own geometry in a panel instead: the chart model gives one the
 room below the title and legend (`LayoutFrame`: bounds, theme, text
 measurement, hidden keys, and stable colors per item key) and draws what it
 returns (`LayoutResult`: geometry, an item lookup by pixel, the items in
@@ -441,6 +441,42 @@ boxes per node and band ends per link. The graph is rebuilt when the table chang
 when the table or the room does. Links are filled bands of two cubic curves,
 drawn as shapes geometry; the pointer finds a band by solving its curve's
 x for the curve parameter with a few Newton steps.
+
+A network (`graph`) is the one mark that reads two tables: its links and,
+optionally, its nodes. Layout marks list tables beyond `table` in
+`otherTables`, and `tablesOf(mark)` gives all of them to whatever follows
+changes: the DOM chart subscribes to each and keys its description on their
+versions, and the React, Vue, and Svelte adapters compare them when deciding
+whether a rebuilt mark is the same. The network is built in one pass over
+each table (names to node indexes once per dictionary code, one link per
+unordered pair), rebuilt when either table changes. Its layout
+(`layout/force.ts`) runs d3-force's simulation with its defaults: springs of
+length 30 whose strength is the inverse of the smaller end's degree, and
+whose pull moves the less connected end more; many-body repulsion of -30,
+summed exactly up to 150 nodes and with a Barnes–Hut quadtree (theta 0.9,
+rebuilt each tick in flat typed arrays) above; alpha decaying from 1 to
+0.001 over 300 ticks; velocities keeping 60% per tick. Two things differ from
+d3, both for the picture's sake. Nodes start from pivot MDS
+(`layout/pivot-mds.ts`, after Brandes and Pich): breadth-first distances
+from up to 50 pivots, double centered, and the top two eigenvectors of the
+small pivot-by-pivot matrix, so the start already follows distances in the
+network; from d3's phyllotaxis spiral, rings and long chains settle folded.
+And connected components are packed in rows of their bounding boxes, tallest
+first (`layout/components.ts`), before and after the simulation, instead of
+being held together by a pull toward the center: components started inside
+one another never separate under 1/r repulsion, and the pull squeezes large
+components out of shape. Boxes are a less compact arrangement than discs,
+but they cannot overlap. Networks are limited to 5,000 nodes, where repulsion
+costs about a second, and 20,000 links, so dense networks cannot make the
+springs cost more. Degrees and totals in tooltips and the description are
+counted over the links drawn, so hiding a group changes them. Layout positions are cached per network; each room
+refits them (uniform scale, one axis stretched by at most 30%, at most 2.5 px
+per unit), then pushes overlapping circles apart over a few passes of a
+uniform grid. Nodes are drawn as shapes geometry, one circle path per node,
+largest first, each filled and ringed in the surface color, so overlaps stay
+legible in SVG, Canvas, and PDF without a geometry kind of their own; links
+are one path per width and color. The pointer lookup scans every node, then
+every link.
 
 ## Annotations
 
@@ -821,7 +857,7 @@ document when `OffscreenCanvas` is unavailable.
   charts with facets rather than splitting. On a log axis, a box or violin
   whose median is zero or below has no tooltip or keyboard stop, though
   its positive part is drawn.
-- A pie, treemap, sunburst, gauge, funnel, radar, or Sankey diagram has its chart to itself: no
+- A pie, treemap, sunburst, gauge, funnel, radar, Sankey diagram, or network has its chart to itself: no
   other marks, facets, zoom, brushing, or sync. Pie labels go beside the pie
   only; treemaps and sunbursts have no drill-down, and their pointer lookup
   scans each level's children. A gauge shows one value, with no needle, ticks,
@@ -831,6 +867,15 @@ document when `OffscreenCanvas` is unavailable.
   (as ECharts' indicators have), log scales, circular grids, or labels on
   the polygons' values. A radar draws at most 100 spokes, and its pointer
   lookup scans every drawn value.
+- Networks are laid out once per change of either table, from scratch: a
+  streamed row redraws the whole picture rather than settling the new node
+  in place, and costs about a second at the 5,000-node limit (links are
+  limited to 20,000). Nodes cannot be
+  dragged or pinned, links have no arrows or labels, there are no circular
+  or hierarchical layouts and no zoom, and hovering a node does not
+  highlight its neighbors. Labels go to the 50 most connected nodes at most
+  (fewer in larger networks) and are left out where they would cover a
+  node. The pointer lookup scans every node and link.
 - Sankey diagrams leave out links that close cycles rather than drawing
   them looping back, and links spanning several columns pass behind the
   nodes between. Nodes cannot be dragged or placed by hand, and there is no

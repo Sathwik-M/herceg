@@ -13,6 +13,7 @@ import { CandlestickMark } from "../marks/candlestick.ts";
 import { ErrorBarMark } from "../marks/errorbar.ts";
 import { FunnelMark } from "../marks/funnel.ts";
 import { GaugeMark } from "../marks/gauge.ts";
+import { GraphMark } from "../marks/graph.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
 import { HistogramMark } from "../marks/histogram.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
@@ -314,6 +315,12 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new RadarMark(spec, source);
       case "sankey":
         return new SankeyMark(spec, source);
+      case "graph":
+        return new GraphMark(
+          spec,
+          source,
+          spec.nodes === undefined ? undefined : tableFor(spec.nodes, tables),
+        );
       default:
         throw new TypeError(
           `unknown mark type ${JSON.stringify((spec as { type: unknown }).type)}`,

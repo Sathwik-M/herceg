@@ -7,6 +7,7 @@ import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
+import { graph } from "../../src/marks/graph.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
@@ -1082,6 +1083,104 @@ describe("sankey diagrams", () => {
     expect(description.textContent).toContain(
       "Sankey of twh: 5 nodes in 3 columns and 4 flows; the largest flow is Electricity → Homes, 130.",
     );
+    chart.destroy();
+  });
+});
+
+describe("networks", () => {
+  const talks = () =>
+    table({ from: ["Ana", "Ana", "Bo", "Cy"], to: ["Bo", "Cy", "Cy", "Dee"], n: [3, 1, 2, 5] });
+  const people = () =>
+    table({ name: ["Ana", "Bo", "Cy", "Dee"], team: ["Data", "Data", "Data", "Sales"] });
+  const network = (links = talks(), nodes = people()) =>
+    graph(links, { source: "from", target: "to", value: "n", nodes, node: "name", group: "team" });
+  const move = (chart: Chart, px: number, py: number, type = "pointermove") => {
+    const rect = chart.root.getBoundingClientRect();
+    chart.root.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        button: 0,
+        clientX: rect.left + px,
+        clientY: rect.top + py,
+      }),
+    );
+  };
+
+  it("outline the node or link under the pointer, and report it and clicks on it", async () => {
+    const chart = createChart(host, { locale: "en-US", marks: [network()] });
+    const hovers: (string | undefined)[] = [];
+    chart.on("hover", ({ inspection }) => hovers.push(inspection?.points[0]?.label));
+    const outline = chart.root.querySelector("svg path[stroke-linejoin='round'][fill='none']")!;
+    for (const key of [
+      [0, "Cy"],
+      [0, "Cy", "Dee"],
+    ]) {
+      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      move(chart, px, py);
+      await frame();
+      expect(outline.getAttribute("visibility")).toBe("visible");
+    }
+    expect(hovers).toEqual(["Cy", "Cy — Dee"]);
+    // Links are outlined by a band around them.
+    expect(outline.getAttribute("d")).toMatch(/^M[\d. ]+L[\d. ]+L[\d. ]+L[\d. ]+Z$/);
+    const tooltip = [...chart.root.children].find(
+      (el) => (el as HTMLElement).style.pointerEvents === "none" && el.tagName === "DIV",
+    ) as HTMLElement;
+    expect(tooltip.textContent).toBe("nCy — Dee5");
+    const clicks: (string | undefined)[] = [];
+    chart.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.label));
+    const { px, py } = chart.model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
+    move(chart, px, py, "pointerdown");
+    move(chart, px, py, "pointerup");
+    expect(clicks).toEqual(["Ana"]);
+    chart.destroy();
+  });
+
+  it("read nodes, then links, with the keyboard, and hide groups from the legend", () => {
+    const chart = createChart(host, { locale: "en-US", marks: [network()] });
+    chart.root.focus();
+    const key = (k: string) =>
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    const live = chart.root.querySelector("[aria-live]")!;
+    key("ArrowRight");
+    expect(live.textContent).toBe("n. Ana: 2 links, n 4 (team Data)");
+    key("ArrowDown");
+    expect(live.textContent).toBe("n. Bo: 2 links, n 5 (team Data)");
+    key("End");
+    expect(live.textContent).toBe("n. Cy — Dee: 5");
+    const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
+    expect(description.textContent).toContain(
+      "Network of 4 nodes and 4 links in 2 groups; most connected: Cy (3 links). Strongest link: Cy — Dee, n 5.",
+    );
+    // Hiding Sales leaves Dee and its link out, and the others where they were.
+    const before = chart.model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
+    const [data, sales] = chart.root.querySelectorAll("button");
+    expect(data!.textContent).toBe("Data");
+    sales!.click();
+    chart.render();
+    expect(sales!.getAttribute("aria-pressed")).toBe("false");
+    key("End");
+    expect(live.textContent).toBe("n. Bo — Cy: 2");
+    expect(chart.model.inspectItem(JSON.stringify([0, "Dee"]))).toBeUndefined();
+    const after = chart.model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
+    expect([after.px, after.py]).toEqual([before.px, before.py]);
+    chart.destroy();
+  });
+
+  it("redraw when either table changes", async () => {
+    const [links, nodes] = [talks(), people()];
+    const chart = createChart(host, { locale: "en-US", marks: [network(links, nodes)] });
+    await frame();
+    nodes.append({ name: ["Eve"], team: ["Ops"] });
+    await frame();
+    expect([...chart.root.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "Data",
+      "Sales",
+      "Ops",
+    ]);
+    links.append({ from: ["Eve"], to: ["Ana"], n: [1] });
+    await frame();
+    expect(chart.model.inspectItem(JSON.stringify([0, "Eve", "Ana"]))).toBeDefined();
     chart.destroy();
   });
 });

@@ -19,7 +19,9 @@ import {
   type FunnelOptions,
   funnel,
   type GaugeOptions,
+  type GraphOptions,
   gauge,
+  graph,
   type HeatmapOptions,
   type HistogramOptions,
   heatmap,
@@ -168,6 +170,17 @@ export const Sankey = /* @__PURE__ */ markElement(
   "Sankey",
   ({ data, ...options }: WithData<SankeyOptions<Schema>, Schema>) => sankey(data, options),
 ) as unknown as <S extends Schema>(props: WithData<SankeyOptions<S>, S>) => null;
+
+/**
+ * A network of `source` and `target` nodes, placed by a force simulation,
+ * with `nodes` for groups and sizes; it has its chart to itself.
+ */
+export const Graph = /* @__PURE__ */ markElement(
+  "Graph",
+  ({ data, ...options }: WithData<GraphOptions<Schema, Schema>, Schema>) => graph(data, options),
+) as unknown as <S extends Schema, N extends Schema = Schema>(
+  props: WithData<GraphOptions<S, N>, S>,
+) => null;
 
 /** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
 export const Candlestick = /* @__PURE__ */ markElement(

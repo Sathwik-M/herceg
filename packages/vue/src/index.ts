@@ -10,6 +10,7 @@ export {
   ErrorBar,
   Funnel,
   Gauge,
+  Graph,
   Heatmap,
   Histogram,
   Line,

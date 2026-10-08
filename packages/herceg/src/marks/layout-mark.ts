@@ -1,8 +1,8 @@
 // Layout marks place their own geometry in a panel, without x and y scales:
-// pies, treemaps, and sunbursts. The chart model gives each the panel's room
-// and draws what it returns, as it does for marks along axes; items, rather
-// than axis positions, are what tooltips, hover events, and the keyboard
-// visit.
+// pies, treemaps, networks, and the like. The chart model gives each the
+// panel's room and draws what it returns, as it does for marks along axes;
+// items, rather than axis positions, are what tooltips, hover events, and
+// the keyboard visit.
 
 import type { Table } from "../data/table.ts";
 import type { MeasureText } from "../layout/text.ts";
@@ -65,6 +65,8 @@ export interface LayoutMark {
   readonly layout: true;
   readonly spec: { readonly type: string; readonly id?: string | undefined };
   readonly table: Table | undefined;
+  /** Tables the mark reads besides `table`, such as a network's nodes; charts follow their changes too. */
+  readonly otherTables?: readonly Table[];
   /** What the values are, for tooltip headers: the value field, or "Count". */
   readonly measure: string;
   /** Entries for the legend, which toggles items by key; `id` as in `LayoutFrame`. */
@@ -77,4 +79,11 @@ export type ChartMark = Mark | LayoutMark;
 
 export function isLayoutMark(mark: object): mark is LayoutMark {
   return (mark as Partial<LayoutMark>).layout === true;
+}
+
+/** Every table a mark reads, which charts redraw on changes to. */
+export function tablesOf(mark: ChartMark): Table[] {
+  const tables = mark.table ? [mark.table] : [];
+  if (isLayoutMark(mark) && mark.otherTables) tables.push(...mark.otherTables);
+  return tables;
 }

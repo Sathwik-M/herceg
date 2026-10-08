@@ -8,6 +8,7 @@
 
 import type { Table } from "../data/table.ts";
 import { canvasMeasurer, estimateText, type MeasureText } from "../layout/text.ts";
+import { tablesOf } from "../marks/layout-mark.ts";
 import type { AxisFormat } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import { describeChart } from "../model/describe.ts";
@@ -365,9 +366,7 @@ export class Chart implements Scheduled, SyncMember {
     const options = this.#options;
     this.root.setAttribute("aria-label", options.title ?? "Chart");
     // Re-subscribe to the tables the marks read.
-    const tables = new Set(
-      options.marks.map((mark) => mark.table).filter((table) => table !== undefined),
-    );
+    const tables = new Set(options.marks.flatMap(tablesOf));
     for (const [table, stop] of this.#tables) {
       if (!tables.has(table)) {
         stop();
@@ -508,7 +507,7 @@ export class Chart implements Scheduled, SyncMember {
 
   #describe() {
     const { config } = this.model;
-    const key = `${config.marks.map((mark) => mark.table?.version ?? 0).join(",")}|${[...this.model.hidden].join(",")}`;
+    const key = `${config.marks.flatMap((mark) => tablesOf(mark).map((table) => table.version)).join(",")}|${[...this.model.hidden].join(",")}`;
     if (this.#described?.config === config && this.#described.key === key) return;
     // Summaries scan the data, so streaming charts refresh them at most once
     // a second; a trailing refresh picks up the last change.

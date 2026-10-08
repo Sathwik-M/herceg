@@ -817,3 +817,108 @@ def test_panels_draw_the_marks_that_name_them():
     assert "rowHeights" in weighted.to_html()
     with pytest.raises(ValueError, match="needs 2 heights"):
         hg.Chart(DATA, panels=["a", "b"], panel_row_heights=[1])
+
+
+def test_graphs_send_links_and_nodes_with_only_the_columns_they_read():
+    talks = {
+        "from": ["Ana", "Bo", "Ana", "Cy"],
+        "to": ["Bo", "Ana", "Cy", "Dee"],
+        "n": [3.0, 2.0, 1.0, 4.0],
+        "note": ["a", "b", "c", "d"],
+    }
+    people = {
+        "name": ["Ana", "Bo", "Cy", "Dee", "Eve"],
+        "team": ["Data", "Data", "Sales", "Sales", "Ops"],
+        "followers": [10.0, 20.0, 30.0, 40.0, 50.0],
+        "age": [30, 40, 50, 60, 70],
+    }
+    chart = hg.graph(
+        talks,
+        "from",
+        "to",
+        "n",
+        nodes=people,
+        node="name",
+        group="team",
+        size="followers",
+        width=400,
+        height=300,
+    )
+    spec, _ = chart.to_spec()
+    assert spec["marks"] == [
+        {
+            "type": "graph",
+            "data": "data",
+            "source": "from",
+            "target": "to",
+            "value": "n",
+            "nodes": "data2",
+            "node": "name",
+            "group": "team",
+            "size": "followers",
+        }
+    ]
+    assert {name: sorted(table["columns"]) for name, table in spec["data"].items()} == {
+        "data": ["from", "n", "to"],
+        "data2": ["followers", "name", "team"],
+    }
+    svg = chart.to_svg()
+    assert ">Eve</text>" in svg  # a node without links, from the nodes table
+    # Without nodes, only the links are sent; options pass through.
+    spec, _ = hg.Chart(talks).graph("from", "to", labels=False, id="talks").to_spec()
+    assert spec["marks"][0] == {
+        "type": "graph",
+        "data": "data",
+        "source": "from",
+        "target": "to",
+        "labels": False,
+        "id": "talks",
+    }
+    assert sorted(spec["data"]["data"]["columns"]) == ["from", "to"]
+    # Nodes from the chart's own data are its first table.
+    both = {"from": ["a"], "to": ["b"], "name": ["a"], "kind": ["x"]}
+    spec, _ = hg.Chart(both).graph("from", "to", nodes=both, node="name", group="kind").to_spec()
+    assert spec["marks"][0]["nodes"] == "data"
+    assert sorted(spec["data"]["data"]["columns"]) == ["from", "kind", "name", "to"]
+
+
+def test_graphs_check_their_columns_and_size():
+    talks = {"from": ["a", "b"], "to": ["b", "c"], "n": [1.0, 2.0]}
+    people = {"name": ["a", "b"], "team": ["x", "y"], "age": [1.0, 2.0]}
+    with pytest.raises(TypeError, match="graph target: column 'n' holds number"):
+        hg.Chart(talks).graph("from", "n")
+    with pytest.raises(TypeError, match="graph size: column 'team' holds category"):
+        hg.Chart(talks).graph("from", "to", nodes=people, node="name", size="team")
+    with pytest.raises(KeyError, match="graph group: no column 'kind'"):
+        hg.Chart(talks).graph("from", "to", nodes=people, node="name", group="kind")
+    with pytest.raises(ValueError, match="graph nodes need node"):
+        hg.Chart(talks).graph("from", "to", nodes=people)
+    with pytest.raises(ValueError, match="columns of nodes, which is missing"):
+        hg.Chart(talks).graph("from", "to", group="team")
+    with pytest.raises(ValueError, match="a graph has its chart to itself"):
+        hg.Chart(talks).graph("from", "to").pie("from")
+    with pytest.raises(ValueError, match="charts of a graph have no x axis"):
+        hg.Chart(talks, zoom=True).graph("from", "to")
+    # Counted as the browser counts: rows left out add no nodes.
+    many = {
+        "from": [f"a{i}" for i in range(2600)],
+        "to": [f"b{i}" for i in range(2600)],
+        "n": [1.0] * 2400 + [0.0] * 200,
+    }
+    hg.Chart(many).graph("from", "to", "n")
+    with pytest.raises(ValueError, match="this network has 5,200 nodes and 2,600 links"):
+        hg.Chart(many).graph("from", "to")
+    # Dense networks are refused by their links; rows either way are one link.
+    names = [f"n{i}" for i in range(201)]
+    pairs = [(a, b) for i, a in enumerate(names) for b in names[i + 1 :]]
+    dense = {"from": [a for a, _ in pairs] + ["n1"], "to": [b for _, b in pairs] + ["n0"]}
+    with pytest.raises(ValueError, match="at most 5,000 nodes and 20,000 links; .* 20,100 links"):
+        hg.Chart(dense).graph("from", "to")
+    hg.Chart({"from": dense["from"][:20000], "to": dense["to"][:20000]}).graph("from", "to")
+    # Pairs whose values overflow are left out before counting, as in the browser.
+    overflowing = {
+        "from": dense["from"][:-1] * 2,
+        "to": dense["to"][:-1] * 2,
+        "v": [1e308] * (2 * len(pairs)),
+    }
+    hg.Chart(overflowing).graph("from", "to", "v")

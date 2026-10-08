@@ -426,6 +426,66 @@ top to bottom), then links (by source, then target). The layout is computed
 again whenever the table changes, so streamed rows redraw the whole diagram.
 Like a pie, a Sankey diagram has its chart to itself.
 
+### Networks
+
+```ts
+graph(friendships, { source: "a", target: "b" });
+graph(messages, {
+  source: "from",
+  target: "to",
+  value: "count", // link widths
+  nodes: people, // a second table, with a row per node
+  node: "name",
+  group: "team", // colors and the legend
+  size: "followers", // node areas
+});
+```
+
+A network draws nodes joined by links from a table with a row per link.
+Nodes are the names in `source` and `target`, and, with `nodes`, the names in
+that table's `node` field, so nodes without links can be drawn too. Links
+have no direction: rows either way between two nodes add to one link, as wide
+as the sum of `value` over them (1 to 6 px), or 1 px without `value`. Rows
+with a missing name, or with a missing, zero, negative, or infinite value,
+are left out, and so are links from a node to itself (the chart's
+description says how many).
+
+A force simulation places the nodes, after d3-force: springs along links pull
+linked nodes about one link length apart, every pair of nodes repels, and
+alpha decays over 300 ticks. Unlike d3's defaults, nodes start where pivot
+MDS puts them (positions whose distances follow distances in the network),
+so rings come out round and chains and trees unfolded, and separate pieces of
+the network are packed in rows rather than pulled toward the middle.
+Heavier links pull somewhat harder. The layout is deterministic: the same
+tables draw the same picture. It is scaled to fit the room (stretching one
+axis by up to 30%), small networks are not blown up past 2.5 px per unit of
+the simulation, and overlapping nodes are then pushed apart.
+
+Nodes are circles of 5 px radius, or sized by area with `size` (3 to 14 px;
+missing or infinite sizes draw smallest),
+smaller in rooms crowded with nodes, each ringed in the
+background color so overlaps read. With `group`, nodes take their group's
+color, links within a group take it too (others are gray), and the legend
+toggles groups: hiding one leaves its nodes and their links out without
+moving the rest. A later row of the nodes table for the same node replaces an
+earlier one's group and size; nodes only links name have no group and are
+gray. Names stand beside the most connected nodes (the largest, with `size`):
+all of up to 50 nodes, fewer in larger networks, and none where a name would
+cover another node or name (`labels: false` turns them off).
+
+Tooltips, hover and click events, and the arrow keys report a node's drawn
+links, the sum of their values, its group, and its size, or a link's value
+(the chart's description counts what is drawn too): nodes
+first (the nodes table's order, then names as links first mention them), then
+links. The pointer finds the node within 4 px of its edge, else the nearest
+link within 4 px. The simulation runs again whenever either table changes,
+about 0.1 s for 1,000 nodes and 1 s for 5,000 on a laptop, and resizing only
+refits it. `graph()` refuses networks of more than 5,000 nodes or 20,000
+links with an error: springs cost little next to repulsion up to that many
+links, but a dense network's millions would take seconds. A network that
+grows past the limits while drawn, or a spec loaded with more, draws nothing
+and its description says why, until its tables shrink again. Like a pie, a network has its chart to itself.
+
 ### A second y axis
 
 Marks with `axis: "right"` use a second y scale, drawn on the right and

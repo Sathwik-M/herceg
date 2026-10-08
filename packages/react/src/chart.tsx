@@ -5,6 +5,7 @@ import {
   type ChartOptions,
   createChart,
   type Chart as HercegChart,
+  tablesOf,
 } from "herceg";
 import {
   Children,
@@ -23,7 +24,7 @@ import { markBuilder } from "./marks.tsx";
 export interface ChartProps extends Omit<ChartOptions, "marks"> {
   /** Marks built with herceg's functions; mark elements among `children` are added after them. */
   marks?: readonly ChartMark[];
-  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Rule>, <Region>, <Text>, <Custom>. */
+  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: ReactNode;
   className?: string;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -109,16 +110,22 @@ const PORTABLE = new Set([
   "funnel",
   "radar",
   "sankey",
+  "graph",
   "rule",
   "region",
   "text",
 ]);
 
-/** Same mark when the spec and the table are unchanged, so caches survive re-renders. */
+/** Same mark when the spec and the tables are unchanged, so caches survive re-renders. */
 function sameMark(a: ChartMark, b: ChartMark): boolean {
   if (a === b) return true;
   if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
-  return a.table === b.table && canonical(a.spec) === canonical(b.spec);
+  const [tables, others] = [tablesOf(a), tablesOf(b)];
+  return (
+    tables.length === others.length &&
+    tables.every((table, i) => table === others[i]) &&
+    canonical(a.spec) === canonical(b.spec)
+  );
 }
 
 type Options = Omit<ChartOptions, "marks">;
