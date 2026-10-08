@@ -32,10 +32,13 @@ await esbuild.build({
   platform: "neutral",
   outfile: join(out, "herceg-static.js"),
 });
-// Notebook widgets: an ES module, as anywidget loads it.
-await esbuild.build({
-  ...common,
-  entryPoints: [join(here, "widget.ts")],
-  format: "esm",
-  outfile: join(out, "herceg-widget.js"),
-});
+// Notebook widgets and Streamlit components: ES modules, as anywidget and
+// Streamlit load them.
+for (const name of ["widget", "streamlit"]) {
+  await esbuild.build({
+    ...common,
+    entryPoints: [join(here, `${name}.ts`)],
+    format: "esm",
+    outfile: join(out, `herceg-${name}.js`),
+  });
+}

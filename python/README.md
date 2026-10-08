@@ -6,7 +6,7 @@ large-data handling as the TypeScript library.
 
 > Early development. Line, area, bar, scatter, heatmap, error bar,
 > candlestick, and histogram marks, rule, region, and text annotations; small multiples;
-> HTML, notebook, SVG, and PNG output; live notebook charts.
+> HTML, notebook, SVG, and PNG output; live notebook charts; Streamlit apps.
 
 ```python
 import herceg as hg
@@ -94,8 +94,8 @@ chart.to_spec()            # (spec dict, list of binary buffers)
 chart.widget()             # a live notebook chart (see below)
 ```
 
-HTML output and notebook display embed the herceg bundle (about 145 KiB,
-53 KiB gzipped), so they work offline. Notebooks show each chart in an
+HTML output and notebook display embed the herceg bundle (about 142 KiB,
+52 KiB gzipped), so they work offline. Notebooks show each chart in an
 isolated iframe.
 
 SVG and PNG export need the `export` extra (`pip install 'herceg[export]'`):
@@ -160,6 +160,47 @@ A widget displayed in several cells is one chart: updates and brushing reach
 every output. A browser that opens the notebook later, or reloads it, draws
 the current data.
 
+## Streamlit
+
+`herceg.streamlit.chart(chart)` shows a chart in a
+[Streamlit](https://streamlit.io) app (Streamlit 1.51 or newer;
+`pip install 'herceg[streamlit]'`) and returns what the user did with it:
+
+```python
+import herceg as hg
+import herceg.streamlit as hst
+
+chart = hg.Chart(df, brush="x").line(x="time", y="latency")
+state = hst.chart(chart, key="latency", on_select="rerun", on_click="rerun")
+
+if state.selection:
+    start, end = state.selection
+    st.dataframe(df[df["time"].between(start, end)])
+if state.click:
+    st.write(state.click.label, state.click.points)
+```
+
+`on_select` (brushing an x range, in charts with `brush="x"`) and `on_click`
+(clicking data) take `"ignore"`, the default, which keeps them in the
+browser; `"rerun"`, which reruns the script so that its `chart(...)` call
+returns them; or a function, called before the rerun as Streamlit widget
+callbacks are. `state.selection` is the brushed x range, with the same
+values as live notebook charts (datetimes on time axes), and stays until the
+user changes it. `state.click` is an `hg.Inspection` in the run a click
+caused, and None otherwise. Inside `st.form`, a selection reaches the script
+when the form is submitted, and `on_click` cannot react, since Streamlit
+sends no clicks from forms. Give a chart a `key` to keep its selection when
+its data changes, and to show several charts with the same content.
+
+The chart is a Streamlit custom component (components v2): it renders in the
+app's page, in a shadow root rather than an iframe, and its spec and column
+buffers travel as one binary payload. A rerun that sends the same chart
+leaves it as it is, zoom and brush included; a changed chart is redrawn in
+place, keeping its zoom and its brush where the brushed values or category
+labels still are. Charts without a theme follow the app's light or dark
+theme, also when it changes. [examples/streamlit_app.py](examples/streamlit_app.py)
+is a complete app.
+
 ## Development
 
 From the repository root:
@@ -187,3 +228,8 @@ npm run test:python    # build, then run pytest in a uv environment
   once. Live charts were tested in JupyterLab 4; Notebook 7, VS Code, and
   Colab support anywidget but have not been tested here.
 - Hover and click events report values, not row numbers.
+- In Streamlit, a chart that changes between script runs is sent whole: its
+  data and, since the component's code travels inline with it, the engine
+  (about 143 KiB, 52 KiB gzipped). Streamlit sends unchanged charts as a
+  reference to what the browser already has. Hover and zoom are not
+  reported to the script, since each report would rerun it.

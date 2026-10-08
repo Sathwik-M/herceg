@@ -485,6 +485,15 @@ it. A range brushed or zoomed in one browser goes through Python to the
 others, marked with its origin; a range report made before a newer change
 from elsewhere is dropped. Views of one widget share its tables and marks
 in the browser, so an update is decoded once however many outputs show it.
+The Streamlit component (`herceg.streamlit.chart`, components v2) has no
+connection that outlives a script run, so every run sends the whole chart as
+one binary payload: a uint32 header length, the JSON header (spec, buffer
+offsets, events the script reacts to), and the buffers at 8-byte aligned
+offsets, viewed in place as typed arrays. Streamlit calls the component
+again on every run and on theme changes; equal bytes keep the drawn chart,
+and changed bytes redraw it in place, keeping zoom and brush (as category
+labels on category axes). Charts without a theme read the app's from the
+CSS variables Streamlit gives components, since Python may not know it.
 
 A test (`test/architecture.test.ts`) keeps the core directories (`data`,
 `scale`, `format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM

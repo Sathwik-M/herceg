@@ -8,7 +8,7 @@ from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
-BUNDLES = ("herceg.js", "herceg-static.js", "herceg-widget.js")
+BUNDLES = ("herceg.js", "herceg-static.js", "herceg-widget.js", "herceg-streamlit.js")
 
 
 class BundleCheck(BuildHookInterface):
