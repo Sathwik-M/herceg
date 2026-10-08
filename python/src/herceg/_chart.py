@@ -100,6 +100,7 @@ class Chart:
         facet_columns: int | None = None,
         facet_row: str | None = None,
         facet_col: str | None = None,
+        resolve_y: Literal["shared", "independent", "rows", "columns"] | None = None,
         legend: bool | None = None,
         tooltip: bool | Tooltip = True,
         zoom: bool | Literal["x", "y", "xy"] = False,
@@ -114,6 +115,18 @@ class Chart:
             raise ValueError("facet_columns needs facet")
         if facet is not None and (facet_row is not None or facet_col is not None):
             raise ValueError("use facet to wrap panels, or facet_row and facet_col, not both")
+        if resolve_y not in (None, "shared", "independent", "rows", "columns"):
+            raise ValueError(
+                "resolve_y must be 'shared', 'independent', 'rows', or 'columns', "
+                f"not {resolve_y!r}"
+            )
+        if resolve_y not in (None, "shared"):
+            if facet is None and facet_row is None and facet_col is None:
+                raise ValueError("resolve_y needs facet, or facet_row or facet_col")
+            if zoom in ("y", "xy"):
+                raise ValueError(
+                    "charts whose panels have y scales of their own cannot zoom along y"
+                )
         if facet_row is not None and facet_row == facet_col:
             raise ValueError(f"facet_row and facet_col must differ, not both {facet_row!r}")
         # bool is an int in Python, but True columns would be meaningless.
@@ -147,6 +160,7 @@ class Chart:
             "y_right": y_right,
             "legend": legend,
             "tooltip": tooltip,
+            "resolve_y": resolve_y,
             "zoom": zoom,
             "brush": brush,
             "sync": sync,
@@ -1347,7 +1361,7 @@ _LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel", "radar")
 #: which decide the columns sent.
 OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
-    *("zoom", "brush", "sync", "renderer", "theme", "locale", "time_zone"),
+    *("zoom", "brush", "sync", "resolve_y", "renderer", "theme", "locale", "time_zone"),
 )
 
 
@@ -1374,6 +1388,7 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "legend": settings["legend"],
         "tooltip": tooltip if tooltip is None or isinstance(tooltip, bool) else {"mode": tooltip},
         "interaction": interaction or None,
+        "resolve": {"y": settings["resolve_y"]} if settings["resolve_y"] else None,
         "renderer": settings["renderer"],
         "theme": _theme(settings["theme"]),
         "locale": settings["locale"],
@@ -1392,7 +1407,7 @@ def assemble_spec(
     """A spec and its buffers from chart options, columns by table name, mark
     specs, and derived tables by name."""
     buffers: list[bytes] = []
-    spec: dict[str, Any] = {"version": 1, **options}
+    spec: dict[str, Any] = {"version": 2, **options}
     if facet is not None:
         spec["facet"] = {key: value for key, value in facet.items() if value is not None}
     if tables or derived:

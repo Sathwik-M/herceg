@@ -9,7 +9,7 @@ import type { Table } from "../data/table.ts";
 import type { Mark } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
-import type { FacetSpec } from "../spec/spec.ts";
+import type { ChartSpec, FacetSpec, ScaleResolution } from "../spec/spec.ts";
 import type { MarkSeries } from "./inspect.ts";
 
 export interface FacetOptions {
@@ -92,8 +92,18 @@ export class Facet {
     return [this.row, this.column].filter((field) => field !== undefined);
   }
 
-  /** Rejects marks that cannot be split by the fields, or that panels cannot draw yet. */
-  check(marks: readonly Mark[]): void {
+  /**
+   * Rejects marks that cannot be split by the fields, panels cannot draw
+   * yet, and a y zoom over panels with y scales of their own.
+   */
+  check(marks: readonly Mark[], options: Pick<ChartSpec, "resolve" | "interaction"> = {}): void {
+    const zoom = options.interaction?.zoom;
+    if (
+      (options.resolve?.y ?? "shared") !== "shared" &&
+      typeof zoom === "string" &&
+      zoom.includes("y")
+    )
+      throw new Error("Charts whose panels have y scales of their own cannot zoom along y yet");
     for (const mark of marks) {
       const { type } = mark.spec;
       if (mark.spec.axis === "right")
@@ -137,6 +147,39 @@ export class Facet {
       rows: this.row !== undefined ? counts[0]! : 1,
       columns: this.column !== undefined ? counts.at(-1)! : 1,
     };
+  }
+
+  /**
+   * The groups of a split's panels that share a y scale under `resolution`
+   * (each panel alone, or the panels of a row or of a column, in rows of
+   * `columns`): each panel's group, and what each group's panels draw.
+   */
+  yGroups(
+    resolution: ScaleResolution,
+    split: PanelSplit,
+    columns: number,
+  ): { groupOf: number[]; drawn: MarkSeries[][] } {
+    const groupOf = split.panels.map((_, i) =>
+      resolution === "independent"
+        ? i
+        : resolution === "rows"
+          ? Math.floor(i / columns)
+          : resolution === "columns"
+            ? i % columns
+            : 0,
+    );
+    const drawn: MarkSeries[][] = [];
+    split.panels.forEach((marks, i) => {
+      const at = groupOf[i]!;
+      drawn[at] ??= marks.map(({ mark }) => ({ mark, series: [] }));
+      const group = drawn[at];
+      // A mark with no rows in a panel adds nothing to its group, not even
+      // the zero a bar stands on.
+      marks.forEach(({ series }, m) => {
+        group[m]!.series.push(...series.filter((s) => s.length > 0));
+      });
+    });
+    return { groupOf, drawn };
   }
 
   /** How a split's panels are placed, with headers a line of text tall. */

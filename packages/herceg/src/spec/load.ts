@@ -75,11 +75,14 @@ const TYPED: Record<
  * column, or mark.
  */
 export function loadSpec(spec: ChartSpec, buffers: readonly SpecBuffer[] = []): LoadedSpec {
-  if (spec?.version !== undefined && spec.version !== SPEC_VERSION) {
+  if (spec?.version !== undefined && spec.version !== 1 && spec.version !== SPEC_VERSION) {
     throw new Error(
-      `Unsupported spec version ${spec.version}; this herceg reads version ${SPEC_VERSION}`,
+      `Unsupported spec version ${spec.version}; this herceg reads versions 1 to ${SPEC_VERSION}`,
     );
   }
+  // An older reader would draw shared axes; a spec asking otherwise says so.
+  if (spec.resolve !== undefined && spec.version !== 2)
+    throw new Error('"resolve" needs "version": 2, so that older readers refuse the spec');
   validateSpec(spec);
   const tables = loadTables(spec.data ?? {}, buffers);
   const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));

@@ -1,7 +1,9 @@
 // Charts with facets in the browser: pointer, brush, keyboard, and synced cursors per panel.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
-import { type Chart, createChart } from "../../src/dom/chart.ts";
+import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
+import type { ChartMark } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
 import { facet } from "../../src/model/facet.ts";
 import { bandBox } from "./helpers.ts";
@@ -188,6 +190,77 @@ describe("facets in the browser", () => {
     chart.render();
     const [, after] = chart.model.panels();
     expect(after!.x.map(6)).toBeCloseTo(px, 0);
+    chart.destroy();
+  });
+});
+
+describe("facet panels with y scales of their own", () => {
+  const grouped = (mark: ChartMark, options: Partial<ChartOptions> = {}) =>
+    createChart(host, {
+      locale: "en-US",
+      timeZone: "UTC",
+      marks: [mark],
+      facet: facet("f", { columns: 2 }),
+      resolve: { y: "independent" },
+      ...options,
+    });
+
+  it("announce a brushed range as the panel it was drawn in formats values", () => {
+    const day = Date.UTC(2026, 0, 1);
+    const data = table({
+      x: [0, 1, 0, 1],
+      y: time([Date.UTC(2020, 0, 1), Date.UTC(2025, 0, 1), day, day + 10_000]),
+      f: ["A", "A", "B", "B"],
+    });
+    host.style.width = "1000px";
+    const chart = grouped(line(data, { x: "x", y: "y" }), {
+      interaction: { brush: "y" },
+      y: { type: "time" },
+    });
+    const b = chart.model.panels()[1]!;
+    pointer(chart.root, "pointerdown", b.x.map(0.5), b.y.map(day + 2000));
+    pointer(chart.root, "pointermove", b.x.map(0.5), b.y.map(day + 8000));
+    pointer(chart.root, "pointerup", b.x.map(0.5), b.y.map(day + 8000));
+    expect(chart.root.querySelector("[aria-live]")!.textContent).toContain("00:00:02");
+    chart.destroy();
+  });
+
+  it("keep x labels clear of the next panel's y labels", () => {
+    const data = table({
+      x: [1000, 2000, 1000, 2000],
+      y: [10000, 20000, 10000, 20000],
+      f: ["A", "A", "B", "B"],
+    });
+    host.style.width = "1000px";
+    const chart = grouped(line(data, { x: "x", y: "y" }), {
+      theme: { fontSize: 24 },
+      x: { ticks: 2 },
+      y: { format: { minimumFractionDigits: 4 } },
+    });
+    // The first panel's x labels against the second panel's y labels.
+    const [first, second] = chart.model.panels();
+    const texts = [...chart.root.querySelectorAll("svg text")];
+    const box = (text: Element) => (text as SVGGraphicsElement).getBBox();
+    const xLabels = texts
+      .filter((t) => t.getAttribute("dominant-baseline") === "hanging")
+      .map(box)
+      .filter((b) => b.x < first!.plot.x + first!.plot.width);
+    const yLabels = texts
+      .filter((t) => t.getAttribute("text-anchor") === "end")
+      .map(box)
+      .filter((b) => b.x > first!.plot.x + first!.plot.width && b.x < second!.plot.x);
+    expect(xLabels.length * yLabels.length).toBeGreaterThan(0);
+    const meet = (p: DOMRect, q: DOMRect) =>
+      p.x < q.x + q.width && q.x < p.x + p.width && p.y < q.y + q.height && q.y < p.y + p.height;
+    expect(xLabels.some((p) => yLabels.some((q) => meet(p, q)))).toBe(false);
+    chart.destroy();
+  });
+
+  it("refuse a y viewport, which no one scale could show", () => {
+    const data = table({ x: [0, 1, 0, 1], y: [1, 2, 100, 200], f: ["A", "A", "B", "B"] });
+    const chart = grouped(line(data, { x: "x", y: "y" }));
+    expect(() => chart.setYViewport([500, 600])).toThrow("no one y viewport");
+    chart.setYViewport(null);
     chart.destroy();
   });
 });

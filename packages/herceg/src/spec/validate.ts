@@ -578,6 +578,12 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     x: axis,
     y: axis,
     yRight: axis,
+    resolve: (r, path) => {
+      object(r, path);
+      properties(r as Record<string, unknown>, path, {
+        y: oneOf("shared", "independent", "rows", "columns"),
+      });
+    },
     facet: (f, path) => {
       object(f, path);
       const spec = f as Record<string, unknown>;
