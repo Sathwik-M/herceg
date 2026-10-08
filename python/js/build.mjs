@@ -7,11 +7,12 @@ import * as esbuild from "esbuild";
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "..", "src", "herceg", "static");
 mkdirSync(out, { recursive: true });
+const engine = join(here, "..", "..", "packages", "herceg", "src");
 const common = {
   bundle: true,
   minify: true,
   target: "es2022",
-  alias: { "herceg/spec": join(here, "..", "..", "packages", "herceg", "src", "from-spec.ts") },
+  alias: { herceg: join(engine, "index.ts"), "herceg/spec": join(engine, "from-spec.ts") },
   logLevel: "warning",
 };
 // Browsers: a classic script defining `hercegPython.render`, so each chart's
@@ -30,4 +31,11 @@ await esbuild.build({
   format: "iife",
   platform: "neutral",
   outfile: join(out, "herceg-static.js"),
+});
+// Notebook widgets: an ES module, as anywidget loads it.
+await esbuild.build({
+  ...common,
+  entryPoints: [join(here, "widget.ts")],
+  format: "esm",
+  outfile: join(out, "herceg-widget.js"),
 });

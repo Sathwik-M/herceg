@@ -12,7 +12,7 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "npm test -w herceg",
-    "test:browser": "npm run test:browser -w herceg && npm run test:browser -w @herceg/react",
+    "test:browser": "npm run test:browser -w herceg && npm run test:browser -w @herceg/react && vitest run --config python/js/vitest.config.ts",
     "bench": "npm run bench -w herceg-benchmarks --",
     "bench:core": "npm run bench -w herceg",
     "bench:size": "npm run size -w herceg-benchmarks --",

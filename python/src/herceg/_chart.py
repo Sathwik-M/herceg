@@ -6,10 +6,13 @@ import datetime as _dt
 import numbers
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from . import _render
 from ._data import Column, Table
+
+if TYPE_CHECKING:
+    from .widget import ChartWidget
 
 Tooltip = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after"]
@@ -101,31 +104,30 @@ class Chart:
                 f"facet_columns must be a whole number of at least 1, not {facet_columns!r}"
             )
         self._facet = facet
+        self._facet_columns = facet_columns
         self._tables: list[tuple[Any, Table]] = []
         self._default = self._table(data) if data is not None else None
         self._marks: list[tuple[dict[str, Any], int | None]] = []
-        self._options: dict[str, Any] = {
+        # The keyword arguments as given, so live charts can change some later.
+        self._settings: dict[str, Any] = {
             "title": title,
             "description": description,
             "width": width,
             "height": height,
-            "x": _axis(x),
-            "y": _axis(y),
-            "yRight": _axis(y_right),
-            "facet": {"field": facet, "columns": facet_columns} if facet is not None else None,
+            "x": x,
+            "y": y,
+            "y_right": y_right,
             "legend": legend,
-            "tooltip": tooltip if isinstance(tooltip, bool) else {"mode": tooltip},
-            "interaction": {
-                key: value
-                for key, value in {"zoom": zoom or None, "brush": brush, "sync": sync}.items()
-                if value
-            }
-            or None,
+            "tooltip": tooltip,
+            "zoom": zoom,
+            "brush": brush,
+            "sync": sync,
             "renderer": renderer,
-            "theme": _theme(theme),
+            "theme": theme,
             "locale": locale,
-            "timeZone": time_zone,
+            "time_zone": time_zone,
         }
+        self._options = spec_options(self._settings)
 
     # Marks -----------------------------------------------------------------
 
@@ -648,34 +650,19 @@ class Chart:
 
     def to_spec(self) -> tuple[dict[str, Any], list[bytes]]:
         """The portable chart spec and the binary buffers its columns reference."""
-        buffers: list[bytes] = []
-        used: dict[int, set[str]] = {}
-        for spec, table in self._marks:
-            if table is not None:
-                fields = used.setdefault(table, set())
-                fields.update(_fields(spec))
-                if self._facet is not None and spec.get("facet") is None:
-                    fields.add(self._facet)
-        data = {}
-        for table, fields in used.items():
-            source = self._tables[table][1]
-            data[_table_name(table)] = {
-                "columns": {
-                    field: _column_spec(source.column(field), buffers) for field in sorted(fields)
-                }
-            }
-        spec: dict[str, Any] = {"version": 1}
-        spec.update({key: value for key, value in self._options.items() if value is not None})
-        if data:
-            spec["data"] = data
-        spec["marks"] = [
-            {
-                **{key: value for key, value in mark.items() if value is not None},
-                **({"data": _table_name(table)} if table is not None else {}),
-            }
-            for mark, table in self._marks
-        ]
-        return spec, buffers
+        return assemble_spec(
+            self._options, self._facet_spec(), self._used_columns(), self._mark_specs()
+        )
+
+    def widget(self) -> ChartWidget:
+        """A live notebook widget of this chart: Python can update it after display,
+        and it reports zooming, brushing, hovering, and clicks back.
+
+        Needs the ``notebook`` extra (``pip install 'herceg[notebook]'``).
+        """
+        from .widget import ChartWidget
+
+        return ChartWidget(self)
 
     def to_html(self, *, full_page: bool = True) -> str:
         """Self-contained HTML that renders the chart, with herceg and the data embedded."""
@@ -712,6 +699,40 @@ class Chart:
         return _render.notebook_html(*self.to_spec(), height=self._options.get("height"))
 
     # Internals -------------------------------------------------------------
+
+    def _facet_spec(self) -> dict[str, Any] | None:
+        if self._facet is None:
+            return None
+        return {"field": self._facet, "columns": self._facet_columns}
+
+    def _used_columns(self) -> dict[str, dict[str, Column]]:
+        """The columns marks read, by spec table name; other columns are never sent."""
+        used: dict[int, set[str]] = {}
+        for spec, table in self._marks:
+            if table is not None:
+                fields = used.setdefault(table, set())
+                fields.update(_fields(spec))
+                if self._facet is not None and spec.get("facet") is None:
+                    fields.add(self._facet)
+        return {
+            table_name(table): {
+                field: self._tables[table][1].column(field) for field in sorted(fields)
+            }
+            for table, fields in used.items()
+        }
+
+    def _mark_specs(self) -> list[dict[str, Any]]:
+        return [
+            {
+                **{key: value for key, value in mark.items() if value is not None},
+                **({"data": table_name(table)} if table is not None else {}),
+            }
+            for mark, table in self._marks
+        ]
+
+    def _table_names(self) -> list[tuple[Any, str]]:
+        """Each data source given to the chart or its marks, with its spec table name."""
+        return [(source, table_name(index)) for index, (source, _) in enumerate(self._tables)]
 
     def _table(self, data: Any) -> int:
         for index, (source, _) in enumerate(self._tables):
@@ -789,7 +810,70 @@ class Chart:
         return self
 
 
-def _table_name(index: int) -> str:
+#: Chart options a live chart can change after display: all but data and facets,
+#: which decide the columns sent.
+OPTIONS = (
+    *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
+    *("zoom", "brush", "sync", "renderer", "theme", "locale", "time_zone"),
+)
+
+
+def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
+    """The spec's chart options from Chart's keyword arguments; unset ones are left out."""
+    tooltip = settings["tooltip"]
+    interaction = {
+        key: value
+        for key, value in {
+            "zoom": settings["zoom"] or None,
+            "brush": settings["brush"],
+            "sync": settings["sync"],
+        }.items()
+        if value
+    }
+    options = {
+        "title": settings["title"],
+        "description": settings["description"],
+        "width": settings["width"],
+        "height": settings["height"],
+        "x": _axis(settings["x"]),
+        "y": _axis(settings["y"]),
+        "yRight": _axis(settings["y_right"]),
+        "legend": settings["legend"],
+        "tooltip": tooltip if tooltip is None or isinstance(tooltip, bool) else {"mode": tooltip},
+        "interaction": interaction or None,
+        "renderer": settings["renderer"],
+        "theme": _theme(settings["theme"]),
+        "locale": settings["locale"],
+        "timeZone": settings["time_zone"],
+    }
+    return {key: value for key, value in options.items() if value is not None}
+
+
+def assemble_spec(
+    options: dict[str, Any],
+    facet: dict[str, Any] | None,
+    tables: dict[str, dict[str, Column]],
+    marks: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[bytes]]:
+    """A spec and its buffers from chart options, columns by table name, and mark specs."""
+    buffers: list[bytes] = []
+    spec: dict[str, Any] = {"version": 1, **options}
+    if facet is not None:
+        spec["facet"] = {key: value for key, value in facet.items() if value is not None}
+    if tables:
+        spec["data"] = {
+            name: {"columns": columns_spec(columns, buffers)} for name, columns in tables.items()
+        }
+    spec["marks"] = marks
+    return spec, buffers
+
+
+def columns_spec(columns: dict[str, Column], buffers: list[bytes]) -> dict[str, Any]:
+    """Spec columns whose values are appended to `buffers`, which they index."""
+    return {field: _column_spec(column, buffers) for field, column in columns.items()}
+
+
+def table_name(index: int) -> str:
     return "data" if index == 0 else f"data{index + 1}"
 
 

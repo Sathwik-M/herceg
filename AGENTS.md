@@ -41,7 +41,7 @@ npm run lint             # biome lint + format check
 npm run format           # apply biome formatting and safe fixes
 npm run typecheck        # type check all TypeScript, including compile-time tests
 npm test                 # unit tests (vitest, Node)
-npm run test:browser     # browser tests for herceg and @herceg/react (local Chrome)
+npm run test:browser     # browser tests for herceg, @herceg/react, and python/js (local Chrome)
 npm run bench:core       # engine microbenchmarks (Node)
 npm run bench:size       # bundle size benchmark
 npm run bench            # browser benchmark suite (Chrome); see benchmarks/README.md

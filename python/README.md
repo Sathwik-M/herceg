@@ -6,7 +6,7 @@ large-data handling as the TypeScript library.
 
 > Early development. Line, area, bar, scatter, heatmap, error bar,
 > candlestick, and histogram marks, rule, region, and text annotations; small multiples;
-> HTML, notebook, SVG, and PNG output.
+> HTML, notebook, SVG, and PNG output; live notebook charts.
 
 ```python
 import herceg as hg
@@ -91,16 +91,74 @@ chart.save("chart.html")   # self-contained page: herceg and the data embedded
 chart.save("chart.svg")    # static SVG
 chart.save("chart.png")    # PNG at twice the chart size (scale=...)
 chart.to_spec()            # (spec dict, list of binary buffers)
+chart.widget()             # a live notebook chart (see below)
 ```
 
-HTML output and notebook display embed the herceg bundle (about 60 KiB), so
-they work offline. Notebooks show each chart in an isolated iframe.
+HTML output and notebook display embed the herceg bundle (about 145 KiB,
+53 KiB gzipped), so they work offline. Notebooks show each chart in an
+isolated iframe.
 
 SVG and PNG export need the `export` extra (`pip install 'herceg[export]'`):
 SVG is rendered by the same DOM-free renderer as herceg's `renderToSVG`, run in
 an embedded V8 engine (`mini-racer`), so it matches the browser's chart
 except for text measurement, which uses fixed Helvetica metrics. PNG is
 rasterized from that SVG by `resvg`.
+
+## Live notebook charts
+
+`chart.widget()` returns a chart that Python keeps updating after it is
+displayed, and that reports zooming, brushing, hovering, and clicks back to
+Python. It runs on [anywidget](https://anywidget.dev), so it works in
+JupyterLab, Jupyter Notebook 7, VS Code, and Colab; install the `notebook`
+extra (`pip install 'herceg[notebook]'`).
+
+```python
+live = hg.Chart(df, title="CPU", zoom=True, brush="x").line(x="time", y="cpu").widget()
+live                                     # display it
+
+live.append(new_rows, max_rows=10_000)   # stream rows, keeping the last 10,000
+live.replace(today)                      # replace every row
+live.update(title="CPU, today", theme="dark")
+live.viewport = (start, end)             # zoom; None fits the data
+live.selection = (start, end)            # brush; None clears it
+```
+
+`append` and `replace` take a table like the chart's data, or for `append`
+one row as a mapping of column names to values. The rows need every column
+the chart reads, with the same kinds of values (missing values fit any
+kind); other columns are ignored. Only the new rows travel, as binary
+buffers over the widget's connection, and the chart redraws once on the next
+frame. `max_rows` keeps a rolling window: the oldest rows are dropped. For a
+mark that reads its own data, pass that object: `live.append(rows,
+data=events)`. `update` takes the options of `hg.Chart` except data and
+facets; `None` restores an option's default.
+
+Interaction comes back as properties and callbacks:
+
+```python
+live.selection                           # the brushed x range, or None
+live.viewport                            # the visible x range when zoomed, or None
+
+live.on_select(lambda selection: print(selection))
+live.on_viewport(lambda viewport: print(viewport))
+live.on_hover(lambda inspection: print(inspection))   # None when the pointer leaves
+live.on_click(lambda inspection: print(inspection.value, inspection.points))
+live.on_click(callback, remove=True)     # stop calling it
+```
+
+Ranges and inspections hold Python values: datetimes on time axes (naive, in
+UTC, like the datetimes herceg reads), category labels on category axes, and
+numbers otherwise. An `hg.Inspection` is what the tooltip shows: the
+inspected `axis` (`"y"` for horizontal bars), the snapped `value` there and
+its axis `label`, the facet `panel`, and `points`, one `hg.InspectedPoint`
+per series with its `series` name, `value`, and tooltip `text`. Selection
+and viewport callbacks also run when Python sets them. Hover, zoom, and selection
+reach Python at most every 100 ms, always ending with the latest; hover and
+click are only sent while a callback listens.
+
+A widget displayed in several cells is one chart: updates and brushing reach
+every output. A browser that opens the notebook later, or reloads it, draws
+the current data.
 
 ## Development
 
@@ -113,6 +171,19 @@ npm run test:python    # build, then run pytest in a uv environment
 
 ## Limits
 
-- No live updates from Python after a chart is displayed; display a new chart
-  instead.
-- Notebook charts do not talk back to Python (selections, zoom state).
+- Static output (a chart displayed as a cell's value, HTML files) neither
+  updates nor talks back to Python; use `chart.widget()` for that.
+- Live charts need a running kernel. Where widgets are not rendered (GitHub,
+  nbviewer, notebooks saved without widget state) they show nothing; display
+  the chart itself for a static copy.
+- `sync` does not link separate widgets, since each loads its own copy of
+  the engine. Link them from Python instead:
+  `a.on_viewport(lambda viewport: setattr(b, "viewport", viewport))`.
+- Python keeps the live chart's current data, so a browser that connects
+  later can draw it, and `append` copies the table's columns on each call
+  (about 0.35 ms for 100 rows into a million-row, three-column window on an
+  Apple M6).
+- Each widget sends the engine (about 146 KiB, 53 KiB gzipped) to the browser
+  once. Live charts were tested in JupyterLab 4; Notebook 7, VS Code, and
+  Colab support anywidget but have not been tested here.
+- Hover and click events report values, not row numbers.

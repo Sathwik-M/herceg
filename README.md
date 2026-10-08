@@ -14,7 +14,7 @@ applications. Today it provides:
 - keyboard navigation, generated data summaries, and static SVG export;
 - React components (`@herceg/react`) whose data updates bypass React;
 - a Python package (`python/`) for pandas, Polars, PyArrow, and NumPy data,
-  with notebook, HTML, SVG, and PNG output.
+  with notebook, HTML, SVG, and PNG output and live notebook charts.
 
 ## Status
 
@@ -43,13 +43,14 @@ marks drawing through the same renderers, level of detail, streaming
 updates, shared scheduler, browser interaction (tooltips, zoom, brushing,
 events, synced charts), static SVG, React adapter, min/max indexes for
 zooming and streaming large line series, WebGL drawing of large point series, chart specs
-with binary columns, Python package, a second y axis, small multiples.
+with binary columns, Python package, a second y axis, small multiples, live
+notebook charts (a widget that streams updates from Python and reports
+interaction back).
 
 Next:
 
 1. More chart types: box plots, pie and donut charts.
-2. Live notebook charts (a widget that streams updates from Python) and PDF
-   export.
+2. A Streamlit component, and PDF export.
 3. Other framework adapters (Vue, Svelte).
 4. Facets by row and column, and independent panel scales.
 

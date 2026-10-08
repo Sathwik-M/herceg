@@ -17,13 +17,18 @@ or compose several marks on one chart::
 
 Charts display in notebooks, save as HTML, SVG, or PNG, and serialize to the
 portable herceg chart spec shared with the TypeScript library.
+``chart.widget()`` makes a live notebook chart that Python can update and
+observe (the ``notebook`` extra).
 """
 
 from ._chart import Axis, Chart, area, bar, candlestick, heatmap, histogram, line, scatter
+from ._events import InspectedPoint, Inspection
 
 __all__ = [
     "Axis",
     "Chart",
+    "InspectedPoint",
+    "Inspection",
     "area",
     "bar",
     "candlestick",

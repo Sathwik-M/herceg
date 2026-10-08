@@ -469,9 +469,26 @@ to their defaults, and are skipped when no mark's spec or table and no option
 changed (compared as JSON with sorted keys). Unchanged marks keep their
 identity, so their caches survive re-renders. Data changes go
 through the table and reach the chart through its own change events and
-frame scheduler, without rendering React. A test
-(`test/architecture.test.ts`) keeps the core directories (`data`, `scale`,
-`format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM access. Marks
+frame scheduler, without rendering React.
+
+The Python package (`python/`) emits specs with binary buffers and ships
+bundles of the engine built by `npm run build:python`: a classic script for
+HTML output, a DOM-free script for SVG export in an embedded V8, and ES
+modules for live charts. A live notebook chart (`chart.widget()`, an
+anywidget) keeps the current data in Python and sends each change as one
+message: appended or replaced columns as binary buffers, changed options as
+JSON. Messages carry a revision number. A browser that connects late,
+reloads, or misses a message asks for the whole chart, which Python builds
+from the current data when it is sent (holding the lock that orders
+updates); it is not stored in the widget state, so updates never re-send
+it. A range brushed or zoomed in one browser goes through Python to the
+others, marked with its origin; a range report made before a newer change
+from elsewhere is dropped. Views of one widget share its tables and marks
+in the browser, so an update is decoded once however many outputs show it.
+
+A test (`test/architecture.test.ts`) keeps the core directories (`data`,
+`scale`, `format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM
+access. Marks
 import their drawings (`draw`), which write SVG without a DOM and paint
 canvases through the context they are handed; only raster painting reaches
 the DOM, creating an offscreen canvas in that canvas' document when

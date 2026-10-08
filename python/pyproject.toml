@@ -12,6 +12,7 @@ pandas = ["pandas>=2.0"]
 polars = ["polars>=1.0"]
 arrow = ["pyarrow>=14"]
 export = ["mini-racer>=0.12", "resvg-py>=0.1"]
+notebook = ["anywidget>=0.9"]
 dev = [
   "pytest>=8",
   "ruff>=0.6",
@@ -20,6 +21,7 @@ dev = [
   "pyarrow>=14",
   "mini-racer>=0.12",
   "resvg-py>=0.1",
+  "anywidget>=0.9",
 ]
 
 [build-system]

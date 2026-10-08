@@ -11,20 +11,26 @@ import uuid
 import webbrowser
 from functools import cache
 from importlib.resources import files
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._chart import Chart
 
 
-def _asset(name: str) -> str:
-    path = files("herceg") / "static" / name
+def asset_path(name: str) -> Path:
+    """A JavaScript bundle shipped in the package (built by `npm run build:python`)."""
+    path = Path(str(files("herceg") / "static" / name))
     if not path.is_file():
         raise RuntimeError(
             f"herceg's JavaScript bundle ({name}) is missing. In a source checkout, "
             "run `npm run build:python` from the repository root."
         )
-    return path.read_text(encoding="utf-8")
+    return path
+
+
+def asset(name: str) -> str:
+    return asset_path(name).read_text(encoding="utf-8")
 
 
 def _encoded(buffers: list[bytes]) -> list[str]:
@@ -54,7 +60,7 @@ def html(spec: dict[str, Any], buffers: list[bytes], *, full_page: bool = True) 
     # `sync` name share cursor and zoom.
     body = (
         f'<div id="{element}" style="width:{width};height:{height}"></div>\n'
-        f"<script>if (!window.hercegPython) {{\n{_asset('herceg.js')}\n}}</script>\n"
+        f"<script>if (!window.hercegPython) {{\n{asset('herceg.js')}\n}}</script>\n"
         f"<script>hercegPython.render(document.getElementById({_script_json(element)}), "
         f"{_script_json(spec)}, {_script_json(_encoded(buffers))});</script>"
     )
@@ -92,7 +98,7 @@ def _engine() -> Any:
     # V8's thread must be stopped before interpreter shutdown, which
     # otherwise waits for it forever.
     atexit.register(engine.close)
-    engine.eval(_asset("herceg-static.js"))
+    engine.eval(asset("herceg-static.js"))
     return engine
 
 
