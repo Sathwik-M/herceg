@@ -669,6 +669,16 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
         sync: string,
       });
     },
+    animation: (a, path) => {
+      if (typeof a === "boolean") return;
+      object(a, path);
+      properties(a as Record<string, unknown>, path, {
+        duration: (v, at) => {
+          if (typeof v !== "number" || !(v >= 0) || !Number.isFinite(v))
+            fail(at, "milliseconds, at least 0", v);
+        },
+      });
+    },
     renderer: oneOf("auto", "svg", "canvas"),
     theme,
     locale: string,

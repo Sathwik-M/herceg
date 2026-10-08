@@ -125,6 +125,7 @@ class Chart:
         zoom: bool | Literal["x", "y", "xy"] = False,
         brush: Literal["x", "y", "xy", "lasso"] | None = None,
         sync: str | None = None,
+        animation: bool | float = False,
         renderer: Literal["auto", "svg", "canvas"] | None = None,
         theme: ThemeName | dict[str, Any] | None = None,
         locale: str | None = None,
@@ -183,6 +184,12 @@ class Chart:
                 raise ValueError(
                     "charts whose panels have y scales of their own cannot zoom along y"
                 )
+        if not isinstance(animation, bool) and not (
+            isinstance(animation, int | float) and math.isfinite(animation) and animation >= 0
+        ):
+            raise ValueError(
+                f"animation must be True, False, or milliseconds of at least 0, not {animation!r}"
+            )
         if facet_row is not None and facet_row == facet_col:
             raise ValueError(f"facet_row and facet_col must differ, not both {facet_row!r}")
         # bool is an int in Python, but True columns would be meaningless.
@@ -225,6 +232,7 @@ class Chart:
             "zoom": zoom,
             "brush": brush,
             "sync": sync,
+            "animation": animation,
             "renderer": renderer,
             "theme": theme,
             "locale": locale,
@@ -1652,13 +1660,15 @@ _NODE_FIELDS = ("node", "group", "size")
 #: which decide the columns sent.
 OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
-    *("zoom", "brush", "sync", "resolve_y", "renderer", "theme", "locale", "time_zone"),
+    *("zoom", "brush", "sync", "animation", "resolve_y", "renderer", "theme", "locale"),
+    "time_zone",
 )
 
 
 def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
     """The spec's chart options from Chart's keyword arguments; unset ones are left out."""
     tooltip = settings["tooltip"]
+    animation = settings["animation"]
     interaction = {
         key: value
         for key, value in {
@@ -1679,6 +1689,9 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "legend": settings["legend"],
         "tooltip": tooltip if tooltip is None or isinstance(tooltip, bool) else {"mode": tooltip},
         "interaction": interaction or None,
+        "animation": (animation or None)
+        if isinstance(animation, bool)
+        else {"duration": animation},
         "resolve": {"y": settings["resolve_y"]} if settings["resolve_y"] else None,
         "renderer": settings["renderer"],
         "theme": _theme(settings["theme"]),

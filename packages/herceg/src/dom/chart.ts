@@ -38,6 +38,7 @@ import {
   type SyncMember,
 } from "./sync.ts";
 import { describeInspection, Tooltip } from "./tooltip.ts";
+import type { ViewAnimation } from "./transition.ts";
 
 export interface ChartOptions extends ChartConfig {
   /** Fixed size in CSS pixels; omitted dimensions follow the container. */
@@ -60,6 +61,15 @@ function measurer(document: Document): MeasureText {
     sharedMeasure = context ? canvasMeasurer(context) : estimateText;
   }
   return sharedMeasure;
+}
+
+/** Whether a scene leaves large point series to the GPU painter. */
+function hasClouds(scene: Scene): boolean {
+  return scene.panels.some((panel) =>
+    panel.marks.some(
+      (mark) => mark.kind === "point" && (mark as unknown as PointGeometry).cloud !== undefined,
+    ),
+  );
 }
 
 const HIDDEN_TEXT =
@@ -91,6 +101,11 @@ export class Chart implements Scheduled, SyncMember {
   #clouds: CloudPainter | null | undefined;
   #cloudsLoading: Promise<void> | undefined;
   #scene: Scene | undefined;
+  /** Moves the axes to views asked for, once loaded for `animation`; null if it failed to load. */
+  #animation: ViewAnimation | null | undefined;
+  #animationLoading: Promise<void> | undefined;
+  /** How long the last frame took to plan and paint, in milliseconds. */
+  #drawTime = 0;
   #visible = true;
   #dirty = true;
   #destroyed = false;
@@ -156,6 +171,7 @@ export class Chart implements Scheduled, SyncMember {
     this.#legend = new Legend(document, (key) => {
       if (this.model.hidden.has(key)) this.model.hidden.delete(key);
       else this.model.hidden.add(key);
+      this.#settle();
       this.#invalidate();
     });
     this.#tooltip = new Tooltip(document);
@@ -185,7 +201,9 @@ export class Chart implements Scheduled, SyncMember {
         const observer = new ResizeObserver(() => {
           this.#remember();
           const { width, height } = this.#size();
-          if (width !== this.model.width || height !== this.model.height) this.#invalidate();
+          if (width === this.model.width && height === this.model.height) return;
+          this.#settle();
+          this.#invalidate();
         });
         observer.observe(container, { box: "border-box" });
         this.#cleanup.push(() => observer.disconnect());
@@ -209,13 +227,18 @@ export class Chart implements Scheduled, SyncMember {
     readPage(this.#container, (page) => this.model.update(this.#options, page));
     // The page was just read; a change it had is in the theme now.
     this.#pageChanged = false;
+    this.#settle();
     this.#applyOptions();
     this.#invalidate();
   }
 
   /** Shows an x range (epoch ms for time axes), or null to fit the data. */
   setViewport(domain: readonly [number, number] | null): void {
-    this.syncViewport(domain);
+    this.#animated(() => this.#setViewport(domain));
+  }
+
+  #setViewport(domain: readonly [number, number] | null): void {
+    this.#applyViewport(domain);
     // A viewport listener may have changed the viewport again; share where
     // it ended up, not the request.
     const sync = this.#options.interaction?.sync;
@@ -232,7 +255,7 @@ export class Chart implements Scheduled, SyncMember {
     const scale = panel?.yRight;
     const across = (value: number) => scale!.invert(panel!.y.map(value));
     const mapped = domain && scale ? ([across(domain[0]), across(domain[1])] as const) : undefined;
-    this.#setYViewport(domain && { y: domain, yRight: right ?? mapped });
+    this.#animated(() => this.#setYViewport(domain && { y: domain, yRight: right ?? mapped }));
   }
 
   /**
@@ -281,17 +304,23 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   /**
-   * Pending while the chart loads its GPU painter for large point series,
-   * which it draws once loaded; undefined when nothing is pending.
+   * Pending while the chart loads code it needs: its GPU painter for large
+   * point series, which it draws once loaded, or its `animation`, without
+   * which views change at once. Undefined when nothing is pending.
    */
   get loading(): Promise<void> | undefined {
-    return this.#cloudsLoading;
+    const clouds = this.#cloudsLoading;
+    const animation = this.#animationLoading;
+    return clouds && animation
+      ? Promise.all([clouds, animation]).then(() => {})
+      : (clouds ?? animation);
   }
 
   /** Renders now instead of on the next frame. */
   render(): void {
     // The container may have changed since the observer last reported.
     this.#remember();
+    this.#settle();
     this.#dirty = true;
     this.flush();
   }
@@ -319,6 +348,8 @@ export class Chart implements Scheduled, SyncMember {
     for (const stop of this.#tables.values()) stop();
     this.#tables.clear();
     this.#clouds?.release(this);
+    // A transition waiting for its first frame leaves the frame's batch.
+    this.#animation?.settle();
     this.#events.clear();
     this.model.dispose();
     this.root.remove();
@@ -329,7 +360,11 @@ export class Chart implements Scheduled, SyncMember {
     if (this.#destroyed) return;
     if (this.#pageChanged) {
       this.#pageChanged = false;
-      if (readPage(this.#container, (page) => this.model.refreshTheme(page))) this.#dirty = true;
+      if (readPage(this.#container, (page) => this.model.refreshTheme(page))) {
+        // New fonts or sizes need margins planned for them: show the new view at once.
+        this.#animation?.settle();
+        this.#dirty = true;
+      }
     }
     if (this.#dirty) {
       this.#dirty = false;
@@ -344,6 +379,11 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   syncViewport(domain: readonly [number, number] | null): void {
+    this.#settle();
+    this.#applyViewport(domain);
+  }
+
+  #applyViewport(domain: readonly [number, number] | null): void {
     const before = this.model.viewport;
     this.model.setViewport(domain);
     this.#invalidate();
@@ -359,6 +399,8 @@ export class Chart implements Scheduled, SyncMember {
 
   #setVisible(visible: boolean) {
     this.#visible = visible;
+    // A chart scrolled away shows the view asked for when it returns.
+    if (!visible) this.#settle();
     if (visible && (this.#dirty || this.#pageChanged)) schedule(this);
   }
 
@@ -377,13 +419,18 @@ export class Chart implements Scheduled, SyncMember {
       if (!this.#tables.has(table))
         this.#tables.set(
           table,
-          table.subscribe(() => this.#invalidate()),
+          table.subscribe(() => {
+            // New data shows at once: a moving view would plan from stale data.
+            this.#settle();
+            this.#invalidate();
+          }),
         );
     }
     const sync = options.interaction?.sync;
     this.#leaveSync?.();
     this.#leaveSync = sync ? join(sync, this) : undefined;
     this.#brush.mode = options.interaction?.brush ?? "x";
+    if (options.animation) this.#loadAnimation();
     // Drags pan or brush; the page still scrolls along an axis they leave alone.
     const { zoom, brush } = options.interaction ?? {};
     const along = `${zoom === true ? "x" : zoom || ""}${brush === "lasso" ? "xy" : (brush ?? "")}`;
@@ -457,16 +504,25 @@ export class Chart implements Scheduled, SyncMember {
   #draw() {
     const { width, height } = this.#size();
     const window = this.root.ownerDocument.defaultView;
+    // Hosts measured each frame change size without the resize observer.
+    if (width !== this.model.width || height !== this.model.height) this.#animation?.settle();
     this.model.setSize(width, height, window?.devicePixelRatio ?? 1);
     this.root.style.width = `${width}px`;
     this.root.style.height = `${height}px`;
-    const scene = this.model.scene(measurer(this.root.ownerDocument), this.#cloudsAllowed());
+    const measure = measurer(this.root.ownerDocument);
+    const cloudsAllowed = this.#cloudsAllowed();
+    const animation = this.#animation;
+    if (animation?.playing) {
+      const plan = () => {
+        this.model.scene(measure, cloudsAllowed);
+        return this.model.panels()[0];
+      };
+      if (animation.step(plan, this.#drawTime)) this.#invalidate();
+    }
+    const started = performance.now();
+    const scene = this.model.scene(measure, cloudsAllowed);
     this.#scene = scene;
-    const clouds = scene.panels.some((panel) =>
-      panel.marks.some(
-        (mark) => mark.kind === "point" && (mark as unknown as PointGeometry).cloud !== undefined,
-      ),
-    );
+    const clouds = hasClouds(scene);
     // A null painter means WebGL is unavailable; it is not loaded again.
     if (clouds && this.#clouds === undefined) this.#loadClouds();
 
@@ -502,7 +558,57 @@ export class Chart implements Scheduled, SyncMember {
     this.#clouds?.endFrame(this);
     this.#svg.render(scene, { marks: !this.#onCanvas });
     this.#legend.update(scene.legend, scene.theme);
+    this.#drawTime = performance.now() - started;
     this.#describe();
+  }
+
+  /**
+   * Makes the view changes `change` makes, moving the axes there gradually
+   * where `animation` allows: in a chart of one panel, on screen, and not
+   * linked to others.
+   */
+  #animated(change: () => void): void {
+    const animation = this.#animation;
+    const panels = this.model.panels();
+    const { config } = this.model;
+    const movable =
+      animation &&
+      panels.length === 1 &&
+      !config.facet &&
+      !config.panels &&
+      !config.interaction?.sync &&
+      this.#visible &&
+      this.#scene &&
+      !hasClouds(this.#scene);
+    // What is on screen: no scene is drawn until the next frame.
+    const from = movable ? panels[0] : undefined;
+    this.#settle();
+    // The transition starts before the change reports itself, so viewport
+    // listeners that draw, stream data, or change options end it as usual.
+    if (from && animation!.start(from, this.#options.animation, this.#drawTime)) this.#invalidate();
+    change();
+  }
+
+  /** Ends a change of view playing and draws the view asked for. */
+  #settle(): void {
+    if (!this.#animation?.playing) return;
+    this.#animation.settle();
+    this.#invalidate();
+  }
+
+  /** Loads the animation module the first time a chart asks for `animation`. */
+  #loadAnimation(): void {
+    if (this.#animation !== undefined || this.#animationLoading) return;
+    this.#animationLoading = import("./transition.ts")
+      .then(
+        ({ ViewAnimation }) => new ViewAnimation(this.model, this.root.ownerDocument.defaultView),
+      )
+      // Without it, views change at once.
+      .catch(() => null)
+      .then((animation) => {
+        this.#animation = animation;
+        this.#animationLoading = undefined;
+      });
   }
 
   #describe() {
@@ -711,6 +817,8 @@ export class Chart implements Scheduled, SyncMember {
       (event) => {
         if (!this.#options.interaction?.zoom || !this.#scene) return;
         event.preventDefault();
+        // The wheel zooms from the view on screen, at once.
+        this.#settle();
         const point = local(event);
         const panel = this.#panelAt(point.x, point.y) ?? this.model.panels()[0];
         if (!panel) return;
@@ -721,7 +829,7 @@ export class Chart implements Scheduled, SyncMember {
         const factor = Math.exp(event.deltaY * 0.002);
         if (zoom.x) {
           const px = Math.min(plot.x + plot.width, Math.max(plot.x, point.x));
-          this.setViewport([
+          this.#setViewport([
             scale.invert(px - (px - plot.x) * factor),
             scale.invert(px + (plot.x + plot.width - px) * factor),
           ]);
@@ -739,6 +847,11 @@ export class Chart implements Scheduled, SyncMember {
     );
     on("pointerdown", (event) => {
       if (event.button !== 0 || !this.#scene) return;
+      // A drag starts from the view it lands in, not one passing by.
+      if (this.#animation?.playing) {
+        this.#settle();
+        this.flush();
+      }
       const { x, y } = local(event);
       if (this.model.layout) {
         this.#tap = { x, y, moved: false };
@@ -801,8 +914,10 @@ export class Chart implements Scheduled, SyncMember {
     // Double click resets both axes, also one zoomed before `interaction.zoom` stopped naming it.
     on("dblclick", () => {
       if (!this.#options.interaction?.zoom) return;
-      this.setViewport(null);
-      this.setYViewport(null);
+      this.#animated(() => {
+        this.#setViewport(null);
+        this.#setYViewport(null);
+      });
     });
 
     on("keydown", (event) => this.#key(event));
@@ -815,12 +930,13 @@ export class Chart implements Scheduled, SyncMember {
 
   /** Moves the zoomable axes by a drag's shift, through the scales of the panel it started in. */
   #pan(press: { x: number; y: number; panel: PanelInfo }, x: number, y: number) {
+    this.#settle();
     const { panel } = press;
     const { plot } = panel;
     const zoom = this.#zoomAxes(panel);
     if (zoom.x) {
       const shift = press.x - x;
-      this.setViewport([
+      this.#setViewport([
         panel.x.invert(plot.x + shift),
         panel.x.invert(plot.x + plot.width + shift),
       ]);
@@ -856,8 +972,10 @@ export class Chart implements Scheduled, SyncMember {
 
   /** Zooms to a brushed selection. */
   #zoomTo(selection: Selection, panel: PanelInfo) {
-    if (selection.x) this.setViewport(selection.x);
-    if (selection.y) this.#zoomY(panel, panel.y.map(selection.y[0]), panel.y.map(selection.y[1]));
+    this.#animated(() => {
+      if (selection.x) this.#setViewport(selection.x);
+      if (selection.y) this.#zoomY(panel, panel.y.map(selection.y[0]), panel.y.map(selection.y[1]));
+    });
   }
 
   /**

@@ -111,6 +111,16 @@ export interface YViewport {
   yRight?: readonly [number, number] | undefined;
 }
 
+/**
+ * Ascending x and y ranges drawn while a change of view plays; null for an
+ * axis without one (a category axis, or no right axis).
+ */
+export interface ViewDomains {
+  x: readonly [number, number] | null;
+  y: readonly [number, number] | null;
+  yRight: readonly [number, number] | null;
+}
+
 export type {
   AxisInspection,
   InspectedPoint,
@@ -140,6 +150,7 @@ export class ChartModel {
   readonly hidden = new Set<string>();
   #viewport: [number, number] | null = null;
   #yViewport: YViewport | null = null;
+  #transition: ViewDomains | null = null;
   #polylines = new Map<string, Polyline>();
   #floats = new Map<string, Float32Array>();
   #bytes = new Map<string, Uint8ClampedArray<ArrayBuffer>>();
@@ -222,6 +233,15 @@ export class ChartModel {
       throw new Error("Charts whose panels have y scales of their own have no one y viewport");
     const y = range(viewport?.y ?? null);
     this.#yViewport = y && { y, yRight: range(viewport?.yRight ?? null) ?? undefined };
+  }
+
+  /**
+   * Draws these ranges in place of the viewports and fitted domains while a
+   * change of view plays: as they are, not rounded, and not reported as the
+   * viewport. Null ends it.
+   */
+  setTransitionDomains(domains: ViewDomains | null): void {
+    this.#transition = domains;
   }
 
   /** Whether every panel shares the y scale: without facets, or without `resolve.y`. */
@@ -486,6 +506,11 @@ export class ChartModel {
 
     // x domain: viewport, explicit domain, or data extent. Log axes only
     // consider positive values. Band axes take their categories instead.
+    // A playing change of view draws its own ranges.
+    const shown = this.#transition;
+    const xView = shown?.x ?? this.#viewport;
+    const yView = shown?.y ?? this.#yViewport?.y;
+    const yRightView = shown?.yRight ?? this.#yViewport?.yRight;
     let xDomain: [number, number] = [0, 1];
     let hasData = false;
     if (xType === "band") {
@@ -498,11 +523,11 @@ export class ChartModel {
       if ((config.x?.zero ?? xMeasures) && !xLog) dataX = unionExtent([dataX, [0, 0]]);
       hasData = dataX !== undefined;
       xDomain = usableDomain(
-        this.#viewport ? oriented(this.#viewport, config.x?.domain) : (config.x?.domain ?? dataX),
+        xView ? oriented(xView, config.x?.domain) : (config.x?.domain ?? dataX),
         xType,
       );
     }
-    const autoX = xType !== "band" && !this.#viewport && !config.x?.domain;
+    const autoX = xType !== "band" && !xView && !config.x?.domain;
     const dataXDomain = xDomain;
 
     // y domains from data visible in the x domain, unless they are fixed;
@@ -529,8 +554,8 @@ export class ChartModel {
       leftUsed = !rightUsed || placesY(leftMarks);
       if (sharedY)
         yBase = usableDomain(
-          this.#yViewport
-            ? oriented(this.#yViewport.y, config.y?.domain)
+          yView
+            ? oriented(yView, config.y?.domain)
             : (config.y?.domain ?? this.#yData(leftMarks, yType, config.y, x0, x1)),
           yType,
         );
@@ -691,7 +716,7 @@ export class ChartModel {
       groupPlans.push(planCategories(plotTop, groupHeight(0)));
     } else if (!groups) {
       groupPlans.push(
-        planValueAxis(yContext, yBase, leftMarks, this.#yViewport !== null, groupHeight(0)),
+        planValueAxis(yContext, yBase, leftMarks, yView !== undefined, groupHeight(0)),
       );
     } else {
       groups.drawn.forEach((drawn, g) => {
@@ -735,14 +760,14 @@ export class ChartModel {
       ? planValueAxis(
           yRightContext,
           usableDomain(
-            this.#yViewport?.yRight
-              ? oriented(this.#yViewport.yRight, config.yRight?.domain)
+            yRightView
+              ? oriented(yRightView, config.yRight?.domain)
               : (config.yRight?.domain ??
                   this.#yData(rightMarks, yRightType, config.yRight, x0, x1)),
             yRightType,
           ),
           rightMarks,
-          this.#yViewport?.yRight !== undefined,
+          yRightView !== undefined,
         )
       : undefined;
     const showLeft = showY && leftUsed;
@@ -755,7 +780,13 @@ export class ChartModel {
     // shrink when the size or configuration changes.
     const layoutKey = `${width}x${height}`;
     const sameLayout = layoutKey === this.#layoutKey;
-    if (sameLayout) left = Math.max(left, this.#left);
+    // A change of view playing keeps the margins of the view it ends at,
+    // planned on its first frame: passing tick labels move nothing, and are
+    // never kept for later scenes.
+    const moving = this.#transition !== null;
+    const frozen = sameLayout && moving;
+    if (frozen) left = this.#left;
+    else if (sameLayout) left = Math.max(left, this.#left);
     this.#layoutKey = layoutKey;
 
     // The right axis' labels decide the right margin, as the left one's do the left.
@@ -766,7 +797,8 @@ export class ChartModel {
       right = Math.ceil(Math.max(0, ...yRightLabels.map(measureLabel))) + GAP + 2 + EDGE;
       if (config.yRight?.label) right += lineHeight + GAP;
     }
-    if (sameLayout) right = Math.max(right, this.#right);
+    if (frozen) right = this.#right;
+    else if (sameLayout) right = Math.max(right, this.#right);
 
     // x ticks; widen the margins if the first or last label would be clipped,
     // and the gap between columns of panels if labels at the edges of
@@ -778,6 +810,7 @@ export class ChartModel {
         ? Math.ceil(labelWidth) + GAP + 2 + 8 + (titled && config.panels ? lineHeight + GAP : 0)
         : 0;
     let columnGap = columns > 1 ? Math.max(16, labelRoom, sameLayout ? this.#columnGap : 0) : 0;
+    if (frozen) columnGap = this.#columnGap;
     const widthOf = () => (width - left - right - (columns - 1) * columnGap) / columns;
     // The x plan for panels `plotWidth` wide, the first starting at `left`.
     const planX = (plotWidth: number): AxisPlan => {
@@ -813,7 +846,7 @@ export class ChartModel {
     // kept for the next scene are ones that scene keeps too.
     for (let pass = 0; pass < 10; pass++) {
       const last = xPlan.ticks.length - 1;
-      if (last < 0 || !hasData || !showX) break;
+      if (last < 0 || !hasData || !showX || frozen) break;
       const half = (index: number) => measure(xPlan.labels[index]!, font) / 2;
       const lastEnd = xPlan.scale.map(xPlan.ticks[last]!) + half(last);
       const firstStart = xPlan.scale.map(xPlan.ticks[0]!) - half(0);
@@ -840,9 +873,11 @@ export class ChartModel {
     }
     if (panelCount > 1 && widthOf() < MIN_PANEL)
       throw tooSmall(panelCount, columns, width, height, layout!.remedy);
-    this.#left = left;
-    this.#right = right;
-    this.#columnGap = columnGap;
+    if (!moving) {
+      this.#left = left;
+      this.#right = right;
+      this.#columnGap = columnGap;
+    }
     const columnOffset = (column: number) => column * (plotWidth + columnGap);
 
     // Every panel shares the x and y plans, moved to its column and row.
@@ -1425,6 +1460,9 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
     ids.add(id);
   }
   if (config.facet && config.panels) throw new Error("A chart has facets or panels, not both");
+  const duration = typeof config.animation === "object" ? config.animation.duration : undefined;
+  if (duration !== undefined && !(Number.isFinite(duration) && duration >= 0))
+    throw new RangeError(`animation.duration must be milliseconds of at least 0, not ${duration}`);
   if (!config.panels) {
     const named = marks.find((mark) => mark.spec.panel !== undefined);
     if (named)

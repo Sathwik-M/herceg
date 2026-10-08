@@ -55,7 +55,7 @@ tables (filter, calculate, bin, aggregate, rolling windows, sort) with
 portable expressions, level of detail, streaming updates, a shared
 scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
-selections), static SVG and PDF export, React, Vue, and Svelte adapters,
+selections, animated changes of view), static SVG and PDF export, React, Vue, and Svelte adapters,
 min/max indexes for zooming and streaming large line series, WebGL drawing
 of large point series, chart specs with binary columns, a Python package, a
 second y axis, small multiples (wrapped or by row and column, with shared or
@@ -68,7 +68,8 @@ Next, in order:
 1. Large data: incremental stacked and grouped updates, partial GPU uploads,
    heatmaps beyond the cell limit.
 2. Layout: independent x scales and weighted columns.
-3. Animation; label collision handling.
+3. Animation of changed values (bars, pies) and of panels; label collision
+   handling.
 4. Financial tools, geographic charts, and 3D.
 5. Screen-reader verification, benchmarks across browsers and machines, and
    an API review before a first release.

@@ -670,6 +670,7 @@ the thousands, not millions.
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |
+| `animation` | `true` or `{ duration }` (milliseconds, 250 by default) moves the axes gradually to a view asked for: `setViewport`, `setYViewport`, zooming to a brush, and double-click reset. Off by default. Wheel zoom, panning, new data, resizes, and export always show at once; charts with several panels or `sync`, pages preferring reduced motion, and charts whose frames seem to take over 10 ms (judged from earlier frames, alone or with the charts beside them) do not animate. The animation code loads with the first chart that asks for it. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
@@ -679,7 +680,8 @@ and `setYViewport([from, to] | null)` (the left axis; a right axis shows what
 the same pixels show on it), `select(selection | [from, to] | null)` (a pair
 is shorthand for an x range) and `selection`, `on(event, listener)`,
 `render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
-painter for large point series loads, otherwise undefined).
+painter for large point series or the animation code loads, otherwise
+undefined).
 
 `selection` is a `Selection`, `{ x, y, lasso }`, or null, all in data values:
 the selected x and y ranges (null along an axis the brush leaves alone; a

@@ -45,6 +45,7 @@ const optionProps = {
   legend: { type: Boolean, default: undefined },
   tooltip: { type: [Boolean, Object] as Option<"tooltip">, default: undefined },
   interaction: Object as Option<"interaction">,
+  animation: { type: [Boolean, Object] as Option<"animation">, default: undefined },
   renderer: String as Option<"renderer">,
   theme: [String, Object] as Option<"theme">,
   locale: String,

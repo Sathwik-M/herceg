@@ -45,6 +45,19 @@ def test_spec_uses_the_portable_format():
     assert np.frombuffer(buffers[columns["p99"]["buffer"]], dtype="<f8").tolist() == [3.0, 4.0]
 
 
+def test_animation_is_off_true_or_a_duration():
+    def animation(**options):
+        spec, _ = hg.Chart(DATA, **options).line(x="t", y="p50").to_spec()
+        return spec.get("animation")
+
+    assert animation() is None
+    assert animation(animation=True) is True
+    assert animation(animation=400) == {"duration": 400}
+    for wrong in (-1, float("nan"), "slow"):
+        with pytest.raises(ValueError, match="animation must be"):
+            hg.Chart(DATA, animation=wrong)
+
+
 def test_categories_travel_as_codes_and_dictionary():
     spec, buffers = hg.Chart(DATA).bar(x="host", y="p50").to_spec()
     host = spec["data"]["data"]["columns"]["host"]

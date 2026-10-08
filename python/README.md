@@ -73,7 +73,9 @@ their panel with `panel="latency"` (or `"*"` for all),
 freehand region; along zoomed axes, drag to zoom instead),
 `sync` (charts with the same name on one HTML page share cursor and zoom;
 notebook outputs are separate iframes, so `sync` does not reach across
-cells), `renderer`, `theme` (below), `locale`, and `time_zone`.
+cells), `animation` (`True`, or milliseconds: zooming to a brush and
+double-click reset move the axes gradually in HTML output), `renderer`,
+`theme` (below), `locale`, and `time_zone`.
 
 `theme` is `"light"` (the default), `"dark"`, `"high-contrast"`,
 `"high-contrast-dark"`, `"auto"` (light or dark to match the surface the chart
