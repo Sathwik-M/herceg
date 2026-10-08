@@ -152,7 +152,7 @@ when the data is on a canvas, and with a halo so text stays readable over
 lines. Annotations outside the view are left out. Text is meant for
 annotations, not for labeling every point of a large series.
 
-Bars, points, error bars, heatmaps, candlesticks, and histograms:
+Bars, points, error bars, heatmaps, candlesticks, histograms, box plots, and violins:
 
 ```ts
 const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
@@ -178,6 +178,7 @@ histogram(requests, { x: "latency", series: "region", bins: { step: 10 }, normal
 
 boxplot(requests, { x: "region", y: "latency", series: "version" });
 boxplot(requests, { x: "latency", y: "region" }); // a category y lays boxes along y
+violin(requests, { x: "region", y: "latency" }); // kernel densities, quartiles inside
 ```
 
 Bar labels go past each bar's end, or for stacks inside each segment in a
@@ -253,6 +254,19 @@ non-finite values are left out. On a log axis, the parts of a box at zero or
 below are not drawn. Statistics are recomputed for every box when the table
 changes, so long streams of observations cost a full pass per frame. In
 charts with facets, box plots repeat in every panel (`facet: "repeat"`).
+
+Violins take the same fields and options as box plots and draw each group's
+Gaussian kernel density instead, mirrored about the category's center: every
+violin is as wide at its densest, and reaches two bandwidths past the group's
+extreme values (Plotly's default "soft" span). The bandwidth is each group's
+own by Silverman's rule of thumb, 0.9 min(sd, IQR / 1.34) n^-1/5, unless
+`bandwidth` sets one in data units for all of them. Inside each violin, a
+line spans the box plot's whiskers, a narrow box the quartiles, and a dot
+marks the median. A group whose values do not vary is a line across the
+violin's width. Tooltips report the median, quartiles, range, and count.
+Densities are of the values themselves, not of their logarithms: on a log
+axis a violin is the same density drawn on a stretched axis, and the part at
+zero or below is not drawn.
 
 Marks are drawn in array order; rules and text always draw above other marks.
 

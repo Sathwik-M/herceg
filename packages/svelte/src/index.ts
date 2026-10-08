@@ -19,3 +19,4 @@ export { default as Rule } from "./Rule.svelte";
 export { default as Sunburst } from "./Sunburst.svelte";
 export { default as Text } from "./Text.svelte";
 export { default as Treemap } from "./Treemap.svelte";
+export { default as Violin } from "./Violin.svelte";

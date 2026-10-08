@@ -9,6 +9,7 @@ import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { TreemapSpec } from "../spec/spec.ts";
+import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { type Branch, count, labelFor, TreeData } from "./tree-data.ts";
 
@@ -181,7 +182,7 @@ export class TreemapMark implements LayoutMark {
     lineHeight: number,
   ): Geometry[] {
     const { theme, measure } = frame;
-    const backdrop = theme.background === "transparent" ? "#ffffff" : theme.background;
+    const backdrop = surface(theme);
     const byFill = new Map<string, { coords: number[]; labels: string[] }>();
     for (const node of drawn) {
       const [x, y, w, h] = boxes.subarray(node * 4, node * 4 + 4) as unknown as number[];

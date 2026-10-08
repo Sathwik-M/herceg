@@ -285,6 +285,7 @@ export type MarkSpec =
   | HistogramSpec
   | PieSpec
   | BoxPlotSpec
+  | ViolinSpec
   | TreemapSpec
   | SunburstSpec;
 
@@ -518,6 +519,30 @@ export interface BoxPlotSpec extends MarkBase {
   /** Category field: a box per value in each category, side by side. */
   series?: Field;
   /** Opacity of the boxes' fill; 0.25 by default. */
+  fillOpacity?: number;
+  label?: string;
+}
+
+/**
+ * Violins: per category, the Gaussian kernel density of a number field's
+ * values mirrored about the category's center, each as wide as the others
+ * at its densest, reaching two bandwidths past the extreme values. Inside
+ * each, a line between the box plot's whisker ends, a narrow box from the
+ * lower to the upper quartile, and a dot at the median. One of `x` and `y`
+ * is a category field, the other the values.
+ */
+export interface ViolinSpec extends MarkBase {
+  type: "violin";
+  x: Field;
+  y: Field;
+  /** Category field: a violin per value in each category, side by side. */
+  series?: Field;
+  /**
+   * The kernel's standard deviation in data units, the same for every
+   * violin; by default each violin's by Silverman's rule of thumb.
+   */
+  bandwidth?: number;
+  /** Opacity of the violins' fill; 0.25 by default. */
   fillOpacity?: number;
   label?: string;
 }

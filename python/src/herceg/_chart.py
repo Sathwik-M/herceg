@@ -604,14 +604,80 @@ class Chart:
         values within 1.5 interquartile ranges, and values beyond are dots.
         ``series`` puts a box per value of a category column side by side.
         """
+        return self._distribution(
+            {"type": "boxplot"}, x, y, data, series, fill_opacity, label, axis, repeat, id
+        )
+
+    def violin(
+        self,
+        x: str,
+        y: str,
+        *,
+        data: Any = None,
+        series: str | None = None,
+        bandwidth: float | None = None,
+        fill_opacity: float | None = None,
+        label: str | None = None,
+        axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
+        id: str | None = None,
+    ) -> Chart:
+        """Violins of a number column's values per category.
+
+        One of ``x`` and ``y`` is a category column, the other the values:
+        a category ``y`` lays the violins along the y axis. Each violin is
+        its values' Gaussian kernel density mirrored about its center,
+        reaching two bandwidths past the extreme values, with the quartiles
+        as a narrow box and the median as a dot inside. Every violin is as
+        wide at its densest. ``bandwidth`` sets the kernel's standard
+        deviation in data units for every violin; by default each has its
+        own by Silverman's rule of thumb. ``series`` puts a violin per value
+        of a category column side by side.
+        """
+        if bandwidth is not None and not (
+            isinstance(bandwidth, numbers.Real)
+            and not isinstance(bandwidth, bool)
+            and math.isfinite(bandwidth)
+            and bandwidth > 0
+        ):
+            raise ValueError(f"bandwidth must be a positive number, not {bandwidth!r}")
+        return self._distribution(
+            {"type": "violin", "bandwidth": bandwidth},
+            x,
+            y,
+            data,
+            series,
+            fill_opacity,
+            label,
+            axis,
+            repeat,
+            id,
+        )
+
+    def _distribution(
+        self,
+        spec: dict[str, Any],
+        x: str,
+        y: str,
+        data: Any,
+        series: str | None,
+        fill_opacity: float | None,
+        label: str | None,
+        axis: Literal["left", "right"] | None,
+        repeat: bool,
+        id: str | None,
+    ) -> Chart:
+        """Adds a box plot or violin mark: a category column on one axis, values on the other."""
+        kind = spec["type"]
         table = self._mark_table(data)
         horizontal = self._kind(table, y) == "category" and self._kind(table, x) != "category"
         category, values = (y, x) if horizontal else (x, y)
-        self._require(table, category, ("category",), f"boxplot {'y' if horizontal else 'x'}")
-        self._require(table, values, _NUMERIC, f"boxplot {'x' if horizontal else 'y'}")
-        self._require(table, series, ("category",), "boxplot series")
+        self._require(table, category, ("category",), f"{kind} {'y' if horizontal else 'x'}")
+        self._require(table, values, _NUMERIC, f"{kind} {'x' if horizontal else 'y'}")
+        self._require(table, series, ("category",), f"{kind} series")
         if horizontal and axis == "right":
-            raise ValueError("horizontal box plots cannot use the right axis")
+            noun = "box plots" if kind == "boxplot" else "violins"
+            raise ValueError(f"horizontal {noun} cannot use the right axis")
         if fill_opacity is not None and not (
             isinstance(fill_opacity, numbers.Real)
             and not isinstance(fill_opacity, bool)
@@ -620,10 +686,11 @@ class Chart:
             raise ValueError(f"fill_opacity must be from 0 to 1, not {fill_opacity!r}")
         return self._add(
             {
-                "type": "boxplot",
+                "type": kind,
                 "x": x,
                 "y": y,
                 "series": series,
+                **{key: value for key, value in spec.items() if key != "type"},
                 "fillOpacity": fill_opacity,
                 "label": label,
                 "axis": axis,
@@ -1088,7 +1155,7 @@ class Chart:
         if self._facet is not None and table is not None and spec.get("facet") is None:
             self._require(table, self._facet, ("category",), "facet")
             kind = spec["type"]
-            if kind in ("heatmap", "histogram", "boxplot", "rule", "region", "text") or (
+            if kind in ("heatmap", "histogram", "boxplot", "violin", "rule", "region", "text") or (
                 kind == "bar" and spec.get("stack")
             ):
                 name = "stacked bar" if kind == "bar" else kind
@@ -1428,6 +1495,19 @@ def boxplot(
 ) -> Chart:
     """Box plots of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
     return Chart(data, **options).boxplot(x, y, series=series)
+
+
+def violin(
+    data: Any,
+    x: str,
+    y: str,
+    *,
+    series: str | None = None,
+    bandwidth: float | None = None,
+    **options: Any,
+) -> Chart:
+    """Violins of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
+    return Chart(data, **options).violin(x, y, series=series, bandwidth=bandwidth)
 
 
 def treemap(

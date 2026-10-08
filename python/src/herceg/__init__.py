@@ -38,6 +38,7 @@ from ._chart import (
     scatter,
     sunburst,
     treemap,
+    violin,
 )
 from ._derive import Derived, Expr, col, derive, when
 from ._events import InspectedPoint, Inspection
@@ -64,6 +65,7 @@ __all__ = [
     "scatter",
     "sunburst",
     "treemap",
+    "violin",
     "when",
 ]
 __version__ = "0.0.0"

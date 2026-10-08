@@ -12,7 +12,7 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`) place their own geometry instead of using x and y scales. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads. Layout marks (`pie`, `treemap`, `sunburst`) place their own geometry instead of using x and y scales. |
 | **Item** | One thing a layout mark draws, such as a pie slice or a tree's node: what its tooltips and the keyboard visit. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
@@ -708,15 +708,18 @@ document when `OffscreenCanvas` is unavailable.
   placed along y (horizontal bars and error bars) only on the left.
 - Facets wrap one category field into a grid with shared scales: no row by
   column facets, independent scales, or right axes in faceted charts, and
-  heatmaps, histograms, box plots, stacked bars, and annotations or custom marks over a table can
+  heatmaps, histograms, box plots, violins, stacked bars, and annotations or custom marks over a table can
   only repeat in every panel. Panel splits are recomputed whenever their
   table changes, and rows of a faceted large line do not use its min/max
   index. A category whose rows all lack a facet value still gets an (empty)
   band. Panels smaller than 20 pixels a side are refused with an error
   rather than drawn.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
-- Box plots recompute every box's statistics when their table changes, and
-  repeat in every panel of charts with facets rather than splitting.
+- Box plots and violins recompute every group's statistics (and violins
+  their densities) when their table changes, and repeat in every panel of
+  charts with facets rather than splitting. On a log axis, a box or violin
+  whose median is zero or below has no tooltip or keyboard stop, though
+  its positive part is drawn.
 - A pie, treemap, or sunburst has its chart to itself: no other marks,
   facets, zoom, brushing, or sync. Pie labels go beside the pie only; treemaps
   and sunbursts have no drill-down, and their pointer lookup scans each

@@ -4,9 +4,10 @@ import { BOTTOM, LEFT, RIGHT, rectDrawing, TOP } from "../draw/rect.ts";
 import { textDrawing } from "../draw/text.ts";
 import { type Formatter, numberFormatter } from "../format/format.ts";
 import { estimateText } from "../layout/text.ts";
-import { contrastingText, isLightColor } from "../scale/color.ts";
+import { contrastingText } from "../scale/color.ts";
 import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { BarSpec } from "../spec/spec.ts";
+import { surface } from "../theme.ts";
 import { definedFields } from "./line.ts";
 import {
   type BandContext,
@@ -397,12 +398,7 @@ class BarLabels {
     this.#horizontal = horizontal;
     this.#size = theme.fontSize;
     this.#font = `${theme.fontSize}px ${theme.font}`;
-    this.#backdrop =
-      theme.background !== "transparent"
-        ? theme.background
-        : isLightColor(theme.text)
-          ? "#000000"
-          : "#ffffff";
+    this.#backdrop = surface(theme);
   }
 
   /**

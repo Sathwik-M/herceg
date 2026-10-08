@@ -302,7 +302,6 @@ export interface ShapesGeometry extends Geometry {
   fontSize: number;
 }
 
-/** The geometry of the built-in marks, for code that narrows by kind. */
 /**
  * Ring sectors, such as pie slices: center x and y, inner and outer radius,
  * and start and end angle (radians, clockwise from +x) per sector.
@@ -320,6 +319,7 @@ export interface ArcGeometry extends Geometry {
   gap: number;
 }
 
+/** The geometry of the built-in marks, for code that narrows by kind. */
 export type MarkGeometry =
   | ArcGeometry
   | LineGeometry

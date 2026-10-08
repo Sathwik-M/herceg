@@ -41,6 +41,8 @@ import {
   type TreemapOptions,
   text,
   treemap,
+  type ViolinOptions,
+  violin,
 } from "herceg";
 import { camelize, toRaw } from "vue";
 
@@ -185,6 +187,12 @@ export const BoxPlot = /* @__PURE__ */ markComponent(
   "BoxPlot",
   ({ data, ...options }: WithData<BoxPlotOptions<Schema>, Schema>) => boxplot(data, options),
 ) as unknown as <S extends Schema>(props: WithData<BoxPlotOptions<S>, S>) => null;
+
+/** Violins: a category field on `x` or `y` and the values on the other. */
+export const Violin = /* @__PURE__ */ markComponent(
+  "Violin",
+  ({ data, ...options }: WithData<ViolinOptions<Schema>, Schema>) => violin(data, options),
+) as unknown as <S extends Schema>(props: WithData<ViolinOptions<S>, S>) => null;
 
 /** A treemap of a tree given by `path` fields, or `node` and `parent`; it has its chart to itself. */
 export const Treemap = /* @__PURE__ */ markComponent(

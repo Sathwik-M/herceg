@@ -421,6 +421,17 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       label: string,
     },
   },
+  violin: {
+    required: ["x", "y"],
+    checks: {
+      x: field,
+      y: field,
+      series: field,
+      bandwidth: positive,
+      fillOpacity: fraction,
+      label: string,
+    },
+  },
   candlestick: {
     required: ["x", "open", "high", "low", "close"],
     checks: {
