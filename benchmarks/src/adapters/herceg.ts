@@ -11,13 +11,15 @@ import {
   table,
   time,
 } from "herceg";
-import type {
-  CandleData,
-  CategoryData,
-  GridData,
-  PointData,
-  SampleData,
-  SeriesData,
+import {
+  BUBBLE,
+  type BubbleData,
+  type CandleData,
+  type CategoryData,
+  type GridData,
+  type PointData,
+  type SampleData,
+  type SeriesData,
 } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartKind, ChartOptions } from "../page/adapter.ts";
 import { clientPoint } from "../page/adapter.ts";
@@ -209,4 +211,32 @@ export const adapter: Adapter = {
       };
     },
   },
+  bubble: {
+    prepare: (data) => table(bubbleColumns(data)),
+    create(container, data, options) {
+      const source = table(bubbleColumns(data));
+      const chart = createChart(container, {
+        width: options.width,
+        height: options.height,
+        tooltip: options.tooltip,
+        // No size key or color legend, as configured for the other libraries.
+        legend: false,
+        marks: [
+          point(source, {
+            x: "x",
+            y: "y",
+            r: "s",
+            rRange: [BUBBLE.minRadius, BUBBLE.maxRadius],
+            color: "v",
+            colors: BUBBLE.colors,
+          }),
+        ],
+      });
+      return { ...common(chart), setData: (next) => source.reset(bubbleColumns(next)) };
+    },
+  },
 };
+
+function bubbleColumns(data: BubbleData) {
+  return { x: data.x, y: data.y, s: data.size, v: data.value };
+}

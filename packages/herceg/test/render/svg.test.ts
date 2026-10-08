@@ -111,6 +111,6 @@ describe("renderToSVG for bars and heatmaps", () => {
     });
     expect(svg).toContain("<image");
     expect(svg).toContain("data:image/png;base64,iVBOR");
-    expect(svg).toContain('<linearGradient id="cells-ramp">');
+    expect(svg).toContain('<linearGradient id="cells-ramp-0">');
   });
 });

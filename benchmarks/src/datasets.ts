@@ -14,6 +14,12 @@ export interface PointData {
   y: Float64Array;
 }
 
+/** Points with a size and a color value each, for bubble charts. */
+export interface BubbleData extends PointData {
+  size: Float64Array;
+  value: Float64Array;
+}
+
 /** Category axis with one value column per series, for bar charts. */
 export interface CategoryData {
   categories: string[];
@@ -121,6 +127,51 @@ export function scatterPoints(count: number, seed = 1): PointData {
     y[i] = center[1] + gaussian(next) * 8;
   }
   return { x, y };
+}
+
+/**
+ * Gaussian clusters with sizes from 1 to 100 and color values from -50 to
+ * 50, in ascending order of value: every library draws bubbles in data order
+ * (Herceg in order of color, high values last), so overlaps look the same.
+ */
+export function bubbles(count: number, seed = 1): BubbleData {
+  const next = random(seed * 31 + 7);
+  const points = scatterPoints(count, seed);
+  const rows = Array.from({ length: count }, (_, i) => ({
+    x: points.x[i]!,
+    y: points.y[i]!,
+    size: 1 + next() * 99,
+    value: next() * 100 - 50,
+  })).sort((a, b) => a.value - b.value);
+  return {
+    x: Float64Array.from(rows, (row) => row.x),
+    y: Float64Array.from(rows, (row) => row.y),
+    size: Float64Array.from(rows, (row) => row.size),
+    value: Float64Array.from(rows, (row) => row.value),
+  };
+}
+
+/**
+ * The bubble encoding every library is given: radii from 2 to 12 pixels with
+ * area growing linearly from size 0 to the largest size, and colors from the
+ * first ramp color at the least value to the second at the greatest.
+ */
+export const BUBBLE = { minRadius: 2, maxRadius: 12, colors: ["#f7fbff", "#08306b"] } as const;
+
+/** Radius in pixels of a size, for libraries that take radii per point. */
+export function bubbleRadius(size: number, maxSize: number): number {
+  const { minRadius: r0, maxRadius: r1 } = BUBBLE;
+  return Math.sqrt(r0 * r0 + (r1 * r1 - r0 * r0) * (size / maxSize));
+}
+
+/** CSS color of a value, for libraries that take colors per point. */
+export function bubbleColor(value: number, min: number, max: number): string {
+  const t = max > min ? (value - min) / (max - min) : 1;
+  const [a, b] = BUBBLE.colors.map((hex) =>
+    [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16)),
+  );
+  const rgb = a!.map((channel, i) => Math.round(channel + (b![i]! - channel) * t));
+  return `rgb(${rgb.join(",")})`;
 }
 
 export function categories(categoryCount: number, seriesCount: number, seed = 1): CategoryData {

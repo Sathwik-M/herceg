@@ -1,11 +1,14 @@
 import Plotly from "plotly.js-dist-min";
-import type {
-  CandleData,
-  CategoryData,
-  GridData,
-  PointData,
-  SampleData,
-  SeriesData,
+import {
+  BUBBLE,
+  type BubbleData,
+  bubbleRadius,
+  type CandleData,
+  type CategoryData,
+  type GridData,
+  type PointData,
+  type SampleData,
+  type SeriesData,
 } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartOptions } from "../page/adapter.ts";
 import { clientPoint, color, FALL, RISE } from "../page/adapter.ts";
@@ -184,6 +187,36 @@ function scatterTraces(data: PointData, options: ChartOptions): Partial<Plotly.D
   ];
 }
 
+// Plotly's area-mode marker radius is sqrt(size / 2) with sizeref 1, so
+// sizes of 2r² give the shared radii; opaque and without outlines, as the
+// other libraries draw them.
+function bubbleTraces(data: BubbleData): Partial<Plotly.Data>[] {
+  const maxSize = Math.max(...data.size);
+  const size = Array.from(data.size, (s) => 2 * bubbleRadius(s, maxSize) ** 2);
+  return [
+    {
+      type: "scatter",
+      mode: "markers",
+      x: data.x as unknown as number[],
+      y: data.y as unknown as number[],
+      marker: {
+        size,
+        sizemode: "area",
+        sizeref: 1,
+        sizemin: 0,
+        opacity: 1,
+        line: { width: 0 },
+        color: data.value as unknown as number[],
+        colorscale: [
+          [0, BUBBLE.colors[0]],
+          [1, BUBBLE.colors[1]],
+        ],
+        showscale: false,
+      },
+    },
+  ];
+}
+
 function heatmapTraces(data: GridData): Partial<Plotly.Data>[] {
   const z: Float64Array[] = [];
   for (let r = 0; r < data.rows; r++) {
@@ -263,6 +296,18 @@ export const adapter: Adapter = {
       return handle<CandleData>(
         root,
         (next) => Plotly.react(root, candleTraces(next), plotLayout, config(options)),
+        plotLayout,
+      );
+    },
+  },
+  bubble: {
+    prepare: bubbleTraces,
+    async create(container, data, options) {
+      const plotLayout = layout(options, { hovermode: options.tooltip ? "closest" : false });
+      const root = await mount(container, bubbleTraces(data), plotLayout, options);
+      return handle<BubbleData>(
+        root,
+        (next) => Plotly.react(root, bubbleTraces(next), plotLayout, config(options)),
         plotLayout,
       );
     },

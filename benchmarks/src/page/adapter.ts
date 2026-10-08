@@ -1,4 +1,5 @@
 import type {
+  BubbleData,
   CandleData,
   CategoryData,
   GridData,
@@ -81,6 +82,7 @@ export interface Adapter {
   heatmap?: ChartKind<GridData>;
   candlestick?: ChartKind<CandleData>;
   histogram?: ChartKind<SampleData>;
+  bubble?: ChartKind<BubbleData>;
 }
 
 /** Candlestick colors: rising (hollow) and falling (filled) candles. */

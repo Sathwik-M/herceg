@@ -178,6 +178,8 @@ export interface ThemeSpec {
   palette?: string[];
   /** Ramp for continuous color (heatmaps), from low to high values. */
   sequential?: string[];
+  /** Ramp for colors on either side of a midpoint, low to high. */
+  diverging?: string[];
   /** Colors of candlesticks that close at or above, and below, their open. */
   rise?: string;
   fall?: string;
@@ -410,10 +412,23 @@ export interface PointSpec extends MarkBase {
   x: Field;
   y: Field;
   series?: Field;
-  /** Radius in pixels. */
-  r?: number;
+  /** Radius in pixels, or a number field sized by area within `rRange`. */
+  r?: number | Field;
+  /** Radii of the smallest and largest values of an `r` field. Default [2, 12]. */
+  rRange?: [number, number];
   fill?: string;
-  fillOpacity?: number;
+  /** Opacity from 0 to 1, or a number field mapped from 0.15 to 1. */
+  fillOpacity?: number | Field;
+  /** A number field colored on a continuous scale (see `colors`). */
+  color?: Field;
+  /** Colors for `color`, low to high, or a scheme name such as "viridis". */
+  colors?: string[] | string;
+  /** The values at the ends of the color ramp; the field's extent by default. */
+  colorDomain?: [number, number];
+  /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
+  colorMidpoint?: number;
+  /** A symbol name ("circle", "square", "triangle", ...), or a category field with a symbol per value. */
+  symbol?: string;
   /** "pixel" draws opaque points sharing a device pixel once. Default "none". */
   sampling?: "none" | "pixel";
   label?: string;
@@ -428,7 +443,11 @@ export interface HeatmapSpec extends MarkBase {
   x: Field;
   y: Field;
   value: Field;
-  /** Color ramp from low to high values; defaults to the theme's. */
-  colors?: string[];
+  /** Color ramp from low to high values, or a scheme name; defaults to the theme's. */
+  colors?: string[] | string;
+  /** The values at the ends of the ramp; the values' extent by default. */
+  colorDomain?: [number, number];
+  /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
+  colorMidpoint?: number;
   label?: string;
 }

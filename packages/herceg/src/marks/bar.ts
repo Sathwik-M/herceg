@@ -1,19 +1,10 @@
 import type { NumericArray } from "../data/column.ts";
-import {
-  type CategoryField,
-  type FieldName,
-  lowerBound,
-  type NumericField,
-  type Schema,
-  type Table,
-  upperBound,
-} from "../data/table.ts";
+import type { CategoryField, FieldName, NumericField, Schema, Table } from "../data/table.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { textDrawing } from "../draw/text.ts";
 import { type Formatter, numberFormatter } from "../format/format.ts";
 import { estimateText } from "../layout/text.ts";
 import { contrastingText, isLightColor } from "../scale/color.ts";
-import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { BarSpec } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";

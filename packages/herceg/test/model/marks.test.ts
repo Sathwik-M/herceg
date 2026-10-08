@@ -836,7 +836,7 @@ describe("heatmap", () => {
       marks: [heatmap(cells, { x: "col", y: "row", value: "v", label: "Load" })],
     });
     expect(scene.legend).toEqual([]);
-    expect(scene.colorLegend).toMatchObject({
+    expect(scene.colorLegends[0]).toMatchObject({
       title: { text: "Load" },
       low: { text: "0" },
       high: { text: "2" },

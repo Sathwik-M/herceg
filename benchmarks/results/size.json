@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-07T21:41:23.220Z",
+ "date": "2026-10-08T07:03:06.862Z",
  "commit": {
-  "sha": "61f1019",
+  "sha": "87efcae",
   "dirty": true
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; the entry chunk is measured, chunks loaded on demand and required CSS are reported separately; gzip level 9; brotli quality 11",
@@ -62,11 +62,11 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (61f1019)",
-   "raw": 171623,
-   "minified": 79857,
-   "gzip": 29709,
-   "brotli": 26866,
+   "version": "0.0.0 (87efcae)",
+   "raw": 175894,
+   "minified": 82256,
+   "gzip": 30555,
+   "brotli": 27661,
    "css": null,
    "lazy": {
     "minified": 5842,
@@ -76,11 +76,11 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (61f1019)",
-   "raw": 175673,
-   "minified": 81999,
-   "gzip": 30652,
-   "brotli": 27712,
+   "version": "0.0.0 (87efcae)",
+   "raw": 179949,
+   "minified": 84396,
+   "gzip": 31499,
+   "brotli": 28443,
    "css": null,
    "lazy": {
     "minified": 5842,

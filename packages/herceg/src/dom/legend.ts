@@ -1,3 +1,4 @@
+import { escapeXml } from "../draw/markup.ts";
 import type { LegendItem } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 
@@ -43,7 +44,7 @@ export class Legend {
         this.#entries.set(item.key, entry);
       }
       // Rewriting styles every frame would make the browser recompute them.
-      const shown = `${item.x}|${item.y}|${item.hidden}|${item.color}|${item.label}|${theme.text}|${theme.fontSize}|${theme.font}`;
+      const shown = `${item.x}|${item.y}|${item.hidden}|${item.color}|${item.glyph}|${item.label}|${theme.text}|${theme.fontSize}|${theme.font}`;
       if (shown !== entry.shown) {
         entry.shown = shown;
         show(entry, item, theme);
@@ -68,7 +69,11 @@ function show({ button, swatch, label }: Entry, item: LegendItem, theme: Theme):
   button.setAttribute("aria-pressed", String(!item.hidden));
   button.title = item.hidden ? `Show ${item.label}` : `Hide ${item.label}`;
   button.style.cssText = `position:absolute;left:${item.x}px;top:${item.y}px;transform:translateY(-50%);display:flex;align-items:center;gap:6px;padding:0;border:0;background:none;cursor:pointer;color:${theme.text};font:${theme.fontSize}px ${theme.font};opacity:${item.hidden ? 0.45 : 1}`;
-  swatch.style.background = item.color;
+  // Point series show their symbol, as the SVG legend draws it; others a rounded square.
+  swatch.style.background = item.glyph ? "none" : item.color;
+  swatch.innerHTML = item.glyph
+    ? `<svg width="10" height="10" style="display:block;overflow:visible"><path transform="translate(5 5)" d="${item.glyph}" fill="${escapeXml(item.color)}"/></svg>`
+    : "";
   label.textContent = item.label;
   label.style.textDecoration = item.hidden ? "line-through" : "";
 }

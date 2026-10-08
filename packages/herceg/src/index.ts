@@ -22,6 +22,7 @@ export type {
 export { fromRows, Table, table } from "./data/table.ts";
 export { type Chart, type ChartOptions, createChart } from "./dom/chart.ts";
 export type { ChartEvents, ChartListener } from "./dom/events.ts";
+export type { SymbolName } from "./draw/symbols.ts";
 export type { MeasureText } from "./layout/text.ts";
 export type { TextField } from "./marks/annotation.ts";
 export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";
@@ -65,5 +66,6 @@ export { type TextDataOptions, type TextMark, type TextOptions, text } from "./m
 export { type Facet, type FacetOptions, facet } from "./model/facet.ts";
 export type { ChartConfig, InspectedPoint, Inspection } from "./model/model.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
+export * from "./scale/schemes.ts";
 export type * from "./spec/spec.ts";
 export type { Theme } from "./theme.ts";

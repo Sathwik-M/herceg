@@ -1,6 +1,6 @@
 import type { FieldKind, NumericArray } from "../data/column.ts";
 import { lowerBound, type Schema, type Table } from "../data/table.ts";
-import { type Formatter, formatNumber, timeTickLabels } from "../format/format.ts";
+import { formatNumber, timeTickLabels } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -77,6 +77,8 @@ export interface SummaryContext {
 export interface AxisFormat {
   x: (value: number) => string;
   y: (value: number) => string;
+  /** Other numbers, such as values of fields a mark encodes as size or color. */
+  value: (value: number) => string;
 }
 
 /** A point found by a mark's own lookup: series, position in it, pixel distance. */
@@ -91,6 +93,17 @@ export interface ColorRamp {
   stops: readonly string[];
   domain: readonly [number, number];
   title: string;
+  /** The value at the ramp's middle, for diverging ramps. */
+  midpoint?: number | undefined;
+}
+
+/**
+ * A legend of the point sizes or shapes a mark encodes by field: each glyph
+ * is SVG path data centered on (0, 0), reaching `r` pixels from its center.
+ */
+export interface GlyphKey {
+  title: string;
+  entries: { label: string; glyph: string; r: number }[];
 }
 
 /**
@@ -172,6 +185,8 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
    * of the x axis and of the series' y axis.
    */
   pointText?(series: Series, row: number, format: AxisFormat): string;
+  /** The color a row is drawn in, for marks coloring rows by a field rather than by series. */
+  pointColor?(series: Series, row: number, theme: Theme): string;
   /**
    * Whether the mark draws a row, for marks reading more fields than their
    * series holds (candlesticks); inspection skips rows it does not draw.
@@ -196,6 +211,13 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
   headroom?(series: readonly Series[], context: BandContext): number;
   /** The continuous color scale the mark draws with, if any. */
   colorRamp?(series: readonly Series[], theme: Theme): ColorRamp | undefined;
+  /**
+   * How a series appears in the legend: by default, a square of its color.
+   * `false` leaves it out, for marks whose series colors mean nothing (heatmaps).
+   */
+  legendEntry?(series: Series, theme: Theme): { color: string; glyph?: string } | false;
+  /** Legends of sizes or shapes the mark encodes by field. */
+  glyphKeys?(series: readonly Series[], format: (value: number) => string): GlyphKey[];
 }
 
 export function requireField(

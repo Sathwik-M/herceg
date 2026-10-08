@@ -7,7 +7,7 @@ import {
   type Table,
 } from "../data/table.ts";
 import { rasterDrawing } from "../draw/raster.ts";
-import { checkRamp, SequentialScale } from "../scale/color.ts";
+import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
 import type { RasterGeometry } from "../scene/scene.ts";
 import type { HeatmapSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
@@ -40,8 +40,16 @@ export interface HeatmapOptions<S extends Schema> {
   y: FieldName<S>;
   /** Cell value, mapped to color. */
   value: NumericField<S>;
-  /** Color ramp from low to high values. Defaults to the theme's sequential ramp. */
+  /**
+   * Color ramp from low to high values, such as an imported scheme
+   * (`viridis`, `rdbu`, ...). Defaults to the theme's sequential ramp, or its
+   * diverging one with a midpoint.
+   */
   colors?: readonly string[];
+  /** The values at the ends of the ramp; the values' extent by default. */
+  colorDomain?: readonly [number, number];
+  /** The value at the ramp's middle, for diverging ramps. */
+  colorMidpoint?: number;
   label?: string;
   /** With the chart's `facet`, draw all cells in every panel; heatmaps cannot be split yet. */
   facet?: "repeat";
@@ -79,7 +87,8 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
     requireField(table, spec.x, ANY, "heatmap x");
     requireField(table, spec.y, ANY, "heatmap y");
     requireField(table, spec.value, NUMERIC, "heatmap value");
-    if (spec.colors) checkRamp(spec.colors, "heatmap colors");
+    if (Array.isArray(spec.colors)) checkRamp(spec.colors, "heatmap colors");
+    checkColorScale(spec.colorDomain, spec.colorMidpoint, "Heatmap");
   }
 
   /** Both axes are banded, whatever the field kind. */
@@ -126,11 +135,25 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
     return undefined;
   }
 
+  /** Cells are colored by value, so the legend shows the ramp instead of series. */
+  legendEntry(): false {
+    return false;
+  }
+
   colorRamp(series: readonly Series[], theme: Theme): ColorRamp | undefined {
-    const domain = this.#valueExtent();
-    if (!domain || series.length === 0) return undefined;
+    const scale = this.#colorScale(theme);
+    if (!scale || series.length === 0) return undefined;
     const title = this.spec.label ?? this.spec.value;
-    return { stops: this.spec.colors ?? theme.sequential, domain, title };
+    return { stops: scale.legendStops(), domain: scale.domain, title, midpoint: scale.midpoint };
+  }
+
+  /** The scale coloring cells: over `colorDomain` or the values' extent. */
+  #colorScale(theme: Theme): SequentialScale | undefined {
+    const { spec } = this;
+    const domain = spec.colorDomain ?? this.#valueExtent();
+    if (!domain) return undefined;
+    const fallback = spec.colorMidpoint === undefined ? theme.sequential : theme.diverging;
+    return new SequentialScale(domain, rampOf(spec.colors, fallback), spec.colorMidpoint);
   }
 
   #valueExtent(): readonly [number, number] | undefined {
@@ -141,13 +164,12 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
 
   geometry(series: readonly Series[], frame: Frame): RasterGeometry[] {
     const s = series[0];
-    const domain = this.#valueExtent();
-    if (!s || frame.hidden.has(s.key) || !domain) return [];
+    const colors = this.#colorScale(frame.theme);
+    if (!s || frame.hidden.has(s.key) || !colors) return [];
     const columns = frame.x.categories?.length ?? 0;
     const rows = frame.y.categories?.length ?? 0;
     if (columns === 0 || rows === 0) return [];
     checkGrid(columns, rows);
-    const colors = new SequentialScale(domain, this.spec.colors ?? frame.theme.sequential);
     const pixels = frame.bytes(s.key, "raster", columns * rows * 4);
     pixels.fill(0);
     // Raster row 0 is the top. Bands of numbers rise from the bottom, so
@@ -241,9 +263,10 @@ export function heatmap<S extends Schema>(
     x: options.x,
     y: options.y,
     value: options.value,
-    ...definedFields(options, ["label", "id", "facet"]),
+    ...definedFields(options, ["label", "id", "facet", "colorMidpoint"]),
   };
   if (options.colors) spec.colors = [...options.colors];
+  if (options.colorDomain) spec.colorDomain = [...options.colorDomain];
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new HeatmapMark(spec, table as unknown as Table);

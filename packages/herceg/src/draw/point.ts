@@ -1,6 +1,121 @@
 import { mapValue } from "../lod/m4.ts";
 import type { Drawing, PointGeometry, Rect, SvgElement } from "../scene/scene.ts";
 import { escapeXml, markupOf, n } from "./markup.ts";
+import { SYMBOLS, symbolPath, traceSymbol } from "./symbols.ts";
+
+/** Points of one shape, size, color, and opacity: circles drawn the fast way. */
+function plain(mark: PointGeometry): boolean {
+  return (
+    mark.symbol === "circle" && !mark.radii && !mark.colors && !mark.opacities && !mark.symbols
+  );
+}
+
+/** Point i's radius, shape, fill, and opacity, from its arrays or the series'. */
+function styleOf(mark: PointGeometry, i: number) {
+  return {
+    r: mark.radii ? mark.radii[i]! : mark.radius,
+    symbol: mark.symbols ? SYMBOLS[mark.symbols[i]!]! : mark.symbol,
+    fill: mark.colors ? mark.colors.palette[mark.colors.index[i]!]! : mark.fill,
+    opacity: mark.opacities ? mark.opacities[i]! : mark.fillOpacity,
+  };
+}
+
+/**
+ * Points grouped by fill: `order` lists point indexes color by color (none
+ * means every point in order), and each group spans a range of it. Colors go
+ * from the low end of the scale to the high, so higher values are drawn on top.
+ */
+function fillGroups(mark: PointGeometry): {
+  order: Uint32Array | undefined;
+  groups: { fill: string; start: number; end: number }[];
+} {
+  const { colors, count } = mark;
+  if (!colors) return { order: undefined, groups: [{ fill: mark.fill, start: 0, end: count }] };
+  const { index, palette } = colors;
+  // A counting sort by palette index.
+  const starts = new Uint32Array(palette.length + 1);
+  for (let i = 0; i < count; i++) starts[index[i]! + 1]!++;
+  for (let c = 0; c < palette.length; c++) starts[c + 1]! += starts[c]!;
+  const groups: { fill: string; start: number; end: number }[] = [];
+  for (let c = 0; c < palette.length; c++) {
+    if (starts[c + 1]! > starts[c]!)
+      groups.push({ fill: palette[c]!, start: starts[c]!, end: starts[c + 1]! });
+  }
+  const order = new Uint32Array(count);
+  const next = starts.slice(0, palette.length);
+  for (let i = 0; i < count; i++) order[next[index[i]!]!++] = i;
+  return { order, groups };
+}
+
+/** Path data of points `order[start..end)`, each in its own shape and size. */
+function symbolsPath(
+  mark: PointGeometry,
+  order: Uint32Array | undefined,
+  start: number,
+  end: number,
+): string {
+  const c = mark.coords;
+  let d = "";
+  for (let k = start; k < end; k++) {
+    const i = order ? order[k]! : k;
+    const { r, symbol } = styleOf(mark, i);
+    d += symbolPath(symbol, c[i * 2]!, c[i * 2 + 1]!, r);
+  }
+  return d;
+}
+
+/**
+ * Encoded points: opaque ones as a path per color, others one by one, in
+ * row order, so overlaps darken.
+ */
+function encodedElements(mark: PointGeometry): SvgElement[] {
+  if (mark.opaque) {
+    const { order, groups } = fillGroups(mark);
+    return groups.map(({ fill, start, end }) => ({
+      tag: "path",
+      attributes: { d: symbolsPath(mark, order, start, end), fill },
+    }));
+  }
+  const c = mark.coords;
+  return Array.from({ length: mark.count }, (_, i) => {
+    const { r, symbol, fill, opacity } = styleOf(mark, i);
+    return {
+      tag: "path",
+      attributes: {
+        d: symbolPath(symbol, c[i * 2]!, c[i * 2 + 1]!, r),
+        fill,
+        "fill-opacity": String(opacity),
+      },
+    };
+  });
+}
+
+function paintEncoded(context: CanvasRenderingContext2D, mark: PointGeometry): void {
+  const c = mark.coords;
+  if (mark.opaque) {
+    const { order, groups } = fillGroups(mark);
+    for (const { fill, start, end } of groups) {
+      context.fillStyle = fill;
+      context.beginPath();
+      for (let k = start; k < end; k++) {
+        const i = order ? order[k]! : k;
+        const { r, symbol } = styleOf(mark, i);
+        traceSymbol(context, symbol, c[i * 2]!, c[i * 2 + 1]!, r);
+      }
+      context.fill();
+    }
+    return;
+  }
+  for (let i = 0; i < mark.count; i++) {
+    const { r, symbol, fill, opacity } = styleOf(mark, i);
+    context.globalAlpha = opacity;
+    context.fillStyle = fill;
+    context.beginPath();
+    traceSymbol(context, symbol, c[i * 2]!, c[i * 2 + 1]!, r);
+    context.fill();
+  }
+  context.globalAlpha = 1;
+}
 
 /**
  * Circles of a translucent series, one element each so overlaps composite;
@@ -28,6 +143,10 @@ function pointPath(mark: PointGeometry): string {
 }
 
 function paintPoints(context: CanvasRenderingContext2D, mark: PointGeometry): void {
+  if (!plain(mark)) {
+    paintEncoded(context, mark);
+    return;
+  }
   const c = mark.coords;
   const r = mark.radius;
   context.globalAlpha = mark.fillOpacity;
@@ -81,17 +200,18 @@ export function placeCloud(mark: PointGeometry, plot: Rect): PointGeometry {
   return { ...placed, coords, count };
 }
 
-/**
- * Points. Clouds (large series left to a GPU painter) are only drawn on a
- * canvas; scenes for SVG never contain them.
- */
 /** Opaque points as one path; translucent points need a circle each (markup). */
 function pointElements(mark: PointGeometry): SvgElement[] | undefined {
   if (mark.cloud) return [];
+  if (!plain(mark)) return encodedElements(mark);
   if (!mark.opaque) return undefined;
   return [{ tag: "path", attributes: { d: pointPath(mark), fill: mark.fill } }];
 }
 
+/**
+ * Points. Clouds (large series left to a GPU painter) are only drawn on a
+ * canvas; scenes for SVG never contain them.
+ */
 export const pointDrawing: Drawing<PointGeometry> = {
   size: (mark) => mark.count,
   elements: pointElements,

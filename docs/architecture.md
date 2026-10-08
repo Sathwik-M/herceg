@@ -261,7 +261,7 @@ by a category field share one pair of table-sized top and base arrays, since
 each row belongs to one series.
 
 Heatmaps are rasterized: each cell is one pixel of an RGBA image (colors from
-a 256-entry lookup table), and renderers stretch the image over the plot.
+a lookup table), and renderers stretch the image over the plot.
 Canvas draws it with `drawImage`; SVG embeds it as a PNG. In the browser the
 canvas encodes the PNG; `renderToSVG` uses a small bundled encoder, which only
 server-side bundles include. Tooltips look cells up in a cell-to-row table,
@@ -272,6 +272,24 @@ transparent. Ramps are `#rgb` or
 the legend read them the same way. A heatmap draws at most 4,194,304 cells
 (16 MB of pixels plus 16 MB of lookup); larger grids are rejected with an
 error asking for binning.
+
+Continuous color (heatmaps, and points with a `color` field) maps values
+through a 255-entry lookup table interpolated from the ramp's stops: odd, so
+a diverging scale's midpoint has an exact middle entry, and under 256, so a
+point's color is one byte. With a midpoint, values on each side map onto
+their half of the table, and the legend's gradient moves its middle stop to
+the midpoint's place between the ends. Named schemes are separate exports;
+only the spec loader holds the table of names, so charts built in TypeScript
+bundle the schemes they import and no others.
+
+Points encoding fields fill per-point arrays alongside their coordinates:
+radii (`Float32Array`), lookup-table color indexes and symbol codes (bytes),
+and opacities. Points without encodings keep the single-style fast paths (one
+path of arcs, pixel sampling, WebGL clouds). Opaque encoded points are drawn
+one path per color after a counting sort by color index, so a canvas fill
+or SVG element covers every point of a color; translucent ones are drawn
+one by one so overlaps darken, as plain translucent points are. Symbols are
+polygons of the same area as the circle of the same radius.
 
 ## Annotations
 

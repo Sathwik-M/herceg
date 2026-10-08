@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import math
 import numbers
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -15,6 +16,17 @@ Tooltip = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after"]
 
 _NUMERIC = ("number", "time")
+
+# Point shapes, in the order a symbol column's values take them.
+SYMBOLS = ("circle", "square", "triangle", "diamond", "cross", "star", "wye", "triangle-down")
+
+# Named color schemes: sequential, diverging, then categorical.
+SCHEMES = (
+    *("viridis", "magma", "inferno", "plasma", "cividis", "turbo"),
+    *("blues", "greens", "greys", "oranges", "purples", "reds", "ylgnbu", "ylorrd"),
+    *("rdbu", "rdylbu", "brbg", "piyg", "prgn", "puor", "spectral"),
+    *("tableau10", "category10", "set2", "dark2"),
+)
 
 # An annotation position: a column name, a number, or a date or datetime
 # (pandas Timestamps and NumPy datetime64 values work too).
@@ -367,19 +379,52 @@ class Chart:
         *,
         series: str | None = None,
         data: Any = None,
-        r: float | None = None,
+        r: float | str | None = None,
+        r_range: tuple[float, float] | None = None,
         fill: str | None = None,
-        fill_opacity: float | None = None,
+        fill_opacity: float | str | None = None,
+        color: str | None = None,
+        colors: str | Sequence[str] | None = None,
+        color_domain: tuple[float, float] | None = None,
+        color_midpoint: float | None = None,
+        symbol: str | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
-        """Scatter points."""
+        """Scatter points.
+
+        ``r`` is a radius in pixels or a numeric column sized by area within
+        ``r_range`` (bubbles); ``fill_opacity`` is a number or a numeric
+        column. ``color`` colors points by a numeric column on ``colors``, a
+        scheme name such as ``"viridis"`` or a list of hex colors, centered on
+        ``color_midpoint`` for diverging schemes. ``symbol`` is a shape
+        (``"circle"``, ``"square"``, ``"triangle"``, ...) or a category column
+        with a shape per value.
+        """
         table = self._mark_table(data)
         self._require(table, x, _NUMERIC, "point x")
         self._require(table, y, _NUMERIC, "point y")
         self._require(table, series, ("category",), "point series")
+        if isinstance(r, str):
+            self._require(table, r, _NUMERIC, "point r")
+        elif r is not None and not (math.isfinite(r) and r > 0):
+            raise ValueError(f"point r must be a positive radius or a column, not {r!r}")
+        if isinstance(fill_opacity, str):
+            self._require(table, fill_opacity, _NUMERIC, "point fill_opacity")
+        elif fill_opacity is not None and not 0 <= fill_opacity <= 1:
+            raise ValueError(
+                f"point fill_opacity must be from 0 to 1 or a column, not {fill_opacity!r}"
+            )
+        self._require(table, color, _NUMERIC, "point color")
+        if symbol is not None:
+            if self._kind(table, symbol) is not None:
+                self._require(table, symbol, ("category",), "point symbol")
+            elif symbol not in SYMBOLS:
+                raise ValueError(
+                    f"point symbol: {symbol!r} is neither a column nor one of {', '.join(SYMBOLS)}"
+                )
         return self._add(
             {
                 "type": "point",
@@ -387,8 +432,14 @@ class Chart:
                 "y": y,
                 "series": series,
                 "r": r,
+                "rRange": _range(r_range, "point r_range", minimum=0),
                 "fill": fill,
                 "fillOpacity": fill_opacity,
+                "color": color,
+                "colors": _colors(colors, "point colors"),
+                "colorDomain": _range(color_domain, "point color_domain"),
+                "colorMidpoint": _midpoint(color_midpoint, color_domain, "point"),
+                "symbol": symbol,
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
@@ -490,12 +541,19 @@ class Chart:
         value: str,
         *,
         data: Any = None,
-        colors: Sequence[str] | None = None,
+        colors: str | Sequence[str] | None = None,
+        color_domain: tuple[float, float] | None = None,
+        color_midpoint: float | None = None,
         label: str | None = None,
         repeat: bool = False,
         id: str | None = None,
     ) -> Chart:
-        """A grid of cells colored by ``value``; one column or row per distinct x or y."""
+        """A grid of cells colored by ``value``; one column or row per distinct x or y.
+
+        ``colors`` is a scheme name such as ``"viridis"`` or a list of hex
+        colors, low to high; with ``color_midpoint``, the theme's diverging
+        ramp is the default and the midpoint takes its middle color.
+        """
         table = self._mark_table(data)
         self._require(table, x, ("number", "time", "category"), "heatmap x")
         self._require(table, y, ("number", "time", "category"), "heatmap y")
@@ -506,7 +564,9 @@ class Chart:
                 "x": x,
                 "y": y,
                 "value": value,
-                "colors": list(colors) if colors is not None else None,
+                "colors": _colors(colors, "heatmap colors"),
+                "colorDomain": _range(color_domain, "heatmap color_domain"),
+                "colorMidpoint": _midpoint(color_midpoint, color_domain, "heatmap"),
                 "label": label,
                 "facet": "repeat" if repeat else None,
                 "id": id,
@@ -661,7 +721,10 @@ class Chart:
             source = self._tables[table][1]
             data[_table_name(table)] = {
                 "columns": {
-                    field: _column_spec(source.column(field), buffers) for field in sorted(fields)
+                    # A point's symbol may name a shape rather than a column.
+                    field: _column_spec(source.column(field), buffers)
+                    for field in sorted(fields)
+                    if field in source.names
                 }
             }
         spec: dict[str, Any] = {"version": 1}
@@ -798,6 +861,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
     for key in (
         *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"),
         *("open", "high", "low", "close"),
+        *("r", "fillOpacity", "color", "symbol"),
     ):
         value = spec.get(key)
         if isinstance(value, str):
@@ -831,6 +895,41 @@ def _theme(theme: str | dict[str, Any] | None) -> Any:
     if theme is None or isinstance(theme, str):
         return theme
     return {_THEME_KEYS.get(key, key): value for key, value in theme.items()}
+
+
+def _colors(colors: str | Sequence[str] | None, role: str) -> str | list[str] | None:
+    """A scheme name, checked, or a list of colors."""
+    if isinstance(colors, str):
+        if colors not in SCHEMES:
+            raise ValueError(f"{role}: unknown scheme {colors!r}; use one of {', '.join(SCHEMES)}")
+        return colors
+    return list(colors) if colors is not None else None
+
+
+def _range(
+    values: tuple[float, float] | None, role: str, *, minimum: float = -math.inf
+) -> list[float] | None:
+    """Two finite ascending numbers, at least ``minimum``, as a list."""
+    if values is None:
+        return None
+    low, high = (float(v) for v in values)
+    if not (math.isfinite(low) and math.isfinite(high) and minimum <= low < high):
+        bound = "" if minimum == -math.inf else f", from {minimum:g} up"
+        raise ValueError(f"{role} must be two finite numbers, ascending{bound}, not {values!r}")
+    return [low, high]
+
+
+def _midpoint(
+    midpoint: float | None, domain: tuple[float, float] | None, role: str
+) -> float | None:
+    """A finite color midpoint, inside the color domain when there is one."""
+    if midpoint is None:
+        return None
+    if not math.isfinite(midpoint):
+        raise ValueError(f"{role} color_midpoint must be a finite number, not {midpoint!r}")
+    if domain is not None and not domain[0] <= midpoint <= domain[1]:
+        raise ValueError(f"{role} color_midpoint {midpoint!r} is outside color_domain {domain!r}")
+    return float(midpoint)
 
 
 def _position(value: Any) -> str | float | None:
@@ -882,15 +981,52 @@ def bar(
 
 
 def scatter(
-    data: Any, x: str, y: str, *, series: str | None = None, r: float | None = None, **options: Any
+    data: Any,
+    x: str,
+    y: str,
+    *,
+    series: str | None = None,
+    r: float | str | None = None,
+    r_range: tuple[float, float] | None = None,
+    color: str | None = None,
+    colors: str | Sequence[str] | None = None,
+    color_domain: tuple[float, float] | None = None,
+    color_midpoint: float | None = None,
+    symbol: str | None = None,
+    fill_opacity: float | str | None = None,
+    **options: Any,
 ) -> Chart:
-    """A scatter plot."""
-    return Chart(data, **options).point(x, y, series=series, r=r)
+    """A scatter plot; ``r``, ``color``, and ``symbol`` can encode columns (see ``Chart.point``)."""
+    return Chart(data, **options).point(
+        x,
+        y,
+        series=series,
+        r=r,
+        r_range=r_range,
+        color=color,
+        colors=colors,
+        color_domain=color_domain,
+        color_midpoint=color_midpoint,
+        symbol=symbol,
+        fill_opacity=fill_opacity,
+    )
 
 
-def heatmap(data: Any, x: str, y: str, value: str, **options: Any) -> Chart:
-    """A heatmap."""
-    return Chart(data, **options).heatmap(x, y, value)
+def heatmap(
+    data: Any,
+    x: str,
+    y: str,
+    value: str,
+    *,
+    colors: str | Sequence[str] | None = None,
+    color_domain: tuple[float, float] | None = None,
+    color_midpoint: float | None = None,
+    **options: Any,
+) -> Chart:
+    """A heatmap; ``colors`` is a scheme name or a list of hex colors (see ``Chart.heatmap``)."""
+    return Chart(data, **options).heatmap(
+        x, y, value, colors=colors, color_domain=color_domain, color_midpoint=color_midpoint
+    )
 
 
 def histogram(

@@ -2,6 +2,7 @@ import { canvasRasterUrl } from "../render/canvas.ts";
 import {
   axisElements,
   colorLegendElement,
+  glyphLegendElements,
   gridPath,
   panelTitleElements,
   titleElement,
@@ -169,8 +170,10 @@ export class SvgLayer {
     let markup = `<g style="font-variant-numeric:tabular-nums">${axisElements(axes, theme)}</g>`;
     markup += panelTitleElements(scene.panels, theme);
     markup += titleElement(scene);
-    if (scene.colorLegend)
-      markup += colorLegendElement(scene.colorLegend, theme, `${this.#id}-ramp`);
+    scene.colorLegends.forEach((legend, i) => {
+      markup += colorLegendElement(legend, theme, `${this.#id}-ramp-${i}`);
+    });
+    markup += glyphLegendElements(scene.glyphLegends, theme);
     if (markup !== this.#guideMarkup) {
       this.#guides.innerHTML = markup;
       this.#guideMarkup = markup;

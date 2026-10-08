@@ -52,6 +52,21 @@ const count: Check = (v, path) => {
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1)
     fail(path, "a whole number of at least 1", v);
 };
+/** Colors as a list, or a scheme's name (resolved when the spec is loaded). */
+const ramp: Check = (v, path) => {
+  if (typeof v === "string") return;
+  strings(v, path);
+};
+/** Two finite numbers, the first below the second. */
+const range: Check = (v, path) => {
+  if (
+    !Array.isArray(v) ||
+    v.length !== 2 ||
+    !v.every((x) => typeof x === "number" && Number.isFinite(x)) ||
+    !(v[0] < v[1])
+  )
+    fail(path, "two finite numbers, ascending", v);
+};
 /** A constant position or a field name. */
 const position: Check = (v, path) => {
   if (typeof v !== "string" && (typeof v !== "number" || !Number.isFinite(v)))
@@ -155,6 +170,7 @@ const theme: Check = (v, path) => {
     fontSize: positive,
     palette: strings,
     sequential: strings,
+    diverging: strings,
     rise: string,
     fall: string,
   });
@@ -247,9 +263,15 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       x: field,
       y: field,
       series: field,
-      r: positive,
+      r: (v, path) => (typeof v === "string" ? field(v, path) : positive(v, path)),
+      rRange: range,
       fill: string,
-      fillOpacity: fraction,
+      fillOpacity: (v, path) => (typeof v === "string" ? field(v, path) : fraction(v, path)),
+      color: field,
+      colors: ramp,
+      colorDomain: range,
+      colorMidpoint: finite,
+      symbol: string,
       sampling: oneOf("none", "pixel"),
       label: string,
     },
@@ -305,7 +327,15 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
   },
   heatmap: {
     required: ["x", "y", "value"],
-    checks: { x: field, y: field, value: field, colors: strings, label: string },
+    checks: {
+      x: field,
+      y: field,
+      value: field,
+      colors: ramp,
+      colorDomain: range,
+      colorMidpoint: finite,
+      label: string,
+    },
   },
 };
 

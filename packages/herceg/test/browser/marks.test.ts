@@ -10,6 +10,7 @@ import { point } from "../../src/marks/point.ts";
 import { region } from "../../src/marks/region.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { text } from "../../src/marks/text.ts";
+import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 
 let host: HTMLDivElement;
@@ -96,6 +97,68 @@ describe("new marks in the browser", () => {
     expect(tooltip.style.display).toBe("block");
     expect(tooltip.textContent).toContain("42");
     chart.destroy();
+  });
+
+  it("draws encoded points on canvas, with symbol swatches and a size key", () => {
+    const pts = table({
+      x: [1, 2, 3, 4],
+      y: [1, 2, 3, 4],
+      pop: [10, 20, 40, 80],
+      kind: ["a", "b", "a", "b"],
+    });
+    const chart = createChart(host, {
+      renderer: "canvas",
+      marks: [point(pts, { x: "x", y: "y", r: "pop", series: "kind", symbol: "kind" })],
+    });
+    const swatches = [...chart.root.querySelectorAll("button svg path")];
+    expect(swatches).toHaveLength(2);
+    // A circle is arcs; the second series' square is straight lines.
+    expect(swatches[0]!.getAttribute("d")).toContain("a");
+    expect(swatches[1]!.getAttribute("d")).toMatch(/^M[^a]*Z$/);
+    expect(chart.root.textContent).toContain("pop");
+    // Each point is painted in its own size: the canvas is not blank around the largest.
+    const canvas = chart.root.querySelector("canvas")!;
+    const context = canvas.getContext("2d")!;
+    const ratio = canvas.width / canvas.clientWidth;
+    const [px, py] = [chart.model.xScale()!.map(4), chart.model.yScale()!.map(4)];
+    const pixel = context.getImageData(Math.round((px + 8) * ratio), Math.round(py * ratio), 1, 1);
+    expect(pixel.data[3]).toBeGreaterThan(0);
+    chart.destroy();
+  });
+
+  it("fills where shapes of one color overlap, on canvas and in SVG", async () => {
+    const kinds = ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"];
+    // A circle (k0) on a square (k1), then on a triangle-down (k7): shapes
+    // wound against each other would leave a hole where they overlap.
+    for (const other of [1, 7]) {
+      const at = (i: number) => (i === 0 || i === other ? 0 : 10);
+      const pts = table({
+        x: kinds.map((_, i) => at(i)),
+        y: kinds.map((_, i) => at(i)),
+        kind: kinds,
+      });
+      const mark = point(pts, { x: "x", y: "y", r: 20, symbol: "kind", fill: "#000000" });
+      const chart = createChart(host, { renderer: "canvas", marks: [mark] });
+      // Inside both shapes, above the grid line at y = 0.
+      const x = chart.model.xScale()!.map(0);
+      const y = chart.model.yScale()!.map(0) - 8;
+      const alpha = (c: HTMLCanvasElement, scale: number) =>
+        c.getContext("2d")!.getImageData(Math.round(x * scale), Math.round(y * scale), 1, 1)
+          .data[3];
+      const canvas = chart.root.querySelector("canvas")!;
+      expect(alpha(canvas, canvas.width / canvas.clientWidth)).toBe(255);
+      // The same chart as static SVG, rasterized.
+      const svg = renderToSVG({ width: 600, height: 300, marks: [mark] });
+      const image = new Image();
+      image.src = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+      await image.decode();
+      const raster = document.createElement("canvas");
+      raster.width = 600;
+      raster.height = 300;
+      raster.getContext("2d")!.drawImage(image, 0, 0);
+      expect(alpha(raster, 1)).toBe(255);
+      chart.destroy();
+    }
   });
 
   it("toggles bar series from the legend", () => {

@@ -7,6 +7,7 @@ import {
   type AxisGeometry,
   type ColorLegend,
   type Geometry,
+  type GlyphLegend,
   LEGEND_SWATCH,
   type LegendItem,
   type Panel,
@@ -70,7 +71,12 @@ export function legendElements(legend: readonly LegendItem[], theme: Theme): str
   for (const item of legend) {
     const opacity = item.hidden ? ' opacity="0.4"' : "";
     const swatchY = item.y - LEGEND_SWATCH / 2;
-    out += `<g${opacity}><rect x="${n(item.x)}" y="${n(swatchY)}" width="${LEGEND_SWATCH}" height="${LEGEND_SWATCH}" rx="2" fill="${escapeXml(item.color)}"/>`;
+    const fill = escapeXml(item.color);
+    // Point series show their symbol.
+    const swatch = item.glyph
+      ? `<path transform="translate(${n(item.x + LEGEND_SWATCH / 2)} ${n(item.y)})" d="${item.glyph}" fill="${fill}"/>`
+      : `<rect x="${n(item.x)}" y="${n(swatchY)}" width="${LEGEND_SWATCH}" height="${LEGEND_SWATCH}" rx="2" fill="${fill}"/>`;
+    out += `<g${opacity}>${swatch}`;
     out += `<text x="${n(item.x + LEGEND_SWATCH + 6)}" y="${n(item.y)}" dominant-baseline="middle" fill="${escapeXml(theme.text)}">${escapeXml(item.label)}</text></g>`;
   }
   return out;
@@ -78,11 +84,14 @@ export function legendElements(legend: readonly LegendItem[], theme: Theme): str
 
 /** Continuous color legend; `id` must be unique in the document (for the gradient). */
 export function colorLegendElement(legend: ColorLegend, theme: Theme, id: string): string {
+  const middle = legend.middle ?? 0.5;
   const stops = legend.stops
-    .map(
-      (color, i) =>
-        `<stop offset="${n((i / Math.max(1, legend.stops.length - 1)) * 100)}%" stop-color="${escapeXml(color)}"/>`,
-    )
+    .map((color, i) => {
+      // Even spacing, with the middle color moved to `middle`.
+      const t = i / Math.max(1, legend.stops.length - 1);
+      const offset = t <= 0.5 ? t * 2 * middle : middle + (t - 0.5) * 2 * (1 - middle);
+      return `<stop offset="${n(offset * 100)}%" stop-color="${escapeXml(color)}"/>`;
+    })
     .join("");
   const y = legend.y;
   const text = (item: { text: string; x: number }, fill: string) =>
@@ -94,6 +103,22 @@ export function colorLegendElement(legend: ColorLegend, theme: Theme, id: string
     `<rect x="${n(legend.ramp.x)}" y="${n(y - LEGEND_SWATCH / 2)}" width="${n(legend.ramp.width)}" height="${LEGEND_SWATCH}" rx="2" fill="url(#${id})"/>` +
     text(legend.high, theme.muted)
   );
+}
+
+/** Legends of point sizes and shapes. */
+export function glyphLegendElements(legends: readonly GlyphLegend[], theme: Theme): string {
+  let out = "";
+  const text = (x: number, y: number, value: string, fill: string) =>
+    `<text x="${n(x)}" y="${n(y)}" dominant-baseline="middle" fill="${escapeXml(fill)}">${escapeXml(value)}</text>`;
+  for (const { title, entries } of legends) {
+    out += text(title.x, title.y, title.text, theme.text);
+    out += `<g fill="${escapeXml(theme.muted)}" fill-opacity="0.6">`;
+    for (const { glyph, x, y } of entries)
+      out += `<path transform="translate(${n(x)} ${n(y)})" d="${glyph}"/>`;
+    out += "</g>";
+    for (const { y, label } of entries) out += text(label.x, y, label.text, theme.muted);
+  }
+  return out;
 }
 
 /** Each panel's facet value above its plot. */
@@ -157,6 +182,9 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   out += panelTitleElements(scene.panels, theme);
   out += titleElement(scene);
   if (options.legend ?? true) out += legendElements(scene.legend, theme);
-  if (scene.colorLegend) out += colorLegendElement(scene.colorLegend, theme, `${id}-ramp`);
+  scene.colorLegends.forEach((legend, i) => {
+    out += colorLegendElement(legend, theme, `${id}-ramp-${i}`);
+  });
+  out += glyphLegendElements(scene.glyphLegends, theme);
   return `${out}</svg>`;
 }

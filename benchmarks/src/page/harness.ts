@@ -10,6 +10,7 @@
 // ingestion scenarios run with normal vsync instead.
 
 import {
+  bubbles,
   type CandleData,
   type CategoryData,
   candles,
@@ -93,6 +94,8 @@ function makeData(s: Scenario, seed: number): AnyData {
       return candles(s.points, seed);
     case "histogram":
       return samples(s.points, seed);
+    case "bubble":
+      return bubbles(s.points, seed);
   }
 }
 
@@ -543,7 +546,7 @@ function hoverTargets(s: Scenario, count: number): Point[] {
   const handle = active[0]!;
   const data = retainedData[0]!;
   const targets: Point[] = [];
-  if (s.chart === "scatter") {
+  if (s.chart === "scatter" || s.chart === "bubble") {
     const points = data as PointData;
     const next = random(42);
     for (let i = 0; i < count; i++) {

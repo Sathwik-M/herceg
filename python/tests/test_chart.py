@@ -1,4 +1,6 @@
 import datetime as dt
+import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -284,3 +286,96 @@ def test_histograms_bin_a_column():
     assert "<path" in hg.Chart(values, width=300, height=150).histogram("ms").to_svg()
     with pytest.raises(TypeError, match="histogram x"):
         hg.Chart(values).histogram("region")
+
+
+def test_points_encode_size_color_opacity_and_shape():
+    values = {
+        "x": np.array([1.0, 2.0, 3.0]),
+        "y": np.array([3.0, 1.0, 2.0]),
+        "pop": np.array([10.0, 40.0, 90.0]),
+        "growth": np.array([-1.0, 0.0, 2.0]),
+        "kind": ["a", "b", "a"],
+        "unused": np.array([0.0, 0.0, 0.0]),
+    }
+    chart = hg.scatter(
+        values, "x", "y", r="pop", color="growth", colors="rdbu", color_midpoint=0, symbol="kind"
+    )
+    spec, _ = chart.to_spec()
+    assert spec["marks"][0] == {
+        "type": "point",
+        "x": "x",
+        "y": "y",
+        "r": "pop",
+        "color": "growth",
+        "colors": "rdbu",
+        "colorMidpoint": 0,
+        "symbol": "kind",
+        "data": "data",
+    }
+    assert sorted(spec["data"]["data"]["columns"]) == ["growth", "kind", "pop", "x", "y"]
+    svg = hg.Chart(values, width=300, height=200).point("x", "y", symbol="diamond").to_svg()
+    assert "<path" in svg
+    # A shape's name is not a column, so it is not sent as one.
+    one, _ = hg.Chart(values).point("x", "y", symbol="star", r_range=(1, 9)).to_spec()
+    assert sorted(one["data"]["data"]["columns"]) == ["x", "y"]
+    assert hg.scatter(values, "x", "y", r="pop", width=300, height=200).to_svg().count("<path") > 1
+
+
+def test_encodings_are_checked():
+    values = {"x": np.array([1.0]), "y": np.array([2.0]), "kind": ["a"]}
+    with pytest.raises(ValueError, match="neither a column nor one of circle"):
+        hg.Chart(values).point("x", "y", symbol="hexagon")
+    with pytest.raises(TypeError, match="point symbol"):
+        hg.Chart(values).point("x", "y", symbol="x")
+    with pytest.raises(TypeError, match="point color"):
+        hg.Chart(values).point("x", "y", color="kind")
+    with pytest.raises(ValueError, match="unknown scheme 'virdis'"):
+        hg.Chart(values).point("x", "y", color="x", colors="virdis")
+    with pytest.raises(ValueError, match="color_domain must be two finite numbers, ascending"):
+        hg.Chart(values).heatmap("x", "y", "x", color_domain=(1, 0))
+    with pytest.raises(ValueError, match="color_domain must be two finite"):
+        hg.Chart(values).point("x", "y", color="x", color_domain=(0, float("inf")))
+    with pytest.raises(ValueError, match="r_range must be two finite numbers, ascending, from 0"):
+        hg.Chart(values).point("x", "y", r="x", r_range=(-1, 4))
+    with pytest.raises(ValueError, match="color_midpoint must be a finite"):
+        hg.Chart(values).point("x", "y", color="x", color_midpoint=float("nan"))
+    with pytest.raises(ValueError, match="outside color_domain"):
+        hg.Chart(values).point("x", "y", color="x", color_domain=(0, 1), color_midpoint=2)
+    with pytest.raises(ValueError, match="positive radius"):
+        hg.Chart(values).point("x", "y", r=0)
+    with pytest.raises(ValueError, match="from 0 to 1"):
+        hg.Chart(values).point("x", "y", fill_opacity=1.5)
+
+
+def test_heatmaps_take_schemes_and_midpoints():
+    values = {"c": ["a", "b"], "r": ["u", "u"], "v": np.array([-1.0, 1.0])}
+    spec, _ = hg.heatmap(
+        values, "c", "r", "v", colors="viridis", color_domain=(-2, 2), color_midpoint=0
+    ).to_spec()
+    assert spec["marks"][0]["colors"] == "viridis"
+    assert spec["marks"][0]["colorDomain"] == [-2, 2]
+    assert spec["marks"][0]["colorMidpoint"] == 0
+
+
+def test_scatter_helper_takes_every_encoding():
+    values = {"x": np.array([1.0, 2.0]), "y": np.array([3.0, 4.0]), "s": np.array([1.0, 5.0])}
+    chart = hg.scatter(
+        values, "x", "y", r="s", r_range=(1, 9), color="s", color_domain=(0, 10), width=300
+    )
+    spec, _ = chart.to_spec()
+    assert spec["marks"][0]["rRange"] == [1, 9]
+    assert spec["marks"][0]["colorDomain"] == [0, 10]
+    assert spec["width"] == 300
+    assert "<path" in chart.to_svg()
+
+
+def test_scheme_and_symbol_names_match_typescript():
+    root = Path(__file__).resolve().parents[2] / "packages" / "herceg" / "src"
+    if not root.exists():
+        pytest.skip("needs a source checkout")
+    schemes = (root / "scale" / "schemes.ts").read_text()
+    table = schemes[schemes.index("export const schemes") :]
+    assert tuple(re.findall(r"^  (\w+),$", table, re.MULTILINE)) == hg.SCHEMES
+    symbols = (root / "draw" / "symbols.ts").read_text()
+    order = symbols[symbols.index("export const SYMBOLS") :]
+    assert tuple(re.findall(r'^  "([\w-]+)",$', order, re.MULTILINE)) == hg.SYMBOLS

@@ -11,6 +11,7 @@ import {
   type BandContext,
   type BandList,
   type Bands,
+  type ColorRamp,
   type Frame,
   type Mark,
   numericBands,
@@ -19,15 +20,7 @@ import type { Series } from "../marks/series.ts";
 import { unionExtent } from "../marks/trace.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
-import {
-  type AxisGeometry,
-  type ColorLegend,
-  LEGEND_SWATCH,
-  type LegendItem,
-  type Panel,
-  type Rect,
-  type Scene,
-} from "../scene/scene.ts";
+import type { AxisGeometry, Panel, Rect, Scene } from "../scene/scene.ts";
 import type { AxisSpec, ChartSpec } from "../spec/spec.ts";
 import { resolveTheme, type Theme } from "../theme.ts";
 import {
@@ -44,6 +37,7 @@ import {
   valueFormatter,
 } from "./axis.ts";
 import type { Facet, PanelSplit, Splitter } from "./facet.ts";
+import { EDGE, type LegendEntry, layoutLegends } from "./legend.ts";
 
 /** Chart options with marks bound to their data. */
 export type ChartConfig = Omit<
@@ -78,10 +72,7 @@ const TICK = 5;
 /** Smallest plot side, in pixels, of a panel among several. */
 const MIN_PANEL = 20;
 const GAP = 6;
-const LEGEND_GAP = 16;
 /** Left inset of the title and legend. */
-const EDGE = 8;
-const RAMP_WIDTH = 120;
 
 export class ChartModel {
   #config: ChartConfig;
@@ -433,41 +424,46 @@ export class ChartModel {
     }
 
     // Vertical layout depends only on fonts, titles, and the legends.
-    const ramp = base
-      .map(({ mark, series }) => mark.colorRamp?.(series, theme))
-      .find((r) => r !== undefined);
-    const legendItems = base
-      .filter(({ mark }) => !mark.colorRamp)
-      .flatMap(({ series }) => series.map((s) => ({ key: s.key, label: s.label, color: s.color })));
-    const showLegend = config.legend ?? legendItems.length > 1;
-    let top = config.title ? lineHeight + 14 : Math.ceil(theme.fontSize / 2) + 2;
-    const legend = showLegend
-      ? this.#layoutLegend(legendItems, top, measure, font, lineHeight)
-      : [];
-    let colorLegend: ColorLegend | undefined;
-    if (ramp && (config.legend ?? true)) {
-      const after = legend.at(-1);
-      const start = after
-        ? after.x + LEGEND_SWATCH + 6 + measure(after.label, font) + LEGEND_GAP
-        : EDGE;
-      const low = formatNumber(ramp.domain[0], locale);
-      const high = formatNumber(ramp.domain[1], locale);
-      const titleWidth = measure(ramp.title, font) + 10;
-      const lowWidth = measure(low, font) + 6;
-      const total = titleWidth + lowWidth + RAMP_WIDTH + 6 + measure(high, font);
-      const wrap = start > EDGE && start + total > width - EDGE;
-      const x = wrap ? EDGE : start;
-      colorLegend = {
-        stops: ramp.stops,
-        y: wrap ? (after?.y ?? top) + lineHeight + 4 : (after?.y ?? top),
-        title: { text: ramp.title, x },
-        low: { text: low, x: x + titleWidth },
-        ramp: { x: x + titleWidth + lowWidth, width: RAMP_WIDTH },
-        high: { text: high, x: x + titleWidth + lowWidth + RAMP_WIDTH + 6 },
-      };
+    // One color legend per distinct scale: marks sharing a scale share one.
+    const ramps = new Map<string, ColorRamp>();
+    for (const { mark, series } of base) {
+      const ramp = mark.colorRamp?.(series, theme);
+      if (!ramp) continue;
+      const key = `${ramp.title}|${ramp.domain.join()}|${ramp.midpoint}|${ramp.stops.join()}`;
+      if (!ramps.has(key)) ramps.set(key, ramp);
     }
-    const lastLegendRow = Math.max(legend.at(-1)?.y ?? -Infinity, colorLegend?.y ?? -Infinity);
-    if (Number.isFinite(lastLegendRow)) top = lastLegendRow + lineHeight + 8;
+    const entries = base.flatMap(({ mark, series }) =>
+      series.flatMap((s) => {
+        const entry = mark.legendEntry ? mark.legendEntry(s, theme) : { color: s.color };
+        if (!entry) return [];
+        const item: LegendEntry = { key: s.key, label: s.label, color: entry.color };
+        if (entry.glyph) item.glyph = entry.glyph;
+        return [item];
+      }),
+    );
+    const legends = config.legend ?? true;
+    const format = (value: number) => formatNumber(value, locale);
+    let top = config.title ? lineHeight + 14 : Math.ceil(theme.fontSize / 2) + 2;
+    const {
+      legend,
+      colorLegends,
+      glyphLegends,
+      bottom: legendBottom,
+    } = layoutLegends(
+      {
+        // Without an explicit setting, one series needs no legend.
+        entries: (config.legend ?? entries.length > 1) ? entries : [],
+        ramps: legends ? [...ramps.values()] : [],
+        keys: legends
+          ? base.flatMap(({ mark, series }) => mark.glyphKeys?.(series, format) ?? [])
+          : [],
+        hidden: this.hidden,
+      },
+      top - lineHeight / 2,
+      width,
+      { measure, font, lineHeight, locale },
+    );
+    if (legendBottom !== undefined) top = legendBottom + lineHeight / 2 + 8;
     const showX = config.x?.axis ?? true;
     const showY = config.y?.axis ?? true;
     const bottom = showX
@@ -803,31 +799,10 @@ export class ChartModel {
       title: config.title ? { text: config.title, x: EDGE, y: lineHeight / 2 + 6 } : undefined,
       panels,
       legend,
-      colorLegend,
+      colorLegends,
+      glyphLegends,
       vertices,
     };
-  }
-
-  #layoutLegend(
-    items: readonly { key: string; label: string; color: string }[],
-    top: number,
-    measure: MeasureText,
-    font: string,
-    lineHeight: number,
-  ): LegendItem[] {
-    const out: LegendItem[] = [];
-    let x = EDGE;
-    let y = top;
-    for (const item of items) {
-      const width = LEGEND_SWATCH + 6 + measure(item.label, font);
-      if (x > EDGE && x + width > this.width - EDGE) {
-        x = EDGE;
-        y += lineHeight + 4;
-      }
-      out.push({ ...item, hidden: this.hidden.has(item.key), x, y });
-      x += width + LEGEND_GAP;
-    }
-    return out;
   }
 
   /** x scale of the last scene's first panel (the only one without facets). */
@@ -890,7 +865,11 @@ export class ChartModel {
   formatsOf(mark: Mark): AxisFormat {
     const last = this.#views[0]?.inspector;
     const fallback = (value: number) => formatNumber(value, this.#config.locale);
-    return { x: last?.formatX ?? fallback, y: last?.axisOf(mark).formatY ?? fallback };
+    return {
+      x: last?.formatX ?? fallback,
+      y: last?.axisOf(mark).formatY ?? fallback,
+      value: last?.formatValue ?? fallback,
+    };
   }
 
   /** Whether a series of the last scene is on the right y axis. */

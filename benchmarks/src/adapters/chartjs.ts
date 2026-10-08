@@ -1,6 +1,7 @@
 import {
   BarController,
   BarElement,
+  BubbleController,
   CategoryScale,
   Chart,
   Decimation,
@@ -14,13 +15,21 @@ import {
   Tooltip,
 } from "chart.js";
 import "chartjs-adapter-date-fns";
-import type { CategoryData, PointData, SeriesData } from "../datasets.ts";
+import {
+  type BubbleData,
+  bubbleColor,
+  bubbleRadius,
+  type CategoryData,
+  type PointData,
+  type SeriesData,
+} from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartOptions } from "../page/adapter.ts";
 import { clientPoint, color } from "../page/adapter.ts";
 
 Chart.register(
   LineController,
   BarController,
+  BubbleController,
   ScatterController,
   LineElement,
   BarElement,
@@ -165,6 +174,27 @@ function scatterPoints(data: PointData): XY[] {
   return points;
 }
 
+/** Chart.js bubbles take a radius per point and a color per point. */
+function bubblePoints(data: BubbleData): {
+  points: { x: number; y: number; r: number }[];
+  colors: string[];
+} {
+  const maxSize = Math.max(...data.size);
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of data.value) {
+    min = Math.min(min, v);
+    max = Math.max(max, v);
+  }
+  const points = new Array(data.x.length);
+  const colors = new Array<string>(data.x.length);
+  for (let i = 0; i < data.x.length; i++) {
+    points[i] = { x: data.x[i]!, y: data.y[i]!, r: bubbleRadius(data.size[i]!, maxSize) };
+    colors[i] = bubbleColor(data.value[i]!, min, max);
+  }
+  return { points, colors };
+}
+
 export const adapter: Adapter = {
   id: "chartjs",
   renderer: { normal: "canvas", large: "canvas (parsing: false, min-max decimation)" },
@@ -232,6 +262,28 @@ export const adapter: Adapter = {
           chart.update("none");
         },
       };
+    },
+  },
+  bubble: {
+    prepare: bubblePoints,
+    create(container, data, options) {
+      const { points, colors } = bubblePoints(data);
+      const chart = new Chart(canvasIn(container, options), {
+        type: "bubble",
+        data: { datasets: [{ data: points, backgroundColor: colors, borderWidth: 0 }] },
+        options: {
+          ...common(options),
+          interaction: { mode: "nearest", intersect: false },
+          plugins: { tooltip: { enabled: options.tooltip } },
+        },
+      });
+      return handle<BubbleData>(chart, (next) => {
+        const prepared = bubblePoints(next);
+        const dataset = chart.data.datasets[0]!;
+        dataset.data = prepared.points;
+        dataset.backgroundColor = prepared.colors;
+        chart.update("none");
+      });
     },
   },
   // Chart.js has no built-in heatmap; chartjs-chart-matrix is a third-party plugin.

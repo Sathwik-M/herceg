@@ -1,7 +1,10 @@
-// Sequential color: maps numbers onto a ramp of colors through a 256-entry
-// lookup table, so coloring many cells costs one table read each.
+// Continuous color: maps numbers onto a ramp of colors through a 255-entry
+// lookup table, so coloring many cells costs one table read each. A
+// diverging ramp maps a midpoint to its middle color, and each side of the
+// midpoint onto its own half of the ramp.
 
-const LUT_SIZE = 256;
+/** Odd, so one entry is the ramp's exact middle, and below 256, so an index fits a byte. */
+const LUT_SIZE = 255;
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 
@@ -15,6 +18,46 @@ export function checkRamp(stops: readonly string[], what: string): void {
   if (bad !== undefined) {
     throw new TypeError(`${what} must be hex colors such as "#08306b"; got ${JSON.stringify(bad)}`);
   }
+}
+
+/**
+ * Checks a mark's fixed color domain and midpoint: finite numbers, the
+ * domain ascending, and the midpoint inside it.
+ */
+export function checkColorScale(
+  domain: readonly [number, number] | undefined,
+  midpoint: number | undefined,
+  what: string,
+): void {
+  if (
+    domain &&
+    !(Number.isFinite(domain[0]) && Number.isFinite(domain[1]) && domain[0] < domain[1])
+  )
+    throw new RangeError(
+      `${what} colorDomain must be two finite numbers, ascending, not ${domain}`,
+    );
+  if (midpoint === undefined) return;
+  if (!Number.isFinite(midpoint))
+    throw new RangeError(`${what} colorMidpoint must be a finite number, not ${midpoint}`);
+  if (domain && !(midpoint >= domain[0] && midpoint <= domain[1]))
+    throw new RangeError(`${what} colorMidpoint ${midpoint} is outside its colorDomain ${domain}`);
+}
+
+/**
+ * A ramp from a mark's colors, or `fallback`. Scheme names in specs are
+ * resolved by the spec loader, which keeps the scheme table out of charts
+ * that do not load specs.
+ */
+export function rampOf(
+  colors: string | readonly string[] | undefined,
+  fallback: readonly string[],
+): readonly string[] {
+  if (typeof colors === "string") {
+    throw new TypeError(
+      `The color scheme "${colors}" must be resolved first: load the spec with loadSpec, or pass the scheme's colors (import { ${colors} } from "herceg")`,
+    );
+  }
+  return colors ?? fallback;
 }
 
 /**
@@ -104,15 +147,27 @@ function parseHex(hex: string): [number, number, number] {
 export class SequentialScale {
   readonly domain: readonly [number, number];
   readonly stops: readonly string[];
+  /** The value at the ramp's middle color, for diverging ramps. */
+  readonly midpoint: number | undefined;
   /** RGBA bytes, LUT_SIZE entries. */
   readonly #lut: Uint8ClampedArray;
-  readonly #low: number;
-  readonly #scale: number;
+  readonly #lo: number;
+  readonly #hi: number;
+  readonly #mid: number;
 
-  constructor(domain: readonly [number, number], stops: readonly string[]) {
-    checkRamp(stops, "A sequential scale");
-    this.domain = domain;
+  /**
+   * A scale over `domain`, widened to include `midpoint` when the midpoint
+   * lies outside it, so values on each side keep their half of the ramp.
+   */
+  constructor(domain: readonly [number, number], stops: readonly string[], midpoint?: number) {
+    checkRamp(stops, "A color scale");
+    this.domain =
+      midpoint === undefined || (midpoint >= domain[0] && midpoint <= domain[1])
+        ? domain
+        : [Math.min(domain[0], midpoint), Math.max(domain[1], midpoint)];
+    const [lo, hi] = this.domain;
     this.stops = stops;
+    this.midpoint = midpoint;
     const rgb = stops.map(parseHex);
     this.#lut = new Uint8ClampedArray(LUT_SIZE * 4);
     for (let i = 0; i < LUT_SIZE; i++) {
@@ -124,16 +179,48 @@ export class SequentialScale {
       for (let c = 0; c < 3; c++) this.#lut[i * 4 + c] = Math.round(a[c]! + (b[c]! - a[c]!) * t);
       this.#lut[i * 4 + 3] = 255;
     }
-    const span = domain[1] - domain[0];
-    this.#low = domain[0];
-    this.#scale = span > 0 ? (LUT_SIZE - 1) / span : 0;
+    this.#lo = lo;
+    this.#hi = hi;
+    this.#mid = midpoint ?? 0;
   }
 
   /** Lookup-table index for a value; -1 for missing values. */
   index(value: number): number {
     if (!Number.isFinite(value)) return -1;
-    const i = Math.round((value - this.#low) * this.#scale);
-    return i < 0 ? 0 : i >= LUT_SIZE ? LUT_SIZE - 1 : i;
+    const v = value;
+    const last = LUT_SIZE - 1;
+    let position: number;
+    if (this.midpoint === undefined) {
+      position = fraction(v, this.#lo, this.#hi) * last;
+    } else {
+      // Each side of the midpoint takes its half of the table; the midpoint
+      // itself, the middle entry.
+      const [lo, mid, hi] = [this.#lo, this.#mid, this.#hi];
+      const t = v < mid ? fraction(v, lo, mid) - 1 : hi > mid ? fraction(v, mid, hi) : 0;
+      position = ((1 + t) * last) / 2;
+    }
+    const i = Math.round(position);
+    return i < 0 ? 0 : i > last ? last : i;
+  }
+
+  /**
+   * The ramp's stops for a legend gradient that places the middle color at
+   * the midpoint. With an even number of stops there is no middle stop, so
+   * the blend of each neighboring pair is added between them, keeping the
+   * stops evenly spaced with the middle color, as the lookup table blends
+   * it, among them.
+   */
+  legendStops(): readonly string[] {
+    const { stops } = this;
+    if (this.midpoint === undefined || stops.length % 2 === 1) return stops;
+    const out = [stops[0]!];
+    for (let i = 1; i < stops.length; i++) out.push(blend(stops[i - 1]!, stops[i]!), stops[i]!);
+    return out;
+  }
+
+  /** The CSS color of each lookup-table entry, for drawing points of many colors. */
+  colors(): string[] {
+    return Array.from({ length: LUT_SIZE }, (_, i) => hexOf(this.#lut, i));
   }
 
   /** Writes the RGBA color of `value` into `out` at byte offset `at` (transparent when missing). */
@@ -151,10 +238,34 @@ export class SequentialScale {
 
   /** CSS color of `value`. */
   color(value: number): string {
-    const i = Math.max(0, this.index(value));
-    const r = this.#lut[i * 4]!;
-    const g = this.#lut[i * 4 + 1]!;
-    const b = this.#lut[i * 4 + 2]!;
-    return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+    return hexOf(this.#lut, Math.max(0, this.index(value)));
   }
+}
+
+/**
+ * Where `value` lies from lo (0) to hi (1); 1 when they are equal, so a
+ * domain of one value takes the high end. Spans too wide for a double are
+ * measured in halves; dividing by the span, rather than multiplying by its
+ * reciprocal, keeps tiny (subnormal) spans exact.
+ */
+export function fraction(value: number, lo: number, hi: number): number {
+  if (!(hi > lo)) return 1;
+  const span = hi - lo;
+  return Number.isFinite(span) ? (value - lo) / span : (value / 2 - lo / 2) / (hi / 2 - lo / 2);
+}
+
+/** The color halfway between two hex colors. */
+function blend(a: string, b: string): string {
+  const [x, y] = [parseHex(a), parseHex(b)];
+  const mixed = new Uint8ClampedArray(
+    [0, 1, 2, 3].map((c) => (c < 3 ? Math.round((x[c]! + y[c]!) / 2) : 255)),
+  );
+  return hexOf(mixed, 0);
+}
+
+function hexOf(lut: Uint8ClampedArray, i: number): string {
+  const r = lut[i * 4]!;
+  const g = lut[i * 4 + 1]!;
+  const b = lut[i * 4 + 2]!;
+  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
 }

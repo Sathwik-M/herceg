@@ -26,7 +26,10 @@ hg.bar(sales, x="q1", y="region")  # a category y gives horizontal bars
 hg.bar(sales, x="region", y="q1", labels=True)  # values at the bar ends
 hg.Chart(stats).bar(x="group", y="mean").error_bar(x="group", y="mean", y_error="se")
 hg.scatter(cars, x="weight", y="mpg", series="origin", r=3)
-hg.heatmap(load, x="hour", y="host", value="cpu")
+hg.scatter(countries, x="gdp", y="life", r="population", series="continent")  # bubbles
+hg.scatter(stations, x="lon", y="lat", color="anomaly", colors="rdbu", color_midpoint=0)
+hg.scatter(cars, x="weight", y="mpg", symbol="origin")  # a shape per origin
+hg.heatmap(load, x="hour", y="host", value="cpu", colors="viridis")
 hg.candlestick(prices, x="day", open="open", high="high", low="low", close="close")
 hg.histogram(requests, x="latency", series="region", bins={"step": 10})
 ```
@@ -55,6 +58,9 @@ cells), `renderer`, `theme` (`"light"`, `"dark"`, or a dict), `locale`, and
 
 Mark methods take column names; `series` names a category column that splits
 rows into one series per value. A mark can read other data with `data=`.
+Points can size (`r`), color (`color`), fade (`fill_opacity`), and shape
+(`symbol`) by column; `colors` takes a scheme name from `hg.SCHEMES` or a list
+of hex colors, and `symbol` a shape from `hg.SYMBOLS` or a category column.
 Column names are checked when the mark is added, with the available columns
 in the error message.
 

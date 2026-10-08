@@ -111,6 +111,9 @@ bar(requests, { x: "time", y: "latency" }); // number or time x: bars centered o
 bar(sales, { x: "region", y: "q1", labels: true }); // values at bar ends; Intl options format them
 
 point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
+point(countries, { x: "gdp", y: "life", r: "population", series: "continent" }); // bubbles
+point(stations, { x: "lon", y: "lat", color: "temperature", colors: viridis });
+point(cars, { x: "weight", y: "mpg", symbol: "origin" }); // a shape per origin
 errorBar(stats, { x: "group", y1: "low", y2: "high" }); // y, x1, x2 for horizontal ones
 errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
@@ -130,8 +133,35 @@ band axis. Categories on a y axis run top to bottom; long names are shortened
 with an ellipsis. Horizontal bars default to "nearest-y" tooltips, which
 report every series in the band under the pointer. Heatmaps also accept number and time fields, with one column or row per
 distinct value, up to 4,194,304 cells (bin finer data first). Heatmaps show a
-color legend instead of series entries; `colors` takes a ramp of `#rgb` or
-`#rrggbb` colors from low to high.
+color legend instead of series entries.
+
+Points encode fields as well as positions. `r` names a number field to size
+points by area, from zero (or the least value, when values are negative) at
+`rRange[0]` pixels to the largest at `rRange[1]` (default [2, 12]), with a key
+of round values below the legend. `fillOpacity` names a field mapped from
+0.15 to opaque. `color` names a number field colored on a continuous scale,
+with a color legend; series then appear in the legend in a neutral color.
+`symbol` is one shape (`"circle"`, `"square"`, `"triangle"`, `"diamond"`,
+`"cross"`, `"star"`, `"wye"`, `"triangle-down"`) or a category field whose
+values take the shapes in that order, with a key unless the field also splits
+series. Every shape covers the area of a circle of the same radius. Points
+missing a value they encode are not drawn, and tooltips name the encoded
+values. Encoded points are drawn on the CPU (Canvas or SVG), not by the WebGL
+painter; opaque ones are drawn one color at a time, high values last.
+
+Continuous color (`colors` on heatmaps and on points with `color`) takes a
+ramp of `#rgb` or `#rrggbb` colors from low to high. Named schemes are
+exported one by one, so a bundle carries only those it imports: sequential
+`viridis`, `magma`, `inferno`, `plasma`, `cividis`, `turbo`, `blues`, `greens`,
+`greys`, `oranges`, `purples`, `reds`, `ylgnbu`, `ylorrd`; diverging `rdbu`,
+`rdylbu`, `brbg`, `piyg`, `prgn`, `puor`, `spectral`; and categorical
+`tableau10`, `category10`, `set2`, `dark2` (for a theme's `palette`). Specs
+name schemes as strings (`"colors": "viridis"`). `colorDomain` fixes the
+values at the ramp's ends (others are clamped), and `colorMidpoint` maps a
+value to the ramp's middle color, each side onto its own half, for diverging
+data; with a midpoint and no `colors`, the theme's `diverging` ramp is used.
+A midpoint outside the data widens the scale to include it, so the legend
+then runs from the midpoint; with `colorDomain`, it must lie inside the domain.
 
 Candlesticks that close at or above their open are hollow, in the theme's
 `rise` color (or the mark's `rise`); others are filled in `fall`, so direction

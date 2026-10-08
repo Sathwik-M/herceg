@@ -7,7 +7,8 @@ export type ChartType =
   | "scatter"
   | "heatmap"
   | "candlestick"
-  | "histogram";
+  | "histogram"
+  | "bubble";
 
 export type Operation =
   /** Create the chart and wait for the first frame. */
@@ -202,6 +203,18 @@ export const SCENARIOS: Scenario[] = [
     samples: 5,
     warmup: 1,
     description: "100,000 candles; each library's large-data strategy",
+  }),
+  s({
+    id: "bubble-medium-init",
+    chart: "bubble",
+    operation: "init",
+    series: 1,
+    points: 10_000,
+    large: false,
+    tooltip: true,
+    samples: 10,
+    warmup: 3,
+    description: "10,000 points sized and colored by two fields",
   }),
   s({
     id: "histogram-medium-init",

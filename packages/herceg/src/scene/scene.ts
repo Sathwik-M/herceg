@@ -7,6 +7,7 @@
 // the view changes.
 
 import type { NumericArray } from "../data/column.ts";
+import type { SymbolName } from "../draw/symbols.ts";
 import type { Mapping } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { Theme } from "../theme.ts";
@@ -207,10 +208,21 @@ export interface PointGeometry extends Geometry {
    * look like one. Other points are drawn one by one so overlaps darken.
    */
   opaque: boolean;
+  /** Radius in pixels; with `radii`, the largest. */
   radius: number;
+  /** The shape of every point, unless `symbols` gives each its own. */
+  symbol: SymbolName;
   /** x, y per point in CSS pixels; empty for a cloud. */
   coords: Float32Array;
   count: number;
+  /** Per point, for points encoding fields: radius in pixels. */
+  radii?: Float32Array | undefined;
+  /** Per point: an index into `palette`, the colors of a continuous scale. */
+  colors?: { index: Uint8ClampedArray; palette: readonly string[] } | undefined;
+  /** Per point: fill opacity. */
+  opacities?: Float32Array | undefined;
+  /** Per point: an index into SYMBOLS. */
+  symbols?: Uint8ClampedArray | undefined;
   /** Set when the series is left to a GPU painter instead of `coords`. */
   cloud?: PointCloud;
 }
@@ -320,9 +332,25 @@ export interface LegendItem {
   key: string;
   label: string;
   color: string;
+  /**
+   * The swatch's shape for point series, as SVG path data centered on
+   * (0, 0); otherwise the swatch is a rounded square.
+   */
+  glyph?: string | undefined;
   hidden: boolean;
   x: number;
   y: number;
+}
+
+/**
+ * Legend of point sizes or shapes: a title, then glyphs in the theme's muted
+ * color, each followed by its label. Glyphs are SVG path data centered on
+ * (0, 0), drawn at (x, y); other positions are left edges, and `y` is the
+ * middle of an item's row.
+ */
+export interface GlyphLegend {
+  title: { text: string; x: number; y: number };
+  entries: { glyph: string; x: number; y: number; label: { text: string; x: number } }[];
 }
 
 /**
@@ -331,6 +359,12 @@ export interface LegendItem {
  */
 export interface ColorLegend {
   stops: readonly string[];
+  /**
+   * Where the ramp's middle color sits, from 0 to 1, for diverging scales:
+   * the midpoint's place between the low and high values. Stops below the
+   * middle spread over the ramp up to it, the rest beyond.
+   */
+  middle?: number | undefined;
   y: number;
   title: { text: string; x: number };
   low: { text: string; x: number };
@@ -365,7 +399,10 @@ export interface Scene {
   /** Plotting areas; a chart without facets has one. */
   panels: Panel[];
   legend: LegendItem[];
-  colorLegend: ColorLegend | undefined;
+  /** Legends of continuous color scales, one per distinct scale. */
+  colorLegends: ColorLegend[];
+  /** Legends of point sizes and shapes encoded by fields. */
+  glyphLegends: GlyphLegend[];
   /** Points in all mark geometry after level-of-detail reduction. */
   vertices: number;
 }

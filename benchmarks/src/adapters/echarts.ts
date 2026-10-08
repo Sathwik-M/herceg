@@ -7,7 +7,16 @@ import {
 } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
-import type { CandleData, CategoryData, GridData, PointData, SeriesData } from "../datasets.ts";
+import {
+  BUBBLE,
+  type BubbleData,
+  bubbleRadius,
+  type CandleData,
+  type CategoryData,
+  type GridData,
+  type PointData,
+  type SeriesData,
+} from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartOptions } from "../page/adapter.ts";
 import { clientPoint, color, FALL, RISE } from "../page/adapter.ts";
 
@@ -180,6 +189,35 @@ function candleRows(data: CandleData): number[][] {
   return rows;
 }
 
+// ECharts' documented scatter item with extra dimensions: [x, y, size, value].
+function bubbleRows(data: BubbleData): number[][] {
+  const rows: number[][] = new Array(data.x.length);
+  for (let i = 0; i < data.x.length; i++) {
+    rows[i] = [data.x[i]!, data.y[i]!, data.size[i]!, data.value[i]!];
+  }
+  return rows;
+}
+
+/**
+ * Bubbles colored by the fourth dimension and sized by the third, with the
+ * domains of `data`; opaque, as the other libraries draw them.
+ */
+function bubbleOption(data: BubbleData) {
+  const [min, max] = extent(data.value);
+  const maxSize = extent(data.size)[1];
+  return {
+    visualMap: { min, max, dimension: 3, show: false, inRange: { color: [...BUBBLE.colors] } },
+    series: [
+      {
+        type: "scatter" as const,
+        data: bubbleRows(data),
+        symbolSize: (row: number[]) => 2 * bubbleRadius(row[2]!, maxSize),
+        itemStyle: { opacity: 1 },
+      },
+    ],
+  };
+}
+
 function heatmapTriples(data: GridData): [number, number, number][] {
   const out: [number, number, number][] = new Array(data.values.length);
   for (let r = 0; r < data.rows; r++) {
@@ -308,6 +346,22 @@ export const adapter: Adapter = {
           ],
         },
         (next) => ({ series: [{ data: candleRows(next) }] }),
+      );
+    },
+  },
+  bubble: {
+    prepare: bubbleRows,
+    create(container, data, options) {
+      return mount<BubbleData>(
+        container,
+        options,
+        {
+          ...base(options, "item"),
+          xAxis: { type: "value", scale: true },
+          yAxis: { type: "value", scale: true },
+          ...bubbleOption(data),
+        },
+        bubbleOption,
       );
     },
   },

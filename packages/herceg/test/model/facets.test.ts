@@ -5,7 +5,6 @@ import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
-import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";

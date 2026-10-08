@@ -19,6 +19,7 @@ import { RuleMark } from "../marks/rule.ts";
 import { TextMark } from "../marks/text.ts";
 import { Facet } from "../model/facet.ts";
 import type { ChartConfig } from "../model/model.ts";
+import { scheme } from "../scale/schemes.ts";
 import {
   type BinaryType,
   type ChartSpec,
@@ -229,9 +230,9 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
       case "bar":
         return new BarMark(spec, source);
       case "point":
-        return new PointMark(spec, source);
+        return new PointMark(withScheme(spec), source);
       case "heatmap":
-        return new HeatmapMark(spec, source);
+        return new HeatmapMark(withScheme(spec), source);
       case "errorbar":
         return new ErrorBarMark(spec, source);
       case "candlestick":
@@ -246,6 +247,11 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
   } catch (error) {
     throw new Error(`Mark ${index} (${String(spec?.type)}): ${(error as Error).message}`);
   }
+}
+
+/** A mark's spec with a named color scheme replaced by the scheme's colors. */
+function withScheme<T extends { colors?: string | string[] | undefined }>(spec: T): T {
+  return typeof spec.colors === "string" ? { ...spec, colors: [...scheme(spec.colors)] } : spec;
 }
 
 function annotationTable(

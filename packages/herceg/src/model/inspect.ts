@@ -384,10 +384,14 @@ export class Inspector {
     return {
       key: s.key,
       label: tooltip === "cell" ? this.formatY(s.y[row]!) : s.label,
-      color: s.color,
+      color: mark?.pointColor ? mark.pointColor(s, row, this.frame.theme) : s.color,
       value,
       text: mark?.pointText
-        ? mark.pointText(s, row, { x: this.formatX, y: this.#axisOf(s).formatY })
+        ? mark.pointText(s, row, {
+            x: this.formatX,
+            y: this.#axisOf(s).formatY,
+            value: this.formatValue,
+          })
         : s.range
           ? `${formatValue(low)} – ${formatValue(value)}`
           : tooltip === "cell"
