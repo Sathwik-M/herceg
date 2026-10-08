@@ -589,12 +589,29 @@ export class ChartModel {
         : header
           ? (aboveEmpty ? xLabels + lineHeight : Math.ceil(lineHeight / 2)) + 8
           : lineHeight + 10;
-    const rowHeight = (height - top - bottom - columnHeader - (rows - 1) * rowGap) / rows - header;
-    if (panelCount > 1 && rowHeight < MIN_PANEL)
+    // Rows share the height left for plots equally, or by the grid's weights.
+    // Weights are scaled to the largest first, so huge ones cannot overflow.
+    const weights = grid.rowWeights;
+    const largest = weights ? Math.max(...weights) : 1;
+    const share = (row: number) => (weights ? weights[row]! / largest : 1);
+    const free = height - top - bottom - columnHeader - (rows - 1) * rowGap - rows * header;
+    let total = 0;
+    for (let r = 0; r < rows; r++) total += share(r);
+    const heights = Array.from({ length: rows }, (_, r) => (free * share(r)) / total);
+    if (panelCount > 1 && Math.min(...heights) < MIN_PANEL)
       throw tooSmall(panelCount, columns, width, height, layout!.remedy);
-    const plotHeight = Math.max(10, rowHeight);
+    const rowHeights = heights.map((h) => Math.max(10, h));
+    // The first row's height plans the axes of charts with equal rows.
+    const plotHeight = rowHeights[0]!;
+    const rowOf = (panel: number) => Math.floor(panel / columns);
+    const tickCount = (spec: AxisSpec | undefined, size: number) =>
+      spec?.ticks ?? Math.max(2, Math.round(size / 45));
     const plotTop = top + columnHeader + header;
-    const rowOffset = (row: number) => row * (header + plotHeight + rowGap);
+    const rowOffset = (row: number) => {
+      let offset = 0;
+      for (let r = 0; r < row; r++) offset += rowHeights[r]! + header + rowGap;
+      return offset;
+    };
     const measureLabel = (label: string) => measure(label, font);
     /** A continuous y axis for the marks on one side, from their data domain `base`. */
     const planValueAxis = (
@@ -602,9 +619,10 @@ export class ChartModel {
       base: [number, number],
       sideMarks: readonly MarkSeries[],
       zoomed: boolean,
+      size = plotHeight,
     ): AxisPlan => {
       const spec = axisContext.spec;
-      const count = spec?.ticks ?? Math.max(2, Math.round(plotHeight / 45));
+      const count = tickCount(spec, size);
       const sideDrawn = sideMarks.filter(({ series }) => series.length > 0);
       // Fixed and zoomed domains are shown as they are.
       const domain =
@@ -614,14 +632,14 @@ export class ChartModel {
               headroomDomain(
                 niceAxisDomain(base, axisContext, count, spec?.nice ?? true),
                 headroom("y", sideDrawn),
-                plotHeight,
+                size,
                 axisContext.type,
               ),
               inset("y", sideDrawn),
-              plotHeight,
+              size,
               axisContext.type,
             );
-      return planAxis(axisContext, domain, [plotTop + plotHeight, plotTop], count);
+      return planAxis(axisContext, domain, [plotTop + size, plotTop], count);
     };
 
     // y ticks decide the left margin. Panels share one plan unless their
@@ -643,25 +661,38 @@ export class ChartModel {
           }),
         )
       : [yContext];
-    const groupPlans: AxisPlan[] = [];
-    // Groups of panels with nothing to show along y have no y labels.
-    const emptyGroups = new Set<number>();
-    if (yType === "band") {
-      if (groups) throw new Error("Panels always share a category y axis");
+    /** The category y axis over the plot from `y`, `size` tall. */
+    const planCategories = (y: number, size: number): AxisPlan => {
       // Categories read top to bottom; bands of numbers rise like a numeric axis.
       const upward = bands.y !== undefined && numericBands(bands.y);
       const plan = planBandAxis(
         bands.y?.labels ?? [],
-        upward ? [plotTop + plotHeight, plotTop] : [plotTop, plotTop + plotHeight],
+        upward ? [y + size, y] : [y, y + size],
         padding("y"),
         () => lineHeight,
       );
       // Long category names are shortened rather than squeezing the plot.
       const room = Math.max(48, Math.round(width * 0.3));
       plan.labels = plan.labels.map((label) => fitText(label, room, measure, font));
-      groupPlans.push(plan);
+      return plan;
+    };
+    // Each group is planned over its shortest row, so what marks draw past
+    // their values (points, bar labels) fits in every row.
+    const groupHeights = contexts.map(() => Number.POSITIVE_INFINITY);
+    groupOf.forEach((g, i) => {
+      groupHeights[g] = Math.min(groupHeights[g]!, rowHeights[rowOf(i)]!);
+    });
+    const groupHeight = (g: number) => groupHeights[g]!;
+    const groupPlans: AxisPlan[] = [];
+    // Groups of panels with nothing to show along y have no y labels.
+    const emptyGroups = new Set<number>();
+    if (yType === "band") {
+      if (groups) throw new Error("Panels always share a category y axis");
+      groupPlans.push(planCategories(plotTop, groupHeight(0)));
     } else if (!groups) {
-      groupPlans.push(planValueAxis(yContext, yBase, leftMarks, this.#yViewport !== null));
+      groupPlans.push(
+        planValueAxis(yContext, yBase, leftMarks, this.#yViewport !== null, groupHeight(0)),
+      );
     } else {
       groups.drawn.forEach((drawn, g) => {
         // A group shows something when its marks place a value along y,
@@ -670,10 +701,25 @@ export class ChartModel {
         const extent = this.#yData(drawn, type, spec, x0, x1);
         if (!extent) emptyGroups.add(g);
         const domain = spec?.domain ?? extent;
-        groupPlans[g] = planValueAxis(contexts[g]!, usableDomain(domain, type), drawn, false);
+        const base = usableDomain(domain, type);
+        groupPlans[g] = planValueAxis(contexts[g]!, base, drawn, false, groupHeight(g));
       });
     }
     const yPlan = groupPlans[0]!;
+    // Every panel's y plan: its group's moved to its row. A row of another
+    // height than the group's keeps the group's domain with ticks for its height.
+    const yPlans = split.keys.map((_, i) => {
+      const row = rowOf(i);
+      const g = groupOf[i]!;
+      const plan = groupPlans[g]!;
+      const context = contexts[g]!;
+      const size = rowHeights[row]!;
+      if (size === groupHeight(g)) return shiftPlan(plan, context, rowOffset(row));
+      const y = plotTop + rowOffset(row);
+      if (yType === "band") return planCategories(y, size);
+      const [d0, d1] = plan.scale.domain;
+      return planAxis(context, [d0!, d1!], [y + size, y], tickCount(context.spec, size));
+    });
     // Panels in other columns than the first show their own y labels when
     // their scales differ from their row's; subplots always label their own.
     const columnLabels =
@@ -701,7 +747,7 @@ export class ChartModel {
       : undefined;
     const showLeft = showY && leftUsed;
     const labelsOf = (plan: AxisPlan) => (hasData && showLeft && leftData ? plan.labels : []);
-    const labelWidth = Math.max(0, ...groupPlans.flatMap(labelsOf).map(measureLabel));
+    const labelWidth = Math.max(0, ...yPlans.flatMap(labelsOf).map(measureLabel));
     // The widest label starts at the chart's edge inset, in line with the title.
     let left = showLeft ? Math.ceil(labelWidth) + GAP + 2 + EDGE : EDGE;
     if (showLeft && titled) left += lineHeight + GAP;
@@ -803,16 +849,9 @@ export class ChartModel {
     const xPlans = Array.from({ length: columns }, (_, c) =>
       shiftPlan(xPlan, xContext, columnOffset(c)),
     );
-    // Every panel's y plan, its group's moved to its row.
-    const yPlans = split.keys.map((_, i) =>
-      shiftPlan(
-        groupPlans[groupOf[i]!]!,
-        contexts[groupOf[i]!]!,
-        rowOffset(Math.floor(i / columns)),
-      ),
-    );
     const gridWidth = columns * plotWidth + (columns - 1) * columnGap;
-    const gridHeight = rows * (header + plotHeight) + (rows - 1) * rowGap;
+    const gridHeight =
+      rowHeights.reduce((sum, h) => sum + h, 0) + rows * header + (rows - 1) * rowGap;
     const xGrid = hasData && xType !== "band" && (config.x?.grid ?? xMeasures);
     // Horizontal grid lines follow the left axis, or the right one when the left is unused.
     const gridPlan = leftUsed
@@ -853,9 +892,13 @@ export class ChartModel {
             (only === "x" ? "nearest-x" : only === "y" ? "nearest-y" : "nearest"));
     };
     const mode = modeOf(drawn);
-    const valueFormat = (context: AxisContext, scale: PositionScale): Formatter =>
+    const valueFormat = (
+      context: AxisContext,
+      scale: PositionScale,
+      size = plotHeight,
+    ): Formatter =>
       context.type === "time"
-        ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale, plotHeight), zone, locale))
+        ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale, size), zone, locale))
         : valueFormatter(context, formatNumbers);
     const formatX =
       xType === "band"
@@ -866,9 +909,21 @@ export class ChartModel {
               timeValueFormatter(timeUnitFor(xPlan.scale, plotWidth), zone, locale),
             )
           : valueFormatter(xContext, formatNumbers);
-    const formats = groupPlans.map((plan, g) =>
-      yType === "band" ? categoryOf(plan.scale) : valueFormat(contexts[g]!, plan.scale),
-    );
+    // Tooltips show y values as precisely as their panel's height resolves:
+    // one formatter per group and row height.
+    const formats = new Map<string, Formatter>();
+    const formatOf = (i: number): Formatter => {
+      const g = groupOf[i]!;
+      const size = rowHeights[rowOf(i)]!;
+      const key = `${g} ${size}`;
+      let format = formats.get(key);
+      if (!format) {
+        const { scale } = yPlans[i]!;
+        format = yType === "band" ? categoryOf(scale) : valueFormat(contexts[g]!, scale, size);
+        formats.set(key, format);
+      }
+      return format;
+    };
     const formatRight = yRightPlan && valueFormat(yRightContext, yRightPlan.scale);
     const rightSet = new Set(rightMarks.map(({ mark }) => mark));
 
@@ -886,7 +941,7 @@ export class ChartModel {
         x: left + columnOffset(column),
         y: plotTop + rowOffset(row),
         width: plotWidth,
-        height: plotHeight,
+        height: rowHeights[row]!,
       };
       const axes: AxisGeometry[] = [];
       // x labels go under the lowest panel of each column, the x title once under them all.
@@ -907,7 +962,7 @@ export class ChartModel {
         });
       }
       if (showLeft && (panelAxis(i)?.axis ?? true) && (column === 0 || columnLabels)) {
-        const labels = emptyGroups.has(groupOf[i]!) ? [] : labelsOf(groupPlans[groupOf[i]!]!);
+        const labels = emptyGroups.has(groupOf[i]!) ? [] : labelsOf(yAt);
         // A subplot's title sits as far left of its plot as the first column's does.
         const titleX = lineHeight / 2 + 2 + (config.panels ? plot.x - left : 0);
         const titleY = config.panels ? plot.y + plot.height / 2 : undefined;
@@ -959,7 +1014,7 @@ export class ChartModel {
         mode: members ? modeOf(inspected.filter(({ series }) => series.length > 0)) : mode,
         hidden: this.hidden,
         formatX,
-        formatY: formats[groupOf[i]!]!,
+        formatY: formatOf(i),
         formatValue: formatNumbers,
       });
       const values = split.values[i]!;

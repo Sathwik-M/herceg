@@ -101,6 +101,8 @@ export interface PanelSpec {
 
 export interface GridSpec {
   columns?: number;
+  /** The rows' heights relative to each other, one per row; equal by default. */
+  rowHeights?: number[];
 }
 
 export interface WrappedFacetSpec {

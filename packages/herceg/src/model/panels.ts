@@ -48,6 +48,7 @@ export function panels(list: readonly PanelSpec[], grid: GridSpec = {}): Panels 
 export class Panels implements PanelLayout {
   readonly list: readonly PanelSpec[];
   readonly columns: number;
+  readonly rowHeights: readonly number[] | undefined;
   get yDefault(): ScaleResolution {
     return "independent";
   }
@@ -67,11 +68,23 @@ export class Panels implements PanelLayout {
       if (ids.has(id)) throw new TypeError(`Two panels have the id "${id}"`);
       ids.add(id);
     }
-    const { columns = 1 } = grid;
+    const { columns = 1, rowHeights } = grid;
     if (!(Number.isInteger(columns) && columns >= 1))
       throw new RangeError(`A grid's columns must be a whole number of at least 1, not ${columns}`);
+    const rows = Math.ceil(list.length / Math.min(columns, list.length));
+    if (rowHeights !== undefined) {
+      if (rowHeights.length !== rows)
+        throw new RangeError(
+          `A grid of ${rows} rows needs ${rows} row heights, not ${rowHeights.length}`,
+        );
+      if (!rowHeights.every((h) => h > 0 && Number.isFinite(h)))
+        throw new RangeError(
+          `A grid's row heights must be positive numbers, not ${rowHeights.join(", ")}`,
+        );
+    }
     this.list = list;
     this.columns = columns;
+    this.rowHeights = rowHeights;
   }
 
   /**
@@ -161,6 +174,7 @@ export class Panels implements PanelLayout {
       header: titled ? lineHeight + 4 : 0,
       columnHeader: 0,
       rowHeader: 0,
+      rowWeights: this.rowHeights,
     };
   }
 

@@ -802,8 +802,8 @@ document when `OffscreenCanvas` is unavailable.
 - One x axis and at most two y axes per chart; category values and marks
   placed along y (horizontal bars and error bars) only on the left.
 - Subplots share x and route whole marks; they have no right axes, shared
-  category y only, x-only zoom and brushing, equal panel sizes (no weighted
-  rows or columns), and no facets inside a panel.
+  category y only, x-only zoom and brushing, columns of equal width (rows
+  may be weighted), and no facets inside a panel.
 - Facets wrap one category field into rows of panels, or lay out a grid by
   two, sharing x; y is shared or resolved per panel, row, or column, for
   continuous axes only. No independent x scales, y zoom with independent y,

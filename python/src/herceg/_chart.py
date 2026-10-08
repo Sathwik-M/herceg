@@ -119,6 +119,7 @@ class Chart:
         resolve_y: Literal["shared", "independent", "rows", "columns"] | None = None,
         panels: Sequence[Panel | str] | None = None,
         panel_columns: int | None = None,
+        panel_row_heights: Sequence[float] | None = None,
         legend: bool | None = None,
         tooltip: bool | Tooltip = True,
         zoom: bool | Literal["x", "y", "xy"] = False,
@@ -151,6 +152,21 @@ class Chart:
             raise ValueError(
                 f"panel_columns must be a whole number of at least 1, not {panel_columns!r}"
             )
+        row_heights: list[float] | None = None
+        if panel_row_heights is not None:
+            if not panel_list:
+                raise ValueError("panel_row_heights needs panels")
+            rows = -(-len(panel_list) // min(panel_columns or 1, len(panel_list)))
+            if len(panel_row_heights) != rows:
+                raise ValueError(f"panel_row_heights needs {rows} heights, one per row")
+            if not all(
+                isinstance(h, numbers.Real) and not isinstance(h, bool) for h in panel_row_heights
+            ):
+                raise ValueError("panel_row_heights must be positive numbers")
+            # NumPy numbers and fractions become floats, which JSON can carry.
+            row_heights = [float(h) for h in panel_row_heights]
+            if not all(0 < h < math.inf for h in row_heights):
+                raise ValueError("panel_row_heights must be positive numbers")
         if panel_list and (facet is not None or facet_row is not None or facet_col is not None):
             raise ValueError("a chart has facets or panels, not both")
         if panel_list and (zoom in ("y", "xy") or brush in ("y", "xy", "lasso")):
@@ -186,6 +202,7 @@ class Chart:
         self._facets = [f for f in (facet, facet_row, facet_col) if f is not None]
         self._panels = panel_list
         self._panel_columns = panel_columns
+        self._panel_row_heights = row_heights
         self._tables: list[tuple[Any, Table | _DerivedColumns]] = []
         # Derived tables by index, with the index of the table they derive from.
         self._derived: dict[int, int] = {}
@@ -1325,8 +1342,9 @@ class Chart:
             return {"facet": {"row": self._facet_row, "column": self._facet_col}}
         if self._panels:
             layout: dict[str, Any] = {"panels": [p._spec() for p in self._panels]}
-            if self._panel_columns is not None:
-                layout["grid"] = {"columns": self._panel_columns}
+            grid = {"columns": self._panel_columns, "rowHeights": self._panel_row_heights}
+            if any(value is not None for value in grid.values()):
+                layout["grid"] = grid
             return layout
         return {}
 

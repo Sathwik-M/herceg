@@ -6,6 +6,7 @@ import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
+import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
@@ -260,5 +261,73 @@ describe("panels", () => {
       );
     expect(spec({ grid: { columns: 2 } })).toThrow("spec.grid: expected a spec with panels");
     expect(spec({ panels: [{ id: "top" }] })).toThrow("marks[0].panel");
+  });
+
+  it("size rows by their relative heights, planning each row's axis over its own height", () => {
+    const tall = panels(stacked.list, { rowHeights: [3, 1] });
+    const { scene, model } = build({ marks, panels: tall });
+    const [top, bottom] = scene.panels as [Panel, Panel];
+    expect(top.plot.height / bottom.plot.height).toBeCloseTo(3, 1);
+    expect(bottom.plot.y).toBeGreaterThan(top.plot.y + top.plot.height);
+    // Each y scale spans its own panel.
+    const [, b] = model.panels();
+    expect(Math.max(...b!.y.range)).toBeCloseTo(bottom.plot.y + bottom.plot.height);
+    expect(Math.min(...b!.y.range)).toBeCloseTo(bottom.plot.y);
+    // A shared scale keeps one domain over rows of different heights, each
+    // row's labels on its own ticks.
+    const shared = build({ marks, panels: tall, resolve: { y: "shared" } });
+    const [s0, s1] = shared.model.panels();
+    expect(s1!.y.domain).toEqual(s0!.y.domain);
+    for (const result of [scene, shared.scene]) {
+      for (const panel of result.panels) {
+        const ticks = panel.axes.find((axis) => axis.orient === "left")!.ticks;
+        expect(ticks.length).toBeGreaterThan(1);
+        for (const { position } of ticks) {
+          expect(position).toBeGreaterThanOrEqual(panel.plot.y - 0.5);
+          expect(position).toBeLessThanOrEqual(panel.plot.y + panel.plot.height + 0.5);
+        }
+      }
+    }
+    expect(() => panels(stacked.list, { rowHeights: [1] })).toThrow("needs 2 row heights");
+    expect(() => panels(stacked.list, { rowHeights: [1, 0] })).toThrow("positive numbers");
+  });
+
+  it("leave room for points at the ends of a shared scale in every row", () => {
+    const ends = table({ t: [0, 1], v: [0, 100] });
+    const dots = (panel: string) => point(ends, { x: "t", y: "v", r: 10, panel });
+    const { model } = build({
+      marks: [dots("latency"), dots("traffic")],
+      panels: panels(stacked.list, { rowHeights: [3, 1] }),
+      resolve: { y: "shared" },
+    });
+    for (const { y, plot } of model.panels()) {
+      expect(y.map(100) - plot.y).toBeGreaterThanOrEqual(10 - 1e-9);
+      expect(plot.y + plot.height - y.map(0)).toBeGreaterThanOrEqual(10 - 1e-9);
+    }
+  });
+
+  it("lay out huge weights as their ratio, and format tooltips for each row's height", () => {
+    const heights = (rowHeights: number[]) =>
+      build({ marks, panels: panels(stacked.list, { rowHeights }) }).scene.panels.map(
+        (panel) => panel.plot.height,
+      );
+    expect(heights([1e307, 1e307])).toEqual(heights([1, 1]));
+    expect(heights([1e308, 1e308])).toEqual(heights([1, 1]));
+    // A time axis in a tall row shows tooltip values finer than in a short one.
+    const times = table({ t: [0, 1], at: time([0, 120_100]) });
+    const timeline = (panel: string) => line(times, { x: "t", y: "at", panel });
+    const { model } = build({
+      marks: [timeline("latency"), timeline("traffic")],
+      panels: panels(
+        [
+          { id: "latency", y: { type: "time", nice: false } },
+          { id: "traffic", y: { type: "time", nice: false } },
+        ],
+        { rowHeights: [1, 6] },
+      ),
+    });
+    const short = model.formatsOf(undefined, "latency").y(120_100);
+    const tall = model.formatsOf(undefined, "traffic").y(120_100);
+    expect(tall.length).toBeGreaterThan(short.length);
   });
 });

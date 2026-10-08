@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import re
 from pathlib import Path
 
@@ -803,3 +804,16 @@ def test_panels_draw_the_marks_that_name_them():
         hg.Chart(DATA, panels=["a"], zoom="xy")
     with pytest.raises(ValueError, match="panel_columns needs panels"):
         hg.Chart(DATA, panel_columns=2)
+    tall, _ = (
+        hg.Chart(DATA, panels=["a", "b"], panel_row_heights=[3, 1])
+        .line(x="t", y="p50", panel="a")
+        .to_spec()
+    )
+    assert tall["grid"] == {"rowHeights": [3, 1]}
+    # NumPy weights arrive as plain numbers JSON can carry.
+    weighted = hg.Chart(DATA, panels=["a", "b"], panel_row_heights=np.array([3, 1]))
+    spec, _ = weighted.line(x="t", y="p50", panel="a").to_spec()
+    assert json.loads(json.dumps(spec["grid"])) == {"rowHeights": [3.0, 1.0]}
+    assert "rowHeights" in weighted.to_html()
+    with pytest.raises(ValueError, match="needs 2 heights"):
+        hg.Chart(DATA, panels=["a", "b"], panel_row_heights=[1])
