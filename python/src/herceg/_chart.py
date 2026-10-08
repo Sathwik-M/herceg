@@ -9,8 +9,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+import numpy as np
+
 from . import _render
 from ._data import Column, Table
+from ._derive import Derived
 
 if TYPE_CHECKING:
     from .widget import ChartWidget
@@ -118,7 +121,9 @@ class Chart:
             )
         self._facet = facet
         self._facet_columns = facet_columns
-        self._tables: list[tuple[Any, Table]] = []
+        self._tables: list[tuple[Any, Table | _DerivedColumns]] = []
+        # Derived tables by index, with the index of the table they derive from.
+        self._derived: dict[int, int] = {}
         self._default = self._table(data) if data is not None else None
         self._marks: list[tuple[dict[str, Any], int | None]] = []
         # The keyword arguments as given, so live charts can change some later.
@@ -712,7 +717,11 @@ class Chart:
     def to_spec(self) -> tuple[dict[str, Any], list[bytes]]:
         """The portable chart spec and the binary buffers its columns reference."""
         return assemble_spec(
-            self._options, self._facet_spec(), self._used_columns(), self._mark_specs()
+            self._options,
+            self._facet_spec(),
+            self._used_columns(),
+            self._mark_specs(),
+            self._derived_specs(),
         )
 
     def widget(self) -> ChartWidget:
@@ -772,8 +781,9 @@ class Chart:
             return None
         return {"field": self._facet, "columns": self._facet_columns}
 
-    def _used_columns(self) -> dict[str, dict[str, Column]]:
-        """The columns marks read, by spec table name; other columns are never sent."""
+    def _used_fields(self) -> dict[int, set[str]]:
+        """The columns each table must send: those marks read, and those derived
+        tables need from their sources."""
         used: dict[int, set[str]] = {}
         for spec, table in self._marks:
             if table is not None:
@@ -781,6 +791,22 @@ class Chart:
                 fields.update(_fields(spec))
                 if self._facet is not None and spec.get("facet") is None:
                     fields.add(self._facet)
+        # Later tables derive from earlier ones, so needs flow back in one pass.
+        for table in sorted(self._derived, reverse=True):
+            if table not in used:
+                continue
+            source = self._derived[table]
+            columns = self._tables[source][1]
+            needs = used.setdefault(source, set())
+            needs.update(self._tables[table][0].source_columns(used[table]))
+            # A table sent without columns has no rows: send one, so counts
+            # survive. Derived tables compute their rows whatever is read.
+            if source not in self._derived and columns.names and not needs & set(columns.names):
+                needs.add(_convertible(columns))
+        return used
+
+    def _used_columns(self) -> dict[str, dict[str, Column]]:
+        """The columns sent, by spec table name; other columns are never sent."""
         return {
             table_name(table): {
                 # A point's symbol may name a shape rather than a column.
@@ -788,7 +814,20 @@ class Chart:
                 for field in sorted(fields)
                 if field in self._tables[table][1].names
             }
-            for table, fields in used.items()
+            for table, fields in self._used_fields().items()
+            if table not in self._derived
+        }
+
+    def _derived_specs(self) -> dict[str, dict[str, Any]]:
+        """The derived tables marks read, directly or through other derived tables."""
+        used = self._used_fields()
+        return {
+            table_name(table): {
+                "source": table_name(source),
+                "transform": list(self._tables[table][0].steps),
+            }
+            for table, source in sorted(self._derived.items())
+            if table in used
         }
 
     def _mark_specs(self) -> list[dict[str, Any]]:
@@ -804,11 +843,16 @@ class Chart:
         """Each data source given to the chart or its marks, with its spec table name."""
         return [(source, table_name(index)) for index, (source, _) in enumerate(self._tables)]
 
-    def _table(self, data: Any) -> int:
+    def _table(self, data: Any, converted: Table | None = None) -> int:
         for index, (source, _) in enumerate(self._tables):
             if source is data:
                 return index
-        self._tables.append((data, Table(data)))
+        if isinstance(data, Derived):
+            source = self._table(data.source, data._table)
+            self._tables.append((data, _DerivedColumns(data)))
+            self._derived[len(self._tables) - 1] = source
+        else:
+            self._tables.append((data, converted or Table(data)))
         return len(self._tables) - 1
 
     def _mark_table(self, data: Any) -> int:
@@ -924,16 +968,19 @@ def assemble_spec(
     facet: dict[str, Any] | None,
     tables: dict[str, dict[str, Column]],
     marks: list[dict[str, Any]],
+    derived: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], list[bytes]]:
-    """A spec and its buffers from chart options, columns by table name, and mark specs."""
+    """A spec and its buffers from chart options, columns by table name, mark
+    specs, and derived tables by name."""
     buffers: list[bytes] = []
     spec: dict[str, Any] = {"version": 1, **options}
     if facet is not None:
         spec["facet"] = {key: value for key, value in facet.items() if value is not None}
-    if tables:
+    if tables or derived:
         spec["data"] = {
             name: {"columns": columns_spec(columns, buffers)} for name, columns in tables.items()
         }
+        spec["data"].update(derived or {})
     spec["marks"] = marks
     return spec, buffers
 
@@ -941,6 +988,35 @@ def assemble_spec(
 def columns_spec(columns: dict[str, Column], buffers: list[bytes]) -> dict[str, Any]:
     """Spec columns whose values are appended to `buffers`, which they index."""
     return {field: _column_spec(column, buffers) for field, column in columns.items()}
+
+
+class _DerivedColumns:
+    """A derived table's columns, as charts check fields: names and kinds, no values."""
+
+    def __init__(self, derived: Derived) -> None:
+        self.names = tuple(derived._kinds)
+        self._kinds = derived._kinds
+
+    def column(self, name: str) -> Column:
+        if name not in self._kinds:
+            raise KeyError(name)
+        return Column(self._kinds[name], np.empty(0))
+
+
+def _convertible(columns: Table) -> str:
+    """The first of a table's columns that converts, to send for its rows alone."""
+    errors: list[Exception] = []
+    for name in columns.names:
+        try:
+            columns.column(name)
+        except (TypeError, ValueError) as error:
+            errors.append(error)
+            continue
+        return name
+    raise ValueError(
+        "derive: counting the rows of this data needs one column of numbers, strings, "
+        f"or dates; column {columns.names[0]!r} holds unsupported values"
+    ) from errors[0]
 
 
 def table_name(index: int) -> str:

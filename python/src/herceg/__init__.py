@@ -35,6 +35,7 @@ from ._chart import (
     line,
     scatter,
 )
+from ._derive import Derived, Expr, col, derive, when
 from ._events import InspectedPoint, Inspection
 
 __all__ = [
@@ -42,14 +43,19 @@ __all__ = [
     "SYMBOLS",
     "Axis",
     "Chart",
+    "Derived",
+    "Expr",
     "InspectedPoint",
     "Inspection",
     "area",
     "bar",
     "candlestick",
+    "col",
+    "derive",
     "heatmap",
     "histogram",
     "line",
     "scatter",
+    "when",
 ]
 __version__ = "0.0.0"

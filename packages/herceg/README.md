@@ -61,6 +61,54 @@ live.dropBefore("time", Date.now() - 60_000);
 live.reset({ time: newTimes, cpu: newValues });
 ```
 
+### Derived tables
+
+`derive` prepares data for charts: filters, calculated fields, bins,
+aggregates, rolling windows, and sorting, in a chain whose field names are
+checked at compile time against the fields each step produces.
+
+```ts
+import { col, count, derive, mean, when } from "herceg";
+
+const hourly = derive(readings)
+  .filter(col("temp").gt(-40).and(col("site").ne("test")))
+  .calculate("f", col("temp").mul(1.8).add(32))
+  .bin("time", { step: 3_600_000, as: "hour" })
+  .aggregate({ groupby: ["hour", "site"], ops: { mean: mean("f"), n: count() } })
+  .table();
+line(hourly, { x: "hour", y: "mean", series: "site" });
+
+derive(prices).rolling({ size: 20, ops: { ma: { op: "mean", field: "close" } } }).table();
+```
+
+The result is an ordinary table that follows its source. Appends to the
+source go through filters, calculations, and fixed-step bins on their own,
+and rows dropped from the source (a rolling window) drop the rows they gave;
+other changes, and pipelines with aggregates, rolling windows, sorting, or
+bins without a step, recompute the table. A derived table keeps its source
+alive; the source holds it weakly, so one no longer referenced stops
+following once it is collected. Treat derived tables as read-only: changes
+to them are replaced when the source changes. Expressions
+(`col("x").gt(0)`, `.add`, `.mul`, `.isIn`, `.isMissing`, `when`, and more)
+are portable JSON trees, as specs carry them (`[">", ["field", "temp"], 30]`;
+not Vega-Lite's expression strings). Missing values (NaN, missing
+categories) compare false except as unequal, and `null` in a `when` branch
+is missing in the other branch's type. Calculated fields are categories
+when they give text and numbers otherwise, even a copy of a time field.
+Ungrouped aggregates give one row even for no rows (a count of 0, missing
+statistics). Aggregates are `count`, `sum`, `mean`, `median`, `min`, `max`,
+`q1`, `q3`, `stdev`, `variance` (sample statistics), `distinct`, `first`,
+and `last`, over finite values; quantiles interpolate as NumPy and pandas
+do. Rolling windows are trailing windows of rows (within `groupby` groups),
+with `count`, `sum`, `mean`, `min`, `max`, and `stdev`. Bins hold their
+start: `step` wide from `start` (by default at multiples of the step), or
+about `count` round bins (default 10; 1 wide when all values are equal);
+time fields bin by a step in milliseconds. Rolling statistics combine
+partial aggregates rather than subtracting values that leave the window, so
+huge values do not swamp small ones. Loading specs (`herceg/spec`) includes
+the transforms, about 4.9 KiB gzip; charts built in TypeScript bundle them
+only when they call `derive`.
+
 ## Marks
 
 ```ts
