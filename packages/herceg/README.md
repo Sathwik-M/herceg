@@ -106,7 +106,7 @@ about `count` round bins (default 10; 1 wide when all values are equal);
 time fields bin by a step in milliseconds. Rolling statistics combine
 partial aggregates rather than subtracting values that leave the window, so
 huge values do not swamp small ones. Loading specs (`herceg/spec`) includes
-the transforms, about 5 KiB gzip; charts built in TypeScript bundle them
+the transforms, about 4.9 KiB gzip; charts built in TypeScript bundle them
 only when they call `derive`.
 
 ## Marks

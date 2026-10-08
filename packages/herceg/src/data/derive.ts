@@ -469,15 +469,9 @@ function rolling(
   for (let i = 0; i < rows.length; i++) members[group[i]!]!.push(i);
   let out = rows;
   for (const spec of specs) {
-    let values = rows.numbers(spec.field);
-    // Means of values spread wider than the largest double can differ by
-    // more than it: such values are halved, and the results doubled back.
-    const extent = scanExtent(values, 0, values.length);
-    const halved = extent !== undefined && !Number.isFinite(extent[1] - extent[0]);
-    if (halved) values = Float64Array.from(values, (value) => value / 2);
+    const values = rows.numbers(spec.field);
     const result = new Float64Array(rows.length);
     for (const list of members) rollingOp(spec.op, values, list, size, result);
-    if (halved && spec.op !== "count") for (let i = 0; i < result.length; i++) result[i]! *= 2;
     const kind = KEEPS_KIND.has(spec.op) && rows.kind(spec.field) === "time" ? "time" : "number";
     out = out.with(spec.as, { kind, values: result, owned: true });
   }

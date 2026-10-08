@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 
 import herceg as hg
-from herceg._data import ROWS
 
 READINGS = {
     "site": ["n", "s", "n", "s"],
@@ -112,8 +111,8 @@ def test_review_fixes_hold():
     data = {"x": np.array([1.0, 2.0, 3.0]), "blob": [{"a": 1}, {"b": 2}, {"c": 3}]}
     counted = hg.derive(data).aggregate(n="count")
     spec, _ = hg.Chart(counted, width=200, height=100).bar(x="n", y="n").to_spec()
-    # A source the steps read nothing from still sends its row count.
-    assert list(spec["data"]["data"]["columns"]) == [ROWS]
+    # A source the steps read nothing from still sends a column, keeping its rows.
+    assert list(spec["data"]["data"]["columns"]) == ["x"]
     assert "<path" in hg.Chart(counted, width=200, height=100).bar(x="n", y="n").to_svg()
     # Expressions are typed as the chart's compiler types them.
     with pytest.raises(TypeError, match="filter needs a true or false condition"):
@@ -133,52 +132,54 @@ def _labelled(derived: hg.Derived, column: str) -> str:
     return hg.Chart(derived, width=200, height=100).text(x=0, y=0, text=column).to_svg()
 
 
-def test_counts_keep_the_source_rows_without_converting_its_columns():
-    # Steps that read only columns they made still count the source's rows:
-    # the source sends its row count, a byte a row, and converts no column.
-    data = {"blob": [{}, {}, {}]}
+def test_counts_keep_the_source_rows_through_one_real_column():
+    # Steps that read only columns they made still count the source's rows: the
+    # source sends its first column that converts, skipping unsupported ones.
+    data = {"blob": [{}, {}, {}], "x": [1.0, 2.0, 3.0]}
     for counted in (
         hg.derive(data).calculate("one", 1).aggregate(n=("one", "sum")),
         hg.derive(data).calculate("blob", 1).aggregate(n=("blob", "sum")),
         hg.derive(data).aggregate(n="count"),
         hg.derive(hg.derive(data).calculate("blob", 2)).aggregate(n="count"),
     ):
-        spec, buffers = hg.Chart(counted).text(x=0, y=0, text="n").to_spec()
-        rows = {"type": "number", "dtype": "uint8", "buffer": 0}
-        assert spec["data"]["data"]["columns"] == {ROWS: rows}
-        assert buffers == [bytes(3)]
+        spec, _ = hg.Chart(counted).text(x=0, y=0, text="n").to_spec()
+        assert list(spec["data"]["data"]["columns"]) == ["x"]
         assert ">3</text>" in _labelled(counted, "n")
     # A source column a step replaces is not sent for a later step that reads it.
-    doubled = hg.derive({"blob": [{}, {}], "x": [1, 2]}).calculate("blob", hg.col("x") * 2)
+    doubled = hg.derive(data).calculate("blob", hg.col("x") * 2)
     spec, _ = hg.Chart(doubled).line(x="x", y="blob").to_spec()
     assert list(spec["data"]["data"]["columns"]) == ["x"]
+    # Without a column that converts, the rows cannot be counted.
+    unsupported = hg.derive({"blob": [{}, {}]}).aggregate(n="count")
+    with pytest.raises(ValueError, match="column 'blob' holds unsupported values"):
+        hg.Chart(unsupported).text(x=0, y=0, text="n").to_spec()
 
 
-def test_row_counts_come_from_every_kind_of_source():
+def test_rows_are_counted_for_every_kind_of_source():
     pd = pytest.importorskip("pandas")
     pl = pytest.importorskip("polars")
     pa = pytest.importorskip("pyarrow")
     for source in (
-        pd.DataFrame({"blob": [{}, {}]}),
+        pd.DataFrame({"blob": [{}, {}], "x": [1, 2]}),
         pl.DataFrame({"x": [1, 2]}),
         pa.table({"x": [1, 2]}),
-        [{"blob": {}}, {"blob": {}}],
-        {"x": (value for value in (1, 2))},  # no length: converted to count it
+        [{"x": 1}, {"x": 2}],
     ):
         counted = hg.derive(source).aggregate(n="count")
         assert ">2</text>" in _labelled(counted, "n")
 
 
-def test_live_charts_append_to_sources_sending_their_row_count():
+def test_live_charts_append_to_sources_counted_through_one_column():
     from herceg._live import LiveChart
 
-    data = {"blob": [{}, {}]}
+    data = {"blob": [{}, {}], "x": [1.0, 2.0]}
     live = LiveChart(hg.Chart(hg.derive(data).aggregate(n="count")).text(x=0, y=0, text="n"))
-    message, buffers = live.append({"blob": [{}, {}, {}]}, data=data)
-    assert message["columns"] == {ROWS: {"type": "number", "dtype": "uint8", "buffer": 0}}
-    assert buffers == [bytes(3)]
-    _, buffers = live.to_spec()
-    assert buffers == [bytes(5)]
+    message, buffers = live.append({"blob": [{}, {}, {}], "x": [3.0, 4.0, 5.0]}, data=data)
+    assert list(message["columns"]) == ["x"]
+    assert np.frombuffer(buffers[0]).tolist() == [3.0, 4.0, 5.0]
+    spec, buffers = live.to_spec()
+    assert list(spec["data"]["data"]["columns"]) == ["x"]
+    assert np.frombuffer(buffers[0]).tolist() == [1.0, 2.0, 3.0, 4.0, 5.0]
 
 
 def test_missing_branches_take_the_other_branch_type():

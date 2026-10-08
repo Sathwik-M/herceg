@@ -384,8 +384,9 @@ describe("edge cases", () => {
       .table();
     expect(values(spread, "sd")).toEqual([null, 0, 0]);
     expect(values(spread, "m")).toEqual([1e308, 1e308, 1e308]);
-    // Results a double holds stay finite on the way: the difference of these
-    // means, and the square of this spread, overflow before they shrink.
+    // Squared deviations a double holds stay finite on the way: this spread
+    // squares past the largest double before its weight of a half. Values
+    // whose differences pass the largest double overflow (a known limit).
     const wide = table({ v: [1e308, -1e308], w: [0, 1.4e154] });
     const finite = derive(wide)
       .rolling({
@@ -393,7 +394,7 @@ describe("edge cases", () => {
         ops: { m: { op: "mean", field: "v" }, sd: { op: "stdev", field: "w" } },
       })
       .table();
-    expect(values(finite, "m")).toEqual([1e308, 0]);
+    expect(values(finite, "m")).toEqual([1e308, -Infinity]);
     const [none, deviation] = values(finite, "sd") as [null, number];
     expect(none).toBeNull();
     expect(deviation / (1.4e154 * Math.SQRT1_2)).toBeCloseTo(1, 12);

@@ -56,30 +56,17 @@ class Column:
     """One converted column: its kind and the arrays that hold it."""
 
     kind: str  # "number" | "time" | "category"
-    # <f8/<f4 numbers or times; <i4 codes for categories; <u1 for ROWS
-    values: np.ndarray
+    values: np.ndarray  # <f8/<f4 numbers or times; <i4 codes for categories
     dictionary: tuple[str, ...] = ()
 
     def __len__(self) -> int:
         return len(self.values)
 
 
-#: A column a table sends for its row count alone, when nothing reads its
-#: columns but derived tables count its rows: zeros, one byte a row. It is
-#: sent only when no column is, so its name cannot hide a column anything reads.
-ROWS = "\0rows"
-
-
-def rows_column(length: int) -> Column:
-    """The ``ROWS`` column of a table of ``length`` rows."""
-    return Column("number", np.zeros(length, dtype="<u1"))
-
-
 class Table:
     """A data source's column names, converting each column on first use."""
 
     def __init__(self, data: Any) -> None:
-        self._data = data
         self._get, keys, names = _accessor(data)
         self.names: tuple[str, ...] = tuple(_distinct_labels(names, "column names"))
         self._keys = dict(zip(self.names, keys, strict=True))
@@ -97,17 +84,6 @@ class Table:
                 raise type(error)(f"Column {name!r}: {error}") from None
             self._columns[name] = column
         return column
-
-    def rows(self) -> int:
-        """The number of rows, without converting a column when the source can tell."""
-        if not isinstance(self._data, Mapping):
-            return len(self._data)  # a dataframe, an Arrow table, or a list of records
-        if not self.names:
-            return 0
-        try:
-            return len(self._get(self._keys[self.names[0]]))
-        except TypeError:  # an iterable without a length
-            return len(self.column(self.names[0]))
 
 
 def to_columns(data: Any) -> dict[str, Column]:

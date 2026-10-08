@@ -682,6 +682,11 @@ document when `OffscreenCanvas` is unavailable.
   band. Panels smaller than 20 pixels a side are refused with an error
   rather than drawn.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
+- Rolling statistics over values whose differences exceed the largest double
+  (about 1.8e308) overflow to Infinity.
+- Python derived tables count their source's rows through one of its
+  columns, so a source whose columns nothing reads needs at least one that
+  converts (numbers, strings, or dates).
 - The model always carries band-axis, color-legend, inspection-along-y, and
   right-axis logic, so a line-only bundle includes some bar, heatmap, and
   second-axis support it does not use.

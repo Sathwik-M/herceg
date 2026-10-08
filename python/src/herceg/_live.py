@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ._chart import OPTIONS, assemble_spec, columns_spec, spec_options
-from ._data import ROWS, Column, Table, rows_column
+from ._data import Column, Table
 
 if TYPE_CHECKING:
     from ._chart import Chart
@@ -109,9 +109,6 @@ class LiveChart:
         if isinstance(rows, Mapping) and all(np.ndim(value) == 0 for value in rows.values()):
             rows = {field: [value] for field, value in rows.items()}  # one row
         table = Table(rows)
-        if ROWS in current:
-            # A table sending its row count alone takes the count of the new rows.
-            return {ROWS: rows_column(table.rows())}
         missing = [field for field in current if field not in table.names]
         if missing:
             raise KeyError(

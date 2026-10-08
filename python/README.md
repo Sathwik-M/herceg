@@ -121,9 +121,7 @@ hg.derive(prices).rolling(20, ma=("close", "mean"))
 Expressions use Python operators (`&`, `|`, and `~` combine conditions),
 `is_in`, `is_missing`, `when`, and math methods; aggregations name their
 results as pandas' named aggregation does. Each step checks the columns it
-reads, and only the source columns that steps and marks use are sent (a
-source whose rows are counted but whose columns nothing reads sends its row
-count, a byte a row).
+reads, and only the source columns that steps and marks use are sent.
 
 ## Output
 
