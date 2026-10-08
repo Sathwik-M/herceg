@@ -8,7 +8,9 @@
     "jsx": "react-jsx",
     "paths": {
       "herceg": ["../packages/herceg/src/index.ts"],
-      "@herceg/react": ["../packages/react/src/index.ts"]
+      "@herceg/react": ["../packages/react/src/index.ts"],
+      "@herceg/vue": ["../packages/vue/src/index.ts"],
+      "@herceg/svelte": ["../packages/svelte/src/index.ts"]
     }
   },
   "include": ["src"]

@@ -331,9 +331,9 @@ canvas through `Path2D`, so custom shapes follow the same renderer choice,
 clipping, and static export as other marks. Fields listed as `x` and `y`
 count toward the axis domains. A custom mark's spec holds only its type and
 id: functions cannot be serialized, so specs, and with them the Python
-package, cannot contain custom marks, and the React adapter rebuilds them on
-every render rather than comparing specs. Marks implement the `Mark`
-interface, whose spec only needs a type and an id (`MarkIdentity`).
+package, cannot contain custom marks, and the framework adapters rebuild them
+whenever they render them again rather than comparing specs. Marks implement
+the `Mark` interface, whose spec only needs a type and an id (`MarkIdentity`).
 
 ## Rendering
 
@@ -517,13 +517,50 @@ to their defaults, and are skipped when no mark's spec or table and no option
 changed (compared as JSON with sorted keys). Unchanged marks keep their
 identity, so their caches survive re-renders. Data changes go
 through the table and reach the chart through its own change events and
-frame scheduler, without rendering React. A test
-(`test/architecture.test.ts`) keeps the core directories (`data`, `scale`,
-`format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM access. Marks
-import their drawings (`draw`), which write SVG without a DOM and paint
-canvases through the context they are handed; only raster painting reaches
-the DOM, creating an offscreen canvas in that canvas' document when
-`OffscreenCanvas` is unavailable.
+frame scheduler, without rendering React.
+
+`@herceg/vue` follows the same model in Vue's terms. `<Chart>` reads its
+mark components from the default slot during render, without mounting them,
+so Vue tracks the state that options and marks read and re-renders the chart
+when it changes; the chart is created in `onMounted` and updated in
+`onUpdated` with the same comparison as in React. Option arrays and objects
+are copied out of Vue's reactive proxies as they are read, so in-place
+changes of reactive state are seen and tables are used unwrapped (their
+private fields cannot be reached through a proxy). Errors building marks
+are caught during render and thrown again from those hooks, because a render
+that throws makes Vue replace the container, and the chart with it. Chart
+events are declared with `emits`; since Vue does not tell a component which
+listeners it has, the chart always listens, and unlike the React adapter it
+has hover and click payloads computed even when nobody listens. Annotation
+and custom mark components are generic in the table rather than in its
+schema, so vue-tsc infers the table from `data` before typing `draw`, and
+reports a wrong field on its attribute; with overloads, as in React, the
+template checker would drop the error.
+
+`@herceg/svelte` cannot read its children, since a Svelte snippet is opaque,
+so its mark components are mounted: each builds its mark in a `$derived`
+from its props and adds itself to the enclosing `<Chart>` through context.
+Each renders one empty `<template>` element, inside a hidden element of the
+chart, and the chart orders marks by the document position of those
+elements, so marks added later by `{#if}` or `{#each}`, or rendered by the
+application's own components, still draw in template order; a mutation
+observer on that hidden element re-sorts them when a keyed `{#each}` moves
+them without changing any. One effect reads
+the options and every mark, so it re-runs when any of them changes, and
+applies them with the same comparison as in React; the chart is created the
+first time it runs, after the mark components have added themselves.
+Options are copied out of `$state` proxies as they are read, as in Vue.
+Event handlers are callback props (`onselect`, ...), subscribed only while
+given. The package is built with `svelte-package` and checked with
+svelte-check, which need TypeScript's JavaScript API: the package keeps
+TypeScript 6 for them, next to the repository's TypeScript 7.
+
+A test (`test/architecture.test.ts`) keeps the core directories (`data`,
+`scale`, `format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM
+access. Marks import their drawings (`draw`), which write SVG without a DOM
+and paint canvases through the context they are handed; only raster
+painting reaches the DOM, creating an offscreen canvas in that canvas'
+document when `OffscreenCanvas` is unavailable.
 
 ## Known limits
 
@@ -567,4 +604,5 @@ the DOM, creating an offscreen canvas in that canvas' document when
   colors must be hex, `rgb()`, `hsl()`, or names, transparent backgrounds
   show as white paper, and halos of labels are read twice by readers that
   ignore replacement text (macOS Preview).
-- No adapters for frameworks other than React. See the roadmap in the repository README.
+- No adapters for frameworks other than React, Vue, and Svelte. See the
+  roadmap in the repository README.

@@ -170,4 +170,7 @@ container) is counted once per chart; an application with one root pays it
 once.
 
 The `herceg-react-line` size entry leaves React and React DOM out of the
-bundle, since an application using the adapter already ships them.
+bundle, since an application using the adapter already ships them;
+`herceg-vue-line` leaves Vue out and `herceg-svelte-line` Svelte's runtime
+for the same reason. The Svelte entry renders a component of its own,
+compiled with `svelte/compiler`, and that component is measured with it.

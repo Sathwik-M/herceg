@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-08T07:08:34.004Z",
+ "date": "2026-10-08T07:10:30.808Z",
  "commit": {
-  "sha": "a021bd6",
+  "sha": "d6d1339",
   "dirty": true
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; the entry chunk is measured, chunks loaded on demand and required CSS are reported separately; gzip level 9; brotli quality 11",
@@ -62,7 +62,7 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (a021bd6)",
+   "version": "0.0.0 (d6d1339)",
    "raw": 176011,
    "minified": 82325,
    "gzip": 30578,
@@ -76,11 +76,39 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (a021bd6)",
+   "version": "0.0.0 (d6d1339)",
    "raw": 180066,
    "minified": 84465,
    "gzip": 31514,
    "brotli": 28474,
+   "css": null,
+   "lazy": {
+    "minified": 5842,
+    "gzip": 2819
+   }
+  },
+  {
+   "entry": "herceg-svelte-line",
+   "package": "@herceg/svelte",
+   "version": "0.0.0 (d6d1339)",
+   "raw": 182504,
+   "minified": 85897,
+   "gzip": 32122,
+   "brotli": 28972,
+   "css": null,
+   "lazy": {
+    "minified": 5842,
+    "gzip": 2819
+   }
+  },
+  {
+   "entry": "herceg-vue-line",
+   "package": "@herceg/vue",
+   "version": "0.0.0 (d6d1339)",
+   "raw": 182331,
+   "minified": 85443,
+   "gzip": 31915,
+   "brotli": 28833,
    "css": null,
    "lazy": {
     "minified": 5842,

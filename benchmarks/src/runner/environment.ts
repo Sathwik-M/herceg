@@ -25,7 +25,12 @@ export const RUNTIMES: Record<string, string[]> = { "herceg-react": ["react", "r
 export const COMPARED = ["herceg", "echarts", "chartjs", "plotly", "tanstack", "uplot"];
 
 /** Workspace packages are measured from source at the current commit. */
-const WORKSPACE: Record<string, string> = { herceg: "herceg", "@herceg/react": "react" };
+const WORKSPACE: Record<string, string> = {
+  herceg: "herceg",
+  "@herceg/react": "react",
+  "@herceg/vue": "vue",
+  "@herceg/svelte": "svelte",
+};
 
 export function packageVersion(name: string): string {
   const directory = WORKSPACE[name];
