@@ -12,6 +12,7 @@ import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { radar } from "../../src/marks/radar.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { sankey } from "../../src/marks/sankey.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import type { ArcGeometry, ShapesGeometry, TextShape } from "../../src/scene/scene.ts";
 import { resolveTheme } from "../../src/theme.ts";
@@ -1000,6 +1001,86 @@ describe("gauges and funnels", () => {
     const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
     expect(description.textContent).toContain(
       "Funnel of users by stage: 3 stages from 2,000 (Visit) to 300 (Purchase), 15% of the first.",
+    );
+    chart.destroy();
+  });
+});
+
+describe("sankey diagrams", () => {
+  const flows = table({
+    from: ["Coal", "Coal", "Gas", "Electricity"],
+    to: ["Electricity", "Industry", "Electricity", "Homes"],
+    twh: [80, 40, 50, 130],
+  });
+
+  it("outline the node or link under the pointer, and report it and clicks on it", async () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [sankey(flows, { source: "from", target: "to", value: "twh" })],
+    });
+    const hovers: (string | undefined)[] = [];
+    chart.on("hover", ({ inspection }) => hovers.push(inspection?.points[0]?.label));
+    const outline = chart.root.querySelector("svg path[stroke-linejoin='round'][fill='none']")!;
+    const rect = chart.root.getBoundingClientRect();
+    for (const key of [
+      [0, "Electricity"],
+      [0, "Coal", "Electricity"],
+    ]) {
+      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      chart.root.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          clientX: rect.left + px,
+          clientY: rect.top + py,
+        }),
+      );
+      await frame();
+      expect(outline.getAttribute("visibility")).toBe("visible");
+    }
+    expect(hovers).toEqual(["Electricity", "Coal → Electricity"]);
+    // Bands are outlined by their curves, nodes by their rectangles.
+    expect(outline.getAttribute("d")).toMatch(/C/);
+    const tooltip = [...chart.root.children].find(
+      (el) => (el as HTMLElement).style.pointerEvents === "none" && el.tagName === "DIV",
+    ) as HTMLElement;
+    expect(tooltip.textContent).toBe("twhCoal → Electricity80");
+    const clicks: (string | undefined)[] = [];
+    chart.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.label));
+    const { px, py } = chart.model.inspectItem(JSON.stringify([0, "Gas"]))!.points[0]!;
+    for (const type of ["pointerdown", "pointerup"]) {
+      chart.root.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          clientX: rect.left + px,
+          clientY: rect.top + py,
+        }),
+      );
+    }
+    expect(clicks).toEqual(["Gas"]);
+    chart.destroy();
+  });
+
+  it("read nodes, then links, with the keyboard", () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [sankey(flows, { source: "from", target: "to", value: "twh" })],
+    });
+    chart.root.focus();
+    const key = (k: string) =>
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    const live = chart.root.querySelector("[aria-live]")!;
+    key("ArrowRight");
+    expect(live.textContent).toBe("twh. Coal: 120 out");
+    key("ArrowDown");
+    expect(live.textContent).toBe("twh. Gas: 50 out");
+    key("ArrowDown");
+    expect(live.textContent).toBe("twh. Electricity: 130 in, 130 out");
+    key("End");
+    expect(live.textContent).toBe("twh. Electricity → Homes: 130");
+    const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
+    expect(description.textContent).toContain(
+      "Sankey of twh: 5 nodes in 3 columns and 4 flows; the largest flow is Electricity → Homes, 130.",
     );
     chart.destroy();
   });

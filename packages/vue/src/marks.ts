@@ -38,8 +38,10 @@ import {
   radar,
   region,
   rule,
+  type SankeyOptions,
   type Schema,
   type SunburstOptions,
+  sankey,
   sunburst,
   type Table,
   type TextDataOptions,
@@ -232,6 +234,13 @@ export const Radar = /* @__PURE__ */ markComponent(
   ({ data, ...options }: WithData<RadarOptions<Schema>, Schema>) => radar(data, options),
   ["points"],
 ) as unknown as <S extends Schema>(props: WithData<RadarOptions<S>, S>) => null;
+
+/** A Sankey diagram of flows from `source` to `target` nodes; it has its chart to itself. */
+export const Sankey = /* @__PURE__ */ markComponent(
+  "Sankey",
+  ({ data, ...options }: WithData<SankeyOptions<Schema>, Schema>) => sankey(data, options),
+  ["labels"],
+) as unknown as <S extends Schema>(props: WithData<SankeyOptions<S>, S>) => null;
 
 /** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
 export const Candlestick = /* @__PURE__ */ markComponent(

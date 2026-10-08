@@ -18,6 +18,7 @@ export {
   Radar,
   Region,
   Rule,
+  Sankey,
   Sunburst,
   Text,
   Treemap,

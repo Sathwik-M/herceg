@@ -63,3 +63,12 @@ export function fitText(text: string, width: number, measure: MeasureText, font:
   }
   return `${characters.slice(0, lo).join("").trimEnd()}…`;
 }
+
+/**
+ * A name fitted to `width` pixels, or "" when shortening it would leave
+ * fewer than three characters, which say too little to be worth it.
+ */
+export function labelFor(name: string, width: number, measure: MeasureText, font: string): string {
+  const text = fitText(name, width, measure, font);
+  return text === name || Array.from(text).length >= 4 ? text : "";
+}

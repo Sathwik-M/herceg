@@ -5,7 +5,7 @@ Charts for pandas, Polars, PyArrow, and NumPy data, rendered by the
 large-data handling as the TypeScript library.
 
 > Early development. Line, area, bar, scatter, heatmap, error bar,
-> candlestick, histogram, pie, box plot, violin, treemap, sunburst, gauge, funnel, and radar marks, rule, region, and text annotations; small multiples;
+> candlestick, histogram, pie, box plot, violin, treemap, sunburst, gauge, funnel, radar, and Sankey marks, rule, region, and text annotations; small multiples;
 > HTML, notebook, SVG, PNG, and PDF output; live notebook charts; Streamlit apps.
 
 ```python
@@ -41,6 +41,7 @@ hg.gauge(metrics, "cpu", bands=[70, 90, (100, "#e0464f")])  # the last value on 
 hg.funnel(signups, "stage", "users")
 hg.radar(scores, "skill", "score", series="player")  # a spoke per skill
 hg.radar(players, fields=["speed", "power", "range"], series="name")  # a polygon per row
+hg.sankey(energy, "source", "target", "twh")  # flows between nodes; counts rows without a value
 ```
 
 `hg.Chart` composes marks on shared axes; each mark method returns the chart:

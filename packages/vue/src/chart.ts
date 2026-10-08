@@ -115,6 +115,7 @@ const PORTABLE = new Set([
   "gauge",
   "funnel",
   "radar",
+  "sankey",
   "rule",
   "region",
   "text",
@@ -157,7 +158,7 @@ export const Chart = defineComponent({
   },
   emits,
   slots: Object as SlotsType<{
-    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Rule>, <Region>, <Text>, <Custom>. */
+    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Rule>, <Region>, <Text>, <Custom>. */
     default?: () => VNode[];
   }>,
   expose: ["chart"],

@@ -4,6 +4,7 @@ import { n } from "../draw/markup.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
+import { labelFor } from "../layout/text.ts";
 import { layoutTreemap } from "../layout/treemap.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
@@ -11,7 +12,7 @@ import type { Geometry, RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { TreemapSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { type Branch, count, labelFor, TreeData } from "./tree-data.ts";
+import { type Branch, count, TreeData } from "./tree-data.ts";
 
 export type TreemapOptions<S extends Schema> = (
   | {

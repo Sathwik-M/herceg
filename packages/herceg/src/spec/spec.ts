@@ -324,7 +324,8 @@ export type MarkSpec =
   | SunburstSpec
   | GaugeSpec
   | FunnelSpec
-  | RadarSpec;
+  | RadarSpec
+  | SankeySpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -694,6 +695,35 @@ export interface RadarSpec {
   points?: boolean;
   /** Name of the polygon of a radar without `series`, and of its values in tooltips. */
   label?: string;
+}
+
+/**
+ * A Sankey diagram of flows between nodes, from a table with a row per
+ * flow. Nodes are the names in `source` and `target`; a link joins each
+ * source and target, as thick as the sum of `value` over their rows (or
+ * their count). Rows without a positive, finite value, links from a node to
+ * itself, and links that would close a cycle are left out.
+ */
+export interface SankeySpec {
+  type: "sankey";
+  data?: string;
+  id?: string;
+  /** Category field naming where each row's flow comes from. */
+  source: Field;
+  /** Category field naming where it goes; a name in both fields is one node. */
+  target: Field;
+  /** Number field summed per source and target; without it, links count rows. */
+  value?: Field;
+  /** Names and values beside the nodes that have room for them; true by default. */
+  labels?: boolean;
+  /** Width of the node bars in pixels; 12 by default. */
+  nodeWidth?: number;
+  /**
+   * Order of the nodes in each column: by default, the order that keeps
+   * links short and crossings few; "input" keeps the order in which nodes
+   * first appear in the table, "value" puts the largest first.
+   */
+  sort?: "input" | "value";
 }
 
 /**

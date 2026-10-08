@@ -21,6 +21,7 @@ import {
   Radar,
   Region,
   Rule,
+  Sankey,
   Sunburst,
   Text,
   Treemap,
@@ -143,6 +144,24 @@ describe("<Chart>", () => {
     await frame();
     expect(host.textContent).toContain("Visit");
     expect(host.textContent).toContain("2,000 · 100%");
+  });
+
+  it("renders a Sankey diagram from its element", () => {
+    const energy = table({
+      from: ["coal", "coal", "power"],
+      to: ["power", "steel", "homes"],
+      twh: [5, 2, 4],
+    });
+    act(() =>
+      root.render(
+        <Chart>
+          <Sankey data={energy} source="from" target="to" value="twh" nodeWidth={10} />
+        </Chart>,
+      ),
+    );
+    const bands = [...paths()].filter((path) => /C/.test(path.getAttribute("d") ?? ""));
+    expect(bands).toHaveLength(3);
+    expect(host.textContent).toContain("coal 7");
   });
 
   it("renders a radar from its element, a filled polygon per series", () => {
