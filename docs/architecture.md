@@ -579,6 +579,32 @@ each dirty chart once, however many changes arrived. Charts outside the
 viewport (IntersectionObserver) stay dirty and render when they become
 visible. A chart's first frame renders synchronously when it is created.
 
+With `animation`, a view asked for (`setViewport`, `setYViewport`, zooming
+to a brush, double-click reset) is shown gradually, by `dom/transition.ts`,
+which a chart loads the first time its options ask for animation (until
+then, views change at once). The model's viewports
+take the new view at once, and the `viewport` event reports it once. The
+chart keeps a transition: the ranges drawn when it was asked for, and, from
+its first frame, the ranges it ends at. Those are planned by building the
+scene of the new view, which is never painted, so they include nice rounding
+and room for glyphs. Each frame then sets the model's transition domains,
+eased and in log space on log axes. The model draws these as given, and every
+frame is an ordinary scene, so tooltips and brushes read what is on screen.
+Anything that must show at once ends the transition at the new view: table
+changes, resizes, option updates, legend toggles, wheel zoom and panning,
+presses, `render()`, and export. Charts with several panels, linked charts,
+and pages preferring reduced motion skip it.
+
+Animation should not cost dashboards frames, so the chart estimates frame
+costs from the JavaScript time of earlier frames (paint and compositing are
+not counted, and earlier frames only suggest the next). Transitions whose
+first frame falls on the same scheduler frame form a batch, which jumps
+before planning when twice its charts' last frame times add up to over 10 ms
+(the first frame builds two scenes); retargeting a chart replaces its share.
+A playing transition ends once its chart's frame, or the scheduler's whole
+frame, takes over 10 ms. Intermediate frames keep the margins planned for
+the new view, so passing tick labels never move the plot.
+
 Charts that set the same `interaction.sync` name share the cursor x and the
 viewport. Charts inspected along y (horizontal bars) measure values on x, so
 they neither share nor follow the cursor; linking them by category is not
@@ -816,6 +842,9 @@ document when `OffscreenCanvas` is unavailable.
   band. Panels smaller than 20 pixels a side are refused with an error
   rather than drawn.
 - Heatmaps are limited to 4,194,304 cells and have no built-in binning.
+- Animation moves the axes of single-panel charts between views; changed
+  values (bars growing, pie slices turning), entering and leaving data, and
+  the first appearance of a chart show at once.
 - Box plots and violins recompute every group's statistics (and violins
   their densities) when their table changes, and repeat in every panel of
   charts with facets rather than splitting. On a log axis, a box or violin

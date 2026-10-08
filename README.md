@@ -52,7 +52,8 @@ annotations from constants or data, custom marks drawing through the same
 renderers (with series, legends, and tooltips), derived tables (filter,
 calculate, bin, aggregate, rolling windows, sort) with portable expressions, level of detail, streaming updates, shared
 scheduler,
-browser interaction (tooltips, zoom, brushing, events, synced charts),
+browser interaction (tooltips, zoom, brushing, events, synced charts, animated
+changes of view),
 static SVG and PDF export, React, Vue, and Svelte adapters, min/max indexes
 for zooming and streaming large line series, WebGL drawing of large point
 series, chart specs with binary columns, Python package, a second y axis,
@@ -66,7 +67,8 @@ Next, in order:
 3. Layout: facets by row and column, independent panel scales, subplots.
 4. Large data: incremental stacked and grouped updates, partial GPU uploads,
    heatmaps beyond the cell limit.
-5. Animation; label collision handling.
+5. Animation of changed values (bars, pies) and of panels; label collision
+   handling.
 6. Financial tools, geographic charts, and 3D.
 7. Screen-reader verification, benchmarks across browsers and machines, and
    an API review before a first release.

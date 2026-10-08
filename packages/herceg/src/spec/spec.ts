@@ -56,6 +56,14 @@ export interface ChartSpec {
   legend?: boolean;
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
+  /**
+   * Moves the axes gradually to a view asked for: `setViewport` and
+   * `setYViewport`, zooming to a brush, and double-click reset. Off by
+   * default; `true` takes 250 ms. Never for wheel zoom, panning, streaming,
+   * linked charts, panels, or slow frames, nor where the page prefers
+   * reduced motion.
+   */
+  animation?: boolean | AnimationSpec;
   /** Renderer for marks. "auto" picks per mark by data size. */
   renderer?: RendererName;
   theme?: ThemeName | ThemeSpec;
@@ -289,6 +297,11 @@ export interface InteractionSpec {
   brush?: BrushSpec;
   /** Charts with the same sync name share their cursor, x range, and selection. */
   sync?: string;
+}
+
+export interface AnimationSpec {
+  /** Milliseconds a view change takes; 0 shows it at once. */
+  duration?: number;
 }
 
 export type ZoomSpec = "x" | "y" | "xy";

@@ -12,9 +12,13 @@ export interface Scheduled {
 
 const pending = new Set<Scheduled>();
 let frame = 0;
+let frames = 0;
+let lastFrame = 0;
 
 function run() {
   frame = 0;
+  frames++;
+  const started = performance.now();
   const due = [...pending];
   pending.clear();
   for (const item of due) {
@@ -27,6 +31,17 @@ function run() {
       report(error);
     }
   }
+  lastFrame = performance.now() - started;
+}
+
+/** How many frames have run: work asked for between two frames shares the count. */
+export function frameCount(): number {
+  return frames;
+}
+
+/** How long every chart's rendering took in the last frame, in milliseconds. */
+export function lastFrameTime(): number {
+  return lastFrame;
 }
 
 /** Reports an error without stopping the code that ran into it. */
