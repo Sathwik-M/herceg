@@ -1,56 +1,36 @@
 import type { AreaGeometry, Drawing, SvgElement } from "../scene/scene.ts";
-import { linePath, traceLine } from "./line.ts";
-import { markupOf, n } from "./markup.ts";
+import { linePath, type PathSink, SvgPath, traceLine, traceRun } from "./line.ts";
+import { markupOf } from "./markup.ts";
 
-/** Closed outline of an area: the top edge, then the bottom edge back. */
-export function areaPath(area: AreaGeometry): string {
-  const upper = area.upper;
-  const lower = area.lower;
-  const u = upper.coords;
-  let d = "";
-  for (let run = 0; run < upper.starts.length; run++) {
-    const start = upper.starts[run]!;
-    const end = upper.runEnd(run);
-    if (end - start < 1) continue;
-    d += `M${n(u[start * 2]!)} ${n(u[start * 2 + 1]!)}`;
-    for (let i = start + 1; i < end; i++) d += `L${n(u[i * 2]!)} ${n(u[i * 2 + 1]!)}`;
-    if (lower && run < lower.starts.length) {
-      const l = lower.coords;
-      const lowerStart = lower.starts[run]!;
-      for (let i = lower.runEnd(run) - 1; i >= lowerStart; i--)
-        d += `L${n(l[i * 2]!)} ${n(l[i * 2 + 1]!)}`;
-    } else {
-      d += `L${n(u[(end - 1) * 2]!)} ${n(area.baseline)}L${n(u[start * 2]!)} ${n(area.baseline)}`;
-    }
-    d += "Z";
-  }
-  return d;
-}
-
-/** Adds an area's outline to the current path of a canvas (or of another path builder). */
-export function traceArea(
-  context: Pick<CanvasPath, "moveTo" | "lineTo" | "closePath">,
-  area: AreaGeometry,
-): void {
+/** Adds an area's outline to `sink`: per run, the top edge, then the bottom edge back. */
+export function traceArea(sink: PathSink, area: AreaGeometry): void {
   const { upper, lower } = area;
   const u = upper.coords;
   for (let run = 0; run < upper.starts.length; run++) {
     const start = upper.starts[run]!;
     const end = upper.runEnd(run);
     if (end - start < 1) continue;
-    context.moveTo(u[start * 2]!, u[start * 2 + 1]!);
-    for (let i = start + 1; i < end; i++) context.lineTo(u[i * 2]!, u[i * 2 + 1]!);
+    sink.moveTo(u[start * 2]!, u[start * 2 + 1]!);
+    traceRun(sink, upper, start, end, true);
     if (lower && run < lower.starts.length) {
       const l = lower.coords;
       const lowerStart = lower.starts[run]!;
-      for (let i = lower.runEnd(run) - 1; i >= lowerStart; i--)
-        context.lineTo(l[i * 2]!, l[i * 2 + 1]!);
+      const lowerEnd = lower.runEnd(run);
+      sink.lineTo(l[(lowerEnd - 1) * 2]!, l[(lowerEnd - 1) * 2 + 1]!);
+      traceRun(sink, lower, lowerStart, lowerEnd, false);
     } else {
-      context.lineTo(u[(end - 1) * 2]!, area.baseline);
-      context.lineTo(u[start * 2]!, area.baseline);
+      sink.lineTo(u[(end - 1) * 2]!, area.baseline);
+      sink.lineTo(u[start * 2]!, area.baseline);
     }
-    context.closePath();
+    sink.closePath();
   }
+}
+
+/** Closed outline of an area, as SVG path data. */
+export function areaPath(area: AreaGeometry): string {
+  const svg = new SvgPath();
+  traceArea(svg, area);
+  return svg.d;
 }
 
 /** The fill, then the outline of the top edge when the area has one. */

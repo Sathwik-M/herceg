@@ -215,7 +215,12 @@ interface MarkBase {
   facet?: "repeat";
 }
 
-export type Curve = "linear" | "step" | "step-before" | "step-after";
+/**
+ * How a line joins its points: straight, in steps, or "monotone", a smooth
+ * curve through every point that never passes a point's value between two
+ * points.
+ */
+export type Curve = "linear" | "step" | "step-before" | "step-after" | "monotone";
 
 /** Lines through (x, y). Several y fields or a series field give several lines. */
 export interface LineSpec extends MarkBase {

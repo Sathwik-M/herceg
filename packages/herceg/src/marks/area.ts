@@ -1,6 +1,7 @@
 import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { areaDrawing } from "../draw/area.ts";
+import type { Polyline } from "../lod/polyline.ts";
 import type { AreaGeometry } from "../scene/scene.ts";
 import type { AreaSpec, Curve } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
@@ -17,7 +18,14 @@ import {
   seriesKey,
 } from "./mark.ts";
 import { type Series, TableCache, xExtent, yExtent } from "./series.ts";
-import { IndexUse, traceBand, tracePath, unionExtent } from "./trace.ts";
+import {
+  curveRows,
+  IndexUse,
+  traceBand,
+  traceCurvedLayers,
+  tracePath,
+  unionExtent,
+} from "./trace.ts";
 
 interface AreaCommon {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
@@ -139,10 +147,11 @@ export class AreaMark implements Mark<AreaSpec> {
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
+    const curved = this.spec.curve === "monotone";
     return unionExtent(
       series.flatMap((s) => [
-        yExtent(s, x0, x1, s.y, log, this.#indexes.index(this.table, s)),
-        s.y0 ? yExtent(s, x0, x1, s.y0, log) : undefined,
+        yExtent(s, x0, x1, s.y, log, this.#indexes.index(this.table, s), curved),
+        s.y0 ? yExtent(s, x0, x1, s.y0, log, undefined, curved) : undefined,
       ]),
     );
   }
@@ -160,18 +169,33 @@ export class AreaMark implements Mark<AreaSpec> {
       : bottom;
     const out: AreaGeometry[] = [];
     this.#indexes.drew(frame.owner, frame.scene, this.table);
+    // Bands and stacks curve all their boundaries together, so layers share
+    // edges and never overlap. When they cannot (log y, or too dense), every
+    // layer is straight, so shared edges still match.
+    const layered = band || stacked;
+    const rows =
+      spec.curve === "monotone" && layered && series[0] && frame.y.type !== "log"
+        ? curveRows(series[0], frame)
+        : undefined;
+    if (rows) {
+      const visible = series.filter((s) => !frame.hidden.has(s.key));
+      const layers = visible.map((s) => ({ series: s, top: s.y, bottom: s.y0 }));
+      const edges = traceCurvedLayers(layers, frame, rows, stacked);
+      return visible.map((s, i) => this.#area(s, edges[i]!, baseline, fillOpacity, outline));
+    }
+    const curve = spec.curve === "monotone" && layered ? "linear" : spec.curve;
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       // Areas filled to zero read their field's index; bands and stacks scan.
       const edges = s.y0
-        ? traceBand(s, s.y, s.y0, frame, spec.curve)
+        ? traceBand(s, s.y, s.y0, frame, curve)
         : {
             upper: tracePath(
               s,
               s.y,
               frame,
               "upper",
-              spec.curve,
+              curve,
               this.#indexes.index(
                 this.table,
                 s,
@@ -181,20 +205,30 @@ export class AreaMark implements Mark<AreaSpec> {
             ),
             lower: null,
           };
-      out.push({
-        kind: "area",
-        draw: areaDrawing,
-        key: s.key,
-        fill: s.color,
-        fillOpacity,
-        upper: edges.upper,
-        lower: edges.lower,
-        baseline,
-        stroke: outline ? s.color : null,
-        strokeWidth: 1.5,
-      });
+      out.push(this.#area(s, edges, baseline, fillOpacity, outline));
     }
     return out;
+  }
+
+  #area(
+    s: Series,
+    edges: { upper: Polyline; lower: Polyline | null },
+    baseline: number,
+    fillOpacity: number,
+    outline: boolean,
+  ): AreaGeometry {
+    return {
+      kind: "area",
+      draw: areaDrawing,
+      key: s.key,
+      fill: s.color,
+      fillOpacity,
+      upper: edges.upper,
+      lower: edges.lower,
+      baseline,
+      stroke: outline ? s.color : null,
+      strokeWidth: 1.5,
+    };
   }
 }
 

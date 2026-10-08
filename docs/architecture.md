@@ -101,8 +101,31 @@ line, unlike LTTB or averaging, which can drop peaks. Removing intermediate
 points does shorten the path, so dash patterns can shift.
 
 Output is at most four points per device-pixel column for each unbroken run,
-before step curves add their corner points. That bounds rendering cost, SVG
-path size, and memory for typical data. Missing values split a line into runs
+before step curves add a corner per point. That bounds rendering cost, SVG
+path size, and memory for typical data.
+
+Monotone curves (Steffen's method, as d3's `curveMonotoneX`) bend lines
+between the points that level of detail keeps, in pixels: segments at least
+2 pixels wide are curved, narrower ones (dense data) stay straight, since a
+curve between points that close differs from the line by less than their
+distance. A curved segment is a cubic Bezier whose control points the
+polyline keeps beside its points (`Polyline.curveTo`); renderers draw it as
+one (SVG `C`, canvas `bezierCurveTo`, PDF `c`), so curves add no vertices
+and need no flattening. Tangents come from distinct neighbors, repeated
+points ignored, and the traced range reaches two distinct x values past
+each edge of the view, so zooming does not change a curve through data that
+is not reduced; where level of detail reduces dense data, the curves next to
+it follow the reduced points, and change as zooming changes the reduction
+(no bound on that change is promised). Automatic y domains include the
+points just outside the view across its edges: a monotone segment stays
+between its ends, so that bounds what is drawn on any scale. Bands and
+stacks curve all their boundaries together: rows are reduced jointly (each
+device-pixel column keeps its first and last rows and every boundary's
+lowest and highest), each boundary is one curve through its own points (so
+none passes its data), shared by the layers on either side, and a segment
+where two boundaries could cross (the difference of their cubics has a
+Bezier ordinate of the wrong sign) is straight for all of them, so layers
+never overlap. Bands and stacks on log y axes are drawn straight. Missing values split a line into runs
 that are reduced separately, so data that alternates between values and gaps
 can still produce one run per few points.
 
@@ -588,6 +611,10 @@ document when `OffscreenCanvas` is unavailable.
 
 ## Known limits
 
+- Geometry is stored in single precision (`Float32Array`) pixel
+  coordinates. When zooming leaves neighboring points more than about 10^7
+  pixels outside the plot (a view of a millionth of the data's range or
+  less), lines and curves between them can be visibly displaced.
 - Mark types: line, area, bar, point, heatmap, error bar, candlestick, histogram, the rule, region,
   and text annotations, and custom marks. Horizontal bars need a category y;
   bars along a number or time y are not supported. Error bars stand at the

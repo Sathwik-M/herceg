@@ -115,6 +115,7 @@ export function yExtent(
   y: Series["y"] = series.y,
   log = false,
   index?: RangeIndex,
+  curved = false,
 ): [number, number] | undefined {
   const lo = Math.min(x0, x1);
   const hi = Math.max(x0, x1);
@@ -136,7 +137,9 @@ export function yExtent(
   let [min, max] = inside ?? [Infinity, -Infinity];
   if (series.sorted) {
     for (const edge of [lo, hi]) {
-      const value = interpolateAt(series, y, edge);
+      const value = curved
+        ? outsideAt(series, y, edge, edge === lo)
+        : interpolateAt(series, y, edge);
       if (!usable(value, log)) continue;
       if (value < min) min = value;
       if (value > max) max = value;
@@ -207,6 +210,21 @@ function interpolateAt(series: Series, y: Series["y"], at: number): number {
   const yb = y[b]!;
   if (!(Number.isFinite(ya) && Number.isFinite(yb)) || xb === xa) return Number.NaN;
   return ya + ((yb - ya) * (at - xa)) / (xb - xa);
+}
+
+/**
+ * The value of the point just outside the range across the edge at `at`
+ * (`lower`: the last before it; else the first after it). A monotone curve
+ * from it to the next point stays between their values, so including it
+ * bounds the part of that curve in view, on any scale, whether it is drawn
+ * curved or straight.
+ */
+function outsideAt(series: Series, y: Series["y"], at: number, lower: boolean): number {
+  const after = lowerPosition(series, at);
+  let k = lower ? after - 1 : after;
+  // The first point past `at`, not one equal to it.
+  if (!lower) while (k < series.length && xAt(series, k) <= at) k++;
+  return k >= 0 && k < series.length ? y[rowOf(series, k)]! : Number.NaN;
 }
 
 /** [min, max] of x values a scale can place; with `log`, only positive ones. */

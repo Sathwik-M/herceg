@@ -2,11 +2,64 @@ import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import type { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
 import { line } from "../../src/marks/line.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { renderToSVG } from "../../src/render/static.ts";
 import type { AreaGeometry, LineGeometry, RuleGeometry, Scene } from "../../src/scene/scene.ts";
+
+/** The y of a polyline at pixel x, by linear interpolation, if it spans x. */
+function yAt(path: Polyline, x: number): number | undefined {
+  const c = path.coords;
+  const k = path.controls;
+  for (let run = 0; run < path.starts.length; run++) {
+    for (let i = path.starts[run]!; i < path.runEnd(run) - 1; i++) {
+      const [x0, x1] = [c[i * 2]!, c[i * 2 + 2]!];
+      if (!(x0 <= x && x <= x1 && x1 > x0)) continue;
+      const t = (x - x0) / (x1 - x0);
+      const [y0, y1] = [c[i * 2 + 1]!, c[i * 2 + 3]!];
+      // A curved segment's control points sit at thirds of x, so x is linear in t.
+      if (!path.curved || Number.isNaN(k[(i + 1) * 4]!)) return y0 + t * (y1 - y0);
+      const [ay, by] = [k[(i + 1) * 4 + 1]!, k[(i + 1) * 4 + 3]!];
+      const u = 1 - t;
+      return u * u * u * y0 + 3 * u * u * t * ay + 3 * u * t * t * by + t * t * t * y1;
+    }
+  }
+  return undefined;
+}
+
+/** Points of a drawn path sampled every pixel across its x range. */
+function sample(path: Polyline): [number, number][] {
+  const xs = Array.from({ length: path.count }, (_, i) => path.coords[i * 2]!);
+  const out: [number, number][] = [];
+  for (let x = Math.min(...xs); x <= Math.max(...xs); x += 1) {
+    const y = yAt(path, x);
+    if (y !== undefined) out.push([x, y]);
+  }
+  return out;
+}
+
+/** A monotone line's value at x, read from its drawn path. */
+function curveAt(
+  xs: number[],
+  ys: number[],
+  at: number,
+  viewport?: [number, number],
+  width = 600,
+  domain: [number, number] = [0, 200],
+): number {
+  const model = new ChartModel({
+    locale: "en-US",
+    y: { domain },
+    marks: [line(table({ x: xs, y: ys }), { x: "x", y: "y", curve: "monotone" })],
+  });
+  model.setSize(width, 300, 1);
+  if (viewport) model.setViewport(viewport);
+  const path = lines(model.scene(estimateText))[0]!.path;
+  return model.yScale()!.invert(yAt(path, model.xScale()!.map(at))!);
+}
 
 function sceneOf(
   config: ChartConfig,
@@ -318,5 +371,237 @@ describe("level of detail", () => {
     const steps = table({ x: [0, 1, 2], y: [0, 1, 0] });
     const { scene } = sceneOf({ marks: [line(steps, { x: "x", y: "y", curve: "step-after" })] });
     expect(lines(scene)[0]!.path.count).toBe(5);
+  });
+
+  it("draws monotone curves through every point without overshooting", () => {
+    const data = table({ x: [0, 1, 2, 3, 4, 5], y: [5, 5, 1, 2, 2, 4] });
+    const { scene, model } = sceneOf({
+      marks: [line(data, { x: "x", y: "y", curve: "monotone" })],
+    });
+    const { path } = lines(scene)[0]!;
+    const x = model.xScale()!;
+    const y = model.yScale()!;
+    // Curved segments, as cubic curves between the data's points.
+    expect(path.curved).toBe(true);
+    expect(path.count).toBe(6);
+    for (let i = 0; i <= 5; i++)
+      expect(yAt(path, x.map(i))!).toBeCloseTo(y.map([5, 5, 1, 2, 2, 4][i]!), 3);
+    const points = sample(path);
+    // Within the data's range, and flat where the data is flat.
+    for (const [px, py] of points) {
+      expect(py).toBeGreaterThanOrEqual(y.map(5) - 1e-3);
+      expect(py).toBeLessThanOrEqual(y.map(1) + 1e-3);
+      if (px <= x.map(1)) expect(py).toBeCloseTo(y.map(5), 3);
+      if (px >= x.map(3) && px <= x.map(4)) expect(py).toBeCloseTo(y.map(2), 3);
+    }
+  });
+
+  it("curves both edges of bands so they never cross, and keeps gaps", () => {
+    const data = table({
+      x: [0, 1, 2, 3, 4, 5],
+      lo: [0, 1, 1, Number.NaN, 2, 0],
+      hi: [0.01, 1.01, 2.01, 2, 4, 1],
+    });
+    const { scene } = sceneOf({
+      marks: [area(data, { x: "x", y1: "lo", y2: "hi", curve: "monotone" })],
+    });
+    const { upper, lower } = scene.panels[0]!.marks[0] as AreaGeometry;
+    expect(upper.starts).toHaveLength(2);
+    expect(lower!.starts).toHaveLength(2);
+    // On screen the upper edge is never below the lower one, sampled along the curves.
+    const samples = sample(upper);
+    expect(samples.length).toBeGreaterThan(100);
+    for (const [x, y] of samples) {
+      const at = yAt(lower!, x);
+      if (at !== undefined) expect(y).toBeLessThanOrEqual(at + 1e-3);
+    }
+  });
+
+  it("shares each curved stack boundary between the layers on either side", () => {
+    const data = table({ x: [0, 1, 2, 3], a: [0, 1, 0, 1], b: [1, 1, Number.NaN, 1] });
+    const { scene } = sceneOf({
+      marks: [area(data, { x: "x", y: ["a", "b"], stack: true, curve: "monotone" })],
+    });
+    const [first, second] = scene.panels[0]!.marks as AreaGeometry[];
+    // The second layer's base follows the first layer's top wherever both are drawn.
+    let compared = 0;
+    for (const [x, y] of sample(second!.lower!)) {
+      const at = yAt(first!.upper, x);
+      if (at === undefined) continue;
+      expect(y).toBeCloseTo(at, 3);
+      compared++;
+    }
+    expect(compared).toBeGreaterThan(50);
+    // Layers stay ordered.
+    for (const [x, y] of sample(second!.upper)) {
+      const at = yAt(second!.lower!, x);
+      if (at !== undefined) expect(y).toBeLessThanOrEqual(at + 1e-3);
+    }
+  });
+
+  it("keeps curves the same when zoomed, and ignores repeated points", () => {
+    expect(curveAt([0, 1, 2, 3], [0, 100, 0, 100], 0.5, [0.25, 0.75])).toBeCloseTo(
+      curveAt([0, 1, 2, 3], [0, 100, 0, 100], 0.5),
+      0,
+    );
+    expect(curveAt([0, 1, 1, 2], [0, 100, 100, 200], 0.5)).toBeCloseTo(
+      curveAt([0, 1, 2], [0, 100, 200], 0.5),
+      1,
+    );
+    expect(curveAt([0, 1, 2], [0, 100, 200], 0.5)).toBeCloseTo(50, 0);
+    // Repeated points at the edge of the view still see the next distinct one.
+    const xs = [0, 1, 1, 1, 2, 3];
+    const ys = [0, 100, 100, 100, 0, 100];
+    expect(curveAt(xs, ys, 0.5, [0.25, 0.75])).toBeCloseTo(curveAt(xs, ys, 0.5), 0);
+  });
+
+  it("curves sparse stretches of irregular data whatever the plot size", () => {
+    const xs = [...Array.from({ length: 199 }, (_, i) => i * 0.001), 1, 2, 3];
+    const ys = [...xs.slice(0, 199).map(() => 0), 100, 0, 100];
+    const narrow = curveAt(xs, ys, 1.25, undefined, 403);
+    expect(curveAt(xs, ys, 1.25, undefined, 404)).toBeCloseTo(narrow, 0);
+    // Curved, not straight: a straight line passes through 75 there.
+    expect(narrow).toBeCloseTo(100 * (1 - (3 * 0.25 ** 2 - 2 * 0.25 ** 3)), 0);
+  });
+
+  it("keeps curved upper edges within their data, and stacks on log axes consistent", () => {
+    const band = table({ x: [0, 1, 2], lo: [0, 1, 2], hi: [3, 3, 2] });
+    const { scene, model } = sceneOf({
+      marks: [area(band, { x: "x", y1: "lo", y2: "hi", curve: "monotone" })],
+    });
+    const { upper } = scene.panels[0]!.marks[0] as AreaGeometry;
+    const top = model.yScale()!.map(3);
+    for (let i = 0; i < upper.count; i++)
+      expect(upper.coords[i * 2 + 1]!).toBeGreaterThanOrEqual(top - 1e-3);
+    const logs = table({ x: [0, 1, 2, 3], a: [1, 10, 1, 10], b: [10, 10, 10, 10] });
+    const stacked = sceneOf({
+      y: { type: "log", domain: [1, 100] },
+      marks: [area(logs, { x: "x", y: ["a", "b"], stack: true, curve: "monotone" })],
+    }).scene;
+    const [first, second] = stacked.panels[0]!.marks as AreaGeometry[];
+    for (let i = 0; i < second!.lower!.count; i++) {
+      const at = yAt(first!.upper, second!.lower!.coords[i * 2]!);
+      if (at !== undefined) expect(second!.lower!.coords[i * 2 + 1]!).toBeCloseTo(at, 3);
+    }
+  });
+
+  it("handles hidden layers, zoomed limits, density, and huge segments", () => {
+    // Every layer hidden, then one shown again.
+    const stack = table({ x: [0, 1, 2], a: [1, 2, 1], b: [2, 1, 2] });
+    const { model } = sceneOf({
+      marks: [area(stack, { x: "x", y: ["a", "b"], stack: true, curve: "monotone" })],
+    });
+    const keys = (model.scene(estimateText).panels[0]!.marks as AreaGeometry[]).map((g) => g.key);
+    for (const key of keys) model.hidden.add(key);
+    expect(model.scene(estimateText).panels[0]!.marks).toEqual([]);
+    model.hidden.delete(keys[1]!);
+    expect(model.scene(estimateText).panels[0]!.marks).toHaveLength(1);
+
+    // Automatic y limits hold what is drawn between zoomed edges: a curve,
+    // a band drawn straight where its curves could cross, and a log x axis.
+    const inPlot = (model: ChartModel) => {
+      const zoomed = model.scene(estimateText);
+      const { plot } = zoomed.panels[0]!;
+      const drawn = (zoomed.panels[0]!.marks as (LineGeometry | AreaGeometry)[]).flatMap((g) =>
+        g.kind === "line" ? [g.path] : [g.upper, ...(g.lower ? [g.lower] : [])],
+      );
+      for (const path of drawn) {
+        for (const [px, py] of sample(path)) {
+          if (px < plot.x || px > plot.x + plot.width) continue;
+          expect(py).toBeGreaterThanOrEqual(plot.y - 0.5);
+          expect(py).toBeLessThanOrEqual(plot.y + plot.height + 0.5);
+        }
+      }
+    };
+    const wave = sceneOf({
+      marks: [
+        line(table({ x: [0, 1, 2, 3], y: [0, 100, 0, 100] }), {
+          x: "x",
+          y: "y",
+          curve: "monotone",
+        }),
+      ],
+    }).model;
+    wave.setViewport([0.25, 0.75]);
+    inPlot(wave);
+    const crossing = table({ x: [0, 1, 2, 3], lo: [9, 11, 67, 85], hi: [14, 13, 67, 89] });
+    const crossed = sceneOf({
+      marks: [area(crossing, { x: "x", y1: "lo", y2: "hi", curve: "monotone" })],
+    }).model;
+    crossed.setViewport([1.3, 1.4]);
+    inPlot(crossed);
+    const logs = sceneOf({
+      x: { type: "log" },
+      marks: [
+        line(table({ x: [1, 10, 100, 1000], y: [0, 100, 0, 100] }), {
+          x: "x",
+          y: "y",
+          curve: "monotone",
+        }),
+      ],
+    }).model;
+    logs.setViewport([2, 3]);
+    inPlot(logs);
+
+    // A band whose dense stretch is followed by a sparse one curves the
+    // sparse stretch at any width.
+    const dense = Array.from({ length: 800 }, (_, i) => i * 0.0001);
+    const xs = [...dense, 1, 2, 3];
+    const band = table({ x: xs, lo: xs.map(() => 0), hi: [...dense.map(() => 0), 100, 0, 100] });
+    const bandAt = (width: number) => {
+      const m = new ChartModel({
+        locale: "en-US",
+        y: { domain: [0, 200] },
+        marks: [area(band, { x: "x", y1: "lo", y2: "hi", curve: "monotone" })],
+      });
+      m.setSize(width, 300, 1);
+      const { upper } = m.scene(estimateText).panels[0]!.marks[0] as AreaGeometry;
+      return m.yScale()!.invert(yAt(upper, m.xScale()!.map(1.25))!);
+    };
+    expect(bandAt(444)).toBeCloseTo(bandAt(445), 0);
+    expect(bandAt(444)).toBeCloseTo(100 * (1 - (3 * 0.25 ** 2 - 2 * 0.25 ** 3)), 0);
+
+    // A segment far larger than the plot is flattened accurately where it shows.
+    // The segment from x 0 to 1: tangent −1.5e8 at its start (an end), 0 at the minimum.
+    const s = 0.9996;
+    const hermite = (2 * s ** 3 - 3 * s ** 2 + 1) * 1e8 + (s ** 3 - 2 * s ** 2 + s) * -1.5e8;
+    expect(curveAt([0, 1, 2], [1e8, 0, 1e8], s, [0.9995, 1.0005], 600, [0, 100])).toBeCloseTo(
+      hermite,
+      0,
+    );
+  });
+
+  it("draws curves natively in SVG and PDF, straight where points are close", () => {
+    // Curved segments, then a dense stretch (0.001 apart) that stays straight.
+    const xs = [0, 1, 2, 3, 3.001, 3.002, 4];
+    const data = table({ x: xs, lo: xs.map(() => 0), hi: [1, 3, 2, 3, 3.1, 3, 1] });
+    const options = {
+      width: 400,
+      height: 200,
+      locale: "en-US",
+      marks: [
+        line(data, { x: "x", y: "hi", curve: "monotone" }),
+        area(data, { x: "x", y1: "lo", y2: "hi", curve: "monotone" }),
+      ],
+    };
+    const svg = renderToSVG(options);
+    const paths = [...svg.matchAll(/ d="([^"]+)"/g)].map((m) => m[1]!);
+    const curved = paths.filter((d) => d.includes("C"));
+    expect(curved.length).toBeGreaterThanOrEqual(2);
+    // Curves and lines mix in one path; the band's outline closes back along its lower edge.
+    expect(curved.some((d) => /C[^Z]*L[^Z]*C/.test(d))).toBe(true);
+  });
+
+  it("draws dense or straight data without extra points", () => {
+    const n = 40_000;
+    const noisy = table({
+      x: Float64Array.from({ length: n }, (_, i) => i),
+      y: Float64Array.from({ length: n }, (_, i) => Math.sin(i) * 100),
+    });
+    const dense = sceneOf({ marks: [line(noisy, { x: "x", y: "y", curve: "monotone" })] }).scene;
+    expect(dense.vertices).toBeLessThanOrEqual(4 * dense.panels[0]!.plot.width + 8);
+    const straight = table({ x: [0, 1, 2, 3], y: [0, 10, 20, 30] });
+    const { scene } = sceneOf({ marks: [line(straight, { x: "x", y: "y", curve: "monotone" })] });
+    expect(lines(scene)[0]!.path.count).toBe(4);
   });
 });

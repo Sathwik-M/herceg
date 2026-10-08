@@ -383,6 +383,19 @@ describe("renderToPDF", () => {
     expect(bounds).toContain(0.25);
   });
 
+  it("draws monotone curves as cubic curves", () => {
+    const wave = table({ x: [0, 1, 2, 3], y: [0, 3, 1, 2] });
+    const { content } = readPdf(
+      renderToPDF({
+        width: 300,
+        height: 150,
+        marks: [line(wave, { x: "x", y: "y", curve: "monotone" })],
+      }),
+    );
+    // Three segments, each one curve (nothing else in the chart is curved).
+    expect(content.match(/ c\n/g)).toHaveLength(3);
+  });
+
   it("embeds heatmaps as compressed images, with a soft mask for missing cells", () => {
     const render = (x: number[], y: number[], v: (number | null)[]) =>
       readPdf(

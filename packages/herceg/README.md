@@ -68,7 +68,10 @@ live.reset({ time: newTimes, cpu: newValues });
 line(metrics, { x: "time", y: ["p50", "p99"] });
 // Long format: one line per category value.
 line(requests, { x: "time", y: "latency", series: "service" });
-// Options: stroke, strokeWidth, dash, curve ("linear" | "step" | "step-before" | "step-after"), label.
+// Options: stroke, strokeWidth, dash, curve, label. `curve` is "linear", "step",
+// "step-before", "step-after", or "monotone": smooth, through every point, and
+// never past a point's value between two points; points under 2 pixels apart
+// are joined straight. Areas take it too (bands and stacks on log y are straight).
 
 const usage = table({ time: time(timestamps), user: userCpu, system: systemCpu });
 area(usage, { x: "time", y: "user" }); // filled to zero

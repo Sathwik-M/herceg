@@ -111,7 +111,7 @@ function required(value: Record<string, unknown>, path: string, keys: readonly s
   }
 }
 
-const curve = oneOf("linear", "step", "step-before", "step-after");
+const curve = oneOf("linear", "step", "step-before", "step-after", "monotone");
 
 /** Options only number or only date formatting reads, to tell which a format is for. */
 const NUMBER_FORMAT =

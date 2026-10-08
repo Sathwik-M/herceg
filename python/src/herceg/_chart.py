@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .widget import ChartWidget
 
 Tooltip = Literal["nearest-x", "nearest-y", "nearest"]
-Curve = Literal["linear", "step", "step-before", "step-after"]
+Curve = Literal["linear", "step", "step-before", "step-after", "monotone"]
 
 _NUMERIC = ("number", "time")
 

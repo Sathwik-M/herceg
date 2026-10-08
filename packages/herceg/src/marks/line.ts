@@ -69,8 +69,10 @@ export class LineMark implements Mark<LineSpec> {
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
+    // Curves at the view's edges are measured where they are drawn.
+    const curved = this.spec.curve === "monotone";
     return unionExtent(
-      series.map((s) => yExtent(s, x0, x1, s.y, log, this.#indexes.index(this.table, s))),
+      series.map((s) => yExtent(s, x0, x1, s.y, log, this.#indexes.index(this.table, s), curved)),
     );
   }
 
