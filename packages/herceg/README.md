@@ -175,6 +175,9 @@ candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "
 
 histogram(requests, { x: "latency" }); // counts in round bins
 histogram(requests, { x: "latency", series: "region", bins: { step: 10 }, normalize: "percent" });
+
+boxplot(requests, { x: "region", y: "latency", series: "version" });
+boxplot(requests, { x: "latency", y: "region" }); // a category y lays boxes along y
 ```
 
 Bar labels go past each bar's end, or for stacks inside each segment in a
@@ -238,6 +241,18 @@ of x (per millisecond for times), so each series' bars cover an area of 1, like
 Plotly's "probability density". Tooltips report a bin's range and its bar;
 a bin is inspected through its center, so one zoomed so far that its center
 is out of view has no tooltip.
+
+Box plots summarize a number or time field per category of the other axis:
+a box from the lower to the upper quartile (linear interpolation between
+ranks, as NumPy and pandas compute them), a line at the median, whiskers to
+the most extreme values within 1.5 interquartile ranges of the box (Tukey's
+rule), and dots for the values beyond. `series` puts a box per value of a
+category field side by side in each category, in its own color. Tooltips
+report a box's median, quartiles, whiskers, count, and outliers. Missing and
+non-finite values are left out. On a log axis, the parts of a box at zero or
+below are not drawn. Statistics are recomputed for every box when the table
+changes, so long streams of observations cost a full pass per frame. In
+charts with facets, box plots repeat in every panel (`facet: "repeat"`).
 
 Marks are drawn in array order; rules and text always draw above other marks.
 

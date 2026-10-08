@@ -395,6 +395,16 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       labels: boolean,
     },
   },
+  boxplot: {
+    required: ["x", "y"],
+    checks: {
+      x: field,
+      y: field,
+      series: field,
+      fillOpacity: fraction,
+      label: string,
+    },
+  },
   candlestick: {
     required: ["x", "open", "high", "low", "close"],
     checks: {

@@ -283,7 +283,8 @@ export type MarkSpec =
   | ErrorBarSpec
   | CandlestickSpec
   | HistogramSpec
-  | PieSpec;
+  | PieSpec
+  | BoxPlotSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -500,6 +501,23 @@ export interface PieSpec {
   sort?: "value" | "input";
   /** Labels beside the slices, joined to them by lines; true by default. */
   labels?: boolean;
+}
+
+/**
+ * Box plots: per category, a box from the lower to the upper quartile of a
+ * number field's values, a line at the median, whiskers to the most extreme
+ * values within 1.5 interquartile ranges of the box, and points beyond them.
+ * One of `x` and `y` is a category field, the other the values.
+ */
+export interface BoxPlotSpec extends MarkBase {
+  type: "boxplot";
+  x: Field;
+  y: Field;
+  /** Category field: a box per value in each category, side by side. */
+  series?: Field;
+  /** Opacity of the boxes' fill; 0.25 by default. */
+  fillOpacity?: number;
+  label?: string;
 }
 
 /**

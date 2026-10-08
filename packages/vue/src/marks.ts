@@ -5,7 +5,9 @@ import {
   type AreaOptions,
   area,
   type BarOptions,
+  type BoxPlotOptions,
   bar,
+  boxplot,
   type CandlestickOptions,
   type ChartMark,
   type CustomDataOptions,
@@ -173,6 +175,12 @@ export const Pie = /* @__PURE__ */ markComponent(
   ({ data, ...options }: WithData<PieOptions<Schema>, Schema>) => pie(data, options),
   ["labels"],
 ) as unknown as <S extends Schema>(props: WithData<PieOptions<S>, S>) => null;
+
+/** Box plots: a category field on `x` or `y` and the values on the other. */
+export const BoxPlot = /* @__PURE__ */ markComponent(
+  "BoxPlot",
+  ({ data, ...options }: WithData<BoxPlotOptions<Schema>, Schema>) => boxplot(data, options),
+) as unknown as <S extends Schema>(props: WithData<BoxPlotOptions<S>, S>) => null;
 
 export const Candlestick = /* @__PURE__ */ markComponent(
   "Candlestick",

@@ -8,6 +8,7 @@ import { type Table, table } from "../data/table.ts";
 import { readsTable } from "../marks/annotation.ts";
 import { AreaMark } from "../marks/area.ts";
 import { BarMark } from "../marks/bar.ts";
+import { BoxPlotMark } from "../marks/boxplot.ts";
 import { CandlestickMark } from "../marks/candlestick.ts";
 import { ErrorBarMark } from "../marks/errorbar.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
@@ -277,6 +278,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new HistogramMark(spec, source);
       case "pie":
         return new PieMark(spec, source);
+      case "boxplot":
+        return new BoxPlotMark(spec, source);
       default:
         throw new TypeError(
           `unknown mark type ${JSON.stringify((spec as { type: unknown }).type)}`,

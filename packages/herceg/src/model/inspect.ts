@@ -250,9 +250,10 @@ export class Inspector {
     const mark = this.#markOf.get(s);
     if (mark?.tooltip !== "y") return true;
     const base = s.x0 ? s.x0[row]! : mark.zero === "x" ? 0 : end;
+    const [from, to] = mark.span?.(s, row) ?? [Math.min(base, end), Math.max(base, end)];
     const lo = Math.min(x.domain[0], x.domain[1]);
     const hi = Math.max(x.domain[0], x.domain[1]);
-    return Math.max(base, end) >= lo && Math.min(base, end) <= hi;
+    return to >= lo && from <= hi;
   }
 
   /**

@@ -449,3 +449,27 @@ def test_pie_slices_decode_as_item_inspections():
     assert inspection.axis == "item"
     assert inspection.value == 40
     assert inspection.points[0].series == "North"
+
+
+def test_boxplots_take_a_category_and_values_either_way():
+    data = {
+        "region": ["n", "n", "s", "s"],
+        "ms": [1.0, 2.0, 3.0, 40.0],
+        "v": ["a", "b", "a", "b"],
+    }
+    spec, _ = hg.boxplot(data, x="region", y="ms", series="v").to_spec()
+    assert spec["marks"] == [
+        {"type": "boxplot", "data": "data", "x": "region", "y": "ms", "series": "v"}
+    ]
+    assert sorted(spec["data"]["data"]["columns"]) == ["ms", "region", "v"]
+    horizontal = hg.Chart(data, width=300, height=200).boxplot(x="ms", y="region")
+    # The boxes' translucent fill.
+    assert 'fill-opacity="0.25"' in horizontal.to_svg()
+    with pytest.raises(TypeError, match="boxplot y: column 'v' holds category"):
+        hg.Chart(data).boxplot(x="region", y="v")
+    with pytest.raises(ValueError, match="horizontal box plots cannot use the right axis"):
+        hg.Chart(data).boxplot(x="ms", y="region", axis="right")
+    with pytest.raises(ValueError, match="fill_opacity"):
+        hg.Chart(data).boxplot(x="region", y="ms", fill_opacity=2)
+    with pytest.raises(ValueError, match="cannot be split into panels"):
+        hg.Chart(data, facet="v").boxplot(x="region", y="ms")

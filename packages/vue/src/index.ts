@@ -4,6 +4,7 @@ export { Chart } from "./chart.ts";
 export {
   Area,
   Bar,
+  BoxPlot,
   Candlestick,
   Custom,
   ErrorBar,
