@@ -1,6 +1,6 @@
 import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, FieldName, NumericField, Schema, Table } from "../data/table.ts";
-import { rectDrawing } from "../draw/rect.ts";
+import { BOTTOM, LEFT, RIGHT, rectDrawing, TOP } from "../draw/rect.ts";
 import { textDrawing } from "../draw/text.ts";
 import { type Formatter, numberFormatter } from "../format/format.ts";
 import { estimateText } from "../layout/text.ts";
@@ -248,6 +248,12 @@ export class BarMark implements Mark<BarSpec> {
       const ends = horizontal ? s.x : s.y;
       const bases = horizontal ? s.x0 : s.y0;
       const rects = frame.floats(s.key, "rect", (end - start) * 4);
+      // Unstacked bars round the corners at their value's end. The buffer
+      // matches the rectangles' capacity, so it grows only when they do.
+      const rounding =
+        !this.spec.stack && frame.theme.barRadius > 0
+          ? frame.bytes(s.key, "ends", Math.ceil(rects.length / 4))
+          : undefined;
       let count = 0;
       for (let k = start; k < end; k++) {
         const row = rowOf(s, k);
@@ -272,12 +278,19 @@ export class BarMark implements Mark<BarSpec> {
           rects[i + 2] = width;
           rects[i + 3] = Math.abs(root - tip);
         }
+        if (rounding)
+          rounding[count] = horizontal ? (tip > root ? RIGHT : LEFT) : tip < root ? TOP : BOTTOM;
         count++;
         if (labeled) {
           const middle = center + offset + width / 2;
           const value = s.values[row]!;
           if (this.spec.stack) labeled.inside(value, middle, root, tip, width, s.color, opacity);
-          else labeled.outside(value, middle, root, tip, spacing, s.color, opacity);
+          else {
+            const cap = rounding
+              ? Math.min(frame.theme.barRadius, width / 2, Math.abs(root - tip))
+              : 0;
+            labeled.outside(value, middle, root, tip, spacing, s.color, opacity, width, cap);
+          }
         }
       }
       out.push({
@@ -288,6 +301,7 @@ export class BarMark implements Mark<BarSpec> {
         fillOpacity: opacity,
         rects,
         count,
+        rounded: rounding && { radius: frame.theme.barRadius, ends: rounding },
       });
       if (labeled) out.push(...labeled.flush(s.key));
     });
@@ -404,7 +418,8 @@ class BarLabels {
   /**
    * A label past the bar's end, or just inside it when past would leave the
    * plot. `middle` is the bar's center across its thickness; `spacing` the
-   * distance to the neighboring bars' centers.
+   * distance to the neighboring bars' centers; `cap` the radius of the bar's
+   * rounded end, which labels inside keep clear of.
    */
   outside(
     value: number,
@@ -414,6 +429,8 @@ class BarLabels {
     spacing: number,
     fill: string,
     opacity: number,
+    thickness: number,
+    cap: number,
   ) {
     const size = this.#size;
     if (!this.#horizontal) {
@@ -428,9 +445,11 @@ class BarLabels {
         this.#add("middle", this.#frame.theme.text, true, middle, past, text);
         return;
       }
-      const inside = up ? tip + LABEL_GAP + size / 2 : tip - LABEL_GAP - size / 2;
+      // Text wider than the flat part of a rounded end starts below the corners.
+      const clear = LABEL_GAP + (width > thickness - 2 * cap ? cap : 0);
+      const inside = up ? tip + clear + size / 2 : tip - clear - size / 2;
       if (
-        Math.abs(tip - root) >= size + 2 * LABEL_GAP &&
+        Math.abs(tip - root) >= size + LABEL_GAP + clear &&
         this.#fits(middle - width / 2, inside - size / 2, width, size)
       )
         this.#inside("middle", fill, opacity, middle, inside, text);
@@ -446,9 +465,10 @@ class BarLabels {
       this.#add(forward ? "start" : "end", this.#frame.theme.text, true, past, middle, text);
       return;
     }
-    const inside = forward ? tip - LABEL_GAP : tip + LABEL_GAP;
+    const clear = LABEL_GAP + (size > thickness - 2 * cap ? cap : 0);
+    const inside = forward ? tip - clear : tip + clear;
     if (
-      Math.abs(tip - root) >= width + 2 * LABEL_GAP &&
+      Math.abs(tip - root) >= width + LABEL_GAP + clear &&
       this.#fits(forward ? inside - width : inside, top, width, size)
     )
       this.#inside(forward ? "end" : "start", fill, opacity, inside, middle, text);

@@ -156,11 +156,21 @@ const axis: Check = (v, path) => {
   });
 };
 
+const THEMES = ["light", "dark", "high-contrast", "high-contrast-dark", "auto"];
 const theme: Check = (v, path) => {
-  if (typeof v === "string") return oneOf("light", "dark")(v, path);
+  if (typeof v === "string") return oneOf(...THEMES)(v, path);
   object(v, path);
   properties(v as Record<string, unknown>, path, {
-    extends: oneOf("light", "dark"),
+    extends: oneOf(...THEMES),
+    titleSize: positive,
+    gridDash: numbers,
+    lineWidth: positive,
+    barRadius: (v, path) => {
+      if (typeof v !== "number" || !(v >= 0) || !Number.isFinite(v))
+        fail(path, "a radius of 0 or more", v);
+    },
+    tooltipBackground: string,
+    tooltipBorder: string,
     background: string,
     text: string,
     muted: string,

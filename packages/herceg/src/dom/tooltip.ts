@@ -1,5 +1,4 @@
 import type { Inspection } from "../model/model.ts";
-import { isLightColor } from "../scale/color.ts";
 import type { Theme } from "../theme.ts";
 
 export class Tooltip {
@@ -8,7 +7,7 @@ export class Tooltip {
   constructor(document: Document) {
     this.element = document.createElement("div");
     this.element.style.cssText =
-      "position:absolute;left:0;top:0;pointer-events:none;display:none;white-space:nowrap;padding:6px 8px;border-radius:6px;line-height:1.35;z-index:1;font-variant-numeric:tabular-nums";
+      "position:absolute;left:0;top:0;pointer-events:none;display:none;white-space:nowrap;padding:8px 10px;border-radius:8px;line-height:1.4;z-index:1;font-variant-numeric:tabular-nums";
   }
 
   show(
@@ -18,12 +17,10 @@ export class Tooltip {
     bounds: { width: number; height: number },
   ) {
     const { element } = this;
-    // Light text implies a dark theme.
-    const dark = isLightColor(theme.text) ?? false;
-    element.style.background = dark ? "#262624" : "#ffffff";
+    element.style.background = theme.tooltipBackground;
     element.style.color = theme.text;
-    element.style.border = `1px solid ${dark ? "rgba(255,255,255,0.12)" : "rgba(11,11,11,0.12)"}`;
-    element.style.boxShadow = "0 2px 8px rgba(0,0,0,0.15)";
+    element.style.border = `1px solid ${theme.tooltipBorder}`;
+    element.style.boxShadow = "0 1px 2px rgba(16, 24, 40, 0.06), 0 6px 16px rgba(16, 24, 40, 0.12)";
     element.style.font = `${theme.fontSize}px ${theme.font}`;
     element.replaceChildren();
     const document = element.ownerDocument;

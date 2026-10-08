@@ -51,7 +51,7 @@ describe("renderToSVG", () => {
       height: 150,
       marks: [line(metrics, { x: "t", y: "db" })],
     });
-    const path = /<path d="(M[^"]+)" fill="none" stroke="#2a78d6"/.exec(svg)![1]!;
+    const path = /<path d="(M[^"]+)" fill="none" stroke="#3266d6"/.exec(svg)![1]!;
     expect(path.match(/M/g)).toHaveLength(2);
   });
 

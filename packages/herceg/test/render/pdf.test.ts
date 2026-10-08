@@ -223,7 +223,7 @@ describe("renderPdf", () => {
         "0 0 100 50 re",
         "f",
         "Q",
-        "q 0.882 0.878 0.851 RG 1 w 0 J 0 j 4 M",
+        "q 0.91 0.922 0.941 RG 1 w 0 J 0 j 4 M",
         "10 25.5 m",
         "90 25.5 l",
         "S",
@@ -306,14 +306,14 @@ describe("renderToPDF", () => {
   it("draws the chart as vector paths and real text", () => {
     const { content, page, objects } = readPdf(renderToPDF(latency));
     // The title in bold (WinAnsi é is octal 351), labels in regular Helvetica.
-    expect(content).toMatch(/BT \/F2 14 Tf 0 Tr 1 0 0 -1 [\d.]+ [\d.]+ Tm \(Latency \\351\) Tj ET/);
+    expect(content).toMatch(/BT \/F2 15 Tf 0 Tr 1 0 0 -1 [\d.]+ [\d.]+ Tm \(Latency \\351\) Tj ET/);
     for (const label of ["08:00", "160", "SLO", "api", "db"]) {
       expect(content).toMatch(new RegExp(`BT /F1 12 Tf .*\\(${label}\\) Tj ET`));
     }
     // The y axis title reads bottom to top.
     expect(content).toMatch(/0 -1 -1 0 [\d.]+ [\d.]+ Tm \(ms\) Tj/);
     // Lines have round joins and caps and a subpath per run: db has a gap.
-    const db = content.indexOf("q 0.922 0.408 0.204 RG 1.5 w 1 J 1 j\n");
+    const db = content.indexOf("q 0.925 0.416 0.173 RG 2 w 1 J 1 j\n");
     expect(db).toBeGreaterThan(0);
     expect(content.slice(db, content.indexOf("\nS\n", db)).match(/ m\n/g)).toHaveLength(2);
     // Data is clipped to the plot; the rule and its label come after the clip.

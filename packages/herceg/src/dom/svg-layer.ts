@@ -142,6 +142,7 @@ export class SvgLayer {
     set(this.#background, "fill", background ? theme.background : "none");
     set(this.#grid, "d", options.marks ? scene.panels.map(gridPath).join("") : "");
     set(this.#grid, "stroke", theme.grid);
+    set(this.#grid, "stroke-dasharray", theme.gridDash.join(" "));
 
     const document = this.#document;
     const context: SvgContext = {

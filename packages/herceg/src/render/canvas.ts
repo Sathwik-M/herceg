@@ -49,7 +49,9 @@ export function paintCanvas(
     }
     context.strokeStyle = theme.grid;
     context.lineWidth = 1 / ratio;
+    context.setLineDash([...theme.gridDash]);
     context.stroke();
+    context.setLineDash([]);
   }
 
   for (const { plot, marks } of scene.panels) {

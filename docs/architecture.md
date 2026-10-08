@@ -454,6 +454,20 @@ assigned to keys the first time they appear and kept for the chart's
 lifetime, so a series keeps its color when others appear, disappear, or are
 hidden.
 
+## Themes
+
+A theme is a set of tokens (`theme.ts`) resolved once per configuration into
+plain values that the model and renderers read. Themes that follow the page
+(`"auto"`, or tokens holding CSS variables) need an environment to resolve:
+the DOM chart passes one that finds whether the chart sits on a dark
+surface (the nearest background color, else the page's color scheme) and
+computes CSS values on a hidden probe inside the container, converting colors
+in any syntax to sRGB hex (or `rgba()`), because ramps, contrast checks, and
+the PDF writer parse colors. The chart watches the color scheme and attribute
+changes on the page's root and body elements, reads the page again on its
+next frame, and re-renders only if the resolved theme changed. Static rendering has no page: variables take their fallbacks and
+`"auto"` is light, so the output does not depend on where it was rendered.
+
 ## Interaction
 
 Tooltips use the model's `inspect()`: for sorted series the nearest x is

@@ -36,8 +36,6 @@ export interface LineOptions<S extends Schema> {
   id?: string;
 }
 
-const DEFAULT_WIDTH = 1.5;
-
 export class LineMark implements Mark<LineSpec> {
   readonly spec: LineSpec;
   readonly table: Table<Schema>;
@@ -86,7 +84,7 @@ export class LineMark implements Mark<LineSpec> {
         draw: lineDrawing,
         key: s.key,
         stroke: s.color,
-        strokeWidth: this.spec.strokeWidth ?? DEFAULT_WIDTH,
+        strokeWidth: this.spec.strokeWidth ?? frame.theme.lineWidth,
         dash: this.spec.dash,
         path: tracePath(
           s,

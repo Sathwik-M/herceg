@@ -3,6 +3,7 @@
 
 import { estimateText } from "./layout/text.ts";
 import { type ChartConfig, ChartModel } from "./model/model.ts";
+import { NO_PAGE } from "./render/fallbacks.ts";
 import { renderPdf } from "./render/pdf.ts";
 
 export interface PdfOptions extends ChartConfig {
@@ -18,7 +19,7 @@ export interface PdfOptions extends ChartConfig {
  * and common punctuation, and heatmaps become embedded images.
  */
 export function renderToPDF(options: PdfOptions): Uint8Array {
-  const model = new ChartModel(options);
+  const model = new ChartModel(options, NO_PAGE);
   model.setSize(options.width, options.height, 1);
   return renderPdf(model.scene(estimateText), {
     title: options.title,

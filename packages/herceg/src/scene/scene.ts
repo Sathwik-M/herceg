@@ -195,6 +195,11 @@ export interface RectGeometry extends Geometry {
   fillOpacity: number;
   rects: Float32Array;
   count: number;
+  /**
+   * Bars' rounded value ends: a radius, and per rectangle which end is
+   * rounded (draw/rect.ts: NONE, TOP, BOTTOM, LEFT, RIGHT).
+   */
+  rounded?: { radius: number; ends: Uint8ClampedArray } | undefined;
 }
 
 /** Circles of one series, such as scatter points: x, y per point. */

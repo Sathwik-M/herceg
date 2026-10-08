@@ -220,6 +220,26 @@ describe("bar labels", () => {
     expect([before!.anchor, before!.labels]).toEqual(["end", ["-10.0"]]);
   });
 
+  it("write values inside full-height bars below their rounded ends", () => {
+    const full = table({ region: ["N", "S"], v: [100000, 100000] });
+    const labelY = (barRadius: number) => {
+      const { scene } = build(
+        {
+          marks: [bar(full, { x: "region", y: "v", labels: true })],
+          y: { domain: [0, 100000] },
+          theme: { barRadius },
+        },
+        360,
+        200,
+      );
+      const [label] = texts(scene);
+      const [top] = rect(rects(scene)[0]!, 0).slice(1);
+      return label!.coords[1]! - top!;
+    };
+    // The label is wider than the flat part of a 100 px end, so it clears the corners.
+    expect(labelY(100) - labelY(0)).toBeGreaterThan(30);
+  });
+
   it("label stacked segments inside, in a contrasting color, when they fit", () => {
     const stacked = table({ region: ["N", "S"], a: [100, 100], b: [1, 50] });
     const { scene } = build({
@@ -254,7 +274,7 @@ describe("bar labels", () => {
     expect(first("#000080", 0.2).fill).toBe("#000000");
     expect(first("#000080").fill).toBe("#ffffff");
     const named = first("white");
-    expect([named.fill, named.halo]).toEqual(["#0b0b0b", true]);
+    expect([named.fill, named.halo]).toEqual(["#1c2333", true]);
   });
 
   it("leave room for labels in automatic domains", () => {

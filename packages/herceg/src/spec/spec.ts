@@ -57,7 +57,11 @@ export interface FacetSpec {
 }
 
 export type RendererName = "auto" | "svg" | "canvas";
-export type ThemeName = "light" | "dark";
+/**
+ * A built-in theme. "auto" is "light" or "dark" as the page prefers, and
+ * follows changes; it is "light" where there is no page.
+ */
+export type ThemeName = "light" | "dark" | "high-contrast" | "high-contrast-dark" | "auto";
 
 /** Columnar data: every column has the same length. */
 export interface DataSpec {
@@ -161,6 +165,12 @@ export interface InteractionSpec {
   sync?: string;
 }
 
+/**
+ * Changes to a built-in theme. Colors and the font may be CSS variables,
+ * `var(--name)`: charts in a page read them where the chart is, and follow
+ * changes of the page's theme; elsewhere (static export) a variable needs a
+ * fallback, `var(--name, #2a78d6)`.
+ */
 export interface ThemeSpec {
   /** Base theme to extend. */
   extends?: ThemeName;
@@ -174,6 +184,16 @@ export interface ThemeSpec {
   axis?: string;
   font?: string;
   fontSize?: number;
+  /** Size of the chart's title, in pixels. */
+  titleSize?: number;
+  /** Dash pattern of grid lines, in pixels; empty for solid lines. */
+  gridDash?: number[];
+  /** Width of lines and area outlines that do not set one. */
+  lineWidth?: number;
+  /** Radius of the corners at the value end of unstacked bars; 0 for square bars. */
+  barRadius?: number;
+  tooltipBackground?: string;
+  tooltipBorder?: string;
   /** Categorical colors in assignment order. */
   palette?: string[];
   /** Ramp for continuous color (heatmaps), from low to high values. */

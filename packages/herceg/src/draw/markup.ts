@@ -26,3 +26,32 @@ export function markupOf(elements: readonly SvgElement[]): string {
   }
   return out;
 }
+
+/** Control point distance of a cubic Bezier quarter circle, per unit of radius. */
+export const KAPPA = 0.5522847498;
+
+/** What paths are traced into: a canvas context, or a builder of SVG or PDF path data. */
+export type PathSink = Pick<
+  CanvasPath,
+  "moveTo" | "lineTo" | "bezierCurveTo" | "closePath" | "rect"
+>;
+
+/** Builds SVG path data from the calls that trace a path on a canvas. */
+export class SvgPath implements PathSink {
+  d = "";
+  moveTo(x: number, y: number): void {
+    this.d += `M${n(x)} ${n(y)}`;
+  }
+  lineTo(x: number, y: number): void {
+    this.d += `L${n(x)} ${n(y)}`;
+  }
+  bezierCurveTo(ax: number, ay: number, bx: number, by: number, x: number, y: number): void {
+    this.d += `C${n(ax)} ${n(ay)} ${n(bx)} ${n(by)} ${n(x)} ${n(y)}`;
+  }
+  rect(x: number, y: number, width: number, height: number): void {
+    this.d += `M${n(x)} ${n(y)}h${n(width)}v${n(height)}h${n(-width)}Z`;
+  }
+  closePath(): void {
+    this.d += "Z";
+  }
+}

@@ -103,7 +103,7 @@ describe("custom marks", () => {
     );
     // Text sits on the alphabetic baseline 0.35 font sizes below its middle, as on Canvas.
     expect(clipped).toMatch(
-      /<text x="[\d.]+" y="[\d.]+" fill="#0b0b0b" text-anchor="start">a&#60;b<\/text>/,
+      /<text x="[\d.]+" y="[\d.]+" fill="#1c2333" text-anchor="start">a&#60;b<\/text>/,
     );
   });
 
