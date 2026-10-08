@@ -53,6 +53,8 @@ export interface HeatmapOptions<S extends Schema> {
   label?: string;
   /** With the chart's `facet`, draw all cells in every panel; heatmaps cannot be split yet. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   id?: string;
 }
 
@@ -263,7 +265,7 @@ export function heatmap<S extends Schema>(
     x: options.x,
     y: options.y,
     value: options.value,
-    ...definedFields(options, ["label", "id", "facet", "colorMidpoint"]),
+    ...definedFields(options, ["label", "id", "facet", "panel", "colorMidpoint"]),
   };
   if (options.colors) spec.colors = [...options.colors];
   if (options.colorDomain) spec.colorDomain = [...options.colorDomain];

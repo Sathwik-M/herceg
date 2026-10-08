@@ -62,7 +62,9 @@ or `facet_row` and `facet_col` (a grid with a row per value of one category
 column and a column per value of another; either may be left out), with
 `resolve_y` (`"shared"` by default, `"independent"`, `"rows"`, or `"columns"`)
 choosing which panels share a y scale; marks with `repeat=True` draw all their
-rows in every panel,
+rows in every panel; `panels` (ids or `hg.Panel("latency", title="Latency",
+y=hg.Axis(label="ms"))`) and `panel_columns` for subplots, whose marks name
+their panel with `panel="latency"` (or `"*"` for all),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`
 (`True` or `"x"`, `"y"`, `"xy"`: wheel zoom and drag pan along those axes),
 `brush` (`"x"`, `"y"`: drag to select a range; `"xy"`: a rectangle; `"lasso"`: a

@@ -21,6 +21,8 @@ export interface LineOptions<S extends Schema> {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   x: NumericField<S>;
   /** One field, or several fields drawn as separate lines sharing x. */
   y: NumericField<S> | readonly NumericField<S>[];
@@ -128,6 +130,7 @@ export function line<S extends Schema>(table: Table<S>, options: LineOptions<S>)
       "id",
       "axis",
       "facet",
+      "panel",
     ]),
   };
   if (table.name !== undefined) spec.data = table.name;

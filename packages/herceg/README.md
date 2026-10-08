@@ -500,6 +500,45 @@ can only repeat for now, and charts with facets have no right axis. A chart
 too small for its panels (under 20 pixels a side) throws an error naming the
 grid; give it more room or fewer columns.
 
+### Subplots
+
+`panels` draws different marks in different panels of one chart, sharing x:
+
+```ts
+import { panels } from "herceg";
+
+createChart(element, {
+  marks: [
+    line(metrics, { x: "time", y: ["p50", "p99"], panel: "latency" }),
+    bar(metrics, { x: "time", y: "requests", panel: "traffic" }),
+    rule({ x: deployedAt, label: "deploy", panel: "*" }), // in every panel
+  ],
+  panels: panels(
+    [
+      { id: "latency", title: "Latency", y: { label: "ms" } },
+      { id: "traffic", title: "Requests", y: { type: "log" } },
+    ],
+    { columns: 1 }, // in a spec: "grid": { "columns": 1 }
+  ),
+});
+```
+
+Each mark names the panel it draws in with `panel`, or `"*"` for all of
+them; in a chart with panels, a mark without one is an error rather than
+drawn everywhere by accident. Panels fill rows of `columns` (one by default)
+in order, with their titles above them. They share the x axis, labeled under
+the lowest panel of each column, and each has a y scale of its own, from its
+marks; `resolve: { y: "shared" }` (or `"rows"`, `"columns"`) shares it
+instead, when the panels sharing it agree on its type, domain, `zero`, and
+`nice`. A panel's `y` takes the place of the chart's `y` settings for its
+own axis, so one panel can be logarithmic or show times while another is
+linear; a panel's y title is centered beside it. Marks keep their place in
+the chart's list as their identity, so colors, the legend, and hidden series
+do not depend on the panel a mark draws in. Inspections report the `panel`
+id. Specs with `panels` need `"version": 2`. Charts with panels have no right
+axis, category y axes are shared by every panel, and zooming and brushing act
+on x only.
+
 ### Custom marks
 
 When no mark fits, `custom` draws shapes with the chart's scales on every
@@ -543,7 +582,8 @@ entries or tooltips, and are meant for shapes in the thousands, not millions.
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`. |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
-| `resolve` | `{ y: "shared" \| "independent" \| "rows" \| "columns" }`: which facet panels share a y scale (see Small multiples). |
+| `resolve` | `{ y: "shared" \| "independent" \| "rows" \| "columns" }`: which panels share a y scale (see Small multiples and Subplots). |
+| `panels` | `panels([{ id, title?, y? }, ...], { columns? })`: subplots whose marks name them in `panel` (see Subplots). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |

@@ -127,6 +127,8 @@ class Widget {
       marks: _marks,
       version: _version,
       facet: _facet,
+      panels: _panels,
+      grid: _grid,
       ...options
     } = snapshot.spec;
     this.#options = options;

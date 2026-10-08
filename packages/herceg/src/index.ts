@@ -107,6 +107,7 @@ export type {
   Inspection,
   ItemInspection,
 } from "./model/model.ts";
+export { type Panels, panels } from "./model/panels.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
 export * from "./scale/schemes.ts";
 export type * from "./spec/spec.ts";

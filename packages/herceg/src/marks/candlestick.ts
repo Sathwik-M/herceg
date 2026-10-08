@@ -44,6 +44,8 @@ export interface CandlestickOptions<S extends Schema> {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   id?: string;
 }
 
@@ -421,7 +423,7 @@ export function candlestick<S extends Schema>(
     high: options.high,
     low: options.low,
     close: options.close,
-    ...definedFields(options, ["rise", "fall", "label", "axis", "facet", "id"]),
+    ...definedFields(options, ["rise", "fall", "label", "axis", "facet", "panel", "id"]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

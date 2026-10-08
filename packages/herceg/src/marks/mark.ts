@@ -122,6 +122,8 @@ export interface MarkIdentity {
   readonly axis?: "left" | "right" | undefined;
   /** "repeat" draws all of the mark's rows in every panel of a faceted chart. */
   readonly facet?: "repeat" | undefined;
+  /** In a chart with panels, the panel the mark draws in, or "*" for every one. */
+  readonly panel?: string | undefined;
 }
 
 export interface Mark<S extends MarkIdentity = MarkIdentity> {

@@ -558,6 +558,7 @@ const mark: Check = (v, path) => {
     id: string,
     axis: oneOf("left", "right"),
     facet: oneOf("repeat"),
+    panel: string,
   });
 };
 
@@ -589,6 +590,25 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     x: axis,
     y: axis,
     yRight: axis,
+    panels: (p, path) => {
+      if (!Array.isArray(p)) fail(path, "a list of panels", p);
+      const ids = new Set<string>();
+      for (const [i, item] of p.entries()) {
+        const at = `${path}[${i}]`;
+        object(item, at);
+        const panel = item as Record<string, unknown>;
+        required(panel, at, ["id"]);
+        properties(panel, at, { id: string, title: string, y: axis });
+        const id = panel.id as string;
+        if (id === "" || id === "*") fail(`${at}.id`, 'a name other than "" and "*"', id);
+        if (ids.has(id)) fail(`${at}.id`, "a name no other panel has", id);
+        ids.add(id);
+      }
+    },
+    grid: (g, path) => {
+      object(g, path);
+      properties(g as Record<string, unknown>, path, { columns: count });
+    },
     resolve: (r, path) => {
       object(r, path);
       properties(r as Record<string, unknown>, path, {
@@ -635,4 +655,23 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     locale: string,
     timeZone: string,
   });
+  // An older reader would draw shared axes or overlay panels; a spec asking
+  // otherwise says so.
+  for (const name of ["resolve", "panels", "grid"])
+    if (chart[name] !== undefined && chart.version !== 2)
+      fail(
+        `spec.${name}`,
+        'a spec with "version": 2, so that older readers refuse it',
+        chart[name],
+      );
+  // Marks name panels the chart has; with panels, every mark names one.
+  const panels = chart.panels as { id: string }[] | undefined;
+  if (chart.grid !== undefined && !panels) fail("spec.grid", "a spec with panels", chart.grid);
+  const ids = new Set(panels?.map(({ id }) => id));
+  for (const [i, item] of (chart.marks as Record<string, unknown>[]).entries()) {
+    const panel = item.panel;
+    if (!panels && panel !== undefined) fail(`marks[${i}].panel`, "a spec with panels", panel);
+    if (panels && panel !== "*" && !ids.has(panel as string))
+      fail(`marks[${i}].panel`, `"*" or the id of one of the panels`, panel);
+  }
 }

@@ -1,0 +1,264 @@
+// Subplots: panels drawing the marks that name them, sharing x.
+import { describe, expect, it } from "vitest";
+import { time } from "../../src/data/column.ts";
+import { table } from "../../src/data/table.ts";
+import { estimateText } from "../../src/layout/text.ts";
+import { bar } from "../../src/marks/bar.ts";
+import { line } from "../../src/marks/line.ts";
+import { pie } from "../../src/marks/pie.ts";
+import { rule } from "../../src/marks/rule.ts";
+import { describeChart } from "../../src/model/describe.ts";
+import { facet } from "../../src/model/facet.ts";
+import { type AxisInspection, type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { panels } from "../../src/model/panels.ts";
+import { renderToSVG } from "../../src/render/static.ts";
+import type { LineGeometry, Panel, RectGeometry } from "../../src/scene/scene.ts";
+import { loadSpec } from "../../src/spec/load.ts";
+
+function build(config: ChartConfig, width = 600, height = 400) {
+  const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
+  model.setSize(width, height, 1);
+  return { model, scene: model.scene(estimateText) };
+}
+
+const metrics = table({
+  t: [0, 1, 2, 3],
+  latency: [120, 180, 150, 400],
+  requests: [5, 9, 7, 6],
+});
+const stacked = panels([
+  { id: "latency", title: "Latency", y: { label: "ms" } },
+  { id: "traffic", title: "Requests" },
+]);
+const marks = [
+  line(metrics, { x: "t", y: "latency", panel: "latency" }),
+  bar(metrics, { x: "t", y: "requests", panel: "traffic" }),
+  rule({ x: 2, label: "deploy", panel: "*" }),
+];
+const kinds = (panel: Panel) => panel.marks.map((m) => m.kind);
+const axis = (panel: Panel, orient: string) => panel.axes.find((a) => a.orient === orient);
+
+describe("panels", () => {
+  it("draw each mark in the panel it names, sharing x, each with a y scale of its own", () => {
+    const { model, scene } = build({ marks, panels: stacked });
+    const [top, bottom] = scene.panels as [Panel, Panel];
+    expect(scene.panels.map((p) => p.key)).toEqual(["latency", "traffic"]);
+    expect(model.panels().map((p) => p.label)).toEqual(["Latency", "Requests"]);
+    // The line above, the bars below, and the deploy rule in both.
+    expect(kinds(top)).toContain("line");
+    expect(kinds(top)).not.toContain("rect");
+    expect(kinds(bottom)).toContain("rect");
+    expect(kinds(bottom)).not.toContain("line");
+    expect(kinds(top).filter((k) => k === "rule")).toHaveLength(1);
+    expect(kinds(bottom).filter((k) => k === "rule")).toHaveLength(1);
+    // Stacked, one column.
+    expect(bottom.plot.x).toBe(top.plot.x);
+    expect(bottom.plot.y).toBeGreaterThan(top.plot.y + top.plot.height);
+    // One x scale; y domains from each panel's own marks.
+    const [a, b] = model.panels();
+    expect(a!.x.domain).toEqual(b!.x.domain);
+    expect(Math.max(...a!.y.domain)).toBeGreaterThanOrEqual(400);
+    expect(Math.max(...b!.y.domain)).toBeLessThan(20);
+    // x labels under the bottom panel only; titles above each panel; the
+    // first panel's y title centered on it.
+    expect(axis(top, "bottom")).toBeUndefined();
+    expect(axis(bottom, "bottom")).toBeDefined();
+    expect(scene.headers.map((h) => h.text)).toEqual(["Latency", "Requests"]);
+    const title = axis(top, "left")!.title!;
+    expect(title.text).toBe("ms");
+    expect(title.y).toBeCloseTo(top.plot.y + top.plot.height / 2);
+    expect(axis(bottom, "left")!.title).toBeUndefined();
+    expect(describeChart(model)).toContain("Panels: Latency, Requests.");
+  });
+
+  it("keep a mark's identity wherever it draws, and report the panel inspected", () => {
+    const { model, scene } = build({ marks, panels: stacked });
+    const lineKey = (scene.panels[0]!.marks.find((m) => m.kind === "line") as LineGeometry).key;
+    // The same key as in a chart without panels: the mark's place in the chart.
+    const plain = build({
+      marks: [line(metrics, { x: "t", y: "latency" }), bar(metrics, { x: "t", y: "requests" })],
+    }).scene;
+    expect(plain.panels[0]!.marks.find((m) => m.kind === "line")!.key).toBe(lineKey);
+    const bars = scene.panels[1]!.marks.find((m) => m.kind === "rect") as RectGeometry;
+    const [bx, by, bw, bh] = Array.from(bars.rects.subarray(0, 4)) as number[];
+    const hit = model.inspect(bx! + bw! / 2, by! + bh! / 2) as AxisInspection;
+    expect(hit.panel).toBe("traffic");
+    expect(hit.points.map((p) => p.label)).toEqual(["requests"]);
+  });
+
+  it("let a panel set its own y axis, of another type", () => {
+    const { model } = build({
+      marks,
+      panels: panels([
+        { id: "latency", y: { type: "log" } },
+        { id: "traffic", y: { domain: [0, 50] } },
+      ]),
+    });
+    const [a, b] = model.panels();
+    expect(a!.y.type).toBe("log");
+    expect(b!.y.type).toBe("linear");
+    expect(b!.y.domain).toEqual([0, 50]);
+  });
+
+  it("place panels in rows of the grid's columns, labeling y beside each", () => {
+    const { scene } = build({ marks, panels: panels(stacked.list, { columns: 2 }) });
+    const [left, right] = scene.panels as [Panel, Panel];
+    expect(right.plot.y).toBe(left.plot.y);
+    expect(right.plot.x).toBeGreaterThan(left.plot.x + left.plot.width);
+    expect(axis(left, "left")).toBeDefined();
+    expect(axis(right, "left")).toBeDefined();
+  });
+
+  it("share a y scale when asked, if the panels agree on it", () => {
+    const { model } = build({ marks, panels: stacked, resolve: { y: "shared" } });
+    const [a, b] = model.panels();
+    expect(a!.y.domain).toEqual(b!.y.domain);
+    expect(() =>
+      build({
+        marks,
+        resolve: { y: "shared" },
+        panels: panels([{ id: "latency", y: { type: "log" } }, { id: "traffic" }]),
+      }),
+    ).toThrow('Panel "traffic" shares a y scale with others');
+  });
+
+  it("refuse marks without a panel or naming an unknown one, and what panels cannot do yet", () => {
+    const loose = line(metrics, { x: "t", y: "latency" });
+    expect(() => build({ marks: [loose], panels: stacked })).toThrow("needs a panel");
+    const lost = line(metrics, { x: "t", y: "latency", panel: "errors" });
+    expect(() => build({ marks: [lost], panels: stacked })).toThrow('names the panel "errors"');
+    const right = line(metrics, { x: "t", y: "latency", panel: "latency", axis: "right" });
+    expect(() => build({ marks: [right], panels: stacked })).toThrow("right axis");
+    expect(() => build({ marks, panels: stacked, interaction: { zoom: "xy" } })).toThrow(
+      "along x only",
+    );
+    expect(() =>
+      build({
+        marks: [line(table({ t: [0], v: [1], g: ["a"] }), { x: "t", y: "v", panel: "latency" })],
+        panels: stacked,
+        facet: facet("g"),
+      }),
+    ).toThrow("facets or panels, not both");
+    const slices = pie(table({ k: ["a"], v: [1] }), { category: "k", value: "v" });
+    expect(() => build({ marks: [slices], panels: stacked })).toThrow("facets or panels");
+    expect(() => panels([])).toThrow("at least one panel");
+    expect(() => panels([{ id: "a" }, { id: "a" }])).toThrow('Two panels have the id "a"');
+    expect(() => panels([{ id: "*" }])).toThrow("other than");
+    expect(() => panels([{ id: "a" }], { columns: 0 })).toThrow("whole number");
+  });
+
+  it("load from spec version 2 and render titles in SVG", () => {
+    const spec = (version: 1 | 2) => ({
+      version,
+      data: { m: { columns: { t: [0, 1], a: [1, 2], b: [30, 40] } } },
+      marks: [
+        { type: "line" as const, x: "t", y: "a", panel: "top" },
+        { type: "line" as const, x: "t", y: "b", panel: "bottom" },
+      ],
+      panels: [
+        { id: "top", title: "Top" },
+        { id: "bottom", title: "Bottom", y: { label: "units" } },
+      ],
+      grid: { columns: 1 },
+    });
+    const { config } = loadSpec(spec(2), []);
+    const svg = renderToSVG({ ...config, width: 400, height: 300 });
+    expect(svg).toContain(">Top</text>");
+    expect(svg).toContain(">units</text>");
+    expect(() => loadSpec(spec(1), [])).toThrow('spec.panels: expected a spec with "version": 2');
+    const duplicated = { ...spec(2), panels: [{ id: "top" }, { id: "top" }] };
+    expect(() => loadSpec(duplicated, [])).toThrow("a name no other panel has");
+  });
+
+  it("read each panel's own axis settings, also when panels share a scale", () => {
+    const logs = panels([
+      { id: "latency", y: { type: "log", domain: [1, 1000] } },
+      { id: "traffic", y: { type: "log", domain: [1, 1000] } },
+    ]);
+    const shared = build({ marks, panels: logs, resolve: { y: "shared" } }).model.panels();
+    expect(shared.map((p) => [p.y.type, p.y.domain])).toEqual([
+      ["log", [1, 1000]],
+      ["log", [1, 1000]],
+    ]);
+    // Settings agree when they come out the same, whether set or inherited.
+    const inherited = panels([{ id: "latency", y: { type: "log" } }, { id: "traffic" }]);
+    expect(() =>
+      build({ marks, panels: inherited, y: { type: "log" }, resolve: { y: "shared" } }),
+    ).not.toThrow();
+    // A time panel and a number panel cannot share a scale.
+    const mixed = panels([{ id: "latency" }, { id: "traffic", y: { type: "time" } }]);
+    expect(() => build({ marks, panels: mixed, resolve: { y: "shared" } })).toThrow(
+      'Panel "traffic" shares a y scale',
+    );
+    // Formats are part of a shared scale.
+    const formats = panels(
+      [{ id: "latency", y: { format: { style: "percent" } } }, { id: "traffic" }],
+      { columns: 2 },
+    );
+    expect(() => build({ marks, panels: formats, resolve: { y: "rows" } })).toThrow("format");
+  });
+
+  it("show, grid, and title each panel's y axis as its own settings say", () => {
+    const own = panels(
+      [
+        { id: "latency", y: { axis: false } },
+        { id: "traffic", y: { grid: true, label: "requests" } },
+      ],
+      { columns: 2 },
+    );
+    const { scene } = build({ marks, panels: own, y: { grid: false }, resolve: { y: "rows" } });
+    const [left, right] = scene.panels as [Panel, Panel];
+    expect(axis(left, "left")).toBeUndefined();
+    expect(left.grid.y).toEqual([]);
+    expect(right.grid.y.length).toBeGreaterThan(0);
+    // The second column's panel keeps its title and labels, sharing its row's scale.
+    expect(axis(right, "left")!.title!.text).toBe("requests");
+    expect(axis(right, "left")!.ticks.length).toBeGreaterThan(0);
+  });
+
+  it("label a panel of annotations only, and choose tooltips by each panel's marks", () => {
+    const { scene, model } = build({
+      marks: [
+        line(metrics, { x: "t", y: ["latency", "requests"], panel: "latency" }),
+        rule({ y: 100, label: "limit", panel: "traffic" }),
+      ],
+      panels: stacked,
+    });
+    expect(axis(scene.panels[1]!, "left")!.ticks.length).toBeGreaterThan(0);
+    // Both lines at the hovered x, as in a chart of lines alone.
+    const [top] = model.panels();
+    const hit = model.inspect(top!.x.map(1), top!.y.map(180)) as AxisInspection;
+    expect(hit.points).toHaveLength(2);
+  });
+
+  it("describe a mark with the panel it draws in", () => {
+    const times = table({ t: [0, 1], at: time([Date.UTC(2026, 0, 1), Date.UTC(2026, 0, 2)]) });
+    const { model } = build({
+      marks: [
+        line(metrics, { x: "t", y: "latency", panel: "latency" }),
+        line(times, { x: "t", y: "at", panel: "traffic" }),
+        rule({ y: Date.UTC(2026, 0, 1, 12), label: "noon", panel: "traffic" }),
+      ],
+      panels: panels([{ id: "latency" }, { id: "traffic", y: { type: "time" } }]),
+    });
+    // The rule in the time panel reads as a time, not as milliseconds.
+    expect(describeChart(model)).toContain("noon (y Jan 1, 2026, 12:00)");
+  });
+
+  it("refuse panels named without panels, in charts and specs", () => {
+    const named = line(metrics, { x: "t", y: "latency", panel: "latency" });
+    expect(() => build({ marks: [named] })).toThrow("names a panel, but the chart has no panels");
+    const spec = (extra: object) => () =>
+      loadSpec(
+        {
+          version: 2,
+          data: { m: { columns: { t: [0, 1], a: [1, 2] } } },
+          marks: [{ type: "line", x: "t", y: "a" }],
+          ...extra,
+        } as never,
+        [],
+      );
+    expect(spec({ grid: { columns: 2 } })).toThrow("spec.grid: expected a spec with panels");
+    expect(spec({ panels: [{ id: "top" }] })).toThrow("marks[0].panel");
+  });
+});

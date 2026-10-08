@@ -280,6 +280,7 @@ export function violin<S extends Schema>(table: Table<S>, options: ViolinOptions
       "label",
       "axis",
       "facet",
+      "panel",
       "id",
     ]),
   };

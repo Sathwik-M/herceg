@@ -34,6 +34,8 @@ interface BarStyle<S extends Schema> {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   /** Category field: one bar series per value. */
   series?: CategoryField<S>;
   /** Stack series instead of placing them side by side. */
@@ -642,6 +644,7 @@ export function bar<S extends Schema>(table: Table<S>, options: BarOptions<S>): 
       "id",
       "axis",
       "facet",
+      "panel",
     ]),
   };
   if (table.name !== undefined) spec.data = table.name;

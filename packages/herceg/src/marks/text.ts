@@ -11,6 +11,8 @@ interface TextStyle {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   /** Defaults to the theme's text color. */
   fill?: string;
   /** Which end of the text is at the point. Default "middle". */
@@ -165,6 +167,7 @@ export function text<S extends Schema>(
       "dy",
       "axis",
       "facet",
+      "panel",
     ]),
   };
   if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.text)) {

@@ -66,6 +66,8 @@ interface CustomBase {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   id?: string;
 }
 
@@ -88,6 +90,8 @@ export interface CustomSpec {
   id?: string;
   axis?: "left" | "right";
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
 }
 
 /** [min, max] of a field's finite values (cached by the table); positive ones on log axes. */
@@ -119,7 +123,7 @@ export class CustomMark implements Mark<CustomSpec> {
   readonly #description: string | undefined;
 
   constructor(table: Table | undefined, options: CustomDataOptions<Schema>) {
-    this.spec = { type: "custom", ...definedFields(options, ["id", "axis", "facet"]) };
+    this.spec = { type: "custom", ...definedFields(options, ["id", "axis", "facet", "panel"]) };
     this.table = table;
     const list = (fields: string | readonly string[] | undefined) =>
       fields === undefined ? [] : typeof fields === "string" ? [fields] : [...fields];

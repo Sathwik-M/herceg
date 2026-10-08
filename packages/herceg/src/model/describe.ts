@@ -77,9 +77,10 @@ export function describeChart(model: ChartModel): string {
   if (kinds) {
     parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
   }
-  if (config.facet) {
+  const panelLayout = config.facet ?? config.panels;
+  if (panelLayout) {
     const panels = model.panels().map(({ label }) => label);
-    parts.push(config.facet.describe(panels, MAX_SERIES));
+    parts.push(panelLayout.describe(panels, MAX_SERIES));
   }
   // With series on both y axes, each one's name says which it is on.
   const right = series.filter((s) => model.onRight(s));
@@ -93,7 +94,7 @@ export function describeChart(model: ChartModel): string {
   for (const s of series.slice(0, MAX_SERIES)) {
     const drawn = model.parts(s);
     const mark = model.markOf(s);
-    const y = model.onRight(s) ? model.yRightScale() : model.yScale();
+    const y = mark && model.yScaleOf(mark);
     const sentence = mark?.summarize
       ? mark.summarize(drawn, name(s), {
           format: model.formatsOf(mark),

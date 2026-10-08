@@ -56,7 +56,8 @@ export function inspectionPayload(
       ? undefined
       : inspection.axis === "x"
         ? chart.model.xScale()
-        : chart.model.yScale();
+        : (chart.model.panels().find(({ key }) => key === inspection.panel)?.y ??
+          chart.model.yScale());
   const categories = scale?.type === "band" ? scale.categories : undefined;
   return {
     axis: inspection.axis,

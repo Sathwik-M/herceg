@@ -21,6 +21,8 @@ interface RegionStyle {
   axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  panel?: string;
   fill?: string;
   fillOpacity?: number;
   /** Text drawn in the top left corner of every region. */
@@ -252,7 +254,20 @@ export function region<S extends Schema>(
         y1: position(options.y1),
         y2: position(options.y2),
       },
-      ["id", "x1", "x2", "y1", "y2", "fill", "fillOpacity", "label", "text", "axis", "facet"],
+      [
+        "id",
+        "x1",
+        "x2",
+        "y1",
+        "y2",
+        "fill",
+        "fillOpacity",
+        "label",
+        "text",
+        "axis",
+        "facet",
+        "panel",
+      ],
     ) as Omit<RegionSpec, "type">),
   };
   if (table?.name !== undefined && readsTable([spec.x1, spec.x2, spec.y1, spec.y2], spec.text)) {

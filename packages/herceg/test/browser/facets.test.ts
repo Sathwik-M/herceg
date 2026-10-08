@@ -6,6 +6,7 @@ import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.
 import type { ChartMark } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
 import { facet } from "../../src/model/facet.ts";
+import { panels } from "../../src/model/panels.ts";
 import { bandBox } from "./helpers.ts";
 
 let host: HTMLDivElement;
@@ -261,6 +262,33 @@ describe("facet panels with y scales of their own", () => {
     const chart = grouped(line(data, { x: "x", y: "y" }));
     expect(() => chart.setYViewport([500, 600])).toThrow("no one y viewport");
     chart.setYViewport(null);
+    chart.destroy();
+  });
+});
+
+describe("subplots", () => {
+  it("inspect the panel under the pointer, and step between panels by title", async () => {
+    const metrics = table({ t: [0, 1, 2], latency: [100, 300, 200], requests: [5, 9, 7] });
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [
+        line(metrics, { x: "t", y: "latency", panel: "latency" }),
+        line(metrics, { x: "t", y: "requests", panel: "traffic" }),
+      ],
+      panels: panels([
+        { id: "latency", title: "Latency" },
+        { id: "traffic", title: "Requests" },
+      ]),
+    });
+    const [, bottom] = chart.model.panels();
+    pointer(chart.root, "pointermove", bottom!.x.map(1), bottom!.y.map(9));
+    await frame();
+    expect(chart.model.inspect(bottom!.x.map(1), bottom!.y.map(9))?.panel).toBe("traffic");
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toMatch(/^Latency: /);
+    key(chart, "ArrowDown");
+    expect(live.textContent).toMatch(/^Requests: /);
     chart.destroy();
   });
 });
