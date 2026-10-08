@@ -13,6 +13,10 @@
     "./spec": {
       "types": "./dist/from-spec.d.ts",
       "import": "./dist/from-spec.js"
+    },
+    "./pdf": {
+      "types": "./dist/pdf.d.ts",
+      "import": "./dist/pdf.js"
     }
   },
   "files": [

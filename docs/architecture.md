@@ -21,7 +21,7 @@ One name per concept, used the same way in code and docs.
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
 | **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), rules, text, or shapes (custom marks). |
-| **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D. |
+| **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
 ## Pipeline
@@ -40,6 +40,7 @@ ChartModel (DOM-free)
         |
         v
 Scene  ──>  renderSvg()      standalone SVG string (server, export, tests)
+       ──>  renderPdf()      one-page PDF document (herceg/pdf)
        ──>  SvgLayer         retained SVG DOM
        ──>  paintCanvas()    Canvas 2D for dense marks
         |
@@ -323,12 +324,11 @@ in `src/draw/`): its SVG markup, optionally the same output as a few SVG
 elements with attributes, and its size (for choosing a renderer). Data
 drawings also paint on a canvas; guide drawings (rules, text) draw only in
 SVG, above the data. The mark that emits the geometry attaches the drawing,
-so renderers know no geometry kinds and a bundle only contains drawing code
-for the marks it imports (a line chart does not carry bar, point, raster,
-or text drawing). Each geometry type is checked against its drawing's type
-at compile time; the `Geometry` base type that renderers hold erases that
-pairing. Each scene
-can be drawn three ways:
+so the SVG and Canvas renderers know no geometry kinds and a bundle only
+contains drawing code for the marks it imports (a line chart does not carry
+bar, point, raster, or text drawing). Each geometry type is checked against
+its drawing's type at compile time; the `Geometry` base type that renderers
+hold erases that pairing. Each scene can be drawn four ways:
 
 - `renderSvg` produces a standalone SVG document.
 - `SvgLayer` keeps each geometry's nodes by key. Drawings that describe
@@ -340,6 +340,33 @@ can be drawn three ways:
   series, not one element per data point.
 - `paintCanvas` redraws grid and marks into a canvas sized to the device pixel
   ratio; point drawings hand clouds to the WebGL painter when one is loaded.
+- `renderPdf` (`render/pdf.ts`) writes a one-page PDF 1.4 document with the
+  static SVG's layout, measured in points (0.75 per CSS pixel).
+
+PDF drawing is the exception to drawings carried by geometry: `renderPdf`
+switches on the geometry kind. A `pdf` member on each drawing would keep each
+kind self-contained, but marks import their drawings, so it would ship PDF
+code in every chart bundle, while PDF export is rare and mostly runs on
+servers and in the Python package. The switch is checked against the
+built-in geometry union (`MarkGeometry`), so a new kind does not compile
+until PDF draws it; a geometry kind it does not know (from a third-party
+drawing) is refused with an error. The PDF reuses the drawings' path tracing
+(`traceLine`, `traceArea`), so outlines match the canvas. Marks, axes, and
+legends are vector paths (circles as Bézier curves, custom marks' SVG path
+data converted, arcs included); opacities are graphics states; heatmaps are
+RGB images with a soft mask for missing cells, each cell wider than a pixel
+repeated to about two image pixels per CSS pixel (at most 4,194,304 pixels),
+because some viewers (macOS Preview) smooth images whatever the file asks
+and would blur cells into each other; the color legend's ramp is an axial
+shading. Text uses the standard 14 fonts, which every viewer has, so
+nothing is embedded: layout measures text with the same Helvetica metrics
+as the static SVG (padded by 10%), and anchoring uses the fonts' exact
+metrics. Streams are Flate-compressed by a small built-in deflate (fixed
+Huffman codes with LZ77 matching; zlib's dynamic codes make text streams
+about 30% smaller), since the output must be built
+synchronously wherever the engine runs, including the V8 engine embedded in
+Python, which has no compression API. Output is deterministic: no creation
+date or random file identifier.
 
 In the browser the layers are, bottom to top: an optional canvas for marks,
 the SVG layer (grid and marks when not on canvas, guides, axes, title, pointer
@@ -451,14 +478,16 @@ little-endian typed buffers (`{ type, dtype, buffer }`, where `buffer`
 indexes the buffers delivered next to the JSON) and categories as int32
 dictionary codes. Binary columns become typed-array views of the delivered
 bytes, copied only when misaligned, so large data never passes through JSON
-number lists. `chartFromSpec` and `specToSVG` render a loaded spec.
+number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec.
 
 ## Package layout
 
 The `herceg` npm package contains the engine, renderers, and browser runtime
 as ES modules with `sideEffects: false`; bundlers drop what a chart does not
 use. Framework adapters live in separate packages because their dependencies
-differ. One package avoids version skew between engine pieces.
+differ. One package avoids version skew between engine pieces. PDF export
+is a subpath, `herceg/pdf`, so that unbundled imports of `herceg` (from a
+CDN or in Node) do not load it either.
 
 `@herceg/react` is a thin layer over the same engine. `<Chart>` creates one
 chart in a layout effect and destroys it on unmount; mark elements (`<Line>`,
@@ -513,4 +542,10 @@ the DOM, creating an offscreen canvas in that canvas' document when
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use
   Canvas or SVG. Uploads are not incremental: streaming a large point series
   uploads it again on every change.
+- PDF text is limited to the standard fonts' Windows-1252 characters (others
+  print as "?"); fonts are not embedded, so Greek, Cyrillic, and CJK labels
+  need SVG or PNG export. PDFs are not tagged for assistive technology,
+  colors must be hex, `rgb()`, `hsl()`, or names, transparent backgrounds
+  show as white paper, and halos of labels are read twice by readers that
+  ignore replacement text (macOS Preview).
 - No adapters for frameworks other than React. See the roadmap in the repository README.

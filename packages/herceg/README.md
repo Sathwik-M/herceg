@@ -1,7 +1,7 @@
 # herceg
 
 Framework-independent charts for analytics: columnar data, streaming updates,
-level-of-detail rendering, SVG and Canvas output.
+level-of-detail rendering, SVG and Canvas output, SVG and PDF export.
 
 > Early development. Line, area, bar, point (scatter), and heatmap marks, and
 > rule, region, and text annotations are available; the API may change before
@@ -286,15 +286,35 @@ Events report changes only: a re-inspected point or an unchanged range does
 not repeat them. Keyboard users select a range with Shift and the arrow keys
 (Enter zooms to it when zoom is on; Escape clears it).
 
-## Server rendering
+## Export
 
-`renderToSVG` needs no DOM:
+`renderToSVG` and `renderToPDF` need no DOM, so they run on servers, in
+workers, and in build scripts:
 
 ```ts
 import { renderToSVG } from "herceg";
+import { renderToPDF } from "herceg/pdf";
 
-const svg = renderToSVG({ width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] });
+const options = { width: 640, height: 320, marks: [line(metrics, { x: "time", y: "p99" })] };
+const svg = renderToSVG(options); // standalone SVG document
+const pdf = renderToPDF(options); // Uint8Array: a one-page vector PDF
 ```
+
+PDF export is a separate entry point, `herceg/pdf`, so applications that do
+not export PDFs do not bundle it (about 11 KiB gzip). The page is the chart's
+size at 0.75 points per CSS pixel, laid out as the static SVG. Marks, axes,
+and legends are vector paths, heatmaps are compressed images, and text is
+selectable text in the standard PDF fonts (Helvetica for sans-serif themes,
+Times or Courier for serif or monospace ones), so no font is embedded. The
+chart's title and description become the document's title and subject.
+
+- The standard fonts cover Windows-1252 (Latin-1 and common punctuation);
+  other characters, such as Greek, Cyrillic, or CJK, print as "?".
+- Colors must be hex, `rgb()`, `hsl()`, or CSS color names; others, such as
+  CSS variables, throw an error.
+- A transparent background stays transparent, which PDF viewers show as
+  white paper: give dark themes a background color.
+- The document is not tagged for assistive technology.
 
 ## Charts from specs
 
@@ -302,10 +322,11 @@ Charts described as JSON, such as those the Python package writes, load
 through the `herceg/spec` entry point:
 
 ```ts
-import { chartFromSpec, specToSVG } from "herceg/spec";
+import { chartFromSpec, specToPDF, specToSVG } from "herceg/spec";
 
 chartFromSpec(element, spec, buffers); // buffers: ArrayBuffers for binary columns
 const svg = specToSVG(spec, buffers);
+const pdf = specToPDF(spec, buffers);
 ```
 
 A spec's `data` holds tables whose columns are JSON arrays,

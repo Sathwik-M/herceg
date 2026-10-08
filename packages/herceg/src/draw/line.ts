@@ -16,8 +16,8 @@ export function linePath(path: Polyline): string {
   return d;
 }
 
-/** Adds a polyline's runs to the current canvas path. */
-export function traceLine(context: CanvasRenderingContext2D, path: Polyline): void {
+/** Adds a polyline's runs to the current path of a canvas (or of another path builder). */
+export function traceLine(context: Pick<CanvasPath, "moveTo" | "lineTo">, path: Polyline): void {
   const c = path.coords;
   for (let run = 0; run < path.starts.length; run++) {
     const start = path.starts[run]!;

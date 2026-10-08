@@ -30,6 +30,29 @@ describe("architecture", () => {
     }
   });
 
+  // PDF export runs wherever the engine does, including the JavaScript engine
+  // embedded in Python, which has no DOM or web APIs such as TextEncoder.
+  it("PDF export uses no DOM or web APIs", () => {
+    const render = join(SRC, "render");
+    const modules = [
+      "pdf.ts",
+      "pdf-document.ts",
+      "pdf-fonts.ts",
+      "deflate.ts",
+      "css-color.ts",
+      "svg-path.ts",
+    ];
+    for (const file of [join(SRC, "pdf.ts"), ...modules.map((name) => join(render, name))]) {
+      const source = readFileSync(file, "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
+      const imports = [...source.matchAll(/from "([^"]+)"/g)].map(([, path]) => path!);
+      const code = source.replace(/from "[^"]+"/g, "");
+      expect(DOM.test(code), `${file} uses a DOM API`).toBe(false);
+      expect(/\b(TextEncoder|btoa|atob|Blob|CompressionStream)\b/.test(code), file).toBe(false);
+      for (const path of imports)
+        expect(path, `${file} imports browser code`).not.toMatch(/\/dom\//);
+    }
+  });
+
   for (const directory of CORE) {
     it(`src/${directory} does not use the DOM or import browser code`, () => {
       for (const file of files(join(SRC, directory))) {

@@ -1,5 +1,5 @@
-// Base64 decoding for buffers embedded in HTML or passed through an embedded
-// JavaScript engine, which has no `atob`.
+// Base64 for buffers embedded in HTML or passed through an embedded
+// JavaScript engine, which has no `atob` or `btoa`.
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const LOOKUP = new Uint8Array(128);
@@ -18,6 +18,19 @@ export function decodeBase64(text: string): Uint8Array<ArrayBuffer> {
       bits -= 8;
       out[at++] = (value >> bits) & 255;
     }
+  }
+  return out;
+}
+
+export function encodeBase64(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i]!;
+    const b = bytes[i + 1] ?? 0;
+    const c = bytes[i + 2] ?? 0;
+    out += ALPHABET[a >> 2]! + ALPHABET[((a & 3) << 4) | (b >> 4)]!;
+    out += i + 1 < bytes.length ? ALPHABET[((b & 15) << 2) | (c >> 6)]! : "=";
+    out += i + 2 < bytes.length ? ALPHABET[c & 63]! : "=";
   }
   return out;
 }

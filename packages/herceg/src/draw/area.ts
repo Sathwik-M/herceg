@@ -27,7 +27,11 @@ export function areaPath(area: AreaGeometry): string {
   return d;
 }
 
-function traceArea(context: CanvasRenderingContext2D, area: AreaGeometry): void {
+/** Adds an area's outline to the current path of a canvas (or of another path builder). */
+export function traceArea(
+  context: Pick<CanvasPath, "moveTo" | "lineTo" | "closePath">,
+  area: AreaGeometry,
+): void {
   const { upper, lower } = area;
   const u = upper.coords;
   for (let run = 0; run < upper.starts.length; run++) {

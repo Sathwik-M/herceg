@@ -11,16 +11,17 @@ applications. Today it provides:
 - SVG and Canvas rendering, chosen per chart by how much it draws, and WebGL
   for large point series, loaded only when a chart needs it;
 - level-of-detail reduction for large line and area series;
-- keyboard navigation, generated data summaries, and static SVG export;
+- keyboard navigation, generated data summaries, and static SVG and PDF
+  export;
 - React components (`@herceg/react`) whose data updates bypass React;
 - a Python package (`python/`) for pandas, Polars, PyArrow, and NumPy data,
-  with notebook, HTML, SVG, and PNG output.
+  with notebook, HTML, SVG, PNG, and PDF output.
 
 ## Status
 
 Early development. The `herceg` package renders line, area, bar, scatter,
 and heatmap marks and annotations with SVG or Canvas, streams data through columnar
-tables, and renders static SVG without a DOM. `@herceg/react` wraps it in
+tables, and renders static SVG and PDF without a DOM. `@herceg/react` wraps it in
 React components, and the Python package builds the same charts from
 dataframes through the portable chart spec. The libraries are measured
 against Apache ECharts, TanStack Charts, Chart.js, Plotly, and uPlot in a
@@ -41,15 +42,14 @@ Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
 candlestick, and histogram marks, rule, region, and text annotations from constants or data, custom
 marks drawing through the same renderers, level of detail, streaming
 updates, shared scheduler, browser interaction (tooltips, zoom, brushing,
-events, synced charts), static SVG, React adapter, min/max indexes for
+events, synced charts), static SVG, PDF export, React adapter, min/max indexes for
 zooming and streaming large line series, WebGL drawing of large point series, chart specs
 with binary columns, Python package, a second y axis, small multiples.
 
 Next:
 
 1. More chart types: box plots, pie and donut charts.
-2. Live notebook charts (a widget that streams updates from Python) and PDF
-   export.
+2. Live notebook charts (a widget that streams updates from Python).
 3. Other framework adapters (Vue, Svelte).
 4. Facets by row and column, and independent panel scales.
 

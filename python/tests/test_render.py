@@ -75,6 +75,44 @@ def test_svg_matches_the_typescript_renderer(tmp_path):
     assert same_ids(svg) == same_ids(result.stdout)
 
 
+def test_pdf_matches_the_typescript_renderer(tmp_path):
+    pdf = chart().to_pdf()
+    assert pdf.startswith(b"%PDF-1.4\n") and pdf.endswith(b"%%EOF\n")
+    # The cross-reference table is where the trailer says it is.
+    start = int(pdf.rsplit(b"startxref\n", 1)[1].split(b"\n", 1)[0])
+    assert pdf[start : start + 5] == b"xref\n"
+    title = "".join(f"{ord(c):04X}" for c in "Latency")
+    assert f"/Title <FEFF{title}>".encode() in pdf
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is needed to compare with the TypeScript renderer")
+    spec, buffers = chart().to_spec()
+    loader = (ROOT / "packages" / "herceg" / "src" / "from-spec.ts").as_uri()
+    entry = tmp_path / "render.mts"
+    entry.write_text(
+        f"const {{ specToPDF }} = await import({json.dumps(loader)});\n"
+        "const { readFileSync } = await import('node:fs');\n"
+        "const input = JSON.parse(readFileSync(0, 'utf8'));\n"
+        "const buffers = input.buffers.map((b) => Buffer.from(b, 'base64'));\n"
+        "process.stdout.write(specToPDF(input.spec, buffers));\n",
+        encoding="utf-8",
+    )
+    payload = json.dumps({"spec": spec, "buffers": [base64.b64encode(b).decode() for b in buffers]})
+    result = subprocess.run(
+        [node, "--experimental-strip-types", str(entry)],
+        input=payload.encode(),
+        capture_output=True,
+        check=True,
+    )
+    assert pdf == result.stdout
+
+
+def test_pdf_export(tmp_path):
+    path = tmp_path / "chart.PDF"
+    chart().save(str(path))
+    assert path.read_bytes() == chart().to_pdf()
+
+
 def test_png_export(tmp_path):
     path = tmp_path / "chart.png"
     chart().save(str(path))

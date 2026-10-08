@@ -689,8 +689,12 @@ class Chart:
         """PNG at ``scale`` times the chart size (requires the ``export`` extra)."""
         return _render.png(self.to_svg(), scale=scale)
 
+    def to_pdf(self) -> bytes:
+        """One-page vector PDF sized to the chart (requires the ``export`` extra)."""
+        return _render.pdf(*self.to_spec())
+
     def save(self, path: str, *, scale: float = 2) -> None:
-        """Writes ``.html``, ``.svg``, or ``.png``, chosen by the file extension."""
+        """Writes ``.html``, ``.svg``, ``.png``, or ``.pdf``, chosen by the file extension."""
         lower = str(path).lower()
         if lower.endswith(".html"):
             content: str | bytes = self.to_html()
@@ -698,8 +702,10 @@ class Chart:
             content = self.to_svg()
         elif lower.endswith(".png"):
             content = self.to_png(scale=scale)
+        elif lower.endswith(".pdf"):
+            content = self.to_pdf()
         else:
-            raise ValueError(f"Unknown file type for {path!r}; use .html, .svg, or .png")
+            raise ValueError(f"Unknown file type for {path!r}; use .html, .svg, .png, or .pdf")
         mode = "wb" if isinstance(content, bytes) else "w"
         with open(path, mode, **({} if mode == "wb" else {"encoding": "utf-8"})) as file:
             file.write(content)
