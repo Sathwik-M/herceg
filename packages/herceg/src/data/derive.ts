@@ -831,7 +831,7 @@ export class Derivation<S extends Schema> {
   /** One row per group of `groupby` values (one row without), with each operation's result. */
   aggregate<
     G extends FieldName<S> = never,
-    O extends Record<string, Aggregation<NumericField<S>>> = {},
+    O extends Record<string, Aggregation<NumericField<S>>> = Record<never, never>,
   >(options: {
     groupby?: readonly G[];
     ops: O;
