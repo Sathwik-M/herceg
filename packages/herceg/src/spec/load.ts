@@ -84,7 +84,7 @@ export function loadSpec(spec: ChartSpec, buffers: readonly SpecBuffer[] = []): 
   const tables = loadTables(spec.data ?? {}, buffers);
   const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));
   const { data: _data, marks: _marks, version: _version, facet: panels, ...options } = spec;
-  const facet = panels && new Facet(panels.field, panels.columns);
+  const facet = panels && new Facet(panels);
   return { config: { ...options, marks, ...(facet && { facet }) }, tables };
 }
 

@@ -580,8 +580,19 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     yRight: axis,
     facet: (f, path) => {
       object(f, path);
-      required(f as Record<string, unknown>, path, ["field"]);
-      properties(f as Record<string, unknown>, path, { field, columns: count });
+      const spec = f as Record<string, unknown>;
+      if ("field" in spec) {
+        properties(spec, path, { field, columns: count });
+        if ("row" in spec || "column" in spec)
+          fail(path, "a field to wrap, or row and column fields, not both", f);
+        return;
+      }
+      properties(spec, path, { row: field, column: field });
+      if (spec.row === undefined && spec.column === undefined)
+        fail(path, "a field, or a row or column field", f);
+      // A grid's columns are its column field's values.
+      if ("columns" in spec)
+        fail(`${path}.columns`, "absent in a grid of row and column fields", spec.columns);
     },
     legend: boolean,
     tooltip: (t, path) => {

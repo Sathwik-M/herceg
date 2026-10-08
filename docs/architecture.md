@@ -247,11 +247,15 @@ pixels: the y viewport holds a range for each.
 
 ## Small multiples
 
-With `facet`, the model draws a panel per value of a category field, in
-order of first appearance across the tables of the marks that split. Rows
+With `facet`, the model draws a panel per value of a category field, or per
+pair of values of a row field and a column field (each field's values in
+order of first appearance across the tables of the marks that split, every
+pair drawn, rows by columns). Facet headers are scene text (`Scene.headers`),
+so every renderer and static export draws them the same way. Rows
 are split after series are resolved: a facet split of a series is the same
 columns read through a list of the rows in each panel (4 bytes per row),
-computed in one pass per series and kept until its table changes, with
+computed in two passes per series (with a transient 4-byte panel index per
+row) and kept until its table changes, with
 sortedness checked per panel. Series keep their keys, so colors, legend
 entries, and hidden state are shared across panels. Splitting after series
 are resolved is right for marks whose series are row-aligned (lines, points,
@@ -748,8 +752,9 @@ document when `OffscreenCanvas` is unavailable.
   field.
 - One x axis and at most two y axes per chart; category values and marks
   placed along y (horizontal bars and error bars) only on the left.
-- Facets wrap one category field into a grid with shared scales: no row by
-  column facets, independent scales, or right axes in faceted charts, and
+- Facets wrap one category field into rows of panels, or lay out a grid by
+  two, always with shared scales: no independent scales or right axes in
+  faceted charts, and
   heatmaps, histograms, box plots, violins, stacked bars, and annotations or custom marks over a table can
   only repeat in every panel. Panel splits are recomputed whenever their
   table changes, and rows of a faceted large line do not use its min/max

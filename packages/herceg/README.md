@@ -414,8 +414,9 @@ sharing x through `interaction: { sync }` are often easier to read.
 
 ### Small multiples
 
-`facet` draws the chart once per value of a category field, in a grid of
-panels that share their x and y scales:
+`facet` draws the chart once per value of a category field, wrapped into
+rows of panels, or once per pair of values of two fields, in a grid; panels
+share their x and y scales:
 
 ```ts
 import { facet } from "herceg";
@@ -428,14 +429,26 @@ createChart(element, {
   ],
   facet: facet("region", { columns: 3 }), // in a spec: { field: "region", columns: 3 }
 });
+
+// A grid: a row per region and a column per product. Either may be left out
+// for one column of rows or one row of columns.
+createChart(element, {
+  marks: [line(sales, { x: "week", y: "units" })],
+  facet: facet({ row: "region", column: "product" }), // in a spec: { row: "region", column: "product" }
+});
 ```
 
 Panels follow the order in which values first appear in the data; rows
 without a value are left out (though their categories still get a band on a
-category axis). Marks over a table split its rows by the field,
-which the table must have, unless they have `facet: "repeat"`; marks without
-a table repeat. x labels go under the lowest panel of each column and y labels
-beside the first. Pointer, brush, and zoom work in any panel and act on the
+category axis). A grid has a panel for every pair of values, rows by
+columns, including pairs without rows, with the column values above the top
+row and the row values beside the last column; wrapped panels each have
+their value above them. Panels are keyed by their value, or in a grid by
+both as a JSON array (`["North","A"]`), which inspections report as `panel`;
+announcements and the chart's description name them by their values. Marks
+over a table split its rows by the fields, which the table must have, unless
+they have `facet: "repeat"`; marks without a table repeat. x labels go under
+the lowest panel of each column and y labels beside the first. Pointer, brush, and zoom work in any panel and act on the
 shared x; the arrow keys step through a panel and Up and Down move between
 panels. Heatmaps, histograms, stacked bars, and annotations or custom marks over a table
 can only repeat for now, and charts with facets have no right axis. A chart
@@ -484,7 +497,7 @@ entries or tooltips, and are meant for shapes in the thousands, not millions.
 | `width`, `height` | Fixed size; omitted dimensions follow the container. |
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`. |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
-| `facet` | `facet(field, { columns? })`: a panel per value of a category field (see Small multiples). |
+| `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |

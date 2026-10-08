@@ -119,6 +119,29 @@ describe("facets in the browser", () => {
     chart.destroy();
   });
 
+  it("name grid panels by both their values, and report the panel's key", () => {
+    const grid = table({
+      t: [0, 1, 0, 1, 0, 1, 0, 1],
+      v: [1, 2, 3, 4, 5, 6, 7, 8],
+      region: ["a", "a", "a", "a", "b", "b", "b", "b"],
+      zone: ["x", "x", "y", "y", "x", "x", "y", "y"],
+    });
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [line(grid, { x: "t", y: "v" })],
+      facet: facet({ row: "region", column: "zone" }),
+    });
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toMatch(/^a, x: /);
+    key(chart, "ArrowDown");
+    expect(live.textContent).toMatch(/^a, y: /);
+    const [, second] = chart.model.panels();
+    expect(second!.key).toBe(JSON.stringify(["a", "y"]));
+    expect(second!.label).toBe("a, y");
+    chart.destroy();
+  });
+
   it("draw a cursor shared by a synced chart in every panel", async () => {
     const other = document.createElement("div");
     other.style.cssText = "width:600px;height:300px";

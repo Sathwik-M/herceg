@@ -242,6 +242,26 @@ def test_facets_split_marks_into_panels():
         hg.Chart(DATA, facet="host").rule(y=1, axis="right")
 
 
+def test_facets_lay_panels_out_by_row_and_column():
+    data = {**DATA, "zone": ["x", "y"]}
+    chart = hg.Chart(data, facet_row="host", facet_col="zone", width=400, height=300).line(
+        x="t", y="p50"
+    )
+    spec, _ = chart.to_spec()
+    assert spec["facet"] == {"row": "host", "column": "zone"}
+    assert sorted(spec["data"]["data"]["columns"]) == ["host", "p50", "t", "zone"]
+    svg = chart.to_svg()
+    assert ">x</text>" in svg and "rotate(90" in svg
+    only_columns, _ = hg.Chart(data, facet_col="zone").line(x="t", y="p50").to_spec()
+    assert only_columns["facet"] == {"column": "zone"}
+    with pytest.raises(ValueError, match="not both"):
+        hg.Chart(data, facet="host", facet_row="zone")
+    with pytest.raises(ValueError, match="must differ"):
+        hg.Chart(data, facet_row="host", facet_col="host")
+    with pytest.raises(KeyError, match="facet: no column 'region'"):
+        hg.Chart(data, facet_row="host", facet_col="region").line(x="t", y="p50")
+
+
 def test_candlesticks_send_their_four_prices():
     prices = {
         "day": np.array(["2026-01-05", "2026-01-06"], dtype="datetime64[ms]"),

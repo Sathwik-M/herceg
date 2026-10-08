@@ -28,7 +28,7 @@ import type { Series } from "../marks/series.ts";
 import { unionExtent } from "../marks/trace.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
-import type { AxisGeometry, Panel, Rect, Scene } from "../scene/scene.ts";
+import type { AxisGeometry, Panel, Rect, Scene, SceneText } from "../scene/scene.ts";
 import type { AxisSpec, ChartSpec } from "../spec/spec.ts";
 import { resolveTheme, type Theme, type ThemeEnvironment } from "../theme.ts";
 import {
@@ -44,7 +44,7 @@ import {
   usableDomain,
   valueFormatter,
 } from "./axis.ts";
-import type { Facet, PanelSplit, Splitter } from "./facet.ts";
+import type { Facet, PanelGrid, PanelSplit, Splitter } from "./facet.ts";
 import { EDGE, type LegendEntry, layoutLegends } from "./legend.ts";
 
 /** Chart options with marks bound to their data. */
@@ -69,14 +69,20 @@ import {
 /** A panel of the last scene and what inspects it. */
 interface PanelView {
   key: string;
+  label: string;
   plot: Rect;
   inspector: Inspector;
 }
 
 /** A panel of the last scene, as the browser runtime reads it. */
 export interface PanelInfo {
-  /** The facet value; "" without facets. */
+  /**
+   * The facet value; with row and column facets, both as a JSON array;
+   * "" without facets.
+   */
   key: string;
+  /** The panel's facet values for people: "North", or "North, A" in a grid. */
+  label: string;
   plot: Rect;
   x: PositionScale;
   /** The left y axis' scale, and the right's when the chart has one. */
@@ -286,10 +292,15 @@ export class ChartModel {
     if (!facet) {
       // A previous facet's splits would keep its tables alive.
       this.#splitter = undefined;
-      return { keys: [""], panels: [base], all: base };
+      return { keys: [""], values: [[]], dimensions: [], panels: [base], all: base };
     }
     if (this.#splitter?.facet !== facet) this.#splitter = { facet, splitter: facet.splitter() };
-    return this.#splitter.splitter.split(base);
+    // Panels that could never fit are refused before they are listed.
+    const { width, height } = this;
+    return this.#splitter.splitter.split(base, ({ rows, columns }, panels) => {
+      if (rows > height / MIN_PANEL || columns > width / MIN_PANEL)
+        throw tooSmall(panels, columns, width, height, facet.field !== undefined);
+    });
   }
 
   /** x extent of all data drawn, ignoring the viewport. */
@@ -524,21 +535,26 @@ export class ChartModel {
     const bottom = showX
       ? TICK + GAP + lineHeight + (config.x?.label ? lineHeight + GAP : 0) + 2
       : 4;
-    // Panels fill a grid of `columns`; without facets, one cell. Each facet
-    // panel has a header with its value, and rows leave room below for the
-    // x labels of panels above an empty cell.
+    // Panels fill a grid of `columns`; without facets, one cell. A wrapped
+    // facet's panels each have a header with their value, and rows leave
+    // room below for the x labels of panels above an empty cell. A grid of
+    // facets has a column per value of its column field, headed once above
+    // the top row, and a row per value of its row field, headed once beside
+    // the last column.
     const panelCount = split.keys.length;
     const facet = config.facet;
-    const columns = facet
-      ? Math.min(panelCount, facet.columns ?? Math.ceil(Math.sqrt(panelCount)))
-      : 1;
-    const rows = Math.ceil(panelCount / columns);
-    const header = facet ? lineHeight + 4 : 0;
-    const rowGap = rows > 1 ? (showX ? TICK + GAP + lineHeight : 0) + 8 : 0;
-    const rowHeight = (height - top - bottom - (rows - 1) * rowGap) / rows - header;
-    if (panelCount > 1 && rowHeight < MIN_PANEL) throw tooSmall(panelCount, columns, width, height);
+    const grid = facet ? facet.grid(split, lineHeight) : ONE_PANEL;
+    const { columns, rows, header, columnHeader, rowHeader } = grid;
+    // A grid labels x under its bottom row only, leaving room between rows
+    // for the y labels at their ends; wrapped panels may need x labels under
+    // any row, above an empty cell.
+    const rowGap =
+      rows <= 1 ? 0 : header ? (showX ? TICK + GAP + lineHeight : 0) + 8 : lineHeight + 10;
+    const rowHeight = (height - top - bottom - columnHeader - (rows - 1) * rowGap) / rows - header;
+    if (panelCount > 1 && rowHeight < MIN_PANEL)
+      throw tooSmall(panelCount, columns, width, height, facet?.field !== undefined);
     const plotHeight = Math.max(10, rowHeight);
-    const plotTop = top + header;
+    const plotTop = top + columnHeader + header;
     const rowOffset = (row: number) => row * (header + plotHeight + rowGap);
     const measureLabel = (label: string) => measure(label, font);
     /** A continuous y axis for the marks on one side, from their data domain `base`. */
@@ -617,7 +633,7 @@ export class ChartModel {
     // The right axis' labels decide the right margin, as the left one's do the left.
     const showRight = yRightPlan !== undefined && (config.yRight?.axis ?? true);
     const yRightLabels = showRight && hasData ? yRightPlan.labels : [];
-    let right = 12;
+    let right = rowHeader ? rowHeader + GAP + EDGE : 12;
     if (showRight) {
       right = Math.ceil(Math.max(0, ...yRightLabels.map(measureLabel))) + GAP + 2 + EDGE;
       if (config.yRight?.label) right += lineHeight + GAP;
@@ -688,7 +704,8 @@ export class ChartModel {
       plotWidth = Math.max(10, widthOf());
       xPlan = planX(plotWidth);
     }
-    if (panelCount > 1 && widthOf() < MIN_PANEL) throw tooSmall(panelCount, columns, width, height);
+    if (panelCount > 1 && widthOf() < MIN_PANEL)
+      throw tooSmall(panelCount, columns, width, height, facet?.field !== undefined);
     this.#left = left;
     this.#right = right;
     this.#columnGap = columnGap;
@@ -756,6 +773,7 @@ export class ChartModel {
     this.#used.clear();
     const scene = ++this.#scenes;
     const views: PanelView[] = [];
+    const headers: SceneText[] = [];
     const panels = split.keys.map((key, i): Panel => {
       const row = Math.floor(i / columns);
       const column = i % columns;
@@ -828,7 +846,12 @@ export class ChartModel {
         formatY,
         formatValue: formatNumbers,
       });
-      views.push({ key, plot, inspector });
+      const values = split.values[i]!;
+      if (facet) {
+        const fit = (text: string, room: number) => fitText(text, room, measure, font);
+        headers.push(...facet.headers(values, row, column, plot, grid, fit));
+      }
+      views.push({ key, label: values.join(", "), plot, inspector });
       return {
         key,
         plot,
@@ -838,9 +861,6 @@ export class ChartModel {
         },
         axes,
         marks: geometry,
-        title: facet
-          ? { text: fitText(key, plotWidth, measure, font), x: plot.x, y: plot.y - header / 2 }
-          : undefined,
       };
     });
     // Drop buffers of series that no longer exist.
@@ -860,6 +880,7 @@ export class ChartModel {
       pixelRatio: this.pixelRatio,
       theme,
       title: head.title,
+      headers,
       panels,
       legend: head.legend,
       colorLegends: head.colorLegends,
@@ -942,6 +963,7 @@ export class ChartModel {
       pixelRatio: this.pixelRatio,
       theme,
       title: header.title,
+      headers: [],
       panels: [{ key: "", plot: bounds, grid: { x: [], y: [] }, axes: [], marks: result.geometry }],
       legend: header.legend,
       colorLegends: header.colorLegends,
@@ -967,8 +989,9 @@ export class ChartModel {
 
   /** The last scene's panels: each one's key, plot, and x scale. */
   panels(): PanelInfo[] {
-    return this.#views.map(({ key, plot, inspector }) => ({
+    return this.#views.map(({ key, label, plot, inspector }) => ({
       key,
+      label,
       plot,
       x: inspector.frame.x,
       y: inspector.frame.y,
@@ -1133,10 +1156,24 @@ export class ChartModel {
 }
 
 /** Refuses a grid of panels the chart has no room for. */
-function tooSmall(panels: number, columns: number, width: number, height: number): RangeError {
+/** Where a chart without facets draws: one panel, without headers. */
+const ONE_PANEL: PanelGrid = { columns: 1, rows: 1, header: 0, columnHeader: 0, rowHeader: 0 };
+
+function tooSmall(
+  panels: number,
+  columns: number,
+  width: number,
+  height: number,
+  wrapped: boolean,
+): RangeError {
   const rows = Math.ceil(panels / columns);
+  // A grid's rows and columns are its fields' values; wrapped panels can be
+  // rearranged.
+  const remedy = wrapped
+    ? "make it larger or set the facet's columns"
+    : "make it larger or facet by fields with fewer values";
   return new RangeError(
-    `${panels} panels in ${rows} rows of ${columns} do not fit a ${width}×${height} chart; make it larger or set the facet's columns`,
+    `${panels} panels in ${rows} rows of ${columns} do not fit a ${width}×${height} chart; ${remedy}`,
   );
 }
 

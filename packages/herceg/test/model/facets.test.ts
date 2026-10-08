@@ -1,5 +1,6 @@
 // Small multiples: one panel per value of a category field.
 import { describe, expect, it } from "vitest";
+import { category } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
@@ -42,7 +43,7 @@ describe("facets", () => {
       facet: facet("region"),
     });
     expect(scene.panels.map((p) => p.key)).toEqual(["N", "S", "E"]);
-    expect(scene.panels.map((p) => p.title?.text)).toEqual(["N", "S", "E"]);
+    expect(scene.headers.map((h) => h.text)).toEqual(["N", "S", "E"]);
     // One y domain for all panels, covering every region.
     expect(model.yScale()!.domain[1]).toBeGreaterThanOrEqual(300);
     // Each panel draws its region's rows: N is 1, 2, 3.
@@ -87,8 +88,8 @@ describe("facets", () => {
     // Axis titles once each.
     const titles = scene.panels.flatMap((p) => p.axes.map((a) => a.title?.text).filter(Boolean));
     expect(titles.sort()).toEqual(["units", "week"]);
-    // Panel titles sit above their plots.
-    expect(n.title!.y).toBeLessThan(n.plot.y);
+    // Panel headers sit above their plots.
+    expect(scene.headers[0]!.y).toBeLessThan(n.plot.y);
   });
 
   it("repeat constant annotations and marks marked repeat in every panel", () => {
@@ -361,5 +362,183 @@ describe("facets", () => {
       153,
       600,
     );
+  });
+});
+
+describe("row and column facets", () => {
+  // Two products in three regions, with no rows for South's B.
+  const grid = table({
+    t: [0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
+    units: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    region: ["N", "N", "N", "N", "S", "S", "E", "E", "E", "E"],
+    product: ["A", "A", "B", "B", "A", "A", "A", "A", "B", "B"],
+  });
+
+  it("draw a panel per pair of values, rows by columns, including pairs without rows", () => {
+    const { scene, model } = build({
+      marks: [line(grid, { x: "t", y: "units" })],
+      facet: facet({ row: "region", column: "product" }),
+    });
+    expect(model.panels().map(({ label }) => label)).toEqual([
+      "N, A",
+      "N, B",
+      "S, A",
+      "S, B",
+      "E, A",
+      "E, B",
+    ]);
+    // Keys name both values without ambiguity.
+    expect(scene.panels[1]!.key).toBe(JSON.stringify(["N", "B"]));
+    const [na, nb, sa, sb, ea] = scene.panels as Panel[];
+    expect(nb!.plot.y).toBe(na!.plot.y);
+    expect(nb!.plot.x).toBeGreaterThan(na!.plot.x + na!.plot.width);
+    expect(sa!.plot.x).toBe(na!.plot.x);
+    expect(ea!.plot.y).toBeGreaterThan(sa!.plot.y);
+    // South has no B: its panel is there, empty.
+    expect(lines(sb!).every((l) => l.path.count === 0)).toBe(true);
+    expect(points(lines(nb!)[0]!)).toHaveLength(2);
+    // Columns are headed once above the top row, rows once beside the last column.
+    const top = scene.headers.filter((h) => h.angle === 0);
+    expect(top.map((h) => h.text)).toEqual(["A", "B"]);
+    expect(top[1]!.x).toBeCloseTo(nb!.plot.x + nb!.plot.width / 2);
+    expect(top[0]!.y).toBeLessThan(na!.plot.y);
+    const side = scene.headers.filter((h) => h.angle === 90);
+    expect(side.map((h) => h.text)).toEqual(["N", "S", "E"]);
+    expect(side[0]!.x).toBeGreaterThan(nb!.plot.x + nb!.plot.width);
+    expect(side[0]!.x).toBeLessThan(600);
+    // x labels under the bottom row only, y labels in the first column only.
+    expect(scene.panels.map((p) => axis(p, "bottom") !== undefined)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+    ]);
+    expect(scene.panels.map((p) => axis(p, "left") !== undefined)).toEqual([
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+    ]);
+    expect(describeChart(model)).toContain(
+      "Panels by region in rows and product in columns: N, A; N, B; S, A; S, B; E, A; E, B.",
+    );
+  });
+
+  it("make one row of columns, or one column of rows, from a single field", () => {
+    const columns = build({
+      marks: [line(grid, { x: "t", y: "units" })],
+      facet: facet({ column: "product" }),
+    }).scene;
+    expect(columns.panels.map((p) => p.key)).toEqual(["A", "B"]);
+    expect(columns.panels[1]!.plot.y).toBe(columns.panels[0]!.plot.y);
+    expect(columns.headers.map((h) => [h.text, h.angle])).toEqual([
+      ["A", 0],
+      ["B", 0],
+    ]);
+    const rows = build({
+      marks: [line(grid, { x: "t", y: "units" })],
+      facet: facet({ row: "region" }),
+    }).scene;
+    expect(rows.panels.map((p) => p.key)).toEqual(["N", "S", "E"]);
+    expect(rows.panels[1]!.plot.x).toBe(rows.panels[0]!.plot.x);
+    expect(rows.headers.map((h) => h.angle)).toEqual([90, 90, 90]);
+  });
+
+  it("refuse facets without fields, with one field twice, or with both forms", () => {
+    expect(() => facet({})).toThrow("needs a field, or a row or column field");
+    expect(() => facet({ row: "region", column: "region" })).toThrow("must differ");
+    const spec = (facet: unknown) => () =>
+      loadSpec(
+        {
+          version: 1,
+          data: { t: { columns: { x: [1], y: [1] } } },
+          marks: [{ type: "line", x: "x", y: "y" }],
+          facet: facet as never,
+        },
+        [],
+      );
+    expect(spec({ field: "a", row: "b" })).toThrow("not both");
+    expect(spec({ columns: 2 })).toThrow("a field, or a row or column field");
+    expect(spec({ row: "a", columns: 2 })).toThrow("facet.columns");
+    expect(() => facet({ column: "c", columns: 2 } as never)).toThrow("not columns");
+  });
+
+  it("draw one empty panel without headers until values arrive, and again after they go", () => {
+    const empty = table({
+      t: new Float64Array(0),
+      units: new Float64Array(0),
+      region: category([]),
+      product: category([]),
+    });
+    for (const grid of [
+      { row: "region", column: "product" },
+      { row: "region" },
+      { column: "product" },
+    ]) {
+      const { scene, model } = build({
+        marks: [line(empty, { x: "t", y: "units" })],
+        facet: facet(grid),
+      });
+      expect(scene.panels).toHaveLength(1);
+      expect(scene.headers).toEqual([]);
+      expect(
+        renderToSVG({
+          marks: [line(empty, { x: "t", y: "units" })],
+          facet: facet(grid),
+          width: 300,
+          height: 200,
+        }),
+      ).toContain("<svg");
+      empty.append({ t: [0], units: [1], region: ["N"], product: ["A"] });
+      expect(model.scene(estimateText).headers.length).toBeGreaterThan(0);
+      empty.dropFirst(1);
+      expect(model.scene(estimateText).headers).toEqual([]);
+    }
+  });
+
+  it("refuse grids that cannot fit before listing their panels, naming the remedy", () => {
+    const n = 300;
+    const diagonal = table({
+      t: Array.from({ length: n }, (_, i) => i),
+      units: Array.from({ length: n }, (_, i) => i),
+      region: Array.from({ length: n }, (_, i) => `r${i}`),
+      product: Array.from({ length: n }, (_, i) => `p${i}`),
+    });
+    expect(() =>
+      build({
+        marks: [line(diagonal, { x: "t", y: "units" })],
+        facet: facet({ row: "region", column: "product" }),
+      }),
+    ).toThrow(
+      "90000 panels in 300 rows of 300 do not fit a 600×400 chart; make it larger or facet by fields with fewer values",
+    );
+  });
+
+  it("load from specs and render headers in SVG", () => {
+    const { config } = loadSpec(
+      {
+        version: 1,
+        data: {
+          t: {
+            columns: {
+              x: [0, 1, 0, 1],
+              y: [1, 2, 3, 4],
+              r: { type: "category", codes: [0, 0, 1, 1], dictionary: ["Up", "Down"] },
+              c: { type: "category", codes: [0, 1, 0, 1], dictionary: ["Left", "Right"] },
+            },
+          },
+        },
+        marks: [{ type: "line", x: "x", y: "y" }],
+        facet: { row: "r", column: "c" },
+      },
+      [],
+    );
+    const svg = renderToSVG({ ...config, width: 500, height: 300 });
+    expect(svg).toContain(">Left</text>");
+    expect(svg).toMatch(/<text [^>]*transform="rotate\(90 [^>]*>Up<\/text>/);
   });
 });
