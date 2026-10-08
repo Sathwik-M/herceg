@@ -18,5 +18,6 @@ export {
   Sunburst,
   Text,
   Treemap,
+  Violin,
   type WithData,
 } from "./marks.ts";

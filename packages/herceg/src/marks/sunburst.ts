@@ -8,6 +8,7 @@ import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { ArcGeometry, Geometry, TextGeometry } from "../scene/scene.ts";
 import type { SunburstSpec } from "../spec/spec.ts";
+import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { type Branch, count, labelFor, TreeData } from "./tree-data.ts";
 
@@ -129,7 +130,7 @@ export class SunburstMark implements LayoutMark {
     if (this.spec.labels ?? true) {
       const font = `${theme.fontSize}px ${theme.font}`;
       const lineHeight = Math.round(theme.fontSize * 1.25);
-      const backdrop = theme.background === "transparent" ? "#ffffff" : theme.background;
+      const backdrop = surface(theme);
       const byColor = new Map<string, { coords: number[]; labels: string[] }>();
       for (const nodes of byDepth) {
         for (const node of nodes) {

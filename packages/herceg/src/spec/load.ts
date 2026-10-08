@@ -23,6 +23,7 @@ import { RuleMark } from "../marks/rule.ts";
 import { SunburstMark } from "../marks/sunburst.ts";
 import { TextMark } from "../marks/text.ts";
 import { TreemapMark } from "../marks/treemap.ts";
+import { ViolinMark } from "../marks/violin.ts";
 import { Facet } from "../model/facet.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { scheme } from "../scale/schemes.ts";
@@ -282,6 +283,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new PieMark(spec, source);
       case "boxplot":
         return new BoxPlotMark(spec, source);
+      case "violin":
+        return new ViolinMark(spec, source);
       case "treemap":
         return new TreemapMark(spec, source);
       case "sunburst":

@@ -1,54 +1,16 @@
-import { category } from "../data/column.ts";
-import { boxStats } from "../data/quantile.ts";
-import {
-  type CategoryField,
-  type NumericField,
-  type Schema,
-  type Table,
-  table,
-} from "../data/table.ts";
+import type { BoxStats } from "../data/quantile.ts";
+import type { Schema, Table } from "../data/table.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import type { PointGeometry, RectGeometry, SegmentGeometry } from "../scene/scene.ts";
 import type { BoxPlotSpec } from "../spec/spec.ts";
+import { DistributionMark, type DistributionOptions, type Stat } from "./distribution.ts";
 import { definedFields } from "./line.ts";
-import {
-  type AxisFormat,
-  type BandContext,
-  type BandList,
-  type Bands,
-  bandIndices,
-  buildSeries,
-  CATEGORY,
-  type Frame,
-  fieldBands,
-  type Hit,
-  type Mark,
-  type MarkKey,
-  NUMERIC,
-  type Palette,
-  requireField,
-  SeriesSplitter,
-  type SummaryContext,
-} from "./mark.ts";
+import type { AxisFormat, Frame } from "./mark.ts";
 import { rowOf, type Series } from "./series.ts";
 
-export type BoxPlotOptions<S extends Schema> = (
-  | { x: CategoryField<S>; y: NumericField<S> }
-  | { x: NumericField<S>; y: CategoryField<S> }
-) & {
-  /** Category field: a box per value in each category, side by side. */
-  series?: CategoryField<S>;
-  /** Opacity of the boxes' fill; 0.25 by default. */
-  fillOpacity?: number;
-  label?: string;
-  /** The y axis the values are on: "left" (default) or "right". */
-  axis?: "left" | "right";
-  /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
-  facet?: "repeat";
-  id?: string;
-};
+export type BoxPlotOptions<S extends Schema> = DistributionOptions<S>;
 
 /** How much of its slot a box takes across its category. */
 const BOX = 0.7;
@@ -59,164 +21,25 @@ const RADIUS = 2.5;
 /** Segments a box draws: four sides, the median, two whiskers, and two caps. */
 const SEGMENTS = 9;
 
-const STATS = ["q1", "median", "q3", "low", "high", "count"] as const;
-type Stat = (typeof STATS)[number];
-
-/** The statistics of every box, rebuilt when the source table changes. */
-interface Summary {
-  version: number;
-  /** A row per category (and series value) with values: `category`, `group`, and the statistics. */
-  table: Table;
-  outliers: number[][];
-  split: SeriesSplitter;
-}
-
 /**
  * Box plots of a number field's values per category: quartiles, median,
- * whiskers by Tukey's rule, and outliers beyond them. The summary's median
- * is each box's value, which tooltips and the nearest-band search read.
+ * whiskers by Tukey's rule, and outliers beyond them. Each box keeps its
+ * outliers besides its statistics.
  */
-export class BoxPlotMark implements Mark<BoxPlotSpec> {
-  readonly spec: BoxPlotSpec;
-  readonly table: Table;
-  readonly tooltip: "x" | "y";
-  readonly bandPadding = 0.2;
+export class BoxPlotMark extends DistributionMark<BoxPlotSpec, number[]> {
   /** Room past the outermost whisker or outlier for an outlier's dot. */
-  readonly inset: { readonly x: number; readonly y: number };
-  readonly #horizontal: boolean;
-  readonly #category: string;
-  readonly #value: string;
-  #summary: Summary | undefined;
+  readonly inset = this.horizontal ? { x: RADIUS + 1, y: 0 } : { x: 0, y: RADIUS + 1 };
+  protected readonly noun = ["box", "boxes"] as const;
+  protected readonly width = BOX;
 
-  constructor(spec: BoxPlotSpec, table: Table) {
-    if (!table.has(spec.x)) requireField(table, spec.x, CATEGORY, "boxplot x");
-    if (!table.has(spec.y)) requireField(table, spec.y, CATEGORY, "boxplot y");
-    this.#horizontal = table.kind(spec.y) === "category" && table.kind(spec.x) !== "category";
-    if (!this.#horizontal && table.kind(spec.x) !== "category") {
-      throw new TypeError(
-        "boxplot needs a category field on x or y, and a number or time field on the other",
-      );
-    }
-    this.#category = this.#horizontal ? spec.y : spec.x;
-    this.#value = this.#horizontal ? spec.x : spec.y;
-    requireField(table, this.#value, NUMERIC, `boxplot ${this.#horizontal ? "x" : "y"}`);
-    if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "boxplot series");
-    this.spec = spec;
-    this.table = table;
-    this.tooltip = this.#horizontal ? "y" : "x";
-    this.inset = this.#horizontal ? { x: RADIUS + 1, y: 0 } : { x: 0, y: RADIUS + 1 };
+  protected describeGroup(_sorted: Float64Array, stats: BoxStats): number[] {
+    return stats.outliers;
   }
 
-  #summarize(): Summary {
-    const source = this.table;
-    if (this.#summary?.version === source.version) return this.#summary;
-    const categories = source.categories(this.#category as never);
-    const groups =
-      this.spec.series !== undefined ? source.categories(this.spec.series as never) : undefined;
-    const values = source.numbers(this.#value as never);
-    const width = groups ? groups.dictionary.length : 1;
-    // The values of each box, keyed by category and group code.
-    const boxes = new Map<number, number[]>();
-    for (let row = 0; row < source.length; row++) {
-      const c = categories.codes[row]!;
-      const g = groups ? groups.codes[row]! : 0;
-      const value = values[row]!;
-      if (c < 0 || g < 0 || !Number.isFinite(value)) continue;
-      const key = c * width + g;
-      let list = boxes.get(key);
-      if (!list) {
-        list = [];
-        boxes.set(key, list);
-      }
-      list.push(value);
-    }
-    const keys = [...boxes.keys()].sort((a, b) => a - b);
-    const columns = Object.fromEntries(STATS.map((stat) => [stat, new Float64Array(keys.length)]));
-    const outliers: number[][] = [];
-    keys.forEach((key, i) => {
-      const stats = boxStats(Float64Array.from(boxes.get(key)!).sort());
-      for (const stat of STATS) columns[stat]![i] = stats[stat];
-      outliers.push(stats.outliers);
-    });
-    // The summary's fields are fixed; the mark reads it on the erased schema.
-    const summary = table({
-      category: category(keys.map((key) => categories.dictionary[Math.floor(key / width)]!)),
-      group: category(keys.map((key) => (groups ? groups.dictionary[key % width]! : ""))),
-      ...(columns as Record<Stat, Float64Array>),
-    }) as unknown as Table;
-    const built: Summary = {
-      version: source.version,
-      table: summary,
-      outliers,
-      split: new SeriesSplitter(
-        summary,
-        undefined,
-        ["median"],
-        this.spec.series !== undefined ? "group" : undefined,
-        this.spec.label ?? this.#value,
-      ),
-    };
-    this.#summary = built;
-    return built;
-  }
-
-  #stat(stat: Stat): Float64Array {
-    return this.#summarize().table.numbers(stat as never) as Float64Array;
-  }
-
-  channelKind(axis: "x" | "y") {
-    return this.table.kind((axis === "x" ? this.spec.x : this.spec.y) as never);
-  }
-
-  bands(axis: "x" | "y", context: BandContext): BandList | undefined {
-    return axis === (this.#horizontal ? "y" : "x")
-      ? fieldBands(this.table, this.#category, context)
-      : undefined;
-  }
-
-  series(
-    key: MarkKey,
-    palette: Palette,
-    _hidden: ReadonlySet<string>,
-    bands: Bands,
-    context: BandContext,
-  ): Series[] {
-    const { table: summary, split } = this.#summarize();
-    const keys = (this.#horizontal ? bands.y : bands.x)?.keys ?? [];
-    const positions = bandIndices(summary, "category", keys, context);
-    const series = buildSeries(summary, split.sources(), positions, key, palette, undefined);
-    // Series are built with positions on x; horizontal boxes swap them onto y.
-    if (this.#horizontal) for (const s of series) [s.x, s.y] = [s.y, s.x];
-    return series;
-  }
-
-  /** Everything drawn along the value axis: boxes, whiskers, and outliers. */
-  #valueExtent(series: readonly Series[], log: boolean) {
-    const stats = (["low", "q1", "median", "q3", "high"] as const).map((stat) => this.#stat(stat));
-    const { outliers } = this.#summarize();
-    let min = Infinity;
-    let max = -Infinity;
-    const add = (value: number) => {
-      if (!Number.isFinite(value) || (log && !(value > 0))) return;
-      if (value < min) min = value;
-      if (value > max) max = value;
-    };
-    for (const s of series) {
-      for (let k = 0; k < s.length; k++) {
-        const row = rowOf(s, k);
-        for (const stat of stats) add(stat[row]!);
-        for (const value of outliers[row]!) add(value);
-      }
-    }
-    return min <= max ? ([min, max] as const) : undefined;
-  }
-
-  xExtent(series: readonly Series[], log: boolean) {
-    return this.#horizontal ? this.#valueExtent(series, log) : undefined;
-  }
-
-  yExtent(series: readonly Series[], _x0: number, _x1: number, log: boolean) {
-    return this.#horizontal ? undefined : this.#valueExtent(series, log);
+  /** Boxes, whiskers, and outliers. */
+  protected drawnValues(row: number, add: (value: number) => void): void {
+    for (const stat of ["low", "q1", "median", "q3", "high"] as const) add(this.stat(stat)[row]!);
+    for (const value of this.summary().groups[row]!) add(value);
   }
 
   geometry(
@@ -224,21 +47,16 @@ export class BoxPlotMark implements Mark<BoxPlotSpec> {
     frame: Frame,
   ): (RectGeometry | SegmentGeometry | PointGeometry)[] {
     const out: (RectGeometry | SegmentGeometry | PointGeometry)[] = [];
-    const horizontal = this.#horizontal;
+    const horizontal = this.horizontal;
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
     const [q1, median, q3, low, high] = (["q1", "median", "q3", "low", "high"] as const).map(
-      (stat) => this.#stat(stat),
+      (stat) => this.stat(stat),
     );
-    const { outliers } = this.#summarize();
-    const visible = series.filter((s) => !frame.hidden.has(s.key));
-    // Several series share each category's slot side by side, as grouped bars do.
-    const slot = Math.abs(along.bandwidth ?? 0);
-    const share = slot / Math.max(1, visible.length);
-    const width = share * BOX;
+    const outliers = this.summary().groups;
     const fillOpacity = this.spec.fillOpacity ?? 0.25;
-    visible.forEach((s, group) => {
-      const offset = -slot / 2 + share * group + share / 2;
+    for (const [s, { offset, share }] of this.placements(series, frame)) {
+      const width = share * BOX;
       let points = 0;
       for (let k = 0; k < s.length; k++) points += outliers[rowOf(s, k)]!.length;
       const rects = frame.floats(s.key, "box", s.length * 4);
@@ -326,88 +144,26 @@ export class BoxPlotMark implements Mark<BoxPlotSpec> {
           count: dots,
         },
       );
-    });
+    }
     return out;
   }
 
   /** From the lowest to the highest value drawn for a box: whiskers and outliers. */
   span(_series: Series, row: number): readonly [number, number] {
-    const values = [this.#stat("low")[row]!, this.#stat("high")[row]!];
-    values.push(...this.#summarize().outliers[row]!);
-    return [Math.min(...values), Math.max(...values)];
-  }
-
-  /**
-   * The box under a pixel, or else the nearest one by its median, where the
-   * boxes are drawn: side by side when several series share a category.
-   */
-  pick(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined {
-    const horizontal = this.#horizontal;
-    const along = horizontal ? frame.y : frame.x;
-    const across = horizontal ? frame.x : frame.y;
-    const [pa, pc] = horizontal ? [py, px] : [px, py];
-    const low = this.#stat("low");
-    const high = this.#stat("high");
-    const median = this.#stat("median");
-    const visible = series.filter((s) => !frame.hidden.has(s.key));
-    const slot = Math.abs(along.bandwidth ?? 0);
-    const share = slot / Math.max(1, visible.length);
-    let best: Hit | undefined;
-    visible.forEach((s, group) => {
-      const offset = -slot / 2 + share * group + share / 2;
-      for (let k = 0; k < s.length; k++) {
-        const row = rowOf(s, k);
-        const position = horizontal ? s.y[row]! : s.x[row]!;
-        if (position < 0 || !Number.isFinite(median[row]!)) continue;
-        const center = along.map(position) + offset;
-        const ends = [across.map(low[row]!), across.map(high[row]!)].filter(Number.isFinite);
-        const inside =
-          Math.abs(pa - center) <= (share * BOX) / 2 &&
-          ends.length === 2 &&
-          pc >= Math.min(...ends) &&
-          pc <= Math.max(...ends);
-        const distance = inside ? 0 : Math.hypot(pa - center, pc - across.map(median[row]!));
-        if (Number.isFinite(distance) && distance < (best?.distance ?? Infinity))
-          best = { series: s, position: k, distance };
-      }
-    });
-    return best;
-  }
-
-  /** Inspection skips categories without a box. */
-  shows(_series: Series, row: number): boolean {
-    return Number.isFinite(this.#stat("median")[row]!);
+    // Outliers are ascending.
+    const outliers = this.summary().groups[row]!;
+    const low = this.stat("low")[row]!;
+    const high = this.stat("high")[row]!;
+    return [Math.min(low, outliers[0] ?? low), Math.max(high, outliers.at(-1) ?? high)];
   }
 
   /** A box's statistics, formatted as its value axis formats values. */
   pointText(_series: Series, row: number, format: AxisFormat): string {
-    const f = this.#horizontal ? format.x : format.y;
-    const stat = (name: Stat) => this.#stat(name)[row]!;
-    const outliers = this.#summarize().outliers[row]!.length;
+    const f = this.horizontal ? format.x : format.y;
+    const stat = (name: Stat) => this.stat(name)[row]!;
+    const outliers = this.summary().groups[row]!.length;
     const n = stat("count");
     return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, whiskers ${f(stat("low"))} to ${f(stat("high"))}, ${n} ${n === 1 ? "value" : "values"}${outliers ? `, ${outliers} ${outliers === 1 ? "outlier" : "outliers"}` : ""}`;
-  }
-
-  /** Boxes and the range of their medians, over a series' parts in every panel. */
-  summarize(parts: readonly Series[], name: string, { format }: SummaryContext): string {
-    const f = this.#horizontal ? format.x : format.y;
-    const median = this.#stat("median");
-    const labels = this.#summarize().table.categories("category" as never);
-    let count = 0;
-    let lowest = -1;
-    let highest = -1;
-    for (const part of parts) {
-      for (let k = 0; k < part.length; k++) {
-        const row = rowOf(part, k);
-        if (!Number.isFinite(median[row]!)) continue;
-        count++;
-        if (lowest < 0 || median[row]! < median[lowest]!) lowest = row;
-        if (highest < 0 || median[row]! > median[highest]!) highest = row;
-      }
-    }
-    if (count === 0) return `${name}: no boxes`;
-    const label = (row: number) => labels.dictionary[labels.codes[row]!]!;
-    return `${name}: ${count} ${count === 1 ? "box" : "boxes"}, medians from ${f(median[lowest]!)} (${label(lowest)}) to ${f(median[highest]!)} (${label(highest)})`;
   }
 }
 

@@ -258,3 +258,12 @@ const COLORS = [
 export function paletteColor(theme: Theme, index: number): string {
   return theme.palette[index % theme.palette.length]!;
 }
+
+/**
+ * The color a chart is drawn on: its background, or under a transparent
+ * one, black for light text and white for dark, as the page likely is.
+ */
+export function surface(theme: Theme): string {
+  if (theme.background !== "transparent") return theme.background;
+  return isLightColor(theme.text) ? "#000000" : "#ffffff";
+}

@@ -20,6 +20,7 @@ import {
   Sunburst,
   Text,
   Treemap,
+  Violin,
 } from "../src/index.ts";
 
 declare global {
@@ -73,6 +74,21 @@ describe("<Chart>", () => {
     const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
     expect(slices).toHaveLength(3);
     expect(host.textContent).toContain("Shares");
+  });
+
+  it("renders violins from their element", () => {
+    const requests = table({ region: ["n", "n", "n", "s", "s", "s"], ms: [1, 2, 4, 3, 5, 9] });
+    act(() =>
+      root.render(
+        <Chart>
+          <Violin data={requests} x="region" y="ms" />
+        </Chart>,
+      ),
+    );
+    // Each violin's fill and its outline.
+    const fills = [...paths()].filter((path) => path.getAttribute("fill-opacity") === "0.25");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]!.getAttribute("d")!.match(/M/g)).toHaveLength(2);
   });
 
   it("renders treemaps and sunbursts from their elements", async () => {

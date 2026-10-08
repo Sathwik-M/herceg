@@ -475,6 +475,25 @@ def test_boxplots_take_a_category_and_values_either_way():
         hg.Chart(data, facet="v").boxplot(x="region", y="ms")
 
 
+def test_violins_take_a_bandwidth_and_the_box_plot_options():
+    data = {"region": ["n", "n", "n", "s", "s"], "ms": [1.0, 2.0, 4.0, 3.0, 9.0]}
+    spec, _ = hg.violin(data, x="region", y="ms", bandwidth=0.5).to_spec()
+    assert spec["marks"] == [
+        {"type": "violin", "data": "data", "x": "region", "y": "ms", "bandwidth": 0.5}
+    ]
+    svg = hg.Chart(data, width=300, height=200).violin(x="ms", y="region").to_svg()
+    assert 'fill-opacity="0.25"' in svg
+    for bad in (0, -1, float("nan"), True):
+        with pytest.raises(ValueError, match="bandwidth must be a positive number"):
+            hg.Chart(data).violin(x="region", y="ms", bandwidth=bad)
+    with pytest.raises(ValueError, match="horizontal violins cannot use the right axis"):
+        hg.Chart(data).violin(x="ms", y="region", axis="right")
+    with pytest.raises(TypeError, match="violin y: column 'region' holds category"):
+        hg.Chart(data).violin(x="region", y="region")
+    with pytest.raises(ValueError, match="cannot be split into panels"):
+        hg.Chart(data, facet="region").violin(x="region", y="ms")
+
+
 def test_treemaps_and_sunbursts_send_their_tree():
     sales = {
         "region": ["Europe", "Europe", "Asia"],
