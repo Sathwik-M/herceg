@@ -543,8 +543,11 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     interaction: (i, path) => {
       object(i, path);
       properties(i as Record<string, unknown>, path, {
-        zoom: boolean,
-        brush: oneOf("x"),
+        zoom: (v, path) => {
+          if (typeof v !== "boolean" && v !== "x" && v !== "y" && v !== "xy")
+            fail(path, 'true, false, "x", "y", or "xy"', v);
+        },
+        brush: oneOf("x", "y", "xy", "lasso"),
         sync: string,
       });
     },

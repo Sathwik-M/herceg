@@ -175,9 +175,10 @@ describe("loadSpec", () => {
         marks: [{ type: "bar", x: "c", y: "v", labels: { maximumFractionDigits: -1 } }],
       }),
     ).toThrow(/marks\[0\]\.labels: /);
-    expect(check({ interaction: { brush: "y" }, marks: [] })).toThrow(
-      /spec\.interaction\.brush: expected "x"/,
+    expect(check({ interaction: { brush: "z" }, marks: [] })).toThrow(
+      /spec\.interaction\.brush: expected "x" or "y" or "xy" or "lasso"/,
     );
+    expect(check({ interaction: { zoom: "z" }, marks: [] })).toThrow(/spec\.interaction\.zoom/);
     // Valid edge cases the TypeScript API produces still load.
     expect(check({ marks: [{ type: "rule", y: 1, strokeWidth: 0 }] })).not.toThrow();
     expect(check({ x: { type: "time", format: { hour: "2-digit" } }, marks: [] })).not.toThrow();

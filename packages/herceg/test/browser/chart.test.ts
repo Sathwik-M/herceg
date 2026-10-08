@@ -6,9 +6,11 @@ import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
+import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import { resolveTheme } from "../../src/theme.ts";
+import { bandBox } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -271,7 +273,7 @@ describe("events and brushing", () => {
     press(chart.root, "pointermove", x.map(to), py, shiftKey);
     press(chart.root, "pointerup", x.map(to), py, shiftKey);
   }
-  const band = (chart: Chart) => chart.root.querySelector("svg rect[fill-opacity]");
+  const band = (chart: Chart) => chart.root.querySelector('svg path[fill-opacity="0.18"]');
 
   it("selects an x range by brushing and clears it with a click", async () => {
     const chart = createChart(host, {
@@ -282,10 +284,10 @@ describe("events and brushing", () => {
     chart.on("select", ({ x }) => selections.push(x));
     drag(chart, 60_000, 20_000);
     await frame();
-    const [lo, hi] = chart.selection!;
+    const [lo, hi] = chart.selection!.x!;
     expect(lo).toBeCloseTo(20_000, -3);
     expect(hi).toBeCloseTo(60_000, -3);
-    expect(selections).toEqual([chart.selection]);
+    expect(selections).toEqual([chart.selection!.x]);
     expect(band(chart)!.getAttribute("visibility")).toBe("visible");
     // A brush selects; it does not zoom.
     expect(chart.model.viewport).toBeNull();
@@ -334,7 +336,7 @@ describe("events and brushing", () => {
     key("ArrowRight");
     key("ArrowRight", true);
     key("ArrowRight", true);
-    expect(chart.selection).toEqual([0, 2]);
+    expect(chart.selection?.x).toEqual([0, 2]);
     const live = chart.root.querySelector("[aria-live]")!;
     expect(live.textContent).toContain("Selected 0 to 2. Press Enter to zoom to it.");
     key("Enter");
@@ -384,12 +386,12 @@ describe("events and brushing", () => {
     press(chart.root, "pointermove", x.map(2), 150);
     press(chart.root, "pointermove", x.range[1] + 200, 150);
     press(chart.root, "pointerup", x.range[1] + 200, 150);
-    expect(chart.selection![1]).toBeCloseTo(3, 6);
+    expect(chart.selection!.x![1]).toBeCloseTo(3, 6);
     press(chart.root, "pointerdown", x.map(0.5), 150);
     press(chart.root, "pointermove", x.map(2.5), 150);
     press(chart.root, "pointercancel", x.map(2.5), 150);
     press(chart.root, "pointerup", x.map(2.5), 150);
-    expect(chart.selection![0]).toBeCloseTo(1, 6);
+    expect(chart.selection!.x![0]).toBeCloseTo(1, 6);
     chart.destroy();
   });
 
@@ -404,13 +406,13 @@ describe("events and brushing", () => {
     press(chart.root, "pointerdown", x.map(0) + 5, 150);
     press(chart.root, "pointermove", x.map(1), 150);
     press(chart.root, "pointerup", x.map(2) - 5, 150);
-    expect(chart.selection).toEqual([0, 2]);
+    expect(chart.selection?.x).toEqual([0, 2]);
     expect(chart.model.viewport).toBeNull();
     chart.select([1, 1]);
     await frame();
     const rect = band(chart)!;
     expect(rect.getAttribute("visibility")).toBe("visible");
-    expect(Number(rect.getAttribute("width"))).toBeGreaterThan(Math.abs(x.bandwidth!));
+    expect(bandBox(rect).width).toBeGreaterThan(Math.abs(x.bandwidth!));
     chart.destroy();
   });
 
@@ -425,14 +427,14 @@ describe("events and brushing", () => {
       chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true }));
     key("ArrowRight");
     key("ArrowRight", true);
-    expect(chart.selection).toEqual([0, 1]);
+    expect(chart.selection?.x).toEqual([0, 1]);
     chart.select(null);
     key("ArrowRight", true);
-    expect(chart.selection).toEqual([1, 2]);
+    expect(chart.selection?.x).toEqual([1, 2]);
     press(chart.root, "pointermove", 300, 150);
     key("ArrowRight");
     key("ArrowRight", true);
-    expect(chart.selection![0]).toBe(chart.selection![1] - 1);
+    expect(chart.selection!.x![0]).toBe(chart.selection!.x![1] - 1);
     chart.destroy();
   });
 
@@ -446,7 +448,7 @@ describe("events and brushing", () => {
     button.focus();
     button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(chart.model.viewport).toBeNull();
-    expect(chart.selection).toEqual([1000, 5000]);
+    expect(chart.selection?.x).toEqual([1000, 5000]);
     chart.destroy();
   });
 
@@ -507,6 +509,27 @@ describe("events and brushing", () => {
     for (const element of hosts.slice(1)) element.remove();
   });
 
+  it("stops an older selection broadcast once a member starts a newer one", () => {
+    const hosts = [host, document.createElement("div"), document.createElement("div")];
+    for (const element of hosts.slice(1)) {
+      element.style.cssText = "width:600px;height:300px";
+      document.body.append(element);
+    }
+    const data = series(100);
+    const interaction = { sync: "three", brush: "x" as const };
+    const [a, b, c] = hosts.map((element) =>
+      createChart(element, { interaction, marks: [line(data, { x: "t", y: "s0" })] }),
+    ) as [Chart, Chart, Chart];
+    // B replaces the selection it receives and shares its own.
+    b.on("select", ({ x }) => {
+      if (x?.[0] === 1000) b.select([3000, 4000]);
+    });
+    a.select([1000, 2000]);
+    for (const chart of [a, b, c]) expect(chart.selection?.x).toEqual([3000, 4000]);
+    for (const chart of [a, b, c]) chart.destroy();
+    for (const element of hosts.slice(1)) element.remove();
+  });
+
   it("removes the drag band when a brush ends without a range", async () => {
     const chart = createChart(host, {
       interaction: { brush: "x" },
@@ -519,8 +542,8 @@ describe("events and brushing", () => {
     await frame();
     press(chart.root, "pointerup", x.map(0.5) + 1, 150);
     await frame();
-    expect(chart.selection).toEqual([1, 2]);
-    expect(Number(band(chart)!.getAttribute("x"))).toBeCloseTo(x.map(1), 3);
+    expect(chart.selection?.x).toEqual([1, 2]);
+    expect(bandBox(band(chart)!).x).toBeCloseTo(x.map(1), 1);
     chart.destroy();
   });
 
@@ -861,3 +884,315 @@ function planOf(chart: Chart) {
   const [x, y, width, height] = clip.slice(1).map(Number) as [number, number, number, number];
   return { x, y, width, height };
 }
+
+describe("zooming and brushing in two dimensions", () => {
+  const points = () =>
+    table({
+      x: Float64Array.from({ length: 50 }, (_, i) => i),
+      y: Float64Array.from({ length: 50 }, (_, i) => (i * 7) % 50),
+    });
+  const at = (chart: Chart, type: string, px: number, py: number) => {
+    const rect = chart.root.getBoundingClientRect();
+    const init = {
+      bubbles: true,
+      cancelable: true,
+      clientX: rect.left + px,
+      clientY: rect.top + py,
+    };
+    chart.root.dispatchEvent(
+      type === "wheel"
+        ? new WheelEvent("wheel", { ...init, deltaY: -200 })
+        : new PointerEvent(type, { ...init, button: 0, pointerId: 1 }),
+    );
+  };
+  const center = (chart: Chart) => {
+    const { plot } = chart.model.panels()[0]!;
+    return [plot.x + plot.width / 2, plot.y + plot.height / 2] as const;
+  };
+
+  it("zooms y, or both axes, with the wheel, and resets both on double click", () => {
+    const chart = createChart(host, {
+      interaction: { zoom: "y" },
+      marks: [point(points(), { x: "x", y: "y" })],
+    });
+    const viewports: (readonly [number, number] | null)[] = [];
+    chart.on("viewport", ({ y }) => viewports.push(y));
+    at(chart, "wheel", ...center(chart));
+    expect(chart.model.viewport).toBeNull();
+    const [lo, hi] = chart.model.yViewport!.y;
+    expect(hi - lo).toBeLessThan(45);
+    expect(viewports).toEqual([chart.model.yViewport!.y]);
+    chart.update({ interaction: { zoom: "xy" } });
+    chart.render();
+    at(chart, "wheel", ...center(chart));
+    expect(chart.model.viewport).not.toBeNull();
+    // Double click resets both, also after y stopped zooming.
+    chart.update({ interaction: { zoom: "x" } });
+    chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect([chart.model.viewport, chart.model.yViewport]).toEqual([null, null]);
+    chart.destroy();
+  });
+
+  it("ignores rectangles and lassos without both width and height", () => {
+    const chart = createChart(host, {
+      interaction: { brush: "xy", zoom: "xy" },
+      marks: [point(points(), { x: "x", y: "y" })],
+    });
+    chart.setYViewport([10, 40]);
+    chart.render();
+    const { x, y } = chart.model.panels()[0]!;
+    const flat = () => {
+      at(chart, "pointerdown", x.map(10), y.map(20));
+      at(chart, "pointermove", x.map(20), y.map(20) + 1);
+      at(chart, "pointerup", x.map(30), y.map(20));
+    };
+    // A flat rectangle does not zoom, so y keeps its zoom.
+    flat();
+    expect(chart.model.viewport).toBeNull();
+    expect(chart.model.yViewport!.y).toEqual([10, 40]);
+    // Without zoom, it selects nothing; nor does a flat lasso.
+    for (const brush of ["xy", "lasso"] as const) {
+      chart.update({ interaction: { brush } });
+      flat();
+      expect(chart.selection).toBeNull();
+    }
+    chart.destroy();
+  });
+
+  it("clips a lasso to each plot rather than moving its corners", () => {
+    const chart = createChart(host, {
+      interaction: { brush: "lasso" },
+      marks: [point(points(), { x: "x", y: "y" })],
+    });
+    // A region drawn while zoomed in reaches past the plot once zoomed out.
+    chart.select({
+      x: [-20, 30],
+      y: [10, 40],
+      lasso: [
+        [-20, 10],
+        [30, 10],
+        [30, 40],
+      ],
+    });
+    chart.render();
+    const { plot, x, y } = chart.model.panels()[0]!;
+    const outline = chart.root.querySelector('svg path[fill-opacity="0.18"]')!;
+    expect(x.map(-20)).toBeLessThan(plot.x);
+    expect(outline.getAttribute("d")).toMatch(
+      new RegExp(`^M${x.map(-20).toFixed(1)} ${y.map(10).toFixed(1)}L`),
+    );
+    const id = /^url\(#(.+)\)$/.exec(outline.getAttribute("clip-path") ?? "")?.[1];
+    const clip = chart.root.querySelector(`[id="${id}"] rect`)!;
+    expect(["x", "y", "width", "height"].map((name) => Number(clip.getAttribute(name)))).toEqual([
+      plot.x,
+      plot.y,
+      plot.width,
+      plot.height,
+    ]);
+    chart.destroy();
+  });
+
+  it("keeps reversed axes reversed when zooming", () => {
+    const data = table({ t: [0, 10], a: [0, 10], b: [0, 100] });
+    const chart = createChart(host, {
+      interaction: { zoom: "xy" },
+      x: { domain: [10, 0] },
+      y: { domain: [0, 10] },
+      yRight: { domain: [100, 0] },
+      marks: [line(data, { x: "t", y: "a" }), line(data, { x: "t", y: "b", axis: "right" })],
+    });
+    const before = chart.model.panels()[0]!;
+    // Pointer events carry whole pixels.
+    const [px, py] = center(chart).map(Math.round) as [number, number];
+    const under = [before.x.invert(px), before.y.invert(py), before.yRight!.invert(py)];
+    at(chart, "wheel", px, py);
+    chart.render();
+    const after = chart.model.panels()[0]!;
+    // The values under the pointer stay there, on every axis.
+    expect(after.x.map(under[0]!)).toBeCloseTo(px, 6);
+    expect(after.y.map(under[1]!)).toBeCloseTo(py, 6);
+    expect(after.yRight!.map(under[2]!)).toBeCloseTo(py, 6);
+    expect(after.x.map(2)).toBeGreaterThan(after.x.map(8));
+    expect(after.yRight!.map(20)).toBeLessThan(after.yRight!.map(80));
+    chart.destroy();
+  });
+
+  it("zooms to a selection on Enter only along zoomable axes, and never to a lasso", () => {
+    const other = document.createElement("div");
+    other.style.cssText = "width:600px;height:300px";
+    document.body.append(other);
+    const marks = [point(points(), { x: "x", y: "y" })];
+    const a = createChart(host, { interaction: { brush: "lasso", sync: "enter" }, marks });
+    const b = createChart(other, {
+      interaction: { brush: "xy", zoom: "xy", sync: "enter" },
+      marks,
+    });
+    const enter = () =>
+      b.root.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    a.select({
+      x: [10, 30],
+      y: [10, 30],
+      lasso: [
+        [10, 10],
+        [30, 10],
+        [20, 30],
+      ],
+    });
+    enter();
+    expect([b.model.viewport, b.model.yViewport]).toEqual([null, null]);
+    expect(b.selection?.lasso).toHaveLength(3);
+    // A rectangle needs both axes to zoom; an x range only x.
+    b.update({ interaction: { brush: "x", zoom: "x", sync: "enter" } });
+    a.select({ x: [10, 30], y: [10, 30], lasso: null });
+    enter();
+    expect([b.model.viewport, b.model.yViewport]).toEqual([null, null]);
+    a.select([10, 30]);
+    enter();
+    expect(b.model.viewport).toEqual([10, 30]);
+    // A chart that only zooms zooms to a rectangle it received, and Escape
+    // clears one it did not zoom to.
+    b.update({ interaction: { zoom: "xy", sync: "enter" } });
+    b.setViewport(null);
+    a.select({ x: [10, 30], y: [10, 30], lasso: null });
+    enter();
+    expect(b.model.viewport).toEqual([10, 30]);
+    const [y0, y1] = b.model.yViewport!.y;
+    expect([y0, y1].map((y) => y.toFixed(6))).toEqual(["10.000000", "30.000000"]);
+    a.select({ x: [10, 20], y: [10, 20], lasso: null });
+    b.root.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(b.selection).toBeNull();
+    a.destroy();
+    b.destroy();
+    other.remove();
+  });
+
+  it("selects along the axis the keyboard steps along", () => {
+    const chart = createChart(host, {
+      interaction: { brush: "y" },
+      marks: [bar(table({ c: ["a", "b", "c"], v: [1, 2, 3] }), { y: "c", x: "v" })],
+    });
+    const key = (k: string, shiftKey = false) =>
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true }));
+    const live = chart.root.querySelector("[aria-live]")!;
+    key("ArrowRight");
+    key("ArrowRight", true);
+    expect(chart.selection).toEqual({ x: null, y: [0, 1], lasso: null });
+    expect(live.textContent).toContain("Selected a to b.");
+    // Rectangles and lassos take a range along that axis too.
+    chart.update({
+      interaction: { brush: "lasso" },
+      marks: [line(table({ t: [0, 1, 2], v: [1, 2, 3] }), { x: "t", y: "v" })],
+    });
+    chart.render();
+    key("Escape");
+    key("ArrowRight");
+    key("ArrowRight", true);
+    expect(chart.selection).toEqual({ x: [0, 1], y: null, lasso: null });
+    chart.destroy();
+  });
+
+  it("announces selections made with the pointer", () => {
+    const chart = createChart(host, {
+      interaction: { brush: "xy" },
+      marks: [point(points(), { x: "x", y: "y" })],
+    });
+    const { x, y } = chart.model.panels()[0]!;
+    const live = chart.root.querySelector("[aria-live]")!;
+    at(chart, "pointerdown", x.map(10), y.map(40));
+    at(chart, "pointermove", x.map(20), y.map(30));
+    at(chart, "pointerup", x.map(30), y.map(20));
+    expect(live.textContent).toBe("Selected x from 10 to 30 and y from 20 to 40.");
+    chart.update({ interaction: { brush: "lasso" } });
+    at(chart, "pointerdown", x.map(10), y.map(10));
+    at(chart, "pointermove", x.map(40), y.map(10));
+    at(chart, "pointermove", x.map(40), y.map(40));
+    at(chart, "pointerup", x.map(10), y.map(40));
+    expect(live.textContent).toBe("Selected a freehand region.");
+    chart.destroy();
+  });
+
+  it("selects rectangles and lassos, and zooms to rectangles along zoomed axes", () => {
+    const chart = createChart(host, {
+      interaction: { brush: "xy" },
+      marks: [point(points(), { x: "x", y: "y" })],
+    });
+    const { plot, x, y } = chart.model.panels()[0]!;
+    at(chart, "pointerdown", x.map(10), y.map(40));
+    at(chart, "pointermove", x.map(20), y.map(30));
+    at(chart, "pointerup", x.map(30), y.map(20));
+    const box = chart.selection!;
+    expect(box.x![0]).toBeCloseTo(10, 6);
+    expect(box.x![1]).toBeCloseTo(30, 6);
+    expect(box.y![0]).toBeCloseTo(20, 6);
+    expect(box.y![1]).toBeCloseTo(40, 6);
+    expect(box.lasso).toBeNull();
+    // A lasso reports its outline in data values, and its extent.
+    chart.update({ interaction: { brush: "lasso" } });
+    chart.render();
+    const corners = [
+      [10, 10],
+      [40, 10],
+      [40, 40],
+      [10, 40],
+    ] as const;
+    at(chart, "pointerdown", x.map(10), y.map(10));
+    for (const [cx, cy] of corners.slice(1)) at(chart, "pointermove", x.map(cx), y.map(cy));
+    at(chart, "pointerup", x.map(10), y.map(40));
+    const lasso = chart.selection!;
+    expect(lasso.lasso!.length).toBeGreaterThanOrEqual(4);
+    expect(lasso.x![0]).toBeCloseTo(10, 6);
+    expect(lasso.y![1]).toBeCloseTo(40, 6);
+    expect(chart.root.style.touchAction).toBe("none");
+    // With zoom along both axes, a rectangle zooms instead of selecting.
+    chart.update({ interaction: { brush: "xy", zoom: "xy" } });
+    chart.select(null);
+    chart.render();
+    at(chart, "pointerdown", x.map(10), y.map(40));
+    at(chart, "pointermove", x.map(20), y.map(30));
+    at(chart, "pointerup", x.map(30), y.map(20));
+    expect(chart.selection).toBeNull();
+    expect(chart.model.viewport![0]).toBeCloseTo(10, 6);
+    expect(chart.model.yViewport!.y[1]).toBeCloseTo(40, 6);
+    expect(plot.width).toBeGreaterThan(0);
+    chart.destroy();
+  });
+
+  it("shares selections with synced charts", () => {
+    const other = document.createElement("div");
+    other.style.cssText = "width:600px;height:300px";
+    document.body.append(other);
+    const options = {
+      interaction: { brush: "xy" as const, sync: "pair" },
+      marks: [point(points(), { x: "x", y: "y" })],
+    };
+    const a = createChart(host, options);
+    const b = createChart(other, options);
+    const seen: (readonly [number, number] | null)[] = [];
+    b.on("select", ({ y }) => seen.push(y));
+    a.select({ x: [5, 15], y: [10, 20], lasso: null });
+    expect(b.selection).toEqual({ x: [5, 15], y: [10, 20], lasso: null });
+    expect(seen).toEqual([[10, 20]]);
+    a.select(null);
+    expect(b.selection).toBeNull();
+    a.destroy();
+    b.destroy();
+    other.remove();
+  });
+
+  it("zooms the right axis with the left one", () => {
+    const data = table({ t: [0, 1, 2, 3], a: [0, 10, 20, 30], b: [0, 1000, 2000, 3000] });
+    const chart = createChart(host, {
+      marks: [line(data, { x: "t", y: "a" }), line(data, { x: "t", y: "b", axis: "right" })],
+      y: { domain: [0, 30] },
+      yRight: { domain: [0, 3000] },
+    });
+    chart.setYViewport([10, 20]);
+    const viewport = chart.model.yViewport!;
+    expect(viewport.y).toEqual([10, 20]);
+    expect(viewport.yRight![0]).toBeCloseTo(1000, 6);
+    expect(viewport.yRight![1]).toBeCloseTo(2000, 6);
+    chart.render();
+    expect(chart.model.yRightScale()!.domain).toEqual([viewport.yRight![0], viewport.yRight![1]]);
+    chart.destroy();
+  });
+});

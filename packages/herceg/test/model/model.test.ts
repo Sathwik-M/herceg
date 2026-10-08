@@ -150,6 +150,23 @@ describe("domains", () => {
     expect(Math.max(...labels)).toBeLessThan(100);
   });
 
+  it("keeps reversed axes reversed when zoomed", () => {
+    const { model } = sceneOf({
+      x: { domain: [5, 0] },
+      y: { domain: [1000, 0] },
+      yRight: { domain: [0, 100] },
+      marks: [line(data, { x: "x", y: "y" }), line(data, { x: "x", y: "y", axis: "right" })],
+    });
+    model.setViewport([1, 4]);
+    model.setYViewport({ y: [800, 200], yRight: [20, 80] });
+    model.scene(estimateText);
+    expect(model.viewport).toEqual([1, 4]);
+    expect(model.yViewport).toEqual({ y: [200, 800], yRight: [20, 80] });
+    expect(model.xScale()!.domain).toEqual([4, 1]);
+    expect(model.yScale()!.domain).toEqual([800, 200]);
+    expect(model.yRightScale()!.domain).toEqual([20, 80]);
+  });
+
   it("excludes hidden series from the domain and the scene", () => {
     const two = table({ x: [0, 1], a: [0, 1], b: [0, 1000] });
     const { model } = sceneOf({ marks: [line(two, { x: "x", y: ["a", "b"] })] });

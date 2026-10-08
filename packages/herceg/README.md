@@ -417,15 +417,22 @@ entries or tooltips, and are meant for shapes in the thousands, not millions.
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field (see Small multiples). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
-| `interaction` | `{ zoom: true }` for wheel zoom and drag pan; `{ brush: "x" }` to select an x range by dragging (with `zoom`, the brush zooms instead and Shift-drag pans); `{ sync: "name" }` to share cursor and zoom with other charts. |
+| `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 
-The returned `Chart` has `update(options)`, `setViewport([from, to] | null)`,
-`select([from, to] | null)` and `selection` (the brushed range), `on(event,
-listener)`, `render()`, `toSVG()`, `destroy()`, and `loading` (a promise
-while the GPU painter for large point series loads, otherwise undefined).
+The returned `Chart` has `update(options)`, `setViewport([from, to] | null)`
+and `setYViewport([from, to] | null)` (the left axis; a right axis shows what
+the same pixels show on it), `select(selection | [from, to] | null)` (a pair
+is shorthand for an x range) and `selection`, `on(event, listener)`,
+`render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
+painter for large point series loads, otherwise undefined).
+
+`selection` is a `Selection`, `{ x, y, lasso }`, or null, all in data values:
+the selected x and y ranges (null along an axis the brush leaves alone; a
+lasso's extent) and a lasso's outline as `[x, y]` pairs. Code written when
+`selection` was the x range reads `chart.selection?.x`.
 
 ### Themes
 
@@ -483,7 +490,8 @@ PDF output reads hex, `rgb()`, `hsl()`, and named colors.
 const stop = chart.on("select", ({ x }) => {
   if (x) detail.setViewport(x); // show the brushed range in another chart
 });
-chart.on("viewport", ({ domain }) => saveView(domain)); // zoom, pan, reset, sync
+chart.on("select", ({ x, y, lasso }) => filterRows(x, y, lasso)); // ranges, and a lasso's outline
+chart.on("viewport", ({ domain, y }) => saveView(domain, y)); // zoom, pan, reset, sync
 chart.on("hover", ({ inspection }) => showOwnTooltip(inspection)); // with tooltip: false
 chart.on("click", ({ inspection }) => openDetails(inspection?.points[0]));
 ```
@@ -492,7 +500,11 @@ Events report changes only: a re-inspected point or an unchanged range does
 not repeat them. An inspection's `axis` says what it is on: `"x"` or `"y"`
 for a position along that axis (with its `position` in pixels), `"item"` for
 a pie slice, whose `value` is the slice's and whose one point names it. Keyboard users select a range with Shift and the arrow keys
-(Enter zooms to it when zoom is on; Escape clears it).
+along the axis the keys step along (x for lines and vertical bars, y for
+horizontal bars), with brushes along that axis or rectangle and lasso
+brushes, which only the pointer draws; Enter zooms to the range when zoom is
+on along it, and Escape clears it. Selections made with the keyboard or the
+pointer are announced.
 
 ## Export
 

@@ -54,8 +54,10 @@ Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 `y_right` (the axis for marks added with `axis="right"`), `facet` and
 `facet_columns` (a panel per value of a category column; marks with
 `repeat=True` draw all their rows in every panel),
-`legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`,
-`brush` (`"x"`: drag to select a range; with `zoom=True`, drag to zoom),
+`legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`
+(`True` or `"x"`, `"y"`, `"xy"`: wheel zoom and drag pan along those axes),
+`brush` (`"x"`, `"y"`: drag to select a range; `"xy"`: a rectangle; `"lasso"`: a
+freehand region; along zoomed axes, drag to zoom instead),
 `sync` (charts with the same name on one HTML page share cursor and zoom;
 notebook outputs are separate iframes, so `sync` does not reach across
 cells), `renderer`, `theme` (below), `locale`, and `time_zone`.
@@ -188,7 +190,7 @@ facets; `None` restores an option's default.
 Interaction comes back as properties and callbacks:
 
 ```python
-live.selection                           # the brushed x range, or None
+live.selection                           # the brushed x range, or None (y and lasso selections are not reported yet)
 live.viewport                            # the visible x range when zoomed, or None
 
 live.on_select(lambda selection: print(selection))

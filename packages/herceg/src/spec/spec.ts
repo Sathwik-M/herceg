@@ -219,17 +219,24 @@ export interface TooltipSpec {
 }
 
 export interface InteractionSpec {
-  /** Wheel zoom and drag pan along x; double-click resets. */
-  zoom?: boolean;
   /**
-   * Drag along x to select a range, shown as a band and reported as a
-   * `select` event; a click clears it. With `zoom` on too, a brush zooms to
-   * its range instead (Shift-drag pans).
+   * Wheel zoom and drag pan along x (`true` or "x"), y, or both ("xy");
+   * double-click resets. Category axes do not zoom.
    */
-  brush?: "x";
-  /** Charts with the same sync name share their cursor and x range. */
+  zoom?: boolean | ZoomSpec;
+  /**
+   * Drag to select: a range along x or y, a rectangle ("xy"), or a freehand
+   * region ("lasso"), reported as a `select` event; a click clears it. With
+   * `zoom` on along the brush's axes, a brush zooms to what it covers
+   * instead (Shift-drag pans); lassos only select.
+   */
+  brush?: BrushSpec;
+  /** Charts with the same sync name share their cursor, x range, and selection. */
   sync?: string;
 }
+
+export type ZoomSpec = "x" | "y" | "xy";
+export type BrushSpec = "x" | "y" | "xy" | "lasso";
 
 /**
  * Changes to a built-in theme. Colors and the font may be CSS variables,

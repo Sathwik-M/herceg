@@ -79,6 +79,19 @@ export interface PanelInfo {
   key: string;
   plot: Rect;
   x: PositionScale;
+  /** The left y axis' scale, and the right's when the chart has one. */
+  y: PositionScale;
+  yRight?: PositionScale | undefined;
+}
+
+/**
+ * The visible y ranges when zoomed along y, ascending: the left axis', and
+ * the right axis' in charts that have one. Axes with a reversed domain show
+ * them reversed.
+ */
+export interface YViewport {
+  y: readonly [number, number];
+  yRight?: readonly [number, number] | undefined;
 }
 
 export type {
@@ -109,6 +122,7 @@ export class ChartModel {
   /** Keys of series hidden through the legend. */
   readonly hidden = new Set<string>();
   #viewport: [number, number] | null = null;
+  #yViewport: YViewport | null = null;
   #polylines = new Map<string, Polyline>();
   #floats = new Map<string, Float32Array>();
   #bytes = new Map<string, Uint8ClampedArray<ArrayBuffer>>();
@@ -168,14 +182,26 @@ export class ChartModel {
     this.pixelRatio = pixelRatio;
   }
 
-  /** The visible x range, or null to fit the data. Band x axes ignore it. */
+  /**
+   * The visible x range, ascending, or null to fit the data. Axes with a
+   * reversed domain show it reversed; band x axes ignore it.
+   */
   get viewport(): readonly [number, number] | null {
     return this.#viewport;
   }
 
   setViewport(domain: readonly [number, number] | null): void {
-    this.#viewport =
-      domain && domain[0] !== domain[1] ? [Math.min(...domain), Math.max(...domain)] : null;
+    this.#viewport = range(domain);
+  }
+
+  /** The visible y ranges, or null to fit the data. Band y axes ignore it. */
+  get yViewport(): YViewport | null {
+    return this.#yViewport;
+  }
+
+  setYViewport(viewport: YViewport | null): void {
+    const y = range(viewport?.y ?? null);
+    this.#yViewport = y && { y, yRight: range(viewport?.yRight ?? null) ?? undefined };
   }
 
   #context(): BandContext {
@@ -430,7 +456,10 @@ export class ChartModel {
       );
       if ((config.x?.zero ?? xMeasures) && !xLog) dataX = unionExtent([dataX, [0, 0]]);
       hasData = dataX !== undefined;
-      xDomain = usableDomain(this.#viewport ?? config.x?.domain ?? dataX, xType);
+      xDomain = usableDomain(
+        this.#viewport ? oriented(this.#viewport, config.x?.domain) : (config.x?.domain ?? dataX),
+        xType,
+      );
     }
     const autoX = xType !== "band" && !this.#viewport && !config.x?.domain;
     const dataXDomain = xDomain;
@@ -456,7 +485,9 @@ export class ChartModel {
     } else {
       leftUsed = !rightUsed || placesY(leftMarks);
       yBase = usableDomain(
-        config.y?.domain ?? this.#yData(leftMarks, yType, config.y, x0, x1),
+        this.#yViewport
+          ? oriented(this.#yViewport.y, config.y?.domain)
+          : (config.y?.domain ?? this.#yData(leftMarks, yType, config.y, x0, x1)),
         yType,
       );
     }
@@ -515,23 +546,26 @@ export class ChartModel {
       axisContext: AxisContext,
       base: [number, number],
       sideMarks: readonly MarkSeries[],
+      zoomed: boolean,
     ): AxisPlan => {
       const spec = axisContext.spec;
       const count = spec?.ticks ?? Math.max(2, Math.round(plotHeight / 45));
       const sideDrawn = sideMarks.filter(({ series }) => series.length > 0);
-      const domain = spec?.domain
-        ? base
-        : insetDomain(
-            headroomDomain(
-              niceAxisDomain(base, axisContext, count, spec?.nice ?? true),
-              headroom("y", sideDrawn),
+      // Fixed and zoomed domains are shown as they are.
+      const domain =
+        spec?.domain || zoomed
+          ? base
+          : insetDomain(
+              headroomDomain(
+                niceAxisDomain(base, axisContext, count, spec?.nice ?? true),
+                headroom("y", sideDrawn),
+                plotHeight,
+                axisContext.type,
+              ),
+              inset("y", sideDrawn),
               plotHeight,
               axisContext.type,
-            ),
-            inset("y", sideDrawn),
-            plotHeight,
-            axisContext.type,
-          );
+            );
       return planAxis(axisContext, domain, [plotTop + plotHeight, plotTop], count);
     };
 
@@ -550,17 +584,21 @@ export class ChartModel {
       const room = Math.max(48, Math.round(width * 0.3));
       yPlan.labels = yPlan.labels.map((label) => fitText(label, room, measure, font));
     } else {
-      yPlan = planValueAxis(yContext, yBase, leftMarks);
+      yPlan = planValueAxis(yContext, yBase, leftMarks, this.#yViewport !== null);
     }
     const yRightContext: AxisContext = { type: yRightType, spec: config.yRight, zone, locale };
     const yRightPlan = rightUsed
       ? planValueAxis(
           yRightContext,
           usableDomain(
-            config.yRight?.domain ?? this.#yData(rightMarks, yRightType, config.yRight, x0, x1),
+            this.#yViewport?.yRight
+              ? oriented(this.#yViewport.yRight, config.yRight?.domain)
+              : (config.yRight?.domain ??
+                  this.#yData(rightMarks, yRightType, config.yRight, x0, x1)),
             yRightType,
           ),
           rightMarks,
+          this.#yViewport?.yRight !== undefined,
         )
       : undefined;
     const showLeft = showY && leftUsed;
@@ -929,7 +967,13 @@ export class ChartModel {
 
   /** The last scene's panels: each one's key, plot, and x scale. */
   panels(): PanelInfo[] {
-    return this.#views.map(({ key, plot, inspector }) => ({ key, plot, x: inspector.frame.x }));
+    return this.#views.map(({ key, plot, inspector }) => ({
+      key,
+      plot,
+      x: inspector.frame.x,
+      y: inspector.frame.y,
+      yRight: inspector.rightFrame?.y,
+    }));
   }
 
   /** The series a panel of the last scene draws; with facets, the parts of series in it. */
@@ -968,8 +1012,11 @@ export class ChartModel {
     );
   }
 
-  /** How the last scene formats x values and a mark's y values, as tooltips do. */
-  formatsOf(mark: Mark): AxisFormat {
+  /**
+   * How the last scene formats x values and a mark's y values (without a
+   * mark, the left axis'), as tooltips do.
+   */
+  formatsOf(mark?: Mark): AxisFormat {
     const last = this.#views[0]?.inspector;
     const fallback = (value: number) => formatNumber(value, this.#config.locale);
     return {
@@ -1159,4 +1206,18 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
   }
   config.facet?.check(marks);
   return [marks, layouts];
+}
+
+/** An ascending range, or null for none or an empty one. */
+function range(domain: readonly [number, number] | null): [number, number] | null {
+  return domain && domain[0] !== domain[1] ? [Math.min(...domain), Math.max(...domain)] : null;
+}
+
+/** An ascending viewport the way the axis' configured domain runs, so reversed axes stay reversed. */
+function oriented(
+  viewport: readonly [number, number],
+  domain: readonly [number, number] | undefined,
+): [number, number] {
+  const [lo, hi] = viewport;
+  return domain && domain[0] > domain[1] ? [hi, lo] : [lo, hi];
 }

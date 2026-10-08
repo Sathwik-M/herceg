@@ -1,6 +1,7 @@
 // Events a chart emits to the application.
 
 import type { Inspection } from "../model/model.ts";
+import type { Selection } from "./brush.ts";
 import { report } from "./scheduler.ts";
 
 /** Chart events by name, with what their listeners receive. */
@@ -9,9 +10,16 @@ export interface ChartEvents {
    * The visible x range changed: zoom, pan, reset, `setViewport`, or a
    * synced chart. `domain` is null when the chart fits its data.
    */
-  viewport: { domain: readonly [number, number] | null };
-  /** The brushed x range changed; `x` is null when the selection was cleared. */
-  select: { x: readonly [number, number] | null };
+  viewport: {
+    domain: readonly [number, number] | null;
+    /** The visible y range of the left axis; null when it fits the data. */
+    y: readonly [number, number] | null;
+  };
+  /**
+   * The selection changed: its x and y ranges and a lasso's outline, all
+   * null when the selection was cleared.
+   */
+  select: Selection;
   /** The data under the pointer or cursor changed; undefined when there is none. */
   hover: { inspection: Inspection | undefined };
   /** The plot was clicked (not dragged), with the data under the pointer. */

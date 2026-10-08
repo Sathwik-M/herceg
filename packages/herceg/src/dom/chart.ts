@@ -8,21 +8,34 @@
 
 import type { Table } from "../data/table.ts";
 import { canvasMeasurer, estimateText, type MeasureText } from "../layout/text.ts";
+import type { AxisFormat } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import { describeChart } from "../model/describe.ts";
-import { type ChartConfig, ChartModel, type Inspection, type PanelInfo } from "../model/model.ts";
+import {
+  type ChartConfig,
+  ChartModel,
+  type Inspection,
+  type PanelInfo,
+  type YViewport,
+} from "../model/model.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { CloudPainter, PointGeometry, Rect, Scene } from "../scene/scene.ts";
+import type { CloudPainter, PointGeometry, Scene } from "../scene/scene.ts";
 import { themeReadsPage } from "../theme.ts";
-import { ascending, Brush, DRAG_THRESHOLD, normalize } from "./brush.ts";
+import { ascending, Brush, DRAG_THRESHOLD, normalize, type Selection } from "./brush.ts";
 import { type ChartEvents, type ChartListener, Emitter } from "./events.ts";
 import { Legend } from "./legend.ts";
 import { readPage, watchPage } from "./page-theme.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
 import { SvgLayer, svgElement } from "./svg-layer.ts";
-import { broadcastCursor, broadcastViewport, join, type SyncMember } from "./sync.ts";
+import {
+  broadcastCursor,
+  broadcastSelection,
+  broadcastViewport,
+  join,
+  type SyncMember,
+} from "./sync.ts";
 import { describeInspection, Tooltip } from "./tooltip.ts";
 
 export interface ChartOptions extends ChartConfig {
@@ -92,20 +105,19 @@ export class Chart implements Scheduled, SyncMember {
   #describeTimer: ReturnType<typeof setTimeout> | 0 = 0;
   /**
    * A primary-button press on a plot until release: where it started, the
-   * panel and x scale it started in, and what dragging does.
+   * panel (and so the scales) it started in, and what dragging does.
    */
   #press: {
     x: number;
     y: number;
-    plot: Rect;
-    scale: PositionScale;
+    panel: PanelInfo;
     mode: "pan" | "brush" | "click";
     moved: boolean;
   } | null = null;
   /** A press in a chart of a layout mark, which has nothing to drag: a click if released in place. */
   #tap: { x: number; y: number; moved: boolean } | null = null;
   readonly #brush: Brush;
-  /** Where a keyboard selection (Shift + arrows) started: data x and its label. */
+  /** Where a keyboard selection (Shift + arrows) started: a value along the cursor's axis and its label. */
   #brushAnchor: { value: number; label: string } | null = null;
   readonly #events = new Emitter();
   /** What the last hover event reported, to emit only changes. */
@@ -138,7 +150,7 @@ export class Chart implements Scheduled, SyncMember {
       "stroke-linejoin": "round",
       visibility: "hidden",
     });
-    this.#brush = new Brush(svgElement(document, "g"));
+    this.#brush = new Brush(svgElement(document, "g"), `${this.#id}-brush`);
     this.#svg.overlay.append(this.#brush.element, ...this.#crosshairs, this.#dots, this.#outline);
     this.#legend = new Legend(document, (key) => {
       if (this.model.hidden.has(key)) this.model.hidden.delete(key);
@@ -210,6 +222,19 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   /**
+   * Shows a y range of the left axis, or null to fit the data. In charts with
+   * a right axis, `right` is its range; by default it shows what the same
+   * pixels show there.
+   */
+  setYViewport(domain: readonly [number, number] | null, right?: readonly [number, number]): void {
+    const panel = this.model.panels()[0];
+    const scale = panel?.yRight;
+    const across = (value: number) => scale!.invert(panel!.y.map(value));
+    const mapped = domain && scale ? ([across(domain[0]), across(domain[1])] as const) : undefined;
+    this.#setYViewport(domain && { y: domain, yRight: right ?? mapped });
+  }
+
+  /**
    * Calls `listener` on every `type` event until the returned function is
    * called.
    *
@@ -221,20 +246,37 @@ export class Chart implements Scheduled, SyncMember {
     return this.#events.on(type, listener);
   }
 
-  /** The brushed x range (epoch ms for time axes), or null. */
-  get selection(): readonly [number, number] | null {
+  /** What is brushed (x and y ranges, epoch ms for time axes, and a lasso's outline), or null. */
+  get selection(): Selection | null {
     return this.#brush.selection;
   }
 
-  /** Sets or clears (null) the brushed x range, as if the user had brushed it. */
-  select(range: readonly [number, number] | null): void {
-    const scale = this.model.xScale();
-    const next = range && (scale ? normalize(scale, range[0], range[1]) : ascending(...range));
+  /**
+   * Sets or clears (null) the selection, as if the user had brushed it; an
+   * x range alone may be given as a pair.
+   */
+  select(selection: Selection | readonly [number, number] | null): void {
+    this.syncSelection(selection);
+    const sync = this.#options.interaction?.sync;
+    if (sync) broadcastSelection(sync, this, this.#brush.selection);
+  }
+
+  syncSelection(selection: Selection | readonly [number, number] | null): void {
+    const given = Array.isArray(selection)
+      ? { x: selection as readonly [number, number], y: null, lasso: null }
+      : (selection as Selection | null);
+    const panel = this.model.panels()[0];
+    const fit = (range: readonly [number, number] | null, scale: PositionScale | undefined) =>
+      range && (scale ? normalize(scale, range[0], range[1]) : ascending(...range));
+    const next =
+      given && (given.x || given.y || given.lasso)
+        ? { x: fit(given.x, panel?.x), y: fit(given.y, panel?.y), lasso: given.lasso }
+        : null;
     if (!next) this.#brushAnchor = null;
-    if (sameRange(next, this.#brush.selection)) return;
+    if (sameSelection(next, this.#brush.selection)) return;
     this.#brush.selection = next;
     schedule(this);
-    this.#events.emit("select", { x: next });
+    this.#events.emit("select", next ?? { x: null, y: null, lasso: null });
   }
 
   /**
@@ -305,7 +347,8 @@ export class Chart implements Scheduled, SyncMember {
     this.model.setViewport(domain);
     this.#invalidate();
     const after = this.model.viewport;
-    if (!sameRange(before, after)) this.#events.emit("viewport", { domain: after });
+    if (!sameRange(before, after))
+      this.#events.emit("viewport", { domain: after, y: this.model.yViewport?.y ?? null });
   }
 
   #invalidate() {
@@ -341,9 +384,17 @@ export class Chart implements Scheduled, SyncMember {
     const sync = options.interaction?.sync;
     this.#leaveSync?.();
     this.#leaveSync = sync ? join(sync, this) : undefined;
-    // Horizontal drags pan or brush; the page still scrolls vertically.
-    const drags = options.interaction?.zoom || options.interaction?.brush;
-    this.root.style.touchAction = drags ? "pan-y" : "";
+    this.#brush.mode = options.interaction?.brush ?? "x";
+    // Drags pan or brush; the page still scrolls along an axis they leave alone.
+    const { zoom, brush } = options.interaction ?? {};
+    const along = `${zoom === true ? "x" : zoom || ""}${brush === "lasso" ? "xy" : (brush ?? "")}`;
+    this.root.style.touchAction = !along
+      ? ""
+      : along.includes("x") && along.includes("y")
+        ? "none"
+        : along.includes("x")
+          ? "pan-y"
+          : "pan-x";
     // Themes that follow the page re-read it when it may have switched themes.
     const follows = themeReadsPage(options.theme);
     if (follows && !this.#unwatchPage) {
@@ -629,13 +680,12 @@ export class Chart implements Scheduled, SyncMember {
       if (press) {
         press.moved ||= Math.hypot(x - press.x, y - press.y) >= DRAG_THRESHOLD;
         if (press.moved && press.mode === "pan") {
-          this.#pan(press, x);
+          this.#pan(press, x, y);
           return;
         }
         if (press.moved && press.mode === "brush") {
-          if (!this.#brush.dragging)
-            this.#brush.start(press.x, { plot: press.plot, x: press.scale });
-          this.#brush.move(x);
+          if (!this.#brush.dragging) this.#brush.start(press.x, press.y, press.panel);
+          this.#brush.move(x, y);
         }
       }
       schedule(this);
@@ -668,12 +718,23 @@ export class Chart implements Scheduled, SyncMember {
         // Zoom in pixel space and invert, so the value under the pointer stays
         // put on any scale type, including log.
         const { plot, x: scale } = panel;
-        const px = Math.min(plot.x + plot.width, Math.max(plot.x, point.x));
+        const zoom = this.#zoomAxes(panel);
         const factor = Math.exp(event.deltaY * 0.002);
-        this.setViewport([
-          scale.invert(px - (px - plot.x) * factor),
-          scale.invert(px + (plot.x + plot.width - px) * factor),
-        ]);
+        if (zoom.x) {
+          const px = Math.min(plot.x + plot.width, Math.max(plot.x, point.x));
+          this.setViewport([
+            scale.invert(px - (px - plot.x) * factor),
+            scale.invert(px + (plot.x + plot.width - px) * factor),
+          ]);
+        }
+        if (zoom.y) {
+          const py = Math.min(plot.y + plot.height, Math.max(plot.y, point.y));
+          this.#zoomY(
+            panel,
+            py + (plot.y + plot.height - py) * factor,
+            py - (py - plot.y) * factor,
+          );
+        }
       },
       { passive: false },
     );
@@ -691,7 +752,7 @@ export class Chart implements Scheduled, SyncMember {
       // on too), pans when only zoom is on, and otherwise does nothing.
       const { brush, zoom } = this.#options.interaction ?? {};
       const mode = brush && !(zoom && event.shiftKey) ? "brush" : zoom ? "pan" : "click";
-      this.#press = { x, y, plot: panel.plot, scale: panel.x, mode, moved: false };
+      this.#press = { x, y, panel, mode, moved: false };
       if (mode !== "click") root.setPointerCapture?.(event.pointerId);
     });
     on("pointerup", (event) => {
@@ -710,13 +771,19 @@ export class Chart implements Scheduled, SyncMember {
       }
       if (press.mode !== "brush") return;
       // The release point ends the brush, wherever the last move was.
-      this.#brush.move(local(event).x);
-      const range = this.#brush.end();
-      // The drag band goes, whether or not the brush selects anything.
+      const end = local(event);
+      this.#brush.move(end.x, end.y);
+      const selection = this.#brush.end();
+      // The drag outline goes, whether or not the brush selects anything.
       schedule(this);
-      if (!range) return;
-      if (this.#zoomsToBrush(press.scale)) this.setViewport(range);
-      else this.select(range);
+      if (!selection) return;
+      if (this.#zooms(selection, press.panel)) {
+        this.#zoomTo(selection, press.panel);
+        return;
+      }
+      this.select(selection);
+      const selected = this.#brush.selection;
+      if (selected) this.#live.textContent = describeSelection(selected, this.model.formatsOf());
     });
     // The browser took the pointer (a touch turned into scrolling, say).
     const cancel = () => {
@@ -729,8 +796,11 @@ export class Chart implements Scheduled, SyncMember {
     on("lostpointercapture", () => {
       if (this.#press) cancel();
     });
+    // Double click resets both axes, also one zoomed before `interaction.zoom` stopped naming it.
     on("dblclick", () => {
-      if (this.#options.interaction?.zoom) this.setViewport(null);
+      if (!this.#options.interaction?.zoom) return;
+      this.setViewport(null);
+      this.setYViewport(null);
     });
 
     on("keydown", (event) => this.#key(event));
@@ -741,22 +811,69 @@ export class Chart implements Scheduled, SyncMember {
     });
   }
 
-  #pan(press: { x: number; plot: Rect; scale: PositionScale }, x: number) {
-    // Shift in pixels and invert through the panel and scale the drag started with.
-    const shift = press.x - x;
-    const { plot } = press;
-    this.setViewport([
-      press.scale.invert(plot.x + shift),
-      press.scale.invert(plot.x + plot.width + shift),
-    ]);
+  /** Moves the zoomable axes by a drag's shift, through the scales of the panel it started in. */
+  #pan(press: { x: number; y: number; panel: PanelInfo }, x: number, y: number) {
+    const { panel } = press;
+    const { plot } = panel;
+    const zoom = this.#zoomAxes(panel);
+    if (zoom.x) {
+      const shift = press.x - x;
+      this.setViewport([
+        panel.x.invert(plot.x + shift),
+        panel.x.invert(plot.x + plot.width + shift),
+      ]);
+    }
+    if (zoom.y) {
+      const shift = press.y - y;
+      this.#zoomY(panel, plot.y + plot.height + shift, plot.y + shift);
+    }
   }
 
   /**
-   * With zoom on, a brush zooms to its range rather than selecting it;
-   * category axes cannot zoom, so their brushes select.
+   * The axes the wheel, drags, and brushes zoom: those `interaction.zoom`
+   * names, less category axes, which do not zoom.
    */
-  #zoomsToBrush(scale: PositionScale): boolean {
-    return Boolean(this.#options.interaction?.zoom) && scale.type !== "band";
+  #zoomAxes(panel: PanelInfo): { x: boolean; y: boolean } {
+    const zoom = this.#options.interaction?.zoom;
+    const axes = zoom === true ? "x" : zoom || "";
+    return {
+      x: axes.includes("x") && panel.x.type !== "band",
+      y: axes.includes("y") && panel.y.type !== "band",
+    };
+  }
+
+  /**
+   * Whether a selection is zoomed to rather than shown: when zoom is on along
+   * every axis it has a range on. Lassos only select.
+   */
+  #zooms(selection: Selection, panel: PanelInfo): boolean {
+    if (selection.lasso || !(selection.x || selection.y)) return false;
+    const zoom = this.#zoomAxes(panel);
+    return (!selection.x || zoom.x) && (!selection.y || zoom.y);
+  }
+
+  /** Zooms to a brushed selection. */
+  #zoomTo(selection: Selection, panel: PanelInfo) {
+    if (selection.x) this.setViewport(selection.x);
+    if (selection.y) this.#zoomY(panel, panel.y.map(selection.y[0]), panel.y.map(selection.y[1]));
+  }
+
+  /**
+   * Shows the y values between two pixels of a panel: on the left axis, and
+   * on the right axis what the same pixels show there.
+   */
+  #zoomY(panel: PanelInfo, bottom: number, top: number) {
+    const range = (scale: PositionScale) => [scale.invert(bottom), scale.invert(top)] as const;
+    this.#setYViewport({ y: range(panel.y), yRight: panel.yRight && range(panel.yRight) });
+  }
+
+  #setYViewport(viewport: YViewport | null) {
+    const before = this.model.yViewport;
+    this.model.setYViewport(viewport);
+    this.#invalidate();
+    const after = this.model.yViewport;
+    if (!sameRange(before?.y ?? null, after?.y ?? null))
+      this.#events.emit("viewport", { domain: this.model.viewport, y: after?.y ?? null });
   }
 
   /** The panel whose plot holds a point of the chart. */
@@ -823,13 +940,13 @@ export class Chart implements Scheduled, SyncMember {
     if (!series) return;
     const brush = this.#options.interaction?.brush;
     if (event.key === "Enter") {
-      const range = this.#brush.selection;
-      const scale = this.model.xScale();
-      if (!brush || !range || !scale || !this.#zoomsToBrush(scale)) return;
+      const selection = this.#brush.selection;
+      const first = panels[0];
+      if (!selection || !first || !this.#zooms(selection, first)) return;
       event.preventDefault();
       this.#brushAnchor = null;
       this.select(null);
-      this.setViewport(range);
+      this.#zoomTo(selection, first);
       return;
     }
     event.preventDefault();
@@ -837,7 +954,7 @@ export class Chart implements Scheduled, SyncMember {
       this.#keyboard = null;
       this.#brushAnchor = null;
       this.#live.textContent = "";
-      if (brush) this.select(null);
+      if (this.#brush.selection) this.select(null);
       schedule(this);
       return;
     }
@@ -863,12 +980,22 @@ export class Chart implements Scheduled, SyncMember {
     let text = describeInspection(inspection);
     if (across || (inspection.panel !== undefined && before?.panel !== inspection.panel))
       text = `${inspection.panel}: ${text}`;
-    if (brush && event.shiftKey && inspection.axis === "x") {
-      const start = before?.axis === "x" ? before : inspection;
+    // Shift selects a range along the axis the cursor steps along: for
+    // brushes along that axis, and for rectangles and lassos, which the
+    // keyboard cannot draw.
+    const axis = inspection.axis;
+    if (
+      event.shiftKey &&
+      axis !== "item" &&
+      (brush === axis || brush === "xy" || brush === "lasso")
+    ) {
+      const start = before?.axis === axis ? before : inspection;
       this.#brushAnchor ??= { value: start.value, label: start.label };
-      this.select([this.#brushAnchor.value, inspection.value]);
-      const scale = this.model.xScale();
-      const hint = scale && this.#zoomsToBrush(scale) ? " Press Enter to zoom to it." : "";
+      const range = [this.#brushAnchor.value, inspection.value] as const;
+      this.select({ x: axis === "x" ? range : null, y: axis === "y" ? range : null, lasso: null });
+      const selection = this.#brush.selection;
+      const zooms = selection && this.#zooms(selection, panels[index]!);
+      const hint = zooms ? " Press Enter to zoom to it." : "";
       text = `Selected ${this.#brushAnchor.label} to ${inspection.label}.${hint} ${text}`;
     } else {
       this.#brushAnchor = null;
@@ -922,6 +1049,29 @@ function nearestTo(series: Series, x: number | undefined): number {
     }
   }
   return best;
+}
+
+/** A sentence announcing a selection, with values as the axes label them. */
+function describeSelection(selection: Selection, format: AxisFormat): string {
+  if (selection.lasso) return "Selected a freehand region.";
+  const { x, y } = selection;
+  const ranges: string[] = [];
+  if (x) ranges.push(`x from ${format.x(x[0])} to ${format.x(x[1])}`);
+  if (y) ranges.push(`y from ${format.y(y[0])} to ${format.y(y[1])}`);
+  return `Selected ${ranges.join(" and ")}.`;
+}
+
+/** Two selections cover the same values, or are both null. */
+function sameSelection(a: Selection | null, b: Selection | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const sameLasso =
+    a.lasso === b.lasso ||
+    (a.lasso !== null &&
+      b.lasso !== null &&
+      a.lasso.length === b.lasso.length &&
+      a.lasso.every(([x, y], i) => x === b.lasso![i]![0] && y === b.lasso![i]![1]));
+  return sameRange(a.x, b.x) && sameRange(a.y, b.y) && sameLasso;
 }
 
 /** Two ranges hold the same values, or are both null. */

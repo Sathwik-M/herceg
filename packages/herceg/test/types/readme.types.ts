@@ -16,6 +16,7 @@ import {
   region,
   renderToSVG,
   rule,
+  type Selection,
   table,
   text,
   time,
@@ -218,3 +219,10 @@ errorBar(sales, { x: "region", y: "q1", yError: "q2" });
 errorBar(sales, { x: "region", y1: "team", y2: "q2" });
 // @ts-expect-error horizontal error bars have no right axis
 errorBar(sales, { y: "region", x1: "q1", x2: "q2", axis: "right" });
+
+// Events and selections
+chart.select({ x: [0, 1], y: [10, 20], lasso: null });
+chart.select([0, 1]);
+const selected: Selection | null = chart.selection;
+const brushed: readonly [number, number] | null | undefined = selected?.x;
+chart.on("select", ({ x, y, lasso }) => [x, y, lasso, brushed]);
