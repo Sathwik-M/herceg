@@ -356,7 +356,7 @@ function frozen<E extends Expression | boolean | undefined>(expression: E): E {
 }
 
 /** The fields an expression reads. */
-function fieldsOf(expression: Expression | undefined): string[] {
+export function fieldsOf(expression: Expression | undefined): string[] {
   if (!Array.isArray(expression)) return [];
   const [operator, ...operands] = expression as readonly [string, ...Expression[]];
   if (operator === "field") return [operands[0] as string];

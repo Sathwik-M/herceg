@@ -1,4 +1,4 @@
-import { rowView, table } from "herceg";
+import { category, count, groupRows, mean, rowView, table } from "herceg";
 import { createGridModel, type Grid as HercegGrid } from "herceg/grid";
 import { act, Profiler, StrictMode, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -149,5 +149,36 @@ describe("<Grid>", () => {
     data.append({ id: [3], ms: [1] });
     await frames();
     expect(grid().getAttribute("aria-rowcount")).toBe("5");
+  });
+
+  it("shows groups as a tree grid, expanding and streaming without rendering React", async () => {
+    const data = table({
+      id: Float64Array.from({ length: 300 }, (_, i) => i),
+      host: category(Array.from({ length: 300 }, (_, i) => ["web", "api", "db"][i % 3]!)),
+      ms: Float64Array.from({ length: 300 }, (_, i) => i % 7),
+    });
+    const view = rowView(data);
+    const model = createGridModel({
+      data: view,
+      groups: groupRows(view, { by: ["host"], ops: { n: count(), avg: mean("ms") } }),
+      columns: [{ field: "host" }, { field: "ms", aggregate: "avg" }],
+    });
+    let commits = 0;
+    act(() =>
+      root.render(
+        <Profiler id="grid" onRender={() => commits++}>
+          <Grid model={model} ariaLabel="Requests" style={{ height: 300 }} />
+        </Profiler>,
+      ),
+    );
+    const tree = () => host.querySelector<HTMLElement>("[role=treegrid]")!;
+    expect(tree().getAttribute("aria-rowcount")).toBe("4");
+    expect(firstCells()).toEqual(["web (100)", "api (100)", "db (100)"]);
+    await userEvent.click(host.querySelector(".hg-toggle")!);
+    data.append({ id: [300], host: ["web"], ms: [1] });
+    await frames();
+    expect(tree().getAttribute("aria-rowcount")).toBe(String(1 + 3 + 101));
+    expect(firstCells()[0]).toBe("web (101)");
+    expect(commits).toBe(1);
   });
 });

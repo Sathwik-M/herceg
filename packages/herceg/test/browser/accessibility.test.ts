@@ -6,6 +6,8 @@
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
 import { category, time } from "../../src/data/column.ts";
+import { count, mean } from "../../src/data/derive.ts";
+import { groupRows } from "../../src/data/groups.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
@@ -579,6 +581,89 @@ describe("grids", () => {
     ]);
     expect(tree.filter((line) => line.includes("focused=true"))).toEqual([
       '      gridcell "259" focused=true',
+    ]);
+  });
+
+  /** The requests grouped by host: api expanded and partly selected, web selected, a row focused. */
+  function grouped(theme: "light" | "dark" | "high-contrast" | "high-contrast-dark", page: string) {
+    const host = document.createElement("div");
+    host.style.cssText = `width:600px;height:300px;background:${page}`;
+    document.body.append(host);
+    const rows = 120;
+    const data = table({
+      id: Float64Array.from({ length: rows }, (_, i) => i),
+      ms: Float64Array.from({ length: rows }, (_, i) => (i * 37) % 500),
+      host: category(Array.from({ length: rows }, (_, i) => ["web", "api", "db"][i % 3]!)),
+    });
+    const view = rowView(data);
+    const model = createGridModel({
+      data: view,
+      groups: groupRows(view, { by: ["host"], ops: { n: count(), avg: mean("ms") } }),
+      columns: [
+        { field: "host" },
+        { field: "id" },
+        { field: "ms", title: "Latency", aggregate: "avg", format: { maximumFractionDigits: 0 } },
+      ],
+      locale: "en-US",
+    });
+    const created = createGrid(host, { model, ariaLabel: "Requests", theme });
+    grids.push(created as unknown as Grid<never>);
+    model.setExpanded(["api"], true);
+    model.select(0);
+    model.select(2, "toggle");
+    model.select(3, "toggle");
+    created.focusCell(3, "id");
+    return created;
+  }
+
+  for (const [theme, page] of [
+    ["light", "#ffffff"],
+    ["high-contrast-dark", "#000000"],
+  ] as const) {
+    it(`pass audits grouped, in the ${theme} theme, with a group partly selected`, async () => {
+      const created = grouped(theme, page);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(await violations(created.root.parentElement!)).toEqual([]);
+    });
+  }
+
+  it("expose groups as a tree grid whose rows say their level, place, expansion, and selection", async () => {
+    grouped("light", "#ffffff");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const tree = (
+      await treeUnder("treegrid", [
+        "multiselectable",
+        "level",
+        "expanded",
+        "selected",
+        "checked",
+        "focused",
+      ])
+    ).filter((line) => !line.trim().startsWith("StaticText"));
+    expect(tree[0]).toMatch(
+      /^treegrid "Requests" \(Arrow keys, .* goes to the group\.\) multiselectable=true$/,
+    );
+    expect(tree.slice(6, 22)).toEqual([
+      '  rowgroup ""',
+      // The checkbox's name and state are read with the group's cell.
+      '    row "Select web (40) 265" level=1 expanded=false',
+      '      gridcell "Select web (40)"',
+      '        checkbox "Select" checked=true',
+      '      gridcell ""',
+      '      gridcell "265"',
+      '    row "Select api (40) 252" level=1 expanded=true',
+      '      gridcell "Select api (40)"',
+      '        checkbox "Select" checked=mixed',
+      '      gridcell ""',
+      '      gridcell "252"',
+      '    row "api 1 37" level=2 selected=true',
+      '      gridcell "api"',
+      '      gridcell "1"',
+      '      gridcell "37"',
+      '    row "api 4 148" level=2 selected=true',
+    ]);
+    expect(tree.filter((line) => line.includes("focused=true"))).toEqual([
+      '      gridcell "4" focused=true',
     ]);
   });
 

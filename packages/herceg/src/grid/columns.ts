@@ -32,6 +32,11 @@ export type GridColumn<S extends Schema = Schema> = {
     align?: "start" | "center" | "end";
     format?: FormatOf<S[F]>;
     hidden?: boolean;
+    /**
+     * In grouped grids: the name of an aggregate of the groups that group
+     * rows show in this column. Without one, group rows leave it empty.
+     */
+    aggregate?: string;
   };
 }[PositionField<S>];
 
@@ -58,6 +63,9 @@ export interface FormatSettings {
 export interface PlacedColumn extends GridColumnLayout {
   /** The cell text of the table's row at `position`. Bound to the table's current arrays. */
   text(table: Table, position: number): string;
+  /** A value of the column's field as text: a label, a number, or a time; null for missing. */
+  format(value: string | number | null): string;
+  readonly aggregate: string | undefined;
 }
 
 const WIDTH = 120;
@@ -97,6 +105,7 @@ export function placeColumns(
     if (column.format !== undefined && kind === "category")
       throw new TypeError(`Column "${id}" shows categories, which take no format`);
     if (column.hidden) continue;
+    const format = valueFormatter(kind, column.format, settings);
     placed.push({
       id,
       field,
@@ -105,7 +114,9 @@ export function placeColumns(
       x,
       width,
       align: column.align ?? (kind === "number" ? "end" : "start"),
-      text: reader(field, kind, column.format, settings),
+      text: reader(field, kind, format, settings.missing),
+      format,
+      aggregate: column.aggregate,
     });
     x += width;
   }
@@ -116,8 +127,8 @@ export function placeColumns(
 function reader(
   field: string,
   kind: "number" | "time" | "category",
-  format: NumberFormat | TimeFormat | undefined,
-  { locale, timeZone, missing }: FormatSettings,
+  format: (value: string | number | null) => string,
+  missing: string,
 ): (table: Table, position: number) => string {
   if (kind === "category") {
     return (table, position) => {
@@ -126,21 +137,29 @@ function reader(
       return code < 0 ? missing : dictionary[code]!;
     };
   }
+  return (table, position) => format(table.numbers(field)[position]!);
+}
+
+/** What writes values of a kind as text, with Intl options for numbers or times. */
+export function valueFormatter(
+  kind: "number" | "time" | "category",
+  format: NumberFormat | TimeFormat | undefined,
+  { locale, timeZone, missing }: FormatSettings,
+): (value: string | number | null) => string {
+  if (kind === "category") return (value) => (value === null ? missing : String(value));
   if (kind === "time") {
     const write = timeFormatter((format as TimeFormat | undefined) ?? TIME, timeZone, locale);
     const number = readableNumber(locale);
-    return (table, position) => {
-      const value = table.numbers(field)[position]!;
-      if (Number.isNaN(value)) return missing;
+    return (value) => {
+      if (value === null || Number.isNaN(value)) return missing;
       // Dates end 8.64e15 ms from 1970 either way; Intl throws past them.
-      return Math.abs(value) <= LAST_DATE ? write(value) : number(value);
+      return Math.abs(value as number) <= LAST_DATE
+        ? write(value as number)
+        : number(value as number);
     };
   }
   const write = format ? numberFormatter(format as NumberFormat, locale) : readableNumber(locale);
-  return (table, position) => {
-    const value = table.numbers(field)[position]!;
-    return Number.isNaN(value) ? missing : write(value);
-  };
+  return (value) => (value === null || Number.isNaN(value) ? missing : write(value as number));
 }
 
 /** Two decimals for most numbers, three significant digits for small ones, as tooltips show them. */

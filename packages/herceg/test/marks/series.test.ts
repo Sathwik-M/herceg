@@ -4,8 +4,8 @@ import { type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { histogram } from "../../src/marks/histogram.ts";
 import { point } from "../../src/marks/point.ts";
-import { RowGroups } from "../../src/marks/row-groups.ts";
-import { groupRows, isSortedSubset, type Series, yExtent } from "../../src/marks/series.ts";
+import { isSortedSubset, rowsByCode, type Series, yExtent } from "../../src/marks/series.ts";
+import { SplitRows } from "../../src/marks/split.ts";
 import { ChartModel } from "../../src/model/model.ts";
 
 function series(x: number[], y: number[], options: Partial<Series> = {}): Series {
@@ -59,7 +59,7 @@ describe("row groups", () => {
   /** What grouping the table from scratch gives, in dictionary order. */
   function regrouped(t: ReturnType<typeof stream>) {
     const { codes, dictionary } = t.categories("kind");
-    const groups = groupRows(codes, dictionary.length);
+    const groups = rowsByCode(codes, dictionary.length);
     const x = t.numbers("x");
     return dictionary.flatMap((name, code) =>
       groups[code]!.length === 0
@@ -69,7 +69,7 @@ describe("row groups", () => {
   }
   const stream = (maxRows: number) =>
     table({ x: new Float64Array(0), kind: category([]) }, { maxRows });
-  const seen = (groups: RowGroups) =>
+  const seen = (groups: SplitRows) =>
     groups.groups().map(({ name, rows, sorted }) => ({ name, rows: Array.from(rows), sorted }));
 
   it("stay what grouping again gives through appends, rolling drops, and renumbered codes", () => {
@@ -79,7 +79,7 @@ describe("row groups", () => {
       return seed / 2147483647;
     };
     const t = stream(300);
-    const groups = new RowGroups(t as unknown as Table, "kind", "x");
+    const groups = new SplitRows(t as unknown as Table, "kind", "x");
     let x = 0;
     for (let tick = 0; tick < 200; tick++) {
       const count = 1 + Math.floor(random() * 40);
@@ -100,7 +100,7 @@ describe("row groups", () => {
 
   it("count the rows each group lost, and keep one key while it follows the table", () => {
     const t = stream(4);
-    const groups = new RowGroups(t as unknown as Table, "kind", "x");
+    const groups = new SplitRows(t as unknown as Table, "kind", "x");
     t.append({ x: Float64Array.of(1, 2, 3, 4), kind: ["a", "b", "a", "b"] });
     const [a] = groups.groups();
     t.append({ x: Float64Array.of(5, 6), kind: ["a", "b"] });
@@ -122,7 +122,7 @@ describe("row groups", () => {
 
   it("leave rows given out unchanged, for scenes and charts that still read them", () => {
     const t = stream(6);
-    const groups = new RowGroups(t as unknown as Table, "kind", "x");
+    const groups = new SplitRows(t as unknown as Table, "kind", "x");
     t.append({ x: Float64Array.of(1, 2, 3, 4, 5, 6), kind: ["a", "b", "a", "b", "a", "b"] });
     const given = groups.groups().map(({ rows }) => [rows, Array.from(rows)] as const);
     // Drops rebase the rest, and appends past a buffer's end grow it.
@@ -175,10 +175,10 @@ describe("row groups", () => {
       });
     add(4);
     for (const x of [undefined, "at"]) {
-      const groups = new RowGroups(t as unknown as Table, "kind", x);
+      const groups = new SplitRows(t as unknown as Table, "kind", x);
       add(3);
       const { codes, dictionary } = t.categories("kind");
-      const expected = groupRows(codes, dictionary.length).map((rows, code) => [
+      const expected = rowsByCode(codes, dictionary.length).map((rows, code) => [
         dictionary[code],
         Array.from(rows),
         false,
@@ -199,7 +199,7 @@ describe("row groups", () => {
 
   it("give back room as a window shrinks a group", () => {
     const t = stream(100_000);
-    const groups = new RowGroups(t as unknown as Table, "kind", "x");
+    const groups = new SplitRows(t as unknown as Table, "kind", "x");
     t.append({
       x: Float64Array.from({ length: 100_000 }, (_, i) => i),
       kind: Array(100_000).fill("a"),
@@ -213,7 +213,7 @@ describe("row groups", () => {
 
   it("keep groups and their keys when a window renumbers the field's codes", () => {
     const t = stream(10);
-    const groups = new RowGroups(t as unknown as Table, "kind", "x");
+    const groups = new SplitRows(t as unknown as Table, "kind", "x");
     // A name ahead of "kept" in the dictionary, which the window drops.
     t.append({ x: Float64Array.of(0, 0.5), kind: ["early", "kept"] });
     const first = groups.groups().find(({ name }) => name === "kept")!;
@@ -240,7 +240,7 @@ describe("row groups", () => {
 
   it("count a missing x as not ascending, as regrouping does", () => {
     const t = stream(2);
-    const groups = new RowGroups(t as unknown as Table, "kind", "x");
+    const groups = new SplitRows(t as unknown as Table, "kind", "x");
     t.append({ x: Float64Array.of(Number.NaN), kind: ["a"] });
     expect(groups.groups()[0]!.sorted).toBe(false);
     t.append({ x: Float64Array.of(3, Number.NaN), kind: ["b", "a"] });
@@ -249,7 +249,7 @@ describe("row groups", () => {
 
   it("tell when x stops ascending in a group, and when the inversion leaves the window", () => {
     const t = stream(3);
-    const groups = new RowGroups(t as unknown as Table, "kind", "x");
+    const groups = new SplitRows(t as unknown as Table, "kind", "x");
     t.append({ x: Float64Array.of(5, 1, 2), kind: ["a", "a", "a"] });
     expect(groups.groups()[0]!.sorted).toBe(false);
     t.append({ x: Float64Array.of(3), kind: ["a"] });

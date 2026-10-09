@@ -39,6 +39,16 @@ export {
   geometry,
   geometryBytes,
 } from "./data/geometry.ts";
+export {
+  type GroupAggregate,
+  type GroupKey,
+  type GroupOp,
+  type GroupOptions,
+  type GroupSchema,
+  groupRows,
+  type NamedAggregate,
+  RowGroups,
+} from "./data/groups.ts";
 export type { SortKey } from "./data/order.ts";
 export { RowSet } from "./data/row-set.ts";
 export { type RowQuery, type RowSnapshot, RowView, rowView } from "./data/row-view.ts";

@@ -741,7 +741,12 @@ export interface Aggregation<F extends string = string> {
   field?: F;
 }
 
-export const count = () => ({ op: "count" }) as const;
+/** Counts rows; with a field, its finite values. */
+export function count(): { readonly op: "count" };
+export function count<F extends string>(field: F): { readonly op: "count"; readonly field: F };
+export function count(field?: string) {
+  return field === undefined ? { op: "count" } : { op: "count", field };
+}
 export const sum = <F extends string>(field: F) => ({ op: "sum", field }) as const;
 export const mean = <F extends string>(field: F) => ({ op: "mean", field }) as const;
 export const median = <F extends string>(field: F) => ({ op: "median", field }) as const;

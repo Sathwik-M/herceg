@@ -1,12 +1,21 @@
 // A grid in the page, imported with its model as `herceg/grid`. It scrolls a
 // spacer as tall as its rows and mounts only the rows and cells in view, with
 // a few more around them, updated in place as it scrolls and as its model
-// changes. It follows the WAI grid pattern: one tab stop, a roving focused
-// cell, logical row and column indexes on what is mounted, and a polite
-// live region saying what sorting and selecting did.
+// changes. It follows the WAI grid pattern (the treegrid pattern when its
+// rows are grouped): one tab stop, a roving focused cell, logical row and
+// column indexes on what is mounted, and a polite live region saying what
+// sorting, selecting, expanding, and collapsing did.
 
+import type { GroupKey, RowGroups } from "../data/groups.ts";
 import type { Schema } from "../data/table.ts";
-import type { GridColumnLayout, GridFocus, GridModel, GridRange } from "../grid/model.ts";
+import type {
+  GridColumnLayout,
+  GridFocus,
+  GridModel,
+  GridRange,
+  GridRow,
+  SelectionState,
+} from "../grid/model.ts";
 import type { ThemeName, ThemeSpec } from "../spec/spec.ts";
 import { resolveTheme, themeReadsPage } from "../theme.ts";
 import { GRID_CSS, themeProperties } from "./grid-style.ts";
@@ -45,6 +54,8 @@ const HIDDEN_TEXT =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0";
 const INSTRUCTIONS =
   "Arrow keys, Page Up, Page Down, Home, and End move between cells. Space selects a row, Shift with arrow keys selects a range, and Control A selects every row. Enter on a column header sorts by it; Shift and Enter adds it to the sort.";
+const GROUP_INSTRUCTIONS =
+  " Rows are grouped. Enter on a group expands or collapses it, and Space selects its rows. On a row's first cell, Right Arrow expands a group, Left Arrow collapses it, and Left Arrow on a group's row goes to the group.";
 
 const MOVES = {
   ArrowUp: "up",
@@ -62,6 +73,8 @@ interface Cell {
   readonly element: HTMLDivElement;
   readonly text: Text;
   readonly sort: Text | undefined;
+  /** The expand toggle and checkbox of a group's first cell, made when first needed. */
+  controls: { element: HTMLSpanElement; check: HTMLSpanElement } | null;
   /** The body row it belongs to; null in the header. */
   readonly row: Row | null;
   /** The id of the column it shows, which it keeps when columns move. */
@@ -72,18 +85,20 @@ interface Cell {
   placed: GridColumnLayout | null;
 }
 
-/** A mounted body row, following the row whose identity it shows. */
+/** A mounted body row, following the row whose identity it shows, or the group whose header it is. */
 interface Row {
   readonly element: HTMLDivElement;
   cells: Cell[];
   index: number;
   identity: number;
   generation: number;
-  /** The table's `modifiedVersion` and the columns its text was written for. */
-  written: { modified: number; layout: readonly GridColumnLayout[] } | null;
+  /** The group it is the header of, among which groups; null for a table row. */
+  group: { id: string; key: GroupKey; groups: RowGroups } | null;
+  /** The table's `modifiedVersion`, the groups' revision, and the columns its text was written for. */
+  written: { modified: number; groups: number; layout: readonly GridColumnLayout[] } | null;
   y: number;
   width: number;
-  selected: boolean | null;
+  selected: SelectionState | null;
 }
 
 let nextId = 0;
@@ -101,6 +116,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   readonly #scroller: HTMLDivElement;
   readonly #headerRow: HTMLDivElement;
   readonly #body: HTMLDivElement;
+  readonly #description: HTMLDivElement;
   readonly #live: HTMLDivElement;
   readonly #cells = new WeakMap<Element, Cell>();
   #options: GridOptions<S>;
@@ -152,7 +168,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     const description = element(document);
     description.id = `herceg-grid-${++nextId}-keys`;
     description.hidden = true;
-    description.textContent = INSTRUCTIONS;
+    this.#description = description;
     this.#scroller.setAttribute("aria-describedby", description.id);
     this.#live = element(document);
     this.#live.setAttribute("aria-live", "polite");
@@ -318,12 +334,17 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
 
   /**
    * The grid's own attributes. With no column shown it has no rows (a row
-   * needs cells), so it is a named group until columns come back.
+   * needs cells), so it is a named group until columns come back; with
+   * groups it is a tree grid.
    */
   #describe(rows: number, columns: number) {
     const scroller = this.#scroller;
     const grid = columns > 0;
-    setAttribute(scroller, "role", grid ? "grid" : "group");
+    const grouped = this.model.groups !== null;
+    setAttribute(scroller, "role", grid ? (grouped ? "treegrid" : "grid") : "group");
+    const instructions = grouped ? INSTRUCTIONS + GROUP_INSTRUCTIONS : INSTRUCTIONS;
+    if (this.#description.textContent !== instructions)
+      this.#description.textContent = instructions;
     // Rows and row groups belong in a grid. Their elements stay laid out, so
     // the scroll offset is kept for when columns come back.
     for (const [element, role] of [
@@ -433,16 +454,23 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       if (outside >= rowEnd) indices.push(outside);
     }
 
-    // Rows keep their elements by identity, so a row that moves (a rolling
-    // window dropping rows above it, a sort) keeps its text.
+    // Rows keep their elements by identity, and groups' headers by key, so a
+    // row that moves (a rolling window dropping rows above it, a sort, a
+    // group expanding above it) keeps its text.
     const generation = model.data.source.generation;
-    const previous = new Map<number, Row>();
-    for (const row of this.#rows)
-      if (row.generation === generation) previous.set(row.identity, row);
-    const identities = indices.map((index) => model.identityAt(index));
-    const found = identities.map((identity) => {
-      const row = previous.get(identity);
-      previous.delete(identity);
+    const groups = model.groups as RowGroups | null;
+    const previous = new Map<number | string, Row>();
+    for (const row of this.#rows) {
+      // Headers of other groups (the grid's groups replaced) may share ids.
+      if (row.group) {
+        if (row.group.groups === groups) previous.set(row.group.id, row);
+      } else if (row.generation === generation) previous.set(row.identity, row);
+    }
+    const entries = indices.map((index) => model.row(index));
+    const found = entries.map((entry) => {
+      const key = entry.kind === "group" ? entry.id : entry.identity;
+      const row = previous.get(key);
+      previous.delete(key);
       return row;
     });
     // Rows no longer shown, those from before a reset among them.
@@ -450,10 +478,15 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     const free = this.#rows.filter((row) => !kept.has(row));
     const rows = found.map((row, k) => {
       if (row) return row;
+      const entry = entries[k]!;
       const reused = free.pop() ?? this.#newRow();
-      reused.identity = identities[k]!;
-      reused.generation = generation;
+      reused.identity = entry.kind === "group" ? -1 : entry.identity;
+      reused.generation = entry.kind === "group" ? -1 : generation;
+      reused.group =
+        entry.kind === "group" ? { id: entry.id, key: entry.key, groups: groups! } : null;
       reused.written = null;
+      // Group headers and table rows mark selection differently.
+      reused.selected = null;
       return reused;
     });
     for (const row of free) row.element.remove();
@@ -465,10 +498,13 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     this.#rows = rows;
 
     const modified = model.data.source.modifiedVersion;
+    const revision = groups?.revision ?? -1;
+    const grouped = groups !== null;
     const height = model.rowHeight;
     for (let k = 0; k < rows.length; k++) {
       const row = rows[k]!;
       const index = indices[k]!;
+      const entry = entries[k]!;
       if (row.index !== index) {
         row.index = index;
         row.element.setAttribute("aria-rowindex", String(index + 2));
@@ -482,21 +518,80 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
         row.width = model.width;
         row.element.style.width = `${model.width}px`;
       }
-      const selected = model.isSelected(index);
+      this.#placeInTree(row.element, entry, grouped);
+      const selected = model.selectionState(index);
       if (row.selected !== selected) {
         row.selected = selected;
-        row.element.setAttribute("aria-selected", String(selected));
+        // A group's header can be partly selected, which its checkbox says.
+        if (entry.kind === "group") row.element.removeAttribute("aria-selected");
+        else row.element.setAttribute("aria-selected", String(selected === "all"));
+        row.element.dataset.selection = selected;
       }
-      const stale = row.written?.modified !== modified || row.written.layout !== layout;
-      row.written = { modified, layout };
+      const written = row.written;
+      const stale =
+        written?.modified !== modified ||
+        written.layout !== layout ||
+        (entry.kind === "group" && written.groups !== revision);
+      row.written = { modified, groups: revision, layout };
       const columns = columnsOf(shown, keep?.rowIndex === index ? keep : null);
       row.cells = this.#mountCells(row.element, row, row.cells, columns, layout);
       for (const cell of row.cells) {
         const column = layout[cell.column]!;
-        if (this.#place(cell, column) || stale)
-          setText(cell.text, model.textAt(index, cell.column));
+        const controls = entry.kind === "group" && cell.column === 0;
+        const placed = this.#place(cell, column);
+        const decorated = this.#decorate(cell, controls, selected);
+        if (placed || decorated || stale) setText(cell.text, model.textAt(index, cell.column));
       }
     }
+  }
+
+  /** A row's place in the tree, for grouped grids: its level, place among its siblings, and expansion. */
+  #placeInTree(element: HTMLDivElement, entry: GridRow, grouped: boolean) {
+    if (!grouped) {
+      for (const name of ["aria-level", "aria-posinset", "aria-setsize", "aria-expanded"])
+        element.removeAttribute(name);
+      return;
+    }
+    setAttribute(element, "aria-level", String(entry.level));
+    setAttribute(element, "aria-posinset", String(entry.setIndex + 1));
+    setAttribute(element, "aria-setsize", String(entry.setSize));
+    if (entry.kind === "group") setAttribute(element, "aria-expanded", String(entry.expanded));
+    else element.removeAttribute("aria-expanded");
+  }
+
+  /**
+   * Puts a group's expand toggle and checkbox in a cell, or takes them out;
+   * whether they came or went (the text must be written again).
+   */
+  #decorate(cell: Cell, wanted: boolean, selected: SelectionState): boolean {
+    const shown = cell.controls?.element.parentNode === cell.element;
+    if (wanted) {
+      let controls = cell.controls;
+      if (!controls) {
+        const document = this.root.ownerDocument;
+        const element = document.createElement("span");
+        element.className = "hg-controls";
+        const toggle = document.createElement("span");
+        toggle.className = "hg-toggle";
+        toggle.setAttribute("aria-hidden", "true");
+        const check = document.createElement("span");
+        check.className = "hg-check";
+        check.setAttribute("role", "checkbox");
+        check.setAttribute("aria-label", "Select");
+        element.append(toggle, check);
+        controls = { element, check };
+        cell.controls = controls;
+      }
+      setAttribute(
+        controls.check,
+        "aria-checked",
+        selected === "all" ? "true" : selected === "some" ? "mixed" : "false",
+      );
+      if (!shown) cell.element.insertBefore(controls.element, cell.text);
+    } else if (shown) {
+      cell.controls!.element.remove();
+    }
+    return wanted !== shown;
   }
 
   #newRow(): Row {
@@ -508,6 +603,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       index: -1,
       identity: -1,
       generation: -1,
+      group: null,
       written: null,
       y: Number.NaN,
       width: -1,
@@ -574,7 +670,16 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       mark.append(sort);
       element.append(mark);
     }
-    const cell: Cell = { element, text, sort, row, id: "", column: -1, placed: null };
+    const cell: Cell = {
+      element,
+      text,
+      sort,
+      controls: null,
+      row,
+      id: "",
+      column: -1,
+      placed: null,
+    };
     this.#cells.set(element, cell);
     return cell;
   }
@@ -669,11 +774,19 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       const across =
         target === "left" || target === "right" || target === "rowStart" || target === "rowEnd";
       const before = model.selection.revision;
+      const group = this.#groupAt(focus.rowIndex);
       model.moveFocus(target, { extend: event.shiftKey && !across });
       if (model.selection.revision !== before) this.#announceSelection();
+      // Left and Right expand and collapse groups on their first cell.
+      if (group && model.isExpanded(group.key) !== group.expanded)
+        this.#announceExpansion(focus.rowIndex);
     } else if ((key === " " || key === "Enter") && focus.rowIndex < 0) {
       model.cycleSort(focus.column, { additive: event.shiftKey });
       this.#announceSort();
+    } else if (key === "Enter" && this.#groupAt(focus.rowIndex)) {
+      const { key: groupKey, expanded } = this.#groupAt(focus.rowIndex)!;
+      model.setExpanded(groupKey, !expanded);
+      this.#announceExpansion(focus.rowIndex);
     } else if (key === " ") {
       model.select(focus.rowIndex, "toggle");
       this.#announceSelection();
@@ -699,17 +812,23 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     this.#press = null;
     // A press that moved selected text.
     if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > CLICK_SLOP) return;
-    const target = this.#cellOf(
-      (event.target as Element).closest("[role=gridcell],[role=columnheader]"),
-    );
+    const clicked = event.target as Element;
+    const target = this.#cellOf(clicked.closest("[role=gridcell],[role=columnheader]"));
     if (!target) return;
     const { rowIndex, column } = target;
     const model = this.model;
     // Focus first: listeners of the sort or the selection may change the rows.
     model.focusCell(rowIndex, column);
+    const group = this.#groupAt(rowIndex);
     if (rowIndex < 0) {
       model.cycleSort(column, { additive: event.shiftKey });
       this.#announceSort();
+    } else if (group && clicked.closest(".hg-toggle")) {
+      model.setExpanded(group.key, !group.expanded);
+      this.#announceExpansion(rowIndex);
+    } else if (group && clicked.closest(".hg-check")) {
+      model.select(rowIndex, "toggle");
+      this.#announceSelection();
     } else {
       const command = event.ctrlKey || event.metaKey;
       model.select(
@@ -753,9 +872,26 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     if (!cell || !column || column.field !== cell.placed?.field) return null;
     const { row } = cell;
     if (!row) return { rowIndex: -1, column: cell.id };
-    if (row.generation !== this.model.data.source.generation) return null;
-    const rowIndex = this.model.rowIndexOf(row.identity);
+    let rowIndex: number;
+    if (row.group) {
+      if (row.group.groups !== (this.model.groups as RowGroups | null)) return null;
+      rowIndex = this.model.rowIndexOfGroup(row.group.key);
+    } else if (row.generation !== this.model.data.source.generation) return null;
+    else rowIndex = this.model.rowIndexOf(row.identity);
     return rowIndex < 0 ? null : { rowIndex, column: cell.id };
+  }
+
+  /** The group whose header is at `rowIndex`, as it is now; null for other rows. */
+  #groupAt(rowIndex: number): (GridRow & { kind: "group" }) | null {
+    if (rowIndex < 0 || !this.model.groups) return null;
+    const row = this.model.row(rowIndex);
+    return row.kind === "group" ? row : null;
+  }
+
+  #announceExpansion(rowIndex: number) {
+    const group = this.#groupAt(rowIndex);
+    if (group)
+      this.#say(`${this.model.textAt(rowIndex, 0)} ${group.expanded ? "expanded" : "collapsed"}`);
   }
 
   #announceSort() {

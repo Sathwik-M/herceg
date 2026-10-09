@@ -171,6 +171,7 @@ describe("transforms", () => {
         groupby: ["g"],
         ops: {
           n: count(),
+          values: count("v"),
           sum: sum("v"),
           mean: mean("v"),
           median: median("v"),
@@ -205,7 +206,15 @@ describe("transforms", () => {
     expect(row(0).var).toBeCloseTo(7 / 3);
     expect(row(0).sd).toBeCloseTo(Math.sqrt(7 / 3));
     // Missing values are left out of every operation but count without a field.
-    expect(row(1)).toMatchObject({ n: 3, sum: 30, mean: 15, min: 10, max: 20, last: null });
+    expect(row(1)).toMatchObject({
+      n: 3,
+      values: 2,
+      sum: 30,
+      mean: 15,
+      min: 10,
+      max: 20,
+      last: null,
+    });
     // Without groups, one row; with several fields, one per combination.
     expect(
       values(
