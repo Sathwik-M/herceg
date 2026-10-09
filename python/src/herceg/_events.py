@@ -54,9 +54,12 @@ def decode_range(payload: Any) -> tuple[Value, Value] | None:
     """An x range from the browser: ``{"x": [start, end], "time": bool}`` or null."""
     if not payload:
         return None
-    start, end = payload["x"]
     time = bool(payload.get("time"))
-    return _value(start, time), _value(end, time)
+    start, end = (_value(value, time) for value in payload["x"])
+    # A range has both ends; the browser never sends a half.
+    if start is None or end is None:
+        return None
+    return start, end
 
 
 def encode_range(value: Any) -> dict[str, Any] | None:

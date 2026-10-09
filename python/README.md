@@ -56,8 +56,8 @@ Shapely; shapes travel as packed binary arrays, not JSON coordinates.
 Coordinates must be longitudes and latitudes in degrees (WGS 84): a
 GeoDataFrame in a projected reference system is refused with a hint to
 `to_crs(4326)`. As in Plotly, `geojson=` with `locations=` and
-`featureidkey=` (`"id"` or `"properties.<name>"`, compared as text, so
-leading zeros count) joins a dataframe's values to the features: every
+`feature_id_key=` (Plotly's `featureidkey`: `"id"` or `"properties.<name>"`,
+compared as text, so leading zeros count) joins a dataframe's values to the features: every
 feature is drawn, those no row names without a value. `hg.Chart(...,
 projection=...)` combines `.geoshape(...)` regions and `.geopoint(...)`
 points on one map; `projection` is a name (`"equal-earth"`,
@@ -102,6 +102,14 @@ notebook outputs are separate iframes, so `sync` does not reach across
 cells), `animation` (`True`, or milliseconds: zooming to a brush and
 double-click reset move the axes gradually in HTML output), `renderer`,
 `theme` (below), `locale`, `time_zone`, and `projection` (maps, above).
+
+The one-call helpers (`hg.line`, `hg.scatter`, which adds `point` marks,
+`hg.choropleth`, which adds `geoshape` marks, and the rest) take the same
+chart options after their own, except that their `x` and `y` name columns:
+the axes are `x_axis` and `y_axis` there. The options are typed
+(`hg.ChartOptions`, `hg.HelperOptions`, and `hg.ChartUpdate` for live
+updates), so type checkers catch misspelled ones; `None` takes an option's
+default.
 
 `theme` is `"light"` (the default), `"dark"`, `"high-contrast"`,
 `"high-contrast-dark"`, `"auto"` (light or dark to match the surface the chart

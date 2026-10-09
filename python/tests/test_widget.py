@@ -232,6 +232,24 @@ def test_update_sends_the_changed_options_only():
         widget.update(facet="host")
 
 
+def test_none_resets_every_option_without_sending_nested_nones():
+    from herceg._chart import OPTIONS
+
+    def nested_none(value) -> bool:
+        if isinstance(value, dict):
+            return any(v is None or nested_none(v) for v in value.values())
+        if isinstance(value, list):
+            return any(v is None or nested_none(v) for v in value)
+        return False
+
+    for option in OPTIONS:
+        widget, browser = live(title="A", zoom=True, animation=300, theme="dark", width=300)
+        widget.update(**{option: None})
+        sent = browser.last[0].get("options", {}) if browser.messages else {}
+        # A None option is removed; None inside an option's value would be sent as null.
+        assert not any(nested_none(value) for value in sent.values()), (option, sent)
+
+
 def test_live_charts_share_x():
     chart = hg.Chart(data(), facet="host", resolve_x="independent").line(x="t", y="v")
     with pytest.raises(ValueError, match="resolve_x must be 'shared'"):

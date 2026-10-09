@@ -47,6 +47,15 @@ export interface ChartOptions extends ChartConfig {
   height?: number;
 }
 
+/**
+ * Changes for `update`. Each option given replaces the chart's (nested
+ * ones, such as an axis or `interaction`, whole), one given as `undefined`
+ * goes back to its default, and options left out keep their values.
+ */
+export type ChartUpdate = {
+  [K in keyof ChartOptions]?: K extends "marks" ? ChartOptions[K] : ChartOptions[K] | undefined;
+};
+
 /** Above this many drawn points, "auto" moves marks from SVG to Canvas. */
 const CANVAS_ABOVE = 4000;
 /** Below this many, "auto" moves them back (hysteresis avoids flapping). */
@@ -246,8 +255,10 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   /** Replaces options. Unspecified keys keep their current values. */
-  update(options: Partial<ChartOptions>): void {
-    this.#options = { ...this.#options, ...options };
+  update(options: ChartUpdate): void {
+    const next: Record<string, unknown> = { ...this.#options, ...options };
+    for (const [key, value] of Object.entries(options)) if (value === undefined) delete next[key];
+    this.#options = next as unknown as ChartOptions;
     readPage(this.#container, (page) => this.model.update(this.#options, page));
     // The page was just read; a change it had is in the theme now.
     this.#pageChanged = false;

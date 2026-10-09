@@ -89,3 +89,7 @@ export function Drawn() {
     </Chart>
   );
 }
+
+// Optional props may be undefined, which takes the default.
+declare const maybeTitle: string | undefined;
+export const untitled = <Chart title={maybeTitle} legend={undefined} />;

@@ -77,7 +77,7 @@ def pack(values: Sequence[Any]) -> tuple[np.ndarray, Shapes]:
             continue
         shape = geometry_of(value)
         kind = shape.get("type") if shape is not None else None
-        if kind not in SHAPES:
+        if shape is None or kind not in SHAPES:
             what = kind or type(value).__name__
             hint = (
                 " (points go in longitude and latitude columns, for geopoint)"
@@ -87,7 +87,7 @@ def pack(values: Sequence[Any]) -> tuple[np.ndarray, Shapes]:
             raise TypeError(
                 f"row {row} holds a {what}; geometry columns hold polygons and multipolygons{hint}"
             )
-        parts = [shape.get("coordinates")] if kind == "Polygon" else shape.get("coordinates")
+        parts: Any = [shape.get("coordinates")] if kind == "Polygon" else shape.get("coordinates")
         if not isinstance(parts, Sequence) or isinstance(parts, str):
             raise TypeError(f"row {row} holds a {kind} without coordinates")
         for polygon in parts:
@@ -205,7 +205,7 @@ def feature_key(feature: Mapping[str, Any], key: str) -> Any:
         return feature.get("id")
     if key.startswith("properties."):
         return (feature.get("properties") or {}).get(key[len("properties.") :])
-    raise ValueError(f'featureidkey must be "id" or "properties.<name>", not {key!r}')
+    raise ValueError(f'feature_id_key must be "id" or "properties.<name>", not {key!r}')
 
 
 def key_text(value: Any) -> str | None:
