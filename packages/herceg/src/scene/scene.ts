@@ -130,8 +130,8 @@ export interface CloudPainter {
   /** Releases everything `owner` uploaded that no other chart uses. */
   release(owner: object): void;
   /**
-   * Draws a 3D chart's point cloud (a faces geometry with `cloud`) with a
-   * depth test, as `paint` draws 2D clouds; false when it cannot.
+   * Draws a 3D chart (a faces geometry with `batches`) with a depth test,
+   * as `paint` draws 2D clouds; false when it cannot.
    */
   paint3d?(
     context: CanvasRenderingContext2D,
@@ -507,12 +507,16 @@ export interface FaceGeometry extends Geometry {
   /** Each face's index into `styles`. */
   style: Uint16Array;
   styles: readonly FaceStyle[];
-  /** Set when a GPU painter draws the points instead of these faces (see PointCloud3D). */
-  cloud?: PointCloud3D | undefined;
+  /** Set when a GPU painter draws the chart instead of these faces (see Batches3D). */
+  batches?: Batches3D | undefined;
 }
 
-/** One layer of a 3D point cloud: its source columns and each row's color. */
-export interface CloudLayer3D {
+/** One layer of a 3D chart for a GPU painter (render/webgl3d.ts). */
+export type Batch3D = PointBatch3D | LineBatch3D | TriangleBatch3D;
+
+/** Points: the layer's source columns, placed by the axes' mappings, and each row's color. */
+export interface PointBatch3D {
+  kind: "points";
   /** Values per row, as the table holds them. */
   x: NumericArray;
   y: NumericArray;
@@ -527,13 +531,74 @@ export interface CloudLayer3D {
 }
 
 /**
- * The points of a 3D chart for a GPU painter, which draws them with a depth
- * test rather than in order: the layers' columns, how each axis maps values
- * into the box (as a scale's mapping onto -1 to 1), and the view.
+ * Paths drawn as ribbons a constant width on screen: runs of points in the
+ * box, each one's style saying how the segment to the next is drawn.
  */
-export interface PointCloud3D {
-  layers: readonly CloudLayer3D[];
-  axes: readonly [Mapping, Mapping, Mapping];
+export interface LineBatch3D {
+  kind: "lines";
+  /** The same object while `arrays()` gives the same arrays. */
+  key: object;
+  /** Segments drawn: what drawing them on the CPU would cost. */
+  segments: number;
+  /** CSS colors, opaque. */
+  palette: readonly string[];
+  /** In CSS pixels. */
+  width: number;
+  arrays(): LineArrays;
+}
+
+export interface LineArrays {
+  /**
+   * x, y, z per point in the box's normalized coordinates, inside it:
+   * segments reaching past the box are cut at its walls, in float64.
+   */
+  positions: Float32Array;
+  /** Per point: the index into `palette` of the segment to the next; 255 for none. */
+  style: Uint8Array;
+}
+
+/**
+ * Triangles of flat colors, lit as a whole cell is: a surface's cells. Each
+ * triangle takes its color and normal from its last vertex, as WebGL's flat
+ * attributes do.
+ */
+export interface TriangleBatch3D {
+  kind: "triangles";
+  /** The same object while `arrays()` gives the same arrays. */
+  key: object;
+  /** Cells drawn: what drawing them on the CPU would cost. */
+  cells: number;
+  /**
+   * RGBA bytes of the colors cells take: 256 per shading level, `levels`
+   * levels (1 for unshaded surfaces), from facing the light least to most.
+   */
+  shades: Uint8Array;
+  levels: number;
+  /** Steps of the depth buffer the triangles are drawn back by, so points and lines lying on them show. */
+  behind: number;
+  arrays(): TriangleArrays;
+}
+
+export interface TriangleArrays {
+  /** x, y, z per vertex, in the box's normalized coordinates. */
+  positions: Float32Array;
+  /** Per vertex: the unit normal (in the box's units) of the triangles ending at it; zero where degenerate. */
+  normals: Float32Array;
+  /** Per vertex: the color (an index into a level of `shades`) of the triangles ending at it. */
+  colors: Uint8Array;
+  /** Three vertices per triangle. */
+  indices: Uint16Array | Uint32Array;
+}
+
+/**
+ * A 3D chart for a GPU painter, which draws every layer with one depth
+ * test rather than in order: the layers, how each axis maps values into the
+ * box (as a scale's mapping onto -1 to 1) for points, the view, and the light.
+ */
+export interface Batches3D {
+  batches: readonly Batch3D[];
+  /** The axes' mappings, where every axis has one (category axes do not); point layers need them. */
+  axes: readonly [Mapping, Mapping, Mapping] | undefined;
   /** Screen x and y, and depth, per normalized coordinate: right x, y; up x, y, z; eye x, y, z. */
   view: Float64Array;
   cx: number;
@@ -541,8 +606,14 @@ export interface PointCloud3D {
   scale: number;
   /** The eye's distance in perspective; Infinity when orthographic. */
   distance: number;
-  /** The same points as faces in depth order, made when a canvas draws them without a GPU. */
-  faces(): FaceGeometry;
+  /** Toward the light, a unit vector in the box's units. */
+  light: readonly [number, number, number];
+  /**
+   * The same chart as faces in drawing order, made when a canvas draws it
+   * without a GPU. `lost` when the painter lost its context: marks too large
+   * for the CPU leave theirs out until a fresh painter draws them.
+   */
+  faces(lost?: boolean): FaceGeometry;
 }
 
 /** The geometry of the built-in marks, for code that narrows by kind. */

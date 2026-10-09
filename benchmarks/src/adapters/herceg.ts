@@ -162,7 +162,8 @@ function gridColumns(data: GridData) {
 export const adapter: Adapter = {
   id: "herceg",
   renderer: {
-    normal: "auto (svg below 4,000 drawn points, canvas above; 3D points from 20,000 on WebGL)",
+    normal:
+      "auto (svg below 4,000 drawn points, canvas above; 3D charts on WebGL from 20,000 points or 10,000 surface cells)",
     large: "auto",
   },
   line: lineKind(false),

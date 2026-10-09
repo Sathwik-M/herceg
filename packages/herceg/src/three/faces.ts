@@ -101,9 +101,15 @@ export class FaceBuffer {
 
   /**
    * Orders the faces, by key when `keyed` and then by depth, and returns
-   * the geometry drawing them in that order.
+   * the geometry drawing them in that order. `distance` is the eye's in
+   * perspective (Infinity orthographically), for depths between vertices.
    */
-  geometry(key: string, keyed: boolean, bounds: Rect): FaceGeometry {
+  geometry(
+    key: string,
+    keyed: boolean,
+    bounds: Rect,
+    distance = Number.POSITIVE_INFINITY,
+  ): FaceGeometry {
     const n = this.count;
     if (this.#order.length < n) {
       this.#order = new Uint32Array(Math.ceil(n * 1.25));
@@ -120,7 +126,7 @@ export class FaceBuffer {
       radixSort(order, n, keys, this.#scratch);
     }
     const mark = this.#gather(key, order);
-    return this.#placeDiscs(mark, order, keyed, bounds) ? this.#gather(key, order) : mark;
+    return this.#placeDiscs(mark, order, keyed, bounds, distance) ? this.#gather(key, order) : mark;
   }
 
   /** The geometry drawing the faces in `order`. */
@@ -158,17 +164,23 @@ export class FaceBuffer {
   }
 
   /**
-   * Places each disc among the polygons it overlaps on screen, which ordering
-   * by its center alone does not: after those behind it and before those in
-   * front, so cells drawn after a disc do not cut its edge though they lie
-   * behind it (seen from above), and nearer cells still do. A polygon
-   * covering the disc's center is in front when drawn after it in a `keyed`
-   * (exact) order; otherwise it is judged by its depth where it comes
-   * closest to the center. Overlapping discs are drawn by depth, farther
-   * first, unless that would draw one over a polygon in front of it.
-   * Whether the order changed.
+   * Places each disc among the polygons and segments it overlaps on screen,
+   * which ordering by its center alone does not: after those behind it and
+   * before those in front, so cells drawn after a disc do not cut its edge
+   * though they lie behind it (seen from above), and nearer cells still do.
+   * A polygon covering the disc's center is in front when drawn after it in
+   * a `keyed` (exact) order; otherwise (and segments always) it is judged by
+   * its depth where it comes closest to the center. Overlapping discs are
+   * drawn by depth, farther first, unless that would draw one over a polygon
+   * in front of it. Whether the order changed.
    */
-  #placeDiscs(mark: FaceGeometry, order: Uint32Array, keyed: boolean, bounds: Rect): boolean {
+  #placeDiscs(
+    mark: FaceGeometry,
+    order: Uint32Array,
+    keyed: boolean,
+    bounds: Rect,
+    eye: number,
+  ): boolean {
     const n = mark.count;
     const { starts, corners, vertices, style, styles } = mark;
     let count = 0;
@@ -182,6 +194,7 @@ export class FaceBuffer {
     let largest = 0;
     for (const s of styles) largest = Math.max(largest, s.radius);
     const faceDepth = this.depth;
+    const depths = new Depths(this.vertexDepth, eye);
     const near = new Float64Array(1);
     // Per drawing position of a disc, the slot it goes to: slot p is before
     // the polygon at position p and after those before it. -1 for polygons.
@@ -202,9 +215,10 @@ export class FaceBuffer {
       const found = polygons.overlapping(x - r, y - r, x + r, y + r);
       for (let f = 0; f < found; f++) {
         const q = polygons.found[f]!;
-        const distance = nearest(mark, this.vertexDepth, q, x, y, r, near);
+        const distance = nearest(mark, depths, q, x, y, r, near);
         if (distance > r * r) continue;
-        const inFront = keyed && distance === 0 ? q > k : near[0]! > depth;
+        const polygon = starts[q + 1]! - starts[q]! > 2;
+        const inFront = keyed && polygon && distance === 0 ? q > k : near[0]! > depth;
         if (distance === 0) {
           if (inFront) ahead = Math.min(ahead, q);
           else behind = Math.max(behind, q);
@@ -278,13 +292,15 @@ export class FaceBuffer {
 }
 
 /**
- * The squared screen distance from (x, y) to polygon k of `mark` (0 inside
- * it), or Infinity when its box lies farther than `within`; the depth at
- * the nearest point, by the vertices' depths `z`, goes to `near[0]`.
+ * The squared screen distance from (x, y) to face k of `mark` (0 inside a
+ * polygon; for a segment, from its stroke's edge), or Infinity when its box
+ * lies farther than `within`; the depth at the nearest point goes to
+ * `near[0]` (where triangles of a polygon folded on screen overlap, the
+ * nearest's).
  */
 function nearest(
   mark: FaceGeometry,
-  z: Float32Array,
+  depth: Depths,
   k: number,
   x: number,
   y: number,
@@ -305,12 +321,22 @@ function nearest(
     y0 = Math.min(y0, v[i * 2 + 1]!);
     y1 = Math.max(y1, v[i * 2 + 1]!);
   }
-  if (x < x0 - within || x > x1 + within || y < y0 - within || y > y1 + within)
+  const half = end - start === 2 ? mark.styles[mark.style[k]!]!.strokeWidth / 2 : 0;
+  const reach = within + half;
+  if (x < x0 - reach || x > x1 + reach || y < y0 - reach || y > y1 + reach)
     return Number.POSITIVE_INFINITY;
   const a = corners[start]!;
+  if (end - start === 2) {
+    const centerline = Math.sqrt(
+      toEdge(v, depth, a, corners[start + 1]!, x, y, Number.POSITIVE_INFINITY, near),
+    );
+    const outside = Math.max(0, centerline - half);
+    return outside * outside;
+  }
   const ax = v[a * 2]!;
   const ay = v[a * 2 + 1]!;
   let best = Number.POSITIVE_INFINITY;
+  let inside = Number.NEGATIVE_INFINITY;
   // Each triangle of the fan the polygon is filled as: inside it, or nearest one of its edges.
   for (let c = start + 1; c + 1 < end; c++) {
     const b = corners[c]!;
@@ -325,21 +351,56 @@ function nearest(
       const lb = ((ey - ay) * (x - ex) + (ax - ex) * (y - ey)) / area;
       const le = 1 - la - lb;
       if (la >= 0 && lb >= 0 && le >= 0) {
-        near[0] = la * z[a]! + lb * z[b]! + le * z[e]!;
-        return 0;
+        inside = Math.max(inside, depth.at3(a, b, e, la, lb, le));
+        continue;
       }
     }
-    best = toEdge(v, z, a, b, x, y, best, near);
-    best = toEdge(v, z, b, e, x, y, best, near);
-    best = toEdge(v, z, e, a, x, y, best, near);
+    best = toEdge(v, depth, a, b, x, y, best, near);
+    best = toEdge(v, depth, b, e, x, y, best, near);
+    best = toEdge(v, depth, e, a, x, y, best, near);
+  }
+  if (inside > Number.NEGATIVE_INFINITY) {
+    near[0] = inside;
+    return 0;
   }
   return best;
+}
+
+/**
+ * Depths between vertices, from theirs, interpolated as the projection
+ * makes them: linearly on screen orthographically, and in perspective (the
+ * eye `eye` away) as 1 / (eye - depth).
+ */
+class Depths {
+  readonly #z: Float32Array;
+  readonly #eye: number;
+
+  constructor(z: Float32Array, eye: number) {
+    this.#z = z;
+    this.#eye = eye;
+  }
+
+  /** Between vertices p and q, `t` of the way on screen. */
+  at2(p: number, q: number, t: number): number {
+    const z = this.#z;
+    const d = this.#eye;
+    if (d === Number.POSITIVE_INFINITY) return z[p]! + t * (z[q]! - z[p]!);
+    return d - 1 / ((1 - t) / (d - z[p]!) + t / (d - z[q]!));
+  }
+
+  /** In triangle (a, b, c), at screen barycentric weights la, lb, lc. */
+  at3(a: number, b: number, c: number, la: number, lb: number, lc: number): number {
+    const z = this.#z;
+    const d = this.#eye;
+    if (d === Number.POSITIVE_INFINITY) return la * z[a]! + lb * z[b]! + lc * z[c]!;
+    return d - 1 / (la / (d - z[a]!) + lb / (d - z[b]!) + lc / (d - z[c]!));
+  }
 }
 
 /** The squared distance from (x, y) to edge (p, q) when below `best`, noting the depth there in `near[0]`; else `best`. */
 function toEdge(
   v: Float32Array,
-  z: Float32Array,
+  depth: Depths,
   p: number,
   q: number,
   x: number,
@@ -357,7 +418,7 @@ function toEdge(
   const oy = py + t * dy - y;
   const distance = ox * ox + oy * oy;
   if (distance >= best) return best;
-  near[0] = z[p]! + t * (z[q]! - z[p]!);
+  near[0] = depth.at2(p, q, t);
   return distance;
 }
 
@@ -401,7 +462,7 @@ export function radixSort(order: Uint32Array, n: number, keys: Uint32Array, scra
 /** Discs in a cell beyond which placing discs takes the cell whole. */
 const CROWDED = 16;
 
-/** Pointer reach past a disc's edge, in pixels. */
+/** Pointer reach past a disc's or a segment's edge, in pixels. */
 const REACH = 3;
 /** Grid cells of the lookup, in pixels a side: at most, and at least where faces are dense. */
 const CELL = 24;
@@ -411,9 +472,10 @@ const WIDE = 64;
 
 /**
  * Finds the face drawn last (frontmost) under a pixel, through a uniform
- * grid: polygons are filed in every cell their box covers, discs in the
- * cell of their center, and a query looks as far around as discs reach.
- * Discs are found within REACH pixels of their edge.
+ * grid: polygons are filed in every cell their box covers, segments in every
+ * cell their stroke reaches, discs in the cell of their center, and a query
+ * looks as far around as discs reach. Discs and segments are found within
+ * REACH pixels of their edge.
  */
 export class FaceIndex {
   readonly #mark: FaceGeometry;
@@ -478,6 +540,14 @@ export class FaceIndex {
         if (x > x1) x1 = x;
         if (y < y0) y0 = y;
         if (y > y1) y1 = y;
+      }
+      // Segments are found within reach of their stroke.
+      if (end - start === 2) {
+        const reach = mark.styles[mark.style[k]!]!.strokeWidth / 2 + REACH;
+        x0 -= reach;
+        y0 -= reach;
+        x1 += reach;
+        y1 += reach;
       }
       const c0 = this.#cell(x0, this.#x0, columns);
       const r0 = this.#cell(y0, this.#y0, rows);
@@ -597,6 +667,20 @@ export class FaceIndex {
       const dx = v[a * 2]! - x;
       const dy = v[a * 2 + 1]! - y;
       return dx * dx + dy * dy <= r * r;
+    }
+    if (end - start === 2) {
+      const reach = mark.styles[mark.style[k]!]!.strokeWidth / 2 + REACH;
+      const b = corners[start + 1]!;
+      const dx = v[b * 2]! - v[a * 2]!;
+      const dy = v[b * 2 + 1]! - v[a * 2 + 1]!;
+      const length = dx * dx + dy * dy;
+      const t =
+        length > 0
+          ? Math.min(1, Math.max(0, ((x - v[a * 2]!) * dx + (y - v[a * 2 + 1]!) * dy) / length))
+          : 0;
+      const ox = v[a * 2]! + t * dx - x;
+      const oy = v[a * 2 + 1]! + t * dy - y;
+      return ox * ox + oy * oy <= reach * reach;
     }
     // Inside any triangle of the fan the face is filled with.
     for (let c = start + 1; c + 1 < end; c++) {

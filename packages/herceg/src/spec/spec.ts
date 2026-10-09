@@ -101,7 +101,7 @@ export interface ChartSpec {
    */
   projection?: ProjectionName | ProjectionSpec;
   /**
-   * The vertical axis of 3D charts (`point3d` and `surface` marks), whose
+   * The vertical axis of 3D charts (`point3d`, `line3d`, and `surface` marks), whose
    * `x` and `y` are the floor's. Only for 3D charts.
    */
   z?: AxisSpec;
@@ -573,6 +573,7 @@ export type MarkSpec =
   | GeoShapeSpec
   | GeoPointSpec
   | Point3DSpec
+  | Line3DSpec
   | SurfaceSpec;
 
 interface MarkBase {
@@ -1264,6 +1265,29 @@ export interface Point3DSpec {
   /** Default 1. */
   fillOpacity?: number;
   /** Legend and tooltip name of points without `series`. */
+  label?: string;
+}
+
+/**
+ * Lines through (x, y, z) in a 3D chart: number or time fields, z vertical.
+ * Each series' rows, in table order, are one path; a row missing a value
+ * (or without a place on a log axis) breaks it. Lines share the chart's box
+ * with its other 3D marks.
+ */
+export interface Line3DSpec {
+  type: "line3d";
+  data?: string;
+  id?: string;
+  x: Field;
+  y: Field;
+  z: Field;
+  /** Category field: one path per value, each with its color and legend entry. */
+  series?: Field;
+  /** One color for every path; by default each series takes the chart's next. */
+  stroke?: string;
+  /** Width in pixels, the same however near or far; default 2. */
+  strokeWidth?: number;
+  /** Legend and tooltip name of the path without `series`. */
   label?: string;
 }
 

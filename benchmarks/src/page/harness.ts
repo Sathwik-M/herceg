@@ -76,6 +76,34 @@ interface Timing {
 }
 
 /** Times `operation` to its first frame and to completed rendering. */
+/**
+ * Runs `run` (a scenario, from mounting to cleanup), failing it when a chart
+ * fails outside the calls it returned from: in a promise the library does
+ * not hand back, or in an animation frame. ResizeObserver's loop notices,
+ * which browsers report as errors though nothing failed, do not count.
+ */
+async function guarded<T>(run: () => Promise<T>): Promise<T> {
+  let failure: { reason: unknown } | undefined;
+  const rejected = (event: PromiseRejectionEvent) => {
+    failure ??= { reason: event.reason };
+  };
+  const thrown = (event: ErrorEvent) => {
+    if (!event.message.includes("ResizeObserver loop")) failure ??= { reason: event.error };
+  };
+  window.addEventListener("unhandledrejection", rejected);
+  window.addEventListener("error", thrown);
+  try {
+    const result = await run();
+    // Failures from cleaning up arrive after it: a frame later at the latest.
+    await nextFrame();
+    if (failure) throw failure.reason;
+    return result;
+  } finally {
+    window.removeEventListener("unhandledrejection", rejected);
+    window.removeEventListener("error", thrown);
+  }
+}
+
 async function timed(
   operation: () => unknown,
   handle?: () => AnyHandle | undefined,
@@ -534,6 +562,57 @@ async function runRotate(
   return { supported: true, metrics: { cameraToFrame: frame } };
 }
 
+/** The time of the next animation frame. */
+function animationFrame(): Promise<number> {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+/**
+ * Turns a 3D chart's camera a step every frame, as dragging does, with the
+ * display's refresh on: the intervals between frames, unlike `rotate`'s
+ * timings, include work the GPU has not finished when a frame's script ends.
+ */
+async function runOrbit(
+  adapter: Adapter,
+  kind: ChartKind<AnyData>,
+  s: Scenario,
+): Promise<PageResult> {
+  const handle = await create(kind, makeData(s, 1), optionsFor(s));
+  try {
+    if (!handle.setCamera)
+      return {
+        supported: false,
+        reason: `${adapter.id} adapter has no camera path`,
+        metrics: {},
+      };
+    const refresh = await refreshInterval();
+    const angles = cameraAngles(s.warmup + s.samples);
+    const intervals: number[] = [];
+    let last = await animationFrame();
+    for (let i = 0; i < angles.length; i++) {
+      const [azimuth, elevation] = angles[i]!;
+      await handle.setCamera(azimuth, elevation);
+      const now = await animationFrame();
+      if (i >= s.warmup) intervals.push(now - last);
+      last = now;
+    }
+    // A frame later than half a refresh past its time missed it.
+    const missed = intervals.filter((interval) => interval > refresh * 1.5).length;
+    return {
+      supported: true,
+      metrics: {
+        frameInterval: metric("ms", intervals),
+        missedFrames: metric("count", [missed]),
+        refreshInterval: metric("ms", [refresh]),
+      },
+    };
+  } finally {
+    handle.destroy();
+    clearStage();
+    await nextFrame();
+  }
+}
+
 async function runResize(kind: ChartKind<AnyData>, s: Scenario): Promise<PageResult> {
   const options = optionsFor(s);
   const handle = await create(kind, makeData(s, 1), options);
@@ -644,51 +723,57 @@ export interface Bench {
 
 let pointerDone: Promise<number> = Promise.resolve(0);
 
+async function runScenario(adapter: Adapter, s: Scenario): Promise<PageResult> {
+  const missing = unsupported(adapter, s);
+  if (missing) return missing;
+  const kind = kindFor(adapter, s)!;
+  switch (s.operation) {
+    case "init":
+      return runInit(kind, s);
+    case "update":
+      return runUpdate(kind, s);
+    case "stream":
+      return runStream(adapter, kind, s);
+    case "ingest":
+      return runIngest(adapter, kind, s);
+    case "resize":
+      return runResize(kind, s);
+    case "zoom":
+      return runZoom(adapter, kind, s);
+    case "dashboard":
+      return runDashboard(kind, s);
+    case "rotate":
+      return runRotate(adapter, kind, s);
+    case "orbit":
+      return runOrbit(adapter, kind, s);
+    default:
+      throw new Error(`${s.operation} is driven by the runner`);
+  }
+}
+
 export function installHarness(adapter: Adapter): void {
   const bench: Bench = {
     id: adapter.id,
     renderer: adapter.renderer,
     refreshInterval: () => refreshInterval(),
-    async run(s) {
-      const missing = unsupported(adapter, s);
-      if (missing) return missing;
-      const kind = kindFor(adapter, s)!;
-      switch (s.operation) {
-        case "init":
-          return runInit(kind, s);
-        case "update":
-          return runUpdate(kind, s);
-        case "stream":
-          return runStream(adapter, kind, s);
-        case "ingest":
-          return runIngest(adapter, kind, s);
-        case "resize":
-          return runResize(kind, s);
-        case "zoom":
-          return runZoom(adapter, kind, s);
-        case "dashboard":
-          return runDashboard(kind, s);
-        case "rotate":
-          return runRotate(adapter, kind, s);
-        default:
-          throw new Error(`${s.operation} is driven by the runner`);
-      }
-    },
+    // Every scenario, from mounting to cleanup, fails on failures reported outside its calls.
+    run: (s) => guarded(() => runScenario(adapter, s)),
     prepareData(s) {
       retainedData = Array.from({ length: s.charts ?? 1 }, (_, c) => makeData(s, 1 + c));
       return retainedData.length;
     },
-    async mount(s) {
-      const missing = unsupported(adapter, s);
-      if (missing) return missing;
-      const kind = kindFor(adapter, s)!;
-      const options = optionsFor(s);
-      if (retainedData.length === 0) bench.prepareData(s);
-      active = [];
-      for (const data of retainedData) active.push(await create(kind, data, options));
-      await nextFrame();
-      return { supported: true };
-    },
+    mount: (s) =>
+      guarded(async () => {
+        const missing = unsupported(adapter, s);
+        if (missing) return missing;
+        const kind = kindFor(adapter, s)!;
+        const options = optionsFor(s);
+        if (retainedData.length === 0) bench.prepareData(s);
+        active = [];
+        for (const data of retainedData) active.push(await create(kind, data, options));
+        await nextFrame();
+        return { supported: true };
+      }),
     hoverTargets,
     footprint() {
       const root = stage();
@@ -708,13 +793,13 @@ export function installHarness(adapter: Adapter): void {
       });
     },
     pointerLatency: () => pointerDone,
-    async unmount() {
-      for (const handle of active) handle.destroy();
-      active = [];
-      retainedData = [];
-      clearStage();
-      await nextFrame();
-    },
+    unmount: () =>
+      guarded(async () => {
+        for (const handle of active) handle.destroy();
+        active = [];
+        retainedData = [];
+        clearStage();
+      }),
     gpu() {
       const gl = document.createElement("canvas").getContext("webgl");
       const info = gl?.getExtension("WEBGL_debug_renderer_info");

@@ -761,6 +761,18 @@ const MARKS: MarkChecks = {
       label: string,
     },
   },
+  line3d: {
+    required: ["x", "y", "z"],
+    checks: {
+      x: field,
+      y: field,
+      z: field,
+      series: field,
+      stroke: string,
+      strokeWidth: positive,
+      label: string,
+    },
+  },
   surface: {
     required: ["x", "y", "z"],
     checks: {
@@ -1197,11 +1209,11 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
   // A 3D chart's options mean nothing to other charts, which an older
   // reader might draw without them.
   const threeD = (chart.marks as Record<string, unknown>[]).some(
-    ({ type }) => type === "point3d" || type === "surface",
+    ({ type }) => type === "point3d" || type === "line3d" || type === "surface",
   );
   for (const name of ["z", "camera", "boxAspect"])
     if (chart[name] !== undefined && !threeD)
-      fail(`spec.${name}`, "a spec with point3d or surface marks", chart[name]);
+      fail(`spec.${name}`, "a spec with point3d, line3d, or surface marks", chart[name]);
   // Marks name panels the chart has; with panels, every mark names one.
   const panels = chart.panels as { id: string }[] | undefined;
   if (chart.grid !== undefined && !panels) fail("spec.grid", "a spec with panels", chart.grid);

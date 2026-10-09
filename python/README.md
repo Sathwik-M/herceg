@@ -51,19 +51,25 @@ hg.choropleth(countries_gdf, "gdp", name="name", projection="equal-earth")  # a 
 hg.choropleth(rates, "rate", geojson=counties, locations="fips")  # values joined to shapes
 hg.scatter_geo(cities, "lon", "lat", r="population", name="city")  # bubbles on a map
 hg.scatter_3d(iris, x="sepal_length", y="sepal_width", z="petal_length", series="species")
+hg.line_3d(flights, x="east", y="north", z="altitude", series="flight")  # a path per flight
 hg.surface(terrain, x="east", y="north", z="height")  # a grid of rows
 hg.surface(z=heights, x=eastings, y=northings)  # a 2D array: row i, column j at y[i], x[j]
 ```
 
-3D charts draw `.point3d(...)` points and `.surface(...)` surfaces in one box
-(they share a chart with each other only), seen from `camera=hg.Camera(azimuth=-60,
+3D charts draw `.point3d(...)` points, `.line3d(...)` lines (each `series`
+category's rows, in order, one path, broken where a row has no value), and
+`.surface(...)` surfaces in one box (they share a chart with each other
+only), seen from `camera=hg.Camera(azimuth=-60,
 elevation=25, zoom=1, perspective=False)` (or a dict of those) and turned by
 dragging (`rotate=False` stops that), the wheel with `zoom=True`, the
 keyboard, and buttons in the chart's corner. `z=hg.Axis(...)` sets the
 vertical axis, `box_aspect=(2, 2, 1)` the box's proportions. A surface from a
-matrix travels as three columns with a row per grid point; a surface has at
-most 250,000 grid points, and rows not on a grid must be binned or
-aggregated first. Static SVG, PNG, and PDF show the starting camera.
+matrix travels as three columns with a row per grid point; rows not on a
+grid must be binned or aggregated first. In the browser, large 3D charts
+(20,000 points, 10,000 surface cells, or 20,000 line segments) are drawn
+with WebGL2 and depth-tested, up to 1,048,576 grid points a surface; static
+SVG, PNG, and PDF draw on the CPU, back to front, at most 250,000, and show
+the starting camera.
 
 Maps read shapes from GeoPandas GeoDataFrames, GeoJSON FeatureCollection
 dicts (properties become columns), or columns of GeoJSON geometries or

@@ -1,16 +1,23 @@
-// 3D charts: the layers of one (`point3d` points, `surface` surfaces) share
-// a box, its axes, and the camera. The chart model draws a chart's layout
-// marks as one, which for 3D charts is a `Plot3D`: it plans each axis over
-// every layer's data, lets each layer write its faces into one buffer, and
-// draws them in one order, so a point behind a surface is hidden by it.
+// 3D charts: the layers of one (`point3d` points, `line3d` lines, and
+// `surface` surfaces) share a box, its axes, and the camera. The chart model
+// draws a chart's layout marks as one, which for 3D charts is a `Plot3D`: it
+// plans each axis over every layer's data and draws the layers together,
+// either through a GPU painter, which draws them all with one depth test
+// (large charts whose every layer it can draw: see GPU_FACES_3D), or as
+// faces written into one buffer and drawn in one order, so a point behind a
+// surface is hidden by it.
 //
-// The order is exact for points alone (back to front) and for one surface
-// with any points: a height field over a grid can only hide what lies
-// beyond it from the eye, so its cells are drawn row by row and column by
-// column from the far side, and each point among the cells at its place,
+// The order of faces is exact for points alone (back to front) and for one
+// surface with any points: a height field over a grid can only hide what
+// lies beyond it from the eye, so its cells are drawn row by row and column
+// by column from the far side, and each point among the cells at its place,
 // before or after its own cell by which side of it the point is on. With
 // several surfaces, everything is drawn back to front by the depth of its
-// center, which can be wrong where surfaces come close or cross.
+// center, which can be wrong where surfaces come close or cross; lines are
+// approximate too (see marks/line3d.ts).
+//
+// The keyboard, screen readers, and the pointer on a GPU painter's charts
+// read the layers' data, never their faces.
 
 import type { Table } from "../data/table.ts";
 import { facesDrawing } from "../draw/faces.ts";
@@ -27,7 +34,7 @@ import {
 import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { TIME_UNIT_MS } from "../scale/time.ts";
-import type { CloudLayer3D, FaceGeometry, Geometry, PointCloud3D, Rect } from "../scene/scene.ts";
+import type { Batch3D, Batches3D, FaceGeometry, Geometry, Rect } from "../scene/scene.ts";
 import type { AxisSpec, CameraSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { type Axis3D, boxGeometry, boxMargin } from "../three/axes.ts";
@@ -67,30 +74,56 @@ export interface PlannedAxis extends Axis3D {
   categories?: ReadonlyMap<string, number>;
   /** How values map onto -1 to 1, for numbers and times; GPU painters place points with it. */
   mapping?: Mapping;
+  /** Equal for axes that place every value alike, so layers keep what they found for one. */
+  key: string;
 }
 
-/** What a layer draws with: the chart's frame, the box's view and axes, and the shared faces. */
+/** What a layer reads in a scene: the chart's frame, the box's view and axes, and the shared faces. */
 export interface Frame3D extends LayoutFrame {
   view: View;
   axes: readonly [PlannedAxis, PlannedAxis, PlannedAxis];
   faces: FaceBuffer;
-  /**
-   * With one surface in the chart, where its cells' order puts a point at
-   * normalized (x, y, z): the key points are sorted by before their depth.
-   */
-  rank: ((x: number, y: number, z: number) => number) | undefined;
 }
 
-/** What a layer drew, read back for tooltips and the keyboard. */
-export interface Placed3D {
+/** What a layer writes its faces with. */
+export interface FaceFrame3D extends Frame3D {
+  /** With one surface in the chart, the order of its cells, which places everything else. */
+  rank: Ranker | undefined;
+  /**
+   * Whether the faces stand in for a GPU painter that lost its context:
+   * layers too large for the CPU leave theirs out, rather than fail, until a
+   * fresh painter draws them.
+   */
+  lost: boolean;
+}
+
+/** With one surface in a chart, the order of its cells that places everything else among them. */
+export interface Ranker {
+  /** The key of a point at normalized (x, y, z): faces are sorted by key, then by depth. */
+  key(x: number, y: number, z: number): number;
+  /** The surface's columns and rows, normalized: lines are cut at them, so each piece lies over one cell. */
+  columns: Float64Array;
+  rows: Float64Array;
+}
+
+/**
+ * What a layer shows, read from its data rather than from faces, so the
+ * keyboard, screen readers, and summaries cost no projecting or sorting.
+ */
+export interface Items3D {
   /** How many items the keyboard visits, in reading order. */
   count: number;
+  /** An item, placed on screen for the frame's view. */
   item(index: number): LayoutItem;
   /** The place in reading order of the item keyed `key`; -1 if not drawn. */
   indexOf(key: string): number;
+  summary(): string;
+}
+
+/** What a layer's faces show, read back for the pointer. */
+export interface Placed3D {
   /** The item a face the layer wrote shows, with the pointer at (px, py). */
   itemOfFace(local: number, px: number, py: number): LayoutItem | undefined;
-  summary(): string;
 }
 
 /** One layer of a 3D chart. */
@@ -101,12 +134,28 @@ export interface Layer3D extends LayoutMark {
   axisData(k: number, log: boolean): AxisData;
   /** Continuous color scales for the legend. */
   scales(theme: Theme, locale: string | undefined): [ColorRamp[], GlyphKey[]];
-  /** A surface: what orders the chart's faces when it is the only one (see Frame3D.rank). */
-  ranker?(frame: Omit<Frame3D, "rank">): (x: number, y: number, z: number) => number;
+  /** A surface: what orders the chart's faces when it is the only one (see FaceFrame3D.rank). */
+  ranker?(frame: Frame3D): Ranker;
+  /**
+   * The layer's items for the frame's view, from caches kept per chart and
+   * per planned axes (stable while the data is), so turning the camera
+   * rebuilds nothing.
+   */
+  items(frame: Frame3D): Items3D;
   /** Writes the layer's faces into `frame.faces`. */
-  place(frame: Frame3D): Placed3D;
-  /** Points: their columns and colors for a GPU painter, or undefined when it cannot draw them. */
-  cloud?(frame: Frame3D): CloudLayer3D | undefined;
+  place(frame: FaceFrame3D): Placed3D;
+  /** What a GPU painter draws of the layer; undefined when it cannot, and the chart is drawn on the CPU. */
+  batch?(frame: Frame3D): Batch3D | undefined;
+  /** The item a GPU painter shows at (px, py), or within reach of it, nearest the eye. */
+  pick?(frame: Frame3D, px: number, py: number): Hit3D | undefined;
+}
+
+/** An item the pointer is on, and its depth there (larger is nearer). */
+export interface Hit3D {
+  item: LayoutItem;
+  depth: number;
+  /** Steps of the depth buffer a GPU painter draws it back by (a surface's, so marks on it show). */
+  behind?: number;
 }
 
 export function isLayer3D(mark: LayoutMark): mark is Layer3D {
@@ -122,7 +171,7 @@ export function joinLayers3D(marks: readonly LayoutMark[], config: ChartConfig):
   const other = marks.find((mark) => !isLayer3D(mark));
   if (other)
     throw new Error(
-      `A ${marks[0]!.spec.type} mark shares its chart only with point3d and surface marks, not a ${other.spec.type}`,
+      `A ${marks[0]!.spec.type} mark shares its chart only with point3d, line3d, and surface marks, not a ${other.spec.type}`,
     );
   const ids = new Set<string>();
   for (const { spec } of marks) {
@@ -152,6 +201,8 @@ export class Plot3D implements LayoutMark {
   readonly #config: ChartConfig;
   /** This chart's faces, reused from scene to scene. */
   readonly #faces = new FaceBuffer();
+  /** The axes, and the table versions they were planned for. */
+  #axes: { key: string; axes: readonly [PlannedAxis, PlannedAxis, PlannedAxis] } | undefined;
 
   constructor(layers: readonly Layer3D[], config: ChartConfig) {
     this.layers = layers;
@@ -182,14 +233,21 @@ export class Plot3D implements LayoutMark {
     return this.layers.flatMap((layer) => legendParts(...layer.scales(theme, locale)));
   }
 
-  /** The chart's x, y, and z axes, planned over every layer's data. */
-  axes(): [PlannedAxis, PlannedAxis, PlannedAxis] {
+  /**
+   * The chart's x, y, and z axes, planned over every layer's data once per
+   * version of their tables, so layers can key what they keep by them.
+   */
+  axes(): readonly [PlannedAxis, PlannedAxis, PlannedAxis] {
+    const key = this.otherTables.map((table) => table.version).join();
+    if (this.#axes?.key === key) return this.#axes.axes;
     const config = this.#config;
-    return AXES.map((name, k) => planAxis3D(name, k, this.layers, config[name], config)) as [
+    const axes = AXES.map((name, k) => planAxis3D(name, k, this.layers, config[name], config)) as [
       PlannedAxis,
       PlannedAxis,
       PlannedAxis,
     ];
+    this.#axes = { key, axes };
+    return axes;
   }
 
   draw(frame: LayoutFrame): LayoutResult {
@@ -202,29 +260,39 @@ export class Plot3D implements LayoutMark {
     );
     const base = { ...frame, view, axes, faces: this.#faces };
     const box = boxGeometry(view, axes, theme, measure, bounds);
-    const cloud = frame.clouds ? this.#cloud(base) : undefined;
-    // A GPU painter draws large point clouds; their faces are made only
-    // when something reads them (the pointer, the keyboard, the summary, or
-    // a canvas the painter cannot draw on).
-    let placed: Placed | undefined;
-    const place = () => {
-      placed ??= this.#place(base);
-      return placed;
+    const batches = frame.clouds ? this.#batches(base) : undefined;
+    // A GPU painter draws large charts; their faces are made only for a
+    // canvas the painter cannot draw on. The keyboard and summaries read the
+    // layers' data, and the pointer finds what the painter drew from it too.
+    let placed: { lost: boolean; placed: Placed } | undefined;
+    const place = (lost = false) => {
+      if (placed?.lost !== lost) placed = { lost, placed: this.#place(base, lost) };
+      return placed.placed;
     };
-    const drawn: FaceGeometry = cloud
-      ? { ...EMPTY, cloud: { ...cloud, faces: () => place().drawn } }
-      : place().drawn;
+    let reading: Reading | undefined;
+    const read = () => {
+      reading ??= this.#read(base);
+      return reading;
+    };
+    let onCpu = batches === undefined;
+    const faces = (lost = false) => {
+      onCpu = true;
+      return place(lost).drawn;
+    };
+    const drawn: FaceGeometry = batches ? { ...EMPTY, batches: { ...batches, faces } } : faces();
     const geometry: Geometry[] = [...box.lines, drawn, ...box.labels];
     return {
       geometry,
-      itemAt: (px, py) => place().itemAt(px, py),
+      // The pointer reads what drew the scene: the faces as they were placed, or the GPU's data.
+      itemAt: (px, py) =>
+        onCpu ? place(placed?.lost ?? false).itemAt(px, py) : this.#pick(base, px, py),
       get count() {
-        return place().count;
+        return read().count;
       },
-      item: (i) => place().item(i),
-      indexOf: (key) => place().indexOf(key),
+      item: (i) => read().item(i),
+      indexOf: (key) => read().indexOf(key),
       summary: () => {
-        const parts = place().summaries();
+        const parts = read().layers.map((layer) => layer.summary());
         const ranges = axes
           .filter((axis) => axis.ticks.length > 0)
           .map(
@@ -240,36 +308,89 @@ export class Plot3D implements LayoutMark {
     };
   }
 
-  /**
-   * The chart's points for a GPU painter: when every layer gives a cloud (its
-   * points are opaque) and they hold at least CLOUD_POINTS_3D rows.
-   */
-  #cloud(frame: Omit<Frame3D, "rank" | "id">): Omit<PointCloud3D, "faces"> | undefined {
-    const mappings = frame.axes.map((axis) => axis.mapping);
-    if (!mappings.every((m) => m !== undefined)) return undefined;
-    const layers: CloudLayer3D[] = [];
-    let rows = 0;
-    for (const [i, layer] of this.layers.entries()) {
-      const cloud = layer.cloud?.({ ...frame, id: this.#id(i), rank: undefined });
-      if (!cloud) return undefined;
-      layers.push(cloud);
-      rows += cloud.x.length;
-    }
-    if (rows < CLOUD_POINTS_3D) return undefined;
-    const { view } = frame;
+  /** Every layer's items, one layer after another, in reading order. */
+  #read(base: Omit<Frame3D, "id">): Reading {
+    const layers = this.layers.map((layer, i) => layer.items({ ...base, id: this.#id(i) }));
+    const starts = [0];
+    for (const layer of layers) starts.push(starts[starts.length - 1]! + layer.count);
+    const layerOf = (index: number) => {
+      let l = 0;
+      while (index >= starts[l + 1]!) l++;
+      return l;
+    };
     return {
       layers,
-      axes: mappings as [Mapping, Mapping, Mapping],
+      count: starts[layers.length]!,
+      item(i) {
+        const l = layerOf(i);
+        return { ...layers[l]!.item(i - starts[l]!), layer: l };
+      },
+      indexOf(key) {
+        for (let l = 0; l < layers.length; l++) {
+          const at = layers[l]!.indexOf(key);
+          if (at >= 0) return starts[l]! + at;
+        }
+        return -1;
+      },
+    };
+  }
+
+  /**
+   * The chart for a GPU painter: when every layer gives a batch (it is
+   * opaque, and of what the painter draws) and drawing them all on the CPU
+   * would cost at least GPU_FACES_3D faces.
+   */
+  #batches(frame: Omit<Frame3D, "id">): Omit<Batches3D, "faces"> | undefined {
+    const batches: Batch3D[] = [];
+    let cost = 0;
+    for (const [i, layer] of this.layers.entries()) {
+      const batch = layer.batch?.({ ...frame, id: this.#id(i) });
+      if (!batch) return undefined;
+      batches.push(batch);
+      cost +=
+        batch.kind === "points"
+          ? batch.x.length
+          : batch.kind === "lines"
+            ? batch.segments
+            : CELL_COST * batch.cells;
+    }
+    if (cost < GPU_FACES_3D) return undefined;
+    const mappings = frame.axes.map((axis) => axis.mapping);
+    const axes = mappings.every((m) => m !== undefined)
+      ? (mappings as [Mapping, Mapping, Mapping])
+      : undefined;
+    // Points are placed by the axes' mappings.
+    if (!axes && batches.some((batch) => batch.kind === "points")) return undefined;
+    const { view } = frame;
+    return {
+      batches,
+      axes,
       view: view.matrix,
       cx: view.cx,
       cy: view.cy,
       scale: view.scale,
       distance: view.distance,
+      light: view.light,
     };
   }
 
-  /** Every layer's faces, drawn in one order, and what reads them back. */
-  #place(base: Omit<Frame3D, "rank" | "id">): Placed {
+  /** What a GPU painter shows at (px, py): of the layers' items there, the nearest the eye. */
+  #pick(base: Omit<Frame3D, "id">, px: number, py: number): LayoutItem | undefined {
+    let best: Hit3D | undefined;
+    let layer = -1;
+    for (const [i, each] of this.layers.entries()) {
+      const hit = each.pick?.({ ...base, id: this.#id(i) }, px, py);
+      // At one depth the later layer shows, as the painter draws it.
+      if (hit && (!best || ahead(hit, best, base.view.distance))) {
+        best = hit;
+        layer = i;
+      }
+    }
+    return best && { ...best.item, layer };
+  }
+
+  /** Every layer's faces, drawn in one order, and what the pointer is on. */
+  #place(base: Omit<Frame3D, "id">, lost: boolean): Placed {
     const { faces, bounds } = base;
     faces.reset();
     const surfaces = this.layers.flatMap((layer, i) => (layer.ranker ? [i] : []));
@@ -279,21 +400,14 @@ export class Plot3D implements LayoutMark {
       surface < 0 ? undefined : this.layers[surface]!.ranker!({ ...base, id: this.#id(surface) });
     const ranges: number[] = [0];
     const results = this.layers.map((layer, i) => {
-      const result = layer.place({ ...base, id: this.#id(i), rank });
+      const result = layer.place({ ...base, id: this.#id(i), rank, lost });
       ranges.push(faces.count);
       return result;
     });
-    const drawn = faces.geometry("faces", rank !== undefined, bounds);
+    const drawn = faces.geometry("faces", rank !== undefined, bounds, base.view.distance);
     const layerOf = (face: number) => {
       let l = 0;
       while (face >= ranges[l + 1]!) l++;
-      return l;
-    };
-    const starts = [0];
-    for (const result of results) starts.push(starts[starts.length - 1]! + result.count);
-    const itemLayer = (index: number) => {
-      let l = 0;
-      while (index >= starts[l + 1]!) l++;
       return l;
     };
     let index: FaceIndex | undefined;
@@ -310,25 +424,40 @@ export class Plot3D implements LayoutMark {
         const item = results[l]!.itemOfFace(local[face]!, px, py);
         return item && { ...item, layer: l };
       },
-      count: starts[results.length]!,
-      item(i) {
-        const l = itemLayer(i);
-        return { ...results[l]!.item(i - starts[l]!), layer: l };
-      },
-      indexOf(key) {
-        for (let l = 0; l < results.length; l++) {
-          const at = results[l]!.indexOf(key);
-          if (at >= 0) return starts[l]! + at;
-        }
-        return -1;
-      },
-      summaries: () => results.map((result) => result.summary()),
     };
   }
 }
 
-/** Points in a 3D chart from which a GPU painter draws them, where one is loaded. */
-export const CLOUD_POINTS_3D = 20_000;
+/**
+ * What layers keep per chart (by its faces: each chart has its own) and per
+ * layer identity there, so charts sharing a mark, and a mark twice in one
+ * chart, keep theirs apart.
+ */
+export class PerChart<T> {
+  readonly #store = new WeakMap<FaceBuffer, Map<string | number, T>>();
+
+  get(frame: { faces: FaceBuffer; id: string | number }): T | undefined {
+    return this.#store.get(frame.faces)?.get(frame.id);
+  }
+
+  set(frame: { faces: FaceBuffer; id: string | number }, value: T): T {
+    let byLayer = this.#store.get(frame.faces);
+    if (!byLayer) {
+      byLayer = new Map();
+      this.#store.set(frame.faces, byLayer);
+    }
+    byLayer.set(frame.id, value);
+    return value;
+  }
+}
+
+/**
+ * What a 3D chart would cost to draw on the CPU, in faces, from which a GPU
+ * painter draws it, where one is loaded: 20,000 points, say, or 10,000 of a
+ * surface's cells, which cost more each.
+ */
+export const GPU_FACES_3D = 20_000;
+const CELL_COST = 2;
 
 /** A geometry of no faces, which a cloud fills. */
 const EMPTY: FaceGeometry = {
@@ -347,10 +476,14 @@ const EMPTY: FaceGeometry = {
 interface Placed {
   drawn: FaceGeometry;
   itemAt(px: number, py: number): LayoutItem | undefined;
+}
+
+/** The items of every layer of one scene. */
+interface Reading {
+  layers: Items3D[];
   count: number;
   item(index: number): LayoutItem;
   indexOf(key: string): number;
-  summaries(): string[];
 }
 
 /** Where a 3D chart's box is fitted in its room: inside room for the labels around it. */
@@ -362,6 +495,71 @@ export function boxRoom(bounds: Rect, theme: Theme): Rect {
     width: Math.max(0, bounds.width - 2 * margin),
     height: Math.max(0, bounds.height - 1.5 * margin),
   };
+}
+
+/**
+ * Where a depth (larger nearer) lands in a GPU painter's 24-bit depth
+ * buffer, as render/webgl3d.ts's projection puts it there (lower nearer),
+ * for the eye `distance` away (Infinity orthographically).
+ */
+function depthStep(depth: number, distance: number): number {
+  const z =
+    distance === Number.POSITIVE_INFINITY
+      ? -0.5 * depth
+      : 1.5 - (1.5 * distance) / (distance - depth);
+  return Math.round((z * 0.5 + 0.5) * 0xffffff);
+}
+
+/** Whether a later layer's hit shows over an earlier one's, drawn back as far as each says. */
+function ahead(hit: Hit3D, than: Hit3D, distance: number): boolean {
+  return (
+    depthStep(hit.depth, distance) + (hit.behind ?? 0) <=
+    depthStep(than.depth, distance) + (than.behind ?? 0)
+  );
+}
+
+/**
+ * Whether something at `depth` shows over what is at `than`, as a GPU
+ * painter draws them: when its depth buffer holds it nearer, or as near and
+ * drawn `later` (the depth test lets the later of two at one depth show).
+ */
+export function inFront(depth: number, later: boolean, than: number, distance: number): boolean {
+  const [a, b] = [depthStep(depth, distance), depthStep(than, distance)];
+  return a < b || (later && a === b);
+}
+
+/** What the chart's axes place values by: equal for axes that place every value alike. */
+export function axesKey(axes: Frame3D["axes"]): string {
+  return `${axes[0].key}|${axes[1].key}|${axes[2].key}`;
+}
+
+/** Whether a point at normalized (u, v, w) lies inside the box (NaN does not). */
+export function inBox(u: number, v: number, w: number): boolean {
+  return Math.abs(u) <= 1 + 1e-9 && Math.abs(v) <= 1 + 1e-9 && Math.abs(w) <= 1 + 1e-9;
+}
+
+/** The row identity in an item key of layer `id`, or undefined. */
+export function identityIn(key: string, id: string | number): number | undefined {
+  let parts: unknown;
+  try {
+    parts = JSON.parse(key);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parts) || parts.length !== 2 || parts[0] !== id) return undefined;
+  return typeof parts[1] === "number" ? parts[1] : undefined;
+}
+
+/** Where `row` is among the first `count` of ascending `rows`, or -1. */
+export function findRow(rows: Uint32Array, count: number, row: number): number {
+  let lo = 0;
+  let hi = count;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (rows[mid]! < row) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < count && rows[lo] === row ? lo : -1;
 }
 
 /** The extent of the positive finite values, for log axes. */
@@ -419,6 +617,7 @@ function planAxis3D(
       shown,
       format: (i) => labels[Math.round(i)] ?? "",
       categories: index,
+      key: JSON.stringify(labels),
     };
   }
   const type: AxisType = spec?.type ?? (kind === "time" ? "time" : "linear");
@@ -445,6 +644,7 @@ function planAxis3D(
     : niceAxisDomain(usableDomain(extent, type), context, count, spec?.nice ?? true);
   const plan = planAxis(context, domain, [-1, 1], count);
   const scale = plan.scale;
+  const mapping = scale.mapping();
   const fallback: Formatter =
     type === "time"
       ? timeValueFormatter(timeUnit(domain), context.zone, config.locale)
@@ -453,7 +653,8 @@ function planAxis3D(
     name,
     type,
     place: (value) => scale.map(value),
-    mapping: scale.mapping(),
+    mapping,
+    key: `${mapping.origin},${mapping.offset},${mapping.factor},${mapping.log}`,
     ticks: plan.ticks,
     labels: plan.labels,
     title,

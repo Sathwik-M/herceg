@@ -319,7 +319,7 @@ export class ChartModel {
   setCamera(camera: CameraSpec | null): boolean {
     const resolve = this.#layouts[0]?.camera;
     if (!resolve || !this.#camera)
-      throw new Error("Only 3D charts (point3d and surface marks) have a camera");
+      throw new Error("Only 3D charts (point3d, line3d, and surface marks) have a camera");
     const next = camera ? resolve.call(this.#layouts[0], camera, this.#camera) : this.#configured!;
     if (JSON.stringify(next) === JSON.stringify(this.#camera)) return false;
     this.#camera = next;

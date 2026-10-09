@@ -32,7 +32,9 @@ export type Operation =
   /** Create `charts` line charts at once (dashboard), then refresh them all. */
   | "dashboard"
   /** Turn a 3D chart's camera through a sequence of angles, waiting for each frame. */
-  | "rotate";
+  | "rotate"
+  /** Turn a 3D chart's camera a step every frame, as a drag does, with vsync on. */
+  | "orbit";
 
 export interface Scenario {
   id: string;
@@ -684,6 +686,94 @@ export const SCENARIOS: Scenario[] = [
     samples: 20,
     warmup: 3,
     description: "200 x 200 grid surface",
+  }),
+  s({
+    id: "surface-317-init",
+    chart: "surface",
+    operation: "init",
+    series: 1,
+    points: 317 * 317,
+    large: true,
+    tooltip: true,
+    samples: 10,
+    warmup: 2,
+    description: "317 x 317 grid surface (99,856 cells)",
+  }),
+  s({
+    id: "surface-1001-init",
+    chart: "surface",
+    operation: "init",
+    series: 1,
+    points: 1001 * 1001,
+    large: true,
+    tooltip: true,
+    samples: 5,
+    warmup: 1,
+    timeout: 300,
+    description: "1001 x 1001 grid surface (1,000,000 cells)",
+  }),
+  s({
+    id: "rotate-surface-317",
+    chart: "surface",
+    operation: "rotate",
+    series: 1,
+    points: 317 * 317,
+    large: true,
+    tooltip: true,
+    samples: 20,
+    warmup: 3,
+    description: "317 x 317 grid surface (99,856 cells)",
+  }),
+  s({
+    id: "rotate-surface-1001",
+    chart: "surface",
+    operation: "rotate",
+    series: 1,
+    points: 1001 * 1001,
+    large: true,
+    tooltip: true,
+    samples: 10,
+    warmup: 2,
+    timeout: 300,
+    description: "1001 x 1001 grid surface (1,000,000 cells)",
+  }),
+  s({
+    id: "orbit-surface-317",
+    chart: "surface",
+    operation: "orbit",
+    series: 1,
+    points: 317 * 317,
+    large: true,
+    tooltip: true,
+    samples: 60,
+    warmup: 10,
+    description: "317 x 317 grid surface (99,856 cells), turned every frame",
+  }),
+  s({
+    id: "orbit-surface-1001",
+    chart: "surface",
+    operation: "orbit",
+    series: 1,
+    points: 1001 * 1001,
+    large: true,
+    tooltip: true,
+    samples: 60,
+    warmup: 10,
+    timeout: 300,
+    description: "1001 x 1001 grid surface (1,000,000 cells), turned every frame",
+  }),
+  s({
+    id: "memory-surface-1001",
+    chart: "surface",
+    operation: "memory",
+    series: 1,
+    points: 1001 * 1001,
+    large: true,
+    tooltip: true,
+    samples: 3,
+    warmup: 0,
+    timeout: 300,
+    description: "1001 x 1001 grid surface (1,000,000 cells)",
   }),
 ];
 

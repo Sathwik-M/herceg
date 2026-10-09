@@ -16,6 +16,7 @@ export { default as Graph } from "./Graph.svelte";
 export { default as Heatmap } from "./Heatmap.svelte";
 export { default as Histogram } from "./Histogram.svelte";
 export { default as Line } from "./Line.svelte";
+export { default as Line3D } from "./Line3D.svelte";
 export type { WithData } from "./marks.js";
 export { default as Pie } from "./Pie.svelte";
 export { default as Point } from "./Point.svelte";

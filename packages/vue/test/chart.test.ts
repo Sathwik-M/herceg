@@ -39,6 +39,7 @@ import {
   GeoPoint,
   GeoShape,
   Line,
+  Line3D,
   Pie,
   Point3D,
   Radar,
@@ -100,6 +101,7 @@ const components = {
   Radar,
   GeoShape,
   GeoPoint,
+  Line3D,
   Point3D,
   Surface,
   Region,
@@ -275,10 +277,12 @@ describe("<Chart>", () => {
       `<Chart ref="view" :camera="camera" :box-aspect="[2, 1, 1]" locale="en-US" @camera="onCamera">
         <Surface :data="grid" x="x" y="y" z="z" />
         <Point3D :data="points" x="x" y="y" z="z" />
+        <Line3D :data="grid" x="x" y="y" z="z" />
       </Chart>`,
       () => ({ grid, points, camera, view, onCamera }),
     );
     expect(host.textContent).toContain("Surface of z over x and y");
+    expect(host.textContent).toContain("3D line through x, y, z: 4 points in 1 run.");
     expect(optionsOf(chart()).boxAspect).toEqual([2, 1, 1]);
     chart().setCamera({ elevation: 50 });
     await frame();

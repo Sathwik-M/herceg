@@ -1,8 +1,9 @@
-// Faces of a 3D chart: polygons (surface cells) and discs (points), drawn in
-// the order given, which is back to front. Faces of one opaque style that
-// follow each other are filled as one path; translucent faces, and faces
-// outlined in another color, are drawn one by one, so each covers or
-// composites over what is behind it.
+// Faces of a 3D chart: polygons (surface cells), discs (points), and
+// segments (lines), drawn in the order given, which is back to front. Faces
+// of one opaque style that follow each other are filled (and segments
+// stroked) as one path; translucent faces, and faces outlined in another
+// color, are drawn one by one, so each covers or composites over what is
+// behind it.
 
 import { isOpaqueColor } from "../scale/color.ts";
 import type { Drawing, FaceGeometry, FaceStyle, SvgElement } from "../scene/scene.ts";
@@ -89,11 +90,17 @@ export function traceFace(sink: FaceSink, mark: FaceGeometry, f: number): void {
   }
 }
 
-/** Traces polygon `f`'s outline; discs have none. */
+/** Traces polygon `f`'s outline, or segment `f` itself; discs have none. */
 export function traceOutline(sink: FaceSink, mark: FaceGeometry, f: number): void {
   const { vertices: v, corners, starts } = mark;
   const start = starts[f]!;
   const end = starts[f + 1]!;
+  if (end - start === 2) {
+    const [a, b] = [corners[start]!, corners[start + 1]!];
+    sink.moveTo(v[a * 2]!, v[a * 2 + 1]!);
+    sink.lineTo(v[b * 2]!, v[b * 2 + 1]!);
+    return;
+  }
   if (end - start < 3) return;
   for (let k = start; k < end; k++) {
     const i = corners[k]!;
@@ -140,54 +147,66 @@ function elements(mark: FaceGeometry): SvgElement[] {
   for (const { start, end, style } of faceRuns(mark)) {
     const fill = new SvgFaces();
     for (let f = start; f < end; f++) traceFace(fill, mark, f);
-    if (!fill.d) continue;
-    const attributes: Record<string, string> = { d: fill.d, fill: style.fill };
-    if (style.opacity < 1) attributes["fill-opacity"] = String(style.opacity);
-    out.push({ tag: "path", attributes });
+    // Segments have no fill, only their stroke.
+    if (fill.d) {
+      const attributes: Record<string, string> = { d: fill.d, fill: style.fill };
+      if (style.opacity < 1) attributes["fill-opacity"] = String(style.opacity);
+      out.push({ tag: "path", attributes });
+    }
     if (style.stroke === undefined || !(style.strokeWidth > 0)) continue;
     const outline = new SvgFaces();
     for (let f = start; f < end; f++) traceOutline(outline, mark, f);
     if (!outline.d) continue;
-    out.push({
-      tag: "path",
-      attributes: {
-        d: outline.d,
-        fill: "none",
-        stroke: style.stroke,
-        "stroke-width": String(style.strokeWidth),
-        "stroke-linejoin": "round",
-      },
-    });
+    const attributes: Record<string, string> = {
+      d: outline.d,
+      fill: "none",
+      stroke: style.stroke,
+      "stroke-width": String(style.strokeWidth),
+      "stroke-linejoin": "round",
+    };
+    // Segments end round, so a line's pieces join smoothly; polygons' outlines are closed.
+    for (let f = start; f < end; f++)
+      if (mark.starts[f + 1]! - mark.starts[f]! === 2) attributes["stroke-linecap"] = "round";
+    out.push({ tag: "path", attributes });
   }
   return out;
 }
 
-/** A geometry's faces: its own, or those of the points a GPU painter would draw. */
+/** A geometry's faces: its own, or those of the chart a GPU painter would draw. */
 function facesOf(mark: FaceGeometry): FaceGeometry {
-  return mark.cloud ? mark.cloud.faces() : mark;
+  return mark.batches ? mark.batches.faces() : mark;
 }
 
 export const facesDrawing: Drawing<FaceGeometry> = {
   // Corners, as polygons count their points: a surface's cell weighs four.
   size(mark) {
-    if (!mark.cloud) return mark.starts[mark.count] ?? 0;
-    let points = 0;
-    for (const layer of mark.cloud.layers) points += layer.x.length;
-    return points;
+    if (!mark.batches) return mark.starts[mark.count] ?? 0;
+    let corners = 0;
+    for (const batch of mark.batches.batches)
+      corners +=
+        batch.kind === "points"
+          ? batch.x.length
+          : batch.kind === "lines"
+            ? 2 * batch.segments
+            : 4 * batch.cells;
+    return corners;
   },
   elements: (mark) => elements(facesOf(mark)),
   svg: (mark) => markupOf(elements(facesOf(mark))),
   canvas(context, given, { plot, pixelRatio, clouds }) {
-    if (given.cloud) {
-      // Until the painter has loaded, clouds are left out, as 2D ones are.
+    if (given.batches) {
+      // Until the painter has loaded, the chart is left out, as 2D clouds are.
       if (clouds.defer) return;
       const owner = clouds.owner ?? context.canvas;
       if (clouds.painter?.paint3d?.(context, given, plot, pixelRatio, owner)) return;
     }
-    const mark = facesOf(given);
+    // A painter that lost its context is replaced; one that declines draws on the CPU.
+    const lost = clouds.painter !== undefined && !clouds.painter.usable;
+    const mark = given.batches ? given.batches.faces(lost) : given;
     const sink = canvasSink(context);
     context.save();
     context.lineJoin = "round";
+    context.lineCap = "round";
     for (const { start, end, style } of faceRuns(mark)) {
       context.beginPath();
       for (let f = start; f < end; f++) traceFace(sink, mark, f);

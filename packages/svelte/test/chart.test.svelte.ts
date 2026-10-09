@@ -187,6 +187,7 @@ describe("<Chart>", () => {
     });
     render(Solids, props);
     expect(host.textContent).toContain("Surface of z over x and y");
+    expect(host.textContent).toContain("3D line through x, y, z: 4 points in 1 run.");
     props.chart!.setCamera({ elevation: 50 });
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     expect(cameras).toEqual([10]);

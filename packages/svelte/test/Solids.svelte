@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Chart as HercegChart, Table } from "herceg";
-  import { Chart, Point3D, Surface } from "../src/index.js";
+  import { Chart, Line3D, Point3D, Surface } from "../src/index.js";
 
   let {
     grid,
@@ -20,4 +20,5 @@
 <Chart bind:chart camera={{ azimuth }} locale="en-US" {oncamera}>
   <Surface data={grid} x="x" y="y" z="z" />
   <Point3D data={points} x="x" y="y" z="z" />
+  <Line3D data={grid} x="x" y="y" z="z" />
 </Chart>

@@ -16,6 +16,7 @@ export {
   Heatmap,
   Histogram,
   Line,
+  Line3D,
   Pie,
   Point,
   Point3D,

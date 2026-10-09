@@ -1717,14 +1717,17 @@ changes, and about 2 µs to find the region under the pointer.
 
 ## 3D charts
 
-3D charts are layout marks too: `point3d` points and `surface` surfaces are
-the layers of one chart, joined (as a map's layers are) into a `Plot3D`
-(`marks/plot3d.ts`) that plans the axes, fits the box, orders what every
-layer draws, and finds what the pointer is on. Everything they draw is
-ordinary scene geometry: the box's grid lines and edges are line geometry
-drawn below the data, its tick labels and titles text drawn above, and the
-layers' points and cells one `faces` geometry, so SVG, Canvas, PDF, static
-export, and the text alternative need no 3D code of their own.
+3D charts are layout marks too: `point3d` points, `line3d` lines, and
+`surface` surfaces are the layers of one chart, joined (as a map's layers
+are) into a `Plot3D` (`marks/plot3d.ts`) that plans the axes, fits the box,
+and draws every layer together, either as ordinary scene geometry or
+through a GPU painter. The box's grid lines and edges are line geometry
+drawn below the data and its tick labels and titles text drawn above; the
+layers are one `faces` geometry, which either holds their faces (points,
+segments, and cells, drawn back to front, so SVG, Canvas, PDF, and static
+export need no 3D code of their own) or describes them for a GPU painter
+(`batches`, below), with the faces made only if a canvas has to draw them
+without one.
 
 Each axis is planned over every layer's data as a 2D axis is (`planAxis`,
 over a range of -1 to 1: linear, log, and time axes, nice domains, ticks,
@@ -1749,23 +1752,48 @@ nearer edge), with labels pushed out along the edge's normal on screen and
 thinned to every n-th tick, against each other and against the titles and
 the labels of axes placed before; an edge seen nearly end on gets no labels.
 
+Each layer reads its items from its data, not from what it drew
+(`Layer3D.items`): the keyboard, the description, and keys find the rows a
+point layer draws (series shown, a color, a place in the box), a line's
+samples, and a surface's grid points in the box, and each item is projected
+for the view only when it is read. What a layer finds is kept per chart
+and per layer for a key of the planned axes (their mappings, or categories,
+so an axis planned again the same way keeps it), the table version, and the
+series shown; `Plot3D` plans its axes once per version of its tables. A
+surface's grid points outside the box at the corners of cells cut at its
+walls are items too, read at the corner of the cut piece nearest them (found
+in normalized coordinates, from the first cell in grid order whose cut piece
+keeps any), and so are a line's samples outside the box at the end of a
+segment that enters it, read where it enters. Turning the camera finds
+nothing again, and a summary never projects or sorts.
+
 Faces (`three/faces.ts`, drawn by `draw/faces.ts`) are packed: screen
 vertices with their depths, each face's corners as vertex indices (one
-corner for a disc, three or four for a cell, more for a triangle of a cell
-cut at the box's walls), a style index per face (fill, opacity, disc radius,
-outline), and a sort key and depth.
+corner for a disc, two for a segment, three or four for a cell, more for a
+triangle of a cell cut at the box's walls), a style index per face (fill,
+opacity, disc radius, outline color and width), and a sort key and depth.
 Faces are sorted by key, then depth, with two 16-bit counting passes per key
 (stable, so ties keep the order they were written in), and drawn in that
-order; consecutive opaque faces of one style are filled as one path (of at
-most 64 faces: Chrome fills one path of thousands of arcs slower than many
-short ones), translucent ones, and ones outlined in another color, one by
-one. A polygon is filled as the fan of triangles from its first corner, each
-turned the same way, so a cell folded edge on still covers what its
-triangles do under the nonzero rule; opaque cells are outlined in their own
-color by half a pixel, which closes the seams antialiasing would leave
+order; consecutive opaque faces of one style are filled (or stroked) as one
+path (of at most 64 faces: Chrome fills one path of thousands of arcs slower
+than many short ones), translucent ones, and ones outlined in another color,
+one by one. A polygon is filled as the fan of triangles from its first
+corner, each turned the same way, so a cell folded edge on still covers what
+its triangles do under the nonzero rule; opaque cells are outlined in their
+own color by half a pixel, which closes the seams antialiasing would leave
 between neighbors, and wireframes are each cell's outline drawn right after
 its fill, so cells in front hide the lines behind (cells cut at the walls,
-drawn as triangles, have no wire, which would show their diagonals).
+drawn as triangles, have no wire, which would show their diagonals). A
+segment is a stroke of its style's width with round ends, so a line's
+segments, drawn at different places in the order, join smoothly.
+
+A line (`marks/line3d.ts`) is each series' rows in table order (a counting
+sort by series), the rows without a place left out and breaking their path;
+each segment is cut at the box's walls (in normalized coordinates, so a
+segment crossing the box keeps its part inside) and becomes a face of two
+corners at the depth of its middle. Over the chart's one surface, segments
+are also cut where they cross its columns and rows, and each piece is
+ranked among the cells as a point at its middle would be.
 
 The order is exact where it can be. Points alone are drawn by depth. For one
 surface, with any points, the key is the surface's: along the eye's
@@ -1783,80 +1811,186 @@ reversed axis, and around missing values. Several surfaces fall back to
 sorting every face by the mean depth of its corners, which can be wrong
 where they approach or cross.
 
+Lines in that order are approximate: a piece is ranked by its middle, so a
+segment piercing a cell, or a wide stroke near a cell's edge, can be drawn
+on the wrong side of it near the crossing, and segments of crossing lines,
+sorted by their middles' depths, can be drawn in the wrong order where they
+cross. Drawing by depth per pixel (the GPU path) is exact where this is not.
+
 A disc, though, covers more than the point at its center: ranked by its
 center, the cells around it drawn after it would cut its edge though they
 lie behind it (seen from above, every point over a surface would show a
 crescent), and two overlapping points over different cells would be drawn
 in the cells' order, not by depth. So once the order is known, each disc is
-placed among the polygons it overlaps on screen: after those behind it and
-before those in front. A polygon covering the disc's center is in front when
-the exact order draws it after the disc; others (and all of them in the
-approximate order) are judged by their depth where they come nearest the
-center, interpolated from their vertices. Where these disagree, the polygons
-over the center win (a point shows exactly when its center does), then
-those in front at the edge. Each disc goes as early as that allows, but no
-earlier than the farther discs it overlaps (placed first), unless that
-would draw it over a polygon in front of it; discs in one place are drawn by
-depth. In grid cells crowded with discs (more than 16), every disc counts as
-overlapping, which can only move a disc later among discs, so points piled
-on one spot are not compared pair by pair. The result is drawn whole, so a
-point shows as a marker would: its outline cut only by the polygons in front
-of it. This costs most where many points lie over a dense surface: ordering
-the faces of 10,000 points of radius 3.5 over a 100 by 100 grid takes 15 to
-25 ms a scene in Node, about 40 ms at radius 10, and 10,000 or 20,000 points
-piled on one spot under 30 ms (each disc is checked against the cells it
-overlaps, found through two more grids like the pointer's).
+placed among the polygons and segments it overlaps on screen: after those
+behind it and before those in front. A polygon covering the disc's center
+is in front when the exact order draws it after the disc; others (all of
+them in the approximate order, and segments always) are judged by their
+depth where they come nearest the center, interpolated from their vertices
+as the projection does (linearly on screen orthographically; in
+perspective, 1 / (eye distance - depth) is linear on screen), and over a
+cell folded on screen by the nearer of its triangles. Where these disagree,
+the polygons over the center win (a point shows exactly when its center
+does), then those in front at the edge. Each disc goes as early as that
+allows, but no earlier than the farther discs it overlaps (placed first),
+unless that would draw it over a polygon in front of it; discs in one place
+are drawn by depth. In grid cells crowded with discs (more than 16), every
+disc counts as overlapping, which can only move a disc later among discs, so
+points piled on one spot are not compared pair by pair. The result is drawn
+whole, so a point shows as a marker would: its outline cut only by the faces
+in front of it. This costs most where many points lie over a dense surface:
+ordering the faces of 10,000 points of radius 3.5 over a 100 by 100 grid
+takes 15 to 25 ms a scene in Node, about 40 ms at radius 10, and 10,000 or
+20,000 points piled on one spot under 30 ms (each disc is checked against
+the faces it overlaps, found through two more grids like the pointer's).
 
 A surface's grid is built once per table version: the distinct numbers or
 times of x and y, sorted (or the categories rows hold, in dictionary order),
 and per grid point the last row with a value, refused before allocation when
-the grid would exceed 250,000 points. Per scene it projects each grid point
-once, then writes a face per cell with three or four corners holding values;
-cells reaching past the box (a configured domain narrower than the data) are
-cut at its walls triangle by triangle, as drawn (Sutherland–Hodgman in
-normalized coordinates), so a cut follows the surface. Shading is
-flat per cell: the cell's normal in the box's units (across its diagonals),
-two-sided against a light above and left of the eye, in 16 steps that
-multiply the ramp color by 0.72 to 1.1, so styles stay few enough to share.
+the grid would exceed 1,048,576 points; the CPU draws at most 250,000 and
+refuses more with a clear error (in exports, with the SVG renderer, without
+WebGL2, and for surfaces the GPU path does not draw), or, standing in for a
+GPU painter that lost its context, draws nothing until it is back. Per
+scene it projects each grid point once, then writes a face per cell with
+three or four corners holding values; cells reaching past the box (a
+configured domain narrower than the data) are cut at its walls triangle by
+triangle, as drawn (Sutherland–Hodgman in normalized coordinates), so a cut
+follows the surface. Shading is flat per cell: the cell's normal in the
+box's units (across its diagonals), two-sided against a light above and
+left of the eye, in 16 steps that multiply the ramp color by 0.72 to 1.1,
+so styles stay few enough to share.
 
 The pointer finds the face drawn last under it through a uniform grid
 (`FaceIndex`, cells sized for a few faces each, 6 to 24 px a side): polygons
-are filed in each cell their box covers, discs by their center, and a query
-looks as far around as discs reach. A surface's cell reports its drawn
-corner nearest the pointer. Grid points outside the box at the corners of
-cells cut at its walls are items too, anchored at the drawn vertex nearest
-them, so the pointer and the keyboard reach every cell drawn. Items are rows: points in
-row order, a surface's grid points in grid order, keyed by the table's row
-identity (`rowOffset` + row), so keys survive rows dropped from a stream.
-Inspections of 3D items carry their values by field.
+are filed in each cell their box covers, segments in each cell their stroke
+reaches, discs by their center, and a query looks as far around as discs
+reach. A surface's cell reports its corner nearest the pointer (corners in
+the box first), a segment the end nearer it. Items are rows: points in row
+order, a line's samples path after path, a surface's grid points in grid
+order, keyed by the table's row identity (`rowOffset` + row), so keys
+survive rows dropped from a stream. Inspections of 3D items carry their
+values by field.
 
-Point layers of at least 20,000 points, all opaque, on linear, time, or log
-axes, are drawn by the GPU in the browser instead (`render/webgl3d.ts`,
-loaded only for a 3D chart's first cloud, through the page's painter in
-`render/webgl.ts` and its context, so in builds that split dynamic imports
-into chunks 2D clouds never download the 3D program; the Python package's
-single-file bundles hold both). Each layer's columns are
-uploaded once per table version as float32 values mapped by the axes then
-(less the centers of their domains, times their factors, so values of any
-magnitude come out near the box's [-1, 1]), and uploaded again only if the
-domains move so far that points in the box would be off by a quarter pixel
-(float32's error grows with the distance from those centers) or the factors
-change a millionfold; axes without a finite mapping draw on the CPU; each row's color is a byte into a
-256-entry palette texture (255 for rows not drawn), uploaded per color array,
-which the layer replaces when the table, the hidden series, or the colors
-change, and palettes are kept as bytes by their colors. Uploads are kept by
-their columns, so layers and charts drawing the same columns share them. The
-axes' mappings and the view are uniforms, so turning the camera uploads
-nothing. The vertex shader places points in the box, moves those outside it
-(and missing values, a sentinel) off the screen, and a depth test, not
-drawing order, decides what shows (at equal depths the later point, as on
-the CPU); sprites' corners are discarded, so they never hide what is behind
-them. The context now has a depth buffer (2D clouds leave it unused). The faces of such a chart are
-built only when something reads them: the pointer's first query after a
-turn, the keyboard, the summary, or a canvas without the painter. Turning a
-million points costs under a millisecond of JavaScript a frame (GPU time not
-included), against about 200 ms on the CPU path; the first tooltip after a
-turn projects, sorts, and indexes every point, about 50 ms at a million.
+### 3D charts on the GPU
+
+A chart is drawn by the GPU in the browser when every layer gives a batch
+(`Layer3D.batch`) and drawing the chart on the CPU would cost at least
+20,000 faces (`GPU_FACES_3D`: a point or a segment counts one, a surface
+cell two). A point batch needs opaque points (its rows' columns, a color
+byte per row, and the axes' mappings); a line batch opaque strokes; a
+triangle batch an opaque surface without a wireframe whose columns and rows
+fall in order on the axes (a second surface's categories may not, and its
+cells would overlap). Anything else draws the whole chart on the CPU, as
+does a painter that declines it (sprites larger than the device allows,
+axes without a finite mapping). The threshold was measured: turning a 50
+by 50 surface (2,401 cells) costs 2.7 ms on the CPU and 0.5 ms through the
+GPU, 200 by 200 (39,601 cells) 28 ms against 0.4 ms; below 10,000 cells the
+CPU's frame is under about 7 ms, and small surfaces stay vector and
+antialiased and need no painter loaded.
+
+The painter (`render/webgl3d.ts`, loaded only for a 3D chart's first batch,
+through the page's painter in `render/webgl.ts` and its context, so in
+builds that split dynamic imports into chunks 2D clouds never download it;
+the Python package's single-file bundles hold both) draws every batch into
+one depth buffer, cleared once per chart, so what is nearer shows whatever
+order the layers come in, and copies the picture into the chart's canvas at
+its place in mark order. All three programs place points with one
+homogeneous projection matching `View.project`: in perspective w is the
+eye's distance to a point over its distance to the box's center, and depth
+is written as 1.5 w - 1.5 (z / w affine in 1 / w), so the GPU's
+interpolation across triangles and ribbons is exact; orthographically depth
+is linear. At equal depths the later layer shows, as on the CPU, except that
+a surface's cells are drawn eight steps of the depth buffer back (polygon
+offset), so points and lines lying on a surface show over it whichever
+layer comes later, as they do on the CPU, though float32 places a point and
+the cell under it a step or two apart (marks within those steps under a
+surface show through it).
+
+Points are sprites as before: each layer's columns are uploaded once per
+table version as float32 values mapped by the axes then (less the centers
+of their domains, times their factors, so values of any magnitude come out
+near the box's [-1, 1]), and uploaded again only if the domains move so far
+that points in the box would be off by a quarter pixel, or by 2e-7 of the
+box (well inside the steps surfaces are drawn back by), as float32's error
+grows with the distance from those centers, or the factors change a
+millionfold; each row's color is a byte into a palette texture (255 for rows
+not drawn), uploaded per color array, which the layer replaces when the
+table, the hidden series, or the colors change. Uploads are kept by their
+columns, so layers and charts drawing the same columns share them, with one
+for each chart placed far from the others' (domains far apart). The
+vertex shader moves points outside the box (and missing values, a sentinel)
+off the screen, and sprites' corners are discarded, so they never hide what
+is behind them.
+
+A surface's cells are indexed triangles over the grid's vertices, their
+positions normalized to the box (float32 is exact enough inside it). Each
+triangle takes its flat color and normal from its last vertex (WebGL's
+provoking vertex): a cell's two triangles both end at the grid point after
+its last column and row, which carries that cell's color index and unit
+normal (the CPU's, in the box's units, so `boxAspect` applies); a
+three-corner cell missing that corner, and each piece of a cell cut at the
+box's walls (cut on the CPU exactly as the CPU path cuts it, so no triangle
+reaches outside the box), get vertices of their own. The vertex shader
+computes how squarely the cell faces the light (the CPU's, a uniform) and
+cuts it into the CPU's 16 steps; the fragment reads the color at that step
+from a 256 by 16 texture the surface fills with the CPU's arithmetic, so
+GPU and CPU colors match exactly except where facing falls on a step's
+boundary (float32 may pick the other step: none of thousands of cells
+sampled in the tests). Indices are 16-bit below 65,535 vertices (65,535
+restarts primitives), else 32-bit. A million cells (1001 by 1001 grid
+points) upload 49 MB: 25 bytes per vertex (position, normal, color) and 24
+per cell (six 32-bit indices).
+
+A line is instanced ribbons: one instance per segment, reading point i as
+its start and i + 1 as its end from one buffer of runs of points in path
+order (12 bytes each, normalized), and a color byte per point for the
+segment to the next (255 at a run's end: a path's end, a break, or a
+segment leaving the box). Segments reaching past the box are cut at its
+walls (Liang–Barsky) when the runs are built, in float64, measured from the
+end nearer the box and each cut end placed on the wall it lies beyond, so a
+segment from however far outside keeps its part in the box (one far out on
+two axes at once, whose part inside float64 cannot place within 1e-4 of the
+box, is left out rather than drawn wrong); the CPU's faces, the pointer,
+and the keyboard cut them the same way. The vertex shader spans each
+segment with a quad half a width past each end, a constant width on screen;
+fragments farther than half the width from the segment are discarded, which
+rounds the ends and joins, and each fragment's depth is the segment's where
+it comes nearest (`gl_FragDepth`), so an end keeps its depth. Ribbons, like
+sprites and triangles, are not antialiased.
+
+Batches build their arrays only when the painter has no upload of them
+(`key`, an object kept while what it describes stays, per chart, for the
+axes' key, the table version, and the box's aspect), so the arrays are not
+kept on the CPU once uploaded, and turning the camera uploads nothing:
+the view, the light, and the axes' mappings are uniforms. Uploads belong to
+the charts that painted them in their last frame and are released when no
+chart did; a lost context drops them all, the chart draws on the CPU in the
+meantime (surfaces too large for it draw nothing), and a fresh painter loads.
+A painter that declines a chart for good (points larger than its sprites)
+leaves it to the CPU, which refuses surfaces too large for it with the same
+error as an export.
+
+The pointer finds what the GPU shows from the data, whenever it drew the
+chart (after the CPU drew it instead, through its faces): each layer gives
+the item nearest the eye within reach and its depth there, and the nearest
+wins (`Layer3D.pick`). A surface walks the pointer's ray (`View.ray`) through
+the cells it crosses inside the box, nearest first, over its columns' and
+rows' positions (`three/hit.ts`), testing each cell's triangles, so no index
+is kept: about a millisecond at a million cells. Points and segments (cut at
+the walls) are projected once per view and filed on screen in a uniform
+grid (a segment once in each cell within reach of it),
+built on the first query after a turn (about 50 ms for a million points,
+about 120 ms for a million samples of a line), then a query is under a
+millisecond. A point within reach and nearer the eye than the surface under
+the pointer wins over it, as on the CPU. Depths are compared as the 24-bit
+depth buffer holds them (the projection's depth, quantized, a surface's
+eight steps back), and of two at one step the later layer or row wins, as
+the depth test lets it show.
+
+On the benchmark machine (see `docs/comparison.md`), turning a 1001 by 1001
+surface takes under half a millisecond of JavaScript a frame and keeps 60
+frames a second when turned every frame; mounting it takes about a quarter
+second (half of it the grid, the rest the batch's arrays and the upload).
 
 ## Annotations
 
@@ -1944,7 +2078,8 @@ hold erases that pairing. Each scene can be drawn four ways:
   only when their markup changes. Bars and points are one `path` element per
   series, not one element per data point.
 - `paintCanvas` redraws grid and marks into a canvas sized to the device pixel
-  ratio; point drawings hand clouds to the WebGL painter when one is loaded.
+  ratio; point drawings hand clouds, and 3D charts' faces their batches, to
+  the WebGL painter when one is loaded.
 - `renderPdf` (`render/pdf.ts`) writes a one-page PDF 1.4 document with the
   static SVG's layout, measured in points (0.75 per CSS pixel).
 
@@ -2668,20 +2803,25 @@ document when `OffscreenCanvas` is unavailable.
   fields), take new shapes only by `reset`, and a table holding one cannot be
   appended to from Python, which replaces it whole. Regions are projected
   again at every new size, and picking tests a shape's every ring.
-- 3D charts draw points and rectilinear height-field surfaces only: no
-  lines, text, or bars in 3D, meshes (`mesh3d`), parametric surfaces,
-  isosurfaces, volumes, cones, or contours, and no shading beyond flat
-  diffuse light. Several surfaces in one chart are ordered by their cells'
-  depth, which can draw them wrongly where they come close or cross. A
-  surface's grid has at most 250,000 points and is never reduced, so large
-  surfaces cost their size every frame on the CPU (about 28 ms for 200 by
-  200 on the benchmark machine). Points sharing a chart with a surface, and
-  translucent points, are drawn on the CPU however many they are. Points are
+- 3D charts draw points, lines, and rectilinear height-field surfaces only:
+  no text or bars in 3D, meshes (`mesh3d`), parametric surfaces,
+  isosurfaces, volumes, cones, or contours, lines colored by a field, and no
+  shading beyond flat diffuse light. On the CPU (exports, small charts,
+  browsers without WebGL2), several surfaces in one chart are ordered by
+  their cells' depth, and lines by their segments', which can draw them
+  wrongly where they come close or cross; the GPU's depth test does not. A
+  surface's grid has at most 1,048,576 points and is never reduced; the CPU
+  draws at most 250,000 and costs their size every frame (about 28 ms for
+  200 by 200 on the benchmark machine). Translucent points and lines, and
+  translucent or wireframed surfaces, keep the whole chart on the CPU
+  however large it is (refused past the CPU's budget). On the CPU points are
   ordered as wholes: one whose center a surface hides is hidden but for what
   reaches past the surface's outline, and one whose center shows is drawn
-  whole, even where its edge passes behind a nearer cell. Charts of a 3D mark
-  have no facets, panels, brushing, or sync, and labels and titles stay
-  horizontal. Streaming tables upload a GPU layer whole on every change.
+  whole, even where its edge passes behind a nearer cell. On the GPU edges
+  are not antialiased, and marks within a few steps of the depth buffer under
+  a surface show through it. Charts of a 3D mark have no facets, panels,
+  brushing, or sync, and labels and titles stay horizontal. Streaming tables
+  upload a GPU layer whole on every change.
 - Rolling statistics over values whose differences exceed the largest double
   (about 1.8e308) overflow to Infinity.
 - Python derived tables count their source's rows through one of its

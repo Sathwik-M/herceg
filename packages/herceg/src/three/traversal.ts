@@ -107,7 +107,7 @@ export class Traversal {
 }
 
 /** Where the ray from `origin` along `direction` crosses triangle (a, b, c), in units of `direction`; NaN if it does not (Möller–Trumbore). */
-function crossing(
+export function crossing(
   origin: readonly number[],
   direction: readonly number[],
   a: readonly number[],

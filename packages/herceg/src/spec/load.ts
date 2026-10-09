@@ -21,6 +21,7 @@ import { HeatmapMark } from "../marks/heatmap.ts";
 import { HistogramMark } from "../marks/histogram.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
 import { LineMark } from "../marks/line.ts";
+import { Line3DMark } from "../marks/line3d.ts";
 import type { Mark } from "../marks/mark.ts";
 import { PieMark } from "../marks/pie.ts";
 import { PointMark } from "../marks/point.ts";
@@ -388,6 +389,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new GeoPointMark(withScheme(spec), source);
       case "point3d":
         return new Point3DMark(withScheme(spec), source);
+      case "line3d":
+        return new Line3DMark(spec, source);
       case "surface":
         return new SurfaceMark(withScheme(spec), source);
       case "graph":

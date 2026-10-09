@@ -127,6 +127,43 @@ describe("face buffers", () => {
     expect(drawn(faces)).toEqual([0, 2, 3, 1]);
   });
 
+  it("judge a disc against a segment by the segment's depth under it, in perspective too", () => {
+    // A segment from far (depth -1.5) to near (1.5) across the screen, and a
+    // disc over its middle at depth 0.3: orthographically the segment's depth
+    // there is 0, so the disc is in front; in perspective (the eye 5 away)
+    // the middle on screen is nearer the near end, about 0.43 deep.
+    for (const [eye, order] of [
+      [Number.POSITIVE_INFINITY, [0, 1]],
+      [5, [1, 0]],
+    ] as const) {
+      const faces = buffer();
+      faces.begin();
+      faces.corner(faces.vertex(20, 50, -1.5));
+      faces.corner(faces.vertex(180, 50, 1.5));
+      faces.face(faces.styleOf("#000000", 1, 0, "#000000", 8), 0, 0, 0);
+      disc(faces, 100, 50, faces.styleOf("#ff0000", 1, 3), 0, 0.3);
+      faces.geometry("faces", false, BOUNDS, eye);
+      expect(drawn(faces)).toEqual(order);
+    }
+  });
+
+  it("strokes segments round-capped, and finds them within reach of their stroke", () => {
+    const faces = buffer();
+    faces.begin();
+    faces.corner(faces.vertex(10, 10, 0));
+    faces.corner(faces.vertex(90, 10, 0));
+    faces.face(faces.styleOf("#00aa00", 1, 0, "#00aa00", 4), 0, 0, 5);
+    const mark = faces.geometry("faces", false, BOUNDS);
+    expect(facesDrawing.svg(mark, { theme: undefined as never, encodeRaster: undefined })).toBe(
+      '<path d="M10 10L90 10" fill="none" stroke="#00aa00" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>',
+    );
+    const index = new FaceIndex(mark, BOUNDS);
+    // Half the width and 3 pixels of reach past it.
+    expect(index.find(50, 14.9)).toBe(0);
+    expect(index.find(50, 15.1)).toBe(-1);
+    expect(index.find(94.5, 10)).toBe(0);
+  });
+
   it("share styles by value", () => {
     const faces = buffer();
     expect(faces.styleOf("#000000", 1, 3)).toBe(0);

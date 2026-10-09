@@ -173,7 +173,9 @@ async function main() {
   };
   let latency = await launch(false);
   const browserVersion = latency.browser.version();
-  let realtime = scenarios.some((s) => s.operation === "ingest") ? await launch(true) : latency;
+  // Paced scenarios run with the display's refresh on.
+  const paced = (s: Scenario) => s.operation === "ingest" || s.operation === "orbit";
+  let realtime = scenarios.some(paced) ? await launch(true) : latency;
 
   const rows: ResultRow[] = [];
   const renderers: Record<string, unknown> = {};
@@ -215,7 +217,7 @@ async function main() {
   try {
     for (const library of libraries) {
       for (const s of scenarios) {
-        const ingest = s.operation === "ingest";
+        const ingest = paced(s);
         const { context } = ingest ? realtime : latency;
         const started = performance.now();
         const opened: { page?: Page; cdp?: CDPSession } = {};
@@ -310,7 +312,7 @@ function writeResults(run: {
       timing:
         browserName === "webkit"
           ? "operation start until rendering finished and the next frame was produced (rAF + MessageChannel); frames follow vsync, so short operations include waiting for it"
-          : "operation start until rendering finished and the next frame was produced (rAF + MessageChannel); frame rate limit disabled except for ingest scenarios",
+          : "operation start until rendering finished and the next frame was produced (rAF + MessageChannel); frame rate limit disabled except for ingest and orbit scenarios",
       memory: measuresMemory
         ? "CDP Runtime.getHeapUsage after forced GC: V8 heap + Blink heap + ArrayBuffer backing stores"
         : "not measured: heap sizes need Chrome's DevTools protocol, so memory scenarios were skipped",

@@ -30,8 +30,10 @@ import {
   type HistogramOptions,
   heatmap,
   histogram,
+  type Line3DOptions,
   type LineOptions,
   line,
+  line3d,
   type PieOptions,
   type Point3DOptions,
   type PointOptions,
@@ -290,6 +292,15 @@ export const Point3D = /* @__PURE__ */ markComponent(
   "Point3D",
   ({ data, ...options }: WithData<Point3DOptions<Schema>, Schema>) => point3d(data, options),
 ) as unknown as <S extends Schema>(props: WithData<Point3DOptions<S>, S>) => null;
+
+/**
+ * Lines in a 3D chart through the number or time fields `x`, `y`, and `z`:
+ * each series' rows, in table order, are one path.
+ */
+export const Line3D = /* @__PURE__ */ markComponent(
+  "Line3D",
+  ({ data, ...options }: WithData<Line3DOptions<Schema>, Schema>) => line3d(data, options),
+) as unknown as <S extends Schema>(props: WithData<Line3DOptions<S>, S>) => null;
 
 /** A surface in a 3D chart over a grid of rows: `x` and `y` pick a grid point, `z` is its height. */
 export const Surface = /* @__PURE__ */ markComponent(

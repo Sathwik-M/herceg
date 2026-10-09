@@ -2,6 +2,7 @@
 // surface's floor), heights and colors numbers. Compiled by `npm run typecheck`.
 import { category, time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
+import { line3d } from "../../src/marks/line3d.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { surface } from "../../src/marks/surface.ts";
 
@@ -28,3 +29,11 @@ surface(data, { x: "kind", y: "when", z: "c", color: "a" });
 surface(data, { x: "a", y: "b", z: "when" });
 // @ts-expect-error heights are numbers
 surface(data, { x: "a", y: "b", z: "kind" });
+
+line3d(data, { x: "when", y: "a", z: "b", series: "kind", stroke: "#000", strokeWidth: 3 });
+// @ts-expect-error categories have no place along a 3D line's axes
+line3d(data, { x: "kind", y: "b", z: "c" });
+// @ts-expect-error series are categories
+line3d(data, { x: "a", y: "b", z: "c", series: "when" });
+// @ts-expect-error not a field of the table
+line3d(data, { x: "a", y: "b", z: "nope" });

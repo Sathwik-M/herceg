@@ -87,10 +87,42 @@ def test_surface_from_columns_and_from_a_matrix():
     assert list(column(spec, buffers, "y")) == [0, 0, 0, 1, 1, 1]
 
 
+def test_line3d_emits_its_fields_and_line_3d_takes_chart_options():
+    chart = hg.Chart(points()).line3d("x", "y", "z", series="kind", stroke_width=3, label="Paths")
+    spec, buffers = chart.to_spec()
+    assert spec["marks"] == [
+        {
+            "type": "line3d",
+            "data": "data",
+            "x": "x",
+            "y": "y",
+            "z": "z",
+            "series": "kind",
+            "strokeWidth": 3,
+            "label": "Paths",
+        }
+    ]
+    assert list(column(spec, buffers, "z")) == [0, 1, 4, 9]
+    chart = hg.line_3d(points(), x="when", y="x", z="z", stroke="#123456", camera={"azimuth": 10})
+    spec, _ = chart.to_spec()
+    assert spec["marks"][0]["stroke"] == "#123456"
+    assert spec["camera"]["azimuth"] == 10.0
+    assert spec["data"]["data"]["columns"]["when"]["type"] == "time"
+    # Lines share a chart with the other 3D marks.
+    spec, _ = hg.Chart(points()).point3d("x", "y", "z").line3d("x", "y", "z").to_spec()
+    assert [mark["type"] for mark in spec["marks"]] == ["point3d", "line3d"]
+    with pytest.raises(ValueError, match="stroke_width must be a positive width"):
+        hg.Chart(points()).line3d("x", "y", "z", stroke_width=0)
+    with pytest.raises(TypeError, match="line3d series: column 'x' holds number values"):
+        hg.Chart(points()).line3d("x", "y", "z", series="x")
+    svg = hg.Chart(points(), width=400, height=300).line3d("x", "y", "z").to_svg()
+    assert 'stroke-linecap="round"' in svg
+
+
 def test_3d_marks_share_their_chart_only_with_each_other():
     chart = hg.Chart(points()).point3d("x", "y", "z")
     chart.surface(z=np.ones((2, 2)))
-    with pytest.raises(ValueError, match="shares its chart only with point3d and surface"):
+    with pytest.raises(ValueError, match="shares its chart only with point3d, line3d, and surface"):
         chart.line("x", "y")
     with pytest.raises(ValueError, match="a point3d shares its chart only with"):
         hg.Chart(points()).line("x", "y").point3d("x", "y", "z")

@@ -631,7 +631,7 @@ describe("3D charts in specs", () => {
     );
     expect(
       fails({ marks: [{ type: "line", data: "points", x: "x", y: "y" }], camera: {} }),
-    ).toThrow(/spec.camera: expected a spec with point3d or surface marks/);
+    ).toThrow(/spec.camera: expected a spec with point3d, line3d, or surface marks/);
     expect(checkSpec({ data, marks, camera: { azimuth: 1, roll: 3 } } as ChartSpec)).toEqual([
       "spec.camera.roll",
     ]);
