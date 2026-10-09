@@ -64,9 +64,10 @@ scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
 selections, animated changes of view and of values (bars, pies, points,
 and small lines and areas, with the axes they move), crosshair
-labels on the axes), time axes that leave out breaks (nights, weekends,
-holidays) in any time zone, static SVG and PDF export, React, Vue, and
-Svelte adapters, min/max indexes for zooming and streaming large line
+labels on the axes), a range navigator (a strip under the plot over the
+whole x axis whose window pans and zooms by pointer and keyboard), time
+axes that leave out breaks (nights, weekends, holidays) in any time zone,
+static SVG and PDF export, React, Vue, and Svelte adapters, min/max indexes for zooming and streaming large line
 series (whole columns or split by a series field), WebGL drawing of large
 point series, chart specs with binary columns, a Python package, a second
 y axis, small multiples (wrapped or by row and column, with shared or
@@ -88,8 +89,9 @@ Next, in order:
    candlesticks on categories per panel.
 3. Animation of stacked and labeled bars, of categories that come and go,
    of panels, and of points across resets (by a key field).
-4. More financial tools (a range navigator, drawing tools, markers at
-   breaks); 3D lines, meshes, parametric surfaces, and surfaces on the GPU.
+4. More financial tools (drawing tools, markers at breaks, range navigators
+   in charts with panels); 3D lines, meshes, parametric surfaces, and
+   surfaces on the GPU.
 5. Grid: pivots, and a server-backed mode whose filters, sorts, and
    aggregates run where the data lives.
 6. Screen-reader verification, benchmarks in Firefox and on other machines

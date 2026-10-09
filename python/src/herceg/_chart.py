@@ -351,6 +351,42 @@ class Animation:
 
 
 @dataclass
+class Navigator:
+    """A range navigator (the chart's ``navigator``): a strip under the plot
+    drawing the chart's marks over the whole x axis, with a window showing
+    the x range in view, which dragging and the keyboard move and resize.
+
+    ``height`` is the strip's height in pixels (40 by default, at least 16,
+    and at most a third of what the plot and the strip share; a chart too
+    short to leave its plot 30 pixels has none); ``marks`` names the ``id`` of each
+    mark the strip draws (by default every line, area, scatter, bar, and
+    candlestick mark). ``navigator=True`` is ``Navigator()``. The chart needs
+    a number or time x axis, and no facets or panels.
+    """
+
+    height: float | None = None
+    marks: Sequence[str] | None = None
+
+    def _spec(self) -> dict[str, Any]:
+        spec: dict[str, Any] = {}
+        if self.height is not None:
+            if isinstance(self.height, bool) or not (_finite(self.height) and self.height >= 16):
+                raise ValueError(
+                    f"navigator height must be at least 16 pixels, not {self.height!r}"
+                )
+            spec["height"] = float(self.height)
+        if self.marks is not None:
+            if isinstance(self.marks, str) or not all(isinstance(m, str) for m in self.marks):
+                raise ValueError(f"navigator marks must be a list of mark ids, not {self.marks!r}")
+            ids = list(self.marks)
+            repeated = next((m for i, m in enumerate(ids) if m in ids[:i]), None)
+            if repeated is not None:
+                raise ValueError(f"navigator marks list {repeated!r} twice")
+            spec["marks"] = ids
+        return spec
+
+
+@dataclass
 class Camera:
     """Where a 3D chart is seen from at first (the chart's ``camera``).
 
@@ -435,6 +471,7 @@ class _SharedOptions(TypedDict, total=False):
     camera: Camera | dict[str, Any] | None
     box_aspect: tuple[float, float, float] | None
     rotate: bool | None
+    navigator: bool | Navigator | dict[str, Any] | None
 
 
 class _LayoutOptions(TypedDict, total=False):
@@ -524,6 +561,7 @@ class Chart:
         camera: Camera | dict[str, Any] | None = None,
         box_aspect: tuple[float, float, float] | None = None,
         rotate: bool | None = True,
+        navigator: bool | Navigator | dict[str, Any] | None = None,
     ) -> None:
         if facet_columns is not None and facet is None:
             raise ValueError("facet_columns needs facet")
@@ -567,6 +605,8 @@ class Chart:
             raise ValueError("a chart has facets or panels, not both")
         if panel_list and (zoom in ("y", "xy") or brush in ("y", "xy", "lasso")):
             raise ValueError("charts with panels can zoom and brush along x only")
+        if _navigator(navigator) is not None and (panel_list or facet or facet_row or facet_col):
+            raise ValueError("charts with facets or panels cannot have a navigator yet")
         for name, resolution in (("resolve_x", resolve_x), ("resolve_y", resolve_y)):
             if resolution not in (None, "shared", "independent", "rows", "columns"):
                 raise ValueError(
@@ -636,6 +676,7 @@ class Chart:
             "camera": camera,
             "box_aspect": box_aspect,
             "rotate": rotate,
+            "navigator": navigator,
         }
         self._options = spec_options(self._settings)
 
@@ -2529,7 +2570,7 @@ _NODE_FIELDS = ("node", "group", "size")
 OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
     *("zoom", "brush", "sync", "animation", "resolve_x", "resolve_y", "renderer", "theme"),
-    *("locale", "time_zone", "projection", "z", "camera", "box_aspect", "rotate"),
+    *("locale", "time_zone", "projection", "z", "camera", "box_aspect", "rotate", "navigator"),
 )
 
 
@@ -2577,6 +2618,7 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "z": _axis(settings.get("z"), "z"),
         "camera": _camera(settings.get("camera")),
         "boxAspect": _box_aspect(settings.get("box_aspect")),
+        "navigator": _navigator(settings.get("navigator")),
     }
     return {key: value for key, value in options.items() if value is not None}
 
@@ -2591,7 +2633,7 @@ def assemble_spec(
     """A spec and its buffers from chart options, columns by table name, mark
     specs, and derived tables by name."""
     buffers: list[bytes] = []
-    spec: dict[str, Any] = {"version": 3, **options}
+    spec: dict[str, Any] = {"version": 4, **options}
     for key, value in layout.items():
         spec[key] = (
             {k: v for k, v in value.items() if v is not None} if isinstance(value, dict) else value
@@ -2753,6 +2795,22 @@ def _animation(animation: Any) -> bool | dict[str, Any] | None:
             f"not {animation!r}"
         )
     return {"duration": animation}
+
+
+def _navigator(navigator: Any) -> bool | dict[str, Any] | None:
+    """The spec's navigator: True, or a Navigator's options; None when off."""
+    if navigator is None or navigator is False:
+        return None
+    if navigator is True:
+        return True
+    if isinstance(navigator, dict):
+        navigator = Navigator(**navigator)
+    if not isinstance(navigator, Navigator):
+        raise TypeError(
+            "navigator must be True, False, a Navigator, or a dict of its fields, "
+            f"not {navigator!r}"
+        )
+    return navigator._spec() or True
 
 
 def _camera(camera: Any) -> dict[str, Any] | None:

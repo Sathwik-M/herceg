@@ -192,6 +192,23 @@ describe("notebook widget", () => {
     expect(figure(host!).getAttribute("aria-label")).toBe("Chart");
   });
 
+  it("draws a navigator, and adds and removes one with options", async () => {
+    const model = new MockModel({
+      _chart: snapshot({ version: 4, navigator: true }),
+      _listening: [],
+    });
+    const [host] = mount(model);
+    const sliders = () => host!.querySelectorAll('[aria-label="Range navigator"] [role="slider"]');
+    await vi.dynamicImportSettled();
+    expect(sliders()).toHaveLength(3);
+    model.receive({ type: "options", revision: 1, options: { navigator: null } });
+    expect(sliders()).toHaveLength(0);
+    model.receive({ type: "options", revision: 2, options: { navigator: { height: 30 } } });
+    await vi.dynamicImportSettled();
+    await frame();
+    expect(sliders()).toHaveLength(3);
+  });
+
   it("changes options of charts whose specs need a later version", () => {
     const resolved = snapshot({ version: 3, resolve: { x: "shared", y: "shared" } });
     const model = new MockModel({ _chart: resolved, _listening: [] });

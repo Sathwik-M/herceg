@@ -9,6 +9,7 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  rangeNavigator,
   type Schema,
   table,
   time,
@@ -562,6 +563,27 @@ describe("<Chart>", () => {
     breaks.value = timeBreaks([{ weekdays: ["sun"] }]);
     await nextTick();
     expect(updates).toHaveLength(1);
+  });
+
+  it("draws a navigator, keeps an equal one without updating, and removes it", async () => {
+    const { view, chart } = chartRef();
+    const navigator = shallowRef<ReturnType<typeof rangeNavigator> | undefined>(rangeNavigator());
+    mount(
+      `<Chart ref="view" :navigator="navigator">
+        <Line :data="metrics" x="t" y="a" />
+      </Chart>`,
+      () => ({ metrics, view, navigator }),
+    );
+    await chart().loading;
+    expect(host.querySelectorAll('[aria-label="Range navigator"] [role="slider"]')).toHaveLength(3);
+    const updates = spyUpdates(chart());
+    navigator.value = rangeNavigator();
+    await nextTick();
+    expect(updates).toHaveLength(0);
+    navigator.value = undefined;
+    await nextTick();
+    expect(updates).toHaveLength(1);
+    expect(host.querySelector('[aria-label="Range navigator"]')).toBeNull();
   });
 
   it("draws a panel per facet value and keeps equal facets without updating", async () => {

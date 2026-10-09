@@ -24,6 +24,7 @@ import {
   type GridSpec,
   type InteractionSpec,
   type MarkSpec,
+  type NavigatorSpec,
   type PanelSpec,
   type ProjectionSpec,
   type ResolveSpec,
@@ -1099,6 +1100,23 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           rotate: boolean,
         } satisfies ChecksOf<InteractionSpec>);
       },
+      navigator: (v, path) => {
+        if (typeof v === "boolean") return;
+        object(v, path);
+        properties(v as Record<string, unknown>, path, {
+          height: (h, at) => {
+            if (typeof h !== "number" || !(h >= 16) || !Number.isFinite(h))
+              fail(at, "a height of at least 16 pixels", h);
+          },
+          marks: (m, at) => {
+            strings(m, at);
+            const ids = m as string[];
+            ids.forEach((id, i) => {
+              if (ids.indexOf(id) !== i) fail(`${at}[${i}]`, "a mark id not listed before", id);
+            });
+          },
+        } satisfies ChecksOf<NavigatorSpec>);
+      },
       animation: (a, path) => {
         if (typeof a === "boolean") return;
         object(a, path);
@@ -1140,7 +1158,11 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
   ] as const;
   for (const [path, value] of ownX)
     if (value !== undefined && declared < 3)
-      fail(path, 'a spec with "version": 3, so that older readers refuse it', value);
+      fail(path, 'a spec with "version": 3 or later, so that older readers refuse it', value);
+  // An older reader would draw the chart without its strip, and the plot taller.
+  const navigator = chart.navigator;
+  if (navigator !== undefined && navigator !== false && declared < 4)
+    fail("spec.navigator", 'a spec with "version": 4, so that older readers refuse it', navigator);
   // A projection places maps' marks; a chart of other marks has nothing to project.
   if (
     chart.projection !== undefined &&

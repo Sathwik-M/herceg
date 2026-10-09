@@ -30,6 +30,7 @@ import { surface } from "../../src/marks/surface.ts";
 import { text } from "../../src/marks/text.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import { facet } from "../../src/model/facet.ts";
+import { rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { accessibilityTree as treeUnder } from "./helpers.ts";
@@ -202,6 +203,22 @@ describe("accessibility audits", () => {
     expect(await violations(chart.root)).toEqual([]);
   });
 
+  for (const theme of ["light", "dark", "high-contrast", "high-contrast-dark"] as const) {
+    it(`find nothing to fix in a range navigator, zoomed and focused, in the ${theme} theme`, async () => {
+      const chart = mount({
+        title: "Latency",
+        theme,
+        marks: [line(metrics, { x: "t", y: ["a", "b"] })],
+        navigator: rangeNavigator(),
+      });
+      await chart.loading;
+      chart.setViewport([start + 6 * 3_600_000, start + 18 * 3_600_000]);
+      chart.render();
+      chart.root.querySelector<HTMLElement>('[role="slider"]')!.focus();
+      expect(await violations(chart.root)).toEqual([]);
+    });
+  }
+
   it("find nothing to fix in static SVG", async () => {
     const host = document.createElement("div");
     host.innerHTML = renderToSVG({
@@ -210,6 +227,7 @@ describe("accessibility audits", () => {
       width: 600,
       height: 320,
       marks: [line(metrics, { x: "t", y: ["a", "b"] }), rule({ y: 110, label: "SLO" })],
+      navigator: rangeNavigator(),
     });
     document.body.append(host);
     try {

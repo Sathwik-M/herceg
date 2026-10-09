@@ -6,6 +6,7 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  rangeNavigator,
   table,
   time,
   timeBreaks,
@@ -127,6 +128,20 @@ describe("<Chart>", () => {
     props.breaks = timeBreaks([{ weekdays: ["sun"] }]);
     flushSync();
     expect(updates).toHaveLength(1);
+  });
+
+  it("draws a navigator, keeps an equal one without updating, and removes it", async () => {
+    const props = lines({ options: { navigator: rangeNavigator() } });
+    await props.chart.loading;
+    expect(host.querySelectorAll('[aria-label="Range navigator"] [role="slider"]')).toHaveLength(3);
+    const updates = spyUpdates(props.chart);
+    props.options = { navigator: rangeNavigator() };
+    flushSync();
+    expect(updates).toHaveLength(0);
+    props.options = {};
+    flushSync();
+    expect(updates).toHaveLength(1);
+    expect(host.querySelector('[aria-label="Range navigator"]')).toBeNull();
   });
 
   it("renders marks from its children, one path per series", () => {

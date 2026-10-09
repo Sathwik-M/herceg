@@ -292,7 +292,7 @@ describe("loadSpec", () => {
       /marks\[0\]: An area needs y, or y1 and y2/,
     );
     expect(() => validateSpec({ marks: [{ type: "rule" }] })).toThrow(/exactly one of x or y/);
-    expect(SPEC_VERSION).toBe(3);
+    expect(SPEC_VERSION).toBe(4);
     // An omitted version is 1, which has no panels.
     expect(() => loadSpec({ marks: [], panels: [{ id: "a" }] })).toThrow(/"version": 2/);
   });
@@ -392,7 +392,7 @@ describe("loadSpec", () => {
         marks: [{ type: "line", x: "x", y: "y" }],
       }),
     ).toThrow(/set `data` to one of "a", "b"/);
-    expect(() => loadSpec({ version: 4 as 1, marks: [] })).toThrow(/Unsupported spec version 4/);
+    expect(() => loadSpec({ version: 5 as 1, marks: [] })).toThrow(/Unsupported spec version 5/);
     expect(() => table({ c: encodedCategory(new Int32Array([2]), ["a"]) })).toThrow(
       /Column "c": Category code 2 at row 0 is outside the dictionary/,
     );

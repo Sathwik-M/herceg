@@ -59,6 +59,8 @@ export type PanelCheck = (shape: { rows: number; columns: number }, panels: numb
 /** The chart options a layout checks; the x axis as panels read it, breaks aside. */
 export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y"> & {
   x?: AxisSpec | undefined;
+  /** Layouts refuse a navigator, which the model then need not check. */
+  navigator?: object | boolean | undefined;
 };
 
 /**

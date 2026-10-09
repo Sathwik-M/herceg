@@ -14,9 +14,9 @@ export type { Expression, Operator } from "../data/expression.ts";
  * The spec format this herceg writes; it reads the earlier ones too. Each
  * version adds what an older reader would ignore and draw differently:
  * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
- * panels' own `x`, and the x axis' `breaks`.
+ * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`.
  */
-export const SPEC_VERSION = 3;
+export const SPEC_VERSION = 4;
 
 /** Column name in a table. */
 export type Field = string;
@@ -31,11 +31,11 @@ export type Frozen<T> = T extends object ? { readonly [K in keyof T]: Frozen<T[K
 export interface ChartSpec {
   /**
    * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
-   * `grid` must give 2 or later, and those using `resolve.x`, a panel's `x`,
-   * or x axis `breaks` 3, so that older readers refuse them rather than draw
-   * them differently.
+   * `grid` must give 2 or later, those using `resolve.x`, a panel's `x`, or
+   * x axis `breaks` 3 or later, and those with a `navigator` 4, so that
+   * older readers refuse them rather than draw them differently.
    */
-  version?: 1 | 2 | 3;
+  version?: 1 | 2 | 3 | 4;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -70,6 +70,14 @@ export interface ChartSpec {
   legend?: boolean;
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
+  /**
+   * A range navigator: a strip under the plot drawing the chart's marks
+   * over the whole x domain, with a window showing the x range in view,
+   * which dragging and the keyboard move and resize. `true` uses the
+   * defaults. Needs spec version 4, a number or time x axis, and a chart
+   * without facets or panels.
+   */
+  navigator?: boolean | NavigatorSpec;
   /**
    * Moves the axes gradually to a view asked for: `setViewport`, zooming
    * to a brush, and double-click reset; with `values`, marks (and the axes
@@ -456,6 +464,22 @@ export interface InteractionSpec {
    * false: the wheel magnifies them.
    */
   rotate?: boolean;
+}
+
+/** The range navigator's options. */
+export interface NavigatorSpec {
+  /**
+   * The strip's height in CSS pixels, from 16 up: 40 by default, and at most
+   * a third of the height the plot and the strip share. A chart too short to
+   * leave its plot 30 pixels beside the strip has none.
+   */
+  height?: number;
+  /**
+   * The `id`s of the marks the strip draws, in the chart's order; by default
+   * every line, area, point, vertical bar, and candlestick mark. An empty
+   * list draws none: the strip has its axis and window only.
+   */
+  marks?: readonly string[];
 }
 
 export interface AnimationSpec {

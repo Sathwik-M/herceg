@@ -61,13 +61,23 @@ import {
 } from "./axis.ts";
 import type { Facet } from "./facet.ts";
 import { EDGE, type LegendEntry, type LegendPart, layoutLegends } from "./legend.ts";
+import type { Navigator } from "./navigator.ts";
 import type { PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
 import type { Panels } from "./panels.ts";
 
 /** Chart options with marks bound to their data. */
 export type ChartConfig = Omit<
   ChartSpec,
-  "marks" | "data" | "width" | "height" | "version" | "facet" | "panels" | "grid" | "x"
+  | "marks"
+  | "data"
+  | "width"
+  | "height"
+  | "version"
+  | "facet"
+  | "panels"
+  | "grid"
+  | "x"
+  | "navigator"
 > & {
   /** Marks along axes, or one layout mark (a pie) that has the chart to itself. */
   marks: readonly ChartMark[];
@@ -76,6 +86,8 @@ export type ChartConfig = Omit<
   facet?: Facet | undefined;
   /** Subplots: panels drawing the marks that name them (see `panels`). */
   panels?: Panels | undefined;
+  /** A strip under the plot to see and move the x range by (see `rangeNavigator`). */
+  navigator?: Navigator | undefined;
 };
 
 /** The x axis' options: its `breaks` are built with `timeBreaks`. */
@@ -888,7 +900,11 @@ export class ChartModel {
     const xLabels = TICK + GAP + tickLabelGap(theme.fontSize) - tickLabelGap(0);
     // Each x scale's title goes once, under its lowest labels (see xTitleOf).
     const xTitle = xContexts.some(({ spec }) => spec?.label) ? lineHeight + GAP : 0;
-    const bottom = showX ? xLabels + lineHeight + xTitle + 2 : 4;
+    // A navigator's strip goes under the x axis, when there is room for it.
+    const navigator = config.navigator;
+    const below = showX ? xLabels + lineHeight + xTitle + 2 : 4;
+    const strip = navigator ? navigator.room(height - top - below) : 0;
+    const bottom = below + strip;
     // A wrapped facet's panels each have a header with their value, and rows
     // leave room below for the x labels of panels above an empty cell. A
     // grid of facets has a column per value of its column field, headed
@@ -1123,16 +1139,22 @@ export class ChartModel {
       const widest = this.#widest(categories, measure, font);
       return planBandAxis(categories, range, padding("x"), widest);
     };
-    const planX = (plotWidth: number, h: number): AxisPlan => {
+    // A domain other than the group's, as a navigator's strip plans the unzoomed one.
+    const planX = (
+      plotWidth: number,
+      h: number,
+      shown = xDomains[h]!,
+      auto = autoX[h],
+    ): AxisPlan => {
       const context = xContexts[h]!;
       const { type, spec } = context;
       if (type === "band") return planCategoriesX(h, [left, left + plotWidth]);
       const count = xTicks(context, plotWidth);
       const range = [left, left + plotWidth] as const;
-      if (!autoX[h]) return planAxis(context, xDomains[h]!, range, count);
+      if (!auto) return planAxis(context, shown, range, count);
       // As for y: ticks on the rounded domain, inside the room for glyphs.
       const nice = spec?.nice ?? xMeasures[h]!;
-      const rounded = niceAxisDomain(xDomains[h]!, context, count, nice);
+      const rounded = niceAxisDomain(shown, context, count, nice);
       // Room at the ends is time shown: on axes with breaks, positions.
       const room = (d: [number, number], as: AxisType) =>
         insetDomain(
@@ -1354,7 +1376,7 @@ export class ChartModel {
           : left + gridWidth / 2,
         y:
           rowOf(i) === rows - 1
-            ? height - lineHeight / 2 - 2
+            ? height - strip - lineHeight / 2 - 2
             : plot.y + plot.height + xLabels + lineHeight * 1.5 + GAP,
       };
     };
@@ -1490,6 +1512,9 @@ export class ChartModel {
     this.#namesPanels = layout !== undefined;
     this.#drawn = marks;
     this.#base = base;
+    // Charts with a navigator have one panel.
+    if (strip)
+      panels.push(navigator!.panel(this, views[0]!.inspector, planX, xContexts[0]!, strip));
 
     let vertices = 0;
     for (const panel of panels) for (const item of panel.marks) vertices += item.draw.size(item);
@@ -2022,7 +2047,8 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
     if (named)
       throw new Error(`A ${named.spec.type} mark names a panel, but the chart has no panels`);
   }
-  (config.facet ?? config.panels)?.check(marks, config);
+  // Facets and panels refuse navigators, so one of the three checks the marks.
+  (config.facet ?? config.panels ?? config.navigator)?.check(marks, config);
   return [marks, layouts];
 }
 

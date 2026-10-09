@@ -109,6 +109,9 @@ class LiveChart:
         settings = {**self._settings, **changes}
         _check_live(settings)
         options = spec_options(settings)
+        # Checked before anything changes, as the chart checks it when made.
+        if options.get("navigator") and self._layout:
+            raise ValueError("charts with facets or panels cannot have a navigator yet")
         changed = {
             key: options.get(key)
             for key in sorted(set(options) | set(self._options))

@@ -36,6 +36,7 @@ import { TreemapMark } from "../marks/treemap.ts";
 import { ViolinMark } from "../marks/violin.ts";
 import { Facet } from "../model/facet.ts";
 import type { ChartConfig } from "../model/model.ts";
+import { rangeNavigator } from "../model/navigator.ts";
 import { Panels } from "../model/panels.ts";
 import { timeBreaks } from "../scale/breaks.ts";
 import { scheme } from "../scale/schemes.ts";
@@ -110,10 +111,12 @@ export function loadSpec(
     panels,
     grid,
     x,
+    navigator: strip,
     ...chart
   } = spec;
   const facet = split && new Facet(split);
   const subplots = panels && new Panels(panels, grid);
+  const navigator = strip ? rangeNavigator(strip === true ? {} : strip) : undefined;
   // Breaks become the TimeBreaks that resolve them.
   const { breaks, ...axis } = x ?? {};
   const xAxis = x && { ...axis, ...(breaks && { breaks: timeBreaks(breaks) }) };
@@ -124,6 +127,7 @@ export function loadSpec(
       ...(xAxis && { x: xAxis }),
       ...(facet && { facet }),
       ...(subplots && { panels: subplots }),
+      ...(navigator && { navigator }),
     },
     tables,
     unknown,
