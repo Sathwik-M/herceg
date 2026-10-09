@@ -4,7 +4,7 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
-import { heatmap, MAX_CELLS } from "../../src/marks/heatmap.ts";
+import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { type PointOptions, point } from "../../src/marks/point.ts";
 import { type AxisInspection, type ChartConfig, ChartModel } from "../../src/model/model.ts";
@@ -839,15 +839,6 @@ describe("heatmap", () => {
     ).toThrow(/hex colors/);
     expect(() => build({ theme: { sequential: ["#fff", "#0008"] }, marks: [] })).toThrow(
       /hex colors/,
-    );
-  });
-
-  it("refuses grids beyond the cell limit", () => {
-    const side = Math.ceil(Math.sqrt(MAX_CELLS)) + 1;
-    const diagonal = Float64Array.from({ length: side }, (_, i) => i);
-    const sparse = table({ x: diagonal, y: diagonal, v: diagonal });
-    expect(() => build({ marks: [heatmap(sparse, { x: "x", y: "y", value: "v" })] })).toThrow(
-      /exceeds the limit/,
     );
   });
 

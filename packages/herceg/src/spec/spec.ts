@@ -863,5 +863,11 @@ export interface HeatmapSpec extends MarkBase {
   colorDomain?: [number, number];
   /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
   colorMidpoint?: number;
+  /**
+   * How a pixel showing several cells (a grid with more columns or rows than
+   * the plot has device pixels) colors them: by the "mean" of their values
+   * (the default), the "max", or the "min".
+   */
+  reduce?: "mean" | "max" | "min";
   label?: string;
 }

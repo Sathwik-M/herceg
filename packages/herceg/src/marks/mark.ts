@@ -1,5 +1,5 @@
 import type { FieldKind, NumericArray } from "../data/column.ts";
-import { lowerBound, type Schema, type Table } from "../data/table.ts";
+import type { Schema, Table } from "../data/table.ts";
 import { formatNumber, timeTickLabels } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
 import type { Polyline } from "../lod/polyline.ts";
@@ -45,6 +45,8 @@ export interface Frame {
   y: PositionScale;
   plot: Rect;
   pixelRatio: number;
+  /** Pixels per CSS pixel of images (heatmap rasters): the pixel ratio, or more for static output. */
+  rasterRatio: number;
   theme: Theme;
   /** Locale for numbers the mark formats as text; undefined uses the runtime's. */
   locale: string | undefined;
@@ -62,6 +64,8 @@ export interface Frame {
   polyline(seriesKey: string, stage: string): Polyline;
   /** A Float32Array of at least `length` items, reused across frames. */
   floats(seriesKey: string, stage: string, length: number): Float32Array;
+  /** A Float64Array of at least `length` items, reused across frames. */
+  doubles(seriesKey: string, stage: string, length: number): Float64Array;
   /** A byte array of at least `length` items, reused across frames. */
   bytes(seriesKey: string, stage: string, length: number): Uint8ClampedArray<ArrayBuffer>;
 }
@@ -413,18 +417,27 @@ function categoryOrdinal(table: Table, field: string): Ordinal {
 
 function valueOrdinal(table: Table, field: string, context: BandContext): Ordinal {
   const values = table.numbers(field as never);
-  // Collect distinct values first: grids have far fewer distinct values than rows.
-  const distinct = new Set<number>();
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i]!;
-    if (Number.isFinite(v)) distinct.add(v);
-  }
-  const unique = Float64Array.from(distinct).sort();
+  // Number distinct values as they appear, then renumber them in ascending
+  // order: grids have far fewer distinct values than rows.
+  const ids = new Map<number, number>();
   const own = new Int32Array(values.length);
   for (let i = 0; i < values.length; i++) {
     const v = values[i]!;
-    own[i] = Number.isFinite(v) ? lowerBound(unique, v) : -1;
+    if (!Number.isFinite(v)) {
+      own[i] = -1;
+      continue;
+    }
+    let id = ids.get(v);
+    if (id === undefined) {
+      id = ids.size;
+      ids.set(v, id);
+    }
+    own[i] = id;
   }
+  const unique = Float64Array.from(ids.keys()).sort();
+  const rank = new Int32Array(unique.length);
+  for (let k = 0; k < unique.length; k++) rank[ids.get(unique[k]!)!] = k;
+  for (let i = 0; i < own.length; i++) if (own[i]! >= 0) own[i] = rank[own[i]!]!;
   return {
     keys: Array.from(unique, (v) => `n:${v}`),
     labels: valueLabels(unique, table.kind(field) === "time", context),
@@ -462,7 +475,8 @@ const indexCache = new WeakMap<
 /**
  * Each row's band index on an axis whose band keys are `keys` (which may
  * include bands from other marks). Cached per table version and key list;
- * the chart keeps key lists stable while their contents do not change.
+ * the chart keeps key lists stable while their contents do not change. The
+ * array is shared with other callers and must not be modified.
  */
 export function bandIndices(
   table: Table,
@@ -485,8 +499,14 @@ export function bandIndices(
   const own = ordinal(table, field, context);
   const position = new Map(keys.map((key, index) => [key, index]));
   const remap = Int32Array.from(own.keys, (key) => position.get(key) ?? -1);
-  const indices = new Int32Array(own.own.length);
-  for (let i = 0; i < indices.length; i++) indices[i] = own.own[i]! >= 0 ? remap[own.own[i]!]! : -1;
+  // When the field's bands lead the axis in their own order, as with one
+  // mark on it, rows keep their own indices rather than a copy of them.
+  let indices = own.own;
+  if (!remap.every((to, from) => to === from)) {
+    indices = new Int32Array(own.own.length);
+    for (let i = 0; i < indices.length; i++)
+      indices[i] = own.own[i]! >= 0 ? remap[own.own[i]!]! : -1;
+  }
   byField.set(field, { version: table.version, indices });
   return indices;
 }

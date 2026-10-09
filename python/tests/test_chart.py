@@ -404,6 +404,15 @@ def test_heatmaps_take_schemes_and_midpoints():
     assert spec["marks"][0]["colors"] == "viridis"
     assert spec["marks"][0]["colorDomain"] == [-2, 2]
     assert spec["marks"][0]["colorMidpoint"] == 0
+    assert "reduce" not in spec["marks"][0]
+
+
+def test_heatmaps_take_a_reduction_for_large_grids():
+    values = {"c": np.arange(4.0), "r": np.zeros(4), "v": np.array([1.0, 9.0, 2.0, 8.0])}
+    spec, _ = hg.heatmap(values, "c", "r", "v", reduce="max").to_spec()
+    assert spec["marks"][0]["reduce"] == "max"
+    with pytest.raises(ValueError, match="reduce must be 'mean', 'max', or 'min', not 'sum'"):
+        hg.Chart(values).heatmap("c", "r", "v", reduce="sum")
 
 
 def test_scatter_helper_takes_every_encoding():

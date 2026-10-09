@@ -168,17 +168,16 @@ export function valueFormatter(context: AxisContext, fallback: Formatter): Forma
 
 /**
  * A band axis. Labels are thinned to every k-th band so neighbors do not
- * overlap: horizontal labels need their width, vertical ones a line height.
+ * overlap: `size` is the room the largest label takes along the axis (for
+ * horizontal labels their width, for vertical ones a line height).
  */
 export function planBandAxis(
   categories: readonly string[],
   range: readonly [number, number],
   padding: number,
-  labelSize: (label: string) => number,
+  size: number,
 ): AxisPlan {
   const scale = new BandScale(categories, range, padding);
-  let size = 0;
-  for (const label of categories) size = Math.max(size, labelSize(label));
   const every = Math.max(1, Math.ceil((size + 6) / Math.max(1e-9, Math.abs(scale.step))));
   const ticks: number[] = [];
   for (let i = 0; i < categories.length; i += every) ticks.push(i);
