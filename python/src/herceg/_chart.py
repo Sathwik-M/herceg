@@ -2697,23 +2697,76 @@ def line(
     y: str | Sequence[str],
     *,
     series: str | None = None,
+    stroke: str | None = None,
+    stroke_width: float | None = None,
+    dash: Sequence[float] | None = None,
+    curve: Curve | None = None,
+    label: str | None = None,
+    axis: Literal["left", "right"] | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A line chart. Remaining keyword arguments are chart options (``HelperOptions``)."""
-    return _chart_of(data, options).line(x, y, series=series)
+    return _chart_of(data, options).line(
+        x,
+        y,
+        series=series,
+        stroke=stroke,
+        stroke_width=stroke_width,
+        dash=dash,
+        curve=curve,
+        label=label,
+        axis=axis,
+        repeat=repeat,
+        panel=panel,
+        id=id,
+    )
 
 
 def area(
     data: Any,
     x: str,
-    y: str | Sequence[str],
+    y: str | Sequence[str] | None = None,
     *,
+    y1: str | None = None,
+    y2: str | None = None,
     series: str | None = None,
     stack: bool = False,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    line: bool | None = None,
+    stroke: str | None = None,
+    stroke_width: float | None = None,
+    curve: Curve | None = None,
+    label: str | None = None,
+    axis: Literal["left", "right"] | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """An area chart, stacked with ``stack=True``."""
-    return _chart_of(data, options).area(x, y, series=series, stack=stack)
+    """An area chart, stacked with ``stack=True``, or the band between ``y1`` and ``y2``."""
+    return _chart_of(data, options).area(
+        x,
+        y,
+        y1=y1,
+        y2=y2,
+        series=series,
+        stack=stack,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        line=line,
+        stroke=stroke,
+        stroke_width=stroke_width,
+        curve=curve,
+        label=label,
+        axis=axis,
+        repeat=repeat,
+        panel=panel,
+        id=id,
+    )
 
 
 def bar(
@@ -2723,11 +2776,31 @@ def bar(
     *,
     series: str | None = None,
     stack: bool = False,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    label: str | None = None,
     labels: bool | dict[str, Any] = False,
+    axis: Literal["left", "right"] | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A bar chart, grouped or stacked; horizontal when ``y`` is a category."""
-    return _chart_of(data, options).bar(x, y, series=series, stack=stack, labels=labels)
+    return _chart_of(data, options).bar(
+        x,
+        y,
+        series=series,
+        stack=stack,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        label=label,
+        labels=labels,
+        axis=axis,
+        repeat=repeat,
+        panel=panel,
+        id=id,
+    )
 
 
 def scatter(
@@ -2738,13 +2811,21 @@ def scatter(
     series: str | None = None,
     r: float | str | None = None,
     r_range: tuple[float, float] | None = None,
+    fill: str | None = None,
+    fill_opacity: float | str | None = None,
+    stroke: str | None = None,
+    stroke_width: float | None = None,
     color: str | None = None,
     colors: str | Sequence[str] | None = None,
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
     symbol: str | None = None,
-    fill_opacity: float | str | None = None,
     sampling: Literal["none", "pixel"] | None = None,
+    label: str | None = None,
+    axis: Literal["left", "right"] | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A scatter plot; ``r``, ``color``, and ``symbol`` can encode columns (see ``Chart.point``)."""
@@ -2754,13 +2835,21 @@ def scatter(
         series=series,
         r=r,
         r_range=r_range,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        stroke=stroke,
+        stroke_width=stroke_width,
         color=color,
         colors=colors,
         color_domain=color_domain,
         color_midpoint=color_midpoint,
         symbol=symbol,
-        fill_opacity=fill_opacity,
         sampling=sampling,
+        label=label,
+        axis=axis,
+        repeat=repeat,
+        panel=panel,
+        id=id,
     )
 
 
@@ -2774,6 +2863,10 @@ def heatmap(
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
     reduce: Literal["mean", "max", "min"] | None = None,
+    label: str | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A heatmap; ``colors`` is a scheme name or a list of hex colors (see ``Chart.heatmap``)."""
@@ -2785,6 +2878,10 @@ def heatmap(
         color_domain=color_domain,
         color_midpoint=color_midpoint,
         reduce=reduce,
+        label=label,
+        repeat=repeat,
+        panel=panel,
+        id=id,
     )
 
 
@@ -2796,11 +2893,29 @@ def histogram(
     series: str | None = None,
     normalize: Literal["count", "percent", "density"] | None = None,
     stack: bool = False,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    label: str | None = None,
+    axis: Literal["left", "right"] | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A histogram of ``x``'s values."""
     return _chart_of(data, options).histogram(
-        x, bins=bins, series=series, normalize=normalize, stack=stack
+        x,
+        bins=bins,
+        series=series,
+        normalize=normalize,
+        stack=stack,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        label=label,
+        axis=axis,
+        repeat=repeat,
+        panel=panel,
+        id=id,
     )
 
 
@@ -2812,11 +2927,17 @@ def pie(
     inner_radius: float | None = None,
     sort: Literal["value", "input"] | None = None,
     labels: bool | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A pie, or with ``inner_radius`` a donut, of ``value`` per ``category``."""
     return _chart_of(data, options).pie(
-        category, value, inner_radius=inner_radius, sort=sort, labels=labels
+        category,
+        value,
+        inner_radius=inner_radius,
+        sort=sort,
+        labels=labels,
+        id=id,
     )
 
 
@@ -2829,11 +2950,18 @@ def gauge(
     bands: Sequence[float | tuple[float, str]] | None = None,
     label: str | None = None,
     format: dict[str, Any] | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A gauge of the last finite value of ``value``, on a dial from ``min`` to ``max``."""
     return _chart_of(data, options).gauge(
-        value, min=min, max=max, bands=bands, label=label, format=format
+        value,
+        min=min,
+        max=max,
+        bands=bands,
+        label=label,
+        format=format,
+        id=id,
     )
 
 
@@ -2844,10 +2972,17 @@ def funnel(
     *,
     sort: Literal["input", "value"] | None = None,
     labels: bool | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A funnel of ``value`` (or row counts) per stage of ``category``, top to bottom."""
-    return _chart_of(data, options).funnel(category, value, sort=sort, labels=labels)
+    return _chart_of(data, options).funnel(
+        category,
+        value,
+        sort=sort,
+        labels=labels,
+        id=id,
+    )
 
 
 def boxplot(
@@ -2856,10 +2991,28 @@ def boxplot(
     y: str,
     *,
     series: str | None = None,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    label: str | None = None,
+    axis: Literal["left", "right"] | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Box plots of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
-    return _chart_of(data, options).boxplot(x, y, series=series)
+    return _chart_of(data, options).boxplot(
+        x,
+        y,
+        series=series,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        label=label,
+        axis=axis,
+        repeat=repeat,
+        panel=panel,
+        id=id,
+    )
 
 
 def violin(
@@ -2869,10 +3022,29 @@ def violin(
     *,
     series: str | None = None,
     bandwidth: float | None = None,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    label: str | None = None,
+    axis: Literal["left", "right"] | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Violins of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
-    return _chart_of(data, options).violin(x, y, series=series, bandwidth=bandwidth)
+    return _chart_of(data, options).violin(
+        x,
+        y,
+        series=series,
+        bandwidth=bandwidth,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        label=label,
+        axis=axis,
+        repeat=repeat,
+        panel=panel,
+        id=id,
+    )
 
 
 def treemap(
@@ -2883,10 +3055,18 @@ def treemap(
     node: str | None = None,
     parent: str | None = None,
     labels: bool | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A treemap of a tree given by ``path`` columns, or ``node`` and ``parent``."""
-    return _chart_of(data, options).treemap(path, value, node=node, parent=parent, labels=labels)
+    return _chart_of(data, options).treemap(
+        path,
+        value,
+        node=node,
+        parent=parent,
+        labels=labels,
+        id=id,
+    )
 
 
 def sunburst(
@@ -2897,10 +3077,18 @@ def sunburst(
     node: str | None = None,
     parent: str | None = None,
     labels: bool | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A sunburst of a tree given by ``path`` columns, or ``node`` and ``parent``."""
-    return _chart_of(data, options).sunburst(path, value, node=node, parent=parent, labels=labels)
+    return _chart_of(data, options).sunburst(
+        path,
+        value,
+        node=node,
+        parent=parent,
+        labels=labels,
+        id=id,
+    )
 
 
 def radar(
@@ -2914,6 +3102,7 @@ def radar(
     fill_opacity: float | None = None,
     points: bool | None = None,
     label: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A radar of ``value`` per ``category``, or of the columns ``fields`` per row."""
@@ -2926,6 +3115,7 @@ def radar(
         fill_opacity=fill_opacity,
         points=points,
         label=label,
+        id=id,
     )
 
 
@@ -2938,11 +3128,18 @@ def sankey(
     labels: bool | None = None,
     node_width: float | None = None,
     sort: Literal["input", "value"] | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A Sankey diagram of flows from ``source`` to ``target``, sized by ``value``."""
     return _chart_of(data, options).sankey(
-        source, target, value, labels=labels, node_width=node_width, sort=sort
+        source,
+        target,
+        value,
+        labels=labels,
+        node_width=node_width,
+        sort=sort,
+        id=id,
     )
 
 
@@ -2957,11 +3154,20 @@ def graph(
     group: str | None = None,
     size: str | None = None,
     labels: bool | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A network of links from ``source`` to ``target``, with ``nodes`` for groups and sizes."""
     return _chart_of(data, options).graph(
-        source, target, value, nodes=nodes, node=node, group=group, size=size, labels=labels
+        source,
+        target,
+        value,
+        nodes=nodes,
+        node=node,
+        group=group,
+        size=size,
+        labels=labels,
+        id=id,
     )
 
 
@@ -2970,30 +3176,43 @@ def choropleth(
     color: str | None = None,
     *,
     geometry: str | None = None,
-    geojson: Any = None,
-    locations: str | None = None,
-    feature_id_key: str = "id",
     name: str | None = None,
     colors: str | Sequence[str] | None = None,
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    stroke: str | None = None,
+    stroke_width: float | None = None,
+    label: str | None = None,
+    geojson: Any = None,
+    locations: str | None = None,
+    feature_id_key: str = "id",
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A map of regions colored by ``color`` (see ``Chart.geoshape``): shapes from
     ``data`` (a GeoDataFrame or GeoJSON FeatureCollection), or values from ``data``
     joined to the features of ``geojson`` by ``locations`` and ``feature_id_key``.
     Remaining keyword arguments are chart options (title, projection, ...)."""
-    return _chart_of(data if geojson is None else None, options).geoshape(
-        geometry,
-        data=data if geojson is not None else None,
-        geojson=geojson,
-        locations=locations,
-        feature_id_key=feature_id_key,
-        name=name,
+    joined = geojson is not None
+    return _chart_of(None if joined else data, options).geoshape(
+        data=data if joined else None,
         color=color,
+        geometry=geometry,
+        name=name,
         colors=colors,
         color_domain=color_domain,
         color_midpoint=color_midpoint,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        stroke=stroke,
+        stroke_width=stroke_width,
+        label=label,
+        geojson=geojson,
+        locations=locations,
+        feature_id_key=feature_id_key,
+        id=id,
     )
 
 
@@ -3008,6 +3227,14 @@ def scatter_geo(
     r_range: tuple[float, float] | None = None,
     color: str | None = None,
     colors: str | Sequence[str] | None = None,
+    color_domain: tuple[float, float] | None = None,
+    color_midpoint: float | None = None,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    stroke: str | None = None,
+    stroke_width: float | None = None,
+    label: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Points or bubbles on a map at ``longitude`` and ``latitude`` (see ``Chart.geopoint``)."""
@@ -3020,6 +3247,14 @@ def scatter_geo(
         r_range=r_range,
         color=color,
         colors=colors,
+        color_domain=color_domain,
+        color_midpoint=color_midpoint,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        stroke=stroke,
+        stroke_width=stroke_width,
+        label=label,
+        id=id,
     )
 
 
@@ -3035,10 +3270,26 @@ def candlestick(
     rise: str | None = None,
     fall: str | None = None,
     label: str | None = None,
+    axis: Literal["left", "right"] | None = None,
+    repeat: bool = False,
+    panel: str | None = None,
+    id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A candlestick chart of open, high, low, and close prices; OHLC bars with
     ``variant="ohlc"``."""
     return _chart_of(data, options).candlestick(
-        x, open, high, low, close, variant=variant, rise=rise, fall=fall, label=label
+        x,
+        open,
+        high,
+        low,
+        close,
+        variant=variant,
+        rise=rise,
+        fall=fall,
+        label=label,
+        axis=axis,
+        repeat=repeat,
+        panel=panel,
+        id=id,
     )

@@ -13,5 +13,8 @@ hg.Chart(data, **chart)
 hg.bar(data, "t", "v", **chart)  # type: ignore[misc, arg-type]
 hg.line(data, "t", "v", titel="typo")  # type: ignore[call-arg]
 hg.line(data, "t", "v", zoom="z")  # type: ignore[arg-type]
+hg.line(data, "t", "v", stroke="#d62728", stroke_width=2, title="Mark and chart options")
+hg.area(data, "t", y1="v", y2="v", fill_opacity=0.3)
+hg.line(data, "t", "v", stroke_width="2")  # type: ignore[arg-type]
 update: hg.ChartUpdate = {"title": None, "theme": "light"}
 not_live: hg.ChartUpdate = {"facet": "host"}  # type: ignore[typeddict-unknown-key]
