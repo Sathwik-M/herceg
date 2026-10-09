@@ -35,7 +35,8 @@ import type { CameraSpec } from "../spec/spec.ts";
 import { surface, themeReadsPage } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
 import type { CrosshairLabels } from "./axis-labels.ts";
-import { ascending, Brush, DRAG_THRESHOLD, normalize, type Selection } from "./brush.ts";
+import type { Brush } from "./brush.ts";
+import { ascending, DRAG_THRESHOLD, normalize, type Selection } from "./brushed.ts";
 import { type ChartEvents, type ChartListener, Emitter, type PanelTarget } from "./events.ts";
 import {
   type AxisTarget,
@@ -214,7 +215,13 @@ export class MountedChart implements Chart {
   #orbitLoading: Promise<void> | undefined;
   /** The camera moved since the last `camera` event, which the next frame reports. */
   #cameraMoved = false;
-  readonly #brush: Brush;
+  /** What is selected, in data values; the brush draws it once loaded. */
+  #selection: Selection | null = null;
+  /** Drags and draws selections; loaded the first time a chart brushes or selects. */
+  #brush: Brush | undefined;
+  #brushLoading: Promise<void> | undefined;
+  /** Where the brush draws, in the pointer overlay. */
+  readonly #brushLayer: SVGGElement;
   /**
    * The panels the selection belongs to: the x scale they share ("" for
    * one every panel shares) and their keys; null without a selection.
@@ -263,8 +270,8 @@ export class MountedChart implements Chart {
       "stroke-linejoin": "round",
       visibility: "hidden",
     });
-    this.#brush = new Brush(svgElement(document, "g"), `${this.#id}-brush`);
-    this.#svg.overlay.append(this.#brush.element, ...this.#crosshairs, this.#dots, this.#outline);
+    this.#brushLayer = svgElement(document, "g");
+    this.#svg.overlay.append(this.#brushLayer, ...this.#crosshairs, this.#dots, this.#outline);
     this.#legend = new Legend(document, (key) =>
       this.setVisibility(key, this.#model.hidden.has(key)),
     );
@@ -412,7 +419,7 @@ export class MountedChart implements Chart {
   }
 
   get selection(): Selection | null {
-    return this.#brush.selection;
+    return this.#selection;
   }
 
   get selectionPanels(): readonly string[] | null {
@@ -427,7 +434,7 @@ export class MountedChart implements Chart {
   #selectIn(selection: Selection | readonly [number, number] | null, panel?: DrawnPanel) {
     this.#select(selection, panel);
     const sync = this.#options.interaction?.sync;
-    if (sync && this.#model.sharesX) broadcastSelection(sync, this.#member, this.#brush.selection);
+    if (sync && this.#model.sharesX) broadcastSelection(sync, this.#member, this.#selection);
   }
 
   #select(selection: Selection | readonly [number, number] | null, at?: DrawnPanel) {
@@ -444,9 +451,11 @@ export class MountedChart implements Chart {
     // A selection belongs to the panels sharing the x scale of the panel it is in.
     const x = next ? (at?.xGroup ?? this.#model.xGroupOf()) : undefined;
     if (!next) this.#brushAnchor = null;
+    // A selection is drawn by the brush.
+    else this.#loadBrush();
     const before = this.#owner;
-    if (sameSelection(next, this.#brush.selection) && x === before?.x) return;
-    this.#brush.selection = next;
+    if (sameSelection(next, this.#selection) && x === before?.x) return;
+    this.#selection = next;
     this.#owner = next && {
       x: x!,
       panels: this.#keysOf(x!),
@@ -472,6 +481,7 @@ export class MountedChart implements Chart {
       this.#animationLoading,
       this.#crosshairLoading,
       this.#orbitLoading,
+      this.#brushLoading,
     ].filter((loading) => loading !== undefined);
     return pending.length > 1 ? Promise.all(pending).then(() => {}) : pending[0];
   }
@@ -792,7 +802,8 @@ export class MountedChart implements Chart {
     const sync = options.interaction?.sync;
     this.#leaveSync?.();
     this.#leaveSync = sync ? join(sync, this.#member) : undefined;
-    this.#brush.mode = options.interaction?.brush ?? "x";
+    if (this.#brush) this.#brush.mode = options.interaction?.brush ?? "x";
+    if (options.interaction?.brush) this.#loadBrush();
     if (options.animation) this.#loadAnimation();
     if (typeof options.tooltip === "object" && options.tooltip.axisLabels) this.#loadCrosshair();
     // Drags pan or brush; the page still scrolls along an axis they leave alone.
@@ -996,6 +1007,29 @@ export class MountedChart implements Chart {
       });
   }
 
+  /**
+   * Loads the brush the first time a chart brushes or shows a selection.
+   * The selection itself is kept without it; a press before it loads still
+   * drags from where it started, once the pointer moves after it has.
+   */
+  #loadBrush(): void {
+    if (this.#brush || this.#brushLoading) return;
+    this.#brushLoading = import("./brush.ts")
+      .then(({ Brush }) => {
+        if (this.#destroyed) return;
+        this.#brush = new Brush(this.#brushLayer, `${this.#id}-brush`);
+        this.#brush.mode = this.#options.interaction?.brush ?? "x";
+        // A selection made while it loaded shows now, or when the chart is
+        // back on screen if it left while the brush loaded.
+        if (this.#selection) this.#invalidate(false);
+      })
+      // Without it, selections are kept and reported but not drawn.
+      .catch(() => {})
+      .finally(() => {
+        this.#brushLoading = undefined;
+      });
+  }
+
   /** Loads the animation module the first time a chart asks for `animation`. */
   #loadAnimation(): void {
     if (this.#animation !== undefined || this.#animationLoading) return;
@@ -1101,15 +1135,19 @@ export class MountedChart implements Chart {
     // how they share scales) goes too.
     const owner = this.#owner;
     if (owner && !panels.some(({ xGroup }) => xGroup === owner.x)) {
-      this.#brush.selection = null;
+      this.#selection = null;
       this.#owner = null;
       this.#brushAnchor = null;
       this.#emitSelection(null, owner);
     }
     // A drag draws in the panels it would select in, a selection in its own.
     const press = this.#press;
-    const x = this.#brush.dragging && press ? press.panel.xGroup : this.#owner?.x;
-    this.#brush.draw(x ? panels.filter(({ xGroup }) => xGroup === x) : panels, theme);
+    const x = this.#brush?.dragging && press ? press.panel.xGroup : this.#owner?.x;
+    this.#brush?.draw(
+      x ? panels.filter(({ xGroup }) => xGroup === x) : panels,
+      theme,
+      this.#selection,
+    );
     const showTooltip = this.#options.tooltip ?? true;
     // Hover listeners get the inspection even without the built-in tooltip,
     // which is how applications draw their own.
@@ -1241,8 +1279,9 @@ export class MountedChart implements Chart {
           return;
         }
         if (press.moved && press.mode === "brush") {
-          if (!this.#brush.dragging) this.#brush.start(press.x, press.y, press.panel);
-          this.#brush.move(x, y);
+          if (this.#brush && !this.#brush.dragging)
+            this.#brush.start(press.x, press.y, press.panel);
+          this.#brush?.move(x, y);
         }
       }
       schedule(this.#scheduled);
@@ -1258,7 +1297,7 @@ export class MountedChart implements Chart {
       // A captured drag leaves only when released; any other press ends here.
       this.#press = null;
       if (this.#tap?.pointer === event.pointerId) this.#tap = null;
-      this.#brush.cancel();
+      this.#brush?.cancel();
       schedule(this.#scheduled);
       const sync = this.#options.interaction?.sync;
       if (sync) broadcastCursor(sync, this.#member, null);
@@ -1347,8 +1386,8 @@ export class MountedChart implements Chart {
       if (press.mode !== "brush") return;
       // The release point ends the brush, wherever the last move was.
       const end = local(event);
-      this.#brush.move(end.x, end.y);
-      const selection = this.#brush.end();
+      this.#brush?.move(end.x, end.y);
+      const selection = this.#brush?.end() ?? null;
       // The drag outline goes, whether or not the brush selects anything.
       schedule(this.#scheduled);
       // A panel that went while dragging (its facet value did) selects nothing.
@@ -1358,7 +1397,7 @@ export class MountedChart implements Chart {
         return;
       }
       this.#selectIn(selection, press.panel);
-      const selected = this.#brush.selection;
+      const selected = this.#selection;
       if (selected) {
         const format = this.#model.formatsOf(undefined, press.panel.key);
         this.#live.textContent = describeSelection(selected, format);
@@ -1441,7 +1480,7 @@ export class MountedChart implements Chart {
   /** A press ends without doing anything: the browser took the pointer, or its panel went. */
   #cancelPress() {
     this.#press = null;
-    this.#brush.cancel();
+    this.#brush?.cancel();
     schedule(this.#scheduled);
   }
 
@@ -1519,7 +1558,7 @@ export class MountedChart implements Chart {
     const brush = this.#options.interaction?.brush;
     // Enter and Escape act on the selection, whichever panel the cursor is in.
     if (event.key === "Enter") {
-      const selection = this.#brush.selection;
+      const selection = this.#selection;
       const at = panels.find(({ xGroup }) => xGroup === this.#owner?.x);
       if (!selection || !at || !this.#zooms(selection, at)) return;
       event.preventDefault();
@@ -1539,7 +1578,7 @@ export class MountedChart implements Chart {
       this.#keyboard = null;
       this.#brushAnchor = null;
       this.#live.textContent = "";
-      if (this.#brush.selection) this.select(null);
+      if (this.#selection) this.select(null);
       schedule(this.#scheduled);
       return;
     }
@@ -1652,7 +1691,7 @@ export class MountedChart implements Chart {
         { x: axis === "x" ? range : null, y: axis === "y" ? range : null, lasso: null },
         to,
       );
-      const selection = this.#brush.selection;
+      const selection = this.#selection;
       const zooms = selection && this.#zooms(selection, to!);
       const hint = zooms ? " Press Enter to zoom to it." : "";
       text = `Selected ${this.#brushAnchor.label} to ${inspection.label}.${hint} ${text}`;

@@ -1,7 +1,7 @@
 // Charts with the same `interaction.sync` name share their cursor position,
 // zoomed x range, and selection.
 
-import type { Selection } from "./brush.ts";
+import type { Selection } from "./brushed.ts";
 
 export interface SyncMember {
   /** Shows a cursor at data x, or hides it with null. Does not rebroadcast. */

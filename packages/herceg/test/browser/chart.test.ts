@@ -337,6 +337,8 @@ describe("events and brushing", () => {
       interaction: { brush: "x" },
       marks: [line(series(100), { x: "t", y: "s0" })],
     });
+    // The brush loads on demand.
+    await chart.loading;
     const selections: (readonly [number, number] | null)[] = [];
     chart.on("select", ({ x }) => selections.push(x));
     drag(chart, 60_000, 20_000);
@@ -358,11 +360,29 @@ describe("events and brushing", () => {
     chart.destroy();
   });
 
-  it("zooms to a brushed range when zoom is on too, and pans with Shift", () => {
+  it("draws a selection made before the brush loaded, even after leaving the screen", async () => {
+    const chart = createChart(host, { marks: [line(series(100), { x: "t", y: "s0" })] });
+    chart.select([20_000, 60_000]);
+    await frame();
+    // The chart scrolls away while the brush loads, and comes back.
+    host.style.cssText += ";position:absolute;top:-5000px";
+    await frame();
+    await chart.loading;
+    await frame();
+    host.style.top = "0";
+    await frame();
+    await frame();
+    expect(band(chart)!.getAttribute("visibility")).toBe("visible");
+    chart.destroy();
+  });
+
+  it("zooms to a brushed range when zoom is on too, and pans with Shift", async () => {
     const chart = createChart(host, {
       interaction: { brush: "x", zoom: true },
       marks: [line(series(100), { x: "t", y: "s0" })],
     });
+    // The brush loads on demand.
+    await chart.loading;
     const viewports: (readonly [number, number] | null)[] = [];
     chart.on("viewport", ({ x }) => viewports.push(x));
     drag(chart, 20_000, 60_000);
@@ -463,12 +483,14 @@ describe("events and brushing", () => {
     chart.destroy();
   });
 
-  it("keeps brushed ranges inside the plot and cancels them with the browser", () => {
+  it("keeps brushed ranges inside the plot and cancels them with the browser", async () => {
     const chart = createChart(host, {
       interaction: { brush: "x" },
       marks: [line(table({ t: [0, 1, 2, 3], v: [1, 2, 3, 4] }), { x: "t", y: "v" })],
       x: { domain: [0, 3] },
     });
+    // The brush loads on demand.
+    await chart.loading;
     expect(chart.root.style.touchAction).toBe("pan-y");
     const x = modelOf(chart).xScale()!;
     press(chart.root, "pointerdown", x.map(1), 150);
@@ -490,6 +512,8 @@ describe("events and brushing", () => {
       interaction: { brush: "x", zoom: true },
       marks: [bar(sales, { x: "region", y: "v" })],
     });
+    // The brush loads on demand.
+    await chart.loading;
     const x = modelOf(chart).xScale()!;
     // From inside the first category to inside the third.
     press(chart.root, "pointerdown", x.map(0) + 5, 150);
@@ -1481,11 +1505,13 @@ describe("zooming and brushing in two dimensions", () => {
     chart.destroy();
   });
 
-  it("clips a lasso to each plot rather than moving its corners", () => {
+  it("clips a lasso to each plot rather than moving its corners", async () => {
     const chart = createChart(host, {
       interaction: { brush: "lasso" },
       marks: [point(points(), { x: "x", y: "y" })],
     });
+    // The brush loads on demand.
+    await chart.loading;
     // A region drawn while zoomed in reaches past the plot once zoomed out.
     chart.select({
       x: [-20, 30],
@@ -1613,11 +1639,13 @@ describe("zooming and brushing in two dimensions", () => {
     chart.destroy();
   });
 
-  it("announces selections made with the pointer", () => {
+  it("announces selections made with the pointer", async () => {
     const chart = createChart(host, {
       interaction: { brush: "xy" },
       marks: [point(points(), { x: "x", y: "y" })],
     });
+    // The brush loads on demand.
+    await chart.loading;
     const { x, y } = modelOf(chart).panels()[0]!;
     const live = chart.root.querySelector("[aria-live]")!;
     at(chart, "pointerdown", x.map(10), y.map(40));
@@ -1633,11 +1661,13 @@ describe("zooming and brushing in two dimensions", () => {
     chart.destroy();
   });
 
-  it("selects rectangles and lassos, and zooms to rectangles along zoomed axes", () => {
+  it("selects rectangles and lassos, and zooms to rectangles along zoomed axes", async () => {
     const chart = createChart(host, {
       interaction: { brush: "xy" },
       marks: [point(points(), { x: "x", y: "y" })],
     });
+    // The brush loads on demand.
+    await chart.loading;
     const { plot, x, y } = modelOf(chart).panels()[0]!;
     at(chart, "pointerdown", x.map(10), y.map(40));
     at(chart, "pointermove", x.map(20), y.map(30));

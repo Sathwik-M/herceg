@@ -8,25 +8,13 @@ import type { PositionScale } from "../scale/scale.ts";
 import type { Rect } from "../scene/scene.ts";
 import type { BrushSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
-
-/** Below this many pixels, a press is a click rather than a drag. */
-export const DRAG_THRESHOLD = 3;
+import { DRAG_THRESHOLD, normalize, type Selection } from "./brushed.ts";
 
 /** A plotting area the brush draws in: its plot and scales. */
 export interface BrushPanel {
   plot: Rect;
   x: PositionScale;
   y: PositionScale;
-}
-
-/** What a brush selected, in data values. */
-export interface Selection {
-  /** The x range, ascending; null for brushes along y. */
-  x: readonly [number, number] | null;
-  /** The y range, ascending; null for brushes along x. */
-  y: readonly [number, number] | null;
-  /** A lasso's outline as x, y pairs; null for other brushes, whose ranges say it all. */
-  lasso: readonly (readonly [number, number])[] | null;
 }
 
 /** Most points a lasso keeps; longer drags keep every other one, then every fourth... */
@@ -38,7 +26,6 @@ export class Brush {
   /** Holds an outline per panel, each clipped to its plot. */
   readonly element: SVGGElement;
   mode: BrushSpec = "x";
-  selection: Selection | null = null;
   /** A drag in progress: its pixel points in the panel it started in. */
   #drag: { points: [number, number][]; panel: BrushPanel } | null = null;
   #outlines: { path: SVGPathElement; clip: SVGRectElement }[] = [];
@@ -87,10 +74,10 @@ export class Brush {
     this.#drag = null;
   }
 
-  /** Draws the drag in progress, or else the selection, in every panel (they share scales). */
-  draw(panels: readonly BrushPanel[], theme: Theme): void {
+  /** Draws the drag in progress, or else `selected`, in every panel (they share scales). */
+  draw(panels: readonly BrushPanel[], theme: Theme, selected: Selection | null): void {
     const drag = this.#drag;
-    const selection = drag ? selectionOf(drag.points, drag.panel, this.mode, true) : this.selection;
+    const selection = drag ? selectionOf(drag.points, drag.panel, this.mode, true) : selected;
     if (!selection) {
       // Most frames have no brush: leave the hidden outlines alone.
       if (this.#shown)
@@ -198,22 +185,6 @@ function outlineOf(selection: Selection, panel: BrushPanel, settled: boolean): s
   const [y0, y1] = span(y, selection.y, plot.y, plot.y + plot.height);
   if (!(x1 > x0 && y1 > y0)) return "";
   return `M${x0.toFixed(1)} ${y0.toFixed(1)}H${x1.toFixed(1)}V${y1.toFixed(1)}H${x0.toFixed(1)}Z`;
-}
-
-export function ascending(a: number, b: number): readonly [number, number] {
-  return a <= b ? [a, b] : [b, a];
-}
-
-/**
- * A selection on `scale`: ascending, and on a category axis whole category
- * indices within its categories.
- */
-export function normalize(scale: PositionScale, a: number, b: number): readonly [number, number] {
-  const [lo, hi] = ascending(a, b);
-  if (scale.type !== "band") return [lo, hi];
-  const last = (scale.categories?.length ?? 1) - 1;
-  const index = (value: number) => Math.min(last, Math.max(0, Math.round(value)));
-  return [index(lo), index(hi)];
 }
 
 function clamp(px: number, py: number, plot: Rect): [number, number] {

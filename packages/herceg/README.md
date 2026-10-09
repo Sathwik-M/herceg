@@ -1120,8 +1120,11 @@ for an x range), `selection` and `selectionPanels` (see Small multiples for
 `getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
 `setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
 `render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
-painter for large point series, the animation code, or a 3D chart's buttons
-load, otherwise undefined).
+painter for large point series, the animation code, a 3D chart's buttons, or
+the brush load, otherwise undefined). The brush loads when a chart can brush
+or first shows a selection; selections are kept and reported before it has,
+and a drag that starts before it arrives goes on from where it began. Tests
+that drag right after creating a chart await `chart.loading` first.
 
 A `Viewport` is `{ x, y, yRight }`: the visible x range and the left and right
 y axes' ranges, in data values (epoch ms on time axes), each null when that

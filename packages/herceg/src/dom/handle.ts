@@ -7,7 +7,7 @@ import type { PositionScale } from "../scale/scale.ts";
 import type { PlotRect } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
 import type { Camera } from "../three/camera.ts";
-import type { Selection } from "./brush.ts";
+import type { Selection } from "./brushed.ts";
 import type { ChartUpdate } from "./chart.ts";
 import type { ChartEvents, ChartListener, PanelTarget } from "./events.ts";
 

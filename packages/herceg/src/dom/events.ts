@@ -2,7 +2,7 @@
 
 import type { Inspection, Viewport } from "../model/model.ts";
 import type { Camera } from "../three/camera.ts";
-import type { Selection } from "./brush.ts";
+import type { Selection } from "./brushed.ts";
 import { report } from "./scheduler.ts";
 
 /** The panel a view or selection is set in, for charts whose panels have scales of their own. */

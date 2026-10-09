@@ -389,6 +389,8 @@ describe("notebook widget", () => {
       _listening: [],
     });
     const [first, second] = mount(model, 2);
+    // The brush loads on demand.
+    await vi.dynamicImportSettled();
     press(first!, "pointerdown", 0.3);
     press(first!, "pointermove", 0.5);
     press(first!, "pointermove", 0.7);
@@ -603,6 +605,8 @@ describe("notebook widget", () => {
       document.body.append(host);
       hosts.push(host);
       const unmount = widget.render({ model, el: host });
+      // The brush that draws the restored lasso loads on demand.
+      await vi.dynamicImportSettled();
       await frame();
       expect(band(host)!.getAttribute("visibility")).toBe("visible");
       const learned = model.messages("select").map(({ selection }) => selection);
