@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-09T16:36:50.989Z",
+ "date": "2026-10-09T17:15:00.958Z",
  "commit": {
-  "sha": "3c5a857",
+  "sha": "3eff156",
   "dirty": false
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
@@ -66,7 +66,7 @@
   {
    "entry": "herceg-grid",
    "package": "herceg",
-   "version": "0.0.0 (3c5a857)",
+   "version": "0.0.0 (3eff156)",
    "raw": 142757,
    "minified": 66698,
    "gzip": 23751,
@@ -78,61 +78,61 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (3c5a857)",
-   "raw": 250872,
-   "minified": 113979,
-   "gzip": 42713,
-   "brotli": 38225,
+   "version": "0.0.0 (3eff156)",
+   "raw": 252823,
+   "minified": 114724,
+   "gzip": 42927,
+   "brotli": 38388,
    "chunks": 3,
    "css": null,
    "lazy": {
-    "minified": 31653,
-    "gzip": 13624
+    "minified": 37713,
+    "gzip": 16318
    }
   },
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (3c5a857)",
-   "raw": 255823,
-   "minified": 116649,
-   "gzip": 43866,
-   "brotli": 39257,
+   "version": "0.0.0 (3eff156)",
+   "raw": 257774,
+   "minified": 117394,
+   "gzip": 44086,
+   "brotli": 39457,
    "chunks": 3,
    "css": null,
    "lazy": {
-    "minified": 31653,
-    "gzip": 13624
+    "minified": 37713,
+    "gzip": 16318
    }
   },
   {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (3c5a857)",
-   "raw": 258243,
-   "minified": 118123,
-   "gzip": 44442,
-   "brotli": 39731,
+   "version": "0.0.0 (3eff156)",
+   "raw": 260194,
+   "minified": 118868,
+   "gzip": 44665,
+   "brotli": 40011,
    "chunks": 3,
    "css": null,
    "lazy": {
-    "minified": 31653,
-    "gzip": 13624
+    "minified": 37713,
+    "gzip": 16318
    }
   },
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (3c5a857)",
-   "raw": 258535,
-   "minified": 117699,
-   "gzip": 44285,
-   "brotli": 39578,
+   "version": "0.0.0 (3eff156)",
+   "raw": 260486,
+   "minified": 118444,
+   "gzip": 44497,
+   "brotli": 39862,
    "chunks": 3,
    "css": null,
    "lazy": {
-    "minified": 31653,
-    "gzip": 13624
+    "minified": 37713,
+    "gzip": 16318
    }
   },
   {
