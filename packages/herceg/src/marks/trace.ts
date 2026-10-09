@@ -20,16 +20,23 @@ import { rowOf, type Series, visibleRange } from "./series.ts";
 /** Buffer stages; a series' buffers are keyed by stage and series key. */
 export type Stage = "line" | "upper" | "lower";
 
-/** Series of at least this many points read a min/max index once they are redrawn. */
 /** Series this long or longer are reduced through min/max indexes where they have one. */
 export const INDEXED_POINTS = 1 << 18;
+/**
+ * Long-format series this long or longer are: their extents otherwise read
+ * every row in view through the series' rows (about 2.5 ns a row), and an
+ * index takes about 0.16 bytes a row beside the rows' own 4 to 6.
+ */
+const INDEXED_ROWS = 1 << 12;
 
 /**
- * When a mark's large series read their table's min/max index for level of
- * detail and extents. An index the table already keeps is always used. A
- * new one is built when a chart redraws the mark and nothing replaced the
- * data wholesale since its previous draw: the data is being zoomed, panned,
- * or streamed, and the table keeps the index current from then on. Data
+ * When a mark's large series read min/max indexes for level of detail and
+ * extents: whole columns their table's, long-format series their group's
+ * (see `SeriesStream`). An index already kept is always used. A new one is
+ * built when a chart redraws the mark and nothing replaced the data since
+ * its previous draw (wholesale, for tables; at all, for groups, which any
+ * change to values in place groups again): the data is being zoomed,
+ * panned, or streamed, and the index is kept current from then on. Data
  * replaced every frame never pays for one.
  */
 export class IndexUse {
@@ -54,20 +61,24 @@ export class IndexUse {
   }
 
   /**
-   * The index serving `s` (whole, sorted, large, and still reading its
-   * field's column), or undefined. `owner` is the drawing chart, and
-   * `linear` whether its scales are ones the index serves (log scales are
-   * not); without both, only an index the table already keeps is served.
+   * The index serving `s` (sorted, large, still reading its field's column,
+   * and a whole column or a long-format group as it follows the table), or
+   * undefined. `owner` is the drawing chart, and `linear` whether its
+   * scales are ones the index serves (log scales are not); without both,
+   * only an index already kept is served.
    */
   index(table: Table, s: Series, owner?: object, linear = false): RangeIndex | undefined {
     const field = s.field;
-    if (field === undefined || s.rows !== undefined || !s.sorted || s.length < INDEXED_POINTS)
-      return undefined;
+    const whole = s.rows === undefined;
+    const source = whole ? table : s.stream;
+    if (!source || field === undefined || !s.sorted) return undefined;
+    if (s.length < (whole ? INDEXED_POINTS : INDEXED_ROWS)) return undefined;
     if (table.numbers(field as never) !== s.y) return undefined;
-    if (table.hasMinMaxIndex(field as never)) return table.minMaxIndex(field as never);
+    if (source.hasMinMaxIndex(field as never)) return source.minMaxIndex(field as never);
     const draw = owner && linear && this.#draws.get(owner);
-    if (!draw || draw.count < 2 || table.replacedVersion > draw.previous) return undefined;
-    return table.minMaxIndex(field as never);
+    const replaced = whole ? table.replacedVersion : table.modifiedVersion;
+    if (!draw || draw.count < 2 || replaced > draw.previous) return undefined;
+    return source.minMaxIndex(field as never);
   }
 }
 
@@ -82,10 +93,12 @@ function reduce(
 ) {
   const xMap = frame.x.mapping();
   const yMap = frame.y.mapping();
-  if (series.sorted) {
-    m4(series.x, y, start, end, xMap, yMap, frame.pixelRatio, out, series.rows, index);
-  } else {
-    polylineAll(series.x, y, start, end, xMap, yMap, out, series.rows);
+  const { x, rows } = series;
+  if (!series.sorted) {
+    polylineAll(x, y, start, end, xMap, yMap, out, rows);
+  } else if (!series.stream?.m4(x, y, start, end, xMap, yMap, frame.pixelRatio, out, rows, index)) {
+    // Long-format series following their table reduce through their rows where they can.
+    m4(x, y, start, end, xMap, yMap, frame.pixelRatio, out, rows, index);
   }
 }
 

@@ -366,6 +366,8 @@ export interface SeriesSource {
 
 /** What keeps long-format rows grouped as tables stream, loaded the first time a splitter needs it. */
 let splitRows: Promise<typeof import("./split.ts")> | undefined;
+/** The same once loaded, so splitters made after it group through it from their first scene. */
+let split: typeof import("./split.ts") | undefined;
 
 /**
  * Splits a table into series sources: one per y field, or one per category of
@@ -437,14 +439,15 @@ export class SeriesSplitter {
           sorted,
         }));
       }
+      if (!shown && split) this.#groups ??= new split.SplitRows(this.table, field, xField);
       if (!shown && this.#groups) {
-        return this.#groups.groups().map(({ name, rows, sorted, dropped, key }) => ({
+        return this.#groups.groups().map(({ name, rows, sorted, stream }) => ({
           id: name,
           label: name,
           y: this.yFields[0]!,
           rows,
           sorted,
-          stream: { key, dropped },
+          stream,
         }));
       }
       if (!shown && !this.#loading) {
@@ -452,7 +455,9 @@ export class SeriesSplitter {
         splitRows ??= import("./split.ts");
         splitRows.then(
           (loaded) => {
-            this.#groups = new loaded.SplitRows(this.table, field, xField);
+            split = loaded;
+            // The next call groups through it, though the table may not have changed.
+            this.#cache = new TableCache();
           },
           // Without it, rows are grouped again each change, as before it loaded.
           () => {},

@@ -65,7 +65,8 @@ rectangle, and lasso brushing, events, synced cursors, zoom, and
 selections, animated changes of view, crosshair labels on the axes), time
 axes that leave out breaks (nights, weekends, holidays) in any time zone,
 static SVG and PDF export, React, Vue, and Svelte adapters,
-min/max indexes for zooming and streaming large line series, WebGL drawing
+min/max indexes for zooming and streaming large line series (whole columns
+or split by a series field), WebGL drawing
 of large point series, chart specs with binary columns, a Python package, a
 second y axis, small multiples (wrapped or by row and column, with shared or
 per-panel x and y scales), subplots (with weighted rows and columns), live notebook charts (a
@@ -78,8 +79,7 @@ keyboard and ARIA navigation, and a React component).
 
 Next, in order:
 
-1. Large data: incremental stacks for bars split by a series field, and
-   min/max indexes for long-format series.
+1. Large data: incremental stacks for bars split by a series field.
 2. Layout: categories resolved per panel.
 3. Animation of changed values (bars, pies) and of panels.
 4. More financial tools (a range navigator, drawing tools, markers at

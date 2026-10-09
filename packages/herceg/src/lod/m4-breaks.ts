@@ -17,11 +17,12 @@ const extremes: RangeExtremes = { low: -1, high: -1, gap: false };
  * point, so the result does not depend on the path taken. A column may
  * gather points from both sides of a break; its points are emitted once.
  *
- * Whole columns of linear data take the fast paths of `m4`: the points of a
- * column are found by comparing x with a threshold (a position left of the
- * column's edge, taken back to a value and checked with the exact column
- * formula) or, with a min/max index of dense data, by binary search and an
- * index query. Other data goes point by point.
+ * Linear data, whole columns or through `rows`, takes the fast paths of
+ * `m4`: the points of a column are found by comparing x with a threshold (a
+ * position left of the column's edge, taken back to a value and checked
+ * with the exact column formula) or, with a min/max index of dense data (by
+ * position), by binary search and an index query. Log y, reversed x, and
+ * mappings that are not finite go point by point.
  */
 export function brokenM4(
   breaks: Breaks,
@@ -41,12 +42,13 @@ export function brokenM4(
   const xOrigin = xMap.origin;
   const columnOf = (value: number) => Math.floor(xo + (breaks.collapse(value) - xOrigin) * xf);
   const ranges = breaks.shown(x, start, end, rows);
-  // Fast paths read whole columns of linear data.
-  const fast = rows === undefined && !yMap.log && xf > 0 && Number.isFinite(xo + xf + xOrigin);
+  const rowAt = (k: number) => (rows === undefined ? k : rows[k]!);
+  // Fast paths read linear data column by column.
+  const fast = !yMap.log && xf > 0 && Number.isFinite(xo + xf + xOrigin);
   let dense = false;
   if (fast && index && index.gapShare < 0.1 && end - start > 0) {
     // Index queries cost about as much as scanning 200 points.
-    const columns = (breaks.collapse(x[end - 1]!) - breaks.collapse(x[start]!)) * xf;
+    const columns = (breaks.collapse(x[rowAt(end - 1)]!) - breaks.collapse(x[rowAt(start)]!)) * xf;
     dense = end - start > 200 * Math.max(1, columns);
   }
   // The open column: its pixel column and the positions of its first,
@@ -106,23 +108,23 @@ export function brokenM4(
         let hi = rangeEnd;
         while (lo < hi) {
           const mid = (lo + hi) >>> 1;
-          if (x[mid]! < next) lo = mid + 1;
+          if (x[rowAt(mid)]! < next) lo = mid + 1;
           else hi = mid;
         }
         const inColumn = (at: number) => Number.isFinite(at) && columnOf(at) === c;
-        while (lo > k && !inColumn(x[lo - 1]!)) lo--;
-        while (lo < rangeEnd && inColumn(x[lo]!)) lo++;
+        while (lo > k && !inColumn(x[rowAt(lo - 1)]!)) lo--;
+        while (lo < rangeEnd && inColumn(x[rowAt(lo)]!)) lo++;
         if (lo === k) continue;
         index!.query(y, k, lo, extremes);
         // Columns with gaps are scanned, which stops at each gap.
         if (!extremes.gap) {
-          if (y[extremes.low]! < lowValue) {
+          if (y[rowAt(extremes.low)]! < lowValue) {
             low = extremes.low;
-            lowValue = y[low]!;
+            lowValue = y[rowAt(low)]!;
           }
-          if (y[extremes.high]! > highValue) {
+          if (y[rowAt(extremes.high)]! > highValue) {
             high = extremes.high;
-            highValue = y[high]!;
+            highValue = y[rowAt(high)]!;
           }
           last = lo - 1;
           k = lo;
@@ -134,22 +136,45 @@ export function brokenM4(
       let safe = breaks.expand(edge - (1e-6 / xf + Math.abs(edge) * 1e-15));
       if (columnOf(safe) !== c) safe = Number.NEGATIVE_INFINITY;
       const before = k;
-      for (; k < rangeEnd; k++) {
-        const at = x[k]!;
-        if (!(at < safe) && (!Number.isFinite(at) || columnOf(at) !== c)) break;
-        const v = y[k]!;
-        // NaN fails both comparisons, so only then is it tested for; the
-        // outer loop breaks the line at it, and at infinities.
-        if (v < lowValue) {
-          if (v === Number.NEGATIVE_INFINITY) break;
-          low = k;
-          lowValue = v;
-        } else if (v > highValue) {
-          if (v === Number.POSITIVE_INFINITY) break;
-          high = k;
-          highValue = v;
-        } else if (Number.isNaN(v)) {
-          break;
+      // Whole columns are read directly: looking up rows in the same loop
+      // would slow them down.
+      if (rows === undefined) {
+        for (; k < rangeEnd; k++) {
+          const at = x[k]!;
+          if (!(at < safe) && (!Number.isFinite(at) || columnOf(at) !== c)) break;
+          const v = y[k]!;
+          // NaN fails both comparisons, so only then is it tested for; the
+          // outer loop breaks the line at it, and at infinities.
+          if (v < lowValue) {
+            if (v === Number.NEGATIVE_INFINITY) break;
+            low = k;
+            lowValue = v;
+          } else if (v > highValue) {
+            if (v === Number.POSITIVE_INFINITY) break;
+            high = k;
+            highValue = v;
+          } else if (Number.isNaN(v)) {
+            break;
+          }
+        }
+      } else {
+        // The same, through rows.
+        for (; k < rangeEnd; k++) {
+          const i = rows[k]!;
+          const at = x[i]!;
+          if (!(at < safe) && (!Number.isFinite(at) || columnOf(at) !== c)) break;
+          const v = y[i]!;
+          if (v < lowValue) {
+            if (v === Number.NEGATIVE_INFINITY) break;
+            low = k;
+            lowValue = v;
+          } else if (v > highValue) {
+            if (v === Number.POSITIVE_INFINITY) break;
+            high = k;
+            highValue = v;
+          } else if (Number.isNaN(v)) {
+            break;
+          }
         }
       }
       if (k > before) last = k - 1;

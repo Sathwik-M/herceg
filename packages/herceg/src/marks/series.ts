@@ -1,7 +1,8 @@
 import type { NumericArray } from "../data/column.ts";
 import { scanExtent, type Table } from "../data/table.ts";
-import type { Breaks } from "../lod/m4.ts";
+import type { Breaks, Mapping } from "../lod/m4.ts";
 import type { RangeExtremes, RangeIndex } from "../lod/minmax-index.ts";
+import type { Polyline } from "../lod/polyline.ts";
 
 /**
  * One drawable series: x and y columns, optionally restricted to a subset of
@@ -40,13 +41,40 @@ export interface Series {
 }
 
 /**
- * A long-format series' rows as their group follows a streaming table: one
- * object per group while it does, and how many rows the group has lost from
- * its front, so GPU uploads take appended points and skip dropped ones.
+ * A long-format series' rows as their group follows a streaming table
+ * (marks/split.ts): one key per group while it does, and how many rows the
+ * group has lost from its front, so GPU uploads take appended points and
+ * skip dropped ones. The group keeps min/max indexes of fields over its
+ * rows, as tables keep them over whole columns, and brings the code that
+ * reduces lines through rows as fast as along columns.
  */
 export interface SeriesStream {
   readonly key: object;
   readonly dropped: number;
+  /** Whether the group has a min/max index of `field`. */
+  hasMinMaxIndex(field: string): boolean;
+  /**
+   * A min/max index of `field` over the series' positions (built on first
+   * request), valid only for the table version the series was read at.
+   */
+  minMaxIndex(field: string): RangeIndex;
+  /**
+   * `m4` through the series' rows, column by column, on linear scales
+   * without breaks (lod/m4-rows.ts); elsewhere it draws nothing and returns
+   * false, for `m4` to reduce them.
+   */
+  m4(
+    x: NumericArray,
+    y: NumericArray,
+    start: number,
+    end: number,
+    xMap: Mapping,
+    yMap: Mapping,
+    pixelRatio: number,
+    out: Polyline,
+    rows: Uint32Array | undefined,
+    index?: RangeIndex,
+  ): boolean;
 }
 
 export function rowOf(series: Series, position: number): number {
@@ -157,15 +185,17 @@ export function yExtent(
     while (start < end && xAt(series, start) < lo) start++;
     while (end > start && xAt(series, end - 1) > hi) end--;
   }
-  // The common case, a whole sorted column, is a plain scan, or an index
-  // query when the column has a min/max index.
-  const whole = series.rows === undefined && series.sorted && !log;
+  // Sorted series with a min/max index of `y` (by position: of a whole
+  // column, or of a long-format series' rows) take an index query; other
+  // whole sorted columns, the common case, a plain scan.
+  const linear = series.sorted && !log;
+  const indexed = linear && index !== undefined && index.length === series.length;
   const extentOf = (a: number, b: number) =>
-    !whole
-      ? scanPositions(series, y, a, b, lo, hi, log, breaks)
-      : index && index.length === y.length
-        ? indexedExtent(index, y, a, b)
-        : scanExtent(y, a, b);
+    indexed
+      ? indexedExtent(index, series, y, a, b)
+      : linear && series.rows === undefined
+        ? scanExtent(y, a, b)
+        : scanPositions(series, y, a, b, lo, hi, log, breaks);
   let inside: readonly [number, number] | undefined;
   if (breaks && series.sorted) {
     // Points inside breaks are not drawn: only the ranges between them count.
@@ -196,12 +226,13 @@ const extremes: RangeExtremes = { low: -1, high: -1, gap: false };
 
 function indexedExtent(
   index: RangeIndex,
+  series: Series,
   y: Series["y"],
   start: number,
   end: number,
 ): [number, number] | undefined {
   const { low, high } = index.query(y, start, end, extremes);
-  return low < 0 ? undefined : [y[low]!, y[high]!];
+  return low < 0 ? undefined : [y[rowOf(series, low)]!, y[rowOf(series, high)]!];
 }
 
 /**

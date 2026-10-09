@@ -2,11 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { category } from "../../src/data/column.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import type { RangeIndex } from "../../src/lod/minmax-index.ts";
+import { RowsIndex } from "../../src/lod/rows-index.ts";
 import { histogram } from "../../src/marks/histogram.ts";
 import { point } from "../../src/marks/point.ts";
 import { isSortedSubset, rowsByCode, type Series, yExtent } from "../../src/marks/series.ts";
 import { SplitRows } from "../../src/marks/split.ts";
 import { ChartModel } from "../../src/model/model.ts";
+import { timeBreaks } from "../../src/scale/breaks.ts";
 
 function series(x: number[], y: number[], options: Partial<Series> = {}): Series {
   const values = Float64Array.from(y);
@@ -52,6 +55,40 @@ describe("yExtent", () => {
       length: 2,
     });
     expect(yExtent(subset, 0, 3)).toEqual([1, 2]);
+  });
+
+  it("reads a long-format series' extremes from its rows' index, as scanning them finds them", () => {
+    let seed = 5;
+    const random = () => {
+      seed = (seed * 16807) % 2147483647;
+      return seed / 2147483647;
+    };
+    // Minutes from a Monday, two weeks of them; every other row or so is the series'.
+    const start = Date.UTC(2025, 2, 3);
+    const n = 20_160;
+    const x = Float64Array.from({ length: n }, (_, i) => start + i * 60_000);
+    const values = Float64Array.from({ length: n }, (_, i) =>
+      random() < 0.002 ? Number.NaN : Math.round(Math.sin(i / 700) * 50 + random() * 20),
+    );
+    const rows = Uint32Array.from(Array.from(x.keys()).filter(() => random() < 0.55));
+    const s = series([], [], { x, y: values, values, rows, length: rows.length });
+    const summaries = new RowsIndex();
+    summaries.update(values, rows, 0, rows.length);
+    const index: RangeIndex = {
+      length: rows.length,
+      gapShare: summaries.gapShare,
+      query: (_values, from, to, out) => summaries.query(values, rows, from, to, out),
+    };
+    const weekends = timeBreaks([{ weekdays: ["sat", "sun"] }]).calendar("UTC");
+    for (let q = 0; q < 300; q++) {
+      const a = x[0]! + random() * (x[n - 1]! - x[0]!) * 1.1;
+      const b = a + random() * random() * (x[n - 1]! - x[0]!);
+      const curved = q % 2 === 0;
+      const breaks = q % 3 === 0 ? weekends : undefined;
+      expect(yExtent(s, a, b, values, false, index, curved, breaks)).toEqual(
+        yExtent(s, a, b, values, false, undefined, curved, breaks),
+      );
+    }
   });
 });
 
@@ -107,17 +144,17 @@ describe("row groups", () => {
     const [after] = groups.groups();
     // The window dropped x 1 and 2: "a" lost one row and kept x 3, now first, then x 5.
     expect(after!.name).toBe("a");
-    expect(after!.dropped).toBe(1);
-    expect(after!.key).toBe(a!.key);
+    expect(after!.stream.dropped).toBe(1);
+    expect(after!.stream.key).toBe(a!.stream.key);
     expect(Array.from(after!.rows)).toEqual([0, 2]);
     // A group the window empties starts over, with a key of its own.
     t.append({ x: Float64Array.of(7, 8, 9, 10), kind: ["b", "b", "b", "a"] });
     const again = groups.groups().find(({ name }) => name === "a")!;
-    expect([again.dropped, again.key === a!.key]).toEqual([0, false]);
+    expect([again.stream.dropped, again.stream.key === a!.stream.key]).toEqual([0, false]);
     // A change to values in place groups the table again.
     t.replace("kind", 0, ["b"]);
     expect(seen(groups)).toEqual(regrouped(t));
-    expect(groups.groups().every(({ dropped }) => dropped === 0)).toBe(true);
+    expect(groups.groups().every(({ stream }) => stream.dropped === 0)).toBe(true);
   });
 
   it("leave rows given out unchanged, for scenes and charts that still read them", () => {
@@ -232,10 +269,10 @@ describe("row groups", () => {
     const kept = groups.groups().find(({ name }) => name === "kept")!;
     expect(dictionary.length).toBeLessThan(30 * 9);
     expect(codes[kept.rows[0]!]).not.toBe(codeBefore);
-    expect(kept.key).toBe(first.key);
+    expect(kept.stream.key).toBe(first.stream.key);
     expect(seen(groups)).toEqual(regrouped(t));
     // Every "kept" row but those still in the window has left.
-    expect(kept.dropped + kept.rows.length).toBe(31);
+    expect(kept.stream.dropped + kept.rows.length).toBe(31);
   });
 
   it("count a missing x as not ascending, as regrouping does", () => {
