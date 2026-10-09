@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
+import { segmentMeetsBox, segmentsMeet } from "../../src/layout/label-boxes.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
@@ -20,6 +21,7 @@ import type {
   Scene,
   TextGeometry,
 } from "../../src/scene/scene.ts";
+import { LIGHT } from "../../src/theme.ts";
 
 function build(config: ChartConfig, width = 600, height = 300) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -271,7 +273,7 @@ describe("text", () => {
 
   it("keeps moving labels in the plot", () => {
     // At the plot's top right corner, the first label goes below and before
-    // its point; the second has no room left.
+    // its point; the second has no room left, nor a clear line farther out.
     const corner = table({ at: [10, 10], v: [5, 5], name: ["one", "two"] });
     const { scene, model } = build({
       marks: [text(corner, { x: "at", y: "v", text: "name", dy: -10, overlap: "move" })],
@@ -284,6 +286,118 @@ describe("text", () => {
     expect(label!.coords[0]).toBeLessThan(model.xScale()!.map(10));
     expect(label!.coords[1]).toBeGreaterThan(model.yScale()!.map(5));
     expect(label!.coords[1]).toBeLessThan(plot.y + plot.height);
+  });
+
+  it("moves labels farther out with a line back to their point when the nearest places are taken", () => {
+    // A tight cluster of points: labels take the places next to them first,
+    // then the rest go a ring or two out, for every anchor.
+    const names = Array.from({ length: 10 }, (_, i) => `p${i}`);
+    const xs = names.map((_, i) => 5 + (i % 5) * 0.05);
+    const ys = names.map((_, i) => 5 + Math.floor(i / 5) * 0.1);
+    const cluster = table({ at: xs, v: ys, name: names });
+    for (const anchor of ["middle", "start", "end"] as const) {
+      const { scene, model } = build({
+        marks: [text(cluster, { x: "at", y: "v", text: "name", anchor, dy: -12, overlap: "move" })],
+        x: { domain: [0, 10] },
+        y: { domain: [0, 10] },
+      });
+      const [label] = of(scene, "text") as TextGeometry[];
+      const [leaders] = of(scene, "segments");
+      expect(leaders!.draw.guide).toBe(true);
+      expect(leaders!.stroke).toBe(scene.theme.muted);
+      expect(leaders!.count).toBeGreaterThan(0);
+      expect(leaders!.count).toBeLessThan(label!.count);
+      // Labels come in row order, whichever pass placed them.
+      expect(label!.labels).toEqual(names.filter((name) => label!.labels.includes(name)));
+      // Each label's box with the room kept around it, as placement sees it.
+      const font = `${scene.theme.fontSize}px ${scene.theme.font}`;
+      const half = Math.ceil(scene.theme.fontSize * 0.6);
+      const boxes = label!.labels.map((name, k) => {
+        const width = estimateText(name, font);
+        const shift = anchor === "start" ? width / 2 : anchor === "end" ? -width / 2 : 0;
+        const cx = label!.coords[k * 2]! + shift;
+        const cy = label!.coords[k * 2 + 1]!;
+        return { name, inner: [cx - width / 2, cy - half, cx + width / 2, cy + half] };
+      });
+      // Boxes with the room kept around them, less a hundredth of a pixel
+      // for line ends stored as 32-bit floats on a box's side.
+      const room = 2 - 0.01;
+      const pad = ([x0, y0, x1, y1]: number[]) =>
+        [x0! - room, y0! - room, x1! + room, y1! + room] as const;
+      const dot = (name: string) => {
+        const i = names.indexOf(name);
+        return [model.xScale()!.map(xs[i]!), model.yScale()!.map(ys[i]!)] as const;
+      };
+      const lines = Array.from({ length: leaders!.count }, (_, k) =>
+        Array.from(leaders!.coords.subarray(k * 4, k * 4 + 4)),
+      );
+      for (const [k, [sx, sy, ex, ey]] of lines.entries()) {
+        // A line ends on its own label's text box and starts 3 pixels from that label's point.
+        const own = boxes.find(
+          ({ inner: [x0, y0, x1, y1] }) =>
+            ex! >= x0! - 1e-3 && ex! <= x1! + 1e-3 && ey! >= y0! - 1e-3 && ey! <= y1! + 1e-3,
+        )!;
+        expect(own).toBeDefined();
+        const [px, py] = dot(own.name);
+        expect(Math.hypot(sx! - px, sy! - py)).toBeCloseTo(3, 3);
+        // It passes through no other label, no other point, and no other line.
+        for (const box of boxes) {
+          if (box !== own)
+            expect(segmentMeetsBox(sx!, sy!, ex!, ey!, ...pad(box.inner))).toBe(false);
+        }
+        for (const name of names) {
+          if (name === own.name) continue;
+          const [qx, qy] = dot(name);
+          const r = 3 - 0.01;
+          expect(segmentMeetsBox(sx!, sy!, ex!, ey!, qx - r, qy - r, qx + r, qy + r)).toBe(false);
+        }
+        for (const [j, other] of lines.entries()) {
+          if (j !== k)
+            expect(
+              segmentsMeet(sx!, sy!, ex!, ey!, ...(other as [number, number, number, number])),
+            ).toBe(false);
+        }
+      }
+    }
+    // Labels in reach of their point need no line.
+    const near = table({ at: [5, 5], v: [5, 5], name: ["a", "b"] });
+    const close = build({
+      marks: [text(near, { x: "at", y: "v", text: "name", dy: -12, overlap: "move" })],
+      x: { domain: [0, 10] },
+      y: { domain: [0, 10] },
+    });
+    expect(of(close.scene, "segments")).toEqual([]);
+    // Static SVG draws the lines too, in the muted color.
+    const svg = renderToSVG({
+      width: 600,
+      height: 300,
+      x: { domain: [0, 10] },
+      y: { domain: [0, 10] },
+      marks: [text(cluster, { x: "at", y: "v", text: "name", dy: -12, overlap: "move" })],
+    });
+    expect(svg).toContain(`fill="none" stroke="${LIGHT.muted}" stroke-width="1"`);
+  });
+
+  it("keep lines from crossing each other", () => {
+    // Without the check, two of these points' lines cross.
+    const at = [4.7, 4.779, 5.153, 4.975, 5.02, 4.831, 4.728, 5.107];
+    const v = [5.108, 5.261, 4.93, 5.012, 5.199, 4.721, 4.732, 5.018];
+    const points = table({ at, v, name: at.map((_, i) => `p${i}`) });
+    const { scene } = build({
+      marks: [text(points, { x: "at", y: "v", text: "name", dy: -12, overlap: "move" })],
+      x: { domain: [0, 10] },
+      y: { domain: [0, 10] },
+    });
+    const [leaders] = of(scene, "segments");
+    expect(leaders!.count).toBeGreaterThan(1);
+    const c = leaders!.coords;
+    for (let a = 0; a < leaders!.count; a++) {
+      for (let b = a + 1; b < leaders!.count; b++) {
+        const [ax, ay, bx, by] = c.subarray(a * 4, a * 4 + 4);
+        const [cx, cy, dx, dy] = c.subarray(b * 4, b * 4 + 4);
+        expect(segmentsMeet(ax!, ay!, bx!, by!, cx!, cy!, dx!, dy!)).toBe(false);
+      }
+    }
   });
 
   it("place labels by their text's width from any anchor, and skip empty ones", () => {

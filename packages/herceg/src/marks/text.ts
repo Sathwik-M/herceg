@@ -1,7 +1,8 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
+import { guideSegmentDrawing } from "../draw/segments.ts";
 import { textDrawing } from "../draw/text.ts";
-import { LabelBoxes } from "../layout/label-boxes.ts";
-import type { TextGeometry } from "../scene/scene.ts";
+import { LabelBoxes, segmentMeetsBox, segmentsMeet } from "../layout/label-boxes.ts";
+import type { SegmentGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, TextSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
 import { definedFields } from "./line.ts";
@@ -25,8 +26,9 @@ interface TextStyle {
    * Labels that would cover an earlier one of this mark, in row order:
    * drawn anyway ("show", the default), left out ("hide"), or moved
    * ("move"): kept where they are put when that is free and in the plot,
-   * else tried above, below, beside, and at the corners of their point, off
-   * the other rows' points, and left out when nothing fits.
+   * else tried above, below, beside, and at the corners of their point,
+   * then farther out with a line back to it, off the other rows' points,
+   * and left out when nothing fits.
    */
   overlap?: "show" | "hide" | "move";
   id?: string;
@@ -38,9 +40,11 @@ const LABEL_GAP = 2;
 const POINT_GAP = 5;
 /** Half the side of the box a labeled point keeps clear of moved labels, in pixels: a dot. */
 const POINT_SIZE = 3;
+/** Rings of places around its point a moved label tries, nearest first; each is a label's height farther. */
+const RINGS = 3;
 /**
- * Where a moved label may go, as directions from its point: above, below,
- * after, before, then the corners.
+ * Where a moved label may go in each ring, as directions from its point:
+ * above, below, after, before, then the corners.
  */
 const AROUND: readonly (readonly [number, number])[] = [
   [0, -1],
@@ -127,7 +131,7 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     });
   }
 
-  geometry(_series: unknown, frame: Frame, key: MarkKey): TextGeometry[] {
+  geometry(_series: unknown, frame: Frame, key: MarkKey): (SegmentGeometry | TextGeometry)[] {
     const { spec } = this;
     const { plot, theme } = frame;
     const data = this.#data;
@@ -156,62 +160,122 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
         if (inPlot(px, py, px, py)) dotOf[row] = dots.add(px - s, py - s, px + s, py + s);
       }
     }
-    const coords = frame.floats(id, "text", data.count * 2);
-    const labels: string[] = [];
+    // Each row's label and where it goes, kept in row order whichever pass places it.
+    const texts: (string | undefined)[] = new Array(data.count);
+    const at = new Float64Array(data.count * 2);
+    const add = (row: number, label: string, lx: number, ly: number) => {
+      texts[row] = label;
+      at[row * 2] = lx;
+      at[row * 2 + 1] = ly;
+    };
+    // Lines from labels moved past the first ring back to their points.
+    const leaders: number[] = [];
+    /** Whether some line passes through the box, or with a segment given, meets it. */
+    const meetsLeader = (test: (sx: number, sy: number, ex: number, ey: number) => boolean) => {
+      for (let k = 0; k < leaders.length; k += 4)
+        if (test(leaders[k]!, leaders[k + 1]!, leaders[k + 2]!, leaders[k + 3]!)) return true;
+      return false;
+    };
+    // Places are boxes' centers: the author's (place 0), then, when moving,
+    // the spots around the point, ring by ring, nearest sides first.
+    const nearPlaces = moving ? 1 + AROUND.length : 1;
+    /** Puts a row's label at the first free place in [from, to); false if none is. */
+    const place = (row: number, label: string, width: number, from: number, to: number) => {
+      const [px, py] = pointAt(row) as [number, number];
+      // From the anchor to the label's center, and half its box's width.
+      const shift = anchor === "start" ? width / 2 : anchor === "end" ? -width / 2 : 0;
+      const reach = width / 2 + LABEL_GAP;
+      for (let p = from; p < to; p++) {
+        const ring = Math.ceil(p / AROUND.length);
+        const [ax, ay] = AROUND[(p - 1) % AROUND.length] ?? [0, 0];
+        const gap = POINT_GAP + (ring - 1) * 2 * half;
+        const [cx, cy] =
+          p === 0 ? [px + dx + shift, py + dy] : [px + ax * (gap + reach), py + ay * (gap + half)];
+        const [x0, y0, x1, y1] = [cx - reach, cy - half, cx + reach, cy + half];
+        // Moving labels stay in the plot, and moved ones off other points
+        // and the lines leading to other labels.
+        if (moving && !inPlot(x0, y0, x1, y1)) continue;
+        // Labels before dots: in a crowded plot labels refuse most places,
+        // and there are fewer of them to check.
+        if (placed!.hits(x0, y0, x1, y1)) continue;
+        if (p > 0 && dots!.hits(x0, y0, x1, y1, dotOf[row])) continue;
+        if (meetsLeader((sx, sy, ex, ey) => segmentMeetsBox(sx, sy, ex, ey, x0, y0, x1, y1)))
+          continue;
+        if (ring > 1) {
+          // A line from the dot's edge to the nearest point of the text's
+          // box, clear of other labels (so none from a point under one),
+          // other rows' dots, and other lines.
+          const ex = Math.min(Math.max(px, cx - width / 2), cx + width / 2);
+          const ey = Math.min(Math.max(py, y0 + LABEL_GAP), y1 - LABEL_GAP);
+          const length = Math.hypot(ex - px, ey - py);
+          const sx = px + ((ex - px) / length) * POINT_SIZE;
+          const sy = py + ((ey - py) / length) * POINT_SIZE;
+          if (placed!.crosses(sx, sy, ex, ey)) continue;
+          if (dots!.crosses(sx, sy, ex, ey, dotOf[row])) continue;
+          if (meetsLeader((ax, ay, bx, by) => segmentsMeet(sx, sy, ex, ey, ax, ay, bx, by)))
+            continue;
+          leaders.push(sx, sy, ex, ey);
+        }
+        placed!.add(x0, y0, x1, y1);
+        add(row, label, cx - shift, cy);
+        return true;
+      }
+      return false;
+    };
+    // Labels that found no place near their point: row, text, and width.
+    const later: [number, string, number][] = [];
     for (let row = 0; row < data.count; row++) {
       const [px, py] = pointAt(row) as [number, number];
       // Labels are not clipped, so ones whose point is out of view are left out.
       if (!inPlot(px, py, px, py)) continue;
       const label = data.text(row, frame.locale);
-      let lx = px + dx;
-      let ly = py + dy;
-      if (placed) {
-        // Empty labels draw nothing, so they take no room.
-        if (label === "") continue;
-        const width = frame.measure(label, font);
-        // From the anchor to the label's center, and half its box's width.
-        const shift = anchor === "start" ? width / 2 : anchor === "end" ? -width / 2 : 0;
-        const reach = width / 2 + LABEL_GAP;
-        // Places are boxes' centers: the author's, then, when moving, the
-        // spots around the point, nearest sides first.
-        const side = POINT_GAP + reach;
-        const level = POINT_GAP + half;
-        let found = false;
-        for (let p = 0; p < (moving ? 9 : 1) && !found; p++) {
-          const [cx, cy] =
-            p === 0
-              ? [lx + shift, ly]
-              : [px + AROUND[p - 1]![0] * side, py + AROUND[p - 1]![1] * level];
-          const [x0, y0, x1, y1] = [cx - reach, cy - half, cx + reach, cy + half];
-          // Moving labels stay in the plot, and moved ones off other points.
-          if (moving && !inPlot(x0, y0, x1, y1)) continue;
-          if (p > 0 && dots!.hits(x0, y0, x1, y1, dotOf[row])) continue;
-          if (placed.hits(x0, y0, x1, y1)) continue;
-          placed.add(x0, y0, x1, y1);
-          lx = cx - shift;
-          ly = cy;
-          found = true;
-        }
-        if (!found) continue;
+      if (!placed) {
+        add(row, label, px + dx, py + dy);
+        continue;
       }
-      coords[labels.length * 2] = lx;
-      coords[labels.length * 2 + 1] = ly;
+      // Empty labels draw nothing, so they take no room.
+      if (label === "") continue;
+      const width = frame.measure(label, font);
+      if (!place(row, label, width, 0, nearPlaces) && moving) later.push([row, label, width]);
+    }
+    // Then those go farther out, once every label that fits near its point
+    // has its place, so lines never take a nearer label's room.
+    for (const [row, label, width] of later)
+      place(row, label, width, nearPlaces, nearPlaces + (RINGS - 1) * AROUND.length);
+    const coords = frame.floats(id, "text", data.count * 2);
+    const labels: string[] = [];
+    for (let row = 0; row < data.count; row++) {
+      const label = texts[row];
+      if (label === undefined) continue;
+      coords[labels.length * 2] = at[row * 2]!;
+      coords[labels.length * 2 + 1] = at[row * 2 + 1]!;
       labels.push(label);
     }
     if (labels.length === 0) return [];
-    return [
-      {
-        kind: "text",
-        draw: textDrawing,
-        halo: true,
-        key: id,
-        fill: spec.fill ?? theme.text,
-        anchor,
-        coords,
-        labels,
-        count: labels.length,
-      },
-    ];
+    const out: (SegmentGeometry | TextGeometry)[] = [];
+    if (leaders.length > 0) {
+      out.push({
+        kind: "segments",
+        draw: guideSegmentDrawing,
+        key: `${id}|leaders`,
+        stroke: theme.muted,
+        strokeWidth: 1,
+        coords: Float32Array.from(leaders),
+        count: leaders.length / 4,
+      });
+    }
+    out.push({
+      kind: "text",
+      draw: textDrawing,
+      halo: true,
+      key: id,
+      fill: spec.fill ?? theme.text,
+      anchor,
+      coords,
+      labels,
+      count: labels.length,
+    });
+    return out;
   }
 }
 

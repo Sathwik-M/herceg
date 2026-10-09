@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LabelBoxes } from "../../src/layout/label-boxes.ts";
+import { LabelBoxes, segmentMeetsBox, segmentsMeet } from "../../src/layout/label-boxes.ts";
 
 describe("label boxes", () => {
   it("find overlaps across grid cells, on either side of zero", () => {
@@ -26,6 +26,41 @@ describe("label boxes", () => {
     expect(far.hits(1e12, 5, 1e12 + 10, 10)).toBe(true);
     expect(far.hits(0, 0, 10, 10)).toBe(false);
     expect(far.hits(0, 0, 10, 10, 0)).toBe(false);
+  });
+
+  it("tell segments that pass through a box from those that miss or only touch it", () => {
+    const box = [10, 10, 20, 20] as const;
+    expect(segmentMeetsBox(0, 15, 30, 15, ...box)).toBe(true);
+    expect(segmentMeetsBox(0, 0, 30, 30, ...box)).toBe(true);
+    // Ending inside counts; ending at a side, running along one, or missing does not.
+    expect(segmentMeetsBox(0, 15, 12, 15, ...box)).toBe(true);
+    expect(segmentMeetsBox(0, 15, 10, 15, ...box)).toBe(false);
+    expect(segmentMeetsBox(0, 10, 30, 10, ...box)).toBe(false);
+    expect(segmentMeetsBox(0, 0, 30, 5, ...box)).toBe(false);
+    expect(segmentMeetsBox(0, 21, 9, 30, ...box)).toBe(false);
+    // A diagonal past a corner, whose bounds overlap the box's.
+    expect(segmentMeetsBox(5, 18, 18, 31, ...box)).toBe(false);
+    const boxes = new LabelBoxes();
+    boxes.add(...box);
+    boxes.add(500, 500, 540, 514);
+    expect(boxes.crosses(0, 15, 600, 15)).toBe(true);
+    expect(boxes.crosses(0, 30, 600, 30)).toBe(false);
+    expect(boxes.crosses(400, 400, 520, 520)).toBe(true);
+  });
+
+  it("tell segments that cross, touch, or overlap from separate ones", () => {
+    // Crossing, and either order of ends.
+    expect(segmentsMeet(0, 0, 10, 10, 0, 10, 10, 0)).toBe(true);
+    expect(segmentsMeet(10, 10, 0, 0, 10, 0, 0, 10)).toBe(true);
+    // An end on the other segment, and shared ends.
+    expect(segmentsMeet(0, 0, 10, 0, 5, 0, 5, 5)).toBe(true);
+    expect(segmentsMeet(0, 0, 10, 0, 10, 0, 10, 5)).toBe(true);
+    // Collinear and overlapping, or collinear with a gap.
+    expect(segmentsMeet(0, 0, 10, 0, 5, 0, 15, 0)).toBe(true);
+    expect(segmentsMeet(0, 0, 10, 0, 11, 0, 15, 0)).toBe(false);
+    // Parallel, and apart though their lines would cross.
+    expect(segmentsMeet(0, 0, 10, 0, 0, 1, 10, 1)).toBe(false);
+    expect(segmentsMeet(0, 0, 4, 4, 10, 0, 6, 4)).toBe(false);
   });
 
   it("stay quick with many labels", () => {

@@ -46,3 +46,11 @@ export const segmentDrawing: Drawing<SegmentGeometry> = {
     context.restore();
   },
 };
+
+/** Segments drawn above the data as guides, such as lines from moved labels to their points. */
+export const guideSegmentDrawing: Drawing<SegmentGeometry> = {
+  guide: true,
+  size: () => 0,
+  elements: segmentElements,
+  svg: (mark) => markupOf(segmentElements(mark)),
+};
