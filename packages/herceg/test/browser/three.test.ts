@@ -3,8 +3,10 @@ import { category } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import { line } from "../../src/marks/line.ts";
+import { point } from "../../src/marks/point.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { surface } from "../../src/marks/surface.ts";
+import { cloudPainter } from "../../src/render/webgl.ts";
 import type { Camera } from "../../src/three/camera.ts";
 import { modelOf } from "./helpers.ts";
 
@@ -21,6 +23,13 @@ afterEach(() => {
 });
 
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+/** Enough 3D points for the GPU. */
+const cloud = table({
+  x: Float64Array.from({ length: 30_000 }, (_, i) => Math.sin(i)),
+  y: Float64Array.from({ length: 30_000 }, (_, i) => Math.cos(i * 1.3)),
+  z: Float64Array.from({ length: 30_000 }, (_, i) => (i % 100) / 100),
+});
 
 const points = table({
   x: [0, 1, 2, 3],
@@ -207,8 +216,11 @@ describe("3D charts", () => {
       y: Float64Array.from({ length: n }, (_, i) => Math.cos(i * 1.3)),
       z: Float64Array.from({ length: n }, (_, i) => (i % 100) / 100),
     });
+    const before = cloudPainter()!.bytes;
     const chart = createChart(host, { marks: [point3d(big, { x: "x", y: "y", z: "z" })] });
     await chart.loading;
+    // The points went to the GPU: three float32 values and a color index each.
+    expect(cloudPainter()!.bytes - before).toBe(n * 13);
     const faces = modelOf(chart)
       .scene((text) => text.length * 6, true)
       .panels[0]!.marks.find((m) => m.kind === "faces") as unknown as { cloud?: unknown };
@@ -225,6 +237,23 @@ describe("3D charts", () => {
     await frame();
     expect(chart.root.textContent).toMatch(/x -?\d/);
     chart.destroy();
+    expect(cloudPainter()!.bytes).toBe(before);
+  });
+
+  it("wait in `loading` for the 3D painter a chart turned 3D needs, after the 2D one", async () => {
+    const before = cloudPainter()!.bytes;
+    const flat = table({
+      x: Float64Array.from({ length: 150_000 }, (_, i) => i % 1000),
+      y: Float64Array.from({ length: 150_000 }, (_, i) => i % 7),
+    });
+    const chart = createChart(host, { marks: [point(flat, { x: "x", y: "y" })] });
+    // The chart turns 3D before the 2D painter has loaded.
+    chart.update({ marks: [point3d(cloud, { x: "x", y: "y", z: "z" })] });
+    await chart.loading;
+    expect(chart.loading).toBeUndefined();
+    expect(cloudPainter()!.bytes - before).toBe(cloud.length * 13);
+    chart.destroy();
+    expect(cloudPainter()!.bytes).toBe(before);
   });
 
   it("place GPU points precisely whatever values lie outside the box, at any magnitude", async () => {

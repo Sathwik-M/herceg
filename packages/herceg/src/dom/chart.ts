@@ -104,15 +104,18 @@ function measurer(document: Document): MeasureText {
   return sharedMeasure;
 }
 
-/** Whether a scene leaves large point series (or a 3D chart's points) to the GPU painter. */
-function hasClouds(scene: Scene): boolean {
-  return scene.panels.some((panel) =>
-    panel.marks.some(
-      (mark) =>
-        (mark.kind === "point" || mark.kind === "faces") &&
-        (mark as unknown as PointGeometry | FaceGeometry).cloud !== undefined,
-    ),
-  );
+/**
+ * What a scene leaves to the GPU painter: large point series ("points"), a
+ * 3D chart's points ("3d", which need the 3D painter), or nothing.
+ */
+function cloudsIn(scene: Scene): "points" | "3d" | undefined {
+  let found: "points" | undefined;
+  for (const panel of scene.panels)
+    for (const mark of panel.marks) {
+      if (mark.kind === "faces" && (mark as unknown as FaceGeometry).cloud) return "3d";
+      if (mark.kind === "point" && (mark as unknown as PointGeometry).cloud) found = "points";
+    }
+  return found;
 }
 
 const HIDDEN_TEXT =
@@ -146,6 +149,8 @@ export class MountedChart implements Chart {
   #onCanvas = false;
   /** GPU painter for large point series once loaded; null when unavailable. */
   #clouds: CloudPainter | null | undefined;
+  /** Whether `#clouds` draws 3D charts' clouds too (render/webgl3d.ts loaded). */
+  #clouds3d = false;
   #cloudsLoading: Promise<void> | undefined;
   #scene: Scene | undefined;
   /** Moves the axes to views asked for, once loaded for `animation`; null if it failed to load. */
@@ -885,21 +890,33 @@ export class MountedChart implements Chart {
   #cloudsAllowed(): boolean {
     if (this.#options.renderer === "svg" || this.#clouds === null) return false;
     // After a lost context, a fresh painter is loaded.
-    if (this.#clouds && !this.#clouds.usable) this.#clouds = undefined;
+    if (this.#clouds && !this.#clouds.usable) {
+      this.#clouds = undefined;
+      this.#clouds3d = false;
+    }
     return true;
   }
 
-  #loadClouds(): void {
+  /** Loads the GPU painter, with 3D clouds when `deep`; 2D charts never download that part. */
+  #loadClouds(deep: boolean): void {
     if (this.#cloudsLoading) return;
     this.#cloudsLoading = import("../render/webgl.ts")
-      .then((module) => module.cloudPainter() ?? null)
-      .catch(() => null)
-      .then((painter) => {
-        this.#clouds = painter;
+      .then((module) =>
+        // A 3D painter that fails to load leaves 3D points to the CPU, and
+        // 2D ones to the painter without it.
+        deep ? module.deepPainter().catch(() => module.cloudPainter()) : module.cloudPainter(),
+      )
+      .catch(() => undefined)
+      .then((painter): Promise<void> | undefined => {
+        this.#clouds = painter ?? null;
+        this.#clouds3d = deep;
         this.#cloudsLoading = undefined;
-        // Draw at once, so `loading` settles with the points on screen.
+        // Draw at once, so `loading` settles with the points on screen; a
+        // scene that turned 3D meanwhile loads that painter, which `loading`
+        // waits for too.
         this.#dirty = true;
         this.#flush();
+        return this.#cloudsLoading;
       });
   }
 
@@ -928,9 +945,13 @@ export class MountedChart implements Chart {
     const scene = this.#values?.frame(build, this.#drawTime) ?? build();
     if (this.#values?.playing) this.#invalidate(false);
     this.#scene = scene;
-    const clouds = hasClouds(scene);
+    const clouds = cloudsIn(scene);
     // A null painter means WebGL is unavailable; it is not loaded again.
-    if (clouds && this.#clouds === undefined) this.#loadClouds();
+    const waiting =
+      clouds !== undefined &&
+      this.#clouds !== null &&
+      !(this.#clouds && (clouds === "points" || this.#clouds3d));
+    if (waiting) this.#loadClouds(clouds === "3d");
 
     const renderer = this.#options.renderer ?? "auto";
     this.#onCanvas =
@@ -951,7 +972,7 @@ export class MountedChart implements Chart {
       paintCanvas(this.#canvas, scene, {
         painter: this.#clouds ?? undefined,
         owner: this,
-        defer: clouds && !this.#clouds,
+        defer: waiting,
       });
     } else if (this.#canvas) {
       // Release the backing store when marks move back to SVG.
@@ -986,7 +1007,7 @@ export class MountedChart implements Chart {
       !config.interaction?.sync &&
       this.#scheduled.visible &&
       this.#scene &&
-      !hasClouds(this.#scene);
+      cloudsIn(this.#scene) === undefined;
     // What is on screen: no scene is drawn until the next frame.
     const from = movable ? panels[0] : undefined;
     this.#settle();

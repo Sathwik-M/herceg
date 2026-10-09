@@ -1458,8 +1458,11 @@ identity (`rowOffset` + row), so keys survive rows dropped from a stream.
 Inspections of 3D items carry their values by field.
 
 Point layers of at least 20,000 points, all opaque, on linear, time, or log
-axes, are drawn by the GPU in the browser instead (`paint3d` in
-`render/webgl.ts`, the painter 2D clouds use). Each layer's columns are
+axes, are drawn by the GPU in the browser instead (`render/webgl3d.ts`,
+loaded only for a 3D chart's first cloud, through the page's painter in
+`render/webgl.ts` and its context, so in builds that split dynamic imports
+into chunks 2D clouds never download the 3D program; the Python package's
+single-file bundles hold both). Each layer's columns are
 uploaded once per table version as float32 values mapped by the axes then
 (less the centers of their domains, times their factors, so values of any
 magnitude come out near the box's [-1, 1]), and uploaded again only if the
