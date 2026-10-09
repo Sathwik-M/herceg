@@ -547,7 +547,10 @@ describe("grid layout", () => {
   it("follow their container's size, and are 320 pixels tall without one", async () => {
     const grid = mount(model(requests(1000), COLUMNS));
     hosts[0]!.style.height = "600px";
+    // The resize observer runs after the first frame's callbacks, so the
+    // redraw it schedules lands a frame later.
     await frames();
+    await frame();
     expect(grid.model.viewportHeight).toBe(568);
     expect(visibleRows(grid)).toHaveLength(21);
     const auto = mount(model(requests(10), COLUMNS), {}, "width:400px");

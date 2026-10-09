@@ -748,6 +748,8 @@ describe("notebook widget", () => {
       revision: 1,
       selection: { x: ["a", "a"], y: null, lasso: null },
     });
+    // The brush that draws the selection loads on demand.
+    await vi.dynamicImportSettled();
     await frame();
     const before = left();
     // "a" moves to the second band: the brush follows it.
