@@ -984,6 +984,7 @@ class Chart:
         y: str,
         *,
         series: str | None = None,
+        animation_key: str | None = None,
         data: Any = None,
         r: float | str | None = None,
         r_range: tuple[float, float] | None = None,
@@ -1017,11 +1018,14 @@ class Chart:
         with a shape per value; a column named like a shape must be renamed to
         be encoded. ``sampling="pixel"`` draws opaque points whose centers share
         a device pixel once, which is faster for dense scatters.
+        ``animation_key`` names a numeric, datetime, or category column matching
+        points across live replacements when ``Animation(values=True)`` is set.
         """
         table = self._mark_table(data)
         self._require(table, x, (*_NUMERIC, "category"), "point x")
         self._require(table, y, (*_NUMERIC, "category"), "point y")
         self._require(table, series, ("category",), "point series")
+        self._require(table, animation_key, (*_NUMERIC, "category"), "point animation_key")
         if isinstance(r, str):
             self._require(table, r, _NUMERIC, "point r")
         elif r is not None and not (math.isfinite(r) and r > 0):
@@ -1052,6 +1056,7 @@ class Chart:
                 "x": x,
                 "y": y,
                 "series": series,
+                "animationKey": animation_key,
                 "r": r,
                 "rRange": _range(r_range, "point r_range", minimum=0),
                 "fill": fill,
@@ -2742,7 +2747,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
         *("category", "fields"),
         *("path", "node", "parent", "source", "target"),
         *("open", "high", "low", "close"),
-        *("r", "fillOpacity", "color", "symbol"),
+        *("r", "fillOpacity", "color", "symbol", "animationKey"),
         *("geometry", "name", "longitude", "latitude", "z"),
     ):
         value = spec.get(key)
@@ -3257,6 +3262,7 @@ def scatter(
     y: str,
     *,
     series: str | None = None,
+    animation_key: str | None = None,
     r: float | str | None = None,
     r_range: tuple[float, float] | None = None,
     fill: str | None = None,
@@ -3281,6 +3287,7 @@ def scatter(
         x,
         y,
         series=series,
+        animation_key=animation_key,
         r=r,
         r_range=r_range,
         fill=fill,

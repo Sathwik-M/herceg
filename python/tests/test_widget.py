@@ -101,6 +101,26 @@ def test_the_widget_state_is_the_chart_spec_with_binary_buffers():
     assert state["selection"] is None and state["viewport"] is None
 
 
+def test_point_keys_travel_through_live_replacements_and_appends():
+    widget = hg.scatter(
+        data(), "t", "v", animation_key="host", animation=hg.Animation(values=True)
+    ).widget()
+    browser = Browser(widget)
+    state, values = snapshot(widget)
+    assert state["spec"]["marks"][0]["animationKey"] == "host"
+    assert values["host"] == ["a", "b"]
+    widget.replace({"t": [T0, T0 + dt.timedelta(minutes=1)], "v": [3.0, 4.0], "host": ["b", "a"]})
+    content, buffers = browser.last
+    assert content["type"] == "replace"
+    assert columns(content, buffers)["host"] == ["b", "a"]
+    widget.append({"t": [T0 + dt.timedelta(minutes=2)], "v": [5.0], "host": ["c"]})
+    content, buffers = browser.last
+    assert columns(content, buffers)["host"] == ["c"]
+    assert snapshot(widget)[1]["host"] == ["b", "a", "c"]
+    with pytest.raises(KeyError, match="host"):
+        widget.replace({"t": [T0], "v": [1.0]})
+
+
 def test_append_sends_only_the_new_rows_and_keeps_the_state_current():
     widget, browser = live()
     widget.append(

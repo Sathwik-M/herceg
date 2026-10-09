@@ -1,5 +1,12 @@
 import type { RowView } from "../data/row-view.ts";
-import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
+import type {
+  CategoryField,
+  NumberField,
+  NumericField,
+  PositionField,
+  Schema,
+  Table,
+} from "../data/table.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../draw/symbols.ts";
 import { GridIndex } from "../lod/grid-index.ts";
@@ -19,6 +26,7 @@ import {
   MOVING_POINTS,
   type PointCloud,
   type PointGeometry,
+  type PointItems,
 } from "../scene/scene.ts";
 import type { Frozen, PointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
@@ -64,6 +72,8 @@ export interface PointOptions<S extends Schema> {
   y: PositionField<S>;
   /** Category field: one colored point series per value. */
   series?: CategoryField<S>;
+  /** Match points across data resets by this field when the chart animates values. */
+  animationKey?: NumberField<S> | CategoryField<S>;
   /** Radius in pixels, or a number field sized by area within `rRange` (bubbles). */
   r?: number | NumericField<S>;
   /** Radii of the smallest and largest values of an `r` field. Default [2, 12]. */
@@ -159,6 +169,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     requireField(table, spec.x, POSITION, "point x");
     requireField(table, spec.y, POSITION, "point y");
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "point series");
+    if (spec.animationKey !== undefined)
+      requireField(table, spec.animationKey, POSITION, "point animationKey");
     this.#banded = {
       x: table.kind(spec.x) === "category",
       y: table.kind(spec.y) === "category",
@@ -302,6 +314,10 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       this.#ringWidth > 0
         ? { color: this.spec.stroke ?? surface(frame.theme), width: this.#ringWidth }
         : undefined;
+    const keyField = frame.keyed ? this.spec.animationKey : undefined;
+    const keyKind = keyField === undefined ? undefined : this.table.kind(keyField);
+    const keyLabels = keyKind === "category" ? this.table.categories(keyField as never) : undefined;
+    const keyNumbers = keyLabels ? undefined : read(keyField);
     const placeRow = this.#banded.x || this.#banded.y ? placeBanded : place;
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
@@ -361,11 +377,20 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       const colorIndex = tones && frame.bytes(s.key, "color", length);
       const opacities = alphas && frame.floats(s.key, "opacity", length);
       const symbols = codes && frame.bytes(s.key, "symbol", length);
-      // Charts that animate changed values learn the row of each point.
-      const ids =
-        frame.keyed && !sample && length <= MOVING_POINTS
-          ? frame.doubles(s.key, "id", length)
-          : undefined;
+      // Capture identity alongside positions; static and sampled charts keep none.
+      let items: PointItems | undefined;
+      if (frame.keyed && !sample && length <= MOVING_POINTS) {
+        const identity = { table: this.table, generation: this.table.generation };
+        if (keyLabels) {
+          items = { ...identity, ids: [], key: { field: keyField!, kind: "category" } };
+        } else {
+          const ids = frame.doubles(s.key, "id", length);
+          items =
+            keyField === undefined
+              ? { ...identity, ids }
+              : { ...identity, ids, key: { field: keyField, kind: keyKind as "number" | "time" } };
+        }
+      }
       let count = 0;
       for (let k = start; k < end; k++) {
         const row = rowOf(s, k);
@@ -395,7 +420,16 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         if (colorIndex) colorIndex[count] = tone;
         if (opacities) opacities[count] = alpha;
         if (symbols) symbols[count] = shape;
-        if (ids) ids[count] = this.table.rowOffset + row;
+        if (items) {
+          if (keyLabels) {
+            (items.ids as (string | undefined)[])[count] =
+              keyLabels.dictionary[keyLabels.codes[row]!];
+          } else {
+            (items.ids as Float64Array)[count] = keyNumbers
+              ? keyNumbers[row]!
+              : this.table.rowOffset + row;
+          }
+        }
         count++;
       }
       out.push({
@@ -414,7 +448,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         opacities,
         symbols,
         ring,
-        items: ids && { table: this.table, generation: this.table.generation, ids },
+        items,
       });
     }
     return out;
@@ -892,6 +926,7 @@ export function point<S extends Schema>(
     y: options.y,
     ...definedFields(options, [
       "series",
+      "animationKey",
       "r",
       "fill",
       "fillOpacity",

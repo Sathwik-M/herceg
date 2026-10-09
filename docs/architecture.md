@@ -2039,7 +2039,8 @@ screen and of the next. Scenes of such charts carry what identifies each
 item: bar geometry carries `BarItems` (each bar's position along its axis, a
 band index or the value, and its root and tip in pixels), point geometry
 `PointItems` (the table, its generation, and each point's row identity,
-`rowOffset + row`), and a pie's sectors `PieSlices` (its slices in order,
+`rowOffset + row`, or an explicit `animationKey` field and its values), and a
+pie's sectors `PieSlices` (its slices in order,
 where each ends as a fraction of the turn, its size, and a function that
 draws other slices as the pie draws its own, leaders and labels included).
 Marks of other charts emit none of them. Every traced polyline says whether
@@ -2060,11 +2061,25 @@ already changed, so old values can no longer be read from it). The next
 frame builds the new scene once and matches the copy to it: bars by series
 key and position (a series repeating a position has no identity for its
 bars, and shows its new values at once), points by series key and row
-identity within one table generation, lines and areas by series key when
-both scenes trace them through the same x pixels in the same runs (rows at
-one x are one point of a line, whichever rows of the table they are, so a
-reset that keeps x moves too), horizontal and vertical rules by key, and
-slices by key, in one order merging both pies'. Each scale that both scenes
+identity within one table generation, or by equal explicit keys when both
+scenes name the same field and kind. Numeric keys reuse the row identity
+`Float64Array`; category keys capture label string references at geometry
+time, independent of dictionary recoding. Snapshots copy these arrays along
+with positions. No per-point objects or interning are used. Temporary maps
+and sets match primitive keys in the lazy `value-points.ts` module; it imports
+no runtime code from initial modules. Finite numbers match without coercion
+(`-0` equals `0`), category labels match as strings, and time keys use their
+numeric values. Missing or duplicate keys in either rendered series make
+that series show its new values at once, with no row fallback; moving axes
+make the whole change show at once. Keys do not affect selection or table
+row identity. The per-frame point bound includes retained points, entrants,
+and exits across the whole chart.
+
+Lines and areas match by series key when both scenes trace them through the
+same x pixels in the same runs (rows at one x are one point of a line,
+whichever rows of the table they are, so a reset that keeps x moves too).
+Horizontal and vertical rules match by key, and slices by key, in one order
+merging both pies'. Each scale that both scenes
 draw with the same type and range, and with continuous domains in the same
 direction (bands and broken time axes must be unchanged), moves from its
 domain before to its domain after, evenly in what it maps linearly (log10 on
@@ -2116,9 +2131,14 @@ while values move and until the data has been still for a change's duration
 (so streaming charts do not animate forever; a derived aggregate, recomputed
 on each change of its source, moves only on changes that far apart), and
 charts that are inspected, off screen, linked, slow (as for views, counting
-the copy), or that draw more than 2,000 bars, slices, and rules, 10,000 points, or
-10,000 points of lines and areas in either scene, or any point cloud, which
-they count before copying anything, show at once too. One transition plays
+the copy), or whose endpoint scenes draw more than 2,000 bars, slices, and
+rules, 10,000 points, or 10,000 points of lines and areas, or any point cloud,
+show at once too. Snapshots check these endpoint counts before copying.
+Matching then counts point exits and checks the combined 10,000-point budget
+across all series, including points that show at once. With fixed axes, some
+series can animate while others show at once to keep within that budget;
+with moving axes, an unmatched series makes the whole change show at once.
+One transition plays
 at a time: a view asked for settles values first, and a table change ends a
 change of view. Pointer moves, presses, and keys settle values, dropping a
 copy not yet moved from and drawing the new scene (axes included) before they
@@ -2497,15 +2517,19 @@ it. A range brushed or zoomed in one browser goes through Python to the
 others, marked with its origin; a range report made before a newer change
 from elsewhere is dropped. Views of one widget share its tables and marks
 in the browser, so an update is decoded once however many outputs show it.
+Replacements reset those tables in place, so points with `animationKey`
+animate across replacements, as they do in JavaScript apps.
 The Streamlit component (`herceg.streamlit.chart`, components v2) has no
 connection that outlives a script run, so every run sends the whole chart as
 one binary payload: a uint32 header length, the JSON header (spec, buffer
 offsets, events the script reacts to), and the buffers at 8-byte aligned
 offsets, viewed in place as typed arrays. Streamlit calls the component
 again on every run and on theme changes; equal bytes keep the drawn chart,
-and changed bytes redraw it in place, keeping the zoom along x and y and the
-whole selection (on category axes, by its categories' labels), which the
-script receives whole; it does not hear of zooming. Charts without a theme read the app's from the
+and changed bytes remount the chart in the same container, restoring the
+zoom along x and y and the whole selection where their values remain (on
+category axes, by their labels). Data changes therefore remount too, so keyed
+points show at once in Streamlit. The script receives the selection whole;
+it does not hear of zooming. Charts without a theme read the app's from the
 CSS variables Streamlit gives components, since Python may not know it.
 
 A test (`test/architecture.test.ts`) keeps the core directories (`data`,
@@ -2591,9 +2615,10 @@ document when `OffscreenCanvas` is unavailable.
 - Animation moves the axes of single-panel charts between views and, with
   `values`, bars, pie slices, points, and lines and areas traced whole to
   changed values, with the axes their domains move, when the plot and
-  categories stay put. Stacked or labeled bars, points across a reset (no
-  key field identifies their rows) or crossing the edge of a fixed domain
-  (they shrink instead), lines whose x positions or level of detail change,
+  categories stay put. Points with `animationKey` match across resets by
+  finite numeric values or category labels. Stacked or labeled bars, unkeyed
+  points across a reset, points crossing the edge of a fixed domain (they
+  shrink instead), lines whose x positions or level of detail change,
   panels, categories that come or go, and the first appearance of a chart
   show at once.
 - Box plots and violins recompute every group's statistics (and violins

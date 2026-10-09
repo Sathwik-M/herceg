@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { SelectionPayload, ViewportPayload } from "../events.ts";
 import widgetModule, { type Model, type Snapshot, type Update } from "../widget.ts";
+import { controlTime, pointPath } from "./animation.ts";
 
 type Handler = (...args: never[]) => void;
 
@@ -126,6 +127,9 @@ beforeEach(() => {
 afterEach(() => {
   for (const cleanup of cleanups) cleanup();
   for (const host of hosts) host.remove();
+  if (vi.isFakeTimers()) vi.runOnlyPendingTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -154,6 +158,35 @@ describe("notebook widget", () => {
     expect(figure(host!).getAttribute("aria-label")).toBe("Live");
     expect(vertices(host!)).toBe(3);
     expect(model.sent).toEqual([{ type: "ready", revision: 0 }]);
+  });
+
+  it("animates keyed points when Python replaces and reorders the rows", async () => {
+    const state = snapshot({
+      animation: { values: true, duration: 300 },
+      x: { domain: [0, 4] },
+      y: { domain: [0, 100] },
+    });
+    state.spec.marks = [{ type: "point", x: "t", y: "v", data: "data", animationKey: "host" }];
+    const initial = rows([1, 2, 3], [10, 20, 30], ["a", "b", "c"]);
+    state.spec.data = { data: { columns: initial.columns } };
+    state.buffers = initial.buffers.map((buffer) => new DataView(buffer.buffer));
+    const model = new MockModel({ _chart: state, _listening: [] });
+    const [host] = mount(model);
+    host!.style.cssText = "position:fixed;left:0;top:0;width:400px";
+    await controlTime(host!);
+    const before = pointPath(host!);
+    const next = rows([1, 2, 3], [70, 60, 50], ["c", "a", "d"]);
+    model.receive(
+      { type: "replace", revision: 1, table: "data", columns: next.columns },
+      next.buffers,
+    );
+    vi.advanceTimersByTime(80);
+    const middle = pointPath(host!);
+    vi.advanceTimersByTime(400);
+    const after = pointPath(host!);
+    expect(middle).not.toBe(before);
+    expect(middle).not.toBe(after);
+    expect(pointPath(host!)).toBe(after);
   });
 
   it("appends rows, keeps a rolling window, and replaces data", async () => {

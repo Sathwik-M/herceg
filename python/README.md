@@ -125,9 +125,29 @@ cells), `animation` (`True`, milliseconds, or `hg.Animation(duration=250,
 values=True)`: zooming to a brush and double-click reset move the axes
 gradually in HTML output, and with `values`, bars, pie slices, and lines and
 areas whose x values stay move to the data a live chart's `replace` sends,
-with axes whose domains change; points do not, as replaced rows are new
-rows), `renderer`,
+with axes whose domains change; points match across replacements with
+`animation_key="id"` on `Chart.point()` or `hg.scatter()`), `renderer`,
 `theme` (below), `locale`, `time_zone`, and `projection` (maps, above).
+
+For points refreshed from an API, use an explicit animation key:
+
+```python
+chart = hg.scatter(data, "x", "y", animation_key="id", animation=hg.Animation(values=True))
+widget = chart.widget()
+widget.replace(next_data)  # matching ids move even when rows are reordered
+```
+
+The key column is sent with the data. It may hold finite numbers, datetimes,
+or category labels; keys must be present and unique within each rendered
+series in both frames. Missing or duplicate keys show that series at once
+(the whole chart if its axes move). Category dictionary codes may change;
+labels identify points. New keys grow and removed keys shrink. Animation keys
+only match the drawing and do not preserve selections across replacements.
+Unkeyed points still show replaced rows at once. Keyed points animate across
+replacements in notebook widgets and JavaScript apps. Streamlit components
+remount when their data changes, so keyed points show at once there. Sampled
+points, GPU clouds, frequent updates, and the other animation limits still
+show at once.
 
 The one-call helpers (`hg.line`, `hg.scatter`, which adds `point` marks,
 `hg.choropleth`, which adds `geoshape` marks, and the rest) take their mark's
@@ -400,9 +420,11 @@ its data changes, and to show several charts with the same content.
 The chart is a Streamlit custom component (components v2): it renders in the
 app's page, in a shadow root rather than an iframe, and its spec and column
 buffers travel as one binary payload. A rerun that sends the same chart
-leaves it as it is, zoom and brush included; a changed chart is redrawn in
-place, keeping its zoom and its brush where the brushed values or category
-labels still are. Charts without a theme follow the app's light or dark
+leaves it as it is, zoom and brush included; changed data or options remount
+the chart in the same container, restoring its zoom and brush where the
+brushed values or category labels still are. Points with `animation_key`
+show at once on remount; keyed replacements animate in notebook widgets and
+JavaScript apps. Charts without a theme follow the app's light or dark
 theme, also when it changes. [examples/streamlit_app.py](examples/streamlit_app.py)
 is a complete app.
 

@@ -1182,6 +1182,8 @@ export interface PointSpec extends MarkBase {
   x: Field;
   y: Field;
   series?: Field;
+  /** Number, time, or category field matching points across resets when values animate. */
+  animationKey?: Field;
   /** Radius in pixels, or a number field sized by area within `rRange`. */
   r?: number | Field;
   /** Radii of the smallest and largest values of an `r` field. Default [2, 12]. */

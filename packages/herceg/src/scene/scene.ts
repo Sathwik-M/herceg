@@ -294,21 +294,23 @@ export interface PointGeometry extends Geometry {
   ring?: { color: string; width: number } | undefined;
   /** Set when the series is left to a GPU painter instead of `coords`. */
   cloud?: PointCloud;
-  /** Points in scenes of charts that animate changed values: the rows they show. */
+  /** Points in scenes that animate changed values: their row identities or explicit keys. */
   items?: PointItems | undefined;
 }
 
 /**
- * What a value transition (`animation.values`) needs of a series' points,
- * which marks give only in scenes of charts that ask for it: the table and
- * its generation (its resets), and per point the identity of the row it
- * shows, `rowOffset + row`, which lasts while rows are dropped and changed.
+ * Animation identity captured with positions, only in scenes that animate:
+ * rows until a reset, or explicit key values that survive resets. Category
+ * labels are string references, independent of later dictionary changes.
  */
-export interface PointItems {
+export type PointItems = {
   table: object;
   generation: number;
-  ids: Float64Array;
-}
+} & (
+  | { ids: Float64Array; key?: undefined }
+  | { ids: Float64Array; key: { field: string; kind: "number" | "time" } }
+  | { ids: readonly (string | undefined)[]; key: { field: string; kind: "category" } }
+);
 
 /** Point series with at least this many points may be drawn as clouds. */
 export const CLOUD_POINTS = 100_000;

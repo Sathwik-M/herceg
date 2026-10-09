@@ -6,14 +6,7 @@
 // the widget's tables and marks, so each update is decoded once and every
 // view redraws from the same data.
 
-import {
-  type Chart,
-  type ChartOptions,
-  createChart,
-  encodedCategory,
-  geometry,
-  type Table,
-} from "herceg";
+import { type Chart, type ChartOptions, createChart, type Table } from "herceg";
 import {
   type ChartSpec,
   type ColumnSpec,
@@ -31,6 +24,7 @@ import {
   type ViewportPayload,
   viewportPayload,
 } from "./events.ts";
+import { resetColumns } from "./tables.ts";
 
 /** The parts of an anywidget model this module uses. */
 export interface Model {
@@ -400,24 +394,6 @@ function appendBatch(table: Table, rows: Table): Parameters<Table["append"]>[0] 
     batch[field] = Array.from(codes, (code) => (code < 0 ? null : dictionary[code]!));
   }
   return batch as Parameters<Table["append"]>[0];
-}
-
-function resetColumns(table: Table, rows: Table): Parameters<Table["reset"]>[0] {
-  const columns = fieldRecord();
-  for (const field of table.fields()) {
-    if (table.kind(field) === "geometry") {
-      const { codes, set } = rows.geometries(field);
-      columns[field] = geometry(set, codes);
-      continue;
-    }
-    if (table.kind(field) !== "category") {
-      columns[field] = rows.numbers(field);
-      continue;
-    }
-    const { codes, dictionary } = rows.categories(field);
-    columns[field] = encodedCategory(codes, dictionary);
-  }
-  return columns as Parameters<Table["reset"]>[0];
 }
 
 /**

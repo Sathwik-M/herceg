@@ -54,6 +54,20 @@ def test_the_payload_is_the_spec_then_aligned_buffers():
         hst._payload({"marks": [], "title": float("nan")}, [], [])
 
 
+def test_point_animation_keys_serialize_in_streamlit_payloads():
+    chart = hg.scatter(
+        {"x": [1.0, 2.0], "y": [3.0, 4.0], "id": ["a", "b"], "unused": [5, 6]},
+        "x",
+        "y",
+        animation_key="id",
+    )
+    spec, buffers = chart.to_spec()
+    header, decoded, _ = read(hst._payload(spec, buffers, []))
+    assert header["spec"]["marks"][0]["animationKey"] == "id"
+    assert sorted(header["spec"]["data"]["data"]["columns"]) == ["id", "x", "y"]
+    assert decoded == buffers
+
+
 def test_the_result_decodes_to_python_values():
     state = hst._state(
         {

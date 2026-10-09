@@ -515,6 +515,7 @@ const MARKS: MarkChecks = {
       x: field,
       y: field,
       series: field,
+      animationKey: field,
       r: (v, path) => (typeof v === "string" ? field(v, path) : positive(v, path)),
       rRange: range,
       fill: string,
