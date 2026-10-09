@@ -4,7 +4,7 @@
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 import { type Mapping, m4, mapValue, polylineAll } from "../lod/m4.ts";
-import type { RangeIndex } from "../lod/minmax-index.ts";
+import type { RangeExtremes, RangeIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { Curve } from "../spec/spec.ts";
 import {
@@ -21,7 +21,8 @@ import { rowOf, type Series, visibleRange } from "./series.ts";
 export type Stage = "line" | "upper" | "lower";
 
 /** Series of at least this many points read a min/max index once they are redrawn. */
-const INDEXED_POINTS = 1 << 18;
+/** Series this long or longer are reduced through min/max indexes where they have one. */
+export const INDEXED_POINTS = 1 << 18;
 
 /**
  * When a mark's large series read their table's min/max index for level of
@@ -154,7 +155,9 @@ function placeable(mapping: Mapping, value: number): boolean {
  * covers positions where both edges have values, and the n-th run of the
  * upper edge pairs with the n-th run of the lower edge when the area is
  * closed. Tracing the edges independently would pair unrelated runs when the
- * edges have gaps in different places.
+ * edges have gaps in different places. With min/max indexes of both edges
+ * (linear scales, a whole sorted series), a view without gaps is one run,
+ * reduced through the indexes without visiting every row.
  */
 export function traceBand(
   series: Series,
@@ -162,6 +165,7 @@ export function traceBand(
   bottom: NumericArray,
   frame: Frame,
   curve: Curve | undefined,
+  indexes?: { top: RangeIndex; bottom: RangeIndex },
 ): { upper: Polyline; lower: Polyline } {
   const upper = frame.polyline(series.key, "upper");
   const lower = frame.polyline(series.key, "lower");
@@ -170,6 +174,23 @@ export function traceBand(
   const [start, end] = visibleRange(series, frame.x.domain[0], frame.x.domain[1]);
   const xMap = frame.x.mapping();
   const yMap = frame.y.mapping();
+  if (
+    indexes &&
+    series.sorted &&
+    series.rows === undefined &&
+    !xMap.log &&
+    !yMap.log &&
+    start < end &&
+    !gapIn(indexes.top, top, start, end) &&
+    !gapIn(indexes.bottom, bottom, start, end)
+  ) {
+    reduce(series, top, start, end, frame, upper, indexes.top);
+    reduce(series, bottom, start, end, frame, lower, indexes.bottom);
+    return {
+      upper: stepped(upper, frame, series.key, "upper", curve),
+      lower: stepped(lower, frame, series.key, "lower", curve),
+    };
+  }
   let runStart = -1;
   for (let k = start; k <= end; k++) {
     let valid = false;
@@ -193,6 +214,13 @@ export function traceBand(
     upper: stepped(upper, frame, series.key, "upper", curve),
     lower: stepped(lower, frame, series.key, "lower", curve),
   };
+}
+
+const extremes: RangeExtremes = { low: -1, high: -1, gap: false };
+
+/** Whether `values[from, to)` holds a value that is not finite, by its index. */
+function gapIn(index: RangeIndex, values: NumericArray, from: number, to: number): boolean {
+  return index.length !== values.length || index.query(values, from, to, extremes).gap;
 }
 
 /** A band, or a layer of a stack: its series, top, and bottom (zero when undefined). */

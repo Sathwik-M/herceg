@@ -166,6 +166,8 @@ export class Table<S extends Schema = Schema> {
   #indexViews = new Map<string, RangeIndex>();
   /** Version of the last change that replaced values wholesale. */
   #replaced = 0;
+  /** Version of the last change to existing values: a replace or a reset. */
+  #modified = 0;
 
   constructor(columns: Record<string, ColumnInput>, options: TableOptions = {}) {
     this.name = options.name;
@@ -284,6 +286,16 @@ export class Table<S extends Schema = Schema> {
    */
   get replacedVersion(): number {
     return this.#replaced;
+  }
+
+  /**
+   * Version of the last change to values already in the table: a replace of
+   * any size, or a reset. Data derived since then stays valid through
+   * appends and drops, which only add rows at the end and remove them from
+   * the front (see `rowOffset`).
+   */
+  get modifiedVersion(): number {
+    return this.#modified;
   }
 
   /** Whether the field has a min/max index, kept current by every change since it was built. */
@@ -448,6 +460,7 @@ export class Table<S extends Schema = Schema> {
     }
     this.#sorted.delete(field);
     this.#extents.delete(field);
+    this.#modified = this.#version + 1;
     this.#changed({
       dropped: 0,
       appended: 0,
@@ -499,6 +512,7 @@ export class Table<S extends Schema = Schema> {
     this.#extents.clear();
     this.#indexes.clear();
     this.#replaced = this.#version + 1;
+    this.#modified = this.#version + 1;
     if (this.#length > this.maxRows) this.#dropFront(this.#length - this.maxRows);
     this.#changed({ dropped: 0, appended: 0, updated: null, fields: [], reset: true });
   }

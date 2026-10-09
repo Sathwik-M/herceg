@@ -105,8 +105,24 @@ Memory amplification over the source data is therefore: reserved capacity
 for tables that grow (about 0.5x the live rows right after growth; at most
 0.5x `maxRows` for rolling windows; after drops, up to about six times the
 live rows until an explicit drop shrinks the buffer), 4 bytes per row for long-format grouping, two `Float64Array`s per
-layer for stacked areas (top and base), and geometry buffers bounded by the
-plot width.
+layer for stacked areas and bars (top and base, with up to 0.5x room to grow
+like a table's), and geometry buffers bounded by the plot width.
+
+Stacks of several fields sharing rows (`marks/stack.ts`) are kept current
+as the table streams: appended rows are stacked on their own and dropped
+rows leave from the front, using the table's stable row identities
+(`rowOffset`) and `modifiedVersion`, the version of the last change to
+values already present; anything else (a replace, a reset, a layer hidden
+or shown) stacks every row again. Long stacks (from 262,144 rows) keep
+min/max indexes over their tops and bases, so y extents and band tracing
+read a few blocks per pixel column rather than every row when the view has
+no gaps. Bars stack row by row only when their positions strictly increase;
+bars split by a series field, or with repeated positions, stack by position
+on every change. Over a million-row window with 10,000 rows appended per
+tick, five stacked area layers take about 4 ms a frame instead of 32 ms
+(unstacked, about 3 ms); five stacked bar fields over 100,000 rows take
+about 5 ms instead of 18 ms, as much as grouped bars (one-off Node
+measurements of the scene, Apple M6).
 
 ## Derived tables
 
@@ -213,8 +229,9 @@ output is identical either way. Zooming into ten million points takes about
 1.3 ms instead of 3 ms. Streaming 10,000 points per tick into a
 million-point window takes a median of about 1.5 ms instead of 2.7 ms (p95
 2.0 instead of 3.4 ms); the ticks that move the window's storage also
-rebuild its index and take up to about 5 ms instead of 4 ms. Bands, stacked
-areas, and long-format series (row subsets) are not indexed.
+rebuild its index and take up to about 5 ms instead of 4 ms. Bands and
+long-format series (row subsets) are not indexed; long stacks have indexes
+of their own (see the data model).
 
 Histograms keep their bins, not their values: whenever the table changes,
 one pass finds the extremes and another counts each series' values (by
@@ -1097,9 +1114,10 @@ document when `OffscreenCanvas` is unavailable.
 - The model always carries band-axis, color-legend, inspection-along-y, and
   right-axis logic, so a line-only bundle includes some bar, heatmap, and
   second-axis support it does not use.
-- Bands, stacked areas, log scales, and long-format series re-scan the
-  visible range on every frame; only whole-column lines and areas filled to
-  zero on linear scales use the min/max index.
+- Bands, log scales, long-format series, and stacked areas with gaps in view
+  re-scan the visible range on every frame; whole-column lines, areas filled
+  to zero, and long gap-free stacks on linear scales use min/max indexes.
+  Stacked bars split by a series field restack every row on each change.
 - Renderer thresholds are not tuned.
 - Rules and text are always drawn above other marks, regardless of mark order.
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use
