@@ -20,12 +20,14 @@ import { rowOf, type Series, visibleRange } from "./series.ts";
 /** Buffer stages; a series' buffers are keyed by stage and series key. */
 export type Stage = "line" | "upper" | "lower";
 
-/** Series this long or longer are reduced through min/max indexes where they have one. */
+/** Stacks this long or longer keep min/max indexes of their layers (see stack.ts). */
 export const INDEXED_POINTS = 1 << 18;
 /**
- * Long-format series this long or longer are: their extents otherwise read
- * every row in view through the series' rows (about 2.5 ns a row), and an
- * index takes about 0.16 bytes a row beside the rows' own 4 to 6.
+ * Series this long or longer are reduced, and their extents read, through
+ * min/max indexes: whole columns their table's, long-format series their
+ * group's. Below it a scan is about as fast. An index takes about 0.16
+ * bytes a row; five whole columns of 200,000 rows zoom in about 1.2 ms
+ * instead of 2.2 ms with one (Node, interleaved runs).
  */
 const INDEXED_ROWS = 1 << 12;
 
@@ -72,7 +74,7 @@ export class IndexUse {
     const whole = s.rows === undefined;
     const source = whole ? table : s.stream;
     if (!source || field === undefined || !s.sorted) return undefined;
-    if (s.length < (whole ? INDEXED_POINTS : INDEXED_ROWS)) return undefined;
+    if (s.length < INDEXED_ROWS) return undefined;
     if (table.numbers(field as never) !== s.y) return undefined;
     if (source.hasMinMaxIndex(field as never)) return source.minMaxIndex(field as never);
     const draw = owner && linear && this.#draws.get(owner);
