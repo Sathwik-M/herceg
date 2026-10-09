@@ -279,7 +279,8 @@ interface IngestTrial {
   intervals: number[];
   appendTimes: number[];
   dropped: number;
-  longFrames: number;
+  /** Undefined where the browser does not report long animation frames. */
+  longFrames: number | undefined;
   rate: number;
   drain: number;
 }
@@ -317,13 +318,15 @@ async function ingestTrial(
   };
   const longFrames: PerformanceEntry[] = [];
   const observer = new PerformanceObserver((list) => longFrames.push(...list.getEntries()));
+  const reportsLongFrames =
+    PerformanceObserver.supportedEntryTypes.includes("long-animation-frame");
   const pending: Promise<unknown>[] = [];
   const appendTimes: number[] = [];
   let timer = 0;
   const started = performance.now();
   let delivered = 0;
   try {
-    observer.observe({ type: "long-animation-frame" });
+    if (reportsLongFrames) observer.observe({ type: "long-animation-frame" });
     requestAnimationFrame(loop);
     await new Promise<void>((resolve, reject) => {
       timer = window.setInterval(() => {
@@ -362,7 +365,9 @@ async function ingestTrial(
       intervals,
       appendTimes,
       dropped,
-      longFrames: longFrames.filter((entry) => entry.startTime >= started).length,
+      longFrames: reportsLongFrames
+        ? longFrames.filter((entry) => entry.startTime >= started).length
+        : undefined,
       rate: (delivered * 1000) / (deadline - started),
       drain,
     };
@@ -407,10 +412,13 @@ async function runIngest(
           "count",
           measured.map((trial) => trial.dropped),
         ),
-        longFrames: metric(
-          "count",
-          measured.map((trial) => trial.longFrames),
-        ),
+        // Browsers without long-animation-frame entries (WebKit) leave it out.
+        ...(measured.every((trial) => trial.longFrames !== undefined) && {
+          longFrames: metric(
+            "count",
+            measured.map((trial) => trial.longFrames!),
+          ),
+        }),
         achievedRate: metric(
           "hz",
           measured.map((trial) => trial.rate),
@@ -580,6 +588,8 @@ export interface Bench {
   pointerLatency(): Promise<number>;
   unmount(): Promise<void>;
   gpu(): string;
+  /** Median requestAnimationFrame interval while idle, in milliseconds. */
+  refreshInterval(): Promise<number>;
 }
 
 let pointerDone: Promise<number> = Promise.resolve(0);
@@ -588,6 +598,7 @@ export function installHarness(adapter: Adapter): void {
   const bench: Bench = {
     id: adapter.id,
     renderer: adapter.renderer,
+    refreshInterval: () => refreshInterval(),
     async run(s) {
       const missing = unsupported(adapter, s);
       if (missing) return missing;

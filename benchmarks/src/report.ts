@@ -73,11 +73,12 @@ function table(header: string[], rows: string[][]): string {
 }
 
 /** One row per scenario, one column per library: median ± MAD of `metric`. */
-function timingTable(scenarios: string[], metric: string): string {
+function timingTable(scenarios: string[], metric: string, results = browser): string {
+  const libraries = Object.keys(results.libraries);
   const rows = scenarios.map((id) => [
-    `${id} (${browser.scenarios[id]?.description})`,
+    `${id} (${results.scenarios[id]?.description})`,
     ...libraries.map((library) => {
-      const row = find(id, library);
+      const row = find(id, library, results);
       if (!row) return "";
       if (!row.supported) return row.reason?.startsWith("error") ? "error" : "n/a";
       const s = row.metrics[metric]?.summary;
@@ -92,12 +93,13 @@ function timingTable(scenarios: string[], metric: string): string {
 }
 
 /** Paced ingestion: frame interval percentiles, dropped frames, achieved rate. */
-function ingestTable(): string {
-  const scenarios = Object.keys(browser.scenarios).filter((id) => id.startsWith("ingest-"));
+function ingestTable(results = browser): string {
+  const libraries = Object.keys(results.libraries);
+  const scenarios = Object.keys(results.scenarios).filter((id) => id.startsWith("ingest-"));
   const rows = scenarios.map((id) => [
-    `${id} (${browser.scenarios[id]?.description})`,
+    `${id} (${results.scenarios[id]?.description})`,
     ...libraries.map((library) => {
-      const row = find(id, library);
+      const row = find(id, library, results);
       if (!row?.supported) return "n/a";
       const frames = row.metrics.frameInterval!.summary as Summary & { p99: number };
       const dropped = row.metrics.droppedFrames!.summary.median;
@@ -157,16 +159,61 @@ function sizeTable(): string {
   );
 }
 
-function environment(): string {
-  const env = browser.environment;
-  const versions = libraries.map((id) => `${id} ${browser.libraries[id]!.version}`).join(", ");
+function environment(results = browser): string {
+  const env = results.environment;
+  const libraries = Object.keys(results.libraries);
+  const versions = libraries.map((id) => `${id} ${results.libraries[id]!.version}`).join(", ");
+  const driver = env.playwright
+    ? ` through Playwright ${env.playwright} (${env.browserBuild})`
+    : "";
+  const cadence =
+    typeof env.frameCadence === "number"
+      ? `, idle frames every ${ms({ median: env.frameCadence, mad: 0, p95: 0 })} ms`
+      : "";
   return [
-    `- Date: ${browser.date.slice(0, 10)}, commit ${browser.commit.sha}${browser.commit.dirty ? " (uncommitted changes)" : ""}`,
+    `- Date: ${results.date.slice(0, 10)}, commit ${results.commit.sha}${results.commit.dirty ? " (uncommitted changes)" : ""}`,
     `- Machine: ${env.cpu}, ${env.cores} cores, ${env.memoryGB} GB, ${env.os}`,
-    `- Browser: ${env.browser}, GPU ${env.gpu}, ${env.headless ? "headless" : "headed"}`,
+    `- Browser: ${env.browser}${driver}, GPU ${env.gpu}, ${env.headless ? "headless" : "headed"}${cadence}`,
     `- Viewport ${env.viewport.width}x${env.viewport.height}, device pixel ratio ${env.deviceScaleFactor}`,
     `- Libraries: ${versions}`,
-    `- Renderers (normal / large config): ${libraries.map((id) => `${id}: ${browser.libraries[id]!.renderer.normal} / ${browser.libraries[id]!.renderer.large}`).join("; ")}`,
+    `- Renderers (normal / large config): ${libraries.map((id) => `${id}: ${results.libraries[id]!.renderer.normal} / ${results.libraries[id]!.renderer.large}`).join("; ")}`,
+  ].join("\n");
+}
+
+/**
+ * The suite in another browser (`results/browser-NAME.json`): its environment
+ * and every timing table, without memory, which only Chrome measures.
+ */
+function browserSection(results: BrowserResults): string {
+  const ids = Object.keys(results.scenarios);
+  const timing = (filter: (id: string) => boolean, metric: string) =>
+    timingTable(ids.filter(filter), metric, results);
+  return [
+    environment(results),
+    "",
+    timing((id) => id.endsWith("-init"), "timeToFrame"),
+    "",
+    timing((id) => id.endsWith("-update"), "timeToFrame"),
+    "",
+    timing((id) => id.startsWith("stream-"), "tickToFrame"),
+    "",
+    ingestTable(results),
+    "",
+    timing((id) => id.startsWith("hover-"), "pointerToFrame"),
+    "",
+    timing((id) => id.startsWith("zoom-"), "viewportToFrame"),
+    "",
+    timing((id) => id.startsWith("resize-"), "resizeToFrame"),
+    "",
+    timing((id) => id === "dashboard", "initAllToFrame").replace(
+      "Scenario (ms",
+      "Mount all charts (ms",
+    ),
+    "",
+    timing((id) => id === "dashboard", "updateAllToFrame").replace(
+      "Scenario (ms",
+      "Refresh all charts (ms",
+    ),
   ].join("\n");
 }
 
@@ -266,6 +313,10 @@ const sections: Record<string, string> = {
   ].join("\n"),
   memory: memoryTable(),
 };
+const webkitResults = join(RESULTS, "browser-webkit.json");
+if (existsSync(webkitResults)) {
+  sections.webkit = browserSection(JSON.parse(readFileSync(webkitResults, "utf8")));
+}
 const reactResults = join(RESULTS, "react.json");
 if (existsSync(reactResults)) {
   sections.react = reactTable(JSON.parse(readFileSync(reactResults, "utf8")));

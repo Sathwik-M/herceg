@@ -3,11 +3,20 @@
 //   npm run bench -- [--lib echarts,uplot] [--scenario line-small-init,...]
 //                    [--filter line-] [--out results/name.json] [--headless]
 //                    [--sample-scale 0.5] [--timeout 120]
+//                    [--browser chrome|firefox|webkit]
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { type BrowserContext, type CDPSession, chromium, type Page } from "playwright";
+import {
+  type Browser,
+  type BrowserContext,
+  type CDPSession,
+  chromium,
+  firefox,
+  type Page,
+  webkit,
+} from "playwright";
 import type { Bench, Metric, PageResult } from "../page/harness.ts";
 import { SCENARIOS, type Scenario } from "../scenarios.ts";
 import { buildPage, ROOT, serve } from "./build.ts";
@@ -24,8 +33,18 @@ const { values: args } = parseArgs({
     "sample-scale": { type: "string", default: "1" },
     /** Seconds before a library's scenario is abandoned; overrides scenario timeouts. */
     timeout: { type: "string" },
+    /** Installed Chrome, or Playwright's Firefox or WebKit build. */
+    browser: { type: "string", default: "chrome" },
   },
 });
+
+const BROWSERS = ["chrome", "firefox", "webkit"] as const;
+type BrowserName = (typeof BROWSERS)[number];
+if (!BROWSERS.includes(args.browser as BrowserName))
+  throw new Error(`--browser must be one of ${BROWSERS.join(", ")}, not ${args.browser}`);
+const browserName = args.browser as BrowserName;
+/** Heap sizes come from Chrome's DevTools protocol; other browsers skip memory scenarios. */
+const measuresMemory = browserName === "chrome";
 
 const VIEWPORT = { width: 1280, height: 1400 };
 const DEVICE_SCALE_FACTOR = 2;
@@ -40,13 +59,24 @@ const COMMON_ARGS = [
 // scenarios keep vsync so frame intervals mean what users see.
 const LATENCY_ARGS = [...COMMON_ARGS, "--disable-frame-rate-limit", "--disable-gpu-vsync"];
 const REALTIME_ARGS = COMMON_ARGS;
+// Firefox paints as soon as it can with a frame rate of 0 ("ASAP mode").
+// WebKit has no such setting: its latencies include waiting for vsync.
+const FIREFOX_LATENCY_PREFS = { "layout.frame_rate": 0 };
+
+/** How each kind of scenario runs, recorded with the results. */
+const BROWSER_SETTINGS = {
+  chrome: { latency: LATENCY_ARGS, realtime: REALTIME_ARGS },
+  firefox: { latency: FIREFOX_LATENCY_PREFS, realtime: {} },
+  webkit: { latency: "default (frames follow vsync)", realtime: "default" },
+}[browserName];
 
 const libraries = args.lib ? args.lib.split(",") : COMPARED;
 const sampleScale = Number(args["sample-scale"]);
 const scenarios = SCENARIOS.filter(
   (s) =>
     (!args.scenario || args.scenario.split(",").includes(s.id)) &&
-    (!args.filter || s.id.includes(args.filter)),
+    (!args.filter || s.id.includes(args.filter)) &&
+    (measuresMemory || s.operation !== "memory"),
 ).map((s) => ({
   ...s,
   samples: Math.max(1, Math.round(s.samples * sampleScale)),
@@ -167,28 +197,34 @@ async function runHover(page: Page, s: Scenario): Promise<PageResult> {
 async function main() {
   for (const library of libraries) await buildPage(library);
   const { server, origin } = await serve();
-  const launch = async (chromeArgs: string[]) => {
-    const browser = await chromium.launch({
-      channel: "chrome",
-      headless: args.headless,
-      args: chromeArgs,
-    });
+  const launch = async (realtime: boolean) => {
+    const headless = args.headless;
+    let browser: Browser;
+    if (browserName === "firefox") {
+      const firefoxUserPrefs = realtime ? {} : FIREFOX_LATENCY_PREFS;
+      browser = await firefox.launch({ headless, firefoxUserPrefs });
+    } else if (browserName === "webkit") {
+      browser = await webkit.launch({ headless });
+    } else {
+      const chromeArgs = realtime ? REALTIME_ARGS : LATENCY_ARGS;
+      browser = await chromium.launch({ channel: "chrome", headless, args: chromeArgs });
+    }
     const context = await browser.newContext({
       viewport: VIEWPORT,
       deviceScaleFactor: DEVICE_SCALE_FACTOR,
     });
     return { browser, context };
   };
-  let latency = await launch(LATENCY_ARGS);
+  let latency = await launch(false);
   const browserVersion = latency.browser.version();
-  let realtime = scenarios.some((s) => s.operation === "ingest")
-    ? await launch(REALTIME_ARGS)
-    : latency;
+  let realtime = scenarios.some((s) => s.operation === "ingest") ? await launch(true) : latency;
 
   const rows: ResultRow[] = [];
   const renderers: Record<string, unknown> = {};
   let gpu = "unknown";
   let userAgent = "";
+  /** Idle frame cadence in the latency browser, which bounds what WebKit timings can show. */
+  let frameCadence: number | undefined;
 
   /**
    * Runs one scenario in a fresh page, from page creation to measurement,
@@ -208,9 +244,13 @@ async function main() {
     renderers[library] ??= await page.evaluate(() => window.bench.renderer);
     if (gpu === "unknown") gpu = await page.evaluate(() => window.bench.gpu());
     userAgent ||= await page.evaluate(() => navigator.userAgent);
-    const cdp = await context.newCDPSession(page);
-    opened.cdp = cdp;
-    if (s.operation === "memory") return runMemory(page, cdp, s);
+    if (frameCadence === undefined && context === latency.context)
+      frameCadence = await page.evaluate(() => window.bench.refreshInterval());
+    if (s.operation === "memory") {
+      const cdp = await context.newCDPSession(page);
+      opened.cdp = cdp;
+      return runMemory(page, cdp, s);
+    }
     if (s.operation === "hover") return runHover(page, s);
     return page.evaluate((scenario) => window.bench.run(scenario), s);
   };
@@ -255,7 +295,7 @@ async function main() {
           const shared = realtime === latency;
           const failed = ingest ? realtime : latency;
           await failed.browser.close().catch(() => {});
-          const fresh = await launch(ingest && !shared ? REALTIME_ARGS : LATENCY_ARGS);
+          const fresh = await launch(ingest && !shared);
           if (ingest && !shared) realtime = fresh;
           else {
             latency = fresh;
@@ -290,7 +330,7 @@ async function main() {
     await latency.browser.close().catch(() => {});
     if (realtime !== latency) await realtime.browser.close().catch(() => {});
     server.close();
-    writeResults({ rows, renderers, gpu, userAgent, browserVersion, complete });
+    writeResults({ rows, renderers, gpu, userAgent, browserVersion, frameCadence, complete });
   }
 }
 
@@ -300,9 +340,10 @@ function writeResults(run: {
   gpu: string;
   userAgent: string;
   browserVersion: string;
+  frameCadence: number | undefined;
   complete: boolean;
 }) {
-  const { rows, renderers, gpu, userAgent, browserVersion, complete } = run;
+  const { rows, renderers, gpu, userAgent, browserVersion, frameCadence, complete } = run;
   const output = {
     schema: 1,
     date: new Date().toISOString(),
@@ -311,20 +352,28 @@ function writeResults(run: {
     complete,
     method: {
       timing:
-        "operation start until rendering finished and the next frame was produced (rAF + MessageChannel); frame rate limit disabled except for ingest scenarios",
-      memory:
-        "CDP Runtime.getHeapUsage after forced GC: V8 heap + Blink heap + ArrayBuffer backing stores",
+        browserName === "webkit"
+          ? "operation start until rendering finished and the next frame was produced (rAF + MessageChannel); frames follow vsync, so short operations include waiting for it"
+          : "operation start until rendering finished and the next frame was produced (rAF + MessageChannel); frame rate limit disabled except for ingest scenarios",
+      memory: measuresMemory
+        ? "CDP Runtime.getHeapUsage after forced GC: V8 heap + Blink heap + ArrayBuffer backing stores"
+        : "not measured: heap sizes need Chrome's DevTools protocol, so memory scenarios were skipped",
       sampleScale,
     },
     environment: {
       ...machine(),
-      browser: `Chrome ${browserVersion}`,
+      browser: `${{ chrome: "Chrome", firefox: "Firefox", webkit: "WebKit" }[browserName]} ${browserVersion}`,
       userAgent,
       gpu,
       headless: args.headless,
       viewport: VIEWPORT,
       deviceScaleFactor: DEVICE_SCALE_FACTOR,
-      chromeArgs: { latency: LATENCY_ARGS, realtime: REALTIME_ARGS },
+      browserSettings: BROWSER_SETTINGS,
+      /** Playwright drives the browser; Firefox and WebKit are its own builds. */
+      playwright: packageVersion("playwright"),
+      browserBuild: browserBuild(browserName),
+      /** Median idle requestAnimationFrame interval in latency scenarios, ms. */
+      frameCadence,
     },
     libraries: Object.fromEntries(
       libraries.map((id) => [
@@ -349,6 +398,21 @@ function writeResults(run: {
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, `${JSON.stringify(output, null, 1)}\n`);
   console.log(`\nWrote ${out}`);
+}
+
+/** The Playwright browser build used, from playwright-core's browsers.json; Chrome is the installed one. */
+function browserBuild(name: BrowserName): string {
+  if (name === "chrome") return "installed Google Chrome";
+  try {
+    const path = join(ROOT, "..", "node_modules", "playwright-core", "browsers.json");
+    const { browsers } = JSON.parse(readFileSync(path, "utf8")) as {
+      browsers: { name: string; revision: string; browserVersion?: string }[];
+    };
+    const build = browsers.find((browser) => browser.name === name);
+    return build ? `${name} revision ${build.revision}` : "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 await main();
