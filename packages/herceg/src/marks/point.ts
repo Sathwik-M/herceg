@@ -1,3 +1,4 @@
+import type { RowView } from "../data/row-view.ts";
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../draw/symbols.ts";
@@ -104,6 +105,7 @@ const streamKeys = new WeakMap<Table, Map<string, Map<string, object>>>();
 export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly spec: Frozen<PointSpec>;
   readonly table: Table<Schema>;
+  readonly view: RowView | undefined;
   readonly tooltip = "point";
   readonly inset: { x: number; y: number };
   readonly #split: SeriesSplitter;
@@ -120,15 +122,17 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   /** How far each of SYMBOLS reaches per unit of radius. */
   readonly #reaches = SYMBOLS.map(symbolReach);
 
-  constructor(input: PointSpec, table: Table<Schema>) {
+  constructor(input: PointSpec, table: Table<Schema>, view?: RowView) {
     this.spec = frozen(input);
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
+    if (view && view.source !== table) throw new Error("A point mark's view must be of its table");
+    this.view = view;
     requireField(table, spec.x, NUMERIC, "point x");
     requireField(table, spec.y, NUMERIC, "point y");
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "point series");
-    this.#split = new SeriesSplitter(table, spec.x, [spec.y], spec.series, spec.label);
+    this.#split = new SeriesSplitter(table, spec.x, [spec.y], spec.series, spec.label, view);
     if (typeof spec.r === "string") requireField(table, spec.r, NUMERIC, "point r");
     if (typeof spec.fillOpacity === "string")
       requireField(table, spec.fillOpacity, NUMERIC, "point fillOpacity");
@@ -243,7 +247,15 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       const [start, end] = this.#visible(s, frame);
       // The GPU maps linearly; points on an axis with breaks are placed here.
       const linear = frame.x.breaks === undefined;
-      if (frame.clouds && !sample && !encoded && linear && end - start >= CLOUD_POINTS) {
+      // The WebGL painter draws whole columns; a view's rows are drawn on the CPU.
+      if (
+        frame.clouds &&
+        !this.view &&
+        !sample &&
+        !encoded &&
+        linear &&
+        end - start >= CLOUD_POINTS
+      ) {
         out.push({
           kind: "point",
           draw: pointDrawing,
@@ -654,7 +666,16 @@ function buildIndex(
  * point(cars, { x: "weight", y: "mpg", series: "origin" })
  * ```
  */
-export function point<S extends Schema>(table: Table<S>, options: PointOptions<S>): PointMark {
+/**
+ * Points at x and y. Over a `RowView`, the points of the view's rows only,
+ * read from its table without a copy, and following the view as it changes.
+ */
+export function point<S extends Schema>(
+  data: Table<S> | RowView<S>,
+  options: PointOptions<S>,
+): PointMark {
+  const view = isRowView(data) ? data : undefined;
+  const table = view ? view.source : (data as Table<S>);
   const spec: PointSpec = {
     type: "point",
     x: options.x,
@@ -680,7 +701,15 @@ export function point<S extends Schema>(table: Table<S>, options: PointOptions<S
   if (options.colorDomain) spec.colorDomain = [options.colorDomain[0], options.colorDomain[1]];
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
-  return new PointMark(spec, table as unknown as Table);
+  return new PointMark(spec, table as unknown as Table, view as unknown as RowView | undefined);
+}
+
+/**
+ * Whether marks' data is a row view rather than a table, told apart by
+ * shape so that charts without views do not bundle the view code.
+ */
+export function isRowView<S extends Schema>(data: Table<S> | RowView<S>): data is RowView<S> {
+  return "source" in data && typeof (data as RowView<S>).read === "function";
 }
 
 /** A shape for legends, about as large as the 10-pixel swatch, and how far it reaches. */

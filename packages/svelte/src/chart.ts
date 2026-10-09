@@ -4,6 +4,7 @@ import {
   type ChartUpdate,
   type Chart as HercegChart,
   tablesOf,
+  viewOf,
 } from "herceg";
 import type { Snippet } from "svelte";
 import type { ClassValue } from "svelte/elements";
@@ -77,6 +78,7 @@ export function sameMark(a: ChartMark, b: ChartMark): boolean {
   return (
     tables.length === others.length &&
     tables.every((table, i) => table === others[i]) &&
+    viewOf(a) === viewOf(b) &&
     canonical(a.spec) === canonical(b.spec)
   );
 }

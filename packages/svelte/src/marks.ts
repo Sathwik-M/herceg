@@ -7,6 +7,7 @@ import type {
   CustomOptions,
   RegionDataOptions,
   RegionOptions,
+  RowView,
   RuleDataOptions,
   RuleOptions,
   Schema,
@@ -19,6 +20,8 @@ import type { Attachment } from "svelte/attachments";
 
 /** Props of a mark component: the mark's options plus the table it reads. */
 export type WithData<O, S extends Schema> = O & { data: Table<S> };
+/** Props of marks that show a table's rows or a row view's. */
+export type WithRows<O, S extends Schema> = O & { data: Table<S> | RowView<S> };
 
 // Annotations and custom marks draw from constants, or from `data` and its
 // fields. Their components are generic in the table rather than its schema,

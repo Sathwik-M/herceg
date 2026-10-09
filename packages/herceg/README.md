@@ -151,6 +151,14 @@ conjunction of channels' conditions, to filter a view by. Nothing
 propagates between views on its own: the application decides which views
 read which channels.
 
+Point marks take a view where they take a table, `point(view, { x, y })`,
+and draw only its rows, read from the table's columns, redrawing as the
+view changes; a grid and a chart filtered by the same store share one copy
+of the data. Points of a view are drawn on the CPU (not the WebGL painter),
+size and color scales span the whole table, facets repeat them in every
+panel (`facet: "repeat"`) rather than splitting them, and views have no
+place in portable specs yet; other marks take tables only.
+
 ## Marks
 
 ```ts

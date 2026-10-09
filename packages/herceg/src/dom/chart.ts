@@ -6,9 +6,10 @@
 // layer (grid and marks when not on canvas, rules, axes, title, pointer
 // overlay), the HTML legend, the tooltip, and a visually hidden description.
 
+import type { RowView } from "../data/row-view.ts";
 import type { Table } from "../data/table.ts";
 import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
-import { tablesOf } from "../marks/layout-mark.ts";
+import { tablesOf, viewOf } from "../marks/layout-mark.ts";
 import type { AxisFormat } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import { describeChart } from "../model/describe.ts";
@@ -169,7 +170,8 @@ export class Chart implements Scheduled, SyncMember {
   /** What the last hover event reported, to emit only changes. */
   #hovered = "";
   readonly #cleanup: (() => void)[] = [];
-  readonly #tables = new Map<Table, () => void>();
+  /** Subscriptions to the tables the marks read and the row views some show. */
+  readonly #tables = new Map<Table | RowView, () => void>();
   #leaveSync: (() => void) | undefined;
   #unwatchPage: (() => void) | undefined;
   /** The page changed since its theme was last read; read again on the next frame. */
@@ -533,8 +535,13 @@ export class Chart implements Scheduled, SyncMember {
   #applyOptions() {
     const options = this.#options;
     this.root.setAttribute("aria-label", options.title ?? "Chart");
-    // Re-subscribe to the tables the marks read.
-    const tables = new Set(options.marks.flatMap(tablesOf));
+    // Re-subscribe to the tables the marks read, and to the views of rows they show.
+    const tables = new Set<Table | RowView>(
+      options.marks.flatMap((mark) => {
+        const view = viewOf(mark);
+        return view ? [...tablesOf(mark), view] : tablesOf(mark);
+      }),
+    );
     for (const [table, stop] of this.#tables) {
       if (!tables.has(table)) {
         stop();

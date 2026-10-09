@@ -185,6 +185,18 @@ channel, as portable conditions or local row sets; consumers choose which
 channels they read and whether to filter or highlight, so a chart's brush
 need not filter the chart that drew it.
 
+Marks show a view's rows through the row lists series already carry
+(`Series.rows`): a point mark over a view keeps the view's table as its
+table and the view as `mark.view`; its series split copies the view's
+positions (4 bytes a shown row, no column), since the view rewrites its own
+when another reader catches it up while a scene's series and picks still
+use them, splits them by series field too, and is cached by the view's
+revision as well as the table's version; charts subscribe to marks' views
+as to their tables. Facet panels are found from whole tables, so marks
+over views only repeat in facets for now. Adapters treat marks over different views as different marks.
+The WebGL painter uploads whole columns, so points of a view stay on the
+CPU path for now.
+
 ## Level of detail
 
 Lines and areas over sorted x use M4 aggregation: within each device-pixel
