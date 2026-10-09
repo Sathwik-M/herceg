@@ -64,7 +64,7 @@ static SVG and PDF export, React, Vue, and Svelte adapters,
 min/max indexes for zooming and streaming large line series, WebGL drawing
 of large point series, chart specs with binary columns, a Python package, a
 second y axis, small multiples (wrapped or by row and column, with shared or
-per-panel x and y scales), subplots (with weighted rows), live notebook charts (a
+per-panel x and y scales), subplots (with weighted rows and columns), live notebook charts (a
 widget that streams updates from Python and reports interaction back), and a
 Streamlit component.
 
@@ -72,7 +72,7 @@ Next, in order:
 
 1. Large data: incremental updates for bars and point clouds split by a
    series field.
-2. Layout: weighted columns, and categories resolved per panel.
+2. Layout: categories resolved per panel.
 3. Animation of changed values (bars, pies) and of panels; leader lines for
    moved labels.
 4. More financial tools (a range navigator, drawing tools, markers at

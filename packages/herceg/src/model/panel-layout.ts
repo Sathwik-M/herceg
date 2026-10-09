@@ -19,6 +19,8 @@ export interface PanelGrid {
   rowHeader: number;
   /** Rows' heights relative to each other; equal without them. */
   rowWeights?: readonly number[] | undefined;
+  /** Columns' widths relative to each other; equal without them. */
+  columnWeights?: readonly number[] | undefined;
 }
 
 /** The panels of a scene: their keys, each one's marks and series, and every mark's across panels. */

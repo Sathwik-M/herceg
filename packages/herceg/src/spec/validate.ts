@@ -990,6 +990,10 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
             if (!Array.isArray(v) || v.length === 0) fail(at, "a list of relative heights", v);
             for (const [i, height] of v.entries()) positive(height, `${at}[${i}]`);
           },
+          columnWidths: (v, at) => {
+            if (!Array.isArray(v) || v.length === 0) fail(at, "a list of relative widths", v);
+            for (const [i, width] of v.entries()) positive(width, `${at}[${i}]`);
+          },
         } satisfies ChecksOf<GridSpec>);
       },
       resolve: (r, path) => {

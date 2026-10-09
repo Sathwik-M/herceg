@@ -379,6 +379,7 @@ class _LayoutOptions(TypedDict, total=False):
     panels: Sequence[Panel | str] | None
     panel_columns: int | None
     panel_row_heights: Sequence[float] | None
+    panel_column_widths: Sequence[float] | None
 
 
 class ChartUpdate(_SharedOptions, total=False):
@@ -438,6 +439,7 @@ class Chart:
         panels: Sequence[Panel | str] | None = None,
         panel_columns: int | None = None,
         panel_row_heights: Sequence[float] | None = None,
+        panel_column_widths: Sequence[float] | None = None,
         legend: bool | None = None,
         tooltip: bool | TooltipMode | Tooltip | None = True,
         zoom: bool | Literal["x", "y", "xy"] | None = False,
@@ -472,21 +474,22 @@ class Chart:
             raise ValueError(
                 f"panel_columns must be a whole number of at least 1, not {panel_columns!r}"
             )
-        row_heights: list[float] | None = None
-        if panel_row_heights is not None:
-            if not panel_list:
-                raise ValueError("panel_row_heights needs panels")
-            rows = -(-len(panel_list) // min(panel_columns or 1, len(panel_list)))
-            if len(panel_row_heights) != rows:
-                raise ValueError(f"panel_row_heights needs {rows} heights, one per row")
-            if not all(
-                isinstance(h, numbers.Real) and not isinstance(h, bool) for h in panel_row_heights
-            ):
-                raise ValueError("panel_row_heights must be positive numbers")
-            # NumPy numbers and fractions become floats, which JSON can carry.
-            row_heights = [float(h) for h in panel_row_heights]
-            if not all(0 < h < math.inf for h in row_heights):
-                raise ValueError("panel_row_heights must be positive numbers")
+        # A grid has no more columns than panels.
+        columns = min(panel_columns or 1, len(panel_list)) if panel_list else 0
+        row_heights = _panel_weights(
+            panel_row_heights,
+            "panel_row_heights",
+            panel_list,
+            -(-len(panel_list) // columns) if columns else 0,
+            "heights, one per row",
+        )
+        column_widths = _panel_weights(
+            panel_column_widths,
+            "panel_column_widths",
+            panel_list,
+            columns,
+            "widths, one per column",
+        )
         if panel_list and (facet is not None or facet_row is not None or facet_col is not None):
             raise ValueError("a chart has facets or panels, not both")
         if panel_list and (zoom in ("y", "xy") or brush in ("y", "xy", "lasso")):
@@ -529,6 +532,7 @@ class Chart:
         self._panels = panel_list
         self._panel_columns = panel_columns
         self._panel_row_heights = row_heights
+        self._panel_column_widths = column_widths
         self._tables: list[tuple[Any, _Columns]] = []
         # Derived tables by index, with the index of the table they derive from.
         self._derived: dict[int, int] = {}
@@ -2052,7 +2056,11 @@ class Chart:
             return {"facet": {"row": self._facet_row, "column": self._facet_col}}
         if self._panels:
             layout: dict[str, Any] = {"panels": [p._spec() for p in self._panels]}
-            grid = {"columns": self._panel_columns, "rowHeights": self._panel_row_heights}
+            grid = {
+                "columns": self._panel_columns,
+                "rowHeights": self._panel_row_heights,
+                "columnWidths": self._panel_column_widths,
+            }
             if any(value is not None for value in grid.values()):
                 layout["grid"] = grid
             return layout
@@ -2619,6 +2627,25 @@ def _range(
         bound = "" if minimum == -math.inf else f", from {minimum:g} up"
         raise ValueError(f"{role} must be two finite numbers, ascending{bound}, not {values!r}")
     return [low, high]
+
+
+def _panel_weights(
+    weights: Sequence[float] | None, option: str, panels: list[Panel], count: int, noun: str
+) -> list[float] | None:
+    """Relative row heights or column widths of a grid of panels, checked."""
+    if weights is None:
+        return None
+    if not panels:
+        raise ValueError(f"{option} needs panels")
+    if len(weights) != count:
+        raise ValueError(f"{option} needs {count} {noun}")
+    if not all(isinstance(w, numbers.Real) and not isinstance(w, bool) for w in weights):
+        raise ValueError(f"{option} must be positive numbers")
+    # NumPy numbers and fractions become floats, which JSON can carry.
+    values = [float(w) for w in weights]
+    if not all(0 < w < math.inf for w in values):
+        raise ValueError(f"{option} must be positive numbers")
+    return values
 
 
 def _finite(value: Any) -> bool:
