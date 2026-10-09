@@ -115,6 +115,42 @@ huge values do not swamp small ones. Loading specs (`herceg/spec`) includes
 the transforms, about 4.9 KiB gzip; charts built in TypeScript bundle them
 only when they call `derive`.
 
+### Row views and selections
+
+A row view shows a table's rows filtered and sorted without copying a
+column: it holds the positions of the rows it shows, which readers such as
+grids take the table's values through.
+
+```ts
+import { col, rowView } from "herceg";
+
+const view = rowView(requests, {
+  filter: col("latency").gt(250),
+  sort: [{ field: "service" }, { field: "latency", order: "descending" }],
+});
+const { indices, length } = view.read(); // positions into `requests`, in view order
+```
+
+Views follow their table: changes mark them out of date at once, and the
+next `read` catches up, filtering appended rows and merging them into the
+order, dropping rows that left a rolling window, and rebuilding when a
+field the view filters or sorts by changes in place (or the table resets).
+Sorts are stable, with missing values last in either direction and
+categories by label. A view with neither filter nor sort holds no
+positions. `view.subscribe(listener)` is told when it goes out of date;
+`view.dispose()` stops it following its table.
+
+A `RowSet` is a set of a table's rows by identity, a bit per row, such as
+the rows picked in a grid: its rows stay members as others are appended and
+dropped, and a reset of the table empties it. `view.restrict(set)` shows
+only its rows. A `SelectionStore` keeps one table's selections by channel,
+each set and cleared by its owner, as a condition (`selectWhere(...)`,
+which later rows meet or not and which can run where the data lives) or a
+row set (`selectRows(set)`); `store.condition(["brush", "legend"])` is the
+conjunction of channels' conditions, to filter a view by. Nothing
+propagates between views on its own: the application decides which views
+read which channels.
+
 ## Marks
 
 ```ts

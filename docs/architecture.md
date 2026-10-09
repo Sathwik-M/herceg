@@ -155,6 +155,36 @@ collected (`FinalizationRegistry`). The spec
 loader loads tables in dependency order and rejects unknown sources and
 cycles.
 
+## Row views and selections
+
+Derived tables compute rows; row views (`data/row-view.ts`) choose and order
+existing ones, holding a `Uint32Array` of positions into their table and no
+column. A view is lazy but invalidated eagerly: table changes bump its
+revision and notify its listeners at once, and `read()` brings it current.
+Catching up works from row identities (`rowOffset + position`), so several
+changes are caught up together: rows that left a rolling window are dropped
+and the rest rebased (O(kept)), appended rows (less any an oversized append
+evicted) are filtered and, in sorted views, sorted on their own and merged
+into the order in one pass (O(kept + appended log appended)), and an in-place
+update of a field the filter or sort reads, a reset, or a new query
+rebuilds the view (O(rows), plus the sort). Filters compile when they run,
+since a column's array can move and category codes change as rows drop. The
+comparator (`data/order.ts`, shared with derived tables' sort) compares keys
+in order, puts missing values last in either direction, orders infinities,
+ranks categories by label once per sort, and breaks ties by position, so
+orders are stable and settle the same way after updates. Like derived
+tables, views are held weakly by their table's subscription.
+
+A table's `generation` counts resets, which start identities again, so a
+row's identity across resets is its table, generation, and `rowOffset +
+position`. `RowSet`s (`data/row-set.ts`) are bitsets over identities from
+the first row they could hold, bound to a generation; dropped rows' bits
+are trimmed as the set is read (O(words)). `SelectionStore`
+(`data/selection.ts`) keeps an application's selections of one table by
+channel, as portable conditions or local row sets; consumers choose which
+channels they read and whether to filter or highlight, so a chart's brush
+need not filter the chart that drew it.
+
 ## Level of detail
 
 Lines and areas over sorted x use M4 aggregation: within each device-pixel
