@@ -1,4 +1,5 @@
 import type { FieldKind, NumericArray } from "../data/column.ts";
+import type { RowView } from "../data/row-view.ts";
 import type { Schema, Table } from "../data/table.ts";
 import { formatNumber, timeTickLabels } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
@@ -141,6 +142,8 @@ export interface MarkIdentity {
 export interface Mark<S extends MarkIdentity = MarkIdentity> {
   readonly spec: S;
   readonly table: Table | undefined;
+  /** The view of `table` whose rows the mark shows, when it shows only some, in its order. */
+  readonly view?: RowView | undefined;
   /**
    * Kind of the field on a position channel. "category" puts the axis on a
    * band scale; "time" makes it a time axis.
@@ -316,7 +319,10 @@ export class SeriesSplitter {
   readonly yFields: readonly string[];
   readonly seriesField: string | undefined;
   readonly label: string | undefined;
-  readonly #cache = new TableCache<SeriesSource[]>();
+  /** The rows to split, when only a view's rows show. */
+  readonly view: RowView | undefined;
+  #cache = new TableCache<SeriesSource[]>();
+  #revision = -1;
 
   constructor(
     table: Table<Schema>,
@@ -324,8 +330,10 @@ export class SeriesSplitter {
     yFields: readonly string[],
     seriesField: string | undefined,
     label: string | undefined,
+    view?: RowView,
   ) {
     this.table = table;
+    this.view = view;
     this.xField = xField;
     this.yFields = yFields;
     this.seriesField = seriesField;
@@ -339,22 +347,34 @@ export class SeriesSplitter {
   }
 
   sources(): SeriesSource[] {
+    // A view changes what shows without the table changing.
+    const revision = this.view?.revision ?? -1;
+    if (revision !== this.#revision) {
+      this.#cache = new TableCache();
+      this.#revision = revision;
+    }
     return this.#cache.get(this.table, () => {
       const xField = this.xField;
       const field = this.seriesField;
+      // A copy of a view's positions: the view rewrites its own when anyone
+      // reads it after a change, while this scene's series and picks live on.
+      const shown = this.view?.read().indices?.slice();
       if (field === undefined) {
-        const sorted = xField !== undefined && this.table.isSorted(xField as never);
+        const x = xField === undefined ? undefined : this.table.numbers(xField as never);
+        const sorted =
+          x !== undefined &&
+          (shown ? isSortedSubset(x, shown) : this.table.isSorted(xField as never));
         return this.yFields.map((y) => ({
           id: y,
           label: this.yFields.length === 1 ? (this.label ?? y) : y,
           y,
-          rows: undefined,
+          rows: shown,
           sorted,
         }));
       }
       const x = xField === undefined ? undefined : this.table.numbers(xField as never);
       const { codes, dictionary } = this.table.categories(field as never);
-      const groups = groupRows(codes, dictionary.length);
+      const groups = groupRows(codes, dictionary.length, shown);
       // Categories with no remaining rows (for example after a rolling
       // window moved past them) produce no series.
       return dictionary.flatMap((name, code) => {

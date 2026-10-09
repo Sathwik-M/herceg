@@ -59,17 +59,21 @@ export function xAt(series: Series, position: number): number {
 }
 
 /** Splits rows by category code. Missing values (-1) belong to no group. */
-export function groupRows(codes: Int32Array, groups: number): Uint32Array[] {
+export function groupRows(codes: Int32Array, groups: number, rows?: Uint32Array): Uint32Array[] {
+  // Every row, or only `rows` (a row view's), in their order.
+  const length = rows ? rows.length : codes.length;
+  const rowAt = (k: number) => (rows ? rows[k]! : k);
   const counts = new Uint32Array(groups);
-  for (let i = 0; i < codes.length; i++) {
-    const code = codes[i]!;
+  for (let k = 0; k < length; k++) {
+    const code = codes[rowAt(k)]!;
     if (code >= 0) counts[code]!++;
   }
   const out = Array.from(counts, (count) => new Uint32Array(count));
   counts.fill(0);
-  for (let i = 0; i < codes.length; i++) {
-    const code = codes[i]!;
-    if (code >= 0) out[code]![counts[code]!++] = i;
+  for (let k = 0; k < length; k++) {
+    const row = rowAt(k);
+    const code = codes[row]!;
+    if (code >= 0) out[code]![counts[code]!++] = row;
   }
   return out;
 }

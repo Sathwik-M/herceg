@@ -39,6 +39,7 @@ import {
   type RadarOptions,
   type RegionDataOptions,
   type RegionOptions,
+  type RowView,
   type RuleDataOptions,
   type RuleOptions,
   radar,
@@ -62,6 +63,8 @@ import { camelize, toRaw } from "vue";
 
 /** Props of a mark component: the mark's options plus the table it reads. */
 export type WithData<O, S extends Schema> = O & { data: Table<S> };
+/** Props of marks that show a table's rows or a row view's. */
+export type WithRows<O, S extends Schema> = O & { data: Table<S> | RowView<S> };
 
 // Annotations and custom marks draw from constants, or from `data` and its
 // fields. Their components are generic in the table rather than its schema:
@@ -179,8 +182,8 @@ export const Bar = /* @__PURE__ */ markComponent(
 /** Scatter points. */
 export const Point = /* @__PURE__ */ markComponent(
   "Point",
-  ({ data, ...options }: WithData<PointOptions<Schema>, Schema>) => point(data, options),
-) as unknown as <S extends Schema>(props: WithData<PointOptions<S>, S>) => null;
+  ({ data, ...options }: WithRows<PointOptions<Schema>, Schema>) => point(data, options),
+) as unknown as <S extends Schema>(props: WithRows<PointOptions<S>, S>) => null;
 
 /** Error bars: `x`, `y1`, `y2` (vertical) or `y`, `x1`, `x2` (horizontal). */
 export const ErrorBar = /* @__PURE__ */ markComponent(

@@ -4,6 +4,7 @@
 // items, rather than axis positions, are what tooltips, hover events, and
 // the keyboard visit.
 
+import type { RowView } from "../data/row-view.ts";
 import type { Table } from "../data/table.ts";
 import type { MeasureText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
@@ -93,6 +94,11 @@ export function isLayoutMark(mark: object): mark is LayoutMark {
 }
 
 /** Every table a mark reads, which charts redraw on changes to. */
+/** The row view a mark shows the rows of, if it shows a view's rows rather than its table's. */
+export function viewOf(mark: ChartMark): RowView | undefined {
+  return "view" in mark ? mark.view : undefined;
+}
+
 export function tablesOf(mark: ChartMark): Table[] {
   const tables = mark.table ? [mark.table] : [];
   if (isLayoutMark(mark) && mark.otherTables) tables.push(...mark.otherTables);

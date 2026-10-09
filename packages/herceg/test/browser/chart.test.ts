@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
+import { col } from "../../src/data/expression.ts";
 import { geometry } from "../../src/data/geometry.ts";
+import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
 import { estimateText } from "../../src/layout/text.ts";
@@ -90,6 +92,18 @@ describe("mounting", () => {
     chart.update({ width: undefined });
     chart.render();
     expect(chart.root.querySelector("svg")!.getAttribute("width")).toBe("600");
+    chart.destroy();
+  });
+
+  it("redraws when a view of rows it shows changes, with no change to the table", async () => {
+    const t = table({ x: [1, 2, 3, 4], y: [4, 3, 2, 1] });
+    const view = rowView(t, { filter: col("y").gt(1) });
+    const chart = createChart(host, { renderer: "svg", marks: [point(view, { x: "x", y: "y" })] });
+    const before = chart.model.series()[0]!.length;
+    expect(before).toBe(3);
+    view.setQuery({ filter: col("y").gt(3) });
+    await frame();
+    expect(chart.model.series()[0]!.length).toBe(1);
     chart.destroy();
   });
 

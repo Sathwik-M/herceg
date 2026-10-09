@@ -1794,6 +1794,11 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
     // The right axis measures values; marks placed along y belong on the left.
     if (sideOf(mark) === "right" && (mark.tooltip === "y" || mark.tooltip === "cell"))
       throw new Error(`A ${mark.spec.type} mark placed along y cannot use the right axis`);
+    // Facet panels come from whole tables; a view's rows would split by them wrongly.
+    if (config.facet && mark.view && mark.spec.facet !== "repeat")
+      throw new Error(
+        `A ${mark.spec.type} mark over a row view cannot be split by facets yet; give it facet: "repeat"`,
+      );
     const id = mark.spec.id;
     if (id === undefined) continue;
     if (ids.has(id)) throw new Error(`Duplicate mark id "${id}"`);

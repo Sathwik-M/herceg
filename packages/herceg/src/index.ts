@@ -121,6 +121,7 @@ export {
   type LayoutMark,
   type LayoutResult,
   tablesOf,
+  viewOf,
 } from "./marks/layout-mark.ts";
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
 export type { AxisFormat, Mark, MarkIdentity } from "./marks/mark.ts";

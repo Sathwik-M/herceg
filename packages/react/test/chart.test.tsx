@@ -1,10 +1,12 @@
 import {
+  col,
   custom,
   facet,
   geometry,
   type Chart as HercegChart,
   type Mark as HercegMark,
   line,
+  rowView,
   table,
   time,
   timeBreaks,
@@ -24,6 +26,7 @@ import {
   Graph,
   Line,
   Pie,
+  Point,
   Radar,
   Region,
   Rule,
@@ -89,6 +92,44 @@ describe("<Chart>", () => {
       /not components wrapping them: call a function/,
     );
     act(() => quiet.unmount());
+  });
+
+  it("draws a view's rows, and a new view replaces the mark", () => {
+    const slow = rowView(metrics, { filter: col("a").gt(2) });
+    const fast = rowView(metrics, { filter: col("a").le(2) });
+    const shown = () => {
+      chartOf().render();
+      return chartOf().model.series()[0]!.length;
+    };
+    let chart: HercegChart | null = null;
+    const chartOf = () => chart!;
+    act(() =>
+      root.render(
+        <Chart
+          renderer="svg"
+          ref={(c) => {
+            chart = c;
+          }}
+        >
+          <Point data={slow} x="t" y="a" />
+        </Chart>,
+      ),
+    );
+    expect(shown()).toBe(2);
+    act(() =>
+      root.render(
+        <Chart
+          renderer="svg"
+          ref={(c) => {
+            chart = c;
+          }}
+        >
+          <Point data={fast} x="t" y="a" />
+        </Chart>,
+      ),
+    );
+    expect(shown()).toBe(2);
+    expect(chartOf().model.series()[0]!.rows).toEqual(Uint32Array.of(0, 1));
   });
 
   it("renders a pie from its element, a path of arcs per slice", () => {

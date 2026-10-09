@@ -1,9 +1,9 @@
 <!-- Scatter points. -->
 <script lang="ts" generics="S extends Schema">
   import { type PointOptions, point, type Schema } from "herceg";
-  import { markAnchor, plain, type WithData } from "./marks.js";
+  import { markAnchor, plain, type WithRows } from "./marks.js";
 
-  let { data, ...options }: WithData<PointOptions<S>, S> = $props();
+  let { data, ...options }: WithRows<PointOptions<S>, S> = $props();
   const mark = $derived(point(data, plain(options) as PointOptions<S>));
   const anchor = markAnchor("Point", () => mark);
 </script>
