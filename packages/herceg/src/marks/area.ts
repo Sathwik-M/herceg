@@ -25,6 +25,7 @@ import {
 import { type Series, xExtent, yExtent } from "./series.ts";
 import { RowStack } from "./stack.ts";
 import {
+  curveLayers,
   curveRows,
   IndexUse,
   traceBand,
@@ -234,7 +235,9 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       const visible = series.filter((s) => !frame.hidden.has(s.key));
       const layers = visible.map((s) => ({ series: s, top: s.y, bottom: s.y0 }));
       const edges = traceCurvedLayers(layers, frame, rows, stacked);
-      return visible.map((s, i) => this.#area(s, edges[i]!, style));
+      // Charts that animate changed values curve the layers between two scenes alike.
+      const curve = frame.keyed ? curveLayers : undefined;
+      return visible.map((s, i) => ({ ...this.#area(s, edges[i]!, style), curve }));
     }
     const curve = spec.curve === "monotone" && layered ? "linear" : spec.curve;
     for (const s of series) {

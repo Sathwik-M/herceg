@@ -6,24 +6,40 @@ import { type TableChange, table } from "../../src/data/table.ts";
 import {
   frameAt,
   MOVING_ITEMS,
+  MOVING_POINTS,
   plan,
   type Shown,
+  sidesOf,
   snapshot,
   type Tween,
   ValueAnimation,
 } from "../../src/dom/value-transition.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { Polyline } from "../../src/lod/polyline.ts";
+import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { monotonePolyline } from "../../src/marks/curve.ts";
+import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
+import { point } from "../../src/marks/point.ts";
+import { rule } from "../../src/marks/rule.ts";
+import { planAxis } from "../../src/model/axis.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderSvg } from "../../src/render/svg.ts";
-import type {
-  ArcGeometry,
-  RectGeometry,
-  Scene,
-  SegmentGeometry,
-  TextGeometry,
+import type { PositionScale } from "../../src/scale/scale.ts";
+import {
+  type ArcGeometry,
+  type AreaGeometry,
+  type AxisGeometry,
+  CLOUD_POINTS,
+  type LineGeometry,
+  type PointGeometry,
+  type RectGeometry,
+  type RuleGeometry,
+  type Scene,
+  type SegmentGeometry,
+  type TextGeometry,
 } from "../../src/scene/scene.ts";
 
 const clock = vi.hoisted(() => ({ frame: 0 }));
@@ -34,6 +50,7 @@ afterEach(() => {
 });
 
 const VALUES = { duration: 200, values: true } as const;
+const BUILDERS = { planAxis, Polyline, monotonePolyline };
 
 /** A chart model drawn at 600 x 300 that animates values. */
 function chart(config: Partial<ChartConfig> & Pick<ChartConfig, "marks">) {
@@ -48,7 +65,10 @@ function change(model: ChartModel, edit: () => void): { shown: Shown; tween: Twe
   expect(shown).toBeDefined();
   edit();
   const scene = model.scene(estimateText);
-  return { shown: shown!, tween: plan(shown!, scene, model.panels()[0], 200) };
+  return {
+    shown: shown!,
+    tween: plan(shown!, scene, model.panels()[0], 200, BUILDERS, sidesOf(model.config)),
+  };
 }
 
 const bars = (scene: Scene) =>
@@ -179,10 +199,10 @@ describe("bars changing values", () => {
     expect(b![0]![2]).toBeGreaterThan(before[1]![0]![2]!);
   });
 
-  it("do not move when the axes, the categories, or the series change", () => {
-    // An automatic y domain grows with the values.
+  it("do not move when the plot, the categories, or the series change", () => {
+    // An automatic y domain grows past the width its labels had room for.
     const grows = barChart([10, 20, 30]);
-    expect(change(grows.model, () => grows.data.setColumn("sales", [10, 20, 90])).tween).toBe(
+    expect(change(grows.model, () => grows.data.setColumn("sales", [10, 20, 90_000])).tween).toBe(
       undefined,
     );
     // A new category changes the bands.
@@ -253,7 +273,7 @@ describe("bars changing values", () => {
     data.setColumn("sales", [1, 2, 3]);
     model.scene(estimateText);
     data.setColumn("sales", [30, 20, 10]);
-    const tween = plan(shown, model.scene(estimateText), model.panels()[0], 200)!;
+    const tween = plan(shown, model.scene(estimateText), model.panels()[0], 200, BUILDERS)!;
     expectRects(rects(bars(frameAt(tween, 0))[0]!), drawn);
   });
 
@@ -335,6 +355,379 @@ describe("pies changing values", () => {
   });
 });
 
+/** Seven eighths: eased progress half way through a change. */
+const HALF = 0.875;
+const axisOf = (scene: Scene, orient: AxisGeometry["orient"]) =>
+  scene.panels[0]!.axes.find((axis) => axis.orient === orient)!;
+const labels = (axis: AxisGeometry) => axis.ticks.map(({ label }) => label);
+/** Ticks alike: the same labels, at positions alike to a thousandth of a pixel. */
+function expectTicks(actual: AxisGeometry, expected: AxisGeometry) {
+  expect(labels(actual)).toEqual(labels(expected));
+  actual.ticks.forEach(({ position }, i) => {
+    expect(position).toBeCloseTo(expected.ticks[i]!.position, 3);
+  });
+}
+/**
+ * Where `value` is drawn by a scale over the range of `to` whose domain is
+ * `t` of the way from `from`'s to `to`'s; with `log`, in log space.
+ */
+function placed(value: number, from: PositionScale, to: PositionScale, t: number, log = false) {
+  const f = (v: number) => (log ? Math.log10(v) : v);
+  const [a, b] = [from.domain.map(f), to.domain.map(f)];
+  const d0 = a[0]! + (b[0]! - a[0]!) * t;
+  const d1 = a[1]! + (b[1]! - a[1]!) * t;
+  const [r0, r1] = to.range;
+  return r0 + ((f(value) - d0) * (r1 - r0)) / (d1 - d0);
+}
+const marksOf = <G>(scene: Scene, kind: string) =>
+  scene.panels[0]!.marks.filter((mark) => mark.kind === kind) as G[];
+const pointsOf = (scene: Scene) => marksOf<PointGeometry>(scene, "point");
+const centers = (mark: PointGeometry) =>
+  Array.from({ length: mark.count }, (_, i) => [mark.coords[i * 2]!, mark.coords[i * 2 + 1]!]);
+const ys = (path: Polyline) =>
+  Array.from({ length: path.count }, (_, i) => path.coords[i * 2 + 1]!);
+const xs = (path: Polyline) => Array.from({ length: path.count }, (_, i) => path.coords[i * 2]!);
+
+describe("axes moving with values", () => {
+  it("plan ticks and grid lines for the domains between, from one scene's to the next's", () => {
+    const { data, model } = barChart([10, 20, 30]);
+    const before = model.scene(estimateText);
+    const from = model.panels()[0]!.y;
+    const { tween } = change(model, () => data.setColumn("sales", [10, 20, 45]));
+    const to = model.panels()[0]!.y;
+    expectTicks(axisOf(frameAt(tween!, 0), "left"), axisOf(before, "left"));
+    expectTicks(axisOf(frameAt(tween!, 200), "left"), axisOf(tween!.scene, "left"));
+    // Half way, ticks go up in tens to 40: between the axes up to 30 and 50.
+    const middle = frameAt(tween!, 100);
+    const left = axisOf(middle, "left");
+    expect(labels(left)).toEqual(["0", "10", "20", "30", "40"]);
+    for (const { label, position } of left.ticks)
+      expect(position).toBeCloseTo(placed(Number(label), from, to, HALF), 3);
+    expect(middle.panels[0]!.grid.y).toEqual(left.ticks.map(({ position }) => position));
+    // The bar keeping its value moves only as its axis does; the one changing goes between.
+    const [n, , e] = rects(bars(middle)[0]!);
+    expect(n![1]).toBeCloseTo(placed(10, from, to, HALF), 3);
+    expect(e![1]).toBeCloseTo(placed(30 + 15 * HALF, from, to, HALF), 3);
+    // The x axis stays.
+    expect(axisOf(middle, "bottom")).toBe(axisOf(tween!.scene, "bottom"));
+  });
+
+  it("move points, lines, and rules with their axes", () => {
+    const data = table({ x: [1, 2, 3], y: [10, 20, 30] });
+    const model = chart({
+      marks: [point(data, { x: "x", y: "y" }), line(data, { x: "x", y: "y" }), rule({ y: 15 })],
+    });
+    model.scene(estimateText);
+    const from = model.panels()[0]!.y;
+    const { tween } = change(model, () => data.set("y", 2, 45));
+    const to = model.panels()[0]!.y;
+    const middle = frameAt(tween!, 100);
+    const [a, , c] = centers(pointsOf(middle)[0]!);
+    expect(a![1]).toBeCloseTo(placed(10, from, to, HALF), 3);
+    expect(c![1]).toBeCloseTo(placed(30 + 15 * HALF, from, to, HALF), 3);
+    const [path] = marksOf<LineGeometry>(middle, "line").map((mark) => mark.path);
+    expect(ys(path!)[0]).toBeCloseTo(placed(10, from, to, HALF), 3);
+    expect(ys(path!)[2]).toBeCloseTo(c![1]!, 3);
+    const [threshold] = marksOf<RuleGeometry>(middle, "rule");
+    expect(threshold!.y1).toBeCloseTo(placed(15, from, to, HALF), 6);
+    expect(threshold!.y2).toBe(threshold!.y1);
+  });
+
+  it("move rules from a table's rows, alone in a chart", () => {
+    const data = table({ y: [10, 20, 30] });
+    const model = chart({ marks: [rule(data, { y: "y" })] });
+    model.scene(estimateText);
+    const from = model.panels()[0]!.y;
+    const { tween } = change(model, () => data.set("y", 2, 45));
+    const to = model.panels()[0]!.y;
+    const [, middle, high] = marksOf<RuleGeometry>(frameAt(tween!, 100), "rule");
+    expect(middle!.y1).toBeCloseTo(placed(20, from, to, HALF), 6);
+    expect(high!.y1).toBeCloseTo(placed(30 + 15 * HALF, from, to, HALF), 6);
+  });
+
+  it("move areas' baselines and both edges of bands with the axis", () => {
+    const data = table({ x: [1, 2, 3], lo: [-10, -5, -8], hi: [5, 10, 20] });
+    const model = chart({
+      marks: [area(data, { x: "x", y: "hi" }), area(data, { x: "x", y1: "lo", y2: "hi" })],
+    });
+    model.scene(estimateText);
+    const from = model.panels()[0]!.y;
+    const { tween } = change(model, () => data.setColumn("hi", [5, 10, 60]));
+    const to = model.panels()[0]!.y;
+    const [filled, band] = marksOf<AreaGeometry>(frameAt(tween!, 100), "area");
+    expect(filled!.baseline).toBeCloseTo(placed(0, from, to, HALF), 3);
+    expect(ys(filled!.upper)[0]).toBeCloseTo(placed(5, from, to, HALF), 3);
+    expect(ys(band!.upper)[0]).toBeCloseTo(placed(5, from, to, HALF), 3);
+    expect(ys(band!.lower!)[0]).toBeCloseTo(placed(-10, from, to, HALF), 3);
+  });
+
+  it("move marks on the right axis with its scale, and leave the left axis' alone", () => {
+    const left = table({ x: [1, 2, 3], y: [1, 2, 3] });
+    const right = table({ x: [1, 2, 3], y: [10, 20, 30] });
+    const model = chart({
+      marks: [line(left, { x: "x", y: "y" }), line(right, { x: "x", y: "y", axis: "right" })],
+      y: { domain: [0, 4] },
+    });
+    model.scene(estimateText);
+    const from = model.panels()[0]!.yRight!;
+    const { tween } = change(model, () => right.set("y", 2, 45));
+    const to = model.panels()[0]!.yRight!;
+    const middle = frameAt(tween!, 100);
+    const [still, moving] = marksOf<LineGeometry>(middle, "line").map((mark) => mark.path);
+    const [drawn] = marksOf<LineGeometry>(tween!.scene, "line").map((mark) => mark.path);
+    expect(ys(still!)).toEqual(ys(drawn!));
+    expect(ys(moving!)[0]).toBeCloseTo(placed(10, from, to, HALF), 3);
+    expect(axisOf(middle, "left")).toBe(axisOf(tween!.scene, "left"));
+    expect(labels(axisOf(middle, "right"))).not.toEqual(labels(axisOf(tween!.scene, "right")));
+  });
+
+  it("move log axes, and values on them, in log space", () => {
+    const data = table({ x: [1, 2, 3], y: [1, 10, 1000] });
+    const model = chart({ marks: [point(data, { x: "x", y: "y" })], y: { type: "log" } });
+    // The widest labels came first: margins only grow, so the plot stays.
+    model.scene(estimateText);
+    data.set("y", 2, 100);
+    model.scene(estimateText);
+    const from = model.panels()[0]!.y;
+    const { tween } = change(model, () => data.set("y", 2, 1000));
+    const to = model.panels()[0]!.y;
+    const middle = frameAt(tween!, 100);
+    const [, ten, top] = centers(pointsOf(middle)[0]!);
+    expect(ten![1]).toBeCloseTo(placed(10, from, to, HALF, true), 3);
+    expect(top![1]).toBeCloseTo(placed(10 ** (2 + HALF), from, to, HALF, true), 3);
+    for (const { label, position } of axisOf(middle, "left").ticks)
+      expect(position).toBeCloseTo(
+        placed(Number(label.replace(/,/g, "")), from, to, HALF, true),
+        3,
+      );
+  });
+
+  it("show at once what cannot move with its axes", () => {
+    const data = table({ region: ["N", "S"], a: [10, 20], b: [5, 15] });
+    const marks = () => [
+      bar(data, { x: "region", y: ["a", "b"], stack: true }),
+      point(data, { x: "region", y: "a" }),
+    ];
+    // Stacked bars do not move: points can, but not with an axis moving past the stacks.
+    const free = chart({ marks: marks() });
+    expect(change(free, () => data.setColumn("a", [10, 30])).tween).toBeUndefined();
+    const fixed = chart({ marks: marks(), y: { domain: [0, 60] } });
+    const { tween } = change(fixed, () => data.setColumn("a", [20, 30]));
+    expect(tween!.points).toHaveLength(1);
+  });
+});
+
+describe("points changing values", () => {
+  /** Points on axes that stay put. */
+  function scatter(columns: Record<string, number[]>, options = {}) {
+    const data = table(columns);
+    const model = chart({
+      marks: [point(data, { x: "x", y: "y", ...options })],
+      x: { domain: [0, 4] },
+      y: { domain: [0, 100] },
+    });
+    return { data, model };
+  }
+
+  it("match points by the rows they show as rows stop and start being drawn", () => {
+    const { data, model } = scatter({ x: [1, 2, 3], y: [10, 20, 30] });
+    const before = centers(pointsOf(model.scene(estimateText))[0]!);
+    // B has no value: it goes, and C, now the second point drawn, is still C.
+    const { tween } = change(model, () => data.set("y", 1, Number.NaN));
+    const start = pointsOf(frameAt(tween!, 0))[0]!;
+    expect(start.count).toBe(3);
+    expectRects(centers(start), [before[0]!, before[2]!, before[1]!]);
+    const end = pointsOf(frameAt(tween!, 200))[0]!;
+    expect(end.radii![2]).toBe(0);
+    expect(pointsOf(tween!.scene)[0]!.count).toBe(2);
+    // B comes back where its new value is, from nothing; A moves to its own.
+    const back = change(model, () => data.replace("y", 0, [50, 60])).tween!;
+    const first = pointsOf(frameAt(back, 0))[0]!;
+    expect(Array.from(first.radii!)).toEqual([2.5, 0, 2.5]);
+    const [a, b] = centers(pointsOf(frameAt(back, 100))[0]!);
+    const y = model.panels()[0]!.y;
+    expect(a![1]).toBeCloseTo(y.map(10 + 40 * HALF), 3);
+    expect(b![1]).toBeCloseTo(y.map(60), 3);
+  });
+
+  it("change the sizes and colors they encode", () => {
+    const { data, model } = scatter(
+      { x: [1, 2, 3], y: [10, 20, 30], r: [1, 2, 4], c: [0, 5, 10] },
+      { r: "r", color: "c" },
+    );
+    const before = pointsOf(model.scene(estimateText))[0]!;
+    const [r0, i0] = [before.radii![0]!, before.colors!.index[0]!];
+    const { tween } = change(model, () => {
+      data.setColumn("r", [4, 2, 1]);
+      data.setColumn("c", [10, 5, 0]);
+    });
+    const after = pointsOf(tween!.scene)[0]!;
+    const middle = pointsOf(frameAt(tween!, 100))[0]!;
+    expect(middle.radii![0]).toBeCloseTo(r0 + (after.radii![0]! - r0) * HALF, 4);
+    expect(middle.colors!.index[0]).toBe(Math.round(i0 + (after.colors!.index[0]! - i0) * HALF));
+    expect(middle.colors!.palette).toEqual(after.colors!.palette);
+  });
+
+  it("do not match points across a reset, or move sampled points", () => {
+    const { data, model } = scatter({ x: [1, 2, 3], y: [10, 20, 30] });
+    expect(
+      change(model, () => data.reset({ x: [1, 2, 3], y: [30, 20, 10] })).tween,
+    ).toBeUndefined();
+    const sampled = scatter({ x: [1, 2, 3], y: [10, 20, 30] }, { sampling: "pixel" }).model;
+    expect(snapshot(sampled.scene(estimateText), sampled.panels()[0], 0)).toBeUndefined();
+  });
+
+  it("leave out clouds, and more points than move every frame, before copying them", () => {
+    const n = MOVING_POINTS + 1;
+    const rows = (length: number) => ({
+      x: Float64Array.from({ length }, (_, i) => i),
+      y: Float64Array.from({ length }, (_, i) => i % 7),
+    });
+    // A series this long says nothing of its rows, so keeps no more for it.
+    const long = chart({ marks: [point(table(rows(n)), { x: "x", y: "y" })] });
+    const scene = long.scene(estimateText);
+    expect(pointsOf(scene)[0]!.items).toBeUndefined();
+    expect(snapshot(scene, long.panels()[0], 0)).toBeUndefined();
+    // Series that are short enough, but too many together.
+    const half = table(rows(Math.ceil(n / 2)));
+    const model = chart({
+      marks: [point(half, { x: "x", y: "y" }), point(half, { x: "x", y: "y", id: "again" })],
+    });
+    const shown = model.scene(estimateText);
+    const copies = vi.spyOn(pointsOf(shown)[0]!.items!.ids, "slice");
+    expect(snapshot(shown, model.panels()[0], 0)).toBeUndefined();
+    expect(copies).not.toHaveBeenCalled();
+    // Nor do other marks beside more points than that.
+    const thresholds = table({ y: [10, 20, 30] });
+    const crowded = chart({
+      marks: [point(table(rows(n)), { x: "x", y: "y" }), rule(thresholds, { y: "y" })],
+    });
+    expect(snapshot(crowded.scene(estimateText), crowded.panels()[0], 0)).toBeUndefined();
+    // Bars beside a cloud stay still too.
+    const cloud = table({
+      x: Float64Array.from({ length: CLOUD_POINTS }, (_, i) => i),
+      y: Float64Array.from({ length: CLOUD_POINTS }, (_, i) => i % 7),
+    });
+    const beside = chart({
+      marks: [
+        bar(table({ x: [1, 2], y: [3, 4] }), { x: "x", y: "y" }),
+        point(cloud, { x: "x", y: "y" }),
+      ],
+    });
+    const drawn = beside.scene(estimateText, true);
+    expect(pointsOf(drawn)[0]!.cloud).toBeDefined();
+    expect(snapshot(drawn, beside.panels()[0], 0)).toBeUndefined();
+  });
+});
+
+describe("lines and areas changing values", () => {
+  const x = [0, 1, 2, 3, 4];
+  function lines(curve?: "step-after" | "monotone") {
+    const data = table({ x, y: [10, 30, 20, 40, 30] });
+    const model = chart({
+      marks: [line(data, { x: "x", y: "y", ...(curve && { curve }) })],
+      y: { domain: [0, 100] },
+    });
+    return { data, model };
+  }
+  const pathOf = (scene: Scene) => marksOf<LineGeometry>(scene, "line")[0]!.path;
+
+  it("move their points along y when rows keep their x positions", () => {
+    const { data, model } = lines();
+    const before = ys(pathOf(model.scene(estimateText)));
+    const { tween } = change(model, () => data.setColumn("y", [50, 30, 60, 40, 90]));
+    const after = pathOf(tween!.scene);
+    expectRects([ys(pathOf(frameAt(tween!, 0)))], [before]);
+    expectRects([ys(pathOf(frameAt(tween!, 200)))], [ys(after)]);
+    const middle = pathOf(frameAt(tween!, 100));
+    expect(xs(middle)).toEqual(xs(after));
+    expect(ys(middle)[0]).toBeCloseTo(before[0]! + (ys(after)[0]! - before[0]!) * HALF, 3);
+    // Rows at the same x after a reset are the same points of the line.
+    expect(change(model, () => data.reset({ x, y: [10, 30, 20, 40, 30] })).tween).toBeDefined();
+  });
+
+  it("show at once lines whose x positions, gaps, or level of detail change", () => {
+    const moved = lines();
+    expect(
+      change(moved.model, () => moved.data.reset({ x: x.map((v) => v + 0.5), y: [1, 2, 3, 4, 5] }))
+        .tween,
+    ).toBeUndefined();
+    const gap = lines();
+    expect(
+      change(gap.model, () => gap.data.setColumn("y", [10, Number.NaN, 20, 40, 30])).tween,
+    ).toBeUndefined();
+    // More rows than device pixels: level of detail leaves some out.
+    const dense = table({
+      x: Float64Array.from({ length: 4000 }, (_, i) => i),
+      y: Float64Array.from({ length: 4000 }, (_, i) => Math.sin(i)),
+    });
+    const model = chart({ marks: [line(dense, { x: "x", y: "y" })] });
+    expect(snapshot(model.scene(estimateText), model.panels()[0], 0)).toBeUndefined();
+  });
+
+  it("move steps through their points, and curve frames through the values between", () => {
+    const steps = lines("step-after");
+    steps.model.scene(estimateText);
+    const step = change(steps.model, () => steps.data.setColumn("y", [50, 30, 60, 40, 90])).tween!;
+    const corners = ys(pathOf(frameAt(step, 100)));
+    // Each corner holds the value before it.
+    for (let i = 1; i < corners.length; i += 2) expect(corners[i]).toBe(corners[i - 1]);
+    // Curves go through the values between as the line curves its own:
+    // never past a point's value between two points.
+    const data = table({ x: [0, 1, 2], y: [0, 1, 2] });
+    const model = chart({
+      marks: [line(data, { x: "x", y: "y", curve: "monotone" })],
+      y: { domain: [0, 10] },
+    });
+    const curve = change(model, () => data.setColumn("y", [2, 1, 10])).tween!;
+    const middle = pathOf(frameAt(curve, 100));
+    const points = new Polyline();
+    for (let i = 0; i < middle.count; i++)
+      points.push(middle.coords[i * 2]!, middle.coords[i * 2 + 1]!);
+    const expected = new Polyline();
+    monotonePolyline(points, expected);
+    expect(middle.curved).toBe(true);
+    expect(Array.from(middle.controls.subarray(4, 12))).toEqual(
+      Array.from(expected.controls.subarray(4, 12)),
+    );
+    const [y0, y1] = [middle.coords[1]!, middle.coords[3]!];
+    for (const control of [middle.controls[5]!, middle.controls[7]!]) {
+      expect(control).toBeGreaterThanOrEqual(Math.min(y0, y1) - 1e-3);
+      expect(control).toBeLessThanOrEqual(Math.max(y0, y1) + 1e-3);
+    }
+  });
+
+  it("move a stack's layers together or not at all", () => {
+    // A missing value leaves the bottom layer out: the one above stays with it.
+    const data = table({ x, a: [10, 10, Number.NaN, 20, 20], b: [5, 5, 5, 5, 5] });
+    const model = chart({
+      marks: [area(data, { x: "x", y: ["a", "b"], stack: true })],
+      y: { domain: [0, 100] },
+    });
+    expect(change(model, () => data.setColumn("a", [30, 30, Number.NaN, 40, 40])).tween).toBe(
+      undefined,
+    );
+  });
+
+  it("move stacked areas' shared edges together, straight or curved", () => {
+    for (const curve of ["linear", "monotone"] as const) {
+      const data = table({ x, a: [10, 30, 20, 40, 30], b: [5, 5, 15, 5, 5] });
+      const model = chart({ marks: [area(data, { x: "x", y: ["a", "b"], stack: true, curve })] });
+      const { tween } = change(model, () => data.setColumn("a", [40, 10, 50, 20, 60]));
+      // Curved layers are curved together.
+      expect(tween!.stacks).toHaveLength(curve === "monotone" ? 1 : 0);
+      for (const elapsed of [0, 30, 100, 170, 200]) {
+        const [below, above] = marksOf<AreaGeometry>(frameAt(tween!, elapsed), "area");
+        expect(ys(above!.lower!)).toEqual(ys(below!.upper));
+        if (curve === "monotone")
+          expect(Array.from(above!.lower!.controls.subarray(0, 20))).toEqual(
+            Array.from(below!.upper.controls.subarray(0, 20)),
+          );
+      }
+    }
+  });
+});
+
 describe("value animation", () => {
   const scene = (model: ChartModel) => model.scene(estimateText);
   const VALUES_CHANGED = { dropped: 0, appended: 0, updated: null, fields: [], reset: true };
@@ -346,7 +739,7 @@ describe("value animation", () => {
       marks: [bar(data, { x: "region", y: "sales" })],
       y: { domain: [0, 40] },
     });
-    const animation = new ValueAnimation(model, null, true);
+    const animation = new ValueAnimation(model, null, true, BUILDERS);
     animation.start(scene(model), 0);
     return { data, model, animation };
   }
@@ -432,15 +825,31 @@ describe("value animation", () => {
   });
 
   it("leave out more bars than it can move every frame, before copying them", () => {
-    const n = MOVING_ITEMS + 1;
-    const data = table({
-      x: Float64Array.from({ length: n }, (_, i) => i),
-      y: Float64Array.from({ length: n }, () => 1),
+    const rows = (length: number) => ({
+      x: Float64Array.from({ length }, (_, i) => i),
+      y: Float64Array.from({ length }, () => 1),
     });
-    const model = chart({ marks: [bar(data, { x: "x", y: "y" })] });
+    // A series this long says nothing of its bars.
+    const long = chart({ marks: [bar(table(rows(MOVING_ITEMS + 1)), { x: "x", y: "y" })] });
+    const scene = long.scene(estimateText);
+    expect(bars(scene)[0]!.bars).toBeUndefined();
+    expect(snapshot(scene, long.panels()[0], 0)).toBeUndefined();
+    // Two short enough, but too many together.
+    const half = table(rows(MOVING_ITEMS / 2 + 1));
+    const model = chart({
+      marks: [bar(half, { x: "x", y: "y" }), bar(half, { x: "x", y: "y", id: "again" })],
+    });
     const shown = model.scene(estimateText);
     const copies = vi.spyOn(bars(shown)[0]!.bars!.at, "slice");
     expect(snapshot(shown, model.panels()[0], 0)).toBeUndefined();
     expect(copies).not.toHaveBeenCalled();
+    // Bars growing past the limit show at once beside marks that could move.
+    const growing = table(rows(10));
+    const mixed = chart({
+      marks: [bar(growing, { x: "x", y: "y" }), point(table(rows(3)), { x: "x", y: "y" })],
+      x: { domain: [-1, 2100] },
+      y: { domain: [0, 2] },
+    });
+    expect(change(mixed, () => growing.reset(rows(MOVING_ITEMS + 1))).tween).toBeUndefined();
   });
 });

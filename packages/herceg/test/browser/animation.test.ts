@@ -7,6 +7,7 @@ import { custom } from "../../src/marks/custom.ts";
 import { tablesOf } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
+import { point } from "../../src/marks/point.ts";
 import { modelOf } from "./helpers.ts";
 
 const charts: Chart[] = [];
@@ -330,6 +331,71 @@ describe("value transitions", () => {
     expect(path(moving, "arc")).toBe(path(still, "arc"));
   });
 
+  /** The left axis' tick labels on screen. */
+  const yLabels = (chart: Chart) =>
+    [...chart.root.querySelectorAll('text[text-anchor="end"]')].map((text) => text.textContent);
+  /** The grid lines on screen. */
+  const grid = (chart: Chart) =>
+    chart.root.querySelector(':scope > svg > path[fill="none"]')?.getAttribute("d") ?? "";
+
+  it("move the axes with values, their ticks and grid lines between", async () => {
+    const marks = (data: ReturnType<typeof sales>) => [bar(data, { x: "region", y: "sales" })];
+    const data = sales();
+    const moving = await mount({ animation: VALUES, marks: marks(data) });
+    const still = await mount({ animation: false, marks: marks(data) });
+    await controlTime();
+    const before = { labels: yLabels(moving), grid: grid(moving) };
+    expect(before.labels).toEqual(["0", "5", "10", "15", "20", "25", "30"]);
+    change([moving], [10, 20, 45]);
+    tick(16);
+    // On their way: neither where they were nor where they go.
+    tick(100);
+    expect(yLabels(moving)).not.toEqual(before.labels);
+    expect(yLabels(moving)).not.toEqual(yLabels(still));
+    expect(grid(moving)).not.toBe(before.grid);
+    expect(grid(moving)).not.toBe(grid(still));
+    tick(400);
+    expect(yLabels(moving)).toEqual(["0", "10", "20", "30", "40", "50"]);
+    expect(chart(moving)).toEqual(chart(still));
+  });
+
+  it("move points and lines with their axes, ending as a chart without animation draws them", async () => {
+    const data = table({ x: [1, 2, 3, 4], y: [10, 20, 30, 20] });
+    const marks = () => [line(data, { x: "x", y: "y" }), point(data, { x: "x", y: "y" })];
+    const moving = await mount({ animation: VALUES, marks: marks() });
+    const still = await mount({ animation: false, marks: marks() });
+    await controlTime();
+    const before = [path(moving, "line"), path(moving, "point")];
+    data.set("y", 3, 45);
+    tick(66);
+    const passing = [path(moving, "line"), path(moving, "point")];
+    expect(passing[0]).not.toBe(before[0]);
+    expect(passing[1]).not.toBe(before[1]);
+    expect(passing).not.toEqual([path(still, "line"), path(still, "point")]);
+    tick(400);
+    expect(chart(moving)).toEqual(chart(still));
+  });
+
+  it("show the new values and axes before the pointer reads them", async () => {
+    const data = sales();
+    const moving = await mount({
+      animation: VALUES,
+      marks: [bar(data, { x: "region", y: "sales" })],
+    });
+    await controlTime();
+    change([moving], [10, 20, 45]);
+    tick(50);
+    const passing = yLabels(moving);
+    const rect = moving.root.getBoundingClientRect();
+    const at = { bubbles: true, clientX: rect.left + 480, clientY: rect.top + 150, pointerId: 1 };
+    moving.root.dispatchEvent(new PointerEvent("pointermove", at));
+    // Drawn at once: the axis is the new one, and the tooltip has the new value.
+    expect(yLabels(moving)).not.toEqual(passing);
+    expect(yLabels(moving)).toEqual(["0", "10", "20", "30", "40", "50"]);
+    tick(16);
+    expect(moving.root.textContent).toContain("45");
+  });
+
   it("show appended rows, and changes that move the axes, at once", async () => {
     const data = table({ region: ["N", "S"], sales: [10, 20] });
     const appending = await bars(data);
@@ -597,12 +663,17 @@ describe("value transitions", () => {
       (query) => ({ matches: query.includes("reduce"), media: query }) as MediaQueryList,
     );
     const calm = await bars();
+    // Nor do axes.
+    const free = await mount({
+      animation: VALUES,
+      marks: [bar(sales(), { x: "region", y: "sales" })],
+    });
     await controlTime();
-    change([calm], [30, 20, 10]);
+    change([calm, free], [30, 20, 45]);
     tick(16);
-    const shown = path(calm);
+    const shown = [path(calm), yLabels(free)];
     tick(400);
-    expect(path(calm)).toBe(shown);
+    expect([path(calm), yLabels(free)]).toEqual(shown);
   });
 
   it("let go of what they move when the chart is destroyed", async () => {

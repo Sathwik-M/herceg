@@ -330,10 +330,11 @@ class Tooltip:
 @dataclass
 class Animation:
     """Animation options (the chart's ``animation``): ``duration`` in
-    milliseconds, and ``values``, with which bars and pie slices also move to
-    changed values when a live chart's data is replaced, besides the axes
-    moving to views asked for. ``animation=True`` is ``Animation()``, and a
-    number is a duration."""
+    milliseconds, and ``values``, with which bars, pie slices, and lines and
+    areas whose x values stay also move to changed values when a live
+    chart's data is replaced, the axes with them, besides the axes moving to
+    views asked for. ``animation=True`` is ``Animation()``, and a number is a
+    duration."""
 
     duration: float = 250
     values: bool = False

@@ -26,6 +26,12 @@ export interface AxisPlan {
   labels: string[];
   /** The domain ticks were chosen in (see `planAxis`); none for band axes. */
   within?: readonly [number, number];
+  /**
+   * What a continuous axis was planned with, and for how many ticks, so it
+   * can be planned again over other domains (as values move between scenes).
+   */
+  context?: AxisContext;
+  count?: number;
 }
 
 export interface AxisContext {
@@ -180,7 +186,7 @@ export function planAxis(
   } else {
     labels = numberTickLabels(ticks, context.locale);
   }
-  return { scale, ticks, labels, within };
+  return { scale, ticks, labels, within, context, count };
 }
 
 /** `plan` for a panel `offset` pixels along: the same ticks and labels on a moved range. */

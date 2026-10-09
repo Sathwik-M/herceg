@@ -168,7 +168,23 @@ export interface AreaGeometry extends Geometry {
   /** Outline color for the top edge, or null for none. */
   stroke: string | null;
   strokeWidth: number;
+  /**
+   * For layers of a monotone band or stack in scenes of charts that animate
+   * changed values: how the mark curves their shared edges together, which
+   * frames between two scenes do again (marks/trace.ts `curveLayers`).
+   */
+  curve?: CurveLayers | undefined;
 }
+
+/** Curves layers' edges through x positions and their boundaries' positions (see `curveLayers`). */
+export type CurveLayers = (
+  xs: Float64Array,
+  positions: readonly Float64Array[],
+  tangents: readonly Float64Array[],
+  curves: Float64Array,
+  edges: readonly { upper: Polyline; lower: Polyline }[],
+  drawn: (layer: number, i: number) => boolean,
+) => void;
 
 export interface RuleGeometry extends Geometry {
   kind: "rule";
@@ -276,10 +292,32 @@ export interface PointGeometry extends Geometry {
   ring?: { color: string; width: number } | undefined;
   /** Set when the series is left to a GPU painter instead of `coords`. */
   cloud?: PointCloud;
+  /** Points in scenes of charts that animate changed values: the rows they show. */
+  items?: PointItems | undefined;
+}
+
+/**
+ * What a value transition (`animation.values`) needs of a series' points,
+ * which marks give only in scenes of charts that ask for it: the table and
+ * its generation (its resets), and per point the identity of the row it
+ * shows, `rowOffset + row`, which lasts while rows are dropped and changed.
+ */
+export interface PointItems {
+  table: object;
+  generation: number;
+  ids: Float64Array;
 }
 
 /** Point series with at least this many points may be drawn as clouds. */
 export const CLOUD_POINTS = 100_000;
+
+/**
+ * In scenes of charts that animate changed values, series of more bars or
+ * points than these say nothing of them (no BarItems or PointItems): value
+ * transitions move no more than these in a chart (dom/value-transition.ts).
+ */
+export const MOVING_BARS = 2000;
+export const MOVING_POINTS = 10_000;
 
 /**
  * A large point series for a GPU painter: its source columns and how they

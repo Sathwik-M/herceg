@@ -97,6 +97,19 @@ interface PanelView {
   xGroup: string;
   yGroup: string;
   inspector: Inspector;
+  plans: PanelPlans;
+}
+
+/**
+ * The plans of a panel's axes: x, the left and right y, and the one its
+ * horizontal grid lines follow, if any. Value transitions plan ticks from
+ * them for the domains between two scenes.
+ */
+export interface PanelPlans {
+  x: AxisPlan;
+  y: AxisPlan;
+  yRight: AxisPlan | undefined;
+  grid: AxisPlan | false | undefined;
 }
 
 /** What a y extent reads: marks' series, within an x range (and its breaks). */
@@ -125,6 +138,7 @@ export interface DrawnPanel {
   /** Names the left y scale the panel shares with others: "" when every panel does. */
   yGroup: string;
   yRight?: PositionScale | undefined;
+  plans: PanelPlans;
 }
 
 /**
@@ -1454,6 +1468,7 @@ export class ChartModel {
         xGroup: xKeys[h]!,
         yGroup: groups?.keys[groupOf[i]!] ?? "",
         inspector,
+        plans: { x: xAt, y: yAt, yRight: yRightPlan, grid: gridAt },
       });
       return {
         key,
@@ -1618,7 +1633,7 @@ export class ChartModel {
   panels(): readonly DrawnPanel[] {
     const views = this.#views;
     if (this.#panelList?.views !== views) {
-      const panels = views.map(({ key, label, plot, xGroup, yGroup, inspector }) => ({
+      const panels = views.map(({ key, label, plot, xGroup, yGroup, inspector, plans }) => ({
         key,
         label,
         plot,
@@ -1627,6 +1642,7 @@ export class ChartModel {
         y: inspector.frame.y,
         yGroup,
         yRight: inspector.rightFrame?.y,
+        plans,
       }));
       this.#panelList = { views, panels };
     }

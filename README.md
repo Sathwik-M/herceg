@@ -62,7 +62,8 @@ tables (filter, calculate, bin, aggregate, rolling windows, sort) with
 portable expressions, level of detail, streaming updates, a shared
 scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
-selections, animated changes of view and of bar and pie values, crosshair
+selections, animated changes of view and of values (bars, pies, points,
+and small lines and areas, with the axes they move), crosshair
 labels on the axes), time axes that leave out breaks (nights, weekends,
 holidays) in any time zone, static SVG and PDF export, React, Vue, and
 Svelte adapters, min/max indexes for zooming and streaming large line
@@ -85,8 +86,8 @@ Next, in order:
 1. Large data: incremental stacks for bars split by a series field.
 2. Layout: annotations over a table split by facets, and error bars and
    candlesticks on categories per panel.
-3. Animation of changed values that move the axes, and of stacked and
-   labeled bars, points, lines, areas, and panels.
+3. Animation of stacked and labeled bars, of categories that come and go,
+   of panels, and of points across resets (by a key field).
 4. More financial tools (a range navigator, drawing tools, markers at
    breaks); 3D lines, meshes, parametric surfaces, and surfaces on the GPU.
 5. Grid: pivots, and a server-backed mode whose filters, sorts, and
