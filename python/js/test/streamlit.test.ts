@@ -152,6 +152,27 @@ describe("Streamlit component", () => {
     expect(parent.querySelector('[role="figure"]')).toBeNull();
   });
 
+  it("draws a navigator, keeping its sliders and the x range when new bytes redraw it", async () => {
+    const parent = host();
+    run(parent, lineChart("Navigated", [], { version: 4, navigator: true }));
+    await vi.dynamicImportSettled();
+    const sliders = () => parent.querySelectorAll('[aria-label="Range navigator"] [role="slider"]');
+    expect(sliders()).toHaveLength(3);
+    const [, middle] = sliders();
+    const before = middle!.getAttribute("aria-valuetext");
+    middle!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true }),
+    );
+    await frame();
+    const shown = middle!.getAttribute("aria-valuetext");
+    expect(shown).not.toBe(before);
+    run(parent, lineChart("Renamed", [], { version: 4, navigator: { height: 30 } }));
+    await vi.dynamicImportSettled();
+    await frame();
+    expect(sliders()).toHaveLength(3);
+    expect(sliders()[1]!.getAttribute("aria-valuetext")).toBe(shown);
+  });
+
   it("reports a brushed range and clicks only when the script reacts to them", async () => {
     const quiet = host();
     const ignored = run(quiet, lineChart("Quiet", []));

@@ -34,7 +34,7 @@ def test_breaks_travel_in_the_x_axis_spec():
         "day", "o", "h", "l", "c"
     )
     spec, _ = chart.to_spec()
-    assert spec["version"] == 3
+    assert spec["version"] == 4
     assert spec["x"] == {
         "breaks": [
             {"weekdays": ["sat", "sun"]},

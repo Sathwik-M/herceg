@@ -111,10 +111,11 @@ export class Panels implements PanelLayout {
 
   /**
    * Rejects marks that name no panel or an unknown one, and what panels with
-   * axes of their own cannot do yet: right axes, and zooming or brushing
-   * along y.
+   * axes of their own cannot do yet: right axes, zooming or brushing along
+   * y, and a navigator.
    */
   check(marks: readonly Mark[], options: LayoutOptions): void {
+    if (options.navigator) throw new Error("Charts with panels cannot have a navigator yet");
     const ids = new Set(this.list.map(({ id }) => id));
     for (const mark of marks) {
       const { type, panel } = mark.spec;

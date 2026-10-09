@@ -26,7 +26,7 @@ def test_spec_uses_the_portable_format():
         .rule(y=250, label="SLO")
     )
     spec, buffers = chart.to_spec()
-    assert spec["version"] == 3
+    assert spec["version"] == 4
     assert spec["title"] == "Latency"
     assert spec["timeZone"] == "UTC"
     assert spec["y"] == {"type": "log", "label": "ms"}
@@ -318,7 +318,7 @@ def test_facet_panels_can_have_y_scales_of_their_own():
     chart = hg.Chart(data, facet_col="zone", resolve_y="independent").line(x="t", y="p50")
     spec, _ = chart.to_spec()
     assert spec["resolve"] == {"y": "independent"}
-    assert spec["version"] == 3
+    assert spec["version"] == 4
     assert "<svg" in chart.to_svg()
     with pytest.raises(ValueError, match="resolve_y must be"):
         hg.Chart(data, facet="host", resolve_y="free")
@@ -333,7 +333,7 @@ def test_panels_can_have_x_scales_of_their_own():
     chart = hg.Chart(data, facet_col="zone", resolve_x="independent", resolve_y="rows")
     spec, _ = chart.line(x="t", y="p50").to_spec()
     assert spec["resolve"] == {"x": "independent", "y": "rows"}
-    assert spec["version"] == 3
+    assert spec["version"] == 4
     assert "<svg" in chart.to_svg()
     subplots = (
         hg.Chart(
@@ -370,7 +370,7 @@ def test_panels_can_have_categories_of_their_own():
     )
     spec, _ = chart.to_spec()
     assert spec["resolve"] == {"x": "independent"}
-    assert spec["version"] == 3
+    assert spec["version"] == 4
     assert spec["marks"][0]["stack"] is True
     svg = chart.to_svg()
     # Each panel labels its own categories: N's b and d, S's a and c, E's c.
@@ -442,7 +442,7 @@ def test_histograms_and_box_plots_split_by_facets():
     spec, _ = binned.to_spec()
     assert spec["facet"] == {"field": "region"}
     assert spec["resolve"] == {"x": "independent"}
-    assert spec["version"] == 3
+    assert spec["version"] == 4
     assert spec["marks"][0] == {
         "type": "histogram",
         "data": "data",

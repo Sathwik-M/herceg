@@ -934,6 +934,65 @@ Labels go only on axes the chart draws: none for `axis: false`, and no y
 label in facet columns that share the first column's y axis. The labels' code loads the first time a
 chart asks for them.
 
+#### Range navigator
+
+`navigator: rangeNavigator()` adds a strip under the plot that draws the
+chart's marks small over the whole x axis, with a window over the x range
+in view:
+
+```ts
+import { createChart, line, rangeNavigator } from "herceg";
+
+createChart(element, {
+  marks: [line(prices, { x: "time", y: "close", id: "close" })],
+  navigator: rangeNavigator({ height: 40, marks: ["close"] }),
+});
+```
+
+Dragging the window pans, dragging either of its edges zooms, dragging
+elsewhere in the strip shows the range dragged over, and a double click
+shows all of x (y keeps its view). The window follows every other change of
+view: wheel zoom and panning, brushes that zoom, `setViewport`, and synced
+charts. Its changes are changes of view like those: reported by `viewport`
+events, shared with synced charts, and shown at once, not animated. A view
+reaching past the data widens the strip to hold it. While data streams, an
+x range set with the navigator stays put, as any set x range does, and the
+strip grows with the data; with x not zoomed, the window spans everything.
+A drag holds on to the strip it started on, so the window moves with the
+pointer as data arrives, and lets go if something else changes the view.
+
+The strip is 40 pixels tall by default (`height`, at least 16 and at most a
+third of the height the plot and the strip share; a chart too short to
+leave its plot 30 pixels beside the strip has none), under the x axis and
+its title, across the
+plot's width, with the strip's own ticks as grid lines and their labels
+inside it. It draws the marks named in `marks` by `id`, or by default every
+line, area, point, vertical bar, and candlestick mark (never annotations):
+lines and areas reduced to a few points per pixel column, as the plot
+reduces them, bars and candlesticks as the plot draws them, and points as a
+sample of one per pixel of the strip, all in their series' colors over the
+data's whole y range (or the y axis' `domain`). It follows the x axis'
+breaks. Charts with facets or panels, layout marks (pies, maps, 3D
+charts), category x axes, or marks placed along y (horizontal bars) cannot
+have one yet.
+
+For the keyboard, the window's left edge, the window, and its right edge
+are sliders, in that order in the tab sequence after the legend, named as
+the start and end of the range shown (the left edge is the end on a
+reversed axis). On an edge, the arrow
+keys move it by a hundredth of the strip, Page Up and Page Down by a tenth,
+and Home and End as far as it goes, a few pixels short of the other edge;
+on the window, they pan it, and with Shift the arrows widen (Right, Up) or
+narrow (Left, Down) it about its middle. Keys move values: Right, Up, Page
+Up, and End toward larger ones, which on a reversed axis are leftward.
+Escape takes a drag back to where it started, or shows all of x.
+The sliders' values read as the x axis' tooltips write them, and where the
+window ends up is announced politely. Static SVG, PDF, and PNG show the
+strip and the window, without the sliders. The strip's model code comes with
+`rangeNavigator` (about 3.8 KiB gzip); the sliders load the first time a
+chart has a navigator (about 2.9 KiB gzip). In a spec, `navigator` is
+`true` or `{ height?, marks? }` (spec version 4).
+
 ### Small multiples
 
 `facet` draws the chart once per value of a category field, wrapped into
@@ -1190,6 +1249,7 @@ is internal, and charts take only marks the mark functions make.
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `resolve` | `{ x?, y? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x or y scale (see Small multiples and Subplots). |
 | `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots). |
+| `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. |
@@ -1209,8 +1269,8 @@ for an x range), `selection` and `selectionPanels` (see Small multiples for
 `getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
 `setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
 `render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
-painter for large point series, the animation code, a 3D chart's buttons, or
-the brush load, otherwise undefined). The brush loads when a chart can brush
+painter for large point series, the animation code, a 3D chart's buttons,
+the brush, or a navigator's sliders load, otherwise undefined). The brush loads when a chart can brush
 or first shows a selection; selections are kept and reported before it has,
 and a drag that starts before it arrives goes on from where it began. Tests
 that drag right after creating a chart await `chart.loading` first.
@@ -1504,7 +1564,8 @@ as they are drawn, skipping empty cells, or to the nearest cell of the next
 row or column when none is in line (Home and End go to a row's ends, Page
 Up and Page Down to a column's). The description also says what color
 scales and size and shape keys show. Pies, trees, and other layout
-marks step through their items. Legend entries are toggle buttons.
+marks step through their items. Legend entries are toggle buttons, and a
+range navigator's window and edges are sliders (see Range navigator).
 
 ## Export
 
@@ -1562,10 +1623,10 @@ their table. A mark's `spec` is frozen, readonly all the way down: to change
 a mark, build a new one and pass it to `chart.update({ marks })`.
 
 Specs say which format `version` they are; one without is version 1. Specs
-using `resolve`, `panels`, or `grid` must say 2 or later, and those using
-`resolve.x` or a panel's own `x` must say 3 (`SPEC_VERSION`, the version this
-herceg writes), so that older readers refuse what they would draw
-differently. Loading checks a spec and names the property at
+using `resolve`, `panels`, or `grid` must say 2 or later, those using
+`resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later, and
+those with a `navigator` 4 (`SPEC_VERSION`, the version this herceg
+writes), so that older readers refuse what they would draw differently. Loading checks a spec and names the property at
 fault in errors. Properties herceg does not know, misspelled or from a newer
 version, are logged with `console.warn` and otherwise ignored;
 `loadSpec(spec, buffers, { unknown: "error" })` refuses them instead, and

@@ -24,6 +24,7 @@ import {
   type Viewport,
   type YViewport,
 } from "../model/model.ts";
+import type { NavigatorControls } from "../model/navigator.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -222,6 +223,8 @@ export class MountedChart implements Chart {
   } | null = null;
   /** A press in a chart of a layout mark, which has nothing to drag: a click if released in place. */
   #tap: { pointer: number; x: number; y: number; moved: boolean } | null = null;
+  /** The navigator's sliders, which load when the chart first has a navigator. */
+  #navigator: NavigatorControls | undefined;
   /** Turns a 3D chart's camera, once loaded; null if it failed to load. */
   #orbit: Orbit | null | undefined;
   #orbitLoading: Promise<void> | undefined;
@@ -495,6 +498,7 @@ export class MountedChart implements Chart {
       this.#crosshairLoading,
       this.#orbitLoading,
       this.#brushLoading,
+      this.#navigator?.loading,
     ].filter((loading) => loading !== undefined);
     return pending.length > 1 ? Promise.all(pending).then(() => {}) : pending[0];
   }
@@ -644,6 +648,7 @@ export class MountedChart implements Chart {
     this.#tables.clear();
     this.#clouds?.release(this);
     this.#orbit?.dispose();
+    this.#navigator?.dispose();
     // A transition waiting for its first frame leaves the frame's batch;
     // values let go of what they moved.
     this.#animation?.settle();
@@ -835,6 +840,15 @@ export class MountedChart implements Chart {
     if (options.animation) this.#loadAnimation();
     if (typeof options.animation === "object" && options.animation.values) this.#loadValues();
     if (typeof options.tooltip === "object" && options.tooltip.axisLabels) this.#loadCrosshair();
+    // The navigator's sliders stay as options change, keeping their focus,
+    // and go when it does.
+    this.#navigator =
+      options.navigator?.mount(
+        this.#navigator,
+        () => import("./navigator.ts"),
+        this as Chart,
+        this.#model,
+      ) ?? this.#navigator?.dispose();
     // Drags pan or brush; the page still scrolls along an axis they leave alone.
     const { zoom, brush } = options.interaction ?? {};
     const along = `${zoom === true ? "x" : zoom || ""}${brush === "lasso" ? "xy" : (brush ?? "")}`;

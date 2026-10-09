@@ -5,6 +5,7 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  rangeNavigator,
   rowView,
   table,
   time,
@@ -631,6 +632,32 @@ describe("<Chart>", () => {
     expect(updates).toBe(0);
     act(() => root.render(<App days={["sun"]} />));
     expect(updates).toBe(1);
+  });
+
+  it("draws a navigator, keeps an equal one without updating, and removes it", async () => {
+    const ref: { current: HercegChart | null } = { current: null };
+    function App({ height }: { height?: number }) {
+      return (
+        <Chart ref={ref} {...(height !== undefined && { navigator: rangeNavigator({ height }) })}>
+          <Line data={metrics} x="t" y="a" />
+        </Chart>
+      );
+    }
+    act(() => root.render(<App height={40} />));
+    const chart = ref.current!;
+    await chart.loading;
+    expect(host.querySelectorAll('[aria-label="Range navigator"] [role="slider"]')).toHaveLength(3);
+    let updates = 0;
+    const update = chart.update.bind(chart);
+    chart.update = (options) => {
+      updates++;
+      update(options);
+    };
+    act(() => root.render(<App height={40} />));
+    expect(updates).toBe(0);
+    act(() => root.render(<App />));
+    expect(updates).toBe(1);
+    expect(host.querySelector('[aria-label="Range navigator"]')).toBeNull();
   });
 
   it("keeps unchanged marks when a sibling mark changes", () => {

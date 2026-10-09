@@ -108,6 +108,7 @@ export class Facet implements PanelLayout {
    * yet, and a y zoom over panels with y scales of their own.
    */
   check(marks: readonly Mark[], options: LayoutOptions = {}): void {
+    if (options.navigator) throw new Error("Charts with facets cannot have a navigator yet");
     checkBands(marks, options, this.yDefault);
     const zoom = options.interaction?.zoom;
     if (
