@@ -15,9 +15,11 @@ import {
   bandIndices,
   buildSeries,
   CATEGORY,
+  type ChartMark,
   type Frame,
   fieldBands,
   frozen,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -102,6 +104,7 @@ function candleOf(prices: Prices, row: number, log: boolean, out: Float64Array):
  * the nearest-point search measures from.
  */
 export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<CandlestickSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "x";
@@ -453,7 +456,7 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
 export function candlestick<S extends Schema>(
   table: Table<S>,
   options: CandlestickOptions<S>,
-): CandlestickMark {
+): ChartMark<Frozen<CandlestickSpec>> {
   const spec: CandlestickSpec = {
     type: "candlestick",
     x: options.x,

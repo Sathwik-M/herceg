@@ -82,7 +82,7 @@ describe("point size by field", () => {
   });
 
   it("leaves room for the largest radius at the plot edges", () => {
-    const mark = point(cities, { x: "x", y: "y", r: "pop", rRange: [1, 30] });
+    const mark = point(cities, { x: "x", y: "y", r: "pop", rRange: [1, 30] }) as PointMark;
     expect(mark.inset).toEqual({ x: 30, y: 30 });
   });
 
@@ -414,10 +414,10 @@ describe("point symbols", () => {
   });
 
   it("leaves room for how far pointed shapes reach", () => {
-    const star = point(cities, { x: "x", y: "y", r: 10, symbol: "star" });
+    const star = point(cities, { x: "x", y: "y", r: 10, symbol: "star" }) as PointMark;
     expect(star.inset.y).toBeCloseTo(10 * symbolReach("star"));
     expect(symbolReach("star")).toBeGreaterThan(1.5);
-    const shapes = point(cities, { x: "x", y: "y", r: 10, symbol: "region" });
+    const shapes = point(cities, { x: "x", y: "y", r: 10, symbol: "region" }) as PointMark;
     expect(shapes.inset.y).toBeCloseTo(10 * Math.max(...SYMBOLS.map(symbolReach)));
     // The topmost star's tip stays inside the plot.
     const { scene } = build({ marks: [star] });

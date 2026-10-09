@@ -2,6 +2,8 @@
 
 import { expect } from "vitest";
 import { cdp } from "vitest/browser";
+import { type Chart, MountedChart } from "../../src/dom/chart.ts";
+import type { ChartModel } from "../../src/model/model.ts";
 
 /** The x and width of a brush outline drawn as a rectangle, "M x0 y0 H x1 V y1 H x0 Z". */
 export function bandBox(outline: Element): { x: number; width: number } {
@@ -60,4 +62,9 @@ export async function accessibilityTree(
   };
   walk(roots[0]!, 0);
   return lines;
+}
+
+/** The model a chart draws from, for what no public method reports. */
+export function modelOf(chart: Chart): ChartModel {
+  return MountedChart.modelOf(chart);
 }

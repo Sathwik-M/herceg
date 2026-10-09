@@ -23,11 +23,13 @@ import {
   type AxisFormat,
   buildSeries,
   CATEGORY,
+  type ChartMark,
   type ColorRamp,
   type Frame,
   frozen,
   type GlyphKey,
   type Hit,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -109,6 +111,7 @@ interface Encoding {
 const streamKeys = new WeakMap<Table, Map<string, Map<string, object>>>();
 
 export class PointMark implements Mark<Frozen<PointSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<PointSpec>;
   readonly table: Table<Schema>;
   readonly view: RowView | undefined;
@@ -721,7 +724,7 @@ function buildIndex(
 export function point<S extends Schema>(
   data: Table<S> | RowView<S>,
   options: PointOptions<S>,
-): PointMark {
+): ChartMark<Frozen<PointSpec>> {
   const view = isRowView(data) ? data : undefined;
   const table = view ? view.source : (data as Table<S>);
   const spec: PointSpec = {

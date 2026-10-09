@@ -11,8 +11,10 @@ import {
   type AxisFormat,
   type BandContext,
   CATEGORY,
+  type ChartMark,
   type Frame,
   frozen,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -73,6 +75,7 @@ interface Binned {
  * x, so tooltips report a bin's range and its count.
  */
 export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<HistogramSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "x";
@@ -499,7 +502,7 @@ function binOf(edges: Float64Array, value: number): number {
 export function histogram<S extends Schema>(
   table: Table<S>,
   options: HistogramOptions<S>,
-): HistogramMark {
+): ChartMark<Frozen<HistogramSpec>> {
   const spec: HistogramSpec = {
     type: "histogram",
     x: options.x,

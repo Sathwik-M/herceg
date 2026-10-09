@@ -34,10 +34,13 @@ functions can also be passed as a `marks` prop.
 The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or `style` says otherwise; `class` and `style` go to the container
 element. Chart events are callback props: `onviewport`, `onselect`,
-`onhover`, `onclick`, and `oncamera` (a 3D chart turned). The chart listens only while a handler is given
-and calls the current one, so passing a new function does not resubscribe.
-`bind:chart` gives the underlying chart (null until mounted) for imperative
-calls (`setViewport`, `select`, `toSVG`):
+`onhover`, `onclick`, `oncamera` (a 3D chart turned), `onvisibility` (series hidden or
+shown), and `onrender` (a frame of the data drawn, for overlays, the first one as the
+chart mounts). The chart listens only
+while a handler is given and calls the current one, so passing a new function does not
+resubscribe. `bind:chart` gives the underlying chart, herceg's `Chart` (null until
+mounted), for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibility`,
+`toSVG`):
 
 ```svelte
 <script lang="ts">

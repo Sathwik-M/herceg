@@ -4,8 +4,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import type { SeriesData } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartKind, ChartOptions } from "../page/adapter.ts";
-import { clientPoint } from "../page/adapter.ts";
-import { appendTo, columnsOf, seriesTable } from "./herceg.ts";
+import { appendTo, columnsOf, pixelOf, seriesTable } from "./herceg.ts";
 
 // Herceg through its React adapter, to measure what React adds. Mounting and
 // resizing go through React props (rendered synchronously with flushSync, as
@@ -35,8 +34,7 @@ function lineKind(fill: boolean): ChartKind<SeriesData> {
         append: (x, ys, keep) => appendTo(source, x, ys, keep),
         // The adapter exposes the chart through `ref` for imperative calls.
         setViewport: (x0, x1) => chart().setViewport([x0, x1]),
-        pixelOf: (_series, _index, x, y) =>
-          clientPoint(chart().root, chart().model.xScale()!.map(x), chart().model.yScale()!.map(y)),
+        pixelOf: (_series, _index, x, y) => pixelOf(chart(), x, y),
         resize: (width, height) => render(width, height),
         destroy: () => root.unmount(),
       };

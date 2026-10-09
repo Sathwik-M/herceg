@@ -4,7 +4,6 @@ import {
   facet,
   geometry,
   type Chart as HercegChart,
-  type Mark as HercegMark,
   line,
   rowView,
   table,
@@ -99,9 +98,15 @@ describe("<Chart>", () => {
   it("draws a view's rows, and a new view replaces the mark", () => {
     const slow = rowView(metrics, { filter: col("a").gt(2) });
     const fast = rowView(metrics, { filter: col("a").le(2) });
+    // The rows of the table the chart shows: those found where they are drawn.
     const shown = () => {
-      chartOf().render();
-      return chartOf().model.series()[0]!.length;
+      const c = chartOf();
+      c.render();
+      return [0, 1, 2, 3].filter((row) => {
+        const x = c.toPixel(metrics.numbers("t")[row]!, { axis: "x" })!;
+        const y = c.toPixel(metrics.numbers("a")[row]!, { axis: "y" })!;
+        return c.inspect(x, y)?.points[0]?.row === row;
+      });
     };
     let chart: HercegChart | null = null;
     const chartOf = () => chart!;
@@ -117,7 +122,7 @@ describe("<Chart>", () => {
         </Chart>,
       ),
     );
-    expect(shown()).toBe(2);
+    expect(shown()).toEqual([2, 3]);
     act(() =>
       root.render(
         <Chart
@@ -130,8 +135,7 @@ describe("<Chart>", () => {
         </Chart>,
       ),
     );
-    expect(shown()).toBe(2);
-    expect(chartOf().model.series()[0]!.rows).toEqual(Uint32Array.of(0, 1));
+    expect(shown()).toEqual([0, 1]);
   });
 
   it("renders a pie from its element, a path of arcs per slice", () => {
@@ -403,29 +407,20 @@ describe("<Chart>", () => {
     act(() => root.render(<App />));
     const buttons = host.querySelectorAll("button");
     expect([...buttons].map((button) => button.textContent)).toEqual(["a", "b"]);
-    const model = (chart as unknown as HercegChart).model;
-    const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))!;
+    const mounted = chart as unknown as HercegChart;
+    const inspection = mounted.inspect(
+      mounted.toPixel(1, { axis: "x" })!,
+      mounted.toPixel(2, { axis: "y" })!,
+    )!;
     expect(inspection.points.map((p) => p.text)).toEqual(["2 req", "3 req"]);
     act(() => buttons[0]!.click());
     (chart as unknown as HercegChart).render();
     expect(drawn.at(-1)).toEqual(["b"]);
   });
 
-  it("keeps marks written against the Mark interface only while they are the same object", async () => {
-    // A mark whose spec does not describe what it draws.
-    const badge = (label: string): HercegMark => {
-      const inner = custom({ draw: ({ text, x, y }) => text(x(1), y(2), label) });
-      return {
-        spec: { type: "badge" },
-        table: undefined,
-        tooltip: "x",
-        channelKind: () => undefined,
-        series: () => [],
-        xExtent: () => undefined,
-        yExtent: () => undefined,
-        geometry: (series, frame, key) => inner.geometry(series, frame, key),
-      };
-    };
+  it("keeps custom marks given as marks only while they are the same object", async () => {
+    // A custom mark's spec does not describe what it draws.
+    const badge = (label: string) => custom({ draw: ({ text, x, y }) => text(x(1), y(2), label) });
     const labels = () =>
       [...host.querySelectorAll('[data-kind="shapes"] text')].map((t) => t.textContent);
     const view = (label: string) => (
@@ -453,6 +448,41 @@ describe("<Chart>", () => {
     act(() => root.render(<App name="two" />));
     act(() => (chart as unknown as HercegChart).select([1, 2]));
     expect(seen).toEqual(["two:1-2"]);
+  });
+
+  it("tells onRender of the first frame, with the ref set", () => {
+    const panels: number[] = [];
+    function App() {
+      const ref = useRef<HercegChart | null>(null);
+      return (
+        <Chart ref={ref} onRender={() => panels.push(ref.current!.getPanels().length)}>
+          <Line data={metrics} x="t" y="a" />
+        </Chart>
+      );
+    }
+    act(() => root.render(<App />));
+    expect(panels).toEqual([1]);
+  });
+
+  it("reports hiding that an update makes to the handler given with it", () => {
+    const ref: { current: HercegChart | null } = { current: null };
+    const seen: string[] = [];
+    function App({ name, both }: { name: string; both: boolean }) {
+      return (
+        <Chart
+          ref={ref}
+          onVisibilityChange={({ hiddenKeys }) => seen.push(`${name}:${hiddenKeys.length}`)}
+        >
+          <Line data={metrics} x="t" y="a" />
+          {both && <Line data={metrics} x="t" y="b" />}
+        </Chart>
+      );
+    }
+    act(() => root.render(<App name="one" both />));
+    act(() => ref.current!.setVisibility(ref.current!.getLegend()[1]!.key, false));
+    // The second line goes, and its hidden key with it.
+    act(() => root.render(<App name="two" both={false} />));
+    expect(seen).toEqual(["one:1", "two:0"]);
   });
 
   it("passes the whole view to onViewportChange", () => {
@@ -553,7 +583,7 @@ describe("<Chart>", () => {
     }
     act(() => root.render(<App field="region" />));
     const chart = ref.current!;
-    expect(chart.model.panels().map((p) => p.key)).toEqual(["N", "S"]);
+    expect(chart.getPanels().map((p) => p.key)).toEqual(["N", "S"]);
     let updates = 0;
     const update = chart.update.bind(chart);
     chart.update = (options) => {
@@ -585,9 +615,10 @@ describe("<Chart>", () => {
     act(() => root.render(<App days={["sat", "sun"]} />));
     const chart = ref.current!;
     expect(host.querySelector("svg g[clip-path] rect")).toBeNull();
-    const x = chart.model.xScale()!;
     // Thursday, Friday, and Monday a day apart.
-    const [thu, fri, mon] = [0, 1, 4].map((d) => x.map(Date.UTC(2025, 9, 9) + d * day));
+    const [thu, fri, mon] = [0, 1, 4].map(
+      (d) => chart.toPixel(Date.UTC(2025, 9, 9) + d * day, { axis: "x" })!,
+    );
     expect(mon! - fri!).toBeCloseTo(fri! - thu!, 6);
     let updates = 0;
     const update = chart.update.bind(chart);

@@ -42,7 +42,7 @@ import {
 import { FaceBuffer, FaceIndex } from "../three/faces.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { legendParts } from "./legend-parts.ts";
-import type { ColorRamp, GlyphKey } from "./mark.ts";
+import type { ColorRamp, GlyphKey, MARK } from "./mark.ts";
 
 export const AXES = ["x", "y", "z"] as const;
 export type AxisName = (typeof AXES)[number];
@@ -142,6 +142,7 @@ export function joinLayers3D(marks: readonly LayoutMark[], config: ChartConfig):
 
 /** A chart's 3D layers, drawn in one box as one layout mark. */
 export class Plot3D implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec = { type: "plot3d" } as const;
   readonly table = undefined;

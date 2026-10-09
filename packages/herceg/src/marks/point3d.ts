@@ -21,7 +21,14 @@ import type { Theme } from "../theme.ts";
 import type { FaceBuffer } from "../three/faces.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { type ColorRamp, frozen, type GlyphKey, requireField } from "./mark.ts";
+import {
+  type ChartMark,
+  type ColorRamp,
+  frozen,
+  type GlyphKey,
+  type MARK,
+  requireField,
+} from "./mark.ts";
 import {
   type AxisData,
   type Frame3D,
@@ -74,6 +81,7 @@ interface Group {
 const drawnRows = new WeakMap<FaceBuffer, Map<string | number, Uint32Array>>();
 
 export class Point3DMark implements Layer3D {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly dimensions = 3;
   readonly spec: Frozen<Point3DSpec>;
@@ -399,7 +407,7 @@ function groupKey(id: string | number, series: string | undefined): string {
 export function point3d<S extends Schema>(
   table: Table<S>,
   options: Point3DOptions<S>,
-): Point3DMark {
+): ChartMark<Frozen<Point3DSpec>> {
   const spec: Point3DSpec = {
     type: "point3d",
     x: options.x,

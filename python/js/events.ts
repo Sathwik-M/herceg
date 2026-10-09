@@ -2,13 +2,10 @@
 // plain JSON in which the axes holding times are named, so Python can return
 // datetimes, and category positions are their labels rather than band indices.
 
-import type { Chart, Inspection, Selection, Viewport } from "herceg";
+import type { Axis, AxisInfo, Chart, Inspection, Selection, Viewport } from "herceg";
 
 type Ends = [number, number] | [string, string];
 type Range = readonly [number, number];
-type Axis = "x" | "y" | "yRight";
-/** What these functions read of an axis' scale. */
-type Scale = { readonly type: string; readonly categories?: readonly string[] | undefined };
 
 /** A viewport: each axis' range, or null where it is not zoomed. */
 export interface ViewportPayload {
@@ -56,25 +53,22 @@ export interface InspectionPayload {
   values?: Readonly<Record<string, number | string>>;
 }
 
-/** What reads a chart's axes: their scales, as Python sees their values. */
+/** What reads a chart's axes, as Python sees their values: their types and categories. */
 interface Scales {
-  x: Scale | undefined;
-  y: Scale | undefined;
-  yRight?: Scale | undefined;
+  x: AxisInfo | undefined;
+  y: AxisInfo | undefined;
+  yRight?: AxisInfo | undefined;
 }
 
 /**
- * The scales of the axes Python reads: x, which every panel of a live chart
- * shares, and the y axes of `panel` (by default the first panel's).
+ * The axes Python reads, as the chart last drew them: x, which every panel
+ * of a live chart shares, and the y axes of `panel` (by default the first
+ * panel's).
  */
 function scalesOf(chart: Chart, panel?: string): Scales {
-  const { model } = chart;
-  const found = model.panels().find(({ key }) => key === panel);
-  return {
-    x: model.xScale(),
-    y: found?.y ?? model.yScale(),
-    yRight: found?.yRight ?? model.yRightScale(),
-  };
+  const panels = chart.getPanels();
+  const found = panels.find(({ key }) => key === panel) ?? panels[0];
+  return { x: panels[0]?.x, y: found?.y, yRight: found?.yRight };
 }
 
 const timeAxes = (scales: Scales, axes: readonly Axis[]): Axis[] =>
@@ -163,14 +157,10 @@ export function inspectionPayload(
   inspection: Inspection | undefined,
 ): InspectionPayload | null {
   if (!inspection) return null;
-  // The panel's scales, which may differ from other panels'.
-  const panel = chart.model.panels().find(({ key }) => key === inspection.panel);
-  const scale =
-    inspection.axis === "item"
-      ? undefined
-      : inspection.axis === "x"
-        ? (panel?.x ?? chart.model.xScale())
-        : (panel?.y ?? chart.model.yScale());
+  // The panel's axes, which may differ from other panels'.
+  const panels = chart.getPanels();
+  const panel = panels.find(({ key }) => key === inspection.panel) ?? panels[0];
+  const scale = inspection.axis === "item" ? undefined : panel?.[inspection.axis];
   const categories = scale?.type === "band" ? scale.categories : undefined;
   return {
     axis: inspection.axis,
@@ -192,7 +182,7 @@ export function inspectionPayload(
 }
 
 /** A range's ends as Python reads them: on category axes, labels. */
-function ends(range: Range | null, scale: Scale | undefined): Ends | null {
+function ends(range: Range | null, scale: AxisInfo | undefined): Ends | null {
   if (!range) return null;
   const categories = scale?.type === "band" ? scale.categories : undefined;
   if (categories) return [label(categories, range[0]), label(categories, range[1])];
@@ -200,7 +190,7 @@ function ends(range: Range | null, scale: Scale | undefined): Ends | null {
 }
 
 /** A range from Python as the chart takes it: category labels become band indices, or null when gone. */
-function chartRange(range: Ends | null, scale: Scale | undefined): Range | null {
+function chartRange(range: Ends | null, scale: AxisInfo | undefined): Range | null {
   if (!range) return null;
   const [start, end] = range;
   if (typeof start === "number" && typeof end === "number") return [start, end];

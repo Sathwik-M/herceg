@@ -5,7 +5,7 @@ import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
-import { line } from "../../src/marks/line.ts";
+import { type LineMark, line } from "../../src/marks/line.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { describeChart } from "../../src/model/describe.ts";
@@ -947,7 +947,10 @@ describe("panel groups", () => {
     model.scene(estimateText);
     const split = layout
       .splitter()
-      .split(model.series().length ? [{ mark: marks[0]!, series: model.series() }] : [], () => {});
+      .split(
+        model.series().length ? [{ mark: marks[0] as LineMark, series: model.series() }] : [],
+        () => {},
+      );
     const byPanel = layout.groups("independent", split, 2);
     expect(byPanel.keys).toEqual(['["a"]', '["b"]', '["c"]', '["d"]']);
     const byRow = layout.groups("rows", split, 2);

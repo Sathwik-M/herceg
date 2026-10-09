@@ -5,7 +5,7 @@ import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
-import { point } from "../../src/marks/point.ts";
+import { type PointMark, point } from "../../src/marks/point.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderSvg } from "../../src/render/svg.ts";
@@ -44,7 +44,7 @@ describe("point outlines", () => {
   });
 
   it("rings points one pixel wide with only a color", () => {
-    const mark = point(values, { x: "x", y: "a", r: 4, stroke: "#123456" });
+    const mark = point(values, { x: "x", y: "a", r: 4, stroke: "#123456" }) as PointMark;
     const [g] = geometry<PointGeometry>(build({ marks: [mark] }), "point");
     expect(g!.ring).toEqual({ color: "#123456", width: 1 });
     // The outline reaches half its width past each point.

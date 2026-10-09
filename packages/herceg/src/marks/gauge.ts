@@ -12,7 +12,7 @@ import type { ArcGeometry, Geometry, ShapesGeometry, TextGeometry } from "../sce
 import type { Frozen, GaugeBand, GaugeSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { frozen, requireField } from "./mark.ts";
+import { type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface GaugeOptions<S extends Schema> {
   /** Number field whose last finite value the gauge shows. */
@@ -54,6 +54,7 @@ interface Band {
 }
 
 export class GaugeMark implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec: Frozen<GaugeSpec>;
   readonly table: Table;
@@ -284,7 +285,10 @@ function outside(value: number, min: number, max: number): string {
  * gauge(metrics, { value: "cpu", bands: [{ to: 70 }, { to: 90 }, { to: 100 }] })
  * ```
  */
-export function gauge<S extends Schema>(table: Table<S>, options: GaugeOptions<S>): GaugeMark {
+export function gauge<S extends Schema>(
+  table: Table<S>,
+  options: GaugeOptions<S>,
+): ChartMark<Frozen<GaugeSpec>> {
   const spec: GaugeSpec = { type: "gauge", value: options.value };
   if (options.min !== undefined) spec.min = options.min;
   if (options.max !== undefined) spec.max = options.max;

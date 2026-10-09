@@ -10,6 +10,7 @@ import { createGrid, type Grid, type GridOptions } from "../../src/dom/grid.ts";
 import { createGridModel, type GridColumn, type GridModel } from "../../src/grid/model.ts";
 import { point } from "../../src/marks/point.ts";
 import { resolveTheme } from "../../src/theme.ts";
+import { modelOf } from "./helpers.ts";
 
 const hosts: HTMLElement[] = [];
 const grids: { destroy(): void }[] = [];
@@ -608,13 +609,13 @@ describe("grids linked to charts", () => {
       modifiers: ["Shift"],
     });
     await frames();
-    expect(chart.model.series()[0]!.length).toBe(4);
+    expect(modelOf(chart).series()[0]!.length).toBe(4);
     chart.select([10, 19.5]);
     await frames();
     expect(scroller(grid).getAttribute("aria-rowcount")).toBe("11");
     expect(texts(rowAt(grid, 0))[0]).toBe("10");
     // The grid's rows filtered away stay selected, and the chart still shows them.
-    expect(chart.model.series()[0]!.length).toBe(4);
+    expect(modelOf(chart).series()[0]!.length).toBe(4);
   });
 });
 

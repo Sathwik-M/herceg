@@ -10,14 +10,14 @@ import type { RowView } from "../data/row-view.ts";
 import type { Table } from "../data/table.ts";
 import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
 import { tablesOf, viewOf } from "../marks/layout-mark.ts";
-import type { AxisFormat } from "../marks/mark.ts";
+import { type AxisFormat, keyOwner } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import { describeChart } from "../model/describe.ts";
 import {
   type ChartConfig,
   ChartModel,
+  type DrawnPanel,
   type Inspection,
-  type PanelInfo,
   type Viewport,
   type YViewport,
 } from "../model/model.ts";
@@ -37,10 +37,18 @@ import type { Camera } from "../three/camera.ts";
 import type { CrosshairLabels } from "./axis-labels.ts";
 import { ascending, Brush, DRAG_THRESHOLD, normalize, type Selection } from "./brush.ts";
 import { type ChartEvents, type ChartListener, Emitter, type PanelTarget } from "./events.ts";
+import {
+  type AxisTarget,
+  type Chart,
+  type InspectOptions,
+  type LegendEntry,
+  type PanelInfo,
+  panelInfo,
+} from "./handle.ts";
 import { Legend } from "./legend.ts";
 import type { Orbit } from "./orbit.ts";
 import { readPage, watchPage } from "./page-theme.ts";
-import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
+import { observeVisibility, schedule, unschedule } from "./scheduler.ts";
 import { SvgLayer, svgElement } from "./svg-layer.ts";
 import {
   broadcastCursor,
@@ -51,6 +59,8 @@ import {
 } from "./sync.ts";
 import { describeInspection, Tooltip } from "./tooltip.ts";
 import type { ViewAnimation } from "./transition.ts";
+
+export type { Chart };
 
 export interface ChartOptions extends ChartConfig {
   /** Fixed size in CSS pixels; omitted dimensions follow the container. */
@@ -106,9 +116,10 @@ function hasClouds(scene: Scene): boolean {
 const HIDDEN_TEXT =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0";
 
-export class Chart implements Scheduled, SyncMember {
-  readonly model: ChartModel;
+/** The chart behind a `Chart` handle: what `createChart` mounts. */
+export class MountedChart implements Chart {
   readonly root: HTMLDivElement;
+  readonly #model: ChartModel;
   #options: ChartOptions;
   readonly #container: HTMLElement;
   /**
@@ -140,8 +151,36 @@ export class Chart implements Scheduled, SyncMember {
   #animationLoading: Promise<void> | undefined;
   /** How long the last frame took to plan and paint, in milliseconds. */
   #drawTime = 0;
-  #visible = true;
+  /**
+   * The chart in the shared frame loop: it draws pending changes once a
+   * frame while the chart is on screen.
+   */
+  readonly #scheduled = { flush: () => this.#flush(), visible: true };
+  /**
+   * How synced charts reach this one: what they share is shown here without
+   * being shared again. Broadcasts name it as their sender.
+   */
+  readonly #member: SyncMember = {
+    syncCursor: (x) => {
+      this.#syncedX = x;
+      schedule(this.#scheduled);
+    },
+    syncViewport: (domain) => {
+      if (!this.#model.sharesX) return;
+      this.#settle();
+      this.#changeView(() => this.#model.setViewport(domain), false);
+    },
+    // Charts whose panels have x scales of their own share cursors only.
+    syncSelection: (selection) => {
+      if (this.#model.sharesX) this.#select(selection);
+    },
+  };
   #dirty = true;
+  /**
+   * Changes since the last frame that may change the panels or how they
+   * share scales (options, data, size, hidden series), unlike changes of view.
+   */
+  #panelsChanged = false;
   #destroyed = false;
   #pointer: { x: number; y: number } | null = null;
   #syncedX: number | null = null;
@@ -164,7 +203,7 @@ export class Chart implements Scheduled, SyncMember {
   #press: {
     x: number;
     y: number;
-    panel: PanelInfo;
+    panel: DrawnPanel;
     mode: "pan" | "brush" | "click";
     moved: boolean;
   } | null = null;
@@ -207,7 +246,7 @@ export class Chart implements Scheduled, SyncMember {
     const document = container.ownerDocument;
     this.#container = container;
     this.#options = options;
-    this.model = readPage(container, (page) => new ChartModel(options, page));
+    this.#model = readPage(container, (page) => new ChartModel(options, page));
 
     this.root = document.createElement("div");
     this.root.style.cssText = "position:relative;overflow:hidden;outline-offset:2px";
@@ -226,12 +265,9 @@ export class Chart implements Scheduled, SyncMember {
     });
     this.#brush = new Brush(svgElement(document, "g"), `${this.#id}-brush`);
     this.#svg.overlay.append(this.#brush.element, ...this.#crosshairs, this.#dots, this.#outline);
-    this.#legend = new Legend(document, (key) => {
-      if (this.model.hidden.has(key)) this.model.hidden.delete(key);
-      else this.model.hidden.add(key);
-      this.#settle();
-      this.#invalidate();
-    });
+    this.#legend = new Legend(document, (key) =>
+      this.setVisibility(key, this.#model.hidden.has(key)),
+    );
     this.#tooltip = new Tooltip(document);
     this.#description = document.createElement("div");
     this.#description.id = `${this.#id}-description`;
@@ -262,7 +298,7 @@ export class Chart implements Scheduled, SyncMember {
         const observer = new ResizeObserver(() => {
           this.#remember();
           const { width, height } = this.#size();
-          if (width === this.model.width && height === this.model.height) return;
+          if (width === this.#model.width && height === this.#model.height) return;
           this.#settle();
           this.#invalidate();
         });
@@ -270,7 +306,7 @@ export class Chart implements Scheduled, SyncMember {
         this.#cleanup.push(() => observer.disconnect());
       }
       // The first frame renders synchronously so the chart is never blank.
-      this.flush();
+      this.#flush();
     } catch (error) {
       // Nothing returns a handle to the caller, so undo everything here.
       this.destroy();
@@ -278,45 +314,48 @@ export class Chart implements Scheduled, SyncMember {
     }
   }
 
-  get visible(): boolean {
-    return this.#visible;
+  /**
+   * The model a chart draws from: for this package's own tests, which read
+   * state no public method reports. Applications use the `Chart` methods.
+   */
+  static modelOf(chart: Chart): ChartModel {
+    return (chart as MountedChart).#model;
   }
 
-  /** Replaces options. Unspecified keys keep their current values. */
   update(options: ChartUpdate): void {
     const next: Record<string, unknown> = { ...this.#options, ...options };
     for (const [key, value] of Object.entries(options)) if (value === undefined) delete next[key];
     this.#options = next as unknown as ChartOptions;
-    const y = this.model.yViewport;
-    readPage(this.#container, (page) => this.model.update(this.#options, page));
+    const y = this.#model.yViewport;
+    readPage(this.#container, (page) => this.#model.update(this.#options, page));
     // The page was just read; a change it had is in the theme now.
     this.#pageChanged = false;
     this.#settle();
     this.#applyOptions();
     this.#invalidate();
+    // Hidden keys go with their marks' identities: their ids, or their
+    // indexes, which other marks may take.
+    const owners = new Set(this.#options.marks.map((mark, i) => mark.spec.id ?? i));
+    const kept = [...this.#model.hidden].filter((key) => {
+      const owner = keyOwner(key);
+      return owner !== undefined && owners.has(owner);
+    });
+    this.#hide(new Set(kept));
     // Panels given y scales of their own let go of the y viewport. Which x
     // scales there are now is known once drawn; listeners drawing calls
     // (hover, select) may change the view, which this report then includes.
-    if (this.model.yViewport !== y) {
+    if (this.#model.yViewport !== y) {
       this.#reporting(() => {
-        this.flush();
+        this.#flush();
         const scales = this.#xScales();
         this.#reportViews(
           scales,
-          scales.map((first) => ({ ...y, x: this.model.viewportOf(first?.key) })),
+          scales.map((first) => ({ ...y, x: this.#model.viewportOf(first?.key) })),
         );
       });
     }
   }
 
-  /**
-   * Zooms: each axis given (`x`, `y`, `yRight`) shows a range (epoch ms on
-   * time axes), or with null its configured domain or its data; axes left
-   * out keep their view. A pair is an x range, and null resets every axis.
-   * In charts whose panels have x scales of their own, an x range needs the
-   * `panel` whose scale shows it, and null without one resets every scale;
-   * y ranges are the chart's, whatever the panel.
-   */
   setViewport(
     view: Partial<Viewport> | readonly [number, number] | null,
     target: PanelTarget = {},
@@ -327,14 +366,14 @@ export class Chart implements Scheduled, SyncMember {
       ? { x: view as readonly [number, number] }
       : ((view as Partial<Viewport> | null) ?? { x: null, y: null, yRight: null });
     // Checked whole, so a change the chart refuses changes nothing.
-    if (change.x && panel === undefined) this.model.xGroupOf();
-    this.model.checkYViewport(change);
+    if (change.x && panel === undefined) this.#model.xGroupOf();
+    this.#model.checkYViewport(change);
     this.#animated(() =>
       this.#changeView(() => {
-        if (change.x !== undefined) this.model.setViewport(change.x, panel);
+        if (change.x !== undefined) this.#model.setViewport(change.x, panel);
         if (change.y !== undefined || change.yRight !== undefined) {
-          const kept = this.model.yViewport;
-          this.model.setYViewport({
+          const kept = this.#model.yViewport;
+          this.#model.setYViewport({
             y: change.y === undefined ? kept.y : change.y,
             yRight: change.yRight === undefined ? kept.yRight : change.yRight,
           });
@@ -343,87 +382,59 @@ export class Chart implements Scheduled, SyncMember {
     );
   }
 
-  /**
-   * What the chart shows: the x range of the x scale every panel shares
-   * (or, in charts whose panels have x scales of their own, of `panel`'s),
-   * and the y ranges, each null when that axis is not zoomed.
-   */
   getViewport(target: PanelTarget = {}): Viewport {
     this.#current(target.panel);
     return this.#viewOf(target.panel);
   }
 
   #viewOf(panel?: string): Viewport {
-    const { y, yRight } = this.model.yViewport;
-    return { x: this.model.viewportOf(panel), y, yRight };
+    const { y, yRight } = this.#model.yViewport;
+    return { x: this.#model.viewportOf(panel), y, yRight };
   }
 
   /**
    * The current panel named `panel`; throws when there is none. Pending
-   * changes may change the panels and how they share x, so they are drawn
-   * first, unless the panel is drawn on the one x scale the chart's options
-   * still say every panel shares. Without a name, nothing.
+   * changes other than changes of view may change the panels and how they
+   * share x, so they are drawn first, unless the panel is drawn on the one
+   * x scale the chart's options still say every panel shares. Without a
+   * name, nothing.
    */
-  #current(panel: string | undefined): PanelInfo | undefined {
+  #current(panel: string | undefined): DrawnPanel | undefined {
     if (panel === undefined) return undefined;
-    const find = () => this.model.panels().find(({ key }) => key === panel);
-    if (this.#dirty && !(this.model.sharesX && find()?.xGroup === "")) this.flush();
-    this.model.xGroupOf(panel);
+    const find = () => this.#model.panels().find(({ key }) => key === panel);
+    if (this.#panelsChanged && !(this.#model.sharesX && find()?.xGroup === "")) this.#flush();
+    this.#model.xGroupOf(panel);
     return find();
   }
 
-  /**
-   * Calls `listener` on every `type` event until the returned function is
-   * called.
-   *
-   * ```ts
-   * chart.on("select", ({ x }) => x && other.setViewport(x));
-   * ```
-   */
   on<K extends keyof ChartEvents>(type: K, listener: ChartListener<K>): () => void {
     return this.#events.on(type, listener);
   }
 
-  /** What is brushed (x and y ranges, epoch ms for time axes, and a lasso's outline), or null. */
   get selection(): Selection | null {
     return this.#brush.selection;
   }
 
-  /**
-   * The keys of the panels the selection belongs to, or null without one:
-   * every panel's, unless panels have x scales of their own (see `select`).
-   */
   get selectionPanels(): readonly string[] | null {
     return this.#owner && this.#keysOf(this.#owner.x);
   }
 
-  /**
-   * Sets or clears (null) the selection, as if the user had brushed it in
-   * `panel`; an x range alone may be given as a pair. In charts whose panels
-   * have x scales of their own, a selection needs the panel it is in, and
-   * belongs to the panels sharing its x scale.
-   */
   select(selection: Selection | readonly [number, number] | null, target: PanelTarget = {}): void {
     this.#selectIn(selection, this.#current(target.panel));
   }
 
   /** Selects in a panel of the last scene, and shares the selection with synced charts. */
-  #selectIn(selection: Selection | readonly [number, number] | null, panel?: PanelInfo) {
+  #selectIn(selection: Selection | readonly [number, number] | null, panel?: DrawnPanel) {
     this.#select(selection, panel);
     const sync = this.#options.interaction?.sync;
-    if (sync && this.model.sharesX) broadcastSelection(sync, this, this.#brush.selection);
+    if (sync && this.#model.sharesX) broadcastSelection(sync, this.#member, this.#brush.selection);
   }
 
-  syncSelection(selection: Selection | readonly [number, number] | null): void {
-    // Charts whose panels have x scales of their own share cursors only.
-    if (this.model.sharesX) this.#select(selection);
-  }
-
-  #select(selection: Selection | readonly [number, number] | null, at?: PanelInfo) {
+  #select(selection: Selection | readonly [number, number] | null, at?: DrawnPanel) {
     const given = Array.isArray(selection)
       ? { x: selection as readonly [number, number], y: null, lasso: null }
       : (selection as Selection | null);
-    const panel = at ?? this.model.panels()[0];
+    const panel = at ?? this.#model.panels()[0];
     const fit = (range: readonly [number, number] | null, scale: PositionScale | undefined) =>
       range && (scale ? normalize(scale, range[0], range[1]) : ascending(...range));
     const next =
@@ -431,7 +442,7 @@ export class Chart implements Scheduled, SyncMember {
         ? { x: fit(given.x, panel?.x), y: fit(given.y, panel?.y), lasso: given.lasso }
         : null;
     // A selection belongs to the panels sharing the x scale of the panel it is in.
-    const x = next ? (at?.xGroup ?? this.model.xGroupOf()) : undefined;
+    const x = next ? (at?.xGroup ?? this.#model.xGroupOf()) : undefined;
     if (!next) this.#brushAnchor = null;
     const before = this.#owner;
     if (sameSelection(next, this.#brush.selection) && x === before?.x) return;
@@ -440,7 +451,7 @@ export class Chart implements Scheduled, SyncMember {
       x: x!,
       panels: this.#keysOf(x!),
     };
-    schedule(this);
+    schedule(this.#scheduled);
     this.#emitSelection(next, this.#owner ?? before);
   }
 
@@ -455,12 +466,6 @@ export class Chart implements Scheduled, SyncMember {
     });
   }
 
-  /**
-   * Pending while the chart loads code it needs: its GPU painter for large
-   * point series, which it draws once loaded, its `animation`, without
-   * which views change at once, or its crosshair labels. Undefined when
-   * nothing is pending.
-   */
   get loading(): Promise<void> | undefined {
     const pending = [
       this.#cloudsLoading,
@@ -471,53 +476,144 @@ export class Chart implements Scheduled, SyncMember {
     return pending.length > 1 ? Promise.all(pending).then(() => {}) : pending[0];
   }
 
-  /** Where a 3D chart is seen from (a copy); undefined for other charts. */
   get camera(): Camera | undefined {
-    return this.model.camera;
+    return this.#model.camera;
   }
 
-  /**
-   * Turns a 3D chart's camera: the settings given replace the current ones;
-   * null goes back to the configured camera. A `camera` event follows on
-   * the next frame.
-   */
   setCamera(camera: CameraSpec | null): void {
     this.#turn(camera, false);
   }
 
   #turn(camera: CameraSpec | null, announce: boolean): void {
-    if (!this.model.setCamera(camera)) return;
+    if (!this.#model.setCamera(camera)) return;
     this.#cameraMoved = true;
-    this.#invalidate();
-    if (announce && this.#orbit) this.#live.textContent = this.#orbit.describe(this.model.camera!);
+    this.#invalidate(false);
+    if (announce && this.#orbit) this.#live.textContent = this.#orbit.describe(this.#model.camera!);
   }
 
-  /** Renders now instead of on the next frame. */
+  getPanels(): readonly PanelInfo[] {
+    const model = this.#model;
+    if (!model.layout) return model.panels().map(panelInfo);
+    // A layout mark had the last frame's one panel to itself, without axes.
+    const plot = this.#scene?.panels[0]?.plot;
+    return plot ? [{ key: "", label: "", plot: { ...plot } }] : [];
+  }
+
+  toPixel(value: number, { panel, axis }: AxisTarget): number | undefined {
+    const scale = this.#panelOf(panel)?.[axis];
+    if (!scale || !Number.isFinite(value) || scale.breaks?.hides(value)) return undefined;
+    return finite(scale.map(value));
+  }
+
+  fromPixel(pixel: number, { panel, axis }: AxisTarget): number | undefined {
+    const scale = this.#panelOf(panel)?.[axis];
+    return scale && Number.isFinite(pixel) ? finite(scale.invert(pixel)) : undefined;
+  }
+
+  formatValue(value: number, { panel, axis }: AxisTarget): string | undefined {
+    const drawn = this.#panelOf(panel);
+    if (!drawn?.[axis] || !Number.isFinite(value)) return undefined;
+    const model = this.#model;
+    // As the panel's tooltips write values: category axes give "" past their categories.
+    const format =
+      axis === "yRight"
+        ? model.yRightFormat(drawn.key)
+        : model.formatsOf(undefined, drawn.key)[axis];
+    return format?.(value) || undefined;
+  }
+
+  inspect(x: number, y: number, { panel, mode }: InspectOptions = {}): Inspection | undefined {
+    // Throws for a panel the chart does not have; without one, the panel under the pixel.
+    if (panel !== undefined) this.#panelOf(panel);
+    return this.#model.inspect(x, y, mode, panel);
+  }
+
+  /**
+   * The panel of the last frame named `panel`, which charts of several
+   * panels need; throws for one the chart does not have. Undefined in a
+   * chart of a layout mark, whose one panel ("") has no axes.
+   */
+  #panelOf(panel: string | undefined): DrawnPanel | undefined {
+    const panels = this.#model.panels();
+    if (panel === undefined) {
+      if (panels.length > 1) throw new Error("Charts of several panels need a panel");
+      return panels[0];
+    }
+    // Throws for a panel the last frame did not have.
+    if (!this.#model.layout || panel !== "") this.#model.xGroupOf(panel);
+    return panels.find(({ key }) => key === panel);
+  }
+
+  getLegend(): readonly LegendEntry[] {
+    return this.#model.legendEntries().map(({ key, label, color }) => ({ key, label, color }));
+  }
+
+  getHiddenKeys(): readonly string[] {
+    return [...this.#model.hidden];
+  }
+
+  setHiddenKeys(keys: readonly string[]): void {
+    this.#hide(new Set(keys));
+  }
+
+  setVisibility(keys: string | readonly string[], visible: boolean): void {
+    const hidden = new Set(this.#model.hidden);
+    for (const key of typeof keys === "string" ? [keys] : keys) {
+      if (visible) hidden.delete(key);
+      else hidden.add(key);
+    }
+    this.#hide(hidden);
+  }
+
+  /**
+   * Hides what `next` names and shows the rest: how the legend, the
+   * visibility methods, and updates that remove marks all hide series and
+   * items, reporting once when something changed.
+   */
+  #hide(next: ReadonlySet<string>): void {
+    const hidden = this.#model.hidden;
+    if (next.size === hidden.size && [...next].every((key) => hidden.has(key))) return;
+    // Scenes draw with copies of the model's set, made as they are built.
+    hidden.clear();
+    for (const key of next) hidden.add(key);
+    this.#settle();
+    this.#invalidate();
+    this.#events.emit("visibility", { hiddenKeys: [...hidden] });
+  }
+
   render(): void {
     // The container may have changed since the observer last reported.
     this.#remember();
     this.#settle();
     this.#dirty = true;
-    this.flush();
+    this.#flush();
   }
 
-  /** Standalone SVG of the current state, for export. */
   toSVG(): string {
-    // Apply pending changes and the current container size first, so the
-    // export reflects the latest state.
-    this.render();
+    // The export shows the latest state at the container's current size: what
+    // is pending is drawn first, and no frame is drawn when nothing is, so
+    // render listeners may export.
+    this.#remember();
+    this.#settle();
+    const { width, height } = this.#size();
+    if (width !== this.#model.width || height !== this.#model.height) this.#dirty = true;
+    const drawn = this.#drawPending();
     const document = this.root.ownerDocument;
-    return renderSvg(this.model.scene(measurer(document)), {
+    const svg = renderSvg(this.#model.scene(measurer(document)), {
       idPrefix: `${this.#id}-export`,
       encodeRaster: (mark) => canvasRasterUrl(mark, document),
       ...(this.#options.description ? { description: this.#options.description } : {}),
     });
+    // Listeners hear of the frame once the export is written: what they
+    // change then is drawn on the next frame, as after any other.
+    if (drawn) this.#finishFrame(true);
+    return svg;
   }
 
   destroy(): void {
     if (this.#destroyed) return;
     this.#destroyed = true;
-    unschedule(this);
+    unschedule(this.#scheduled);
     if (this.#describeTimer !== 0) clearTimeout(this.#describeTimer);
     for (const stop of this.#cleanup) stop();
     this.#unwatchPage?.();
@@ -528,44 +624,50 @@ export class Chart implements Scheduled, SyncMember {
     // A transition waiting for its first frame leaves the frame's batch.
     this.#animation?.settle();
     this.#events.clear();
-    this.model.dispose();
+    this.#model.dispose();
     this.#scene = undefined;
     this.root.remove();
   }
 
-  /** Called by the scheduler. */
-  flush(): void {
+  /** Draws what changed: the scheduler calls this once a frame, the chart itself when it must draw at once. */
+  #flush(): void {
     if (this.#destroyed) return;
+    this.#finishFrame(this.#drawPending());
+  }
+
+  /** Draws pending changes, the page's theme among them; whether there were any. */
+  #drawPending(): boolean {
+    if (this.#destroyed) return false;
     if (this.#pageChanged) {
       this.#pageChanged = false;
-      if (readPage(this.#container, (page) => this.model.refreshTheme(page))) {
+      if (readPage(this.#container, (page) => this.#model.refreshTheme(page))) {
         // New fonts or sizes need margins planned for them: show the new view at once.
         this.#animation?.settle();
         this.#dirty = true;
       }
     }
-    if (this.#dirty) {
+    const drawn = this.#dirty;
+    if (drawn) {
       this.#dirty = false;
+      this.#panelsChanged = false;
       this.#draw();
     }
+    return drawn;
+  }
+
+  /**
+   * Draws the cursor, tooltip, and brush, and reports what the frame
+   * changed: what is hovered, the camera, and with `drawn`, the frame.
+   */
+  #finishFrame(drawn: boolean): void {
     this.#drawOverlay();
     // Camera events come once a frame, however many moves a drag made.
-    const camera = this.model.camera;
+    const camera = this.#model.camera;
     if (this.#cameraMoved && camera) {
       this.#cameraMoved = false;
       this.#events.emit("camera", { camera });
     }
-  }
-
-  syncCursor(x: number | null): void {
-    this.#syncedX = x;
-    schedule(this);
-  }
-
-  syncViewport(domain: readonly [number, number] | null): void {
-    if (!this.model.sharesX) return;
-    this.#settle();
-    this.#changeView(() => this.model.setViewport(domain), false);
+    if (drawn) this.#events.emit("render", {});
   }
 
   /**
@@ -587,13 +689,14 @@ export class Chart implements Scheduled, SyncMember {
     } finally {
       this.#changingView = false;
     }
-    this.#invalidate();
+    this.#invalidate(false);
     this.#reportViews(scales, before);
     // A listener may have changed the view again: share where it ended up.
     // Charts whose panels have x scales of their own share cursors only: a
     // viewport belongs to some panels.
     const sync = this.#options.interaction?.sync;
-    if (shareX && sync && this.model.sharesX) broadcastViewport(sync, this, this.model.viewport);
+    if (shareX && sync && this.#model.sharesX)
+      broadcastViewport(sync, this.#member, this.#model.viewport);
   }
 
   /**
@@ -602,7 +705,7 @@ export class Chart implements Scheduled, SyncMember {
    * these are reported, reports itself, and the views it reported are not
    * reported again.
    */
-  #reportViews(scales: readonly (PanelInfo | undefined)[], before: readonly Viewport[]): void {
+  #reportViews(scales: readonly (DrawnPanel | undefined)[], before: readonly Viewport[]): void {
     this.#reporting(() =>
       scales.forEach((first, i) => {
         // A listener may have changed the panels; those gone are left alone.
@@ -627,31 +730,36 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   /** The first panel of each x scale; one undefined when every panel shares x. */
-  #xScales(): (PanelInfo | undefined)[] {
-    const panels = this.model.panels();
-    return this.model.sharesX
+  #xScales(): (DrawnPanel | undefined)[] {
+    const panels = this.#model.panels();
+    return this.#model.sharesX
       ? [undefined]
       : panels.filter((p, i) => panels.findIndex(({ xGroup }) => xGroup === p.xGroup) === i);
   }
 
   /** The keys of the panels drawn with the x scale named `x`. */
   #keysOf(x: string): string[] {
-    return this.model
+    return this.#model
       .panels()
       .filter(({ xGroup }) => xGroup === x)
       .map(({ key }) => key);
   }
 
-  #invalidate() {
+  /**
+   * Draws on the next frame. Changes of view (`panels` false) keep the
+   * panels and how they share scales, which `#current` then need not draw.
+   */
+  #invalidate(panels = true) {
     this.#dirty = true;
-    schedule(this);
+    if (panels) this.#panelsChanged = true;
+    schedule(this.#scheduled);
   }
 
   #setVisible(visible: boolean) {
-    this.#visible = visible;
+    this.#scheduled.visible = visible;
     // A chart scrolled away shows the view asked for when it returns.
     if (!visible) this.#settle();
-    if (visible && (this.#dirty || this.#pageChanged)) schedule(this);
+    if (visible && (this.#dirty || this.#pageChanged)) schedule(this.#scheduled);
   }
 
   #applyOptions() {
@@ -683,7 +791,7 @@ export class Chart implements Scheduled, SyncMember {
     }
     const sync = options.interaction?.sync;
     this.#leaveSync?.();
-    this.#leaveSync = sync ? join(sync, this) : undefined;
+    this.#leaveSync = sync ? join(sync, this.#member) : undefined;
     this.#brush.mode = options.interaction?.brush ?? "x";
     if (options.animation) this.#loadAnimation();
     if (typeof options.tooltip === "object" && options.tooltip.axisLabels) this.#loadCrosshair();
@@ -697,7 +805,7 @@ export class Chart implements Scheduled, SyncMember {
         : along.includes("x")
           ? "pan-y"
           : "pan-x";
-    if (this.model.camera) this.#loadOrbit();
+    if (this.#model.camera) this.#loadOrbit();
     else {
       this.#orbit?.dispose();
       this.#orbit = undefined;
@@ -708,7 +816,7 @@ export class Chart implements Scheduled, SyncMember {
     if (follows && !this.#unwatchPage) {
       this.#unwatchPage = watchPage(this.#container.ownerDocument, () => {
         this.#pageChanged = true;
-        schedule(this);
+        schedule(this.#scheduled);
       });
     } else if (!follows && this.#unwatchPage) {
       this.#unwatchPage();
@@ -759,7 +867,7 @@ export class Chart implements Scheduled, SyncMember {
         this.#cloudsLoading = undefined;
         // Draw at once, so `loading` settles with the points on screen.
         this.#dirty = true;
-        this.flush();
+        this.#flush();
       });
   }
 
@@ -767,8 +875,8 @@ export class Chart implements Scheduled, SyncMember {
     const { width, height } = this.#size();
     const window = this.root.ownerDocument.defaultView;
     // Hosts measured each frame change size without the resize observer.
-    if (width !== this.model.width || height !== this.model.height) this.#animation?.settle();
-    this.model.setSize(width, height, window?.devicePixelRatio ?? 1);
+    if (width !== this.#model.width || height !== this.#model.height) this.#animation?.settle();
+    this.#model.setSize(width, height, window?.devicePixelRatio ?? 1);
     this.root.style.width = `${width}px`;
     this.root.style.height = `${height}px`;
     const measure = measurer(this.root.ownerDocument);
@@ -776,13 +884,13 @@ export class Chart implements Scheduled, SyncMember {
     const animation = this.#animation;
     if (animation?.playing) {
       const plan = () => {
-        this.model.scene(measure, cloudsAllowed);
-        return this.model.panels()[0];
+        this.#model.scene(measure, cloudsAllowed);
+        return this.#model.panels()[0];
       };
-      if (animation.step(plan, this.#drawTime)) this.#invalidate();
+      if (animation.step(plan, this.#drawTime)) this.#invalidate(false);
     }
     const started = performance.now();
-    const scene = this.model.scene(measure, cloudsAllowed);
+    const scene = this.#model.scene(measure, cloudsAllowed);
     this.#scene = scene;
     const clouds = hasClouds(scene);
     // A null painter means WebGL is unavailable; it is not loaded again.
@@ -832,15 +940,15 @@ export class Chart implements Scheduled, SyncMember {
    */
   #animated(change: () => void): void {
     const animation = this.#animation;
-    const panels = this.model.panels();
-    const { config } = this.model;
+    const panels = this.#model.panels();
+    const { config } = this.#model;
     const movable =
       animation &&
       panels.length === 1 &&
       !config.facet &&
       !config.panels &&
       !config.interaction?.sync &&
-      this.#visible &&
+      this.#scheduled.visible &&
       this.#scene &&
       !hasClouds(this.#scene);
     // What is on screen: no scene is drawn until the next frame.
@@ -848,7 +956,8 @@ export class Chart implements Scheduled, SyncMember {
     this.#settle();
     // The transition starts before the change reports itself, so viewport
     // listeners that draw, stream data, or change options end it as usual.
-    if (from && animation!.start(from, this.#options.animation, this.#drawTime)) this.#invalidate();
+    if (from && animation!.start(from, this.#options.animation, this.#drawTime))
+      this.#invalidate(false);
     change();
   }
 
@@ -856,7 +965,7 @@ export class Chart implements Scheduled, SyncMember {
   #settle(): void {
     if (!this.#animation?.playing) return;
     this.#animation.settle();
-    this.#invalidate();
+    this.#invalidate(false);
   }
 
   /** Loads what turns 3D charts the first time a chart draws one. */
@@ -866,7 +975,7 @@ export class Chart implements Scheduled, SyncMember {
       .then(
         ({ Orbit }) =>
           new Orbit(this.root, {
-            camera: () => this.model.camera,
+            camera: () => this.#model.camera,
             turn: (camera, announce) => this.#turn(camera, announce),
             onPlot: (target) => !this.#legend.element.contains(target as Node),
           }),
@@ -875,7 +984,7 @@ export class Chart implements Scheduled, SyncMember {
       .then((orbit) => {
         this.#orbitLoading = undefined;
         // A chart destroyed, or no longer 3D, while it loaded does without.
-        if (orbit && (this.#destroyed || !this.model.camera)) {
+        if (orbit && (this.#destroyed || !this.#model.camera)) {
           orbit.dispose();
           return;
         }
@@ -892,7 +1001,7 @@ export class Chart implements Scheduled, SyncMember {
     if (this.#animation !== undefined || this.#animationLoading) return;
     this.#animationLoading = import("./transition.ts")
       .then(
-        ({ ViewAnimation }) => new ViewAnimation(this.model, this.root.ownerDocument.defaultView),
+        ({ ViewAnimation }) => new ViewAnimation(this.#model, this.root.ownerDocument.defaultView),
       )
       // Without it, views change at once.
       .catch(() => null)
@@ -917,13 +1026,13 @@ export class Chart implements Scheduled, SyncMember {
       .then((labels) => {
         this.#crosshair = labels;
         this.#crosshairLoading = undefined;
-        if (!this.#destroyed) schedule(this);
+        if (!this.#destroyed) schedule(this.#scheduled);
       });
   }
 
   #describe() {
-    const { config } = this.model;
-    const key = `${config.marks.flatMap((mark) => tablesOf(mark).map((table) => table.version)).join(",")}|${[...this.model.hidden].join(",")}`;
+    const { config } = this.#model;
+    const key = `${config.marks.flatMap((mark) => tablesOf(mark).map((table) => table.version)).join(",")}|${[...this.#model.hidden].join(",")}`;
     if (this.#described?.config === config && this.#described.key === key) return;
     // Summaries scan the data, so streaming charts refresh them at most once
     // a second; a trailing refresh picks up the last change.
@@ -941,10 +1050,10 @@ export class Chart implements Scheduled, SyncMember {
     }
     this.#describedAt = performance.now();
     this.#described = { config, key };
-    const turn = this.model.camera
+    const turn = this.#model.camera
       ? " Shift with the arrow keys turns it, and plus and minus zoom."
       : "";
-    this.#description.textContent = `${describeChart(this.model)} Focus the chart and use the arrow keys to read values.${turn}`;
+    this.#description.textContent = `${describeChart(this.#model)} Focus the chart and use the arrow keys to read values.${turn}`;
   }
 
   /** The point the pointer or the keyboard is on. */
@@ -953,24 +1062,24 @@ export class Chart implements Scheduled, SyncMember {
     // A chart being turned shows no tooltip.
     if (this.#orbit?.turning) return undefined;
     // The model applies the configured tooltip mode.
-    if (this.#pointer) return this.model.inspect(this.#pointer.x, this.#pointer.y);
+    if (this.#pointer) return this.#model.inspect(this.#pointer.x, this.#pointer.y);
     const keyboard = this.#keyboard;
-    if (keyboard && this.model.layout) return this.model.inspectItem(keyboard.key);
+    if (keyboard && this.#model.layout) return this.#model.inspectItem(keyboard.key);
     if (keyboard)
-      return this.model.inspectPosition(keyboard.key, keyboard.position, keyboard.panel);
+      return this.#model.inspectPosition(keyboard.key, keyboard.position, keyboard.panel);
     return undefined;
   }
 
   /** Each panel's points at the x another chart's cursor shares. */
   #synced(): Inspection[] {
     const x = this.#syncedX;
-    if (x === null || !this.#sharesCursor() || this.model.series().length === 0) return [];
-    return this.model.panels().flatMap(({ plot, x: scale }) => {
+    if (x === null || !this.#sharesCursor() || this.#model.series().length === 0) return [];
+    return this.#model.panels().flatMap(({ plot, x: scale }) => {
       // Outside a panel's x range, the pixel would land in a neighboring panel;
       // a time an axis break leaves out has no place.
       const px = scale.map(x);
       if (!(px >= plot.x && px <= plot.x + plot.width) || scale.breaks?.hides(x)) return [];
-      const inspection = this.model.inspect(px, plot.y + plot.height / 2, "nearest-x");
+      const inspection = this.#model.inspect(px, plot.y + plot.height / 2, "nearest-x");
       return inspection ? [inspection] : [];
     });
   }
@@ -980,14 +1089,14 @@ export class Chart implements Scheduled, SyncMember {
    * (horizontal bars) measure values on x, so they neither share nor follow them.
    */
   #sharesCursor(): boolean {
-    return this.model.cursorAxis() === "x";
+    return this.#model.cursorAxis() === "x";
   }
 
   #drawOverlay() {
     const scene = this.#scene;
     if (!scene) return;
     const { theme } = scene;
-    const panels = this.model.panels();
+    const panels = this.#model.panels();
     // A selection whose panels are gone (their facet values, or a change of
     // how they share scales) goes too.
     const owner = this.#owner;
@@ -1087,7 +1196,7 @@ export class Chart implements Scheduled, SyncMember {
     const crosshair = this.#crosshair;
     if (crosshair && typeof tooltip === "object" && tooltip.axisLabels) {
       crosshair.draw(drawn, active, this.#pointer, {
-        model: this.model,
+        model: this.#model,
         scene,
         measure: measurer(this.root.ownerDocument),
         labelGap: tickLabelGap(theme.fontSize),
@@ -1136,12 +1245,12 @@ export class Chart implements Scheduled, SyncMember {
           this.#brush.move(x, y);
         }
       }
-      schedule(this);
+      schedule(this.#scheduled);
       const sync = this.#options.interaction?.sync;
       // Share the data x under the pointer; over no panel, none.
       if (sync && this.#sharesCursor()) {
         const panel = this.#panelAt(x, y);
-        broadcastCursor(sync, this, panel ? panel.x.invert(x) : null);
+        broadcastCursor(sync, this.#member, panel ? panel.x.invert(x) : null);
       }
     });
     on("pointerleave", (event) => {
@@ -1150,9 +1259,9 @@ export class Chart implements Scheduled, SyncMember {
       this.#press = null;
       if (this.#tap?.pointer === event.pointerId) this.#tap = null;
       this.#brush.cancel();
-      schedule(this);
+      schedule(this.#scheduled);
       const sync = this.#options.interaction?.sync;
-      if (sync) broadcastCursor(sync, this, null);
+      if (sync) broadcastCursor(sync, this.#member, null);
     });
 
     on(
@@ -1164,7 +1273,7 @@ export class Chart implements Scheduled, SyncMember {
         // shares; with several, none, and the page scrolls.
         const panel =
           this.#panelAt(point.x, point.y) ??
-          (this.model.sharesX ? this.model.panels()[0] : undefined);
+          (this.#model.sharesX ? this.#model.panels()[0] : undefined);
         if (!panel) return;
         event.preventDefault();
         // The wheel zooms from the view on screen, at once.
@@ -1178,7 +1287,7 @@ export class Chart implements Scheduled, SyncMember {
         const py = Math.min(plot.y + plot.height, Math.max(plot.y, point.y));
         this.#changeView(() => {
           if (zoom.x) {
-            this.model.setViewport(
+            this.#model.setViewport(
               [
                 scale.invert(px - (px - plot.x) * factor),
                 scale.invert(px + (plot.x + plot.width - px) * factor),
@@ -1201,10 +1310,10 @@ export class Chart implements Scheduled, SyncMember {
       // A drag starts from the view it lands in, not one passing by.
       if (this.#animation?.playing) {
         this.#settle();
-        this.flush();
+        this.#flush();
       }
       const { x, y } = local(event);
-      if (this.model.layout) {
+      if (this.#model.layout) {
         // A second pointer down makes neither a click (a pinch, say).
         if (this.#tap) this.#tap.moved = true;
         else this.#tap = { pointer: event.pointerId, x, y, moved: false };
@@ -1241,7 +1350,7 @@ export class Chart implements Scheduled, SyncMember {
       this.#brush.move(end.x, end.y);
       const selection = this.#brush.end();
       // The drag outline goes, whether or not the brush selects anything.
-      schedule(this);
+      schedule(this.#scheduled);
       // A panel that went while dragging (its facet value did) selects nothing.
       if (!selection || !this.#still(press.panel)) return;
       if (this.#zooms(selection, press.panel)) {
@@ -1251,7 +1360,7 @@ export class Chart implements Scheduled, SyncMember {
       this.#selectIn(selection, press.panel);
       const selected = this.#brush.selection;
       if (selected) {
-        const format = this.model.formatsOf(undefined, press.panel.key);
+        const format = this.#model.formatsOf(undefined, press.panel.key);
         this.#live.textContent = describeSelection(selected, format);
       }
     });
@@ -1272,11 +1381,11 @@ export class Chart implements Scheduled, SyncMember {
       if (!this.#options.interaction?.zoom) return;
       if (this.#legend.element.contains(event.target as Node)) return;
       const { x, y } = local(event);
-      const panel = this.model.sharesX ? undefined : this.#panelAt(x, y)?.key;
+      const panel = this.#model.sharesX ? undefined : this.#panelAt(x, y)?.key;
       this.#animated(() =>
         this.#changeView(() => {
-          this.model.setViewport(null, panel);
-          this.model.setYViewport({ y: null, yRight: null });
+          this.#model.setViewport(null, panel);
+          this.#model.setYViewport({ y: null, yRight: null });
         }, true),
       );
     });
@@ -1285,12 +1394,12 @@ export class Chart implements Scheduled, SyncMember {
     on("blur", () => {
       this.#keyboard = null;
       this.#brushAnchor = null;
-      schedule(this);
+      schedule(this.#scheduled);
     });
   }
 
   /** Moves the zoomable axes by a drag's shift, through the scales of the panel it started in. */
-  #pan(press: { x: number; y: number; panel: PanelInfo }, x: number, y: number) {
+  #pan(press: { x: number; y: number; panel: DrawnPanel }, x: number, y: number) {
     this.#settle();
     const { panel } = press;
     const { plot } = panel;
@@ -1298,7 +1407,7 @@ export class Chart implements Scheduled, SyncMember {
     const [dx, dy] = [press.x - x, press.y - y];
     this.#changeView(() => {
       if (zoom.x)
-        this.model.setViewport(
+        this.#model.setViewport(
           [panel.x.invert(plot.x + dx), panel.x.invert(plot.x + plot.width + dx)],
           panel.key,
         );
@@ -1310,7 +1419,7 @@ export class Chart implements Scheduled, SyncMember {
    * The axes the wheel, drags, and brushes zoom: those `interaction.zoom`
    * names, less category axes, which do not zoom.
    */
-  #zoomAxes(panel: PanelInfo): { x: boolean; y: boolean } {
+  #zoomAxes(panel: DrawnPanel): { x: boolean; y: boolean } {
     const zoom = this.#options.interaction?.zoom;
     const axes = zoom === true ? "x" : zoom || "";
     return {
@@ -1323,7 +1432,7 @@ export class Chart implements Scheduled, SyncMember {
    * Whether a selection is zoomed to rather than shown: when zoom is on along
    * every axis it has a range on. Lassos only select.
    */
-  #zooms(selection: Selection, panel: PanelInfo): boolean {
+  #zooms(selection: Selection, panel: DrawnPanel): boolean {
     if (selection.lasso || !(selection.x || selection.y)) return false;
     const zoom = this.#zoomAxes(panel);
     return (!selection.x || zoom.x) && (!selection.y || zoom.y);
@@ -1333,25 +1442,25 @@ export class Chart implements Scheduled, SyncMember {
   #cancelPress() {
     this.#press = null;
     this.#brush.cancel();
-    schedule(this);
+    schedule(this.#scheduled);
   }
 
   /**
    * Whether a panel of an earlier scene is still drawn, with the same
    * scales to share: what a drag that started in it may go on acting on.
    */
-  #still(panel: PanelInfo): boolean {
-    return this.model
+  #still(panel: DrawnPanel): boolean {
+    return this.#model
       .panels()
       .some(({ key, xGroup }) => key === panel.key && xGroup === panel.xGroup);
   }
 
   /** Zooms to a brushed selection. */
-  #zoomTo(selection: Selection, panel: PanelInfo) {
+  #zoomTo(selection: Selection, panel: DrawnPanel) {
     const { x, y } = selection;
     this.#animated(() =>
       this.#changeView(() => {
-        if (x) this.model.setViewport(x, panel.key);
+        if (x) this.#model.setViewport(x, panel.key);
         if (y) this.#zoomY(panel, panel.y.map(y[0]), panel.y.map(y[1]));
       }, x !== null),
     );
@@ -1361,18 +1470,18 @@ export class Chart implements Scheduled, SyncMember {
    * Shows the y values between two pixels of a panel: on the left axis, and
    * on the right axis what the same pixels show there.
    */
-  #zoomY(panel: PanelInfo, bottom: number, top: number) {
+  #zoomY(panel: DrawnPanel, bottom: number, top: number) {
     const range = (scale: PositionScale) => [scale.invert(bottom), scale.invert(top)] as const;
     const view: YViewport = {
       y: range(panel.y),
       yRight: panel.yRight ? range(panel.yRight) : null,
     };
-    this.model.setYViewport(view);
+    this.#model.setYViewport(view);
   }
 
   /** The panel whose plot holds a point of the chart. */
-  #panelAt(x: number, y: number): PanelInfo | undefined {
-    return this.model
+  #panelAt(x: number, y: number): DrawnPanel | undefined {
+    return this.#model
       .panels()
       .find(
         ({ plot }) =>
@@ -1384,7 +1493,7 @@ export class Chart implements Scheduled, SyncMember {
   #click(point: { x: number; y: number }) {
     if (this.#options.interaction?.brush) this.select(null);
     if (this.#events.has("click"))
-      this.#events.emit("click", { inspection: this.model.inspect(point.x, point.y) });
+      this.#events.emit("click", { inspection: this.#model.inspect(point.x, point.y) });
   }
 
   /**
@@ -1397,24 +1506,16 @@ export class Chart implements Scheduled, SyncMember {
    */
   #key(event: KeyboardEvent) {
     // Controls inside the chart (legend buttons) keep their own keys.
-    if (event.target !== this.root) return;
-    if (this.model.layout) {
+    if (event.target !== this.root || !NAVIGATION_KEYS.includes(event.key)) return;
+    // Keys move through what the chart shows once pending changes (a series
+    // hidden, new options) are drawn.
+    if (this.#dirty) this.#flush();
+    if (this.#model.layout) {
       this.#itemKey(event);
       return;
     }
-    const keys = [
-      "ArrowLeft",
-      "ArrowRight",
-      "Home",
-      "End",
-      "PageUp",
-      "PageDown",
-      "Escape",
-      "Enter",
-    ];
-    const panels = this.model.panels();
+    const panels = this.#model.panels();
     const vertical = event.key === "ArrowUp" || event.key === "ArrowDown";
-    if (!keys.includes(event.key) && !vertical) return;
     const brush = this.#options.interaction?.brush;
     // Enter and Escape act on the selection, whichever panel the cursor is in.
     if (event.key === "Enter") {
@@ -1426,8 +1527,8 @@ export class Chart implements Scheduled, SyncMember {
       this.select(null);
       // A select listener may have taken the panel away, or given it another
       // scale: zoom only where the selection still is.
-      if (this.#dirty) this.flush();
-      const still = this.model
+      if (this.#dirty) this.#flush();
+      const still = this.#model
         .panels()
         .find(({ key, xGroup }) => key === at.key && xGroup === at.xGroup);
       if (still) this.#zoomTo(selection, still);
@@ -1439,13 +1540,13 @@ export class Chart implements Scheduled, SyncMember {
       this.#brushAnchor = null;
       this.#live.textContent = "";
       if (this.#brush.selection) this.select(null);
-      schedule(this);
+      schedule(this.#scheduled);
       return;
     }
     // Where the cursor stops, panel by panel: Left and Right move through a
     // stop's points, Up and Down to the stop before or after.
     const stops = panels.flatMap(({ key }) =>
-      this.model.keyboardStops(key).map((series) => ({ panel: key, series })),
+      this.#model.keyboardStops(key).map((series) => ({ panel: key, series })),
     );
     const keyboard = this.#keyboard;
     let at = stops.findIndex(
@@ -1463,12 +1564,12 @@ export class Chart implements Scheduled, SyncMember {
     if (!start) return;
     // Heatmaps step cell by cell, in rows and columns as drawn; Up and Down
     // leave the grid at its edges.
-    const cells = (stop: { series: Series }) => this.model.markOf(stop.series)?.tooltip === "cell";
+    const cells = (stop: { series: Series }) => this.#model.markOf(stop.series)?.tooltip === "cell";
     let cell: number | undefined;
     if (cells(start) && current >= 0) {
       const [columns, rows] = CELL_STEPS[event.key] ?? [0, 0];
       cell =
-        this.model.stepCell(start.panel, start.series.key, current, columns, rows) ??
+        this.#model.stepCell(start.panel, start.series.key, current, columns, rows) ??
         (vertical ? undefined : current);
     }
     let across = keyboard !== null && !found;
@@ -1481,7 +1582,7 @@ export class Chart implements Scheduled, SyncMember {
     const { panel, series } = stops[at]!;
     // Entering a grid, the cursor starts at its top left cell.
     if (cell === undefined && cells(stops[at]!) && (across || current < 0))
-      cell = this.model.stepCell(panel, series.key, -1, 0, 0);
+      cell = this.#model.stepCell(panel, series.key, -1, 0, 0);
     const from = panels.find(({ key }) => key === start.panel);
     const to = panels.find(({ key }) => key === panel);
     event.preventDefault();
@@ -1518,7 +1619,9 @@ export class Chart implements Scheduled, SyncMember {
     }
     this.#keyboard = { panel, key: series.key, position };
     this.#pointer = null;
-    this.flush();
+    // The cursor moves on the frame drawn: what listeners changed while it
+    // drew waits for the next.
+    this.#finishFrame(false);
     const inspection = this.#inspection();
     if (!inspection) return;
     this.#keyboard.last = inspection;
@@ -1544,9 +1647,10 @@ export class Chart implements Scheduled, SyncMember {
       const start = before?.axis === axis && !crossed ? before : inspection;
       this.#brushAnchor ??= { value: start.value, label: start.label, axis };
       const range = [this.#brushAnchor.value, inspection.value] as const;
-      this.select(
+      // In the panel as drawn: what listeners changed since waits for the next frame.
+      this.#selectIn(
         { x: axis === "x" ? range : null, y: axis === "y" ? range : null, lasso: null },
-        { panel },
+        to,
       );
       const selection = this.#brush.selection;
       const zooms = selection && this.#zooms(selection, to!);
@@ -1563,21 +1667,35 @@ export class Chart implements Scheduled, SyncMember {
       event.preventDefault();
       this.#keyboard = null;
       this.#live.textContent = "";
-      schedule(this);
+      schedule(this.#scheduled);
       return;
     }
     const step = ITEM_STEPS[event.key];
     if (step === undefined) return;
     event.preventDefault();
-    const key = this.model.stepItem(this.#keyboard?.key, step);
+    const key = this.#model.stepItem(this.#keyboard?.key, step);
     if (key === undefined) return;
     this.#keyboard = { panel: "", key, position: 0 };
     this.#pointer = null;
-    this.flush();
+    this.#finishFrame(false);
     const inspection = this.#inspection();
     if (inspection) this.#live.textContent = describeInspection(inspection);
   }
 }
+
+/** Keys the keyboard cursor and selections answer to. */
+const NAVIGATION_KEYS = [
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Escape",
+  "Enter",
+];
 
 /** Columns right and rows up each key moves in a grid of cells. */
 const CELL_STEPS: Record<string, readonly [number, number]> = {
@@ -1662,6 +1780,11 @@ function sameRange(
   return a === b || (a !== null && b !== null && a[0] === b[0] && a[1] === b[1]);
 }
 
+/** A number, or undefined for none: NaN and infinities are where nothing is. */
+function finite(value: number): number | undefined {
+  return Number.isFinite(value) ? value : undefined;
+}
+
 /** What a hover event reports, as a key that changes when any of it does. */
 function inspectionKey(inspection: Inspection | undefined): string {
   return inspection ? JSON.stringify(inspection) : "";
@@ -1678,5 +1801,5 @@ function inspectionKey(inspection: Inspection | undefined): string {
  * ```
  */
 export function createChart(container: HTMLElement, options: ChartOptions): Chart {
-  return new Chart(container, options);
+  return new MountedChart(container, options);
 }

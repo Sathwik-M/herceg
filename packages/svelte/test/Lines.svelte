@@ -1,6 +1,6 @@
 <!-- A chart whose options, marks, and handlers the tests change through props. -->
 <script lang="ts">
-  import type { ChartListener, DrawContext, Chart as HercegChart, Mark, Table } from "herceg";
+  import type { ChartListener, ChartMark, DrawContext, Chart as HercegChart, Table } from "herceg";
   import { Chart, Custom, Line, Region, Rule } from "../src/index.js";
   import Pair from "./Pair.svelte";
 
@@ -22,7 +22,7 @@
     pair?: boolean;
     limit?: number;
     draw?: (context: DrawContext) => void;
-    marks?: readonly Mark[];
+    marks?: readonly ChartMark[];
     options?: Record<string, unknown>;
     chart?: HercegChart | null;
     onselect?: ChartListener<"select"> | undefined;

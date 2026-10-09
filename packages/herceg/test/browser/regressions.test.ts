@@ -4,6 +4,7 @@ import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { schedule } from "../../src/dom/scheduler.ts";
 import { line } from "../../src/marks/line.ts";
+import { modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -24,11 +25,11 @@ describe("runtime regressions", () => {
     const chart = createChart(host, { marks: [line(data, { x: "x", y: "y" })] });
     await frame();
     await frame();
-    expect([chart.model.width, chart.model.height]).toEqual([620, 320]);
+    expect([modelOf(chart).width, modelOf(chart).height]).toEqual([620, 320]);
     host.style.cssText = "width:600px;height:300px;writing-mode:vertical-rl";
     await frame();
     await frame();
-    expect([chart.model.width, chart.model.height]).toEqual([600, 300]);
+    expect([modelOf(chart).width, modelOf(chart).height]).toEqual([600, 300]);
     chart.destroy();
   });
 
@@ -39,11 +40,11 @@ describe("runtime regressions", () => {
     const chart = createChart(span, { marks: [line(data, { x: "x", y: "y" })] });
     await frame();
     await frame();
-    expect(chart.model.width).toBe(600);
+    expect(modelOf(chart).width).toBe(600);
     host.style.width = "800px";
     chart.update({});
     await frame();
-    expect(chart.model.width).toBe(800);
+    expect(modelOf(chart).width).toBe(800);
     chart.destroy();
   });
 
@@ -75,7 +76,7 @@ describe("runtime regressions", () => {
     await frame();
     host.style.width = "450px";
     chart.render();
-    expect(chart.model.width).toBe(450);
+    expect(modelOf(chart).width).toBe(450);
     host.style.width = "500px";
     expect(chart.toSVG()).toContain('width="500"');
     chart.destroy();
@@ -88,7 +89,7 @@ describe("runtime regressions", () => {
       interaction: { zoom: true },
       marks: [line(data, { x: "x", y: "y" })],
     });
-    const before = chart.model.xScale()!;
+    const before = modelOf(chart).xScale()!;
     const px = before.map(10);
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
@@ -100,7 +101,7 @@ describe("runtime regressions", () => {
       }),
     );
     chart.render();
-    const after = chart.model.xScale()!;
+    const after = modelOf(chart).xScale()!;
     expect(after.domain[0]).toBeGreaterThan(0);
     expect(after.map(10)).toBeCloseTo(px, 0);
     chart.destroy();

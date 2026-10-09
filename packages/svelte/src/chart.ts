@@ -30,6 +30,10 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   onclick?: ChartListener<"click"> | undefined;
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   oncamera?: ChartListener<"camera"> | undefined;
+  /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
+  onvisibility?: ChartListener<"visibility"> | undefined;
+  /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
+  onrender?: ChartListener<"render"> | undefined;
 }
 
 /** JSON with object keys sorted, so equal settings written in any order compare equal. */
@@ -42,9 +46,9 @@ export function canonical(value: unknown): string {
 }
 
 /**
- * Mark types whose spec and table describe them completely. Other marks
- * (custom marks, whose `draw` may close over new values, and marks written
- * against the `Mark` interface) are only the same mark as themselves.
+ * Mark types whose spec and table describe them completely. Custom marks,
+ * whose `draw` may close over new values, are only the same mark as
+ * themselves.
  */
 const PORTABLE = new Set([
   "line",

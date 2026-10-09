@@ -5,7 +5,7 @@ import { estimateText } from "../../src/layout/text.ts";
 import { line } from "../../src/marks/line.ts";
 import { boxRoom, joinLayers3D } from "../../src/marks/plot3d.ts";
 import { point3d } from "../../src/marks/point3d.ts";
-import { MAX_GRID_POINTS, surface } from "../../src/marks/surface.ts";
+import { MAX_GRID_POINTS, type SurfaceMark, surface } from "../../src/marks/surface.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { type ChartConfig, ChartModel, type ItemInspection } from "../../src/model/model.ts";
 import { renderToPDF } from "../../src/pdf.ts";
@@ -311,7 +311,7 @@ function checkVisibility(
       ? Number.NaN
       : Math.sin(x * 1.3) * Math.cos(y) + 0.3 * x,
   );
-  const mark = surface(data, { x: "x", y: "y", z: "z" });
+  const mark = surface(data, { x: "x", y: "y", z: "z" }) as SurfaceMark;
   const { scene, model } = build({
     marks: [mark],
     camera,

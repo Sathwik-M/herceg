@@ -1,5 +1,6 @@
 import {
   type AxisFormat,
+  type ChartOptions,
   type CustomSeries,
   custom,
   type DataDrawContext,
@@ -7,14 +8,13 @@ import {
   facet,
   geometry,
   type Chart as HercegChart,
-  type Mark as HercegMark,
   line,
   type Schema,
   table,
   time,
   timeBreaks,
 } from "herceg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type App,
   computed,
@@ -46,6 +46,27 @@ import {
   Surface,
   Text,
 } from "../src/index.ts";
+
+// The options each chart was last given, at creation and by `update`, which
+// tests compare with the props that made them.
+const given = vi.hoisted(() => new WeakMap<object, Record<string, unknown>>());
+vi.mock("herceg", async (original) => {
+  const herceg = await original<typeof import("herceg")>();
+  return {
+    ...herceg,
+    createChart(container: HTMLElement, options: ChartOptions) {
+      const chart = herceg.createChart(container, options);
+      given.set(chart, { ...options });
+      const update = chart.update.bind(chart);
+      chart.update = (changes) => {
+        Object.assign(given.get(chart)!, changes);
+        update(changes);
+      };
+      return chart;
+    },
+  };
+});
+const optionsOf = (chart: HercegChart) => given.get(chart) as unknown as ChartOptions;
 
 let host: HTMLDivElement;
 let app: App | undefined;
@@ -257,7 +278,7 @@ describe("<Chart>", () => {
       () => ({ grid, points, camera, view, onCamera }),
     );
     expect(host.textContent).toContain("Surface of z over x and y");
-    expect(chart().model.config.boxAspect).toEqual([2, 1, 1]);
+    expect(optionsOf(chart()).boxAspect).toEqual([2, 1, 1]);
     chart().setCamera({ elevation: 50 });
     await frame();
     expect(cameras).toEqual([10]);
@@ -293,10 +314,10 @@ describe("<Chart>", () => {
       </Chart>`,
       () => ({ metrics, view }),
     );
-    const [area, bar] = chart().model.config.marks;
+    const [area, bar] = optionsOf(chart()).marks;
     expect(area!.spec).toMatchObject({ stack: true, fillOpacity: 0.5 });
     expect(bar!.spec).not.toHaveProperty("stack");
-    expect(chart().model.config.legend).toBe(true);
+    expect(optionsOf(chart()).legend).toBe(true);
   });
 
   it("keeps marks from v-for and v-if in template order", async () => {
@@ -312,7 +333,7 @@ describe("<Chart>", () => {
       () => ({ metrics, view, band, fields }),
     );
     const order = () =>
-      chart().model.config.marks.map((mark) => {
+      optionsOf(chart()).marks.map((mark) => {
         const spec = mark.spec as { type: string; y?: unknown };
         return spec.type === "line" ? `line:${spec.y}` : spec.type;
       });
@@ -375,29 +396,20 @@ describe("<Chart>", () => {
     );
     const buttons = host.querySelectorAll("button");
     expect([...buttons].map((button) => button.textContent)).toEqual(["a", "b"]);
-    const { model } = chart();
-    const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))!;
+    const mounted = chart();
+    const inspection = mounted.inspect(
+      mounted.toPixel(1, { axis: "x" })!,
+      mounted.toPixel(2, { axis: "y" })!,
+    )!;
     expect(inspection.points.map((p) => p.text)).toEqual(["2 req", "3 req"]);
     buttons[0]!.click();
     chart().render();
     expect(drawn.at(-1)).toEqual(["b"]);
   });
 
-  it("keeps marks written against the Mark interface only while they are the same object", async () => {
-    // A mark whose spec does not describe what it draws.
-    const badge = (label: string): HercegMark => {
-      const inner = custom({ draw: ({ text, x, y }) => text(x(1), y(2), label) });
-      return {
-        spec: { type: "badge" },
-        table: undefined,
-        tooltip: "x",
-        channelKind: () => undefined,
-        series: () => [],
-        xExtent: () => undefined,
-        yExtent: () => undefined,
-        geometry: (series, frame, key) => inner.geometry(series, frame, key),
-      };
-    };
+  it("keeps custom marks given as marks only while they are the same object", async () => {
+    // A custom mark's spec does not describe what it draws.
+    const badge = (label: string) => custom({ draw: ({ text, x, y }) => text(x(1), y(2), label) });
     const labels = () =>
       [...host.querySelectorAll('[data-kind="shapes"] text')].map((t) => t.textContent);
     const marks = shallowRef([line(metrics, { x: "t", y: "a" }), badge("first")]);
@@ -422,6 +434,18 @@ describe("<Chart>", () => {
     await nextTick();
     chart().select([1, 2]);
     expect(seen).toEqual(["two:1-2"]);
+  });
+
+  it("emits render for the first frame, drawn as the chart mounts, with the ref set", async () => {
+    const { view, chart } = chartRef();
+    const panels: number[] = [];
+    mount(`<Chart ref="view" @render="count"><Line :data="metrics" x="t" y="a" /></Chart>`, () => ({
+      metrics,
+      view,
+      count: () => panels.push(chart().getPanels().length),
+    }));
+    await nextTick();
+    expect(panels).toEqual([1]);
   });
 
   it("emits the whole view", () => {
@@ -528,7 +552,7 @@ describe("<Chart>", () => {
       </Chart>`,
       () => ({ prices, view, breaks }),
     );
-    expect(chart().model.config.marks[0]!.spec).toMatchObject({ variant: "ohlc" });
+    expect(optionsOf(chart()).marks[0]!.spec).toMatchObject({ variant: "ohlc" });
     expect(host.querySelector("svg g[clip-path] rect")).toBeNull();
     const updates = spyUpdates(chart());
     // New breaks with the same rules are the same option; other rules are not.
@@ -551,7 +575,7 @@ describe("<Chart>", () => {
     }));
     expect(
       chart()
-        .model.panels()
+        .getPanels()
         .map((p) => p.key),
     ).toEqual(["N", "S"]);
     const updates = spyUpdates(chart());
@@ -572,8 +596,8 @@ describe("<Chart>", () => {
     const groups = () =>
       new Set(
         chart()
-          .model.panels()
-          .map((p) => p.xGroup),
+          .getPanels()
+          .map((p) => p.x!.group),
       ).size;
     expect(groups()).toBe(2);
     resolve.value = {};

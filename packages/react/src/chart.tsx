@@ -44,6 +44,10 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   onClick?: ChartListener<"click">;
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   onCameraChange?: ChartListener<"camera">;
+  /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
+  onVisibilityChange?: ChartListener<"visibility">;
+  /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
+  onRender?: ChartListener<"render">;
 }
 
 /**
@@ -55,7 +59,7 @@ function useChartEvent<K extends keyof ChartEvents>(
   chart: RefObject<HercegChart | null>,
   type: K,
   handler: ChartListener<K> | undefined,
-): void {
+): RefObject<ChartListener<K> | undefined> {
   const latest = useRef(handler);
   useLayoutEffect(() => {
     latest.current = handler;
@@ -66,6 +70,7 @@ function useChartEvent<K extends keyof ChartEvents>(
     if (!present || !chart.current) return;
     return chart.current.on(type, (event) => latest.current?.(event));
   }, [present]);
+  return latest;
 }
 
 function marksFrom(children: ReactNode, out: ChartMark[] = []): ChartMark[] {
@@ -96,9 +101,9 @@ function canonical(value: unknown): string {
 }
 
 /**
- * Mark types whose spec and table describe them completely. Other marks
- * (custom marks, whose `draw` may close over new props, and marks written
- * against the `Mark` interface) are only the same mark as themselves.
+ * Mark types whose spec and table describe them completely. Custom marks,
+ * whose `draw` may close over new props, are only the same mark as
+ * themselves.
  */
 const PORTABLE = new Set([
   "line",
@@ -172,6 +177,8 @@ export function Chart({
   onHover,
   onClick,
   onCameraChange,
+  onVisibilityChange,
+  onRender,
   ...options
 }: ChartProps) {
   const container = useRef<HTMLDivElement>(null);
@@ -198,7 +205,24 @@ export function Chart({
     };
   }, []);
 
-  // A layout effect, so parents' layout effects and refs see the new props.
+  useChartEvent(chart, "viewport", onViewportChange);
+  useChartEvent(chart, "select", onSelect);
+  useChartEvent(chart, "hover", onHover);
+  useChartEvent(chart, "click", onClick);
+  useChartEvent(chart, "camera", onCameraChange);
+  useChartEvent(chart, "visibility", onVisibilityChange);
+  const render = useChartEvent(chart, "render", onRender);
+
+  useImperativeHandle<HercegChart | null, HercegChart | null>(ref, () => chart.current, []);
+
+  // The chart drew its first frame as it was created, before handlers
+  // subscribed: `onRender` hears of it once the ref is set.
+  useLayoutEffect(() => {
+    if (chart.current) render.current?.({});
+  }, [render]);
+
+  // A layout effect, so parents' layout effects and refs see the new props;
+  // after the handlers' own, so events an update emits reach the latest.
   useLayoutEffect(() => {
     const last = applied.current;
     if (!chart.current || !last) return;
@@ -217,14 +241,6 @@ export function Chart({
     applied.current = { marks: next, options, key: optionsKey };
     chart.current.update({ ...reset, ...options, marks: next });
   });
-
-  useChartEvent(chart, "viewport", onViewportChange);
-  useChartEvent(chart, "select", onSelect);
-  useChartEvent(chart, "hover", onHover);
-  useChartEvent(chart, "click", onClick);
-  useChartEvent(chart, "camera", onCameraChange);
-
-  useImperativeHandle<HercegChart | null, HercegChart | null>(ref, () => chart.current, []);
 
   return (
     <div

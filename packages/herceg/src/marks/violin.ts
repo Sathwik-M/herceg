@@ -13,11 +13,11 @@ import type {
   RectGeometry,
   SegmentGeometry,
 } from "../scene/scene.ts";
-import type { ViolinSpec } from "../spec/spec.ts";
+import type { Frozen, ViolinSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import { DistributionMark, type DistributionOptions, type Stat } from "./distribution.ts";
 import { definedFields } from "./line.ts";
-import type { AxisFormat, Frame } from "./mark.ts";
+import type { AxisFormat, ChartMark, Frame } from "./mark.ts";
 import { rowOf, type Series } from "./series.ts";
 
 export type ViolinOptions<S extends Schema> = DistributionOptions<S> & {
@@ -268,7 +268,10 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
  * violin(requests, { x: "region", y: "latency" })
  * ```
  */
-export function violin<S extends Schema>(table: Table<S>, options: ViolinOptions<S>): ViolinMark {
+export function violin<S extends Schema>(
+  table: Table<S>,
+  options: ViolinOptions<S>,
+): ChartMark<Frozen<ViolinSpec>> {
   const spec: ViolinSpec = {
     type: "violin",
     x: options.x,

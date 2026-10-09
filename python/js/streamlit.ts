@@ -8,7 +8,14 @@
 // and brush included; new bytes replace it, keeping the zoom and the brush
 // where their values (or category labels) still are.
 
-import { type Chart, createChart, type ThemeName } from "herceg";
+import {
+  type AxisInfo,
+  type Chart,
+  createChart,
+  type PanelInfo,
+  type ThemeName,
+  type Viewport,
+} from "herceg";
 import { type ChartSpec, loadSpec } from "herceg/spec";
 import { inspectionPayload, selectionPayload } from "./events.ts";
 
@@ -77,65 +84,10 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   if (!previous) component.parentElement.append(element);
   const followsApp = header.spec.theme === undefined;
   const theme = followsApp ? appTheme(element) : undefined;
-  // What the user had: each panel's zoom and the whole selection, more than
-  // the script hears of.
-  const kept = previous && {
-    panels: previous.chart.model.panels().map(({ key, x, y }) => ({
-      key,
-      x,
-      y,
-      viewport: previous.chart.model.viewportOf(key),
-    })),
-    yRight: previous.chart.model.yRightScale(),
-    yViewport: previous.chart.model.yViewport,
-    selection: previous.chart.selection,
-    selectionPanels: previous.chart.selectionPanels,
-  };
+  const kept = previous && keptView(previous.chart);
   previous?.chart.destroy();
   const chart = createChart(element, theme ? { ...config, theme } : config);
-  if (kept) {
-    const { model } = chart;
-    const panels = model.panels();
-    const [first] = kept.panels;
-    // A panel's x range carries to the panel of the same key; one every panel
-    // shares, also to a panel that is new. Panels sharing a scale take the
-    // first one's. Set on the model, nothing is drawn yet: setViewport
-    // below draws them all at once.
-    const zoomed = new Set<string>();
-    for (const { key, x: scale, xGroup } of panels) {
-      const before =
-        kept.panels.find((panel) => panel.key === key) ?? (model.sharesX ? first : undefined);
-      if (!before || zoomed.has(xGroup)) continue;
-      zoomed.add(xGroup);
-      const range = carry(before.viewport, before.x, scale);
-      if (range) model.setViewport(range, key);
-    }
-    // Each y axis keeps its range where it can; charts whose panels have y
-    // scales of their own have none.
-    const y = carry(kept.yViewport.y, first?.y, model.yScale());
-    const yRight = carry(kept.yViewport.yRight, kept.yRight, model.yRightScale());
-    chart.setViewport(model.sharesY ? { y, yRight } : { y: null, yRight: null });
-    // The selection carries to a panel it was in, through its scales, or to
-    // the scale every panel shares.
-    const { selection, selectionPanels } = kept;
-    const from = kept.panels.find(({ key }) => selectionPanels?.includes(key));
-    const at =
-      panels.find(({ key }) => selectionPanels?.includes(key)) ??
-      (model.sharesX ? panels[0] : undefined);
-    const next = selection &&
-      from &&
-      at && {
-        x: carry(selection.x, from.x, at.x),
-        y: carry(selection.y, from.y, at.y),
-        lasso: selection.lasso,
-      };
-    // A selection keeps all its ranges or goes: part of a rectangle is another
-    // selection. A lasso's outline cannot follow categories that moved.
-    const whole = next && (!selection.x || next.x) && (!selection.y || next.y);
-    const moved =
-      selection?.lasso && (!sameCategories(from?.x, at?.x) || !sameCategories(from?.y, at?.y));
-    if (whole && !moved) chart.select(next, { panel: at!.key });
-  }
+  if (kept) restore(chart, kept);
   const instance: Instance = {
     bytes,
     element,
@@ -157,15 +109,85 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
 }
 
 type Range = readonly [number, number];
-/** What `carry` reads of an axis' scale. */
-type Axis = { type: string; categories?: readonly string[] } | undefined;
+
+/** What the user had: each panel's axes and zoom, and the whole selection, more than the script hears of. */
+interface Kept {
+  panels: (PanelInfo & { view: Viewport })[];
+  selection: Chart["selection"];
+  selectionPanels: Chart["selectionPanels"];
+}
+
+function keptView(chart: Chart): Kept {
+  return {
+    // Charts of a layout mark have no axes to zoom.
+    panels: chart
+      .getPanels()
+      .filter((panel) => panel.x)
+      .map((panel) => ({ ...panel, view: chart.getViewport({ panel: panel.key }) })),
+    selection: chart.selection,
+    selectionPanels: chart.selectionPanels,
+  };
+}
+
+/**
+ * Restores what the user had in a chart just drawn from new bytes, where its
+ * values are still shown. The changes are drawn together, on the next frame.
+ */
+function restore(chart: Chart, kept: Kept) {
+  const panels = chart.getPanels().filter((panel) => panel.x);
+  const [first] = kept.panels;
+  // A panel's x range carries to the panel of the same key; one every panel
+  // shares, also to a panel that is new. Panels sharing a scale take the
+  // first one's.
+  const zoomed = new Set<string>();
+  for (const { key, x } of panels) {
+    const group = x!.group;
+    const before = kept.panels.find((panel) => panel.key === key) ?? (group ? undefined : first);
+    if (!before || zoomed.has(group)) continue;
+    zoomed.add(group);
+    const range = carry(before.view.x, before.x, x);
+    if (range) chart.setViewport({ x: range }, { panel: key });
+  }
+  // Each y axis keeps its range where it can; charts whose panels have y
+  // scales of their own have none.
+  const [now] = panels;
+  const y: Partial<Viewport> = {};
+  if (now?.y?.canSetViewport) y.y = carry(first?.view.y ?? null, first?.y, now.y);
+  if (now?.yRight?.canSetViewport)
+    y.yRight = carry(first?.view.yRight ?? null, first?.yRight, now.yRight);
+  chart.setViewport(y);
+  // The selection carries to a panel it was in, through its scales, or to
+  // the scale every panel shares.
+  const { selection, selectionPanels } = kept;
+  const from = kept.panels.find(({ key }) => selectionPanels?.includes(key));
+  const at =
+    panels.find(({ key }) => selectionPanels?.includes(key)) ??
+    (panels[0]?.x?.group === "" ? panels[0] : undefined);
+  const next = selection &&
+    from &&
+    at && {
+      x: carry(selection.x, from.x, at.x),
+      y: carry(selection.y, from.y, at.y),
+      lasso: selection.lasso,
+    };
+  // A selection keeps all its ranges or goes: part of a rectangle is another
+  // selection. A lasso's outline cannot follow categories that moved.
+  const whole = next && (!selection.x || next.x) && (!selection.y || next.y);
+  const moved =
+    selection?.lasso && (!sameCategories(from?.x, at?.x) || !sameCategories(from?.y, at?.y));
+  if (whole && !moved) chart.select(next, { panel: at!.key });
+}
 
 /**
  * A range of an old chart's axis on the new chart's: on category axes, where
  * its categories are now; on others, the same values. Null when the axes
  * differ in type or the categories are gone.
  */
-function carry(range: Range | null, from: Axis, to: Axis): Range | null {
+function carry(
+  range: Range | null,
+  from: AxisInfo | undefined,
+  to: AxisInfo | undefined,
+): Range | null {
   if (!range || !from || !to || from.type !== to.type) return null;
   const before = from.categories;
   const after = to.categories;
@@ -179,7 +201,7 @@ function carry(range: Range | null, from: Axis, to: Axis): Range | null {
 }
 
 /** Whether two axes have the same categories in the same order, or none. */
-function sameCategories(from: Axis, to: Axis): boolean {
+function sameCategories(from: AxisInfo | undefined, to: AxisInfo | undefined): boolean {
   const [a, b] = [from?.categories, to?.categories];
   if (!a || !b) return a === b;
   return a.length === b.length && a.every((label, i) => label === b[i]);

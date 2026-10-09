@@ -77,28 +77,34 @@ export type {
 } from "./data/table.ts";
 export { fromRows, Table, table } from "./data/table.ts";
 export type { Selection } from "./dom/brush.ts";
-export { type Chart, type ChartOptions, type ChartUpdate, createChart } from "./dom/chart.ts";
+export { type ChartOptions, type ChartUpdate, createChart } from "./dom/chart.ts";
 export type { ChartEvents, ChartListener, PanelTarget } from "./dom/events.ts";
+export type {
+  Axis,
+  AxisInfo,
+  AxisTarget,
+  Chart,
+  InspectOptions,
+  LegendEntry,
+  PanelInfo,
+} from "./dom/handle.ts";
 export type { SymbolName } from "./draw/symbols.ts";
 export type { MeasureText } from "./layout/text.ts";
 export type { TextField } from "./marks/annotation.ts";
-export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";
+export { type AreaOptions, area } from "./marks/area.ts";
 export {
-  type BarMark,
   type BarOptions,
   bar,
   type HorizontalBarOptions,
   type VerticalBarOptions,
 } from "./marks/bar.ts";
-export { type BoxPlotMark, type BoxPlotOptions, boxplot } from "./marks/boxplot.ts";
+export { type BoxPlotOptions, boxplot } from "./marks/boxplot.ts";
 export {
-  type CandlestickMark,
   type CandlestickOptions,
   candlestick,
 } from "./marks/candlestick.ts";
 export {
   type CustomDataOptions,
-  type CustomMark,
   type CustomOptions,
   type CustomSeries,
   type CustomSpec,
@@ -109,7 +115,6 @@ export {
   type TextShapeStyle,
 } from "./marks/custom.ts";
 export {
-  type ErrorBarMark,
   type ErrorBarOptions,
   errorBar,
   type HorizontalErrorBarOptions,
@@ -117,42 +122,32 @@ export {
   type VerticalErrorBarOptions,
   type VerticalSymmetricErrorBarOptions,
 } from "./marks/errorbar.ts";
-export { type FunnelMark, type FunnelOptions, funnel } from "./marks/funnel.ts";
-export { type GaugeMark, type GaugeOptions, gauge } from "./marks/gauge.ts";
-export { type GeoPointMark, type GeoPointOptions, geopoint } from "./marks/geopoint.ts";
-export { type GeoShapeMark, type GeoShapeOptions, geoshape } from "./marks/geoshape.ts";
-export { type GraphMark, type GraphOptions, graph } from "./marks/graph.ts";
-export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
-export { type HistogramMark, type HistogramOptions, histogram } from "./marks/histogram.ts";
-export {
-  type ChartMark,
-  type LayoutFrame,
-  type LayoutItem,
-  type LayoutMark,
-  type LayoutResult,
-  tablesOf,
-  viewOf,
-} from "./marks/layout-mark.ts";
-export { type LineMark, type LineOptions, line } from "./marks/line.ts";
-export type { AxisFormat, Mark, MarkIdentity } from "./marks/mark.ts";
-export { type PieMark, type PieOptions, pie } from "./marks/pie.ts";
-export type { Plot3D } from "./marks/plot3d.ts";
-export { type PointMark, type PointOptions, point } from "./marks/point.ts";
-export { type Point3DMark, type Point3DOptions, point3d } from "./marks/point3d.ts";
-export { type RadarMark, type RadarOptions, radar } from "./marks/radar.ts";
+export { type FunnelOptions, funnel } from "./marks/funnel.ts";
+export { type GaugeOptions, gauge } from "./marks/gauge.ts";
+export { type GeoPointOptions, geopoint } from "./marks/geopoint.ts";
+export { type GeoShapeOptions, geoshape } from "./marks/geoshape.ts";
+export { type GraphOptions, graph } from "./marks/graph.ts";
+export { type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
+export { type HistogramOptions, histogram } from "./marks/histogram.ts";
+export { tablesOf, viewOf } from "./marks/layout-mark.ts";
+export { type LineOptions, line } from "./marks/line.ts";
+export type { AxisFormat, ChartMark, MarkIdentity } from "./marks/mark.ts";
+export { type PieOptions, pie } from "./marks/pie.ts";
+export { type PointOptions, point } from "./marks/point.ts";
+export { type Point3DOptions, point3d } from "./marks/point3d.ts";
+export { type RadarOptions, radar } from "./marks/radar.ts";
 export {
   type RegionDataOptions,
-  type RegionMark,
   type RegionOptions,
   region,
 } from "./marks/region.ts";
-export { type RuleDataOptions, type RuleMark, type RuleOptions, rule } from "./marks/rule.ts";
-export { type SankeyMark, type SankeyOptions, sankey } from "./marks/sankey.ts";
-export { type SunburstMark, type SunburstOptions, sunburst } from "./marks/sunburst.ts";
-export { type SurfaceMark, type SurfaceOptions, surface } from "./marks/surface.ts";
-export { type TextDataOptions, type TextMark, type TextOptions, text } from "./marks/text.ts";
-export { type TreemapMark, type TreemapOptions, treemap } from "./marks/treemap.ts";
-export { type ViolinMark, type ViolinOptions, violin } from "./marks/violin.ts";
+export { type RuleDataOptions, type RuleOptions, rule } from "./marks/rule.ts";
+export { type SankeyOptions, sankey } from "./marks/sankey.ts";
+export { type SunburstOptions, sunburst } from "./marks/sunburst.ts";
+export { type SurfaceOptions, surface } from "./marks/surface.ts";
+export { type TextDataOptions, type TextOptions, text } from "./marks/text.ts";
+export { type TreemapOptions, treemap } from "./marks/treemap.ts";
+export { type ViolinOptions, violin } from "./marks/violin.ts";
 export { type Facet, type FacetOptions, facet } from "./model/facet.ts";
 export type {
   AxisInspection,
@@ -160,6 +155,7 @@ export type {
   InspectedPoint,
   Inspection,
   ItemInspection,
+  TooltipMode,
   Viewport,
   XAxisConfig,
 } from "./model/model.ts";
@@ -167,6 +163,7 @@ export { type Panels, panels } from "./model/panels.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
 export { type TimeBreaks, timeBreaks } from "./scale/breaks.ts";
 export * from "./scale/schemes.ts";
+export type { PlotRect } from "./scene/scene.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
 export type { Theme } from "./theme.ts";

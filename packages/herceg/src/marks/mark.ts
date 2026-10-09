@@ -33,6 +33,22 @@ export function seriesKey(mark: MarkKey, source: string): string {
 }
 
 /**
+ * The identity of the mark a series or item key belongs to: keys are JSON
+ * arrays that start with it, or objects (groups of networks, maps, and 3D
+ * points) that hold it as `mark`. Undefined for any other string.
+ */
+export function keyOwner(key: string): MarkKey | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(key);
+  } catch {
+    return undefined;
+  }
+  const owner = Array.isArray(parsed) ? parsed[0] : (parsed as { mark?: unknown } | null)?.mark;
+  return typeof owner === "string" || typeof owner === "number" ? owner : undefined;
+}
+
+/**
  * Color for a series key. A chart assigns each key a palette slot the first
  * time it appears and keeps it, so colors follow series, not their order.
  */
@@ -143,12 +159,29 @@ export interface MarkIdentity {
 }
 
 /**
- * A mark draws one visual layer. It pairs a portable spec with the table it
- * reads (if any) and holds caches that depend only on the data, so the same
- * mark can be shown by several charts.
+ * Brands the marks herceg's mark functions make. It exists only in types,
+ * so an object written by hand is not a `ChartMark`.
  */
-export interface Mark<S extends MarkIdentity = MarkIdentity> {
+export declare const MARK: unique symbol;
+
+/**
+ * A mark as charts take it, made by a mark function (`line`, `bar`,
+ * `custom`, and the others). Its `spec` says what it draws: for built-in
+ * marks the portable spec, for custom marks their identity. How marks draw
+ * is the engine's own; `custom` draws shapes of your own.
+ */
+export interface ChartMark<S extends MarkIdentity = MarkIdentity> {
   readonly spec: S;
+  readonly [MARK]: true;
+}
+
+/**
+ * A mark along axes, as the chart model draws it: one visual layer. It
+ * pairs a portable spec with the table it reads (if any) and holds caches
+ * that depend only on the data, so the same mark can be shown by several
+ * charts. Internal: applications make marks with the mark functions.
+ */
+export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S> {
   readonly table: Table | undefined;
   /** The view of `table` whose rows the mark shows, when it shows only some, in its order. */
   readonly view?: RowView | undefined;

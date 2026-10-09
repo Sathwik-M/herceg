@@ -12,10 +12,12 @@ import {
   bandIndices,
   buildSeries,
   CATEGORY,
+  type ChartMark,
   type Frame,
   fieldBands,
   frozen,
   type Hit,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -142,6 +144,7 @@ type Ends = { low: string; high: string } | { center: string; error: string };
  * place, are neither drawn nor counted toward the axes.
  */
 export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<ErrorBarSpec>;
   readonly table: Table<Schema>;
   readonly tooltip: "x" | "y";
@@ -468,7 +471,7 @@ function swap(s: Series): Series {
 export function errorBar<S extends Schema>(
   table: Table<S>,
   options: ErrorBarOptions<S>,
-): ErrorBarMark {
+): ChartMark<Frozen<ErrorBarSpec>> {
   const spec = {
     type: "errorbar",
     ...definedFields(options as Partial<Record<keyof ErrorBarSpec, unknown>>, [

@@ -46,6 +46,18 @@ export interface ChartEvents {
    * buttons, or set with `setCamera`; once a frame at most.
    */
   camera: { camera: Camera };
+  /**
+   * Series or items were hidden or shown: through the legend,
+   * `setVisibility` or `setHiddenKeys`, or as marks the chart no longer
+   * has took their keys along. The keys now hidden.
+   */
+  visibility: { hiddenKeys: readonly string[] };
+  /**
+   * The chart drew a frame of its data, axes, and legend (a cursor or
+   * tooltip moving alone draws none): panels, pixel mapping, and the legend
+   * now describe it, for overlays drawn over the chart.
+   */
+  render: Record<string, never>;
 }
 
 export type ChartListener<K extends keyof ChartEvents> = (event: ChartEvents[K]) => void;

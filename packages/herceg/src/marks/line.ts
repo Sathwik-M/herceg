@@ -6,8 +6,10 @@ import type { Curve, Frozen, LineSpec } from "../spec/spec.ts";
 import {
   buildSeries,
   CATEGORY,
+  type ChartMark,
   type Frame,
   frozen,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -42,6 +44,7 @@ export interface LineOptions<S extends Schema> {
 }
 
 export class LineMark implements Mark<Frozen<LineSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<LineSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "x";
@@ -124,7 +127,10 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
  * line(metrics, { x: "time", y: "latency", series: "service" })
  * ```
  */
-export function line<S extends Schema>(table: Table<S>, options: LineOptions<S>): LineMark {
+export function line<S extends Schema>(
+  table: Table<S>,
+  options: LineOptions<S>,
+): ChartMark<Frozen<LineSpec>> {
   const spec: LineSpec = {
     type: "line",
     x: options.x,

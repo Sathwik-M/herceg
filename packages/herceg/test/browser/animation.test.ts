@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import { custom } from "../../src/marks/custom.ts";
+import { tablesOf } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
+import { modelOf } from "./helpers.ts";
 
 const charts: Chart[] = [];
 
@@ -55,15 +57,15 @@ async function controlTime() {
   for (const chart of charts) {
     chart.render();
     // Asks for a frame without changing anything, so the scheduler runs one.
-    chart.syncCursor(null);
+    chart.root.dispatchEvent(new PointerEvent("pointerleave"));
   }
   tick(16);
 }
 const tick = (ms: number) => vi.advanceTimersByTime(ms);
 
-const x = (chart: Chart) => [...chart.model.panels()[0]!.x.domain];
-const y = (chart: Chart) => [...chart.model.panels()[0]!.y.domain];
-const plot = (chart: Chart) => ({ ...chart.model.panels()[0]!.plot });
+const x = (chart: Chart) => [...modelOf(chart).panels()[0]!.x.domain];
+const y = (chart: Chart) => [...modelOf(chart).panels()[0]!.y.domain];
+const plot = (chart: Chart) => ({ ...modelOf(chart).panels()[0]!.plot });
 const between = (value: number, a: number, b: number) =>
   value > Math.min(a, b) && value < Math.max(a, b);
 
@@ -75,7 +77,7 @@ describe("view transitions", () => {
     chart.on("viewport", ({ x }) => viewports.push(x));
     const [lo, hi] = x(chart) as [number, number];
     chart.setViewport([20_000, 40_000]);
-    expect(chart.model.viewport).toEqual([20_000, 40_000]);
+    expect(chart.getViewport().x).toEqual([20_000, 40_000]);
     expect(viewports).toEqual([[20_000, 40_000]]);
     tick(50);
     const [a, b] = x(chart) as [number, number];
@@ -156,7 +158,7 @@ describe("view transitions", () => {
     tick(16);
     expect(x(chart)).not.toEqual([20_000, 40_000]);
     // Appended rows show at once, at the view asked for.
-    chart.model.config.marks[0]!.table!.append({ t: [101_000], v: [1] });
+    tablesOf(modelOf(chart).config.marks[0]!)[0]!.append({ t: [101_000], v: [1] });
     tick(16);
     expect(x(chart)).toEqual([20_000, 40_000]);
 
@@ -177,7 +179,7 @@ describe("view transitions", () => {
     chart.root.dispatchEvent(new WheelEvent("wheel", { ...at, deltaY: -100, cancelable: true }));
     tick(16);
     // The wheel zooms from the view on screen, and shows its zoom at once.
-    expect(x(chart)).toEqual([...chart.model.viewport!]);
+    expect(x(chart)).toEqual([...chart.getViewport().x!]);
     tick(400);
   });
 
@@ -200,7 +202,7 @@ describe("view transitions", () => {
     const chart = await mount({ interaction: { zoom: true, brush: "x" } });
     await controlTime();
     const [lo, hi] = x(chart) as [number, number];
-    const scale = chart.model.panels()[0]!.x;
+    const scale = modelOf(chart).panels()[0]!.x;
     const rect = chart.root.getBoundingClientRect();
     for (const [type, value] of [
       ["pointerdown", 30_000],
@@ -211,7 +213,7 @@ describe("view transitions", () => {
       const init = { bubbles: true, clientX, clientY: rect.top + 150, pointerId: 1 };
       chart.root.dispatchEvent(new PointerEvent(type, { ...init, button: 0 }));
     }
-    const [from, to] = chart.model.viewport!;
+    const [from, to] = chart.getViewport().x!;
     expect(from).toBeCloseTo(30_000, -2);
     expect(to).toBeCloseTo(50_000, -2);
     tick(50);
@@ -219,7 +221,7 @@ describe("view transitions", () => {
     tick(400);
     expect(x(chart)).toEqual([from, to]);
     chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    expect(chart.model.viewport).toBeNull();
+    expect(chart.getViewport().x).toBeNull();
     tick(50);
     expect(between(x(chart)[0]!, lo, from)).toBe(true);
     tick(400);

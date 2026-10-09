@@ -20,7 +20,7 @@ import type {
 } from "../scene/scene.ts";
 import type { Frozen, RadarSpec } from "../spec/spec.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, frozen, requireField } from "./mark.ts";
+import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export type RadarOptions<S extends Schema> = (
   | {
@@ -98,6 +98,7 @@ interface Drawn {
 }
 
 export class RadarMark implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec: Frozen<RadarSpec>;
   readonly table: Table;
@@ -636,7 +637,10 @@ function rowsBySeries(
  * radar(players, { fields: ["speed", "power", "range"], series: "name" })
  * ```
  */
-export function radar<S extends Schema>(table: Table<S>, options: RadarOptions<S>): RadarMark {
+export function radar<S extends Schema>(
+  table: Table<S>,
+  options: RadarOptions<S>,
+): ChartMark<Frozen<RadarSpec>> {
   const spec: RadarSpec = { type: "radar" };
   if (options.fields !== undefined) spec.fields = [...options.fields];
   else {

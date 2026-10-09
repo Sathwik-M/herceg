@@ -108,8 +108,8 @@ describe("streaming point clouds", () => {
       const canvas = chart.root.querySelector("canvas")!;
       const ratio = canvas.width / canvas.clientWidth;
       const at = (v: number) => [
-        Math.round(chart.model.xScale()!.map(v) * ratio),
-        Math.round(chart.model.yScale()!.map(v) * ratio),
+        Math.round(chart.toPixel(v, { axis: "x" })! * ratio),
+        Math.round(chart.toPixel(v, { axis: "y" })! * ratio),
       ];
       const color = (v: number) => {
         const [x, y] = at(v);

@@ -13,7 +13,7 @@ import type { Frozen, TreemapSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { frozen } from "./mark.ts";
+import { type ChartMark, frozen, type MARK } from "./mark.ts";
 import { type Branch, count, TreeData } from "./tree-data.ts";
 
 export type TreemapOptions<S extends Schema> = (
@@ -43,6 +43,7 @@ const GAP = 2;
 const INSET = 4;
 
 export class TreemapMark implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec: Frozen<TreemapSpec>;
   readonly table: Table;
@@ -256,7 +257,7 @@ export class TreemapMark implements LayoutMark {
 export function treemap<S extends Schema>(
   table: Table<S>,
   options: TreemapOptions<S>,
-): TreemapMark {
+): ChartMark<Frozen<TreemapSpec>> {
   const { path } = options;
   // Every option is kept, so the mark refuses a tree named both ways.
   const spec = {

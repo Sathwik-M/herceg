@@ -9,8 +9,10 @@ import { definedFields } from "./line.ts";
 import {
   buildSeries,
   CATEGORY,
+  type ChartMark,
   type Frame,
   frozen,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -93,6 +95,7 @@ export function areaFormError(spec: {
 }
 
 export class AreaMark implements Mark<Frozen<AreaSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<AreaSpec>;
   readonly table: Table<Schema>;
   readonly #split: SeriesSplitter | undefined;
@@ -294,7 +297,10 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
  * area(latency, { x: "time", y1: "p25", y2: "p75" })
  * ```
  */
-export function area<S extends Schema>(table: Table<S>, options: AreaOptions<S>): AreaMark {
+export function area<S extends Schema>(
+  table: Table<S>,
+  options: AreaOptions<S>,
+): ChartMark<Frozen<AreaSpec>> {
   const { y } = options;
   // Every option is kept, so the mark refuses forms mixed by casts or JavaScript.
   const spec = {

@@ -4,10 +4,10 @@ import { pointDrawing } from "../draw/point.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import type { PointGeometry, RectGeometry, SegmentGeometry } from "../scene/scene.ts";
-import type { BoxPlotSpec } from "../spec/spec.ts";
+import type { BoxPlotSpec, Frozen } from "../spec/spec.ts";
 import { DistributionMark, type DistributionOptions, type Stat } from "./distribution.ts";
 import { definedFields } from "./line.ts";
-import type { AxisFormat, Frame } from "./mark.ts";
+import type { AxisFormat, ChartMark, Frame } from "./mark.ts";
 import { rowOf, type Series } from "./series.ts";
 
 export type BoxPlotOptions<S extends Schema> = DistributionOptions<S>;
@@ -178,7 +178,7 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, number[]> {
 export function boxplot<S extends Schema>(
   table: Table<S>,
   options: BoxPlotOptions<S>,
-): BoxPlotMark {
+): ChartMark<Frozen<BoxPlotSpec>> {
   const spec: BoxPlotSpec = {
     type: "boxplot",
     x: options.x,
