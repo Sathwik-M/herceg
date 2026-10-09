@@ -69,8 +69,11 @@ min/max indexes for zooming and streaming large line series, WebGL drawing
 of large point series, chart specs with binary columns, a Python package, a
 second y axis, small multiples (wrapped or by row and column, with shared or
 per-panel x and y scales), subplots (with weighted rows and columns), live notebook charts (a
-widget that streams updates from Python and reports interaction back), and a
-Streamlit component.
+widget that streams updates from Python and reports interaction back), a
+Streamlit component, row views and selection stores shared by charts and
+grids, and an analytical grid (`herceg/grid`: virtualized rows and columns
+over the same tables, sorting, row selection, keyboard and ARIA grid
+navigation, and a React component).
 
 Next, in order:
 
@@ -80,7 +83,11 @@ Next, in order:
 3. Animation of changed values (bars, pies) and of panels.
 4. More financial tools (a range navigator, drawing tools, markers at
    breaks); 3D lines, meshes, parametric surfaces, and surfaces on the GPU.
-5. Screen-reader verification, benchmarks in Firefox and on other machines
+5. Grid: benchmarks against TanStack Table with TanStack Virtual, AG Grid,
+   and Glide Data Grid; then column resizing and pinning, grouping and
+   aggregation through derived tables, pivots, and a server-backed mode
+   whose filters, sorts, and aggregates run where the data lives.
+6. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 
 ## Development

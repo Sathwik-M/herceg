@@ -1378,6 +1378,44 @@ row, and Escape clears the selection; Enter or Space on a header sorts by it.
 What sorting and selecting did is announced. Grids take the charts' themes
 (`theme`); without a height of its own, a grid's container gets 320 pixels.
 
+A grid and a chart linked both ways share one table: the grid's selected
+rows restrict what the chart shows, and the chart's brush filters the grid.
+Each reads the table through a view of its own, so neither copies columns.
+
+```ts
+import { col, createChart, point, rowView, selectionStore } from "herceg";
+import { createGrid, createGridModel } from "herceg/grid";
+
+const store = selectionStore(requests);
+const gridRows = rowView(requests);
+const chartRows = rowView(requests);
+const grid = createGrid(gridElement, {
+  model: createGridModel({ data: gridRows, columns, selection: store }),
+  ariaLabel: "Requests",
+});
+const chart = createChart(chartElement, {
+  marks: [point(chartRows, { x: "time", y: "latency" })],
+  interaction: { brush: "x" },
+});
+
+// Selected rows show in the chart; with none selected, it shows them all.
+store.subscribe(() => {
+  const picked = store.get("grid-rows");
+  chartRows.restrict(picked?.kind === "rows" ? picked.rows : null);
+});
+// A brushed range filters the grid; clearing the brush shows every row.
+chart.on("select", ({ x }) =>
+  gridRows.setQuery({
+    ...gridRows.query,
+    filter: x ? col("time").ge(x[0]).and(col("time").le(x[1])) : true,
+  }),
+);
+```
+
+How they link is the application's choice; nothing filters automatically.
+Rows that a filter takes out of the grid stay selected, so the chart keeps
+showing them.
+
 Rows have one height (`rowHeight`, 28 pixels by default) and columns explicit
 widths. Rows taller together than 8 million pixels scroll scaled: the
 scrollbar covers them all, and a pixel scrolled moves more than one. Not yet
