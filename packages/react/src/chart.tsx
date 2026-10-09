@@ -27,7 +27,7 @@ import { markBuilder } from "./marks.tsx";
 export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   /** Marks built with herceg's functions; mark elements among `children` are added after them. */
   marks?: readonly ChartMark[];
-  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
+  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Line3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: ReactNode;
   className?: string;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -127,6 +127,7 @@ const PORTABLE = new Set([
   "geoshape",
   "geopoint",
   "point3d",
+  "line3d",
   "surface",
   "rule",
   "region",

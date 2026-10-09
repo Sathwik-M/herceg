@@ -13,6 +13,7 @@ export const PACKAGES: Record<string, string> = {
   tanstack: "@tanstack/charts",
   uplot: "uplot",
   "herceg-react": "@herceg/react",
+  "herceg-cpu": "herceg",
 };
 
 /** Runtime packages an adapter's results depend on, recorded with their versions. */
@@ -20,7 +21,8 @@ export const RUNTIMES: Record<string, string[]> = { "herceg-react": ["react", "r
 
 /**
  * Libraries in the main comparison. `herceg-react` is measured separately
- * against plain herceg (`npm run bench:react`).
+ * against plain herceg (`npm run bench:react`), and `herceg-cpu` (herceg
+ * without WebGL2) against herceg's GPU paths for 3D charts.
  */
 export const COMPARED = ["herceg", "echarts", "chartjs", "plotly", "tanstack", "uplot"];
 

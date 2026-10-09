@@ -25,6 +25,7 @@ import {
   GeoShape,
   Graph,
   Line,
+  Line3D,
   Pie,
   Point,
   Point3D,
@@ -331,10 +332,12 @@ describe("<Chart>", () => {
       >
         <Surface data={grid} x="x" y="y" z="z" />
         <Point3D data={points} x="x" y="y" z="z" />
+        <Line3D data={grid} x="x" y="y" z="z" />
       </Chart>
     );
     act(() => root.render(view(10)));
     expect(host.textContent).toContain("Surface of z over x and y");
+    expect(host.textContent).toContain("3D line through x, y, z: 4 points in 1 run.");
     const chart = ref.current!;
     chart.setCamera({ elevation: 50 });
     await frame();

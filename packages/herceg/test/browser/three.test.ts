@@ -3,6 +3,7 @@ import { category } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import { line } from "../../src/marks/line.ts";
+import { line3d } from "../../src/marks/line3d.ts";
 import { point } from "../../src/marks/point.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { surface } from "../../src/marks/surface.ts";
@@ -223,8 +224,8 @@ describe("3D charts", () => {
     expect(cloudPainter()!.bytes - before).toBe(n * 13);
     const faces = modelOf(chart)
       .scene((text) => text.length * 6, true)
-      .panels[0]!.marks.find((m) => m.kind === "faces") as unknown as { cloud?: unknown };
-    expect(faces.cloud).toBeDefined();
+      .panels[0]!.marks.find((m) => m.kind === "faces") as unknown as { batches?: unknown };
+    expect(faces.batches).toBeDefined();
     const canvas = chart.root.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
     const first = modelOf(chart).inspectItem(modelOf(chart).stepItem(undefined, 1)!)!.points[0]!;
@@ -376,6 +377,36 @@ describe("3D charts", () => {
         1,
       ).data;
       expect([g, a]).toEqual([0xaa, 255]);
+    }
+    chart.destroy();
+  });
+
+  it("stroke lines' segments on a canvas, joined round", async () => {
+    const path = table({ x: [0, 1, 2], y: [0, 1, 0], z: [0, 1, 0] });
+    const chart = createChart(host, {
+      renderer: "canvas",
+      marks: [line3d(path, { x: "x", y: "y", z: "z", stroke: "#00aa00", strokeWidth: 6 })],
+    });
+    const model = modelOf(chart);
+    const at = (row: number) => model.inspectItem(JSON.stringify([0, row]))!.points[0]!;
+    const canvas = chart.root.querySelector("canvas")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    const context = canvas.getContext("2d")!;
+    // Along each segment and at the joint.
+    for (const [a, b, t] of [
+      [0, 1, 0.5],
+      [1, 2, 0.5],
+      [1, 2, 0],
+    ] as const) {
+      const x = at(a).px + t * (at(b).px - at(a).px);
+      const y = at(a).py + t * (at(b).py - at(a).py);
+      const [, g, , alpha] = context.getImageData(
+        Math.round(x * ratio),
+        Math.round(y * ratio),
+        1,
+        1,
+      ).data;
+      expect([g, alpha]).toEqual([0xaa, 255]);
     }
     chart.destroy();
   });

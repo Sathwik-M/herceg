@@ -9,6 +9,7 @@ import { gridSection } from "./grid/report.ts";
 import { ROOT } from "./runner/build.ts";
 
 interface Summary {
+  n?: number;
   median: number;
   mad: number;
   p95: number;
@@ -53,7 +54,6 @@ const DOC = join(ROOT, "..", "docs", "comparison.md");
 
 const browser: BrowserResults = JSON.parse(readFileSync(join(RESULTS, "browser.json"), "utf8"));
 const size: SizeResults = JSON.parse(readFileSync(join(RESULTS, "size.json"), "utf8"));
-const libraries = Object.keys(browser.libraries);
 
 const ms = (s: Summary) =>
   s.median >= 100 ? s.median.toFixed(0) : s.median.toFixed(s.median >= 10 ? 1 : 2);
@@ -93,6 +93,24 @@ function timingTable(scenarios: string[], metric: string, results = browser): st
   return table(["Scenario (ms, median ± MAD)", ...libraries], rows);
 }
 
+/** Turning a 3D chart every frame with vsync on: frame intervals and frames that missed the refresh. */
+function orbitTable(results: BrowserResults): string {
+  const libraries = Object.keys(results.libraries);
+  const scenarios = Object.keys(results.scenarios).filter((id) => id.startsWith("orbit-"));
+  const rows = scenarios.map((id) => [
+    `${id} (${results.scenarios[id]?.description})`,
+    ...libraries.map((library) => {
+      const row = find(id, library, results);
+      if (!row?.supported) return row?.reason?.startsWith("error") ? "error" : "n/a";
+      const frames = row.metrics.frameInterval!;
+      const missed = row.metrics.missedFrames!.summary.median;
+      const late = `${missed} of ${frames.summary.n} late`;
+      return `${ms(frames.summary)} (p95 ${ms({ ...frames.summary, median: frames.summary.p95 })}), ${late}`;
+    }),
+  ]);
+  return table(["Frame interval (ms, median)", ...libraries], rows);
+}
+
 /** Paced ingestion: frame interval percentiles, dropped frames, achieved rate. */
 function ingestTable(results = browser): string {
   const libraries = Object.keys(results.libraries);
@@ -117,16 +135,17 @@ function ingestTable(results = browser): string {
   );
 }
 
-function memoryTable(): string {
-  const scenarios = Object.keys(browser.scenarios).filter((id) => id.startsWith("memory-"));
+function memoryTable(results = browser): string {
+  const libraries = Object.keys(results.libraries);
+  const scenarios = Object.keys(results.scenarios).filter((id) => id.startsWith("memory-"));
   const rows: string[][] = [];
   for (const id of scenarios) {
-    const source = find(id, libraries[0]!)?.metrics.sourceBytes?.summary.median ?? 0;
+    const source = find(id, libraries[0]!, results)?.metrics.sourceBytes?.summary.median ?? 0;
     rows.push([
-      `${id} (${browser.scenarios[id]?.description}; source ${mb(source)} MB)`,
+      `${id} (${results.scenarios[id]?.description}; source ${mb(source)} MB)`,
       ...libraries.map((library) => {
-        const row = find(id, library);
-        if (!row?.supported) return "n/a";
+        const row = find(id, library, results);
+        if (!row?.supported) return row?.reason?.startsWith("error") ? "error" : "n/a";
         const retained = row.metrics.retainedBytes!.summary.median;
         const canvas = row.metrics.canvasBytes!.summary.median;
         const nodes = row.metrics.domNodes!.summary.median;
@@ -220,7 +239,7 @@ function browserSection(results: BrowserResults): string {
 
 /**
  * 3D charts (`results/three.json`, a run of the 3D scenarios alone): the
- * environment, mounting, and turning the camera.
+ * environment, mounting, turning the camera, turning it every frame, and memory.
  */
 function threeSection(results: BrowserResults): string {
   const ids = Object.keys(results.scenarios);
@@ -238,6 +257,10 @@ function threeSection(results: BrowserResults): string {
       "cameraToFrame",
       results,
     ),
+    "",
+    orbitTable(results),
+    "",
+    memoryTable(results),
   ].join("\n");
 }
 

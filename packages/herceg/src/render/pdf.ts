@@ -488,6 +488,7 @@ function paintGeometry(
           stroke: style.stroke,
           strokeWidth: style.strokeWidth,
           join: "round",
+          cap: "round",
         });
       }
       return;

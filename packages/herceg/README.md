@@ -902,7 +902,7 @@ previous one are left out of a region's outline.
 ### 3D charts
 
 ```ts
-import { createChart, point3d, surface, table } from "herceg";
+import { createChart, line3d, point3d, surface, table } from "herceg";
 
 createChart(element, {
   camera: { azimuth: -60, elevation: 25 },
@@ -910,6 +910,7 @@ createChart(element, {
   marks: [
     surface(fit, { x: "nitrogen", y: "rain", z: "yield" }), // a fitted surface
     point3d(trials, { x: "nitrogen", y: "rain", z: "yield", series: "field" }), // observations
+    line3d(runs, { x: "nitrogen", y: "rain", z: "yield", series: "run" }), // paths through them
   ],
 });
 ```
@@ -919,6 +920,14 @@ vertical): one color and legend entry per category of `series`, or colored
 by a number field `color` (`colors`, `colorDomain`, and `colorMidpoint` as
 for heatmaps), with a color legend; `r` is the radius (3.5 px), `fill` and
 `fillOpacity` the color without them, and `name` names points in tooltips.
+`line3d` draws lines through the number or time fields `x`, `y`, and `z`:
+each category of `series` is one path (one color and legend entry; without
+`series`, all rows form one path), through its rows in table order, so a
+path may turn back along any axis. A row missing a value (or without a place
+on a log axis) breaks its path there; rows of other series in between do
+not. `stroke` gives every path one color and `strokeWidth` the width in
+pixels (2), which stays the same however near or far the line is; a run of
+one row draws nothing (compose `point3d` for markers).
 `surface` draws a height field over a grid of rows: each row's `x` and `y`
 (number, time, or category fields) pick a grid point (the distinct numbers
 and times in order, the categories in dictionary order and evenly spaced),
@@ -927,8 +936,11 @@ point, the last with a value wins. Each cell between four grid points with
 values is drawn as two triangles (split along the diagonal from its lowest x
 and y corner), a cell with three as their triangle, so missing values leave
 holes. Grid spacing may be irregular; rows not on a grid (scattered samples)
-are not triangulated: bin or aggregate them into one first. A surface draws
-at most 250,000 grid points (`MAX_GRID_POINTS`). Cells are colored by the
+are not triangulated: bin or aggregate them into one first. A surface holds
+at most 1,048,576 grid points (`MAX_GRID_POINTS`), and without a GPU
+painter (SVG, PDF, and PNG exports, the SVG renderer, a browser without
+WebGL2, a wireframe or translucent surface) draws at most 250,000
+(`MAX_CPU_GRID_POINTS`): larger ones throw. Cells are colored by the
 mean of their corners' `z` (or `color` field) on the theme's sequential ramp
 or `colors`, with a color legend, and shaded by how they face a light above
 and to the left of the viewer; `shading: false` shows colors exactly as the
@@ -943,7 +955,7 @@ each axis spans every mark's data (rounded to ticks), set by the chart's
 lengths (`[2, 2, 1]` for a flat box). Grid lines are drawn on the three
 walls behind the data, tick labels along the box's lowest edges for x and y
 and its leftmost for z (thinned where they would overlap), and data outside
-a given `domain` is left out, surfaces cut at the walls.
+a given `domain` is left out, surfaces and lines cut at the walls.
 
 The chart's `camera` is where it is seen from at first: `azimuth`, degrees
 counterclockwise around the z axis from +x seen from above (-60 by default);
@@ -956,7 +968,8 @@ the configured camera. Buttons in the chart's corner, shown while the
 pointer or focus is in it, turn, tilt, zoom, and reset the view for people
 who cannot drag; Shift with the arrow keys turns it too, and plus and minus
 zoom. The arrow keys, as in other charts without axes, read the points in
-row order and a surface's grid points row by row. Touch drags turn the box
+row order, a line's points path after path, and a surface's grid points row
+by row. Touch drags turn the box
 sideways and leave vertical drags to scroll the page. `chart.camera` is the
 current camera, `chart.setCamera({ ... })` changes the settings it is given
 (null goes back to the configured camera), and a `camera` event reports
@@ -964,27 +977,44 @@ every move, once a frame at most. Updating the chart with a different
 `camera` shows it; updating it with the same camera keeps the view the user
 turned to.
 
-Tooltips, hover and click events, and the keyboard report a point's or grid
-point's `x`, `y`, and `z` (and `color`), and the inspection's `values` holds
-them by field. The pointer finds what is drawn on top under it (a point
-within 3 px of its disc, or a surface's cell, reporting the cell's corner
-nearest the pointer). The description summarizes the points or the surface
-(its grid, highest, and lowest points), the axes' ranges, and the camera.
+Tooltips, hover and click events, and the keyboard report a point's, a
+line's point's, or a grid point's `x`, `y`, and `z` (and `color`), and the
+inspection's `values` holds them by field. The pointer finds what shows on
+top under it: a point within 3 px of its disc, a line within 3 px of its
+stroke (reporting the end of the segment nearer the pointer, or, for an end
+outside the box, where the segment enters it), or a surface's cell
+(reporting its corner nearest the pointer). The description summarizes the
+points, the lines (their points, runs, and the rows that break them), or the
+surface (its grid, highest, and lowest points), the axes' ranges, and the
+camera; it and the keyboard read the data, never what is drawn.
 
-Everything is drawn back to front, as SVG, Canvas, and PDF draw it: points
-alone by depth, and one surface with any points in an order exact for a
-height field, so points under a surface are hidden by it and those above
-show; a point's disc is drawn as a marker, cut only by the cells in front of
-it, and overlapping points by depth. Several surfaces in one chart are
-ordered by their cells' depth, which can be wrong where they come close or
-cross. Charts of points alone
-with at least 20,000 points, opaque, are drawn by the GPU in the browser
-(with a depth test; the WebGL code loads only then), and turning them costs
-under a millisecond of JavaScript a frame at a million points; the first
-tooltip after a turn projects every point on the CPU (about 50 ms at a
-million). Other 3D charts are drawn on the CPU every frame: about 3 ms for a
-50 by 50 surface and 30 ms for a 200 by 200 one on the benchmark machine
-(see `docs/comparison.md`).
+Large 3D charts are drawn by the GPU in the browser, with one depth test for
+all of their marks, when every mark can be (opaque points, opaque lines, and
+opaque surfaces without a wireframe) and the CPU would draw at least 20,000
+faces: 20,000 points, 10,000 surface cells, 20,000 line segments, or a mix
+(the WebGL code loads only then). Lines are ribbons a constant width on
+screen with round ends and joins; a surface's cells keep their CPU colors
+and shading (where facing the light falls on the boundary between two
+shading steps, float32 may pick the other). Whatever is nearer shows,
+crossings included, and points and lines lying on a surface show over it. Turning the camera uploads nothing, and the pointer
+finds what the GPU shows from the data: a ray through a surface's grid, and
+points and segments projected once per view. Edges are not antialiased.
+
+Everything else is drawn back to front, as SVG, Canvas, and PDF draw it
+(exports always are): points alone by depth, and one surface with any
+points in an order exact for a height field, so points under a surface are
+hidden by it and those above show; a point's disc is drawn as a marker, cut
+only by the cells and lines in front of it, and overlapping points by depth.
+Lines are cut at the box's walls into segments sorted by depth among the
+other faces (over a single surface, also cut where they cross its columns
+and rows and each piece ranked among its cells), which is approximate: a
+line piercing a cell, or two lines crossing, can be drawn in the wrong order
+near the crossing. Several surfaces in one chart are ordered by their cells'
+depth, which can be wrong where they come close or cross. On the benchmark
+machine (see `docs/comparison.md`) turning a 1001 by 1001 surface (a million
+cells) takes under half a millisecond of JavaScript a frame and keeps 60
+frames a second when it turns every frame; on the CPU a 317 by 317 surface
+(100,000 cells) takes about 90 ms a turn.
 
 ### A second y axis
 
@@ -1793,7 +1823,8 @@ createChart(element, config);
 Every point is drawn by default. In the browser, point series of 100,000
 points or more are drawn with WebGL2, loaded on demand the first time a chart
 needs it; `chart.loading` settles once they are on screen (points on a time
-axis with breaks are placed on the CPU). With
+axis with breaks are placed on the CPU). So are 3D charts of 20,000 points,
+10,000 surface cells, or 20,000 line segments (see 3D charts). With
 `sampling: "pixel"`, opaque points
 whose centers land on the same device pixel are drawn once (above 4,096
 points per series), which is faster for dense scatter plots but can drop

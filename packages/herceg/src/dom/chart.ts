@@ -110,13 +110,13 @@ function measurer(document: Document): MeasureText {
 
 /**
  * What a scene leaves to the GPU painter: large point series ("points"), a
- * 3D chart's points ("3d", which need the 3D painter), or nothing.
+ * large 3D chart ("3d", which needs the 3D painter), or nothing.
  */
 function cloudsIn(scene: Scene): "points" | "3d" | undefined {
   let found: "points" | undefined;
   for (const panel of scene.panels)
     for (const mark of panel.marks) {
-      if (mark.kind === "faces" && (mark as unknown as FaceGeometry).cloud) return "3d";
+      if (mark.kind === "faces" && (mark as unknown as FaceGeometry).batches) return "3d";
       if (mark.kind === "point" && (mark as unknown as PointGeometry).cloud) found = "points";
     }
   return found;

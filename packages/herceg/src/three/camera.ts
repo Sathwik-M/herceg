@@ -161,6 +161,45 @@ export class View {
   }
 
   /**
+   * The ray of points the pixel at (px, py) shows, in normalized
+   * coordinates: `origin` + t * `direction`, farther from the eye as t grows
+   * (from the eye at t = 0 in perspective; orthographically, t = 0 is at the
+   * box's center's depth and nearer points have negative t).
+   */
+  ray(px: number, py: number): { origin: number[]; direction: number[] } {
+    const sx = (px - this.cx) / this.scale;
+    const sy = (this.cy - py) / this.scale;
+    // The point under the pixel at the center's depth, in the box's units.
+    const under = [0, 1, 2].map((k) => this.right[k]! * sx + this.up[k]! * sy);
+    const d = this.distance;
+    const from = d === Number.POSITIVE_INFINITY ? under : this.eye.map((e) => e * d);
+    const toward =
+      d === Number.POSITIVE_INFINITY ? this.eye.map((e) => -e) : under.map((q, k) => q - from[k]!);
+    return {
+      origin: from.map((value, k) => value / this.half[k]!),
+      direction: toward.map((value, k) => value / this.half[k]!),
+    };
+  }
+
+  /** Toward the light that shades surfaces, a unit vector in the box's units: above and to the left of the eye. */
+  get light(): [number, number, number] {
+    const v = [0, 1, 2].map((k) => this.eye[k]! + 0.5 * this.up[k]! - 0.35 * this.right[k]!);
+    const length = Math.hypot(v[0]!, v[1]!, v[2]!);
+    return length > 0 ? [v[0]! / length, v[1]! / length, v[2]! / length] : [0, 0, 1];
+  }
+
+  /** Whether `other` places every point where this view does. */
+  same(other: View): boolean {
+    return (
+      other.cx === this.cx &&
+      other.cy === this.cy &&
+      other.scale === this.scale &&
+      other.distance === this.distance &&
+      other.matrix.every((value, k) => value === this.matrix[k])
+    );
+  }
+
+  /**
    * Where the eye is, in normalized coordinates: infinitely far along the
    * eye's direction when orthographic.
    */

@@ -5,7 +5,12 @@ import { estimateText } from "../../src/layout/text.ts";
 import { line } from "../../src/marks/line.ts";
 import { boxRoom, joinLayers3D } from "../../src/marks/plot3d.ts";
 import { point3d } from "../../src/marks/point3d.ts";
-import { MAX_GRID_POINTS, type SurfaceMark, surface } from "../../src/marks/surface.ts";
+import {
+  MAX_CPU_GRID_POINTS,
+  MAX_GRID_POINTS,
+  type SurfaceMark,
+  surface,
+} from "../../src/marks/surface.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { type ChartConfig, ChartModel, type ItemInspection } from "../../src/model/model.ts";
 import { renderToPDF } from "../../src/pdf.ts";
@@ -222,7 +227,7 @@ describe("surfaces", () => {
     expect(model.inspectItem(JSON.stringify([0, 3]))!.value).toBe(2);
   });
 
-  it("refuses grids larger than it draws", () => {
+  it("refuses grids larger than it holds, and on the CPU larger than it draws there", () => {
     const n = Math.ceil(Math.sqrt(MAX_GRID_POINTS)) + 1;
     const scattered = table({
       x: Float64Array.from({ length: n }, (_, i) => i),
@@ -230,7 +235,15 @@ describe("surfaces", () => {
       z: new Float64Array(n),
     });
     expect(() => surface(scattered, { x: "x", y: "y", z: "z" })).toThrow(
-      /at most 250,000 grid points/,
+      /holds at most 1,048,576 grid points/,
+    );
+    // A grid the GPU draws, but an export cannot.
+    const side = Math.ceil(Math.sqrt(MAX_CPU_GRID_POINTS)) + 1;
+    const large = field(side, (x, y) => x * y);
+    expect(() =>
+      renderToSVG({ width: 300, height: 200, marks: [surface(large, { x: "x", y: "y", z: "z" })] }),
+    ).toThrow(
+      /drawn only on the GPU: in the browser with WebGL2, opaque, without a wireframe.*at most 250,000/,
     );
   });
 

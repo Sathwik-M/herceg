@@ -15,10 +15,11 @@ import {
   rampOf,
   SequentialScale,
 } from "../scale/color.ts";
-import type { CloudLayer3D } from "../scene/scene.ts";
+import type { PointBatch3D } from "../scene/scene.ts";
 import type { Frozen, Point3DSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
-import type { FaceBuffer } from "../three/faces.ts";
+import type { View } from "../three/camera.ts";
+import { ScreenGrid } from "../three/hit.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -31,9 +32,18 @@ import {
 } from "./mark.ts";
 import {
   type AxisData,
+  axesKey,
+  type FaceFrame3D,
   type Frame3D,
+  findRow,
+  type Hit3D,
+  type Items3D,
+  identityIn,
+  inBox,
+  inFront,
   joinLayers3D,
   type Layer3D,
+  PerChart,
   type Placed3D,
   positiveExtent,
 } from "./plot3d.ts";
@@ -64,6 +74,8 @@ export interface Point3DOptions<S extends Schema> {
 }
 
 const RADIUS = 3.5;
+/** Pointer reach past a point's edge, in pixels, as on the CPU (three/faces.ts). */
+const REACH = 3;
 
 /** A set of points in the legend: a category of `series`, or every point. */
 interface Group {
@@ -73,12 +85,25 @@ interface Group {
   code: number;
 }
 
-/**
- * The rows each layer drew last, in row order, per chart (by its faces) and
- * layer identity, so layers of one chart (the same mark twice, too) and
- * charts sharing a mark keep their own.
- */
-const drawnRows = new WeakMap<FaceBuffer, Map<string | number, Uint32Array>>();
+/** The rows a layer draws, in row order, for one chart's axes and series shown. */
+interface Reading {
+  key: string;
+  rows: Uint32Array;
+  count: number;
+}
+
+/** Where the rows drawn are on screen for one view, for the pointer when a GPU painter draws them. */
+interface Screen {
+  view: View;
+  reading: Reading;
+  x: Float32Array;
+  y: Float32Array;
+  depth: Float32Array;
+  grid: ScreenGrid;
+}
+
+const readings = new PerChart<Reading>();
+const screens = new PerChart<Screen>();
 
 export class Point3DMark implements Layer3D {
   declare readonly [MARK]: true;
@@ -176,9 +201,9 @@ export class Point3DMark implements Layer3D {
   /**
    * The points for a GPU painter: each row's color as an index into a
    * palette of the series' colors or the ramp's, 255 for rows not drawn.
-   * Translucent points need drawing in order, so they have no cloud.
+   * Translucent points need drawing in order, so they have no batch.
    */
-  cloud(frame: Frame3D): CloudLayer3D | undefined {
+  batch(frame: Frame3D): PointBatch3D | undefined {
     const { spec, table } = this;
     if ((spec.fillOpacity ?? 1) < 1) return undefined;
     const { theme, hidden, id } = frame;
@@ -188,7 +213,8 @@ export class Point3DMark implements Layer3D {
     const shown = groups.map((group) => !hidden.has(groupKey(id, group.category)));
     const palette = spec.color === undefined ? fills : (scale?.colors() ?? []);
     if (palette.length > 255 || !palette.every(isOpaqueColor)) return undefined;
-    const key = `${table.version}|${shown.join()}|${palette.join()}`;
+    // Rows' colors are indices, which the colors themselves do not change.
+    const key = `${table.version}|${shown.join()}`;
     let style = this.#cloudStyle?.key === key ? this.#cloudStyle.style : undefined;
     if (!style) {
       style = new Uint8Array(table.length).fill(255);
@@ -214,6 +240,7 @@ export class Point3DMark implements Layer3D {
     }
     const [x, y, z] = this.#fields.map((field) => table.numbers(field as never));
     return {
+      kind: "points",
       x: x!,
       y: y!,
       z: z!,
@@ -224,94 +251,107 @@ export class Point3DMark implements Layer3D {
     };
   }
 
-  place(frame: Frame3D): Placed3D {
-    const { view, axes, faces, rank, theme, hidden, id } = frame;
+  /**
+   * The rows drawn, in row order: of series shown, with a color, and inside
+   * the box. Found once per chart for its axes, the table version, and the
+   * series shown, so turning the camera finds nothing again.
+   */
+  #reading(frame: Frame3D): Reading {
     const { spec, table } = this;
+    const { axes, hidden, id } = frame;
+    const groups = this.#groups();
+    const shown = groups.map((group) => !hidden.has(groupKey(id, group.category)));
+    const key = `${table.version}|${shown.join()}|${axesKey(axes)}`;
+    const held = readings.get(frame);
+    if (held?.key === key) return held;
     const n = table.length;
     const [xs, ys, zs] = this.#fields.map((field) => table.numbers(field as never));
-    const radius = spec.r ?? RADIUS;
-    const opacity = spec.fillOpacity ?? 1;
-    // Each series' style, or with `color` each ramp entry's; -1 for hidden series.
-    const scale = this.#scale(theme);
-    const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
-    const ramp = scale && tones ? scale.colors() : undefined;
-    const rampStyles = ramp && new Int32Array(ramp.length).fill(-1);
     const series = spec.series === undefined ? undefined : table.categories(spec.series as never);
     const codes = series?.codes;
-    // Each series code's style (the code 0 stands for every row without `series`); -1 when hidden.
-    const styleOfCode = new Int32Array(series ? series.dictionary.length : 1).fill(-1);
-    for (const group of this.#groups()) {
-      const key = groupKey(id, group.category);
-      if (hidden.has(key)) continue;
-      const fill = spec.fill ?? frame.color(key);
-      styleOfCode[Math.max(0, group.code)] = faces.styleOf(fill, opacity, radius);
-    }
-    let byLayer = drawnRows.get(faces);
-    if (!byLayer) {
-      byLayer = new Map();
-      drawnRows.set(faces, byLayer);
-    }
-    let rows = byLayer.get(id);
-    if (!rows || rows.length < n) {
-      rows = new Uint32Array(Math.max(16, Math.ceil(n * 1.25)));
-      byLayer.set(id, rows);
-    }
-    const out = new Float64Array(2);
+    // Whether each series code (0 standing for every row without `series`) is shown.
+    const showsCode = new Uint8Array(series ? series.dictionary.length : 1);
+    groups.forEach((group, g) => {
+      if (shown[g]) showsCode[Math.max(0, group.code)] = 1;
+    });
+    // Points colored by a field need a value to color by.
+    const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+    const rows = held && held.rows.length >= n ? held.rows : new Uint32Array(Math.ceil(n * 1.25));
     const [ax, ay, az] = axes;
-    const firstVertex = faces.vertexCount;
     let count = 0;
-    // With `color` but no value to color by, no point has a color to draw.
-    const drawable = spec.color === undefined || scale !== undefined;
-    for (let row = 0; drawable && row < n; row++) {
+    for (let row = 0; row < n; row++) {
       const code = codes ? codes[row]! : 0;
-      let style = code >= 0 ? styleOfCode[code]! : -1;
-      if (style < 0) continue;
-      if (ramp) {
-        const tone = scale!.index(tones![row]!);
-        if (tone < 0) continue;
-        style = rampStyles![tone]!;
-        if (style < 0) {
-          style = faces.styleOf(ramp[tone]!, opacity, radius);
-          rampStyles![tone] = style;
-        }
-      }
-      const u = ax.place(xs![row]!);
-      const v = ay.place(ys![row]!);
-      const w = az.place(zs![row]!);
+      if (code < 0 || !showsCode[code]) continue;
+      if (tones && !Number.isFinite(tones[row]!)) continue;
       // Points outside the box (or without a place on it) are not drawn.
-      if (!(Math.abs(u) <= 1 + 1e-9 && Math.abs(v) <= 1 + 1e-9 && Math.abs(w) <= 1 + 1e-9))
-        continue;
-      const depth = view.project(u, v, w, out, 0);
-      faces.begin();
-      faces.corner(faces.vertex(out[0]!, out[1]!, depth));
-      faces.face(style, rank ? rank(u, v, w) : 0, depth, row);
+      if (!inBox(ax.place(xs![row]!), ay.place(ys![row]!), az.place(zs![row]!))) continue;
       rows[count++] = row;
     }
-    return this.#placed(frame, rows, count, firstVertex, radius);
+    return readings.set(frame, { key, rows, count });
   }
 
-  #placed(
-    frame: Frame3D,
-    rows: Uint32Array,
-    count: number,
-    firstVertex: number,
-    radius: number,
-  ): Placed3D {
+  /**
+   * The point a GPU painter shows nearest the eye within reach of (px, py):
+   * the drawn rows are projected and filed on screen once per view.
+   */
+  pick(frame: Frame3D, px: number, py: number): Hit3D | undefined {
+    const { view, axes, bounds } = frame;
+    const reading = this.#reading(frame);
+    let screen = screens.get(frame);
+    if (!screen || screen.reading !== reading || !screen.view.same(view)) {
+      const { rows, count } = reading;
+      const [xs, ys, zs] = this.#fields.map((field) => this.table.numbers(field as never));
+      const [ax, ay, az] = axes;
+      const x = new Float32Array(count);
+      const y = new Float32Array(count);
+      const depth = new Float32Array(count);
+      const out = new Float64Array(2);
+      for (let i = 0; i < count; i++) {
+        const row = rows[i]!;
+        depth[i] = view.project(
+          ax.place(xs![row]!),
+          ay.place(ys![row]!),
+          az.place(zs![row]!),
+          out,
+          0,
+        );
+        x[i] = out[0]!;
+        y[i] = out[1]!;
+      }
+      const grid = new ScreenGrid(bounds, count, (filer) => {
+        for (let i = 0; i < count; i++) filer.box(i, x[i]!, y[i]!, x[i]!, y[i]!);
+      });
+      screen = screens.set(frame, { view, reading, x, y, depth, grid });
+    }
+    const { x, y, depth } = screen;
+    const reach = (this.spec.r ?? RADIUS) + REACH;
+    let best = -1;
+    screen.grid.near(px, py, reach, (i) => {
+      const dx = x[i]! - px;
+      const dy = y[i]! - py;
+      if (dx * dx + dy * dy > reach * reach) return;
+      // At one depth the later row shows, as the painter draws it.
+      if (best < 0 || inFront(depth[i]!, i > best, depth[best]!, view.distance)) best = i;
+    });
+    return best < 0 ? undefined : { item: this.items(frame).item(best), depth: depth[best]! };
+  }
+
+  items(frame: Frame3D): Items3D {
     const { spec, table } = this;
-    const { faces, axes, id } = frame;
+    const { axes, view, id, theme } = frame;
+    const { rows, count } = this.#reading(frame);
     const [xs, ys, zs] = this.#fields.map((field) => table.numbers(field as never));
     const names = spec.name === undefined ? undefined : table.categories(spec.name as never);
     const series = spec.series === undefined ? undefined : table.categories(spec.series as never);
     const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+    const scale = this.#scale(theme);
     const offset = table.rowOffset;
-    const styles = faces.styles;
-    // Styles of drawn points, by drawing position among this layer's faces.
-    const firstFace = faces.count - count;
+    const radius = spec.r ?? RADIUS;
+    const out = new Float64Array(2);
     const category = (column: typeof names, row: number) => {
       const code = column ? column.codes[row]! : -1;
       return code >= 0 ? column!.dictionary[code]! : undefined;
     };
-    const itemOf = (i: number): LayoutItem => {
+    const item = (i: number): LayoutItem => {
       const row = rows[i]!;
       const values = [xs![row]!, ys![row]!, zs![row]!];
       const parts = values.map(
@@ -329,12 +369,21 @@ export class Point3DMark implements Layer3D {
       const group = category(series, row);
       if (name !== undefined) data[spec.name!] = name;
       if (group !== undefined) data[spec.series!] = group;
-      const px = faces.vertices[(firstVertex + i) * 2]!;
-      const py = faces.vertices[(firstVertex + i) * 2 + 1]!;
+      view.project(
+        axes[0].place(values[0]!),
+        axes[1].place(values[1]!),
+        axes[2].place(values[2]!),
+        out,
+        0,
+      );
+      const [px, py] = [Math.fround(out[0]!), Math.fround(out[1]!)];
       return {
         key: JSON.stringify([id, offset + row]),
         label: name ?? group ?? `${spec.label ?? "Point"} ${offset + row + 1}`,
-        color: styles[faces.style[firstFace + i]!]!.fill,
+        color:
+          tones && scale
+            ? scale.color(tones[row]!)
+            : (spec.fill ?? frame.color(groupKey(id, group))),
         value: values[2]!,
         text: parts.join(", "),
         px,
@@ -345,27 +394,12 @@ export class Point3DMark implements Layer3D {
         row,
       };
     };
-    /** Where row `row` is among the drawn rows, or -1. */
-    const find = (row: number) => {
-      let lo = 0;
-      let hi = count;
-      while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (rows[mid]! < row) lo = mid + 1;
-        else hi = mid;
-      }
-      return lo < count && rows[lo] === row ? lo : -1;
-    };
     return {
       count,
-      item: itemOf,
+      item,
       indexOf(key) {
         const identity = identityIn(key, id);
-        return identity === undefined ? -1 : find(identity - offset);
-      },
-      itemOfFace(row) {
-        const at = find(row);
-        return at < 0 ? undefined : itemOf(at);
+        return identity === undefined ? -1 : findRow(rows, count, identity - offset);
       },
       summary: () => {
         if (count === 0) return "3D chart with no points to show.";
@@ -377,18 +411,59 @@ export class Point3DMark implements Layer3D {
       },
     };
   }
-}
 
-/** The row identity in an item key of layer `id`, or undefined. */
-export function identityIn(key: string, id: string | number): number | undefined {
-  let parts: unknown;
-  try {
-    parts = JSON.parse(key);
-  } catch {
-    return undefined;
+  place(frame: FaceFrame3D): Placed3D {
+    const { view, axes, faces, rank, theme, id } = frame;
+    const { spec, table } = this;
+    const { rows, count } = this.#reading(frame);
+    const [xs, ys, zs] = this.#fields.map((field) => table.numbers(field as never));
+    const radius = spec.r ?? RADIUS;
+    const opacity = spec.fillOpacity ?? 1;
+    // Each series' style, or with `color` each ramp entry's.
+    const scale = this.#scale(theme);
+    const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+    const ramp = scale && tones ? scale.colors() : undefined;
+    const rampStyles = ramp && new Int32Array(ramp.length).fill(-1);
+    const series = spec.series === undefined ? undefined : table.categories(spec.series as never);
+    const codes = series?.codes;
+    // Each series code's style (the code 0 stands for every row without `series`).
+    const styleOfCode = new Int32Array(series ? series.dictionary.length : 1).fill(-1);
+    if (!ramp)
+      for (const group of this.#groups()) {
+        const fill = spec.fill ?? frame.color(groupKey(id, group.category));
+        styleOfCode[Math.max(0, group.code)] = faces.styleOf(fill, opacity, radius);
+      }
+    const out = new Float64Array(2);
+    const [ax, ay, az] = axes;
+    for (let i = 0; i < count; i++) {
+      const row = rows[i]!;
+      let style: number;
+      if (ramp) {
+        const tone = scale!.index(tones![row]!);
+        style = rampStyles![tone]!;
+        if (style < 0) {
+          style = faces.styleOf(ramp[tone]!, opacity, radius);
+          rampStyles![tone] = style;
+        }
+      } else style = styleOfCode[codes ? codes[row]! : 0]!;
+      const u = ax.place(xs![row]!);
+      const v = ay.place(ys![row]!);
+      const w = az.place(zs![row]!);
+      const depth = view.project(u, v, w, out, 0);
+      faces.begin();
+      faces.corner(faces.vertex(out[0]!, out[1]!, depth));
+      faces.face(style, rank ? rank.key(u, v, w) : 0, depth, row);
+    }
+    let items: Items3D | undefined;
+    return {
+      itemOfFace: (row) => {
+        const at = findRow(rows, count, row);
+        if (at < 0) return undefined;
+        items ??= this.items(frame);
+        return items.item(at);
+      },
+    };
   }
-  if (!Array.isArray(parts) || parts.length !== 2 || parts[0] !== id) return undefined;
-  return typeof parts[1] === "number" ? parts[1] : undefined;
 }
 
 /** The legend and color key of a set of points. */

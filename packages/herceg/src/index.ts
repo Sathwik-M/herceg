@@ -131,6 +131,7 @@ export { type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
 export { type HistogramOptions, histogram } from "./marks/histogram.ts";
 export { tablesOf, viewOf } from "./marks/layout-mark.ts";
 export { type LineOptions, line } from "./marks/line.ts";
+export { type Line3DOptions, line3d } from "./marks/line3d.ts";
 export type { AxisFormat, ChartMark, MarkIdentity } from "./marks/mark.ts";
 export { type PieOptions, pie } from "./marks/pie.ts";
 export { type PointOptions, point } from "./marks/point.ts";

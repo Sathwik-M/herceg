@@ -14,12 +14,12 @@ import { formatNumber } from "../format/format.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
+import type { TriangleBatch3D } from "../scene/scene.ts";
 import type { Frozen, SurfaceSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
-import type { View } from "../three/camera.ts";
 import { clipToBox } from "../three/clip.ts";
-import type { FaceBuffer } from "../three/faces.ts";
-import { Traversal } from "../three/traversal.ts";
+import { monotone, rayInBox, walkGrid } from "../three/hit.ts";
+import { crossing, Traversal } from "../three/traversal.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -32,13 +32,21 @@ import {
 } from "./mark.ts";
 import {
   type AxisData,
+  axesKey,
+  type FaceFrame3D,
   type Frame3D,
+  findRow,
+  type Hit3D,
+  type Items3D,
+  identityIn,
+  inBox,
   joinLayers3D,
   type Layer3D,
+  PerChart,
   type Placed3D,
   positiveExtent,
+  type Ranker,
 } from "./plot3d.ts";
-import { identityIn } from "./point3d.ts";
 
 export interface SurfaceOptions<S extends Schema> {
   /** Number, time, or category fields: each row's grid column and row. */
@@ -63,9 +71,20 @@ export interface SurfaceOptions<S extends Schema> {
   id?: string;
 }
 
-/** Grid points a surface draws at most: beyond this, rows should be binned or aggregated first. */
-export const MAX_GRID_POINTS = 250_000;
+/**
+ * Grid points a surface holds at most, and draws at most without a GPU
+ * painter (in SVG, PDF, and PNG exports, and charts without WebGL2): beyond
+ * these, rows should be binned or aggregated first.
+ */
+export const MAX_GRID_POINTS = 1_048_576;
+export const MAX_CPU_GRID_POINTS = 250_000;
 
+/**
+ * Steps of a GPU painter's depth buffer cells are drawn back by: points and
+ * lines lying on a surface show over it, whatever the order of the layers,
+ * as they do on the CPU, though float32 places them a step or two apart.
+ */
+const BEHIND = 8;
 /** Shading steps: cells share a style per color and step, so faces of one color batch. */
 const LEVELS = 16;
 /** Light reaching cells facing away from it, and the most it adds facing it. */
@@ -74,7 +93,6 @@ const DIFFUSE = 0.38;
 /** Width of the outline each opaque cell gets in its own color, closing antialiasing seams. */
 const SEAM = 0.5;
 const WIRE = 0.6;
-const EPSILON = 1e-9;
 /** A quad cell's triangles, by its corners: split along the diagonal from the first. */
 const FAN = [
   [0, 1, 2],
@@ -98,22 +116,45 @@ interface Grid {
   present: Uint32Array;
 }
 
-/** What a chart's last scene of a surface placed: kept per chart (by its faces) and reused. */
-interface Scratch {
-  view: View | undefined;
+/**
+ * Where a surface's grid points lie in one chart's box, and which the
+ * keyboard reads: found once per chart for its axes and the table version.
+ */
+interface Reading {
+  /** The table version and the axes' key it was found for. */
+  key: string;
+  version: number;
   /** Normalized position of each column and row, and height of each grid point (NaN without a value). */
   u: Float64Array;
   v: Float64Array;
   w: Float64Array;
+  /** Grid points read, in grid order: those in the box, and grid points outside it at corners of cut cells drawn. */
+  readable: Uint32Array;
+  /** How many of them lie in the box. */
+  inside: number;
+  /** Grid points outside the box that are read: the normalized place of the cut cell's corner nearest each. */
+  anchors: ReadonlyMap<number, readonly [number, number, number]>;
+}
+
+/** What a chart's last scene of a surface placed, reused from scene to scene. */
+interface Scratch {
   /** Each grid point's vertex among the faces' vertices, or -1 where it is not drawn. */
   vertexOf: Int32Array;
   depth: Float64Array;
   traversal: Traversal | undefined;
-  /** Grid points the keyboard reads: those drawn, in grid order. */
-  readable: Uint32Array;
 }
 
-const scratches = new WeakMap<FaceBuffer, Map<string | number, Scratch>>();
+/** A surface's cells for a GPU painter: the batch key, kept while the reading and the box's aspect stay. */
+interface Mesh {
+  reading: Reading;
+  aspect: string;
+  key: object;
+  cells: number;
+}
+
+const readings = new PerChart<Reading>();
+const scratches = new PerChart<Scratch>();
+const meshes = new PerChart<Mesh>();
 
 export class SurfaceMark implements Layer3D {
   declare readonly [MARK]: true;
@@ -123,6 +164,9 @@ export class SurfaceMark implements Layer3D {
   readonly table: Table;
   readonly measure: string;
   #grid: Grid | undefined;
+  #domain: { version: number; extent: readonly [number, number] | undefined } | undefined;
+  /** The colors cells take on the GPU, and the ramp and shading they are for. */
+  #shaded: { key: string; bytes: Uint8Array } | undefined;
 
   constructor(input: SurfaceSpec, table: Table) {
     this.spec = frozen(input);
@@ -158,7 +202,7 @@ export class SurfaceMark implements Layer3D {
     const ny = y.values.length;
     if (nx * ny > MAX_GRID_POINTS)
       throw new RangeError(
-        `A surface draws at most ${MAX_GRID_POINTS.toLocaleString("en-US")} grid points; ${nx.toLocaleString("en-US")} distinct values of ${spec.x} by ${ny.toLocaleString("en-US")} of ${spec.y} make ${(nx * ny).toLocaleString("en-US")}. Bin or aggregate the rows first`,
+        `A surface holds at most ${MAX_GRID_POINTS.toLocaleString("en-US")} grid points; ${nx.toLocaleString("en-US")} distinct values of ${spec.x} by ${ny.toLocaleString("en-US")} of ${spec.y} make ${(nx * ny).toLocaleString("en-US")}. Bin or aggregate the rows first`,
       );
     const z = table.numbers(spec.z as never);
     const row = new Int32Array(nx * ny).fill(-1);
@@ -222,22 +266,27 @@ export class SurfaceMark implements Layer3D {
     return table.numbers((spec.color ?? spec.z) as never);
   }
 
+  /** The extent of the tones of the grid points with values, found once per table version. */
+  #toneDomain(): readonly [number, number] | undefined {
+    const grid = this.#build();
+    if (this.#domain?.version === grid.version) return this.#domain.extent;
+    const tones = this.#tones();
+    let lo = Number.POSITIVE_INFINITY;
+    let hi = Number.NEGATIVE_INFINITY;
+    for (const p of grid.present) {
+      const t = tones[grid.row[p]!]!;
+      if (t < lo) lo = t;
+      if (t > hi) hi = t;
+    }
+    const extent = lo <= hi ? ([lo, hi] as const) : undefined;
+    this.#domain = { version: grid.version, extent };
+    return extent;
+  }
+
   #scale(theme: Theme): SequentialScale | undefined {
     const { spec } = this;
-    let domain = spec.colorDomain;
-    if (!domain) {
-      const grid = this.#build();
-      const tones = this.#tones();
-      let lo = Number.POSITIVE_INFINITY;
-      let hi = Number.NEGATIVE_INFINITY;
-      for (const p of grid.present) {
-        const t = tones[grid.row[p]!]!;
-        if (t < lo) lo = t;
-        if (t > hi) hi = t;
-      }
-      if (!(lo <= hi)) return undefined;
-      domain = [lo, hi];
-    }
+    const domain = spec.colorDomain ?? this.#toneDomain();
+    if (!domain) return undefined;
     const fallback = spec.colorMidpoint === undefined ? theme.sequential : theme.diverging;
     return new SequentialScale(domain, rampOf(spec.colors, fallback), spec.colorMidpoint);
   }
@@ -255,95 +304,445 @@ export class SurfaceMark implements Layer3D {
     return [[{ stops: scale.legendStops(), domain, midpoint, title }], []];
   }
 
-  /** This chart's scratch for the surface, with positions for `frame`'s view. */
-  #scratch(frame: Omit<Frame3D, "rank">): Scratch {
+  /** A cell's color value: the mean of its `m` corners' (grid points) tones; NaN when one is missing. */
+  #cellTone(grid: Grid, tones: ArrayLike<number>, corners: Int32Array, m: number): number {
+    let tone = 0;
+    for (let k = 0; k < m; k++) tone += tones[grid.row[corners[k]!]!]!;
+    let mean = tone / m;
+    if (!Number.isFinite(mean)) {
+      // Finite values near the largest overflow when summed: average their quarters.
+      let quarters = 0;
+      for (let k = 0; k < m; k++) quarters += tones[grid.row[corners[k]!]!]! / 4;
+      mean = (quarters / m) * 4;
+    }
+    return mean;
+  }
+
+  /**
+   * Where the grid points lie in this chart's box and which are read, found
+   * once for its axes and the table version: those in the box, and those
+   * outside it at the corners of drawn cells cut at its walls, read where
+   * the cut cell's drawn corner nearest them is.
+   */
+  #reading(frame: Frame3D): Reading {
     const grid = this.#build();
-    const { nx, ny } = grid;
-    let byLayer = scratches.get(frame.faces);
-    if (!byLayer) {
-      byLayer = new Map();
-      scratches.set(frame.faces, byLayer);
-    }
-    let scratch = byLayer.get(frame.id);
-    // A grid of the same size may have gained values: readable points need room too.
-    if (
-      !scratch ||
-      scratch.u.length !== nx ||
-      scratch.v.length !== ny ||
-      scratch.readable.length < grid.present.length
-    ) {
-      scratch = {
-        view: undefined,
-        u: new Float64Array(nx),
-        v: new Float64Array(ny),
-        w: new Float64Array(nx * ny),
-        vertexOf: new Int32Array(nx * ny),
-        depth: new Float64Array(nx * ny),
-        traversal: undefined,
-        readable: new Uint32Array(grid.present.length),
-      };
-      byLayer.set(frame.id, scratch);
-    }
-    if (scratch.view === frame.view) return scratch;
-    scratch.view = frame.view;
-    scratch.traversal = undefined;
-    const [ax, ay, az] = frame.axes;
+    const { axes } = frame;
+    const key = `${grid.version}|${axesKey(axes)}`;
+    const held = readings.get(frame);
+    if (held?.key === key) return held;
+    const { nx, ny, present, row } = grid;
+    const [ax, ay, az] = axes;
     const place = (
-      axis: (typeof frame.axes)[number],
+      axis: (typeof axes)[number],
       values: Float64Array,
       names: readonly string[] | undefined,
-      out: Float64Array,
-    ) => {
-      for (let i = 0; i < values.length; i++)
-        out[i] = axis.place(names ? (axis.categories!.get(names[i]!) ?? Number.NaN) : values[i]!);
-    };
-    place(ax, grid.xs, grid.xNames, scratch.u);
-    place(ay, grid.ys, grid.yNames, scratch.v);
+    ) =>
+      Float64Array.from(values, (value, i) =>
+        axis.place(names ? (axis.categories!.get(names[i]!) ?? Number.NaN) : value),
+      );
+    const u = place(ax, grid.xs, grid.xNames);
+    const v = place(ay, grid.ys, grid.yNames);
+    const w = new Float64Array(nx * ny).fill(Number.NaN);
     const z = this.table.numbers(this.spec.z as never);
-    scratch.w.fill(Number.NaN);
     // Grid points the axes give no place (nonpositive values on log axes) are missing: NaN heights.
-    for (const p of grid.present) {
+    // Usually every grid point with a value is in the box: they are read as they are held.
+    let readable = present;
+    let inside = 0;
+    for (const [k, p] of present.entries()) {
       const i = p % nx;
-      const height = az.place(z[grid.row[p]!]!);
-      const placed =
-        Number.isFinite(scratch.u[i]!) &&
-        Number.isFinite(scratch.v[(p - i) / nx]!) &&
-        Number.isFinite(height);
-      scratch.w[p] = placed ? height : Number.NaN;
+      const j = (p - i) / nx;
+      const height = az.place(z[row[p]!]!);
+      const placed = Number.isFinite(u[i]!) && Number.isFinite(v[j]!) && Number.isFinite(height);
+      if (placed) w[p] = height;
+      if (placed && inBox(u[i]!, v[j]!, height)) {
+        if (readable !== present) readable[inside] = p;
+        inside++;
+      } else if (readable === present) {
+        // The first left out: those before it were all in.
+        readable = new Uint32Array(present.length);
+        readable.set(present.subarray(0, k));
+      }
     }
-    return scratch;
+    // Corners outside the box of the cells cut at its walls: each triangle
+    // of a cell (as drawn whole) cut at the walls, its corners outside read
+    // at the kept corner nearest them, from the first cell that keeps any.
+    const anchors = new Map<number, readonly [number, number, number]>();
+    const tones = this.#tones();
+    const corners = new Int32Array(4);
+    const clipped: number[] = [];
+    const drawable = this.spec.colorDomain !== undefined || this.#toneDomain() !== undefined;
+    for (let j = 0; drawable && j + 1 < ny; j++)
+      for (let i = 0; i + 1 < nx; i++) {
+        const a = j * nx + i;
+        let m = 0;
+        let out = false;
+        for (const p of [a, a + 1, a + nx + 1, a + nx]) {
+          if (Number.isNaN(w[p]!)) continue;
+          corners[m++] = p;
+          const pi = p % nx;
+          out ||= !inBox(u[pi]!, v[(p - pi) / nx]!, w[p]!);
+        }
+        if (m < 3 || !out || !Number.isFinite(this.#cellTone(grid, tones, corners, m))) continue;
+        for (const triangle of m === 4 ? FAN : [[0, 1, 2]]) {
+          clipped.length = 0;
+          for (const k of triangle) {
+            const p = corners[k]!;
+            const pi = p % nx;
+            clipped.push(u[pi]!, v[(p - pi) / nx]!, w[p]!);
+          }
+          const kept = clipToBox(clipped);
+          if (kept.length < 9) continue;
+          for (let t = 0; t < triangle.length; t++) {
+            const p = corners[triangle[t]!]!;
+            const pi = p % nx;
+            if (inBox(u[pi]!, v[(p - pi) / nx]!, w[p]!) || anchors.has(p)) continue;
+            let nearest = 0;
+            let best = Number.POSITIVE_INFINITY;
+            for (let c = 0; c < kept.length; c += 3) {
+              const d = Math.hypot(
+                kept[c]! - clipped[t * 3]!,
+                kept[c + 1]! - clipped[t * 3 + 1]!,
+                kept[c + 2]! - clipped[t * 3 + 2]!,
+              );
+              if (d < best) {
+                best = d;
+                nearest = c;
+              }
+            }
+            anchors.set(p, [kept[nearest]!, kept[nearest + 1]!, kept[nearest + 2]!]);
+          }
+        }
+      }
+    let read = readable === present ? present : readable.subarray(0, inside);
+    if (anchors.size > 0) {
+      // In grid order, the points outside among those inside.
+      read = new Uint32Array(inside + anchors.size);
+      read.set(readable.subarray(0, inside));
+      let at = inside;
+      for (const p of anchors.keys()) read[at++] = p;
+      read.sort();
+    }
+    return readings.set(frame, {
+      key,
+      version: grid.version,
+      u,
+      v,
+      w,
+      readable: read,
+      inside,
+      anchors,
+    });
   }
 
-  ranker(frame: Omit<Frame3D, "rank">): (x: number, y: number, z: number) => number {
-    const scratch = this.#scratch(frame);
+  /** This chart's scratch for the surface, sized for its grid. */
+  #scratch(frame: Frame3D): Scratch {
+    const { nx, ny } = this.#build();
+    const held = scratches.get(frame);
+    if (held && held.vertexOf.length === nx * ny) return held;
+    return scratches.set(frame, {
+      vertexOf: new Int32Array(nx * ny),
+      depth: new Float64Array(nx * ny),
+      traversal: undefined,
+    });
+  }
+
+  ranker(frame: Frame3D): Ranker {
+    const { u, v, w } = this.#reading(frame);
     const grid = this.#build();
-    scratch.traversal = new Traversal(scratch.u, scratch.v, frame.view);
+    const scratch = this.#scratch(frame);
+    scratch.traversal = new Traversal(u, v, frame.view);
     const traversal = scratch.traversal;
-    return (x, y, z) => traversal.pointKey(x, y, z, scratch.w, grid.nx);
+    return { key: (x, y, z) => traversal.pointKey(x, y, z, w, grid.nx), columns: u, rows: v };
   }
 
-  place(frame: Frame3D): Placed3D {
+  /**
+   * The cells for a GPU painter, as triangles taking their cell's color and
+   * normal; undefined for what it does not draw (translucent cells, which
+   * need drawing in order, wires, and grids whose columns or rows fall out
+   * of order on a shared category axis, whose cells overlap).
+   */
+  batch(frame: Frame3D): TriangleBatch3D | undefined {
+    const { spec } = this;
+    if ((spec.fillOpacity ?? 1) < 1 || spec.wireframe) return undefined;
+    const reading = this.#reading(frame);
+    if (!monotone(reading.u) || !monotone(reading.v)) return undefined;
+    const scale = this.#scale(frame.theme);
+    const half = frame.view.half;
+    const aspect = half.join();
+    let mesh = meshes.get(frame);
+    if (!mesh || mesh.reading !== reading || mesh.aspect !== aspect) {
+      const cells = scale ? this.#cells(reading, () => {}) : 0;
+      mesh = meshes.set(frame, { reading, aspect, key: {}, cells });
+    }
+    const shading = spec.shading ?? true;
+    return {
+      kind: "triangles",
+      key: mesh.key,
+      cells: mesh.cells,
+      shades: this.#shades(scale, shading),
+      levels: shading ? LEVELS : 1,
+      behind: BEHIND,
+      arrays: () => this.#mesh(reading, half, scale),
+    };
+  }
+
+  /**
+   * Calls `cell` with each cell drawn, in grid order: its first grid point,
+   * its corners with values (`m` of `corners`), and its tone; how many.
+   */
+  #cells(
+    reading: Reading,
+    cell: (a: number, corners: Int32Array, m: number, tone: number) => void,
+  ): number {
+    const grid = this.#build();
+    const { nx, ny } = grid;
+    const { w } = reading;
+    const tones = this.#tones();
+    const corners = new Int32Array(4);
+    let count = 0;
+    for (let j = 0; j + 1 < ny; j++)
+      for (let i = 0; i + 1 < nx; i++) {
+        const a = j * nx + i;
+        let m = 0;
+        for (const p of [a, a + 1, a + nx + 1, a + nx]) if (!Number.isNaN(w[p]!)) corners[m++] = p;
+        if (m < 3) continue;
+        const tone = this.#cellTone(grid, tones, corners, m);
+        if (!Number.isFinite(tone)) continue;
+        cell(a, corners, m, tone);
+        count++;
+      }
+    return count;
+  }
+
+  /** Each ramp color at each shading level, as RGBA bytes, kept while the ramp is the same. */
+  #shades(scale: SequentialScale | undefined, shading: boolean): Uint8Array {
+    const key = `${scale?.stops.join()}|${shading}`;
+    if (this.#shaded?.key === key) return this.#shaded.bytes;
+    const levels = shading ? LEVELS : 1;
+    const bytes = new Uint8Array(256 * levels * 4);
+    const ramp = scale ? scale.colors().map(rgbOf) : [];
+    for (let level = 0; level < levels; level++) {
+      const factor = shading ? AMBIENT + (DIFFUSE * level) / (LEVELS - 1) : 1;
+      ramp.forEach((rgb, i) => {
+        const at = (level * 256 + i) * 4;
+        for (let c = 0; c < 3; c++) bytes[at + c] = shaded(rgb[c]!, factor);
+        bytes[at + 3] = 255;
+      });
+    }
+    this.#shaded = { key, bytes };
+    return bytes;
+  }
+
+  /**
+   * The cells as triangles over the grid's vertices: each takes its cell's
+   * color and normal from its last vertex, the grid point after the cell's
+   * last corner (column and row), where it has a value; three-corner cells
+   * missing that corner, and the pieces of cells cut at the box's walls (cut
+   * as the CPU cuts them), get vertices of their own.
+   */
+  #mesh(reading: Reading, half: readonly number[], scale: SequentialScale | undefined) {
+    const grid = this.#build();
+    // The batch was made for the reading's table version; a scene drawn later would show stale cells.
+    if (grid.version !== reading.version)
+      throw new Error("A surface's cells changed before they were drawn");
+    const { nx, ny } = grid;
+    const { u, v, w } = reading;
+    const box = new Float64Array(12);
+    const normal = new Float64Array(3);
+    // Writes cell's normal (in the box's units, of the corners in `box`) into `normal`.
+    const facing = (corners: Int32Array, m: number) => {
+      for (let k = 0; k < m; k++) {
+        const p = corners[k]!;
+        const i = p % nx;
+        box[k * 3] = u[i]! * half[0]!;
+        box[k * 3 + 1] = v[(p - i) / nx]! * half[1]!;
+        box[k * 3 + 2] = w[p]! * half[2]!;
+      }
+      cellNormal(box, m, normal);
+    };
+    let triangles = 0;
+    let extra = 0;
+    const inside = (p: number) => {
+      const i = p % nx;
+      return inBox(u[i]!, v[(p - i) / nx]!, w[p]!);
+    };
+    const whole = (corners: Int32Array, m: number) => {
+      for (let k = 0; k < m; k++) if (!inside(corners[k]!)) return false;
+      return true;
+    };
+    // Calls `piece` with each triangle of a cell (corners in `box`) cut at
+    // the box's walls, as normalized polygons. Cut cells are few, so they
+    // are cut once to count and again to write, and nothing is kept between.
+    const clipped: number[] = [];
+    const pieces = (m: number, piece: (kept: number[]) => void) => {
+      for (const triangle of m === 4 ? FAN : [[0, 1, 2]]) {
+        clipped.length = 0;
+        for (const k of triangle)
+          clipped.push(
+            box[k * 3]! / half[0]!,
+            box[k * 3 + 1]! / half[1]!,
+            box[k * 3 + 2]! / half[2]!,
+          );
+        const kept = clipToBox(clipped);
+        if (kept.length >= 9) piece(kept);
+      }
+    };
+    this.#cells(reading, (a, corners, m) => {
+      if (whole(corners, m)) {
+        triangles += m - 2;
+        if (m === 3 && Number.isNaN(w[a + nx + 1]!)) extra++;
+        return;
+      }
+      facing(corners, m);
+      pieces(m, (kept) => {
+        extra += kept.length / 3;
+        triangles += kept.length / 3 - 2;
+      });
+    });
+    const points = nx * ny;
+    const vertices = points + extra;
+    const positions = new Float32Array(vertices * 3);
+    const normals = new Float32Array(vertices * 3);
+    const colors = new Uint8Array(vertices);
+    // Index 65,535 restarts primitives in WebGL2.
+    const indices =
+      vertices < 65_535 ? new Uint16Array(triangles * 3) : new Uint32Array(triangles * 3);
+    for (let p = 0; p < points; p++) {
+      const i = p % nx;
+      positions[p * 3] = u[i]!;
+      positions[p * 3 + 1] = v[(p - i) / nx]!;
+      positions[p * 3 + 2] = w[p]!;
+    }
+    let next = points;
+    let at = 0;
+    const attributes = (vertex: number, color: number) => {
+      normals.set(normal, vertex * 3);
+      colors[vertex] = color;
+    };
+    const triangle = (a: number, b: number, c: number) => {
+      indices[at++] = a;
+      indices[at++] = b;
+      indices[at++] = c;
+    };
+    this.#cells(reading, (a, corners, m, tone) => {
+      facing(corners, m);
+      const color = scale!.index(tone);
+      if (!whole(corners, m)) {
+        // Each piece's vertices are its own, all carrying the cell's attributes.
+        pieces(m, (kept) => {
+          const first = next;
+          for (let k = 0; k < kept.length; k += 3) {
+            positions[next * 3] = kept[k]!;
+            positions[next * 3 + 1] = kept[k + 1]!;
+            positions[next * 3 + 2] = kept[k + 2]!;
+            attributes(next++, color);
+          }
+          for (let k = first + 1; k + 1 < next; k++) triangle(first, k, k + 1);
+        });
+        return;
+      }
+      // The cell's attributes go on the grid point after its last column and row.
+      const last = a + nx + 1;
+      if (m === 4) {
+        attributes(last, color);
+        triangle(a, a + 1, last);
+        triangle(a + nx, a, last);
+        return;
+      }
+      const [p, q, r] = [corners[0]!, corners[1]!, corners[2]!];
+      if (r === last) triangle(p, q, r);
+      else if (q === last) triangle(r, p, q);
+      else if (p === last) triangle(q, r, p);
+      else {
+        // Missing that grid point: a copy of a corner of its own carries them.
+        positions.copyWithin(next * 3, r * 3, r * 3 + 3);
+        attributes(next, color);
+        triangle(p, q, next++);
+        return;
+      }
+      attributes(last, color);
+    });
+    return { positions, normals, colors, indices };
+  }
+
+  /**
+   * The grid point a GPU painter shows at (px, py): the pointer's ray is
+   * walked through the cells it crosses in the box, nearest first, to the
+   * first triangle it meets; the cell's corner nearest the pointer is read.
+   */
+  pick(frame: Frame3D, px: number, py: number): Hit3D | undefined {
+    const reading = this.#reading(frame);
+    if (!this.#scale(frame.theme)) return undefined;
+    const { view } = frame;
+    const { nx } = this.#build();
+    const { u, v, w } = reading;
+    const { origin, direction } = view.ray(px, py);
+    const span = rayInBox(origin, direction);
+    if (!span) return undefined;
+    const tones = this.#tones();
+    const grid = this.#build();
+    const corners = new Int32Array(4);
+    const place = (p: number) => {
+      const i = p % nx;
+      return [u[i]!, v[(p - i) / nx]!, w[p]!];
+    };
+    let nearest = Number.POSITIVE_INFINITY;
+    let cell = -1;
+    walkGrid(u, v, origin, direction, span[0], span[1], (i, j) => {
+      const a = j * nx + i;
+      let m = 0;
+      for (const p of [a, a + 1, a + nx + 1, a + nx]) if (!Number.isNaN(w[p]!)) corners[m++] = p;
+      if (m < 3 || !Number.isFinite(this.#cellTone(grid, tones, corners, m))) return false;
+      for (const [p, q, r] of m === 4 ? FAN : [[0, 1, 2]]) {
+        const t = crossing(
+          origin,
+          direction,
+          place(corners[p!]!),
+          place(corners[q!]!),
+          place(corners[r!]!),
+        );
+        // Only what lies in the box is drawn.
+        if (t >= span[0] - 1e-9 && t <= span[1] + 1e-9 && t < nearest) {
+          nearest = t;
+          cell = a;
+        }
+      }
+      return cell >= 0;
+    });
+    if (cell < 0) return undefined;
+    const item = this.#items(frame).itemOfCell(cell, px, py);
+    const at = origin.map((o, k) => o + nearest * direction[k]!);
+    return item && { item, depth: view.depth(at[0]!, at[1]!, at[2]!), behind: BEHIND };
+  }
+
+  place(frame: FaceFrame3D): Placed3D {
     const { view, faces, theme } = frame;
     const { spec } = this;
     const grid = this.#build();
+    if (grid.nx * grid.ny > MAX_CPU_GRID_POINTS) {
+      // Standing in for a GPU painter that lost its context, nothing is
+      // drawn until a fresh one is.
+      if (frame.lost) return { itemOfFace: () => undefined };
+      throw new RangeError(
+        `A surface of ${(grid.nx * grid.ny).toLocaleString("en-US")} grid points is drawn only on the GPU: in the browser with WebGL2, opaque, without a wireframe, and with marks beside it the GPU draws (opaque, points no larger than it draws). SVG, PDF, and PNG exports, and charts drawn otherwise, draw at most ${MAX_CPU_GRID_POINTS.toLocaleString("en-US")}. Bin or aggregate the rows first`,
+      );
+    }
+    const { u, v, w } = this.#reading(frame);
     const scratch = this.#scratch(frame);
     const { nx, ny, present } = grid;
-    const { u, v, w, vertexOf, depth } = scratch;
+    const { vertexOf, depth } = scratch;
     const traversal = frame.rank ? scratch.traversal : undefined;
     const out = new Float64Array(2);
     // Grid points inside the box become vertices; the rest are left out,
     // and cells reaching past the box are cut at its walls.
     vertexOf.fill(-1);
-    let readable = 0;
     for (const p of present) {
       const i = p % nx;
       const j = (p - i) / nx;
       const [a, b, c] = [u[i]!, v[j]!, w[p]!];
-      if (!(Math.abs(a) <= 1 + EPSILON && Math.abs(b) <= 1 + EPSILON && Math.abs(c) <= 1 + EPSILON))
-        continue;
+      if (!inBox(a, b, c)) continue;
       depth[p] = view.project(a, b, c, out, 0);
       vertexOf[p] = faces.vertex(out[0]!, out[1]!, depth[p]!);
-      scratch.readable[readable++] = p;
     }
     const scale = this.#scale(theme);
     const tones = this.#tones();
@@ -355,21 +754,13 @@ export class SurfaceMark implements Layer3D {
     // Cut cells are drawn as triangles: a wire around each would show their diagonals.
     const cutStyles = wire ? new Int32Array(ramp.length * LEVELS).fill(-1) : styles;
     const [ha, hb, hc] = view.half;
-    // A light above and to the left of the eye, in the box's units.
-    const light = normalize([
-      view.eye[0] + 0.5 * view.up[0] - 0.35 * view.right[0],
-      view.eye[1] + 0.5 * view.up[1] - 0.35 * view.right[1],
-      view.eye[2] + 0.5 * view.up[2] - 0.35 * view.right[2],
-    ]);
+    const light = view.light;
     // A cell's corners with values (counterclockwise from its lowest x and y,
     // so the fan from the first splits it along that corner's diagonal), and
     // their positions in the box's units.
     const corners = new Int32Array(4);
     const box = new Float64Array(12);
     const clipped: number[] = [];
-    // Grid points outside the box at the corners of cut cells drawn: the vertex they are read at.
-    const anchors = new Map<number, number>();
-    const row = grid.row;
     for (let j = 0; scale && j + 1 < ny; j++) {
       for (let i = 0; i + 1 < nx; i++) {
         const a = j * nx + i;
@@ -377,44 +768,18 @@ export class SurfaceMark implements Layer3D {
         for (const p of [a, a + 1, a + nx + 1, a + nx]) if (!Number.isNaN(w[p]!)) corners[m++] = p;
         // Three corners make one triangle.
         if (m < 3) continue;
-        let tone = 0;
         let inside = true;
         for (let k = 0; k < m; k++) {
           const p = corners[k]!;
-          tone += tones[row[p]!]!;
           inside &&= vertexOf[p]! >= 0;
           const pi = p % nx;
           box[k * 3] = u[pi]! * ha;
           box[k * 3 + 1] = v[(p - pi) / nx]! * hb;
           box[k * 3 + 2] = w[p]! * hc;
         }
-        let mean = tone / m;
-        if (!Number.isFinite(mean)) {
-          // Finite values near the largest overflow when summed: average their quarters.
-          let quarters = 0;
-          for (let k = 0; k < m; k++) quarters += tones[row[corners[k]!]!]! / 4;
-          mean = (quarters / m) * 4;
-        }
-        const index = scale.index(mean);
+        const index = scale.index(this.#cellTone(grid, tones, corners, m));
         if (index < 0) continue;
-        let level = LEVELS - 1;
-        if (shading) {
-          // The cell's facing: across the diagonals of a quad, or along two sides of a triangle.
-          const [p, q, r, t] = m === 4 ? [0, 1, 2, 3] : [0, 0, 1, 2];
-          const ax = box[r * 3]! - box[p * 3]!;
-          const ay = box[r * 3 + 1]! - box[p * 3 + 1]!;
-          const az = box[r * 3 + 2]! - box[p * 3 + 2]!;
-          const bx = box[t * 3]! - box[q * 3]!;
-          const by = box[t * 3 + 1]! - box[q * 3 + 1]!;
-          const bz = box[t * 3 + 2]! - box[q * 3 + 2]!;
-          const crossX = ay * bz - az * by;
-          const crossY = az * bx - ax * bz;
-          const crossZ = ax * by - ay * bx;
-          const length = Math.hypot(crossX, crossY, crossZ);
-          const facing =
-            Math.abs(crossX * light[0] + crossY * light[1] + crossZ * light[2]) / length;
-          level = Number.isFinite(facing) ? Math.round(facing * (LEVELS - 1)) : LEVELS - 1;
-        }
+        const level = shading ? shadeLevel(box, m, light) : LEVELS - 1;
         let style = styles[index * LEVELS + level]!;
         if (style < 0) {
           const fill = shade(
@@ -459,7 +824,6 @@ export class SurfaceMark implements Layer3D {
           const kept = clipToBox(clipped);
           if (kept.length < 9) continue;
           faces.begin();
-          const first = faces.vertexCount;
           let sum = 0;
           for (let k = 0; k < kept.length; k += 3) {
             const at = view.project(kept[k]!, kept[k + 1]!, kept[k + 2]!, out, 0);
@@ -467,59 +831,43 @@ export class SurfaceMark implements Layer3D {
             sum += at;
           }
           faces.face(style, key, sum / (kept.length / 3), a);
-          // Its corners outside the box are read at the drawn vertex nearest them.
-          for (let t = 0; t < triangle.length; t++) {
-            const p = corners[triangle[t]!]!;
-            if (vertexOf[p]! >= 0 || anchors.has(p)) continue;
-            let nearest = 0;
-            let best = Number.POSITIVE_INFINITY;
-            for (let c = 0; c < kept.length; c += 3) {
-              const d = Math.hypot(
-                kept[c]! - clipped[t * 3]!,
-                kept[c + 1]! - clipped[t * 3 + 1]!,
-                kept[c + 2]! - clipped[t * 3 + 2]!,
-              );
-              if (d < best) {
-                best = d;
-                nearest = c / 3;
-              }
-            }
-            anchors.set(p, first + nearest);
-          }
         }
       }
     }
-    // Grid points read, in grid order: those in the box and the corners of cut cells drawn.
-    if (anchors.size > 0) {
-      const outside = [...anchors.keys()].sort((a, b) => a - b);
-      const inside = scratch.readable.slice(0, readable);
-      let i = 0;
-      let o = 0;
-      for (let k = 0; k < readable + outside.length; k++)
-        scratch.readable[k] =
-          o >= outside.length || (i < readable && inside[i]! < outside[o]!)
-            ? inside[i++]!
-            : outside[o++]!;
-      readable += outside.length;
-    }
-    return this.#placed(frame, grid, scratch, readable, scale, anchors);
+    let items: SurfaceItems | undefined;
+    return {
+      itemOfFace: (a, px, py) => {
+        items ??= this.#items(frame);
+        return items.itemOfCell(a, px, py);
+      },
+    };
   }
 
-  #placed(
-    frame: Frame3D,
-    grid: Grid,
-    scratch: Scratch,
-    count: number,
-    scale: SequentialScale | undefined,
-    anchors: ReadonlyMap<number, number>,
-  ): Placed3D {
+  items(frame: Frame3D): Items3D {
+    return this.#items(frame);
+  }
+
+  #items(frame: Frame3D): SurfaceItems {
     const { spec, table } = this;
-    const { faces, axes, id, locale } = frame;
+    const { axes, id, locale, view } = frame;
+    const grid = this.#build();
+    const reading = this.#reading(frame);
+    const { readable, anchors, u, v, w } = reading;
+    const count = readable.length;
     const { nx } = grid;
-    const readable = scratch.readable;
     const z = table.numbers(spec.z as never);
     const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+    const scale = this.#scale(frame.theme);
     const offset = table.rowOffset;
+    const out = new Float64Array(2);
+    /** Where a read grid point is on screen: at its place, or (outside the box) its anchor's. */
+    const screen = (p: number): [number, number] => {
+      const i = p % nx;
+      const anchor = anchors.get(p);
+      if (anchor) view.project(anchor[0], anchor[1], anchor[2], out, 0);
+      else view.project(u[i]!, v[(p - i) / nx]!, w[p]!, out, 0);
+      return [Math.fround(out[0]!), Math.fround(out[1]!)];
+    };
     const coordinate = (k: number, p: number): number | string => {
       const i = p % nx;
       const j = (p - i) / nx;
@@ -530,7 +878,6 @@ export class SurfaceMark implements Layer3D {
       return names ? names[at]! : values[at]!;
     };
     const fields = [spec.x, spec.y, spec.z];
-    // A grid point's item, at its vertex (or for one outside the box, its cut cell's nearest).
     const itemOf = (index: number): LayoutItem => {
       const p = readable[index]!;
       const row = grid.row[p]!;
@@ -545,9 +892,7 @@ export class SurfaceMark implements Layer3D {
         parts.push(`${spec.color} ${formatNumber(tones[row]!, locale)}`);
         data[spec.color!] = tones[row]!;
       }
-      const vertex = scratch.vertexOf[p]! >= 0 ? scratch.vertexOf[p]! : anchors.get(p)!;
-      const px = faces.vertices[vertex * 2]!;
-      const py = faces.vertices[vertex * 2 + 1]!;
+      const [px, py] = screen(p);
       return {
         key: JSON.stringify([id, offset + row]),
         label: this.measure,
@@ -562,16 +907,7 @@ export class SurfaceMark implements Layer3D {
         row,
       };
     };
-    const find = (p: number) => {
-      let lo = 0;
-      let hi = count;
-      while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (readable[mid]! < p) lo = mid + 1;
-        else hi = mid;
-      }
-      return lo < count && readable[lo] === p ? lo : -1;
-    };
+    const find = (p: number) => findRow(readable, count, p);
     return {
       count,
       item: itemOf,
@@ -581,25 +917,22 @@ export class SurfaceMark implements Layer3D {
         for (let k = 0; k < count; k++) if (grid.row[readable[k]!] === identity - offset) return k;
         return -1;
       },
-      itemOfFace(a, px, py) {
-        // The cell's corner nearest the pointer: drawn ones first, else
-        // (a cell cut at the walls) those read where the cut cell is drawn.
+      itemOfCell(a, px, py) {
+        // The cell's corner nearest the pointer: those in the box first,
+        // else (a cell cut at the walls) those read where the cut cell is.
         let best = -1;
         let drawn = false;
         let nearest = Number.POSITIVE_INFINITY;
         for (const p of [a, a + 1, a + nx + 1, a + nx]) {
-          if (p >= scratch.vertexOf.length) continue;
-          const own = scratch.vertexOf[p]!;
-          const vertex = own >= 0 ? own : (anchors.get(p) ?? -1);
-          if (vertex < 0 || (drawn && own < 0)) continue;
-          const d = Math.hypot(
-            faces.vertices[vertex * 2]! - px,
-            faces.vertices[vertex * 2 + 1]! - py,
-          );
-          if ((own >= 0 && !drawn) || d < nearest) {
+          if (p >= w.length || Number.isNaN(w[p]!)) continue;
+          const own = !anchors.has(p);
+          if ((own && find(p) < 0) || (drawn && !own)) continue;
+          const [x, y] = screen(p);
+          const d = Math.hypot(x - px, y - py);
+          if ((own && !drawn) || d < nearest) {
             nearest = d;
             best = p;
-            drawn ||= own >= 0;
+            drawn ||= own;
           }
         }
         const at = best < 0 ? -1 : find(best);
@@ -612,8 +945,7 @@ export class SurfaceMark implements Layer3D {
         if (held === 0) return `${what}, with nothing to show.`;
         const cells = nx < 2 || ny < 2 ? " (one line of grid points makes no cells)" : "";
         const values = `${what}: ${nx} by ${ny} grid points, ${held} with values${cells}`;
-        let inside = 0;
-        for (let k = 0; k < count; k++) if (scratch.vertexOf[readable[k]!]! >= 0) inside++;
+        const { inside } = reading;
         const inBox =
           inside === held ? "" : `, ${inside === 0 ? "none" : inside} of them in the box`;
         if (count === 0) return `${values}${inBox}.`;
@@ -637,9 +969,54 @@ export class SurfaceMark implements Layer3D {
   }
 }
 
-function normalize(v: number[]): [number, number, number] {
-  const length = Math.hypot(v[0]!, v[1]!, v[2]!);
-  return length > 0 ? [v[0]! / length, v[1]! / length, v[2]! / length] : [0, 0, 1];
+/**
+ * The normal of a cell of `m` corners at `box` (x, y, z each, in the box's
+ * units), written to `out` as a unit vector (zero for a degenerate cell):
+ * across the diagonals of a quad, or along two sides of a triangle.
+ */
+function cellNormal(box: Float64Array, m: number, out: Float64Array): void {
+  const [p, q, r, t] = m === 4 ? [0, 1, 2, 3] : [0, 0, 1, 2];
+  const ax = box[r * 3]! - box[p * 3]!;
+  const ay = box[r * 3 + 1]! - box[p * 3 + 1]!;
+  const az = box[r * 3 + 2]! - box[p * 3 + 2]!;
+  const bx = box[t * 3]! - box[q * 3]!;
+  const by = box[t * 3 + 1]! - box[q * 3 + 1]!;
+  const bz = box[t * 3 + 2]! - box[q * 3 + 2]!;
+  const x = ay * bz - az * by;
+  const y = az * bx - ax * bz;
+  const z = ax * by - ay * bx;
+  const length = Math.hypot(x, y, z);
+  const ok = length > 0 && Number.isFinite(length);
+  out[0] = ok ? x / length : 0;
+  out[1] = ok ? y / length : 0;
+  out[2] = ok ? z / length : 0;
+}
+
+/** A surface's items, and the item a cell shows. */
+interface SurfaceItems extends Items3D {
+  /** The read corner of cell `a` (by its first grid point) nearest the pointer. */
+  itemOfCell(a: number, px: number, py: number): LayoutItem | undefined;
+}
+
+/**
+ * The shading step of a cell of `m` corners at `box` (x, y, z each, in the
+ * box's units): how squarely it faces `light`, either side, across the
+ * diagonals of a quad or along two sides of a triangle.
+ */
+function shadeLevel(box: Float64Array, m: number, light: readonly number[]): number {
+  const [p, q, r, t] = m === 4 ? [0, 1, 2, 3] : [0, 0, 1, 2];
+  const ax = box[r * 3]! - box[p * 3]!;
+  const ay = box[r * 3 + 1]! - box[p * 3 + 1]!;
+  const az = box[r * 3 + 2]! - box[p * 3 + 2]!;
+  const bx = box[t * 3]! - box[q * 3]!;
+  const by = box[t * 3 + 1]! - box[q * 3 + 1]!;
+  const bz = box[t * 3 + 2]! - box[q * 3 + 2]!;
+  const crossX = ay * bz - az * by;
+  const crossY = az * bx - ax * bz;
+  const crossZ = ax * by - ay * bx;
+  const length = Math.hypot(crossX, crossY, crossZ);
+  const facing = Math.abs(crossX * light[0]! + crossY * light[1]! + crossZ * light[2]!) / length;
+  return Number.isFinite(facing) ? Math.round(facing * (LEVELS - 1)) : LEVELS - 1;
 }
 
 function rgbOf(hex: string): [number, number, number] {
@@ -647,9 +1024,14 @@ function rgbOf(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+/** A color channel multiplied by `factor`. */
+function shaded(channel: number, factor: number): number {
+  return Math.min(255, Math.max(0, Math.round(channel * factor)));
+}
+
 /** A color with its channels multiplied by `factor`, as hex. */
 function shade([r, g, b]: [number, number, number], factor: number): string {
-  const c = (v: number) => Math.min(255, Math.max(0, Math.round(v * factor)));
+  const c = (v: number) => shaded(v, factor);
   return `#${((1 << 24) | (c(r) << 16) | (c(g) << 8) | c(b)).toString(16).slice(1)}`;
 }
 

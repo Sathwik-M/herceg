@@ -1988,6 +1988,52 @@ class Chart:
             table,
         )
 
+    def line3d(
+        self,
+        x: str,
+        y: str,
+        z: str,
+        *,
+        data: Any = None,
+        series: str | None = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
+        label: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """Lines in a 3D chart through the numeric or datetime columns ``x``,
+        ``y``, and ``z`` (z is vertical).
+
+        Each ``series`` category's rows, in table order, are one path with its
+        color and legend entry (all rows are one path without it); a row
+        missing a value breaks its path. ``stroke_width`` is in pixels (2 by
+        default) and stays the same however near or far the line is. 3D marks
+        share their chart, its box, and its ``camera``.
+        """
+        self._alone_3d("line3d")
+        table = self._mark_table(data)
+        for axis, field in (("x", x), ("y", y), ("z", z)):
+            self._require(table, field, _NUMERIC, f"line3d {axis}")
+        self._require(table, series, ("category",), "line3d series")
+        if stroke_width is not None and not (_finite(stroke_width) and stroke_width > 0):
+            raise ValueError(
+                f"line3d stroke_width must be a positive width in pixels, not {stroke_width!r}"
+            )
+        return self._add(
+            {
+                "type": "line3d",
+                "x": x,
+                "y": y,
+                "z": z,
+                "series": series,
+                "stroke": stroke,
+                "strokeWidth": stroke_width,
+                "label": label,
+                "id": id,
+            },
+            table,
+        )
+
     def surface(
         self,
         x: Any = None,
@@ -2269,7 +2315,9 @@ class Chart:
         three_d = any(mark["type"] in _MARKS_3D for mark, _ in self._marks)
         for name in ("z", "camera", "box_aspect"):
             if self._settings.get(name) is not None and not three_d:
-                raise ValueError(f"{name} is an option of 3D charts: add point3d or surface marks")
+                raise ValueError(
+                    f"{name} is an option of 3D charts: add point3d, line3d, or surface marks"
+                )
         return assemble_spec(
             self._options,
             self._layout_spec(),
@@ -2505,7 +2553,7 @@ class Chart:
                 )
             if kind in _MARKS_3D:
                 raise ValueError(
-                    f"a {kind} shares its chart only with point3d and surface marks; "
+                    f"a {kind} shares its chart only with point3d, line3d, and surface marks; "
                     "draw other marks in another chart"
                 )
             raise ValueError(f"a {kind} has its chart to itself; draw other marks in another chart")
@@ -2579,14 +2627,14 @@ class Chart:
 #: Marks that lay out their own chart, with no axes.
 _LAYOUT_MARKS = (
     *("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey", "graph"),
-    *("geoshape", "geopoint", "point3d", "surface"),
+    *("geoshape", "geopoint", "point3d", "line3d", "surface"),
 )
 
 #: The layers of maps, which share a chart and its projection.
 _MAP_MARKS = ("geoshape", "geopoint")
 
 #: The layers of 3D charts, which share a chart, its box, and its camera.
-_MARKS_3D = ("point3d", "surface")
+_MARKS_3D = ("point3d", "line3d", "surface")
 
 #: The most nodes and links a graph lays out, as the browser enforces.
 MAX_NODES = 5000
@@ -3336,6 +3384,37 @@ def scatter_3d(
         color_midpoint=color_midpoint,
         fill=fill,
         fill_opacity=fill_opacity,
+        label=label,
+        id=id,
+    )
+
+
+def line_3d(
+    data: Any,
+    x: str,
+    y: str,
+    z: str,
+    *,
+    series: str | None = None,
+    stroke: str | None = None,
+    stroke_width: float | None = None,
+    label: str | None = None,
+    id: str | None = None,
+    **options: Unpack[HelperOptions],
+) -> Chart:
+    """Lines in 3D (see ``Chart.line3d``): each ``series`` category's rows, in
+    order, are one path. Remaining keyword arguments are chart options
+    (``HelperOptions``), such as ``camera``; ``z_axis`` is the chart's ``z``::
+
+        hg.line_3d(df, x="east", y="north", z="altitude", series="flight")
+    """
+    return _chart_of(data, options).line3d(
+        x,
+        y,
+        z,
+        series=series,
+        stroke=stroke,
+        stroke_width=stroke_width,
         label=label,
         id=id,
     )
