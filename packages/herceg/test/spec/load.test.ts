@@ -190,6 +190,10 @@ describe("loadSpec", () => {
       /spec\.interaction\.brush: expected "x" or "y" or "xy" or "lasso"/,
     );
     expect(check({ interaction: { zoom: "z" }, marks: [] })).toThrow(/spec\.interaction\.zoom/);
+    expect(check({ animation: { values: "yes" }, marks: [] })).toThrow(
+      /spec\.animation\.values: expected true or false/,
+    );
+    expect(check({ animation: { duration: 300, values: true }, marks: [] })).not.toThrow();
     // Valid edge cases the TypeScript API produces still load.
     expect(check({ marks: [{ type: "rule", y: 1, strokeWidth: 0 }] })).not.toThrow();
     expect(check({ x: { type: "time", format: { hour: "2-digit" } }, marks: [] })).not.toThrow();

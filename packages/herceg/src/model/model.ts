@@ -35,7 +35,14 @@ import {
   type SceneText,
   tickLabelGap,
 } from "../scene/scene.ts";
-import type { AxisSpec, CameraSpec, ChartSpec, ScaleResolution, XAxisSpec } from "../spec/spec.ts";
+import type {
+  AnimationSpec,
+  AxisSpec,
+  CameraSpec,
+  ChartSpec,
+  ScaleResolution,
+  XAxisSpec,
+} from "../spec/spec.ts";
 import { resolveTheme, type Theme, type ThemeEnvironment } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
 import {
@@ -1317,6 +1324,7 @@ export class ChartModel {
 
     this.#used.clear();
     const scene = ++this.#scenes;
+    const keyed = keyedBy(config);
     // A copy for the frames and inspectors this scene keeps: what they find
     // before the next scene is what was drawn, whatever has been hidden since.
     const hidden: ReadonlySet<string> = new Set(this.hidden);
@@ -1384,6 +1392,7 @@ export class ChartModel {
         scene,
         clouds,
         measure,
+        keyed,
         ...this.#pools(i),
       };
       // Marks on the right axis draw with its scale.
@@ -1522,6 +1531,7 @@ export class ChartModel {
       color: this.#palette,
       camera: this.#camera,
       clouds,
+      keyed: keyedBy(this.#config),
     });
     this.#layout = { result, measure: mark.measure, marks: this.#config.marks };
     // Nothing is drawn along axes: let go of what the last such scene kept.
@@ -1897,6 +1907,11 @@ function timeUnitFor(scale: PositionScale): TimeUnit {
 }
 
 /** The y axis a mark's values are on. */
+/** Whether scenes describe bars and slices for value transitions (`animation.values`). */
+function keyedBy(config: ChartConfig): boolean {
+  return (config.animation as AnimationSpec | undefined)?.values === true;
+}
+
 function sideOf(mark: Mark): "left" | "right" {
   return mark.spec.axis === "right" ? "right" : "left";
 }

@@ -62,8 +62,9 @@ tables (filter, calculate, bin, aggregate, rolling windows, sort) with
 portable expressions, level of detail, streaming updates, a shared
 scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
-selections, animated changes of view, crosshair labels on the axes), time
-axes that leave out breaks (nights, weekends, holidays) in any time zone,
+selections, animated changes of view and of bar and pie values, crosshair
+labels on the axes), time axes that leave out breaks (nights, weekends,
+holidays) in any time zone,
 static SVG and PDF export, React, Vue, and Svelte adapters,
 min/max indexes for zooming and streaming large line series (whole columns
 or split by a series field), WebGL drawing
@@ -81,7 +82,8 @@ Next, in order:
 
 1. Large data: incremental stacks for bars split by a series field.
 2. Layout: categories resolved per panel.
-3. Animation of changed values (bars, pies) and of panels.
+3. Animation of changed values that move the axes, and of stacked and
+   labeled bars, points, lines, areas, and panels.
 4. More financial tools (a range navigator, drawing tools, markers at
    breaks); 3D lines, meshes, parametric surfaces, and surfaces on the GPU.
 5. Grid: benchmarks against TanStack Table with TanStack Virtual, AG Grid,

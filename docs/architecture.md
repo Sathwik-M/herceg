@@ -1401,6 +1401,62 @@ A playing transition ends once its chart's frame, or the scheduler's whole
 frame, takes over 10 ms. Intermediate frames keep the margins planned for
 the new view, so passing tick labels never move the plot.
 
+With `animation: { values: true }`, `dom/value-transition.ts`, which a chart
+loads separately the first time its options ask for it, also moves bars and
+pie slices to changed values. The data is current at once; what moves is a
+picture of the change, made from keyed geometry. Scenes of such charts carry
+what identifies each item and where it ends: bar geometry carries
+`BarItems` (each bar's position along its axis, a band index or the value,
+and its root and tip in pixels), and a pie's sectors carry `PieSlices` (its
+slices in order, where each ends as a fraction of the turn, its size, and a
+function that draws other slices as the pie draws its own, leaders and
+labels included). Marks of other charts emit neither. When a table reports a
+change of values in place or a reset, the chart copies the bars and slices of
+the frame on screen, because the model reuses geometry buffers for its next
+scene. The next frame builds the new scene once and matches the copy to it:
+bars by series key and position (a series repeating a position has no
+identity for its bars, and shows its new values at once), slices by key, in
+one order merging both pies'. Later frames draw that scene with its bars and
+slices interpolated, eased as views are, without building another. Bars move
+their roots and tips rather than their tops and heights, so a bar changing
+sign shrinks to the baseline and grows past it, with its rounded end at the
+tip; slices move their widths, so neighbors share a boundary and the slices
+make a whole turn throughout. Bars and slices that appear or go are drawn
+from or to nothing, as geometry only: the model, tooltips, the keyboard,
+events, and summaries have the new data from the start.
+
+A change moves only when both scenes place values alike: one panel with the
+same key, plot, theme, and scales (type, domain, range, bands), the same bar
+series, and retained slices in the same order; anything else, such as an
+automatic domain that grows, a new category, or a legend that wraps, shows at
+once. So do appended and dropped rows, row views' changes, changes under
+options or hidden keys other than those the scene on screen was drawn with,
+changes while values move and until the data has been still for a change's
+duration (so streaming charts do not animate forever; a derived aggregate,
+recomputed on each change of its source, moves only on changes that far
+apart), and charts that are inspected, off screen, linked, slow (as for
+views, counting the copy), or that draw more than 2,000 bars and slices in
+either scene, which they count before copying anything. One transition plays
+at a time: a view asked for settles values first, and a table change ends a
+change of view. Pointer moves, presses, and keys settle values, dropping a
+copy not yet moved from and drawing the new scene before they inspect it,
+and a change under the pointer, a press, or the keyboard cursor shows at
+once; after a settle that dropped anything, what is on screen may be a frame
+between two scenes, so changes show at once until the next scene is built;
+`render()`, export, and static output always draw the new values, and
+destroying a chart lets go of what it was moving. Preparing a change copies
+and matches the items: about 0.03 ms for 100 bars and 0.2 to 0.3 ms for
+2,000 in Node. In Chrome (one-off runs outside the benchmark suite, means
+over 15 changes of 12 frames each, with other work on the machine), each
+later frame takes about 0.2 to 0.7 ms of JavaScript for 10 to 2,000 bars
+(1.6 ms for 2,000 in a busier run) and 0.3 to 0.9 ms for 5 to 100 slices,
+rebuilding the bars' and slices' paths as painting a scene does anyway,
+against 0.4 to 1.5 ms for the frame that draws a change without animation.
+Pies place their labels again each frame: 0.5 to 0.9 ms for 500 slices and 2
+to 3 ms for 2,000, still less than the frame that draws such a pie's change
+at once (up to 2 and 7 ms). Charts without `values` measure the same as
+before the feature in interleaved runs.
+
 Charts that set the same `interaction.sync` name share the cursor x and the
 viewport (charts whose panels have x scales of their own, the cursor only). Charts inspected along y (horizontal bars) measure values on x, so
 they neither share nor follow the cursor; linking them by category is not
@@ -1816,9 +1872,11 @@ document when `OffscreenCanvas` is unavailable.
   about 0.3 s and 0.1 s in Chrome on the benchmark machine. Band indices and
   the cell index take up to 12 bytes per row (4 more per axis shared with
   other marks).
-- Animation moves the axes of single-panel charts between views; changed
-  values (bars growing, pie slices turning), entering and leaving data, and
-  the first appearance of a chart show at once.
+- Animation moves the axes of single-panel charts between views and, with
+  `values`, bars and pie slices to changed values when the axes, plot, and
+  categories stay put. Changes that move the axes, stacked or labeled bars,
+  points, lines, areas, panels, and the first appearance of a chart show at
+  once.
 - Box plots and violins recompute every group's statistics (and violins
   their densities) when their table changes, and repeat in every panel of
   charts with facets rather than splitting. On a log axis, a box or violin

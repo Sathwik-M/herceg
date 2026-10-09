@@ -237,6 +237,11 @@ def test_update_sends_the_changed_options_only():
     assert snapshot(widget)[0]["spec"]["theme"] == "dark"
     with pytest.raises(TypeError, match="unknown chart option 'facet'.*cannot change"):
         widget.update(facet="host")
+    # Replaced data moves bars and slices once a live chart animates values.
+    widget.update(animation=hg.Animation(values=True))
+    assert browser.last[0]["options"] == {"animation": {"duration": 250, "values": True}}
+    with pytest.raises(ValueError, match="animation duration must be"):
+        widget.update(animation=hg.Animation(duration=float("inf")))
 
 
 def test_none_resets_every_option_without_sending_nested_nones():
