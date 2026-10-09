@@ -36,16 +36,24 @@ import { rowOf, type Series } from "./series.ts";
 
 /** Options box plots and violins share. */
 export type DistributionOptions<S extends Schema> = (
-  | { x: CategoryField<S>; y: NumericField<S> }
-  | { x: NumericField<S>; y: CategoryField<S> }
+  | {
+      x: CategoryField<S>;
+      y: NumericField<S>;
+      /** The y axis the values are on: "left" (default) or "right". */
+      axis?: "left" | "right";
+    }
+  | {
+      x: NumericField<S>;
+      y: CategoryField<S>;
+      /** Categories along y are on the left axis; only vertical shapes use the right one. */
+      axis?: "left";
+    }
 ) & {
   /** Category field: a shape per value in each category, side by side. */
   series?: CategoryField<S>;
   /** Opacity of the shapes' fill; 0.25 by default. */
   fillOpacity?: number;
   label?: string;
-  /** The y axis the values are on: "left" (default) or "right". */
-  axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */

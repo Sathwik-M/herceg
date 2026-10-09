@@ -535,6 +535,19 @@ class Chart:
         else:
             self._require(table, x1 if horizontal else y1, _NUMERIC, f"error_bar {other}1")
             self._require(table, x2 if horizontal else y2, _NUMERIC, f"error_bar {other}2")
+        # A column of another form would be dropped, so it is refused.
+        given = dict(x=x, y=y, x1=x1, x2=x2, y1=y1, y2=y2, x_error=x_error, y_error=y_error)
+        used = (
+            [along, other, f"{other}_error"]
+            if error is not None
+            else [along, f"{other}1", f"{other}2"]
+        )
+        extra = next(
+            (name for name, column in given.items() if column is not None and name not in used),
+            None,
+        )
+        if extra is not None:
+            raise ValueError(f"error_bar from {', '.join(used)} cannot also take {extra}")
         self._require(table, series, ("category",), "error_bar series")
         return self._add(
             {
@@ -1023,6 +1036,8 @@ class Chart:
     ) -> Chart:
         self._layout_alone(kind)
         table = self._mark_table(data)
+        if path is not None and (node is not None or parent is not None):
+            raise ValueError(f"{kind} takes a path, or node and parent, not both")
         if path is not None:
             if isinstance(path, str) or len(path) == 0:
                 raise ValueError(f"{kind} path must be a list of at least one column")

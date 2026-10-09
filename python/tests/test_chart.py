@@ -229,6 +229,10 @@ def test_marks_go_on_the_right_axis():
         hg.Chart(DATA).bar(x="p50", y="host", axis="right")
     with pytest.raises(ValueError, match="horizontal error bars"):
         hg.Chart(DATA).error_bar(y="host", x1="p50", x2="p99", axis="right")
+    with pytest.raises(ValueError, match="from x, y1, y2 cannot also take y"):
+        hg.Chart(DATA).error_bar(x="t", y1="p50", y2="p99", y="p50")
+    with pytest.raises(ValueError, match="from y, x, x_error cannot also take x1"):
+        hg.Chart(DATA).error_bar(y="host", x="p50", x_error="p99", x1="p50")
     with pytest.raises(ValueError, match="axis must be 'left' or 'right'"):
         hg.Chart(DATA).line(x="t", y="p50", axis="middle")  # type: ignore[arg-type]
 
@@ -646,6 +650,8 @@ def test_treemaps_and_sunbursts_send_their_tree():
     assert spec["marks"][0] == {"type": "sunburst", "data": "data", "node": "node", "parent": "up"}
     with pytest.raises(ValueError, match="needs a path of category columns"):
         hg.Chart(sales).treemap()
+    with pytest.raises(ValueError, match="a path, or node and parent, not both"):
+        hg.Chart(sales).treemap(["region"], node="country", parent="region")
     with pytest.raises(ValueError, match="a treemap has its chart to itself"):
         hg.Chart(sales).treemap(["region"]).pie("region")
     with pytest.raises(TypeError, match="treemap path: column 'revenue' holds number"):

@@ -1,7 +1,7 @@
 import type { NumericArray } from "../data/column.ts";
 import {
-  type FieldName,
   type NumericField,
+  type PositionField,
   type Schema,
   scanExtent,
   type Table,
@@ -36,9 +36,9 @@ export interface HeatmapOptions<S extends Schema> {
    * Column field. Category fields give one column per category; number and
    * time fields give one column per distinct value, in ascending order.
    */
-  x: FieldName<S>;
+  x: PositionField<S>;
   /** Row field, like `x`. Categories run top to bottom, numbers and times bottom to top. */
-  y: FieldName<S>;
+  y: PositionField<S>;
   /** Cell value, mapped to color. */
   value: NumericField<S>;
   /**

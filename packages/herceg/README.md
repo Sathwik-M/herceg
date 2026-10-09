@@ -26,7 +26,11 @@ const chart = createChart(document.querySelector("#latency")!, {
 ```
 
 Field names are checked against the table at compile time: `y` only accepts
-numeric or time fields, `series` only accepts category fields.
+numeric or time fields, `series` only accepts category fields. A continuous
+axis is a time axis when any field a mark places on it holds times, whether
+the mark is a line, area, point, error bar, or candlestick; bar lengths and
+histogram counts stay numbers, and heatmaps give every value of a position
+its own band. Set `type: "linear"` on the axis to read times as plain numbers.
 
 ## Data
 

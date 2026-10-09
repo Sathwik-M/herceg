@@ -1,5 +1,5 @@
 import type { NumericArray } from "../data/column.ts";
-import type { FieldName, NumericField, Schema, Table } from "../data/table.ts";
+import type { NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -23,6 +23,7 @@ import {
   requireField,
   SeriesSplitter,
   type SummaryContext,
+  valueKind,
 } from "./mark.ts";
 import { rowOf, type Series, visibleRange, xExtent } from "./series.ts";
 import { FILL, Slots } from "./slots.ts";
@@ -30,7 +31,7 @@ import { unionExtent } from "./trace.ts";
 
 export interface CandlestickOptions<S extends Schema> {
   /** Time, number, or category field the candles stand at. */
-  x: FieldName<S>;
+  x: PositionField<S>;
   open: NumericField<S>;
   high: NumericField<S>;
   low: NumericField<S>;
@@ -118,8 +119,7 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
   channelKind(axis: "x" | "y") {
     const { spec, table } = this;
     if (axis === "x") return table.kind(spec.x);
-    const prices = [spec.open, spec.high, spec.low, spec.close];
-    return prices.some((field) => table.kind(field as never) === "time") ? "time" : "number";
+    return valueKind(table, [spec.open, spec.high, spec.low, spec.close]);
   }
 
   bands(axis: "x" | "y", context: BandContext): BandList | undefined {

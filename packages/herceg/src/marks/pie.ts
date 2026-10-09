@@ -1,4 +1,4 @@
-import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
 import { ArcPath, arcDrawing, inSector, traceSector } from "../draw/arc.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import { textDrawing } from "../draw/text.ts";
@@ -15,7 +15,7 @@ export interface PieOptions<S extends Schema> {
   /** Category field: a slice per value. */
   category: CategoryField<S>;
   /** Number field summed per category; without it, slices count rows. */
-  value?: NumericField<S>;
+  value?: NumberField<S>;
   /** The hole's radius as a fraction of the pie's: 0 (the default) for a pie, about 0.6 for a donut. */
   innerRadius?: number;
   /** "value" (the default) orders slices largest first, clockwise from the top; "input" keeps the categories' order. */

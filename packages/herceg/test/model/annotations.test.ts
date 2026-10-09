@@ -193,8 +193,9 @@ describe("region", () => {
   });
 
   it("needs complete pairs", () => {
-    expect(() => region({ x1: 1 })).toThrow(/both x1 and x2/);
-    expect(() => region({})).toThrow(/needs x1 and x2, y1 and y2, or both/);
+    // Types refuse these; JavaScript callers get errors.
+    expect(() => region({ x1: 1 } as never)).toThrow(/both x1 and x2/);
+    expect(() => region({} as never)).toThrow(/needs x1 and x2, y1 and y2, or both/);
   });
 });
 

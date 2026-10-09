@@ -16,6 +16,7 @@ import {
   requireField,
   SeriesSplitter,
   seriesKey,
+  valueKind,
 } from "./mark.ts";
 import { type Series, xExtent, yExtent } from "./series.ts";
 import { RowStack } from "./stack.ts";
@@ -54,6 +55,8 @@ export type AreaOptions<S extends Schema> = AreaCommon &
         /** Category field: one area per value. Not combinable with `stack`. */
         series?: CategoryField<S>;
         stack?: boolean;
+        y1?: never;
+        y2?: never;
       }
     | {
         x: NumericField<S>;
@@ -61,6 +64,9 @@ export type AreaOptions<S extends Schema> = AreaCommon &
         y1: NumericField<S>;
         /** Upper edge of a band. */
         y2: NumericField<S>;
+        y?: never;
+        series?: never;
+        stack?: never;
       }
   );
 
@@ -82,7 +88,9 @@ export class AreaMark implements Mark<AreaSpec> {
     if (band) {
       if (spec.y1 === undefined || spec.y2 === undefined)
         throw new Error("A band area needs both y1 and y2");
-      if (spec.y !== undefined) throw new Error("Use y, or y1 and y2, not both");
+      if (spec.y !== undefined || spec.series !== undefined || spec.stack) {
+        throw new Error("An area takes y (with series or stack), or y1 and y2, not both");
+      }
       requireField(table, spec.y1, NUMERIC, "area y1");
       requireField(table, spec.y2, NUMERIC, "area y2");
     } else {
@@ -103,7 +111,10 @@ export class AreaMark implements Mark<AreaSpec> {
   readonly tooltip = "x";
 
   channelKind(axis: "x" | "y") {
-    return axis === "x" ? this.table.kind(this.spec.x) : "number";
+    const { spec, table } = this;
+    if (axis === "x") return table.kind(spec.x);
+    const ys = typeof spec.y === "string" ? [spec.y] : (spec.y ?? [spec.y1!, spec.y2!]);
+    return valueKind(table, ys);
   }
 
   series(key: MarkKey, palette: Palette, hidden: ReadonlySet<string>) {
@@ -255,10 +266,16 @@ export class AreaMark implements Mark<AreaSpec> {
  * ```
  */
 export function area<S extends Schema>(table: Table<S>, options: AreaOptions<S>): AreaMark {
-  const spec: AreaSpec = {
+  const { y } = options;
+  // Every option is kept, so the mark refuses forms mixed by casts or JavaScript.
+  const spec = {
     type: "area",
-    x: options.x,
-    ...definedFields(options as AreaCommon, [
+    ...definedFields(options, [
+      "x",
+      "y1",
+      "y2",
+      "series",
+      "stack",
       "fill",
       "fillOpacity",
       "line",
@@ -269,15 +286,8 @@ export function area<S extends Schema>(table: Table<S>, options: AreaOptions<S>)
       "facet",
       "panel",
     ]),
-  };
-  if ("y1" in options) {
-    spec.y1 = options.y1;
-    spec.y2 = options.y2;
-  } else {
-    spec.y = typeof options.y === "string" ? options.y : [...options.y];
-    if (options.series !== undefined) spec.series = options.series;
-    if (options.stack !== undefined) spec.stack = options.stack;
-  }
+    ...(y !== undefined && { y: typeof y === "string" ? y : [...y] }),
+  } as unknown as AreaSpec;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new AreaMark(spec, table as unknown as Table);

@@ -476,19 +476,9 @@ export interface LineSpec extends MarkBase {
   label?: string;
 }
 
-/**
- * Filled areas. With `y`, each series is filled down to zero (or stacked on
- * the previous series with `stack`). With `y1` and `y2`, the band between two
- * fields is filled.
- */
-export interface AreaSpec extends MarkBase {
+interface AreaStyle extends MarkBase {
   type: "area";
   x: Field;
-  y?: Field | Field[];
-  y1?: Field;
-  y2?: Field;
-  series?: Field;
-  stack?: boolean;
   fill?: string;
   fillOpacity?: number;
   /** Outline the top edge. Default true for unstacked single areas. */
@@ -498,17 +488,31 @@ export interface AreaSpec extends MarkBase {
 }
 
 /**
+ * Filled areas. With `y`, each series is filled down to zero (or stacked on
+ * the previous series with `stack`). With `y1` and `y2`, the band between two
+ * fields is filled.
+ */
+export type AreaSpec = AreaStyle &
+  (
+    | { y: Field | Field[]; series?: Field; stack?: boolean; y1?: never; y2?: never }
+    | { y1: Field; y2: Field; y?: never; series?: never; stack?: never }
+  );
+
+/**
  * A position of an annotation: a number (times in epoch milliseconds), or a
  * number or time field of the mark's table. An annotation with a field draws
  * one item per row; with numbers only, one item.
  */
 export type Position = number | Field;
 
+/** Where rules stand: at `x` (vertical) or at `y` (horizontal). */
+export type RulePosition<P> = { x: P; y?: never } | { y: P; x?: never };
+
 /** Horizontal (y) or vertical (x) reference lines. */
-export interface RuleSpec extends MarkBase {
+export type RuleSpec = RuleStyle & RulePosition<Position>;
+
+interface RuleStyle extends MarkBase {
   type: "rule";
-  x?: Position;
-  y?: Position;
   stroke?: string;
   strokeWidth?: number;
   dash?: number[];
@@ -518,17 +522,21 @@ export interface RuleSpec extends MarkBase {
   text?: Field;
 }
 
+/** The ranges a region spans: along x, along y, or both. */
+export type RegionRange<P> =
+  | { x1: P; x2: P; y1?: never; y2?: never }
+  | { y1: P; y2: P; x1?: never; x2?: never }
+  | { x1: P; x2: P; y1: P; y2: P };
+
 /**
  * Shaded regions: from `x1` to `x2` across the plot's height, from `y1` to
  * `y2` across its width, or rectangles with both. Drawn in mark order, so
  * list them before the marks they highlight to draw them underneath.
  */
-export interface RegionSpec extends MarkBase {
+export type RegionSpec = RegionStyle & RegionRange<Position>;
+
+interface RegionStyle extends MarkBase {
   type: "region";
-  x1?: Position;
-  x2?: Position;
-  y1?: Position;
-  y2?: Position;
   /** Defaults to the theme's muted color. */
   fill?: string;
   /** Default 0.15. */
@@ -597,18 +605,52 @@ export interface BarSpec extends MarkBase {
  * `x1` to `x2` or `x ± xError`. Positions may be category, number, or time
  * fields; ends, centers, and errors are number or time fields.
  */
-export interface ErrorBarSpec extends MarkBase {
+export type ErrorBarSpec = ErrorBarStyle &
+  (
+    | {
+        x: Field;
+        y1: Field;
+        y2: Field;
+        y?: never;
+        yError?: never;
+        x1?: never;
+        x2?: never;
+        xError?: never;
+      }
+    | {
+        x: Field;
+        y: Field;
+        yError: Field;
+        y1?: never;
+        y2?: never;
+        x1?: never;
+        x2?: never;
+        xError?: never;
+      }
+    | {
+        y: Field;
+        x1: Field;
+        x2: Field;
+        x?: never;
+        xError?: never;
+        y1?: never;
+        y2?: never;
+        yError?: never;
+      }
+    | {
+        y: Field;
+        x: Field;
+        xError: Field;
+        x1?: never;
+        x2?: never;
+        y1?: never;
+        y2?: never;
+        yError?: never;
+      }
+  );
+
+interface ErrorBarStyle extends MarkBase {
   type: "errorbar";
-  x?: Field;
-  y?: Field;
-  x1?: Field;
-  x2?: Field;
-  y1?: Field;
-  y2?: Field;
-  /** Symmetric error around the center `y`, for vertical intervals. */
-  yError?: Field;
-  /** Symmetric error around the center `x`, for horizontal intervals. */
-  xError?: Field;
   series?: Field;
   stroke?: string;
   strokeWidth?: number;
@@ -701,18 +743,23 @@ export interface ViolinSpec extends MarkBase {
 }
 
 /**
+ * How a spec names a tree: a path of category fields from the outermost
+ * group in, or a field naming each row's node and one naming its parent's.
+ */
+export type TreeShape =
+  | { path: string[]; node?: never; parent?: never }
+  | { node: string; parent: string; path?: never };
+
+/**
  * A treemap: nested rectangles for a tree whose leaves' areas are their
  * share of `value` (or of the rows), as the portable spec describes it.
  */
-export interface TreemapSpec {
+export type TreemapSpec = TreemapStyle & TreeShape;
+
+interface TreemapStyle {
   type: "treemap";
   data?: string;
   id?: string;
-  /** Category fields from the outermost group in; or `node` and `parent`. */
-  path?: string[];
-  /** Category field naming each row's node, with `parent` naming its parent's. */
-  node?: string;
-  parent?: string;
   value?: string;
   /** Names inside the rectangles that have room for them; true by default. */
   labels?: boolean;
@@ -722,15 +769,12 @@ export interface TreemapSpec {
  * A sunburst: a tree as rings around a center, each node's angle its share
  * of its parent's, deeper levels further out.
  */
-export interface SunburstSpec {
+export type SunburstSpec = SunburstStyle & TreeShape;
+
+interface SunburstStyle {
   type: "sunburst";
   data?: string;
   id?: string;
-  /** Category fields from the outermost group in; or `node` and `parent`. */
-  path?: string[];
-  /** Category field naming each row's node, with `parent` naming its parent's. */
-  node?: string;
-  parent?: string;
   value?: string;
   /** Names inside the sectors that have room for them; true by default. */
   labels?: boolean;

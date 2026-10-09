@@ -1,4 +1,4 @@
-import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
 import { SvgPath } from "../draw/markup.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
@@ -34,7 +34,7 @@ export interface SankeyOptions<S extends Schema> {
   /** Category field naming where it goes; a name in both fields is one node. */
   target: CategoryField<S>;
   /** Number field summed per source and target; without it, links count rows. */
-  value?: NumericField<S>;
+  value?: NumberField<S>;
   /** Names and values beside the nodes that have room for them; true by default. */
   labels?: boolean;
   /** Width of the node bars in pixels; 12 by default. */

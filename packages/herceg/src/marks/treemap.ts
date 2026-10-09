@@ -1,5 +1,5 @@
 import { type Hierarchy, pathOf } from "../data/hierarchy.ts";
-import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
 import { n } from "../draw/markup.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { textDrawing } from "../draw/text.ts";
@@ -12,21 +12,25 @@ import type { Geometry, RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { TreemapSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import { definedFields } from "./line.ts";
 import { type Branch, count, TreeData } from "./tree-data.ts";
 
 export type TreemapOptions<S extends Schema> = (
   | {
       /** Category fields from the outermost group in; a row ends at its first missing one. */
       path: readonly CategoryField<S>[];
+      node?: never;
+      parent?: never;
     }
   | {
       /** Category field naming each row's node; rows without a parent are top-level. */
       node: CategoryField<S>;
       parent: CategoryField<S>;
+      path?: never;
     }
 ) & {
   /** Number field summed over each node's rows; without it, rows count. */
-  value?: NumericField<S>;
+  value?: NumberField<S>;
   /** Names inside the rectangles that have room for them; true by default. */
   labels?: boolean;
   id?: string;
@@ -250,15 +254,13 @@ export function treemap<S extends Schema>(
   table: Table<S>,
   options: TreemapOptions<S>,
 ): TreemapMark {
-  const spec: TreemapSpec = { type: "treemap" };
-  if ("path" in options) spec.path = [...options.path];
-  else {
-    spec.node = options.node;
-    spec.parent = options.parent;
-  }
-  if (options.value !== undefined) spec.value = options.value;
-  if (options.labels !== undefined) spec.labels = options.labels;
-  if (options.id !== undefined) spec.id = options.id;
+  const { path } = options;
+  // Every option is kept, so the mark refuses a tree named both ways.
+  const spec = {
+    type: "treemap",
+    ...definedFields(options, ["node", "parent", "value", "labels", "id"]),
+    ...(path !== undefined && { path: [...path] }),
+  } as unknown as TreemapSpec;
   if (table.name !== undefined) spec.data = table.name;
   return new TreemapMark(spec, table as unknown as Table);
 }

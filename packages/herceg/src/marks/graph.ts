@@ -1,4 +1,4 @@
-import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
 import { n } from "../draw/markup.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import { textDrawing } from "../draw/text.ts";
@@ -19,7 +19,7 @@ export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
   /** Category field naming the other end; a name in both fields is one node. */
   target: CategoryField<S>;
   /** Number field summed per pair of nodes, setting links' widths; without it, links are alike. */
-  value?: NumericField<S>;
+  value?: NumberField<S>;
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
   labels?: boolean;
   id?: string;
@@ -33,7 +33,7 @@ export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
       /** Category field of `nodes`: nodes are colored by it, with a legend. */
       group?: CategoryField<N>;
       /** Number field of `nodes` sizing nodes by area. */
-      size?: NumericField<N>;
+      size?: NumberField<N>;
     }
 );
 
