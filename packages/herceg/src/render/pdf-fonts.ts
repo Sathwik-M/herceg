@@ -1,9 +1,10 @@
 // Text in PDF output uses the standard 14 fonts, which every PDF viewer
 // provides, so nothing is embedded. Their WinAnsi encoding covers Latin-1
 // and common punctuation; other characters cannot be shown. Advance widths
-// come from Adobe's font metrics (AFM) for the same fonts. Layout measures
-// text with `estimateText` (Helvetica plus 10%), so labels have room in
-// every font here.
+// come from Adobe's font metrics (AFM) for the same fonts; PDF layout
+// measures text with them (`measurePdfText`), so labels fit as drawn.
+
+import { fontKind, type MeasureText, parseFont } from "../layout/text.ts";
 
 export type PdfFont =
   | "Helvetica"
@@ -122,20 +123,16 @@ export function textWidth(encoded: string, font: PdfFont): number {
   return units / 1000;
 }
 
-const MONOSPACE = /mono|courier|consolas|menlo|monaco/;
-const SERIF = /(^|\s)(ui-)?serif$|times|georgia|garamond|palatino|cambria|baskerville/;
-const SANS = /sans|helvetica|arial|system-ui|apple-system|segoe|roboto|verdana|tahoma/;
-
-/**
- * The standard font closest to a CSS font family list: the first family
- * recognized as monospace, serif, or sans-serif decides; Helvetica otherwise.
- */
+/** The standard font closest to a CSS font family list (see `fontKind`). */
 export function standardFont(family: string, bold: boolean): PdfFont {
-  for (const entry of family.toLowerCase().split(",")) {
-    const name = entry.trim().replace(/^["']|["']$/g, "");
-    if (MONOSPACE.test(name)) return bold ? "Courier-Bold" : "Courier";
-    if (SERIF.test(name)) return bold ? "Times-Bold" : "Times-Roman";
-    if (SANS.test(name)) break;
-  }
+  const kind = fontKind(family);
+  if (kind === "monospace") return bold ? "Courier-Bold" : "Courier";
+  if (kind === "serif") return bold ? "Times-Bold" : "Times-Roman";
   return bold ? "Helvetica-Bold" : "Helvetica";
 }
+
+/** Text widths in the standard fonts a PDF draws with: exact, since every viewer has them. */
+export const measurePdfText: MeasureText = (text, font) => {
+  const { size, bold, family } = parseFont(font);
+  return textWidth(encodeText(text), standardFont(family, bold)) * size;
+};

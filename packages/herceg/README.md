@@ -142,6 +142,7 @@ region({ y1: 200, y2: 300 }); // shaded y range; with x1/x2 too, a rectangle
 
 text({ x: launch, y: 120, label: "Launch", anchor: "start", dx: 6 });
 text(peaks, { x: "time", y: "value", text: "value", dy: -10 });
+text(cities, { x: "gdp", y: "growth", text: "name", dy: -10, overlap: "move" });
 ```
 
 Annotation positions count toward the axis domains, so thresholds and events
@@ -149,8 +150,17 @@ stay in view; on a category axis, a constant position is a band index (0 is
 the first band, -0.5 its edge). Regions are drawn in mark order (list them first to shade
 underneath the data); rules and text are drawn above the data, as SVG even
 when the data is on a canvas, and with a halo so text stays readable over
-lines. Annotations outside the view are left out. Text is meant for
-annotations, not for labeling every point of a large series.
+lines. Annotations outside the view are left out. Text labels that would
+cover an earlier label of the same mark, in row order, are drawn anyway by
+default. With `overlap: "hide"` they are left out. With `overlap: "move"`,
+a label goes where `anchor`, `dx`, and `dy` put it if that is free and in
+the plot; otherwise it tries above, below, after, before, and at the corners
+of its point, a few pixels away and off the other rows' points, and is left
+out if none of those is free (sort the table to label what matters first).
+Empty labels take no room. Placement measures text with the browser's fonts
+on screen and with estimated widths in static SVG and PDF output, so the two
+can place labels differently. Text is meant for annotations and labeling a
+few hundred points, not every point of a large series.
 
 Bars, points, error bars, heatmaps, candlesticks, histograms, box plots, and violins:
 

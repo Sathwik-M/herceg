@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Schema, type Table, table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { type HeatmapOptions, heatmap } from "../../src/marks/heatmap.ts";
-import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { type ChartConfig, ChartModel, STATIC_RASTER_RATIO } from "../../src/model/model.ts";
 import { renderToPDF } from "../../src/pdf.ts";
+import { measurePdfText } from "../../src/render/pdf-fonts.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { SequentialScale } from "../../src/scale/color.ts";
 import type { RasterGeometry } from "../../src/scene/scene.ts";
@@ -358,8 +359,13 @@ describe("reduced heatmaps", () => {
     const plotWidth = Number(/<image x="[\d.]+" y="[\d.]+" width="([\d.]+)"/.exec(svg)![1]);
     expect(width).toBe(Math.floor(plotWidth * 2));
     expect(height).toBe(3);
+    // PDF layout measures text in the PDF's fonts, so its plot is its own.
+    const model = new ChartModel(options);
+    model.setSize(400, 200, 1, STATIC_RASTER_RATIO);
+    model.scene(measurePdfText);
+    const pdfWidth = Math.floor(model.panels()[0]!.plot.width * 2);
     const pdf = new TextDecoder("latin1").decode(renderToPDF(options));
-    expect(pdf).toContain(`/Subtype /Image /Width ${width} /Height`);
+    expect(pdf).toContain(`/Subtype /Image /Width ${pdfWidth} /Height`);
   });
 
   it("takes reduce from specs", () => {

@@ -11,6 +11,7 @@ import { rule } from "../../src/marks/rule.ts";
 import { text } from "../../src/marks/text.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { measurePdfText } from "../../src/render/pdf-fonts.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type {
   MarkGeometry,
@@ -240,6 +241,100 @@ describe("text", () => {
     model.setViewport([start, start + 23 * hour]);
     model.scene(estimateText);
     expect(model.yScale()!.domain[1]).toBeLessThan(1000);
+  });
+
+  it("hides or moves labels that would cover earlier ones", () => {
+    // Three labels above nearly the same point, and one apart.
+    const crowd = table({
+      at: [start + 4 * hour, start + 4 * hour, start + 4 * hour, start + 18 * hour],
+      v: [110, 110.2, 109.8, 110],
+      name: ["first", "second", "third", "apart"],
+    });
+    const labels = (overlap?: "hide" | "move") => {
+      const { scene, model } = build({
+        marks: [
+          line(metrics, { x: "time", y: "value" }),
+          text(crowd, { x: "at", y: "v", text: "name", dy: -10, ...(overlap && { overlap }) }),
+        ],
+      });
+      return { label: (of(scene, "text") as TextGeometry[])[0]!, y: model.yScale()! };
+    };
+    expect(labels().label.labels).toEqual(["first", "second", "third", "apart"]);
+    // Hidden: the first label at a point wins, in row order.
+    expect(labels("hide").label.labels).toEqual(["first", "apart"]);
+    // Moved: the second goes below its point, and the third where it fits.
+    const { label: moved, y } = labels("move");
+    expect(moved.labels).toEqual(["first", "second", "third", "apart"]);
+    expect(moved.coords[3]).toBeGreaterThan(y.map(110.2));
+  });
+
+  it("keeps moving labels in the plot", () => {
+    // At the plot's top right corner, the first label goes below and before
+    // its point; the second has no room left.
+    const corner = table({ at: [10, 10], v: [5, 5], name: ["one", "two"] });
+    const { scene, model } = build({
+      marks: [text(corner, { x: "at", y: "v", text: "name", dy: -10, overlap: "move" })],
+      x: { domain: [0, 10] },
+      y: { domain: [0, 5] },
+    });
+    const [label] = of(scene, "text") as TextGeometry[];
+    expect(label!.labels).toEqual(["one"]);
+    const { plot } = scene.panels[0]!;
+    expect(label!.coords[0]).toBeLessThan(model.xScale()!.map(10));
+    expect(label!.coords[1]).toBeGreaterThan(model.yScale()!.map(5));
+    expect(label!.coords[1]).toBeLessThan(plot.y + plot.height);
+  });
+
+  it("place labels by their text's width from any anchor, and skip empty ones", () => {
+    // Labels ending at points by the plot's right edge cannot stay there.
+    const edge = table({ at: [10, 2], v: [2.5, 2.5], name: ["right edge", ""] });
+    const { scene, model } = build({
+      marks: [text(edge, { x: "at", y: "v", text: "name", anchor: "end", dx: 8, overlap: "move" })],
+      x: { domain: [0, 10] },
+      y: { domain: [0, 5] },
+    });
+    const [label] = of(scene, "text") as TextGeometry[];
+    expect(label!.labels).toEqual(["right edge"]);
+    // Moved before its point, the label ends a few pixels short of it.
+    const px = model.xScale()!.map(10);
+    expect(label!.coords[0]).toBeLessThan(px - 4);
+    expect(label!.coords[0]).toBeGreaterThan(px - 12);
+    // An empty label before a visible one at the same point takes no room.
+    const pair = table({ at: [5, 5], v: [2, 2], name: ["", "shown"] });
+    const hidden = build({
+      marks: [text(pair, { x: "at", y: "v", text: "name", overlap: "hide" })],
+    });
+    expect((of(hidden.scene, "text") as TextGeometry[])[0]!.labels).toEqual(["shown"]);
+  });
+
+  it("keep labels apart in PDF layout, measured in the PDF's own fonts", () => {
+    // Twenty i's are wider in Times than the Helvetica estimate allows for.
+    const pair = table({ at: [3, 6], v: [5, 5], name: ["i".repeat(20), "i".repeat(20)] });
+    const model = new ChartModel({
+      marks: [text(pair, { x: "at", y: "v", text: "name", overlap: "hide" })],
+      x: { domain: [0, 9] },
+      y: { domain: [0, 10] },
+      theme: { font: "Georgia, serif" },
+      locale: "en-US",
+    });
+    model.setSize(240, 200, 1);
+    const scene = model.scene(measurePdfText);
+    const [label] = of(scene, "text") as TextGeometry[];
+    const gap = model.xScale()!.map(6) - model.xScale()!.map(3);
+    expect(gap).toBeLessThan(measurePdfText("i".repeat(20), "12px Georgia, serif"));
+    expect(label!.labels).toHaveLength(1);
+  });
+
+  it("finish quickly with offsets far outside the chart", () => {
+    for (const overlap of ["hide", "move"] as const) {
+      const { scene } = build({
+        marks: [text({ x: 5, y: 5, label: "far", dx: 1e20, overlap })],
+        x: { domain: [0, 10] },
+        y: { domain: [0, 10] },
+      });
+      // Hidden labels keep the author's place; moving ones fall back beside their point.
+      expect((of(scene, "text") as TextGeometry[]).flatMap((g) => g.labels)).toEqual(["far"]);
+    }
   });
 
   it("needs exactly one of label or text", () => {

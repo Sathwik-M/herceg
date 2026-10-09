@@ -52,7 +52,7 @@ Chart (browser runtime): scheduler, pointer/keyboard, tooltip, legend, zoom, syn
 The model never touches the DOM, so the same code produces server-rendered
 SVG (`renderToSVG`) and browser charts. Text measurement is injected: the
 browser uses a canvas context, static rendering uses built-in Helvetica
-metrics padded by 10%.
+metrics (an even 0.6 em per glyph for monospace fonts) padded by 10%.
 
 ## Data model
 
@@ -531,7 +531,14 @@ black, by the text color, when the background is transparent) so it stays
 readable over lines (fills given by name, which would need the full CSS
 color table to classify, get the halo for the theme's text color). The SVG
 layer keeps each annotation's nodes by geometry key, so a changing label
-rebuilds neither the axes nor other annotations. Annotations have no series, so
+rebuilds neither the axes nor other annotations. Text with `overlap` places
+labels greedily in row order, measuring each with the chart's text measurer
+(`Frame.measure`) and filing placed boxes in a grid (`layout/label-boxes.ts`),
+so each label checks only its neighbors; boxes too large for the grid, or far
+outside it, are checked one by one. Each mark places its own labels. Moving
+labels keep their given place when it is free and in the plot, else try
+eight spots touching their point, nearest sides first, off the other rows'
+points and inside the plot. Annotations have no series, so
 they appear in neither legends nor tooltips; the chart's text alternative
 lists them (up to ten items each, with positions formatted as in tooltips)
 after the series summaries. `Mark.geometry` receives the mark's key so their
@@ -608,9 +615,9 @@ repeated to about two image pixels per CSS pixel (at most 4,194,304 pixels),
 because some viewers (macOS Preview) smooth images whatever the file asks
 and would blur cells into each other; the color legend's ramp is an axial
 shading. Text uses the standard 14 fonts, which every viewer has, so
-nothing is embedded: layout measures text with the same Helvetica metrics
-as the static SVG (padded by 10%), and anchoring uses the fonts' exact
-metrics. Streams are Flate-compressed by a small built-in deflate (fixed
+nothing is embedded: layout and anchoring measure text with those fonts'
+exact metrics (Adobe's AFM widths), so a PDF's margins and label placement
+can differ slightly from the static SVG's, which uses estimates. Streams are Flate-compressed by a small built-in deflate (fixed
 Huffman codes with LZ77 matching; zlib's dynamic codes make text streams
 about 30% smaller), since the output must be built
 synchronously wherever the engine runs, including the V8 engine embedded in
@@ -889,7 +896,8 @@ document when `OffscreenCanvas` is unavailable.
   `series`, and are inspected at their series' points, not by the shapes
   they draw; custom marks without series have no legend entries or tooltips.
 - Annotation fields cannot be categories (constants on a category axis are
-  band indices); text has no collision avoidance or connectors. Bar value
+  band indices); text can hide or move labels that would overlap, but has
+  no leader lines and does not avoid other marks' geometry. Bar value
   labels estimate text widths from the font size to decide what fits.
 - Continuous color only for heatmaps; points cannot be colored by a numeric
   field.

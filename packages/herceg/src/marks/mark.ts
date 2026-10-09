@@ -2,6 +2,7 @@ import type { FieldKind, NumericArray } from "../data/column.ts";
 import type { Schema, Table } from "../data/table.ts";
 import { formatNumber, timeTickLabels } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
+import type { MeasureText } from "../layout/text.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
@@ -57,6 +58,8 @@ export interface Frame {
   scene: number;
   /** Large point series may be left to a GPU painter as clouds. */
   clouds: boolean;
+  /** Text widths for the chart's fonts, as its axes measure them. */
+  measure: MeasureText;
   /**
    * A polyline buffer reused across frames, one per series key and stage
    * (for example "line", "upper", "upper-step").

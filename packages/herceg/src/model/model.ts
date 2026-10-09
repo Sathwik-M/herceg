@@ -1080,6 +1080,7 @@ export class ChartModel {
         owner: this,
         scene,
         clouds,
+        measure,
         ...this.#pools(i),
       };
       // Marks on the right axis draw with its scale.

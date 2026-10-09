@@ -11,23 +11,57 @@ const WIDTHS = [
   222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584,
 ];
 
-function fontSize(font: string): number {
-  const match = /(\d+(?:\.\d+)?)px/.exec(font);
-  return match ? Number(match[1]) : 12;
+/** The size in pixels, weight, and family list of a CSS `font` such as "600 12px Inter, sans-serif". */
+export function parseFont(font: string): { size: number; bold: boolean; family: string } {
+  const match = /(\d+(?:\.\d+)?)px\s*(.*)$/.exec(font);
+  const before = match ? font.slice(0, match.index) : "";
+  return {
+    size: match ? Number(match[1]) : 12,
+    bold: /\b(bold|[6-9]00)\b/.test(before),
+    family: match?.[2] ?? font,
+  };
+}
+
+const MONOSPACE = /mono|courier|consolas|menlo|monaco/;
+const SERIF = /(^|\s)(ui-)?serif$|times|georgia|garamond|palatino|cambria|baskerville/;
+const SANS = /sans|helvetica|arial|system-ui|apple-system|segoe|roboto|verdana|tahoma/;
+
+/**
+ * What a CSS font family list draws with: the first family recognized as
+ * monospace, serif, or sans-serif decides; sans-serif when none is.
+ */
+export function fontKind(family: string): "monospace" | "serif" | "sans" {
+  for (const entry of family.toLowerCase().split(",")) {
+    const name = entry.trim().replace(/^["']|["']$/g, "");
+    if (MONOSPACE.test(name)) return "monospace";
+    if (SERIF.test(name)) return "serif";
+    if (SANS.test(name)) return "sans";
+  }
+  return "sans";
 }
 
 /**
- * Width estimate from Helvetica metrics, padded by 10% because the viewer's
- * font is unknown (system UI fonts run slightly wider). Reserving a little too
- * much space is better than clipping labels.
+ * Width estimate from Helvetica metrics (Courier's for monospace fonts),
+ * padded by 10% because the viewer's font is unknown (system UI fonts run
+ * slightly wider). Reserving a little too much space is better than
+ * clipping labels; serif fonts, narrower, are estimated as Helvetica.
  */
 export const estimateText: MeasureText = (text, font) => {
+  const { size, family } = parseFont(font);
+  const monospace = fontKind(family) === "monospace";
   let units = 0;
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    units += code >= 32 && code <= 126 ? WIDTHS[code - 32]! : code >= 0x2e80 ? 1000 : 556;
+    units +=
+      code >= 0x2e80
+        ? 1000
+        : monospace
+          ? 600
+          : code >= 32 && code <= 126
+            ? WIDTHS[code - 32]!
+            : 556;
   }
-  return (units / 1000) * fontSize(font) * 1.1;
+  return (units / 1000) * size * 1.1;
 };
 
 /** Measures with a 2D canvas context, caching results per font and string. */

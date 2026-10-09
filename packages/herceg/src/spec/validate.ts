@@ -342,6 +342,7 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       text: field,
       fill: string,
       anchor: oneOf("start", "middle", "end"),
+      overlap: oneOf("show", "hide", "move"),
       dx: finite,
       dy: finite,
     },

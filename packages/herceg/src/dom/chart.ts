@@ -7,7 +7,7 @@
 // overlay), the HTML legend, the tooltip, and a visually hidden description.
 
 import type { Table } from "../data/table.ts";
-import { canvasMeasurer, estimateText, type MeasureText } from "../layout/text.ts";
+import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
 import { tablesOf } from "../marks/layout-mark.ts";
 import type { AxisFormat } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
@@ -55,10 +55,18 @@ const DEFAULT_HEIGHT = 320;
 let nextId = 0;
 let sharedMeasure: MeasureText | undefined;
 
+/**
+ * Without a canvas to measure with (some test environments), glyphs are
+ * taken to be 0.6 em wide; browsers always measure, so charts do not carry
+ * the static estimator's font tables.
+ */
+const roughText: MeasureText = (text, font) =>
+  text.length * 0.6 * (Number(/(\d+(?:\.\d+)?)px/.exec(font)?.[1]) || 12);
+
 function measurer(document: Document): MeasureText {
   if (!sharedMeasure) {
     const context = document.createElement("canvas").getContext("2d");
-    sharedMeasure = context ? canvasMeasurer(context) : estimateText;
+    sharedMeasure = context ? canvasMeasurer(context) : roughText;
   }
   return sharedMeasure;
 }

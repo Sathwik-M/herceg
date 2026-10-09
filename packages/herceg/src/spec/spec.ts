@@ -495,6 +495,13 @@ export interface TextSpec extends MarkBase {
   /** Pixel offsets from the point; positive dy moves down. */
   dx?: number;
   dy?: number;
+  /**
+   * Labels that would cover an earlier one of this mark: drawn anyway
+   * ("show", the default), left out ("hide"), or, where their place is taken
+   * or outside the plot, tried around their point and left out when nothing
+   * fits ("move").
+   */
+  overlap?: "show" | "hide" | "move";
 }
 
 /**
