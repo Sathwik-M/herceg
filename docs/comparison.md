@@ -85,10 +85,10 @@ and `@herceg/svelte` and leave Vue and Svelte's runtime out.
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-line | 0.0.0 (22e7ae8) | 99.4 | 36.9 | 33.2 | - | 4.5 |
-| herceg-react-line | 0.0.0 (22e7ae8) | 101.7 | 37.9 | 34.0 | - | 4.5 |
-| herceg-svelte-line | 0.0.0 (22e7ae8) | 103.1 | 38.5 | 34.5 | - | 4.5 |
-| herceg-vue-line | 0.0.0 (22e7ae8) | 102.8 | 38.4 | 34.4 | - | 4.5 |
+| herceg-line | 0.0.0 (207f0b3) | 99.4 | 36.9 | 33.1 | - | 4.5 |
+| herceg-react-line | 0.0.0 (207f0b3) | 101.7 | 37.9 | 34.0 | - | 4.5 |
+| herceg-svelte-line | 0.0.0 (207f0b3) | 103.1 | 38.5 | 34.5 | - | 4.5 |
+| herceg-vue-line | 0.0.0 (207f0b3) | 102.8 | 38.4 | 34.4 | - | 4.5 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |
