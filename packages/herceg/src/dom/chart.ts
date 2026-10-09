@@ -190,9 +190,12 @@ export class Chart implements Scheduled, SyncMember {
     this.#tooltip = new Tooltip(document);
     this.#description = document.createElement("div");
     this.#description.id = `${this.#id}-description`;
-    this.#description.style.cssText = HIDDEN_TEXT;
+    // Read only as the figure's description: shown as text too, it would be read twice.
+    this.#description.hidden = true;
     this.#live = document.createElement("div");
     this.#live.setAttribute("aria-live", "polite");
+    // A new value is announced whole, not as the words that changed.
+    this.#live.setAttribute("aria-atomic", "true");
     this.#live.style.cssText = HIDDEN_TEXT;
     this.root.setAttribute("aria-describedby", this.#description.id);
     this.root.append(

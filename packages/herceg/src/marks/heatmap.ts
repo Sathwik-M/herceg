@@ -27,6 +27,7 @@ import {
   NUMERIC,
   type Palette,
   requireField,
+  type SummaryContext,
   seriesKey,
 } from "./mark.ts";
 import { type Series, TableCache } from "./series.ts";
@@ -150,6 +151,34 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
 
   yExtent() {
     return undefined;
+  }
+
+  /** How many cells in how many columns and rows, and where the values are lowest and highest. */
+  summarize(parts: readonly Series[], name: string, { format }: SummaryContext): string {
+    const columns = new Set<number>();
+    const rows = new Set<number>();
+    let cells = 0;
+    let low: { s: Series; row: number } | undefined;
+    let high: { s: Series; row: number } | undefined;
+    for (const s of parts) {
+      for (let row = 0; row < s.length; row++) {
+        const value = s.values[row]!;
+        if (!Number.isFinite(value)) continue;
+        cells++;
+        columns.add(s.x[row]!);
+        rows.add(s.y[row]!);
+        if (!low || value < low.s.values[low.row]!) low = { s, row };
+        if (!high || value > high.s.values[high.row]!) high = { s, row };
+      }
+    }
+    if (!low || !high) return `${name}: no values`;
+    const at = ({ s, row }: { s: Series; row: number }) =>
+      `${format.value(s.values[row]!)} at ${format.x(s.x[row]!)}, ${format.y(s.y[row]!)}`;
+    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    return (
+      `${name}: ${plural(cells, "cell")} in ${plural(columns.size, "column")} and ` +
+      `${plural(rows.size, "row")}, lowest ${at(low)}, highest ${at(high)}`
+    );
   }
 
   /** Cells are colored by value, so the legend shows the ramp instead of series. */

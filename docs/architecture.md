@@ -943,18 +943,27 @@ application draws its own.
 
 - The chart root is a focusable `figure` named by the title, described by a
   generated summary (series count and, per series, point count, range, and
-  last value) that is refreshed at most once a second.
+  last value; marks such as heatmaps, histograms, and layout marks write
+  their own) that is refreshed at most once a second. The summary does not
+  repeat the title, and the element holding it is hidden, so it is read
+  once, as the figure's description.
 - Arrow keys, Page Up/Down, Home, and End move a cursor through the data; the
-  values are announced through a polite live region and shown in the tooltip.
-- Legend entries are buttons with `aria-pressed`.
+  values are announced whole through a polite, atomic live region and shown
+  in the tooltip, which is hidden from assistive technology so they are not
+  read twice. Drawings (SVG and canvas) are hidden from it too.
+- Legend entries are buttons with `aria-pressed` in a group named "Legend".
 - Static SVG output has `role="img"`, `<title>`, and `<desc>`.
 - Browser tests audit rendered charts with axe-core (WCAG 2.1 A and AA rules
   and best practices; `test/browser/accessibility.test.ts`): every chart
   family, SVG and Canvas rendering, facets, subplots, the four built-in
   themes, a shown tooltip with the keyboard cursor on a point, and static
   SVG. Automated rules check names, roles, focusable controls, and HTML text
-  contrast; they do not show how a screen reader reads a chart, which has
-  not been tested.
+  contrast. The same tests read the accessibility tree Chrome gives screen
+  readers (through the DevTools protocol): the figure's name and
+  description, the legend's buttons and their states, what the live region
+  says as the keyboard moves, and that nothing else is exposed. That is what
+  a screen reader receives, not how one speaks it; the charts have not been
+  tried with screen readers themselves.
 
 ## Spec and API
 

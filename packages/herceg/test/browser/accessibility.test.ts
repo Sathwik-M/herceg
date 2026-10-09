@@ -1,9 +1,11 @@
 // Automated accessibility audits (axe-core, WCAG 2.1 A and AA plus best
-// practices) of charts as they render in the browser and as static SVG.
-// They check names, roles, focusable controls, and the like; they do not
-// replace testing with screen readers.
+// practices) of charts as they render in the browser and as static SVG,
+// and checks of the accessibility tree Chrome gives screen readers: what a
+// chart is called, what it says about itself, and what it announces. They
+// do not replace testing with screen readers.
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
+import { cdp } from "vitest/browser";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
@@ -191,6 +193,126 @@ describe("accessibility audits", () => {
       expect(await violations(host)).toEqual([]);
     } finally {
       host.remove();
+    }
+  });
+});
+
+interface AXNode {
+  nodeId: string;
+  ignored: boolean;
+  role?: { value: string };
+  name?: { value: string };
+  description?: { value: string };
+  childIds?: string[];
+  properties?: { name: string; value: { value: unknown } }[];
+}
+
+/**
+ * The accessibility tree under the chart's figure, one node a line:
+ * `role "name"`, then its description and states, indented by depth.
+ * Nodes assistive technology ignores are left out.
+ */
+async function accessibilityTree(): Promise<string[]> {
+  // Tests run in a frame of the page the session is attached to.
+  const { frameTree } = (await cdp().send("Page.getFrameTree")) as {
+    frameTree: { childFrames?: { frame: { id: string } }[] };
+  };
+  const frameId = frameTree.childFrames!.at(-1)!.frame.id;
+  const { nodes } = (await cdp().send("Accessibility.getFullAXTree", { frameId })) as {
+    nodes: AXNode[];
+  };
+  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+  const figures = nodes.filter((node) => node.role?.value === "figure");
+  expect(figures).toHaveLength(1);
+  const lines: string[] = [];
+  const walk = (node: AXNode, depth: number) => {
+    const shown = !node.ignored && node.role?.value !== "InlineTextBox";
+    if (shown) {
+      const states = (node.properties ?? [])
+        .filter(({ name }) => ["pressed", "live", "atomic", "focused"].includes(name))
+        .map(({ name, value }) => `${name}=${value.value}`);
+      const description = node.description?.value ? [`(${node.description.value})`] : [];
+      lines.push(
+        `${"  ".repeat(depth)}${[node.role?.value, JSON.stringify(node.name?.value ?? ""), ...description, ...states].join(" ")}`,
+      );
+    }
+    for (const id of node.childIds ?? []) walk(byId.get(id)!, shown ? depth + 1 : depth);
+  };
+  walk(figures[0]!, 0);
+  return lines;
+}
+
+const press = (chart: Chart, key: string) =>
+  chart.root.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+
+describe("the accessibility tree", () => {
+  it("names and describes a chart once, with a legend of toggle buttons", async () => {
+    const chart = mount({
+      title: "Latency",
+      marks: [line(metrics, { x: "t", y: ["a", "b"] })],
+      locale: "en-US",
+      timeZone: "UTC",
+    });
+    await chart.loading;
+    const tree = await accessibilityTree();
+    expect(tree[0]).toMatch(
+      /^figure "Latency" \(Line chart with 2 series\. a: 48 points, .*arrow keys to read values\.\)$/,
+    );
+    // The description is read as the figure's, never again as text.
+    expect(tree.filter((line) => line.includes("Line chart with"))).toHaveLength(1);
+    expect(tree).toContain('  group "Legend"');
+    expect(tree).toContain('    button "a" (Hide a) pressed=true');
+    expect(tree).toContain('    button "b" (Hide b) pressed=true');
+    // An empty live region waits for values.
+    expect(tree.at(-1)).toBe('  generic "" live=polite atomic=true');
+    chart.root.querySelector("button")!.click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(await accessibilityTree()).toContain('    button "a" (Show a) pressed=false');
+  });
+
+  it("announces the values the keyboard reaches, and only there", async () => {
+    const chart = mount({
+      title: "Latency",
+      marks: [line(metrics, { x: "t", y: ["a", "b"] })],
+      locale: "en-US",
+      timeZone: "UTC",
+    });
+    await chart.loading;
+    chart.root.focus();
+    press(chart, "ArrowRight");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const tree = await accessibilityTree();
+    const live = tree.findIndex((line) => line.includes("live=polite"));
+    expect(tree[live + 1]).toMatch(/^ {4}StaticText "Jan 1, 2026, 00:00\. a: 100\. b: 95"$/);
+    // The tooltip shows the same values, hidden from assistive technology.
+    expect(tree.filter((line) => line.includes('StaticText "a"'))).toHaveLength(1);
+    press(chart, "ArrowRight");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect((await accessibilityTree()).join("\n")).toContain('StaticText "Jan 1, 2026, 01:00.');
+  });
+
+  it("keeps drawings out of the tree, whatever draws them", async () => {
+    for (const options of [
+      { title: "Signal", marks: [line(dense, { x: "t", y: "v" })] },
+      { title: "Revenue", marks: [pie(sales, { category: "region", value: "revenue" })] },
+      { marks: [heatmap(metrics, { x: "t", y: "host", value: "a" })] },
+    ] satisfies ChartOptions[]) {
+      const chart = mount(options);
+      await chart.loading;
+      const tree = await accessibilityTree();
+      // A figure, its legend and buttons, and an empty live region: no canvas, image, or SVG text.
+      const roles = new Set(tree.map((line) => line.trim().split(" ")[0]));
+      expect(
+        [...roles].filter(
+          (role) => !["figure", "group", "button", "StaticText", "generic"].includes(role!),
+        ),
+      ).toEqual([]);
+      expect(tree[0]).toMatch(
+        options.title ? new RegExp(`^figure "${options.title}" \\(`) : /^figure "Chart" \(/,
+      );
+      chart.destroy();
+      charts.splice(charts.indexOf(chart), 1);
+      chart.root.parentElement?.remove();
     }
   });
 });

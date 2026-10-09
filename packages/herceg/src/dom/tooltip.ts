@@ -6,6 +6,8 @@ export class Tooltip {
 
   constructor(document: Document) {
     this.element = document.createElement("div");
+    // The live region announces what the tooltip shows; read here too, it would repeat it.
+    this.element.setAttribute("aria-hidden", "true");
     this.element.style.cssText =
       "position:absolute;left:0;top:0;pointer-events:none;display:none;white-space:nowrap;padding:8px 10px;border-radius:8px;line-height:1.4;z-index:1;font-variant-numeric:tabular-nums";
   }

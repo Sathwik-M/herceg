@@ -21,6 +21,8 @@ export class Legend {
 
   constructor(document: Document, toggle: (key: string) => void) {
     this.element = document.createElement("div");
+    this.element.setAttribute("role", "group");
+    this.element.setAttribute("aria-label", "Legend");
     this.element.style.cssText = "position:absolute;left:0;top:0;width:100%;height:0";
     this.#toggle = toggle;
   }
