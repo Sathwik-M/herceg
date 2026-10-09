@@ -4,12 +4,13 @@ import type { Breaks } from "../lod/m4.ts";
 import type { RangeIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { AreaGeometry } from "../scene/scene.ts";
-import type { AreaSpec, Curve } from "../spec/spec.ts";
+import type { AreaSpec, Curve, Frozen } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
   buildSeries,
   CATEGORY,
   type Frame,
+  frozen,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -87,8 +88,8 @@ export function areaFormError(spec: {
   return undefined;
 }
 
-export class AreaMark implements Mark<AreaSpec> {
-  readonly spec: AreaSpec;
+export class AreaMark implements Mark<Frozen<AreaSpec>> {
+  readonly spec: Frozen<AreaSpec>;
   readonly table: Table<Schema>;
   readonly #split: SeriesSplitter | undefined;
   readonly #stack = new RowStack("sum", { indexed: true });
@@ -97,8 +98,10 @@ export class AreaMark implements Mark<AreaSpec> {
   readonly #indexes = new IndexUse();
   readonly zero: "y" | undefined;
 
-  constructor(spec: AreaSpec, table: Table<Schema>) {
-    this.spec = spec;
+  constructor(input: AreaSpec, table: Table<Schema>) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.table = table;
     requireField(table, spec.x, NUMERIC, "area x");
     const problem = areaFormError(spec);

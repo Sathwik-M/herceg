@@ -70,7 +70,7 @@ export function projectionSpec(spec: ProjectionName | ProjectionSpec | undefined
 export function planProjection(spec: ProjectionSpec, extent: GeoExtent): ProjectionPlan {
   const name = spec.type;
   const conic = name === "conic-equal-area";
-  const box = Array.isArray(spec.fit) ? spec.fit : undefined;
+  const box = typeof spec.fit === "object" ? spec.fit : undefined;
   if (box) checkBox(box);
   if (!Number.isFinite(spec.centralMeridian ?? 0))
     throw new RangeError(`centralMeridian must be a finite longitude, not ${spec.centralMeridian}`);

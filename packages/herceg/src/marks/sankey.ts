@@ -23,10 +23,10 @@ import type {
   ShapesGeometry,
   TextGeometry,
 } from "../scene/scene.ts";
-import type { SankeySpec } from "../spec/spec.ts";
+import type { Frozen, SankeySpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, requireField } from "./mark.ts";
+import { CATEGORY, frozen, requireField } from "./mark.ts";
 
 export interface SankeyOptions<S extends Schema> {
   /** Category field naming where each row's flow comes from. */
@@ -75,14 +75,17 @@ interface Flows {
 
 export class SankeyMark implements LayoutMark {
   readonly layout = true;
-  readonly spec: SankeySpec;
+  readonly spec: Frozen<SankeySpec>;
   readonly table: Table;
   readonly measure: string;
   #flows: Flows | undefined;
   /** The last layout, and the table version and bounds it is for. */
   #placed: { key: string; layout: SankeyLayout } | undefined;
 
-  constructor(spec: SankeySpec, table: Table) {
+  constructor(input: SankeySpec, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     requireField(table, spec.source, CATEGORY, "sankey source");
     requireField(table, spec.target, CATEGORY, "sankey target");
     if (spec.value !== undefined) requireField(table, spec.value, ["number"], "sankey value");
@@ -90,7 +93,6 @@ export class SankeyMark implements LayoutMark {
     if (!(width > 0 && width < Number.POSITIVE_INFINITY)) {
       throw new RangeError(`sankey nodeWidth must be a positive number of pixels, not ${width}`);
     }
-    this.spec = spec;
     this.table = table;
     this.measure = spec.value ?? "Count";
   }

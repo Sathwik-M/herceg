@@ -11,7 +11,7 @@ import { CellIndex } from "../lod/cell-index.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RasterGeometry } from "../scene/scene.ts";
-import type { HeatmapSpec } from "../spec/spec.ts";
+import type { Frozen, HeatmapSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -22,6 +22,7 @@ import {
   type ColorRamp,
   type Frame,
   fieldBands,
+  frozen,
   type Hit,
   type Mark,
   type MarkKey,
@@ -86,8 +87,8 @@ interface Painted {
   upward: boolean;
 }
 
-export class HeatmapMark implements Mark<HeatmapSpec> {
-  readonly spec: HeatmapSpec;
+export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
+  readonly spec: Frozen<HeatmapSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "cell";
   readonly bandPadding = 0;
@@ -95,8 +96,10 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
   readonly #cells = new WeakMap<NumericArray, CellIndex>();
   readonly #extent = new TableCache<readonly [number, number] | null>();
 
-  constructor(spec: HeatmapSpec, table: Table<Schema>) {
-    this.spec = spec;
+  constructor(input: HeatmapSpec, table: Table<Schema>) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.table = table;
     requireField(table, spec.x, ANY, "heatmap x");
     requireField(table, spec.y, ANY, "heatmap y");

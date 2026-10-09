@@ -12,7 +12,7 @@ import {
   table,
 } from "../data/table.ts";
 import type { Geometry } from "../scene/scene.ts";
-import type { BoxPlotSpec, ViolinSpec } from "../spec/spec.ts";
+import type { BoxPlotSpec, Frozen, ViolinSpec } from "../spec/spec.ts";
 import {
   type AxisFormat,
   type BandContext,
@@ -23,6 +23,7 @@ import {
   CATEGORY,
   type Frame,
   fieldBands,
+  frozen,
   type Hit,
   type Mark,
   type MarkKey,
@@ -88,8 +89,10 @@ export interface Placement {
  * nearest-band search read. `G` is what the mark keeps of a group's values
  * for drawing, such as its outliers or its density.
  */
-export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G> implements Mark<T> {
-  readonly spec: T;
+export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
+  implements Mark<Frozen<T>>
+{
+  readonly spec: Frozen<T>;
   readonly table: Table;
   readonly tooltip: "x" | "y";
   readonly bandPadding = 0.2;
@@ -104,7 +107,10 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G> im
   protected abstract readonly width: number;
   #summary: Summary<G> | undefined;
 
-  constructor(spec: T, table: Table) {
+  constructor(input: T, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     const type = spec.type;
     if (!table.has(spec.x)) requireField(table, spec.x, CATEGORY, `${type} x`);
     if (!table.has(spec.y)) requireField(table, spec.y, CATEGORY, `${type} y`);
@@ -118,7 +124,6 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G> im
     this.value = this.horizontal ? spec.x : spec.y;
     requireField(table, this.value, NUMERIC, `${type} ${this.horizontal ? "x" : "y"}`);
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, `${type} series`);
-    this.spec = spec;
     this.table = table;
     this.tooltip = this.horizontal ? "y" : "x";
   }

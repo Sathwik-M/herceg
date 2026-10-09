@@ -122,7 +122,7 @@ export class GeoMap implements LayoutMark {
   plan(): ProjectionPlan {
     const spec = this.projection;
     const extent = emptyExtent();
-    if (spec.type === "conic-equal-area" && !Array.isArray(spec.fit))
+    if (spec.type === "conic-equal-area" && typeof spec.fit !== "object")
       for (const layer of this.layers) layer.extent(extent);
     return planProjection(spec, extent);
   }
@@ -132,7 +132,7 @@ export class GeoMap implements LayoutMark {
     const { fit } = this.projection;
     let box: ArrayLike<number> | undefined;
     if (fit === "world") box = worldBox(plan);
-    else if (Array.isArray(fit)) {
+    else if (typeof fit === "object") {
       box = degreeBox(plan, fit);
       // A box beyond the projection's latitudes (Mercator's) shows the world.
       if (!(box[0]! <= box[2]!)) box = worldBox(plan);

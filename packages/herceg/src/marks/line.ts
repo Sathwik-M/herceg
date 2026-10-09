@@ -2,11 +2,12 @@ import type { CategoryField, NumericField, Schema, Table } from "../data/table.t
 import { lineDrawing } from "../draw/line.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { LineGeometry } from "../scene/scene.ts";
-import type { Curve, LineSpec } from "../spec/spec.ts";
+import type { Curve, Frozen, LineSpec } from "../spec/spec.ts";
 import {
   buildSeries,
   CATEGORY,
   type Frame,
+  frozen,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -40,15 +41,17 @@ export interface LineOptions<S extends Schema> {
   id?: string;
 }
 
-export class LineMark implements Mark<LineSpec> {
-  readonly spec: LineSpec;
+export class LineMark implements Mark<Frozen<LineSpec>> {
+  readonly spec: Frozen<LineSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "x";
   readonly #split: SeriesSplitter;
   readonly #indexes = new IndexUse();
 
-  constructor(spec: LineSpec, table: Table<Schema>) {
-    this.spec = spec;
+  constructor(input: LineSpec, table: Table<Schema>) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.table = table;
     const ys = typeof spec.y === "string" ? [spec.y] : spec.y;
     requireField(table, spec.x, NUMERIC, "line x");

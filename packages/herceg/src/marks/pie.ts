@@ -7,9 +7,9 @@ import { ELBOW, placePieLabels, RUN } from "../layout/pie-labels.ts";
 import { fitText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ArcGeometry, Geometry, SegmentGeometry, TextGeometry } from "../scene/scene.ts";
-import type { PieSpec } from "../spec/spec.ts";
+import type { Frozen, PieSpec } from "../spec/spec.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, requireField } from "./mark.ts";
+import { CATEGORY, frozen, requireField } from "./mark.ts";
 
 export interface PieOptions<S extends Schema> {
   /** Category field: a slice per value. */
@@ -39,20 +39,22 @@ interface Slice {
 
 export class PieMark implements LayoutMark {
   readonly layout = true;
-  readonly spec: PieSpec;
+  readonly spec: Frozen<PieSpec>;
   readonly table: Table;
   readonly measure: string;
   /** Totals per category code, and the table version they are for. */
   #totals: { version: number; values: Float64Array } | undefined;
 
-  constructor(spec: PieSpec, table: Table) {
+  constructor(input: PieSpec, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     requireField(table, spec.category, CATEGORY, "pie category");
     if (spec.value !== undefined) requireField(table, spec.value, ["number"], "pie value");
     const inner = spec.innerRadius ?? 0;
     if (!(inner >= 0 && inner < 1)) {
       throw new RangeError(`pie innerRadius must be at least 0 and below 1, not ${inner}`);
     }
-    this.spec = spec;
     this.table = table;
     this.measure = spec.value ?? "Count";
   }

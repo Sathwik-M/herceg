@@ -13,9 +13,9 @@ import { fitText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
-import type { FunnelSpec } from "../spec/spec.ts";
+import type { Frozen, FunnelSpec } from "../spec/spec.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, requireField } from "./mark.ts";
+import { CATEGORY, frozen, requireField } from "./mark.ts";
 
 export interface FunnelOptions<S extends Schema> {
   /** Category field: a stage per value, in the field's order unless `sort` says otherwise. */
@@ -47,16 +47,18 @@ interface Stage {
 
 export class FunnelMark implements LayoutMark {
   readonly layout = true;
-  readonly spec: FunnelSpec;
+  readonly spec: Frozen<FunnelSpec>;
   readonly table: Table;
   readonly measure: string;
   /** Totals and row counts per category code, and the table version they are for. */
   #totals: { version: number; sums: Float64Array; rows: Uint32Array } | undefined;
 
-  constructor(spec: FunnelSpec, table: Table) {
+  constructor(input: FunnelSpec, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     requireField(table, spec.category, CATEGORY, "funnel category");
     if (spec.value !== undefined) requireField(table, spec.value, ["number"], "funnel value");
-    this.spec = spec;
     this.table = table;
     this.measure = spec.value ?? "Count";
   }

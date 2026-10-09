@@ -5,12 +5,14 @@ import { estimateText } from "../../src/layout/text.ts";
 import type { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
 import { line } from "../../src/marks/line.ts";
+import { frozen } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { AreaGeometry, LineGeometry, RuleGeometry, Scene } from "../../src/scene/scene.ts";
+import { loadSpec } from "../../src/spec/load.ts";
 
 /** The y of a polyline at pixel x, by linear interpolation, if it spans x. */
 function yAt(path: Polyline, x: number): number | undefined {
@@ -137,6 +139,40 @@ describe("ChartModel layout", () => {
     expect(model.scene(estimateText).panels[0]!.plot.x).toBe(wide);
     model.setSize(500, 300);
     expect(model.scene(estimateText).panels[0]!.plot.x).toBeLessThan(wide);
+  });
+});
+
+describe("mark specs", () => {
+  it("are frozen copies, so they cannot change under a mark", () => {
+    const dash = [2, 3];
+    const mark = line(table({ x: [0, 1], y: [1, 2] }), { x: "x", y: "y", dash });
+    expect(Object.isFrozen(mark.spec)).toBe(true);
+    expect(Object.isFrozen(mark.spec.dash)).toBe(true);
+    expect(() => {
+      (mark.spec as { y: string }).y = "z";
+    }).toThrow(TypeError);
+    // What the caller passed is copied, not frozen.
+    expect(Object.isFrozen(dash)).toBe(false);
+  });
+
+  it("do not follow later changes to what built them", () => {
+    const fields = ["y"];
+    const input = {
+      data: { t: { columns: { x: [0, 1], y: [1, 2], z: [5, 9] } } },
+      marks: [{ type: "line" as const, x: "x", y: fields }],
+    };
+    const { config } = loadSpec(input);
+    fields[0] = "z";
+    const { model } = sceneOf(config);
+    expect(model.series().map((s) => s.label)).toEqual(["y"]);
+    expect(model.yScale()!.domain[1]).toBeLessThan(5);
+  });
+
+  it("keep keys named like object internals as keys", () => {
+    const spec = frozen(JSON.parse('{"type": "line", "__proto__": {"polluted": true}}'));
+    expect(Object.keys(spec)).toEqual(["type", "__proto__"]);
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(spec)).toBe(Object.prototype);
   });
 });
 

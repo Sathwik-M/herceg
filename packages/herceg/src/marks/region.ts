@@ -4,7 +4,7 @@ import { textDrawing } from "../draw/text.ts";
 import type { Formatter } from "../format/format.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
-import type { Position, RegionRange, RegionSpec } from "../spec/spec.ts";
+import type { Frozen, Position, RegionRange, RegionSpec } from "../spec/spec.ts";
 import {
   AnnotationData,
   type Channel,
@@ -14,7 +14,7 @@ import {
   valueAt,
 } from "./annotation.ts";
 import { definedFields } from "./line.ts";
-import { type AxisFormat, type Frame, type Mark, type MarkKey, seriesKey } from "./mark.ts";
+import { type AxisFormat, type Frame, frozen, type Mark, type MarkKey, seriesKey } from "./mark.ts";
 
 interface RegionStyle {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
@@ -63,13 +63,15 @@ export function regionFormError(spec: {
   return undefined;
 }
 
-export class RegionMark implements Mark<RegionSpec> {
-  readonly spec: RegionSpec;
+export class RegionMark implements Mark<Frozen<RegionSpec>> {
+  readonly spec: Frozen<RegionSpec>;
   readonly tooltip = "x";
   readonly #data: AnnotationData;
 
-  constructor(spec: RegionSpec, table?: Table) {
-    this.spec = spec;
+  constructor(input: RegionSpec, table?: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     const problem = regionFormError(spec);
     if (problem) throw new Error(problem);
     this.#data = new AnnotationData(

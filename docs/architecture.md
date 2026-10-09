@@ -1065,7 +1065,9 @@ application draws its own.
 `ChartSpec` (in `src/spec/spec.ts`) is plain JSON: field names, constants,
 and Intl format options; no functions or typed arrays. The TypeScript API
 builds the same structures: `line(table, options)` returns a mark whose
-`spec` is the portable part. Mark implementations are attached to the mark
+`spec` is the portable part, a frozen copy of what built it (`Frozen<T>`),
+since the mark's caches depend on it: charts change by taking new marks.
+Mark implementations are attached to the mark
 objects rather than looked up in a registry, so unused mark types are tree
 shaken away. Field options are typed from the table schema: numeric encodings
 only accept number or time fields, positions also take categories but never

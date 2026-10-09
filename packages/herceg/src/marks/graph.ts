@@ -8,10 +8,10 @@ import { labelFor } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { isLightColor } from "../scale/color.ts";
 import type { Geometry, PathShape, Rect, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
-import type { GraphSpec } from "../spec/spec.ts";
+import type { Frozen, GraphSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, requireField } from "./mark.ts";
+import { CATEGORY, frozen, requireField } from "./mark.ts";
 
 export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
   /** Category field naming one end of each row's link. */
@@ -119,7 +119,7 @@ interface Placement {
 
 export class GraphMark implements LayoutMark {
   readonly layout = true;
-  readonly spec: GraphSpec;
+  readonly spec: Frozen<GraphSpec>;
   /** The table of links. */
   readonly table: Table;
   /** The table of nodes, when there is one. */
@@ -129,7 +129,10 @@ export class GraphMark implements LayoutMark {
   #network: Network | undefined;
   #placed: Placement | undefined;
 
-  constructor(spec: GraphSpec, links: Table, nodes?: Table) {
+  constructor(input: GraphSpec, links: Table, nodes?: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     requireField(links, spec.source, CATEGORY, "graph source");
     requireField(links, spec.target, CATEGORY, "graph target");
     if (spec.value !== undefined) requireField(links, spec.value, ["number"], "graph value");
@@ -142,7 +145,6 @@ export class GraphMark implements LayoutMark {
     } else if (spec.node !== undefined || spec.group !== undefined || spec.size !== undefined) {
       throw new Error("graph node, group, and size are fields of a nodes table, and there is none");
     }
-    this.spec = spec;
     this.table = links;
     this.nodes = nodes;
     this.otherTables = nodes ? [nodes] : [];

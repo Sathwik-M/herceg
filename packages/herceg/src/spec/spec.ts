@@ -21,6 +21,13 @@ export const SPEC_VERSION = 3;
 /** Column name in a table. */
 export type Field = string;
 
+/**
+ * A spec as marks hold it: readonly all the way down, and frozen at run
+ * time, since a mark's caches depend on it. Change a chart by giving it new
+ * marks (`chart.update({ marks })`), not by editing a mark's spec.
+ */
+export type Frozen<T> = T extends object ? { readonly [K in keyof T]: Frozen<T[K]> } : T;
+
 export interface ChartSpec {
   /**
    * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
@@ -38,7 +45,7 @@ export interface ChartSpec {
   height?: number;
   /** Tables referenced by marks, by name. */
   data?: Record<string, DataSpec>;
-  marks: MarkSpec[];
+  marks: readonly MarkSpec[];
   x?: XAxisSpec;
   y?: AxisSpec;
   /**
@@ -57,7 +64,7 @@ export interface ChartSpec {
    * Subplots: panels in a grid, each drawing the marks that name it in their
    * `panel`. Needs spec version 2; not with `facet`.
    */
-  panels?: PanelSpec[];
+  panels?: readonly PanelSpec[];
   /** How `panels` are placed: in rows of `columns` (1 by default), in order. */
   grid?: GridSpec;
   legend?: boolean;
@@ -130,7 +137,7 @@ export interface PanelSpec {
 export interface GridSpec {
   columns?: number;
   /** The rows' heights relative to each other, one per row; equal by default. */
-  rowHeights?: number[];
+  rowHeights?: readonly number[];
 }
 
 export interface WrappedFacetSpec {
@@ -171,14 +178,14 @@ export interface ProjectionSpec {
    * The two standard parallels of "conic-equal-area", in degrees: by
    * default a sixth of the data's span of latitudes in from either end.
    */
-  parallels?: [number, number];
+  parallels?: readonly [number, number];
   /**
    * What the map fits into its plot: the data's shapes and points ("data",
    * the default), the whole "world", or a box of longitudes and latitudes,
    * `[[west, south], [east, north]]`, whose west may lie east of its east
    * to cross the antimeridian.
    */
-  fit?: "data" | "world" | [[number, number], [number, number]];
+  fit?: "data" | "world" | readonly [readonly [number, number], readonly [number, number]];
 }
 /**
  * A built-in theme. "auto" is "light" or "dark" as the page prefers, and
@@ -200,7 +207,7 @@ export interface ColumnsSpec {
  */
 export interface DerivedSpec {
   source: string;
-  transform: TransformSpec[];
+  transform: readonly TransformSpec[];
 }
 
 /**
@@ -219,8 +226,8 @@ export type TransformSpec =
   | { filter: Expression }
   | { calculate: Expression; as: Field }
   | { bin: Field; as?: Field; step?: number; count?: number; start?: number }
-  | { aggregate: AggregateSpec[]; groupby?: Field[] }
-  | { rolling: RollingSpec[]; size: number; groupby?: Field[] }
+  | { aggregate: readonly AggregateSpec[]; groupby?: readonly Field[] }
+  | { rolling: readonly RollingSpec[]; size: number; groupby?: readonly Field[] }
   | { sort: Field; order?: "ascending" | "descending" };
 
 /** An aggregate: its operation, the number field it reads (none for count), and its name. */
@@ -258,8 +265,8 @@ export type RollingOp = "count" | "sum" | "mean" | "min" | "max" | "stdev";
  * strings for categories), a time column, or a binary column.
  */
 export type ColumnSpec =
-  | (number | null)[]
-  | (string | null)[]
+  | readonly (number | null)[]
+  | readonly (string | null)[]
   | TimeColumnSpec
   | BinaryColumnSpec
   | CategoryColumnSpec
@@ -268,7 +275,7 @@ export type ColumnSpec =
 /** Epoch milliseconds or ISO 8601 strings; null for missing values. */
 export interface TimeColumnSpec {
   type: "time";
-  values: (number | string | null)[];
+  values: readonly (number | string | null)[];
 }
 
 /** Element types of binary columns, stored little-endian. */
@@ -299,8 +306,8 @@ export interface BinaryColumnSpec {
  */
 export interface CategoryColumnSpec {
   type: "category";
-  codes: number | number[];
-  dictionary: string[];
+  codes: number | readonly number[];
+  dictionary: readonly string[];
 }
 
 /**
@@ -316,11 +323,11 @@ export interface CategoryColumnSpec {
  */
 export interface GeometryColumnSpec {
   type: "geometry";
-  coordinates: number | number[];
-  ringOffsets: number | number[];
-  polygonOffsets: number | number[];
-  geometryOffsets: number | number[];
-  codes?: number | number[];
+  coordinates: number | readonly number[];
+  ringOffsets: number | readonly number[];
+  polygonOffsets: number | readonly number[];
+  geometryOffsets: number | readonly number[];
+  codes?: number | readonly number[];
 }
 
 /** Scale and axis options for one position channel. */
@@ -328,7 +335,7 @@ export interface AxisSpec {
   /** Inferred from the data when omitted: time fields get "time". */
   type?: "linear" | "log" | "time";
   /** Fixed domain. Time domains are epoch milliseconds. */
-  domain?: [number, number];
+  domain?: readonly [number, number];
   /**
    * Extend the domain to round tick values. Default true for y, and for x
    * when it measures horizontal bars.
@@ -356,7 +363,7 @@ export interface XAxisSpec extends AxisSpec {
    * and spec version 3. Data inside a break is not drawn; lines and areas
    * join the points on either side.
    */
-  breaks?: TimeBreakSpec[];
+  breaks?: readonly TimeBreakSpec[];
 }
 
 /** A day of the week, by its first three letters in English. */
@@ -373,9 +380,9 @@ export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
  * span, so a span inside a repeated hour is left out twice.
  */
 export type TimeBreakSpec =
-  | { weekdays: Weekday[] }
-  | { hours: [string, string] }
-  | { dates: string[] }
+  | { weekdays: readonly Weekday[] }
+  | { hours: readonly [string, string] }
+  | { dates: readonly string[] }
   | { from: number; to: number };
 
 export interface TooltipSpec {
@@ -441,7 +448,7 @@ export interface ThemeSpec {
   /** Size of the chart's title, in pixels. */
   titleSize?: number;
   /** Dash pattern of grid lines, in pixels; empty for solid lines. */
-  gridDash?: number[];
+  gridDash?: readonly number[];
   /** Width of lines and area outlines that do not set one. */
   lineWidth?: number;
   /** Radius of the corners at the value end of unstacked bars; 0 for square bars. */
@@ -449,11 +456,11 @@ export interface ThemeSpec {
   tooltipBackground?: string;
   tooltipBorder?: string;
   /** Categorical colors in assignment order. */
-  palette?: string[];
+  palette?: readonly string[];
   /** Ramp for continuous color (heatmaps), from low to high values. */
-  sequential?: string[];
+  sequential?: readonly string[];
   /** Ramp for colors on either side of a midpoint, low to high. */
-  diverging?: string[];
+  diverging?: readonly string[];
   /** Colors of candlesticks that close at or above, and below, their open. */
   rise?: string;
   fall?: string;
@@ -514,14 +521,14 @@ export type Curve = "linear" | "step" | "step-before" | "step-after" | "monotone
 export interface LineSpec extends MarkBase {
   type: "line";
   x: Field;
-  y: Field | Field[];
+  y: Field | readonly Field[];
   /** Category field that splits rows into one line per value. */
   series?: Field;
   /** Constant color; otherwise colors come from the palette per series. */
   stroke?: string;
   strokeWidth?: number;
   /** SVG-style dash pattern in pixels. */
-  dash?: number[];
+  dash?: readonly number[];
   curve?: Curve;
   /** Legend and tooltip name for a single-field line without `series`. */
   label?: string;
@@ -545,7 +552,7 @@ interface AreaStyle extends MarkBase {
  */
 export type AreaSpec = AreaStyle &
   (
-    | { y: Field | Field[]; series?: Field; stack?: boolean; y1?: never; y2?: never }
+    | { y: Field | readonly Field[]; series?: Field; stack?: boolean; y1?: never; y2?: never }
     | { y1: Field; y2: Field; y?: never; series?: never; stack?: never }
   );
 
@@ -566,7 +573,7 @@ interface RuleStyle extends MarkBase {
   type: "rule";
   stroke?: string;
   strokeWidth?: number;
-  dash?: number[];
+  dash?: readonly number[];
   /** Text drawn by every rule. */
   label?: string;
   /** Category or number field with each rule's text, for rules from data. */
@@ -634,8 +641,8 @@ export interface TextSpec extends MarkBase {
  */
 export interface BarSpec extends MarkBase {
   type: "bar";
-  x: Field | Field[];
-  y: Field | Field[];
+  x: Field | readonly Field[];
+  y: Field | readonly Field[];
   series?: Field;
   /** Stack series instead of placing them side by side. */
   stack?: boolean;
@@ -804,7 +811,7 @@ export interface ViolinSpec extends MarkBase {
  * group in, or a field naming each row's node and one naming its parent's.
  */
 export type TreeShape =
-  | { path: string[]; node?: never; parent?: never }
+  | { path: readonly string[]; node?: never; parent?: never }
   | { node: string; parent: string; path?: never };
 
 /**
@@ -859,7 +866,7 @@ export interface GaugeSpec {
   min?: number;
   max?: number;
   /** Colored ranges, by ascending ends above `min` and at most `max`. */
-  bands?: GaugeBand[];
+  bands?: readonly GaugeBand[];
   /** Text under the value; the field's name by default. */
   label?: string;
   /** Intl.NumberFormat options for the value and the dial's ends. */
@@ -900,11 +907,11 @@ export interface RadarSpec {
   category?: Field;
   value?: Field;
   /** Distinct number fields, a spoke each, in order; each series' last row is its polygon. */
-  fields?: Field[];
+  fields?: readonly Field[];
   /** Category field: a polygon per value. Without it, every row belongs to one polygon. */
   series?: Field;
   /** Values at the center and at the rim; from 0 (or the smallest value) to a round number above the largest by default. */
-  domain?: [number, number];
+  domain?: readonly [number, number];
   /** Opacity of the polygons' fill; 0.15 by default. */
   fillOpacity?: number;
   /** A dot at each value; true by default. */
@@ -989,9 +996,9 @@ export interface GeoShapeSpec {
   /** A number field colored on a continuous scale, or a category field with a palette color per value. */
   color?: Field;
   /** Colors for a number `color`, low to high, or a scheme name such as "viridis". */
-  colors?: string[] | string;
+  colors?: readonly string[] | string;
   /** The values at the ends of the color ramp; the field's extent by default. */
-  colorDomain?: [number, number];
+  colorDomain?: readonly [number, number];
   /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
   colorMidpoint?: number;
   /** The fill without `color`, and of regions without a value. */
@@ -1023,11 +1030,11 @@ export interface GeoPointSpec {
   /** Radius in pixels, or a number field sized by area within `rRange` (bubbles). */
   r?: number | Field;
   /** Radii of the smallest and largest values of an `r` field. Default [2, 16]. */
-  rRange?: [number, number];
+  rRange?: readonly [number, number];
   /** A number field colored on a continuous scale. */
   color?: Field;
-  colors?: string[] | string;
-  colorDomain?: [number, number];
+  colors?: readonly string[] | string;
+  colorDomain?: readonly [number, number];
   colorMidpoint?: number;
   fill?: string;
   /** Default 0.8, so overlapping points and the regions under them show. */
@@ -1068,16 +1075,16 @@ export interface PointSpec extends MarkBase {
   /** Radius in pixels, or a number field sized by area within `rRange`. */
   r?: number | Field;
   /** Radii of the smallest and largest values of an `r` field. Default [2, 12]. */
-  rRange?: [number, number];
+  rRange?: readonly [number, number];
   fill?: string;
   /** Opacity from 0 to 1, or a number field mapped from 0.15 to 1. */
   fillOpacity?: number | Field;
   /** A number field colored on a continuous scale (see `colors`). */
   color?: Field;
   /** Colors for `color`, low to high, or a scheme name such as "viridis". */
-  colors?: string[] | string;
+  colors?: readonly string[] | string;
   /** The values at the ends of the color ramp; the field's extent by default. */
-  colorDomain?: [number, number];
+  colorDomain?: readonly [number, number];
   /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
   colorMidpoint?: number;
   /**
@@ -1100,9 +1107,9 @@ export interface HeatmapSpec extends MarkBase {
   y: Field;
   value: Field;
   /** Color ramp from low to high values, or a scheme name; defaults to the theme's. */
-  colors?: string[] | string;
+  colors?: readonly string[] | string;
   /** The values at the ends of the ramp; the values' extent by default. */
-  colorDomain?: [number, number];
+  colorDomain?: readonly [number, number];
   /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
   colorMidpoint?: number;
   /**
