@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
+import { geometry } from "../../src/data/geometry.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
 import { estimateText } from "../../src/layout/text.ts";
@@ -7,6 +8,8 @@ import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
+import { geopoint } from "../../src/marks/geopoint.ts";
+import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
@@ -1181,6 +1184,135 @@ describe("networks", () => {
     links.append({ from: ["Eve"], to: ["Ana"], n: [1] });
     await frame();
     expect(chart.model.inspectItem(JSON.stringify([0, "Eve", "Ana"]))).toBeDefined();
+    chart.destroy();
+  });
+});
+
+describe("maps", () => {
+  const square = (x: number, y: number, s: number) => [x, y, x + s, y, x + s, y + s, x, y + s];
+  const regions = () =>
+    table({
+      name: ["Ada", "Bel", "Cor"],
+      party: ["Red", "Blue", "Red"],
+      shape: geometry({
+        coordinates: Float64Array.from([
+          ...square(0, 0, 10),
+          ...square(3, 3, 4),
+          ...square(10, 0, 10),
+          ...square(20, 0, 10),
+        ]),
+        ringOffsets: Int32Array.from([0, 4, 8, 12, 16]),
+        polygonOffsets: Int32Array.from([0, 2, 3, 4]),
+        geometryOffsets: Int32Array.from([0, 1, 2, 3]),
+      }),
+    });
+  const places = () => table({ city: ["Port"], lon: [15], lat: [5], people: [40] });
+  const map = (shapes = regions()) => [
+    geoshape(shapes, { name: "name", color: "party" }),
+    geopoint(places(), { longitude: "lon", latitude: "lat", r: "people", name: "city" }),
+  ];
+  const move = (chart: Chart, px: number, py: number, type = "pointermove") => {
+    const rect = chart.root.getBoundingClientRect();
+    chart.root.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        button: 0,
+        clientX: rect.left + px,
+        clientY: rect.top + py,
+      }),
+    );
+  };
+
+  it("outline the region or point under the pointer and show its tooltip", async () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      projection: "equirectangular",
+      marks: map(),
+    });
+    const hovers: (string | undefined)[] = [];
+    chart.on("hover", ({ inspection }) => hovers.push(inspection?.points[0]?.label));
+    const outline = chart.root.querySelector("svg path[stroke-linejoin='round'][fill='none']")!;
+    for (const key of [
+      [0, 0],
+      [1, 0],
+    ]) {
+      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      move(chart, px, py);
+      await frame();
+      expect(outline.getAttribute("visibility")).toBe("visible");
+    }
+    expect(hovers).toEqual(["Ada", "Port"]);
+    const tooltip = [...chart.root.children].find(
+      (el) => (el as HTMLElement).style.pointerEvents === "none" && el.tagName === "DIV",
+    ) as HTMLElement;
+    expect(tooltip.textContent).toBe("peoplePort40");
+    chart.destroy();
+  });
+
+  it("read regions, then points, with the keyboard, and gray categories out from the legend", () => {
+    const chart = createChart(host, { locale: "en-US", projection: "mercator", marks: map() });
+    chart.root.focus();
+    const key = (k: string) =>
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+    const live = chart.root.querySelector("[aria-live]")!;
+    key("ArrowRight");
+    expect(live.textContent).toBe("party. Ada: Red");
+    key("End");
+    expect(live.textContent).toBe("people. Port: 40");
+    const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
+    expect(description.textContent).toContain(
+      "Map of 3 regions colored by party: Red 2, Blue 1. 1 point on the map sized by people; largest Port (40).",
+    );
+    // Hiding Red grays its regions out; they stay on the map and in reading order.
+    const before = chart.model.inspectItem(JSON.stringify([0, 2]))!.points[0]!;
+    const [red] = chart.root.querySelectorAll("button");
+    expect(red!.textContent).toBe("Red");
+    red!.click();
+    chart.render();
+    const after = chart.model.inspectItem(JSON.stringify([0, 2]))!.points[0]!;
+    expect([after.px, after.py]).toEqual([before.px, before.py]);
+    expect(after.color).not.toBe(before.color);
+    chart.destroy();
+  });
+
+  it("paint regions on a canvas with holes left empty", () => {
+    const chart = createChart(host, {
+      projection: "equirectangular",
+      marks: [geoshape(regions(), { fill: "#ff0000", strokeWidth: 0 })],
+      renderer: "canvas",
+    });
+    const canvas = host.querySelector("canvas")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    const pixel = (px: number, py: number) =>
+      Array.from(
+        canvas.getContext("2d")!.getImageData(Math.round(px * ratio), Math.round(py * ratio), 1, 1)
+          .data,
+      );
+    // Ada's exterior, the first ring of its outline: its middle is the lake's.
+    const outline = chart.model.inspectItem(JSON.stringify([0, 0]))!;
+    const exterior = (outline as { outline: string }).outline.split("Z")[0]!;
+    const values = exterior.match(/-?[\d.]+/g)!.map(Number);
+    const xs = values.filter((_, i) => i % 2 === 0);
+    const ys = values.filter((_, i) => i % 2 === 1);
+    const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    expect(pixel((x0 + x1) / 2, (y0 + y1) / 2)[3]).toBe(0);
+    expect(pixel(x0 + (x1 - x0) / 10, (y0 + y1) / 2)).toEqual([255, 0, 0, 255]);
+    chart.destroy();
+  });
+
+  it("redraw when values change, keeping the regions in place", async () => {
+    const shapes = regions();
+    const chart = createChart(host, { locale: "en-US", marks: map(shapes) });
+    const before = chart.model.inspectItem(JSON.stringify([0, 1]))!;
+    expect(before.points[0]!.text).toBe("Blue");
+    shapes.setColumn("party", ["Red", "Red", "Red"]);
+    await frame();
+    const after = chart.model.inspectItem(JSON.stringify([0, 1]))!;
+    expect(after.points[0]!.text).toBe("Red");
+    expect([after.points[0]!.px, after.points[0]!.py]).toEqual([
+      before.points[0]!.px,
+      before.points[0]!.py,
+    ]);
     chart.destroy();
   });
 });

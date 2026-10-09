@@ -19,12 +19,13 @@ Svelte 5 components for [herceg](../herceg/README.md) charts.
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 children are mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
-`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Radar>`, `<Sankey>`, `<Graph>`, `<Rule>`,
+`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Radar>`, `<Sankey>`, `<Graph>`, `<GeoShape>`, `<GeoPoint>`, `<Rule>`,
 `<Region>`, `<Text>`, and `<Custom>`, written directly, in `{#if}` and
 `{#each}` blocks, or in components of your own, and drawn in template order.
 Each mark component takes the table it reads as `data`, so svelte-check
 checks field names against that table's columns; `<Graph>` takes its links as
-`data` and a table of nodes as `nodes`. Annotations (`<Rule>`,
+`data` and a table of nodes as `nodes`; `<GeoShape>` and `<GeoPoint>` share a
+chart with each other, projected by its `projection` prop. Annotations (`<Rule>`,
 `<Region>`, `<Text>`) take `data` only when they draw one item per row:
 `<Rule data={deploys} x="time" text="version" />`. Marks built with herceg's
 functions can also be passed as a `marks` prop.

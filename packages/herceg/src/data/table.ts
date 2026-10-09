@@ -8,11 +8,13 @@ import {
   createColumnOfKind,
   encode,
   type FieldKind,
+  type GeometryColumn,
   isNumericArray,
   type NumericArray,
   type TimeInput,
   toMilliseconds,
 } from "./column.ts";
+import type { GeometryInput, GeometrySet } from "./geometry.ts";
 
 /** Field name to storage kind. */
 export type Schema = Record<string, FieldKind>;
@@ -21,21 +23,23 @@ type Present<E> = Exclude<E, null | undefined>;
 
 type KindOfInput<V> = V extends TimeInput
   ? "time"
-  : V extends CategoryInput
-    ? "category"
-    : V extends NumericArray
-      ? "number"
-      : V extends readonly (infer E)[]
-        ? [Present<E>] extends [never]
-          ? "number"
-          : Present<E> extends Date
-            ? "time"
-            : Present<E> extends string
-              ? "category"
-              : Present<E> extends number
-                ? "number"
-                : never
-        : never;
+  : V extends GeometryInput
+    ? "geometry"
+    : V extends CategoryInput
+      ? "category"
+      : V extends NumericArray
+        ? "number"
+        : V extends readonly (infer E)[]
+          ? [Present<E>] extends [never]
+            ? "number"
+            : Present<E> extends Date
+              ? "time"
+              : Present<E> extends string
+                ? "category"
+                : Present<E> extends number
+                  ? "number"
+                  : never
+          : never;
 
 /** Schema inferred from the columns passed to `table()`. */
 export type SchemaOf<T> = { [K in keyof T & string]: KindOfInput<T[K]> };
@@ -59,21 +63,33 @@ export type CategoryField<S extends Schema> = string extends keyof S
   ? string
   : { [K in keyof S & string]: S[K] extends "category" ? K : never }[keyof S & string];
 
+/** Geometry fields: shapes for maps. */
+export type GeometryField<S extends Schema> = string extends keyof S
+  ? string
+  : { [K in keyof S & string]: S[K] extends "geometry" ? K : never }[keyof S & string];
+
 export type FieldName<S extends Schema> = keyof S & string;
 
-/** A single value as accepted by `appendRow` and `set`. */
+/**
+ * A single value as accepted by `appendRow` and `set`. Geometry values are
+ * codes into the column's set of shapes, -1 for none.
+ */
 export type ValueOf<K extends FieldKind> = K extends "category"
   ? string | null
   : K extends "time"
     ? Date | number | null
-    : number | null;
+    : K extends "geometry"
+      ? number
+      : number | null;
 
 /** Values for one field as accepted by `append` and `replace`. */
 export type ValuesOf<K extends FieldKind> = K extends "category"
   ? readonly (string | null)[]
   : K extends "time"
     ? NumericArray | readonly (Date | number | null)[]
-    : NumericArray | readonly (number | null)[];
+    : K extends "geometry"
+      ? Int32Array | readonly number[]
+      : NumericArray | readonly (number | null)[];
 
 export type Row<S extends Schema> = { [K in keyof S]: ValueOf<S[K]> };
 export type Batch<S extends Schema> = { [K in keyof S]: ValuesOf<S[K]> };
@@ -221,7 +237,10 @@ export class Table<S extends Schema = Schema> {
     return this.#column(field).kind;
   }
 
-  /** Live values of a numeric or time field. The view is valid until the next mutation. */
+  /**
+   * Live values of a numeric or time field (of a geometry field, its codes).
+   * The view is valid until the next mutation.
+   */
   numbers(field: NumericField<S>): NumericArray {
     const column = this.#column(field);
     if (column.kind === "category") throw new TypeError(`Field "${field}" is categorical`);
@@ -235,7 +254,20 @@ export class Table<S extends Schema = Schema> {
     return { codes: this.#view(field, column.buffer) as Int32Array, dictionary: column.dictionary };
   }
 
-  /** One value: number (NaN becomes null), epoch ms for times, or a string. */
+  /**
+   * Each row's code (-1 for none) into the shapes of a geometry field, and
+   * the shapes. The codes are valid until the next mutation.
+   */
+  geometries(field: GeometryField<S>): { codes: Int32Array; set: GeometrySet } {
+    // Marks check field kinds (requireField) before reading them.
+    const { set } = this.#column(field) as GeometryColumn;
+    return { codes: this.numbers(field as never) as Int32Array, set };
+  }
+
+  /**
+   * One value: number (NaN becomes null), epoch ms for times, a string, or
+   * a geometry's code (-1 for none).
+   */
   value(field: FieldName<S>, row: number): number | string | null {
     const column = this.#column(field);
     if (!(Number.isInteger(row) && row >= 0 && row < this.#length))
@@ -326,9 +358,11 @@ export class Table<S extends Schema = Schema> {
     }
     const count = entries[0]?.[1].length ?? 0;
     for (const [field, values] of entries) {
-      this.#column(field);
+      const column = this.#column(field);
       if (values.length !== count)
         throw new RangeError(`Field "${field}" has ${values.length} values, expected ${count}`);
+      // Geometry codes are checked before anything changes.
+      column.check?.(values);
     }
     if (count === 0) return;
     // Inputs that view this table's own storage could be overwritten by
@@ -398,6 +432,7 @@ export class Table<S extends Schema = Schema> {
     requireCount(start, "replace() start");
     if (start + count > this.#length) throw new RangeError("replace() range is out of bounds");
     if (count === 0) return;
+    column.check?.(input);
     if (isNumericArray(input) && this.#ownsBuffer(input.buffer)) input = input.slice();
     if (!column.owned) this.#reallocate(this.#capacity);
     writeValues(column, this.#start + start, input, 0);

@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ._chart import OPTIONS, assemble_spec, columns_spec, spec_options
+from . import _geo
+from ._chart import OPTIONS, assemble_spec, columns_spec, spec_options, table_name
 from ._data import Column, Table
 
 if TYPE_CHECKING:
@@ -32,6 +33,10 @@ class LiveChart:
         self._derived = chart._derived_specs()
         self._sources = chart._table_names()
         self._default = self._sources[chart._default][1] if chart._default is not None else None
+        # Joined maps: replacing their rows joins the new rows to the features again.
+        self._joins = [
+            (join.source, table_name(index), join) for index, join in chart._joins.items()
+        ]
 
     def to_spec(self) -> Message:
         return assemble_spec(self._options, self._layout, self._tables, self._marks, self._derived)
@@ -43,6 +48,8 @@ class LiveChart:
         ):
             raise ValueError(f"max_rows must be a whole number of at least 1, not {max_rows!r}")
         name = self._table_name(data)
+        if any(column.kind == "geometry" for column in self._tables[name].values()):
+            raise ValueError("a table of shapes takes replace(), not append()")
         batch = self._batch(name, rows)
         count = _length(batch)
         if count == 0:
@@ -61,12 +68,25 @@ class LiveChart:
         return message, buffers
 
     def replace(self, rows: Any, data: Any = None) -> Message:
-        """Replaces every row of a table."""
-        name = self._table_name(data)
-        batch = self._batch(name, rows)
-        self._tables[name] = batch
+        """Replaces every row of a table; rows joined to a map's features (``geojson=``)
+        are joined again."""
+        joins = [] if data is None or self._sources_read(data) else self._joins_of(data)
+        if len(joins) > 1:
+            raise ValueError(
+                "these rows are joined to the features of several geoshape marks; "
+                "make a chart per map, or join the rows with GeoPandas first (merge)"
+            )
+        if joins:
+            _, name, join = joins[0]
+            batch = self._batch(name, rows, join.rejoin(Table(_one_row(rows))))
+        else:
+            name = self._table_name(data)
+            batch = self._batch(name, rows)
         buffers: list[bytes] = []
-        return {"type": "replace", "table": name, "columns": columns_spec(batch, buffers)}, buffers
+        # The message is made first, so rows it cannot carry change nothing.
+        columns = columns_spec(batch, buffers)
+        self._tables[name] = batch
+        return {"type": "replace", "table": name, "columns": columns}, buffers
 
     def update(self, changes: dict[str, Any]) -> Message | None:
         """Changes chart options; the message holds the changed spec options, None
@@ -103,12 +123,20 @@ class LiveChart:
             raise ValueError("no mark of the chart reads columns of that data")
         return name
 
-    def _batch(self, name: str, rows: Any) -> dict[str, Column]:
-        """The table's columns from `rows`, converted to the kinds the table holds."""
+    def _joins_of(self, data: Any) -> list[tuple[Any, str, Any]]:
+        """The joined maps made from `data`, one per table of features."""
+        return [join for join in self._joins if join[0] is data]
+
+    def _sources_read(self, data: Any) -> bool:
+        """Whether a mark reads the columns of `data` itself."""
+        return any(source is data and name in self._tables for source, name in self._sources)
+
+    def _batch(self, name: str, rows: Any, table: Any = None) -> dict[str, Column]:
+        """The table's columns from `rows` (or `table`, rows already read), converted
+        to the kinds the table holds."""
         current = self._tables[name]
-        if isinstance(rows, Mapping) and all(np.ndim(value) == 0 for value in rows.values()):
-            rows = {field: [value] for field, value in rows.items()}  # one row
-        table = Table(rows)
+        if table is None:
+            table = Table(_one_row(rows))
         missing = [field for field in current if field not in table.names]
         if missing:
             raise KeyError(
@@ -124,6 +152,13 @@ class LiveChart:
         return batch
 
 
+def _one_row(rows: Any) -> Any:
+    """A mapping of single values as a row of columns; other rows as they are."""
+    if isinstance(rows, Mapping) and all(np.ndim(value) == 0 for value in rows.values()):
+        return {field: [value] for field, value in rows.items()}
+    return rows
+
+
 def _length(columns: dict[str, Column]) -> int:
     return len(next(iter(columns.values())))
 
@@ -135,11 +170,14 @@ def _as_kind(column: Column, current: Column, field: str) -> Column:
         if column.kind == "number" and np.isnan(column.values).all():
             if current.kind == "category":
                 return Column("category", np.full(len(column), -1, dtype="<i4"))
+            if current.kind == "geometry":
+                codes, shapes = _geo.pack([None] * len(column))
+                return Column("geometry", codes, shapes=shapes)
             return Column(current.kind, column.values.astype("<f8"))
         raise TypeError(
             f"column {field!r} holds {current.kind} values; the rows hold {column.kind} values"
         )
-    if column.kind == "category":
+    if column.kind in ("category", "geometry"):
         return column
     return Column(column.kind, column.values.astype(current.values.dtype, copy=False))
 

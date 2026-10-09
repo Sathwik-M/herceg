@@ -5,7 +5,7 @@ Charts for pandas, Polars, PyArrow, and NumPy data, rendered by the
 large-data handling as the TypeScript library.
 
 > Early development. Line, area, bar, scatter, heatmap, error bar,
-> candlestick, histogram, pie, box plot, violin, treemap, sunburst, gauge, funnel, radar, Sankey, and network (graph) marks, rule, region, and text annotations; small multiples;
+> candlestick, histogram, pie, box plot, violin, treemap, sunburst, gauge, funnel, radar, Sankey, network (graph), and map (choropleth and point) marks, rule, region, and text annotations; small multiples;
 > HTML, notebook, SVG, PNG, and PDF output; live notebook charts; Streamlit apps.
 
 ```python
@@ -43,7 +43,29 @@ hg.radar(scores, "skill", "score", series="player")  # a spoke per skill
 hg.radar(players, fields=["speed", "power", "range"], series="name")  # a polygon per row
 hg.sankey(energy, "source", "target", "twh")  # flows between nodes; counts rows without a value
 hg.graph(talks, "from", "to", nodes=people, node="name", group="team")  # a network
+hg.choropleth(countries_gdf, "gdp", name="name", projection="equal-earth")  # a map
+hg.choropleth(rates, "rate", geojson=counties, locations="fips")  # values joined to shapes
+hg.scatter_geo(cities, "lon", "lat", r="population", name="city")  # bubbles on a map
 ```
+
+Maps read shapes from GeoPandas GeoDataFrames, GeoJSON FeatureCollection
+dicts (properties become columns), or columns of GeoJSON geometries or
+objects with `__geo_interface__` (Shapely), without importing GeoPandas or
+Shapely; shapes travel as packed binary arrays, not JSON coordinates.
+Coordinates must be longitudes and latitudes in degrees (WGS 84): a
+GeoDataFrame in a projected reference system is refused with a hint to
+`to_crs(4326)`. As in Plotly, `geojson=` with `locations=` and
+`featureidkey=` (`"id"` or `"properties.<name>"`, compared as text, so
+leading zeros count) joins a dataframe's values to the features: every
+feature is drawn, those no row names without a value. `hg.Chart(...,
+projection=...)` combines `.geoshape(...)` regions and `.geopoint(...)`
+points on one map; `projection` is a name (`"equal-earth"`,
+`"natural-earth"`, `"mercator"`, `"equirectangular"`,
+`"conic-equal-area"`) or `hg.Projection(type, central_meridian=...,
+parallels=(29.5, 45.5), fit="data" | "world" | ((west, south), (east,
+north)))`. A live chart replaces a table of shapes whole (`replace`) rather
+than appending to it; for values joined with `geojson=`, `replace(rows,
+data=values)` joins the new rows to the features again.
 
 `hg.Chart` composes marks on shared axes; each mark method returns the chart:
 
@@ -75,7 +97,7 @@ freehand region; along zoomed axes, drag to zoom instead),
 notebook outputs are separate iframes, so `sync` does not reach across
 cells), `animation` (`True`, or milliseconds: zooming to a brush and
 double-click reset move the axes gradually in HTML output), `renderer`,
-`theme` (below), `locale`, and `time_zone`.
+`theme` (below), `locale`, `time_zone`, and `projection` (maps, above).
 
 `theme` is `"light"` (the default), `"dark"`, `"high-contrast"`,
 `"high-contrast-dark"`, `"auto"` (light or dark to match the surface the chart

@@ -46,7 +46,9 @@ Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
 (vertical and horizontal, with value labels), point (with size, color,
 opacity, and shape encoded by fields), heatmap, error bar, candlestick,
 histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge,
-funnel, radar, Sankey, and network (graph) marks, monotone curves, named
+funnel, radar, Sankey, network (graph), and map marks (choropleth regions and
+points on Equal Earth, Natural Earth, Mercator, equirectangular, and conic
+equal-area projections, from GeoJSON or packed geometry columns), monotone curves, named
 color schemes and diverging color, built-in themes (light, dark, high
 contrast, and one that follows the page) with CSS-variable theming, rule,
 region, and text annotations from constants or data (with labels hidden or
@@ -70,7 +72,7 @@ Next, in order:
 2. Layout: independent x scales and weighted columns.
 3. Animation of changed values (bars, pies) and of panels; leader lines for
    moved labels.
-4. Financial tools, geographic charts, and 3D.
+4. Financial tools and 3D.
 5. Screen-reader verification, benchmarks across browsers and machines, and
    an API review before a first release.
 

@@ -19,8 +19,12 @@ import {
   type FunnelOptions,
   funnel,
   type GaugeOptions,
+  type GeoPointOptions,
+  type GeoShapeOptions,
   type GraphOptions,
   gauge,
+  geopoint,
+  geoshape,
   graph,
   type HeatmapOptions,
   type HistogramOptions,
@@ -255,6 +259,21 @@ export const Graph = /* @__PURE__ */ markComponent(
 ) as unknown as <S extends Schema, N extends Schema = Schema>(
   props: WithData<GraphOptions<S, N>, S>,
 ) => null;
+
+/**
+ * Regions of a map from a table's geometry field, filled by `color`; maps'
+ * marks share a chart and its `projection`.
+ */
+export const GeoShape = /* @__PURE__ */ markComponent(
+  "GeoShape",
+  ({ data, ...options }: WithData<GeoShapeOptions<Schema>, Schema>) => geoshape(data, options),
+) as unknown as <S extends Schema>(props: WithData<GeoShapeOptions<S>, S>) => null;
+
+/** Points of a map at `longitude` and `latitude`, sized and colored as points are. */
+export const GeoPoint = /* @__PURE__ */ markComponent(
+  "GeoPoint",
+  ({ data, ...options }: WithData<GeoPointOptions<Schema>, Schema>) => geopoint(data, options),
+) as unknown as <S extends Schema>(props: WithData<GeoPointOptions<S>, S>) => null;
 
 /** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
 export const Candlestick = /* @__PURE__ */ markComponent(

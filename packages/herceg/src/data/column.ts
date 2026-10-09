@@ -1,6 +1,8 @@
 // Column storage. A column owns one typed buffer; the table that holds it
 // decides which slice of the buffer is live (see table.ts).
 
+import type { GeometryInput, GeometrySet } from "./geometry.ts";
+
 export type NumericArray =
   | Float64Array
   | Float32Array
@@ -17,14 +19,16 @@ export type NumericArray =
  * - `number`: numeric values; NaN marks a missing value in float columns.
  * - `time`: epoch milliseconds stored like `number`.
  * - `category`: dictionary-encoded strings; code -1 marks a missing value.
+ * - `geometry`: codes into a set of shapes (data/geometry.ts); -1 marks none.
  */
-export type FieldKind = "number" | "time" | "category";
+export type FieldKind = "number" | "time" | "category" | "geometry";
 
 export interface NumberColumn {
   readonly kind: "number" | "time";
   buffer: NumericArray;
   /** False while the buffer is a caller's typed array; it is copied before any write. */
   owned: boolean;
+  readonly check?: undefined;
 }
 
 export interface CategoryColumn {
@@ -34,9 +38,20 @@ export interface CategoryColumn {
   readonly dictionary: string[];
   /** Code lookup for the dictionary; built lazily on first append. */
   codes: Map<string, number> | undefined;
+  readonly check?: undefined;
 }
 
-export type Column = NumberColumn | CategoryColumn;
+export interface GeometryColumn {
+  readonly kind: "geometry";
+  buffer: Int32Array;
+  owned: boolean;
+  /** The shapes codes point into; shared, never written. */
+  readonly set: GeometrySet;
+  /** Throws unless values are codes of the set, before a table writes them. */
+  readonly check: (values: ArrayLike<unknown>) => void;
+}
+
+export type Column = NumberColumn | CategoryColumn | GeometryColumn;
 
 /** Marks a numeric array or Date list as a time column. */
 export interface TimeInput {
@@ -83,7 +98,8 @@ export type ColumnInput =
   | readonly (Date | null | undefined)[]
   | readonly (string | null | undefined)[]
   | TimeInput
-  | CategoryInput;
+  | CategoryInput
+  | GeometryInput;
 
 export function isNumericArray(value: unknown): value is NumericArray {
   return ArrayBuffer.isView(value) && !(value instanceof DataView) && !isBigIntArray(value);
@@ -161,6 +177,8 @@ export function encode(column: CategoryColumn, value: string | null | undefined)
 export function createColumn(input: ColumnInput): Column {
   if (isNumericArray(input)) return { kind: "number", buffer: input, owned: false };
   if (!Array.isArray(input)) {
+    // Geometry inputs build their own column, so only charts using them bundle that code.
+    if ((input as GeometryInput).column) return (input as GeometryInput).column();
     const tagged = input as TimeInput | CategoryInput;
     if (tagged.kind === "category") {
       return "codes" in tagged

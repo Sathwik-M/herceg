@@ -46,7 +46,9 @@ requests.categories("service"); // { codes: Int32Array, dictionary: string[] }
 Row objects can be converted with `fromRows(rows)`. Categories that are
 already dictionary-encoded (Arrow dictionaries, pandas categoricals) are used
 without decoding: `encodedCategory(codes, dictionary)` takes `Int32Array`
-codes (-1 for missing) and the dictionary.
+codes (-1 for missing) and the dictionary. Shapes for maps are geometry
+fields, from `fromGeoJSON(collection)` or `geometry(set, codes?)` (see Maps);
+`table.geometries(field)` gives each row's code and the shapes.
 
 Tables are mutable and charts that read them re-render on the next animation
 frame, once per frame however many changes arrive:
@@ -511,6 +513,93 @@ links, but a dense network's millions would take seconds. A network that
 grows past the limits while drawn, or a spec loaded with more, draws nothing
 and its description says why, until its tables shrink again. Like a pie, a network has its chart to itself.
 
+### Maps
+
+```ts
+import { createChart, fromGeoJSON, geopoint, geoshape, table } from "herceg";
+
+const countries = fromGeoJSON(await (await fetch("countries.geojson")).json());
+const cities = table({ city: [...], lon: [...], lat: [...], population: [...] });
+
+createChart(element, {
+  projection: "equal-earth",
+  marks: [
+    geoshape(countries, { name: "name", color: "gdp" }), // a choropleth
+    geopoint(cities, { longitude: "lon", latitude: "lat", r: "population", name: "city" }),
+  ],
+});
+```
+
+A map draws `geoshape` regions and `geopoint` points (or bubbles) on one
+projection; the two share a chart with each other, not with other marks.
+Regions come from a table's geometry field, which holds polygons and
+multipolygons in longitude and latitude (degrees, WGS 84). `fromGeoJSON`
+reads a GeoJSON FeatureCollection into such a table: its shapes in a
+`geometry` field (points in `longitude` and `latitude` fields), feature ids
+in `id`, and each property in a field of its own (numbers and booleans as
+numbers, strings as categories, a mix of the two as categories of their
+text). `geometry(set, codes?)` builds a geometry column from packed arrays
+(see Charts from specs), as GeoArrow nests multipolygons; rows hold codes
+into the shapes, so filtered and sorted derived tables share them, and
+appended rows name existing shapes by code. Edges are straight lines in
+longitude and latitude, as GeoJSON defines them: shapes that cross the
+antimeridian are expected to be cut there, as RFC 7946 asks.
+
+`geoshape` fills each region by `color`: a number field on a continuous
+scale (`colors`, `colorDomain`, and `colorMidpoint` as for heatmaps), with a
+color legend, or a category field with a palette color per value, whose
+legend grays a category's regions out without moving the map. Regions
+without a value, and regions of a map without `color`, are filled with
+`fill` (the theme's grid color by default); borders are drawn in the chart's
+background color (`stroke`, `strokeWidth`, 0.75 px by default). `geometry`
+names the field when the table has several. `geopoint` places points at the
+`longitude` and `latitude` number fields, sized by area with an `r` field
+(`rRange`, 2 to 16 px by default; a size key joins the legend), colored by a
+`series` category or a `color` number field, at 0.8 opacity, each ringed in
+the background color (`stroke`, `strokeWidth`), and largest first, across
+series, so smaller points stay on top. Points missing a value they encode
+are left out. `name` (a category field) names regions and points in
+tooltips and keyboard reading.
+
+The chart's `projection` is a name or `{ type, centralMeridian?,
+parallels?, fit? }`:
+
+| Projection | |
+| --- | --- |
+| `"equal-earth"` (default) | Equal-area, for world maps. |
+| `"natural-earth"` | A compromise for world maps. |
+| `"mercator"` | Conformal; cut at 85.05 degrees of latitude. |
+| `"equirectangular"` | Longitude and latitude as they are. |
+| `"conic-equal-area"` | Albers' equal-area conic, for countries and continents. |
+
+`centralMeridian` is the longitude at the map's center (0 by default; for the
+conic projection, the middle of the data, across the widest gap between its
+longitudes), and shapes are cut where the opposite meridian crosses them.
+`parallels` are the conic projection's standard parallels, by default a
+sixth of the data's span of latitudes in from either end. `fit` is what the
+map fills: the data's shapes and points (`"data"`, the default), the whole
+`"world"`, or a box `[[west, south], [east, north]]` (west may lie east of
+east, to cross the antimeridian; a box beyond Mercator's latitudes shows the
+world). The fit does not change when the legend hides categories. Edges are
+divided until they are drawn within a quarter pixel of their projected
+curves, whatever the zoom.
+
+Tooltips, hover and click events, and the arrow keys report a region's name
+and value (or category) and a point's name and size (or color value, or
+position): regions first in row order, then points. The pointer finds the
+last-drawn point whose disc is within 3 px, else the last-drawn region
+containing it (holes are not part of a region). The chart's description
+summarizes each layer: the regions' range of values with the highest and
+lowest, or their categories, and the points' count and largest.
+
+Regions are projected once per projection and fit and kept with their
+shapes, so changing values, colors, the legend, or the theme draws without
+projecting again; at a new size they are projected again (200 regions of
+1,000 vertices with 10,000 points, in Node: about 20 to 30 ms for the first
+drawing, 11 ms at a new size, 2 ms to redraw, 2 µs to find the region under
+the pointer). Points closer than a third of a pixel to the
+previous one are left out of a region's outline.
+
 ### A second y axis
 
 Marks with `axis: "right"` use a second y scale, drawn on the right and
@@ -699,6 +788,7 @@ the thousands, not millions.
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
+| `projection` | How maps are projected: a projection's name or `{ type, centralMeridian?, parallels?, fit? }` (see Maps). |
 
 The returned `Chart` has `update(options)`, `setViewport([from, to] | null)`
 and `setYViewport([from, to] | null)` (the left axis; a right axis shows what
@@ -831,8 +921,12 @@ const pdf = specToPDF(spec, buffers);
 
 A spec's `data` holds tables whose columns are JSON arrays,
 `{ type: "time", values }`, binary columns (`{ type: "number" | "time",
-dtype: "float64" | "float32" | "int32" | ..., buffer: <index> }`), or
-dictionary-encoded categories (`{ type: "category", codes, dictionary }`).
+dtype: "float64" | "float32" | "int32" | ..., buffer: <index> }`),
+dictionary-encoded categories (`{ type: "category", codes, dictionary }`), or
+geometries (`{ type: "geometry", coordinates, ringOffsets, polygonOffsets,
+geometryOffsets, codes? }`: float64 longitude, latitude pairs and int32
+offsets, each a buffer index or a JSON array, and int32 codes per row,
+row i holding geometry i without them).
 Marks are the same objects as a TypeScript mark's `spec`, with `data` naming
 their table.
 

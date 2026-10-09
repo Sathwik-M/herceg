@@ -1,11 +1,13 @@
 """Columnar data conversion: dataframes and arrays to binary spec columns.
 
-Every column becomes one of three kinds, matching the chart spec:
+Every column becomes one of four kinds, matching the chart spec:
 
 - ``number``: float64 (float32 stays float32), NaN for missing values;
 - ``time``: epoch milliseconds as float64 (fractions keep sub-millisecond
   precision), NaN for missing values;
-- ``category``: int32 dictionary codes (-1 for missing) plus the dictionary.
+- ``category``: int32 dictionary codes (-1 for missing) plus the dictionary;
+- ``geometry``: int32 codes (-1 for missing) into packed polygons, from
+  GeoJSON geometries or objects with ``__geo_interface__`` (see ``_geo``).
 
 Values are not turned into Python objects or JSON number lists: each column's
 bytes come from NumPy (pandas, Polars, and PyArrow all convert to it cheaply)
@@ -27,6 +29,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
+from . import _geo
 
 #: Largest integer magnitude float64 holds exactly.
 _EXACT_INTEGERS = 2**53
@@ -55,9 +59,10 @@ _MS_PER_UNIT = {
 class Column:
     """One converted column: its kind and the arrays that hold it."""
 
-    kind: str  # "number" | "time" | "category"
-    values: np.ndarray  # <f8/<f4 numbers or times; <i4 codes for categories
+    kind: str  # "number" | "time" | "category" | "geometry"
+    values: np.ndarray  # <f8/<f4 numbers or times; <i4 codes for categories and geometries
     dictionary: tuple[str, ...] = ()
+    shapes: _geo.Shapes | None = None
 
     def __len__(self) -> int:
         return len(self.values)
@@ -99,8 +104,17 @@ def _accessor(data: Any) -> tuple[Callable[[Any], Any], list[Any], list[Any]]:
     as such rather than failing on lookup.
     """
     module = type(data).__module__.split(".")[0]
-    if module == "pandas" and hasattr(data, "columns"):
+    if module in ("pandas", "geopandas") and hasattr(data, "columns"):
+        # A GeoDataFrame is a pandas DataFrame whose shapes have a reference system.
+        _geo.check_crs(data)
         return (lambda key: data.iloc[:, key]), list(range(data.shape[1])), list(data.columns)
+    interface = getattr(data, "__geo_interface__", None)
+    if not isinstance(data, Mapping) and _geo.is_feature_collection(interface):
+        _geo.check_crs(data)
+        data = interface
+    if _geo.is_feature_collection(data):
+        columns = _geo.feature_columns(data)
+        return (lambda key: columns[key]), list(columns), list(columns)
     if module == "polars" and hasattr(data, "get_columns"):
         columns = data.get_columns()
         return (lambda key: columns[key]), list(range(len(columns))), list(data.columns)
@@ -119,8 +133,8 @@ def _accessor(data: Any) -> tuple[Callable[[Any], Any], list[Any], list[Any]]:
         keys = list(dict.fromkeys(key for record in data for key in record))
         return (lambda key: [record.get(key) for record in data]), keys, keys
     raise TypeError(
-        "Chart data must be a pandas, Polars, or PyArrow table, a mapping of column "
-        f"names to arrays, or a list of records; got {type(data).__name__}"
+        "Chart data must be a pandas, Polars, or PyArrow table, a GeoJSON FeatureCollection, "
+        f"a mapping of column names to arrays, or a list of records; got {type(data).__name__}"
     )
 
 
@@ -138,7 +152,13 @@ def _distinct_labels(values: Sequence[Any], what: str) -> list[str]:
 
 def convert(values: Any) -> Column:
     """Converts one column of any supported type."""
+    if isinstance(values, _geo.GeometryList):
+        return _shapes(values)
     module = type(values).__module__.split(".")[0]
+    if module == "geopandas":
+        # A GeoSeries (or its array) of Shapely shapes.
+        _geo.check_crs(values)
+        return _shapes(list(values))
     if module == "pandas":
         return _from_pandas(values)
     if module == "polars":
@@ -219,6 +239,8 @@ def _is_missing(value: Any) -> bool:
 
 
 def _kind_of(value: Any) -> str:
+    if _geo.is_geometry(value):
+        return "geometry"
     if isinstance(value, str):
         return "text"
     if isinstance(value, (_dt.datetime, _dt.date, np.datetime64)):
@@ -236,6 +258,8 @@ def _from_sequence(values: list[Any]) -> Column:
     kind = kinds.pop() if kinds else "number"
     if kind == "text":
         return _categories(values)
+    if kind == "geometry":
+        return _shapes(values)
     if kind == "time":
         return Column(
             "time", np.array([np.nan if _is_missing(v) else _time_ms(v) for v in values], "<f8")
@@ -246,6 +270,11 @@ def _from_sequence(values: list[Any]) -> Column:
     return Column(
         "number", np.array([np.nan if _is_missing(v) else float(v) for v in values], "<f8")
     )
+
+
+def _shapes(values: Sequence[Any]) -> Column:
+    codes, shapes = _geo.pack(values)
+    return Column("geometry", codes, shapes=shapes)
 
 
 def _categories(values: Sequence[Any]) -> Column:

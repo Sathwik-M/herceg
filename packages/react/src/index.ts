@@ -10,6 +10,8 @@ export {
   ErrorBar,
   Funnel,
   Gauge,
+  GeoPoint,
+  GeoShape,
   Graph,
   Heatmap,
   Histogram,

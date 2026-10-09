@@ -71,6 +71,11 @@ export interface ChartSpec {
   locale?: string;
   /** "local" (default), "UTC", or an IANA zone for time axes and labels. */
   timeZone?: string;
+  /**
+   * How maps (`geoshape` and `geopoint` marks) are projected: a projection's
+   * name, or one with parameters. Equal Earth by default.
+   */
+  projection?: ProjectionName | ProjectionSpec;
 }
 
 /**
@@ -125,6 +130,41 @@ export interface GridFacetSpec {
 }
 
 export type RendererName = "auto" | "svg" | "canvas";
+
+/**
+ * A map projection: "equal-earth" (equal-area, for world maps),
+ * "natural-earth" (a compromise for world maps), "mercator" (conformal,
+ * cut at 85.05 degrees of latitude), "equirectangular" (longitude and
+ * latitude as they are), or "conic-equal-area" (Albers' equal-area conic,
+ * for countries and continents).
+ */
+export type ProjectionName =
+  | "equal-earth"
+  | "natural-earth"
+  | "mercator"
+  | "equirectangular"
+  | "conic-equal-area";
+
+export interface ProjectionSpec {
+  type: ProjectionName;
+  /**
+   * The longitude at the map's center, in degrees east: 0 by default; for
+   * "conic-equal-area", the middle of the data (or of `fit`).
+   */
+  centralMeridian?: number;
+  /**
+   * The two standard parallels of "conic-equal-area", in degrees: by
+   * default a sixth of the data's span of latitudes in from either end.
+   */
+  parallels?: [number, number];
+  /**
+   * What the map fits into its plot: the data's shapes and points ("data",
+   * the default), the whole "world", or a box of longitudes and latitudes,
+   * `[[west, south], [east, north]]`, whose west may lie east of its east
+   * to cross the antimeridian.
+   */
+  fit?: "data" | "world" | [[number, number], [number, number]];
+}
 /**
  * A built-in theme. "auto" is "light" or "dark" as the page prefers, and
  * follows changes; it is "light" where there is no page.
@@ -207,7 +247,8 @@ export type ColumnSpec =
   | (string | null)[]
   | TimeColumnSpec
   | BinaryColumnSpec
-  | CategoryColumnSpec;
+  | CategoryColumnSpec
+  | GeometryColumnSpec;
 
 /** Epoch milliseconds or ISO 8601 strings; null for missing values. */
 export interface TimeColumnSpec {
@@ -245,6 +286,26 @@ export interface CategoryColumnSpec {
   type: "category";
   codes: number | number[];
   dictionary: string[];
+}
+
+/**
+ * Polygons and multipolygons in longitude and latitude (degrees, WGS 84),
+ * packed as GeoArrow nests multipolygons. Each array is a buffer index or
+ * an inline JSON array: `coordinates` float64 longitude, latitude pairs;
+ * `ringOffsets` int32 offsets into coordinate pairs; `polygonOffsets` int32
+ * offsets into rings (each polygon's exterior first, then its holes); and
+ * `geometryOffsets` int32 offsets into polygons, each array one longer
+ * than the things it divides. Row i holds geometry `codes[i]` (int32, -1
+ * for none), or geometry i without `codes`. Edges are straight in
+ * longitude and latitude, as GeoJSON defines them.
+ */
+export interface GeometryColumnSpec {
+  type: "geometry";
+  coordinates: number | number[];
+  ringOffsets: number | number[];
+  polygonOffsets: number | number[];
+  geometryOffsets: number | number[];
+  codes?: number | number[];
 }
 
 /** Scale and axis options for one position channel. */
@@ -368,7 +429,9 @@ export type MarkSpec =
   | FunnelSpec
   | RadarSpec
   | SankeySpec
-  | GraphSpec;
+  | GraphSpec
+  | GeoShapeSpec
+  | GeoPointSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -806,6 +869,74 @@ export interface GraphSpec {
   size?: Field;
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
   labels?: boolean;
+}
+
+/**
+ * Regions of a map: each row's shape from a geometry field, filled by
+ * `color` (a number field on a continuous scale, or a category field with
+ * a color per value) or with `fill`. Maps project every geo mark of a chart
+ * with the chart's `projection`.
+ */
+export interface GeoShapeSpec {
+  type: "geoshape";
+  data?: string;
+  id?: string;
+  /** The geometry field; the table's only one by default. */
+  geometry?: Field;
+  /** Category field naming each region, for tooltips, keyboard reading, and the summary. */
+  name?: Field;
+  /** A number field colored on a continuous scale, or a category field with a palette color per value. */
+  color?: Field;
+  /** Colors for a number `color`, low to high, or a scheme name such as "viridis". */
+  colors?: string[] | string;
+  /** The values at the ends of the color ramp; the field's extent by default. */
+  colorDomain?: [number, number];
+  /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
+  colorMidpoint?: number;
+  /** The fill without `color`, and of regions without a value. */
+  fill?: string;
+  /** Default 1. */
+  fillOpacity?: number;
+  /** Border color; the chart's background by default. */
+  stroke?: string;
+  /** Border width in pixels; default 0.75, 0 for none. */
+  strokeWidth?: number;
+  /** What the regions are, in the legend and tooltips without `color`. */
+  label?: string;
+}
+
+/**
+ * Points of a map at `longitude` and `latitude` (number fields, degrees),
+ * sized, colored, and split into series as `point` marks are.
+ */
+export interface GeoPointSpec {
+  type: "geopoint";
+  data?: string;
+  id?: string;
+  longitude: Field;
+  latitude: Field;
+  /** Category field naming each point, for tooltips, keyboard reading, and the summary. */
+  name?: Field;
+  /** Category field: one colored set of points per value, with a legend. */
+  series?: Field;
+  /** Radius in pixels, or a number field sized by area within `rRange` (bubbles). */
+  r?: number | Field;
+  /** Radii of the smallest and largest values of an `r` field. Default [2, 16]. */
+  rRange?: [number, number];
+  /** A number field colored on a continuous scale. */
+  color?: Field;
+  colors?: string[] | string;
+  colorDomain?: [number, number];
+  colorMidpoint?: number;
+  fill?: string;
+  /** Default 0.8, so overlapping points and the regions under them show. */
+  fillOpacity?: number;
+  /** Color of the ring around each point; the chart's background by default. */
+  stroke?: string;
+  /** Width of the ring in pixels; default 1, 0 for none. */
+  strokeWidth?: number;
+  /** Legend and tooltip name of points without `series`. */
+  label?: string;
 }
 
 /**

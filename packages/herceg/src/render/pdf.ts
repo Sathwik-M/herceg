@@ -14,6 +14,7 @@ import { traceArea } from "../draw/area.ts";
 import { traceLine } from "../draw/line.ts";
 import { KAPPA, type PathSink } from "../draw/markup.ts";
 import { placeCloud } from "../draw/point.ts";
+import { tracePolygon } from "../draw/polygons.ts";
 import { traceRects } from "../draw/rect.ts";
 import { ruleLabel } from "../draw/rule.ts";
 import { MIDDLE_TO_BASELINE } from "../draw/shapes.ts";
@@ -171,6 +172,8 @@ interface PaintStyle {
   cap?: "butt" | "round";
   /** Default "miter", as in SVG. */
   join?: "miter" | "round";
+  /** Fill with the even-odd rule rather than nonzero winding. */
+  evenOdd?: boolean;
 }
 
 /**
@@ -178,7 +181,7 @@ interface PaintStyle {
  * that paint a path with it, or undefined (and opens nothing) when it would
  * paint nothing. The caller closes the state with "Q".
  */
-function begin(page: PdfPage, style: PaintStyle): ("f" | "S")[] | undefined {
+function begin(page: PdfPage, style: PaintStyle): ("f" | "f*" | "S")[] | undefined {
   const fill = style.fill === undefined ? undefined : color(style.fill, style.fillOpacity);
   // PDF draws a width of 0 as the thinnest visible line, SVG draws nothing.
   const raw = style.strokeWidth ?? 1;
@@ -207,7 +210,8 @@ function begin(page: PdfPage, style: PaintStyle): ("f" | "S")[] | undefined {
   // Filled and stroked paths are painted twice rather than with "B", which
   // knocks the fill out under a translucent stroke instead of compositing
   // the stroke over it as SVG does.
-  return fill && stroke ? ["f", "S"] : fill ? ["f"] : ["S"];
+  const filled = style.evenOdd ? "f*" : "f";
+  return fill && stroke ? [filled, "S"] : fill ? [filled] : ["S"];
 }
 
 function paint(page: PdfPage, path: PathBuilder, style: PaintStyle): void {
@@ -298,7 +302,7 @@ function paintEncoded(page: PdfPage, mark: PointGeometry): void {
   };
   const fillOf = (i: number) =>
     mark.colors ? mark.colors.palette[mark.colors.index[i]!]! : mark.fill;
-  if (mark.opaque) {
+  if (mark.opaque && !mark.ring) {
     const groups = new Map<number, number[]>();
     for (let i = 0; i < mark.count; i++) {
       const tone = mark.colors ? mark.colors.index[i]! : 0;
@@ -320,8 +324,14 @@ function paintEncoded(page: PdfPage, mark: PointGeometry): void {
     paint(page, path, {
       fill: fillOf(i),
       fillOpacity: mark.opacities ? mark.opacities[i]! : mark.fillOpacity,
+      ...ringStyle(mark),
     });
   }
+}
+
+/** The paint style of a points' ring, if they have one. */
+function ringStyle(mark: PointGeometry): PaintStyle {
+  return mark.ring ? { stroke: mark.ring.color, strokeWidth: mark.ring.width } : {};
 }
 
 function paintPoints(page: PdfPage, mark: PointGeometry): void {
@@ -330,19 +340,20 @@ function paintPoints(page: PdfPage, mark: PointGeometry): void {
     return;
   }
   const c = mark.coords;
-  const style = { fill: mark.fill, fillOpacity: mark.fillOpacity };
+  const style = { fill: mark.fill, fillOpacity: mark.fillOpacity, ...ringStyle(mark) };
   const path = new PathBuilder();
-  if (mark.opaque) {
+  if (mark.opaque && !mark.ring) {
     for (let i = 0; i < mark.count; i++) path.circle(c[i * 2]!, c[i * 2 + 1]!, mark.radius);
     paint(page, path, style);
     return;
   }
   // One fill per point so overlapping translucent points darken, as in SVG.
-  if (!begin(page, style)) return;
+  const operators = begin(page, style);
+  if (!operators) return;
   for (let i = 0; i < mark.count; i++) {
     path.operators = "";
     path.circle(c[i * 2]!, c[i * 2 + 1]!, mark.radius);
-    page.write(`${path.operators}f\n`);
+    for (const operator of operators) page.write(`${path.operators}${operator}\n`);
   }
   page.write("Q\n");
 }
@@ -444,6 +455,21 @@ function paintGeometry(
       );
       return;
     }
+    case "polygons":
+      // Shape by shape, as SVG and canvas draw them.
+      mark.shapes.forEach((shape, i) => {
+        const rings = new PathBuilder();
+        tracePolygon(rings, shape);
+        paint(page, rings, {
+          fill: mark.colors[mark.colorIndex[i]!],
+          fillOpacity: mark.fillOpacity,
+          evenOdd: true,
+          stroke: mark.strokeWidth > 0 ? mark.stroke : undefined,
+          strokeWidth: mark.strokeWidth,
+          join: "round",
+        });
+      });
+      return;
     case "shapes":
       for (const shape of mark.shapes) {
         if ("text" in shape) {

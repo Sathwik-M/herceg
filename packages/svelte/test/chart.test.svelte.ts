@@ -2,6 +2,7 @@ import {
   custom,
   type DrawContext,
   facet,
+  geometry,
   type Chart as HercegChart,
   type Mark as HercegMark,
   line,
@@ -14,6 +15,7 @@ import Faulty from "./Faulty.svelte";
 import Gauges from "./Gauges.svelte";
 import Lines from "./Lines.svelte";
 import Lollipops from "./Lollipops.svelte";
+import Maps from "./Maps.svelte";
 import Parent from "./Parent.svelte";
 import Pies from "./Pies.svelte";
 import Stray from "./Stray.svelte";
@@ -82,6 +84,25 @@ describe("<Chart>", () => {
     render(Pies, { data: table({ k: ["a", "b", "c"], v: [3, 2, 1] }) });
     const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
     expect(slices).toHaveLength(3);
+  });
+
+  it("draws a map's regions and points from their components, with its projection", () => {
+    const square = (x: number) => [x, 0, x + 10, 0, x + 10, 10, x, 10];
+    const regions = table({
+      name: ["Ada", "Bel"],
+      gdp: [1, 2],
+      shape: geometry({
+        coordinates: Float64Array.from([...square(0), ...square(10)]),
+        ringOffsets: Int32Array.from([0, 4, 8]),
+        polygonOffsets: Int32Array.from([0, 1, 2]),
+        geometryOffsets: Int32Array.from([0, 1, 2]),
+      }),
+    });
+    render(Maps, { regions, places: table({ lon: [5], lat: [5] }) });
+    const filled = [...paths()].filter((path) => path.getAttribute("fill-rule") === "evenodd");
+    expect(filled).toHaveLength(2);
+    // The point, ringed in the background color.
+    expect(host.querySelectorAll('svg g[clip-path] g[stroke-width="1"] circle')).toHaveLength(1);
   });
 
   it("renders gauges and funnels from their components", () => {

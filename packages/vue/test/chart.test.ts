@@ -5,6 +5,7 @@ import {
   type DataDrawContext,
   type DrawContext,
   facet,
+  geometry,
   type Chart as HercegChart,
   type Mark as HercegMark,
   line,
@@ -31,6 +32,8 @@ import {
   Custom,
   Funnel,
   Gauge,
+  GeoPoint,
+  GeoShape,
   Line,
   Pie,
   Radar,
@@ -67,6 +70,8 @@ const components = {
   Gauge,
   Funnel,
   Radar,
+  GeoShape,
+  GeoPoint,
   Region,
   Rule,
   Text,
@@ -120,6 +125,37 @@ describe("<Chart>", () => {
     );
     const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
     expect(slices).toHaveLength(3);
+  });
+
+  it("draws a map's regions and points from their components, with its projection", async () => {
+    const square = (x: number) => [x, 0, x + 10, 0, x + 10, 10, x, 10];
+    const regions = table({
+      name: ["Ada", "Bel"],
+      gdp: [1, 2],
+      shape: geometry({
+        coordinates: Float64Array.from([...square(0), ...square(10)]),
+        ringOffsets: Int32Array.from([0, 4, 8]),
+        polygonOffsets: Int32Array.from([0, 1, 2]),
+        geometryOffsets: Int32Array.from([0, 1, 2]),
+      }),
+    });
+    const places = table({ lon: [5], lat: [5] });
+    const projection = ref<"mercator" | "equirectangular">("mercator");
+    mount(
+      `<Chart :projection="projection" locale="en-US">
+        <GeoShape :data="regions" name="name" color="gdp" />
+        <GeoPoint :data="places" longitude="lon" latitude="lat" />
+      </Chart>`,
+      () => ({ regions, places, projection }),
+    );
+    const filled = () =>
+      [...paths()].filter((path) => path.getAttribute("fill-rule") === "evenodd");
+    expect(filled()).toHaveLength(2);
+    const before = filled()[0]!.getAttribute("d");
+    projection.value = "equirectangular";
+    await nextTick();
+    await frame();
+    expect(filled()[0]!.getAttribute("d")).not.toBe(before);
   });
 
   it("renders gauges and funnels from their components", () => {

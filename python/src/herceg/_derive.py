@@ -16,6 +16,9 @@ import numpy as np
 
 from ._data import Table
 
+#: Kinds of columns whose values steps can compare and group: all but shapes.
+_VALUES = ("number", "time", "category")
+
 AGGREGATES = (
     *("count", "sum", "mean", "median", "min", "max", "q1", "q3"),
     *("stdev", "variance", "distinct", "first", "last"),
@@ -249,6 +252,8 @@ def _type(json: Any, kinds: _Kinds) -> str:
         name = args[0]
         if name not in kinds:
             raise KeyError(f"no column {name!r}; the rows have {', '.join(map(repr, kinds))}")
+        if kinds[name] == "geometry":
+            raise TypeError(f"column {name!r} holds shapes, which expressions cannot read")
         return "string" if kinds[name] == "category" else "number"
     if op in _COMPARE:
         arity(2)
@@ -406,7 +411,7 @@ class Derived:
         """One row per group of ``by`` columns, with each named operation, as in
         pandas' named aggregation: ``n="count"`` or ``mean=("temp", "mean")``."""
         groupby = [by] if isinstance(by, str) else list(by or [])
-        self._require(groupby, "aggregate by")
+        self._require(groupby, "aggregate by", _VALUES)
         if not operations:
             raise ValueError("aggregate needs at least one operation, such as n='count'")
         specs = []
@@ -435,7 +440,7 @@ class Derived:
         if not (isinstance(size, int) and not isinstance(size, bool) and size >= 1):
             raise ValueError(f"rolling size must be a whole number of at least 1, not {size!r}")
         groupby = [by] if isinstance(by, str) else list(by or [])
-        self._require(groupby, "rolling by")
+        self._require(groupby, "rolling by", _VALUES)
         if not operations:
             raise ValueError("rolling needs at least one operation, such as avg=('temp', 'mean')")
         specs = []
@@ -453,7 +458,7 @@ class Derived:
 
     def sort(self, column: str, *, descending: bool = False) -> Derived:
         """Orders rows by a column, stably, missing values last."""
-        self._require(column, "sort")
+        self._require(column, "sort", _VALUES)
         return self._then(
             {"sort": column, "order": "descending" if descending else "ascending"}, self._kinds
         )

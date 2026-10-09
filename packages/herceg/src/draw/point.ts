@@ -69,7 +69,7 @@ function symbolsPath(
  * row order, so overlaps darken.
  */
 function encodedElements(mark: PointGeometry): SvgElement[] {
-  if (mark.opaque) {
+  if (mark.opaque && !mark.ring) {
     const { order, groups } = fillGroups(mark);
     return groups.map(({ fill, start, end }) => ({
       tag: "path",
@@ -85,14 +85,29 @@ function encodedElements(mark: PointGeometry): SvgElement[] {
         d: symbolPath(symbol, c[i * 2]!, c[i * 2 + 1]!, r),
         fill,
         "fill-opacity": String(opacity),
+        ...ringAttributes(mark),
       },
     };
   });
 }
 
+/** SVG attributes of a points' ring, if they have one. */
+function ringAttributes(mark: PointGeometry): Record<string, string> {
+  return mark.ring ? { stroke: mark.ring.color, "stroke-width": String(mark.ring.width) } : {};
+}
+
+/** Strokes a point's ring on a canvas, after its fill. */
+function strokeRing(context: CanvasRenderingContext2D, mark: PointGeometry): void {
+  if (!mark.ring) return;
+  context.globalAlpha = 1;
+  context.strokeStyle = mark.ring.color;
+  context.lineWidth = mark.ring.width;
+  context.stroke();
+}
+
 function paintEncoded(context: CanvasRenderingContext2D, mark: PointGeometry): void {
   const c = mark.coords;
-  if (mark.opaque) {
+  if (mark.opaque && !mark.ring) {
     const { order, groups } = fillGroups(mark);
     for (const { fill, start, end } of groups) {
       context.fillStyle = fill;
@@ -113,6 +128,7 @@ function paintEncoded(context: CanvasRenderingContext2D, mark: PointGeometry): v
     context.beginPath();
     traceSymbol(context, symbol, c[i * 2]!, c[i * 2 + 1]!, r);
     context.fill();
+    strokeRing(context, mark);
   }
   context.globalAlpha = 1;
 }
@@ -151,12 +167,14 @@ function paintPoints(context: CanvasRenderingContext2D, mark: PointGeometry): vo
   const r = mark.radius;
   context.globalAlpha = mark.fillOpacity;
   context.fillStyle = mark.fill;
-  if (!mark.opaque) {
+  if (!mark.opaque || mark.ring) {
     // One fill per point so overlapping translucent points darken, as in SVG.
     for (let i = 0; i < mark.count; i++) {
       context.beginPath();
       context.arc(c[i * 2]!, c[i * 2 + 1]!, r, 0, Math.PI * 2);
       context.fill();
+      strokeRing(context, mark);
+      context.globalAlpha = mark.fillOpacity;
     }
     context.globalAlpha = 1;
     return;
@@ -204,7 +222,7 @@ export function placeCloud(mark: PointGeometry, plot: Rect): PointGeometry {
 function pointElements(mark: PointGeometry): SvgElement[] | undefined {
   if (mark.cloud) return [];
   if (!plain(mark)) return encodedElements(mark);
-  if (!mark.opaque) return undefined;
+  if (!mark.opaque || mark.ring) return undefined;
   return [{ tag: "path", attributes: { d: pointPath(mark), fill: mark.fill } }];
 }
 
@@ -219,7 +237,7 @@ export const pointDrawing: Drawing<PointGeometry> = {
     const elements = pointElements(mark);
     return elements
       ? markupOf(elements)
-      : `<g fill="${escapeXml(mark.fill)}" fill-opacity="${mark.fillOpacity}">${pointCircles(mark)}</g>`;
+      : `<g fill="${escapeXml(mark.fill)}" fill-opacity="${mark.fillOpacity}"${mark.ring ? ` stroke="${escapeXml(mark.ring.color)}" stroke-width="${mark.ring.width}"` : ""}>${pointCircles(mark)}</g>`;
   },
   canvas(context, mark, { plot, pixelRatio, clouds }) {
     if (!mark.cloud) return paintPoints(context, mark);

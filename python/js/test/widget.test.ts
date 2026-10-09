@@ -250,6 +250,50 @@ describe("notebook widget", () => {
     expect(labels).toEqual(expect.arrayContaining(["n0", "n1", "n2"]));
   });
 
+  it("replaces a table of shapes, reading its geometry column", async () => {
+    const square = (x: number) => [x, 0, x + 1, 0, x + 1, 1, x, 1];
+    const shapes = () => ({
+      type: "geometry" as const,
+      coordinates: 0,
+      ringOffsets: 1,
+      polygonOffsets: 2,
+      geometryOffsets: 2,
+    });
+    const buffers = (count: number) => [
+      new DataView(
+        Float64Array.from(Array.from({ length: count }, (_, i) => square(i * 2)).flat()).buffer,
+      ),
+      new DataView(Int32Array.from({ length: count + 1 }, (_, i) => i * 4).buffer),
+      new DataView(Int32Array.from({ length: count + 1 }, (_, i) => i).buffer),
+    ];
+    const model = new MockModel({
+      _chart: {
+        revision: 1,
+        spec: {
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          projection: "equirectangular",
+          data: { data: { columns: { shape: shapes() } } },
+          marks: [{ type: "geoshape", data: "data", geometry: "shape" }],
+        },
+        buffers: buffers(1),
+        selection: null,
+        viewport: null,
+      } satisfies Snapshot,
+      _listening: [],
+    });
+    const [host] = mount(model);
+    const regions = () => host!.querySelectorAll('svg path[fill-rule="evenodd"]');
+    expect(regions()).toHaveLength(1);
+    model.receive(
+      { type: "replace", revision: 2, table: "data", columns: { shape: shapes() } },
+      buffers(3).map((view) => new Uint8Array(view.buffer)),
+    );
+    await frame();
+    expect(regions()).toHaveLength(3);
+  });
+
   it("shows invalid options as an error and keeps the chart", () => {
     const model = new MockModel({ _chart: snapshot(), _listening: [] });
     const [host] = mount(model);
