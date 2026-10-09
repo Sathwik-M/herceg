@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-09T10:25:19.284Z",
+ "date": "2026-10-09T11:08:12.336Z",
  "commit": {
-  "sha": "2d0767a",
+  "sha": "1629060",
   "dirty": false
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
@@ -66,11 +66,11 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (2d0767a)",
-   "raw": 241673,
-   "minified": 111724,
-   "gzip": 41761,
-   "brotli": 37460,
+   "version": "0.0.0 (1629060)",
+   "raw": 242948,
+   "minified": 112232,
+   "gzip": 41994,
+   "brotli": 37601,
    "chunks": 2,
    "css": null,
    "lazy": {
@@ -81,11 +81,11 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (2d0767a)",
-   "raw": 246258,
-   "minified": 114199,
-   "gzip": 42845,
-   "brotli": 38385,
+   "version": "0.0.0 (1629060)",
+   "raw": 247560,
+   "minified": 114722,
+   "gzip": 43084,
+   "brotli": 38559,
    "chunks": 2,
    "css": null,
    "lazy": {
@@ -96,11 +96,11 @@
   {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (2d0767a)",
-   "raw": 248535,
-   "minified": 115559,
-   "gzip": 43402,
-   "brotli": 38959,
+   "version": "0.0.0 (1629060)",
+   "raw": 249837,
+   "minified": 116082,
+   "gzip": 43654,
+   "brotli": 39134,
    "chunks": 2,
    "css": null,
    "lazy": {
@@ -111,11 +111,11 @@
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (2d0767a)",
-   "raw": 248599,
-   "minified": 115208,
-   "gzip": 43278,
-   "brotli": 38824,
+   "version": "0.0.0 (1629060)",
+   "raw": 249901,
+   "minified": 115731,
+   "gzip": 43502,
+   "brotli": 38973,
    "chunks": 2,
    "css": null,
    "lazy": {
