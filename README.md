@@ -65,8 +65,7 @@ Streamlit component.
 
 Next, in order:
 
-1. Large data: incremental stacked and grouped updates, partial GPU uploads,
-   heatmaps beyond the cell limit.
+1. Large data: incremental stacked and grouped updates, partial GPU uploads.
 2. Layout: independent x scales and weighted columns.
 3. Animation of changed values (bars, pies) and of panels; label collision
    handling.

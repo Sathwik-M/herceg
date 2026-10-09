@@ -170,6 +170,7 @@ errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
 const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(load, { x: "hour", y: "host", value: "cpu" });
+heatmap(spectrum, { x: "time", y: "frequency", value: "power", reduce: "max" }); // grids larger than the plot
 
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
 
@@ -187,8 +188,22 @@ field on `x` or `y` (bars) or on `x` and `y` (heatmaps) gives a
 band axis. Categories on a y axis run top to bottom; long names are shortened
 with an ellipsis. Horizontal bars default to "nearest-y" tooltips, which
 report every series in the band under the pointer. Heatmaps also accept number and time fields, with one column or row per
-distinct value, up to 4,194,304 cells (bin finer data first). Heatmaps show a
-color legend instead of series entries.
+distinct value, and show a color legend instead of series entries.
+
+A heatmap draws one pixel per cell while its grid fits the plot's device
+pixels. A grid with more columns (or rows) than that, such as 4,000 x 4,000
+cells on a plot 1,500 device pixels wide, is drawn at the plot's resolution
+instead: each pixel shows the block of cells whose left (or top) edges fall
+in it, colored by the mean of their values, or with `reduce: "max"` or
+`"min"`, by the greatest or least, which keeps single hot cells visible.
+Missing and NaN values are left out of a block, a block without values is
+transparent, and rows that repeat a cell each count, where a cell drawn at
+full resolution shows its last row. Tooltips still report the single cell
+under the pointer, or nothing when that cell has no value. Static SVG and
+PDF output, which are zoomed and printed, reduce only past two pixels per
+CSS pixel. Drawing costs one pass over the table's rows, and memory follows
+the rows and the plot's pixels, not the number of cells, so there is no cell
+limit.
 
 Points encode fields as well as positions. `r` names a number field to size
 points by area, from zero (or the least value, when values are negative) at
@@ -820,7 +835,8 @@ needs it; `chart.loading` settles once they are on screen. With
 whose centers land on the same device pixel are drawn once (above 4,096
 points per series), which is faster for dense scatter plots but can drop
 subpixel edge coverage. Tooltips find the nearest point through a spatial
-grid index. Heatmaps are drawn as one image.
+grid index. Heatmaps are drawn as one image of at most the plot's device
+pixels, whatever their number of cells.
 
 Lines and areas over sorted x are reduced before drawing (M4): within each
 device-pixel column, only the first, lowest, highest, and last points of an

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
+import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { graph } from "../../src/marks/graph.ts";
@@ -14,6 +15,7 @@ import { sankey } from "../../src/marks/sankey.ts";
 import { text } from "../../src/marks/text.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
+import type { RasterGeometry } from "../../src/scene/scene.ts";
 
 let host: HTMLDivElement;
 
@@ -85,6 +87,94 @@ describe("new marks in the browser", () => {
     await frame();
     expect(tooltipOf(chart.root).textContent).toContain("203");
     chart.destroy();
+  });
+
+  it("reduces heatmaps wider than the plot and reports the cell under the pointer", async () => {
+    // 3,000 columns on a plot a few hundred pixels wide; column 1500 has no values.
+    const [columns, rows] = [3000, 40];
+    const c = Float64Array.from({ length: columns * rows }, (_, i) => i % columns);
+    const r = Float64Array.from({ length: columns * rows }, (_, i) => Math.floor(i / columns));
+    const v = Float64Array.from(c, (column) => (column === 1500 ? Number.NaN : column));
+    const chart = createChart(host, {
+      marks: [heatmap(table({ c, r, v }), { x: "c", y: "r", value: "v" })],
+    });
+    const canvas = chart.root.querySelector("canvas")!;
+    const ratio = canvas.width / canvas.clientWidth;
+    const xs = chart.model.xScale()!;
+    const ys = chart.model.yScale()!;
+    hover(chart.root, xs.map(1234), ys.map(7));
+    await frame();
+    const tooltip = tooltipOf(chart.root);
+    expect(tooltip.style.display).toBe("block");
+    expect(tooltip.textContent).toContain("1,234");
+    // The pixel showing column 1500 is painted from its neighbors, but the
+    // cell under the pointer has no value: no tooltip.
+    const painted = canvas
+      .getContext("2d")!
+      .getImageData(Math.floor(xs.map(1500) * ratio), Math.floor(ys.map(7) * ratio), 1, 1);
+    expect(painted.data[3]).toBe(255);
+    hover(chart.root, xs.map(1500), ys.map(7));
+    await frame();
+    expect(tooltip.style.display).toBe("none");
+    // One raster pixel per device pixel across, one per cell down.
+    const raster = chart.model.scene(estimateText).panels[0]!.marks[0] as RasterGeometry;
+    expect(raster.columns).toBe(Math.floor(raster.width * ratio));
+    expect(raster.columns).toBeLessThan(columns);
+    expect(raster.rows).toBe(rows);
+    chart.destroy();
+  });
+
+  it("draws every pixel of a reduced heatmap at fractional pixel ratios", async () => {
+    const columns = 3000;
+    const c = Float64Array.from({ length: columns }, (_, i) => i);
+    const devicePixelRatio = Object.getOwnPropertyDescriptor(window, "devicePixelRatio")!;
+    // A plot 541 CSS pixels wide spans a fractional number of device pixels.
+    host.style.width = "561px";
+    for (const ratio of [1, 1.25, 1.5, 1.75]) {
+      Object.defineProperty(window, "devicePixelRatio", { value: ratio, configurable: true });
+      const data = table({ c, r: new Float64Array(columns), v: new Float64Array(columns) });
+      const chart = createChart(host, {
+        renderer: "canvas",
+        legend: false,
+        x: { axis: false },
+        y: { axis: false },
+        marks: [
+          heatmap(data, {
+            x: "c",
+            y: "r",
+            value: "v",
+            reduce: "max",
+            colors: ["#000000", "#ff0000"],
+            colorDomain: [0, 1],
+          }),
+        ],
+      });
+      // Every other pixel gets a hot cell; a pixel lost in drawing would
+      // drop a red run or merge two.
+      const across = (chart.model.scene(estimateText).panels[0]!.marks[0] as RasterGeometry)
+        .columns;
+      expect(across).toBeLessThan(columns);
+      // The first cell of pixel j is the first whose left edge is in it.
+      const hot = new Set<number>();
+      for (let j = 0; j < across; j += 2) hot.add(Math.ceil((j * columns) / across));
+      data.setColumn(
+        "v",
+        Float64Array.from(c, (i) => (hot.has(i) ? 1 : 0)),
+      );
+      await frame();
+      const canvas = chart.root.querySelector("canvas")!;
+      const y = Math.floor(chart.model.yScale()!.map(0) * ratio);
+      const line = canvas.getContext("2d")!.getImageData(0, y, canvas.width, 1).data;
+      let runs = 0;
+      for (let i = 0; i < canvas.width; i++) {
+        const red = line[i * 4]! > 128 && line[i * 4 + 1]! < 64;
+        const before = i > 0 && line[i * 4 - 4]! > 128 && line[i * 4 - 3]! < 64;
+        if (red && !before) runs++;
+      }
+      expect(runs).toBe(Math.ceil(across / 2));
+      chart.destroy();
+    }
+    Object.defineProperty(window, "devicePixelRatio", devicePixelRatio);
   });
 
   it("shows heatmap cell tooltips when nearest-x is requested", async () => {

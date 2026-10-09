@@ -338,18 +338,50 @@ Those distinct values are sorted once per table version. Stacked series split
 by a category field share one pair of table-sized top and base arrays, since
 each row belongs to one series.
 
-Heatmaps are rasterized: each cell is one pixel of an RGBA image (colors from
-a lookup table), and renderers stretch the image over the plot.
-Canvas draws it with `drawImage`; SVG embeds it as a PNG. In the browser the
-canvas encodes the PNG; `renderToSVG` uses a small bundled encoder, which only
-server-side bundles include. Tooltips look cells up in a cell-to-row table,
-rebuilt when the table or the band order changes. When several rows fall in
-one cell, the last row with a value wins; missing values leave a cell
-transparent. Ramps are `#rgb` or
-`#rrggbb` colors, checked when the mark or theme is created, so the raster and
-the legend read them the same way. A heatmap draws at most 4,194,304 cells
-(16 MB of pixels plus 16 MB of lookup); larger grids are rejected with an
-error asking for binning.
+Heatmaps are rasterized into an RGBA image (colors from a lookup table) that
+renderers stretch over the plot. Canvas draws it with `drawImage`; SVG embeds
+it as a PNG. In the browser the canvas encodes the PNG; `renderToSVG` uses a
+small bundled encoder, which only server-side bundles include. While the grid
+fits the plot's device pixels, each cell is one pixel; when several rows fall
+in one cell, the last row with a value wins, and missing values leave a cell
+transparent. A grid with more columns or rows than the plot has device pixels
+(the frame's `rasterRatio`: the device pixel ratio on screen, 2 for static
+SVG and PDF, which are zoomed and printed) gets an image of the plot's size
+instead, rounded down so each image pixel covers at least a device pixel
+(nearest-neighbor drawing of a larger image would skip pixels, and with them
+a block's only hot cell). The image is reduced along each axis separately:
+cell `c` of `n` lands in pixel `floor(c * pixels / n)`, the pixel its leading
+edge falls in, and one pass over the rows accumulates each pixel's sum and
+count of finite values (or its greatest or least value, with `reduce: "max"`
+or `"min"`). Sums are Float64; a block whose sum overflows (values near the
+largest doubles) is summed again in a second pass with every value divided by
+2^64, and its mean multiplied back. Each pixel's four bytes hold its count
+until it is colored. The sums are a frame buffer kept while the image is
+repainted (8 bytes per pixel besides the 4 of the image).
+Rows that repeat a cell each count toward a mean. The painted image is kept
+and reused until the table, the band order, the image size, the theme, or
+the mark painting into the buffer changes, so redraws for other reasons (a
+legend toggle, a brush) do not repaint it.
+
+Tooltips report the cell under the pointer even when its pixel shows a block:
+the band scale maps the pointer to a band index, and a cell index finds the
+row. The index (`lod/cell-index.ts`) is the table's rows with a value, sorted
+by cell row and column with two counting sorts (rows already in cell order,
+as dense grids usually are, are taken as they are, and when they are every
+row, the table itself is the index), so it keeps at most 4 bytes per row
+whatever the number of cells (building it takes up to 8 more per row and a
+counter per band), and a lookup is a binary search. It is built on the
+first lookup after the table or the band order changes. Ramps
+are `#rgb` or `#rrggbb` colors, checked when the mark or theme is created, so
+the raster and the legend read them the same way.
+
+Band axes find each field's distinct values once per table version, numbered
+in order of appearance through a Map and then renumbered in ascending order;
+when a field's bands lead the axis in their own order (one mark on it), its
+rows' band indices are that numbering itself rather than a remapped copy.
+Thinning band labels needs the widest label, measured once per list of band
+labels, so an axis of 10,000 categories measures each label once rather than
+on every layout pass.
 
 Continuous color (heatmaps, and points with a `color` field) maps values
 through a 255-entry lookup table interpolated from the ramp's stops: odd, so
@@ -877,7 +909,17 @@ document when `OffscreenCanvas` is unavailable.
   index. A category whose rows all lack a facet value still gets an (empty)
   band. Panels smaller than 20 pixels a side are refused with an error
   rather than drawn.
-- Heatmaps are limited to 4,194,304 cells and have no built-in binning.
+- Heatmaps have no binning of their own (a derived table's `bin` and
+  `aggregate` steps make the grid) and one band per distinct value. A grid
+  larger than the plot's device pixels is drawn reduced, with a pixel per
+  block of cells: a block with any value is painted, so a sparse grid looks
+  denser than it is, and static SVG and PDF hold the reduced image, so
+  zooming into the file shows no more cells. Changing any value of the table
+  finds the x and y bands again and repaints the image, and the next tooltip
+  rebuilds the cell index, each a pass over the rows: for 10 million rows,
+  about 0.3 s and 0.1 s in Chrome on the benchmark machine. Band indices and
+  the cell index take up to 12 bytes per row (4 more per axis shared with
+  other marks).
 - Animation moves the axes of single-panel charts between views; changed
   values (bars growing, pie slices turning), entering and leaving data, and
   the first appearance of a chart show at once.

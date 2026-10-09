@@ -1221,6 +1221,7 @@ class Chart:
         colors: str | Sequence[str] | None = None,
         color_domain: tuple[float, float] | None = None,
         color_midpoint: float | None = None,
+        reduce: Literal["mean", "max", "min"] | None = None,
         label: str | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -1230,8 +1231,13 @@ class Chart:
 
         ``colors`` is a scheme name such as ``"viridis"`` or a list of hex
         colors, low to high; with ``color_midpoint``, the theme's diverging
-        ramp is the default and the midpoint takes its middle color.
+        ramp is the default and the midpoint takes its middle color. Grids
+        with more columns or rows than the plot has pixels draw each pixel
+        from a block of cells, colored by the ``reduce`` of their values:
+        ``"mean"`` (the default), ``"max"``, or ``"min"``.
         """
+        if reduce not in (None, "mean", "max", "min"):
+            raise ValueError(f"heatmap reduce must be 'mean', 'max', or 'min', not {reduce!r}")
         table = self._mark_table(data)
         self._require(table, x, ("number", "time", "category"), "heatmap x")
         self._require(table, y, ("number", "time", "category"), "heatmap y")
@@ -1245,6 +1251,7 @@ class Chart:
                 "colors": _colors(colors, "heatmap colors"),
                 "colorDomain": _range(color_domain, "heatmap color_domain"),
                 "colorMidpoint": _midpoint(color_midpoint, color_domain, "heatmap"),
+                "reduce": reduce,
                 "label": label,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
@@ -1980,11 +1987,18 @@ def heatmap(
     colors: str | Sequence[str] | None = None,
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
+    reduce: Literal["mean", "max", "min"] | None = None,
     **options: Any,
 ) -> Chart:
     """A heatmap; ``colors`` is a scheme name or a list of hex colors (see ``Chart.heatmap``)."""
     return Chart(data, **options).heatmap(
-        x, y, value, colors=colors, color_domain=color_domain, color_midpoint=color_midpoint
+        x,
+        y,
+        value,
+        colors=colors,
+        color_domain=color_domain,
+        color_midpoint=color_midpoint,
+        reduce=reduce,
     )
 
 

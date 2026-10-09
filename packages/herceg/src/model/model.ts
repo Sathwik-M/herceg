@@ -129,6 +129,12 @@ export type {
   TooltipMode,
 } from "./inspect.ts";
 
+/**
+ * Raster pixels per CSS pixel in static SVG and PDF, which are zoomed,
+ * printed, and rasterized larger (Python's PNG export at twice the size).
+ */
+export const STATIC_RASTER_RATIO = 2;
+
 const TICK = 5;
 /** Smallest plot side, in pixels, of a panel among several. */
 const MIN_PANEL = 20;
@@ -146,6 +152,8 @@ export class ChartModel {
   width = 640;
   height = 400;
   pixelRatio = 1;
+  /** Pixels per CSS pixel of the images marks draw (heatmaps); see `setSize`. */
+  rasterRatio = 1;
   /** Keys of series hidden through the legend. */
   readonly hidden = new Set<string>();
   #viewport: [number, number] | null = null;
@@ -153,8 +161,13 @@ export class ChartModel {
   #transition: ViewDomains | null = null;
   #polylines = new Map<string, Polyline>();
   #floats = new Map<string, Float32Array>();
+  #doubles = new Map<string, Float64Array>();
   #bytes = new Map<string, Uint8ClampedArray<ArrayBuffer>>();
   #used = new Set<string>();
+  #labelWidths = new WeakMap<
+    readonly string[],
+    { measure: MeasureText; font: string; width: number }
+  >();
   #left = 0;
   #right = 0;
   #columnGap = 0;
@@ -205,10 +218,21 @@ export class ChartModel {
     this.#layoutKey = "";
   }
 
-  setSize(width: number, height: number, pixelRatio = this.pixelRatio): void {
+  /**
+   * The chart's size in CSS pixels and the device pixels per CSS pixel.
+   * Images marks draw have `rasterRatio` pixels per CSS pixel: by default the
+   * device's, and more for static output (STATIC_RASTER_RATIO).
+   */
+  setSize(
+    width: number,
+    height: number,
+    pixelRatio = this.pixelRatio,
+    rasterRatio = pixelRatio,
+  ): void {
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
     this.pixelRatio = pixelRatio;
+    this.rasterRatio = rasterRatio;
   }
 
   /**
@@ -395,6 +419,20 @@ export class ChartModel {
     return zero && !log && data ? unionExtent([data, [0, 0]]) : data;
   }
 
+  /**
+   * The width of the widest of `labels`, measured once per list of band
+   * labels (the chart keeps a list while its bands are unchanged), since
+   * band axes may have thousands of them.
+   */
+  #widest(labels: readonly string[], measure: MeasureText, font: string): number {
+    const cached = this.#labelWidths.get(labels);
+    if (cached?.measure === measure && cached.font === font) return cached.width;
+    let width = 0;
+    for (const label of labels) width = Math.max(width, measure(label, font));
+    this.#labelWidths.set(labels, { measure, font, width });
+    return width;
+  }
+
   #pooled<T>(pool: Map<string, T>, key: string, create: () => T): T {
     let value = pool.get(key);
     if (value === undefined) {
@@ -419,6 +457,16 @@ export class ChartModel {
     return buffer;
   };
 
+  #doubleBuffer = (seriesKey: string, stage: string, length: number): Float64Array => {
+    const key = `${stage}|${seriesKey}`;
+    let buffer = this.#pooled(this.#doubles, key, () => new Float64Array(Math.max(16, length)));
+    if (buffer.length < length) {
+      buffer = new Float64Array(Math.ceil(length * 1.5));
+      this.#doubles.set(key, buffer);
+    }
+    return buffer;
+  };
+
   #byteBuffer = (
     seriesKey: string,
     stage: string,
@@ -437,14 +485,20 @@ export class ChartModel {
    * Buffer pools for panel `index`: each panel draws into buffers of its own.
    * Kept out of `scene` so frames, which inspectors keep, hold no scene state.
    */
-  #pools(index: number): Pick<Frame, "polyline" | "floats" | "bytes"> {
+  #pools(index: number): Pick<Frame, "polyline" | "floats" | "doubles" | "bytes"> {
     if (index === 0) {
-      return { polyline: this.#polyline, floats: this.#floatBuffer, bytes: this.#byteBuffer };
+      return {
+        polyline: this.#polyline,
+        floats: this.#floatBuffer,
+        doubles: this.#doubleBuffer,
+        bytes: this.#byteBuffer,
+      };
     }
     const at = (stage: string) => `${stage}~${index}`;
     return {
       polyline: (key, stage) => this.#polyline(key, at(stage)),
       floats: (key, stage, length) => this.#floatBuffer(key, at(stage), length),
+      doubles: (key, stage, length) => this.#doubleBuffer(key, at(stage), length),
       bytes: (key, stage, length) => this.#byteBuffer(key, at(stage), length),
     };
   }
@@ -694,7 +748,7 @@ export class ChartModel {
         bands.y?.labels ?? [],
         upward ? [y + size, y] : [y, y + size],
         padding("y"),
-        () => lineHeight,
+        lineHeight,
       );
       // Long category names are shortened rather than squeezing the plot.
       const room = Math.max(48, Math.round(width * 0.3));
@@ -813,14 +867,11 @@ export class ChartModel {
     if (frozen) columnGap = this.#columnGap;
     const widthOf = () => (width - left - right - (columns - 1) * columnGap) / columns;
     // The x plan for panels `plotWidth` wide, the first starting at `left`.
+    const categories = bands.x?.labels ?? [];
+    const widest = xType === "band" ? this.#widest(categories, measure, font) : 0;
     const planX = (plotWidth: number): AxisPlan => {
       if (xType === "band") {
-        return planBandAxis(
-          bands.x?.labels ?? [],
-          [left, left + plotWidth],
-          padding("x"),
-          measureLabel,
-        );
+        return planBandAxis(categories, [left, left + plotWidth], padding("x"), widest);
       }
       const xCount =
         config.x?.ticks ?? Math.max(2, Math.round(plotWidth / (xType === "time" ? 100 : 80)));
@@ -1022,6 +1073,7 @@ export class ChartModel {
         y: yAt.scale,
         plot,
         pixelRatio: this.pixelRatio,
+        rasterRatio: this.rasterRatio,
         theme,
         locale,
         hidden: this.hidden,
@@ -1070,7 +1122,8 @@ export class ChartModel {
       };
     });
     // Drop buffers of series that no longer exist.
-    for (const pool of [this.#polylines, this.#floats, this.#bytes] as Map<string, unknown>[]) {
+    const pools = [this.#polylines, this.#floats, this.#doubles, this.#bytes];
+    for (const pool of pools as Map<string, unknown>[]) {
       for (const key of pool.keys()) if (!this.#used.has(key)) pool.delete(key);
     }
     this.#views = views;
@@ -1160,6 +1213,7 @@ export class ChartModel {
     this.#bands = {};
     this.#polylines.clear();
     this.#floats.clear();
+    this.#doubles.clear();
     this.#bytes.clear();
     let vertices = 0;
     for (const item of result.geometry) vertices += item.draw.size(item);
@@ -1368,6 +1422,7 @@ export class ChartModel {
   dispose(): void {
     this.#polylines.clear();
     this.#floats.clear();
+    this.#doubles.clear();
     this.#bytes.clear();
     this.#views = [];
     this.#drawn = [];

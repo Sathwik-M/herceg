@@ -547,6 +547,7 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       colors: ramp,
       colorDomain: range,
       colorMidpoint: finite,
+      reduce: oneOf("mean", "max", "min"),
       label: string,
     },
   },

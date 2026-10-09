@@ -255,7 +255,8 @@ export interface PointCloud {
 
 /**
  * A grid of colored cells drawn as an image: `columns x rows` RGBA pixels,
- * row 0 at the top, stretched over the destination rectangle.
+ * row 0 at the top, stretched over the destination rectangle. A pixel is
+ * one cell, or for grids larger than the plot's pixels, a block of cells.
  */
 export interface RasterGeometry extends Geometry {
   kind: "raster";

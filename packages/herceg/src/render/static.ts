@@ -1,5 +1,5 @@
 import { estimateText, type MeasureText } from "../layout/text.ts";
-import { type ChartConfig, ChartModel } from "../model/model.ts";
+import { type ChartConfig, ChartModel, STATIC_RASTER_RATIO } from "../model/model.ts";
 import { NO_PAGE } from "./fallbacks.ts";
 import { pngDataUrl } from "./png.ts";
 import { renderSvg } from "./svg.ts";
@@ -24,7 +24,7 @@ let renders = 0;
 /** Renders a chart to a standalone SVG string. Needs no DOM. */
 export function renderToSVG(options: StaticOptions): string {
   const model = new ChartModel(options, NO_PAGE);
-  model.setSize(options.width, options.height, 1);
+  model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
   const scene = model.scene(options.measureText ?? estimateText);
   return renderSvg(scene, {
     idPrefix: options.idPrefix ?? `herceg-svg-${++renders}`,

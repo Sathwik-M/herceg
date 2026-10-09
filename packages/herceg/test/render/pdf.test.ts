@@ -590,21 +590,27 @@ describe("renderToPDF", () => {
       255, 255, 255, 0,
     ]);
 
-    // Cells narrower than a pixel stay one pixel each.
-    const columns = Array.from({ length: 1000 }, (_, i) => i);
-    const fine = render(
-      columns,
-      columns.map(() => 0),
-      columns,
-    );
-    expect(size(fine.objects.get(ref(fine.page, "Im1"))!.dictionary)[0]).toBe(1000);
+    // Cells narrower than a pixel stay one pixel each, up to two per CSS
+    // pixel; past that, pixels show blocks of cells.
+    const imageWidth = (count: number) => {
+      const columns = Array.from({ length: count }, (_, i) => i);
+      const pdf = render(
+        columns,
+        columns.map(() => 0),
+        columns,
+      );
+      return size(pdf.objects.get(ref(pdf.page, "Im1"))!.dictionary)[0];
+    };
+    const plotWidth = Number(placed![1]);
+    expect(imageWidth(400)).toBe(400);
+    expect(imageWidth(1000)).toBe(Math.floor(plotWidth * 2));
   });
 
   it("keeps repeated heatmap images within their pixel budget", () => {
     const budget = 4_194_304;
     expect(cellRepeat(300, 200, 2, 2)).toEqual([300, 200]);
     expect(cellRepeat(300, 200, 1000, 1)).toEqual([1, 400]);
-    // At the cell limit, a single row or column cannot repeat at all.
+    // At the pixel budget, a single row or column cannot repeat at all.
     expect(cellRepeat(400, 200, budget, 1)).toEqual([1, 1]);
     expect(cellRepeat(400, 200, 1, budget)).toEqual([1, 1]);
     // Wide cells in one direction shrink until the image fits.
