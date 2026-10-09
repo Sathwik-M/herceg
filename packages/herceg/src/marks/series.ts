@@ -1,5 +1,6 @@
 import type { NumericArray } from "../data/column.ts";
 import { scanExtent, type Table } from "../data/table.ts";
+import type { Breaks } from "../lod/m4.ts";
 import type { RangeExtremes, RangeIndex } from "../lod/minmax-index.ts";
 
 /**
@@ -119,7 +120,7 @@ function usable(value: number, log: boolean): boolean {
  * [min, max] of the y values a viewport [x0, x1] shows: points inside it,
  * plus, for sorted series, where segments cross its edges, so a line zoomed
  * in between two samples stays in view. With `log`, only positive values
- * count.
+ * count; with x `breaks`, only points they do not hide.
  */
 export function yExtent(
   series: Series,
@@ -129,6 +130,7 @@ export function yExtent(
   log = false,
   index?: RangeIndex,
   curved = false,
+  breaks?: Breaks,
 ): [number, number] | undefined {
   const lo = Math.min(x0, x1);
   const hi = Math.max(x0, x1);
@@ -142,17 +144,30 @@ export function yExtent(
   // The common case, a whole sorted column, is a plain scan, or an index
   // query when the column has a min/max index.
   const whole = series.rows === undefined && series.sorted && !log;
-  const inside = !whole
-    ? scanPositions(series, y, start, end, lo, hi, log)
-    : index && index.length === y.length
-      ? indexedExtent(index, y, start, end)
-      : scanExtent(y, start, end);
+  const extentOf = (a: number, b: number) =>
+    !whole
+      ? scanPositions(series, y, a, b, lo, hi, log, breaks)
+      : index && index.length === y.length
+        ? indexedExtent(index, y, a, b)
+        : scanExtent(y, a, b);
+  let inside: readonly [number, number] | undefined;
+  if (breaks && series.sorted) {
+    // Points inside breaks are not drawn: only the ranges between them count.
+    const ranges = breaks.shown(series.x, start, end, series.rows);
+    for (let r = 0; r < ranges.length; r += 2) {
+      const extent = extentOf(ranges[r]!, ranges[r + 1]!);
+      if (extent)
+        inside = inside ? [Math.min(inside[0], extent[0]), Math.max(inside[1], extent[1])] : extent;
+    }
+  } else {
+    inside = extentOf(start, end);
+  }
   let [min, max] = inside ?? [Infinity, -Infinity];
   if (series.sorted) {
     for (const edge of [lo, hi]) {
       const value = curved
-        ? outsideAt(series, y, edge, edge === lo)
-        : interpolateAt(series, y, edge);
+        ? outsideAt(series, y, edge, edge === lo, breaks)
+        : interpolateAt(series, y, edge, breaks);
       if (!usable(value, log)) continue;
       if (value < min) min = value;
       if (value > max) max = value;
@@ -173,7 +188,10 @@ function indexedExtent(
   return low < 0 ? undefined : [y[low]!, y[high]!];
 }
 
-/** [min, max] of usable y values at positions [start, end) whose x is in [lo, hi]. */
+/**
+ * [min, max] of usable y values at positions [start, end) whose x is in
+ * [lo, hi] and not hidden by `breaks`.
+ */
 function scanPositions(
   series: Series,
   y: Series["y"],
@@ -182,11 +200,12 @@ function scanPositions(
   lo: number,
   hi: number,
   log: boolean,
+  breaks?: Breaks,
 ): [number, number] | undefined {
   let min = Infinity;
   let max = -Infinity;
   const { rows, x } = series;
-  if (rows === undefined && !series.sorted && !log) {
+  if (rows === undefined && !series.sorted && !log && !breaks) {
     // A whole unsorted column (scatter plots): one tight loop.
     for (let k = start; k < end; k++) {
       const at = x[k]!;
@@ -197,11 +216,13 @@ function scanPositions(
     }
     return min <= max ? [min, max] : undefined;
   }
+  // Sorted series are given shown ranges; others are checked point by point.
+  const hides = !series.sorted && breaks ? breaks : undefined;
   for (let k = start; k < end; k++) {
     const row = rowOf(series, k);
     if (!series.sorted) {
       const at = x[row]!;
-      if (!(at >= lo && at <= hi)) continue;
+      if (!(at >= lo && at <= hi) || hides?.hides(at)) continue;
     }
     const value = y[row]!;
     if (!usable(value, log)) continue;
@@ -211,18 +232,28 @@ function scanPositions(
   return min <= max ? [min, max] : undefined;
 }
 
-/** y where the segment spanning x = `at` crosses it, or NaN when no segment does. */
-function interpolateAt(series: Series, y: Series["y"], at: number): number {
-  const after = lowerPosition(series, at);
-  if (after <= 0 || after >= series.length) return Number.NaN;
-  const a = rowOf(series, after - 1);
+/**
+ * y where the segment spanning x = `at` crosses it, or NaN when no segment
+ * does. With `breaks`, the segment joins the shown points either side,
+ * straight in positions (time shown), as it is drawn.
+ */
+function interpolateAt(series: Series, y: Series["y"], at: number, breaks?: Breaks): number {
+  let after = lowerPosition(series, at);
+  let before = after - 1;
+  if (breaks) {
+    after = breaks.shownFrom(series.x, after, series.length, series.rows);
+    before = breaks.shownBefore(series.x, before, series.rows);
+  }
+  if (before < 0 || after >= series.length) return Number.NaN;
+  const a = rowOf(series, before);
   const b = rowOf(series, after);
-  const xa = series.x[a]!;
-  const xb = series.x[b]!;
+  const place = (v: number) => (breaks ? breaks.collapse(v) : v);
+  const xa = place(series.x[a]!);
+  const xb = place(series.x[b]!);
   const ya = y[a]!;
   const yb = y[b]!;
   if (!(Number.isFinite(ya) && Number.isFinite(yb)) || xb === xa) return Number.NaN;
-  return ya + ((yb - ya) * (at - xa)) / (xb - xa);
+  return ya + ((yb - ya) * (place(at) - xa)) / (xb - xa);
 }
 
 /**
@@ -232,11 +263,22 @@ function interpolateAt(series: Series, y: Series["y"], at: number): number {
  * bounds the part of that curve in view, on any scale, whether it is drawn
  * curved or straight.
  */
-function outsideAt(series: Series, y: Series["y"], at: number, lower: boolean): number {
+function outsideAt(
+  series: Series,
+  y: Series["y"],
+  at: number,
+  lower: boolean,
+  breaks?: Breaks,
+): number {
   const after = lowerPosition(series, at);
   let k = lower ? after - 1 : after;
   // The first point past `at`, not one equal to it.
   if (!lower) while (k < series.length && xAt(series, k) <= at) k++;
+  // Hidden points are not drawn, so the curve runs to the shown ones beyond.
+  if (breaks)
+    k = lower
+      ? breaks.shownBefore(series.x, k, series.rows)
+      : breaks.shownFrom(series.x, k, series.length, series.rows);
   return k >= 0 && k < series.length ? y[rowOf(series, k)]! : Number.NaN;
 }
 
@@ -288,41 +330,6 @@ export function nearestPosition(series: Series, value: number): number {
     }
   }
   return best;
-}
-
-/**
- * Position of the point nearest `value` among those with x in [lo, hi], or
- * -1 when none is.
- */
-export function nearestPositionWithin(
-  series: Series,
-  value: number,
-  lo: number,
-  hi: number,
-): number {
-  if (!series.sorted) {
-    let best = -1;
-    let bestDistance = Infinity;
-    for (let k = 0; k < series.length; k++) {
-      const x = xAt(series, k);
-      if (!(x >= lo && x <= hi)) continue;
-      const distance = Math.abs(x - value);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        best = k;
-      }
-    }
-    return best;
-  }
-  let k = nearestPosition(series, value);
-  if (k < 0) return -1;
-  if (xAt(series, k) < lo) k = lowerPosition(series, lo);
-  else if (xAt(series, k) > hi) {
-    k = lowerPosition(series, hi);
-    if (k >= series.length || xAt(series, k) > hi) k--;
-  }
-  const x = k >= 0 && k < series.length ? xAt(series, k) : Number.NaN;
-  return x >= lo && x <= hi ? k : -1;
 }
 
 /** Caches a computation until the table changes. */

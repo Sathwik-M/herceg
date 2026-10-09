@@ -39,12 +39,14 @@ export interface PanelSplit {
 /** Sees a split's rows and columns of panels, and throws if the chart cannot draw them. */
 export type PanelCheck = (shape: { rows: number; columns: number }, panels: number) => void;
 
+/** The chart options a layout checks; the x axis as panels read it, breaks aside. */
+export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y"> & {
+  x?: AxisSpec | undefined;
+};
+
 export interface PanelLayout {
   /** Rejects marks and options the panels cannot draw. */
-  check(
-    marks: readonly Mark[],
-    options: Pick<ChartSpec, "resolve" | "interaction" | "x" | "y">,
-  ): void;
+  check(marks: readonly Mark[], options: LayoutOptions): void;
   /** Splits a chart's series into panels, keeping what it can from one scene to the next. */
   splitter(): { split(base: readonly MarkSeries[], check: PanelCheck): PanelSplit };
   grid(split: PanelSplit, lineHeight: number): PanelGrid;

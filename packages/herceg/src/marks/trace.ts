@@ -104,19 +104,41 @@ function stepped(
 }
 
 /**
- * The visible rows widened to two distinct x values past each edge of the
- * view (when the data has them), so a monotone curve's tangents at the
- * view's edges are those it has unzoomed.
+ * The rows a line through the view runs through: those in it and one
+ * neighbor past each edge, so it reaches the plot's edges. On an axis with
+ * breaks, a neighbor is the nearest shown row, past any hidden ones.
+ */
+export function drawnRange(series: Series, frame: Frame): [number, number] {
+  const [start, end] = visibleRange(series, frame.x.domain[0], frame.x.domain[1]);
+  const breaks = frame.x.breaks;
+  if (!breaks || !series.sorted) return [start, end];
+  return breaks.reach(series.x, start, end, series.length, series.rows);
+}
+
+/**
+ * The drawn rows widened to two distinct x values past each edge of the
+ * view (when the data has them; on an axis with breaks, of shown rows), so
+ * a monotone curve's tangents at the view's edges are those it has unzoomed.
  */
 export function curveRows(series: Series, frame: Frame): [number, number] {
-  let [start, end] = visibleRange(series, frame.x.domain[0], frame.x.domain[1]);
+  let [start, end] = drawnRange(series, frame);
   if (!series.sorted) return [start, end];
-  const xAt = (k: number) => series.x[rowOf(series, k)]!;
-  for (let distinct = 0; start > 0 && distinct < 2; start--) {
-    if (xAt(start - 1) !== xAt(start)) distinct++;
+  const { x, rows, length } = series;
+  const breaks = frame.x.breaks;
+  const xAt = (k: number) => x[rowOf(series, k)]!;
+  const before = (k: number) => (breaks ? breaks.shownBefore(x, k, rows) : k);
+  const after = (k: number) => (breaks ? breaks.shownFrom(x, k, length, rows) : k);
+  for (let distinct = 0; start > 0 && distinct < 2; ) {
+    const k = before(start - 1);
+    if (k < 0) break;
+    if (xAt(k) !== xAt(start)) distinct++;
+    start = k;
   }
-  for (let distinct = 0; end < series.length && distinct < 2; end++) {
-    if (xAt(end) !== xAt(end - 1)) distinct++;
+  for (let distinct = 0; end < length && distinct < 2; ) {
+    const k = after(end);
+    if (k >= length) break;
+    if (xAt(k) !== xAt(end - 1)) distinct++;
+    end = k + 1;
   }
   return [start, end];
 }
@@ -135,10 +157,7 @@ export function tracePath(
 ): Polyline {
   const path = frame.polyline(series.key, stage);
   path.reset();
-  const [start, end] =
-    curve === "monotone"
-      ? curveRows(series, frame)
-      : visibleRange(series, frame.x.domain[0], frame.x.domain[1]);
+  const [start, end] = curve === "monotone" ? curveRows(series, frame) : drawnRange(series, frame);
   reduce(series, y, start, end, frame, path, index);
   if (curve !== "monotone") return stepped(path, frame, series.key, stage, curve);
   const curved = frame.polyline(series.key, `${stage}-curve`);
@@ -171,7 +190,7 @@ export function traceBand(
   const lower = frame.polyline(series.key, "lower");
   upper.reset();
   lower.reset();
-  const [start, end] = visibleRange(series, frame.x.domain[0], frame.x.domain[1]);
+  const [start, end] = drawnRange(series, frame);
   const xMap = frame.x.mapping();
   const yMap = frame.y.mapping();
   if (
@@ -192,10 +211,13 @@ export function traceBand(
     };
   }
   let runStart = -1;
+  const breaks = xMap.breaks;
   for (let k = start; k <= end; k++) {
     let valid = false;
     if (k < end) {
       const row = rowOf(series, k);
+      // Rows inside an axis break are left out without ending a run.
+      if (breaks?.hides(series.x[row]!)) continue;
       valid =
         placeable(xMap, series.x[row]!) &&
         placeable(yMap, top[row]!) &&
@@ -377,8 +399,10 @@ function keptRows(
     kept[n++] = k;
   };
   let n = 0;
+  const breaks = frame.x.breaks;
   if (!series.sorted) {
-    for (let k = start; k < end; k++) keep(k);
+    // Rows inside an axis break are left out.
+    for (let k = start; k < end; k++) if (!breaks?.hides(series.x[rowOf(series, k)]!)) keep(k);
     if (kept.length <= RETAINED) keptScratch = kept;
     return kept.subarray(0, n);
   }
@@ -416,6 +440,8 @@ function keptRows(
   for (let k = start; k < end; k++) {
     const row = rowOf(series, k);
     const x = series.x[row]!;
+    // Rows inside an axis break are left out; the edges join across them.
+    if (breaks?.hides(x)) continue;
     let missing = !placeable(xMap, x);
     for (let b = 0; b < count && !missing; b++) missing = !placeable(yMap, value(k, b));
     for (const layer of layers) missing ||= !Number.isFinite(layer.top[rowOf(layer.series, k)]!);

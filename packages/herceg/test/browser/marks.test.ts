@@ -743,7 +743,7 @@ describe("point clouds on the GPU", () => {
       tooltip: "x",
       channelKind: (axis) => lines.channelKind(axis),
       series: (key, palette) => lines.series(key, palette),
-      xExtent: (...args) => lines.xExtent(...args),
+      xExtent: (series, log) => lines.xExtent(series, log),
       yExtent: (...args) => lines.yExtent(...args),
       geometry: (series, frame) =>
         lines.geometry(series, frame).map((g) => Object.assign(g, { cloud: false })),

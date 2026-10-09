@@ -1,5 +1,6 @@
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { areaDrawing } from "../draw/area.ts";
+import type { Breaks } from "../lod/m4.ts";
 import type { RangeIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { AreaGeometry } from "../scene/scene.ts";
@@ -174,15 +175,15 @@ export class AreaMark implements Mark<AreaSpec> {
     return unionExtent(series.map((s) => xExtent(s, log)));
   }
 
-  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
+  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
     const curved = this.spec.curve === "monotone";
     return unionExtent(
       series.flatMap((s) => {
         const stacked = this.#stackIndexes.get(s.key);
         const top = stacked?.top ?? this.#indexes.index(this.table, s);
         return [
-          yExtent(s, x0, x1, s.y, log, top, curved),
-          s.y0 ? yExtent(s, x0, x1, s.y0, log, stacked?.bottom, curved) : undefined,
+          yExtent(s, x0, x1, s.y, log, top, curved, breaks),
+          s.y0 ? yExtent(s, x0, x1, s.y0, log, stacked?.bottom, curved, breaks) : undefined,
         ];
       }),
     );

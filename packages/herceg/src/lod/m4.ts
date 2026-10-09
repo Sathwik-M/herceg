@@ -4,23 +4,97 @@ import type { Polyline } from "./polyline.ts";
 
 /**
  * Maps a value to pixels: `offset + (v - origin) * factor`, where `v` is the
- * value or, for log scales, its base-10 logarithm.
+ * value, for log scales its base-10 logarithm, and on axes with breaks its
+ * position with the breaks taken out.
  */
 export interface Mapping {
   readonly origin: number;
   readonly offset: number;
   readonly factor: number;
   readonly log: boolean;
+  readonly breaks?: Breaks | undefined;
+}
+
+/**
+ * Time a time axis leaves out (`timeBreaks`). Values are placed by their
+ * position with the breaks before them taken out; values inside a break are
+ * hidden, and lines join the points on either side. Implemented by
+ * scale/breaks.ts, which only charts with breaks load, together with level
+ * of detail over them.
+ */
+export interface Breaks {
+  /**
+   * A value's position: the value less the break time before it.
+   * Nondecreasing; every value in a break is at its seam.
+   */
+  collapse(value: number): number;
+  /** The value at a position; at a seam, the end of its break (the first value shown after it). */
+  expand(position: number): number;
+  /** Whether a value is inside a break, and so not drawn. */
+  hides(value: number): boolean;
+  /** The break holding a value, as [from, to), or undefined when the value is shown. */
+  around(value: number): readonly [number, number] | undefined;
+  /**
+   * The first of the positions [k, end) of ascending `x` whose value is
+   * shown, or `end`; hidden runs are jumped by binary search, however long.
+   * Position i is row `rows[i]` when `rows` is given.
+   */
+  shownFrom(x: NumericArray, k: number, end: number, rows?: Uint32Array): number;
+  /** The last of the positions [0, k] of ascending `x` whose value is shown, or -1. */
+  shownBefore(x: NumericArray, k: number, rows?: Uint32Array): number;
+  /**
+   * Positions [start, end) of ascending `x` (of `length`), widened where
+   * their first or last value is hidden to the nearest shown one past it.
+   */
+  reach(
+    x: NumericArray,
+    start: number,
+    end: number,
+    length: number,
+    rows?: Uint32Array,
+  ): [number, number];
+  /**
+   * Of the positions [0, end) of `x`, the shown one nearest `k` going one
+   * way (toward 0 when `back`), else the other way; -1 when none is.
+   * Ascending x is searched, other x scanned.
+   */
+  nearestShown(
+    x: NumericArray,
+    k: number,
+    end: number,
+    back: boolean,
+    sorted: boolean,
+    rows?: Uint32Array,
+  ): number;
+  /**
+   * Of the positions [start, end) of ascending `x` (position k is row
+   * `rows[k]` when `rows` is given), the ranges whose values are shown, as
+   * pairs of start and end positions.
+   */
+  shown(x: NumericArray, start: number, end: number, rows?: Uint32Array): number[];
+  /** `m4` over ascending x: hidden points are left out, without breaking the line. */
+  m4(
+    x: NumericArray,
+    y: NumericArray,
+    start: number,
+    end: number,
+    xMap: Mapping,
+    yMap: Mapping,
+    pixelRatio: number,
+    out: Polyline,
+    rows?: Uint32Array,
+    index?: RangeIndex,
+  ): void;
 }
 
 export function mapValue(mapping: Mapping, value: number): number {
-  return (
-    mapping.offset + ((mapping.log ? Math.log10(value) : value) - mapping.origin) * mapping.factor
-  );
+  const { breaks } = mapping;
+  const v = mapping.log ? Math.log10(value) : breaks ? breaks.collapse(value) : value;
+  return mapping.offset + (v - mapping.origin) * mapping.factor;
 }
 
 /** Values a mapping cannot place: non-finite, or not positive on a log scale. */
-function unmappable(mapping: Mapping, value: number): boolean {
+export function unmappable(mapping: Mapping, value: number): boolean {
   return !Number.isFinite(value) || (mapping.log && value <= 0);
 }
 
@@ -55,6 +129,10 @@ export function m4(
   rows?: Uint32Array,
   index?: RangeIndex,
 ): void {
+  if (xMap.breaks) {
+    xMap.breaks.m4(x, y, start, end, xMap, yMap, pixelRatio, out, rows, index);
+    return;
+  }
   if (rows === undefined && !xMap.log && !yMap.log && xMap.factor > 0) {
     // Index queries cost about as much as scanning 200 points.
     const columns = (x[end - 1]! - x[start]!) * xMap.factor * pixelRatio;
@@ -252,7 +330,7 @@ function m4Points(
   if (first >= 0) emitColumn(x, y, first, low, high, last, xMap, yMap, out, rows);
 }
 
-function emitColumn(
+export function emitColumn(
   x: NumericArray,
   y: NumericArray,
   first: number,
@@ -285,7 +363,7 @@ function emitPoint(
   out.push(mapValue(xMap, x[row]!), mapValue(yMap, y[row]!));
 }
 
-/** Writes every point without reduction, for unsorted x. */
+/** Writes every point without reduction, for unsorted x. Hidden points are left out. */
 export function polylineAll(
   x: NumericArray,
   y: NumericArray,
@@ -296,10 +374,12 @@ export function polylineAll(
   out: Polyline,
   rows?: Uint32Array,
 ): void {
+  const breaks = xMap.breaks;
   for (let k = start; k < end; k++) {
     const i = rows === undefined ? k : rows[k]!;
     const xv = x[i]!;
     const yv = y[i]!;
+    if (breaks?.hides(xv)) continue;
     if (unmappable(xMap, xv) || unmappable(yMap, yv)) {
       out.break();
       continue;

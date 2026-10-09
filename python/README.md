@@ -31,6 +31,7 @@ hg.scatter(stations, x="lon", y="lat", color="anomaly", colors="rdbu", color_mid
 hg.scatter(cars, x="weight", y="mpg", symbol="origin")  # a shape per origin
 hg.heatmap(load, x="hour", y="host", value="cpu", colors="viridis")
 hg.candlestick(prices, x="day", open="open", high="high", low="low", close="close")
+hg.candlestick(prices, "day", "open", "high", "low", "close", variant="ohlc")  # OHLC bars
 hg.histogram(requests, x="latency", series="region", bins={"step": 10})
 hg.pie(sales, "region", "revenue", inner_radius=0.6)  # a donut; counts rows without a value
 hg.boxplot(requests, x="region", y="latency", series="version")
@@ -90,7 +91,9 @@ rows in every panel; `panels` (ids or `hg.Panel("latency", title="Latency",
 x=hg.Axis(label="Time"), y=hg.Axis(label="ms"))`), `panel_columns`, and
 `panel_row_heights` (relative heights of the rows) for subplots, whose marks
 name their panel with `panel="latency"` (or `"*"` for all),
-`legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`
+`legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`, or
+`hg.Tooltip(mode=..., axis_labels=True)`, which also labels the crosshair on
+the axes), `zoom`
 (`True` or `"x"`, `"y"`, `"xy"`: wheel zoom and drag pan along those axes),
 `brush` (`"x"`, `"y"`: drag to select a range; `"xy"`: a rectangle; `"lasso"`: a
 freehand region; along zoomed axes, drag to zoom instead),
@@ -113,6 +116,30 @@ variables, and static output has no page: both use the fallback.
 
 ```python
 hg.Chart(data, theme={"extends": "dark", "bar_radius": 0, "palette": ["#5b8def", "#dc6f3a"]})
+```
+
+A time x axis can leave out time, so trading sessions sit side by side:
+`hg.Axis(breaks=[...])` takes `hg.Break` rules, each one of `weekdays`
+(`("sat", "sun")`), `hours` (`("16:00", "09:30")` or `datetime.time`s, a
+daily span wrapping past midnight), `dates` (holidays, as dates or
+`"YYYY-MM-DD"`), or `start` and `end` (instants; naive datetimes are UTC),
+all in the chart's `time_zone`, clock changes included. Data inside a break
+is not drawn; lines join the points either side, and ticks that would fall
+in a break move to the session that opens after it. Dicts in the spec's
+form (`{"weekdays": [...]}`, `{"from": ..., "to": ...}`) work too.
+
+```python
+sessions = hg.Axis(
+    breaks=[
+        hg.Break(weekdays=("sat", "sun")),
+        hg.Break(hours=("16:00", "09:30")),
+        hg.Break(dates=[datetime.date(2025, 12, 25)]),
+    ]
+)
+(
+    hg.Chart(prices, x=sessions, time_zone="America/New_York", tooltip=hg.Tooltip(axis_labels=True))
+    .candlestick("time", "open", "high", "low", "close")
+)
 ```
 
 Mark methods take column names; `series` names a category column that splits

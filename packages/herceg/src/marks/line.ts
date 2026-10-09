@@ -1,5 +1,6 @@
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { lineDrawing } from "../draw/line.ts";
+import type { Breaks } from "../lod/m4.ts";
 import type { LineGeometry } from "../scene/scene.ts";
 import type { Curve, LineSpec } from "../spec/spec.ts";
 import {
@@ -71,11 +72,13 @@ export class LineMark implements Mark<LineSpec> {
     return unionExtent(series.map((s) => xExtent(s, log)));
   }
 
-  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
+  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
     // Curves at the view's edges are measured where they are drawn.
     const curved = this.spec.curve === "monotone";
     return unionExtent(
-      series.map((s) => yExtent(s, x0, x1, s.y, log, this.#indexes.index(this.table, s), curved)),
+      series.map((s) =>
+        yExtent(s, x0, x1, s.y, log, this.#indexes.index(this.table, s), curved, breaks),
+      ),
     );
   }
 

@@ -1,4 +1,4 @@
-import type { Mapping } from "../lod/m4.ts";
+import type { Breaks, Mapping } from "../lod/m4.ts";
 import { linearTicks, niceDomain } from "./ticks.ts";
 
 export type ScaleType = "linear" | "log" | "time" | "band";
@@ -16,6 +16,8 @@ export interface PositionScale {
   ticks(count: number): number[];
   /** Coefficients for inlining the mapping in hot loops. */
   mapping(): Mapping;
+  /** Time scales with breaks: the time left out; values inside it are not drawn. */
+  readonly breaks?: Breaks;
   /** Band scales: category labels in index order. */
   readonly categories?: readonly string[];
   /** Band scales: width of each band in pixels (negative for reversed ranges). */

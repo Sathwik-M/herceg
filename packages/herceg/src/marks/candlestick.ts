@@ -2,6 +2,7 @@ import type { NumericArray } from "../data/column.ts";
 import type { NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { segmentDrawing } from "../draw/segments.ts";
+import type { Breaks } from "../lod/m4.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry, SegmentGeometry } from "../scene/scene.ts";
 import type { CandlestickSpec } from "../spec/spec.ts";
@@ -40,6 +41,12 @@ export interface CandlestickOptions<S extends Schema> {
   rise?: string;
   /** Color of candles closing below their open; the theme's `fall` by default. */
   fall?: string;
+  /**
+   * "candlestick" (the default): bodies from open to close, hollow when
+   * they rise. "ohlc": bars, a line from low to high with the open ticked
+   * to its left and the close to its right, colored by direction.
+   */
+  variant?: "candlestick" | "ohlc";
   label?: string;
   /** The y axis the prices are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
@@ -52,6 +59,8 @@ export interface CandlestickOptions<S extends Schema> {
 
 /** Segments a candle draws at most: a hollow body's four sides and two wicks. */
 const SEGMENTS = 6;
+/** Segments of an OHLC bar: its line from low to high, and the open and close ticks. */
+const OHLC_SEGMENTS = 3;
 
 type Prices = Record<"open" | "high" | "low" | "close", NumericArray>;
 
@@ -83,7 +92,9 @@ function candleOf(prices: Prices, row: number, log: boolean, out: Float64Array):
  * Open-high-low-close candles, as for prices. A candle's body spans its open
  * and close, its wicks its low and high. Candles closing at or above their
  * open are hollow, others filled, so direction reads without color while
- * candles are a few pixels wide. When more candles are in view than the plot
+ * candles are a few pixels wide. The "ohlc" variant draws bars instead: a
+ * line from low to high, the open ticked left and the close right, which
+ * show direction by their order. When more candles are in view than the plot
  * has pixels, the candles in each pixel column merge into one: the open of
  * the earliest, the close of the latest (by x, then by row), and the highest
  * high and lowest low. The series reads the close, which tooltips mark and
@@ -143,15 +154,18 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
     return buildSeries(table, this.#split.sources(), positions, key, palette, color);
   }
 
-  xExtent(series: readonly Series[], log: boolean) {
+  xExtent(series: readonly Series[], log: boolean, breaks?: Breaks) {
     if (!this.#slots) return undefined;
     const extent = unionExtent(series.map((s) => xExtent(s, log)));
     // Leave half a candle slot of room at each end.
-    return extent && this.#slots.pad(extent, log);
+    return extent && this.#slots.pad(extent, log, breaks);
   }
 
-  /** The lowest low and highest high of candles whose center is in [x0, x1]. */
-  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
+  /**
+   * The lowest low and highest high of candles whose center is in [x0, x1]
+   * and not inside one of the x axis' `breaks`.
+   */
+  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
     const prices = this.#prices();
     const candle = this.#candle;
     const lo = Math.min(x0, x1);
@@ -164,7 +178,7 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
         const row = rowOf(s, k);
         const at = s.x[row]!;
         if (this.#categorical ? at < 0 : !(at >= lo && at <= hi)) continue;
-        if (!candleOf(prices, row, log, candle)) continue;
+        if (breaks?.hides(at) || !candleOf(prices, row, log, candle)) continue;
         if (candle[2]! < min) min = candle[2]!;
         if (candle[1]! > max) max = candle[1]!;
       }
@@ -180,6 +194,9 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
     const rise = this.spec.rise ?? frame.theme.rise;
     const fall = this.spec.fall ?? frame.theme.fall;
     const candle = this.#candle;
+    const ohlc = this.spec.variant === "ohlc";
+    // Candles at times an axis break leaves out are not drawn.
+    const breaks = x.breaks;
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       const [start, end] = this.#categorical
@@ -196,14 +213,15 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
       for (let k = start; k < end && count <= columns; k++) {
         const row = rowOf(s, k);
         const at = s.x[row]!;
-        if (this.#categorical && at < 0) continue;
+        if ((this.#categorical && at < 0) || breaks?.hides(at)) continue;
         if (reaches(x.map(at)) && candleOf(prices, row, log, candle)) count++;
       }
       const merged = count > columns;
       const capacity = merged ? columns : count;
       const rising = frame.floats(s.key, "rise", capacity * SEGMENTS * 4);
-      const falling = frame.floats(s.key, "fall", capacity * 4);
-      const bodies = frame.floats(s.key, "body", capacity * 4);
+      // A falling candle draws one wick beside its body; a falling bar, all its segments.
+      const falling = frame.floats(s.key, "fall", capacity * (ohlc ? OHLC_SEGMENTS : 1) * 4);
+      const bodies = ohlc ? undefined : frame.floats(s.key, "body", capacity * 4);
       let risingCount = 0;
       let fallingCount = 0;
       let bodyCount = 0;
@@ -224,6 +242,17 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
         const [yo, yh, yl, yc] = [y.map(o), y.map(h), y.map(l), y.map(c)];
         const left = center - width / 2;
         const right = center + width / 2;
+        if (ohlc) {
+          const rises = c >= o;
+          const to = rises ? rising : falling;
+          let at = rises ? risingCount : fallingCount;
+          segment(to, at++, center, yh, center, yl);
+          segment(to, at++, left, yo, center, yo);
+          segment(to, at++, center, yc, right, yc);
+          if (rises) risingCount = at;
+          else fallingCount = at;
+          return;
+        }
         const top = Math.min(yo, yc);
         const bottom = Math.max(yo, yc);
         if (c >= o) {
@@ -237,11 +266,11 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
         } else {
           segment(falling, fallingCount++, center, yh, center, yl);
           const at = bodyCount++ * 4;
-          bodies[at] = left;
-          bodies[at + 1] = top;
-          bodies[at + 2] = width;
+          bodies![at] = left;
+          bodies![at + 1] = top;
+          bodies![at + 2] = width;
           // A candle that barely moves still shows as a line.
-          bodies[at + 3] = Math.max(1, bottom - top);
+          bodies![at + 3] = Math.max(1, bottom - top);
         }
       };
       if (merged) {
@@ -250,13 +279,14 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
         for (let k = start; k < end; k++) {
           const row = rowOf(s, k);
           const at = s.x[row]!;
-          if (this.#categorical && at < 0) continue;
+          if ((this.#categorical && at < 0) || breaks?.hides(at)) continue;
           const center = x.map(at);
           if (!reaches(center) || !candleOf(prices, row, log, candle)) continue;
           draw(center, width, candle[0]!, candle[1]!, candle[2]!, candle[3]!);
         }
       }
-      const strokeWidth = 1;
+      // Bars wide enough to read a heavier line get one.
+      const strokeWidth = ohlc && !merged && width >= 8 ? 2 : 1;
       out.push(
         {
           kind: "segments",
@@ -276,7 +306,9 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
           coords: falling,
           count: fallingCount,
         },
-        {
+      );
+      if (bodies) {
+        out.push({
           kind: "rect",
           draw: rectDrawing,
           key: `${s.key}|body`,
@@ -284,8 +316,8 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
           fillOpacity: 1,
           rects: bodies,
           count: bodyCount,
-        },
-      );
+        });
+      }
     }
     return out;
   }
@@ -315,7 +347,7 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
     for (let k = start; k < end; k++) {
       const row = rowOf(s, k);
       const at = s.x[row]!;
-      if (this.#categorical && at < 0) continue;
+      if ((this.#categorical && at < 0) || x.breaks?.hides(at)) continue;
       const offset = x.map(at) - plot.x;
       // Only candles centered in the plot; the domain's end maps to its edge.
       if (!(offset >= 0 && offset <= plot.width)) continue;
@@ -386,11 +418,14 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
         }
       }
     }
-    if (count === 0 || latest < 0) return `${name}: no candles`;
+    const bars = this.spec.variant === "ohlc";
+    const noun = (n: number) =>
+      bars ? (n === 1 ? "OHLC bar" : "OHLC bars") : n === 1 ? "candle" : "candles";
+    if (count === 0 || latest < 0) return `${name}: no ${noun(0)}`;
     const f = format.y;
     candleOf(prices, latest, log, candle);
     const [o, h, l, c] = candle;
-    return `${name}: ${count} ${count === 1 ? "candle" : "candles"}, prices from ${f(low)} to ${f(high)}; the last opened at ${f(o!)}, ranged from ${f(l!)} to ${f(h!)}, and closed at ${f(c!)}`;
+    return `${name}: ${count} ${noun(count)}, prices from ${f(low)} to ${f(high)}; the last opened at ${f(o!)}, ranged from ${f(l!)} to ${f(h!)}, and closed at ${f(c!)}`;
   }
 
   #prices(): Prices {
@@ -423,7 +458,7 @@ export function candlestick<S extends Schema>(
     high: options.high,
     low: options.low,
     close: options.close,
-    ...definedFields(options, ["rise", "fall", "label", "axis", "facet", "panel", "id"]),
+    ...definedFields(options, ["variant", "rise", "fall", "label", "axis", "facet", "panel", "id"]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

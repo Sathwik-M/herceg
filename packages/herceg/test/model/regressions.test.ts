@@ -122,7 +122,7 @@ describe("domains", () => {
       tooltip: inner.tooltip,
       channelKind: (axis) => inner.channelKind(axis),
       series: (key, palette) => inner.series(key, palette),
-      xExtent: (...args) => inner.xExtent(...args),
+      xExtent: (series, log) => inner.xExtent(series, log),
       yExtent: (...args) => {
         scans++;
         return inner.yExtent(...args);

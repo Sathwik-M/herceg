@@ -44,8 +44,8 @@ benchmark suite.
 
 Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
 (vertical and horizontal, with value labels), point (with size, color,
-opacity, and shape encoded by fields), heatmap, error bar, candlestick,
-histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge,
+opacity, and shape encoded by fields), heatmap, error bar, candlestick (and
+OHLC bars), histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge,
 funnel, radar, Sankey, network (graph), and map marks (choropleth regions and
 points on Equal Earth, Natural Earth, Mercator, equirectangular, and conic
 equal-area projections, from GeoJSON or packed geometry columns), monotone curves, named
@@ -58,7 +58,9 @@ tables (filter, calculate, bin, aggregate, rolling windows, sort) with
 portable expressions, level of detail, streaming updates, a shared
 scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
-selections, animated changes of view), static SVG and PDF export, React, Vue, and Svelte adapters,
+selections, animated changes of view, crosshair labels on the axes), time
+axes that leave out breaks (nights, weekends, holidays) in any time zone,
+static SVG and PDF export, React, Vue, and Svelte adapters,
 min/max indexes for zooming and streaming large line series, WebGL drawing
 of large point series, chart specs with binary columns, a Python package, a
 second y axis, small multiples (wrapped or by row and column, with shared or
@@ -73,7 +75,8 @@ Next, in order:
 2. Layout: weighted columns, and categories resolved per panel.
 3. Animation of changed values (bars, pies) and of panels; leader lines for
    moved labels.
-4. Financial tools and 3D.
+4. More financial tools (a range navigator, drawing tools, markers at
+   breaks) and 3D.
 5. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 

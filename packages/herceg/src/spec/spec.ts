@@ -13,8 +13,8 @@ export type { Expression, Operator } from "../data/expression.ts";
 /**
  * The spec format this herceg writes; it reads the earlier ones too. Each
  * version adds what an older reader would ignore and draw differently:
- * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x` and
- * panels' own `x`.
+ * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
+ * panels' own `x`, and the x axis' `breaks`.
  */
 export const SPEC_VERSION = 3;
 
@@ -24,8 +24,9 @@ export type Field = string;
 export interface ChartSpec {
   /**
    * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
-   * `grid` must give 2 or later, and those using `resolve.x` or a panel's `x`
-   * 3, so that older readers refuse them rather than draw them differently.
+   * `grid` must give 2 or later, and those using `resolve.x`, a panel's `x`,
+   * or x axis `breaks` 3, so that older readers refuse them rather than draw
+   * them differently.
    */
   version?: 1 | 2 | 3;
   /** Chart title, also its accessible name. */
@@ -38,7 +39,7 @@ export interface ChartSpec {
   /** Tables referenced by marks, by name. */
   data?: Record<string, DataSpec>;
   marks: MarkSpec[];
-  x?: AxisSpec;
+  x?: XAxisSpec;
   y?: AxisSpec;
   /**
    * A second y axis on the right, for marks with `axis: "right"`, with its
@@ -347,6 +348,36 @@ export interface AxisSpec {
   axis?: boolean;
 }
 
+/** The x axis: an axis whose time may leave out spans of time. */
+export interface XAxisSpec extends AxisSpec {
+  /**
+   * Time the axis leaves out, so that what is left is drawn without gaps:
+   * weekends, hours outside trading sessions, holidays. Needs a time axis
+   * and spec version 3. Data inside a break is not drawn; lines and areas
+   * join the points on either side.
+   */
+  breaks?: TimeBreakSpec[];
+}
+
+/** A day of the week, by its first three letters in English. */
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+/**
+ * Time a time axis leaves out, in the chart's `timeZone`. Each break is one
+ * of: days of the week (`{ weekdays: ["sat", "sun"] }`), a daily span of
+ * wall-clock time (`{ hours: ["16:00", "09:30"] }`, wrapping past midnight
+ * when it ends earlier than it starts), whole calendar days
+ * (`{ dates: ["2025-12-25"] }`), or a span of instants (`{ from, to }`,
+ * epoch milliseconds). Starts are included, ends are not. Across a clock
+ * change, `hours` leaves out the instants whose wall-clock time is in the
+ * span, so a span inside a repeated hour is left out twice.
+ */
+export type TimeBreakSpec =
+  | { weekdays: Weekday[] }
+  | { hours: [string, string] }
+  | { dates: string[] }
+  | { from: number; to: number };
+
 export interface TooltipSpec {
   /**
    * "nearest-x": every series at the x position nearest the pointer.
@@ -355,6 +386,12 @@ export interface TooltipSpec {
    * "nearest": the single nearest point.
    */
   mode?: "nearest-x" | "nearest-y" | "nearest";
+  /**
+   * Label the crosshair on the axes, as financial charts do: the inspected
+   * value on the axis the crosshair follows, and the pointer's position on
+   * the other axes, across the plot at a dashed line. Off by default.
+   */
+  axisLabels?: boolean;
 }
 
 export interface InteractionSpec {
@@ -685,6 +722,12 @@ export interface CandlestickSpec extends MarkBase {
   high: Field;
   low: Field;
   close: Field;
+  /**
+   * "candlestick" (the default): bodies from open to close. "ohlc": bars,
+   * a line from low to high with the open ticked to its left and the close
+   * to its right.
+   */
+  variant?: "candlestick" | "ohlc";
   /** Color of candles closing at or above their open; the theme's `rise` by default. */
   rise?: string;
   /** Color of candles closing below their open; the theme's `fall` by default. */
