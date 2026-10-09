@@ -71,8 +71,8 @@ Next, in order:
 3. Animation of changed values (bars, pies) and of panels; leader lines for
    moved labels.
 4. Financial tools, geographic charts, and 3D.
-5. Screen-reader verification, benchmarks across browsers and machines, and
-   an API review before a first release.
+5. Screen-reader verification, benchmarks in Firefox and on other machines
+   (WebKit and Chrome are measured), and an API review before a first release.
 
 ## Development
 
