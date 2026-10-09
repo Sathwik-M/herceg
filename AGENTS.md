@@ -57,16 +57,21 @@ npm run lint:python      # ruff check, format check, and mypy type check of the 
 Keep this list in sync with `package.json` as build, test, and Python commands
 are added.
 
-### Astra reviews
+### Codex reviews and design advice
 
-"Astra" is the Codex model `gpt-6-astra`. A significant-step review is run with
-High reasoning effort and full permissions:
+"Sol" is the Codex model `gpt-6.1-sol`. A significant-step review is run with
+xhigh reasoning effort and full permissions:
 
 ```sh
-codex exec -m gpt-6-astra -c model_reasoning_effort="high" \
+codex exec -m gpt-6.1-sol -c model_reasoning_effort="xhigh" \
   --dangerously-bypass-approvals-and-sandbox -C "$PWD" \
   "$(cat tmp/reviews/<topic>-request.md)" < /dev/null > tmp/reviews/<topic>-response.md
 ```
+
+"Astra" is the Codex model `gpt-6-astra`. Ask it for design advice and
+recommendations before building (`-m gpt-6-astra -c
+model_reasoning_effort="high"`, otherwise the same command); reviews go to
+Sol.
 
 Close stdin (`< /dev/null`); otherwise `codex exec` waits for more input.
 
@@ -497,17 +502,17 @@ dataset, and mark in different places unless they mean different things. The
 core vocabulary is defined in `docs/architecture.md`; keep code and docs
 consistent with it.
 
-## Significant-step review with Astra
+## Significant-step review with Sol
 
-Before every significant commit, request a review from Astra (see "Astra
-reviews" above) with High reasoning and full permissions. Significant steps
+Before every significant commit, request a review from Sol (see "Codex
+reviews and design advice" above) with xhigh reasoning and full permissions. Significant steps
 include architectural decisions, public API changes, renderer implementations,
 data model changes, benchmark infrastructure changes, memory model changes,
 streaming changes, new chart families, Python binding changes, serialization
 format changes, build/package restructuring, major performance work,
 accessibility architecture, and major documentation changes.
 
-Give Astra enough context to review the actual implementation, and ask it to
+Give Sol enough context to review the actual implementation, and ask it to
 inspect correctness, architecture, API design, performance risks, memory risks,
 TypeScript ergonomics, framework coupling, Python portability, bundle impact,
 testing gaps, benchmark fairness, maintainability, unnecessary complexity, and
@@ -556,7 +561,7 @@ fixes", "AI improvements", "final".
    React ergonomics, Python portability, composition, accessibility, ease of
    use, maintainability. If one gets worse, record why the tradeoff is
    acceptable.
-8. **Astra review** for significant commits. Resolve valid issues; where a
+8. **Sol review** for significant commits. Resolve valid issues; where a
    suggestion is rejected and it matters, record why.
 9. **Final diff inspection** after fixes and cleanup. Do not commit files you did
    not mean to change.
