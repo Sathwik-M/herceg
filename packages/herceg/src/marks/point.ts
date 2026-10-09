@@ -13,7 +13,7 @@ import {
 } from "../scale/color.ts";
 import { linearTicks } from "../scale/ticks.ts";
 import { CLOUD_POINTS, type PointCloud, type PointGeometry } from "../scene/scene.ts";
-import type { PointSpec } from "../spec/spec.ts";
+import type { Frozen, PointSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -22,6 +22,7 @@ import {
   CATEGORY,
   type ColorRamp,
   type Frame,
+  frozen,
   type GlyphKey,
   type Hit,
   type Mark,
@@ -100,8 +101,8 @@ interface Encoding {
 /** Stream identities of clouds by table, x field, and y field, shared by every chart drawing them. */
 const streamKeys = new WeakMap<Table, Map<string, Map<string, object>>>();
 
-export class PointMark implements Mark<PointSpec> {
-  readonly spec: PointSpec;
+export class PointMark implements Mark<Frozen<PointSpec>> {
+  readonly spec: Frozen<PointSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "point";
   readonly inset: { x: number; y: number };
@@ -119,8 +120,10 @@ export class PointMark implements Mark<PointSpec> {
   /** How far each of SYMBOLS reaches per unit of radius. */
   readonly #reaches = SYMBOLS.map(symbolReach);
 
-  constructor(spec: PointSpec, table: Table<Schema>) {
-    this.spec = spec;
+  constructor(input: PointSpec, table: Table<Schema>) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.table = table;
     requireField(table, spec.x, NUMERIC, "point x");
     requireField(table, spec.y, NUMERIC, "point y");

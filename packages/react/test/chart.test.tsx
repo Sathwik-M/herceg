@@ -73,6 +73,24 @@ describe("<Chart>", () => {
     expect(host.textContent).toContain("limit");
   });
 
+  it("reuses groups of marks from functions, and names the fix for wrapping components", () => {
+    const loadMarks = () => (
+      <>
+        <Line data={metrics} x="t" y="a" />
+        <Line data={metrics} x="t" y="b" />
+      </>
+    );
+    act(() => root.render(<Chart>{loadMarks()}</Chart>));
+    expect(paths()).toHaveLength(2);
+    // A component of the application's: the chart cannot see what it renders.
+    const LoadMarks = () => loadMarks();
+    const quiet = createRoot(document.createElement("div"));
+    expect(() => act(() => quiet.render(<Chart>{<LoadMarks />}</Chart>))).toThrow(
+      /not components wrapping them: call a function/,
+    );
+    act(() => quiet.unmount());
+  });
+
   it("renders a pie from its element, a path of arcs per slice", () => {
     const shares = table({ k: ["a", "b", "c"], v: [3, 2, 1] });
     act(() =>

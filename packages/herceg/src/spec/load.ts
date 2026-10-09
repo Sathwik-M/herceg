@@ -180,8 +180,11 @@ function loadTable(name: string, data: ColumnsSpec, buffers: readonly SpecBuffer
   }
 }
 
+/** `Array.isArray`, typed to narrow readonly arrays too, as spec columns are. */
+const isList = Array.isArray as (value: unknown) => value is readonly unknown[];
+
 function loadColumn(column: ColumnSpec, buffers: readonly SpecBuffer[]): ColumnInput {
-  if (Array.isArray(column)) return inlineValues(column);
+  if (isList(column)) return inlineValues(column);
   if (typeof column !== "object" || column === null) {
     throw new TypeError("expected an array of values or a column object");
   }
@@ -236,7 +239,7 @@ function loadColumn(column: ColumnSpec, buffers: readonly SpecBuffer[]): ColumnI
 }
 
 /** A JSON array: numbers (null for missing) or strings (null for missing), not a mix. */
-function inlineValues(values: unknown[]): ColumnInput {
+function inlineValues(values: readonly unknown[]): ColumnInput {
   let kind: "number" | "string" | undefined;
   values.forEach((value, row) => {
     if (value === null) return;
@@ -394,7 +397,7 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
 }
 
 /** A mark's spec with a named color scheme replaced by the scheme's colors. */
-function withScheme<T extends { colors?: string | string[] | undefined }>(spec: T): T {
+function withScheme<T extends { colors?: string | readonly string[] | undefined }>(spec: T): T {
   return typeof spec.colors === "string" ? { ...spec, colors: [...scheme(spec.colors)] } : spec;
 }
 

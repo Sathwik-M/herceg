@@ -8,6 +8,7 @@ import type { Polyline } from "../lod/polyline.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
+import type { Frozen } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { groupRows, isSortedSubset, type Series, TableCache } from "./series.ts";
 
@@ -118,11 +119,6 @@ export interface GlyphKey {
 }
 
 /**
- * A mark draws one visual layer. It pairs a portable spec with the table it
- * reads (if any) and holds caches that depend only on the data, so the same
- * mark can be shown by several charts.
- */
-/**
  * What charts read from any mark's spec: its type and identity. Built-in
  * marks have portable specs (`MarkSpec`); custom marks only this.
  */
@@ -137,6 +133,11 @@ export interface MarkIdentity {
   readonly panel?: string | undefined;
 }
 
+/**
+ * A mark draws one visual layer. It pairs a portable spec with the table it
+ * reads (if any) and holds caches that depend only on the data, so the same
+ * mark can be shown by several charts.
+ */
 export interface Mark<S extends MarkIdentity = MarkIdentity> {
   readonly spec: S;
   readonly table: Table | undefined;
@@ -548,4 +549,19 @@ export function bandIndices(
   }
   byField.set(field, { version: table.version, indices });
   return indices;
+}
+
+/**
+ * A frozen copy of a spec, all the way down, so it cannot change under the
+ * mark's caches, nor freeze arrays and objects its caller still holds.
+ * Specs are small plain objects; copying them is cheap.
+ */
+export function frozen<T>(spec: T): Frozen<T> {
+  if (Array.isArray(spec)) return Object.freeze(spec.map(frozen)) as Frozen<T>;
+  if (typeof spec !== "object" || spec === null) return spec as Frozen<T>;
+  const copy = {};
+  // Defined rather than assigned: a JSON key "__proto__" stays a key.
+  for (const [key, value] of Object.entries(spec))
+    Object.defineProperty(copy, key, { value: frozen(value), enumerable: true });
+  return Object.freeze(copy) as Frozen<T>;
 }

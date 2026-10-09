@@ -496,7 +496,7 @@ describe("graph", () => {
         {
           ...spec,
           marks: [{ type: "graph", data: "talks", source: "from", ...mark }],
-        } as ChartSpec,
+        } as never,
         [],
       );
     expect(bad({})).toThrow("marks[0].target: required");

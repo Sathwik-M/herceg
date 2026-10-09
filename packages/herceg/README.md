@@ -1077,7 +1077,8 @@ geometryOffsets, codes? }`: float64 longitude, latitude pairs and int32
 offsets, each a buffer index or a JSON array, and int32 codes per row,
 row i holding geometry i without them).
 Marks are the same objects as a TypeScript mark's `spec`, with `data` naming
-their table.
+their table. A mark's `spec` is frozen, readonly all the way down: to change
+a mark, build a new one and pass it to `chart.update({ marks })`.
 
 Specs say which format `version` they are; one without is version 1. Specs
 using `resolve`, `panels`, or `grid` must say 2 or later, and those using

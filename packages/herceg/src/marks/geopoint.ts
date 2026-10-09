@@ -20,12 +20,12 @@ import {
 } from "../scale/color.ts";
 import { linearTicks } from "../scale/ticks.ts";
 import type { PointGeometry } from "../scene/scene.ts";
-import type { GeoPointSpec } from "../spec/spec.ts";
+import type { Frozen, GeoPointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { type ColorRamp, type GlyphKey, requireField } from "./mark.ts";
+import { type ColorRamp, frozen, type GlyphKey, requireField } from "./mark.ts";
 import { groupRows } from "./series.ts";
 
 export interface GeoPointOptions<S extends Schema> {
@@ -83,7 +83,7 @@ interface Drawn {
 export class GeoPointMark implements GeoLayer {
   readonly layout = true;
   readonly geo = true;
-  readonly spec: GeoPointSpec;
+  readonly spec: Frozen<GeoPointSpec>;
   readonly table: Table;
   readonly measure: string;
   readonly reach: number;
@@ -93,7 +93,10 @@ export class GeoPointMark implements GeoLayer {
   /** Plane positions per row (NaN off the map), for the table version and projection named by `key`. */
   #projected: { key: string; xy: Float64Array; box: Float64Array | undefined } | undefined;
 
-  constructor(spec: GeoPointSpec, table: Table) {
+  constructor(input: GeoPointSpec, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     requireField(table, spec.longitude, ["number"], "geopoint longitude");
     requireField(table, spec.latitude, ["number"], "geopoint latitude");
     if (spec.name !== undefined) requireField(table, spec.name, ["category"], "geopoint name");
@@ -117,7 +120,6 @@ export class GeoPointMark implements GeoLayer {
       throw new RangeError(
         `geopoint strokeWidth must be 0 or more pixels, not ${spec.strokeWidth}`,
       );
-    this.spec = spec;
     this.table = table;
     this.#rField = typeof spec.r === "string" ? spec.r : undefined;
     this.measure = this.#rField ?? spec.color ?? spec.label ?? "Location";

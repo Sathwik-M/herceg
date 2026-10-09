@@ -5,7 +5,7 @@ import { segmentDrawing } from "../draw/segments.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry, SegmentGeometry } from "../scene/scene.ts";
-import type { CandlestickSpec } from "../spec/spec.ts";
+import type { CandlestickSpec, Frozen } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -17,6 +17,7 @@ import {
   CATEGORY,
   type Frame,
   fieldBands,
+  frozen,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -100,8 +101,8 @@ function candleOf(prices: Prices, row: number, log: boolean, out: Float64Array):
  * high and lowest low. The series reads the close, which tooltips mark and
  * the nearest-point search measures from.
  */
-export class CandlestickMark implements Mark<CandlestickSpec> {
-  readonly spec: CandlestickSpec;
+export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
+  readonly spec: Frozen<CandlestickSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "x";
   readonly #categorical: boolean;
@@ -110,8 +111,10 @@ export class CandlestickMark implements Mark<CandlestickSpec> {
   /** Scratch for one candle's prices. */
   readonly #candle = new Float64Array(4);
 
-  constructor(spec: CandlestickSpec, table: Table<Schema>) {
-    this.spec = spec;
+  constructor(input: CandlestickSpec, table: Table<Schema>) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.table = table;
     requireField(table, spec.x, [...NUMERIC, ...CATEGORY], "candlestick x");
     for (const name of ["open", "high", "low", "close"] as const)

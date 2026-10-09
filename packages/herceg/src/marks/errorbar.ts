@@ -3,7 +3,7 @@ import type { CategoryField, NumericField, PositionField, Schema, Table } from "
 import { segmentDrawing } from "../draw/segments.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { Rect, SegmentGeometry } from "../scene/scene.ts";
-import type { ErrorBarSpec } from "../spec/spec.ts";
+import type { ErrorBarSpec, Frozen } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
   type BandContext,
@@ -14,6 +14,7 @@ import {
   CATEGORY,
   type Frame,
   fieldBands,
+  frozen,
   type Hit,
   type Mark,
   type MarkKey,
@@ -140,8 +141,8 @@ type Ends = { low: string; high: string } | { center: string; error: string };
  * both ends; intervals missing an end, or with an end the axis cannot
  * place, are neither drawn nor counted toward the axes.
  */
-export class ErrorBarMark implements Mark<ErrorBarSpec> {
-  readonly spec: ErrorBarSpec;
+export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
+  readonly spec: Frozen<ErrorBarSpec>;
   readonly table: Table<Schema>;
   readonly tooltip: "x" | "y";
   readonly inset: { x: number; y: number };
@@ -154,8 +155,10 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
   /** Ends computed from a center and an error, per table version. */
   readonly #computed = new TableCache<{ low: Float64Array; high: Float64Array }>();
 
-  constructor(spec: ErrorBarSpec, table: Table<Schema>) {
-    this.spec = spec;
+  constructor(input: ErrorBarSpec, table: Table<Schema>) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.table = table;
     const form = errorBarForm(spec);
     if (typeof form === "string") throw new Error(form);

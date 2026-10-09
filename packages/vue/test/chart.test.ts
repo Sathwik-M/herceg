@@ -119,6 +119,29 @@ describe("<Chart>", () => {
     expect(host.textContent).toContain("limit");
   });
 
+  it("takes groups of marks as marks, and names the fix for wrapping components", () => {
+    const loadMarks = () => [line(metrics, { x: "t", y: "a" }), line(metrics, { x: "t", y: "b" })];
+    mount(`<Chart :marks="loadMarks()" />`, () => ({ loadMarks }));
+    expect(paths()).toHaveLength(2);
+    app?.unmount();
+    // A component of the application's: the chart cannot see what it renders.
+    const LoadMarks = defineComponent({
+      components,
+      template: `<Line :data="metrics" x="t" y="a" />`,
+      setup: () => ({ metrics }),
+    });
+    const errors: unknown[] = [];
+    app = createApp(
+      defineComponent({
+        components: { ...components, LoadMarks },
+        template: `<Chart><LoadMarks /></Chart>`,
+      }),
+    );
+    app.config.errorHandler = (error) => errors.push(error);
+    app.mount(host);
+    expect(String(errors[0])).toMatch(/not components wrapping them: pass marks/);
+  });
+
   it("renders a pie from its component, a path of arcs per slice", () => {
     const shares = table({ k: ["a", "b", "c"], v: [3, 2, 1] });
     mount(

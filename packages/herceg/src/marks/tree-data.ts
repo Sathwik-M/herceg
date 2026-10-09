@@ -16,7 +16,7 @@ import { CATEGORY, requireField } from "./mark.ts";
 
 /** How a spec names a tree: a path of category fields, or node and parent fields. */
 export interface TreeFields {
-  path?: string[];
+  path?: readonly string[];
   node?: string;
   parent?: string;
   value?: string;

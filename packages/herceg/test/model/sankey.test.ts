@@ -296,7 +296,7 @@ describe("sankey", () => {
     expect(renderToPDF({ ...config, width: 500, height: 300 }).length).toBeGreaterThan(500);
     // Specs from outside TypeScript, which the type checker cannot help.
     const bad = (mark: Record<string, unknown>) => () =>
-      loadSpec({ ...spec, marks: [{ type: "sankey", data: "flows", ...mark }] } as ChartSpec, []);
+      loadSpec({ ...spec, marks: [{ type: "sankey", data: "flows", ...mark }] } as never, []);
     expect(bad({ source: "from" })).toThrow("marks[0].target: required");
     expect(bad({ source: "from", target: "to", nodeWidth: -1 })).toThrow(
       "marks[0].nodeWidth: expected a positive number",

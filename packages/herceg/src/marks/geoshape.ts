@@ -14,12 +14,12 @@ import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
 import type { PolygonGeometry } from "../scene/scene.ts";
-import type { GeoShapeSpec } from "../spec/spec.ts";
+import type { Frozen, GeoShapeSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { type ColorRamp, type GlyphKey, requireField } from "./mark.ts";
+import { type ColorRamp, frozen, type GlyphKey, requireField } from "./mark.ts";
 
 export interface GeoShapeOptions<S extends Schema> {
   /** The geometry field; the table's only one by default. */
@@ -70,7 +70,7 @@ interface Drawn {
 export class GeoShapeMark implements GeoLayer {
   readonly layout = true;
   readonly geo = true;
-  readonly spec: GeoShapeSpec;
+  readonly spec: Frozen<GeoShapeSpec>;
   readonly table: Table;
   readonly measure: string;
   readonly reach: number;
@@ -79,7 +79,10 @@ export class GeoShapeMark implements GeoLayer {
   /** How `color` colors regions: by number, by category, or not at all. */
   readonly #colorKind: FieldKind | undefined;
 
-  constructor(spec: GeoShapeSpec, table: Table) {
+  constructor(input: GeoShapeSpec, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     const geometries = table.fields().filter((field) => table.kind(field) === "geometry");
     const field = spec.geometry ?? (geometries.length === 1 ? geometries[0] : undefined);
     if (field === undefined)
@@ -105,7 +108,6 @@ export class GeoShapeMark implements GeoLayer {
     const width = spec.strokeWidth ?? STROKE_WIDTH;
     if (!(width >= 0 && Number.isFinite(width)))
       throw new RangeError(`geoshape strokeWidth must be 0 or more pixels, not ${width}`);
-    this.spec = spec;
     this.table = table;
     this.field = field;
     this.measure = spec.color ?? spec.label ?? "Region";

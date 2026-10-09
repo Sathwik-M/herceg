@@ -9,10 +9,10 @@ import { type Formatter, formatNumber, numberFormatter } from "../format/format.
 import { fitText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ArcGeometry, Geometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
-import type { GaugeBand, GaugeSpec } from "../spec/spec.ts";
+import type { Frozen, GaugeBand, GaugeSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { requireField } from "./mark.ts";
+import { frozen, requireField } from "./mark.ts";
 
 export interface GaugeOptions<S extends Schema> {
   /** Number field whose last finite value the gauge shows. */
@@ -55,13 +55,16 @@ interface Band {
 
 export class GaugeMark implements LayoutMark {
   readonly layout = true;
-  readonly spec: GaugeSpec;
+  readonly spec: Frozen<GaugeSpec>;
   readonly table: Table;
   readonly measure: string;
   readonly #min: number;
   readonly #max: number;
 
-  constructor(spec: GaugeSpec, table: Table) {
+  constructor(input: GaugeSpec, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     requireField(table, spec.value, ["number"], "gauge value");
     const min = spec.min ?? 0;
     const max = spec.max ?? 100;
@@ -79,7 +82,6 @@ export class GaugeMark implements LayoutMark {
         );
       previous = to;
     }
-    this.spec = spec;
     this.table = table;
     this.measure = spec.value;
     this.#min = min;

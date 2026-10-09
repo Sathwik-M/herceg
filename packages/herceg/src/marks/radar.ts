@@ -18,9 +18,9 @@ import type {
   ShapesGeometry,
   TextGeometry,
 } from "../scene/scene.ts";
-import type { RadarSpec } from "../spec/spec.ts";
+import type { Frozen, RadarSpec } from "../spec/spec.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, requireField } from "./mark.ts";
+import { CATEGORY, frozen, requireField } from "./mark.ts";
 
 export type RadarOptions<S extends Schema> = (
   | {
@@ -97,12 +97,15 @@ interface Drawn {
 
 export class RadarMark implements LayoutMark {
   readonly layout = true;
-  readonly spec: RadarSpec;
+  readonly spec: Frozen<RadarSpec>;
   readonly table: Table;
   readonly measure: string;
   #read: Values | undefined;
 
-  constructor(spec: RadarSpec, table: Table) {
+  constructor(input: RadarSpec, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     const long = spec.category !== undefined || spec.value !== undefined;
     if (long === (spec.fields !== undefined) || (long && !(spec.category && spec.value)))
       throw new Error(
@@ -126,7 +129,6 @@ export class RadarMark implements LayoutMark {
     const opacity = spec.fillOpacity ?? 0.15;
     if (!(opacity >= 0 && opacity <= 1))
       throw new RangeError(`radar fillOpacity must be from 0 to 1, not ${opacity}`);
-    this.spec = spec;
     this.table = table;
     this.measure = spec.label ?? spec.value ?? "Value";
     // The spokes of a long table are its data: with rows, too few or too many is a mistake now.

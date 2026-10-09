@@ -142,3 +142,10 @@ const errorBoth: ErrorBarSpec = { type: "errorbar", x: "x", y1: "a", y2: "b", x1
 const treeBoth: TreemapSpec = { type: "treemap", path: ["a"], node: "b", parent: "c" };
 
 export { areaBoth, errorBoth, regionHalf, ruleSpec, ruleWithout, treeBoth };
+
+// A mark's spec is readonly all the way down: give the chart new marks instead.
+const drawn = line(readings, { x: "at", y: "cpu", dash: [2, 3] });
+// @ts-expect-error specs cannot be edited
+drawn.spec.y = "stage";
+// @ts-expect-error nor can their arrays
+drawn.spec.dash?.push(4);

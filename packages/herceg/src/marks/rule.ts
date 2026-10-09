@@ -1,10 +1,11 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
 import { ruleDrawing } from "../draw/rule.ts";
 import type { RuleGeometry } from "../scene/scene.ts";
-import type { RulePosition, RuleSpec } from "../spec/spec.ts";
+import type { Frozen, RulePosition, RuleSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
 import { definedFields } from "./line.ts";
 import type { AxisFormat, Frame, Mark, MarkKey } from "./mark.ts";
+import { frozen } from "./mark.ts";
 
 interface RuleStyle {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
@@ -42,13 +43,15 @@ export function ruleFormError(spec: { x?: unknown; y?: unknown }): string | unde
  * Reference lines. Their values are included in the axis domain so
  * thresholds and events stay visible.
  */
-export class RuleMark implements Mark<RuleSpec> {
-  readonly spec: RuleSpec;
+export class RuleMark implements Mark<Frozen<RuleSpec>> {
+  readonly spec: Frozen<RuleSpec>;
   readonly tooltip = "x";
   readonly #data: AnnotationData;
 
-  constructor(spec: RuleSpec, table?: Table) {
-    this.spec = spec;
+  constructor(input: RuleSpec, table?: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     const problem = ruleFormError(spec);
     if (problem) throw new Error(problem);
     this.#data = new AnnotationData(table, { x: spec.x, y: spec.y }, spec.label, spec.text, "rule");

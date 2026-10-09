@@ -5,13 +5,14 @@ import type { TimeZone } from "../format/zone.ts";
 import { niceDomain, tickStep } from "../scale/ticks.ts";
 import { chooseInterval, niceTimeDomain, timeTicks } from "../scale/time.ts";
 import type { RectGeometry } from "../scene/scene.ts";
-import type { HistogramSpec } from "../spec/spec.ts";
+import type { Frozen, HistogramSpec } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
   type BandContext,
   CATEGORY,
   type Frame,
+  frozen,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -71,8 +72,8 @@ interface Binned {
  * the last also its right edge. Series reads the bars, with bin centers as
  * x, so tooltips report a bin's range and its count.
  */
-export class HistogramMark implements Mark<HistogramSpec> {
-  readonly spec: HistogramSpec;
+export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
+  readonly spec: Frozen<HistogramSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "x";
   readonly zero = "y";
@@ -87,8 +88,10 @@ export class HistogramMark implements Mark<HistogramSpec> {
   /** The zone of the chart resolving series; charts sharing the mark may differ. */
   #zone: TimeZone = "local";
 
-  constructor(spec: HistogramSpec, table: Table<Schema>) {
-    this.spec = spec;
+  constructor(input: HistogramSpec, table: Table<Schema>) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.table = table;
     requireField(table, spec.x, NUMERIC, "histogram x");
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "histogram series");

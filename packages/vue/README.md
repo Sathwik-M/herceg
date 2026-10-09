@@ -58,6 +58,27 @@ const exportSvg = () => view.value?.chart?.toSVG();
 </template>
 ```
 
+## Reusing groups of marks
+
+`<Chart>` reads its children's props to build marks; it does not render
+them. Mark components may sit in fragments, `v-for`, and `v-if`, but not
+inside components of your own, whose output the chart cannot see. To reuse
+a group of marks, build them with herceg's functions and pass them as
+`marks`:
+
+```ts
+import { line, rule, type Table } from "herceg";
+
+export const latencyMarks = (data: Table) => [
+  line(data, { x: "time", y: ["p50", "p99"] }),
+  rule({ y: 250, label: "SLO" }),
+];
+```
+
+```vue
+<Chart title="Checkout" :marks="latencyMarks(checkout)" />
+```
+
 ## Live data
 
 Mark components render nothing and do not create one component per data

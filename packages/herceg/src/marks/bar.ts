@@ -7,7 +7,7 @@ import { estimateText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
-import type { BarSpec } from "../spec/spec.ts";
+import type { BarSpec, Frozen } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -19,6 +19,7 @@ import {
   CATEGORY,
   type Frame,
   fieldBands,
+  frozen,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -82,8 +83,8 @@ interface Stack {
   bases: Float64Array[];
 }
 
-export class BarMark implements Mark<BarSpec> {
-  readonly spec: BarSpec;
+export class BarMark implements Mark<Frozen<BarSpec>> {
+  readonly spec: Frozen<BarSpec>;
   readonly table: Table<Schema>;
   readonly zero: "x" | "y";
   readonly tooltip: "x" | "y";
@@ -102,8 +103,10 @@ export class BarMark implements Mark<BarSpec> {
   #slots: Slots | undefined;
   #formatter: { locale: string | undefined; format: Formatter } | undefined;
 
-  constructor(spec: BarSpec, table: Table<Schema>) {
-    this.spec = spec;
+  constructor(input: BarSpec, table: Table<Schema>) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.table = table;
     const xs = typeof spec.x === "string" ? [spec.x] : spec.x;
     const ys = typeof spec.y === "string" ? [spec.y] : spec.y;

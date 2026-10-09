@@ -2,10 +2,10 @@ import type { NumericField, Schema, Table } from "../data/table.ts";
 import { textDrawing } from "../draw/text.ts";
 import { LabelBoxes } from "../layout/label-boxes.ts";
 import type { TextGeometry } from "../scene/scene.ts";
-import type { TextSpec } from "../spec/spec.ts";
+import type { Frozen, TextSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
 import { definedFields } from "./line.ts";
-import { type AxisFormat, type Frame, type Mark, type MarkKey, seriesKey } from "./mark.ts";
+import { type AxisFormat, type Frame, frozen, type Mark, type MarkKey, seriesKey } from "./mark.ts";
 
 interface TextStyle {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
@@ -73,13 +73,15 @@ export type TextDataOptions<S extends Schema> = TextStyle & {
  * left out when their point is outside the plot; meant for annotations, not
  * for labeling every point of a large series.
  */
-export class TextMark implements Mark<TextSpec> {
-  readonly spec: TextSpec;
+export class TextMark implements Mark<Frozen<TextSpec>> {
+  readonly spec: Frozen<TextSpec>;
   readonly tooltip = "x";
   readonly #data: AnnotationData;
 
-  constructor(spec: TextSpec, table?: Table) {
-    this.spec = spec;
+  constructor(input: TextSpec, table?: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     if (spec.x === undefined || spec.y === undefined) throw new Error("Text needs x and y");
     if ((spec.label === undefined) === (spec.text === undefined))
       throw new Error("Text needs exactly one of label or text");

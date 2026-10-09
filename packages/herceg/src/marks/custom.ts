@@ -1,3 +1,4 @@
+import type { Frozen } from "../spec/spec.ts";
 // Custom marks: a JavaScript `draw` function places shapes using the chart's
 // scales. They share axes, viewport, and rendering (SVG, Canvas, static SVG)
 // with built-in marks, but are not portable: a chart spec cannot hold one.
@@ -16,6 +17,7 @@ import {
   buildSeries,
   CATEGORY,
   type Frame,
+  frozen,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -185,8 +187,8 @@ function fieldExtent(
   return min <= max ? [min, max] : undefined;
 }
 
-export class CustomMark implements Mark<CustomSpec> {
-  readonly spec: CustomSpec;
+export class CustomMark implements Mark<Frozen<CustomSpec>> {
+  readonly spec: Frozen<CustomSpec>;
   readonly table: Table | undefined;
   readonly tooltip = "x";
   readonly #x: readonly string[];
@@ -231,7 +233,7 @@ export class CustomMark implements Mark<CustomSpec> {
         "A custom mark's series, label, and pointText need one x field and y fields, and no series: false",
       );
     }
-    this.spec = spec;
+    this.spec = frozen(spec);
     this.#draw = options.draw;
     this.#pointText = options.pointText;
     this.#description = options.description;

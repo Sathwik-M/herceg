@@ -9,10 +9,11 @@ import { layoutTreemap } from "../layout/treemap.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, TextGeometry } from "../scene/scene.ts";
-import type { TreemapSpec } from "../spec/spec.ts";
+import type { Frozen, TreemapSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
+import { frozen } from "./mark.ts";
 import { type Branch, count, TreeData } from "./tree-data.ts";
 
 export type TreemapOptions<S extends Schema> = (
@@ -43,14 +44,16 @@ const INSET = 4;
 
 export class TreemapMark implements LayoutMark {
   readonly layout = true;
-  readonly spec: TreemapSpec;
+  readonly spec: Frozen<TreemapSpec>;
   readonly table: Table;
   readonly measure: string;
   readonly #data: TreeData;
 
-  constructor(spec: TreemapSpec, table: Table) {
+  constructor(input: TreemapSpec, table: Table) {
+    this.spec = frozen(input);
+    // Read from the copy: the caller may change what it passed.
+    const spec = this.spec;
     this.#data = new TreeData(table, spec, "treemap");
-    this.spec = spec;
     this.table = table;
     this.measure = spec.value ?? "Count";
   }
