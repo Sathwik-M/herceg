@@ -64,15 +64,15 @@ scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
 selections, animated changes of view and of bar and pie values, crosshair
 labels on the axes), time axes that leave out breaks (nights, weekends,
-holidays) in any time zone,
-static SVG and PDF export, React, Vue, and Svelte adapters,
-min/max indexes for zooming and streaming large line series (whole columns
-or split by a series field), WebGL drawing
-of large point series, chart specs with binary columns, a Python package, a
-second y axis, small multiples (wrapped or by row and column, with shared or
-per-panel x and y scales, and categories per panel for bars, heatmaps, and points), points on category axes, subplots (with weighted rows and columns), live notebook charts (a
-widget that streams updates from Python and reports interaction back), a
-Streamlit component, row views and selection stores shared by charts and
+holidays) in any time zone, static SVG and PDF export, React, Vue, and
+Svelte adapters, min/max indexes for zooming and streaming large line
+series (whole columns or split by a series field), WebGL drawing of large
+point series, chart specs with binary columns, a Python package, a second
+y axis, small multiples (wrapped or by row and column, with shared or
+per-panel x and y scales, and categories per panel for bars, heatmaps, and
+points), points on category axes, subplots (with weighted rows and
+columns), live notebook charts (a widget that streams updates from Python
+and reports interaction back), a Streamlit component, row views and selection stores shared by charts and
 grids, row groups whose aggregates charts and grids share, and an
 analytical grid (`herceg/grid`: virtualized rows and columns over the same
 tables, sorting, row selection, nested groups with aggregates as a tree grid,
@@ -88,9 +88,8 @@ Next, in order:
    labeled bars, points, lines, areas, and panels.
 4. More financial tools (a range navigator, drawing tools, markers at
    breaks); 3D lines, meshes, parametric surfaces, and surfaces on the GPU.
-5. Grid: benchmarks against TanStack Table with TanStack Virtual, AG Grid,
-   and Glide Data Grid; then pivots, and a server-backed mode whose
-   filters, sorts, and aggregates run where the data lives.
+5. Grid: pivots, and a server-backed mode whose filters, sorts, and
+   aggregates run where the data lives.
 6. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 
