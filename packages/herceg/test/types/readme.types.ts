@@ -159,8 +159,12 @@ bar(sales, { x: ["q1", "q2"], y: "q1" });
 // @ts-expect-error horizontal bars have no right axis
 bar(sales, { x: "q1", y: "region", axis: "right" });
 point(metrics, { x: "p50", y: "p99", r: 3 });
-// @ts-expect-error point x must be numeric
 point(sales, { x: "region", y: "q1" });
+point(sales, { x: "q1", y: "region", series: "team" });
+// @ts-expect-error point sizes must be numeric
+point(sales, { x: "region", y: "q1", r: "team" });
+// @ts-expect-error point colors must be numeric
+point(sales, { x: "region", y: "q1", color: "team" });
 const load = table({ hour: time(timestamps), host: serviceNames, cpu: latencies });
 heatmap(load, { x: "hour", y: "host", value: "cpu" });
 // @ts-expect-error heatmap values must be numeric

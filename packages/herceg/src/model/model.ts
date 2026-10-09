@@ -1743,6 +1743,11 @@ export class ChartModel {
     return mark !== undefined && sideOf(mark) === "right";
   }
 
+  /** The chart's bands as of the last scene, which band indices in series name. */
+  get bands(): Bands {
+    return this.#bands;
+  }
+
   /** The mark a series of the last scene belongs to. */
   markOf(series: Series): Mark | undefined {
     return this.#base?.find((entry) => entry.series.some((s) => s.key === series.key))?.mark;

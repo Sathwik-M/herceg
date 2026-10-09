@@ -750,7 +750,7 @@ geometry buffers hold at most one candle per column.
 ## Band axes
 
 A mark reports the kind of field on each position channel. A categorical
-field (bar x or y, heatmap x and y) puts the axis on a band scale whose values are
+field (bar x or y, heatmap x and y, point x or y) puts the axis on a band scale whose values are
 category indices; the category labels are the union of what the marks on that
 axis contribute, in order of appearance (panels that resolve the axis apart
 hold only some of them; see Small multiples). Bands are identified by raw value
@@ -883,8 +883,10 @@ when a facet splits them (`Mark.series`'s `split`) and stack after the split
 (`stackPanels`), each panel, position, and sign apart: one pair of
 table-sized top and base arrays per field, which the panels' disjoint rows
 fill, kept while the table, the panels' rows, and the hidden series stay the
-same. Heatmaps, histograms, and box plots refuse facets until they split
-before combining. Continuous domains come from every panel's series, so rows
+same. Heatmaps split like row-aligned marks: each panel's raster and cell
+index read only its rows, so a cell takes the last row with a value among
+them, and equal cells of other panels never meet (see Points and rasters).
+Histograms and box plots refuse facets until they split before combining. Continuous domains come from every panel's series, so rows
 without a facet value are left out of them; the bands of a shared category
 axis still come from whole tables. Each panel gets a frame whose scales are the
 shared plans moved to its row and column, and whose buffer pools are its
@@ -965,9 +967,13 @@ most eight times as many as it holds, looks places up in an `Int32Array` over
 that span; others search the sorted bands they hold. A group's places
 therefore take at most 16 KiB, or 32 bytes per band it holds where that is
 more: never a chart-sized or table-sized array per panel. Panels' series are
-shallow copies carrying the places (`Series.places`), shared by a group's
-panels. Whatever reads a categorical position reads it through `placeAt` (bar
-geometry, inspection, the keyboard). Places keep the chart's order, so a range
+shallow copies carrying the places (`Series.places`), shared by the panels of
+a group, or with both axes resolved apart (heatmaps, points over two
+category fields) of a pair of groups; a mark's copy carries places only on
+the axes it bands. Whatever reads a categorical position reads it through
+`placeAt` (bar, point, and heatmap geometry, inspection, the keyboard), and
+the values tooltips and events report through `valueAt` (a point's value on
+a category y axis is its category's place). Places keep the chart's order, so a range
 of places is a range of chart bands; a panel's ascending band indices can
 still lie outside its domain, so placed series are searched as unsorted.
 Groups are kept by their panels' keys while their bands are the same (labels
@@ -976,10 +982,19 @@ number that changes with its bands (not with their labels alone, nor with
 other groups): a selection on the scale is cleared, and a drag through it
 stops, when they change, as when its panels do, since its band indices then
 name other categories. Hidden series keep their categories; grouped bars keep
-a slot per series of the mark in every category of every panel. Only bars
-place categories per panel so far: other marks on such an axis (heatmaps, box
-plots, error bars, candlesticks), synced charts, and brushes along a y axis of
-such categories are refused, and category axes still do not zoom.
+a slot per series of the mark in every category of every panel. A heatmap's
+cell index holds chart band indices rather than places: places keep the
+chart's order and every row a panel draws has a band its group holds, so the
+index is the same at every panel's places, and one index serves every panel
+drawing the same rows (a repeated mark, a subplot's `"*"`). The pointer's
+place is turned back into a chart band (`BandPlaces.band`) to look a cell up,
+and the keyboard compares cells at their places, as the panel draws them.
+Text summaries read series' parts in every panel, which hold chart band
+indices, so they name categories by the chart's bands (`SummaryContext.bands`)
+rather than one panel's. Bars, heatmaps, and points place categories per
+panel; other marks on such an axis (box plots, violins, error bars,
+candlesticks), synced charts, and brushes along a y axis of such categories
+are refused, and category axes still do not zoom.
 
 ## Points and rasters
 
@@ -997,6 +1012,16 @@ values, the domain widens by the radius in pixels, so points at the data
 extremes are drawn whole and ticks stay round: they are chosen in the
 rounded domain, since choosing them in the widened one could take a coarser
 step (a short axis rounded to -20..40 at two ticks would keep only 0).
+
+Points on a category axis (strip and dot plots, either axis or both) sit at
+their bands' centers. Their series hold each row's band index, as bars'
+do, read through a panel's places; rows without a category are neither
+drawn nor counted in the other axis' domain. Such points are always placed
+on the CPU, since a GPU cloud uploads its raw columns, and a category y
+axis has no values: a point's reported value there is its category's
+place and its tooltip text the category. Summaries of such points count
+only those drawn (with a category, a position, and the values they encode),
+and along category y say how many categories they fall in.
 
 Point series of at least 100,000 visible points are drawn by the GPU in the
 browser. The point mark then emits a point cloud instead of pixel
@@ -1070,19 +1095,27 @@ largest doubles) is summed again in a second pass with every value divided by
 until it is colored. The sums are a frame buffer kept while the image is
 repainted (8 bytes per pixel besides the 4 of the image).
 Rows that repeat a cell each count toward a mean. The painted image is kept
-and reused until the table, the band order, the image size, the theme, or
-the mark painting into the buffer changes, so redraws for other reasons (a
+and reused until the table, the band order, a facet panel's rows or its
+categories' places, the image size, the theme, or the mark painting into
+the buffer changes, so redraws for other reasons (a
 legend toggle, a brush) do not repaint it.
 
 Tooltips report the cell under the pointer even when its pixel shows a block:
 the band scale maps the pointer to a band index, and a cell index finds the
-row. The index (`lod/cell-index.ts`) is the table's rows with a value, sorted
-by cell row and column with two counting sorts (rows already in cell order,
-as dense grids usually are, are taken as they are, and when they are every
-row, the table itself is the index), so it keeps at most 4 bytes per row
-whatever the number of cells (building it takes up to 8 more per row and a
-counter per band), and a lookup is a binary search. It is built on the
-first lookup after the table or the band order changes. Ramps
+row. The index (`lod/cell-index.ts`) is the series' positions with a value
+(the table's rows, or a facet panel's), sorted by cell row and column with
+two counting sorts (positions already in cell order, as dense grids usually
+are, are taken as they are, and when they are every position, the series
+itself is the index), so it keeps at most 4 bytes per row whatever the
+number of cells, and a lookup is a binary search. Building it over a whole
+table takes up to 8 more bytes per row and a counter per band; over a facet
+panel's rows, it first gathers their cells and values (16 bytes per
+position), so up to 24 per position; and a grid of several times more bands
+than positions (a panel's few rows among many categories) is sorted by
+comparison instead, without counters. It is built on the first lookup
+after the table, the band order, or a facet panel's rows change, and is
+kept by the rows it indexes, so a faceted heatmap's panels take one index
+each, their rows' share of one table's. Ramps
 are `#rgb` or `#rrggbb` colors, checked when the mark or theme is created, so
 the raster and the legend read them the same way.
 
@@ -1798,8 +1831,8 @@ inspection costs three more fields per point and one map lookup.
 
 - The chart root is a focusable `figure` named by the title, described by a
   generated summary (series count and, per series, point count, range, and
-  last value; marks such as heatmaps, histograms, and layout marks write
-  their own), followed by what color scales and size and shape keys show,
+  last value; marks such as heatmaps, histograms, points on a category y
+  axis, and layout marks write their own), followed by what color scales and size and shape keys show,
   since their legends are drawn. It is refreshed at most once a second,
   does not repeat the title, and its element is hidden, so it is read once,
   as the figure's description.
@@ -2065,18 +2098,18 @@ document when `OffscreenCanvas` is unavailable.
   million-point line with ten years of sessions takes about 1.2 ms a scene
   instead of 0.6 ms. A calendar keeps every span it resolved for as long as
   its `TimeBreaks` lives (24 bytes per interval).
-- Subplots route whole marks; they have no right axes, shared category x
-  and y axes only, x-only zoom and brushing, and no facets inside a panel.
+- Subplots route whole marks; they have no right axes, categories of their
+  own only for bars, heatmaps, and points, x-only zoom and brushing, and no
+  facets inside a panel.
   Rows and columns may be weighted; a scale shared across sizes is planned
   over its smallest panel, so what marks draw past their values fits in
   every one, and the others keep its domain with ticks for their size.
 - Facets wrap one category field into rows of panels, or lay out a grid by
-  two; x and y are shared or resolved per panel, row, or column, for
-  continuous axes only. No y zoom with independent y, or right axes in
-  faceted charts, and
-  heatmaps, histograms, box plots, violins, stacked bars, annotations over a
-  table, and custom marks over a table without series can only repeat in
-  every panel. Panel splits are recomputed whenever their
+  two; x and y are shared or resolved per panel, row, or column, category
+  axes only for bars, heatmaps, and points. No y zoom with independent y,
+  sync of charts with categories per panel, or right axes in faceted
+  charts, and histograms, box plots, violins, annotations over a table, and
+  custom marks over a table without series can only repeat in every panel. Panel splits are recomputed whenever their
   table changes, and rows of a faceted large line do not use its min/max
   index. A category whose rows all lack a facet value still gets an (empty)
   band. Panels smaller than 20 pixels a side are refused with an error

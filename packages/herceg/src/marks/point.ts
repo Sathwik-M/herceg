@@ -1,5 +1,5 @@
 import type { RowView } from "../data/row-view.ts";
-import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../draw/symbols.ts";
 import { GridIndex } from "../lod/grid-index.ts";
@@ -21,11 +21,16 @@ import { legendParts } from "./legend-parts.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
+  type BandContext,
+  type BandList,
+  type Bands,
+  bandIndices,
   buildSeries,
   CATEGORY,
   type ChartMark,
   type ColorRamp,
   type Frame,
+  fieldBands,
   frozen,
   type GlyphKey,
   type Hit,
@@ -36,8 +41,9 @@ import {
   type Palette,
   requireField,
   SeriesSplitter,
+  type SummaryContext,
 } from "./mark.ts";
-import { rowOf, type Series, visibleRange, xExtent, yExtent } from "./series.ts";
+import { placeAt, rowOf, type Series, valueAt, visibleRange, xExtent, yExtent } from "./series.ts";
 import { unionExtent } from "./trace.ts";
 
 export interface PointOptions<S extends Schema> {
@@ -47,8 +53,10 @@ export interface PointOptions<S extends Schema> {
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
-  x: NumericField<S>;
-  y: NumericField<S>;
+  /** A number or time field, or a category field placing points in its bands (strip plots). */
+  x: PositionField<S>;
+  /** Like `x`: categories run top to bottom. */
+  y: PositionField<S>;
   /** Category field: one colored point series per value. */
   series?: CategoryField<S>;
   /** Radius in pixels, or a number field sized by area within `rRange` (bubbles). */
@@ -93,6 +101,7 @@ const R_RANGE: readonly [number, number] = [2, 12];
 /** Opacity of a field's smallest value; its largest is opaque. */
 const MIN_OPACITY = 0.15;
 const NO_COORDS = new Float32Array(0);
+const POSITION: readonly ["number", "time", "category"] = ["number", "time", "category"];
 /** The shape code of category values no row holds. */
 const NO_SHAPE = 255;
 /** Legend shapes: circles of this radius, other shapes reaching at most LEGEND_REACH. */
@@ -118,6 +127,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly tooltip = "point";
   readonly inset: { x: number; y: number };
   readonly #split: SeriesSplitter;
+  /** Which positions are categories: each row's band index places it. */
+  readonly #banded: { readonly x: boolean; readonly y: boolean };
   /** Pick indexes per frame (charts sharing this mark have separate frames), per series key. */
   readonly #indexes = new WeakMap<Frame, Map<string, GridIndex>>();
   /** Fields encoding size, opacity, color, and shape, when the options name fields. */
@@ -140,10 +151,16 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     this.table = table;
     if (view && view.source !== table) throw new Error("A point mark's view must be of its table");
     this.view = view;
-    requireField(table, spec.x, NUMERIC, "point x");
-    requireField(table, spec.y, NUMERIC, "point y");
+    requireField(table, spec.x, POSITION, "point x");
+    requireField(table, spec.y, POSITION, "point y");
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "point series");
-    this.#split = new SeriesSplitter(table, spec.x, [spec.y], spec.series, spec.label, view);
+    this.#banded = {
+      x: table.kind(spec.x) === "category",
+      y: table.kind(spec.y) === "category",
+    };
+    // Points in bands are in no x order.
+    const xField = this.#banded.x ? undefined : spec.x;
+    this.#split = new SeriesSplitter(table, xField, [spec.y], spec.series, spec.label, view);
     if (typeof spec.r === "string") requireField(table, spec.r, NUMERIC, "point r");
     if (typeof spec.fillOpacity === "string")
       requireField(table, spec.fillOpacity, NUMERIC, "point fillOpacity");
@@ -206,22 +223,43 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     return this.table.kind(axis === "x" ? this.spec.x : this.spec.y);
   }
 
-  series(key: MarkKey, palette: Palette) {
+  bands(axis: "x" | "y", context: BandContext): BandList | undefined {
+    return this.#banded[axis] ? fieldBands(this.table, this.spec[axis], context) : undefined;
+  }
+
+  series(
+    key: MarkKey,
+    palette: Palette,
+    _hidden: ReadonlySet<string>,
+    bands: Bands,
+    context: BandContext,
+  ) {
+    const { spec, table } = this;
+    // A category position is each row's band index on the chart's axis.
+    const banded = (axis: "x" | "y") =>
+      bandIndices(table, spec[axis], bands[axis]?.keys ?? [], context);
     return buildSeries(
-      this.table,
+      table,
       this.#split.sources(),
-      this.table.numbers(this.spec.x as never),
+      this.#banded.x ? banded("x") : table.numbers(spec.x as never),
       key,
       palette,
-      this.spec.fill,
+      spec.fill,
+      this.#banded.y ? banded("y") : undefined,
     );
   }
 
   xExtent(series: readonly Series[], log: boolean) {
-    return unionExtent(series.map((s) => xExtent(s, log)));
+    if (this.#banded.x) return undefined;
+    return unionExtent(
+      series.map((s) => (this.#banded.y ? bandedExtent(s, "x", log) : xExtent(s, log))),
+    );
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
+    if (this.#banded.y) return undefined;
+    // A category x axis shows all its bands.
+    if (this.#banded.x) return unionExtent(series.map((s) => bandedExtent(s, "y", log)));
     return unionExtent(series.map((s) => yExtent(s, x0, x1, s.y, log, undefined, false, breaks)));
   }
 
@@ -259,6 +297,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       this.#ringWidth > 0
         ? { color: this.spec.stroke ?? surface(frame.theme), width: this.#ringWidth }
         : undefined;
+    const placeRow = this.#banded.x || this.#banded.y ? placeBanded : place;
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       const opaque =
@@ -271,10 +310,13 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       const [start, end] = this.#visible(s, frame);
       // The GPU maps linearly; points on an axis with breaks are placed here.
       const linear = frame.x.breaks === undefined;
-      // The WebGL painter draws whole columns; a view's rows are drawn on the CPU.
+      // The WebGL painter draws whole columns of numbers; a view's rows, and
+      // points in bands (read through a panel's places), are drawn on the CPU.
       if (
         frame.clouds &&
         !this.view &&
+        !this.#banded.x &&
+        !this.#banded.y &&
         !ring &&
         !sample &&
         !encoded &&
@@ -325,7 +367,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         if (!(r > 0 && tone >= 0 && Number.isFinite(alpha) && shape !== NO_SHAPE)) continue;
         // Points whose shape reaches into the plot are drawn.
         const reach = r * (codes ? reachOf[shape]! : fixedReach) + this.#ringWidth / 2;
-        const placed = place(s, row, frame, reach);
+        const placed = placeRow(s, row, frame, reach);
         if (!placed) continue;
         const [px, py] = placed;
         if (occupied) {
@@ -586,9 +628,9 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
 
   #codeShapes: { version: number; shapes: Uint8Array } | undefined;
 
-  /** The y value and the values of the fields encoded as size, color, and opacity. */
+  /** The y value (or category) and the values of the fields encoded as size, color, and opacity. */
   pointText(s: Series, row: number, format: AxisFormat): string {
-    let text = format.y(s.values[row]!);
+    let text = format.y(valueAt(s, row));
     for (const field of [this.#rField, this.spec.color, this.#opacityField]) {
       if (field === undefined) continue;
       text += `, ${field} ${format.value(this.table.numbers(field as never)[row]!)}`;
@@ -625,8 +667,67 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     );
   }
 
-  /** Rows of a series in the x domain, widened by how far points reach past it. */
+  /**
+   * For points on a category axis, how many are drawn and over what values:
+   * on category y, in how many categories and over what x; other points take
+   * the chart's sentence. Rows without a category, a position, or a value
+   * they encode are not drawn, so not counted.
+   */
+  summarize(
+    parts: readonly Series[],
+    name: string,
+    { format, bands }: SummaryContext,
+  ): string | undefined {
+    const { x: bandX, y: bandY } = this.#banded;
+    if (!bandX && !bandY) return undefined;
+    const radiusOf = this.#radiusScale();
+    // Points of no encoded field are drawn wherever they are placed.
+    const encodes = [this.#rField, this.spec.color, this.#opacityField, this.#symbolField].some(
+      (field) => field !== undefined,
+    );
+    // Parts hold the chart's band indices, which panels may place apart.
+    const used = new Uint8Array(bandY ? (bands.y?.keys.length ?? 0) : 0);
+    let [points, categories, low, high] = [0, 0, Infinity, -Infinity];
+    // The last value is a part's last drawn point (a view's rows may run in
+    // any order), of the part whose last point is the table's latest row.
+    let [last, lastRow] = [Number.NaN, -1];
+    for (const s of parts) {
+      let [partLast, partRow] = [Number.NaN, -1];
+      for (let k = 0; k < s.length; k++) {
+        const row = rowOf(s, k);
+        const x = s.x[row]!;
+        const y = s.y[row]!;
+        const placed =
+          (bandX ? x >= 0 : Number.isFinite(x)) && (bandY ? y >= 0 : Number.isFinite(y));
+        if (!placed || (encodes && !(this.#reach(row, radiusOf) > 0))) continue;
+        points++;
+        if (bandY && !used[y]) {
+          used[y] = 1;
+          categories++;
+        }
+        // The value along the axis of values: y, or x along category y.
+        const value = bandY ? x : y;
+        if (value < low) low = value;
+        if (value > high) high = value;
+        partLast = value;
+        partRow = row;
+      }
+      if (partRow > lastRow) [last, lastRow] = [partLast, partRow];
+    }
+    if (points === 0) return `${name}: no data`;
+    const count = `${points} point${points === 1 ? "" : "s"}`;
+    const { value } = format;
+    if (!bandY)
+      return `${name}: ${count}, from ${value(low)} to ${value(high)}, last ${value(last)}`;
+    const among = `${count} in ${categories} ${categories === 1 ? "category" : "categories"}`;
+    return bandX
+      ? `${name}: ${among}`
+      : `${name}: ${among}, x from ${format.x(low)} to ${format.x(high)}`;
+  }
+
+  /** Rows of a series in the x domain, widened by how far points reach past it; all on category x. */
   #visible(s: Series, frame: Frame): [number, number] {
+    if (this.#banded.x) return [0, s.length];
     const { plot, x } = frame;
     const reach = this.inset.x;
     return visibleRange(s, x.invert(plot.x - reach), x.invert(plot.x + plot.width + reach));
@@ -656,11 +757,14 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     }
     let best: Hit | undefined;
     const radiusOf = this.#radiusScale();
+    const placeRow = this.#banded.x || this.#banded.y ? placeBanded : place;
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       let index = indexes.get(s.key);
       if (!index) {
-        index = buildIndex(s, frame, this.#visible(s, frame), (row) => this.#reach(row, radiusOf));
+        index = buildIndex(s, frame, this.#visible(s, frame), placeRow, (row) =>
+          this.#reach(row, radiusOf),
+        );
         indexes.set(s.key, index);
       }
       const found = index.nearest(px, py, best?.distance ?? Infinity);
@@ -672,14 +776,14 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
 }
 
 /**
- * Pixel position of a row, or undefined when the point is not drawn: missing,
- * or farther outside the plot than points reach.
+ * Pixel position of a point at `x` and `y`, or undefined when it is not
+ * drawn: missing, or farther outside the plot than points reach.
  */
-function place(s: Series, row: number, frame: Frame, reach: number): [number, number] | undefined {
+function pixelOf(x: number, y: number, frame: Frame, reach: number): [number, number] | undefined {
   // Points inside an axis break are not drawn.
-  if (frame.x.breaks?.hides(s.x[row]!)) return undefined;
-  const px = frame.x.map(s.x[row]!);
-  const py = frame.y.map(s.y[row]!);
+  if (frame.x.breaks?.hides(x)) return undefined;
+  const px = frame.x.map(x);
+  const py = frame.y.map(y);
   if (!(Number.isFinite(px) && Number.isFinite(py))) return undefined;
   const { plot } = frame;
   if (px < plot.x - reach || px > plot.x + plot.width + reach) return undefined;
@@ -687,11 +791,54 @@ function place(s: Series, row: number, frame: Frame, reach: number): [number, nu
   return [px, py];
 }
 
+/**
+ * How a row of a series is placed: `place` at its x and y, or `placeBanded`
+ * for points in bands. Declared functions, not constants: calls through a
+ * constant cost dense scatters about a twentieth of their scene.
+ */
+type Place = typeof place;
+
+function place(s: Series, row: number, frame: Frame, reach: number): [number, number] | undefined {
+  return pixelOf(s.x[row]!, s.y[row]!, frame, reach);
+}
+
+/** Categories are read at their panel's places; a band index of -1 is a missing one. */
+function placeBanded(
+  s: Series,
+  row: number,
+  frame: Frame,
+  reach: number,
+): [number, number] | undefined {
+  const x = placeAt(s, "x", row);
+  const y = placeAt(s, "y", row);
+  if ((x < 0 && frame.x.type === "band") || (y < 0 && frame.y.type === "band")) return undefined;
+  return pixelOf(x, y, frame, reach);
+}
+
+/**
+ * [min, max] of a series' `axis` values (with `log`, positive ones) at rows
+ * with a category on the other axis: rows without one are not drawn.
+ */
+function bandedExtent(s: Series, axis: "x" | "y", log: boolean): [number, number] | undefined {
+  const [values, bands] = axis === "x" ? [s.x, s.y] : [s.y, s.x];
+  let min = Infinity;
+  let max = -Infinity;
+  for (let k = 0; k < s.length; k++) {
+    const row = rowOf(s, k);
+    const value = values[row]!;
+    if (bands[row]! < 0 || !Number.isFinite(value) || (log && value <= 0)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  return min <= max ? [min, max] : undefined;
+}
+
 /** A grid index of the rows in [start, end) whose points reach into the plot. */
 function buildIndex(
   s: Series,
   frame: Frame,
   [start, end]: [number, number],
+  placeRow: Place,
   reachOf: (row: number) => number,
 ): GridIndex {
   const coords = new Float32Array((end - start) * 2);
@@ -700,7 +847,7 @@ function buildIndex(
   for (let k = start; k < end; k++) {
     const row = rowOf(s, k);
     const reach = reachOf(row);
-    const placed = reach >= 0 ? place(s, row, frame, reach) : undefined;
+    const placed = reach >= 0 ? placeRow(s, row, frame, reach) : undefined;
     if (!placed) continue;
     coords[count * 2] = placed[0];
     coords[count * 2 + 1] = placed[1];

@@ -3,7 +3,7 @@
 // template by calling it with the props written there, and <Chart> against
 // its `$props`, so these lines check what templates check.
 import { type Chart as HercegChart, table, time } from "herceg";
-import { type Chart, Custom, Line, Rule, Text } from "../src/index.ts";
+import { type Chart, Custom, Line, Point, Rule, Text } from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -18,6 +18,10 @@ Line({ data: metrics, x: "time", y: "p50", series: "service" });
 Line({ data: metrics, x: "time", y: "missing" });
 // @ts-expect-error a category field is not a numeric encoding
 Line({ data: metrics, x: "time", y: "service" });
+// A category field places points in its bands; sizes stay numeric.
+Point({ data: metrics, x: "service", y: "p50" });
+// @ts-expect-error point sizes are number fields
+Point({ data: metrics, x: "service", y: "p50", r: "service" });
 
 // The template checker passes `:data` as a call expression, from which
 // TypeScript cannot tell union members apart; `unwrap` stands in for it.

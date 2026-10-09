@@ -932,7 +932,9 @@ class Chart:
     ) -> Chart:
         """Scatter points.
 
-        ``r`` is a radius in pixels or a numeric column sized by area within
+        ``x`` and ``y`` are numeric, datetime, or category columns; a category
+        column places points in its bands, as for strip and dot plots. ``r``
+        is a radius in pixels or a numeric column sized by area within
         ``r_range`` (bubbles); ``fill_opacity`` is a number or a numeric
         column. ``stroke`` and ``stroke_width`` ring each point, in the
         background color by default. ``color`` colors points by a numeric column on ``colors``, a
@@ -944,8 +946,8 @@ class Chart:
         a device pixel once, which is faster for dense scatters.
         """
         table = self._mark_table(data)
-        self._require(table, x, _NUMERIC, "point x")
-        self._require(table, y, _NUMERIC, "point y")
+        self._require(table, x, (*_NUMERIC, "category"), "point x")
+        self._require(table, y, (*_NUMERIC, "category"), "point y")
         self._require(table, series, ("category",), "point series")
         if isinstance(r, str):
             self._require(table, r, _NUMERIC, "point r")
@@ -2458,7 +2460,7 @@ class Chart:
             for field in self._facets:
                 self._require(table, field, ("category",), "facet")
             kind = spec["type"]
-            if kind in ("heatmap", "histogram", "boxplot", "violin", "rule", "region", "text"):
+            if kind in ("histogram", "boxplot", "violin", "rule", "region", "text"):
                 raise ValueError(
                     f"{kind} marks over a table cannot be split into panels yet; "
                     "pass repeat=True to draw them whole in every panel"
@@ -2470,8 +2472,8 @@ class Chart:
     def _check_categories(self, spec: dict[str, Any], table: int | None) -> None:
         """Refuses, as the browser would, what panels with categories of their own
         (``resolve_x`` or ``resolve_y`` other than ``"shared"`` on a category axis)
-        cannot draw yet: marks other than bars on such an axis, synced charts, and
-        brushes along a y axis of such categories."""
+        cannot draw yet: marks other than bars, heatmaps, and points on such an
+        axis, synced charts, and brushes along a y axis of such categories."""
         if table is None or not (self._facets or self._panels):
             return
         kind = spec["type"]
@@ -2484,7 +2486,7 @@ class Chart:
             )
             if resolution == "shared" or not banded:
                 continue
-            if kind != "bar":
+            if kind not in ("bar", "heatmap", "point"):
                 raise ValueError(
                     f"a {kind} mark's categories cannot be resolved per panel yet; "
                     f"pass resolve_{axis}='shared'"

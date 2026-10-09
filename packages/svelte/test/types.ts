@@ -4,7 +4,7 @@
 // here; `Readme.svelte` holds the README's examples.
 import { type Chart as HercegChart, table, time } from "herceg";
 import type { ComponentProps } from "svelte";
-import { type Chart, Custom, Line, Rule, Text } from "../src/index.js";
+import { type Chart, Custom, Line, Point, Rule, Text } from "../src/index.js";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -21,6 +21,10 @@ Line(internals, { data: metrics, x: "time", y: "p50", series: "service" });
 Line(internals, { data: metrics, x: "time", y: "missing" });
 // @ts-expect-error a category field is not a numeric encoding
 Line(internals, { data: metrics, x: "time", y: "service" });
+// A category field places points in its bands; sizes stay numeric.
+Point(internals, { data: metrics, x: "service", y: "p50" });
+// @ts-expect-error point sizes are number fields
+Point(internals, { data: metrics, x: "service", y: "p50", r: "service" });
 
 Rule(internals, { y: 250, label: "SLO" });
 Rule(internals, { data: deploys, x: "at", text: "version" });

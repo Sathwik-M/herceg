@@ -107,6 +107,11 @@ export interface SummaryContext {
   format: AxisFormat;
   locale: string | undefined;
   log: boolean;
+  /**
+   * The chart's bands, which band indices in series name: summaries read
+   * series' parts across panels, whose own categories place them apart.
+   */
+  bands: Bands;
 }
 
 /** How the chart formats single x and y values, as in tooltips. */
@@ -300,9 +305,10 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   /**
    * The text alternative's sentence for a series, over its parts in every
    * panel, for marks whose values say more than one number (candlesticks,
-   * histograms). `context.log` says whether the series' y axis is logarithmic.
+   * histograms); undefined leaves it to the chart's (points, range, and last
+   * value). `context.log` says whether the series' y axis is logarithmic.
    */
-  summarize?(parts: readonly Series[], name: string, context: SummaryContext): string;
+  summarize?(parts: readonly Series[], name: string, context: SummaryContext): string | undefined;
   /**
    * A sentence describing what the mark shows, for marks without series
    * (annotations), which the chart's data summary would otherwise leave out.
@@ -489,7 +495,11 @@ export class SeriesSplitter {
   }
 }
 
-/** Builds series from sources: keys, colors, column views. `x` holds each row's x position. */
+/**
+ * Builds series from sources: keys, colors, column views. `x` holds each
+ * row's x position; `positions`, when given, each row's y position in place
+ * of the sources' y field (band indices of a category field).
+ */
 export function buildSeries(
   table: Table<Schema>,
   sources: readonly SeriesSource[],
@@ -497,9 +507,10 @@ export function buildSeries(
   key: MarkKey,
   palette: Palette,
   stroke: string | undefined,
+  positions?: NumericArray,
 ): Series[] {
   return sources.map((source) => {
-    const y = table.numbers(source.y as never);
+    const y = positions ?? table.numbers(source.y as never);
     const id = seriesKey(key, source.id);
     return {
       key: id,
@@ -509,7 +520,7 @@ export function buildSeries(
       y,
       y0: undefined,
       values: y,
-      field: source.y,
+      field: positions ? undefined : source.y,
       range: false,
       rows: source.rows,
       stream: source.stream,

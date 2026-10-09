@@ -6,7 +6,6 @@ import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { errorBar } from "../../src/marks/errorbar.ts";
-import { heatmap } from "../../src/marks/heatmap.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
@@ -664,16 +663,6 @@ describe("categories resolved per panel", () => {
   });
 
   it("refuse what panels cannot resolve per panel yet", () => {
-    const cells = table({ x: ["a"], y: ["b"], v: [1], region: ["N"] });
-    expect(() =>
-      build({
-        marks: [heatmap(cells, { x: "x", y: "y", value: "v", facet: "repeat" })],
-        facet: facet("region"),
-        resolve: { x: "independent" },
-      }),
-    ).toThrow(
-      `A heatmap mark's categories cannot be resolved per panel yet; give the chart resolve: { x: "shared" }`,
-    );
     const data = sales();
     expect(() =>
       build({

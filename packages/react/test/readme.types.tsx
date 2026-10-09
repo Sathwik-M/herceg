@@ -1,7 +1,7 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
 import { table, time } from "herceg";
 import { useEffect, useMemo } from "react";
-import { Chart, Custom, Line, Region, Rule, Text } from "../src/index.ts";
+import { Chart, Custom, Line, Point, Region, Rule, Text } from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -40,6 +40,17 @@ export function Checked() {
     <Chart>
       {/* @ts-expect-error fields are checked against the element's data */}
       <Line data={metrics} x="time" y="missing" />
+    </Chart>
+  );
+}
+
+export function Strip() {
+  return (
+    <Chart>
+      {/* A category field places points in its bands. */}
+      <Point data={metrics} x="service" y="p50" />
+      {/* @ts-expect-error point sizes are number fields */}
+      <Point data={metrics} x="service" y="p50" r="service" />
     </Chart>
   );
 }

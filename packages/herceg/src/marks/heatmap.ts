@@ -35,7 +35,7 @@ import {
   type SummaryContext,
   seriesKey,
 } from "./mark.ts";
-import { type Series, TableCache } from "./series.ts";
+import { type BandPlaces, placeAt, rowOf, type Series, TableCache } from "./series.ts";
 
 export interface HeatmapOptions<S extends Schema> {
   /**
@@ -64,7 +64,7 @@ export interface HeatmapOptions<S extends Schema> {
    */
   reduce?: "mean" | "max" | "min";
   label?: string;
-  /** With the chart's `facet`, draw all cells in every panel; heatmaps cannot be split yet. */
+  /** With the chart's `facet`, draw all cells in every panel instead of splitting them. */
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
@@ -81,6 +81,10 @@ interface Painted {
   version: number;
   x: NumericArray;
   y: NumericArray;
+  /** A facet panel's rows, and its categories' places (see `Series.places`). */
+  panelRows: Uint32Array | undefined;
+  xPlaces: BandPlaces | undefined;
+  yPlaces: BandPlaces | undefined;
   theme: Theme;
   columns: number;
   rows: number;
@@ -96,8 +100,11 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
   readonly table: Table<Schema>;
   readonly tooltip = "cell";
   readonly bandPadding = 0;
-  /** Cell lookups for tooltips, keyed by the column-index array they were built from. */
-  readonly #cells = new WeakMap<NumericArray, CellIndex>();
+  /**
+   * Cell lookups for tooltips and the keyboard, keyed by the rows they index
+   * (a facet panel's), or for whole columns by the column-index array.
+   */
+  readonly #cells = new WeakMap<object, CellIndex>();
   readonly #extent = new TableCache<readonly [number, number] | null>();
 
   constructor(input: HeatmapSpec, table: Table<Schema>) {
@@ -168,70 +175,81 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     rows: number,
     frame: { x: PositionScale; y: PositionScale },
   ): number | undefined {
+    // The index holds chart bands; a panel's own categories are read at
+    // their places, as the panel draws them.
+    const xPlaces = series.places?.x;
+    const yPlaces = series.places?.y;
     const index = this.#cellIndex(
       series,
-      frame.x.categories?.length ?? 0,
-      frame.y.categories?.length ?? 0,
+      lastBand(xPlaces, frame.x.categories?.length ?? 0),
+      lastBand(yPlaces, frame.y.categories?.length ?? 0),
     );
     // Rows of categories run down the plot, rows of numbers up it.
     const up = frame.y.map(1) < frame.y.map(0) ? 1 : -1;
     // The best cell so far, by a rank compared key by key (lowest first).
     let best = -1;
     let [ra, rb, rc] = [Number.POSITIVE_INFINITY, 0, 0];
-    const consider = (row: number, a: number, b = 0, c = 0) => {
+    const consider = (position: number, a: number, b = 0, c = 0) => {
       if (a < ra || (a === ra && (b < rb || (b === rb && c < rc)))) {
-        best = row;
+        best = position;
         [ra, rb, rc] = [a, b, c];
       }
     };
     if (position < 0) {
       // Entering the grid: its top left cell.
-      index.forEachCell((c, r, row) => consider(row, -r * up, c));
+      index.forEachCell((c, r, k) => consider(k, -placeOf(yPlaces, r) * up, placeOf(xPlaces, c)));
       return best < 0 ? undefined : best;
     }
     const along = columns !== 0;
     const steps = Math.abs(along ? columns : rows);
     const direction = Math.sign(along ? columns : rows * up);
-    // Heatmaps repeat in facet panels rather than split, so positions are table rows.
-    const [column, line] = [series.x[position]!, series.y[position]!];
-    index.forEachCell((c, r, row) => {
+    const row = rowOf(series, position);
+    const [column, line] = [placeAt(series, "x", row), placeAt(series, "y", row)];
+    index.forEachCell((cb, rb, k) => {
+      const c = placeOf(xPlaces, cb);
+      const r = placeOf(yPlaces, rb);
       const offset = (along ? c - column : r - line) * direction;
       if (offset <= 0) return;
       const across = Math.abs(along ? r - line : c - column);
       // The next cell in the same row (or column), else the nearest ahead in
       // another, so no cell is out of reach; the furthest for jumps.
       if (steps === Number.POSITIVE_INFINITY) {
-        if (across === 0) consider(row, -offset);
-      } else consider(row, across === 0 ? 0 : 1, offset, across);
+        if (across === 0) consider(k, -offset);
+      } else consider(k, across === 0 ? 0 : 1, offset, across);
     });
     return best < 0 ? undefined : best;
   }
 
-  /** How many cells are drawn in how many columns and rows, and the lowest and highest. */
-  summarize(parts: readonly Series[], name: string, { format }: SummaryContext): string {
-    const s = parts[0];
-    if (!s) return `${name}: no values`;
-    let columns = 0;
-    let rows = 0;
-    for (let row = 0; row < s.length; row++) {
-      columns = Math.max(columns, s.x[row]! + 1);
-      rows = Math.max(rows, s.y[row]! + 1);
-    }
-    const used = new Uint8Array(columns);
-    let [cells, columnCount, rowCount, lastRow] = [0, 0, 0, -1];
-    let low = -1;
-    let high = -1;
-    this.#cellIndex(s, columns, rows).forEachCell((c, r, row) => {
-      cells++;
-      if (!used[c]) [used[c], columnCount] = [1, columnCount + 1];
-      if (r !== lastRow) [lastRow, rowCount] = [r, rowCount + 1];
-      const value = s.values[row]!;
-      if (low < 0 || value < s.values[low]!) low = row;
-      if (high < 0 || value > s.values[high]!) high = row;
+  /**
+   * How many cells are drawn in how many columns and rows, and the lowest
+   * and highest, over the series' parts in every panel. Parts hold the
+   * chart's band indices, so cells are named by the chart's categories.
+   */
+  summarize(parts: readonly Series[], name: string, { format, bands }: SummaryContext): string {
+    const label = (list: BandList | undefined, band: number) => list?.labels[band] ?? "";
+    const [columns, rows] = [bands.x?.keys.length ?? 0, bands.y?.keys.length ?? 0];
+    const indexes = parts.map((s) => this.#cellIndex(s, columns, rows));
+    const usedColumns = new Uint8Array(columns);
+    const usedRows = new Uint8Array(rows);
+    let [cells, columnCount, rowCount] = [0, 0, 0];
+    // The lowest and highest cells: their part and row, and their values.
+    let low: [Series, number] | undefined;
+    let high: [Series, number] | undefined;
+    let [lowest, highest] = [Infinity, -Infinity];
+    parts.forEach((s, i) => {
+      indexes[i]!.forEachCell((c, r, k) => {
+        cells++;
+        if (!usedColumns[c]) [usedColumns[c], columnCount] = [1, columnCount + 1];
+        if (!usedRows[r]) [usedRows[r], rowCount] = [1, rowCount + 1];
+        const row = rowOf(s, k);
+        const value = s.values[row]!;
+        if (value < lowest) [low, lowest] = [[s, row], value];
+        if (value > highest) [high, highest] = [[s, row], value];
+      });
     });
-    if (cells === 0) return `${name}: no values`;
-    const at = (row: number) =>
-      `${format.value(s.values[row]!)} at ${format.x(s.x[row]!)}, ${format.y(s.y[row]!)}`;
+    if (!low || !high) return `${name}: no values`;
+    const at = ([s, row]: [Series, number]) =>
+      `${format.value(s.values[row]!)} at ${label(bands.x, s.x[row]!)}, ${label(bands.y, s.y[row]!)}`;
     const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
     return (
       `${name}: ${plural(cells, "cell")} in ${plural(columnCount, "column")} and ` +
@@ -271,7 +289,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
   geometry(series: readonly Series[], frame: Frame): RasterGeometry[] {
     const s = series[0];
     const colors = this.#colorScale(frame.theme);
-    if (!s || frame.hidden.has(s.key) || !colors) return [];
+    if (!s || s.length === 0 || frame.hidden.has(s.key) || !colors) return [];
     const columns = frame.x.categories?.length ?? 0;
     const rows = frame.y.categories?.length ?? 0;
     if (columns === 0 || rows === 0) return [];
@@ -298,6 +316,9 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
       version: this.table.version,
       x: s.x,
       y: s.y,
+      panelRows: s.rows,
+      xPlaces: s.places?.x,
+      yPlaces: s.places?.y,
       theme: frame.theme,
       columns,
       rows,
@@ -350,21 +371,23 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     pixels.fill(0, 0, count * 4);
     // Until it is colored, each pixel's four bytes count its block's values.
     const counts = new Uint32Array(pixels.buffer, pixels.byteOffset, count);
-    const { x, y, values } = s;
     const pixelOf = (c: number, r: number) =>
       Math.floor(((upward ? rows - 1 - r : r) * down) / rows) * across +
       Math.floor((c * across) / columns);
-    for (let row = 0; row < s.length; row++) {
-      const c = x[row]!;
-      const r = y[row]!;
-      const value = values[row]!;
-      if (c < 0 || r < 0 || !Number.isFinite(value)) continue;
-      const at = pixelOf(c, r);
-      if (reduce === "mean") {
-        totals[at]! += value;
-        counts[at]!++;
-      } else if (reduce === "max" ? !(totals[at]! >= value) : !(totals[at]! <= value)) {
-        totals[at] = value;
+    for (const cells = new Cells(s); cells.next(); ) {
+      const { x, y, values, length } = cells;
+      for (let k = 0; k < length; k++) {
+        const c = x[k]!;
+        const r = y[k]!;
+        const value = values[k]!;
+        if (c < 0 || r < 0 || !Number.isFinite(value)) continue;
+        const at = pixelOf(c, r);
+        if (reduce === "mean") {
+          totals[at]! += value;
+          counts[at]!++;
+        } else if (reduce === "max" ? !(totals[at]! >= value) : !(totals[at]! <= value)) {
+          totals[at] = value;
+        }
       }
     }
     if (reduce !== "mean") {
@@ -382,13 +405,16 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     }
     if (overflowed.size > 0) {
       for (const i of overflowed) totals[i] = 0;
-      for (let row = 0; row < s.length; row++) {
-        const c = x[row]!;
-        const r = y[row]!;
-        const value = values[row]!;
-        if (c < 0 || r < 0 || !Number.isFinite(value)) continue;
-        const at = pixelOf(c, r);
-        if (overflowed.has(at)) totals[at]! += value / 2 ** 64;
+      for (const cells = new Cells(s); cells.next(); ) {
+        const { x, y, values, length } = cells;
+        for (let k = 0; k < length; k++) {
+          const c = x[k]!;
+          const r = y[k]!;
+          const value = values[k]!;
+          if (c < 0 || r < 0 || !Number.isFinite(value)) continue;
+          const at = pixelOf(c, r);
+          if (overflowed.has(at)) totals[at]! += value / 2 ** 64;
+        }
       }
     }
     for (let i = 0; i < count; i++) {
@@ -411,21 +437,36 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     const c = Math.round(frame.x.invert(px));
     const r = Math.round(frame.y.invert(py));
     if (c < 0 || r < 0 || c >= columns || r >= rows) return undefined;
-    const position = this.#cellIndex(s, columns, rows).find(c, r);
+    // The index holds chart bands, which a panel's own categories place apart.
+    const [xPlaces, yPlaces] = [s.places?.x, s.places?.y];
+    const index = this.#cellIndex(s, lastBand(xPlaces, columns), lastBand(yPlaces, rows));
+    const position = index.find(bandOf(xPlaces, c), bandOf(yPlaces, r));
     return position < 0 ? undefined : { series: s, position, distance: 0 };
   }
 
-  /** The index of `s`'s rows by cell, for a grid of `columns` x `rows`. */
+  /**
+   * The index of `s`'s positions by cell, in chart bands, built for a grid
+   * of `columns` x `rows` of them. Every caller's grid holds every cell `s`'s
+   * rows do (the chart's bands, or those of the panel drawing them), so an
+   * index is whole whichever built it. Band index arrays are rebuilt
+   * whenever the table or the band order changes, and a facet panel's rows
+   * whenever its table or the panels do, so their identity tells whether an
+   * index is current. Panels with categories of their own place the same
+   * bands in the same order (see `BandPlaces`), so one index serves every
+   * panel drawing the same rows (a mark repeated in each).
+   */
   #cellIndex(s: Series, columns: number, rows: number): CellIndex {
-    // Index arrays are rebuilt whenever the table or the band order changes,
-    // so their identity tells whether an index is current.
-    // An index of a larger grid holds every cell of a smaller one.
-    const cached = this.#cells.get(s.x);
-    if (cached && cached.y === s.y && cached.columns >= columns && cached.rows >= rows) {
+    const key = s.rows ?? s.x;
+    const cached = this.#cells.get(key);
+    if (
+      cached?.x === s.x &&
+      cached.y === s.y &&
+      cached.values === s.values &&
+      cached.rows === s.rows
+    )
       return cached;
-    }
-    const index = new CellIndex(s.x, s.y, s.values, columns, rows);
-    this.#cells.set(s.x, index);
+    const index = new CellIndex(s.x, s.y, s.values, columns, rows, s.rows);
+    this.#cells.set(key, index);
     return index;
   }
 }
@@ -440,6 +481,9 @@ function samePainting(a: Painted | undefined, b: Painted): boolean {
     a.version === b.version &&
     a.x === b.x &&
     a.y === b.y &&
+    a.panelRows === b.panelRows &&
+    a.xPlaces === b.xPlaces &&
+    a.yPlaces === b.yPlaces &&
     a.theme === b.theme &&
     a.columns === b.columns &&
     a.rows === b.rows &&
@@ -460,13 +504,94 @@ function paintCells(
   { columns, rows, upward }: Painted,
 ): void {
   pixels.fill(0, 0, columns * rows * 4);
-  for (let row = 0; row < s.length; row++) {
-    const c = s.x[row]!;
-    const r = s.y[row]!;
-    const value = s.values[row]!;
-    if (c < 0 || r < 0 || !Number.isFinite(value)) continue;
-    colors.write(value, pixels, ((upward ? rows - 1 - r : r) * columns + c) * 4);
+  for (const cells = new Cells(s); cells.next(); ) {
+    const { x, y, values, length } = cells;
+    for (let k = 0; k < length; k++) {
+      const c = x[k]!;
+      const r = y[k]!;
+      const value = values[k]!;
+      if (c < 0 || r < 0 || !Number.isFinite(value)) continue;
+      colors.write(value, pixels, ((upward ? rows - 1 - r : r) * columns + c) * 4);
+    }
   }
+}
+
+/** Positions of a facet panel's rows, or of placed cells, read at a time. */
+const CHUNK = 4096;
+/** Buffers for chunks of cells, kept once made: cells are read a chunk at a time, in turn. */
+let buffers: { x: Int32Array; y: Int32Array; values: Float64Array } | undefined;
+
+/**
+ * A series' cells (-1 for a missing category) and values by position, in
+ * order, for loops over every row of large grids: a whole table's columns
+ * themselves, in one turn, or for a facet panel's rows or a panel's own
+ * categories, CHUNK positions a turn, read through their rows and places
+ * into buffers kept for this. The loops read arrays directly either way,
+ * and nothing is allocated per row, panel, or table.
+ */
+class Cells {
+  x: NumericArray;
+  y: NumericArray;
+  values: NumericArray;
+  /** How many positions the current turn holds. */
+  length = 0;
+  readonly #s: Series;
+  #next = 0;
+
+  constructor(s: Series) {
+    this.#s = s;
+    ({ x: this.x, y: this.y, values: this.values } = s);
+  }
+
+  /** Moves to the next turn's positions; false when there are no more. */
+  next(): boolean {
+    const s = this.#s;
+    const start = this.#next;
+    if (start >= s.length) return false;
+    if (!s.rows && !s.places) {
+      this.length = s.length;
+      this.#next = s.length;
+      return true;
+    }
+    buffers ??= {
+      x: new Int32Array(CHUNK),
+      y: new Int32Array(CHUNK),
+      values: new Float64Array(CHUNK),
+    };
+    const { x, y, values } = buffers;
+    const length = Math.min(CHUNK, s.length - start);
+    const { rows, x: xBands, y: yBands } = s;
+    const [xPlaces, yPlaces] = [s.places?.x, s.places?.y];
+    for (let i = 0; i < length; i++) {
+      const row = rows ? rows[start + i]! : start + i;
+      const c = xBands[row]!;
+      const r = yBands[row]!;
+      x[i] = xPlaces && c >= 0 ? xPlaces.at(c) : c;
+      y[i] = yPlaces && r >= 0 ? yPlaces.at(r) : r;
+      values[i] = s.values[row]!;
+    }
+    [this.x, this.y, this.values, this.length] = [x, y, values, length];
+    this.#next = start + length;
+    return true;
+  }
+}
+
+/** The place of chart band `band` in a panel placing bands at `places`. */
+function placeOf(places: BandPlaces | undefined, band: number): number {
+  return places ? places.at(band) : band;
+}
+
+/**
+ * How many chart bands an axis of `count` bands reaches, from the first:
+ * past its last, which a panel's own categories place last.
+ */
+function lastBand(places: BandPlaces | undefined, count: number): number {
+  return places && count > 0 ? places.band(count - 1) + 1 : count;
+}
+
+/** The chart band at place `place` in a panel placing bands at `places`. */
+function bandOf(places: BandPlaces | undefined, place: number): number {
+  return places ? places.band(place) : place;
 }
 
 /**

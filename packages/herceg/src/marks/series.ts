@@ -46,10 +46,15 @@ export interface Series {
   places?: { readonly x?: BandPlaces; readonly y?: BandPlaces } | undefined;
 }
 
-/** Where chart bands are on an axis holding only some of them. */
+/**
+ * Where chart bands are on an axis holding only some of them. Places keep
+ * the chart's order: of two bands the axis holds, the earlier is placed first.
+ */
 export interface BandPlaces {
   /** The place of chart band `band` (at least 0), or -1 when the axis lacks it. */
   at(band: number): number;
+  /** The chart band at place `place`, or -1 past the axis' bands. */
+  band(place: number): number;
 }
 
 /**
@@ -98,6 +103,15 @@ export function placeAt(s: Series, axis: "x" | "y", row: number): number {
   const value = s[axis][row]!;
   const places = s.places?.[axis];
   return places && value >= 0 ? places.at(value) : value;
+}
+
+/**
+ * The value tooltips and events report for row `row` of `s`: its value, or
+ * where the series' values are its y categories (points along a category
+ * y axis), the category's place, as positions along that axis are.
+ */
+export function valueAt(s: Series, row: number): number {
+  return s.values === s.y ? placeAt(s, "y", row) : s.values[row]!;
 }
 
 /**

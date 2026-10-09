@@ -95,13 +95,13 @@ export function describeChart(model: ChartModel): string {
     const drawn = model.parts(s);
     const mark = model.markOf(s);
     const y = mark && model.yScaleOf(mark);
-    const sentence = mark?.summarize
-      ? mark.summarize(drawn, name(s), {
-          format: model.formatsOf(mark),
-          locale: config.locale,
-          log: y?.type === "log",
-        })
-      : summarize(drawn, name(s), config.locale);
+    const sentence =
+      mark?.summarize?.(drawn, name(s), {
+        format: model.formatsOf(mark),
+        locale: config.locale,
+        log: y?.type === "log",
+        bands: model.bands,
+      }) ?? summarize(drawn, name(s), config.locale);
     parts.push(`${sentence}.`);
   }
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);

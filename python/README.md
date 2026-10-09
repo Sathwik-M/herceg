@@ -29,6 +29,7 @@ hg.scatter(cars, x="weight", y="mpg", series="origin", r=3)
 hg.scatter(countries, x="gdp", y="life", r="population", series="continent")  # bubbles
 hg.scatter(stations, x="lon", y="lat", color="anomaly", colors="rdbu", color_midpoint=0)
 hg.scatter(cars, x="weight", y="mpg", symbol="origin")  # a shape per origin
+hg.scatter(requests, x="region", y="latency")  # a category x places points in its bands
 hg.heatmap(load, x="hour", y="host", value="cpu", colors="viridis")
 hg.candlestick(prices, x="day", open="open", high="high", low="low", close="close")
 hg.candlestick(prices, "day", "open", "high", "low", "close", variant="ohlc")  # OHLC bars
@@ -99,9 +100,9 @@ or `facet_row` and `facet_col` (a grid with a row per value of one category
 column and a column per value of another; either may be left out), with
 `resolve_x` and `resolve_y` (`"shared"`, `"independent"`, `"rows"`, or
 `"columns"`) choosing which panels share an x or a y scale (facets share
-both by default, subplots x; on a category axis of bars, panels that do not
-share it show only the categories their rows hold); marks with
-`repeat=True` draw all their rows in every panel; `panels` (ids or
+both by default, subplots x; on a category axis of bars, heatmaps, or
+points, panels that do not share it show only the categories their rows
+hold); marks with `repeat=True` draw all their rows in every panel; `panels` (ids or
 `hg.Panel("latency", title="Latency", x=hg.Axis(label="Time"),
 y=hg.Axis(label="ms"))`), `panel_columns`, and
 `panel_row_heights` and `panel_column_widths` (relative heights of the rows
