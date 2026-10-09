@@ -253,11 +253,12 @@ export interface Layer {
 }
 
 /**
- * Reused scratch storage for curved layers, grown as needed. Buffers grown
+ * Reused scratch storage for curved layers, allocated when first needed (a
+ * chart without curved areas never does) and grown as needed. Buffers grown
  * past RETAINED entries for an unusually large chart are not kept.
  */
-let layerFloats = new Float64Array(1024);
-let keptScratch = new Int32Array(256);
+let layerFloats = new Float64Array(0);
+let keptScratch = new Int32Array(0);
 const RETAINED = 1 << 16;
 
 /**
@@ -369,7 +370,7 @@ export function traceCurvedLayers(
     });
     return { upper, lower };
   });
-  if (layerFloats.length > RETAINED) layerFloats = new Float64Array(1024);
+  if (layerFloats.length > RETAINED) layerFloats = new Float64Array(0);
   releaseScratch();
   return edges;
 }
@@ -392,7 +393,7 @@ function keptRows(
   let kept = keptScratch;
   const keep = (k: number) => {
     if (n === kept.length) {
-      const grown = new Int32Array(2 * kept.length);
+      const grown = new Int32Array(Math.max(256, 2 * kept.length));
       grown.set(kept);
       kept = grown;
     }
