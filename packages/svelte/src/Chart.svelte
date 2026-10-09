@@ -9,6 +9,7 @@
     type ChartListener,
     type ChartMark,
     type ChartOptions,
+    type ChartUpdate,
     createChart,
     type Chart as HercegChart,
   } from "herceg";
@@ -29,7 +30,7 @@
     ...options
   }: ChartProps = $props();
 
-  type Options = Omit<ChartOptions, "marks">;
+  type Options = Omit<ChartUpdate, "marks">;
 
   /** What the chart shows, to skip updates when nothing changed. */
   interface View {
@@ -77,7 +78,12 @@
   function show(view: View) {
     const last = applied;
     if (!current || !last) {
-      current = createChart(container, { ...view.options, marks: view.marks });
+      // Options given as undefined take their defaults, as if left out.
+      const given = Object.entries(view.options).filter(([, value]) => value !== undefined);
+      current = createChart(container, {
+        ...(Object.fromEntries(given) as Omit<ChartOptions, "marks">),
+        marks: view.marks,
+      });
       chart = current;
       applied = view;
       return;
@@ -95,7 +101,7 @@
     const cleared = Object.keys(last.options).filter((key) => !(key in view.options));
     const reset = Object.fromEntries(cleared.map((key) => [key, undefined]));
     applied = { ...view, marks: next };
-    current.update({ ...reset, ...view.options, marks: next } as ChartOptions);
+    current.update({ ...reset, ...view.options, marks: next });
   }
 
   $effect(() => () => {

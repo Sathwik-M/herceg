@@ -224,7 +224,7 @@ export const Chart = defineComponent({
       if (sameMarks && next.key === last.key) return;
       // Props are the whole configuration: options no longer passed go back
       // to their defaults rather than keeping their previous values.
-      chart.value.update({ ...UNSET, ...next.options, marks } as ChartOptions);
+      chart.value.update({ ...UNSET, ...next.options, marks });
       applied = { ...next, marks };
     }
 

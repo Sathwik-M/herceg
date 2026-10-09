@@ -1,14 +1,15 @@
 import {
   type ChartListener,
   type ChartMark,
-  type ChartOptions,
+  type ChartUpdate,
   type Chart as HercegChart,
   tablesOf,
 } from "herceg";
 import type { Snippet } from "svelte";
 import type { ClassValue } from "svelte/elements";
 
-export interface ChartProps extends Omit<ChartOptions, "marks"> {
+/** Chart options as props: one left out, or `undefined`, takes its default. */
+export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   /** Marks built with herceg's functions; mark components among the children are added after them. */
   marks?: readonly ChartMark[] | undefined;
   /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Rule>, <Region>, <Text>, <Custom>. */

@@ -77,6 +77,22 @@ describe("mounting", () => {
     chart.destroy();
   });
 
+  it("resets options given as undefined to their defaults and keeps the rest", () => {
+    const chart = createChart(host, {
+      title: "Load",
+      width: 400,
+      marks: [line(series(10), { x: "t", y: "s0" })],
+    });
+    chart.update({ title: undefined });
+    chart.render();
+    expect(chart.root.getAttribute("aria-label")).toBe("Chart");
+    expect(chart.root.querySelector("svg")!.getAttribute("width")).toBe("400");
+    chart.update({ width: undefined });
+    chart.render();
+    expect(chart.root.querySelector("svg")!.getAttribute("width")).toBe("600");
+    chart.destroy();
+  });
+
   it("re-renders when the container resizes", async () => {
     const chart = createChart(host, { marks: [line(series(10), { x: "t", y: "s0" })] });
     host.style.width = "450px";

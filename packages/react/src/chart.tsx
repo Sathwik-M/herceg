@@ -3,6 +3,7 @@ import {
   type ChartListener,
   type ChartMark,
   type ChartOptions,
+  type ChartUpdate,
   createChart,
   type Chart as HercegChart,
   tablesOf,
@@ -21,7 +22,8 @@ import {
 } from "react";
 import { markBuilder } from "./marks.tsx";
 
-export interface ChartProps extends Omit<ChartOptions, "marks"> {
+/** Chart options as props: one left out, or `undefined`, takes its default. */
+export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   /** Marks built with herceg's functions; mark elements among `children` are added after them. */
   marks?: readonly ChartMark[];
   /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Rule>, <Region>, <Text>, <Custom>. */
@@ -130,7 +132,7 @@ function sameMark(a: ChartMark, b: ChartMark): boolean {
   );
 }
 
-type Options = Omit<ChartOptions, "marks">;
+type Options = Omit<ChartUpdate, "marks">;
 
 interface Applied {
   marks: readonly ChartMark[];
@@ -172,7 +174,12 @@ export function Chart({
   // The chart is created once; later prop changes go through update().
   // biome-ignore lint/correctness/useExhaustiveDependencies: created once on mount
   useLayoutEffect(() => {
-    const created = createChart(container.current!, { ...options, marks });
+    // Options given as undefined take their defaults, as if left out.
+    const given = Object.entries(options).filter(([, value]) => value !== undefined);
+    const created = createChart(container.current!, {
+      ...(Object.fromEntries(given) as Omit<ChartOptions, "marks">),
+      marks,
+    });
     chart.current = created;
     applied.current = { marks, options, key: optionsKey };
     return () => {
@@ -198,7 +205,7 @@ export function Chart({
     const cleared = Object.keys(last.options).filter((key) => !(key in options));
     const reset = Object.fromEntries(cleared.map((key) => [key, undefined]));
     applied.current = { marks: next, options, key: optionsKey };
-    chart.current.update({ ...reset, ...options, marks: next } as ChartOptions);
+    chart.current.update({ ...reset, ...options, marks: next });
   });
 
   useChartEvent(chart, "viewport", onViewportChange);

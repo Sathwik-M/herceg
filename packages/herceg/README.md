@@ -922,6 +922,12 @@ null, { panel? })` (a pair is shorthand for an x range), `selection` and
 painter for large point series or the animation code loads, otherwise
 undefined).
 
+`update` takes a `ChartUpdate`: each option given replaces the chart's,
+nested options (an axis, `interaction`, `tooltip`) whole, so pass every
+setting you want to keep; an option given as `undefined` goes back to its
+default; options left out are unchanged. React, Vue, and Svelte props are the
+whole configuration: a prop left out, or `undefined`, takes its default.
+
 `selection` is a `Selection`, `{ x, y, lasso }`, or null, all in data values:
 the selected x and y ranges (null along an axis the brush leaves alone; a
 lasso's extent) and a lasso's outline as `[x, y]` pairs. Code written when
