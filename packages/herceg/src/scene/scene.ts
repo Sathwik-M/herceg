@@ -221,6 +221,8 @@ export interface SegmentGeometry extends Geometry {
   draw: Drawing<SegmentGeometry>;
   stroke: string;
   strokeWidth: number;
+  /** Dash pattern in CSS pixels; absent or empty for solid segments. */
+  dash?: readonly number[];
   coords: Float32Array;
   count: number;
 }

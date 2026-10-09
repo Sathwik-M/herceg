@@ -164,6 +164,7 @@ form (`{"weekdays": [...]}`, `{"from": ..., "to": ...}`) work too.
 
 ```python
 sessions = hg.Axis(
+    seams=True,
     breaks=[
         hg.Break(weekdays=("sat", "sun")),
         hg.Break(hours=("16:00", "09:30")),
@@ -175,6 +176,15 @@ sessions = hg.Axis(
     .candlestick("time", "open", "high", "low", "close")
 )
 ```
+
+`hg.Axis(seams=True)` marks time breaks' seams with dashed vertical lines,
+one CSS pixel wide, behind the data and inside the plot. Set
+`seams={"min_spacing": 40}` to change their minimum spacing (finite and
+positive, default 40 CSS pixels). Seams are kept in chronological order;
+markers become selective when zoomed out and exclude plot edges. They
+follow each panel's shown domain; the navigator draws none. Omission or
+`False` disables them. Enabled seams need time-axis breaks and write spec
+version 5. Seams use the theme's resolved grid color and a `[3, 3]` dash.
 
 `navigator=True` adds a range navigator: a strip under the plot drawing the
 chart's lines, areas, points, bars, and candlesticks over the whole x axis,

@@ -89,7 +89,7 @@ Next, in order:
    candlesticks on categories per panel.
 3. Animation of stacked and labeled bars, of categories that come and go,
    of panels, and of points across resets (by a key field).
-4. More financial tools (drawing tools, markers at breaks, range navigators
+4. More financial tools (drawing tools, range navigators
    in charts with panels); 3D lines, meshes, parametric surfaces, and
    surfaces on the GPU.
 5. Grid: pivots, and a server-backed mode whose filters, sorts, and

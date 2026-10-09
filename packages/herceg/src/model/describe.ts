@@ -72,8 +72,7 @@ export function describeChart(model: ChartModel): string {
     ),
   ].join(" and ");
   // The title is the chart's name, which is read before its description.
-  const parts: string[] = [];
-  if (config.description) parts.push(config.description);
+  const parts = [config.description, config.x?.breaks?.description];
   if (kinds) {
     parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
   }
@@ -106,5 +105,5 @@ export function describeChart(model: ChartModel): string {
   }
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
   parts.push(...model.legendSummaries(), ...model.annotationSummaries());
-  return parts.join(" ");
+  return parts.filter(Boolean).join(" ");
 }

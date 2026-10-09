@@ -570,6 +570,12 @@ export function plan(
   // Moving scales move the axes and grid lines, whatever marks do.
   let moves = scales;
   for (const [index, mark] of drawn.marks.entries()) {
+    // Seams of time breaks (scale/breaks.ts names them) follow x alone: they
+    // stay put while only y moves.
+    if (mark.key === "time-break-seams") {
+      if (motions.x.moves) return undefined;
+      continue;
+    }
     const item = shown.items.get(mark.key);
     const side = sides(mark.key);
     let moved: { moves: boolean } | undefined;

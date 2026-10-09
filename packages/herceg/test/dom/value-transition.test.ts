@@ -1,7 +1,7 @@
 // Changes of values moving: bars and pie slices matched between two scenes
 // and interpolated, evaluated at explicit times.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { category, encodedCategory } from "../../src/data/column.ts";
+import { category, encodedCategory, time } from "../../src/data/column.ts";
 import { type TableChange, table } from "../../src/data/table.ts";
 import {
   frameAt,
@@ -27,6 +27,7 @@ import { planAxis } from "../../src/model/axis.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderSvg } from "../../src/render/svg.ts";
+import { timeBreaks } from "../../src/scale/breaks.ts";
 import type { PositionScale } from "../../src/scale/scale.ts";
 import {
   type ArcGeometry,
@@ -514,6 +515,24 @@ describe("axes moving with values", () => {
     const fixed = chart({ marks: marks(), y: { domain: [0, 60] } });
     const { tween } = change(fixed, () => data.setColumn("a", [20, 30]));
     expect(tween!.points).toHaveLength(1);
+  });
+});
+
+describe("seams of time breaks while values change", () => {
+  it("stay put while only y moves, and leave changes that move x to show at once", () => {
+    const data = table({ t: time([0, 10, 20]), y: [10, 20, 30] });
+    const model = chart({
+      timeZone: "UTC",
+      marks: [point(data, { x: "t", y: "y" })],
+      x: { breaks: timeBreaks([{ from: 4, to: 8 }]), seams: true },
+    });
+    const seams = (scene: Scene) =>
+      scene.panels[0]!.marks.filter((m) => m.key === "time-break-seams");
+    const { tween } = change(model, () => data.set("y", 2, 45));
+    expect(tween).toBeDefined();
+    expect(seams(frameAt(tween!, 100))).toEqual(seams(tween!.scene));
+    expect(seams(tween!.scene)).toHaveLength(1);
+    expect(change(model, () => data.set("t", 2, 30)).tween).toBeUndefined();
   });
 });
 

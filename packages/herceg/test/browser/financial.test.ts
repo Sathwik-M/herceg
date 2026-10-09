@@ -4,13 +4,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
+import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { panels } from "../../src/model/panels.ts";
+import { paintCanvas } from "../../src/render/canvas.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
+import type { SegmentGeometry } from "../../src/scene/scene.ts";
 import { modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
@@ -76,6 +79,76 @@ const tooltipOf = (chart: Chart) =>
   ) as HTMLElement;
 
 describe("time axes with breaks", () => {
+  it("renders dashed seams behind data in SVG and Canvas and clears them on updates", () => {
+    const chart = createChart(host, {
+      renderer: "svg",
+      timeZone: "UTC",
+      marks: [line(table({ t: time([0, 20]), v: [0, 0] }), { x: "t", y: "v" })],
+      x: { domain: [0, 20], breaks: timeBreaks([{ from: 4, to: 8 }]), seams: true, grid: false },
+      y: { domain: [0, 1], grid: false },
+      theme: { grid: "#ff0000" },
+    });
+    const seam = chart.root.querySelector('path[data-kind="segments"]')!;
+    expect(seam.getAttribute("stroke-width")).toBe("1");
+    expect(seam.getAttribute("data-kind")).toBe("segments");
+    expect(seam.getAttribute("stroke-dasharray")).toBe("3 3");
+    expect(seam.getAttribute("aria-hidden")).toBe("true");
+    expect(seam.getAttribute("pointer-events")).toBe("none");
+    expect(seam.getAttribute("focusable")).toBe("false");
+    expect(seam.parentElement!.hasAttribute("clip-path")).toBe(true);
+    expect(seam.nextElementSibling!.getAttribute("data-kind")).toBe("line");
+    chart.render();
+    expect(chart.root.querySelector('path[data-kind="segments"]')).toBe(seam);
+    chart.update({
+      x: { domain: [0, 20], breaks: timeBreaks([{ from: 4, to: 8 }]), seams: false },
+    });
+    chart.render();
+    expect(chart.root.querySelector('path[data-kind="segments"]')).toBeNull();
+    chart.update({
+      x: { domain: [0, 20], breaks: timeBreaks([{ from: 4, to: 8 }]), seams: true, grid: false },
+    });
+    chart.render();
+    expect(chart.root.querySelector('path[data-kind="segments"]')).not.toBeNull();
+
+    chart.update({ renderer: "canvas" });
+    chart.render();
+    expect(chart.root.querySelector('path[data-kind="segments"]')).toBeNull();
+    const canvas = chart.root.querySelector("canvas")!;
+    const model = modelOf(chart);
+    const context = canvas.getContext("2d")!;
+    for (const ratio of [1, 2]) {
+      model.setSize(600, 300, ratio);
+      const scene = model.scene(estimateText);
+      paintCanvas(canvas, scene);
+      const plot = scene.panels[0]!.plot;
+      // The first device pixel the 1-pixel line centered on x covers.
+      const x = (scene.panels[0]!.marks[0] as SegmentGeometry).coords[0]!;
+      const px = Math.round((x - 0.5) * ratio);
+      const row = context.getImageData(px - 1, Math.ceil((plot.y + 1) * ratio), ratio + 2, 1).data;
+      expect(Array.from(row).filter((v, i) => i % 4 === 3 && v === 255)).toHaveLength(ratio);
+      expect(row[3]).toBe(0);
+      expect(row.at(-1)).toBe(0);
+      expect(context.getImageData(px, Math.ceil((plot.y + 4) * ratio), 1, 1).data[3]).toBe(0);
+      expect(context.getImageData(px, Math.floor((plot.y - 2) * ratio), 1, 1).data[3]).toBe(0);
+    }
+
+    chart.update({
+      x: { domain: [0, 20], breaks: timeBreaks([{ from: 4, to: 8 }]), seams: false },
+    });
+    chart.render();
+    const plot = model.panels()[0]!.plot;
+    const ratio = window.devicePixelRatio;
+    const px = Math.round(model.xScale()!.map(8) * ratio);
+    const cleared = context.getImageData(
+      px,
+      Math.ceil(plot.y * ratio),
+      1,
+      Math.floor(24 * ratio),
+    ).data;
+    expect(Array.from(cleared).some((v, i) => i % 4 === 3 && v > 0)).toBe(false);
+    chart.destroy();
+  });
+
   it("zoom around the pointer and pan by pixels of time shown", () => {
     const chart = createChart(host, {
       timeZone: "UTC",

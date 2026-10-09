@@ -343,6 +343,8 @@ const axis: Check = (v, path) => {
   // Only the x axis has breaks: refuse them elsewhere rather than ignore them.
   if (spec.breaks !== undefined)
     fail(`${path}.breaks`, "breaks on the chart's x axis only", spec.breaks);
+  if (spec.seams !== undefined)
+    fail(`${path}.seams`, "seams on the chart's x axis only", spec.seams);
   properties(spec, path, axisChecks(spec));
 };
 
@@ -353,6 +355,14 @@ const xAxis: Check = (v, path) => {
     ...axisChecks(spec),
     // Whether any x scale is a time scale shows only once panels are planned.
     breaks: checkBreaks,
+    seams: (v, at) => {
+      if (typeof v !== "boolean") {
+        object(v, at);
+        properties(v as Record<string, unknown>, at, { minSpacing: positive });
+      }
+      if (v !== false && spec.breaks === undefined)
+        fail(at, "time-axis breaks when seams are enabled", v);
+    },
   } satisfies ChecksOf<XAxisSpec>);
 };
 
@@ -1162,7 +1172,14 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
   // An older reader would draw the chart without its strip, and the plot taller.
   const navigator = chart.navigator;
   if (navigator !== undefined && navigator !== false && declared < 4)
-    fail("spec.navigator", 'a spec with "version": 4, so that older readers refuse it', navigator);
+    fail(
+      "spec.navigator",
+      'a spec with "version": 4 or later, so that older readers refuse it',
+      navigator,
+    );
+  const seams = (chart.x as XAxisSpec | undefined)?.seams;
+  if (seams !== undefined && seams !== false && declared < 5)
+    fail("spec.x.seams", 'a spec with "version": 5, so that older readers refuse it', seams);
   // A projection places maps' marks; a chart of other marks has nothing to project.
   if (
     chart.projection !== undefined &&

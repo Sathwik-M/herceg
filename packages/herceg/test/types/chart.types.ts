@@ -13,6 +13,12 @@ const chart = createChart(element, { marks: [line(data, { x: "x", y: "y" })] });
 // Undefined resets an option to its default; values replace it.
 chart.update({ title: undefined, theme: "dark" });
 chart.update({ title: maybeTitle, y: { label: "ms" } });
+chart.update({ x: { seams: true }, theme: { grid: "#123456" } });
+chart.update({ x: { seams: { minSpacing: 40 } } });
+// @ts-expect-error seam spacing is a number of CSS pixels
+chart.update({ x: { seams: { minSpacing: "40" } } });
+// @ts-expect-error only x axes have time-break seams
+chart.update({ y: { seams: true } });
 // Marks can be replaced, never unset.
 chart.update({ marks: [line(data, { x: "x", y: "y" })] });
 // @ts-expect-error a chart always has marks

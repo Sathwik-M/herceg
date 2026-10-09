@@ -14,9 +14,10 @@ export type { Expression, Operator } from "../data/expression.ts";
  * The spec format this herceg writes; it reads the earlier ones too. Each
  * version adds what an older reader would ignore and draw differently:
  * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
- * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`.
+ * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`,
+ * version 5 enabled x axis `seams`.
  */
-export const SPEC_VERSION = 4;
+export const SPEC_VERSION = 5;
 
 /** Column name in a table. */
 export type Field = string;
@@ -32,10 +33,11 @@ export interface ChartSpec {
   /**
    * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
    * `grid` must give 2 or later, those using `resolve.x`, a panel's `x`, or
-   * x axis `breaks` 3 or later, and those with a `navigator` 4, so that
+   * x axis `breaks` 3 or later, those with a `navigator` 4 or later,
+   * and those with enabled x axis `seams` 5, so that
    * older readers refuse them rather than draw them differently.
    */
-  version?: 1 | 2 | 3 | 4;
+  version?: 1 | 2 | 3 | 4 | 5;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -407,6 +409,12 @@ export interface XAxisSpec extends AxisSpec {
    * join the points on either side.
    */
   breaks?: readonly TimeBreakSpec[];
+  /**
+   * Dashed vertical lines behind data at time breaks' seams. Default false;
+   * needs time-axis breaks and spec version 5. Seams are kept in chronological
+   * order at least `minSpacing` CSS pixels apart (default 40), excluding plot edges.
+   */
+  seams?: boolean | { minSpacing?: number };
 }
 
 /** A day of the week, by its first three letters in English. */

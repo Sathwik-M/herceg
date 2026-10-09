@@ -63,6 +63,52 @@ def test_dates_of_the_first_century_keep_their_year():
     assert hg.Break(dates=[dt.date(99, 1, 1)])._spec() == {"dates": ["0099-01-01"]}
 
 
+@pytest.mark.parametrize(
+    "seams,expected", [(True, True), ({}, {}), ({"min_spacing": 40}, {"minSpacing": 40})]
+)
+def test_seams_spec_and_static_svg(seams, expected):
+    chart = hg.Chart(
+        PRICES,
+        x=hg.Axis(breaks=[hg.Break(weekdays=("sat", "sun"))], seams=seams),
+        theme={"grid": "#ff0000"},
+        time_zone="UTC",
+    ).line(x="day", y="c")
+    spec, _ = chart.to_spec()
+    assert spec["version"] == 5
+    assert spec["x"]["seams"] == expected
+    assert spec["theme"] == {"grid": "#ff0000"}
+    svg = chart.to_svg()
+    assert 'stroke="#ff0000" stroke-width="1" stroke-dasharray="3 3"' in svg
+    assert 'aria-hidden="true" focusable="false" pointer-events="none"' in svg
+
+
+@pytest.mark.parametrize("seams", [None, False])
+def test_disabled_seams_keep_the_existing_spec_version(seams):
+    spec, _ = hg.Chart(PRICES, x=hg.Axis(seams=seams)).line(x="day", y="c").to_spec()
+    assert spec["version"] == 4
+    assert (spec.get("x") or {}).get("seams") == seams
+
+
+@pytest.mark.parametrize("spacing", [0, -1, float("nan"), float("inf"), True, "40", None])
+def test_seam_spacing_is_finite_and_positive(spacing):
+    with pytest.raises(ValueError, match="finite and positive"):
+        hg.Axis(breaks=[], seams={"min_spacing": spacing})._spec()
+
+
+def test_seams_need_time_axis_breaks():
+    with pytest.raises(ValueError, match="need breaks on a time x axis"):
+        hg.Chart(PRICES, x=hg.Axis(seams=True))
+    with pytest.raises(ValueError, match="x axis only"):
+        hg.Chart(PRICES, y=hg.Axis(seams=False))
+    with pytest.raises(ValueError, match="bool or a dict with min_spacing"):
+        hg.Axis(breaks=[], seams={"minSpacing": 40})._spec()
+    numbers = hg.Chart(
+        {"x": [0, 20], "v": [1, 2]}, x=hg.Axis(breaks=[hg.Break(start=4, end=8)], seams=True)
+    ).line(x="x", y="v")
+    with pytest.raises(Exception, match="time x axis"):
+        numbers.to_svg()
+
+
 def test_breaks_are_checked():
     with pytest.raises(ValueError, match="weekdays must be names"):
         hg.Axis(breaks=[hg.Break(weekdays=["saturday"])])._spec()
