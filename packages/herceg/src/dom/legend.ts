@@ -21,11 +21,15 @@ export class Legend {
 
   constructor(document: Document, toggle: (key: string) => void) {
     this.element = document.createElement("div");
+    this.element.setAttribute("role", "group");
+    this.element.setAttribute("aria-label", "Legend");
     this.element.style.cssText = "position:absolute;left:0;top:0;width:100%;height:0";
     this.#toggle = toggle;
   }
 
   update(items: readonly LegendItem[], theme: Theme): void {
+    // An empty group would still be announced.
+    this.element.hidden = items.length === 0;
     const document = this.element.ownerDocument;
     const seen = new Set<string>();
     let previous: Element | null = null;

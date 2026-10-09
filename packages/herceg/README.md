@@ -688,7 +688,7 @@ rather than draw shared axes. Charts whose panels have
 y scales of their own cannot zoom along y or take a y viewport
 (`setYViewport`) yet. Pointer, brush, and zoom work in any panel and act on
 its x scale; the arrow keys step through a panel and Up and Down move
-between panels. Heatmaps, histograms, stacked bars, annotations over a
+between its series and on to the next panel. Heatmaps, histograms, stacked bars, annotations over a
 table, and custom marks over a table without series can only repeat for
 now, and charts with facets have no right axis. A chart too small for its
 panels (under 20 pixels a side) throws an error naming the grid; give it
@@ -939,6 +939,24 @@ horizontal bars), with brushes along that axis or rectangle and lasso
 brushes, which only the pointer draws; Enter zooms to the range when zoom is
 on along it, and Escape clears it. Selections made with the keyboard or the
 pointer are announced.
+
+## Accessibility
+
+A chart is a focusable figure named by its `title` and described by a
+summary of what it shows (`description` first, if given), which assistive
+technology reads once. Focused, the arrow keys move a cursor through the
+data and announce what it reaches, as the tooltip shows it. Left and Right
+step through a series (Home, End, Page Up, and Page Down jump), and Up and
+Down move to the next one: fields of one table drawn as lines, areas, or
+bars are one stop, since each announcement names every series at the
+cursor's x, while series of points and series at other places are stops of
+their own; past the last stop of a panel, Up and Down move on to the next
+panel. In heatmaps the arrow keys move cell by cell across rows and columns
+as they are drawn, skipping empty cells, or to the nearest cell of the next
+row or column when none is in line (Home and End go to a row's ends, Page
+Up and Page Down to a column's). The description also says what color
+scales and size and shape keys show. Pies, trees, and other layout
+marks step through their items. Legend entries are toggle buttons.
 
 ## Export
 

@@ -9,6 +9,7 @@ import {
   nearestPositionWithin,
   rowOf,
   type Series,
+  samePositions,
   xAt,
 } from "../marks/series.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -354,7 +355,12 @@ export class Inspector {
   ): AxisInspection {
     const points: InspectedPoint[] = [];
     for (const s of series) {
-      const position = s === anchor ? anchorPosition! : this.#positionAt(s, axis, value);
+      // Series sharing the anchor's positions are read at its row: at an x
+      // several rows share, the first would hide the others.
+      const position =
+        anchor && (s === anchor || samePositions(s, anchor, axis))
+          ? anchorPosition!
+          : this.#positionAt(s, axis, value);
       if (position < 0) continue;
       const point = this.#point(s, position);
       if (point) points.push(point);

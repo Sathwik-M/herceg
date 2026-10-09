@@ -9,6 +9,7 @@ import {
 import { rasterDrawing } from "../draw/raster.ts";
 import { CellIndex } from "../lod/cell-index.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
+import type { PositionScale } from "../scale/scale.ts";
 import type { RasterGeometry } from "../scene/scene.ts";
 import type { HeatmapSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
@@ -27,6 +28,7 @@ import {
   NUMERIC,
   type Palette,
   requireField,
+  type SummaryContext,
   seriesKey,
 } from "./mark.ts";
 import { type Series, TableCache } from "./series.ts";
@@ -150,6 +152,84 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
 
   yExtent() {
     return undefined;
+  }
+
+  stepCell(
+    series: Series,
+    position: number,
+    columns: number,
+    rows: number,
+    frame: { x: PositionScale; y: PositionScale },
+  ): number | undefined {
+    const index = this.#cellIndex(
+      series,
+      frame.x.categories?.length ?? 0,
+      frame.y.categories?.length ?? 0,
+    );
+    // Rows of categories run down the plot, rows of numbers up it.
+    const up = frame.y.map(1) < frame.y.map(0) ? 1 : -1;
+    // The best cell so far, by a rank compared key by key (lowest first).
+    let best = -1;
+    let [ra, rb, rc] = [Number.POSITIVE_INFINITY, 0, 0];
+    const consider = (row: number, a: number, b = 0, c = 0) => {
+      if (a < ra || (a === ra && (b < rb || (b === rb && c < rc)))) {
+        best = row;
+        [ra, rb, rc] = [a, b, c];
+      }
+    };
+    if (position < 0) {
+      // Entering the grid: its top left cell.
+      index.forEachCell((c, r, row) => consider(row, -r * up, c));
+      return best < 0 ? undefined : best;
+    }
+    const along = columns !== 0;
+    const steps = Math.abs(along ? columns : rows);
+    const direction = Math.sign(along ? columns : rows * up);
+    // Heatmaps repeat in facet panels rather than split, so positions are table rows.
+    const [column, line] = [series.x[position]!, series.y[position]!];
+    index.forEachCell((c, r, row) => {
+      const offset = (along ? c - column : r - line) * direction;
+      if (offset <= 0) return;
+      const across = Math.abs(along ? r - line : c - column);
+      // The next cell in the same row (or column), else the nearest ahead in
+      // another, so no cell is out of reach; the furthest for jumps.
+      if (steps === Number.POSITIVE_INFINITY) {
+        if (across === 0) consider(row, -offset);
+      } else consider(row, across === 0 ? 0 : 1, offset, across);
+    });
+    return best < 0 ? undefined : best;
+  }
+
+  /** How many cells are drawn in how many columns and rows, and the lowest and highest. */
+  summarize(parts: readonly Series[], name: string, { format }: SummaryContext): string {
+    const s = parts[0];
+    if (!s) return `${name}: no values`;
+    let columns = 0;
+    let rows = 0;
+    for (let row = 0; row < s.length; row++) {
+      columns = Math.max(columns, s.x[row]! + 1);
+      rows = Math.max(rows, s.y[row]! + 1);
+    }
+    const used = new Uint8Array(columns);
+    let [cells, columnCount, rowCount, lastRow] = [0, 0, 0, -1];
+    let low = -1;
+    let high = -1;
+    this.#cellIndex(s, columns, rows).forEachCell((c, r, row) => {
+      cells++;
+      if (!used[c]) [used[c], columnCount] = [1, columnCount + 1];
+      if (r !== lastRow) [lastRow, rowCount] = [r, rowCount + 1];
+      const value = s.values[row]!;
+      if (low < 0 || value < s.values[low]!) low = row;
+      if (high < 0 || value > s.values[high]!) high = row;
+    });
+    if (cells === 0) return `${name}: no values`;
+    const at = (row: number) =>
+      `${format.value(s.values[row]!)} at ${format.x(s.x[row]!)}, ${format.y(s.y[row]!)}`;
+    const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    return (
+      `${name}: ${plural(cells, "cell")} in ${plural(columnCount, "column")} and ` +
+      `${plural(rowCount, "row")}, lowest ${at(low)}, highest ${at(high)}`
+    );
   }
 
   /** Cells are colored by value, so the legend shows the ramp instead of series. */
@@ -330,8 +410,9 @@ export class HeatmapMark implements Mark<HeatmapSpec> {
   #cellIndex(s: Series, columns: number, rows: number): CellIndex {
     // Index arrays are rebuilt whenever the table or the band order changes,
     // so their identity tells whether an index is current.
+    // An index of a larger grid holds every cell of a smaller one.
     const cached = this.#cells.get(s.x);
-    if (cached && cached.y === s.y && cached.columns === columns && cached.rows === rows) {
+    if (cached && cached.y === s.y && cached.columns >= columns && cached.rows >= rows) {
       return cached;
     }
     const index = new CellIndex(s.x, s.y, s.values, columns, rows);

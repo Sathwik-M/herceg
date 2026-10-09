@@ -7,6 +7,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { type PointOptions, point } from "../../src/marks/point.ts";
+import { describeChart } from "../../src/model/describe.ts";
 import { type AxisInspection, type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import type {
   PointGeometry,
@@ -771,6 +772,13 @@ describe("heatmap", () => {
     expect(inspection.label).toBe("b");
     expect(inspection.points[0]).toMatchObject({ label: "low", value: 1, text: "1" });
     expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(1))).toBeUndefined();
+  });
+
+  it("describes its cells, lowest and highest, for assistive technology", () => {
+    const { model } = build({ marks: [heatmap(cells, { x: "col", y: "row", value: "v" })] });
+    expect(describeChart(model)).toContain(
+      "v: 3 cells in 2 columns and 2 rows, lowest 0 at a, low, highest 2 at a, high.",
+    );
   });
 
   it("keeps numbers whose labels coincide in separate columns", () => {

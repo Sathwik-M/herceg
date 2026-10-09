@@ -423,6 +423,7 @@ export class PointMark implements Mark<PointSpec> {
       const values = [...new Set([0.25, 0.5, 1].map((f) => nearest(lo + (hi - lo) * f)))];
       out.push({
         title: this.#rField!,
+        channel: "size",
         entries: values.map((value) => {
           const r = radius(value);
           return { label: format(value), glyph: symbolPath("circle", 0, 0, r), r };
@@ -435,11 +436,13 @@ export class PointMark implements Mark<PointSpec> {
       const shapeOf = this.#shapesByCode();
       out.push({
         title: field,
+        channel: "shape",
         // The values in the table now, in order of appearance.
         entries: dictionary.flatMap((label, code) => {
           if (shapeOf[code] === NO_SHAPE) return [];
-          const { glyph, reach } = legendGlyph(SYMBOLS[shapeOf[code]!]!);
-          return [{ label, glyph, r: reach }];
+          const shape = SYMBOLS[shapeOf[code]!]!;
+          const { glyph, reach } = legendGlyph(shape);
+          return [{ label, glyph, r: reach, shape }];
         }),
       });
     }

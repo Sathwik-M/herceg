@@ -24,7 +24,7 @@ import {
   type Mark,
   numericBands,
 } from "../marks/mark.ts";
-import type { Series } from "../marks/series.ts";
+import { type Series, samePositions } from "../marks/series.ts";
 import { unionExtent } from "../marks/trace.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
@@ -194,6 +194,8 @@ export class ChartModel {
   #drawn: MarkSeries[] = [];
   /** Every mark's series before facets split them, for legends and summaries. */
   #base: MarkSeries[] | undefined;
+  /** The color scales and size and shape keys the last scene's legends show. */
+  #scales: { ramps: readonly ColorRamp[]; keys: readonly GlyphKey[] } = { ramps: [], keys: [] };
   /** Palette slot per series key, assigned on first appearance and kept. */
   #slots = new Map<string, number>();
 
@@ -1331,6 +1333,7 @@ export class ChartModel {
     measure: MeasureText,
   ) {
     const { title, legend, locale } = this.#config;
+    this.#scales = { ramps, keys };
     const theme = this.#theme;
     const font = `${theme.fontSize}px ${theme.font}`;
     const lineHeight = Math.round(theme.fontSize * 1.25);
@@ -1457,6 +1460,50 @@ export class ChartModel {
     return view ? view.inspector.marks.flatMap(({ series }) => series) : [];
   }
 
+  /**
+   * The series of a panel the keyboard stops at, in order. An inspection
+   * along x (or y) reports every series with a point at exactly that
+   * place, so series inspected along an axis share a stop when they share
+   * their positions along it (several fields of one table); every other
+   * shown series, and each inspected point by point or cell by cell, is a
+   * stop of its own.
+   */
+  keyboardStops(panel: string): Series[] {
+    const view = this.#views.find(({ key }) => key === panel);
+    if (!view) return [];
+    const shared: { axis: "x" | "y"; series: Series }[] = [];
+    return view.inspector.marks.flatMap(({ mark, series }) =>
+      series.filter((s) => {
+        if (this.hidden.has(s.key) || s.length === 0) return false;
+        const axis = mark.tooltip;
+        if (axis !== "x" && axis !== "y") return true;
+        if (shared.some((p) => p.axis === axis && samePositions(p.series, s, axis))) return false;
+        shared.push({ axis, series: s });
+        return true;
+      }),
+    );
+  }
+
+  /**
+   * For series the keyboard reads cell by cell (heatmaps): the position of
+   * the cell `columns` to the right and `rows` up from the one at
+   * `position`, as the panel draws them, or undefined when there is none.
+   */
+  stepCell(
+    panel: string,
+    seriesKey: string,
+    position: number,
+    columns: number,
+    rows: number,
+  ): number | undefined {
+    const view = this.#views.find(({ key }) => key === panel);
+    const found = view?.inspector.marks.find(({ series }) =>
+      series.some((s) => s.key === seriesKey),
+    );
+    const s = found?.series.find((part) => part.key === seriesKey);
+    return s && found!.mark.stepCell?.(s, position, columns, rows, view!.inspector.frame);
+  }
+
   /** The panel whose plot holds a pixel, if any. */
   #viewAt(px: number, py: number): PanelView | undefined {
     return this.#views.find(
@@ -1570,6 +1617,26 @@ export class ChartModel {
     const at = key === undefined ? -1 : layout.indexOf(key);
     const from = at >= 0 ? at : step > 0 ? -1 : layout.count;
     return layout.item(Math.min(layout.count - 1, Math.max(0, from + step))).key;
+  }
+
+  /**
+   * Sentences for what the last scene's legends of color scales and of
+   * sizes and shapes show, which are drawn and so hidden from assistive
+   * technology.
+   */
+  legendSummaries(): string[] {
+    const f = (value: number) => formatNumber(value, this.#config.locale);
+    const { ramps, keys } = this.#scales;
+    return [
+      ...ramps.map(({ title, domain, midpoint }) => {
+        const middle = midpoint === undefined ? "" : `, diverging at ${f(midpoint)}`;
+        return `Color shows ${title} from ${f(domain[0])} to ${f(domain[1])}${middle}.`;
+      }),
+      ...keys.map(({ title, channel, entries }) => {
+        const values = entries.map(({ label, shape }) => (shape ? `${shape} for ${label}` : label));
+        return `${channel === "size" ? "Size" : "Shape"} shows ${title}: ${values.join(", ")}.`;
+      }),
+    ];
   }
 
   /** A sentence describing the layout mark's last scene. */

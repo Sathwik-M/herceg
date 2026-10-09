@@ -110,7 +110,10 @@ export interface ColorRamp {
  */
 export interface GlyphKey {
   title: string;
-  entries: { label: string; glyph: string; r: number }[];
+  /** What the glyphs vary in, for the chart's text alternative. */
+  channel: "size" | "shape";
+  /** For shapes, `shape` is the symbol's name. */
+  entries: { label: string; glyph: string; r: number; shape?: string }[];
 }
 
 /**
@@ -208,6 +211,19 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
    * series holds (candlesticks); inspection skips rows it does not draw.
    */
   shows?(series: Series, row: number, y: PositionScale): boolean;
+  /**
+   * For marks the keyboard reads cell by cell (heatmaps): the position of
+   * the cell `columns` to the right and `rows` up from the one at
+   * `position`, as `frame` draws them, or undefined when there is none; a
+   * negative position asks for the first cell.
+   */
+  stepCell?(
+    series: Series,
+    position: number,
+    columns: number,
+    rows: number,
+    frame: { x: PositionScale; y: PositionScale },
+  ): number | undefined;
   /**
    * The text alternative's sentence for a series, over its parts in every
    * panel, for marks whose values say more than one number (candlesticks,

@@ -60,7 +60,7 @@ export function describeChart(model: ChartModel): string {
   const { config } = model;
   const layout = model.layoutSummary();
   if (layout !== undefined) {
-    return [config.title, config.description, layout].filter(Boolean).join(" ");
+    return [config.description, layout, ...model.legendSummaries()].filter(Boolean).join(" ");
   }
   const series = model.series();
   // Annotations describe themselves; the chart kind names the data marks.
@@ -71,8 +71,8 @@ export function describeChart(model: ChartModel): string {
         .map((mark) => mark.spec.type),
     ),
   ].join(" and ");
+  // The title is the chart's name, which is read before its description.
   const parts: string[] = [];
-  if (config.title) parts.push(config.title);
   if (config.description) parts.push(config.description);
   if (kinds) {
     parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
@@ -105,6 +105,6 @@ export function describeChart(model: ChartModel): string {
     parts.push(`${sentence}.`);
   }
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
-  parts.push(...model.annotationSummaries());
+  parts.push(...model.legendSummaries(), ...model.annotationSummaries());
   return parts.join(" ");
 }

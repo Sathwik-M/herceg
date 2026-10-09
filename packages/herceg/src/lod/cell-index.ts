@@ -90,6 +90,32 @@ export class CellIndex {
     this.order = rowsFound;
   }
 
+  /** How many rows the index holds. */
+  get length(): number {
+    return this.order ? this.order.length : this.x.length;
+  }
+
+  /** The table row `k`th in cell order. */
+  rowAt(k: number): number {
+    return this.order ? this.order[k]! : k;
+  }
+
+  /**
+   * Calls `visit` with each cell's column, row, and the table row drawn in
+   * it (the last with a value), in cell order: by row, then column.
+   */
+  forEachCell(visit: (c: number, r: number, row: number) => void): void {
+    const { x, y } = this;
+    const length = this.length;
+    for (let k = 0; k < length; k++) {
+      const row = this.rowAt(k);
+      const next = k + 1 < length ? this.rowAt(k + 1) : -1;
+      // Rows sharing a cell are adjacent; only the last is drawn.
+      if (next >= 0 && x[next] === x[row] && y[next] === y[row]) continue;
+      visit(x[row]!, y[row]!, row);
+    }
+  }
+
   /** The last table row with a value in the cell at column `c`, row `r`; -1 for none. */
   find(c: number, r: number): number {
     const { x, y, order } = this;

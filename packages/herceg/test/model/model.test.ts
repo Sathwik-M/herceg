@@ -7,6 +7,7 @@ import { area } from "../../src/marks/area.ts";
 import { line } from "../../src/marks/line.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { AreaGeometry, LineGeometry, RuleGeometry, Scene } from "../../src/scene/scene.ts";
@@ -298,6 +299,30 @@ describe("areas", () => {
     model.hidden.add('[0,"a"]');
     model.scene(estimateText);
     expect(Array.from(model.series()[1]!.y)).toEqual([10, Number.NaN, 30]);
+  });
+
+  it("stops the keyboard once at fields of one table, in every panel, and at each other series", () => {
+    const t = table({
+      x: [0, 1, 2, 0, 1, 2],
+      a: [1, 2, 3, 4, 5, 6],
+      b: [6, 5, 4, 3, 2, 1],
+      g: ["p", "p", "p", "q", "q", "q"],
+    });
+    const other = table({ x: [0.5, 1.5], c: [1, 2] });
+    const stops = (config: ChartConfig) => {
+      const { model } = sceneOf(config);
+      return model.panels().map(({ key }) => model.keyboardStops(key).map((s) => s.label));
+    };
+    expect(
+      stops({ marks: [line(t, { x: "x", y: ["a", "b"] }), line(other, { x: "x", y: "c" })] }),
+    ).toEqual([["a", "c"]]);
+    expect(stops({ marks: [line(t, { x: "x", y: ["a", "b"] })], facet: facet("g") })).toEqual([
+      ["a"],
+      ["a"],
+    ]);
+    expect(stops({ marks: [point(t, { x: "x", y: "a" }), point(t, { x: "x", y: "b" })] })).toEqual([
+      ["a", "b"],
+    ]);
   });
 
   it("refuses areas mixing a filled y with a band's edges", () => {
