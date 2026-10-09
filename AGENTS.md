@@ -47,6 +47,7 @@ npm run bench:core       # engine microbenchmarks (Node)
 npm run bench:size       # bundle size benchmark
 npm run bench            # browser benchmark suite (Chrome); see benchmarks/README.md
 npm run bench:react      # herceg vs herceg through @herceg/react
+npm run bench:grid       # grid suite: herceg/grid vs TanStack Table, AG Grid, Glide (Chrome)
 npm run bench:report     # regenerate result tables in docs/comparison.md
 npm run build:python     # bundle herceg's JavaScript into the Python package
 npm run test:python      # build:python, then pytest (uv environment in python/)

@@ -20,6 +20,7 @@ import {
 import type { Bench, Metric, PageResult } from "../page/harness.ts";
 import { SCENARIOS, type Scenario } from "../scenarios.ts";
 import { buildPage, ROOT, serve } from "./build.ts";
+import { bounded, heapBytes, LATENCY_ARGS, REALTIME_ARGS } from "./chrome.ts";
 import { COMPARED, commit, machine, PACKAGES, packageVersion, RUNTIMES } from "./environment.ts";
 import { type Summary, summarize } from "./stats.ts";
 
@@ -49,16 +50,6 @@ const measuresMemory = browserName === "chrome";
 const VIEWPORT = { width: 1280, height: 1400 };
 const DEVICE_SCALE_FACTOR = 2;
 const HOVER_SPACING_MS = 70;
-const COMMON_ARGS = [
-  "--js-flags=--expose-gc",
-  "--disable-renderer-backgrounding",
-  "--disable-background-timer-throttling",
-  "--disable-backgrounding-occluded-windows",
-];
-// Latency scenarios produce frames as fast as work allows; paced ingestion
-// scenarios keep vsync so frame intervals mean what users see.
-const LATENCY_ARGS = [...COMMON_ARGS, "--disable-frame-rate-limit", "--disable-gpu-vsync"];
-const REALTIME_ARGS = COMMON_ARGS;
 // Firefox paints as soon as it can with a frame rate of 0 ("ASAP mode").
 // WebKit has no such setting: its latencies include waiting for vsync.
 const FIREFOX_LATENCY_PREFS = { "layout.frame_rate": 0 };
@@ -85,23 +76,6 @@ const scenarios = SCENARIOS.filter(
   timeout: Number(args.timeout ?? s.timeout ?? 600),
 }));
 
-/** Waits for `promise` at most `ms`, ignoring its outcome. */
-function bounded(promise: Promise<unknown>, ms = 10_000): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    promise.then(
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-    );
-  });
-}
-
 interface ResultRow {
   scenario: string;
   library: string;
@@ -114,24 +88,6 @@ declare global {
   interface Window {
     bench: Bench;
   }
-}
-
-async function heapBytes(cdp: CDPSession) {
-  await cdp.send("HeapProfiler.collectGarbage");
-  await cdp.send("HeapProfiler.collectGarbage");
-  const usage = (await cdp.send("Runtime.getHeapUsage")) as {
-    usedSize: number;
-    embedderHeapUsedSize?: number;
-    backingStorageSize?: number;
-  };
-  // V8 heap + Blink (Oilpan) heap + ArrayBuffer backing stores. Typed arrays
-  // live in backing stores, so leaving them out would hide columnar data.
-  return {
-    js: usage.usedSize,
-    embedder: usage.embedderHeapUsedSize ?? 0,
-    backing: usage.backingStorageSize ?? 0,
-    total: usage.usedSize + (usage.embedderHeapUsedSize ?? 0) + (usage.backingStorageSize ?? 0),
-  };
 }
 
 async function runMemory(page: Page, cdp: CDPSession, s: Scenario): Promise<PageResult> {
