@@ -8,7 +8,9 @@ export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 /** Herceg is bundled from source so benchmarks always measure the working tree. */
 export const HERCEG_ALIAS = {
   herceg: join(ROOT, "..", "packages", "herceg", "src", "index.ts"),
+  "herceg/grid": join(ROOT, "..", "packages", "herceg", "src", "grid.ts"),
   "@herceg/react": join(ROOT, "..", "packages", "react", "src", "index.ts"),
+  "@herceg/react/grid": join(ROOT, "..", "packages", "react", "src", "grid.tsx"),
   "@herceg/vue": join(ROOT, "..", "packages", "vue", "src", "index.ts"),
   "@herceg/svelte": join(ROOT, "..", "packages", "svelte", "src", "index.ts"),
 };

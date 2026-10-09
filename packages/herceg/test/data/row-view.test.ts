@@ -189,3 +189,68 @@ describe("row views", () => {
     expect(calls).toBe(2);
   });
 });
+
+describe("finding rows in views", () => {
+  it("give the query back, so one part can change and the other stay", () => {
+    const t = table({ x: [3, 1, 2], host: ["a", "b", "a"] });
+    const view = rowView(t, { filter: col("host").eq("a"), sort: [{ field: "x" }] });
+    expect(view.query).toEqual({
+      filter: ["==", ["field", "host"], "a"],
+      sort: [{ field: "x" }],
+    });
+    expect(Object.isFrozen(view.query.sort)).toBe(true);
+    view.setQuery({ ...view.query, sort: [{ field: "x", order: "descending" }] });
+    expect(shown(view)).toEqual([0, 2]);
+    view.setQuery({ filter: true });
+    expect(view.query).toEqual({});
+  });
+
+  it("keep their own copy of the filter", () => {
+    const t = table({ x: [1, 5, 9] });
+    const limit: [">", ["field", "x"], number] = [">", ["field", "x"], 2];
+    const view = rowView(t, { filter: limit });
+    limit[2] = 6;
+    expect(shown(view)).toEqual([1, 2]);
+    expect(Object.isFrozen(view.query.filter)).toBe(true);
+  });
+
+  it("count changes of query and restriction apart from changes of the table", () => {
+    const t = table({ x: [1, 2] });
+    const view = rowView(t);
+    t.append({ x: [3] });
+    expect(view.queryRevision).toBe(0);
+    view.setQuery({ sort: [{ field: "x" }] });
+    view.restrict(new RowSet(t).add(0));
+    expect(view.queryRevision).toBe(2);
+    expect(view.revision).toBe(3);
+  });
+
+  it("find where a row shows, in every kind of view, and -1 for rows left out", () => {
+    const next = random(3);
+    const value = () => (next() < 0.1 ? Number.NaN : Math.round(next() * 10));
+    const tag = () => ["b", "a", null][Math.floor(next() * 3)]!;
+    const t = table(
+      { x: Array.from({ length: 200 }, value), tag: Array.from({ length: 200 }, tag) },
+      { maxRows: 250 },
+    );
+    const views = [
+      rowView(t),
+      rowView(t, { filter: col("x").gt(4) }),
+      rowView(t, { sort: [{ field: "x", order: "descending" }] }),
+      rowView(t, { filter: col("x").ge(2), sort: [{ field: "tag" }, { field: "x" }] }),
+    ];
+    for (let step = 0; step < 4; step++) {
+      for (const view of views) {
+        const order = shown(view);
+        for (let row = 0; row < t.length; row++)
+          expect(view.indexOf(row), `row ${row}`).toBe(order.indexOf(row));
+      }
+      t.append({ x: Array.from({ length: 30 }, value), tag: Array.from({ length: 30 }, tag) });
+    }
+    for (const view of views) {
+      expect(view.indexOf(-1)).toBe(-1);
+      expect(view.indexOf(t.length)).toBe(-1);
+      expect(view.indexOf(0.5)).toBe(-1);
+    }
+  });
+});

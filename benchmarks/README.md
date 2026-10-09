@@ -196,3 +196,6 @@ bundle, since an application using the adapter already ships them;
 `herceg-vue-line` leaves Vue out and `herceg-svelte-line` Svelte's runtime
 for the same reason. The Svelte entry renders a component of its own,
 compiled with `svelte/compiler`, and that component is measured with it.
+The `herceg-grid` entry mounts a two-column grid (`herceg/grid`) over the
+same data instead of a chart; none of the other libraries has a grid to
+compare it with.

@@ -75,6 +75,32 @@ export class RowSet<S extends Schema = Schema> {
     return this;
   }
 
+  /** Adds the rows at these positions, in any order: one pass, for many rows at once. */
+  addAll(positions: ArrayLike<number>): this {
+    this.#check();
+    this.#trim();
+    let last = -1;
+    for (let i = 0; i < positions.length; i++) {
+      const position = positions[i]!;
+      this.#positions(position, position + 1);
+      if (position > last) last = position;
+    }
+    if (last < 0) return this;
+    const shift = this.source.rowOffset - this.#base;
+    this.#reserve(shift + last + 1);
+    const words = this.#words;
+    for (let i = 0; i < positions.length; i++) {
+      const bit = positions[i]! + shift;
+      const word = Math.floor(bit / 32);
+      const mask = 1 << (bit & 31);
+      if ((words[word]! & mask) === 0) {
+        words[word]! |= mask;
+        this.#count++;
+      }
+    }
+    return this;
+  }
+
   delete(position: number): this {
     this.#check();
     this.#positions(position, position + 1);

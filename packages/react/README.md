@@ -88,3 +88,27 @@ default. They are compared on each render, and when neither the options nor
 any mark's spec or table changed, the chart is left alone, so writing marks
 and option objects inline is fine. Changes are applied during React's layout
 phase, so a parent's layout effect can already read them through `ref`.
+
+## Grids
+
+`<Grid>`, from `@herceg/react/grid` so that applications drawing only charts
+never load it, shows a grid model (see herceg's README, "Grids"). The
+application makes the model and owns it; data changes, scrolling, focus,
+selection, and sorting go through the model and the grid, never through
+React. A new `model` makes a new grid; `ariaLabel`, `theme`, and
+`headerHeight` change in place. A model no one keeps any more stops following
+its view on its own, so a model made with `useMemo` needs no cleanup.
+
+```tsx
+import { rowView } from "herceg";
+import { createGridModel } from "herceg/grid";
+import { Grid } from "@herceg/react/grid";
+
+function Requests({ data }: { data: typeof requests }) {
+  const model = useMemo(
+    () => createGridModel({ data: rowView(data), columns: [{ field: "time" }, { field: "latency" }] }),
+    [data],
+  );
+  return <Grid model={model} ariaLabel="Requests" style={{ height: 400 }} />;
+}
+```

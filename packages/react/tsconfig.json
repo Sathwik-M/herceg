@@ -5,7 +5,10 @@
     "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "types": [],
-    "paths": { "herceg": ["../herceg/src/index.ts"] }
+    "paths": {
+      "herceg": ["../herceg/src/index.ts"],
+      "herceg/grid": ["../herceg/src/grid.ts"]
+    }
   },
   "include": ["src", "test", "vitest.config.ts"]
 }
