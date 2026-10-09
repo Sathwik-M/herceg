@@ -232,6 +232,20 @@ def test_update_sends_the_changed_options_only():
         widget.update(facet="host")
 
 
+def test_live_charts_share_x():
+    chart = hg.Chart(data(), facet="host", resolve_x="independent").line(x="t", y="v")
+    with pytest.raises(ValueError, match="resolve_x must be 'shared'"):
+        chart.widget()
+    widget, browser = live(zoom=True)
+    count = len(browser.messages)
+    with pytest.raises(ValueError, match="resolve_x must be 'shared'"):
+        widget.update(resolve_x="rows")
+    # The refused change changed nothing.
+    widget.update(resolve_x="shared")
+    assert browser.last[0]["options"] == {"resolve": {"x": "shared"}}
+    assert len(browser.messages) == count + 1
+
+
 def test_a_browser_behind_gets_the_whole_chart():
     widget, browser = live()
     browser.reply({"type": "ready", "revision": 0})

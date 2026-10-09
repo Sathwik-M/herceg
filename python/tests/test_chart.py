@@ -26,7 +26,7 @@ def test_spec_uses_the_portable_format():
         .rule(y=250, label="SLO")
     )
     spec, buffers = chart.to_spec()
-    assert spec["version"] == 2
+    assert spec["version"] == 3
     assert spec["title"] == "Latency"
     assert spec["timeZone"] == "UTC"
     assert spec["y"] == {"type": "log", "label": "ms"}
@@ -289,7 +289,7 @@ def test_facet_panels_can_have_y_scales_of_their_own():
     chart = hg.Chart(data, facet_col="zone", resolve_y="independent").line(x="t", y="p50")
     spec, _ = chart.to_spec()
     assert spec["resolve"] == {"y": "independent"}
-    assert spec["version"] == 2
+    assert spec["version"] == 3
     assert "<svg" in chart.to_svg()
     with pytest.raises(ValueError, match="resolve_y must be"):
         hg.Chart(data, facet="host", resolve_y="free")
@@ -297,6 +297,36 @@ def test_facet_panels_can_have_y_scales_of_their_own():
         hg.Chart(data, resolve_y="rows")
     with pytest.raises(ValueError, match="cannot zoom along y"):
         hg.Chart(data, facet="host", resolve_y="independent", zoom="xy")
+
+
+def test_panels_can_have_x_scales_of_their_own():
+    data = {**DATA, "zone": ["x", "y"]}
+    chart = hg.Chart(data, facet_col="zone", resolve_x="independent", resolve_y="rows")
+    spec, _ = chart.line(x="t", y="p50").to_spec()
+    assert spec["resolve"] == {"x": "independent", "y": "rows"}
+    assert spec["version"] == 3
+    assert "<svg" in chart.to_svg()
+    subplots = (
+        hg.Chart(
+            DATA,
+            panels=[hg.Panel("a", x=hg.Axis(label="Time")), hg.Panel("b", x={"type": "log"})],
+            panel_row_heights=[2, 1],
+            resolve_x="independent",
+        )
+        .line(x="t", y="p50", panel="a")
+        .line(x="p50", y="p99", panel="b")
+    )
+    spec, _ = subplots.to_spec()
+    assert spec["panels"] == [
+        {"id": "a", "x": {"label": "Time"}},
+        {"id": "b", "x": {"type": "log"}},
+    ]
+    assert spec["resolve"] == {"x": "independent"}
+    assert ">Time</text>" in subplots.to_svg()
+    with pytest.raises(ValueError, match="resolve_x must be"):
+        hg.Chart(data, facet="host", resolve_x="free")
+    with pytest.raises(ValueError, match="resolve_x needs facet"):
+        hg.Chart(data, resolve_x="rows")
 
 
 def test_candlesticks_send_their_four_prices():

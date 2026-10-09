@@ -25,7 +25,7 @@ import type { PositionScale } from "../scale/scale.ts";
 import type { CloudPainter, PointGeometry, Scene } from "../scene/scene.ts";
 import { themeReadsPage } from "../theme.ts";
 import { ascending, Brush, DRAG_THRESHOLD, normalize, type Selection } from "./brush.ts";
-import { type ChartEvents, type ChartListener, Emitter } from "./events.ts";
+import { type ChartEvents, type ChartListener, Emitter, type PanelTarget } from "./events.ts";
 import { Legend } from "./legend.ts";
 import { readPage, watchPage } from "./page-theme.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
@@ -141,6 +141,11 @@ export class Chart implements Scheduled, SyncMember {
   /** A press in a chart of a layout mark, which has nothing to drag: a click if released in place. */
   #tap: { x: number; y: number; moved: boolean } | null = null;
   readonly #brush: Brush;
+  /**
+   * The panels the selection belongs to: the x scale they share ("" for
+   * one every panel shares) and their keys; null without a selection.
+   */
+  #owner: { x: string; panels: readonly string[] } | null = null;
   /** Where a keyboard selection (Shift + arrows) started: a value along the cursor's axis and its label. */
   #brushAnchor: { value: number; label: string } | null = null;
   readonly #events = new Emitter();
@@ -240,17 +245,38 @@ export class Chart implements Scheduled, SyncMember {
     this.#invalidate();
   }
 
-  /** Shows an x range (epoch ms for time axes), or null to fit the data. */
-  setViewport(domain: readonly [number, number] | null): void {
-    this.#animated(() => this.#setViewport(domain));
+  /**
+   * Shows an x range (epoch ms for time axes), or null to fit the data. In
+   * charts whose panels have x scales of their own, a range needs the
+   * `panel` whose scale shows it, and null without one fits every scale.
+   */
+  setViewport(domain: readonly [number, number] | null, target: PanelTarget = {}): void {
+    const { panel } = target;
+    this.#current(panel);
+    this.#animated(() => this.#setViewport(domain, panel));
   }
 
-  #setViewport(domain: readonly [number, number] | null): void {
-    this.#applyViewport(domain);
+  #setViewport(domain: readonly [number, number] | null, panel?: string): void {
+    this.#applyViewport(domain, panel);
     // A viewport listener may have changed the viewport again; share where
-    // it ended up, not the request.
+    // it ended up, not the request. Charts whose panels have x scales of
+    // their own share cursors only: a viewport belongs to some panels.
     const sync = this.#options.interaction?.sync;
-    if (sync) broadcastViewport(sync, this, this.model.viewport);
+    if (sync && this.model.sharesX) broadcastViewport(sync, this, this.model.viewport);
+  }
+
+  /**
+   * The current panel named `panel`; throws when there is none. Pending
+   * changes may change the panels and how they share x, so they are drawn
+   * first, unless the panel is drawn on the one x scale the chart's options
+   * still say every panel shares. Without a name, nothing.
+   */
+  #current(panel: string | undefined): PanelInfo | undefined {
+    if (panel === undefined) return undefined;
+    const find = () => this.model.panels().find(({ key }) => key === panel);
+    if (this.#dirty && !(this.model.sharesX && find()?.xGroup === "")) this.flush();
+    this.model.xGroupOf(panel);
+    return find();
   }
 
   /**
@@ -284,31 +310,69 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   /**
-   * Sets or clears (null) the selection, as if the user had brushed it; an
-   * x range alone may be given as a pair.
+   * The keys of the panels the selection belongs to, or null without one:
+   * every panel's, unless panels have x scales of their own (see `select`).
    */
-  select(selection: Selection | readonly [number, number] | null): void {
-    this.syncSelection(selection);
+  get selectionPanels(): readonly string[] | null {
+    return this.#owner && this.#keysOf(this.#owner.x);
+  }
+
+  /**
+   * Sets or clears (null) the selection, as if the user had brushed it in
+   * `panel`; an x range alone may be given as a pair. In charts whose panels
+   * have x scales of their own, a selection needs the panel it is in, and
+   * belongs to the panels sharing its x scale.
+   */
+  select(selection: Selection | readonly [number, number] | null, target: PanelTarget = {}): void {
+    this.#selectIn(selection, this.#current(target.panel));
+  }
+
+  /** Selects in a panel of the last scene, and shares the selection with synced charts. */
+  #selectIn(selection: Selection | readonly [number, number] | null, panel?: PanelInfo) {
+    this.#select(selection, panel);
     const sync = this.#options.interaction?.sync;
-    if (sync) broadcastSelection(sync, this, this.#brush.selection);
+    if (sync && this.model.sharesX) broadcastSelection(sync, this, this.#brush.selection);
   }
 
   syncSelection(selection: Selection | readonly [number, number] | null): void {
+    // Charts whose panels have x scales of their own share cursors only.
+    if (this.model.sharesX) this.#select(selection);
+  }
+
+  #select(selection: Selection | readonly [number, number] | null, at?: PanelInfo) {
     const given = Array.isArray(selection)
       ? { x: selection as readonly [number, number], y: null, lasso: null }
       : (selection as Selection | null);
-    const panel = this.model.panels()[0];
+    const panel = at ?? this.model.panels()[0];
     const fit = (range: readonly [number, number] | null, scale: PositionScale | undefined) =>
       range && (scale ? normalize(scale, range[0], range[1]) : ascending(...range));
     const next =
       given && (given.x || given.y || given.lasso)
         ? { x: fit(given.x, panel?.x), y: fit(given.y, panel?.y), lasso: given.lasso }
         : null;
+    // A selection belongs to the panels sharing the x scale of the panel it is in.
+    const x = next ? (at?.xGroup ?? this.model.xGroupOf()) : undefined;
     if (!next) this.#brushAnchor = null;
-    if (sameSelection(next, this.#brush.selection)) return;
+    const before = this.#owner;
+    if (sameSelection(next, this.#brush.selection) && x === before?.x) return;
     this.#brush.selection = next;
+    this.#owner = next && {
+      x: x!,
+      panels: this.#keysOf(x!),
+    };
     schedule(this);
-    this.#events.emit("select", next ?? { x: null, y: null, lasso: null });
+    this.#emitSelection(next, this.#owner ?? before);
+  }
+
+  /** Reports a selection, naming its panels when they are only some (the cleared one's, for none). */
+  #emitSelection(
+    selection: Selection | null,
+    owner: { x: string; panels: readonly string[] } | null,
+  ) {
+    this.#events.emit("select", {
+      ...(selection ?? { x: null, y: null, lasso: null }),
+      ...(owner?.x && { panels: owner.panels }),
+    });
   }
 
   /**
@@ -387,17 +451,49 @@ export class Chart implements Scheduled, SyncMember {
   }
 
   syncViewport(domain: readonly [number, number] | null): void {
+    if (!this.model.sharesX) return;
     this.#settle();
     this.#applyViewport(domain);
   }
 
-  #applyViewport(domain: readonly [number, number] | null): void {
-    const before = this.model.viewport;
-    this.model.setViewport(domain);
+  #applyViewport(domain: readonly [number, number] | null, panel?: string): void {
+    // Fitting every x scale fits each in turn, reporting each.
+    if (!domain && panel === undefined && !this.model.sharesX) {
+      // A listener may change the panels; those gone are left alone.
+      for (const first of this.#xScales())
+        if (first && this.#still(first)) this.#applyViewport(null, first.key);
+      return;
+    }
+    const before = this.model.viewportOf(panel);
+    this.model.setViewport(domain, panel);
     this.#invalidate();
-    const after = this.model.viewport;
-    if (!sameRange(before, after))
-      this.#events.emit("viewport", { domain: after, y: this.model.yViewport?.y ?? null });
+    if (!sameRange(before, this.model.viewportOf(panel))) this.#reportViewport(panel);
+  }
+
+  /** The first panel of each x scale; one undefined when every panel shares x. */
+  #xScales(): (PanelInfo | undefined)[] {
+    const panels = this.model.panels();
+    return this.model.sharesX
+      ? [undefined]
+      : panels.filter((p, i) => panels.findIndex(({ xGroup }) => xGroup === p.xGroup) === i);
+  }
+
+  /** The keys of the panels drawn with the x scale named `x`. */
+  #keysOf(x: string): string[] {
+    return this.model
+      .panels()
+      .filter(({ xGroup }) => xGroup === x)
+      .map(({ key }) => key);
+  }
+
+  /** Emits the view of `panel`'s x scale, naming its panels when other panels have other x scales. */
+  #reportViewport(panel?: string): void {
+    const x = panel === undefined ? undefined : this.model.xGroupOf(panel);
+    this.#events.emit("viewport", {
+      domain: this.model.viewportOf(panel),
+      y: this.model.yViewport?.y ?? null,
+      ...(x && { panels: this.#keysOf(x) }),
+    });
   }
 
   #invalidate() {
@@ -680,7 +776,19 @@ export class Chart implements Scheduled, SyncMember {
     if (!scene) return;
     const { theme } = scene;
     const panels = this.model.panels();
-    this.#brush.draw(panels, theme);
+    // A selection whose panels are gone (their facet values, or a change of
+    // how they share scales) goes too.
+    const owner = this.#owner;
+    if (owner && !panels.some(({ xGroup }) => xGroup === owner.x)) {
+      this.#brush.selection = null;
+      this.#owner = null;
+      this.#brushAnchor = null;
+      this.#emitSelection(null, owner);
+    }
+    // A drag draws in the panels it would select in, a selection in its own.
+    const press = this.#press;
+    const x = this.#brush.dragging && press ? press.panel.xGroup : this.#owner?.x;
+    this.#brush.draw(x ? panels.filter(({ xGroup }) => xGroup === x) : panels, theme);
     const showTooltip = this.#options.tooltip ?? true;
     // Hover listeners get the inspection even without the built-in tooltip,
     // which is how applications draw their own.
@@ -790,7 +898,8 @@ export class Chart implements Scheduled, SyncMember {
       const tap = this.#tap;
       // A press that strays is not a click, even if it comes back.
       if (tap) tap.moved ||= Math.hypot(x - tap.x, y - tap.y) >= DRAG_THRESHOLD;
-      if (press) {
+      if (press && !this.#still(press.panel)) this.#cancelPress();
+      else if (press) {
         press.moved ||= Math.hypot(x - press.x, y - press.y) >= DRAG_THRESHOLD;
         if (press.moved && press.mode === "pan") {
           this.#pan(press, x, y);
@@ -824,12 +933,16 @@ export class Chart implements Scheduled, SyncMember {
       "wheel",
       (event) => {
         if (!this.#options.interaction?.zoom || !this.#scene) return;
+        const point = local(event);
+        // Outside the plots, the wheel zooms the one x scale every panel
+        // shares; with several, none, and the page scrolls.
+        const panel =
+          this.#panelAt(point.x, point.y) ??
+          (this.model.sharesX ? this.model.panels()[0] : undefined);
+        if (!panel) return;
         event.preventDefault();
         // The wheel zooms from the view on screen, at once.
         this.#settle();
-        const point = local(event);
-        const panel = this.#panelAt(point.x, point.y) ?? this.model.panels()[0];
-        if (!panel) return;
         // Zoom in pixel space and invert, so the value under the pointer stays
         // put on any scale type, including log.
         const { plot, x: scale } = panel;
@@ -837,10 +950,13 @@ export class Chart implements Scheduled, SyncMember {
         const factor = Math.exp(event.deltaY * 0.002);
         if (zoom.x) {
           const px = Math.min(plot.x + plot.width, Math.max(plot.x, point.x));
-          this.#setViewport([
-            scale.invert(px - (px - plot.x) * factor),
-            scale.invert(px + (plot.x + plot.width - px) * factor),
-          ]);
+          this.#setViewport(
+            [
+              scale.invert(px - (px - plot.x) * factor),
+              scale.invert(px + (plot.x + plot.width - px) * factor),
+            ],
+            panel.key,
+          );
         }
         if (zoom.y) {
           const py = Math.min(plot.y + plot.height, Math.max(plot.y, point.y));
@@ -896,12 +1012,13 @@ export class Chart implements Scheduled, SyncMember {
       const selection = this.#brush.end();
       // The drag outline goes, whether or not the brush selects anything.
       schedule(this);
-      if (!selection) return;
+      // A panel that went while dragging (its facet value did) selects nothing.
+      if (!selection || !this.#still(press.panel)) return;
       if (this.#zooms(selection, press.panel)) {
         this.#zoomTo(selection, press.panel);
         return;
       }
-      this.select(selection);
+      this.#selectIn(selection, press.panel);
       const selected = this.#brush.selection;
       if (selected) {
         const format = this.model.formatsOf(undefined, press.panel.key);
@@ -910,20 +1027,23 @@ export class Chart implements Scheduled, SyncMember {
     });
     // The browser took the pointer (a touch turned into scrolling, say).
     const cancel = () => {
-      this.#press = null;
+      this.#cancelPress();
       this.#tap = null;
-      this.#brush.cancel();
-      schedule(this);
     };
     on("pointercancel", cancel);
     on("lostpointercapture", () => {
       if (this.#press) cancel();
     });
-    // Double click resets both axes, also one zoomed before `interaction.zoom` stopped naming it.
-    on("dblclick", () => {
+    // Double click resets both axes, also one zoomed before `interaction.zoom`
+    // stopped naming it: on a plot, its x scale; elsewhere, every one. The
+    // legend's buttons keep their clicks.
+    on("dblclick", (event) => {
       if (!this.#options.interaction?.zoom) return;
+      if (this.#legend.element.contains(event.target as Node)) return;
+      const { x, y } = local(event);
+      const panel = this.model.sharesX ? undefined : this.#panelAt(x, y)?.key;
       this.#animated(() => {
-        this.#setViewport(null);
+        this.#setViewport(null, panel);
         this.#setYViewport(null);
       });
     });
@@ -944,10 +1064,10 @@ export class Chart implements Scheduled, SyncMember {
     const zoom = this.#zoomAxes(panel);
     if (zoom.x) {
       const shift = press.x - x;
-      this.#setViewport([
-        panel.x.invert(plot.x + shift),
-        panel.x.invert(plot.x + plot.width + shift),
-      ]);
+      this.#setViewport(
+        [panel.x.invert(plot.x + shift), panel.x.invert(plot.x + plot.width + shift)],
+        panel.key,
+      );
     }
     if (zoom.y) {
       const shift = press.y - y;
@@ -978,10 +1098,27 @@ export class Chart implements Scheduled, SyncMember {
     return (!selection.x || zoom.x) && (!selection.y || zoom.y);
   }
 
+  /** A press ends without doing anything: the browser took the pointer, or its panel went. */
+  #cancelPress() {
+    this.#press = null;
+    this.#brush.cancel();
+    schedule(this);
+  }
+
+  /**
+   * Whether a panel of an earlier scene is still drawn, with the same
+   * scales to share: what a drag that started in it may go on acting on.
+   */
+  #still(panel: PanelInfo): boolean {
+    return this.model
+      .panels()
+      .some(({ key, xGroup }) => key === panel.key && xGroup === panel.xGroup);
+  }
+
   /** Zooms to a brushed selection. */
   #zoomTo(selection: Selection, panel: PanelInfo) {
     this.#animated(() => {
-      if (selection.x) this.#setViewport(selection.x);
+      if (selection.x) this.#setViewport(selection.x, panel.key);
       if (selection.y) this.#zoomY(panel, panel.y.map(selection.y[0]), panel.y.map(selection.y[1]));
     });
   }
@@ -999,9 +1136,10 @@ export class Chart implements Scheduled, SyncMember {
     const before = this.model.yViewport;
     this.model.setYViewport(viewport);
     this.#invalidate();
-    const after = this.model.yViewport;
-    if (!sameRange(before?.y ?? null, after?.y ?? null))
-      this.#events.emit("viewport", { domain: this.model.viewport, y: after?.y ?? null });
+    // Every x scale's view changed: one event for each.
+    if (!sameRange(before?.y ?? null, this.model.yViewport?.y ?? null))
+      for (const first of this.#xScales())
+        if (!first || this.#still(first)) this.#reportViewport(first?.key);
   }
 
   /** The panel whose plot holds a point of the chart. */
@@ -1049,36 +1187,26 @@ export class Chart implements Scheduled, SyncMember {
     const panels = this.model.panels();
     const across = panels.length > 1 && (event.key === "ArrowUp" || event.key === "ArrowDown");
     if (!keys.includes(event.key) && !across) return;
-    // The first visible series with points in a panel.
-    const firstIn = (panel: string) =>
-      this.model.panelSeries(panel).find((s) => !this.model.hidden.has(s.key) && s.length > 0);
-    let index = Math.max(
-      0,
-      panels.findIndex(({ key }) => key === this.#keyboard?.panel),
-    );
-    if (across) {
-      const step = event.key === "ArrowUp" ? -1 : 1;
-      let next = index + step;
-      while (next >= 0 && next < panels.length && !firstIn(panels[next]!.key)) next += step;
-      if (next < 0 || next >= panels.length) return;
-      index = next;
-    }
-    const panel = panels[index]?.key ?? "";
-    const series = firstIn(panel);
-    if (!series) return;
     const brush = this.#options.interaction?.brush;
+    // Enter and Escape act on the selection, whichever panel the cursor is in.
     if (event.key === "Enter") {
       const selection = this.#brush.selection;
-      const first = panels[0];
-      if (!selection || !first || !this.#zooms(selection, first)) return;
+      const at = panels.find(({ xGroup }) => xGroup === this.#owner?.x);
+      if (!selection || !at || !this.#zooms(selection, at)) return;
       event.preventDefault();
       this.#brushAnchor = null;
       this.select(null);
-      this.#zoomTo(selection, first);
+      // A select listener may have taken the panel away, or given it another
+      // scale: zoom only where the selection still is.
+      if (this.#dirty) this.flush();
+      const still = this.model
+        .panels()
+        .find(({ key, xGroup }) => key === at.key && xGroup === at.xGroup);
+      if (still) this.#zoomTo(selection, still);
       return;
     }
-    event.preventDefault();
     if (event.key === "Escape") {
+      event.preventDefault();
       this.#keyboard = null;
       this.#brushAnchor = null;
       this.#live.textContent = "";
@@ -1086,13 +1214,43 @@ export class Chart implements Scheduled, SyncMember {
       schedule(this);
       return;
     }
+    // The first visible series with points in a panel.
+    const firstIn = (panel: string) =>
+      this.model.panelSeries(panel).find((s) => !this.model.hidden.has(s.key) && s.length > 0);
+    let index = Math.max(
+      0,
+      panels.findIndex(({ key }) => key === this.#keyboard?.panel),
+    );
+    const from = panels[index];
+    if (across) {
+      const step = event.key === "ArrowUp" ? -1 : 1;
+      let next = index + step;
+      while (next >= 0 && next < panels.length && !firstIn(panels[next]!.key)) next += step;
+      if (next < 0 || next >= panels.length) return;
+      index = next;
+    }
+    const to = panels[index];
+    const panel = to?.key ?? "";
+    const series = firstIn(panel);
+    if (!series) return;
+    event.preventDefault();
     const before = this.#keyboard ? this.#inspection() : undefined;
     const keyboard = this.#keyboard;
     const current =
       keyboard?.key === series.key && keyboard.panel === panel ? keyboard.position : -1;
     const page = Math.max(1, Math.round(series.length / 10));
+    // Up and Down carry the cursor's x to the next panel: its value on a
+    // shared x scale, else its place across the plot.
+    const carried = (value: number, position: number) =>
+      !from || !to || from.xGroup === to.xGroup
+        ? value
+        : to.x.invert(to.plot.x + (position - from.plot.x));
     let position = Math.max(0, current);
-    if (across) position = nearestTo(series, before?.axis === "x" ? before.value : undefined);
+    if (across)
+      position = nearestTo(
+        series,
+        before?.axis === "x" ? carried(before.value, before.position) : undefined,
+      );
     else if (event.key === "ArrowLeft") position -= 1;
     else if (event.key === "ArrowRight") position = current < 0 ? 0 : current + 1;
     else if (event.key === "PageUp") position -= page;
@@ -1110,19 +1268,25 @@ export class Chart implements Scheduled, SyncMember {
       text = `${panels.find(({ key }) => key === inspection.panel)?.label ?? inspection.panel}: ${text}`;
     // Shift selects a range along the axis the cursor steps along: for
     // brushes along that axis, and for rectangles and lassos, which the
-    // keyboard cannot draw.
+    // keyboard cannot draw. A range does not go on into a panel with
+    // another scale along that axis.
     const axis = inspection.axis;
+    const crossed = across && from?.xGroup !== to?.xGroup;
+    if (crossed) this.#brushAnchor = null;
     if (
       event.shiftKey &&
       axis !== "item" &&
       (brush === axis || brush === "xy" || brush === "lasso")
     ) {
-      const start = before?.axis === axis ? before : inspection;
+      const start = before?.axis === axis && !crossed ? before : inspection;
       this.#brushAnchor ??= { value: start.value, label: start.label };
       const range = [this.#brushAnchor.value, inspection.value] as const;
-      this.select({ x: axis === "x" ? range : null, y: axis === "y" ? range : null, lasso: null });
+      this.select(
+        { x: axis === "x" ? range : null, y: axis === "y" ? range : null, lasso: null },
+        { panel },
+      );
       const selection = this.#brush.selection;
-      const zooms = selection && this.#zooms(selection, panels[index]!);
+      const zooms = selection && this.#zooms(selection, to!);
       const hint = zooms ? " Press Enter to zoom to it." : "";
       text = `Selected ${this.#brushAnchor.label} to ${inspection.label}.${hint} ${text}`;
     } else {

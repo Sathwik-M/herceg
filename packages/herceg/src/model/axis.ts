@@ -23,6 +23,8 @@ export interface AxisPlan {
   scale: PositionScale;
   ticks: number[];
   labels: string[];
+  /** The domain ticks were chosen in (see `planAxis`); none for band axes. */
+  within?: readonly [number, number];
 }
 
 export interface AxisContext {
@@ -121,14 +123,23 @@ export function createScale(
   return new LinearScale(domain, range);
 }
 
+/**
+ * Ticks and labels for a scale over `domain`. Ticks are chosen in `within`
+ * (part of the domain): a domain rounded to nice values and then widened
+ * for glyphs keeps the nice values as its ticks, while choosing in the
+ * widened domain could step past them (a span just over a threshold takes
+ * a coarser step, and a short axis can keep only one tick).
+ */
 export function planAxis(
   context: AxisContext,
   domain: readonly [number, number],
   range: readonly [number, number],
   count: number,
+  within: readonly [number, number] = domain,
 ): AxisPlan {
   const scale = createScale(context, domain, range);
-  const ticks = scale.ticks(count);
+  const ticker = within === domain ? scale : createScale(context, within, range);
+  const ticks = ticker.ticks(count);
   const format = context.spec?.format;
   let labels: string[];
   if (format) {
@@ -137,12 +148,12 @@ export function planAxis(
         ? timeFormatter(format as Intl.DateTimeFormatOptions, context.zone, context.locale)
         : numberFormatter(format as Intl.NumberFormatOptions, context.locale);
     labels = ticks.map(formatter);
-  } else if (scale instanceof TimeScale) {
-    labels = timeTickLabels(ticks, scale.interval(count), context.zone, context.locale);
+  } else if (ticker instanceof TimeScale) {
+    labels = timeTickLabels(ticks, ticker.interval(count), context.zone, context.locale);
   } else {
     labels = numberTickLabels(ticks, context.locale);
   }
-  return { scale, ticks, labels };
+  return { scale, ticks, labels, within };
 }
 
 /** `plan` for a panel `offset` pixels along: the same ticks and labels on a moved range. */

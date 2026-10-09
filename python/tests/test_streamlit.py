@@ -79,6 +79,15 @@ def test_reactions_are_checked():
         hst.chart(chart(), on_select="always")
 
 
+def test_charts_with_x_scales_of_their_own_show_but_cannot_report_selections():
+    data = {"x": [0.0, 1.0, 10.0, 11.0], "y": [1.0, 2.0, 3.0, 4.0], "g": ["a", "a", "b", "b"]}
+    split = hg.Chart(data, facet="g", resolve_x="independent", brush="x").line(x="x", y="y")
+    assert hst.chart(split) == hst.ChartState()
+    assert hst.chart(split, on_click="rerun") == hst.ChartState()
+    with pytest.raises(ValueError, match="on_select reports one x range"):
+        hst.chart(split, on_select="rerun")
+
+
 def test_outside_a_running_app_the_chart_has_no_state():
     assert hst.chart(chart(), on_select="rerun") == hst.ChartState()
 

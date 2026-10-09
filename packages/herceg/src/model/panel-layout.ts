@@ -41,7 +41,10 @@ export type PanelCheck = (shape: { rows: number; columns: number }, panels: numb
 
 export interface PanelLayout {
   /** Rejects marks and options the panels cannot draw. */
-  check(marks: readonly Mark[], options: Pick<ChartSpec, "resolve" | "interaction" | "y">): void;
+  check(
+    marks: readonly Mark[],
+    options: Pick<ChartSpec, "resolve" | "interaction" | "x" | "y">,
+  ): void;
   /** Splits a chart's series into panels, keeping what it can from one scene to the next. */
   splitter(): { split(base: readonly MarkSeries[], check: PanelCheck): PanelSplit };
   grid(split: PanelSplit, lineHeight: number): PanelGrid;
@@ -60,36 +63,47 @@ export interface PanelLayout {
   /** How panels share y when the chart's `resolve` does not say. */
   readonly yDefault: ScaleResolution;
   /**
-   * The y axis of a group of panels sharing a scale, whose first is panel
+   * The `axis` of a group of panels sharing a scale, whose first is panel
    * `index` and which draws `drawn`: its settings over the chart's, and its type.
    */
   groupAxis(
+    axis: "x" | "y",
     index: number,
     drawn: readonly MarkSeries[],
     chart: AxisSpec | undefined,
     chartType: AxisType,
   ): { type: AxisType; spec: AxisSpec | undefined };
-  /** Panel `index`'s y axis settings: the chart's, with the panel's own. */
-  panelAxis(index: number, chart: AxisSpec | undefined): AxisSpec | undefined;
-  yGroups(
-    resolution: ScaleResolution,
+  /** Panel `index`'s `axis` settings: the chart's, with the panel's own. */
+  panelAxis(axis: "x" | "y", index: number, chart: AxisSpec | undefined): AxisSpec | undefined;
+  groups(resolution: ScaleResolution, split: PanelSplit, columns: number): PanelGroups;
+  /** See `across`. */
+  across(
     split: PanelSplit,
-    columns: number,
-  ): { groupOf: number[]; drawn: MarkSeries[][] };
+    groupOf: readonly number[],
+    by: readonly number[],
+  ): [number, MarkSeries[]][][];
   /** A sentence naming the panels, up to `max` of their labels. */
   describe(labels: readonly string[], max: number): string;
 }
 
+/** Panels sharing a scale: each panel's group, and each group's marks and name. */
+export interface PanelGroups {
+  groupOf: number[];
+  drawn: MarkSeries[][];
+  /** Its panels' keys, so a group whose panels change is another group. */
+  keys: string[];
+}
+
 /**
- * The groups of a split's panels that share a y scale under `resolution`
+ * The groups of a split's panels that share a scale under `resolution`
  * (each panel alone, or the panels of a row or of a column, in rows of
  * `columns`): each panel's group, and what each group's panels draw.
  */
-export function yGroups(
+export function groups(
   resolution: ScaleResolution,
   split: PanelSplit,
   columns: number,
-): { groupOf: number[]; drawn: MarkSeries[][] } {
+): PanelGroups {
   const groupOf = split.panels.map((_, i) =>
     resolution === "independent"
       ? i
@@ -99,7 +113,53 @@ export function yGroups(
           ? i % columns
           : 0,
   );
-  // A group's marks are those drawn in any of its panels, in the chart's order.
+  const drawn = drawnBy(split, groupOf) as MarkSeries[][];
+  const members: string[][] = drawn.map(() => []);
+  groupOf.forEach((g, i) => {
+    members[g]!.push(split.keys[i]!);
+  });
+  return { groupOf, drawn, keys: members.map((keys) => JSON.stringify(keys)) };
+}
+
+/**
+ * Splits each group of `groupOf` by the groups of `by` its panels are in
+ * (y scales by x scales): per group, each such `by` group with what the
+ * panels in both draw.
+ */
+export function across(
+  split: PanelSplit,
+  groupOf: readonly number[],
+  by: readonly number[],
+): [number, MarkSeries[]][][] {
+  // The pairs of groups that have panels, numbered as they first appear.
+  const numbers = new Map<string, number>();
+  const pairs: [number, number][] = [];
+  const pairOf = groupOf.map((g, i) => {
+    const key = `${g} ${by[i]}`;
+    let at = numbers.get(key);
+    if (at === undefined) {
+      at = pairs.length;
+      numbers.set(key, at);
+      pairs.push([g, by[i]!]);
+    }
+    return at;
+  });
+  const drawn = drawnBy(split, pairOf);
+  const parts: [number, MarkSeries[]][][] = [];
+  pairs.forEach(([g, h], k) => {
+    const group = parts[g] ?? [];
+    group.push([h, drawn[k]!]);
+    parts[g] = group;
+  });
+  return parts;
+}
+
+/**
+ * What the panels of each group draw, for panels grouped by `groupOf`: the
+ * marks drawn in any of them, in the chart's order, with their series
+ * there; undefined for a group without panels.
+ */
+function drawnBy(split: PanelSplit, groupOf: readonly number[]): (MarkSeries[] | undefined)[] {
   const drawn: (MarkSeries | undefined)[][] = [];
   split.panels.forEach((marks, i) => {
     const at = groupOf[i]!;
@@ -114,8 +174,5 @@ export function yGroups(
       for (const s of series) if (s.length > 0 && !entry.series.includes(s)) entry.series.push(s);
     });
   });
-  return {
-    groupOf,
-    drawn: drawn.map((group) => group.filter((entry) => entry !== undefined)),
-  };
+  return Array.from(drawn, (group) => group?.filter((entry) => entry !== undefined));
 }

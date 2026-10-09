@@ -6,6 +6,7 @@ import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { line } from "../../src/marks/line.ts";
+import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { text } from "../../src/marks/text.ts";
 import { describeChart } from "../../src/model/describe.ts";
@@ -332,5 +333,20 @@ describe("right y axis", () => {
     const along = model.inspect(scene.panels[0]!.plot.x + 5, right.map(3100), "nearest-y")!;
     expect(along.label).toBe("3.1K");
     expect(along.points.map((p) => p.text)).toEqual(["3.1K"]);
+  });
+});
+
+describe("ticks on axes widened for glyphs", () => {
+  it("fall on the rounded values, however short the axis", () => {
+    // Points from -5 to 25 round to -20..40 at two ticks' height; widened
+    // for the points' radius, that span would step by 50 and keep only 0.
+    const spread = table({ t: [0, 1, 2, 3], v: [-5, 25, 10, 0] });
+    const labels = (height: number) => {
+      const { scene, model } = build({ marks: [point(spread, { x: "t", y: "v" })] }, 400, height);
+      return { plot: model.panels()[0]!.plot.height, ticks: axis(scene, "left")!.ticks };
+    };
+    const short = labels(130);
+    expect(short.plot).toBeLessThan(101);
+    expect(short.ticks.map((t) => t.label)).toEqual(["-20", "0", "20", "40"]);
   });
 });

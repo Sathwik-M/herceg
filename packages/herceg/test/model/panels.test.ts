@@ -166,7 +166,9 @@ describe("panels", () => {
     const svg = renderToSVG({ ...config, width: 400, height: 300 });
     expect(svg).toContain(">Top</text>");
     expect(svg).toContain(">units</text>");
-    expect(() => loadSpec(spec(1), [])).toThrow('spec.panels: expected a spec with "version": 2');
+    expect(() => loadSpec(spec(1), [])).toThrow(
+      'spec.panels: expected a spec with "version": 2 or later',
+    );
     const duplicated = { ...spec(2), panels: [{ id: "top" }, { id: "top" }] };
     expect(() => loadSpec(duplicated, [])).toThrow("a name no other panel has");
   });
@@ -329,5 +331,187 @@ describe("panels", () => {
     const short = model.formatsOf(undefined, "latency").y(120_100);
     const tall = model.formatsOf(undefined, "traffic").y(120_100);
     expect(tall.length).toBeGreaterThan(short.length);
+  });
+});
+
+describe("panels with x scales of their own", () => {
+  const day = Date.UTC(2026, 9, 9);
+  const series = table({
+    time: time([day, day + 3_600_000, day + 7_200_000]),
+    latency: [120, 180, 150],
+  });
+  const histogram = table({ ms: [100, 150, 200], count: [4, 9, 2] });
+  const config = (resolve?: ChartConfig["resolve"]): ChartConfig => ({
+    marks: [
+      line(series, { x: "time", y: "latency", panel: "series" }),
+      bar(histogram, { x: "ms", y: "count", panel: "spread" }),
+    ],
+    panels: panels(
+      [
+        { id: "series", title: "Over time", x: { label: "Time" } },
+        { id: "spread", title: "Spread", x: { label: "Latency (ms)" } },
+      ],
+      { rowHeights: [2, 1] },
+    ),
+    ...(resolve && { resolve }),
+  });
+
+  it("give each panel its own x type, domain, labels, and title", () => {
+    const { model, scene } = build(config({ x: "independent" }));
+    const [a, b] = model.panels();
+    expect(a!.x.type).toBe("time");
+    expect(b!.x.type).toBe("linear");
+    expect(Math.min(...b!.x.domain)).toBeLessThanOrEqual(100);
+    expect(Math.max(...b!.x.domain)).toBeLessThan(1000);
+    const [top, bottom] = scene.panels as [Panel, Panel];
+    expect(axis(top, "bottom")!.title!.text).toBe("Time");
+    expect(axis(bottom, "bottom")!.title!.text).toBe("Latency (ms)");
+    // The title sits under the panel's labels, above the next panel's header.
+    const title = axis(top, "bottom")!.title!;
+    expect(title.x).toBeCloseTo(top.plot.x + top.plot.width / 2, 5);
+    expect(title.y).toBeGreaterThan(top.plot.y + top.plot.height);
+    expect(title.y).toBeLessThan(bottom.plot.y - 10);
+    // Weighted rows keep their weights.
+    expect(top.plot.height / bottom.plot.height).toBeCloseTo(2, 5);
+    // Tooltips format each panel's x as its own scale does.
+    expect(model.formatsOf(undefined, "series").x(day)).toMatch(/Oct|2026|00:00/);
+    expect(model.formatsOf(undefined, "spread").x(150)).toBe("150");
+  });
+
+  it("share x by default, with the first panel's settings", () => {
+    const shared = config();
+    const { model, scene } = build({
+      ...shared,
+      marks: [
+        line(metrics, { x: "t", y: "latency", panel: "series" }),
+        bar(metrics, { x: "t", y: "requests", panel: "spread" }),
+      ],
+      panels: panels([
+        { id: "series", x: { label: "t" } },
+        { id: "spread", x: { label: "t" } },
+      ]),
+    });
+    expect(model.sharesX).toBe(true);
+    const [top, bottom] = scene.panels as [Panel, Panel];
+    expect(axis(top, "bottom")).toBeUndefined();
+    expect(axis(bottom, "bottom")!.title!.text).toBe("t");
+    // Panels sharing x must agree on how it is set up, its title included.
+    expect(() =>
+      build({
+        ...shared,
+        marks: [line(metrics, { x: "t", y: "latency", panel: "series" })],
+        panels: panels([
+          { id: "series", x: { label: "a" } },
+          { id: "spread", x: { label: "b" } },
+        ]),
+      }),
+    ).toThrow('Panel "spread" shares an x scale with others but differs');
+    expect(() =>
+      build({
+        ...shared,
+        marks: [line(metrics, { x: "t", y: "latency", panel: "series" })],
+        panels: panels([{ id: "series" }, { id: "spread", x: { domain: [0, 1] } }]),
+        resolve: { x: "independent" },
+      }),
+    ).not.toThrow();
+  });
+
+  it("let a panel show the x axis the chart leaves out, and the other way round", () => {
+    const { scene } = build({
+      ...config({ x: "independent" }),
+      x: { axis: false },
+      panels: panels([{ id: "series" }, { id: "spread", x: { axis: true } }]),
+    });
+    const [top, bottom] = scene.panels as [Panel, Panel];
+    expect(axis(top, "bottom")).toBeUndefined();
+    expect(axis(bottom, "bottom")!.ticks.length).toBeGreaterThan(0);
+    const hidden = build({
+      ...config({ x: "independent" }),
+      panels: panels([{ id: "series", x: { axis: false } }, { id: "spread" }]),
+    });
+    expect(hidden.scene.panels.map((p) => axis(p, "bottom") !== undefined)).toEqual([false, true]);
+  });
+
+  it("center a row's x title under the row, whichever of its panels are labeled", () => {
+    const list = ["a", "b", "c"].map((id) => ({ id, x: { label: "t" } }));
+    const { scene } = build({
+      marks: ["a", "b", "c"].map((panel) => line(metrics, { x: "t", y: "latency", panel })),
+      panels: panels(
+        list.map((p) => (p.id === "b" ? { ...p, x: { ...p.x, axis: false } } : p)),
+        { columns: 2 },
+      ),
+      resolve: { x: "rows" },
+    });
+    const [a, b, c] = scene.panels as [Panel, Panel, Panel];
+    // b's labels are left out; the row's title still centers on a and b.
+    expect(axis(b, "bottom")).toBeUndefined();
+    const title = axis(a, "bottom")!.title!;
+    expect(title.x).toBeCloseTo((a.plot.x + b.plot.x + b.plot.width) / 2, 5);
+    // The last row holds c alone.
+    expect(axis(c, "bottom")!.title!.x).toBeCloseTo(c.plot.x + c.plot.width / 2, 5);
+  });
+
+  it("label a shared y fully in weighted rows with x titles between them", () => {
+    // Two rows sharing y, the first twice as tall, each with x labels and a title.
+    const readings = table({ t: [0, 1, 2, 3], v: [-5, 25, 10, 0] });
+    const { model, scene } = build(
+      {
+        marks: [
+          point(readings, { x: "t", y: "v", panel: "a" }),
+          point(readings, { x: "t", y: "v", panel: "b" }),
+        ],
+        panels: panels(
+          [
+            { id: "a", x: { label: "First" } },
+            { id: "b", x: { label: "Second" } },
+          ],
+          { rowHeights: [2, 1] },
+        ),
+        resolve: { x: "independent", y: "shared" },
+      },
+      400,
+      300,
+    );
+    const [a, b] = model.panels();
+    expect(b!.plot.height).toBeLessThan(100);
+    expect(a!.plot.height / b!.plot.height).toBeCloseTo(2, 5);
+    const yLabels = scene.panels.map((p) => axis(p, "left")!.ticks.map((t) => t.label));
+    // Both rows, planned on the shorter one's two ticks and the taller
+    // one's own count, label the rounded values of one domain.
+    expect(yLabels).toEqual([
+      ["-20", "0", "20", "40"],
+      ["-20", "0", "20", "40"],
+    ]);
+    expect(a!.y.domain).toEqual(b!.y.domain);
+    expect(scene.panels.map((p) => axis(p, "bottom")!.title!.text)).toEqual(["First", "Second"]);
+  });
+
+  it("load panels' x settings from specs", () => {
+    const { config: loaded } = loadSpec(
+      {
+        version: 3,
+        data: { m: { columns: { t: [0, 1], v: [1, 2] } } },
+        marks: [{ type: "line", data: "m", x: "t", y: "v", panel: "a" }],
+        panels: [{ id: "a", x: { label: "Seconds", type: "log" } }, { id: "b" }],
+        resolve: { x: "independent" },
+      },
+      [],
+    );
+    const { model, scene } = build(loaded);
+    expect(model.panels()[0]!.x.type).toBe("log");
+    expect(axis(scene.panels[0]!, "bottom")!.title!.text).toBe("Seconds");
+    expect(() =>
+      loadSpec(
+        {
+          version: 3,
+          marks: [],
+          panels: [{ id: "a", x: { type: "radial" } as never }],
+        },
+        [],
+      ),
+    ).toThrow("panels[0].x.type");
+    expect(() =>
+      loadSpec({ version: 2, marks: [], panels: [{ id: "a", x: { label: "s" } }] }, []),
+    ).toThrow('spec.panels[0].x: expected a spec with "version": 3');
   });
 });

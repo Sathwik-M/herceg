@@ -355,3 +355,146 @@ describe("Streamlit component", () => {
     expect(triggers).toHaveLength(1);
   });
 });
+
+describe("Streamlit component with panels' own x scales", () => {
+  /** Two facet panels side by side, a over 0..2 and b over 100..102. */
+  function facets(title: string) {
+    return payload(
+      {
+        version: 3,
+        title,
+        width: 400,
+        height: 200,
+        renderer: "svg",
+        // Rectangles select: zoom is not on along y.
+        interaction: { zoom: true, brush: "xy" },
+        data: {
+          data: {
+            columns: {
+              x: { type: "number", dtype: "float64", buffer: 0 },
+              y: { type: "number", dtype: "float64", buffer: 1 },
+              g: { type: "category", codes: 2, dictionary: ["a", "b"] },
+            },
+          },
+        },
+        marks: [{ type: "line", x: "x", y: "y", data: "data" }],
+        facet: { field: "g", columns: 2 },
+        resolve: { x: "independent" },
+      },
+      [
+        new Float64Array([0, 1, 2, 100, 101, 102]),
+        new Float64Array([1, 3, 2, 1, 3, 2]),
+        new Int32Array([0, 0, 0, 1, 1, 1]),
+      ],
+      [],
+    );
+  }
+  const xLabels = (root: ParentNode) =>
+    [...root.querySelectorAll('svg text[dominant-baseline="hanging"]')].map((t) => t.textContent);
+
+  it("keeps each panel's zoom and the selection in its panel on a redraw", async () => {
+    const parent = host();
+    run(parent, facets("Before"));
+    const fitted = xLabels(parent);
+    // Zoom the right panel (b) and select in the left one (a).
+    press(parent, "wheel", 0.75);
+    press(parent, "pointerdown", 0.15, 0.3);
+    press(parent, "pointermove", 0.2, 0.5);
+    press(parent, "pointerup", 0.3, 0.7);
+    await frame();
+    const before = xLabels(parent);
+    // b's labels changed and a's did not.
+    expect(before).not.toEqual(fitted);
+    expect(before.slice(0, 3)).toEqual(fitted.slice(0, 3));
+    const outline = band(parent)!.getAttribute("d");
+    run(parent, facets("After"));
+    await frame();
+    expect(figure(parent).getAttribute("aria-label")).toBe("After");
+    expect(xLabels(parent)).toEqual(before);
+    expect(band(parent)!.getAttribute("d")).toBe(outline);
+  });
+
+  it("keeps a selection on a shared x scale when the panels change", async () => {
+    const parent = host();
+    const panel = (name: string) =>
+      payload(
+        {
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          interaction: { brush: "x" },
+          data: {
+            data: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                y: { type: "number", dtype: "float64", buffer: 1 },
+                g: { type: "category", codes: 2, dictionary: [name] },
+              },
+            },
+          },
+          marks: [{ type: "line", x: "x", y: "y", data: "data" }],
+          facet: { field: "g" },
+        },
+        [new Float64Array([0, 1, 2]), new Float64Array([1, 3, 2]), new Int32Array([0, 0, 0])],
+        ["select"],
+      );
+    const first = run(parent, panel("a"));
+    brush(parent, 0.3, 0.7);
+    await frame();
+    const [, selected] = first.state.at(-1)!;
+    const next = run(parent, panel("b"));
+    await frame();
+    expect(band(parent)!.getAttribute("visibility")).toBe("visible");
+    // The script already has this selection.
+    expect(next.state).toEqual([]);
+    expect(selected).not.toBeNull();
+  });
+
+  it("reports clicks with the x of the panel clicked", () => {
+    const parent = host();
+    const day = Date.UTC(2026, 0, 1);
+    const { triggers } = run(
+      parent,
+      payload(
+        {
+          version: 3,
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          data: {
+            series: {
+              columns: {
+                t: { type: "time", dtype: "float64", buffer: 0 },
+                v: { type: "number", dtype: "float64", buffer: 1 },
+              },
+            },
+            spread: {
+              columns: {
+                ms: { type: "number", dtype: "float64", buffer: 2 },
+                n: { type: "number", dtype: "float64", buffer: 1 },
+              },
+            },
+          },
+          marks: [
+            { type: "line", data: "spread", x: "ms", y: "n", panel: "spread" },
+            { type: "line", data: "series", x: "t", y: "v", panel: "series" },
+          ],
+          panels: [{ id: "spread" }, { id: "series" }],
+          grid: { columns: 2 },
+          resolve: { x: "independent" },
+        },
+        [
+          new Float64Array([day, day + 60_000, day + 120_000]),
+          new Float64Array([1, 3, 2]),
+          new Float64Array([10, 20, 30]),
+        ],
+        ["click"],
+      ),
+    );
+    // The right panel shows times; the left one, which is first, numbers.
+    press(parent, "pointerdown", 0.8);
+    press(parent, "pointerup", 0.8);
+    expect(triggers).toHaveLength(1);
+    expect(triggers[0]![1]).toMatchObject({ panel: "series", time: true });
+  });
+});

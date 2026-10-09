@@ -633,7 +633,7 @@ sharing x through `interaction: { sync }` are often easier to read.
 
 `facet` draws the chart once per value of a category field, wrapped into
 rows of panels, or once per pair of values of two fields, in a grid; panels
-share their x and y scales:
+share their x and y scales unless `resolve` says otherwise:
 
 ```ts
 import { facet } from "herceg";
@@ -654,6 +654,15 @@ createChart(element, {
   facet: facet({ row: "region", column: "product" }), // in a spec: { row: "region", column: "product" }
   resolve: { y: "rows" }, // each row of panels gets a y scale of its own
 });
+
+// Each region measured over its own weeks: an x scale per panel.
+createChart(element, {
+  marks: [line(trials, { x: "week", y: "response" })],
+  facet: facet("site", { columns: 3 }),
+  resolve: { x: "independent" },
+  x: { label: "Week" },
+  interaction: { zoom: true },
+});
 ```
 
 Panels follow the order in which values first appear in the data; rows
@@ -668,21 +677,46 @@ over a table split its rows by the fields, which the table must have, unless
 they have `facet: "repeat"`; marks without a table repeat. Panels share
 their x and y scales; `resolve: { y }` gives each panel a y scale of its own
 fitting what it draws (`"independent"`), or one per row (`"rows"`) or per
-column (`"columns"`), for a continuous y axis. x labels go under the lowest
-panel of each column and y labels beside the first, or beside every panel
-when columns differ. Specs with `resolve` need `"version": 2`, so that
-readers from before it refuse them rather than draw shared axes; such charts
-cannot zoom along y or take a y viewport (`setYViewport`) yet. Pointer, brush, and zoom work in any panel and act on the
-shared x; the arrow keys step through a panel and Up and Down move between
-panels. Heatmaps, histograms, stacked bars, annotations over a table, and
-custom marks over a table without series can only repeat for now, and
-charts with facets have no right axis. A chart
-too small for its panels (under 20 pixels a side) throws an error naming the
-grid; give it more room or fewer columns.
+column (`"columns"`), for a continuous y axis, and `resolve: { x }` does the
+same for a continuous x axis. x labels go under the lowest panel of each
+column, or under every panel when a column's panels have different x
+scales, with the x title once under each scale's lowest labels; y labels go
+beside the first panel of each row, or beside every panel when a row's
+panels differ. Specs with `resolve` need `"version": 2`, and with
+`resolve.x` `"version": 3`, so that readers from before them refuse them
+rather than draw shared axes. Charts whose panels have
+y scales of their own cannot zoom along y or take a y viewport
+(`setYViewport`) yet. Pointer, brush, and zoom work in any panel and act on
+its x scale; the arrow keys step through a panel and Up and Down move
+between panels. Heatmaps, histograms, stacked bars, annotations over a
+table, and custom marks over a table without series can only repeat for
+now, and charts with facets have no right axis. A chart too small for its
+panels (under 20 pixels a side) throws an error naming the grid; give it
+more room or fewer columns.
+
+With x scales of their own, each scale fits what its panels draw within its
+own range, and zooms, pans, and resets by itself: the wheel and dragging act
+on the panel under the pointer, double-clicking a panel resets its scale,
+and double-clicking outside the panels resets every one. A shared y scale
+still fits what every panel shows of its own x range, so zooming one panel
+can change the y of the others. `setViewport([from, to], { panel })` names
+the panel whose scale shows the range (null without a panel fits every
+scale), and `viewport` events carry `panels`, the keys of the panels whose
+range `domain` is, one event per scale. A selection belongs to the panels
+sharing the x scale of the panel it was made in: it is drawn only there,
+`select(range, { panel })` needs that panel, and `select` events and
+`chart.selectionPanels` name them; a selection whose panels go (their facet
+values leave the data) is cleared. Synced charts share cursors with such a
+chart, drawn in every panel whose scale holds the value, but not viewports
+or selections, which belong to some of its panels; sync only charts whose x
+values mean the same thing. A scale's zoom is kept while its panels stay the
+same: when they change (a new facet value wraps the panels anew), it fits
+its data again. Category x axes are always shared.
 
 ### Subplots
 
-`panels` draws different marks in different panels of one chart, sharing x:
+`panels` draws different marks in different panels of one chart, sharing x
+unless `resolve.x` says otherwise:
 
 ```ts
 import { panels } from "herceg";
@@ -713,10 +747,33 @@ marks; `resolve: { y: "shared" }` (or `"rows"`, `"columns"`) shares it
 instead, when the panels sharing it agree on its type, domain, `zero`, and
 `nice`. A panel's `y` takes the place of the chart's `y` settings for its
 own axis, so one panel can be logarithmic or show times while another is
-linear; a panel's y title is centered beside it. Marks keep their place in
-the chart's list as their identity, so colors, the legend, and hidden series
-do not depend on the panel a mark draws in. Inspections report the `panel`
-id. Specs with `panels` need `"version": 2`. Charts with panels have no right
+linear; a panel's y title is centered beside it. `resolve: { x:
+"independent" }` (or `"rows"`, `"columns"`) gives panels x scales of their
+own in the same way, each from its panels' marks (a time axis when they
+place times) and its first panel's `x` settings, with labels and a title
+under its panels as in Small multiples; panels sharing an x scale must agree
+on its settings, title included, and a panel's `x: { axis }` shows or leaves
+out its own labels. A time series over a time axis can then sit above a distribution
+of its values:
+
+```ts
+createChart(element, {
+  marks: [
+    line(metrics, { x: "time", y: "latency", panel: "series" }),
+    bar(buckets, { x: "ms", y: "count", panel: "spread" }),
+  ],
+  panels: panels([
+    { id: "series", x: { label: "Time" }, y: { label: "ms" } },
+    { id: "spread", x: { label: "Latency (ms)" } },
+  ]),
+  resolve: { x: "independent" }, // in a spec: "resolve": { "x": "independent" }
+});
+```
+
+Marks keep their place in the chart's list as their identity, so colors,
+the legend, and hidden series do not depend on the panel a mark draws in. Inspections report the `panel`
+id. Specs with `panels` need `"version": 2`, and panels with their own `x`
+`"version": 3`. Charts with panels have no right
 axis, category y axes are shared by every panel, and zooming and brushing act
 on x only.
 
@@ -784,8 +841,8 @@ the thousands, not millions.
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`. |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
-| `resolve` | `{ y: "shared" \| "independent" \| "rows" \| "columns" }`: which panels share a y scale (see Small multiples and Subplots). |
-| `panels` | `panels([{ id, title?, y? }, ...], { columns? })`: subplots whose marks name them in `panel` (see Subplots). |
+| `resolve` | `{ x?, y? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x or y scale (see Small multiples and Subplots). |
+| `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights? })`: subplots whose marks name them in `panel` (see Subplots). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |
@@ -795,10 +852,11 @@ the thousands, not millions.
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 | `projection` | How maps are projected: a projection's name or `{ type, centralMeridian?, parallels?, fit? }` (see Maps). |
 
-The returned `Chart` has `update(options)`, `setViewport([from, to] | null)`
-and `setYViewport([from, to] | null)` (the left axis; a right axis shows what
-the same pixels show on it), `select(selection | [from, to] | null)` (a pair
-is shorthand for an x range) and `selection`, `on(event, listener)`,
+The returned `Chart` has `update(options)`, `setViewport([from, to] | null,
+{ panel? })` and `setYViewport([from, to] | null)` (the left axis; a right
+axis shows what the same pixels show on it), `select(selection | [from, to] |
+null, { panel? })` (a pair is shorthand for an x range), `selection` and
+`selectionPanels` (see Small multiples for `panel`), `on(event, listener)`,
 `render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
 painter for large point series or the animation code loads, otherwise
 undefined).
@@ -866,6 +924,7 @@ const stop = chart.on("select", ({ x }) => {
 });
 chart.on("select", ({ x, y, lasso }) => filterRows(x, y, lasso)); // ranges, and a lasso's outline
 chart.on("viewport", ({ domain, y }) => saveView(domain, y)); // zoom, pan, reset, sync
+chart.on("viewport", ({ domain, panels }) => saveView(domain, panels)); // panels' own x scales
 chart.on("hover", ({ inspection }) => showOwnTooltip(inspection)); // with tooltip: false
 chart.on("click", ({ inspection }) => openDetails(inspection?.points[0]));
 ```
@@ -935,9 +994,11 @@ row i holding geometry i without them).
 Marks are the same objects as a TypeScript mark's `spec`, with `data` naming
 their table.
 
-Specs say which format `version` they are; one without is version 1, and
-specs using `resolve`, `panels`, or `grid` must say 2 (`SPEC_VERSION`, the
-version this herceg writes). Loading checks a spec and names the property at
+Specs say which format `version` they are; one without is version 1. Specs
+using `resolve`, `panels`, or `grid` must say 2 or later, and those using
+`resolve.x` or a panel's own `x` must say 3 (`SPEC_VERSION`, the version this
+herceg writes), so that older readers refuse what they would draw
+differently. Loading checks a spec and names the property at
 fault in errors. Properties herceg does not know, misspelled or from a newer
 version, are logged with `console.warn` and otherwise ignored;
 `loadSpec(spec, buffers, { unknown: "error" })` refuses them instead, and
