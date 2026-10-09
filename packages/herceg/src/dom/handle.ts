@@ -181,9 +181,9 @@ export interface Chart {
   on<K extends keyof ChartEvents>(type: K, listener: ChartListener<K>): () => void;
   /**
    * Pending while the chart loads code it needs: its GPU painter for large
-   * point series, which it draws once loaded, its `animation`, without
-   * which views change at once, its crosshair labels, or what turns a 3D
-   * chart. Undefined when nothing is pending.
+   * point series, which it draws once loaded, its `animation` of views and
+   * values, without which they change at once, its crosshair labels, or
+   * what turns a 3D chart. Undefined when nothing is pending.
    */
   readonly loading: Promise<void> | undefined;
   /**

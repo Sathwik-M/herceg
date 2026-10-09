@@ -1104,7 +1104,7 @@ is internal, and charts take only marks the mark functions make.
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. |
-| `animation` | `true` or `{ duration }` (milliseconds, 250 by default) moves the axes gradually to a view asked for: `setViewport` (both axes of one call together), zooming to a brush, and double-click reset. Off by default. Wheel zoom, panning, new data, resizes, and export always show at once; charts with several panels or `sync`, pages preferring reduced motion, and charts whose frames seem to take over 10 ms (judged from earlier frames, alone or with the charts beside them) do not animate. The animation code loads with the first chart that asks for it. |
+| `animation` | `true` or `{ duration?, values? }`: the axes move gradually to views asked for, and with `values: true`, bars and pie slices to changed values (see Animation). Off by default. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
@@ -1149,6 +1149,55 @@ whole configuration: a prop left out, or `undefined`, takes its default.
 the selected x and y ranges (null along an axis the brush leaves alone; a
 lasso's extent) and a lasso's outline as `[x, y]` pairs. Code written when
 `selection` was the x range reads `chart.selection?.x`.
+
+### Animation
+
+`animation: true`, or `{ duration }` in milliseconds (250 by default), moves
+the axes gradually to a view asked for: `setViewport` (both axes of one call
+together), zooming to a brush, and double-click reset. With `values: true`
+too, bars and pie slices move to new values when a table's values change in
+place or are replaced (`set`, `replace`, `setColumn`, `reset`):
+
+```ts
+const chart = createChart(element, {
+  marks: [bar(sales, { x: "region", y: "revenue" })],
+  y: { domain: [0, 100] }, // a fixed axis, which changing values do not move
+  animation: { values: true },
+});
+sales.setColumn("revenue", next); // the bars grow and shrink to the new values
+```
+
+Bars are matched by series and position (their category, or their x value),
+so rows may arrive in another order. Bars that appear grow from their base and
+bars that go shrink to it; a bar whose value changes sign shrinks to the
+baseline and grows on its other side. Pie slices are matched by category and
+turn to their new sizes, sharing their boundaries, so they always make a whole
+pie; slices that appear open from nothing and slices that go close. Only the
+drawing moves: data, tooltips, events, and summaries have the new values at
+once. Other marks in the chart show their new data at once. A derived table
+is recomputed whenever its source changes, so bars of an aggregate over rows
+that keep arriving move with each change that comes after the last has
+settled (every few seconds, say) and show more frequent ones at once.
+
+A change shows at once when it would move more than bars and slices: an axis
+whose automatic domain changes (a fixed `domain` keeps it still), categories
+or series that appear or go, a legend that wraps differently, slices that
+change order (with `sort: "value"`, the default, when values pass each other),
+or a resize. So do appended and dropped rows, changes while values move and
+until the data has been still for a change's duration, changes of options and
+of hidden series, stacked bars, bars with `labels`, log axes, bars sharing a
+position in one series, scenes of more than 2,000 bars and slices, marks over
+row views, charts with several panels or `sync`, charts off screen, charts the
+pointer is over, pressed, or read with the keyboard, pages preferring reduced
+motion, and
+charts whose frames seem to take over 10 ms (judged from earlier frames, alone
+or with the charts beside them). Moving the pointer, pressing, and keys show
+the new values before they act, and `render()`, export, and a chart's first
+frame always draw them. Wheel zoom, panning, new data, resizes, and export
+show views at once too; charts with several panels or `sync` do not move
+their views. The code for views loads with the first chart that asks for
+`animation`, and the code for values separately, with the first that asks
+for `values`.
 
 ### Themes
 

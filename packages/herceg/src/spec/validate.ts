@@ -1107,6 +1107,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
             if (typeof v !== "number" || !(v >= 0) || !Number.isFinite(v))
               fail(at, "milliseconds, at least 0", v);
           },
+          values: boolean,
         } satisfies ChecksOf<AnimationSpec>);
       },
       renderer: oneOf("auto", "svg", "canvas"),

@@ -6,7 +6,13 @@ import { formatNumber, numberFormatter } from "../format/format.ts";
 import { ELBOW, placePieLabels, RUN } from "../layout/pie-labels.ts";
 import { fitText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
-import type { ArcGeometry, Geometry, SegmentGeometry, TextGeometry } from "../scene/scene.ts";
+import type {
+  ArcGeometry,
+  Geometry,
+  PieSlice,
+  SegmentGeometry,
+  TextGeometry,
+} from "../scene/scene.ts";
 import type { Frozen, PieSpec } from "../spec/spec.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
@@ -30,12 +36,6 @@ const START = -Math.PI / 2;
 const TAU = 2 * Math.PI;
 /** Space between neighboring slices, in pixels. */
 const GAP = 2;
-
-interface Slice {
-  key: string;
-  label: string;
-  value: number;
-}
 
 export class PieMark implements LayoutMark {
   declare readonly [MARK]: true;
@@ -81,10 +81,10 @@ export class PieMark implements LayoutMark {
   }
 
   /** Every category with rows, in slice order. */
-  #slices(id: string | number): Slice[] {
+  #slices(id: string | number): PieSlice[] {
     const sums = this.#sums();
     const { dictionary } = this.table.categories(this.spec.category);
-    const slices: Slice[] = [];
+    const slices: PieSlice[] = [];
     for (let code = 0; code < dictionary.length; code++) {
       // A category whose sum overflows a double has no slice.
       if (!(sums[code]! > 0 && sums[code]! < Number.POSITIVE_INFINITY)) continue;
@@ -139,31 +139,21 @@ export class PieMark implements LayoutMark {
     });
     if (slices.length > 0) ends[slices.length - 1] = 1;
     const angle = (fraction: number) => START + fraction * TAU;
-    const arcs = new Float32Array(slices.length * 6);
-    // Slices sharing a color are drawn together; palettes repeat colors.
-    const sliceColors = slices.map(({ key }) => frame.color(key));
-    const indexOf = new Map<string, number>();
-    for (const color of sliceColors) if (!indexOf.has(color)) indexOf.set(color, indexOf.size);
-    const colors = [...indexOf.keys()];
-    const colorIndex = Uint32Array.from(sliceColors, (color) => indexOf.get(color)!);
-    slices.forEach((_, i) => {
-      arcs.set([cx, cy, r0, r, angle(i > 0 ? ends[i - 1]! : 0), angle(ends[i]!)], i * 6);
-    });
     const gap = slices.length > 1 ? GAP : 0;
-    const geometry: Geometry[] = [
-      {
-        kind: "arc",
-        draw: arcDrawing,
-        key: "pie",
-        arcs,
-        count: slices.length,
-        colors,
-        colorIndex,
-        fillOpacity: 1,
-        gap,
-      } as ArcGeometry,
-    ];
-    if (labeled) geometry.push(...this.#labels(slices, ends, cx, cy, r, frame, font, lineHeight));
+    const draw = (
+      items: readonly PieSlice[],
+      at: Float64Array,
+      radius: number,
+      labels: boolean,
+    ) => {
+      const sectors = this.#sectors(items, at, cx, cy, radius, frame);
+      if (!labels) return [sectors];
+      return [sectors, ...this.#labels(items, at, cx, cy, radius, frame, font, lineHeight)];
+    };
+    const geometry = draw(slices, ends, r, labeled);
+    // Charts that animate changed values draw frames between two scenes as this one draws.
+    if (frame.keyed)
+      (geometry[0] as ArcGeometry).slices = { items: slices, ends, cx, cy, r, labeled, draw };
 
     const percent = numberFormatter({ style: "percent", maximumFractionDigits: 1 }, locale);
     const middle = (r0 + r) / 2 || r * 0.6;
@@ -180,7 +170,7 @@ export class PieMark implements LayoutMark {
       items[i] = {
         key: slice.key,
         label: slice.label,
-        color: sliceColors[i]!,
+        color: frame.color(slice.key),
         value: slice.value,
         text: `${formatNumber(slice.value, locale)} (${percent(share(slice.value))})`,
         px: cx + middle * Math.cos(mid),
@@ -216,9 +206,44 @@ export class PieMark implements LayoutMark {
     };
   }
 
+  /** The sectors of slices ending at `ends` (fractions of the turn) around (cx, cy), out to `r`. */
+  #sectors(
+    slices: readonly PieSlice[],
+    ends: Float64Array,
+    cx: number,
+    cy: number,
+    r: number,
+    frame: LayoutFrame,
+  ): ArcGeometry {
+    const r0 = r * (this.spec.innerRadius ?? 0);
+    const angle = (fraction: number) => START + fraction * TAU;
+    const arcs = new Float32Array(slices.length * 6);
+    // Slices sharing a color are drawn together; palettes repeat colors.
+    const indexOf = new Map<string, number>();
+    const colorIndex = Uint32Array.from(slices, ({ key }) => {
+      const color = frame.color(key);
+      if (!indexOf.has(color)) indexOf.set(color, indexOf.size);
+      return indexOf.get(color)!;
+    });
+    slices.forEach((_, i) => {
+      arcs.set([cx, cy, r0, r, angle(i > 0 ? ends[i - 1]! : 0), angle(ends[i]!)], i * 6);
+    });
+    return {
+      kind: "arc",
+      draw: arcDrawing,
+      key: "pie",
+      arcs,
+      count: slices.length,
+      colors: [...indexOf.keys()],
+      colorIndex,
+      fillOpacity: 1,
+      gap: slices.length > 1 ? GAP : 0,
+    };
+  }
+
   /** Labels beside the slices, with lines from each slice's edge. */
   #labels(
-    slices: readonly Slice[],
+    slices: readonly PieSlice[],
     ends: Float64Array,
     cx: number,
     cy: number,
@@ -285,7 +310,7 @@ export class PieMark implements LayoutMark {
   }
 
   #summary(
-    slices: readonly Slice[],
+    slices: readonly PieSlice[],
     total: number,
     share: (value: number) => number,
     locale: string | undefined,

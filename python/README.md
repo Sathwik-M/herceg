@@ -113,8 +113,10 @@ the axes), `zoom`
 freehand region; along zoomed axes, drag to zoom instead),
 `sync` (charts with the same name on one HTML page share cursor and zoom;
 notebook outputs are separate iframes, so `sync` does not reach across
-cells), `animation` (`True`, or milliseconds: zooming to a brush and
-double-click reset move the axes gradually in HTML output), `renderer`,
+cells), `animation` (`True`, milliseconds, or `hg.Animation(duration=250,
+values=True)`: zooming to a brush and double-click reset move the axes
+gradually in HTML output, and with `values`, bars and pie slices move to the
+data a live chart's `replace` sends), `renderer`,
 `theme` (below), `locale`, `time_zone`, and `projection` (maps, above).
 
 The one-call helpers (`hg.line`, `hg.scatter`, which adds `point` marks,

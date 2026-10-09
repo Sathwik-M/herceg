@@ -25,6 +25,7 @@ in a Streamlit app (the ``streamlit`` extra).
 from ._chart import (
     SCHEMES,
     SYMBOLS,
+    Animation,
     Axis,
     Break,
     Camera,
@@ -63,6 +64,7 @@ from ._events import InspectedPoint, Inspection, Selection, Viewport
 __all__ = [
     "SCHEMES",
     "SYMBOLS",
+    "Animation",
     "Axis",
     "Break",
     "Camera",

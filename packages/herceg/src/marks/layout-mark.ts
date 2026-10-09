@@ -32,6 +32,8 @@ export interface LayoutFrame {
   camera?: Camera | undefined;
   /** Whether a GPU painter may draw large point sets (see PointCloud3D). */
   clouds?: boolean;
+  /** The chart animates changed values: pies describe their slices (PieSlices). */
+  keyed?: boolean;
 }
 
 /** One thing a layout mark drew, as tooltips and the keyboard report it. */

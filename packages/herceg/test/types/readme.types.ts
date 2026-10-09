@@ -61,6 +61,19 @@ live.replace("cpu", 0, [0.1, 0.2]);
 live.dropBefore("time", Date.now() - 60_000);
 live.reset({ time: newTimes, cpu: newValues });
 
+// Animation
+{
+  const sales = table({ region: ["N", "S"], revenue: [40, 60] });
+  createChart(element, {
+    marks: [bar(sales, { x: "region", y: "revenue" })],
+    y: { domain: [0, 100] },
+    animation: { values: true },
+  });
+  sales.setColumn("revenue", [55, 45]);
+  // @ts-expect-error values are animated or not
+  createChart(element, { marks: [], animation: { values: "bars" } });
+}
+
 // Marks
 line(metrics, { x: "time", y: ["p50", "p99"] });
 line(requests, { x: "time", y: "latency", series: "service" });

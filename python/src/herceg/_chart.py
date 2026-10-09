@@ -328,6 +328,28 @@ class Tooltip:
 
 
 @dataclass
+class Animation:
+    """Animation options (the chart's ``animation``): ``duration`` in
+    milliseconds, and ``values``, with which bars and pie slices also move to
+    changed values when a live chart's data is replaced, besides the axes
+    moving to views asked for. ``animation=True`` is ``Animation()``, and a
+    number is a duration."""
+
+    duration: float = 250
+    values: bool = False
+
+    def _spec(self) -> dict[str, Any]:
+        if not (_finite(self.duration) and self.duration >= 0):
+            raise ValueError(
+                f"animation duration must be milliseconds of at least 0, not {self.duration!r}"
+            )
+        spec: dict[str, Any] = {"duration": self.duration}
+        if self.values:
+            spec["values"] = True
+        return spec
+
+
+@dataclass
 class Camera:
     """Where a 3D chart is seen from at first (the chart's ``camera``).
 
@@ -401,7 +423,7 @@ class _SharedOptions(TypedDict, total=False):
     zoom: bool | Literal["x", "y", "xy"] | None
     brush: Literal["x", "y", "xy", "lasso"] | None
     sync: str | None
-    animation: bool | float | None
+    animation: bool | float | Animation | None
     resolve_x: Literal["shared", "independent", "rows", "columns"] | None
     resolve_y: Literal["shared", "independent", "rows", "columns"] | None
     renderer: Literal["auto", "svg", "canvas"] | None
@@ -491,7 +513,7 @@ class Chart:
         zoom: bool | Literal["x", "y", "xy"] | None = False,
         brush: Literal["x", "y", "xy", "lasso"] | None = None,
         sync: str | None = None,
-        animation: bool | float | None = False,
+        animation: bool | float | Animation | None = False,
         renderer: Literal["auto", "svg", "canvas"] | None = None,
         theme: ThemeName | dict[str, Any] | None = None,
         locale: str | None = None,
@@ -556,12 +578,7 @@ class Chart:
                 raise ValueError(f"{name} needs facet, facet_row, facet_col, or panels")
         if resolve_y not in (None, "shared") and zoom in ("y", "xy"):
             raise ValueError("charts whose panels have y scales of their own cannot zoom along y")
-        if not (animation is None or isinstance(animation, bool)) and not (
-            isinstance(animation, int | float) and math.isfinite(animation) and animation >= 0
-        ):
-            raise ValueError(
-                f"animation must be True, False, or milliseconds of at least 0, not {animation!r}"
-            )
+        _animation(animation)
         if facet_row is not None and facet_row == facet_col:
             raise ValueError(f"facet_row and facet_col must differ, not both {facet_row!r}")
         # bool is an int in Python, but True columns would be meaningless.
@@ -2513,9 +2530,7 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         if isinstance(tooltip, Tooltip)
         else {"mode": tooltip},
         "interaction": interaction or None,
-        "animation": (animation or None)
-        if animation is None or isinstance(animation, bool)
-        else {"duration": animation},
+        "animation": _animation(animation),
         "resolve": {
             axis: settings[f"resolve_{axis}"] for axis in ("x", "y") if settings[f"resolve_{axis}"]
         }
@@ -2690,6 +2705,20 @@ def _projection(projection: Any) -> Any:
     elif isinstance(projection, dict):
         projection = Projection(**projection)
     return projection._spec()
+
+
+def _animation(animation: Any) -> bool | dict[str, Any] | None:
+    """The spec's animation: True, a duration, or Animation's options; None when off."""
+    if animation is None or isinstance(animation, bool):
+        return animation or None
+    if isinstance(animation, Animation):
+        return animation._spec()
+    if not (_finite(animation) and animation >= 0):
+        raise ValueError(
+            "animation must be True, False, milliseconds of at least 0, or an Animation, "
+            f"not {animation!r}"
+        )
+    return {"duration": animation}
 
 
 def _camera(camera: Any) -> dict[str, Any] | None:

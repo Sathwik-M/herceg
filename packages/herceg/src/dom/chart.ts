@@ -7,7 +7,7 @@
 // overlay), the HTML legend, the tooltip, and a visually hidden description.
 
 import type { RowView } from "../data/row-view.ts";
-import type { Table } from "../data/table.ts";
+import type { Table, TableChange } from "../data/table.ts";
 import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
 import { tablesOf, viewOf } from "../marks/layout-mark.ts";
 import { type AxisFormat, keyOwner } from "../marks/mark.ts";
@@ -60,6 +60,7 @@ import {
 } from "./sync.ts";
 import { describeInspection, Tooltip } from "./tooltip.ts";
 import type { ViewAnimation } from "./transition.ts";
+import type { ValueAnimation } from "./value-transition.ts";
 
 export type { Chart };
 
@@ -150,6 +151,9 @@ export class MountedChart implements Chart {
   /** Moves the axes to views asked for, once loaded for `animation`; null if it failed to load. */
   #animation: ViewAnimation | null | undefined;
   #animationLoading: Promise<void> | undefined;
+  /** Moves bars and slices to changed values, once loaded for `animation.values`; null if it failed to load. */
+  #values: ValueAnimation | null | undefined;
+  #valuesLoading: Promise<void> | undefined;
   /** How long the last frame took to plan and paint, in milliseconds. */
   #drawTime = 0;
   /**
@@ -479,6 +483,7 @@ export class MountedChart implements Chart {
     const pending = [
       this.#cloudsLoading,
       this.#animationLoading,
+      this.#valuesLoading,
       this.#crosshairLoading,
       this.#orbitLoading,
       this.#brushLoading,
@@ -631,8 +636,10 @@ export class MountedChart implements Chart {
     this.#tables.clear();
     this.#clouds?.release(this);
     this.#orbit?.dispose();
-    // A transition waiting for its first frame leaves the frame's batch.
+    // A transition waiting for its first frame leaves the frame's batch;
+    // values let go of what they moved.
     this.#animation?.settle();
+    this.#values?.settle();
     this.#events.clear();
     this.#model.dispose();
     this.#scene = undefined;
@@ -792,9 +799,22 @@ export class MountedChart implements Chart {
       if (!this.#tables.has(table))
         this.#tables.set(
           table,
-          table.subscribe(() => {
-            // New data shows at once: a moving view would plan from stale data.
-            this.#settle();
+          table.subscribe((change?: TableChange) => {
+            // New data shows at once: a moving view would plan from stale
+            // data. Changed values may move there from what is on screen,
+            // unless something inspects or presses it or moves its view.
+            const busy =
+              this.#animation?.playing ||
+              this.#pointer ||
+              this.#keyboard ||
+              this.#press ||
+              this.#tap;
+            this.#values?.changed(
+              busy || !this.#scheduled.visible ? undefined : this.#scene,
+              change,
+              this.#drawTime,
+            );
+            this.#animation?.settle();
             this.#invalidate();
           }),
         );
@@ -805,6 +825,7 @@ export class MountedChart implements Chart {
     if (this.#brush) this.#brush.mode = options.interaction?.brush ?? "x";
     if (options.interaction?.brush) this.#loadBrush();
     if (options.animation) this.#loadAnimation();
+    if (typeof options.animation === "object" && options.animation.values) this.#loadValues();
     if (typeof options.tooltip === "object" && options.tooltip.axisLabels) this.#loadCrosshair();
     // Drags pan or brush; the page still scrolls along an axis they leave alone.
     const { zoom, brush } = options.interaction ?? {};
@@ -901,7 +922,11 @@ export class MountedChart implements Chart {
       if (animation.step(plan, this.#drawTime)) this.#invalidate(false);
     }
     const started = performance.now();
-    const scene = this.#model.scene(measure, cloudsAllowed);
+    // Changed values on their way draw the scene they move to, which stays
+    // the model's last, with its bars and slices between.
+    const build = () => this.#model.scene(measure, cloudsAllowed);
+    const scene = this.#values?.frame(build, this.#drawTime) ?? build();
+    if (this.#values?.playing) this.#invalidate(false);
     this.#scene = scene;
     const clouds = hasClouds(scene);
     // A null painter means WebGL is unavailable; it is not loaded again.
@@ -972,10 +997,23 @@ export class MountedChart implements Chart {
     change();
   }
 
-  /** Ends a change of view playing and draws the view asked for. */
+  /**
+   * Ends values on their way, or shown part way, and draws the new ones
+   * now, before input reads them (a click may come before the next frame).
+   */
+  #showValues(): void {
+    if (!this.#values?.settle()) return;
+    this.#invalidate(false);
+    this.#flush();
+    // What render listeners changed meanwhile shows at once too: input reads it next.
+    this.#values?.settle();
+  }
+
+  /** Ends a change of view or values playing and draws where it was going. */
   #settle(): void {
-    if (!this.#animation?.playing) return;
-    this.#animation.settle();
+    const values = this.#values?.settle();
+    if (!values && !this.#animation?.playing) return;
+    this.#animation?.settle();
     this.#invalidate(false);
   }
 
@@ -1042,6 +1080,27 @@ export class MountedChart implements Chart {
       .then((animation) => {
         this.#animation = animation;
         this.#animationLoading = undefined;
+      });
+  }
+
+  /** Loads what moves changed values the first time a chart asks for `animation.values`. */
+  #loadValues(): void {
+    if (this.#values !== undefined || this.#valuesLoading) return;
+    this.#valuesLoading = import("./value-transition.ts")
+      .then(
+        ({ ValueAnimation }) =>
+          new ValueAnimation(
+            this.#model,
+            this.root.ownerDocument.defaultView,
+            // The scene on screen shows the chart's options, unless a frame is pending.
+            !this.#dirty,
+          ),
+      )
+      // Without it, values change at once.
+      .catch(() => null)
+      .then((values) => {
+        if (!this.#destroyed) this.#values = values;
+        this.#valuesLoading = undefined;
       });
   }
 
@@ -1262,6 +1321,8 @@ export class MountedChart implements Chart {
     };
 
     on("pointermove", (event) => {
+      // Inspection reads the new values: they show first.
+      this.#showValues();
       this.#pointer = local(event);
       this.#keyboard = null;
       this.#brushAnchor = null;
@@ -1346,11 +1407,13 @@ export class MountedChart implements Chart {
     );
     on("pointerdown", (event) => {
       if (event.button !== 0 || !this.#scene) return;
-      // A drag starts from the view it lands in, not one passing by.
+      // A drag starts from the view it lands in, not one passing by, and
+      // from values as they are.
       if (this.#animation?.playing) {
         this.#settle();
         this.#flush();
       }
+      this.#showValues();
       const { x, y } = local(event);
       if (this.#model.layout) {
         // A second pointer down makes neither a click (a pinch, say).
@@ -1547,8 +1610,11 @@ export class MountedChart implements Chart {
     // Controls inside the chart (legend buttons) keep their own keys.
     if (event.target !== this.root || !NAVIGATION_KEYS.includes(event.key)) return;
     // Keys move through what the chart shows once pending changes (a series
-    // hidden, new options) are drawn.
+    // hidden, new options, values on their way) are drawn, and values that
+    // render listeners changed meanwhile do not move.
+    this.#showValues();
     if (this.#dirty) this.#flush();
+    this.#values?.settle();
     if (this.#model.layout) {
       this.#itemKey(event);
       return;

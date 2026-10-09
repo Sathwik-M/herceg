@@ -8,6 +8,8 @@ data = {"t": [1.0, 2.0], "v": [3.0, 4.0]}
 
 hg.line(data, "t", "v", title="Latency", zoom="x", theme="dark")
 hg.scatter(data, "t", "v", tooltip=hg.Tooltip(mode="nearest"), animation=None)
+hg.bar(data, "t", "v", animation=hg.Animation(duration=400, values=True))
+hg.bar(data, "t", "v", animation="slow")  # type: ignore[arg-type]
 helper: hg.HelperOptions = {"title": "Saved", "y_axis": hg.Axis(label="ms")}
 hg.bar(data, "t", "v", **helper)
 chart: hg.ChartOptions = {"title": "Saved", "y": hg.Axis(label="ms"), "facet_columns": 2}

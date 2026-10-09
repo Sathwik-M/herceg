@@ -269,6 +269,9 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
           ? Math.abs(along.map(1) - along.map(0))
           : this.#slotsOf().pixelGap(along);
     const opacity = this.spec.fillOpacity ?? 1;
+    // Charts that animate changed values learn where each bar stands and
+    // ends; stacks, labeled bars, and log axes show their new values at once.
+    const keyed = frame.keyed && !this.spec.stack && !labels && across.type !== "log";
     visible.forEach((s, group) => {
       const labeled = labels?.fits(width, spacing, Boolean(this.spec.stack)) ? labels : undefined;
       // Stacked series share the whole slot; grouped ones take their share of it.
@@ -286,6 +289,8 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         !this.spec.stack && frame.theme.barRadius > 0
           ? frame.bytes(s.key, "ends", Math.ceil(rects.length / 4))
           : undefined;
+      const places = keyed ? frame.doubles(s.key, "at", end - start) : undefined;
+      const span = keyed ? frame.floats(s.key, "span", (end - start) * 2) : undefined;
       let count = 0;
       // Bars at times an axis break leaves out are not drawn.
       const breaks = along.breaks;
@@ -315,6 +320,11 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         }
         if (rounding)
           rounding[count] = horizontal ? (tip > root ? RIGHT : LEFT) : tip < root ? TOP : BOTTOM;
+        if (places) {
+          places[count] = at;
+          span![count * 2] = root;
+          span![count * 2 + 1] = tip;
+        }
         count++;
         if (labeled) {
           const middle = center + offset + width / 2;
@@ -337,6 +347,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         rects,
         count,
         rounded: rounding && { radius: frame.theme.barRadius, ends: rounding },
+        bars: places && { horizontal, at: places, span: span! },
       });
       if (labeled) out.push(...labeled.flush(s.key));
     });

@@ -87,6 +87,8 @@ export interface Frame {
   clouds: boolean;
   /** Text widths for the chart's fonts, as its axes measure them. */
   measure: MeasureText;
+  /** The chart animates changed values: bars say what identifies each and where it ends (BarItems). */
+  keyed?: boolean;
   /**
    * A polyline buffer reused across frames, one per series key and stage
    * (for example "line", "upper", "upper-step").

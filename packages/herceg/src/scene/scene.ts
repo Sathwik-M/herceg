@@ -222,6 +222,24 @@ export interface RectGeometry extends Geometry {
    * rounded (draw/rect.ts: NONE, TOP, BOTTOM, LEFT, RIGHT).
    */
   rounded?: { radius: number; ends: Uint8ClampedArray } | undefined;
+  /** Bars in scenes of charts that animate changed values: what identifies each and where it ends. */
+  bars?: BarItems | undefined;
+}
+
+/**
+ * What a value transition (`animation.values`) needs of a series' bars,
+ * which marks give only in scenes of charts that ask for it. Per rectangle:
+ * the position it stands at, which identifies it in its series (a band
+ * index on a category axis, else the value), and where it starts and ends
+ * along the value axis, which its rectangle does not say: root (its base)
+ * and tip (its value), in pixels.
+ */
+export interface BarItems {
+  /** Positions on y, lengths along x. */
+  horizontal: boolean;
+  at: Float64Array;
+  /** Root and tip per rectangle. */
+  span: Float32Array;
 }
 
 /** Circles of one series, such as scatter points: x, y per point. */
@@ -357,6 +375,35 @@ export interface ArcGeometry extends Geometry {
   fillOpacity: number;
   /** Space between neighboring sectors, in pixels. */
   gap: number;
+  /** A pie's slices in scenes of charts that animate changed values. */
+  slices?: PieSlices | undefined;
+}
+
+/** One slice of a pie: its key (the item's), its category, and the value it sums. */
+export interface PieSlice {
+  key: string;
+  label: string;
+  value: number;
+}
+
+/**
+ * What a value transition (`animation.values`) needs of a pie, which it
+ * gives only in scenes of charts that ask for it: its slices in order, where
+ * each ends, its size, and how it draws other slices, so that frames between
+ * two scenes draw sectors, leaders, and labels as the pie does.
+ */
+export interface PieSlices {
+  items: readonly PieSlice[];
+  /** Each slice's end, as a fraction of the turn clockwise from the top. */
+  ends: Float64Array;
+  cx: number;
+  cy: number;
+  /** Outer radius, in pixels. */
+  r: number;
+  /** Whether labels are drawn beside the slices. */
+  labeled: boolean;
+  /** The pie's sectors, leaders, and labels with `items` ending at `ends`, out to radius `r`. */
+  draw(items: readonly PieSlice[], ends: Float64Array, r: number, labeled: boolean): Geometry[];
 }
 
 /** One shape of a polygons geometry: rings of points, filled together. */
