@@ -5,15 +5,22 @@ from __future__ import annotations
 import datetime as _dt
 import math
 import numbers
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
 import numpy as np
 
 from . import _geo, _render
 from ._data import Column, Table
 from ._derive import Derived
+
+# Annotations read at runtime (typing.get_type_hints) need Unpack too.
+if sys.version_info >= (3, 11):
+    from typing import Unpack
+else:
+    from typing_extensions import Unpack
 
 if TYPE_CHECKING:
     from .widget import ChartWidget
@@ -265,7 +272,7 @@ class Projection:
         parallels = None
         if self.parallels is not None:
             parallels = _range(self.parallels, "projection parallels", minimum=-90)
-            if parallels[1] > 90:
+            if parallels is not None and parallels[1] > 90:
                 raise ValueError(f"projection parallels must be latitudes, not {self.parallels!r}")
         fit: Any = self.fit
         if fit not in (None, "data", "world"):
@@ -343,6 +350,58 @@ class Panel:
         return {key: value for key, value in spec.items() if value is not None}
 
 
+class _SharedOptions(TypedDict, total=False):
+    title: str | None
+    description: str | None
+    width: int | None
+    height: int | None
+    y_right: Axis | dict[str, Any] | None
+    legend: bool | None
+    tooltip: bool | TooltipMode | Tooltip | None
+    zoom: bool | Literal["x", "y", "xy"] | None
+    brush: Literal["x", "y", "xy", "lasso"] | None
+    sync: str | None
+    animation: bool | float | None
+    resolve_x: Literal["shared", "independent", "rows", "columns"] | None
+    resolve_y: Literal["shared", "independent", "rows", "columns"] | None
+    renderer: Literal["auto", "svg", "canvas"] | None
+    theme: ThemeName | dict[str, Any] | None
+    locale: str | None
+    time_zone: str | None
+    projection: ProjectionName | Projection | dict[str, Any] | None
+
+
+class _LayoutOptions(TypedDict, total=False):
+    facet: str | None
+    facet_columns: int | None
+    facet_row: str | None
+    facet_col: str | None
+    panels: Sequence[Panel | str] | None
+    panel_columns: int | None
+    panel_row_heights: Sequence[float] | None
+
+
+class ChartUpdate(_SharedOptions, total=False):
+    """Chart options a live chart can change (``widget.update``): those of
+    ``Chart`` but data, facets, and panels. ``None`` takes an option's default."""
+
+    x: Axis | dict[str, Any] | None
+    y: Axis | dict[str, Any] | None
+
+
+class ChartOptions(ChartUpdate, _LayoutOptions, total=False):
+    """``Chart``'s keyword arguments. ``None`` takes an option's default."""
+
+
+class HelperOptions(_SharedOptions, _LayoutOptions, total=False):
+    """Chart options as the one-call helpers (``hg.line``, ``hg.scatter``, ...)
+    take them, after their own: ``x_axis`` and ``y_axis`` are the chart's ``x``
+    and ``y``, since the helpers' ``x`` and ``y`` name columns."""
+
+    x_axis: Axis | dict[str, Any] | None
+    y_axis: Axis | dict[str, Any] | None
+
+
 class Chart:
     """A chart: data, marks drawn in order, and options.
 
@@ -380,11 +439,11 @@ class Chart:
         panel_columns: int | None = None,
         panel_row_heights: Sequence[float] | None = None,
         legend: bool | None = None,
-        tooltip: bool | TooltipMode | Tooltip = True,
-        zoom: bool | Literal["x", "y", "xy"] = False,
+        tooltip: bool | TooltipMode | Tooltip | None = True,
+        zoom: bool | Literal["x", "y", "xy"] | None = False,
         brush: Literal["x", "y", "xy", "lasso"] | None = None,
         sync: str | None = None,
-        animation: bool | float = False,
+        animation: bool | float | None = False,
         renderer: Literal["auto", "svg", "canvas"] | None = None,
         theme: ThemeName | dict[str, Any] | None = None,
         locale: str | None = None,
@@ -444,7 +503,7 @@ class Chart:
                 raise ValueError(f"{name} needs facet, facet_row, facet_col, or panels")
         if resolve_y not in (None, "shared") and zoom in ("y", "xy"):
             raise ValueError("charts whose panels have y scales of their own cannot zoom along y")
-        if not isinstance(animation, bool) and not (
+        if not (animation is None or isinstance(animation, bool)) and not (
             isinstance(animation, int | float) and math.isfinite(animation) and animation >= 0
         ):
             raise ValueError(
@@ -470,7 +529,7 @@ class Chart:
         self._panels = panel_list
         self._panel_columns = panel_columns
         self._panel_row_heights = row_heights
-        self._tables: list[tuple[Any, Table | _DerivedColumns]] = []
+        self._tables: list[tuple[Any, _Columns]] = []
         # Derived tables by index, with the index of the table they derive from.
         self._derived: dict[int, int] = {}
         self._default = self._table(data) if data is not None else None
@@ -776,6 +835,7 @@ class Chart:
         color_domain: tuple[float, float] | None = None,
         color_midpoint: float | None = None,
         symbol: str | None = None,
+        sampling: Literal["none", "pixel"] | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
@@ -791,7 +851,8 @@ class Chart:
         ``color_midpoint`` for diverging schemes. ``symbol`` is a shape
         (``"circle"``, ``"square"``, ``"triangle"``, ...) or a category column
         with a shape per value; a column named like a shape must be renamed to
-        be encoded.
+        be encoded. ``sampling="pixel"`` draws opaque points whose centers share
+        a device pixel once, which is faster for dense scatters.
         """
         table = self._mark_table(data)
         self._require(table, x, _NUMERIC, "point x")
@@ -834,6 +895,7 @@ class Chart:
                 "colorDomain": _range(color_domain, "point color_domain"),
                 "colorMidpoint": _midpoint(color_midpoint, color_domain, "point"),
                 "symbol": symbol,
+                "sampling": sampling,
                 "label": label,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
@@ -1309,6 +1371,7 @@ class Chart:
         else:
             self._require(table, category, ("category",), "radar category")
             self._require(table, value, ("number",), "radar value")
+            assert category is not None
             codes = self._tables[table][1].column(category).values
             # Derived tables have no rows here; their spokes are checked when drawn.
             spokes = len(np.unique(codes[codes >= 0]))
@@ -1491,6 +1554,7 @@ class Chart:
             links_count = int(np.count_nonzero(np.isfinite(totals)))
         found = set(names)
         if node_table is not None:
+            assert node is not None
             ids_column = self._tables[node_table][1].column(node)
             codes = ids_column.values[ids_column.values >= 0].astype(np.intp)
             found.update(np.asarray(ids_column.dictionary, dtype=object)[codes])
@@ -1521,7 +1585,7 @@ class Chart:
         label: str | None = None,
         geojson: Any = None,
         locations: str | None = None,
-        featureidkey: str = "id",
+        feature_id_key: str = "id",
         id: str | None = None,
     ) -> Chart:
         """Regions of a map: each row's shape, filled by ``color``, a numeric column
@@ -1536,7 +1600,8 @@ class Chart:
 
         Or, as in Plotly, the values come from ``data`` and the shapes from
         ``geojson``: each row's ``locations`` value names its feature by
-        ``featureidkey`` (``"id"`` or ``"properties.<name>"``), compared as text.
+        ``feature_id_key`` (``"id"`` or ``"properties.<name>"``; Plotly's
+        ``featureidkey``), compared as text.
         Every feature is drawn; those no row names have no value. ``name``
         labels regions in tooltips, keyboard reading, and the summary.
         Geoshape and geopoint marks share a chart, projected by its
@@ -1554,12 +1619,12 @@ class Chart:
                 (
                     index
                     for index, join in self._joins.items()
-                    if join.made_from(self._tables[values][0], geojson, locations, featureidkey)
+                    if join.made_from(self._tables[values][0], geojson, locations, feature_id_key)
                 ),
                 None,
             )
             if same is None:
-                joined = _JoinedShapes(self, values, geojson, locations, featureidkey)
+                joined = _JoinedShapes(self, values, geojson, locations, feature_id_key)
                 table = self._table(joined, joined.table)
                 self._joins[table] = joined
             else:
@@ -1931,9 +1996,12 @@ class Chart:
             content = self.to_pdf()
         else:
             raise ValueError(f"Unknown file type for {path!r}; use .html, .svg, .png, or .pdf")
-        mode = "wb" if isinstance(content, bytes) else "w"
-        with open(path, mode, **({} if mode == "wb" else {"encoding": "utf-8"})) as file:
-            file.write(content)
+        if isinstance(content, bytes):
+            with open(path, "wb") as binary:
+                binary.write(content)
+        else:
+            with open(path, "w", encoding="utf-8") as text:
+                text.write(content)
 
     def show(self) -> None:
         """Displays the chart in a notebook, or opens it in a browser elsewhere."""
@@ -2034,7 +2102,7 @@ class Chart:
         """Each data source given to the chart or its marks, with its spec table name."""
         return [(source, table_name(index)) for index, (source, _) in enumerate(self._tables)]
 
-    def _table(self, data: Any, converted: Table | None = None) -> int:
+    def _table(self, data: Any, converted: _Columns | None = None) -> int:
         for index, (source, _) in enumerate(self._tables):
             if source is data:
                 return index
@@ -2199,7 +2267,7 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         else {"mode": tooltip},
         "interaction": interaction or None,
         "animation": (animation or None)
-        if isinstance(animation, bool)
+        if animation is None or isinstance(animation, bool)
         else {"duration": animation},
         "resolve": {
             axis: settings[f"resolve_{axis}"] for axis in ("x", "y") if settings[f"resolve_{axis}"]
@@ -2243,6 +2311,15 @@ def columns_spec(columns: dict[str, Column], buffers: list[bytes]) -> dict[str, 
     return {field: _column_spec(column, buffers) for field, column in columns.items()}
 
 
+class _Columns(Protocol):
+    """What charts read of a table: its column names and, by name, its columns."""
+
+    @property
+    def names(self) -> tuple[str, ...]: ...
+
+    def column(self, name: str) -> Column: ...
+
+
 class _DerivedColumns:
     """A derived table's columns, as charts check fields: names and kinds, no values."""
 
@@ -2256,7 +2333,7 @@ class _DerivedColumns:
         return Column(self._kinds[name], np.empty(0))
 
 
-def _convertible(columns: Table) -> str:
+def _convertible(columns: _Columns) -> str:
     """The first of a table's columns that converts, to send for its rows alone."""
     errors: list[Exception] = []
     for name in columns.names:
@@ -2407,7 +2484,7 @@ class _JoinedShapes:
             and (self._locations, self._key) == (locations, key)
         )
 
-    def rejoin(self, source: Table) -> _Joined:
+    def rejoin(self, source: _Columns) -> _Joined:
         """The features joined with the rows of `source`."""
         if self._locations not in source.names:
             raise KeyError(f"geoshape locations: the rows have no column {self._locations!r}")
@@ -2447,7 +2524,7 @@ class _Joined:
     """The joined rows' columns, converted when a mark first reads them: the
     data's taken at each feature's row, then the features' own."""
 
-    def __init__(self, source: Table, rows: np.ndarray, shapes: Table) -> None:
+    def __init__(self, source: _Columns, rows: np.ndarray, shapes: Table) -> None:
         self._source = source
         self._rows = rows
         self._shapes = shapes
@@ -2573,11 +2650,25 @@ def _position(value: Any) -> str | float | None:
 # Express-style helpers: one call, one chart -----------------------------------
 
 
+def _chart_of(data: Any, options: HelperOptions) -> Chart:
+    """A helper's chart: its ``x_axis`` and ``y_axis`` are the chart's ``x`` and ``y``."""
+    settings: dict[str, Any] = dict(options)
+    for axis in ("x", "y"):
+        if f"{axis}_axis" in settings:
+            settings[axis] = settings.pop(f"{axis}_axis")
+    return Chart(data, **settings)
+
+
 def line(
-    data: Any, x: str, y: str | Sequence[str], *, series: str | None = None, **options: Any
+    data: Any,
+    x: str,
+    y: str | Sequence[str],
+    *,
+    series: str | None = None,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A line chart. Remaining keyword arguments are chart options (title, x, y, ...)."""
-    return Chart(data, **options).line(x, y, series=series)
+    """A line chart. Remaining keyword arguments are chart options (``HelperOptions``)."""
+    return _chart_of(data, options).line(x, y, series=series)
 
 
 def area(
@@ -2587,10 +2678,10 @@ def area(
     *,
     series: str | None = None,
     stack: bool = False,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """An area chart, stacked with ``stack=True``."""
-    return Chart(data, **options).area(x, y, series=series, stack=stack)
+    return _chart_of(data, options).area(x, y, series=series, stack=stack)
 
 
 def bar(
@@ -2601,10 +2692,10 @@ def bar(
     series: str | None = None,
     stack: bool = False,
     labels: bool | dict[str, Any] = False,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A bar chart, grouped or stacked; horizontal when ``y`` is a category."""
-    return Chart(data, **options).bar(x, y, series=series, stack=stack, labels=labels)
+    return _chart_of(data, options).bar(x, y, series=series, stack=stack, labels=labels)
 
 
 def scatter(
@@ -2621,10 +2712,11 @@ def scatter(
     color_midpoint: float | None = None,
     symbol: str | None = None,
     fill_opacity: float | str | None = None,
-    **options: Any,
+    sampling: Literal["none", "pixel"] | None = None,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A scatter plot; ``r``, ``color``, and ``symbol`` can encode columns (see ``Chart.point``)."""
-    return Chart(data, **options).point(
+    return _chart_of(data, options).point(
         x,
         y,
         series=series,
@@ -2636,6 +2728,7 @@ def scatter(
         color_midpoint=color_midpoint,
         symbol=symbol,
         fill_opacity=fill_opacity,
+        sampling=sampling,
     )
 
 
@@ -2649,10 +2742,10 @@ def heatmap(
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
     reduce: Literal["mean", "max", "min"] | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A heatmap; ``colors`` is a scheme name or a list of hex colors (see ``Chart.heatmap``)."""
-    return Chart(data, **options).heatmap(
+    return _chart_of(data, options).heatmap(
         x,
         y,
         value,
@@ -2671,10 +2764,10 @@ def histogram(
     series: str | None = None,
     normalize: Literal["count", "percent", "density"] | None = None,
     stack: bool = False,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A histogram of ``x``'s values."""
-    return Chart(data, **options).histogram(
+    return _chart_of(data, options).histogram(
         x, bins=bins, series=series, normalize=normalize, stack=stack
     )
 
@@ -2687,10 +2780,10 @@ def pie(
     inner_radius: float | None = None,
     sort: Literal["value", "input"] | None = None,
     labels: bool | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A pie, or with ``inner_radius`` a donut, of ``value`` per ``category``."""
-    return Chart(data, **options).pie(
+    return _chart_of(data, options).pie(
         category, value, inner_radius=inner_radius, sort=sort, labels=labels
     )
 
@@ -2704,10 +2797,10 @@ def gauge(
     bands: Sequence[float | tuple[float, str]] | None = None,
     label: str | None = None,
     format: dict[str, Any] | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A gauge of the last finite value of ``value``, on a dial from ``min`` to ``max``."""
-    return Chart(data, **options).gauge(
+    return _chart_of(data, options).gauge(
         value, min=min, max=max, bands=bands, label=label, format=format
     )
 
@@ -2719,10 +2812,10 @@ def funnel(
     *,
     sort: Literal["input", "value"] | None = None,
     labels: bool | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A funnel of ``value`` (or row counts) per stage of ``category``, top to bottom."""
-    return Chart(data, **options).funnel(category, value, sort=sort, labels=labels)
+    return _chart_of(data, options).funnel(category, value, sort=sort, labels=labels)
 
 
 def boxplot(
@@ -2731,10 +2824,10 @@ def boxplot(
     y: str,
     *,
     series: str | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """Box plots of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
-    return Chart(data, **options).boxplot(x, y, series=series)
+    return _chart_of(data, options).boxplot(x, y, series=series)
 
 
 def violin(
@@ -2744,10 +2837,10 @@ def violin(
     *,
     series: str | None = None,
     bandwidth: float | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """Violins of ``y`` per category of ``x``, or of ``x`` per category of ``y``."""
-    return Chart(data, **options).violin(x, y, series=series, bandwidth=bandwidth)
+    return _chart_of(data, options).violin(x, y, series=series, bandwidth=bandwidth)
 
 
 def treemap(
@@ -2758,10 +2851,10 @@ def treemap(
     node: str | None = None,
     parent: str | None = None,
     labels: bool | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A treemap of a tree given by ``path`` columns, or ``node`` and ``parent``."""
-    return Chart(data, **options).treemap(path, value, node=node, parent=parent, labels=labels)
+    return _chart_of(data, options).treemap(path, value, node=node, parent=parent, labels=labels)
 
 
 def sunburst(
@@ -2772,10 +2865,10 @@ def sunburst(
     node: str | None = None,
     parent: str | None = None,
     labels: bool | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A sunburst of a tree given by ``path`` columns, or ``node`` and ``parent``."""
-    return Chart(data, **options).sunburst(path, value, node=node, parent=parent, labels=labels)
+    return _chart_of(data, options).sunburst(path, value, node=node, parent=parent, labels=labels)
 
 
 def radar(
@@ -2789,10 +2882,10 @@ def radar(
     fill_opacity: float | None = None,
     points: bool | None = None,
     label: str | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A radar of ``value`` per ``category``, or of the columns ``fields`` per row."""
-    return Chart(data, **options).radar(
+    return _chart_of(data, options).radar(
         category,
         value,
         fields=fields,
@@ -2813,10 +2906,10 @@ def sankey(
     labels: bool | None = None,
     node_width: float | None = None,
     sort: Literal["input", "value"] | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A Sankey diagram of flows from ``source`` to ``target``, sized by ``value``."""
-    return Chart(data, **options).sankey(
+    return _chart_of(data, options).sankey(
         source, target, value, labels=labels, node_width=node_width, sort=sort
     )
 
@@ -2832,10 +2925,10 @@ def graph(
     group: str | None = None,
     size: str | None = None,
     labels: bool | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A network of links from ``source`` to ``target``, with ``nodes`` for groups and sizes."""
-    return Chart(data, **options).graph(
+    return _chart_of(data, options).graph(
         source, target, value, nodes=nodes, node=node, group=group, size=size, labels=labels
     )
 
@@ -2847,23 +2940,23 @@ def choropleth(
     geometry: str | None = None,
     geojson: Any = None,
     locations: str | None = None,
-    featureidkey: str = "id",
+    feature_id_key: str = "id",
     name: str | None = None,
     colors: str | Sequence[str] | None = None,
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A map of regions colored by ``color`` (see ``Chart.geoshape``): shapes from
     ``data`` (a GeoDataFrame or GeoJSON FeatureCollection), or values from ``data``
-    joined to the features of ``geojson`` by ``locations`` and ``featureidkey``.
+    joined to the features of ``geojson`` by ``locations`` and ``feature_id_key``.
     Remaining keyword arguments are chart options (title, projection, ...)."""
-    return Chart(data if geojson is None else None, **options).geoshape(
+    return _chart_of(data if geojson is None else None, options).geoshape(
         geometry,
         data=data if geojson is not None else None,
         geojson=geojson,
         locations=locations,
-        featureidkey=featureidkey,
+        feature_id_key=feature_id_key,
         name=name,
         color=color,
         colors=colors,
@@ -2883,10 +2976,10 @@ def scatter_geo(
     r_range: tuple[float, float] | None = None,
     color: str | None = None,
     colors: str | Sequence[str] | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """Points or bubbles on a map at ``longitude`` and ``latitude`` (see ``Chart.geopoint``)."""
-    return Chart(data, **options).geopoint(
+    return _chart_of(data, options).geopoint(
         longitude,
         latitude,
         name=name,
@@ -2910,10 +3003,10 @@ def candlestick(
     rise: str | None = None,
     fall: str | None = None,
     label: str | None = None,
-    **options: Any,
+    **options: Unpack[HelperOptions],
 ) -> Chart:
     """A candlestick chart of open, high, low, and close prices; OHLC bars with
     ``variant="ohlc"``."""
-    return Chart(data, **options).candlestick(
+    return _chart_of(data, options).candlestick(
         x, open, high, low, close, variant=variant, rise=rise, fall=fall, label=label
     )

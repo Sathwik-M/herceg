@@ -50,7 +50,7 @@ npm run bench:react      # herceg vs herceg through @herceg/react
 npm run bench:report     # regenerate result tables in docs/comparison.md
 npm run build:python     # bundle herceg's JavaScript into the Python package
 npm run test:python      # build:python, then pytest (uv environment in python/)
-npm run lint:python      # ruff check and format check of the Python package
+npm run lint:python      # ruff check, format check, and mypy type check of the Python package
 ```
 
 Keep this list in sync with `package.json` as build, test, and Python commands

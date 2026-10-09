@@ -20,7 +20,7 @@
     "bench:report": "npm run report -w herceg-benchmarks",
     "build:python": "node python/js/build.mjs",
     "test:python": "npm run build:python && cd python && uv run --extra dev pytest",
-    "lint:python": "cd python && uv run --extra dev ruff check src tests examples && uv run --extra dev ruff format --check src tests examples"
+    "lint:python": "cd python && uv run --extra dev ruff check src tests examples && uv run --extra dev ruff format --check src tests examples && uv run --extra dev mypy"
   },
   "engines": {
     "node": ">=22.12"

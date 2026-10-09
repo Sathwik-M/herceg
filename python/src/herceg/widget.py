@@ -22,6 +22,7 @@ except ImportError as error:  # pragma: no cover - depends on the environment
     ) from error
 
 from . import _render
+from ._chart import ChartUpdate, Unpack
 from ._events import Inspection, Value, decode_inspection, decode_range, encode_range
 from ._live import LiveChart, Message
 
@@ -105,7 +106,7 @@ class ChartWidget(anywidget.AnyWidget):
         with self._lock:
             self._push(self._live.replace(rows, data))
 
-    def update(self, **options: Any) -> None:
+    def update(self, **options: Unpack[ChartUpdate]) -> None:
         """Changes chart options, as given to ``hg.Chart``: ``title``, ``x``, ``y``,
         ``theme``, ``zoom``, ``tooltip``, and the rest except data and facets.
         ``None`` restores an option's default."""

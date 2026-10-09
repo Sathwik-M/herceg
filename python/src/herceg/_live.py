@@ -63,7 +63,11 @@ class LiveChart:
             joined = _concatenate(current[field], column)
             current[field] = _tail(joined, max_rows) if max_rows is not None else joined
         buffers: list[bytes] = []
-        message = {"type": "append", "table": name, "columns": columns_spec(batch, buffers)}
+        message: dict[str, Any] = {
+            "type": "append",
+            "table": name,
+            "columns": columns_spec(batch, buffers),
+        }
         if max_rows is not None:
             message["maxRows"] = max_rows
         return message, buffers
@@ -89,7 +93,7 @@ class LiveChart:
         self._tables[name] = batch
         return {"type": "replace", "table": name, "columns": columns}, buffers
 
-    def update(self, changes: dict[str, Any]) -> Message | None:
+    def update(self, changes: Mapping[str, Any]) -> Message | None:
         """Changes chart options; the message holds the changed spec options, None
         for removed ones. None when nothing changed."""
         unknown = sorted(set(changes) - set(OPTIONS))
@@ -114,11 +118,12 @@ class LiveChart:
                 raise ValueError("the chart has no data of its own; pass data= to choose a table")
             name = self._default
         else:
-            name = next((name for source, name in self._sources if source is data), None)
-            if name is None:
+            found = next((name for source, name in self._sources if source is data), None)
+            if found is None:
                 raise ValueError(
                     "data= must be the object passed to the chart or to one of its marks"
                 )
+            name = found
         if name in self._derived:
             raise ValueError("a derived table follows its source: append to the source's data")
         if name not in self._tables:

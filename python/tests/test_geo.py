@@ -177,7 +177,7 @@ def test_values_join_shapes_by_location_as_in_plotly():
         data={"who": ["Bel"], "v": [3.0]},
         geojson=collection(),
         locations="who",
-        featureidkey="properties.name",
+        feature_id_key="properties.name",
         color="v",
     )
     by_name_spec, by_name_buffers = by_name.to_spec()

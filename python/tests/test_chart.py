@@ -1006,3 +1006,35 @@ def test_graphs_check_their_columns_and_size():
         "v": [1e308] * (2 * len(pairs)),
     }
     hg.Chart(overflowing).graph("from", "to", "v")
+
+
+def test_option_types_list_every_option():
+    import inspect
+
+    from herceg._chart import OPTIONS
+
+    parameters = set(inspect.signature(hg.Chart.__init__).parameters) - {"self", "data"}
+    assert set(hg.ChartOptions.__optional_keys__) == parameters
+    assert set(hg.ChartUpdate.__optional_keys__) == set(OPTIONS)
+    helper = set(hg.HelperOptions.__optional_keys__)
+    assert helper == parameters - {"x", "y"} | {"x_axis", "y_axis"}
+
+
+def test_helpers_take_axes_as_x_axis_and_y_axis():
+    spec, _ = hg.line(
+        DATA, "t", "p50", x_axis=hg.Axis(label="time"), y_axis={"label": "ms"}
+    ).to_spec()
+    assert spec["x"] == {"label": "time"}
+    assert spec["y"] == {"label": "ms"}
+
+
+def test_none_takes_the_default_of_every_option_at_construction():
+    import typing
+
+    hg.Chart(DATA, animation=None, tooltip=None, zoom=None).line(x="t", y="p50").to_spec()
+    hg.scatter(DATA, "t", "p50", animation=None)
+    # Annotations resolve at runtime, as documentation tools and validators read them.
+    assert "options" in typing.get_type_hints(hg.line)
+    from herceg.widget import ChartWidget
+
+    assert "options" in typing.get_type_hints(ChartWidget.update)
