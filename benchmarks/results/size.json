@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-09T09:53:14.943Z",
+ "date": "2026-10-09T09:56:15.941Z",
  "commit": {
-  "sha": "f866170",
+  "sha": "678f549",
   "dirty": true
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; the entry chunk is measured, chunks loaded on demand and required CSS are reported separately; gzip level 9; brotli quality 11",
@@ -62,57 +62,57 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (f866170)",
-   "raw": 233016,
-   "minified": 107836,
-   "gzip": 40052,
-   "brotli": 35913,
+   "version": "0.0.0 (678f549)",
+   "raw": 239786,
+   "minified": 110776,
+   "gzip": 41282,
+   "brotli": 36967,
    "css": null,
    "lazy": {
-    "minified": 9566,
-    "gzip": 4648
+    "minified": 12364,
+    "gzip": 6002
    }
   },
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (f866170)",
-   "raw": 237375,
-   "minified": 110157,
-   "gzip": 41068,
-   "brotli": 36873,
+   "version": "0.0.0 (678f549)",
+   "raw": 244145,
+   "minified": 113097,
+   "gzip": 42294,
+   "brotli": 37915,
    "css": null,
    "lazy": {
-    "minified": 9566,
-    "gzip": 4648
+    "minified": 12364,
+    "gzip": 6002
    }
   },
   {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (f866170)",
-   "raw": 239775,
-   "minified": 111593,
-   "gzip": 41671,
-   "brotli": 37360,
+   "version": "0.0.0 (678f549)",
+   "raw": 246545,
+   "minified": 114540,
+   "gzip": 42897,
+   "brotli": 38483,
    "css": null,
    "lazy": {
-    "minified": 9566,
-    "gzip": 4648
+    "minified": 12364,
+    "gzip": 6002
    }
   },
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (f866170)",
-   "raw": 239840,
-   "minified": 111238,
-   "gzip": 41504,
-   "brotli": 37200,
+   "version": "0.0.0 (678f549)",
+   "raw": 246614,
+   "minified": 114178,
+   "gzip": 42734,
+   "brotli": 38292,
    "css": null,
    "lazy": {
-    "minified": 9566,
-    "gzip": 4648
+    "minified": 12364,
+    "gzip": 6002
    }
   },
   {
