@@ -1,7 +1,7 @@
 // Row groups: aggregates over a view's positions, as derived tables compute
 // them, kept current as the view's table streams, with stable keys.
-import { describe, expect, it } from "vitest";
-import { category, time } from "../../src/data/column.ts";
+import { describe, expect, it, vi } from "vitest";
+import { category, encodedCategory, time } from "../../src/data/column.ts";
 import { count, derive, max, mean, min, sum } from "../../src/data/derive.ts";
 import { col } from "../../src/data/expression.ts";
 import { groupId, groupRows } from "../../src/data/groups.ts";
@@ -115,7 +115,10 @@ describe("row groups", () => {
     expect(groups.indexOf(["x", 1, 0])).toBe(0);
     expect(groups.indexOf(["x", 3, 0])).toBe(-1);
     expect(groups.indexOf(["x", "1", 0])).toBe(-1);
-    expect(groups.indexOf(["x", 1])).toBe(-1);
+    // Shorter keys name the groups above: "x" then 1, of the second level.
+    expect(groups.indexOf(["x", 1])).toBe(0);
+    expect(groups.indexOf(["x", 1, 0, 0])).toBe(-1);
+    expect(groups.indexOf([])).toBe(-1);
   });
 
   it("keep -0 with 0 and infinities apart from missing values, in keys and their ids", () => {
@@ -421,3 +424,447 @@ describe("row groups following their view", () => {
     }
   });
 });
+
+/** Rows with numbers rounded to 12 significant digits: sums are compensated, derived ones are not. */
+const rounded = (list: Record<string, unknown>[]) =>
+  list.map((row) =>
+    Object.fromEntries(
+      Object.entries(row).map(([field, value]) => [
+        field,
+        typeof value === "number" ? Number(value.toPrecision(12)) : value,
+      ]),
+    ),
+  );
+
+/** A deterministic stream of numbers in [0, 1). */
+const randoms = (seed: number) => () => {
+  seed = (seed * 16807) % 2147483647;
+  return seed / 2147483647;
+};
+
+/** Requests over regions, services, and hosts, some latencies missing or infinite. */
+function traffic(n: number, random = randoms(11)) {
+  const pick = <T>(list: readonly T[]) => list[Math.floor(random() * list.length)]!;
+  return {
+    region: Array.from({ length: n }, () => pick(["eu", "us", "ap", null])),
+    service: Array.from({ length: n }, () => pick(["api", "web", "db"])),
+    host: Array.from({ length: n }, () => pick([1, 2, 3, 4, Number.NaN])),
+    ms: Array.from({ length: n }, () =>
+      random() < 0.1
+        ? pick([Number.NaN, Number.POSITIVE_INFINITY])
+        : Math.round(random() * 1e4) / 8,
+    ),
+    at: Array.from({ length: n }, () => Math.floor(random() * 1e6)),
+  };
+}
+
+const BY = ["region", "service", "host"] as const;
+
+/** Each level's table as derived tables aggregate its fields. */
+const derived = (t: Table, query: { filter?: unknown } = {}) =>
+  BY.map((_, depth) => {
+    let steps = derive(t);
+    if (query.filter) steps = steps.filter(query.filter as never);
+    return rounded(rows(steps.aggregate({ groupby: BY.slice(0, depth + 1), ops: OPS }).table()));
+  });
+
+describe("nested row groups", () => {
+  it("aggregate every level as derived tables aggregate the fields down to it", () => {
+    const t = table({ ...traffic(500), region: category(traffic(500).region) });
+    const groups = groupRows(rowView(t), { by: BY, ops: OPS });
+    const levels = BY.map((field) => rounded(rows(groups.tableOf(field))));
+    expect(levels).toEqual(derived(t as unknown as Table));
+    expect(groups.table).toBe(groups.tableOf("host"));
+    expect(BY.map((_, depth) => groups.countAt(depth))).toEqual(levels.map((l) => l.length));
+    expect(groups.length).toBe(levels[2]!.length);
+    // Each level's table has the grouping fields down to it, then the aggregates.
+    expect(groups.tableOf("region").fields()).toEqual(["region", ...Object.keys(OPS)]);
+    expect(groups.tableOf("service").fields()).toEqual(["region", "service", ...Object.keys(OPS)]);
+  });
+
+  it("combine a parent's mean from its rows' sums and counts, not its groups' means", () => {
+    const t = table({ g: ["a", "a", "a", "a"], h: ["x", "y", "y", "y"], v: [10, 0, 0, 0] });
+    const groups = groupRows(rowView(t), { by: ["g", "h"], ops: { avg: mean("v"), n: count() } });
+    expect(rows(groups.table)).toEqual([
+      { g: "a", h: "x", avg: 10, n: 1 },
+      { g: "a", h: "y", avg: 0, n: 3 },
+    ]);
+    expect(rows(groups.tableOf("g"))).toEqual([{ g: "a", avg: 2.5, n: 4 }]);
+  });
+
+  it("name groups by key paths, with their parents, children, rows, and members at every level", () => {
+    const t = table({
+      region: ["eu", "us", "eu", "eu", "us", null],
+      service: ["api", "api", "web", "api", "db", "api"],
+      ms: [1, 2, 3, 4, 5, 6],
+    });
+    const groups = groupRows(rowView(t, { sort: [{ field: "ms", order: "descending" }] }), {
+      by: ["region", "service"],
+      ops: { n: count() },
+    });
+    // eu: api (rows 0, 3), web (2); us: api (1), db (4); missing: api (5).
+    expect([0, 1, 2].map((g) => groups.keyOf(g, 0))).toEqual([["eu"], ["us"], [null]]);
+    expect(groups.keyOf(3)).toEqual(["us", "db"]);
+    expect(groups.indexOf(["us", "db"])).toBe(3);
+    expect(groups.indexOf(["us"])).toBe(1);
+    expect(groups.indexOf([null, "api"])).toBe(4);
+    expect(groups.idOf(1, 0)).toBe('["us"]');
+    expect(groups.idOf(1)).toBe('["us","api"]');
+    expect(Array.from(groups.childrenOf(0, 0))).toEqual([0, 2]);
+    expect(Array.from(groups.childrenOf(1, 0))).toEqual([1, 3]);
+    expect(groups.childrenOf(0, 1)).toHaveLength(0);
+    expect([0, 1, 2, 3, 4].map((g) => groups.parentOf(g, 1))).toEqual([0, 1, 0, 1, 2]);
+    expect(groups.parentOf(1, 0)).toBe(-1);
+    expect([groups.size(0, 0), groups.size(0)]).toEqual([3, 2]);
+    expect([groups.groupOf(2), groups.groupOf(2, 0)]).toEqual([2, 0]);
+    // Rows in the view's order within each last-level group, those groups in the order they appeared.
+    expect(Array.from(groups.members(0))).toEqual([3, 0]);
+    expect(Array.from(groups.members(0, 0))).toEqual([3, 0, 2]);
+    expect([groups.memberAt(0, 0), groups.memberIndex(0)]).toEqual([3, 1]);
+    expect(() => groups.keyOf(3, 0)).toThrow(/not among the 3 groups at depth 0/);
+    expect(() => groups.countAt(2)).toThrow(/Depth 2/);
+    expect(() => groups.tableOf("ms" as never)).toThrow(/no grouping field "ms"/);
+    expect(() => groups.memberAt(0, 2)).toThrow(/no row 2/);
+  });
+});
+
+describe("row groups in streams", () => {
+  /** Every level's table as computed from scratch, each sorted by key to compare. */
+  const fresh = (t: Table, query = {}) => {
+    const groups = groupRows(rowView(t, query), { by: BY, ops: OPS });
+    return BY.map((field) => byKey(rounded(rows(groups.tableOf(field)))));
+  };
+  const byKey = (list: Record<string, unknown>[]) =>
+    [...list].sort((a, b) =>
+      JSON.stringify(BY.map((f) => a[f])).localeCompare(JSON.stringify(BY.map((f) => b[f]))),
+    );
+
+  it("follow a rolling window by taking dropped rows away, as computing again would give", () => {
+    const random = randoms(5);
+    const t = table(
+      {
+        region: category([]),
+        service: category([]),
+        host: [] as number[],
+        ms: [] as number[],
+        at: [] as number[],
+      },
+      { maxRows: 300 },
+    );
+    for (const query of [{}, { filter: col("ms").gt(100), sort: [{ field: "at" as const }] }]) {
+      const view = rowView(t, query);
+      const groups = groupRows(view, { by: BY, ops: OPS });
+      const resets = BY.map((field) => changesOf(groups.tableOf(field) as unknown as Table));
+      for (let step = 0; step < 80; step++) {
+        const batch = traffic(1 + Math.floor(random() * 60), random);
+        t.append(batch);
+        expect(BY.map((field) => byKey(rounded(rows(groups.tableOf(field)))))).toEqual(
+          fresh(t as unknown as Table, query),
+        );
+        // Rows of every last-level group, in the view's order.
+        if (step % 10 === 0) {
+          const shown = view.read();
+          const order = shown.indices ? Array.from(shown.indices) : [...Array(t.length).keys()];
+          for (let g = 0; g < groups.length; g++)
+            expect(Array.from(groups.members(g))).toEqual(
+              order.filter((p) => groups.groupOf(p) === g),
+            );
+        }
+      }
+      // The first level's three regions and missing one never vanish: its table never starts over.
+      expect(resets[0]!.some(({ reset }) => reset)).toBe(false);
+    }
+  });
+
+  it("find minimums and maximums again when theirs leave, and keep sums from drifting", () => {
+    const t = table({ g: category([]), v: [] as number[] }, { maxRows: 3 });
+    const groups = groupRows(rowView(t), {
+      by: ["g"],
+      ops: { low: min("v"), high: max("v"), total: sum("v"), avg: mean("v") },
+    });
+    t.append({ g: ["a", "a", "a"], v: [0.1, 1e17, 0.2] });
+    expect(rows(groups.table)).toEqual([
+      { g: "a", low: 0.1, high: 1e17, total: 1e17, avg: 1e17 / 3 },
+    ]);
+    // 1e17 leaves; plain sums would keep an error of about 16 from its rounding.
+    t.append({ g: ["a", "a"], v: [0.3, 0.4] });
+    const [row] = rows(groups.table);
+    expect(row).toMatchObject({ low: 0.2, high: 0.4 });
+    expect(Math.abs((row!.total as number) - 0.9)).toBeLessThan(1e-15);
+    // Every value leaves: the sum is 0 exactly, and the mean and extremes missing.
+    t.append({ g: ["b", "b", "b"], v: [Number.NaN, 1, 2] });
+    expect(rows(groups.table)).toEqual([{ g: "b", low: 1, high: 2, total: 3, avg: 1.5 }]);
+  });
+
+  it("keep groups' keys and numbers as rows come and go, and drop groups left without rows", () => {
+    const t = table({ g: category(["a", "b", "a"]), h: [1, 1, 2] }, { maxRows: 3 });
+    const groups = groupRows(rowView(t), { by: ["g", "h"], ops: { n: count() } });
+    const changes = BY.slice(0, 2).map(() => [] as TableChange[]);
+    groups.tableOf("g").subscribe((change) => changes[0]!.push(change));
+    groups.table.subscribe((change) => changes[1]!.push(change));
+    // Drops ("a", 1): "a" keeps a row (h 2), so no group of the first level vanishes.
+    t.append({ g: ["b"], h: [2] });
+    expect(rows(groups.tableOf("g"))).toEqual([
+      { g: "a", n: 1 },
+      { g: "b", n: 2 },
+    ]);
+    expect(rows(groups.table)).toEqual([
+      { g: "b", h: 1, n: 1 },
+      { g: "a", h: 2, n: 1 },
+      { g: "b", h: 2, n: 1 },
+    ]);
+    expect(changes.map((list) => list.map(({ reset }) => reset))).toEqual([[false], [true]]);
+    expect(groups.indexOf(["a", 2])).toBe(1);
+    expect(groups.indexOf(["a", 1])).toBe(-1);
+    // "a" leaves altogether.
+    t.append({ g: ["c", "c"], h: [3, 3] });
+    expect(rows(groups.tableOf("g"))).toEqual([
+      { g: "b", n: 1 },
+      { g: "c", n: 2 },
+    ]);
+    expect([groups.indexOf(["a"]), groups.indexOf(["c", 3])]).toEqual([-1, 1]);
+    expect(groups.keyOf(1)).toEqual(["c", 3]);
+  });
+
+  it("follow categories through dictionaries the table compacts as rows drop", () => {
+    const random = randoms(3);
+    const t = table({ k: category([]), v: [] as number[] }, { maxRows: 20 });
+    const groups = groupRows(rowView(t), { by: ["k"], ops: { n: count(), total: sum("v") } });
+    for (let step = 0; step < 40; step++) {
+      const n = 1 + Math.floor(random() * 12);
+      // Labels drift, so old ones leave the window and the table compacts its dictionary.
+      t.append({
+        k: Array.from({ length: n }, () => `k${step + Math.floor(random() * 4)}`),
+        v: Array.from({ length: n }, () => Math.floor(random() * 10)),
+      });
+      const expected = rows(
+        derive(t)
+          .aggregate({ groupby: ["k"], ops: { n: count(), total: sum("v") } })
+          .table(),
+      );
+      const byLabel = (list: Record<string, unknown>[]) =>
+        [...list].sort((a, b) => String(a.k).localeCompare(String(b.k)));
+      expect(byLabel(rows(groups.table))).toEqual(byLabel(expected));
+    }
+  });
+
+  it("follow categories whose compacted dictionary gives a label its old code again", () => {
+    // k0 to k69, the first row k69: compacting keeps only k68, and k69 comes back as code 69.
+    const labels = Array.from({ length: 70 }, (_, i) => `k${i}`);
+    const codes = Int32Array.from([69, ...Array.from({ length: 69 }, (_, i) => i)]);
+    const t = table({ k: encodedCategory(codes, labels) }, { maxRows: 70 });
+    const groups = groupRows(rowView(t), { by: ["k"], ops: { n: count() } });
+    t.append({ k: [...Array.from({ length: 68 }, (_, i) => `new${i}`), "k69"] });
+    expect(t.categories("k").dictionary[69]).toBe("k69");
+    const expected = rows(
+      derive(t)
+        .aggregate({ groupby: ["k"], ops: { n: count() } })
+        .table(),
+    );
+    const byLabel = (list: Record<string, unknown>[]) =>
+      [...list].sort((a, b) => String(a.k).localeCompare(String(b.k)));
+    expect(byLabel(rows(groups.table))).toEqual(byLabel(expected));
+    expect(groups.keyOf(groups.groupOf(1))).toEqual(["new0"]);
+  });
+
+  it("sum the same way whether or not the table drops rows", () => {
+    for (const options of [{}, { maxRows: 100 }]) {
+      const t = table({ g: ["a", "a", "a"], v: [1e16, 1, -1e16] }, options);
+      const groups = groupRows(rowView(t), { by: ["g"], ops: { total: sum("v") } });
+      // A plain sum would lose the 1 in 1e16.
+      expect(groups.table.value("total", 0)).toBe(1);
+    }
+  });
+
+  it("sum again exactly what values cancelling left inaccurate, as they leave or come", () => {
+    const ops = { s: sum("v"), avg: mean("v"), lo: min("v") };
+    const t = table({ g: ["a", "a", "a"], h: ["x", "x", "x"], v: [1e40, 1e16, 1] }, { maxRows: 3 });
+    const groups = groupRows(rowView(t), { by: ["g", "h"], ops });
+    t.dropFirst(2);
+    for (const field of ["g", "h"] as const)
+      expect(rows(groups.tableOf(field))[0]).toMatchObject({ s: 1, avg: 1, lo: 1 });
+    // Appended values cancelling: a plain sum would say -1e16.
+    const appended = table({ g: ["a"], v: [1e40] });
+    const grouped = groupRows(rowView(appended), { by: ["g"], ops: { s: sum("v") } });
+    appended.append({ g: ["a", "a", "a", "a"], v: [1e16, 1, -1e40, -1e16] });
+    expect(grouped.table.value("s", 0)).toBe(1);
+    expect(
+      groupRows(rowView(appended), { by: ["g"], ops: { s: sum("v") } }).table.value("s", 0),
+    ).toBe(1);
+  });
+
+  it("sum a parent exactly when its groups' sums cancel beyond their accuracy", () => {
+    const t = table({
+      g: ["a", "a", "a", "a", "a"],
+      h: ["x", "x", "x", "y", "y"],
+      v: [1e40, 1e16, 1, -1e40, -1e16],
+    });
+    const groups = groupRows(rowView(t), { by: ["g", "h"], ops: { s: sum("v") } });
+    expect(groups.tableOf("g").value("s", 0)).toBe(1);
+    t.append({ g: ["a"], h: ["y"], v: [1] });
+    expect(groups.tableOf("g").value("s", 0)).toBe(2);
+  });
+
+  it("sum a parent from its rows when its groups overflowed both ways", () => {
+    const t = table({
+      g: ["a", "a", "a", "a"],
+      h: ["x", "y", "x", "y"],
+      v: [1e308, -1e308, 1e308, -1e308],
+    });
+    const groups = groupRows(rowView(t), { by: ["g", "h"], ops: { s: sum("v"), hi: max("v") } });
+    expect(Array.from({ length: 2 }, (_, g) => groups.table.value("s", g))).toEqual([
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]);
+    expect(groups.tableOf("g").value("s", 0)).toBe(0);
+    // The parent's maximum leaves: it is folded again from groups that overflowed both ways.
+    t.dropFirst(1);
+    t.append({ g: ["a"], h: ["x"], v: [1e308] });
+    expect(groups.tableOf("g").value("s", 0)).toBe(0);
+  });
+
+  it("read a parent's rows once when they overflow, not again with every append", () => {
+    const t = table({ g: ["a", "a", "a"], h: ["x", "x", "x"], v: [1e308, 1e308, 1] });
+    const groups = groupRows(rowView(t), { by: ["g", "h"], ops: { s: sum("v") } });
+    expect(groups.tableOf("g").value("s", 0)).toBe(Number.POSITIVE_INFINITY);
+    // Reading a parent's rows lists its groups below.
+    const children = vi.spyOn(groups, "childrenOf");
+    for (let i = 0; i < 10; i++) t.append({ g: ["a"], h: ["x"], v: [1] });
+    expect(children).not.toHaveBeenCalled();
+    expect(groups.tableOf("g").value("s", 0)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("keep a sum that overflowed infinite until the rows that overflowed it leave", () => {
+    const t = table({ g: ["a", "a"], v: [1e308, 1e308] }, { maxRows: 2 });
+    const groups = groupRows(rowView(t), { by: ["g"], ops: { s: sum("v") } });
+    expect(groups.table.value("s", 0)).toBe(Number.POSITIVE_INFINITY);
+    t.append({ g: ["a"], v: [1] });
+    expect(groups.table.value("s", 0)).toBe(1e308);
+  });
+
+  it("find extremes again in table order, as computing again does, signed zeros among them", () => {
+    const t = table({ g: ["a", "a", "a"], v: [5, -0, 0], s: [0, 2, 1] }, { maxRows: 3 });
+    const query = { sort: [{ field: "s" as const }] };
+    const ops = { low: min("v"), high: max("v") };
+    const groups = groupRows(rowView(t, query), { by: ["g"], ops });
+    // 5, the maximum, leaves: the group's rows are read again.
+    t.append({ g: ["a"], v: [1], s: [3] });
+    const fresh = groupRows(rowView(t, query), { by: ["g"], ops });
+    expect(Object.is(groups.table.value("low", 0), fresh.table.value("low", 0))).toBe(true);
+    expect(rows(groups.table)).toEqual(rows(fresh.table));
+  });
+
+  it("write every level's table before telling listeners of any", () => {
+    const t = table({ g: ["a"], h: ["x"], v: [1] });
+    const groups = groupRows(rowView(t), { by: ["g", "h"], ops: { n: count() } });
+    const seen: unknown[] = [];
+    groups
+      .tableOf("g")
+      .subscribe(() => seen.push([groups.tableOf("g").value("n", 0), groups.table.value("n", 0)]));
+    t.append({ g: ["a"], h: ["x"], v: [2] });
+    expect(seen).toEqual([[2, 2]]);
+  });
+
+  it("list rows for a listener that streams into the groups' source, and keep them whole after", () => {
+    const t = table({ g: ["a", "a"], v: [1, 2] }, { maxRows: 2 });
+    const groups = groupRows(rowView(t), { by: ["g"], ops: { total: sum("v") } });
+    const read: number[][] = [];
+    let once = true;
+    groups.table.subscribe(() => {
+      if (!once) return;
+      once = false;
+      t.append({ g: ["a"], v: [4] });
+      // Read while the groups have yet to take that append: the rows still in the table.
+      read.push(Array.from(groups.members(0)));
+    });
+    t.append({ g: ["a"], v: [3] });
+    expect(read).toEqual([[0]]);
+    expect(Array.from(groups.members(0))).toEqual([0, 1]);
+    expect([groups.size(0), groups.table.value("total", 0)]).toEqual([2, 7]);
+  });
+
+  it("answer a listener that streams into their source as they were, cached rows or not", () => {
+    for (const cached of [false, true]) {
+      const t = table({ g: ["a", "b"], v: [1, 2] }, { maxRows: 2 });
+      const groups = groupRows(rowView(t), { by: ["g"], ops: { s: sum("v") } });
+      if (cached) groups.members(1);
+      const read: unknown[] = [];
+      let once = true;
+      groups.table.subscribe(() => {
+        if (!once) return;
+        once = false;
+        // Drops b's row (the groups' a, then b) and appends one of b's, which they have yet to take.
+        t.append({ g: ["b"], v: [4] });
+        read.push([
+          Array.from(groups.members(0)),
+          Array.from(groups.members(1)),
+          groups.groupOf(0),
+          groups.memberIndex(0),
+          groups.groupOf(1),
+        ]);
+      });
+      t.append({ g: ["a"], v: [3] });
+      expect(read).toEqual([[[0], [], 0, 0, -1]]);
+      expect([Array.from(groups.members(0)), Array.from(groups.members(1))]).toEqual([[0], [1]]);
+    }
+  });
+
+  it("list rows in their new order for listeners once a sort field changed and rows came", () => {
+    const t = table({ g: ["a", "a"], v: [1, 2], s: [1, 2] });
+    const view = rowView(t, { sort: [{ field: "s" }] });
+    const groups = groupRows(view, { by: ["g"], ops: { total: sum("v") } });
+    groups.members(0);
+    const read: number[][] = [];
+    let phase = 0;
+    groups.table.subscribe(() => {
+      if (phase++ === 0) {
+        t.set("s", 0, 10);
+        t.append({ g: ["a"], v: [4], s: [4] });
+      } else read.push(Array.from(groups.members(0)));
+    });
+    t.append({ g: ["a"], v: [3], s: [3] });
+    expect(read).toEqual([[1, 2, 3, 0]]);
+  });
+
+  it("have no rows to list once disposed", () => {
+    const t = table({ g: ["a", "a"], v: [1, 2] });
+    const groups = groupRows(rowView(t), { by: ["g"] });
+    groups.dispose();
+    expect(Array.from(groups.members(0))).toEqual([]);
+    expect(groups.memberIndex(0)).toBe(-1);
+    expect(() => groups.memberAt(0, 0)).toThrow(/no row 0/);
+  });
+
+  it("start keeping values when a table without maxRows first drops rows", () => {
+    const t = requests();
+    const groups = groupRows(rowView(t), { by: ["host"], ops: OPS });
+    // Groups keep the order they appeared in: compare them by key.
+    const expected = () =>
+      byHost(
+        rounded(
+          rows(
+            derive(t)
+              .aggregate({ groupby: ["host"], ops: OPS })
+              .table(),
+          ),
+        ),
+      );
+    const byHost = (list: Record<string, unknown>[]) =>
+      [...list].sort((a, b) => String(a.host).localeCompare(String(b.host)));
+    const before = groups.byteLength;
+    t.dropFirst(2);
+    expect(byHost(rounded(rows(groups.table)))).toEqual(expected());
+    // The values of "ms" are kept from now on, so later drops take rows away.
+    expect(groups.byteLength).toBeGreaterThan(before);
+    t.append({ host: ["web"], ms: [3], at: [0] });
+    t.dropFirst(3);
+    expect(byHost(rounded(rows(groups.table)))).toEqual(expected());
+  });
+});
+
+/** A table's changes from now on. */
+function changesOf(t: Table) {
+  const changes: TableChange[] = [];
+  t.subscribe((change) => changes.push(change));
+  return changes;
+}

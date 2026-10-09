@@ -641,7 +641,7 @@ describe("grids", () => {
       ])
     ).filter((line) => !line.trim().startsWith("StaticText"));
     expect(tree[0]).toMatch(
-      /^treegrid "Requests" \(Arrow keys, .* goes to the group\.\) multiselectable=true$/,
+      /^treegrid "Requests" \(Arrow keys, .* goes to the group holding it\.\) multiselectable=true$/,
     );
     expect(tree.slice(6, 22)).toEqual([
       '  rowgroup ""',
@@ -664,6 +664,48 @@ describe("grids", () => {
     ]);
     expect(tree.filter((line) => line.includes("focused=true"))).toEqual([
       '      gridcell "4" focused=true',
+    ]);
+  });
+
+  it("expose nested groups' levels and their places among their siblings, and pass audits", async () => {
+    const host = document.createElement("div");
+    host.style.cssText = "width:600px;height:300px;background:#ffffff";
+    document.body.append(host);
+    const rows = 120;
+    const data = table({
+      id: Float64Array.from({ length: rows }, (_, i) => i),
+      host: category(Array.from({ length: rows }, (_, i) => ["web", "api", "db"][i % 3]!)),
+      tier: category(Array.from({ length: rows }, (_, i) => ["gold", "free"][(i >> 2) % 2]!)),
+    });
+    const view = rowView(data);
+    const model = createGridModel({
+      data: view,
+      groups: groupRows(view, { by: ["host", "tier"], ops: { n: count() } }),
+      columns: [{ field: "host" }, { field: "tier" }, { field: "id" }],
+      locale: "en-US",
+    });
+    const created = createGrid(host, { model, ariaLabel: "Requests" });
+    grids.push(created as unknown as Grid<never>);
+    model.setExpanded(["web"], true);
+    model.setExpanded(["web", "gold"], true);
+    // A row of web's gold group: both groups above it are partly selected.
+    model.select(2);
+    created.focusCell(2, "id");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(await violations(host)).toEqual([]);
+    const lines = await treeUnder("treegrid", ["level", "expanded", "selected", "checked"]);
+    expect(lines.filter((line) => line.includes("checkbox")).slice(0, 2)).toEqual([
+      '        checkbox "Select" checked=mixed',
+      '        checkbox "Select" checked=mixed',
+    ]);
+    const tree = lines.filter((line) => line.includes(" level=")).slice(0, 6);
+    expect(tree).toEqual([
+      '    row "Select web (40)" level=1 expanded=true',
+      '    row "Select gold (20) gold" level=2 expanded=true',
+      '    row "web gold 0" level=3 selected=true',
+      '    row "web gold 3" level=3 selected=false',
+      '    row "web gold 9" level=3 selected=false',
+      '    row "web gold 18" level=3 selected=false',
     ]);
   });
 

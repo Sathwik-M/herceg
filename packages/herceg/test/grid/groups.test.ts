@@ -355,3 +355,278 @@ describe("grouped grids", () => {
     ).not.toThrow();
   });
 });
+
+/** Ten requests over two regions and a missing one, each over hosts. */
+const regional = (options: { maxRows?: number } = {}) =>
+  table(
+    {
+      id: Float64Array.from({ length: 10 }, (_, i) => i),
+      region: category(["eu", "us", "eu", "us", "eu", "eu", "us", null, "eu", "us"]),
+      host: category(["web", "api", "api", "api", "web", "db", "web", "web", "api", "api"]),
+      ms: [12, 30, 8, 100, 45, 20, 5, 70, 16, 25],
+    },
+    options,
+  );
+
+function nested(t = regional(), query: object = {}) {
+  const view = rowView(t, query);
+  const groups = groupRows(view, {
+    by: ["region", "host"],
+    ops: { n: count(), avg: mean("ms") },
+  });
+  const model = createGridModel({
+    data: view,
+    groups,
+    columns: [
+      { field: "id" },
+      { field: "region" },
+      { field: "host" },
+      { field: "ms", aggregate: "avg", format: { maximumFractionDigits: 1 } },
+      { field: "id", id: "count", aggregate: "n" },
+    ],
+    locale: "en-US",
+    rowHeight: 10,
+  });
+  model.setViewport(500, 50);
+  return { t, view, groups, model };
+}
+
+/** What each row shows, indented by its level: a group's first cell, or a row's id. */
+const tree = <S extends Schema>(model: GridModel<S>) =>
+  Array.from({ length: model.rowCount }, (_, i) => {
+    const row = model.row(i);
+    return `${"  ".repeat(row.level - 1)}${model.textAt(i, 0)}`;
+  });
+
+describe("nested grouped grids", () => {
+  // eu: web (0, 4), api (2, 8), db (5); us: api (1, 3, 9), web (6); missing: web (7).
+  it("show each level's groups under their parents, with their own keys and aggregates", () => {
+    const { model } = nested();
+    expect(tree(model)).toEqual(["eu (5)", "us (4)", "(missing) (1)"]);
+    model.setExpanded(["eu"], true);
+    expect(tree(model)).toEqual([
+      "eu (5)",
+      "  web (2)",
+      "  api (2)",
+      "  db (1)",
+      "us (4)",
+      "(missing) (1)",
+    ]);
+    expect(model.row(0)).toEqual({
+      kind: "group",
+      group: 0,
+      key: ["eu"],
+      id: '["eu"]',
+      rows: 5,
+      expanded: true,
+      level: 1,
+      setIndex: 0,
+      setSize: 3,
+    });
+    expect(model.row(2)).toMatchObject({ key: ["eu", "api"], level: 2, setIndex: 1, setSize: 3 });
+    // A grouping field's column shows its value on its level and below; aggregates are each level's.
+    expect([1, 2, 3, 4].map((c) => model.textAt(0, c))).toEqual(["eu", "", "20.2", "5"]);
+    expect([1, 2, 3, 4].map((c) => model.textAt(2, c))).toEqual(["eu", "api", "12", "2"]);
+    model.setExpanded(["eu", "api"], true);
+    expect(tree(model).slice(2, 5)).toEqual(["  api (2)", "    2", "    8"]);
+    expect(model.row(3)).toMatchObject({
+      kind: "row",
+      position: 2,
+      level: 3,
+      setIndex: 0,
+      setSize: 2,
+    });
+    expect(model.rowIndexOfGroup(["eu", "db"])).toBe(5);
+    expect(model.rowIndexOf(8)).toBe(4);
+    // Collapsing a parent hides its groups, which keep their own expansion.
+    model.setExpanded(["eu"], false);
+    expect([model.rowCount, model.rowIndexOf(8), model.rowIndexOfGroup(["eu", "api"])]).toEqual([
+      3, -1, -1,
+    ]);
+    expect(model.isExpanded(["eu", "api"])).toBe(true);
+    model.expandAll();
+    expect(model.rowCount).toBe(3 + 6 + 10);
+    model.collapseAll();
+    expect(model.rowCount).toBe(3);
+  });
+
+  it("move the focus to the collapsing group above, and between levels with the arrows", () => {
+    const { model } = nested();
+    model.setExpanded(["eu"], true);
+    model.setExpanded(["eu", "api"], true);
+    // Row 8, eu's second api row.
+    model.focusCell(4, "ms");
+    model.setExpanded(["eu"], false);
+    expect(model.focus).toEqual({ rowIndex: 0, columnIndex: 3, column: "ms" });
+    model.setExpanded(["eu"], true);
+    // From a row's first cell, Left goes to its group, collapses it, then goes to the group above.
+    model.focusCell(4, "id");
+    model.moveFocus("left");
+    expect(model.focus!.rowIndex).toBe(2);
+    model.moveFocus("left");
+    expect(model.isExpanded(["eu", "api"])).toBe(false);
+    model.moveFocus("left");
+    expect(model.focus!.rowIndex).toBe(0);
+    model.moveFocus("left");
+    expect(model.isExpanded(["eu"])).toBe(false);
+    model.moveFocus("left");
+    expect(model.focus).toEqual({ rowIndex: 0, columnIndex: 0, column: "id" });
+    model.moveFocus("right");
+    model.moveFocus("down");
+    model.moveFocus("right");
+    expect(model.isExpanded(["eu", "web"])).toBe(true);
+    expect(tree(model).slice(1, 4)).toEqual(["  web (2)", "    0", "    4"]);
+  });
+
+  it("select a group's rows at every level, and say how much of each group is selected", () => {
+    const { model } = nested();
+    const selected = () => {
+      const selection = model.selection.get("grid-rows");
+      return selection?.kind === "rows" ? Array.from(selection.rows.positions()) : [];
+    };
+    model.select(0);
+    expect(selected()).toEqual([0, 2, 4, 5, 8]);
+    model.setExpanded(["eu"], true);
+    model.setExpanded(["eu", "api"], true);
+    expect([0, 1, 2, 3, 6].map((i) => model.selectionState(i))).toEqual([
+      "all",
+      "all",
+      "all",
+      "all",
+      "none",
+    ]);
+    // Row 8 toggled off: its group and the one above are partly selected.
+    model.select(4, "toggle");
+    expect([0, 1, 2, 5].map((i) => model.selectionState(i))).toEqual([
+      "some",
+      "all",
+      "some",
+      "all",
+    ]);
+    // Counted again from the store, the counts agree.
+    model.selection.set("grid-rows", model.selection.get("grid-rows"));
+    expect([0, 1, 2, 5].map((i) => model.selectionState(i))).toEqual([
+      "some",
+      "all",
+      "some",
+      "all",
+    ]);
+    // Toggling the partly selected group above selects all of it again.
+    model.select(0, "toggle");
+    expect(model.selectionState(2)).toBe("all");
+    model.select(0, "toggle");
+    expect(selected()).toEqual([]);
+    // A range from eu's api rows to us's header takes those rows, db, and all of us.
+    model.select(3);
+    model.select(6, "range");
+    expect(selected()).toEqual([1, 2, 3, 5, 6, 8, 9]);
+    expect([0, 6, 7].map((i) => model.selectionState(i))).toEqual(["some", "all", "none"]);
+  });
+
+  it("sort each level's groups among their siblings, by aggregates or by their own key", () => {
+    const { model } = nested();
+    model.expandAll();
+    model.setGroupSort([{ field: "n", order: "descending" }]);
+    const groupsShown = () => tree(model).filter((text) => !/^ *\d+$/.test(text));
+    // Ties keep the order groups appeared in.
+    expect(groupsShown()).toEqual([
+      "eu (5)",
+      "  web (2)",
+      "  api (2)",
+      "  db (1)",
+      "us (4)",
+      "  api (3)",
+      "  web (1)",
+      "(missing) (1)",
+      "  web (1)",
+    ]);
+    // A grouping field's column orders its own level; the levels above keep their order.
+    model.cycleSort("host");
+    expect(model.groupSort).toEqual([{ field: "host", order: "ascending" }]);
+    expect(groupsShown().slice(0, 7)).toEqual([
+      "eu (5)",
+      "  api (2)",
+      "  db (1)",
+      "  web (2)",
+      "us (4)",
+      "  api (3)",
+      "  web (1)",
+    ]);
+    model.cycleSort("region");
+    model.cycleSort("region");
+    expect(groupsShown().filter((text) => !text.startsWith(" "))).toEqual([
+      "us (4)",
+      "eu (5)",
+      "(missing) (1)",
+    ]);
+    // Rows sort within their group.
+    model.setSort([{ field: "ms", order: "descending" }]);
+    expect(tree(model).slice(1, 5)).toEqual(["  api (3)", "    3", "    1", "    9"]);
+  });
+
+  it("order groups by every level's final aggregates when listeners of a level's table read the grid", () => {
+    const t = table({ g: ["a", "a"], h: ["x", "y"], v: [10, 20] });
+    const view = rowView(t);
+    const groups = groupRows(view, { by: ["g", "h"], ops: { total: sum("v") } });
+    const model = createGridModel({
+      data: view,
+      groups,
+      columns: [{ field: "g" }, { field: "v", aggregate: "total" }],
+    });
+    model.setExpanded(["a"], true);
+    model.setGroupSort([{ field: "total" }]);
+    groups.tableOf("g").subscribe(() => model.rowCount);
+    // x's total passes y's.
+    t.append({ g: ["a"], h: ["x"], v: [20] });
+    expect([1, 2].map((i) => model.row(i))).toEqual([
+      expect.objectContaining({ key: ["a", "y"] }),
+      expect.objectContaining({ key: ["a", "x"] }),
+    ]);
+  });
+
+  it("stream a rolling window into expanded groups, keeping the top row, the focus, and each group's rows current", () => {
+    const random = (() => {
+      let seed = 9;
+      return () => {
+        seed = (seed * 16807) % 2147483647;
+        return seed / 2147483647;
+      };
+    })();
+    const t = regional({ maxRows: 60 });
+    const { model, groups } = nested(t, { sort: [{ field: "ms" }] });
+    model.setGroupSort([{ field: "region" }, { field: "host" }]);
+    model.expandAll();
+    model.setViewport(500, 100);
+    let id = 10;
+    for (let step = 0; step < 30; step++) {
+      // A row of the table near the middle at the top, 3 pixels in, and focused.
+      const rows = Array.from({ length: model.rowCount }, (_, i) => i).filter(
+        (i) => model.row(i).kind === "row",
+      );
+      const top = rows[rows.length >> 1]!;
+      const identity = model.identityAt(top);
+      model.scrollTo({ top: top * 10 + 3 });
+      model.focusCell(top, "ms", { reveal: false });
+      const n = 1 + Math.floor(random() * 8);
+      t.append({
+        id: Array.from({ length: n }, () => id++),
+        region: Array.from(
+          { length: n },
+          () => ["eu", "us", "ap", null][Math.floor(random() * 4)]!,
+        ),
+        host: Array.from({ length: n }, () => ["web", "api", "db"][Math.floor(random() * 3)]!),
+        ms: Array.from({ length: n }, () => Math.floor(random() * 100)),
+      });
+      const fresh = nested(t, { sort: [{ field: "ms" }] }).model;
+      fresh.setGroupSort([{ field: "region" }, { field: "host" }]);
+      fresh.expandAll();
+      expect(tree(model)).toEqual(tree(fresh));
+      expect(groups.length).toBe(fresh.groups!.length);
+      const at = model.rowIndexOf(identity);
+      if (at >= 0) {
+        expect(model.top).toBe(Math.min(at * 10 + 3, model.contentHeight - 100));
+        expect(model.focus!.rowIndex).toBe(at);
+      }
+    }
+  });
+});

@@ -1,27 +1,31 @@
-// Row groups: a row view's rows grouped by the values of some fields, with
-// each group's counts, sums, means, minimums, and maximums in an ordinary
-// table, one row per group, that charts and grids share. Values are read
+// Row groups: a row view's rows grouped by the values of some fields, level
+// by level (by the first field, then the first two, and so on), with each
+// group's counts, sums, means, minimums, and maximums in an ordinary table
+// per level, one row per group, that charts and grids share. Values are read
 // through the view's positions, so no column is copied; each group's rows
-// are listed (positions in the view's order) only when a reader asks for
-// them, as a grid showing a group's rows does.
+// are listed (in the view's order) only once a reader asks for them, as a
+// grid showing a group's rows does, and then kept current.
 //
-// The table follows the view. Appended rows update the groups they join and
-// add the groups they start, reading no other row; anything else (rows
-// dropped, a value changed in place in a field the groups read, a new query
-// or restriction, a reset) computes every group again, changing the table
-// only where its values changed.
+// The tables follow the view. Rows appended, and rows a rolling window drops
+// from the front, update the groups they join or leave, reading no other row
+// (but the rows of a group whose minimum or maximum left); anything else (a
+// value changed in place in a field the groups read, a new query or
+// restriction, a reset) computes every group again, changing the tables only
+// where their values changed.
 
 import { type ColumnInput, category, time } from "./column.ts";
 import type { Expression } from "./expression.ts";
+import { GroupLevel, GroupTable, type LevelAggregate } from "./group-levels.ts";
+import { MemberRuns } from "./group-members.ts";
 import { rowComparator } from "./order.ts";
 import { fieldsOf, type RowSnapshot, type RowView } from "./row-view.ts";
-import {
-  type FieldName,
-  type NumericField,
-  type PositionField,
-  type Schema,
+import type {
+  FieldName,
+  NumericField,
+  PositionField,
+  Schema,
   Table,
-  type TableChange,
+  TableChange,
 } from "./table.ts";
 
 /** Operations that summarize a group's rows. */
@@ -38,7 +42,7 @@ export interface GroupAggregate<F extends string = string> {
   readonly field?: F;
 }
 
-/** One of the aggregates a groups' table holds. */
+/** One of the aggregates a groups' tables hold. */
 export interface NamedAggregate {
   readonly name: string;
   readonly op: GroupOp;
@@ -46,10 +50,10 @@ export interface NamedAggregate {
 }
 
 /**
- * A group's value of each grouping field: a category's label, a number (a
- * time's epoch milliseconds), or null where the value is missing. Keys name
- * groups however rows come, go, and sort, and across resets; positions and
- * category codes do not.
+ * A group's key path: its value of each grouping field down to its own
+ * level, a category's label, a number (a time's epoch milliseconds), or null
+ * where the value is missing. Keys name groups however rows come, go, and
+ * sort, and across resets; positions and category codes do not.
  */
 export type GroupKey = readonly (string | number | null)[];
 
@@ -69,10 +73,37 @@ export type GroupSchema<S extends Schema, B extends keyof S, O> = Pick<S, B> & {
   [P in keyof O & string]: ResultKind<S, O[P]>;
 };
 
+/**
+ * The grouping fields a level's table lacks: those after `F` in `B`, or,
+ * when `B` is not a tuple (its order unknown), every one but `F` (every one
+ * but which `F` is, when `F` is a union).
+ */
+type After<B extends readonly string[], F extends string> = B extends readonly [
+  infer First,
+  ...infer Rest extends readonly string[],
+]
+  ? First extends F
+    ? Rest[number]
+    : After<Rest, F>
+  : number extends B["length"]
+    ? F extends unknown
+      ? Exclude<B[number], F>
+      : never
+    : never;
+
+/** A level's table: the last level's fields less the grouping fields below it; any fields for groups whose fields are erased. */
+type LevelTable<R extends Schema, B extends readonly string[], F extends string> = unknown extends R
+  ? Table<R>
+  : Table<Omit<R, After<B, F>>>;
+
 export interface GroupOptions<B extends string, O> {
-  /** Fields whose values group the rows, one group per combination: numbers, times, or categories. */
+  /**
+   * Fields whose values group the rows: numbers, times, or categories. With
+   * several, groups nest: by the first field, then within each of those by
+   * the second, and so on.
+   */
   by: readonly B[];
-  /** Each group's aggregates, by the name of the field they make in the table. */
+  /** Each group's aggregates, by the name of the field they make in the tables. */
   ops?: O;
 }
 
@@ -80,13 +111,13 @@ export interface GroupOptions<B extends string, O> {
 interface KeyField {
   readonly name: string;
   readonly kind: "number" | "time" | "category";
-  /** Each value's id. Missing numbers are NaN here, missing categories null. */
+  /** Each value's id (on the first level, its group). Missing numbers are NaN here, missing categories null. */
   readonly ids: Map<string | number | null, number>;
-  /** For categories: each dictionary code's id, -1 until seen since the last rebuild. */
+  /** For categories: each dictionary code's id, -1 until seen since codes may have changed. */
   codeIds: Int32Array;
 }
 
-/** Ids of values combine as `id × RADIX + id`, exact while ids stay below it. */
+/** Ids of groups and values combine as `group × RADIX + id`, exact while ids stay below it. */
 const RADIX = 2 ** 26;
 
 /** Each groups' table keeps its groups following; the source holds them only weakly. */
@@ -94,116 +125,62 @@ const keepers = new WeakMap<Table, RowGroups>();
 const followers = new FinalizationRegistry<() => void>((stop) => stop());
 
 /**
- * Unchanged groups between two changed ones that are written over rather
- * than ending a run: another `replace` costs about as much as copying them.
- */
-const GAP = 64;
-
-/**
- * The groups' table. An update of the groups writes several aggregates and
- * appends new groups; `batch` tells listeners of all of it as one change
- * once the last write is done, so none sees some aggregates updated and
- * others not. (A `Table` method doing this would be in every chart's bundle.)
- */
-class GroupTable extends Table {
-  readonly #listeners = new Set<(change: TableChange) => void>();
-  #held: { appended: number; start: number; end: number; fields: Set<string> } | null = null;
-
-  constructor(columns: Record<string, ColumnInput>) {
-    super(columns);
-    super.subscribe((change) => {
-      const held = this.#held;
-      if (!held) {
-        for (const listener of [...this.#listeners]) listener(change);
-        return;
-      }
-      // Batches replace and append, which move no row.
-      held.appended += change.appended;
-      if (change.updated) {
-        held.start = Math.min(held.start, change.updated.start);
-        held.end = Math.max(held.end, change.updated.end);
-      }
-      for (const field of change.fields) held.fields.add(field);
-    });
-  }
-
-  override subscribe(listener: (change: TableChange) => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
-  }
-
-  /** Makes the replaces and appends `write` makes, then tells listeners of them as one change. */
-  batch(write: () => void): void {
-    const held = {
-      appended: 0,
-      start: Number.POSITIVE_INFINITY,
-      end: 0,
-      fields: new Set<string>(),
-    };
-    this.#held = held;
-    try {
-      write();
-    } finally {
-      this.#held = null;
-    }
-    const updated = held.fields.size > 0 ? { start: held.start, end: held.end } : null;
-    if (!updated && held.appended === 0) return;
-    const change = {
-      dropped: 0,
-      appended: held.appended,
-      updated,
-      fields: [...held.fields],
-      reset: false,
-    };
-    for (const listener of [...this.#listeners]) listener(change);
-  }
-}
-
-/**
- * A row view's rows grouped by the values of `by`, with the aggregates of
- * each group in `table`: one row per group, in the order groups first
- * appeared, holding the grouping fields' values and each aggregate. Rows are
- * read through the view's positions; no column is copied.
+ * A row view's rows grouped by the values of `by`, level by level: the
+ * groups of each level (`depth` 0 for the first field) hold the rows of
+ * their key, the groups of the level below split them by the next field, and
+ * each row belongs to one group of the last level. Each level has a table
+ * (`tableOf(field)`; `table` is the last level's), one row per group, in the
+ * order groups first appeared, holding the grouping fields' values and each
+ * aggregate. Rows are read through the view's positions; no column is copied.
  *
- * The table is current as soon as the view's table changes: appended rows
- * update the rows of the groups they join and add rows for the groups they
- * start; other changes compute the groups again, and change the table where
- * their values differ, or reset it when a group lost its last row. Treat
- * the table as read-only. It keeps the groups following; `dispose()` stops
- * them.
+ * The tables are current as soon as the view's table changes: appended and
+ * dropped rows update the groups they join and leave and add the groups they
+ * start; other changes compute the groups again. Tables change where their
+ * values differ, or reset when one of their groups lost its last row. Treat
+ * them as read-only. They keep the groups following; `dispose()` stops them.
  */
 export class RowGroups<
   S extends Schema = Schema,
-  // biome-ignore lint/suspicious/noExplicitAny: `RowGroups<S>` erases the table's fields, so readers such as grids take groups of any aggregates (which they name at runtime).
+  // biome-ignore lint/suspicious/noExplicitAny: `RowGroups<S>` erases the tables' fields, so readers such as grids take groups of any aggregates (which they name at runtime).
   R extends Schema = any,
+  B extends readonly string[] = readonly string[],
 > {
   readonly view: RowView<S>;
   readonly by: readonly FieldName<S>[];
   readonly aggregates: readonly NamedAggregate[];
-  /** One row per group: the grouping fields' values, then each aggregate. */
+  /** The last level's table: one row per group of every grouping field's values. */
   readonly table: Table<R>;
-  readonly #table: GroupTable;
   readonly #source: Table;
   readonly #fields: KeyField[];
-  /** For each grouping field after the first: (id of the values before it × RADIX + its value's id) → id. */
-  readonly #levels: Map<number, number>[];
+  readonly #levels: GroupLevel[];
+  /** For each level below the first: (parent × RADIX + id of the value) → group. */
+  readonly #lookups: Map<number, number>[];
+  /** The fields aggregates read, each once. */
+  readonly #read: readonly string[];
+  /** Aggregates whose values are times. */
+  readonly #times: ReadonlySet<string>;
 
-  #count = 0;
-  #keys: GroupKey[] = [];
-  #ids: string[] = [];
-  /** Rows per group. */
-  #rows = new Float64Array(0);
-  /** Per aggregate: its running value per group (a count, a sum, a minimum, or a maximum). */
-  #values: Float64Array[];
-  /** Per aggregate: for means, the count of values summed. */
-  #finite: (Float64Array | null)[];
-  /** The group of each position the view shows; -1 for positions it leaves out. */
+  /** The last level's group of each row the view shows, -1 for others: position `p` at `#offset + p`. */
   #slots = new Int32Array(0);
-  /** The positions of each group's rows, group after group, in the view's order. */
-  #members = new Uint32Array(0);
-  /** Where each group's rows start in #members, and where the last one's end. */
-  #starts = new Uint32Array(1);
-  #listed = -1;
+  #offset = 0;
+  /** The values of the fields in `#read`, at the same indices: kept to take rows away once the table drops them. */
+  #kept: Float64Array[] | null = null;
+  /** Whether the table drops rows (it has `maxRows`, or has dropped some). */
+  #dropping: boolean;
+  /** Each last-level group's rows, once a reader asked for them. */
+  #members: MemberRuns | null = null;
+  #children: {
+    renumbered: number;
+    groups: number;
+    starts: Int32Array[];
+    lists: Int32Array[];
+  } | null = null;
+  /** Room for the rows of a group whose aggregates are read again. */
+  #scratch = new Uint32Array(0);
+  /** Counts renumberings of the groups. */
+  #renumbered = 0;
+  /** Set when a group lost its last row. */
+  #emptied = false;
   #compare: { version: number; query: number; compare: (a: number, b: number) => number } | null =
     null;
 
@@ -220,10 +197,8 @@ export class RowGroups<
   #heard = 0;
   #recompute = false;
   #reordered = false;
-  /** The table's version as last changed here. */
-  #published: number;
   #revision = 0;
-  /** Set while changing the groups' table, whose listeners may read the groups or change their source. */
+  /** Set while changing the groups' tables, whose listeners may read the groups or change their source. */
   #updating = false;
   #stopped = false;
   readonly #stop: () => void;
@@ -245,7 +220,7 @@ export class RowGroups<
       return { name, kind, ids: new Map(), codeIds: new Int32Array(0) };
     });
     this.by = Object.freeze(by);
-    this.#levels = by.slice(1).map(() => new Map());
+    this.#lookups = by.map(() => new Map());
     const aggregates = Object.entries(options.ops ?? {}).map(([name, { op, field }]) => {
       if (by.includes(name as FieldName<S>))
         throw new Error(`Aggregate "${name}" has the name of a grouping field`);
@@ -262,16 +237,36 @@ export class RowGroups<
       return Object.freeze({ name, op, field });
     });
     this.aggregates = Object.freeze(aggregates);
-    this.#values = aggregates.map(() => new Float64Array(0));
-    this.#finite = aggregates.map(({ op }) => (op === "mean" ? new Float64Array(0) : null));
+    const read = [
+      ...new Set(aggregates.flatMap(({ field }) => (field === undefined ? [] : [field]))),
+    ];
+    this.#read = read;
+    this.#times = new Set(
+      aggregates
+        .filter(({ op, field }) => op !== "count" && op !== "sum" && field !== undefined)
+        .filter(({ field }) => source.kind(field!) === "time")
+        .map(({ name }) => name),
+    );
+    const leveled: LevelAggregate[] = aggregates.map(({ name, op, field }) => ({
+      name,
+      op,
+      field: field === undefined ? -1 : read.indexOf(field),
+    }));
+    this.#levels = by.map((_, depth) => new GroupLevel(depth, depth === by.length - 1, leveled));
+    this.#dropping = source.maxRows !== Number.POSITIVE_INFINITY;
 
-    this.#compute(view.read(), 0);
-    this.#table = new GroupTable(this.#inputs());
-    this.table = this.#table as unknown as Table<R>;
-    this.#published = this.#table.version;
+    this.#compute(view.read());
     this.#seen = this.#state();
+    this.#refresh();
+    for (const level of this.#levels) {
+      level.table = new GroupTable(this.#columns(level, 0, level.count, true));
+      level.published = { version: level.table.version, length: level.count };
+      level.unmark();
+      keepers.set(level.table, this as unknown as RowGroups);
+    }
+    this.table = this.#levels.at(-1)!.table as unknown as Table<R>;
 
-    // Held weakly by what it follows, so groups no one keeps (nor their table) stop on their own.
+    // Held weakly by what it follows, so groups no one keeps (nor their tables) stop on their own.
     const ref = new WeakRef(this);
     const stops = [
       source.subscribe((change) => {
@@ -290,13 +285,17 @@ export class RowGroups<
     };
     this.#stop = stop;
     followers.register(this, stop, this);
-    keepers.set(this.#table, this as unknown as RowGroups);
   }
 
-  /** The number of groups. */
+  /** The number of groups of the last level. */
   get length(): number {
+    return this.countAt(this.by.length - 1);
+  }
+
+  /** The number of groups at `depth` (0 for the first grouping field's). */
+  countAt(depth: number): number {
     this.#update();
-    return this.#count;
+    return this.#level(depth).count;
   }
 
   /**
@@ -308,100 +307,183 @@ export class RowGroups<
     return this.#revision;
   }
 
-  /** Bytes the groups hold beyond their view and table: each row's group, the rows listed by group, and running aggregates. */
+  /**
+   * Bytes of the typed arrays the groups hold beyond their view and tables:
+   * each row's group, values kept for rows to drop, the rows listed by
+   * group, and each group's running aggregates. Keys, ids, and the maps of
+   * values, which grow with the number of groups, are not counted.
+   */
   get byteLength(): number {
-    let bytes = this.#slots.byteLength + this.#members.byteLength + this.#starts.byteLength;
-    bytes += this.#rows.byteLength;
-    for (const values of this.#values) bytes += values.byteLength;
-    for (const finite of this.#finite) bytes += finite?.byteLength ?? 0;
+    let bytes = this.#slots.byteLength + this.#scratch.byteLength;
+    bytes += this.#members?.byteLength ?? 0;
+    for (const kept of this.#kept ?? []) bytes += kept.byteLength;
+    for (const level of this.#levels) bytes += level.byteLength;
+    for (const field of this.#fields) bytes += field.codeIds.byteLength;
+    for (const list of this.#children?.lists ?? []) bytes += list.byteLength;
+    for (const starts of this.#children?.starts ?? []) bytes += starts.byteLength;
     return bytes;
   }
 
-  /** The key of group `group` (a row of `table`). */
-  keyOf(group: number): GroupKey {
-    this.#check(group);
-    return this.#keys[group]!;
+  /**
+   * The table of the groups by the grouping fields up to `field`: one row
+   * per group, holding those fields' values and each aggregate.
+   */
+  tableOf<F extends B[number]>(field: F): LevelTable<R, B, F> {
+    const depth = this.by.indexOf(field as unknown as FieldName<S>);
+    if (depth < 0) throw new Error(`The groups have no grouping field "${field}"`);
+    return this.#levels[depth]!.table as unknown as LevelTable<R, B, F>;
   }
 
-  /** A string naming the group by its key, unique among these groups: for maps and element keys. */
-  idOf(group: number): string {
-    this.#check(group);
-    this.#ids[group] ??= groupId(this.#keys[group]!);
-    return this.#ids[group];
+  /** The key of a group (a row of its level's table) at `depth`, the last level's by default. */
+  keyOf(group: number, depth = this.by.length - 1): GroupKey {
+    this.#check(group, depth);
+    const levels = this.#levels;
+    const level = levels[depth]!;
+    let key = level.keys[group];
+    if (!key) {
+      const values: (string | number | null)[] = new Array(depth + 1);
+      for (let d = depth, g = group; d >= 0; d--) {
+        values[d] = levels[d]!.values[g]!;
+        g = levels[d]!.parents[g]!;
+      }
+      key = level.keys[group] = Object.freeze(values);
+    }
+    return key;
   }
 
-  /** The group (a row of `table`) with this key, or -1 when no row of the view has it. */
+  /** A string naming a group by its key, unique among these groups: for maps and element keys. */
+  idOf(group: number, depth = this.by.length - 1): string {
+    const level = this.#levels[depth];
+    this.#check(group, depth);
+    level!.ids[group] ??= groupId(this.keyOf(group, depth));
+    return level!.ids[group];
+  }
+
+  /** The group (a row of its level's table) with this key, or -1: the key's length gives its level. */
   indexOf(key: GroupKey): number {
     this.#update();
     const fields = this.#fields;
-    if (key.length !== fields.length) return -1;
-    let id = fields[0]!.ids.get(mapKey(fields[0]!, key[0]!));
-    for (let k = 1; k < fields.length && id !== undefined; k++) {
-      const next = fields[k]!.ids.get(mapKey(fields[k]!, key[k]!));
-      id = next === undefined ? undefined : this.#levels[k - 1]!.get(id * RADIX + next);
+    if (key.length < 1 || key.length > fields.length) return -1;
+    let group = fields[0]!.ids.get(mapKey(fields[0]!, key[0]!));
+    for (let d = 1; d < key.length && group !== undefined; d++) {
+      const id = fields[d]!.ids.get(mapKey(fields[d]!, key[d]!));
+      group = id === undefined ? undefined : this.#lookups[d]!.get(group * RADIX + id);
     }
-    return id ?? -1;
+    return group ?? -1;
   }
 
-  /** Rows of the view in the group. */
-  size(group: number): number {
-    this.#check(group);
-    return this.#rows[group]!;
+  /** Rows of the view in a group at `depth`, the last level by default. */
+  size(group: number, depth = this.by.length - 1): number {
+    this.#check(group, depth);
+    return this.#levels[depth]!.rows[group]!;
   }
 
-  /** The group of the table's row at `position`, or -1 when the view leaves the row out. */
-  groupOf(position: number): number {
-    this.#update();
-    if (!(Number.isInteger(position) && position >= 0 && position < this.#source.length)) return -1;
-    // Nothing is left after `dispose`.
-    return this.#slots[position] ?? -1;
+  /** The group of the level above holding a group at `depth`; -1 on the first level. */
+  parentOf(group: number, depth: number): number {
+    this.#check(group, depth);
+    return depth === 0 ? -1 : this.#levels[depth]!.parents[group]!;
   }
 
   /**
-   * The positions of a group's rows in the view's order. Borrowed: valid
-   * until the table or the view changes, and never to be written. The first
-   * call after a change lists every group's rows, a pass over the view.
+   * The groups of the level below in a group at `depth`, in the order they
+   * appeared; none on the last level. Borrowed: valid until groups are
+   * added or renumbered, and never to be written.
    */
-  members(group: number): Uint32Array {
-    this.#check(group);
-    this.#list();
-    return this.#members.subarray(this.#starts[group], this.#starts[group + 1]);
+  childrenOf(group: number, depth: number): Int32Array {
+    this.#check(group, depth);
+    if (depth === this.by.length - 1) return new Int32Array(0);
+    const { starts, lists } = this.#childLists();
+    return lists[depth]!.subarray(starts[depth]![group], starts[depth]![group + 1]);
   }
 
-  /** Where the table's row at `position` is among its group's rows, or -1 when the view leaves it out. */
+  /** The group at `depth` (the last level by default) of the table's row at `position`, or -1 when the view leaves the row out. */
+  groupOf(position: number, depth = this.by.length - 1): number {
+    this.#update();
+    this.#level(depth);
+    if (!(Number.isInteger(position) && position >= 0 && position < this.#source.length)) return -1;
+    const index = this.#indexAt(position);
+    // Nothing is left after `dispose`.
+    let group = index < 0 ? -1 : (this.#slots[index] ?? -1);
+    for (let d = this.by.length - 1; d > depth && group >= 0; d--)
+      group = this.#levels[d]!.parents[group]!;
+    return group;
+  }
+
+  /**
+   * The positions of a group's rows, in a new array: the rows of a
+   * last-level group in the view's order, and of a group above, each of its
+   * last-level groups' rows in turn, in the order those groups appeared.
+   * The first call after rows were listed anew (see `memberAt`) lists them.
+   */
+  members(group: number, depth = this.by.length - 1): Uint32Array {
+    this.#check(group, depth);
+    if (this.#stopped) return new Uint32Array(0);
+    const runs = this.#runs();
+    const rowOffset = this.#source.rowOffset;
+    const last = this.by.length - 1;
+    const leaves: number[] = [];
+    const visit = (g: number, d: number) => {
+      if (d === last) leaves.push(g);
+      else for (const child of this.childrenOf(g, d)) visit(child, d + 1);
+    };
+    visit(group, depth);
+    const out = new Uint32Array(leaves.reduce((sum, leaf) => sum + runs.size(leaf), 0));
+    let at = 0;
+    for (const leaf of leaves) at += runs.copy(leaf, out, at, rowOffset);
+    return out;
+  }
+
+  /**
+   * The table position of the `index`th row, in the view's order, of a
+   * last-level group. Rows are listed by group when first asked for (a pass
+   * over the view) and kept current from then on as rows stream; a new
+   * query, a reset, or a change of a field the groups read or the view sorts
+   * by lists them again when next asked.
+   */
+  memberAt(group: number, index: number): number {
+    this.#check(group, this.by.length - 1);
+    const runs = this.#stopped ? null : this.#runs();
+    if (!(runs && Number.isInteger(index) && index >= 0 && index < runs.size(group)))
+      throw new RangeError(`Group ${group} has no row ${index}`);
+    return runs.at(group, index, this.#source.rowOffset);
+  }
+
+  /** Where the table's row at `position` is among its last-level group's rows, or -1 when the view leaves it out. */
   memberIndex(position: number): number {
     const group = this.groupOf(position);
-    if (group < 0) return -1;
-    this.#list();
-    const members = this.#members;
-    const start = this.#starts[group]!;
-    const end = this.#starts[group + 1]!;
+    if (group < 0 || this.#stopped) return -1;
+    const runs = this.#runs();
     // A group's rows are in the view's order, which breaks ties by position.
-    const compare = this.#comparator();
-    let [lo, hi] = [start, end];
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (compare(members[mid]!, position) < 0) lo = mid + 1;
-      else hi = mid;
-    }
-    return lo < end && members[lo] === position ? lo - start : -1;
+    const order = this.view.query.sort?.length ? this.#comparator() : null;
+    return runs.indexOf(group, position, this.#source.rowOffset, order);
   }
 
-  /** Stops following the view; the table keeps its last values. */
+  /** Stops following the view; the tables keep their last values. */
   dispose(): void {
     if (this.#stopped) return;
     this.#stopped = true;
     this.#stop();
     followers.unregister(this);
     this.#slots = new Int32Array(0);
-    this.#members = new Uint32Array(0);
+    this.#kept = null;
+    this.#members = null;
+    this.#children = null;
     this.#compare = null;
+    this.#scratch = new Uint32Array(0);
   }
 
-  #check(group: number) {
+  #level(depth: number): GroupLevel {
+    const level = this.#levels[depth];
+    if (!(Number.isInteger(depth) && level))
+      throw new RangeError(`Depth ${depth} is not among the ${this.by.length} levels of groups`);
+    return level;
+  }
+
+  #check(group: number, depth: number) {
     this.#update();
-    if (!(Number.isInteger(group) && group >= 0 && group < this.#count))
-      throw new RangeError(`Group ${group} is not among the ${this.#count} groups`);
+    const { count } = this.#level(depth);
+    if (!(Number.isInteger(group) && group >= 0 && group < count))
+      throw new RangeError(`Group ${group} is not among the ${count} groups at depth ${depth}`);
   }
 
   #state() {
@@ -424,8 +506,11 @@ export class RowGroups<
     if (change.updated) {
       const query = this.view.query;
       // A view keeps its filter as an expression.
-      const reads = new Set<string>([...this.by, ...fieldsOf(query.filter as Expression)]);
-      for (const { field } of this.aggregates) if (field !== undefined) reads.add(field);
+      const reads = new Set<string>([
+        ...this.by,
+        ...this.#read,
+        ...fieldsOf(query.filter as Expression),
+      ]);
       if (change.fields.some((field) => reads.has(field))) this.#recompute = true;
       else if (query.sort?.some(({ field }) => change.fields.includes(field)))
         this.#reordered = true;
@@ -443,138 +528,409 @@ export class RowGroups<
     const snapshot = view.read();
     // Changes made before a read caught up, which no listener call described.
     const unheard = source.version - seen.version > this.#heard;
+    const dropped = source.rowOffset - seen.rowOffset;
+    if (dropped > 0) this.#dropping = true;
     const recompute =
       this.#recompute ||
       (unheard && source.modifiedVersion !== seen.modified) ||
       source.generation !== seen.generation ||
       view.queryRevision !== seen.query ||
-      source.rowOffset !== seen.rowOffset ||
-      source.length < seen.length;
-    const appended = !recompute && source.length > seen.length;
-    if (recompute || appended || this.#reordered) this.#revision++;
-    // Caught up before the groups' table changes: its listeners read what is current.
+      // Dropped rows are taken away by their values, kept from now on.
+      (dropped > 0 && this.#read.length > 0 && !this.#kept);
+    const moved = dropped > 0 || source.rowOffset + source.length !== seen.rowOffset + seen.length;
+    const reordered = this.#reordered;
+    if (recompute || moved || reordered) this.#revision++;
+    // Caught up before the groups' tables change: their listeners read what is current.
     this.#heard = 0;
     this.#recompute = false;
     this.#reordered = false;
     this.#seen = this.#state();
     this.#updating = true;
     try {
+      // Rows of a group are listed again in their new order when next asked for.
+      if (reordered) this.#members = null;
       if (recompute) this.#rebuild(snapshot);
-      else if (appended) this.#append(snapshot, seen.length);
+      else if (moved) this.#follow(snapshot, seen);
     } finally {
       this.#updating = false;
     }
-    // A listener of the groups' table changed their source meanwhile.
+    // A listener of the groups' tables changed their source meanwhile.
     if (source.version !== this.#seen.version || view.queryRevision !== this.#seen.query)
       this.#update();
   }
 
+  /** Computes every group again; groups that remain keep their numbers. */
   #rebuild(snapshot: RowSnapshot) {
-    const old = this.#count;
-    this.#compute(snapshot, 0);
-    for (let group = 0; group < old; group++) {
-      if (this.#rows[group] === 0) {
-        this.#compact();
-        this.#publishAll();
-        return;
-      }
-    }
-    this.#publish(null, old);
+    this.#compute(snapshot);
+    const last = this.#levels.at(-1)!;
+    for (let group = 0; group < last.count && !this.#emptied; group++)
+      if (last.rows[group] === 0) this.#emptied = true;
+    this.#finish(true);
   }
 
-  #append(snapshot: RowSnapshot, from: number) {
-    const old = this.#count;
-    this.#publish(this.#compute(snapshot, from), old);
+  /** Takes away the rows dropped since `seen` and adds those appended. */
+  #follow(snapshot: RowSnapshot, seen: { rowOffset: number; length: number }) {
+    const source = this.#source;
+    // An append larger than `maxRows` drops every row there was, and some of its own.
+    const removed = Math.min(source.rowOffset - seen.rowOffset, seen.length);
+    const from = Math.max(0, seen.rowOffset + seen.length - source.rowOffset);
+    // Tables compact a dictionary as rows drop, renumbering its codes.
+    if (source.rowOffset > seen.rowOffset) for (const field of this.#fields) field.codeIds.fill(-1);
+    if (removed > 0) this.#remove(removed, seen.rowOffset + removed);
+    if (from < source.length) this.#add(snapshot, from);
+    this.#finish(false);
   }
 
   /**
-   * Groups the rows the view shows from position `from` on, all of them
-   * from 0 (starting every group's aggregates again), in table order, and
-   * adds them to their groups' aggregates. Returns the groups that existed
-   * before and gained rows, ascending, when computing from a later position.
+   * Brings the groups up to date once rows were added and taken away, and
+   * writes the tables, telling their listeners once every table is written.
    */
-  #compute(snapshot: RowSnapshot, from: number): number[] {
-    const length = this.#source.length;
-    if (from === 0) {
-      this.#clear(0, this.#count);
-      // Category codes may have been renumbered.
-      for (const field of this.#fields) field.codeIds.fill(-1);
-    }
-    if (this.#slots.length < length) {
+  #finish(everyGroup: boolean) {
+    this.#refresh();
+    const reset = this.#emptied ? this.#compact() : null;
+    const changes = this.#levels.map((level) =>
+      level.publish(reset?.[level.depth] ?? false, everyGroup, (from, to) =>
+        this.#columns(level, from, to, false),
+      ),
+    );
+    this.#levels.forEach((level, depth) => {
+      const change = changes[depth];
+      if (change) level.table.tell(change);
+    });
+  }
+
+  /**
+   * Groups every row the view shows and adds it to its groups' aggregates,
+   * from scratch, in table order: the last level's from the rows, each
+   * level above's from the one below.
+   */
+  #compute(snapshot: RowSnapshot) {
+    const source = this.#source;
+    const length = source.length;
+    const levels = this.#levels;
+    for (const level of levels) level.clear(0, level.count);
+    // Category codes may have been renumbered.
+    for (const field of this.#fields) field.codeIds.fill(-1);
+    this.#offset = 0;
+    if (this.#slots.length < length)
       // Room to grow once rows are appended; the first computation takes what it needs.
-      const slots = new Int32Array(this.#slots.length === 0 ? length : grown(length));
-      slots.set(this.#slots.subarray(0, from));
-      this.#slots = slots;
+      this.#slots = new Int32Array(this.#slots.length === 0 ? length : grown(length));
+    const slots = this.#slots;
+    this.#mark(snapshot, 0, length);
+    const find = this.#finder();
+    for (let position = 0; position < length; position++)
+      if (slots[position] === -2) slots[position] = find(position);
+    const columns = this.#read.map((field) => source.numbers(field));
+    levels.at(-1)!.accumulate(slots, 0, length, columns, 0);
+    for (let depth = levels.length - 1; depth > 0; depth--)
+      levels[depth - 1]!.fold(levels[depth]!, null);
+    // Values cancelling can leave a sum's compensation off: those are summed again exactly.
+    for (const level of levels) level.checkSums(null);
+    this.#kept =
+      this.#dropping && columns.length > 0
+        ? columns.map((column) => {
+            const kept = new Float64Array(slots.length);
+            kept.set(column);
+            return kept;
+          })
+        : null;
+    this.#members = null;
+  }
+
+  /** Takes away the table's first `removed` rows (as they were), which it dropped. */
+  #remove(removed: number, end: number) {
+    const start = this.#offset;
+    const slots = this.#slots;
+    this.#apply(start, start + removed, -1, this.#kept ?? [], 0);
+    const members = this.#members;
+    if (members) {
+      if (!this.view.query.sort?.length) {
+        // Rows in table order: a group's oldest rows lead its run.
+        for (let index = start; index < start + removed; index++) {
+          const group = slots[index]!;
+          if (group >= 0) members.dropFirst(group, 1);
+        }
+      } else {
+        const groups = new Set<number>();
+        for (let index = start; index < start + removed; index++)
+          if (slots[index]! >= 0) groups.add(slots[index]!);
+        for (const group of groups) members.dropBefore(group, end);
+      }
     }
+    this.#offset += removed;
+  }
+
+  /** Groups the rows from position `from` on, all appended, and adds them to their groups. */
+  #add(snapshot: RowSnapshot, from: number) {
+    const source = this.#source;
+    const length = source.length;
+    this.#reserve(from, length);
+    const offset = this.#offset;
     const slots = this.#slots;
     this.#mark(snapshot, from, length);
-    const old = this.#count;
     const find = this.#finder();
-    const gained: number[] = [];
-    // In table order, so aggregates come out as recomputing them would make them.
-    for (let position = from; position < length; position++) {
-      if (slots[position] !== -2) continue;
-      const group = find(position);
-      slots[position] = group;
-      if (from > 0 && group < old) gained.push(group);
+    for (let position = from; position < length; position++)
+      if (slots[offset + position] === -2) slots[offset + position] = find(position);
+    const columns = this.#read.map((field) => source.numbers(field));
+    this.#kept?.forEach((kept, i) => {
+      kept.set(columns[i]!.subarray(from, length), offset + from);
+    });
+    this.#apply(offset + from, offset + length, 1, columns, offset);
+    const members = this.#members;
+    if (!members) return;
+    const rowOffset = source.rowOffset;
+    if (!members.fits(rowOffset + length)) {
+      this.#members = null;
+      return;
     }
-    this.#accumulate(from, length);
-    gained.sort((a, b) => a - b);
-    return gained.filter((group, i) => i === 0 || gained[i - 1] !== group);
+    members.grow(this.#levels.at(-1)!.count);
+    if (!this.view.query.sort?.length) {
+      for (let position = from; position < length; position++) {
+        const group = slots[offset + position]!;
+        if (group >= 0) members.push(group, rowOffset + position);
+      }
+      return;
+    }
+    // Appended rows merge into each group's rows in the view's order.
+    const compare = this.#comparator();
+    const added = new Map<number, number[]>();
+    for (let position = from; position < length; position++) {
+      const group = slots[offset + position]!;
+      if (group < 0) continue;
+      const list = added.get(group);
+      if (list) list.push(position);
+      else added.set(group, [position]);
+    }
+    for (const [group, positions] of added) {
+      positions.sort(compare);
+      members.merge(
+        group,
+        positions.map((position) => rowOffset + position),
+        compare,
+        rowOffset,
+      );
+    }
+  }
+
+  /**
+   * Adds (`sign` 1) or takes away (-1) the rows at window indices `from` to
+   * `to` at every level, reading aggregated values at
+   * `columns[field][index - offset]`.
+   */
+  #apply(
+    from: number,
+    to: number,
+    sign: 1 | -1,
+    columns: readonly ArrayLike<number>[],
+    offset: number,
+  ) {
+    const levels = this.#levels;
+    const slots = this.#slots;
+    for (let index = from; index < to; index++) {
+      let group = slots[index]!;
+      for (let depth = levels.length - 1; depth >= 0 && group >= 0; depth--) {
+        const level = levels[depth]!;
+        if (level.change(group, sign, columns, index - offset) === 0) this.#emptied = true;
+        group = level.parents[group]!;
+      }
+    }
+  }
+
+  /**
+   * Computes again what taking rows away left stale: the minimums and
+   * maximums that left, and sums that lost their accuracy (checked once a
+   * batch is in, for the groups it changed). Last-level groups read their
+   * rows; groups above add up the level below, and read their rows when
+   * their groups' sums cancel beyond their accuracy.
+   */
+  #refresh() {
+    const levels = this.#levels;
+    for (const level of levels) level.checkSums(level.changed);
+    const last = levels.at(-1)!;
+    if (last.staleCount > 0) {
+      for (let group = 0; group < last.count; group++)
+        if (last.stale[group]) this.#reread(last, group);
+      last.settle();
+    }
+    for (let depth = levels.length - 2; depth >= 0; depth--) {
+      const level = levels[depth]!;
+      if (level.staleCount === 0) continue;
+      for (let group = 0; group < level.count; group++) if (level.stale[group]) level.empty(group);
+      level.fold(levels[depth + 1]!, level.stale);
+      level.resum(levels[depth + 1]!);
+      for (const group of level.inexact()) this.#reread(level, group);
+      level.settle();
+    }
+  }
+
+  /** Computes a group's stale aggregates again from its rows, in table order. */
+  #reread(level: GroupLevel, group: number) {
+    const runs = this.#runs();
+    const source = this.#source;
+    const last = this.by.length - 1;
+    const leaves: number[] = [];
+    const visit = (g: number, d: number) => {
+      if (d === last) leaves.push(g);
+      else for (const child of this.childrenOf(g, d)) visit(child, d + 1);
+    };
+    visit(group, level.depth);
+    const size = leaves.reduce((sum, leaf) => sum + runs.size(leaf), 0);
+    if (this.#scratch.length < size) this.#scratch = new Uint32Array(grown(size));
+    const rows = this.#scratch.subarray(0, size);
+    let at = 0;
+    for (const leaf of leaves) at += runs.copy(leaf, rows, at, source.rowOffset);
+    // Rows of sorted views, and of several groups, go back to table order.
+    if (leaves.length > 1 || this.view.query.sort?.length) rows.sort();
+    level.recompute(
+      group,
+      rows,
+      this.#read.map((field) => source.numbers(field)),
+    );
+  }
+
+  /**
+   * Drops groups left without rows, level by level from the first (a group's
+   * groups below leave with it); the others keep their order. Returns the
+   * levels whose groups were renumbered, whose tables start over.
+   */
+  #compact(): boolean[] {
+    this.#emptied = false;
+    this.#renumbered++;
+    this.#children = null;
+    const reset: boolean[] = [];
+    // The renumbering of the level above, which its groups' parents follow.
+    let above: Int32Array | null = null;
+    for (const level of this.#levels) {
+      const remap = new Int32Array(level.count);
+      let kept = 0;
+      for (let group = 0; group < level.count; group++)
+        remap[group] = level.rows[group]! > 0 ? kept++ : -1;
+      const lost = kept < level.count;
+      level.renumber(lost ? remap : null, kept, above);
+      reset.push(lost);
+      above = lost ? remap : null;
+    }
+    // The last level's groups were renumbered: its rows' groups too.
+    if (above) {
+      const slots = this.#slots;
+      const end = this.#offset + this.#source.length;
+      for (let index = this.#offset; index < end; index++) {
+        const group = slots[index]!;
+        if (group >= 0) slots[index] = above[group]!;
+      }
+      this.#members?.renumber(above, this.#levels.at(-1)!.count);
+    }
+    // Ids of the surviving keys only, so values seen once do not stay forever.
+    const fields = this.#fields;
+    for (const field of fields) {
+      field.ids.clear();
+      field.codeIds.fill(-1);
+    }
+    this.#levels.forEach((level, depth) => {
+      const field = fields[depth]!;
+      const lookup = this.#lookups[depth]!;
+      lookup.clear();
+      for (let group = 0; group < level.count; group++) {
+        const value = mapKey(field, level.values[group]!);
+        if (depth === 0) {
+          field.ids.set(value, group);
+          continue;
+        }
+        let id = field.ids.get(value);
+        if (id === undefined) {
+          id = field.ids.size;
+          field.ids.set(value, id);
+        }
+        lookup.set(level.parents[group]! * RADIX + id, group);
+      }
+    });
+    return reset;
   }
 
   /** Marks the positions from `from` that the view shows -2 and the others -1. */
   #mark({ indices, length: shown }: RowSnapshot, from: number, length: number) {
     const slots = this.#slots;
+    const offset = this.#offset;
     if (!indices) {
-      slots.fill(-2, from, length);
+      slots.fill(-2, offset + from, offset + length);
       return;
     }
-    slots.fill(-1, from, length);
+    slots.fill(-1, offset + from, offset + length);
     if (from === 0) {
-      for (let i = 0; i < shown; i++) slots[indices[i]!] = -2;
+      for (let i = 0; i < shown; i++) slots[offset + indices[i]!] = -2;
     } else if (!this.view.query.sort?.length) {
       // Unsorted views keep table order: new rows are at the end.
-      for (let i = shown - 1; i >= 0 && indices[i]! >= from; i--) slots[indices[i]!] = -2;
+      for (let i = shown - 1; i >= 0 && indices[i]! >= from; i--) slots[offset + indices[i]!] = -2;
     } else {
-      for (let i = 0; i < shown; i++) if (indices[i]! >= from) slots[indices[i]!] = -2;
+      for (let i = 0; i < shown; i++) if (indices[i]! >= from) slots[offset + indices[i]!] = -2;
     }
   }
 
-  /** What finds the group of a row, adding it when its key is new; it reads the table as it is now. */
+  /** Room for rows up to position `length`, the first `live` of which are kept. */
+  #reserve(live: number, length: number) {
+    const offset = this.#offset;
+    const capacity = this.#slots.length;
+    if (offset + length <= capacity) return;
+    // Moving the rows to the front costs as much as the appends that filled the room since.
+    const size = length * 1.5 <= capacity ? capacity : grown(length);
+    const move = <A extends Int32Array | Float64Array>(array: A): A => {
+      if (size === array.length) {
+        array.copyWithin(0, offset, offset + live);
+        return array;
+      }
+      const next = new (array.constructor as new (length: number) => A)(size);
+      next.set(array.subarray(offset, offset + live));
+      return next;
+    };
+    this.#slots = move(this.#slots);
+    if (this.#kept) this.#kept = this.#kept.map(move);
+    this.#offset = 0;
+  }
+
+  /** What finds the last-level group of a row, adding groups for keys that are new; it reads the table as it is now. */
   #finder(): (position: number) => number {
     const fields = this.#fields;
-    const ids = fields.map((field) => this.#idReader(field, fields.length === 1));
-    if (ids.length === 1) return ids[0]!;
     const levels = this.#levels;
-    const last = levels.length - 1;
+    const first = levels[0]!;
+    const ids = fields.map((field, depth) =>
+      this.#idReader(field, depth === 0 ? (value) => first.add(value, -1) : null),
+    );
+    if (ids.length === 1) return ids[0]!;
+    const lookups = this.#lookups;
     return (position) => {
-      let id = ids[0]!(position);
-      for (let k = 0; k <= last; k++) {
-        const combined = id * RADIX + ids[k + 1]!(position);
-        const level = levels[k]!;
-        let next = level.get(combined);
+      let group = ids[0]!(position);
+      for (let depth = 1; depth < levels.length; depth++) {
+        const combined = group * RADIX + ids[depth]!(position);
+        const lookup = lookups[depth]!;
+        let next = lookup.get(combined);
         if (next === undefined) {
-          next = k === last ? this.#add(position) : level.size;
-          if (k < last && next >= RADIX) throw new RangeError("Too many groups");
-          level.set(combined, next);
+          const level = levels[depth]!;
+          if (depth < levels.length - 1 && level.count >= RADIX)
+            throw new RangeError("Too many groups");
+          next = level.add(this.#valueAt(fields[depth]!, position), group);
+          lookup.set(combined, next);
         }
-        id = next;
+        group = next;
       }
-      return id;
+      return group;
     };
   }
 
-  /** The id of a field's value in a row; with one grouping field, the id is the group, added when new. */
-  #idReader(field: KeyField, groups: boolean): (position: number) => number {
+  /**
+   * The id of a field's value in a row. With `add`, the id is a group of the
+   * first level, added when the value is new.
+   */
+  #idReader(
+    field: KeyField,
+    add: ((value: string | number | null) => number) | null,
+  ): (position: number) => number {
     const source = this.#source;
     const ids = field.ids;
-    const next = (position: number, value: string | number | null) => {
-      // Ids of fields followed by others combine with theirs: they must stay below RADIX.
-      const id = groups ? this.#add(position) : ids.size;
-      if (!groups && id >= RADIX)
-        throw new RangeError(`Too many values of "${field.name}" to group by`);
-      ids.set(value, id);
+    const next = (key: string | number | null, value: string | number | null) => {
+      // Ids combine with groups: they must stay below RADIX.
+      const id = add ? add(value) : ids.size;
+      if (id >= RADIX) throw new RangeError(`Too many values of "${field.name}" to group by`);
+      ids.set(key, id);
       return id;
     };
     if (field.kind === "category") {
@@ -587,11 +943,11 @@ export class RowGroups<
       const codeIds = field.codeIds;
       return (position) => {
         const code = codes[position]!;
-        if (code < 0) return ids.get(null) ?? next(position, null);
+        if (code < 0) return ids.get(null) ?? next(null, null);
         let id = codeIds[code]!;
         if (id < 0) {
           const label = dictionary[code]!;
-          id = ids.get(label) ?? next(position, label);
+          id = ids.get(label) ?? next(label, label);
           codeIds[code] = id;
         }
         return id;
@@ -600,279 +956,136 @@ export class RowGroups<
     const values = source.numbers(field.name);
     return (position) => {
       const value = values[position]!;
-      // Maps take NaN as one key, so missing numbers share a group.
-      return ids.get(value) ?? next(position, value);
+      // Maps take NaN as one key, so missing numbers share a group; -0 joins 0.
+      return ids.get(value) ?? next(value, Number.isNaN(value) ? null : value === 0 ? 0 : value);
     };
   }
 
-  /** Adds a group with the key of the row at `position`. */
-  #add(position: number): number {
-    const group = this.#count++;
-    if (group >= this.#rows.length) this.#reserve(grown(group + 1));
-    const source = this.#source;
-    this.#keys[group] = Object.freeze(
-      this.#fields.map(({ name, kind }) => {
-        if (kind === "category") {
-          const { codes, dictionary } = source.categories(name);
-          const code = codes[position]!;
-          return code < 0 ? null : dictionary[code]!;
-        }
-        const value = source.numbers(name)[position]!;
-        // -0 groups with 0.
-        return Number.isNaN(value) ? null : value === 0 ? 0 : value;
-      }),
-    );
-    return group;
-  }
-
-  /** Room for `capacity` groups. */
-  #reserve(capacity: number) {
-    const grow = (array: Float64Array) => {
-      const next = new Float64Array(capacity);
-      next.set(array);
-      return next;
-    };
-    const old = this.#rows.length;
-    this.#rows = grow(this.#rows);
-    this.#values = this.#values.map(grow);
-    this.#finite = this.#finite.map((finite) => finite && grow(finite));
-    this.#clear(old, capacity);
-  }
-
-  /** Empties the aggregates of groups `from` to `to`. */
-  #clear(from: number, to: number) {
-    this.#rows.fill(0, from, to);
-    this.aggregates.forEach(({ op }, k) => {
-      this.#values[k]!.fill(op === "min" || op === "max" ? Number.NaN : 0, from, to);
-      this.#finite[k]?.fill(0, from, to);
-    });
-  }
-
-  /** Adds the rows from position `from` on to their groups' aggregates. */
-  #accumulate(from: number, to: number) {
-    const slots = this.#slots;
-    const rows = this.#rows;
-    for (let position = from; position < to; position++) {
-      const group = slots[position]!;
-      if (group >= 0) rows[group]!++;
+  /** A field's value in a row, as keys hold it. */
+  #valueAt(field: KeyField, position: number): string | number | null {
+    if (field.kind === "category") {
+      const { codes, dictionary } = this.#source.categories(field.name);
+      const code = codes[position]!;
+      return code < 0 ? null : dictionary[code]!;
     }
-    this.aggregates.forEach(({ op, field }, k) => {
-      if (field === undefined) return;
-      const values = this.#source.numbers(field);
-      const out = this.#values[k]!;
-      if (op === "count") {
-        for (let position = from; position < to; position++) {
-          const group = slots[position]!;
-          if (group >= 0 && Number.isFinite(values[position]!)) out[group]!++;
-        }
-      } else if (op === "sum" || op === "mean") {
-        const finite = this.#finite[k];
-        for (let position = from; position < to; position++) {
-          const group = slots[position]!;
-          const value = values[position]!;
-          if (group < 0 || !Number.isFinite(value)) continue;
-          out[group]! += value;
-          if (finite) finite[group]!++;
-        }
-      } else {
-        const lower = op === "min";
-        for (let position = from; position < to; position++) {
-          const group = slots[position]!;
-          const value = values[position]!;
-          if (group < 0 || !Number.isFinite(value)) continue;
-          const current = out[group]!;
-          if (Number.isNaN(current) || (lower ? value < current : value > current))
-            out[group] = value;
-        }
-      }
-    });
-  }
-
-  /** Aggregate `k` of group `group`. */
-  #result(k: number, group: number): number {
-    const { op, field } = this.aggregates[k]!;
-    if (op === "count" && field === undefined) return this.#rows[group]!;
-    const value = this.#values[k]![group]!;
-    if (op !== "mean") return value;
-    const n = this.#finite[k]![group]!;
-    return n > 0 ? value / n : Number.NaN;
-  }
-
-  /** Drops groups left without rows; the others keep their order. */
-  #compact() {
-    const count = this.#count;
-    const rows = this.#rows;
-    const remap = new Int32Array(count);
-    let kept = 0;
-    for (let group = 0; group < count; group++) remap[group] = rows[group]! > 0 ? kept++ : -1;
-    const slots = this.#slots;
-    const length = this.#source.length;
-    for (let position = 0; position < length; position++) {
-      const group = slots[position]!;
-      if (group >= 0) slots[position] = remap[group]!;
-    }
-    // Survivors only move down, so moving them in order overwrites nothing still needed.
-    for (let group = 0; group < count; group++) {
-      const to = remap[group]!;
-      if (to < 0 || to === group) continue;
-      rows[to] = rows[group]!;
-      for (const values of this.#values) values[to] = values[group]!;
-      for (const finite of this.#finite) if (finite) finite[to] = finite[group]!;
-      this.#keys[to] = this.#keys[group]!;
-    }
-    this.#keys.length = kept;
-    this.#count = kept;
-    this.#clear(kept, count);
-    this.#ids = [];
-    // Ids of the surviving keys only, so values seen once do not stay forever.
-    for (const field of this.#fields) {
-      field.ids.clear();
-      field.codeIds.fill(-1);
-    }
-    for (const level of this.#levels) level.clear();
-    this.#keys.forEach((key, group) => {
-      this.#register(key, group);
-    });
-  }
-
-  /** Gives a key's values their ids again, the whole key naming `group`. */
-  #register(key: GroupKey, group: number) {
-    const fields = this.#fields;
-    const idOf = (k: number, own: number) => {
-      const field = fields[k]!;
-      const value = mapKey(field, key[k]!);
-      let id = field.ids.get(value);
-      if (id === undefined) {
-        id = own;
-        field.ids.set(value, id);
-      }
-      return id;
-    };
-    let id = idOf(0, fields.length === 1 ? group : fields[0]!.ids.size);
-    const last = this.#levels.length - 1;
-    for (let k = 0; k <= last; k++) {
-      const combined = id * RADIX + idOf(k + 1, fields[k + 1]!.ids.size);
-      const level = this.#levels[k]!;
-      let next = level.get(combined);
-      if (next === undefined) {
-        next = k === last ? group : level.size;
-        level.set(combined, next);
-      }
-      id = next;
-    }
+    const value = this.#source.numbers(field.name)[position]!;
+    return Number.isNaN(value) ? null : value === 0 ? 0 : value;
   }
 
   /**
-   * Writes the aggregates that changed among `groups` (ascending; null for
-   * every group before `old`), in runs of groups, then appends the groups
-   * from `old` on, as one change of the table.
+   * Each last-level group's rows, listed now unless they are current. A
+   * listener of the groups' tables that changed their source reads the
+   * groups as they were before that change: their rows still in the table,
+   * in the view's order, listed for that reader only.
    */
-  #publish(groups: readonly number[] | null, old: number) {
-    const table = this.#table;
-    // Someone else changed it: start it over.
-    if (table.version !== this.#published || table.length !== old) {
-      this.#publishAll();
-      return;
+  #runs(): MemberRuns {
+    this.#update();
+    const behind = this.#behind();
+    if (this.#members && !behind) return this.#members;
+    const source = this.#source;
+    const seen = this.#seen;
+    const { indices, length } = this.view.read();
+    // Rows appended since have no group yet, and rows dropped since left the view; after a reset, none has.
+    const shift = source.rowOffset - seen.rowOffset;
+    const limit = !behind
+      ? source.length
+      : source.generation === seen.generation
+        ? seen.length - shift
+        : 0;
+    const runs = new MemberRuns(
+      this.#levels.at(-1)!.count,
+      indices,
+      length,
+      this.#slots,
+      this.#offset + shift,
+      limit,
+      source.rowOffset,
+    );
+    if (!behind) this.#members = runs;
+    return runs;
+  }
+
+  /** Whether a listener of the groups' tables changed their source or view, which they have yet to follow. */
+  #behind(): boolean {
+    return (
+      this.#source.version !== this.#seen.version || this.view.queryRevision !== this.#seen.query
+    );
+  }
+
+  /**
+   * Where the groups keep the table's row at `position`, or -1 for a row
+   * they have not seen. While they are behind their source (see `#runs`),
+   * rows dropped since shift positions, rows appended since have no group,
+   * none has after a reset, and rows the view no longer shows have none.
+   */
+  #indexAt(position: number): number {
+    const source = this.#source;
+    const seen = this.#seen;
+    if (!this.#behind()) return this.#offset + position;
+    if (source.generation !== seen.generation || this.view.indexOf(position) < 0) return -1;
+    const at = position + source.rowOffset - seen.rowOffset;
+    return at >= 0 && at < seen.length ? this.#offset + at : -1;
+  }
+
+  /** Each level's groups' children, made when groups were added or renumbered since. */
+  #childLists() {
+    const levels = this.#levels;
+    let groups = 0;
+    for (const level of levels) groups += level.count;
+    const cached = this.#children;
+    if (cached?.renumbered === this.#renumbered && cached.groups === groups) return cached;
+    const starts: Int32Array[] = [];
+    const lists: Int32Array[] = [];
+    for (let depth = 0; depth < levels.length - 1; depth++) {
+      const { count } = levels[depth]!;
+      const child = levels[depth + 1]!;
+      // A counting sort of the level below by parent keeps the order groups appeared in.
+      const start = new Int32Array(count + 1);
+      for (let c = 0; c < child.count; c++) start[child.parents[c]! + 1]!++;
+      for (let group = 0; group < count; group++) start[group + 1]! += start[group]!;
+      const list = new Int32Array(child.count);
+      const next = start.slice(0, count);
+      for (let c = 0; c < child.count; c++) list[next[child.parents[c]!]!++] = c;
+      starts.push(start);
+      lists.push(list);
     }
-    const count = groups ? groups.length : old;
-    table.batch(() => {
-      this.aggregates.forEach(({ name }, k) => {
-        const column = table.numbers(name);
-        // Runs of changed groups, as start and end pairs.
-        const runs: number[] = [];
-        for (let i = 0; i < count; i++) {
-          const group = groups ? groups[i]! : i;
-          if (Object.is(this.#result(k, group), column[group])) continue;
-          const last = runs.length - 1;
-          if (last > 0 && group - runs[last]! <= GAP) runs[last] = group + 1;
-          else runs.push(group, group + 1);
-        }
-        for (let r = 0; r < runs.length; r += 2) {
-          const [start, end] = [runs[r]!, runs[r + 1]!];
-          const values = new Float64Array(end - start);
-          for (let group = start; group < end; group++)
-            values[group - start] = this.#result(k, group);
-          table.replace(name, start, values);
-        }
-      });
-      if (this.#count > old) table.append(this.#batch(old, this.#count) as never);
-    });
-    this.#published = table.version;
+    this.#children = { renumbered: this.#renumbered, groups, starts, lists };
+    return this.#children;
   }
 
-  #publishAll() {
-    const table = this.#table;
-    table.reset(this.#batch(0, this.#count) as never);
-    this.#published = table.version;
-  }
-
-  /** Groups `from` to `to` as columns: labels for category keys, numbers for the rest. */
-  #batch(from: number, to: number): Record<string, (string | null)[] | Float64Array> {
-    const columns: Record<string, (string | null)[] | Float64Array> = Object.create(null);
-    const keys = this.#keys;
-    this.#fields.forEach(({ name, kind }, k) => {
+  /** A level's groups `from` to `to` as columns: labels for category keys, numbers for the rest, tagged with their kinds for a new table. */
+  #columns(level: GroupLevel, from: number, to: number, tagged: boolean) {
+    const levels = this.#levels;
+    const fields = this.#fields;
+    const keys: ColumnInput[] = [];
+    // Each group's ancestors, level by level up.
+    const groups = new Int32Array(to - from);
+    for (let i = 0; i < groups.length; i++) groups[i] = from + i;
+    for (let depth = level.depth; depth >= 0; depth--) {
+      const at = levels[depth]!;
+      const { kind } = fields[depth]!;
       if (kind === "category") {
-        columns[name] = keys.slice(from, to).map((key) => key[k] as string | null);
+        const labels = Array.from(groups, (group) => at.values[group] as string | null);
+        keys[depth] = tagged ? category(labels) : labels;
       } else {
-        const values = new Float64Array(to - from);
-        for (let group = from; group < to; group++)
-          values[group - from] = (keys[group]![k] as number | null) ?? Number.NaN;
-        columns[name] = values;
+        const values = Float64Array.from(
+          groups,
+          (group) => (at.values[group] as number | null) ?? Number.NaN,
+        );
+        keys[depth] = tagged && kind === "time" ? time(values) : values;
       }
+      for (let i = 0; depth > 0 && i < groups.length; i++) groups[i] = at.parents[groups[i]!]!;
+    }
+    const columns: Record<string, ColumnInput> = Object.create(null);
+    keys.forEach((column, depth) => {
+      columns[fields[depth]!.name] = column;
     });
-    this.aggregates.forEach(({ name }, k) => {
+    level.aggregates.forEach(({ name }, k) => {
       const values = new Float64Array(to - from);
-      for (let group = from; group < to; group++) values[group - from] = this.#result(k, group);
-      columns[name] = values;
+      for (let group = from; group < to; group++) values[group - from] = level.result(k, group);
+      columns[name] = tagged && this.#times.has(name) ? time(values) : values;
     });
     return columns;
-  }
-
-  /** The first table's columns, tagged with their kinds, as even empty ones keep them. */
-  #inputs(): Record<string, ColumnInput> {
-    const batch = this.#batch(0, this.#count);
-    const inputs: Record<string, ColumnInput> = Object.create(null);
-    const source = this.#source;
-    for (const { name, kind } of this.#fields) {
-      const column = batch[name]!;
-      inputs[name] =
-        kind === "category"
-          ? category(column as (string | null)[])
-          : kind === "time"
-            ? time(column as Float64Array)
-            : (column as Float64Array);
-    }
-    for (const { name, op, field } of this.aggregates) {
-      const values = batch[name] as Float64Array;
-      const keeps = op === "mean" || op === "min" || op === "max";
-      inputs[name] =
-        keeps && field !== undefined && source.kind(field) === "time" ? time(values) : values;
-    }
-    return inputs;
-  }
-
-  /** Lists each group's rows, in the view's order, when the groups changed since. */
-  #list() {
-    this.#update();
-    if (this.#listed === this.#revision) return;
-    const { indices, length } = this.view.read();
-    const count = this.#count;
-    const slots = this.#slots;
-    const starts = new Uint32Array(count + 1);
-    for (let i = 0; i < length; i++) starts[slots[indices ? indices[i]! : i]! + 1]!++;
-    for (let group = 0; group < count; group++) starts[group + 1]! += starts[group]!;
-    const members =
-      this.#members.length >= length
-        ? this.#members
-        : new Uint32Array(this.#members.length === 0 ? length : grown(length));
-    const next = starts.slice(0, count);
-    for (let i = 0; i < length; i++) {
-      const position = indices ? indices[i]! : i;
-      members[next[slots[position]!]!++] = position;
-    }
-    this.#members = members;
-    this.#starts = starts;
-    this.#listed = this.#revision;
   }
 
   /** The view's order, for the table as it is now. */
@@ -890,21 +1103,26 @@ export class RowGroups<
 
 /**
  * Groups a row view's rows by the values of `by`, with aggregates of each
- * group in `groups.table`; see `RowGroups`.
+ * group in `groups.table`; with several fields, level by level, each level's
+ * aggregates in `groups.tableOf(field)`. See `RowGroups`.
  *
  * ```ts
  * const byService = groupRows(rowView(requests), {
- *   by: ["service"],
+ *   by: ["region", "service"],
  *   ops: { requests: count(), latency: mean("latency") },
  * });
- * bar(byService.table, { x: "service", y: "requests" });
+ * bar(byService.tableOf("region"), { x: "region", y: "requests" });
+ * bar(byService.table, { x: "service", y: "latency", series: "region" });
  * ```
  */
 export function groupRows<
   S extends Schema,
-  B extends PositionField<S>,
+  const B extends readonly PositionField<S>[],
   O extends Record<string, GroupAggregate<NumericField<S>>> = Record<never, never>,
->(view: RowView<S>, options: GroupOptions<B, O>): RowGroups<S, GroupSchema<S, B, O>> {
+>(
+  view: RowView<S>,
+  options: GroupOptions<B[number], O> & { by: B },
+): RowGroups<S, GroupSchema<S, B[number], O>, B> {
   return new RowGroups(
     view,
     options as unknown as GroupOptions<FieldName<S>, Record<string, GroupAggregate>>,
@@ -914,7 +1132,7 @@ export function groupRows<
 /**
  * A string naming a group by its key: its values as JSON, with infinities
  * as text. Unique among one grouping's keys, whose values at each place are
- * all labels or all numbers.
+ * all labels or all numbers, and whose lengths tell their levels.
  */
 export function groupId(key: GroupKey): string {
   return JSON.stringify(key, (_, value) =>

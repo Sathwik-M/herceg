@@ -182,29 +182,66 @@ bar(byService.table, { x: "service", y: "errors" });
 
 Values are read through the view's positions, so no column is copied. The
 view's filter and restriction choose the rows; its sort orders each group's
-rows (`byService.members(g)`, positions in the view's order) but not the
-aggregates, which add up rows in table order: the values
+rows but not the aggregates, which add up rows in table order: the values
 `derive(...).filter(...).aggregate(...)` gives, from `count` (rows, or with a
 field its finite values), `sum`, `mean`, `min`, and `max`, which leave out
-missing and infinite values. Groups come in the order they first appeared.
+missing and infinite values. Sums are compensated (each keeps what rounding
+left out of it, and what it lost; one whose values cancel enough to make
+that matter is summed again exactly from its group's rows), so a group's
+sum stays within about an ulp of the exact sum of its rows, however rows
+came and went, and can differ from a derived table's plain sum in the last
+digits. A sum that overflows on the way (past about ±1.8e308) is infinite
+until rows leave it. Groups come in the order they first appeared.
 
-The table follows the view. Appended rows update the groups they join and
-add rows for the groups they start, reading no other row; anything else
-(rows dropped, a value the groups read changed in place, a new filter or
-restriction, a reset) computes the groups again and changes the table where
-its values differ, keeping the groups that remain in their order, and
-resetting the table only when a group lost its last row. Each change of the
-view's table is one change of the groups' table, whose listeners find every
-aggregate and new group in place. Treat it as read-only; it keeps the groups
-following, and `dispose()` stops them.
+With several fields, groups nest: by the first field, then within each of
+those by the second, and so on, in one computation. Each level has a table
+of its own, with the grouping fields down to it, which charts read:
 
-A group's key is its value of each grouping field (`byService.keyOf(g)`):
-a label for categories, a number for numbers and times, null where the value
-is missing. Keys name groups however rows come, go, and sort, and across
-resets: `indexOf(key)` finds a group's row of the table, `groupOf(position)`
-the group of a table row. Groups hold 4 bytes per table row (each row's
-group), 4 bytes per row of the view once a reader lists groups' rows, and
-their running aggregates.
+```ts
+const traffic = groupRows(rowView(requests), {
+  by: ["region", "service"],
+  ops: { n: count(), latency: mean("latency") },
+});
+bar(traffic.tableOf("region"), { x: "region", y: "n" });
+bar(traffic.table, { x: "service", y: "latency", series: "region" }); // the last level's
+```
+
+A level's aggregates are of its own rows: a region's mean latency is the
+mean of its requests, not of its services' means (levels above the last add
+up the sums and counts of the level below, or read their rows when those
+cancel). `tableOf` is typed by the
+fields `by` lists, so a chart of the regions' table cannot name `service`
+(with `by` an array whose order TypeScript does not know, it names only
+its own grouping field).
+
+The tables follow the view. Appended rows update the groups they join, at
+every level, and add the groups they start; rows a rolling window (`maxRows`)
+or `dropFirst` drops are taken away from theirs the same way, reading no
+other row, except a group whose minimum or maximum left, or whose sum lost
+its accuracy, whose rows are read again. Anything else (a value the groups read changed in place, a new
+filter or restriction, a reset) computes the groups again. Tables change
+where their values differ, keeping the groups that remain in their order,
+and start over only when one of their groups lost its last row. Each change
+of the view's table is one change of each level's table, told once every
+level's table is written, so their listeners find every aggregate and new
+group in place. Treat the tables as read-only; they
+keep the groups following, and `dispose()` stops them (their tables keep
+their last values, and they list no rows).
+
+A group's key is its path of values down to its level (`traffic.keyOf(g)`
+for the last level, `keyOf(g, 0)` for the first): a label for categories, a
+number for numbers and times, null where the value is missing. Keys name
+groups however rows come, go, and sort, and across resets: `indexOf(key)`
+finds a group by its key at the key's level, `groupOf(position, depth)` the
+group of a table row, and `parentOf` and `childrenOf` move between levels.
+`members(g, depth)` lists a group's rows (those of its groups below too),
+and `memberAt(g, i)` gives the `i`th row of a last-level group in the view's
+order. Groups hold 4 bytes per table row (each row's group); once a reader
+lists groups' rows, about 6 more per shown row, kept current as rows
+stream; and once the table drops rows (or from the start with `maxRows`),
+8 bytes per table row, shown or not, for each field the aggregates read:
+the values to take away. `byteLength` counts these and the groups' own
+arrays, not their keys and maps.
 
 ## Marks
 
@@ -1659,68 +1696,84 @@ Rows that a filter takes out of the grid stay selected, so the chart keeps
 showing them.
 
 A grid shows its view's rows in groups (see Row groups) given as `groups`:
-a header row per group, followed by the group's rows when it is expanded.
+a header row per group, followed when it is expanded by its groups of the
+level below, or, on the last level, by its rows.
 
 ```ts
 import { bar, count, groupRows, mean, rowView } from "herceg";
 
 const view = rowView(requests);
-const byService = groupRows(view, {
-  by: ["service"],
+const traffic = groupRows(view, {
+  by: ["region", "service"],
   ops: { n: count(), latency: mean("latency") },
 });
 const model = createGridModel({
   data: view,
-  groups: byService,
+  groups: traffic,
   columns: [
     { field: "service" },
+    { field: "region" },
     { field: "time" },
     { field: "latency", aggregate: "latency", format: { maximumFractionDigits: 1 } },
   ],
 });
-bar(byService.table, { x: "service", y: "latency" }); // the same groups, charted
+bar(traffic.tableOf("region"), { x: "region", y: "latency" }); // the same groups, charted
 ```
 
-A header's first cell names its group by key and counts its rows
-("api (1,204)"); a column of a grouping field shows the key's value, and a
-column with an `aggregate` the group's value of it, in the column's format
+A header's first cell names its group by its own key value and counts its
+rows ("api (1,204)"), indented by level; a column of a grouping field shows
+the key's value on that field's level and below, and a column with an
+`aggregate` the group's value of it at its level, in the column's format
 when the aggregate is a sum, mean, minimum, or maximum of the column's own
-field. Groups start collapsed: `model.setExpanded(key, true)`,
-`expandAll()`, and `collapseAll()` change that by key, so groups keep it as
-rows stream and through resets (`model.setGroups` shows other groups, or
-none). `model.row(i)` tells a group's header (`kind: "group"`, with its key,
-row count, and expansion) from a table row (`kind: "row"`). Clicking a
-column's header sorts each group's rows by its field and the groups by the
-column's aggregate, or by key for a grouping field; `model.setGroupSort`
-orders groups by any field of the groups' table, and without it they keep
-the order they appeared in.
+field. Groups start collapsed: `model.setExpanded(key, true)` expands the
+group with that key path (`["eu"]`, `["eu", "api"]`), and `expandAll()` and
+`collapseAll()` change every level; expansion is kept by key, so groups keep
+it as rows stream, through resets, and while a group above them is
+collapsed (`model.setGroups` shows other groups, or none). `model.row(i)`
+tells a group's header (`kind: "group"`, with its key, level, row count, and
+expansion) from a table row (`kind: "row"`). Clicking a column's header
+sorts each group's rows by its field and the groups among their siblings by
+the column's aggregate at every level, or by key on the level of a grouping
+field; `model.setGroupSort` orders groups by any field of the groups'
+tables (each level by the keys its table has), and without it they keep the
+order they appeared in.
 
 Selecting a group's header selects every row of the group that the view
-shows, collapsed or not, into the grid's row set; its checkbox is checked
-when all of them are selected and mixed when some are
-(`model.selectionState(i)`), and Shift ranges take whole groups whose
+shows, in its groups below too, collapsed or not, into the grid's row set;
+its checkbox is checked when all of them are selected and mixed when some
+are (`model.selectionState(i)`), and Shift ranges take whole groups whose
 headers they cover. Rows appended to a group later are not selected. When a
 group collapses around the focused cell, the focus goes to its header.
 Grouped grids are WAI tree grids: rows say their level, their place among
-the group's rows or the groups, and whether they are expanded. Since the
-focus is always on a cell, a row's first cell stands for the row, as the
-pattern's focused rows do: there Right expands a group, Left collapses it,
-and Left on a group's row goes to its header (elsewhere the arrows move
-between cells); Enter on any cell of a header expands or collapses it, and
-Space selects its rows.
+their siblings, and whether they are expanded. Since the focus is always on
+a cell, a row's first cell stands for the row, as the pattern's focused rows
+do: there Right expands a group, Left collapses it, and Left on a collapsed
+group or a group's row goes to the group holding it (elsewhere the arrows
+move between cells); Enter on any cell of a header expands or collapses it,
+and Space selects its rows.
 
 Rows have one height (`rowHeight`, 28 pixels by default) and columns explicit
 widths. Rows taller together than 8 million pixels scroll scaled: the
 scrollbar covers them all, and a pixel scrolled moves more than one. Not yet
 available: column groups (headers over several columns), sizing columns to
-their content, moving columns by touch (the menu moves them), nested groups,
-pivots, custom cell content, editing, and copying.
+their content, moving columns by touch (the menu moves them), pivots, custom
+cell content, editing, and copying.
 
 ## Migrating from earlier versions
 
 Herceg is not yet at 1.0. Grid columns are at least 32 pixels wide
 (`MIN_COLUMN_WIDTH`): `setColumns` and `createGridModel` refuse narrower
 widths, which they took before.
+
+Row groups by several fields nest. `groups.table` is unchanged (one row per
+combination of the fields' values), but a grid shows a header per level
+(each naming its own value) instead of one header per combination, and
+`indexOf` of a shorter key finds the group of that level rather than -1.
+`members(g)` returns a new array instead of one borrowed from the groups. A
+group's `GridRow` has its level (1 for the first) and its place among its
+siblings rather than among every group. Groups' sums are compensated, so
+they can differ in the last digits from those of earlier versions (and of
+derived tables).
 
 Its chart handle now keeps the engine to itself:
 
