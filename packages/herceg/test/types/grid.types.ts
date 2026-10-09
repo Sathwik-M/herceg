@@ -153,6 +153,44 @@ focusFirst(grid);
   grouped.setGroups(groupRows(rowView(table({ x: [1] })), { by: ["x"] }));
 }
 
+// Nested groups: each level's table has the grouping fields down to it.
+{
+  const view = rowView(requests);
+  const nested = groupRows(view, {
+    by: ["host", "at"],
+    ops: { n: count(), worst: max("latency") },
+  });
+  bar(nested.tableOf("host"), { x: "host", y: "n" });
+  // @ts-expect-error the first level's table has no "at"
+  bar(nested.tableOf("host"), { x: "at", y: "n" });
+  bar(nested.tableOf("at"), { x: "at", y: "worst", series: "host" });
+  expectTypeOf(nested.tableOf("host").kind).parameter(0).toEqualTypeOf<"host" | "n" | "worst">();
+  expectTypeOf(nested.tableOf("at").kind)
+    .parameter(0)
+    .toEqualTypeOf<"host" | "at" | "n" | "worst">();
+  // @ts-expect-error not a grouping field
+  nested.tableOf("latency");
+  expectTypeOf(nested.keyOf(0, 0)).toEqualTypeOf<GroupKey>();
+  expectTypeOf(nested.childrenOf(0, 0)).toEqualTypeOf<Int32Array>();
+  // Grids take nested groups as any others.
+  const model = createGridModel({ data: view, groups: nested, columns: [{ field: "host" }] });
+  const row = model.row(0);
+  if (row.kind === "group") expectTypeOf(row.level).toEqualTypeOf<number>();
+  // Without a tuple of fields, their order is unknown: a level's table has its own grouping field only.
+  const fields: ("host" | "at")[] = ["host", "at"];
+  const loose = groupRows(view, { by: fields, ops: { n: count() } });
+  bar(loose.tableOf("at"), { x: "at", y: "n" });
+  // @ts-expect-error "host" may come after "at"
+  bar(loose.tableOf("at"), { x: "host", y: "n" });
+  // A field known only as one of them: neither may be in its table.
+  const either = fields[0]!;
+  bar(loose.tableOf(either), { x: "n", y: "n" });
+  // @ts-expect-error the table of "host" lacks "at"
+  loose.tableOf(either).numbers("at");
+  // In a tuple, the first field is in every level's table.
+  expectTypeOf(nested.tableOf(either).kind).parameter(0).toEqualTypeOf<"host" | "n" | "worst">();
+}
+
 // The README's row groups and grouped grid.
 {
   const log = table({

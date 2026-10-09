@@ -1,6 +1,7 @@
 // A grid's state without a DOM, imported as `herceg/grid/model`: the columns
 // it shows (their order, widths, pins, and which are hidden), the rows of a
-// row view (or the view's groups, each followed by its rows when expanded),
+// row view (or the view's groups, level by level, each followed by its
+// groups below or its rows when expanded),
 // where it is scrolled, which cell has the focus, and which rows are
 // selected. A renderer (dom/grid.ts) draws it and turns keys, clicks, and
 // drags into its commands; applications call the same commands.
@@ -35,13 +36,17 @@ import {
   widthOf,
 } from "./columns.ts";
 import {
+  countGroup,
+  countRow,
   countSelected,
   countsHold,
+  extended,
   headerTexts,
   type Projection,
   placeOf,
   project,
   type SelectedCounts,
+  shownAs,
   stamped,
 } from "./grouped.ts";
 
@@ -59,7 +64,8 @@ export interface GridModelOptions<S extends Schema = Schema> {
   columns: readonly GridColumn<S>[];
   /**
    * Groups of the view's rows (`groupRows(data, ...)`) to show as group
-   * rows, each followed by its rows when expanded; none by default.
+   * rows, each followed by its groups below, or its rows, when expanded;
+   * none by default.
    */
   groups?: RowGroups<S> | null;
   /** Where the selected rows go; a store of the grid's own when left out. */
@@ -107,9 +113,9 @@ export type GridRow =
       readonly position: number;
       /** `rowOffset + position`: the row's own while rows come and go, until the table resets. */
       readonly identity: number;
-      /** Its group (a row of the groups' table), or -1 when the grid has no groups. */
+      /** Its group (a row of the groups' last table), or -1 when the grid has no groups. */
       readonly group: number;
-      /** 2 under a group, 1 otherwise. */
+      /** Its level in the tree: one past the groups' levels under groups, 1 otherwise. */
       readonly level: number;
       /** Its place among its group's rows (or the grid's), from 0, and how many there are. */
       readonly setIndex: number;
@@ -117,16 +123,18 @@ export type GridRow =
     }
   | {
       readonly kind: "group";
-      /** The group: a row of the groups' table. */
+      /** The group: a row of its level's table, `groups.tableOf(groups.by[level - 1])`. */
       readonly group: number;
+      /** Its key path: its value of each grouping field down to its level's. */
       readonly key: GroupKey;
       /** Names the group for maps and element keys, the same while its key is. */
       readonly id: string;
       /** Rows of the view in the group, shown or not. */
       readonly rows: number;
       readonly expanded: boolean;
-      readonly level: 1;
-      /** Its place among the groups, from 0, and how many there are. */
+      /** Its level in the tree, from 1: the number of grouping fields its key has. */
+      readonly level: number;
+      /** Its place among the groups in the same group above (or the first level's), from 0, and how many there are. */
       readonly setIndex: number;
       readonly setSize: number;
     };
@@ -178,11 +186,16 @@ interface Display {
   readonly grouped: Projection | null;
 }
 
-/** A row: its group and position (-1 for a group's header), and in grouped grids its group's place and its own. */
+/**
+ * A row: its group and the group's depth (the last level's for a row of the
+ * table), its position (-1 for a group's header), and in grouped grids the
+ * header shown at or before it and how far past that header it is.
+ */
 interface Entry {
+  readonly depth: number;
   readonly group: number;
   readonly position: number;
-  readonly rank: number;
+  readonly header: number;
   readonly offset: number;
 }
 
@@ -224,7 +237,7 @@ export class GridModel<S extends Schema = Schema> {
   #groupTexts: {
     layout: readonly PlacedColumn[];
     groups: RowGroups;
-    texts: ((group: number) => string)[];
+    texts: ((group: number, depth: number) => string)[];
   } | null = null;
   #counts: SelectedCounts | null = null;
 
@@ -427,12 +440,17 @@ export class GridModel<S extends Schema = Schema> {
     this.#notify();
   }
 
-  /** The order of the groups: keys over the groups' table (grouping fields and aggregates). */
+  /** The order of the groups: keys over the groups' tables (grouping fields and aggregates). */
   get groupSort(): readonly SortKey[] {
     return this.#groupSort;
   }
 
-  /** Orders the groups by fields of the groups' table, stably; the order they appeared in without keys. */
+  /**
+   * Orders the groups by fields of the groups' tables, stably; the order
+   * they appeared in without keys. Each level's groups are ordered among
+   * their siblings by the keys its table has: aggregates order every level,
+   * and a grouping field the groups of its own level.
+   */
   setGroupSort(keys: readonly SortKey[]): void {
     this.#current();
     this.#sortGroups(keys);
@@ -440,14 +458,15 @@ export class GridModel<S extends Schema = Schema> {
     this.#notify();
   }
 
-  /** Whether the group with this key shows its rows. */
+  /** Whether the group with this key path (of any level) shows its groups below, or its rows. */
   isExpanded(key: GroupKey): boolean {
     return this.#isOpen(groupId(key));
   }
 
   /**
-   * Shows or hides the rows of the group with this key. The focus on one of
-   * its rows moves to the group's header when it collapses.
+   * Shows or hides the groups below, or the rows, of the group with this key
+   * path; groups below keep their own expansion. The focus on a row or group
+   * hidden moves to the group's header when it collapses.
    */
   setExpanded(key: GroupKey, expanded: boolean): void {
     if (this.isExpanded(key) === expanded) return;
@@ -458,21 +477,21 @@ export class GridModel<S extends Schema = Schema> {
     this.#rearrange();
   }
 
-  /** Expands every group, those that appear later too. */
+  /** Expands every group of every level, those that appear later too. */
   expandAll(): void {
     this.#expandedByDefault = true;
     this.#toggled.clear();
     this.#rearrange();
   }
 
-  /** Collapses every group, those that appear later too. */
+  /** Collapses every group of every level, those that appear later too. */
   collapseAll(): void {
     this.#expandedByDefault = false;
     this.#toggled.clear();
     this.#rearrange();
   }
 
-  /** Where the header of the group with this key shows, or -1. */
+  /** Where the header of the group with this key path shows, or -1 (a group above it is collapsed). */
   rowIndexOfGroup(key: GroupKey): number {
     const groups = this.#groups;
     this.#current();
@@ -503,23 +522,23 @@ export class GridModel<S extends Schema = Schema> {
         position,
         identity: snapshot.rowOffset + position,
         group,
-        level: grouped ? 2 : 1,
+        level: grouped ? grouped.groups.by.length + 1 : 1,
         setIndex: grouped ? entry.offset - 1 : rowIndex,
         setSize: grouped ? grouped.groups.size(group) : display.length,
       };
     }
-    const { groups, order, open } = grouped!;
-    const { group } = entry;
+    const { groups, open, places, siblings } = grouped!;
+    const { group, depth, header } = entry;
     return {
       kind: "group",
       group,
-      key: groups.keyOf(group),
-      id: groups.idOf(group),
-      rows: groups.size(group),
-      expanded: open[group] === 1,
-      level: 1,
-      setIndex: entry.rank,
-      setSize: order.length,
+      key: groups.keyOf(group, depth),
+      id: groups.idOf(group, depth),
+      rows: groups.size(group, depth),
+      expanded: open[depth]![group] === 1,
+      level: depth + 1,
+      setIndex: places[header]!,
+      setSize: siblings[header]!,
     };
   }
 
@@ -548,9 +567,9 @@ export class GridModel<S extends Schema = Schema> {
   textAt(rowIndex: number, columnIndex: number): string {
     const column = this.#layout[columnIndex];
     if (!column) throw new RangeError(`Column ${columnIndex} is not shown`);
-    const { group, position } = this.#entry(rowIndex);
+    const { group, depth, position } = this.#entry(rowIndex);
     if (position >= 0) return column.content.text(this.#table, position);
-    return this.#textsOfGroups()[columnIndex]!(group);
+    return this.#textsOfGroups()[columnIndex]!(group, depth);
   }
 
   // Sorting
@@ -568,8 +587,8 @@ export class GridModel<S extends Schema = Schema> {
    * Sorts by a column's field as a header click does: ascending, then
    * descending, then not at all. Plain, the field becomes the only key;
    * additive (Shift and click), the other keys stay and a new field goes last.
-   * In grouped grids the groups sort too, by the column's aggregate, or by
-   * their key when the column shows a grouping field.
+   * In grouped grids the groups sort too: every level's by the column's
+   * aggregate, or the level of the grouping field the column shows by key.
    */
   cycleSort(column: string, { additive = false }: { additive?: boolean } = {}): void {
     const definition = this.#columns.find(({ id }) => id === column);
@@ -718,23 +737,30 @@ export class GridModel<S extends Schema = Schema> {
    * Moves the focus as the keyboard does and scrolls it into view. Moving
    * between rows with `extend` (Shift) selects the rows from the anchor to
    * the new focus. In grouped grids, on a row's first cell, right expands a
-   * collapsed group, left collapses an expanded one, and left from a group's
-   * row goes to its header.
+   * collapsed group, left collapses an expanded one, and left from a
+   * collapsed group or a group's row goes to the group holding it.
    */
   moveFocus(move: FocusMove, { extend = false }: { extend?: boolean } = {}): void {
     const focus = this.focus;
     if (!focus) return;
     if (focus.rowIndex >= 0 && focus.columnIndex === 0 && (move === "left" || move === "right")) {
-      const display = this.#current();
-      if (display.grouped) {
-        const { group, position, rank } = this.#entry(focus.rowIndex);
-        const expanded = display.grouped.open[group] === 1;
+      const { grouped } = this.#current();
+      if (grouped) {
+        const { group, depth, position, header } = this.#entry(focus.rowIndex);
+        const expanded = position < 0 && grouped.open[depth]![group] === 1;
         if (position < 0 && expanded === (move === "left")) {
-          this.setExpanded(display.grouped.groups.keyOf(group), !expanded);
+          this.setExpanded(grouped.groups.keyOf(group, depth), !expanded);
           return;
         }
-        if (position >= 0 && move === "left") {
-          this.focusCell(display.grouped.starts[rank]!, focus.column);
+        // A collapsed group's parent, or a row's group, is shown above it.
+        const holder =
+          position >= 0
+            ? header
+            : depth > 0
+              ? grouped.rank[depth - 1]![grouped.groups.parentOf(group, depth)]!
+              : -1;
+        if (move === "left" && holder >= 0) {
+          this.focusCell(grouped.starts[holder]!, focus.column);
           return;
         }
       }
@@ -775,10 +801,10 @@ export class GridModel<S extends Schema = Schema> {
 
   /** How much of a row is selected; a group's header is partly when some of its rows are. */
   selectionState(rowIndex: number): SelectionState {
-    const { group, position } = this.#entry(rowIndex);
+    const { group, depth, position } = this.#entry(rowIndex);
     if (position >= 0) return this.#selected(position) ? "all" : "none";
-    const selected = this.#groupCounts().counts[group]!;
-    return selected === 0 ? "none" : selected >= this.#groups!.size(group) ? "all" : "some";
+    const selected = this.#groupCounts().counts[depth]![group]!;
+    return selected === 0 ? "none" : selected >= this.#groups!.size(group, depth) ? "all" : "some";
   }
 
   /**
@@ -802,31 +828,32 @@ export class GridModel<S extends Schema = Schema> {
   /**
    * Selects as clicks do (see `SelectMode`); the selection is a row set in
    * the channel. Selecting a group's header selects every row of the group
-   * the view shows, collapsed or not; toggling it clears them when all are
-   * selected.
+   * the view shows, in its groups below too, collapsed or not; toggling it
+   * clears them when all are selected.
    */
   select(rowIndex: number, mode: SelectMode = "only"): void {
-    const { group, position } = this.#entry(rowIndex);
+    const { group, depth, position } = this.#entry(rowIndex);
     if (mode === "only" || mode === "toggle") {
       const only = mode === "only";
       const rows = only ? new RowSet(this.data.source) : this.#writable();
-      let adjust: (counts: Float64Array) => void;
+      const groups = this.#groups;
+      let adjust: (counts: readonly Float64Array[]) => void;
       if (position >= 0) {
         const removed = !only && rows.has(position);
         if (removed) rows.delete(position);
         else rows.add(position);
         adjust = (counts) => {
-          if (only) counts.fill(0);
-          if (group >= 0) counts[group]! += removed ? -1 : 1;
+          if (only) for (const at of counts) at.fill(0);
+          if (group >= 0) countRow(counts, groups!, group, removed ? -1 : 1);
         };
       } else {
-        const members = this.#groups!.members(group);
+        const members = groups!.members(group, depth);
         const removed = !only && this.selectionState(rowIndex) === "all";
         if (removed) for (const member of members) rows.delete(member);
         else rows.addAll(members);
         adjust = (counts) => {
-          if (only) counts.fill(0);
-          counts[group] = removed ? 0 : members.length;
+          if (only) for (const at of counts) at.fill(0);
+          countGroup(counts, groups!, depth, group, !removed);
         };
       }
       this.#selectionAnchor = this.#refAt(rowIndex);
@@ -851,7 +878,9 @@ export class GridModel<S extends Schema = Schema> {
     addRows(rows, snapshot, 0, snapshot.length);
     const groups = this.#groups;
     this.#publish(rows, (counts) => {
-      for (let group = 0; group < counts.length; group++) counts[group] = groups!.size(group);
+      counts.forEach((at, depth) => {
+        for (let group = 0; group < at.length; group++) at[group] = groups!.size(group, depth);
+      });
     });
   }
 
@@ -982,7 +1011,7 @@ export class GridModel<S extends Schema = Schema> {
     const grouped = groups ? project(groups, this.#groupSort, (id) => this.#isOpen(id)) : null;
     this.#display = {
       snapshot,
-      length: grouped ? grouped.starts[grouped.order.length]! : snapshot.length,
+      length: grouped ? grouped.starts[grouped.count]! : snapshot.length,
       grouped,
     };
     this.#seen = {
@@ -1012,9 +1041,15 @@ export class GridModel<S extends Schema = Schema> {
   /** Forgets the expansion of groups gone once they outnumber those left, so streams of keys do not pile up. */
   #prune() {
     const groups = this.#groups;
-    if (!groups || this.#toggled.size <= 64 + 2 * groups.length) return;
+    if (!groups) return;
+    const depths = groups.by.length;
+    let count = 0;
+    for (let depth = 0; depth < depths; depth++) count += groups.countAt(depth);
+    if (this.#toggled.size <= 64 + 2 * count) return;
     const current = new Set<string>();
-    for (let group = 0; group < groups.length; group++) current.add(groups.idOf(group));
+    for (let depth = 0; depth < depths; depth++)
+      for (let group = 0; group < groups.countAt(depth); group++)
+        current.add(groups.idOf(group, depth));
     for (const id of this.#toggled) if (!current.has(id)) this.#toggled.delete(id);
   }
 
@@ -1035,20 +1070,20 @@ export class GridModel<S extends Schema = Schema> {
     this.#arrangement++;
   }
 
-  /** The row at `rowIndex`: its group and position, and where it is among the groups. */
+  /** The row at `rowIndex`: its group and position, and the header it follows. */
   #entry(rowIndex: number): Entry {
     const { snapshot, grouped, length } = this.#current();
     if (!(Number.isInteger(rowIndex) && rowIndex >= 0 && rowIndex < length))
       throw new RangeError(`Row ${rowIndex} is not among the grid's ${length} rows`);
     if (!grouped) {
       const position = snapshot.indices ? snapshot.indices[rowIndex]! : rowIndex;
-      return { group: -1, position, rank: -1, offset: 0 };
+      return { depth: -1, group: -1, position, header: -1, offset: 0 };
     }
-    const place = placeOf(grouped, rowIndex);
-    const group = grouped.order[place]!;
-    const offset = rowIndex - grouped.starts[place]!;
-    const position = offset === 0 ? -1 : grouped.groups.members(group)[offset - 1]!;
-    return { group, position, rank: place, offset };
+    const header = placeOf(grouped, rowIndex);
+    const group = grouped.heads[header]!;
+    const offset = rowIndex - grouped.starts[header]!;
+    const position = offset === 0 ? -1 : grouped.groups.memberAt(group, offset - 1);
+    return { depth: grouped.depths[header]!, group, position, header, offset };
   }
 
   #scroll(top: number, left: number, quiet = false) {
@@ -1100,27 +1135,31 @@ export class GridModel<S extends Schema = Schema> {
     this.#anchor = { ref: this.#refAt(index), offset: this.#top - index * this.rowHeight };
   }
 
-  /** What follows the row at `rowIndex`: its identity, or its group's key. */
+  /** What follows the row at `rowIndex`: its identity, or its group's key path. */
   #refAt(rowIndex: number): Ref {
     const { snapshot, grouped } = this.#display!;
-    const { group, position } = this.#entry(rowIndex);
+    const { group, depth, position } = this.#entry(rowIndex);
     if (position >= 0)
       return { identity: snapshot.rowOffset + position, generation: snapshot.generation };
     const groups = grouped!.groups;
-    return { id: groups.idOf(group), key: groups.keyOf(group), groups };
+    return { id: groups.idOf(group, depth), key: groups.keyOf(group, depth), groups };
   }
 
   /**
    * Where a row or group is now, or -1 when it left (or the table was reset
-   * since). A row of a collapsed group is at its group's header with
-   * `collapsed`, and nowhere without.
+   * since). A row or group hidden by a collapsed group above is at that
+   * group's header with `collapsed`, and nowhere without.
    */
   #find(ref: Ref, collapsed: boolean): number {
     const { snapshot, grouped } = this.#display!;
     if ("id" in ref) {
       if (!grouped || ref.groups !== grouped.groups) return -1;
       const group = grouped.groups.indexOf(ref.key);
-      return group < 0 ? -1 : grouped.starts[grouped.rank[group]!]!;
+      if (group < 0) return -1;
+      const depth = ref.key.length - 1;
+      const shown = shownAs(grouped, depth, group);
+      if (shown.depth < depth && !collapsed) return -1;
+      return grouped.starts[grouped.rank[shown.depth]![shown.group]!]!;
     }
     if (ref.generation !== snapshot.generation) return -1;
     const position = ref.identity - snapshot.rowOffset;
@@ -1128,8 +1167,10 @@ export class GridModel<S extends Schema = Schema> {
     const { groups, starts, rank, open } = grouped;
     const group = groups.groupOf(position);
     if (group < 0) return -1;
-    const header = starts[rank[group]!]!;
-    if (!open[group]) return collapsed ? header : -1;
+    const last = groups.by.length - 1;
+    const shown = shownAs(grouped, last, group);
+    const header = starts[rank[shown.depth]![shown.group]!]!;
+    if (shown.depth < last || !open[last]![group]) return collapsed ? header : -1;
     const index = groups.memberIndex(position);
     return index < 0 ? -1 : header + 1 + index;
   }
@@ -1167,7 +1208,7 @@ export class GridModel<S extends Schema = Schema> {
   }
 
   /** What each column shows on a group's header row. */
-  #textsOfGroups(): ((group: number) => string)[] {
+  #textsOfGroups(): ((group: number, depth: number) => string)[] {
     const groups = this.#groups!;
     const layout = this.#layout;
     const cached = this.#groupTexts;
@@ -1187,11 +1228,9 @@ export class GridModel<S extends Schema = Schema> {
     const cached = this.#counts;
     if (cached && countsHold(cached, groups, revision, selection, view)) {
       // Groups started by appended rows have none selected yet.
-      if (cached.counts.length < groups.length) {
-        const counts = new Float64Array(groups.length);
-        counts.set(cached.counts);
+      const counts = extended(cached.counts, groups);
+      if (counts.some((at, depth) => at !== cached.counts[depth]))
         this.#counts = { ...cached, counts };
-      }
       return this.#counts!;
     }
     const test = selection?.kind === "predicate" ? this.#test(selection.expression) : () => false;
@@ -1199,24 +1238,35 @@ export class GridModel<S extends Schema = Schema> {
     return this.#counts;
   }
 
-  /** Adds the rows from row index `start` to `end`: a group's header adds every row of its group. */
+  /**
+   * Adds the rows from row index `start` to `end`: a group's header adds
+   * every row of its group, those of its groups below too.
+   */
   #addRows(rows: RowSet<S>, start: number, end: number) {
     const { snapshot, grouped } = this.#current();
     if (!grouped) {
       addRows(rows, snapshot, start, end);
       return;
     }
-    const { starts, order, open, groups } = grouped;
-    for (let place = this.#entry(start).rank; place < order.length; place++) {
-      const header = starts[place]!;
+    const { starts, heads, depths, open, groups, count } = grouped;
+    const last = groups.by.length - 1;
+    // The depth of a header in the range whose rows were added: those below it add nothing more.
+    let covered = -1;
+    for (let at = this.#entry(start).header; at < count; at++) {
+      const header = starts[at]!;
       if (header >= end) break;
-      const group = order[place]!;
-      const members = groups.members(group);
-      if (header >= start) rows.addAll(members);
-      else if (open[group])
+      const [group, depth] = [heads[at]!, depths[at]!];
+      if (covered >= 0 && depth > covered) continue;
+      covered = -1;
+      if (header >= start) {
+        rows.addAll(groups.members(group, depth));
+        covered = depth;
+      } else if (depth === last && open[depth]![group]) {
+        const members = groups.members(group, depth);
         rows.addAll(
           members.subarray(start - header - 1, Math.min(members.length, end - header - 1)),
         );
+      }
     }
   }
 
@@ -1264,7 +1314,7 @@ export class GridModel<S extends Schema = Schema> {
    * counts of selected rows per group into those of the new selection,
    * when they were current, so a click counts nothing again.
    */
-  #publish(rows: RowSet<S>, adjust: ((counts: Float64Array) => void) | null) {
+  #publish(rows: RowSet<S>, adjust: ((counts: readonly Float64Array[]) => void) | null) {
     const store = this.selection;
     const groups = this.#groups;
     const before = this.#counts;
@@ -1272,8 +1322,7 @@ export class GridModel<S extends Schema = Schema> {
     const current = store.get(this.channel) as DataSelection | null;
     let after: SelectedCounts | null = null;
     if (groups && adjust && before && countsHold(before, groups, store.revision, current, view)) {
-      const counts = new Float64Array(groups.length);
-      counts.set(before.counts);
+      const counts = extended(before.counts, groups).map((at) => at.slice());
       adjust(counts);
       // Stamped as things are now, and with the revision setting the channel
       // makes: the store's listeners may change the store, the view, or the

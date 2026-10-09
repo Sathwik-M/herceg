@@ -48,8 +48,8 @@ ${G} .hg-keys{margin-left:auto;color:var(--hg-muted)}
 ${G} .hg-menu [role=separator]{height:1px;margin:4px 0;background:var(--hg-rule)}
 ${G} .hg-menu-title{padding:4px 12px;color:var(--hg-muted);font-size:0.85em}
 ${G} .hg-body [aria-expanded]{font-weight:600}
-${G} .hg-body [aria-expanded]>[aria-colindex="1"]{text-align:start}
-${G} .hg-body [aria-level="2"]>[aria-colindex="1"]{padding-inline-start:calc(34px + 1em)}
+${G} .hg-body [aria-expanded]>[aria-colindex="1"]{text-align:start;padding-inline-start:calc(8px + var(--hg-indent) * (1em + 6px))}
+${G} .hg-body [aria-level]:not([aria-expanded])>[aria-colindex="1"]{padding-inline-start:calc(34px + 1em + var(--hg-indent) * (1em + 6px))}
 ${G} .hg-controls{display:inline-flex;align-items:center;gap:6px;height:100%;margin-inline-end:6px;vertical-align:top}
 ${G} .hg-toggle{width:1em;text-align:center;cursor:pointer;color:var(--hg-muted)}
 ${G} .hg-toggle::before{content:"\\25B8"}

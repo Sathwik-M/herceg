@@ -290,3 +290,115 @@ describe("grouped grids", () => {
     expect(texts(first)).toEqual(["web", "0", "30", "30"]);
   });
 });
+
+const REGIONS = ["eu", "us", "ap"];
+
+/** `rows` requests over three regions and four hosts, in a grid grouping them by region, then host. */
+function nested(rows: number, options: { maxRows?: number } = {}) {
+  const make = (from: number, n: number) => ({
+    id: Float64Array.from({ length: n }, (_, i) => from + i),
+    region: Array.from({ length: n }, (_, i) => REGIONS[(from + i) % 3]!),
+    host: Array.from({ length: n }, (_, i) => HOSTS[Math.floor((from + i) / 3) % 4]!),
+    ms: Float64Array.from({ length: n }, (_, i) => latency(from + i)),
+  });
+  const first = make(0, rows);
+  const t = table(
+    { ...first, region: category(first.region), host: category(first.host) },
+    options,
+  );
+  const view = rowView(t, { sort: [{ field: "id", order: "descending" }] });
+  const groups = groupRows(view, { by: ["region", "host"], ops: { n: count(), avg: mean("ms") } });
+  const model = createGridModel({
+    data: view,
+    groups,
+    columns: [
+      { field: "region", width: 160 },
+      { field: "host", width: 80 },
+      { field: "id", width: 80 },
+      { field: "ms", aggregate: "avg", format: { maximumFractionDigits: 1 } },
+    ],
+    locale: "en-US",
+  });
+  const host = document.createElement("div");
+  host.style.cssText = "width:600px;height:300px";
+  document.body.append(host);
+  hosts.push(host);
+  const grid = createGrid(host, { model, ariaLabel: "Requests" });
+  grids.push(grid);
+  return { t, model, grid, make };
+}
+
+describe("nested grouped grids", () => {
+  it("draw each level of groups in the tree, indented, with places among their siblings", () => {
+    const { grid, model } = nested(120);
+    model.setExpanded(["eu"], true);
+    model.setExpanded(["eu", "web"], true);
+    grid.render();
+    const attributes = (index: number) =>
+      ["aria-level", "aria-posinset", "aria-setsize", "aria-expanded"].map((name) =>
+        rowAt(grid, index)!.getAttribute(name),
+      );
+    // eu, then its hosts web (expanded, with its 10 rows), api, db, cache; then us and ap.
+    expect(attributes(0)).toEqual(["1", "1", "3", "true"]);
+    expect(attributes(1)).toEqual(["2", "1", "4", "true"]);
+    expect(attributes(2)).toEqual(["3", "1", "10", null]);
+    expect(attributes(12)).toEqual(["2", "2", "4", "false"]);
+    expect(scroller(grid).getAttribute("aria-rowcount")).toBe(String(1 + 1 + 4 + 10 + 2));
+    expect(texts(rowAt(grid, 1))).toEqual(["web (10)", "web", "", expect.any(String)]);
+    // A grouping field's column shows its value on its level and below.
+    expect(texts(rowAt(grid, 0)).slice(0, 3)).toEqual(["eu (40)", "", ""]);
+    // Each level's first cell starts further in; rows start past their group's controls.
+    const start = (index: number) =>
+      Number.parseFloat(
+        getComputedStyle(rowAt(grid, index)!.querySelector("[aria-colindex='1']")!)
+          .paddingInlineStart,
+      );
+    expect(start(0)).toBe(8);
+    expect(start(1)).toBeGreaterThan(start(0));
+    expect(start(2)).toBeGreaterThan(start(1));
+  });
+
+  it("move between levels with the arrows on a row's first cell, saying what expanding did", async () => {
+    const { grid, model } = nested(120);
+    grid.focusCell(0, "region");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(said(grid)).toBe("eu (40) expanded");
+    await userEvent.keyboard("{ArrowDown}{ArrowRight}");
+    expect(model.isExpanded(["eu", "web"])).toBe(true);
+    expect(said(grid)).toBe("web (10) expanded");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(rowAt(grid, 2)!.getAttribute("aria-level")).toBe("3");
+    expect(focused()).toEqual([2, 0]);
+    // Left: to the group, collapsing it, to the group above, collapsing that.
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(focused()).toEqual([1, 0]);
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(said(grid)).toBe("web (10) collapsed");
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(focused()).toEqual([0, 0]);
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(said(grid)).toBe("eu (40) collapsed");
+    expect(grid.root.querySelectorAll(".hg-body [role=row]")).toHaveLength(3);
+  });
+
+  it("stream a rolling window into expanded groups while scrolled, the rows in view staying put", async () => {
+    const { t, grid, model, make } = nested(600, { maxRows: 600 });
+    model.expandAll();
+    grid.render();
+    // Within us's web rows (206 to 256): eu, us, its web group, and 13 of its rows are above.
+    scroller(grid).scrollTop = 28 * 220;
+    await frames();
+    const before = visibleFirstCells(grid);
+    const ids = () =>
+      [...grid.root.querySelectorAll(".hg-body [role=row]")].map((row) => texts(row)[2]);
+    const mounted = ids();
+    // New rows sort first (by id, descending), into groups above the rows in view; as many
+    // drop, last in their groups, none of them in view.
+    t.append(make(600, 6));
+    await frames();
+    expect(visibleFirstCells(grid)).toEqual(before);
+    expect(ids()).toEqual(mounted);
+    expect(model.textAt(0, 0)).toBe("eu (200)");
+    expect(scroller(grid).getAttribute("aria-rowcount")).toBe(String(600 + 3 + 12 + 1));
+  });
+});

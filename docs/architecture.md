@@ -28,8 +28,8 @@ One name per concept, used the same way in code and docs.
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`), and the handle applications hold to it (`Chart`). |
 | **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
-| **Row groups** | A row view's rows grouped by the values of some fields (`RowGroups`, made by `groupRows`): each group's key (its value of each field), the positions of its rows, and a table with one row of aggregates per group. |
-| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, or its row groups as header rows each followed by its rows when expanded, drawn from a grid model (`GridModel`), which holds its columns, scroll position, expansion, focus, and selection without a DOM. |
+| **Row groups** | A row view's rows grouped by the values of some fields, level by level (`RowGroups`, made by `groupRows`): each group's key path (its value of each field down to its level), its parent and children, the positions of its rows, and per level a table with one row of aggregates per group. |
+| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, or its row groups as header rows each followed by its groups below (or its rows) when expanded, drawn from a grid model (`GridModel`), which holds its columns, scroll position, expansion, focus, and selection without a DOM. |
 | **Grid column** | A field a grid shows, with its id, title, width, alignment, and format (`GridColumn`). Not a table's column (its storage). |
 
 ## Pipeline
@@ -232,70 +232,160 @@ CPU path for now.
 
 ## Row groups
 
-Row groups (`data/groups.ts`) group the rows a view shows by the values of
-some fields and keep count, sum, mean, minimum, and maximum per group, with
-derived tables' semantics (a count without a field counts rows, with one its
-finite values; the others leave out missing and infinite values). Groups are
-numbered in the order they first appeared, and group `g` is row `g` of their
-table, an ordinary `Table` charts and grids read.
+Row groups (`data/groups.ts`, with each level's state in
+`data/group-levels.ts` and the lists of groups' rows in
+`data/group-members.ts`) group the rows a view shows by the values of some
+fields, level by level: level `d` groups by the first `d + 1` fields, each
+group's parent is the group of the level above holding its rows, and every
+row belongs to one group of the last level. Each group keeps count, sum,
+mean, minimum, and maximum, with derived tables' semantics (a count without a
+field counts rows, with one its finite values; the others leave out missing
+and infinite values). Groups are numbered per level in the order they first
+appeared, and group `g` of a level is row `g` of its table, an ordinary
+`Table` charts and grids read. One table per level, rather than one table
+with a depth column, gives each level a schema of its own (the grouping
+fields down to it, then the aggregates), which charts read as they read any
+table and TypeScript types by the fields `by` lists (`tableOf`); a depth
+column would leave the deeper grouping fields missing on parents' rows,
+which cannot be told from a missing value, and would make charts filter it.
 
 Each grouping field gives its values ids in order of first appearance
 (category codes map to ids through an `Int32Array` per dictionary, numbers
 through a `Map` in which NaN is one key, so missing values form a group and
--0 joins 0); with one field the id is the group, with several, ids combine
-pairwise (`id × 2^26 + id`) through a map per further field. The group of
-every position the view shows is kept in an `Int32Array` over the table's
-rows (-1 for rows it leaves out), and running aggregates in `Float64Array`s
-per group. Rows are visited in table order, whatever the view's sort: the
-view's positions are marked in that array, then read in order. So sums add
-up as derived tables add them (equal to `derive(...).filter(...).aggregate()`
-to the bit), and sorting the view changes no aggregate.
+-0 joins 0). On the first level the id is the group; below it, a map per
+level takes `parent × 2^26 + id` to the group, adding it (with its parent and
+own value) when new. Groups keep their own value and parent in parallel
+arrays, and key paths, ids, and children lists are made from them when
+asked for. The last-level group of every position the view shows is kept
+in an `Int32Array` over the table's rows (-1 for rows it leaves out), as a
+window that slides as the table drops rows, compacted or grown when appends
+reach its end. Running aggregates are `Float64Array`s per level and
+aggregate. A computation from scratch visits rows in table order, whatever
+the view's sort (the view's positions are marked in that array, then read in
+order), adding them to the last level's groups, whose aggregates then add up
+into each level above: a parent's mean is its rows' sum over their count,
+never a mean of its groups' means. Sums are compensated (Neumaier: each
+group's running sum and what rounding left out of it, whose correction is
+exact) and add up what adding to that remainder rounded away (exactly, by
+Knuth's two-sum, so exact arithmetic loses nothing). Once a batch is in, a
+changed group whose losses pass an ulp of its sum (values cancelling: a
+large value leaving a window, or values of opposite signs arriving) is
+stale, and its sum is computed again exactly (Shewchuk's partials, as
+Python's `math.fsum`) from its rows, kept as the rounded sum and its exact
+remainder, whose own rounding is its new loss. So a last-level group's sum
+is within about an ulp of the exact sum of its rows whatever rows came and
+went, and can differ from a derived table's plain sum in the last digits. A
+stale group above adds up its groups' sums exactly, with their losses; when
+those still pass an ulp of its sum (its groups cancelling), it reads its
+rows too. A last-level sum that overflows is infinite, with an unknown
+loss, until a row leaves it, which computes it again (plainly, where the
+exact partials overflow too); a sum above that overflowed or became
+missing adding its groups' sums, which its rows need not, reads its rows,
+and an overflow found there is kept, like a last-level one, until a row
+leaves it.
+A minimum or maximum of zero above the last level may differ in sign from
+a derived table's, which keeps the first in table order. Over values spanning 40 orders of magnitude with random signs
+in a rolling window, every level stayed within an ulp of the exact sums
+(4,000 steps, four seeds, `tmp` fuzzing).
 
 Groups follow the view's table through its change events (which also give
 the fields an update touched) and the view through its `queryRevision`.
-Appended rows only (no drop, reset, query change, or update of a field the
-groups read: grouping fields, aggregated fields, and the view's filter's) are
-marked, found a group (new keys add groups at the end), and added to its
-aggregates: O(appended), plus a scan of the view's positions for sorted
-views, where appended rows merge anywhere. Anything else computes every
-group again (O(rows)), starting from the same ids, so groups that remain
-keep their numbers; groups left without rows are then dropped, their keys'
-ids forgotten, and the rest renumbered in order. The table is changed where
-values differ: a `replace` of each aggregate over each run of groups whose
-value changed (runs closer than 64 groups merge, since another call costs
-about as much as copying them), then an `append` of new groups; a group that
-vanished resets it. So an append costs O(appended × aggregates), not
-O(groups), however far apart the groups it touches are. The groups' table is
-a `Table` subclass of the module's own whose listeners hear those writes as
-one change, after the last one (its appended rows, the updated range, and
-the fields): none of them sees some aggregates updated and others not. A
-`Table` method writing several fields at once would do the same, but every
-chart would bundle it. An update of a field only the view's sort reads keeps
-the aggregates and only reorders the groups' rows. Reads catch up first, so a listener of the table that runs
-before the groups heard of a change reads it already (a change no listener
-call described, seen only through the version, is treated as an update of
-every field); a listener of the groups' table that changes their source is
-caught up with once the groups' own changes are written.
+Rows appended and rows dropped from the front (no reset, query change, or
+update of a field the groups read: grouping fields, aggregated fields, and
+the view's filter's) are added to and taken from their group at every
+level: O((appended + dropped) × levels × aggregates), plus a scan of the
+view's positions for sorted views, where appended rows merge anywhere.
+Taking a row away needs its values, which the table no longer has once it
+dropped the row, so groups over a table that drops rows (one with `maxRows`,
+or once it first drops some, which computes the groups again) keep the
+values of each field the aggregates read for every table row, shown or not,
+at the same window indices. A sum whose values all left is 0 exactly. A
+group whose minimum or maximum left (or whose sum overflowed) is marked
+stale and computed again: a last-level group from its rows (listed for it
+if they were not), in table order as a computation from scratch adds them,
+a group above from its groups below. Since the table compacts a dictionary as
+rows drop, renumbering its codes, groups forget their codes' ids whenever
+rows drop (a fill over the dictionary's size) and find them again by label. Anything else
+computes every group again (O(rows)), starting from the same ids, so groups
+that remain keep their numbers. Groups left without rows are then dropped,
+level by level from the first (a group's groups below leave with it), their
+keys' ids forgotten, and the rest renumbered in order; the window's groups
+are renumbered too (a pass over it).
 
-The positions of each group's rows, in the view's order, are listed only
-when a reader asks (a grid with a group expanded, or selecting a group): one
-`Uint32Array` of the view's positions, group after group, and where each
-group starts, built by counting sort in two passes over the view and kept
-until the groups next change. `memberIndex` finds a row among its group's by
-binary search with the view's comparator. A group's key is its value of each
-field (labels, numbers, or null), and its id the key as JSON with infinities
-as text: keys, not numbers or codes, name groups to readers, since numbers
-change when groups are renumbered and codes when dictionaries are compacted.
-The groups' table keeps the groups alive (a `WeakMap`), and the table and
-view hold them weakly, as views are held.
+Each level's table is changed where values differ: a `replace` of each
+aggregate over each run of changed groups (runs closer than 64 groups merge,
+since another call costs about as much as copying them), then an `append` of
+new groups; a level that lost a group resets its table. So an update costs
+O(changed groups), however far apart they are. The tables are a `Table`
+subclass of the module's own whose listeners hear those writes as one
+change (its appended rows, the updated range, and the fields, or a reset),
+told once every level's table is written: none of them sees some
+aggregates or levels updated and others not, so a grid read from a
+listener of the first level's table orders groups by every level's final
+aggregates. A `Table` method writing several fields at once would do the
+same, but every chart would bundle it.
+An update of a field only the view's sort reads keeps the aggregates and
+only reorders the groups' rows. Reads catch up first, so a listener of the
+table that runs before the groups heard of a change reads it already (a
+change no listener call described, seen only through the version, is
+treated as an update of every field); a listener of the groups' tables that
+changes their source is caught up with once the groups' own changes are
+told, and meanwhile reads the groups as they were before its change: their
+rows still in the table, listed for that read only, so no list built
+against a newer view outlives it.
+
+The rows of each last-level group, in the view's order, are listed only
+when a reader asks (a grid with a group expanded, selecting a group, or a
+stale minimum): one packed `Uint32Array` holding every group's run of rows,
+each in a slot with a quarter more room after it, as row identities less a
+base, so rows dropped from the front move no entry. From then on they are
+kept current: appended rows are written into their run's room (rows of
+views in table order at its end; rows of sorted views merged in, from the
+back), dropped rows leave the front of their run (or, in sorted views, are
+filtered out of it), and a run without room moves to the end of the vector
+with room for half as many again, the vector being packed anew when its end
+is reached. A new query, a reset, an update of a field the groups read or
+the view sorts by, or identities outgrowing 32 bits drop the lists, to be
+listed again when next asked for. `memberAt` reads a row by its index in a
+group's run; `memberIndex` finds a row by binary search with the view's
+comparator; `members` copies a group's rows (a group above: its last-level
+groups' rows in turn). A group's key is its path of values (labels,
+numbers, or null) and its id the key as JSON with infinities as text: keys,
+not numbers or codes, name groups to readers, since numbers change when
+groups are renumbered and codes when dictionaries are compacted; a key's
+length tells its level. The groups' tables keep the groups alive (a
+`WeakMap`), and the tables and view hold them weakly, as views are held.
 
 Memory: 4 bytes per table row (each row's group, with half again as room
-once rows are appended), 4 bytes per shown row once rows are listed, and
-8 bytes per group per running value. At a million rows and a thousand
-groups, the groups take 4 MiB at first and grouping takes about 11 ms, where
-a derived table's filter and aggregate take about 40 ms and allocate
-copies of the filtered columns (about 98 MiB for 20 fields); 1,000 appended
-rows update them in about 0.1 ms (one-off Node measurements, Apple M6).
+once rows are appended); for tables that drop rows, 8 bytes per row (with
+the same room) for each field the aggregates read; once rows are listed,
+about 6 bytes per shown row; and per group and level, 8 bytes per running
+value, 24 more per sum or mean (its compensation, error bound, and count),
+and a few for its parent and marks. `byteLength` counts these typed arrays, not the keys,
+ids, and maps of values, which grow with the number of groups. At a
+million rows and a thousand groups, one level takes 4 MiB at first and
+grouping takes about 17–20 ms (12–13 ms with plain sums), where a derived table's filter and
+aggregate take about 40 ms and allocate copies of the filtered columns
+(about 98 MiB for 20 fields); 1,000 appended rows update them in about
+0.1 ms (one-off Node measurements, Apple M6). Over 100,000 rows of 20
+fields with five aggregates (two of them sums), one level of 100 groups
+takes about 1.6 ms to group (1.1 ms with plain sums), and three levels of
+ten groups each about 6.5 ms (5.9 ms as one level of their thousand
+combinations with plain sums): finding groups through the maps dominates.
+In a rolling window of 100,000 rows taking batches of 500 through two
+turnovers, a batch and a grid's frame of model work take 0.12 to 0.4 ms at
+the median and 0.4 to 0.8 ms at the 99th percentile, where computing the
+groups again took 2.5 to 6 ms; 1.2 ms for a sorted and filtered view
+(whose own merge and drop pass over its rows; 3.9 ms before); 0.75 ms for
+minimums and maximums of a field that rises with time, which leave nearly
+every group with every batch (2.8 ms before); and 0.14 ms for sums of
+values cancelling exactly, which read no row again. That costs about
+4.5 MiB of values kept for four aggregated fields. With keys nearly unique
+(about 63,000 groups of 100,000 rows), groups vanish with every batch and
+each level that lost one is renumbered and its table reset: 13 ms (38 ms
+before) collapsed, and as slow as before (about 36 ms) fully expanded,
+where 63,000 headers are placed again. (Interleaved Node measurements
+against the previous implementation, Apple M6.)
 
 ## Grids
 
@@ -357,32 +447,45 @@ unpinned columns between the held widths, and the scroll range is unchanged
 less the room between the pins).
 
 Grouped grids show a row groups' groups (`grid/grouped.ts`), each a header
-row followed by its group's rows when expanded. The model keeps the
-expansion as the ids of groups expanded otherwise than by default (all
+row followed, when expanded, by its groups of the level below or, on the
+last level, by its rows. The model keeps the expansion as the ids of groups
+(key paths, so any level) expanded otherwise than by default (all
 collapsed, or all expanded after `expandAll`), so groups keep it as rows
-stream and through resets; ids of groups gone are forgotten once they
-outnumber the groups present. The display is the groups in order (by the
-group sort over the groups' table, or as they appeared), each header's row
-index as prefix counts of header and expanded rows (a `Float64Array` per
-group, no object per row), so a row index finds its group by binary search
-and its row as an offset into the group's rows. It is rebuilt (O(groups),
-plus a sort of the groups when sorted) when the groups, their order, or the
-expansion change. Rows of a collapsed group are not shown; the focus, the
-row at the top, and a range's anchor follow table rows by identity and
-headers by key, and a row hidden by its group collapsing resolves to the
-group's header. Expanding or collapsing keeps the top row in place; new
-groups or a new group order keep the pixel offset, as a new query does.
+stream, through resets, and while a group above them is collapsed; ids of
+groups gone are forgotten once they outnumber the groups present. The
+display is the headers shown, in order: the first level's groups, and under
+each expanded group its children (the groups' children lists, made by a
+counting sort by parent) ordered among themselves by the keys of the group
+sort that their level's table has, or as they appeared. Each header's group,
+depth, row index (prefix counts of headers and expanded rows, a
+`Float64Array`), and place among its siblings are parallel arrays, with a
+rank per group and level (-1 while hidden), so a row index finds its header
+by binary search and a table row as an offset past its group's header; no
+object stands for any row. It is rebuilt when the groups, their order, or
+the expansion change: its arrays are made and filled for every group
+(O(groups)), but only the groups shown are visited, their expansion read,
+and their siblings sorted; collapsed groups' children are neither sorted
+nor visited. Rows of collapsed groups are not
+shown; the focus, the row at the top, and a range's anchor follow table rows
+by identity and headers by key, and a row or group hidden by a group
+collapsing above it resolves to the header of the first collapsed group on
+its path. Expanding or collapsing keeps the top row in place; new groups or
+a new group order keep the pixel offset, as a new query does. While rows
+stream into an expanded grid, the rows of its groups are kept current (see
+Row groups) rather than listed again each change.
 
-Selecting a header selects its group's rows into the row set (its rows are
-listed for it). How many rows of each group are selected is counted once per
-selection and change of the groups' rows: a pass over the row set's members,
-or for a condition over the table, finding each row's group. Appends leave
-the counts of row sets alone (appended rows are in none, and new groups have
-none selected), so streaming into a grouped grid counts nothing again, and
-the model's own clicks and keys adjust the counts they change instead of
-counting again. Headers' cells are written from the groups' table through
-the columns' formatters, the first naming the group by key and counting its
-rows.
+Selecting a header selects the rows of its group (and its groups below)
+into the row set. How many rows of each group are selected is counted once
+per selection and change of the groups' rows: a pass over the row set's
+members, or for a condition over the table, finding each row's last-level
+group, whose counts then add up level by level. Appends leave the counts of
+row sets alone (appended rows are in none, and new groups have none
+selected), so streaming into a grouped grid counts nothing again, and the
+model's own clicks and keys adjust the counts they change (a row: its group
+and those above; a group: it, its groups below, and the change in those
+above) instead of counting again. Headers' cells are written from their
+level's table through the columns' formatters, the first naming the group
+by its own key value and counting its rows.
 
 Selection commands write a `RowSet` into the store's channel. Toggles and
 ranges change the set the model last put there when the channel still holds
@@ -475,18 +578,20 @@ the user's, map by the ratio. A million 28-pixel rows scroll 3.5 times as
 far per pixel.
 
 Grouped grids follow the WAI tree grid pattern (`role="treegrid"`): rows
-carry `aria-level`, `aria-posinset`, and `aria-setsize` (their place among
-the groups, or among their group's rows, since most are not mounted), and
-headers `aria-expanded`. Since `aria-selected` has no mixed value, a header's
+carry `aria-level` (a group's level from 1; table rows one past the last),
+`aria-posinset`, and `aria-setsize` (their place among their siblings, or
+among their group's rows, since most are not mounted), and headers
+`aria-expanded`; a row's first cell is indented by its level (a custom
+property on the row). Since `aria-selected` has no mixed value, a header's
 first cell holds a checkbox (`role="checkbox"`, `aria-checked` true, false,
 or mixed) beside a toggle drawn for the eye only; its rows keep
 `aria-selected`. Focus stays on cells, so the keys adapt the pattern's: a
 row's first cell stands for the row (where the pattern would focus rows),
-so Right and Left there expand and collapse a group and Left on a group's
-row goes to its header, while elsewhere the arrows move between cells, as in
-the pattern's cell focus; Enter on any cell of a header toggles it (the
-pattern's cell focus takes Enter on the first cell only), and the live
-region says what expanding and collapsing did.
+so Right and Left there expand and collapse a group, and Left on a collapsed
+group or a group's row goes to the group holding it, while elsewhere the
+arrows move between cells, as in the pattern's cell focus; Enter on any cell
+of a header toggles it (the pattern's cell focus takes Enter on the first
+cell only), and the live region says what expanding and collapsing did.
 
 Keyboard focus follows the WAI grid pattern: one tab stop, held by the
 focused cell when it is mounted and by the grid otherwise (Tab into the grid

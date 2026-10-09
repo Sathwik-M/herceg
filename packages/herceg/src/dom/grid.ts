@@ -60,7 +60,7 @@ const HIDDEN_TEXT =
 const INSTRUCTIONS =
   "Arrow keys, Page Up, Page Down, Home, and End move between cells. Space selects a row, Shift with arrow keys selects a range, and Control A selects every row. Enter on a column header sorts by it; Shift and Enter adds it to the sort. On a column header, Shift with Left or Right Arrow moves the column, Alt with Left or Right Arrow resizes it, and Alt and Down Arrow opens its menu, which also pins, hides, and shows columns.";
 const GROUP_INSTRUCTIONS =
-  " Rows are grouped. Enter on a group expands or collapses it, and Space selects its rows. On a row's first cell, Right Arrow expands a group, Left Arrow collapses it, and Left Arrow on a group's row goes to the group.";
+  " Rows are grouped. Enter on a group expands or collapses it, and Space selects its rows. On a row's first cell, Right Arrow expands a group, Left Arrow collapses it, and Left Arrow on a collapsed group or a group's row goes to the group holding it.";
 
 const MOVES = {
   ArrowUp: "up",
@@ -593,13 +593,21 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     }
   }
 
-  /** A row's place in the tree, for grouped grids: its level, place among its siblings, and expansion. */
+  /**
+   * A row's place in the tree, for grouped grids: its level, place among its
+   * siblings, and expansion, and how far its first cell is indented (a
+   * table row's as far as its group's header).
+   */
   #placeInTree(element: HTMLDivElement, entry: GridRow, grouped: boolean) {
     if (!grouped) {
       for (const name of ["aria-level", "aria-posinset", "aria-setsize", "aria-expanded"])
         element.removeAttribute(name);
+      element.style.removeProperty("--hg-indent");
       return;
     }
+    const indent = String(entry.level - (entry.kind === "group" ? 1 : 2));
+    if (element.style.getPropertyValue("--hg-indent") !== indent)
+      element.style.setProperty("--hg-indent", indent);
     setAttribute(element, "aria-level", String(entry.level));
     setAttribute(element, "aria-posinset", String(entry.setIndex + 1));
     setAttribute(element, "aria-setsize", String(entry.setSize));
