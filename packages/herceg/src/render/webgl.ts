@@ -60,6 +60,10 @@ interface Normalized {
  * current zoom would exceed a quarter pixel are placed on the CPU instead.
  */
 const RELATIVE_ERROR = 2 ** -46;
+/** Room for appended points in streams' buffers, as a multiple of the points uploaded. */
+const STREAM_GROWTH = 1.5;
+/** Streams' normalized range reaches this share of their data's span past each end, for points to come. */
+const STREAM_HEADROOM = 0.5;
 
 interface Upload {
   x: NumericArray;
@@ -75,6 +79,19 @@ interface Upload {
   bytes: number;
   /** Charts that painted this upload; it is released when none remain. */
   owners: Set<object>;
+  /**
+   * For streams: the row identity and table `modifiedVersion` of what is
+   * uploaded, where its first point sits in the buffers, and how many points
+   * they hold.
+   */
+  stream?: {
+    offset: number;
+    modified: number;
+    start: number;
+    capacity: number;
+    /** Whether points were dropped since the normalization was chosen, so their range may be wider than needed. */
+    dropped: boolean;
+  };
 }
 
 let shared: Painter | null | undefined;
@@ -95,7 +112,7 @@ class Painter implements CloudPainter {
    * Uploads by series: its rows for long-format series (which share one y
    * column), otherwise its y column.
    */
-  readonly #uploads = new Map<NumericArray, Upload>();
+  readonly #uploads = new Map<object, Upload>();
   /** Uploads each chart painted since its last `endFrame`. */
   readonly #painted = new Map<object, Set<Upload>>();
   #bytes = 0;
@@ -162,7 +179,12 @@ class Painter implements CloudPainter {
     if (size > this.#maxPointSize) return false;
     if (cloud.end <= cloud.start) return true;
     const gl = this.#gl;
-    const upload = this.#upload(cloud);
+    let upload = this.#upload(cloud);
+    // A stream's range may still reach points it has dropped (an outlier
+    // gone), costing precision; one fresh upload fits it to what is left.
+    if (!this.#placeable(upload, cloud, pixelRatio) && upload.stream?.dropped) {
+      upload = this.#upload(cloud, true);
+    }
     upload.owners.add(owner);
     const painted = this.#painted.get(owner) ?? new Set<Upload>();
     this.#painted.set(owner, painted);
@@ -187,13 +209,8 @@ class Painter implements CloudPainter {
         offset: sign * (((map.offset - start) * 2) / length - 1),
       };
     };
+    if (!this.#placeable(upload, cloud, pixelRatio)) return false;
     const [ax, ay] = upload.axes;
-    if (!(ax.finite && ay.finite)) return false;
-    const error =
-      Math.max(ax.span * Math.abs(cloud.xMap.factor), ay.span * Math.abs(cloud.yMap.factor)) *
-      pixelRatio *
-      RELATIVE_ERROR;
-    if (!(error < 0.25)) return false;
     const x = axis(cloud.xMap, ax, plot.x, plot.width, false);
     const y = axis(cloud.yMap, ay, plot.y, plot.height, true);
     const safe = [x, y].every(
@@ -227,7 +244,8 @@ class Painter implements CloudPainter {
     const [r, g, b, a] = rgba(context, mark.fill);
     const alpha = a * mark.fillOpacity;
     gl.uniform4f(u.color!, r * alpha, g * alpha, b * alpha, alpha);
-    gl.drawArrays(gl.POINTS, cloud.start, cloud.end - cloud.start);
+    const first = (upload.stream?.start ?? 0) + cloud.start;
+    gl.drawArrays(gl.POINTS, first, cloud.end - cloud.start);
     gl.bindVertexArray(null);
     context.drawImage(this.#canvas, plot.x, plot.y, plot.width, plot.height);
     return true;
@@ -248,24 +266,36 @@ class Painter implements CloudPainter {
     this.endFrame(owner);
   }
 
-  /** The cloud's columns on the GPU, uploaded again only when they changed. */
-  #upload(cloud: PointCloud): Upload {
+  /** Whether the GPU can place an upload's points within a quarter pixel at the cloud's zoom. */
+  #placeable(upload: Upload, cloud: PointCloud, pixelRatio: number): boolean {
+    const [ax, ay] = upload.axes;
+    if (!(ax.finite && ay.finite)) return false;
+    const error =
+      Math.max(ax.span * Math.abs(cloud.xMap.factor), ay.span * Math.abs(cloud.yMap.factor)) *
+      pixelRatio *
+      RELATIVE_ERROR;
+    return error < 0.25;
+  }
+
+  /**
+   * The cloud's columns on the GPU, uploaded again only when they changed
+   * (or always, `fresh`); streams take appended points and drop the first
+   * ones in place.
+   */
+  #upload(cloud: PointCloud, fresh = false): Upload {
     const xLog = cloud.xMap.log;
     const yLog = cloud.yMap.log;
     const length = cloud.rows?.length ?? cloud.y.length;
-    const key = cloud.rows ?? cloud.y;
+    const key = cloud.stream?.key ?? cloud.rows ?? cloud.y;
     const cached = this.#uploads.get(key);
-    if (
-      cached &&
-      cached.x === cloud.x &&
-      cached.y === cloud.y &&
-      cached.rows === cloud.rows &&
-      cached.version === cloud.version &&
-      cached.length === length &&
-      cached.xLog === xLog &&
-      cached.yLog === yLog
-    ) {
-      return cached;
+    if (cached && cached.xLog === xLog && cached.yLog === yLog) {
+      const current =
+        cached.x === cloud.x &&
+        cached.y === cloud.y &&
+        cached.rows === cloud.rows &&
+        cached.version === cloud.version &&
+        cached.length === length;
+      if (!fresh && (current || (cloud.stream && this.#follow(cached, cloud)))) return cached;
     }
     const owners = cached?.owners ?? new Set<object>();
     if (cached) this.#discard(key, cached);
@@ -274,31 +304,25 @@ class Painter implements CloudPainter {
     const xs = axisValues(cloud.x, cloud.rows, length, xLog);
     const ys = axisValues(cloud.y, cloud.rows, length, yLog);
     // Normalizing each axis to [0, 1] over its data keeps every value, and
-    // the sentinel for missing ones, within float32 range.
-    const axes: [Normalized, Normalized] = [normalization(xs), normalization(ys)];
-    // Each coordinate is a float32 and its float32 remainder: about 48 bits.
-    const high = new Float32Array(length * 2).fill(MISSING);
-    const low = new Float32Array(length * 2);
-    const [ax, ay] = axes;
-    for (let k = 0; k < length; k++) {
-      const ux = (xs[k]! - ax.min) / ax.span;
-      const uy = (ys[k]! - ay.min) / ay.span;
-      // NaN fails this test, so missing values keep the sentinel.
-      if (!(ux - ux === 0 && uy - uy === 0)) continue;
-      const hx = Math.fround(ux);
-      const hy = Math.fround(uy);
-      high[k * 2] = hx;
-      high[k * 2 + 1] = hy;
-      low[k * 2] = ux - hx;
-      low[k * 2 + 1] = uy - hy;
-    }
+    // the sentinel for missing ones, within float32 range. A stream seen
+    // changing gets room in its buffers and range for points to come; until
+    // then its upload is as small as any.
+    const stream = cloud.stream;
+    const growing = stream !== undefined && cached?.stream !== undefined;
+    const axes: [Normalized, Normalized] = growing
+      ? [padded(normalization(xs)), padded(normalization(ys))]
+      : [normalization(xs), normalization(ys)];
+    const capacity = growing ? Math.max(1024, Math.ceil(length * STREAM_GROWTH)) : length;
+    const high = new Float32Array(capacity * 2).fill(MISSING);
+    const low = new Float32Array(capacity * 2);
+    encode(xs, ys, false, false, 0, length, axes, high, low);
     const gl = this.#gl;
     const vao = gl.createVertexArray()!;
     gl.bindVertexArray(vao);
     const buffers = [high, low].map((data, i) => {
       const buffer = gl.createBuffer()!;
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, data, stream ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
       const location = gl.getAttribLocation(this.#program, i === 0 ? "high" : "low");
       gl.enableVertexAttribArray(location);
       gl.vertexAttribPointer(location, 2, gl.FLOAT, false, 0, 0);
@@ -318,13 +342,72 @@ class Painter implements CloudPainter {
       buffers,
       bytes: high.byteLength + low.byteLength,
       owners,
+      ...(stream && {
+        stream: {
+          offset: stream.offset,
+          modified: stream.modified,
+          start: 0,
+          capacity,
+          dropped: false,
+        },
+      }),
     };
     this.#uploads.set(key, upload);
     this.#bytes += upload.bytes;
     return upload;
   }
 
-  #discard(key: NumericArray, upload: Upload): void {
+  /**
+   * Brings a stream's upload up to date when rows were only appended and
+   * dropped from the front since: the first points are skipped and new ones
+   * written after the last, when they fit the buffers and the normalized
+   * range. Whether it could.
+   */
+  #follow(upload: Upload, cloud: PointCloud): boolean {
+    const held = upload.stream;
+    const stream = cloud.stream!;
+    if (!held || held.modified !== stream.modified) return false;
+    const length = cloud.y.length;
+    const dropped = stream.offset - held.offset;
+    const kept = upload.length - dropped;
+    if (dropped < 0 || kept < 0 || length < kept) return false;
+    const start = held.start + dropped;
+    if (start + length > held.capacity) return false;
+    // A window that shrank far below its buffers gives the room back.
+    if (held.capacity > 1024 && length * 4 < held.capacity) return false;
+    if (length > kept) {
+      const count = length - kept;
+      const high = new Float32Array(count * 2).fill(MISSING);
+      const low = new Float32Array(count * 2);
+      const fits = encode(
+        cloud.x,
+        cloud.y,
+        upload.xLog,
+        upload.yLog,
+        kept,
+        length,
+        upload.axes,
+        high,
+        low,
+      );
+      if (!fits) return false;
+      const gl = this.#gl;
+      for (const [i, data] of [high, low].entries()) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, upload.buffers[i]!);
+        gl.bufferSubData(gl.ARRAY_BUFFER, (start + kept) * 8, data);
+      }
+    }
+    held.start = start;
+    held.offset = stream.offset;
+    held.dropped ||= dropped > 0;
+    upload.length = length;
+    upload.version = cloud.version;
+    upload.x = cloud.x;
+    upload.y = cloud.y;
+    return true;
+  }
+
+  #discard(key: object, upload: Upload): void {
     const gl = this.#gl;
     for (const buffer of upload.buffers) gl.deleteBuffer(buffer);
     gl.deleteVertexArray(upload.vao);
@@ -351,6 +434,58 @@ function axisValues(
     out[k] = log ? (v > 0 ? Math.log10(v) : Number.NaN) : v;
   }
   return out;
+}
+
+/**
+ * Writes points `[from, to)` as normalized float32 pairs and their
+ * remainders into `high` and `low` from position 0, taking log10 of values
+ * on log axes (`xLog`, `yLog`; values already in axis units pass false).
+ * Missing values keep the sentinel. Whether every placeable point fell
+ * inside the normalized range.
+ */
+function encode(
+  xs: NumericArray,
+  ys: NumericArray,
+  xLog: boolean,
+  yLog: boolean,
+  from: number,
+  to: number,
+  [ax, ay]: readonly [Normalized, Normalized],
+  high: Float32Array,
+  low: Float32Array,
+): boolean {
+  let fits = true;
+  for (let k = from; k < to; k++) {
+    const vx = xLog ? (xs[k]! > 0 ? Math.log10(xs[k]!) : Number.NaN) : xs[k]!;
+    const vy = yLog ? (ys[k]! > 0 ? Math.log10(ys[k]!) : Number.NaN) : ys[k]!;
+    // Missing values keep the sentinel.
+    if (!(vx - vx === 0 && vy - vy === 0)) continue;
+    const ux = (vx - ax.min) / ax.span;
+    const uy = (vy - ay.min) / ay.span;
+    // A placeable value whose normalized position overflows cannot be drawn
+    // with this normalization.
+    if (!(ux - ux === 0 && uy - uy === 0)) {
+      fits = false;
+      continue;
+    }
+    if (ux < 0 || ux > 1 || uy < 0 || uy > 1) fits = false;
+    const at = (k - from) * 2;
+    const hx = Math.fround(ux);
+    const hy = Math.fround(uy);
+    high[at] = hx;
+    high[at + 1] = hy;
+    low[at] = ux - hx;
+    low[at + 1] = uy - hy;
+  }
+  return fits;
+}
+
+/** A normalization widened past each end of the data, for values still to come. */
+function padded(normalized: Normalized): Normalized {
+  if (!normalized.finite) return normalized;
+  const pad = normalized.span * STREAM_HEADROOM;
+  const span = normalized.span + 2 * pad;
+  return Number.isFinite(span) ? { min: normalized.min - pad, span, finite: true } : normalized;
 }
 
 /** The finite range of values, as an origin and a nonzero span. */

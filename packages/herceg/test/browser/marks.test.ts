@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { estimateText } from "../../src/layout/text.ts";
@@ -627,6 +627,47 @@ describe("point clouds on the GPU", () => {
     expect(painter.bytes).toBe(before + 150_000 * 16);
     chart.destroy();
     expect(painter.bytes).toBe(before);
+  });
+
+  it("follows streaming rows by uploading only the new ones", async () => {
+    const data = cloudTable(150_000);
+    const rolling = table({ x: data.numbers("x"), y: data.numbers("y") }, { maxRows: 150_000 });
+    const chart = createChart(host, {
+      x: { domain: [0, 10], grid: false },
+      y: { domain: [0, 10], grid: false },
+      marks: [point(rolling, { x: "x", y: "y", r: 6, fill: "#000000", fillOpacity: 0.5 })],
+    });
+    await chart.loading;
+    const proto = WebGL2RenderingContext.prototype;
+    const whole = vi.spyOn(proto, "bufferData");
+    const part = vi.spyOn(proto, "bufferSubData");
+    const append = (x: number, y: number) => {
+      rolling.append({ x: new Float64Array(1000).fill(x), y: new Float64Array(1000).fill(y) });
+      chart.render();
+    };
+    // The first change uploads again, with room to grow; later ones only add rows.
+    append(3, 3);
+    const uploads = whole.mock.calls.length;
+    expect(uploads).toBeGreaterThan(0);
+    for (let tick = 0; tick < 20; tick++) append(1, 1);
+    // Within the range uploaded (the data's, from 1 to 3, and half as much again each way).
+    append(2.5, 2.5);
+    expect(whole.mock.calls.length).toBe(uploads);
+    expect(part.mock.calls.length).toBeGreaterThanOrEqual(21);
+    // New points are drawn; the window has dropped the lone point at (5, 5).
+    expect(pixel(chart, 3, 3)[3]).toBeGreaterThan(0);
+    expect(pixel(chart, 2.5, 2.5)[3]).toBeGreaterThan(0);
+    expect(pixel(chart, 5, 5)[3]).toBe(0);
+    // Points past the range uploaded so far, and values replaced in place, upload again.
+    append(1e6, 1);
+    expect(whole.mock.calls.length).toBeGreaterThan(uploads);
+    const after = whole.mock.calls.length;
+    rolling.replace("y", 0, [2]);
+    chart.render();
+    expect(whole.mock.calls.length).toBeGreaterThan(after);
+    whole.mockRestore();
+    part.mockRestore();
+    chart.destroy();
   });
 
   it("keeps precision for extreme values and resolves any CSS color", async () => {

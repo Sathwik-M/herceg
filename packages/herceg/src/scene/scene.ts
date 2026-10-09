@@ -257,6 +257,13 @@ export interface PointCloud {
   yMap: Mapping;
   /** Table version of the columns: with their identity, it tells whether uploaded copies are current. */
   version: number;
+  /**
+   * For whole columns of a table: one object per table and field pair, the
+   * row identity (`rowOffset`) of the columns' first value, and the table's
+   * `modifiedVersion`. Uploaded copies then take appended rows and drop the
+   * first ones as the table streams, instead of being uploaded again.
+   */
+  stream?: { key: object; offset: number; modified: number } | undefined;
 }
 
 /**

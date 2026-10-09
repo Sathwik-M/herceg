@@ -11,7 +11,7 @@ import {
   SequentialScale,
 } from "../scale/color.ts";
 import { linearTicks } from "../scale/ticks.ts";
-import { CLOUD_POINTS, type PointGeometry } from "../scene/scene.ts";
+import { CLOUD_POINTS, type PointCloud, type PointGeometry } from "../scene/scene.ts";
 import type { PointSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { definedFields } from "./line.ts";
@@ -92,6 +92,9 @@ interface Encoding {
   palette?: readonly string[];
   opacity?: (value: number) => number;
 }
+
+/** Stream identities of clouds by table, x field, and y field, shared by every chart drawing them. */
+const streamKeys = new WeakMap<Table, Map<string, Map<string, object>>>();
 
 export class PointMark implements Mark<PointSpec> {
   readonly spec: PointSpec;
@@ -244,6 +247,7 @@ export class PointMark implements Mark<PointSpec> {
             xMap: frame.x.mapping(),
             yMap: frame.y.mapping(),
             version: this.table.version,
+            stream: this.#stream(s),
           },
         });
         continue;
@@ -472,6 +476,31 @@ export class PointMark implements Mark<PointSpec> {
   /** Shapes by category value, and the next shape a new value takes. */
   readonly #shapes = new Map<string, number>();
   #nextShape = 0;
+  /** The stream identity of a series of whole columns, for GPU uploads that follow appends. */
+  #stream(s: Series): PointCloud["stream"] {
+    const { table } = this;
+    const x = this.spec.x as string;
+    if (s.rows !== undefined || s.field === undefined) return undefined;
+    if (s.x !== table.numbers(x as never) || s.y !== table.numbers(s.field as never))
+      return undefined;
+    let byX = streamKeys.get(table);
+    if (!byX) {
+      byX = new Map();
+      streamKeys.set(table, byX);
+    }
+    let byY = byX.get(x);
+    if (!byY) {
+      byY = new Map();
+      byX.set(x, byY);
+    }
+    let key = byY.get(s.field);
+    if (!key) {
+      key = {};
+      byY.set(s.field, key);
+    }
+    return { key, offset: table.rowOffset, modified: table.modifiedVersion };
+  }
+
   #codeShapes: { version: number; shapes: Uint8Array } | undefined;
 
   /** The y value and the values of the fields encoded as size, color, and opacity. */
