@@ -117,6 +117,8 @@ describe("time axes with breaks", () => {
       marks: [line(hourly(), { x: "t", y: "v" })],
       x: { breaks: weekend() },
     });
+    // The brush loads on demand.
+    await chart.loading;
     const x = modelOf(chart).xScale()!;
     const from = utc(2025, 10, 10, 12);
     const to = utc(2025, 10, 13, 12);

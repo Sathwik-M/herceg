@@ -114,6 +114,8 @@ describe("facets in the browser", () => {
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
     });
+    // The brush loads on demand.
+    await chart.loading;
     const [a, b] = modelOf(chart).panels();
     const y = b!.plot.y + b!.plot.height / 2;
     pointer(chart.root, "pointerdown", b!.x.map(2), y);
@@ -242,7 +244,7 @@ describe("facet panels with y scales of their own", () => {
       ...options,
     });
 
-  it("announce a brushed range as the panel it was drawn in formats values", () => {
+  it("announce a brushed range as the panel it was drawn in formats values", async () => {
     const day = Date.UTC(2026, 0, 1);
     const data = table({
       x: [0, 1, 0, 1],
@@ -254,6 +256,8 @@ describe("facet panels with y scales of their own", () => {
       interaction: { brush: "y" },
       y: { type: "time" },
     });
+    // The brush loads on demand.
+    await chart.loading;
     const b = modelOf(chart).panels()[1]!;
     pointer(chart.root, "pointerdown", b.x.map(0.5), b.y.map(day + 2000));
     pointer(chart.root, "pointermove", b.x.map(0.5), b.y.map(day + 8000));
@@ -519,6 +523,8 @@ describe("facet panels with x scales of their own", () => {
       facet: facet("region"),
       resolve: { x: "independent" },
     });
+    // The brush loads on demand.
+    await chart.loading;
     const selections: ChartEvents["select"][] = [];
     chart.on("select", (event) => selections.push(event));
     const [, b] = modelOf(chart).panels();
@@ -634,8 +640,10 @@ describe("facet panels with x scales of their own", () => {
     chart.destroy();
   });
 
-  it("zoom a brushed range in its own panel's scale", () => {
+  it("zoom a brushed range in its own panel's scale", async () => {
     const chart = independent({ interaction: { brush: "x", zoom: true } });
+    // The brush loads on demand.
+    await chart.loading;
     const [a] = modelOf(chart).panels();
     const y = a!.plot.y + a!.plot.height / 2;
     pointer(chart.root, "pointerdown", a!.x.map(2), y);

@@ -1,7 +1,7 @@
 // The Streamlit component's front end, called the way Streamlit calls it:
 // once per script run, with the payload herceg.streamlit.payload builds.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import herceg, { type Component, type Header } from "../streamlit.ts";
 
 /**
@@ -129,7 +129,9 @@ function press(root: ParentNode, type: string, fraction: number, down = 0.5) {
   );
 }
 
-function brush(root: ParentNode, from: number, to: number) {
+/** Drags across a chart, once its brush, which loads on demand, has. */
+async function brush(root: ParentNode, from: number, to: number) {
+  await vi.dynamicImportSettled();
   press(root, "pointerdown", from);
   press(root, "pointermove", (from + to) / 2);
   press(root, "pointermove", to);
@@ -153,7 +155,7 @@ describe("Streamlit component", () => {
   it("reports a brushed range and clicks only when the script reacts to them", async () => {
     const quiet = host();
     const ignored = run(quiet, lineChart("Quiet", []));
-    brush(quiet, 0.3, 0.7);
+    await brush(quiet, 0.3, 0.7);
     press(quiet, "pointerdown", 0.5);
     press(quiet, "pointerup", 0.5);
     expect(ignored.state).toEqual([]);
@@ -161,7 +163,7 @@ describe("Streamlit component", () => {
 
     const parent = host();
     const { state, triggers } = run(parent, lineChart("Reacts", ["select", "click"]));
-    brush(parent, 0.3, 0.7);
+    await brush(parent, 0.3, 0.7);
     await frame();
     expect(state).toHaveLength(1);
     const [name, value] = state[0]!;
@@ -192,7 +194,7 @@ describe("Streamlit component", () => {
   it("redraws new bytes in place, keeping the brush", async () => {
     const parent = host();
     run(parent, lineChart("Before", ["select"]));
-    brush(parent, 0.3, 0.7);
+    await brush(parent, 0.3, 0.7);
     await frame();
     const next = run(parent, lineChart("After", ["select"]));
     await frame();
@@ -208,6 +210,8 @@ describe("Streamlit component", () => {
     const options = { interaction: { brush: "xy", zoom: "y" } } as const;
     run(parent, lineChart("Before", ["select"], options));
     press(parent, "wheel", 0.5);
+    // The brush loads on demand.
+    await vi.dynamicImportSettled();
     press(parent, "pointerdown", 0.3, 0.3);
     press(parent, "pointermove", 0.5, 0.5);
     press(parent, "pointerup", 0.7, 0.7);
@@ -276,6 +280,8 @@ describe("Streamlit component", () => {
   it("keeps a lasso over categories only while they stay where they were", async () => {
     const parent = host();
     const first = run(parent, bars(["a", "b", "c"], "lasso"));
+    // The brush loads on demand.
+    await vi.dynamicImportSettled();
     press(parent, "pointerdown", 0.2, 0.3);
     for (const [x, y] of [
       [0.5, 0.3],
@@ -304,7 +310,7 @@ describe("Streamlit component", () => {
   it("clears the script's selection when a new chart cannot keep the brush", async () => {
     const parent = host();
     run(parent, lineChart("Numbers", ["select"]));
-    brush(parent, 0.3, 0.7);
+    await brush(parent, 0.3, 0.7);
     await frame();
     // Bars along categories replace the line: a range of numbers means nothing there.
     const next = run(parent, bars(["a", "b"]));
@@ -316,7 +322,7 @@ describe("Streamlit component", () => {
     const parent = host();
     const { state } = run(parent, bars(["a", "b", "c"]));
     // Across the first two of three bands.
-    brush(parent, 0.15, 0.45);
+    await brush(parent, 0.15, 0.45);
     await frame();
     const whole = { y: null, lasso: null, time: [] };
     expect(state).toEqual([["selection", { x: ["a", "b"], ...whole }]]);
@@ -411,6 +417,8 @@ describe("Streamlit component with panels' own x scales", () => {
     const fitted = xLabels(parent);
     // Zoom the right panel (b) and select in the left one (a).
     press(parent, "wheel", 0.75);
+    // The brush loads on demand.
+    await vi.dynamicImportSettled();
     press(parent, "pointerdown", 0.15, 0.3);
     press(parent, "pointermove", 0.2, 0.5);
     press(parent, "pointerup", 0.3, 0.7);
@@ -452,7 +460,7 @@ describe("Streamlit component with panels' own x scales", () => {
         ["select"],
       );
     const first = run(parent, panel("a"));
-    brush(parent, 0.3, 0.7);
+    await brush(parent, 0.3, 0.7);
     await frame();
     const [, selected] = first.state.at(-1)!;
     const next = run(parent, panel("b"));
