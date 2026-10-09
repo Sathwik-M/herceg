@@ -1,9 +1,9 @@
 {
  "schema": 1,
- "date": "2026-10-09T20:51:03.597Z",
+ "date": "2026-10-09T21:11:41.524Z",
  "commit": {
-  "sha": "b5a0d08",
-  "dirty": true
+  "sha": "1b6b91c",
+  "dirty": false
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
  "environment": {
@@ -66,7 +66,7 @@
   {
    "entry": "herceg-grid",
    "package": "herceg",
-   "version": "0.0.0 (b5a0d08)",
+   "version": "0.0.0 (1b6b91c)",
    "raw": 187454,
    "minified": 87866,
    "gzip": 30425,
@@ -78,11 +78,11 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (b5a0d08)",
-   "raw": 254488,
-   "minified": 115177,
-   "gzip": 43091,
-   "brotli": 38587,
+   "version": "0.0.0 (1b6b91c)",
+   "raw": 254755,
+   "minified": 115207,
+   "gzip": 43111,
+   "brotli": 38592,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -93,11 +93,11 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (b5a0d08)",
-   "raw": 259439,
-   "minified": 117851,
-   "gzip": 44257,
-   "brotli": 39589,
+   "version": "0.0.0 (1b6b91c)",
+   "raw": 259706,
+   "minified": 117881,
+   "gzip": 44274,
+   "brotli": 39613,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -108,11 +108,11 @@
   {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (b5a0d08)",
-   "raw": 261859,
-   "minified": 119323,
-   "gzip": 44827,
-   "brotli": 40177,
+   "version": "0.0.0 (1b6b91c)",
+   "raw": 262126,
+   "minified": 119353,
+   "gzip": 44845,
+   "brotli": 40138,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -123,11 +123,11 @@
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (b5a0d08)",
-   "raw": 262156,
-   "minified": 118897,
-   "gzip": 44654,
-   "brotli": 39987,
+   "version": "0.0.0 (1b6b91c)",
+   "raw": 262423,
+   "minified": 118927,
+   "gzip": 44672,
+   "brotli": 40002,
    "chunks": 3,
    "css": null,
    "lazy": {
