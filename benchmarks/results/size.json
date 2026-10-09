@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-09T17:38:34.354Z",
+ "date": "2026-10-09T18:21:33.039Z",
  "commit": {
-  "sha": "12677c4",
+  "sha": "59eef32",
   "dirty": false
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
@@ -66,7 +66,7 @@
   {
    "entry": "herceg-grid",
    "package": "herceg",
-   "version": "0.0.0 (12677c4)",
+   "version": "0.0.0 (59eef32)",
    "raw": 177849,
    "minified": 83927,
    "gzip": 28857,
@@ -78,11 +78,11 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (12677c4)",
-   "raw": 252823,
-   "minified": 114724,
-   "gzip": 42927,
-   "brotli": 38388,
+   "version": "0.0.0 (59eef32)",
+   "raw": 253486,
+   "minified": 114885,
+   "gzip": 43004,
+   "brotli": 38514,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -93,11 +93,11 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (12677c4)",
-   "raw": 257774,
-   "minified": 117394,
-   "gzip": 44086,
-   "brotli": 39457,
+   "version": "0.0.0 (59eef32)",
+   "raw": 258437,
+   "minified": 117559,
+   "gzip": 44165,
+   "brotli": 39575,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -108,11 +108,11 @@
   {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (12677c4)",
-   "raw": 260194,
-   "minified": 118868,
-   "gzip": 44665,
-   "brotli": 40011,
+   "version": "0.0.0 (59eef32)",
+   "raw": 260857,
+   "minified": 119030,
+   "gzip": 44735,
+   "brotli": 40021,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -123,11 +123,11 @@
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (12677c4)",
-   "raw": 260486,
-   "minified": 118444,
-   "gzip": 44497,
-   "brotli": 39862,
+   "version": "0.0.0 (59eef32)",
+   "raw": 261154,
+   "minified": 118605,
+   "gzip": 44563,
+   "brotli": 39935,
    "chunks": 3,
    "css": null,
    "lazy": {
