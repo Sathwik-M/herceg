@@ -162,6 +162,8 @@ def test_annotations_take_constants_or_columns():
     assert marks[2] == {"type": "rule", "x": "at", "text": "name", "data": "data2"}
     assert marks[3] == {"type": "rule", "y": 2.5, "label": "limit"}
     assert (marks[4]["data"], marks[4]["text"]) == ("data", "host")
+    crowded, _ = hg.Chart(DATA).text(x="t", y="p50", text="host", overlap="move").to_spec()
+    assert crowded["marks"][0]["overlap"] == "move"
     assert sorted(spec["data"]["data"]["columns"]) == ["host", "p50", "p99", "t"]
     svg = chart.to_svg()
     for label in ("warmup", "deploy", "limit", "a", "b"):
@@ -177,6 +179,8 @@ def test_annotation_options_are_checked():
         hg.Chart(DATA).rule(x="host")
     with pytest.raises(TypeError, match="text text: column 't'"):
         hg.Chart(DATA).text(x="t", y="p50", text="t")
+    with pytest.raises(ValueError, match="overlap must be"):
+        hg.Chart(DATA).text(x="t", y="p50", text="host", overlap="dodge")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="Pass data"):
         hg.Chart().rule(x="at")
 

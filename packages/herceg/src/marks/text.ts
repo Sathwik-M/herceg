@@ -1,5 +1,6 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
 import { textDrawing } from "../draw/text.ts";
+import { LabelBoxes } from "../layout/label-boxes.ts";
 import type { TextGeometry } from "../scene/scene.ts";
 import type { TextSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
@@ -20,9 +21,37 @@ interface TextStyle {
   /** Pixel offsets from the point; positive dy moves down. */
   dx?: number;
   dy?: number;
+  /**
+   * Labels that would cover an earlier one of this mark, in row order:
+   * drawn anyway ("show", the default), left out ("hide"), or moved
+   * ("move"): kept where they are put when that is free and in the plot,
+   * else tried above, below, beside, and at the corners of their point, off
+   * the other rows' points, and left out when nothing fits.
+   */
+  overlap?: "show" | "hide" | "move";
   id?: string;
 }
 
+/** Room kept around each label against others, in pixels; a halo reaches 1.5. */
+const LABEL_GAP = 2;
+/** Room between a moved label and its point, in pixels. */
+const POINT_GAP = 5;
+/** Half the side of the box a labeled point keeps clear of moved labels, in pixels: a dot. */
+const POINT_SIZE = 3;
+/**
+ * Where a moved label may go, as directions from its point: above, below,
+ * after, before, then the corners.
+ */
+const AROUND: readonly (readonly [number, number])[] = [
+  [0, -1],
+  [0, 1],
+  [1, 0],
+  [-1, 0],
+  [1, -1],
+  [-1, -1],
+  [1, 1],
+  [-1, 1],
+];
 /** One label at constant values. */
 export interface TextOptions extends TextStyle {
   x: number | Date;
@@ -98,26 +127,74 @@ export class TextMark implements Mark<TextSpec> {
 
   geometry(_series: unknown, frame: Frame, key: MarkKey): TextGeometry[] {
     const { spec } = this;
-    const { plot } = frame;
+    const { plot, theme } = frame;
     const data = this.#data;
     const id = seriesKey(key, "text");
     const x = data.channel(spec.x);
     const y = data.channel(spec.y);
-    const coords = frame.floats(id, "text", data.count * 2);
-    const labels: string[] = [];
+    const anchor = spec.anchor ?? "middle";
     const dx = spec.dx ?? 0;
     const dy = spec.dy ?? 0;
-    for (let i = 0; i < data.count; i++) {
-      const px = frame.x.map(valueAt(x, i));
-      const py = frame.y.map(valueAt(y, i));
+    const overlap = spec.overlap ?? "show";
+    const placed = overlap === "show" ? undefined : new LabelBoxes();
+    const moving = overlap === "move";
+    const font = `${theme.fontSize}px ${theme.font}`;
+    // Half a label's height, with the room kept around it.
+    const half = Math.ceil(theme.fontSize * 0.6) + LABEL_GAP;
+    const inPlot = (x0: number, y0: number, x1: number, y1: number) =>
+      x0 >= plot.x && x1 <= plot.x + plot.width && y0 >= plot.y && y1 <= plot.y + plot.height;
+    const pointAt = (row: number) => [frame.x.map(valueAt(x, row)), frame.y.map(valueAt(y, row))];
+    // Moved labels keep off the points of the other rows in view.
+    const dots = moving ? new LabelBoxes() : undefined;
+    const dotOf = new Int32Array(dots ? data.count : 0).fill(-1);
+    if (dots) {
+      for (let row = 0; row < data.count; row++) {
+        const [px, py] = pointAt(row) as [number, number];
+        const s = POINT_SIZE;
+        if (inPlot(px, py, px, py)) dotOf[row] = dots.add(px - s, py - s, px + s, py + s);
+      }
+    }
+    const coords = frame.floats(id, "text", data.count * 2);
+    const labels: string[] = [];
+    for (let row = 0; row < data.count; row++) {
+      const [px, py] = pointAt(row) as [number, number];
       // Labels are not clipped, so ones whose point is out of view are left out.
-      if (
-        !(px >= plot.x && px <= plot.x + plot.width && py >= plot.y && py <= plot.y + plot.height)
-      )
-        continue;
-      coords[labels.length * 2] = px + dx;
-      coords[labels.length * 2 + 1] = py + dy;
-      labels.push(data.text(i, frame.locale));
+      if (!inPlot(px, py, px, py)) continue;
+      const label = data.text(row, frame.locale);
+      let lx = px + dx;
+      let ly = py + dy;
+      if (placed) {
+        // Empty labels draw nothing, so they take no room.
+        if (label === "") continue;
+        const width = frame.measure(label, font);
+        // From the anchor to the label's center, and half its box's width.
+        const shift = anchor === "start" ? width / 2 : anchor === "end" ? -width / 2 : 0;
+        const reach = width / 2 + LABEL_GAP;
+        // Places are boxes' centers: the author's, then, when moving, the
+        // spots around the point, nearest sides first.
+        const side = POINT_GAP + reach;
+        const level = POINT_GAP + half;
+        let found = false;
+        for (let p = 0; p < (moving ? 9 : 1) && !found; p++) {
+          const [cx, cy] =
+            p === 0
+              ? [lx + shift, ly]
+              : [px + AROUND[p - 1]![0] * side, py + AROUND[p - 1]![1] * level];
+          const [x0, y0, x1, y1] = [cx - reach, cy - half, cx + reach, cy + half];
+          // Moving labels stay in the plot, and moved ones off other points.
+          if (moving && !inPlot(x0, y0, x1, y1)) continue;
+          if (p > 0 && dots!.hits(x0, y0, x1, y1, dotOf[row])) continue;
+          if (placed.hits(x0, y0, x1, y1)) continue;
+          placed.add(x0, y0, x1, y1);
+          lx = cx - shift;
+          ly = cy;
+          found = true;
+        }
+        if (!found) continue;
+      }
+      coords[labels.length * 2] = lx;
+      coords[labels.length * 2 + 1] = ly;
+      labels.push(label);
     }
     if (labels.length === 0) return [];
     return [
@@ -126,8 +203,8 @@ export class TextMark implements Mark<TextSpec> {
         draw: textDrawing,
         halo: true,
         key: id,
-        fill: spec.fill ?? frame.theme.text,
-        anchor: spec.anchor ?? "middle",
+        fill: spec.fill ?? theme.text,
+        anchor,
         coords,
         labels,
         count: labels.length,
@@ -165,6 +242,7 @@ export function text<S extends Schema>(
       "anchor",
       "dx",
       "dy",
+      "overlap",
       "axis",
       "facet",
       "panel",

@@ -49,7 +49,8 @@ histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge,
 funnel, radar, Sankey, and network (graph) marks, monotone curves, named
 color schemes and diverging color, built-in themes (light, dark, high
 contrast, and one that follows the page) with CSS-variable theming, rule,
-region, and text annotations from constants or data, custom marks drawing
+region, and text annotations from constants or data (with labels hidden or
+moved where they would overlap), custom marks drawing
 through the same renderers (with series, legends, and tooltips), derived
 tables (filter, calculate, bin, aggregate, rolling windows, sort) with
 portable expressions, level of detail, streaming updates, a shared
@@ -67,8 +68,8 @@ Next, in order:
 
 1. Large data: incremental stacked and grouped updates, partial GPU uploads.
 2. Layout: independent x scales and weighted columns.
-3. Animation of changed values (bars, pies) and of panels; label collision
-   handling.
+3. Animation of changed values (bars, pies) and of panels; leader lines for
+   moved labels.
 4. Financial tools, geographic charts, and 3D.
 5. Screen-reader verification, benchmarks across browsers and machines, and
    an API review before a first release.

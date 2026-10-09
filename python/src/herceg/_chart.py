@@ -1364,6 +1364,7 @@ class Chart:
         anchor: Literal["start", "middle", "end"] | None = None,
         dx: float | None = None,
         dy: float | None = None,
+        overlap: Literal["show", "hide", "move"] | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -1372,8 +1373,14 @@ class Chart:
         """Text at ``(x, y)``: ``label`` for constant text, or ``text`` naming a column.
 
         Column names for ``x`` or ``y`` draw one label per row. ``dx`` and
-        ``dy`` offset labels in pixels; positive ``dy`` moves down.
+        ``dy`` offset labels in pixels; positive ``dy`` moves down. Labels that
+        would cover an earlier one of this mark, in row order, are drawn anyway
+        (``overlap="show"``), left out (``"hide"``), or, where their place is
+        taken or outside the plot, tried around their point and left out when
+        nothing fits (``"move"``).
         """
+        if overlap not in (None, "show", "hide", "move"):
+            raise ValueError(f"overlap must be 'show', 'hide', or 'move', not {overlap!r}")
         if (label is None) == (text is None):
             raise ValueError("text needs exactly one of label or text")
         table = self._annotation_table(data, {"x": x, "y": y}, text, "text")
@@ -1388,6 +1395,7 @@ class Chart:
                 "anchor": anchor,
                 "dx": dx,
                 "dy": dy,
+                "overlap": overlap,
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
