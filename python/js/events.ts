@@ -52,6 +52,8 @@ export interface InspectionPayload {
     value: number | null;
     text: string;
   }[];
+  /** An item's data by field (a 3D chart's point): numbers, times in epoch ms, and categories. */
+  values?: Readonly<Record<string, number | string>>;
 }
 
 /** What reads a chart's axes: their scales, as Python sees their values. */
@@ -185,6 +187,7 @@ export function inspectionPayload(
       value: finite(point.value),
       text: point.text,
     })),
+    ...(inspection.axis === "item" && inspection.values && { values: inspection.values }),
   };
 }
 

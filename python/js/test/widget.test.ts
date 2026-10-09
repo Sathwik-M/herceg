@@ -801,4 +801,29 @@ describe("notebook widget", () => {
     expect(model.messages("hover")).toEqual([{ type: "hover", inspection }]);
     expect(model.messages("click")).toEqual([{ type: "click", inspection }]);
   });
+
+  it("sends a 3D chart's camera and its points' values when Python listens", async () => {
+    const chart = snapshot();
+    chart.spec.marks = [{ type: "point3d", x: "t", y: "v", z: "v", data: "data" }];
+    const model = new MockModel({ _chart: chart, _listening: ["camera", "click"] });
+    const [host] = mount(model);
+    const rect = host!.getBoundingClientRect();
+    const drag = (type: string, x: number) =>
+      host!.querySelector<HTMLElement>("[role=figure]")!.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          button: 0,
+          pointerId: 1,
+          clientX: rect.left + x,
+          clientY: rect.top + 100,
+        }),
+      );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    drag("pointerdown", 200);
+    drag("pointermove", 220);
+    drag("pointerup", 220);
+    await frame();
+    const [message] = model.messages("camera") as { camera: { azimuth: number } }[];
+    expect(message!.camera.azimuth).toBeCloseTo(-60 - 20 * 0.4);
+  });
 });

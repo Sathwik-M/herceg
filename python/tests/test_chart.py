@@ -1066,7 +1066,7 @@ def test_option_types_list_every_option():
     assert set(hg.ChartOptions.__optional_keys__) == parameters
     assert set(hg.ChartUpdate.__optional_keys__) == set(OPTIONS)
     helper = set(hg.HelperOptions.__optional_keys__)
-    assert helper == parameters - {"x", "y"} | {"x_axis", "y_axis"}
+    assert helper == parameters - {"x", "y", "z"} | {"x_axis", "y_axis", "z_axis"}
 
 
 def test_helpers_take_axes_as_x_axis_and_y_axis():
@@ -1097,6 +1097,8 @@ HELPERS = {
     "choropleth": "geoshape",
     "scatter_geo": "geopoint",
     "candlestick": "candlestick",
+    "scatter_3d": "point3d",
+    "surface": "surface",
 }
 
 

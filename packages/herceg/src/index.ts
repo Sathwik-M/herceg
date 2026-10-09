@@ -126,7 +126,9 @@ export {
 export { type LineMark, type LineOptions, line } from "./marks/line.ts";
 export type { AxisFormat, Mark, MarkIdentity } from "./marks/mark.ts";
 export { type PieMark, type PieOptions, pie } from "./marks/pie.ts";
+export type { Plot3D } from "./marks/plot3d.ts";
 export { type PointMark, type PointOptions, point } from "./marks/point.ts";
+export { type Point3DMark, type Point3DOptions, point3d } from "./marks/point3d.ts";
 export { type RadarMark, type RadarOptions, radar } from "./marks/radar.ts";
 export {
   type RegionDataOptions,
@@ -137,6 +139,7 @@ export {
 export { type RuleDataOptions, type RuleMark, type RuleOptions, rule } from "./marks/rule.ts";
 export { type SankeyMark, type SankeyOptions, sankey } from "./marks/sankey.ts";
 export { type SunburstMark, type SunburstOptions, sunburst } from "./marks/sunburst.ts";
+export { type SurfaceMark, type SurfaceOptions, surface } from "./marks/surface.ts";
 export { type TextDataOptions, type TextMark, type TextOptions, text } from "./marks/text.ts";
 export { type TreemapMark, type TreemapOptions, treemap } from "./marks/treemap.ts";
 export { type ViolinMark, type ViolinOptions, violin } from "./marks/violin.ts";
@@ -157,3 +160,4 @@ export * from "./scale/schemes.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
 export type { Theme } from "./theme.ts";
+export type { Camera } from "./three/camera.ts";

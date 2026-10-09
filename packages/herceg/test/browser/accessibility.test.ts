@@ -18,9 +18,11 @@ import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
+import { point3d } from "../../src/marks/point3d.ts";
 import { radar } from "../../src/marks/radar.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { sankey } from "../../src/marks/sankey.ts";
+import { surface } from "../../src/marks/surface.ts";
 import { text } from "../../src/marks/text.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import { facet } from "../../src/model/facet.ts";
@@ -127,6 +129,22 @@ const cases: [string, ChartOptions][] = [
   ["a radar", { marks: [radar(players, { fields: ["speed", "power", "range"], series: "name" })] }],
   ["a Sankey diagram", { marks: [sankey(flows, { source: "from", target: "to", value: "twh" })] }],
   ["a network", { marks: [graph(flows, { source: "from", target: "to", value: "twh" })] }],
+  [
+    "a 3D scatter, with its view buttons",
+    { marks: [point3d(metrics, { x: "t", y: "a", z: "b", series: "host" })] },
+  ],
+  [
+    "a surface with a color legend",
+    {
+      marks: [
+        surface(table({ x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [1, 2, 3, 4] }), {
+          x: "x",
+          y: "y",
+          z: "z",
+        }),
+      ],
+    },
+  ],
 ];
 
 describe("accessibility audits", () => {

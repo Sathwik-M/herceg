@@ -6,9 +6,11 @@ import {
   type CandleData,
   type CategoryData,
   type GridData,
+  type Point3Data,
   type PointData,
   type SampleData,
   type SeriesData,
+  type SurfaceData,
 } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartOptions } from "../page/adapter.ts";
 import { clientPoint, color, FALL, RISE } from "../page/adapter.ts";
@@ -235,6 +237,68 @@ function heatmapTraces(data: GridData): Partial<Plotly.Data>[] {
   ];
 }
 
+// 3D charts are WebGL (gl3d) in Plotly. The camera is orthographic, as
+// Herceg's is by default, with the box a cube, and its eye at Plotly's
+// default distance in the direction of the azimuth and elevation.
+function scene3d(
+  options: ChartOptions,
+  extra: Partial<Plotly.Layout> = {},
+): Partial<Plotly.Layout> {
+  return layout(options, {
+    hovermode: options.tooltip ? "closest" : false,
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    scene: { aspectmode: "cube", camera: { projection: { type: "orthographic" } } },
+    ...extra,
+  } as Partial<Plotly.Layout>);
+}
+
+function eye(azimuth: number, elevation: number) {
+  const distance = Math.hypot(1.25, 1.25, 1.25);
+  const [a, e] = [(azimuth * Math.PI) / 180, (elevation * Math.PI) / 180];
+  return {
+    x: distance * Math.cos(e) * Math.cos(a),
+    y: distance * Math.cos(e) * Math.sin(a),
+    z: distance * Math.sin(e),
+  };
+}
+
+function scatter3dTraces(data: Point3Data): Partial<Plotly.Data>[] {
+  return [
+    {
+      type: "scatter3d",
+      mode: "markers",
+      x: data.x as unknown as number[],
+      y: data.y as unknown as number[],
+      z: data.z as unknown as number[],
+      marker: { size: 7, color: color(0), line: { width: 0 } },
+    } as Partial<Plotly.Data>,
+  ];
+}
+
+// Plotly's surface takes z as rows of the grid, over the x and y vectors.
+function surfaceTraces(data: SurfaceData): Partial<Plotly.Data>[] {
+  const side = data.x.length;
+  const z = Array.from({ length: data.y.length }, (_, j) =>
+    data.z.subarray(j * side, (j + 1) * side),
+  );
+  return [
+    {
+      type: "surface",
+      x: data.x as unknown as number[],
+      y: data.y as unknown as number[],
+      z: z as unknown as number[][],
+    } as Partial<Plotly.Data>,
+  ];
+}
+
+function camera3d(root: Root) {
+  return async (azimuth: number, elevation: number) => {
+    await Plotly.relayout(root, {
+      "scene.camera.eye": eye(azimuth, elevation),
+    } as Partial<Plotly.Layout>);
+  };
+}
+
 export const adapter: Adapter = {
   id: "plotly",
   renderer: { normal: "svg", large: "webgl (scattergl)" },
@@ -323,6 +387,36 @@ export const adapter: Adapter = {
         (next) => Plotly.react(root, histogramTraces(next), plotLayout, config(options)),
         plotLayout,
       );
+    },
+  },
+  scatter3d: {
+    prepare: scatter3dTraces,
+    async create(container, data, options) {
+      const plotLayout = scene3d(options);
+      const root = await mount(container, scatter3dTraces(data), plotLayout, options);
+      return {
+        ...handle<Point3Data>(
+          root,
+          (next) => Plotly.react(root, scatter3dTraces(next), plotLayout, config(options)),
+          plotLayout,
+        ),
+        setCamera: camera3d(root),
+      };
+    },
+  },
+  surface: {
+    prepare: surfaceTraces,
+    async create(container, data, options) {
+      const plotLayout = scene3d(options);
+      const root = await mount(container, surfaceTraces(data), plotLayout, options);
+      return {
+        ...handle<SurfaceData>(
+          root,
+          (next) => Plotly.react(root, surfaceTraces(next), plotLayout, config(options)),
+          plotLayout,
+        ),
+        setCamera: camera3d(root),
+      };
     },
   },
 };

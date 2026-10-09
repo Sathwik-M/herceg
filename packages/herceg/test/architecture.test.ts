@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const SRC = join(import.meta.dirname, "..", "src");
 // The chart engine must run without a DOM (servers, workers, Python exports).
-const CORE = ["data", "geo", "scale", "format", "lod", "marks", "model", "scene", "spec"];
+const CORE = ["data", "geo", "scale", "format", "lod", "marks", "model", "scene", "spec", "three"];
 const DOM = /\b(document|window|HTMLElement|SVGElement|requestAnimationFrame|getComputedStyle)\b/;
 
 function files(directory: string): string[] {

@@ -21,6 +21,7 @@ import Maps from "./Maps.svelte";
 import Parent from "./Parent.svelte";
 import Pies from "./Pies.svelte";
 import Prices from "./Prices.svelte";
+import Solids from "./Solids.svelte";
 import Stray from "./Stray.svelte";
 
 let host: HTMLDivElement;
@@ -136,6 +137,25 @@ describe("<Chart>", () => {
     expect(filled).toHaveLength(2);
     // The point, ringed in the background color.
     expect(host.querySelectorAll('svg g[clip-path] g[stroke-width="1"] circle')).toHaveLength(1);
+  });
+
+  it("draws 3D marks from their components, with camera props and events", async () => {
+    const cameras: number[] = [];
+    const props = $state({
+      grid: table({ x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [1, 2, 3, 4] }),
+      points: table({ x: [0.5], y: [0.5], z: [3] }),
+      azimuth: 10,
+      chart: null as HercegChart | null,
+      oncamera: ({ camera }: { camera: { azimuth: number } }) => cameras.push(camera.azimuth),
+    });
+    render(Solids, props);
+    expect(host.textContent).toContain("Surface of z over x and y");
+    props.chart!.setCamera({ elevation: 50 });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(cameras).toEqual([10]);
+    props.azimuth = 40;
+    flushSync();
+    expect(props.chart!.camera).toMatchObject({ azimuth: 40, elevation: 25 });
   });
 
   it("renders gauges and funnels from their components", () => {

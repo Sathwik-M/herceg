@@ -39,9 +39,11 @@ import {
   GeoShape,
   Line,
   Pie,
+  Point3D,
   Radar,
   Region,
   Rule,
+  Surface,
   Text,
 } from "../src/index.ts";
 
@@ -76,6 +78,8 @@ const components = {
   Radar,
   GeoShape,
   GeoPoint,
+  Point3D,
+  Surface,
   Region,
   Rule,
   Text,
@@ -236,6 +240,30 @@ describe("<Chart>", () => {
     };
     expect(dots("points")).toBe(2);
     expect(dots(':points="false"')).toBe(0);
+  });
+
+  it("draws 3D marks from their components, with camera props and events", async () => {
+    const grid = table({ x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [1, 2, 3, 4] });
+    const points = table({ x: [0.5], y: [0.5], z: [3] });
+    const camera = ref({ azimuth: 10 });
+    const cameras: number[] = [];
+    const onCamera = ({ camera }: { camera: { azimuth: number } }) => cameras.push(camera.azimuth);
+    const { view, chart } = chartRef();
+    mount(
+      `<Chart ref="view" :camera="camera" :box-aspect="[2, 1, 1]" locale="en-US" @camera="onCamera">
+        <Surface :data="grid" x="x" y="y" z="z" />
+        <Point3D :data="points" x="x" y="y" z="z" />
+      </Chart>`,
+      () => ({ grid, points, camera, view, onCamera }),
+    );
+    expect(host.textContent).toContain("Surface of z over x and y");
+    expect(chart().model.config.boxAspect).toEqual([2, 1, 1]);
+    chart().setCamera({ elevation: 50 });
+    await frame();
+    expect(cameras).toEqual([10]);
+    camera.value = { azimuth: 40 };
+    await nextTick();
+    expect(chart().camera).toMatchObject({ azimuth: 40, elevation: 25 });
   });
 
   it("builds annotations from constants or from their own data", () => {

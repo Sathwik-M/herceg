@@ -42,6 +42,20 @@ export interface CandleData {
   close: Float64Array;
 }
 
+/** Points in three dimensions, for 3D scatter plots. */
+export interface Point3Data {
+  x: Float64Array;
+  y: Float64Array;
+  z: Float64Array;
+}
+
+/** A height field: `z` row-major over `x` (columns) by `y` (rows), for surfaces. */
+export interface SurfaceData {
+  x: Float64Array;
+  y: Float64Array;
+  z: Float64Array;
+}
+
 /** Values to bin, for histograms. */
 export interface SampleData {
   values: Float64Array;
@@ -228,4 +242,37 @@ export function samples(points: number, seed = 1): SampleData {
 /** Bytes of numeric payload, used to report memory amplification. */
 export function seriesBytes(data: SeriesData): number {
   return data.x.byteLength + data.ys.reduce((sum, y) => sum + y.byteLength, 0);
+}
+
+/** Points around four centers in three dimensions. */
+export function points3d(count: number, seed = 1): Point3Data {
+  const next = random(seed);
+  const x = new Float64Array(count);
+  const y = new Float64Array(count);
+  const z = new Float64Array(count);
+  const centers = [
+    [20, 30, 10],
+    [60, 70, 40],
+    [75, 25, 70],
+    [40, 55, 55],
+  ] as const;
+  for (let i = 0; i < count; i++) {
+    const center = centers[i % centers.length]!;
+    x[i] = center[0] + gaussian(next) * 8;
+    y[i] = center[1] + gaussian(next) * 8;
+    z[i] = center[2] + gaussian(next) * 8;
+  }
+  return { x, y, z };
+}
+
+/** A side by side grid of hills and valleys with a little noise. */
+export function surfaceGrid(side: number, seed = 1): SurfaceData {
+  const next = random(seed);
+  const x = Float64Array.from({ length: side }, (_, i) => (i / (side - 1)) * 10 - 5);
+  const y = Float64Array.from({ length: side }, (_, j) => (j / (side - 1)) * 10 - 5);
+  const z = new Float64Array(side * side);
+  for (let j = 0; j < side; j++)
+    for (let i = 0; i < side; i++)
+      z[j * side + i] = Math.sin(x[i]!) * Math.cos(y[j]! * 0.8) * 3 + x[i]! * 0.3 + next() * 0.05;
+  return { x, y, z };
 }

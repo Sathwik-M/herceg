@@ -27,11 +27,13 @@ import {
   Line,
   Pie,
   Point,
+  Point3D,
   Radar,
   Region,
   Rule,
   Sankey,
   Sunburst,
+  Surface,
   Text,
   Treemap,
   Violin,
@@ -308,6 +310,37 @@ describe("<Chart>", () => {
     act(() => root.render(map("equirectangular")));
     expect(seen).toHaveLength(1);
     await frame();
+  });
+
+  it("draws 3D marks from their elements, keeping a turned view until the camera prop changes", async () => {
+    const grid = table({ x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [1, 2, 3, 4] });
+    const points = table({ x: [0.5], y: [0.5], z: [3] });
+    const ref: { current: HercegChart | null } = { current: null };
+    const cameras: number[] = [];
+    const view = (azimuth: number) => (
+      <Chart
+        ref={ref}
+        camera={{ azimuth }}
+        locale="en-US"
+        onCameraChange={({ camera }) => cameras.push(camera.azimuth)}
+      >
+        <Surface data={grid} x="x" y="y" z="z" />
+        <Point3D data={points} x="x" y="y" z="z" />
+      </Chart>
+    );
+    act(() => root.render(view(10)));
+    expect(host.textContent).toContain("Surface of z over x and y");
+    const chart = ref.current!;
+    chart.setCamera({ elevation: 50 });
+    await frame();
+    expect(cameras).toEqual([10]);
+    act(() => root.render(view(10)));
+    expect(chart.camera).toMatchObject({ azimuth: 10, elevation: 50 });
+    // A changed prop shows its camera; the application set it, so no event says so.
+    act(() => root.render(view(30)));
+    expect(chart.camera).toMatchObject({ azimuth: 30, elevation: 25 });
+    await frame();
+    expect(cameras).toEqual([10]);
   });
 
   it("builds annotations from constants or from their own data", () => {

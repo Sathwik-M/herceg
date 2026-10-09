@@ -218,6 +218,29 @@ function browserSection(results: BrowserResults): string {
 }
 
 /**
+ * 3D charts (`results/three.json`, a run of the 3D scenarios alone): the
+ * environment, mounting, and turning the camera.
+ */
+function threeSection(results: BrowserResults): string {
+  const ids = Object.keys(results.scenarios);
+  return [
+    environment(results),
+    "",
+    timingTable(
+      ids.filter((id) => id.endsWith("-init")),
+      "timeToFrame",
+      results,
+    ),
+    "",
+    timingTable(
+      ids.filter((id) => id.startsWith("rotate-")),
+      "cameraToFrame",
+      results,
+    ),
+  ].join("\n");
+}
+
+/**
  * Herceg through @herceg/react next to plain herceg, measured in one session
  * (`results/react.json`), for every scenario the React adapter supports.
  */
@@ -316,6 +339,10 @@ const sections: Record<string, string> = {
 const webkitResults = join(RESULTS, "browser-webkit.json");
 if (existsSync(webkitResults)) {
   sections.webkit = browserSection(JSON.parse(readFileSync(webkitResults, "utf8")));
+}
+const threeResults = join(RESULTS, "three.json");
+if (existsSync(threeResults)) {
+  sections.three = threeSection(JSON.parse(readFileSync(threeResults, "utf8")));
 }
 const reactResults = join(RESULTS, "react.json");
 if (existsSync(reactResults)) {

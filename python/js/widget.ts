@@ -206,6 +206,10 @@ class Widget {
       if (!inspection || !this.#listening("click")) return;
       this.#model.send({ type: "click", inspection: inspectionPayload(chart, inspection) });
     });
+    // A drag turns the camera every frame: Python hears of it at most once a throttle interval.
+    chart.on("camera", ({ camera }) => {
+      if (this.#listening("camera")) this.#outbox.post("camera", { type: "camera", camera });
+    });
   }
 
   #size({ element }: View) {

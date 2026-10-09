@@ -27,7 +27,7 @@ import { markBuilder } from "./marks.tsx";
 export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   /** Marks built with herceg's functions; mark elements among `children` are added after them. */
   marks?: readonly ChartMark[];
-  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Rule>, <Region>, <Text>, <Custom>. */
+  /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: ReactNode;
   className?: string;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -42,6 +42,8 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   onHover?: ChartListener<"hover">;
   /** The plot was clicked, with the data under the pointer. */
   onClick?: ChartListener<"click">;
+  /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
+  onCameraChange?: ChartListener<"camera">;
 }
 
 /**
@@ -119,6 +121,8 @@ const PORTABLE = new Set([
   "graph",
   "geoshape",
   "geopoint",
+  "point3d",
+  "surface",
   "rule",
   "region",
   "text",
@@ -167,6 +171,7 @@ export function Chart({
   onSelect,
   onHover,
   onClick,
+  onCameraChange,
   ...options
 }: ChartProps) {
   const container = useRef<HTMLDivElement>(null);
@@ -217,6 +222,7 @@ export function Chart({
   useChartEvent(chart, "select", onSelect);
   useChartEvent(chart, "hover", onHover);
   useChartEvent(chart, "click", onClick);
+  useChartEvent(chart, "camera", onCameraChange);
 
   useImperativeHandle<HercegChart | null, HercegChart | null>(ref, () => chart.current, []);
 

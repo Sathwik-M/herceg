@@ -72,6 +72,8 @@ export interface ItemInspection {
   points: InspectedPoint[];
   /** SVG path data outlining the item. */
   outline: string;
+  /** The item's data by field, for items of several values (a 3D chart's points): numbers, times in epoch ms, and categories. */
+  values?: Readonly<Record<string, number | string>>;
   panel?: string;
 }
 

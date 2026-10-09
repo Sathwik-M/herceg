@@ -1,6 +1,7 @@
 // Events a chart emits to the application.
 
 import type { Inspection, Viewport } from "../model/model.ts";
+import type { Camera } from "../three/camera.ts";
 import type { Selection } from "./brush.ts";
 import { report } from "./scheduler.ts";
 
@@ -40,6 +41,11 @@ export interface ChartEvents {
   hover: { inspection: Inspection | undefined };
   /** The plot was clicked (not dragged), with the data under the pointer. */
   click: { inspection: Inspection | undefined };
+  /**
+   * A 3D chart's camera moved: dragged, zoomed, reset, turned by keys or
+   * buttons, or set with `setCamera`; once a frame at most.
+   */
+  camera: { camera: Camera };
 }
 
 export type ChartListener<K extends keyof ChartEvents> = (event: ChartEvents[K]) => void;

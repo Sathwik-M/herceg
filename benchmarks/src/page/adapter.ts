@@ -3,9 +3,11 @@ import type {
   CandleData,
   CategoryData,
   GridData,
+  Point3Data,
   PointData,
   SampleData,
   SeriesData,
+  SurfaceData,
 } from "../datasets.ts";
 
 export interface ChartOptions {
@@ -55,6 +57,12 @@ export interface ChartHandle<T> {
    * axis-range path. Line charts only; omitted when the library has none.
    */
   setViewport?(x0: number, x1: number): void | Promise<void>;
+  /**
+   * Turns a 3D chart's camera to an azimuth about the vertical axis and an
+   * elevation above the floor, in degrees, through the library's documented
+   * camera path. 3D charts only.
+   */
+  setCamera?(azimuth: number, elevation: number): void | Promise<void>;
 }
 
 export interface ChartKind<T> {
@@ -83,6 +91,8 @@ export interface Adapter {
   candlestick?: ChartKind<CandleData>;
   histogram?: ChartKind<SampleData>;
   bubble?: ChartKind<BubbleData>;
+  scatter3d?: ChartKind<Point3Data>;
+  surface?: ChartKind<SurfaceData>;
 }
 
 /** Candlestick colors: rising (hollow) and falling (filled) candles. */

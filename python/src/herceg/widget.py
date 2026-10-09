@@ -22,7 +22,7 @@ except ImportError as error:  # pragma: no cover - depends on the environment
     ) from error
 
 from . import _render
-from ._chart import ChartUpdate, Unpack
+from ._chart import Camera, ChartUpdate, Unpack
 from ._events import (
     Inspection,
     Range,
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
 __all__ = ["ChartWidget", "Inspection", "Selection", "Viewport"]
 
-Event = Literal["select", "viewport", "hover", "click"]
+Event = Literal["select", "viewport", "hover", "click", "camera"]
 #: The key of each event's state in messages and the snapshot.
 _STATE_KEYS = {"select": "selection", "viewport": "viewport"}
 
@@ -91,7 +91,7 @@ class ChartWidget(anywidget.AnyWidget):
         }
         self._callbacks = {
             event: ipywidgets.CallbackDispatcher()
-            for event in ("select", "viewport", "hover", "click")
+            for event in ("select", "viewport", "hover", "click", "camera")
         }
         # Updates may come from a background thread while the kernel's thread
         # sends the whole chart: each change and its message happen together.
@@ -181,6 +181,11 @@ class ChartWidget(anywidget.AnyWidget):
         """Calls ``callback(inspection)`` when the plot is clicked over data."""
         self._listen("click", callback, remove)
 
+    def on_camera(self, callback: Callable[[Camera], Any], remove: bool = False) -> None:
+        """Calls ``callback(camera)`` when a 3D chart is turned or zoomed in a browser,
+        at most a few times a second while it is dragged."""
+        self._listen("camera", callback, remove)
+
     # Internals -------------------------------------------------------------
 
     def _snapshot(self) -> dict[str, Any]:
@@ -266,6 +271,16 @@ class ChartWidget(anywidget.AnyWidget):
             inspection = decode_inspection(content.get("inspection"))
             if kind == "hover" or inspection is not None:
                 self._callbacks[kind](inspection)
+        elif kind == "camera":
+            camera = content.get("camera") or {}
+            self._callbacks["camera"](
+                Camera(
+                    azimuth=camera.get("azimuth", -60),
+                    elevation=camera.get("elevation", 25),
+                    zoom=camera.get("zoom", 1),
+                    perspective=bool(camera.get("perspective", False)),
+                )
+            )
 
 
 def _decoded(event: str, payload: dict[str, Any] | None) -> Selection | Viewport | None:

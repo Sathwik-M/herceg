@@ -52,6 +52,9 @@ const optionProps = {
   locale: String,
   timeZone: String,
   projection: [String, Object] as Option<"projection">,
+  z: Object as Option<"z">,
+  camera: Object as Option<"camera">,
+  boxAspect: Array as unknown as Option<"boxAspect">,
 } satisfies { [K in keyof Options]-?: unknown };
 
 const OPTION_KEYS = Object.keys(optionProps) as (keyof Options)[];
@@ -73,6 +76,8 @@ const emits = {
   hover: (_: ChartEvents["hover"]) => true,
   /** The plot was clicked, with the data under the pointer. */
   click: (_: ChartEvents["click"]) => true,
+  /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
+  camera: (_: ChartEvents["camera"]) => true,
 };
 
 function collectMarks(children: unknown, out: ChartMark[]): ChartMark[] {
@@ -127,6 +132,8 @@ const PORTABLE = new Set([
   "graph",
   "geoshape",
   "geopoint",
+  "point3d",
+  "surface",
   "rule",
   "region",
   "text",
@@ -175,7 +182,7 @@ export const Chart = defineComponent({
   },
   emits,
   slots: Object as SlotsType<{
-    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Rule>, <Region>, <Text>, <Custom>. */
+    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
     default?: () => VNode[];
   }>,
   expose: ["chart"],
@@ -215,6 +222,7 @@ export const Chart = defineComponent({
         created.on("select", (event) => emit("select", event));
         created.on("hover", (event) => emit("hover", event));
         created.on("click", (event) => emit("click", event));
+        created.on("camera", (event) => emit("camera", event));
         chart.value = created;
         applied = next;
         return;

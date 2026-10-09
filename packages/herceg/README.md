@@ -662,6 +662,93 @@ drawing, 11 ms at a new size, 2 ms to redraw, 2 µs to find the region under
 the pointer). Points closer than a third of a pixel to the
 previous one are left out of a region's outline.
 
+### 3D charts
+
+```ts
+import { createChart, point3d, surface, table } from "herceg";
+
+createChart(element, {
+  camera: { azimuth: -60, elevation: 25 },
+  z: { label: "Yield" },
+  marks: [
+    surface(fit, { x: "nitrogen", y: "rain", z: "yield" }), // a fitted surface
+    point3d(trials, { x: "nitrogen", y: "rain", z: "yield", series: "field" }), // observations
+  ],
+});
+```
+
+`point3d` draws points at the number or time fields `x`, `y`, and `z` (z is
+vertical): one color and legend entry per category of `series`, or colored
+by a number field `color` (`colors`, `colorDomain`, and `colorMidpoint` as
+for heatmaps), with a color legend; `r` is the radius (3.5 px), `fill` and
+`fillOpacity` the color without them, and `name` names points in tooltips.
+`surface` draws a height field over a grid of rows: each row's `x` and `y`
+(number, time, or category fields) pick a grid point (the distinct numbers
+and times in order, the categories in dictionary order and evenly spaced),
+and its `z` (a number field) is the height there; when rows repeat a grid
+point, the last with a value wins. Each cell between four grid points with
+values is drawn as two triangles (split along the diagonal from its lowest x
+and y corner), a cell with three as their triangle, so missing values leave
+holes. Grid spacing may be irregular; rows not on a grid (scattered samples)
+are not triangulated: bin or aggregate them into one first. A surface draws
+at most 250,000 grid points (`MAX_GRID_POINTS`). Cells are colored by the
+mean of their corners' `z` (or `color` field) on the theme's sequential ramp
+or `colors`, with a color legend, and shaded by how they face a light above
+and to the left of the viewer; `shading: false` shows colors exactly as the
+legend reads them. `wireframe: true` draws the grid's lines (except on
+cells cut at the box's walls), `fillOpacity` makes the surface translucent.
+
+3D marks share a chart with each other, not with other marks, and its box:
+each axis spans every mark's data (rounded to ticks), set by the chart's
+`x`, `y`, and `z` options as other axes are (`type` `"linear"`, `"log"`, or
+`"time"`, `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format`,
+`axis`). The box is a cube unless `boxAspect` gives its sides' relative
+lengths (`[2, 2, 1]` for a flat box). Grid lines are drawn on the three
+walls behind the data, tick labels along the box's lowest edges for x and y
+and its leftmost for z (thinned where they would overlap), and data outside
+a given `domain` is left out, surfaces cut at the walls.
+
+The chart's `camera` is where it is seen from at first: `azimuth`, degrees
+counterclockwise around the z axis from +x seen from above (-60 by default);
+`elevation`, degrees above the floor, from -90 to 90 (25); `zoom` (1 fits
+the box; from 0.5 to 10); and `perspective` (false: orthographic, so equal
+lengths look equal wherever they are). The box keeps its size as it turns.
+Dragging turns it (`interaction: { rotate: false }` turns that off), the
+wheel zooms with `interaction: { zoom: true }`, and double-click returns to
+the configured camera. Buttons in the chart's corner, shown while the
+pointer or focus is in it, turn, tilt, zoom, and reset the view for people
+who cannot drag; Shift with the arrow keys turns it too, and plus and minus
+zoom. The arrow keys, as in other charts without axes, read the points in
+row order and a surface's grid points row by row. Touch drags turn the box
+sideways and leave vertical drags to scroll the page. `chart.camera` is the
+current camera, `chart.setCamera({ ... })` changes the settings it is given
+(null goes back to the configured camera), and a `camera` event reports
+every move, once a frame at most. Updating the chart with a different
+`camera` shows it; updating it with the same camera keeps the view the user
+turned to.
+
+Tooltips, hover and click events, and the keyboard report a point's or grid
+point's `x`, `y`, and `z` (and `color`), and the inspection's `values` holds
+them by field. The pointer finds what is drawn on top under it (a point
+within 3 px of its disc, or a surface's cell, reporting the cell's corner
+nearest the pointer). The description summarizes the points or the surface
+(its grid, highest, and lowest points), the axes' ranges, and the camera.
+
+Everything is drawn back to front, as SVG, Canvas, and PDF draw it: points
+alone by depth, and one surface with any points in an order exact for a
+height field, so points under a surface are hidden by it and those above
+show; a point's disc is drawn as a marker, cut only by the cells in front of
+it, and overlapping points by depth. Several surfaces in one chart are
+ordered by their cells' depth, which can be wrong where they come close or
+cross. Charts of points alone
+with at least 20,000 points, opaque, are drawn by the GPU in the browser
+(with a depth test; the WebGL code loads only then), and turning them costs
+under a millisecond of JavaScript a frame at a million points; the first
+tooltip after a turn projects every point on the CPU (about 50 ms at a
+million). Other 3D charts are drawn on the CPU every frame: about 3 ms for a
+50 by 50 surface and 30 ms for a 200 by 200 one on the benchmark machine
+(see `docs/comparison.md`).
+
 ### A second y axis
 
 Marks with `axis: "right"` use a second y scale, drawn on the right and
@@ -961,20 +1048,22 @@ the thousands, not millions.
 | `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
-| `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |
+| `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. |
 | `animation` | `true` or `{ duration }` (milliseconds, 250 by default) moves the axes gradually to a view asked for: `setViewport` (both axes of one call together), zooming to a brush, and double-click reset. Off by default. Wheel zoom, panning, new data, resizes, and export always show at once; charts with several panels or `sync`, pages preferring reduced motion, and charts whose frames seem to take over 10 ms (judged from earlier frames, alone or with the charts beside them) do not animate. The animation code loads with the first chart that asks for it. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 | `projection` | How maps are projected: a projection's name or `{ type, centralMeridian?, parallels?, fit? }` (see Maps). |
+| `z`, `camera`, `boxAspect` | 3D charts' vertical axis (options as for `x` and `y`), where they are seen from at first (`{ azimuth?, elevation?, zoom?, perspective? }`), and their box's side lengths (see 3D charts). |
 
 The returned `Chart` has `update(options)`, `setViewport(view | [from, to] |
 null, { panel? })` and `getViewport({ panel? })`, `select(selection | [from,
 to] | null, { panel? })` (a pair is shorthand for an x range), `selection` and
-`selectionPanels` (see Small multiples for `panel`), `on(event, listener)`,
-`render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
-painter for large point series or the animation code loads, otherwise
-undefined).
+`selectionPanels` (see Small multiples for `panel`), `camera` and
+`setCamera(camera | null)` (3D charts), `on(event, listener)`, `render()`,
+`toSVG()`, `destroy()`, and `loading` (a promise while the GPU painter for
+large point series, the animation code, or a 3D chart's buttons load,
+otherwise undefined).
 
 A `Viewport` is `{ x, y, yRight }`: the visible x range and the left and right
 y axes' ranges, in data values (epoch ms on time axes), each null when that
@@ -1065,6 +1154,7 @@ chart.on("click", ({ inspection }) => {
   // The row of the mark's table the point is: the record clicked.
   if (point?.markId === "orders" && point.row !== undefined) openOrder(orders.value("id", point.row));
 });
+chart.on("camera", ({ camera }) => saveView(camera)); // a 3D chart turned
 ```
 
 Events report changes only: a re-inspected point or an unchanged view does

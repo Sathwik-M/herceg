@@ -21,12 +21,13 @@ const metrics = table({ time: time(timestamps), p50, p99 });
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 slot holds mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
-`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Radar>`, `<Sankey>`, `<Graph>`, `<GeoShape>`, `<GeoPoint>`, `<Rule>`,
+`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Radar>`, `<Sankey>`, `<Graph>`, `<GeoShape>`, `<GeoPoint>`, `<Point3D>`, `<Surface>`, `<Rule>`,
 `<Region>`, `<Text>`, and `<Custom>`, also from `v-if` and `v-for`, drawn in
 template order. Each mark component takes the table it reads as `data`, so
 vue-tsc checks field names against that table's columns; `<Graph>` takes its
 links as `data` and a table of nodes as `nodes`; `<GeoShape>` and `<GeoPoint>`
-share a chart with each other, projected by its `projection` prop. Annotations
+share a chart with each other, projected by its `projection` prop, and
+`<Point3D>` and `<Surface>` a 3D chart seen from its `camera` prop. Annotations
 (`<Rule>`, `<Region>`, `<Text>`) take `data` only when they draw one item per
 row: `<Rule :data="deploys" x="time" text="version" />`. Marks built with
 herceg's functions can also be passed as a `marks` prop. Options may be
@@ -37,7 +38,7 @@ components of your own that render marks are not read.
 The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or a style says otherwise; `class`, `style`, and other attributes
 go to the container element. Chart events are Vue events: `@viewport`,
-`@select`, `@hover`, and `@click` (the chart's click, with the data under
+`@select`, `@hover`, `@camera` (a 3D chart turned), and `@click` (the chart's click, with the data under
 the pointer, not the element's). A template ref exposes the underlying chart
 as `chart` (null until mounted) for imperative calls (`setViewport`,
 `select`, `toSVG`):

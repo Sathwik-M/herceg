@@ -90,6 +90,9 @@ class Inspection:
     #: The facet value of the panel, in charts with facets; with ``facet_row``
     #: and ``facet_col``, both values as a JSON array, as in ``'["North","A"]'``.
     panel: str | None = None
+    #: A 3D chart's point by column: numbers (datetimes as epoch milliseconds)
+    #: and category labels; None for other charts.
+    values: dict[str, float | str] | None = None
 
 
 def decode_viewport(payload: Any) -> Viewport:
@@ -241,6 +244,7 @@ def decode_inspection(payload: Any) -> Inspection | None:
             for point in payload.get("points", ())
         ),
         panel=payload.get("panel"),
+        values=payload.get("values"),
     )
 
 

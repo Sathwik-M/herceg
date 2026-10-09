@@ -10,7 +10,9 @@ import type { MeasureText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
+import type { CameraSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
+import type { Camera } from "../three/camera.ts";
 import type { ColorRamp, GlyphKey, Mark } from "./mark.ts";
 
 /** What a layout mark lays out with: its room and the chart's settings. */
@@ -26,6 +28,10 @@ export interface LayoutFrame {
   hidden: ReadonlySet<string>;
   /** The color of an item, kept for the chart's lifetime once given. */
   color(key: string): string;
+  /** The chart's camera, for marks drawn in three dimensions. */
+  camera?: Camera | undefined;
+  /** Whether a GPU painter may draw large point sets (see PointCloud3D). */
+  clouds?: boolean;
 }
 
 /** One thing a layout mark drew, as tooltips and the keyboard report it. */
@@ -44,9 +50,11 @@ export interface LayoutItem {
   outline: string;
   /** What `value` measures, when it differs from the mark's `measure` (items of several marks). */
   measure?: string;
+  /** The item's data by field, where it has several values (a 3D point): numbers, times in epoch ms, and categories. */
+  values?: Readonly<Record<string, number | string>>;
   /** The row of the mark's table the item is, for items that are one row. */
   row?: number;
-  /** In a map of several layers, the index of the item's layer among them. */
+  /** In a chart of several layers (a map's, a 3D box's), the index of the item's layer among them. */
   layer?: number;
 }
 
@@ -88,6 +96,12 @@ export interface LayoutMark {
    * projection); it throws for marks it cannot draw with.
    */
   join?(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark;
+  /**
+   * 3D charts, whose camera the pointer and keyboard turn: the camera `spec`
+   * describes, its settings left out taken from `base` (by default the
+   * default camera's). Throws for settings out of range.
+   */
+  camera?(spec: CameraSpec | undefined, base?: Camera): Camera;
 }
 
 /** Any mark a chart takes: one along axes, or a layout mark. */
