@@ -38,6 +38,18 @@ export interface Series {
   sorted: boolean;
   /** For `rows` grouped from a whole table as it streams. */
   stream?: SeriesStream | undefined;
+  /**
+   * On a band axis holding only some of the chart's bands (a panel's own
+   * categories), where its bands are: `x` or `y` then holds chart band
+   * indices, which `placeAt` reads through this.
+   */
+  places?: { readonly x?: BandPlaces; readonly y?: BandPlaces } | undefined;
+}
+
+/** Where chart bands are on an axis holding only some of them. */
+export interface BandPlaces {
+  /** The place of chart band `band` (at least 0), or -1 when the axis lacks it. */
+  at(band: number): number;
 }
 
 /**
@@ -81,13 +93,21 @@ export function rowOf(series: Series, position: number): number {
   return series.rows === undefined ? position : series.rows[position]!;
 }
 
+/** Where row `row` of `s` is placed along `axis`: its value, or its band's place (see `places`). */
+export function placeAt(s: Series, axis: "x" | "y", row: number): number {
+  const value = s[axis][row]!;
+  const places = s.places?.[axis];
+  return places && value >= 0 ? places.at(value) : value;
+}
+
 /**
  * Whether two series place their points at the same positions along
  * `axis`, position by position: the same array read through the same rows
- * (fields of one table; facet panels hold a copy of the rows per series).
+ * (fields of one table) and band places.
  */
 export function samePositions(a: Series, b: Series, axis: "x" | "y"): boolean {
-  if (a[axis] !== b[axis] || a.length !== b.length) return false;
+  if (a[axis] !== b[axis] || a.length !== b.length || a.places?.[axis] !== b.places?.[axis])
+    return false;
   if (a.rows === b.rows) return true;
   if (!a.rows || !b.rows) return false;
   for (let i = 0; i < a.length; i++) if (a.rows[i] !== b.rows[i]) return false;

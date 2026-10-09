@@ -917,11 +917,18 @@ createChart(element, {
   x: { label: "Week" },
   interaction: { zoom: true },
 });
+
+// Each region's products only, stacked by channel within the region.
+createChart(element, {
+  marks: [bar(sales, { x: "product", y: "units", series: "channel", stack: true })],
+  facet: facet("region"),
+  resolve: { x: "independent" }, // in a spec: "resolve": { "x": "independent" }
+});
 ```
 
 Panels follow the order in which values first appear in the data; rows
 without a value are left out (though their categories still get a band on a
-category axis). A grid has a panel for every pair of values, rows by
+shared category axis). A grid has a panel for every pair of values, rows by
 columns, including pairs without rows, with the column values above the top
 row and the row values beside the last column; wrapped panels each have
 their value above them. Panels are keyed by their value, or in a grid by
@@ -931,10 +938,10 @@ over a table split its rows by the fields, which the table must have, unless
 they have `facet: "repeat"`; marks without a table repeat. Panels share
 their x and y scales; `resolve: { y }` gives each panel a y scale of its own
 fitting what it draws (`"independent"`), or one per row (`"rows"`) or per
-column (`"columns"`), for a continuous y axis, and `resolve: { x }` does the
-same for a continuous x axis. x labels go under the lowest panel of each
-column, or under every panel when a column's panels have different x
-scales, with the x title once under each scale's lowest labels; y labels go
+column (`"columns"`), and `resolve: { x }` does the same for x. x labels go
+under the lowest panel of each column, or under every panel when a column's
+panels have different x scales, with the x title once under each scale's
+lowest labels; y labels go
 beside the first panel of each row, or beside every panel when a row's
 panels differ. Specs with `resolve` need `"version": 2`, and with
 `resolve.x` `"version": 3`, so that readers from before them refuse them
@@ -942,9 +949,10 @@ rather than draw shared axes. Charts whose panels have
 y scales of their own cannot zoom along y or take y ranges in
 `setViewport` yet. Pointer, brush, and zoom work in any panel and act on
 its x scale; the arrow keys step through a panel and Up and Down move
-between its series and on to the next panel. Heatmaps, histograms, stacked bars, annotations over a
-table, and custom marks over a table without series can only repeat for
-now, and charts with facets have no right axis. A chart too small for its
+between its series and on to the next panel. Stacked bars stack within each
+panel. Heatmaps, histograms, box plots, annotations over a table, and custom
+marks over a table without series can only repeat for now, and charts with
+facets have no right axis. A chart too small for its
 panels (under 20 pixels a side) throws an error naming the grid; give it
 more room or fewer columns.
 
@@ -965,7 +973,24 @@ chart, drawn in every panel whose scale holds the value, but not viewports
 or selections, which belong to some of its panels; sync only charts whose x
 values mean the same thing. A scale's zoom is kept while its panels stay the
 same: when they change (a new facet value wraps the panels anew), it fits
-its data again. Category x axes are always shared.
+its data again.
+
+A category axis of bars that panels do not share holds only the categories
+of the rows its panels draw, in the order the shared axis would have them
+(dictionary order, across the marks' tables in the chart's order), so a
+category's band index can differ from one panel to the next: tooltips,
+`toPixel`, `formatValue`, and selections read each panel's own (its axis'
+`categories` in `getPanels()`). A mark with `facet: "repeat"`, or a subplot's
+mark, counts all its rows in every panel it draws in; an empty panel has an
+empty axis. Bars grouped by series keep a slot per series of the mark in
+every category, whichever series a panel has, and stacks, split into panels
+first, never reach across them. A selection on such an axis is cleared when
+its panels' categories change, since its band indices would then name other
+categories (the axis' `group` changes with them), and the keyboard carries
+its cursor to another scale by its place across the plot. Only bars can have
+categories of their own so far: heatmaps, box plots, violins, error bars, and
+candlesticks on a category axis need it shared, and such charts cannot be
+synced or brushed along a y axis of categories.
 
 ### Subplots
 
@@ -999,7 +1024,8 @@ the rows' heights and the columns' widths relative to each other (a shared
 scale keeps one domain over rows or columns of different sizes, each with
 ticks for its size). They share the x axis, labeled under
 the lowest panel of each column, and each has a y scale of its own, from its
-marks; `resolve: { y: "shared" }` (or `"rows"`, `"columns"`) shares it
+marks (for horizontal bars, its own categories, as in Small multiples);
+`resolve: { y: "shared" }` (or `"rows"`, `"columns"`) shares it
 instead, when the panels sharing it agree on its type, domain, `zero`, and
 `nice`. A panel's `y` takes the place of the chart's `y` settings for its
 own axis, so one panel can be logarithmic or show times while another is

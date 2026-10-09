@@ -11,7 +11,7 @@ import type { Table, TableChange } from "../data/table.ts";
 import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
 import { tablesOf, viewOf } from "../marks/layout-mark.ts";
 import { type AxisFormat, keyOwner } from "../marks/mark.ts";
-import { rowOf, type Series } from "../marks/series.ts";
+import { placeAt, rowOf, type Series } from "../marks/series.ts";
 import { describeChart } from "../model/describe.ts";
 import {
   type ChartConfig,
@@ -1836,7 +1836,7 @@ function nearestTo(series: Series, x: number | undefined, scale: PositionScale):
   let distance = Infinity;
   const at = scale.map(x);
   for (let k = 0; k < series.length; k++) {
-    const value = series.x[rowOf(series, k)]!;
+    const value = placeAt(series, "x", rowOf(series, k));
     if (scale.breaks?.hides(value)) continue;
     const d = Math.abs(scale.map(value) - at);
     if (d < distance) {

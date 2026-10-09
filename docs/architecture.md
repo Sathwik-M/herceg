@@ -647,7 +647,8 @@ geometry buffers hold at most one candle per column.
 A mark reports the kind of field on each position channel. A categorical
 field (bar x or y, heatmap x and y) puts the axis on a band scale whose values are
 category indices; the category labels are the union of what the marks on that
-axis contribute, in order of appearance. Bands are identified by raw value
+axis contribute, in order of appearance (panels that resolve the axis apart
+hold only some of them; see Small multiples). Bands are identified by raw value
 (a category, or a number's full-precision key), so values whose formatted
 labels coincide stay separate. Each row's band index is computed
 once per table version (4 bytes per row) and reused while the band list is
@@ -767,15 +768,20 @@ are split after series are resolved: a facet split of a series is the same
 columns read through a list of the rows in each panel (4 bytes per row),
 computed in two passes per series (with a transient 4-byte panel index per
 row) and kept until its table changes, with
-sortedness checked per panel. Series keep their keys, so colors, legend
+sortedness checked per panel. Series of one table's rows split alike (the
+fields of wide data) share their panels' row lists. Series keep their keys, so colors, legend
 entries, and hidden state are shared across panels. Splitting after series
 are resolved is right for marks whose series are row-aligned (lines, points,
-bands and stacks of several fields, unstacked bars, error bars, candlesticks);
-stacked bars, heatmaps, and histograms, whose geometry combines rows, refuse
-facets until they split
+bands and stacks of several fields, unstacked bars, error bars, candlesticks).
+Stacked bars, whose geometry combines rows, resolve their series unstacked
+when a facet splits them (`Mark.series`'s `split`) and stack after the split
+(`stackPanels`), each panel, position, and sign apart: one pair of
+table-sized top and base arrays per field, which the panels' disjoint rows
+fill, kept while the table, the panels' rows, and the hidden series stay the
+same. Heatmaps, histograms, and box plots refuse facets until they split
 before combining. Continuous domains come from every panel's series, so rows
-without a facet value are left out of them; category bands still come from
-whole tables. Each panel gets a frame whose scales are the
+without a facet value are left out of them; the bands of a shared category
+axis still come from whole tables. Each panel gets a frame whose scales are the
 shared plans moved to its row and column, and whose buffer pools are its
 own, so geometry code is the same as for one panel; each has its own
 inspector, and the chart routes the pointer to the panel under it.
@@ -835,6 +841,40 @@ charts whose panels have x scales of their own; the Streamlit component shows th
 reports clicks (the clicked panel's scale decides whether values are
 times), keeps each panel's zoom across reruns by panel key, and refuses
 `on_select`.
+
+With `resolve` other than `"shared"` on a category axis, each group of panels
+sharing the axis holds only the chart's bands that the rows its panels draw
+hold, in the chart's order. The model discovers the chart's bands and resolves
+series as it does for one panel, so a series' categorical channel holds chart
+band indices: the shared axis' array of each row's band (4 bytes per row, the
+field's own numbering when one mark's bands lead the axis, else one remapped
+copy for the chart), which every panel shares. After the layout splits rows
+into panels, `PanelBands` (`model/panel-layout.ts`) finds the bands each
+panel's rows hold (a pass over each split's rows per table version, cached by
+its row list; marks drawn whole, facet repeats and subplots, over their whole
+column), unions them per group, and gives each group a band list and its
+places: where each chart band is among the group's (-1 for none). A group
+holding the chart's first bands, each at its own index (as when it holds them
+all), needs no places; one whose bands span at most 4,096 chart bands, or at
+most eight times as many as it holds, looks places up in an `Int32Array` over
+that span; others search the sorted bands they hold. A group's places
+therefore take at most 16 KiB, or 32 bytes per band it holds where that is
+more: never a chart-sized or table-sized array per panel. Panels' series are
+shallow copies carrying the places (`Series.places`), shared by a group's
+panels. Whatever reads a categorical position reads it through `placeAt` (bar
+geometry, inspection, the keyboard). Places keep the chart's order, so a range
+of places is a range of chart bands; a panel's ascending band indices can
+still lie outside its domain, so placed series are searched as unsorted.
+Groups are kept by their panels' keys while their bands are the same (labels
+are measured once per list), and a group's key, the scale's `group`, carries a
+number that changes with its bands (not with their labels alone, nor with
+other groups): a selection on the scale is cleared, and a drag through it
+stops, when they change, as when its panels do, since its band indices then
+name other categories. Hidden series keep their categories; grouped bars keep
+a slot per series of the mark in every category of every panel. Only bars
+place categories per panel so far: other marks on such an axis (heatmaps, box
+plots, error bars, candlesticks), synced charts, and brushes along a y axis of
+such categories are refused, and category axes still do not zoom.
 
 ## Points and rasters
 
