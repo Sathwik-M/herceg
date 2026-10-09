@@ -106,14 +106,27 @@ describe("histograms", () => {
     expect(bars(one.model)[0]).toEqual({ centers: [7], values: [2] });
   });
 
-  it("repeat in faceted charts, load from specs, and draw in static SVG", () => {
+  it("split or repeat in faceted charts, load from specs, and draw in static SVG", () => {
     const groups = table({ v: [1, 2, 3], g: ["a", "a", "b"] });
-    expect(() =>
-      build({
-        marks: [line(groups, { x: "v", y: "v" }), histogram(groups, { x: "v" })],
+    // A line splits the rows into panels; a repeated histogram counts them all in each.
+    const counted = (repeat: boolean) => {
+      const { model } = build({
+        marks: [
+          histogram(groups, { x: "v", bins: 2, ...(repeat && { facet: "repeat" as const }) }),
+          line(groups, { x: "v", y: "v" }),
+        ],
         facet: facet("g"),
-      }),
-    ).toThrow(/histogram mark over a table cannot be split into panels yet/);
+      });
+      return model.panels().map((p) => [...model.panelSeries(p.key)[0]!.values]);
+    };
+    expect(counted(false)).toEqual([
+      [1, 1],
+      [0, 1],
+    ]);
+    expect(counted(true)).toEqual([
+      [1, 2],
+      [1, 2],
+    ]);
     const { config } = loadSpec({
       data: { t: { columns: { v: [1, 2, 3] } } },
       marks: [{ type: "histogram", x: "v", bins: { step: 1 }, normalize: "percent" }],

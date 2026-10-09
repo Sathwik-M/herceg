@@ -2460,7 +2460,7 @@ class Chart:
             for field in self._facets:
                 self._require(table, field, ("category",), "facet")
             kind = spec["type"]
-            if kind in ("histogram", "boxplot", "violin", "rule", "region", "text"):
+            if kind in ("rule", "region", "text"):
                 raise ValueError(
                     f"{kind} marks over a table cannot be split into panels yet; "
                     "pass repeat=True to draw them whole in every panel"
@@ -2472,8 +2472,9 @@ class Chart:
     def _check_categories(self, spec: dict[str, Any], table: int | None) -> None:
         """Refuses, as the browser would, what panels with categories of their own
         (``resolve_x`` or ``resolve_y`` other than ``"shared"`` on a category axis)
-        cannot draw yet: marks other than bars, heatmaps, and points on such an
-        axis, synced charts, and brushes along a y axis of such categories."""
+        cannot draw yet: marks other than bars, heatmaps, points, box plots, and
+        violins on such an axis (error bars and candlesticks), synced charts, and
+        brushes along a y axis of such categories."""
         if table is None or not (self._facets or self._panels):
             return
         kind = spec["type"]
@@ -2486,7 +2487,7 @@ class Chart:
             )
             if resolution == "shared" or not banded:
                 continue
-            if kind not in ("bar", "heatmap", "point"):
+            if kind not in ("bar", "heatmap", "point", "boxplot", "violin"):
                 raise ValueError(
                     f"a {kind} mark's categories cannot be resolved per panel yet; "
                     f"pass resolve_{axis}='shared'"

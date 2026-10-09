@@ -5,10 +5,15 @@ import { rectDrawing } from "../draw/rect.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import type { PointGeometry, RectGeometry, SegmentGeometry } from "../scene/scene.ts";
 import type { BoxPlotSpec, Frozen } from "../spec/spec.ts";
-import { DistributionMark, type DistributionOptions, type Stat } from "./distribution.ts";
+import {
+  DistributionMark,
+  type DistributionOptions,
+  type Stat,
+  type Summary,
+} from "./distribution.ts";
 import { definedFields } from "./line.ts";
 import type { AxisFormat, ChartMark, Frame } from "./mark.ts";
-import { rowOf, type Series } from "./series.ts";
+import { placeAt, rowOf, type Series } from "./series.ts";
 
 export type BoxPlotOptions<S extends Schema> = DistributionOptions<S>;
 
@@ -37,9 +42,13 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, number[]> {
   }
 
   /** Boxes, whiskers, and outliers. */
-  protected drawnValues(row: number, add: (value: number) => void): void {
-    for (const stat of ["low", "q1", "median", "q3", "high"] as const) add(this.stat(stat)[row]!);
-    for (const value of this.summary().groups[row]!) add(value);
+  protected drawnValues(
+    { stats, groups }: Summary<number[]>,
+    row: number,
+    add: (value: number) => void,
+  ): void {
+    for (const stat of ["low", "q1", "median", "q3", "high"] as const) add(stats[stat][row]!);
+    for (const value of groups[row]!) add(value);
   }
 
   geometry(
@@ -50,12 +59,12 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, number[]> {
     const horizontal = this.horizontal;
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
-    const [q1, median, q3, low, high] = (["q1", "median", "q3", "low", "high"] as const).map(
-      (stat) => this.stat(stat),
-    );
-    const outliers = this.summary().groups;
     const fillOpacity = this.spec.fillOpacity ?? 0.25;
     for (const [s, { offset, share }] of this.placements(series, frame)) {
+      // A series without groups in a panel draws nothing there, but keeps its slot.
+      if (s.length === 0) continue;
+      const { stats, groups: outliers } = this.summaryOf(s);
+      const { q1, median, q3, low, high } = stats;
       const width = share * BOX;
       let points = 0;
       for (let k = 0; k < s.length; k++) points += outliers[rowOf(s, k)]!.length;
@@ -73,7 +82,8 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, number[]> {
       };
       for (let k = 0; k < s.length; k++) {
         const row = rowOf(s, k);
-        const position = horizontal ? s.y[row]! : s.x[row]!;
+        // A panel's own categories are read at their places.
+        const position = placeAt(s, horizontal ? "y" : "x", row);
         if (position < 0) continue;
         const center = along.map(position) + offset;
         if (!Number.isFinite(center)) continue;
@@ -149,19 +159,21 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, number[]> {
   }
 
   /** From the lowest to the highest value drawn for a box: whiskers and outliers. */
-  span(_series: Series, row: number): readonly [number, number] {
+  span(series: Series, row: number): readonly [number, number] {
+    const { stats, groups } = this.summaryOf(series);
     // Outliers are ascending.
-    const outliers = this.summary().groups[row]!;
-    const low = this.stat("low")[row]!;
-    const high = this.stat("high")[row]!;
+    const outliers = groups[row]!;
+    const low = stats.low[row]!;
+    const high = stats.high[row]!;
     return [Math.min(low, outliers[0] ?? low), Math.max(high, outliers.at(-1) ?? high)];
   }
 
   /** A box's statistics, formatted as its value axis formats values. */
-  pointText(_series: Series, row: number, format: AxisFormat): string {
+  pointText(series: Series, row: number, format: AxisFormat): string {
     const f = this.horizontal ? format.x : format.y;
-    const stat = (name: Stat) => this.stat(name)[row]!;
-    const outliers = this.summary().groups[row]!.length;
+    const { stats, groups } = this.summaryOf(series);
+    const stat = (name: Stat) => stats[name][row]!;
+    const outliers = groups[row]!.length;
     const n = stat("count");
     return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, whiskers ${f(stat("low"))} to ${f(stat("high"))}, ${n} ${n === 1 ? "value" : "values"}${outliers ? `, ${outliers} ${outliers === 1 ? "outlier" : "outliers"}` : ""}`;
   }

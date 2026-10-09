@@ -136,9 +136,10 @@ export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
 
 /**
  * Scale sharing between panels; needs spec version 2 (3 for `x`). A category
- * axis of bars, heatmaps, or points that panels do not share holds only the
- * categories of the rows they draw; other marks on category axes need them
- * shared.
+ * axis of bars, heatmaps, points, box plots, or violins that panels do not
+ * share holds only the categories of the rows they draw; error bars and
+ * candlesticks on category axes need them shared. Histograms choose their
+ * bins from the rows of the panels sharing an x scale.
  */
 export interface ResolveSpec {
   /** Shared by default. */

@@ -69,8 +69,9 @@ Svelte adapters, min/max indexes for zooming and streaming large line
 series (whole columns or split by a series field), WebGL drawing of large
 point series, chart specs with binary columns, a Python package, a second
 y axis, small multiples (wrapped or by row and column, with shared or
-per-panel x and y scales, and categories per panel for bars, heatmaps, and
-points), points on category axes, subplots (with weighted rows and
+per-panel x and y scales, histograms, box plots, and violins summarizing
+each panel's rows, and categories per panel for bars, heatmaps, points, box
+plots, and violins), points on category axes, subplots (with weighted rows and
 columns), live notebook charts (a widget that streams updates from Python
 and reports interaction back), a Streamlit component, row views and selection stores shared by charts and
 grids, row groups whose aggregates charts and grids share, and an
@@ -82,8 +83,8 @@ menu, keyboard and ARIA navigation, and a React component).
 Next, in order:
 
 1. Large data: incremental stacks for bars split by a series field.
-2. Layout: categories resolved per panel for histograms and box plots, as
-   they are for bars, heatmaps, and points.
+2. Layout: annotations over a table split by facets, and error bars and
+   candlesticks on categories per panel.
 3. Animation of changed values that move the axes, and of stacked and
    labeled bars, points, lines, areas, and panels.
 4. More financial tools (a range navigator, drawing tools, markers at

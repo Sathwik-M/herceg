@@ -381,9 +381,11 @@ def test_panels_can_have_categories_of_their_own():
         .bar(x="v", y="name", data={"name": ["vw", "audi"], "v": [5, 6]}, panel="cars")
     )
     assert ">audi</text>" in subplots.to_svg()
-    with pytest.raises(ValueError, match="boxplot mark's categories cannot be resolved per panel"):
-        hg.Chart(sales, facet="region", resolve_x="independent").boxplot(
-            x="product", y="units", repeat=True
+    with pytest.raises(
+        ValueError, match="candlestick mark's categories cannot be resolved per panel"
+    ):
+        hg.Chart(sales, facet="region", resolve_x="independent").candlestick(
+            x="product", open="units", high="units", low="units", close="units"
         )
     with pytest.raises(ValueError, match="cannot be synced yet"):
         hg.Chart(sales, facet="region", resolve_x="rows", sync="board").bar(x="product", y="units")
@@ -427,6 +429,42 @@ def test_heatmaps_and_points_have_categories_of_their_own():
     assert ">q</text>" in hg.scatter(load, x="cpu", y="host").to_svg()
     with pytest.raises(TypeError, match="point r: column 'host' holds category values"):
         hg.scatter(load, x="hour", y="cpu", r="host")
+
+
+def test_histograms_and_box_plots_split_by_facets():
+    load = {
+        "region": ["N", "N", "N", "S", "S", "S"],
+        "host": ["p", "p", "q", "q", "r", "r"],
+        "ms": [1.0, 2.0, 3.0, 110.0, 120.0, 190.0],
+    }
+    binned = hg.Chart(load, facet="region", resolve_x="independent", width=500, height=250)
+    binned = binned.histogram(x="ms", bins={"step": 10})
+    spec, _ = binned.to_spec()
+    assert spec["facet"] == {"field": "region"}
+    assert spec["resolve"] == {"x": "independent"}
+    assert spec["version"] == 3
+    assert spec["marks"][0] == {
+        "type": "histogram",
+        "data": "data",
+        "x": "ms",
+        "bins": {"step": 10},
+    }
+    assert sorted(spec["data"]["data"]["columns"]) == ["ms", "region"]
+    svg = binned.to_svg()
+    # Each panel's bins span its own rows: N's 0 to 10, with ticks 0, 5, 10;
+    # S's 110 to 190, with ticks 120 to 180.
+    assert ">5</text>" in svg and ">180</text>" in svg
+    boxes = hg.Chart(load, facet="region", resolve_x="independent", width=500, height=250)
+    boxes = boxes.boxplot(x="host", y="ms")
+    spec, _ = boxes.to_spec()
+    assert spec["marks"][0] == {"type": "boxplot", "data": "data", "x": "host", "y": "ms"}
+    svg = boxes.to_svg()
+    # N's p and q, S's q and r, each panel labeling its own.
+    assert all(f">{label}</text>" in svg for label in ("p", "q", "r"))
+    sideways = hg.Chart(load, facet="region", resolve_y="independent").violin(x="ms", y="host")
+    assert sideways.to_spec()[0]["resolve"] == {"y": "independent"}
+    with pytest.raises(ValueError, match="text marks over a table cannot be split into panels"):
+        hg.Chart(load, facet="region").text(x="ms", y="ms", text="host")
 
 
 def test_candlesticks_send_their_four_prices():
@@ -772,8 +810,6 @@ def test_boxplots_take_a_category_and_values_either_way():
         hg.Chart(data).boxplot(x="ms", y="region", axis="right")
     with pytest.raises(ValueError, match="fill_opacity"):
         hg.Chart(data).boxplot(x="region", y="ms", fill_opacity=2)
-    with pytest.raises(ValueError, match="cannot be split into panels"):
-        hg.Chart(data, facet="v").boxplot(x="region", y="ms")
 
 
 def test_violins_take_a_bandwidth_and_the_box_plot_options():
@@ -791,8 +827,6 @@ def test_violins_take_a_bandwidth_and_the_box_plot_options():
         hg.Chart(data).violin(x="ms", y="region", axis="right")
     with pytest.raises(TypeError, match="violin y: column 'region' holds category"):
         hg.Chart(data).violin(x="region", y="region")
-    with pytest.raises(ValueError, match="cannot be split into panels"):
-        hg.Chart(data, facet="region").violin(x="region", y="ms")
 
 
 def test_treemaps_and_sunbursts_send_their_tree():

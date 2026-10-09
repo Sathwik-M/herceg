@@ -5,8 +5,10 @@ import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import type { ChartEvents } from "../../src/dom/events.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { boxplot } from "../../src/marks/boxplot.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
+import { histogram } from "../../src/marks/histogram.ts";
 import { line } from "../../src/marks/line.ts";
 import type { ChartMark } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
@@ -918,6 +920,115 @@ describe("facet panels with heatmaps and points on categories of their own", () 
     const live = chart.root.querySelector("[aria-live]")!;
     key(chart, "ArrowRight");
     expect(live.textContent).toBe("N: b. cpu: 1");
+    chart.destroy();
+  });
+});
+
+describe("facet panels with histograms and box plots", () => {
+  // N's values are small and S's large; b is N's second category and S's first.
+  const sales = () =>
+    table({
+      region: ["N", "S", "N", "S", "N", "S", "N", "S"],
+      product: ["a", "b", "a", "b", "a", "b", "b", "c"],
+      units: [1, 100, 2, 200, 3, 300, 10, 5],
+    });
+
+  it("count each panel's rows in its own bins, as tooltips and the keyboard read them", async () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [histogram(sales(), { x: "units", bins: { step: 5 } })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+    });
+    const [n, s] = modelOf(chart).panels();
+    expect(n!.x.domain).toEqual([0, 10]);
+    expect(s!.x.domain).toEqual([5, 300]);
+    pointer(chart.root, "pointermove", s!.x.map(102.5), s!.plot.y + s!.plot.height / 2);
+    await frame();
+    const tooltip = [...chart.root.children].find(
+      (el) => (el as HTMLElement).style.pointerEvents === "none" && el.tagName === "DIV",
+    ) as HTMLElement;
+    expect(tooltip.textContent).toContain("100 – 105: 1");
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toBe("N: 2.5. units: 0 – 5: 3");
+    // Into S, whose x scale is its own, at the same place across the plot.
+    key(chart, "ArrowDown");
+    expect(live.textContent).toBe("S: 77.5. units: 75 – 80: 0");
+    chart.destroy();
+  });
+
+  it("carry the keyboard across panels along y categories of their own", () => {
+    for (const layout of ["facet", "subplots"] as const) {
+      const data = sales();
+      const chart = createChart(host, {
+        locale: "en-US",
+        ...(layout === "facet"
+          ? {
+              marks: [boxplot(data, { x: "units", y: "product" })],
+              facet: facet("region"),
+              resolve: { y: "independent" },
+            }
+          : {
+              // N's rows and S's, each in a panel of its own categories.
+              marks: [
+                boxplot(table({ product: ["a", "b"], units: [2, 10] }), {
+                  x: "units",
+                  y: "product",
+                  panel: "N",
+                }),
+                boxplot(table({ product: ["b", "c"], units: [200, 5] }), {
+                  x: "units",
+                  y: "product",
+                  panel: "S",
+                }),
+              ],
+              panels: panels([{ id: "N" }, { id: "S" }]),
+            }),
+      });
+      const live = chart.root.querySelector("[aria-live]")!;
+      key(chart, "ArrowRight");
+      expect(live.textContent).toMatch(/^N: a\. /);
+      key(chart, "ArrowRight");
+      expect(live.textContent).toMatch(/^b\. /);
+      // Into S at the same place down the plot: its second category, c.
+      key(chart, "ArrowDown");
+      expect(live.textContent).toMatch(/^S: c\. /);
+      chart.destroy();
+    }
+  });
+
+  it("paint each panel's boxes at its own categories on a canvas, and read them", () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [boxplot(sales(), { x: "product", y: "units" })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+      renderer: "canvas",
+      theme: { palette: ["#ff0000"] },
+    });
+    const [n, s] = modelOf(chart).panels();
+    expect([n!.x.categories, s!.x.categories]).toEqual([
+      ["a", "b"],
+      ["b", "c"],
+    ]);
+    const canvas = host.querySelector("canvas")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    const pixel = (x: number, y: number) =>
+      Array.from(
+        canvas.getContext("2d")!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1)
+          .data,
+      );
+    // S's box at place 0 (b) spans 150 to 250, filled a light red; N's
+    // there (a) spans 1 to 3.
+    const red = ([r, g]: number[]) => r! - g! > 30;
+    expect(red(pixel(s!.x.map(0), s!.y.map(220)))).toBe(true);
+    expect(red(pixel(n!.x.map(0), n!.y.map(220)))).toBe(false);
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toMatch(/^N: a\. units: median 2,/);
+    key(chart, "ArrowDown");
+    expect(live.textContent).toMatch(/^S: b\. units: median 200,/);
     chart.destroy();
   });
 });

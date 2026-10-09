@@ -224,7 +224,9 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * `palette` returns the color for a series key, `hidden` holds keys of
    * series the user hid, and `bands` gives the band axes' categories. With
    * `split`, facets split the series' rows into panels next, and marks that
-   * combine rows (stacks) leave that to `stackPanels`.
+   * combine rows (stacks) leave that to `stackPanels`; marks that summarize
+   * rows return their series without data (keys, labels, and colors), and
+   * summarize each panel's rows in `summarizePanels`.
    */
   series(
     key: MarkKey,
@@ -240,6 +242,21 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * `series` returned), whose values it stacks in place.
    */
   stackPanels?(panels: readonly (readonly Series[])[], hidden: ReadonlySet<string>): void;
+  /**
+   * For marks whose series summarize rows (histograms, box plots), resolved
+   * with `split`: each panel's series, one per series of `roster` (those
+   * `series` returned, whose keys, labels, and colors they keep), from the
+   * table rows in each panel (`rows[p]`, ascending). `xGroupOf[p]` is the
+   * group of panels sharing panel p's x scale.
+   */
+  summarizePanels?(
+    roster: readonly Series[],
+    rows: readonly Uint32Array[],
+    xGroupOf: readonly number[],
+    hidden: ReadonlySet<string>,
+    bands: Bands,
+    context: BandContext,
+  ): Series[][];
   /** The axis whose domain includes zero, for marks drawn from a zero baseline. */
   readonly zero?: "x" | "y" | undefined;
   /**

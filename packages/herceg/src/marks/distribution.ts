@@ -2,7 +2,7 @@
 // category (and series value), each group's statistics, and how the groups
 // are placed, picked, and described. The marks differ in what they draw.
 
-import { category } from "../data/column.ts";
+import { category, type NumericArray } from "../data/column.ts";
 import { type BoxStats, boxStats } from "../data/quantile.ts";
 import {
   type CategoryField,
@@ -33,8 +33,9 @@ import {
   requireField,
   SeriesSplitter,
   type SummaryContext,
+  seriesKey,
 } from "./mark.ts";
-import { rowOf, type Series } from "./series.ts";
+import { placeAt, rowOf, type Series } from "./series.ts";
 
 /** Options box plots and violins share. */
 export type DistributionOptions<S extends Schema> = (
@@ -68,13 +69,20 @@ export type DistributionOptions<S extends Schema> = (
 const STATS = ["q1", "median", "q3", "low", "high", "count"] as const;
 export type Stat = (typeof STATS)[number];
 
-/** The statistics of every group, rebuilt when the source table changes. */
-interface Summary<G> {
-  version: number;
+/**
+ * The statistics of groups of a number field's values, by category and
+ * series value: one chart's, or one facet panel's. Built once, never changed.
+ */
+export interface Summary<G> {
   /** A row per category (and series value) with values: `category`, `group`, and the statistics. */
   table: Table;
+  /** Each statistic by summary row. */
+  stats: Readonly<Record<Stat, Float64Array>>;
   /** What the mark keeps of each row's values besides its statistics. */
   groups: G[];
+  /** A table row of each summary row's group, whose category places it. */
+  first: Uint32Array;
+  /** Summary rows by series value. */
   split: SeriesSplitter;
 }
 
@@ -86,11 +94,16 @@ export interface Placement {
   share: number;
 }
 
+const NO_ROWS = new Uint32Array(0);
+/** The keys of an axis without bands; one list, as `bandIndices` keeps its mappings per list. */
+const NO_KEYS: readonly string[] = [];
+
 /**
  * A mark summarizing a number field's values per category. Each summary row
  * is one group; its median is the row's value, which tooltips and the
  * nearest-band search read. `G` is what the mark keeps of a group's values
- * for drawing, such as its outliers or its density.
+ * for drawing, such as its outliers or its density. Split by facets, each
+ * panel summarizes its own rows.
  */
 export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   implements Mark<Frozen<T>>
@@ -110,7 +123,25 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   protected abstract readonly noun: readonly [string, string];
   /** The fraction of its series' room in a slot a shape is wide. */
   protected abstract readonly width: number;
-  #summary: Summary<G> | undefined;
+  /** One chart's summary of all rows, as of a table version. */
+  #whole: { version: number; summary: Summary<G> } | undefined;
+  /** Facet panels' summaries, by their first panel's rows: charts split rows apart. */
+  readonly #panels = new WeakMap<
+    Uint32Array,
+    { version: number; rows: readonly Uint32Array[]; summaries: Summary<G>[] }
+  >();
+  /**
+   * The summary each series reads, by its values (the summary's medians),
+   * which panels' copies of a series share.
+   */
+  readonly #summaries = new WeakMap<NumericArray, Summary<G>>();
+  /**
+   * Each summary's band positions, by the chart's band indices of the
+   * table's rows they were read from: charts sharing the mark may have others.
+   */
+  readonly #positions = new WeakMap<Summary<G>, WeakMap<Int32Array, Int32Array>>();
+  /** The series one chart's summary has, in its order, as of a table version. */
+  #roster: { version: number; ids: string[] } | undefined;
 
   constructor(input: T, table: Table) {
     this.spec = frozen(input);
@@ -136,8 +167,12 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   /** What to keep of a group's ascending, finite values besides `stats`. */
   protected abstract describeGroup(sorted: Float64Array, stats: BoxStats): G;
 
-  /** Calls `add` with every value drawn for a row, for the value axis' extent. */
-  protected abstract drawnValues(row: number, add: (value: number) => void): void;
+  /** Calls `add` with every value drawn for a row of `summary`, for the value axis' extent. */
+  protected abstract drawnValues(
+    summary: Summary<G>,
+    row: number,
+    add: (value: number) => void,
+  ): void;
 
   abstract geometry(series: readonly Series[], frame: Frame): Geometry[];
 
@@ -147,17 +182,35 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   /** A row's statistics, formatted as its value axis formats values. */
   abstract pointText(series: Series, row: number, format: AxisFormat): string;
 
-  protected summary(): Summary<G> {
+  /** The summary a series of this mark reads. */
+  protected summaryOf(series: Series): Summary<G> {
+    return this.#summaries.get(series.values)!;
+  }
+
+  /** One chart's summary, of every row. */
+  #wholeSummary(): Summary<G> {
+    const { version } = this.table;
+    if (this.#whole?.version !== version) this.#whole = { version, summary: this.#summarize() };
+    return this.#whole.summary;
+  }
+
+  /**
+   * The statistics of each category's (and series value's) values at
+   * `rows` of the table, or at every row.
+   */
+  #summarize(rows?: Uint32Array): Summary<G> {
     const source = this.table;
-    if (this.#summary?.version === source.version) return this.#summary;
     const categories = source.categories(this.category as never);
     const series =
       this.spec.series !== undefined ? source.categories(this.spec.series as never) : undefined;
     const values = source.numbers(this.value as never);
     const width = series ? series.dictionary.length : 1;
-    // The values of each group, keyed by category and series code.
+    // The values of each group, keyed by category and series code, and a row of it.
     const lists = new Map<number, number[]>();
-    for (let row = 0; row < source.length; row++) {
+    const firsts = new Map<number, number>();
+    const length = rows ? rows.length : source.length;
+    for (let k = 0; k < length; k++) {
+      const row = rows ? rows[k]! : k;
       const c = categories.codes[row]!;
       const s = series ? series.codes[row]! : 0;
       const value = values[row]!;
@@ -167,6 +220,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
       if (!list) {
         list = [];
         lists.set(key, list);
+        firsts.set(key, row);
       }
       list.push(value);
     }
@@ -186,9 +240,12 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
       ...(columns as Record<Stat, Float64Array>),
     }) as unknown as Table;
     const built: Summary<G> = {
-      version: source.version,
       table: summary,
+      stats: Object.fromEntries(
+        STATS.map((stat) => [stat, summary.numbers(stat as never) as Float64Array]),
+      ) as Record<Stat, Float64Array>,
       groups,
+      first: Uint32Array.from(keys, (key) => firsts.get(key)!),
       split: new SeriesSplitter(
         summary,
         undefined,
@@ -197,12 +254,78 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
         this.spec.label ?? this.value,
       ),
     };
-    this.#summary = built;
+    this.#summaries.set(built.stats.median, built);
     return built;
   }
 
-  protected stat(stat: Stat): Float64Array {
-    return this.summary().table.numbers(stat as never) as Float64Array;
+  /**
+   * Facet panels' summaries, one per panel of `rows`: kept while the table
+   * and the panels' rows are the same, so redrawing sorts nothing again.
+   */
+  #panelSummaries(rows: readonly Uint32Array[]): Summary<G>[] {
+    const { version } = this.table;
+    const key = rows[0]!;
+    const cached = this.#panels.get(key);
+    if (
+      cached?.version === version &&
+      cached.rows.length === rows.length &&
+      cached.rows.every((r, p) => r === rows[p])
+    )
+      return cached.summaries;
+    const summaries = rows.map((panel) => this.#summarize(panel));
+    this.#panels.set(key, { version, rows, summaries });
+    return summaries;
+  }
+
+  /**
+   * Each row's band on the chart's category axis, from the band of a table
+   * row of its group (`bands`): a summary-sized array, kept per summary and
+   * band indices, so panels read the chart's mapping rather than make their own.
+   */
+  #placed(summary: Summary<G>, bands: Int32Array): Int32Array {
+    let byBands = this.#positions.get(summary);
+    if (!byBands) {
+      byBands = new WeakMap();
+      this.#positions.set(summary, byBands);
+    }
+    let positions = byBands.get(bands);
+    if (!positions) {
+      positions = Int32Array.from(summary.first, (row) => bands[row]!);
+      byBands.set(bands, positions);
+    }
+    return positions;
+  }
+
+  /** Each table row's band index on the chart's category axis. */
+  #bands(bands: Bands, context: BandContext): Int32Array {
+    const keys = (this.horizontal ? bands.y : bands.x)?.keys ?? NO_KEYS;
+    return bandIndices(this.table, this.category, keys, context);
+  }
+
+  /**
+   * The series values one chart's summary has groups of, in its order: by
+   * the first category each has values in, as its summary lists them. A
+   * pass over the rows per table version, with nothing summarized.
+   */
+  #rosterIds(): string[] {
+    const source = this.table;
+    if (this.#roster?.version === source.version) return this.#roster.ids;
+    let ids = ["median"];
+    if (this.spec.series !== undefined) {
+      const categories = source.categories(this.category as never).codes;
+      const { codes, dictionary } = source.categories(this.spec.series as never);
+      const values = source.numbers(this.value as never);
+      const first = new Float64Array(dictionary.length).fill(Infinity);
+      for (let row = 0; row < source.length; row++) {
+        const c = categories[row]!;
+        const s = codes[row]!;
+        if (c >= 0 && s >= 0 && Number.isFinite(values[row]!) && c < first[s]!) first[s] = c;
+      }
+      const order = Array.from(dictionary, (_, s) => s).filter((s) => first[s]! < Infinity);
+      ids = order.sort((a, b) => first[a]! - first[b]! || a - b).map((s) => dictionary[s]!);
+    }
+    this.#roster = { version: source.version, ids };
+    return ids;
   }
 
   channelKind(axis: "x" | "y") {
@@ -221,14 +344,97 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     _hidden: ReadonlySet<string>,
     bands: Bands,
     context: BandContext,
+    split = false,
   ): Series[] {
-    const { table: summary, split } = this.summary();
-    const keys = (this.horizontal ? bands.y : bands.x)?.keys ?? [];
-    const positions = bandIndices(summary, "category", keys, context);
-    const series = buildSeries(summary, split.sources(), positions, key, palette, this.spec.fill);
+    // Facets summarize each panel's rows (summarizePanels).
+    if (split) {
+      const label = this.spec.label ?? this.value;
+      return this.#rosterIds().map((name) => {
+        const id = seriesKey(key, name);
+        const series = this.spec.series === undefined ? label : name;
+        return this.#series(
+          id,
+          series,
+          this.spec.fill ?? palette(id),
+          NO_ROWS,
+          NO_ROWS,
+          NO_ROWS,
+          0,
+        );
+      });
+    }
+    const summary = this.#wholeSummary();
+    const positions = this.#placed(summary, this.#bands(bands, context));
+    const series = buildSeries(
+      summary.table,
+      summary.split.sources(),
+      positions,
+      key,
+      palette,
+      this.spec.fill,
+    );
     // Series are built with positions on x; horizontal shapes swap them onto y.
     if (this.horizontal) for (const s of series) [s.x, s.y] = [s.y, s.x];
     return series;
+  }
+
+  /**
+   * Each panel's shapes, one series per series of `roster`, from the
+   * statistics of the panel's rows; a series with no group in a panel has
+   * no shapes there, but keeps its slot.
+   */
+  summarizePanels(
+    roster: readonly Series[],
+    rows: readonly Uint32Array[],
+    _xGroupOf: readonly number[],
+    _hidden: ReadonlySet<string>,
+    bands: Bands,
+    context: BandContext,
+  ): Series[][] {
+    const ids = this.#rosterIds();
+    const indices = this.#bands(bands, context);
+    return this.#panelSummaries(rows).map((summary) => {
+      const positions = this.#placed(summary, indices);
+      const median = summary.stats.median;
+      const sources = new Map(summary.split.sources().map((source) => [source.id, source]));
+      return roster.map(({ key, label, color }, i) => {
+        // Without a series field, the one series has every summary row.
+        const found = sources.get(ids[i]!);
+        const length = found ? (found.rows?.length ?? median.length) : 0;
+        const rows = found ? found.rows : NO_ROWS;
+        return this.#series(key, label, color, positions, median, rows, length);
+      });
+    });
+  }
+
+  /**
+   * A series of `length` summary rows (`rows`, or the first), at
+   * `positions` along the category axis, with `median` values.
+   */
+  #series(
+    key: string,
+    label: string,
+    color: string,
+    positions: NumericArray,
+    median: NumericArray,
+    rows: Uint32Array | undefined,
+    length: number,
+  ): Series {
+    const [x, y] = this.horizontal ? [median, positions] : [positions, median];
+    return {
+      key,
+      label,
+      color,
+      x,
+      y,
+      y0: undefined,
+      values: median,
+      field: undefined,
+      range: false,
+      rows,
+      length,
+      sorted: false,
+    };
   }
 
   #valueExtent(series: readonly Series[], log: boolean) {
@@ -239,7 +445,11 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
       if (value < min) min = value;
       if (value > max) max = value;
     };
-    for (const s of series) for (let k = 0; k < s.length; k++) this.drawnValues(rowOf(s, k), add);
+    for (const s of series) {
+      if (s.length === 0) continue;
+      const summary = this.summaryOf(s);
+      for (let k = 0; k < s.length; k++) this.drawnValues(summary, rowOf(s, k), add);
+    }
     return min <= max ? ([min, max] as const) : undefined;
   }
 
@@ -274,12 +484,14 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
     const [pa, pc] = horizontal ? [py, px] : [px, py];
-    const median = this.stat("median");
     let best: Hit | undefined;
     for (const [s, { offset, share }] of this.placements(series, frame)) {
+      if (s.length === 0) continue;
+      const { median } = this.summaryOf(s).stats;
       for (let k = 0; k < s.length; k++) {
         const row = rowOf(s, k);
-        const position = horizontal ? s.y[row]! : s.x[row]!;
+        // A panel's own categories are read at their places.
+        const position = placeAt(s, horizontal ? "y" : "x", row);
         if (position < 0 || !Number.isFinite(median[row]!)) continue;
         const center = along.map(position) + offset;
         const ends = this.span(s, row)
@@ -299,30 +511,37 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   }
 
   /** Inspection skips categories without values. */
-  shows(_series: Series, row: number): boolean {
-    return Number.isFinite(this.stat("median")[row]!);
+  shows(series: Series, row: number): boolean {
+    return Number.isFinite(this.summaryOf(series).stats.median[row]!);
   }
 
-  /** The number of shapes and the range of their medians, over a series' parts in every panel. */
+  /**
+   * The number of shapes and the range of their medians, over a series'
+   * parts in every panel, each read with its own summary.
+   */
   summarize(parts: readonly Series[], name: string, { format }: SummaryContext): string {
     const f = this.horizontal ? format.x : format.y;
-    const median = this.stat("median");
-    const labels = this.summary().table.categories("category" as never);
     let count = 0;
-    let lowest = -1;
-    let highest = -1;
+    // The lowest and highest medians, and their categories.
+    let lowest: [number, string] | undefined;
+    let highest: [number, string] | undefined;
     for (const part of parts) {
+      if (part.length === 0) continue;
+      const summary = this.summaryOf(part);
+      const { median } = summary.stats;
+      const labels = summary.table.categories("category" as never);
       for (let k = 0; k < part.length; k++) {
         const row = rowOf(part, k);
-        if (!Number.isFinite(median[row]!)) continue;
+        const value = median[row]!;
+        if (!Number.isFinite(value)) continue;
         count++;
-        if (lowest < 0 || median[row]! < median[lowest]!) lowest = row;
-        if (highest < 0 || median[row]! > median[highest]!) highest = row;
+        const label = () => labels.dictionary[labels.codes[row]!]!;
+        if (!lowest || value < lowest[0]) lowest = [value, label()];
+        if (!highest || value > highest[0]) highest = [value, label()];
       }
     }
     const [one, many] = this.noun;
-    if (count === 0) return `${name}: no ${many}`;
-    const label = (row: number) => labels.dictionary[labels.codes[row]!]!;
-    return `${name}: ${count} ${count === 1 ? one : many}, medians from ${f(median[lowest]!)} (${label(lowest)}) to ${f(median[highest]!)} (${label(highest)})`;
+    if (!lowest || !highest) return `${name}: no ${many}`;
+    return `${name}: ${count} ${count === 1 ? one : many}, medians from ${f(lowest[0])} (${lowest[1]}) to ${f(highest[0])} (${highest[1]})`;
   }
 }
