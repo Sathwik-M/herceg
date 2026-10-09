@@ -42,6 +42,28 @@ export interface GridOptions<S extends Schema = Schema> {
 export type GridUpdate = Partial<Omit<GridOptions, "model">>;
 
 /**
+ * Header rows over the columns' own, for grids that need them
+ * (dom/grid-pivot.ts: a pivot's values over their aggregates).
+ */
+export interface HeaderRows {
+  /** How many rows it draws for this layout. */
+  rows(layout: readonly PlacedColumn[]): number;
+  /**
+   * Draws them at the top of the header rowgroup, over the shown columns
+   * mounted (`columns`, indices into `layout`, whose header cells are
+   * `cells`), in a grid of columns `width` wide whose rows are `span` wide.
+   */
+  draw(
+    header: HTMLElement,
+    columns: readonly number[],
+    cells: readonly { readonly element: HTMLElement }[],
+    layout: readonly PlacedColumn[],
+    width: number,
+    span: number,
+  ): void;
+}
+
+/**
  * The tallest the rows' spacer is made, in CSS pixels; taller content
  * scrolls scaled. Browsers lay out up to about 33.5 million pixels (Chrome,
  * Safari) or 17.9 million (Firefox), but Chrome stops drawing one-pixel
@@ -132,6 +154,9 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   readonly #controls: ColumnControls<S>;
   readonly #cells = new WeakMap<Element, Cell>();
   #options: GridOptions<S>;
+  readonly #headers: HeaderRows | undefined;
+  /** Header rows: the columns' own and those `#headers` draws. */
+  #levels = 1;
   #headerHeight = HEADER_HEIGHT;
   #rows: Row[] = [];
   #headerCells: Cell[] = [];
@@ -158,11 +183,13 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   readonly #stops: (() => void)[] = [];
   #unwatchPage: (() => void) | undefined;
 
-  constructor(container: HTMLElement, options: GridOptions<S>) {
+  /** `headers` draws header rows over the columns' own (`createPivotGrid` gives them). */
+  constructor(container: HTMLElement, options: GridOptions<S>, headers?: HeaderRows) {
     const document = container.ownerDocument;
     this.#container = container;
     this.model = options.model;
     this.#options = options;
+    this.#headers = headers;
     this.root = element(document, "herceg-grid");
     const style = document.createElement("style");
     style.textContent = GRID_CSS;
@@ -332,7 +359,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   /** Takes the scroller's content box: the rows' viewport is what the header leaves. */
   #measured(width: number, height: number) {
     this.#box = { width, height };
-    this.model.setViewport(width, Math.max(0, height - this.#headerHeight));
+    this.model.setViewport(width, Math.max(0, height - this.#headerHeight * this.#levels));
   }
 
   #draw() {
@@ -343,6 +370,13 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       const count = model.rowCount;
       // The model's layout is of placed columns, which say what they show.
       const layout = model.columnLayout as readonly PlacedColumn[];
+      const levels = 1 + (this.#headers?.rows(layout) ?? 0);
+      if (levels !== this.#levels) {
+        this.#levels = levels;
+        // Rows' indexes count the header rows: every mounted row writes its own again.
+        for (const row of this.#rows) row.index = -1;
+        if (this.#box) this.#measured(this.#box.width, this.#box.height);
+      }
       // A column's menu closing with its column gives the focus back to the grid.
       if (this.#controls.sync()) this.#focusRequested = true;
       const shift = this.#scroll();
@@ -385,10 +419,10 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       if (grid) setAttribute(element, "role", role);
       else element.removeAttribute("role");
     }
-    if (grid) setAttribute(this.#headerRow, "aria-rowindex", "1");
+    if (grid) setAttribute(this.#headerRow, "aria-rowindex", String(this.#levels));
     else this.#headerRow.removeAttribute("aria-rowindex");
     for (const [name, value] of [
-      ["aria-rowcount", String(rows + 1)],
+      ["aria-rowcount", String(rows + this.#levels)],
       ["aria-colcount", String(columns)],
       ["aria-multiselectable", "true"],
       ["aria-readonly", "true"],
@@ -456,6 +490,14 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     const columns = columnsOf(shown, keep?.rowIndex === -1 ? keep : null, layout);
     const cells = this.#mountCells(this.#headerRow, null, this.#headerCells, columns, layout);
     this.#headerCells = cells;
+    this.#headers?.draw(
+      this.#headerRow.parentElement!,
+      columns,
+      cells,
+      layout,
+      this.model.width,
+      this.#spacer.width,
+    );
     const sort = this.model.sort;
     const changed = this.#header?.layout !== layout || this.#header.sort !== sort;
     this.#header = { layout, sort };
@@ -541,7 +583,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     this.#rows = rows;
 
     const modified = model.data.source.modifiedVersion;
-    const revision = groups?.revision ?? -1;
+    const revision = model.groupsRevision;
     const grouped = groups !== null;
     const height = model.rowHeight;
     for (let k = 0; k < rows.length; k++) {
@@ -550,7 +592,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       const entry = entries[k]!;
       if (row.index !== index) {
         row.index = index;
-        row.element.setAttribute("aria-rowindex", String(index + 2));
+        row.element.setAttribute("aria-rowindex", String(index + 1 + this.#levels));
       }
       const y = index * height - shift;
       if (row.y !== y) {
@@ -584,7 +626,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
         const column = layout[cell.column]!;
         const controls = entry.kind === "group" && cell.column === 0;
         this.#place(cell, column, layout);
-        const decorated = this.#decorate(cell, controls, selected);
+        const decorated = this.#decorate(cell, controls, selected, grouped);
         if (stale || decorated || cell.content !== column.content) {
           cell.content = column.content;
           setText(cell.text, model.textAt(index, cell.column));
@@ -616,10 +658,11 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   }
 
   /**
-   * Puts a group's expand toggle and checkbox in a cell, or takes them out;
-   * whether they came or went (the text must be written again).
+   * Puts a group's checkbox in a cell, with its expand toggle when groups
+   * can expand (not a pivot's), or takes them out; whether they came or
+   * went (the text must be written again).
    */
-  #decorate(cell: Cell, wanted: boolean, selected: SelectionState): boolean {
+  #decorate(cell: Cell, wanted: boolean, selected: SelectionState, toggles: boolean): boolean {
     const shown = cell.controls?.element.parentNode === cell.element;
     if (wanted) {
       let controls = cell.controls;
@@ -634,7 +677,8 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
         check.className = "hg-check";
         check.setAttribute("role", "checkbox");
         check.setAttribute("aria-label", "Select");
-        element.append(toggle, check);
+        if (toggles) element.append(toggle);
+        element.append(check);
         controls = { element, check };
         cell.controls = controls;
       }
@@ -757,26 +801,9 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   #place(cell: Cell, column: GridColumnLayout, layout: readonly GridColumnLayout[]): boolean {
     if (cell.placed === column) return false;
     cell.placed = column;
-    const { element } = cell;
-    const style = element.style;
-    const { pinned } = column;
     const index = cell.column;
-    // The first cell held at the right goes after the others in the row's flow.
-    const first = pinned === "right" && layout[index - 1]?.pinned !== "right";
-    const last = pinned === "left" && layout[index + 1]?.pinned !== "left";
-    // Most cells keep their place when one column resizes: write only what changed.
-    const set = (name: "left" | "right" | "marginLeft" | "width", value: string) => {
-      if (style[name] !== value) style[name] = value;
-    };
-    set("left", pinned === "right" ? "" : `${column.x}px`);
-    set("right", pinned === "right" ? `${this.model.width - column.x - column.width}px` : "");
-    set("marginLeft", first ? "auto" : "");
-    set("width", `${column.width}px`);
-    setAttribute(element, "data-pin", pinned ?? "");
-    // The boundary between held columns and those scrolling under them.
-    setAttribute(element, "data-edge", first || last ? pinned! : "");
-    setAttribute(element, "data-align", column.align);
-    setAttribute(element, "aria-colindex", String(index + 1));
+    placeCell(cell.element, column, layout, index, index + 1, this.model.width);
+    setAttribute(cell.element, "aria-colindex", String(index + 1));
     return true;
   }
 
@@ -913,7 +940,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     } else if (group && clicked.closest(".hg-toggle")) {
       model.setExpanded(group.key, !group.expanded);
       this.#announceExpansion(rowIndex);
-    } else if (group && clicked.closest(".hg-check")) {
+    } else if (clicked.closest(".hg-check")) {
       model.select(rowIndex, "toggle");
       this.#announceSelection();
     } else {
@@ -1020,14 +1047,48 @@ function element(document: Document, className?: string): HTMLDivElement {
   return div;
 }
 
+/**
+ * Places a cell over shown columns `start` to `end` (one column's, or a
+ * header's over several) at `column`'s offset, width, and edge, in a grid of
+ * columns `width` wide: cells of columns held at an edge are in the row's
+ * flow and stick there (sticky offsets are their distances from the edge);
+ * the others are placed absolutely, and scroll under them.
+ */
+export function placeCell(
+  element: HTMLElement,
+  column: Pick<GridColumnLayout, "x" | "width" | "pinned" | "align">,
+  layout: readonly GridColumnLayout[],
+  start: number,
+  end: number,
+  width: number,
+) {
+  const style = element.style;
+  const { pinned } = column;
+  // The first cell held at the right goes after the others in the row's flow.
+  const first = pinned === "right" && layout[start - 1]?.pinned !== "right";
+  const last = pinned === "left" && layout[end]?.pinned !== "left";
+  // Most cells keep their place when one column resizes: write only what changed.
+  const set = (name: "left" | "right" | "marginLeft" | "width", value: string) => {
+    if (style[name] !== value) style[name] = value;
+  };
+  set("left", pinned === "right" ? "" : `${column.x}px`);
+  set("right", pinned === "right" ? `${width - column.x - column.width}px` : "");
+  set("marginLeft", first ? "auto" : "");
+  set("width", `${column.width}px`);
+  setAttribute(element, "data-pin", pinned ?? "");
+  // The boundary between held columns and those scrolling under them.
+  setAttribute(element, "data-edge", first || last ? pinned! : "");
+  setAttribute(element, "data-align", column.align);
+}
+
 /** Sets an attribute unless it has the value; an empty value for `data-` attributes removes it. */
-function setAttribute(target: Element, name: string, value: string) {
+export function setAttribute(target: Element, name: string, value: string) {
   if (value === "" && name.startsWith("data-")) {
     if (target.hasAttribute(name)) target.removeAttribute(name);
   } else if (target.getAttribute(name) !== value) target.setAttribute(name, value);
 }
 
-function setText(text: Text, value: string) {
+export function setText(text: Text, value: string) {
   if (text.data !== value) text.data = value;
 }
 
@@ -1060,7 +1121,7 @@ function columnsOf(
  * element `fixed` holds the page's focus and stays put; the others move
  * around it, each only if it is out of place.
  */
-function arrange(parent: Element, elements: readonly Element[], fixed: Element | null) {
+export function arrange(parent: Element, elements: readonly Element[], fixed: Element | null) {
   if (elements.length === 0) return;
   let pivot = fixed ? elements.indexOf(fixed) : -1;
   if (pivot < 0) {

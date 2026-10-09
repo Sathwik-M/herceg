@@ -1,14 +1,14 @@
 // A grid's state without a DOM, imported as `herceg/grid/model`: the columns
 // it shows (their order, widths, pins, and which are hidden), the rows of a
 // row view (or the view's groups, level by level, each followed by its
-// groups below or its rows when expanded),
-// where it is scrolled, which cell has the focus, and which rows are
-// selected. A renderer (dom/grid.ts) draws it and turns keys, clicks, and
+// groups below or its rows when expanded, or a pivot's rows, from
+// grid/pivot.ts), where it is scrolled, which cell has the focus, and which
+// rows are selected. A renderer (dom/grid.ts) draws it and turns keys, clicks, and
 // drags into its commands; applications call the same commands.
 // One model serves one grid: grids showing the same rows share the view, the
 // groups, and the selection store, each with a model of its own.
 
-import { compileExpression, type Expression } from "../data/expression.ts";
+import { compileExpression, type Expression, type Fields } from "../data/expression.ts";
 import { type GroupKey, groupId, type RowGroups } from "../data/groups.ts";
 import type { SortKey } from "../data/order.ts";
 import { RowSet } from "../data/row-set.ts";
@@ -202,7 +202,29 @@ interface Entry {
 const ROW_HEIGHT = 28;
 
 /** A column as the model keeps it: with its id. */
-type Column<S extends Schema> = GridColumn<S> & { readonly id: string };
+type Column<S extends Schema = Schema> = GridColumn<S> & { readonly id: string };
+
+/**
+ * A pivot as a grid shows it (grid/pivot.ts, which keeps pivots out of
+ * grids that show none): its rows are its groups' first level, never
+ * expanded, and its columns are generated, each a field of its crosstab.
+ */
+export interface GridPivot {
+  readonly groups: RowGroups;
+  /** The table whose row `r` holds the pivot's row `r`, which cells read. */
+  readonly rows: Table;
+  /** The crosstab's fields (the rows field and the columns generated), which rows sort by. */
+  readonly fields: Fields;
+  /** Counts changes of the columns generated. */
+  readonly revision: number;
+  /** Whether the pivot stopped at a limit: its rows show what they held, and select nothing. */
+  readonly stopped: boolean;
+  /** The columns generated now, laid out as `current` left them, or as `given` (by `setColumns`) says. */
+  columns(
+    current: readonly Column[],
+    given: readonly GridColumn[] | null,
+  ): { columns: Column[]; contents: Map<string, ColumnContent> };
+}
 
 /**
  * The state of one grid over a row view. Every read brings it up to date
@@ -226,6 +248,9 @@ export class GridModel<S extends Schema = Schema> {
   #pins = { left: 0, right: 0, leftWidth: 0, rightWidth: 0 };
 
   #groups: RowGroups | null = null;
+  readonly #pivot: GridPivot | null;
+  /** The pivot's columns' revision the columns were generated for. */
+  #pivotRevision = -1;
   #groupSort: readonly SortKey[] = [];
   /** Ids of groups expanded otherwise than by default. */
   readonly #toggled = new Set<string>();
@@ -272,7 +297,8 @@ export class GridModel<S extends Schema = Schema> {
   readonly #listeners = new Set<() => void>();
   readonly #stop: () => void;
 
-  constructor(options: GridModelOptions<S>) {
+  /** `pivot`, from `createPivotGridModel`, shows a pivot's rows. */
+  constructor(options: GridModelOptions<S>, pivot?: GridPivot) {
     const { data, selection } = options;
     this.data = data;
     this.#table = data.source as unknown as Table;
@@ -288,7 +314,10 @@ export class GridModel<S extends Schema = Schema> {
       timeZone: options.timeZone ?? "local",
       missing: options.missing ?? "",
     };
-    this.#groups = this.#checkGroups(options.groups ?? null, options.columns);
+    this.#pivot = pivot ?? null;
+    this.#groups = pivot
+      ? pivot.groups
+      : this.#checkGroups(options.groups ?? null, options.columns);
     this.setColumns(options.columns);
     // Held weakly by what it follows, so a model no one keeps stops following on its own.
     const ref = new WeakRef(this);
@@ -313,21 +342,36 @@ export class GridModel<S extends Schema = Schema> {
    * back.
    */
   get columns(): readonly GridColumn<S>[] {
+    this.#generated();
     return this.#columns;
   }
 
   /** The shown columns, placed side by side: pinned left, the others, pinned right. */
   get columnLayout(): readonly GridColumnLayout[] {
+    this.#generated();
     return this.#layout;
   }
 
   /** Width of the shown columns together, in CSS pixels. */
   get width(): number {
+    this.#generated();
     return this.#width;
   }
 
-  /** Replaces the columns: their order, widths, pins, formats, aggregates, and which are hidden. */
+  /**
+   * Replaces the columns: their order, widths, pins, formats, aggregates, and
+   * which are hidden. A pivot grid's columns are generated: it takes their
+   * layout, by id, kept for columns not generated now until they are.
+   */
   setColumns(columns: readonly GridColumn<S>[]): void {
+    const pivot = this.#pivot;
+    if (pivot) {
+      const generated = pivot.columns(this.#columns, columns);
+      this.#pivotRevision = pivot.revision;
+      this.#contents = generated.contents;
+      this.#takeColumns(generated.columns as Column<S>[]);
+      return;
+    }
     const contents = describeColumns(this.#table, columns as readonly GridColumn[], this.#settings);
     this.#checkGroups(this.#groups, columns);
     this.#contents = contents;
@@ -407,14 +451,20 @@ export class GridModel<S extends Schema = Schema> {
 
   /** Index of the shown column `id`, or -1. */
   columnIndex(id: string): number {
+    this.#generated();
     return this.#layout.findIndex((column) => column.id === id);
   }
 
   // Groups
 
-  /** The groups the grid shows, or null when it shows the view's rows alone. */
+  /** The groups the grid shows, or null when it shows the view's rows alone (or a pivot's). */
   get groups(): RowGroups<S> | null {
-    return this.#groups as RowGroups<S> | null;
+    return (this.#pivot ? null : this.#groups) as RowGroups<S> | null;
+  }
+
+  /** Increments whenever the groups' (or the pivot's) aggregates, rows, or order may have changed: what group rows say. */
+  get groupsRevision(): number {
+    return this.#groups?.revision ?? -1;
   }
 
   /**
@@ -423,6 +473,7 @@ export class GridModel<S extends Schema = Schema> {
    * collapsed, in the order they first appeared.
    */
   setGroups(groups: RowGroups<S> | null): void {
+    if (this.#pivot) throw new Error("A pivot grid shows its pivot's rows");
     if (groups === this.#groups) return;
     this.#checkGroups(groups, this.#columns);
     if (this.#display) this.#current();
@@ -565,22 +616,34 @@ export class GridModel<S extends Schema = Schema> {
 
   /** The text of a cell: row `rowIndex` of the view, shown column `columnIndex`. */
   textAt(rowIndex: number, columnIndex: number): string {
+    // Catching up first: a pivot's columns follow its rows.
+    const { group, depth, position } = this.#entry(rowIndex);
     const column = this.#layout[columnIndex];
     if (!column) throw new RangeError(`Column ${columnIndex} is not shown`);
-    const { group, depth, position } = this.#entry(rowIndex);
     if (position >= 0) return column.content.text(this.#table, position);
+    if (this.#pivot) return column.content.text(this.#pivot.rows, group);
     return this.#textsOfGroups()[columnIndex]!(group, depth);
   }
 
   // Sorting
 
   get sort(): readonly SortKey<PositionField<S>>[] {
+    // A pivot grid's keys are of its crosstab's fields, as they are now.
+    if (this.#pivot) {
+      this.#generated();
+      return this.#groupSort as readonly SortKey<PositionField<S>>[];
+    }
     return this.data.query.sort ?? [];
   }
 
-  /** Sorts the view by these keys, keeping its filter; in grouped grids, the rows within each group. */
+  /**
+   * Sorts the view by these keys, keeping its filter; in grouped grids, the
+   * rows within each group. A pivot grid sorts its rows by its columns'
+   * fields, leaving the view alone.
+   */
   setSort(keys: readonly SortKey<PositionField<S>>[]): void {
-    this.data.setQuery({ ...this.data.query, sort: keys });
+    if (this.#pivot) this.setGroupSort(keys);
+    else this.data.setQuery({ ...this.data.query, sort: keys });
   }
 
   /**
@@ -591,8 +654,7 @@ export class GridModel<S extends Schema = Schema> {
    * aggregate, or the level of the grouping field the column shows by key.
    */
   cycleSort(column: string, { additive = false }: { additive?: boolean } = {}): void {
-    const definition = this.#columns.find(({ id }) => id === column);
-    if (!definition) throw new Error(`No grid column "${column}"`);
+    const definition = this.#column(column);
     const field = definition.field as PositionField<S>;
     const keys = this.sort;
     const at = keys.findIndex((key) => key.field === field);
@@ -600,7 +662,7 @@ export class GridModel<S extends Schema = Schema> {
     const order =
       current === undefined ? "ascending" : current === "ascending" ? "descending" : undefined;
     const groups = this.#groups;
-    if (groups) {
+    if (groups && !this.#pivot) {
       const by = groups.by as readonly string[];
       const key = definition.aggregate ?? (by.includes(field) ? field : undefined);
       this.#current();
@@ -745,7 +807,7 @@ export class GridModel<S extends Schema = Schema> {
     if (!focus) return;
     if (focus.rowIndex >= 0 && focus.columnIndex === 0 && (move === "left" || move === "right")) {
       const { grouped } = this.#current();
-      if (grouped) {
+      if (grouped && !this.#pivot) {
         const { group, depth, position, header } = this.#entry(focus.rowIndex);
         const expanded = position < 0 && grouped.open[depth]![group] === 1;
         if (position < 0 && expanded === (move === "left")) {
@@ -833,6 +895,7 @@ export class GridModel<S extends Schema = Schema> {
    */
   select(rowIndex: number, mode: SelectMode = "only"): void {
     const { group, depth, position } = this.#entry(rowIndex);
+    if (this.#pivot?.stopped) return;
     if (mode === "only" || mode === "toggle") {
       const only = mode === "only";
       const rows = only ? new RowSet(this.data.source) : this.#writable();
@@ -873,8 +936,9 @@ export class GridModel<S extends Schema = Schema> {
 
   /** Selects every row the view shows, those scrolled away or in collapsed groups too, as they are now. */
   selectAll(): void {
-    const rows = new RowSet(this.data.source);
     const { snapshot } = this.#current();
+    if (this.#pivot?.stopped) return;
+    const rows = new RowSet(this.data.source);
     addRows(rows, snapshot, 0, snapshot.length);
     const groups = this.#groups;
     this.#publish(rows, (counts) => {
@@ -925,6 +989,7 @@ export class GridModel<S extends Schema = Schema> {
 
   /** The column `id`, shown or hidden. */
   #column(id: string): Column<S> {
+    this.#generated();
     const column = this.#columns.find((other) => other.id === id);
     if (!column) throw new Error(`No grid column "${id}"`);
     return column;
@@ -992,6 +1057,8 @@ export class GridModel<S extends Schema = Schema> {
   #current(): Display {
     const view = this.data;
     const groups = this.#groups;
+    const pivot = this.#pivot;
+    if (pivot && pivot.revision !== this.#pivotRevision) this.#generate(pivot);
     // The groups' revision catches them up; the table's version too, since a
     // listener of the table that runs before the view's reads before the
     // view has been told.
@@ -1008,7 +1075,14 @@ export class GridModel<S extends Schema = Schema> {
     const snapshot = view.read();
     const reset = snapshot.generation !== seen.generation;
     const requery = view.queryRevision !== seen.query || this.#structure !== seen.structure;
-    const grouped = groups ? project(groups, this.#groupSort, (id) => this.#isOpen(id)) : null;
+    const grouped = groups
+      ? project(
+          groups,
+          this.#groupSort,
+          (id) => this.#isOpen(id),
+          pivot ? [pivot.fields] : undefined,
+        )
+      : null;
     this.#display = {
       snapshot,
       length: grouped ? grouped.starts[grouped.count]! : snapshot.length,
@@ -1035,7 +1109,36 @@ export class GridModel<S extends Schema = Schema> {
   }
 
   #isOpen(id: string): boolean {
-    return this.#expandedByDefault !== this.#toggled.has(id);
+    return !this.#pivot && this.#expandedByDefault !== this.#toggled.has(id);
+  }
+
+  /** A pivot's columns follow its values: they catch up with the rows. */
+  #generated() {
+    if (this.#pivot) this.#current();
+  }
+
+  /**
+   * Takes the pivot's columns as they are now: generated columns come and
+   * go, keeping their layout and the focus, the first scrolling column in
+   * view stays where it was, and sort keys of columns gone go too.
+   */
+  #generate(pivot: GridPivot) {
+    const left = this.#left;
+    const anchor = this.#layout.find(
+      ({ x, width, pinned }) => pinned === null && x + width > left + this.#pins.leftWidth,
+    );
+    const generated = pivot.columns(this.#columns, null);
+    this.#pivotRevision = pivot.revision;
+    this.#contents = generated.contents;
+    // Rows sort by the columns there are; the others' keys go.
+    const keys = this.#groupSort.filter(({ field }) => pivot.fields.has(field));
+    if (keys.length < this.#groupSort.length) this.#groupSort = Object.freeze(keys);
+    this.#columns = Object.freeze(
+      generated.columns.map((column) => Object.freeze(column)),
+    ) as readonly Column<S>[];
+    this.#placeColumns();
+    const moved = anchor && this.#layout.find(({ id }) => id === anchor.id);
+    this.#left = this.#clampLeft(moved ? moved.x - anchor.x + left : left);
   }
 
   /** Forgets the expansion of groups gone once they outnumber those left, so streams of keys do not pile up. */
@@ -1062,7 +1165,7 @@ export class GridModel<S extends Schema = Schema> {
   }
 
   #sortGroups(keys: readonly SortKey[]) {
-    const table = this.#groups?.table;
+    const table = this.#pivot?.fields ?? this.#groups?.table;
     for (const { field } of keys)
       if (!table?.has(field)) throw new Error(`The groups have no field "${field}" to sort by`);
     this.#groupSort = Object.freeze(keys.map((key) => Object.freeze({ ...key })));

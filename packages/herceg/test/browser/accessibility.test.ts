@@ -8,11 +8,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { category, time } from "../../src/data/column.ts";
 import { count, mean } from "../../src/data/derive.ts";
 import { groupRows } from "../../src/data/groups.ts";
+import { pivotColumnId, pivotRows } from "../../src/data/pivot.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import { createGrid, type Grid } from "../../src/dom/grid.ts";
+import { createPivotGrid } from "../../src/dom/grid-pivot.ts";
 import { createGridModel } from "../../src/grid/model.ts";
+import { createPivotGridModel } from "../../src/grid/pivot.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { funnel } from "../../src/marks/funnel.ts";
@@ -811,6 +814,123 @@ describe("grids", () => {
     expect(menu).toContain('  menuitem "Pin to the left"');
     expect(menu).toContain('  group "Columns"');
     expect(menu).toContain('    menuitemcheckbox "host" checked=true');
+  });
+
+  /**
+   * Requests pivoted by host and tier (two aggregates, with totals), sorted
+   * by a generated column, a row partly selected, tier pinned, a cell focused.
+   */
+  function pivoted(
+    theme: "light" | "high-contrast-dark",
+    page: string,
+    ops: Record<string, { readonly op: "count" | "mean"; readonly field?: "ms" }> = {
+      n: count(),
+      avg: mean("ms"),
+    },
+  ) {
+    const host = document.createElement("div");
+    host.style.cssText = `width:600px;height:300px;background:${page}`;
+    document.body.append(host);
+    const rows = 120;
+    const data = table({
+      id: Float64Array.from({ length: rows }, (_, i) => i),
+      ms: Float64Array.from({ length: rows }, (_, i) => (i * 37) % 500),
+      host: category(Array.from({ length: rows }, (_, i) => ["web", "api", "db"][i % 3]!)),
+      tier: category(Array.from({ length: rows }, (_, i) => ["gold", "free"][(i >> 2) % 2]!)),
+    });
+    const pivot = pivotRows(rowView(data), {
+      rows: "tier",
+      pivot: "host",
+      ops,
+      totals: true,
+    });
+    const model = createPivotGridModel({
+      data: pivot,
+      aggregates: { avg: { title: "Latency", format: { maximumFractionDigits: 0 } } },
+      locale: "en-US",
+    });
+    const created = createPivotGrid(host, { model, ariaLabel: "Requests by tier", theme });
+    grids.push(created as unknown as Grid<never>);
+    const web = pivotColumnId("host", "category", "web", {
+      name: "n",
+      op: "count",
+      field: undefined,
+    });
+    model.cycleSort(web);
+    model.pinColumn("tier", "left");
+    model.select(0);
+    // A row appended to the first row's tier: it is partly selected.
+    data.append({ id: [rows], ms: [1], host: ["web"], tier: [model.textAt(0, 0)] });
+    created.focusCell(1, web);
+    return created;
+  }
+
+  for (const [theme, page] of [
+    ["light", "#ffffff"],
+    ["high-contrast-dark", "#000000"],
+  ] as const) {
+    it(`pass audits as a pivot under two header rows, in the ${theme} theme`, async () => {
+      const created = pivoted(theme, page);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(await violations(created.root.parentElement!)).toEqual([]);
+    });
+  }
+
+  it("expose a pivot's values over their aggregates, and rows that select theirs", async () => {
+    const created = pivoted("light", "#ffffff");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const tree = (
+      await treeUnder("grid", ["multiselectable", "selected", "checked", "focused"])
+    ).filter((line) => !line.trim().startsWith("StaticText"));
+    expect(tree[0]).toMatch(/^grid "Requests by tier" \(Arrow keys, .*\) multiselectable=true$/);
+    expect(tree.slice(1, 15)).toEqual([
+      '  rowgroup ""',
+      // The values over their aggregates (those in view); nothing over the pinned tier.
+      '    row "web api db"',
+      '      columnheader "web"',
+      '      columnheader "api"',
+      '      columnheader "db"',
+      '    row "tier web, n web, Latency api, n api, Latency db, n db, Latency"',
+      '      columnheader "tier"',
+      '      columnheader "web, n"',
+      '      columnheader "web, Latency"',
+      '      columnheader "api, n"',
+      '      columnheader "api, Latency"',
+      '      columnheader "db, n"',
+      '      columnheader "db, Latency"',
+      '  rowgroup ""',
+    ]);
+    const rows = tree.filter((line) => line.trim().startsWith("row ")).slice(2);
+    expect(rows[0]).toMatch(/^ {4}row "Select (gold|free) /);
+    expect(tree).toContain('        checkbox "Select" checked=mixed');
+    expect(tree.filter((line) => line.includes("focused=true"))).toHaveLength(1);
+    // Logical indexes: the values span their aggregates' columns, after the tier's.
+    const band = [...created.root.querySelectorAll(".hg-band [role=columnheader]")];
+    expect(
+      band.map((cell) => [cell.getAttribute("aria-colindex"), cell.getAttribute("aria-colspan")]),
+    ).toEqual([
+      ["2", "2"],
+      ["4", "2"],
+      ["6", "2"],
+    ]);
+    const scroller = created.root.querySelector("[role=grid]")!;
+    expect(scroller.getAttribute("aria-rowcount")).toBe("4");
+    expect(scroller.getAttribute("aria-colcount")).toBe("9");
+  });
+
+  it("pass audits as a pivot of one aggregate under one header row", async () => {
+    const created = pivoted("light", "#ffffff", { n: count() });
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(created.root.querySelector(".hg-band")).toBeNull();
+    expect(await violations(created.root.parentElement!)).toEqual([]);
+    const tree = await treeUnder("grid", []);
+    expect(tree.filter((line) => line.trim().startsWith("columnheader"))).toEqual([
+      '      columnheader "tier"',
+      '      columnheader "web"',
+      '      columnheader "api"',
+      '      columnheader "db"',
+      '      columnheader "Total"',
+    ]);
   });
 
   it("announce what sorting and selecting did, politely and outside the grid", async () => {
