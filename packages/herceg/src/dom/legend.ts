@@ -28,6 +28,8 @@ export class Legend {
   }
 
   update(items: readonly LegendItem[], theme: Theme): void {
+    // An empty group would still be announced.
+    this.element.hidden = items.length === 0;
     const document = this.element.ownerDocument;
     const seen = new Set<string>();
     let previous: Element | null = null;

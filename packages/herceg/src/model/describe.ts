@@ -60,7 +60,7 @@ export function describeChart(model: ChartModel): string {
   const { config } = model;
   const layout = model.layoutSummary();
   if (layout !== undefined) {
-    return [config.description, layout].filter(Boolean).join(" ");
+    return [config.description, layout, ...model.legendSummaries()].filter(Boolean).join(" ");
   }
   const series = model.series();
   // Annotations describe themselves; the chart kind names the data marks.
@@ -105,6 +105,6 @@ export function describeChart(model: ChartModel): string {
     parts.push(`${sentence}.`);
   }
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
-  parts.push(...model.annotationSummaries());
+  parts.push(...model.legendSummaries(), ...model.annotationSummaries());
   return parts.join(" ");
 }

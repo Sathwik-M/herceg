@@ -120,7 +120,11 @@ export class Chart implements Scheduled, SyncMember {
   #pointer: { x: number; y: number } | null = null;
   #syncedX: number | null = null;
   /** Keyboard cursor: a panel, a series, and a position in the series' part in the panel. */
-  #keyboard: { panel: string; key: string; position: number } | null = null;
+  /**
+   * The keyboard's cursor, and what it last announced: where the cursor
+   * was, should its series go (hidden) before the next key.
+   */
+  #keyboard: { panel: string; key: string; position: number; last?: Inspection } | null = null;
   /** Outlines the item inspected in charts of a layout mark (a pie slice). */
   readonly #outline: SVGPathElement;
   #describedAt = -Infinity;
@@ -147,7 +151,7 @@ export class Chart implements Scheduled, SyncMember {
    */
   #owner: { x: string; panels: readonly string[] } | null = null;
   /** Where a keyboard selection (Shift + arrows) started: a value along the cursor's axis and its label. */
-  #brushAnchor: { value: number; label: string } | null = null;
+  #brushAnchor: { value: number; label: string; axis: "x" | "y" } | null = null;
   readonly #events = new Emitter();
   /** What the last hover event reported, to emit only changes. */
   #hovered = "";
@@ -1188,8 +1192,8 @@ export class Chart implements Scheduled, SyncMember {
       "Enter",
     ];
     const panels = this.model.panels();
-    const across = panels.length > 1 && (event.key === "ArrowUp" || event.key === "ArrowDown");
-    if (!keys.includes(event.key) && !across) return;
+    const vertical = event.key === "ArrowUp" || event.key === "ArrowDown";
+    if (!keys.includes(event.key) && !vertical) return;
     const brush = this.#options.interaction?.brush;
     // Enter and Escape act on the selection, whichever panel the cursor is in.
     if (event.key === "Enter") {
@@ -1217,39 +1221,60 @@ export class Chart implements Scheduled, SyncMember {
       schedule(this);
       return;
     }
-    // The first visible series with points in a panel.
-    const firstIn = (panel: string) =>
-      this.model.panelSeries(panel).find((s) => !this.model.hidden.has(s.key) && s.length > 0);
-    let index = Math.max(
-      0,
-      panels.findIndex(({ key }) => key === this.#keyboard?.panel),
+    // Where the cursor stops, panel by panel: Left and Right move through a
+    // stop's points, Up and Down to the stop before or after.
+    const stops = panels.flatMap(({ key }) =>
+      this.model.keyboardStops(key).map((series) => ({ panel: key, series })),
     );
-    const from = panels[index];
-    if (across) {
-      const step = event.key === "ArrowUp" ? -1 : 1;
-      let next = index + step;
-      while (next >= 0 && next < panels.length && !firstIn(panels[next]!.key)) next += step;
-      if (next < 0 || next >= panels.length) return;
-      index = next;
-    }
-    const to = panels[index];
-    const panel = to?.key ?? "";
-    const series = firstIn(panel);
-    if (!series) return;
-    event.preventDefault();
-    const before = this.#keyboard ? this.#inspection() : undefined;
     const keyboard = this.#keyboard;
-    const current =
-      keyboard?.key === series.key && keyboard.panel === panel ? keyboard.position : -1;
+    let at = stops.findIndex(
+      ({ panel, series }) => panel === keyboard?.panel && series.key === keyboard.key,
+    );
+    // The cursor's stop may be gone (its series hidden): then it starts afresh in its panel.
+    const found = at >= 0;
+    const current = found ? keyboard!.position : -1;
+    if (!found)
+      at = Math.max(
+        0,
+        stops.findIndex(({ panel }) => panel === keyboard?.panel),
+      );
+    const start = stops[at];
+    if (!start) return;
+    // Heatmaps step cell by cell, in rows and columns as drawn; Up and Down
+    // leave the grid at its edges.
+    const cells = (stop: { series: Series }) => this.model.markOf(stop.series)?.tooltip === "cell";
+    let cell: number | undefined;
+    if (cells(start) && current >= 0) {
+      const [columns, rows] = CELL_STEPS[event.key] ?? [0, 0];
+      cell =
+        this.model.stepCell(start.panel, start.series.key, current, columns, rows) ??
+        (vertical ? undefined : current);
+    }
+    let across = keyboard !== null && !found;
+    if (vertical && cell === undefined) {
+      const next = keyboard && found ? at + (event.key === "ArrowUp" ? -1 : 1) : at;
+      if (next < 0 || next >= stops.length) return;
+      across ||= next !== at;
+      at = next;
+    }
+    const { panel, series } = stops[at]!;
+    // Entering a grid, the cursor starts at its top left cell.
+    if (cell === undefined && cells(stops[at]!) && (across || current < 0))
+      cell = this.model.stepCell(panel, series.key, -1, 0, 0);
+    const from = panels.find(({ key }) => key === start.panel);
+    const to = panels.find(({ key }) => key === panel);
+    event.preventDefault();
+    const before = keyboard ? (this.#inspection() ?? keyboard.last) : undefined;
     const page = Math.max(1, Math.round(series.length / 10));
-    // Up and Down carry the cursor's x to the next panel: its value on a
+    // Up and Down carry the cursor's x to the next stop: its value on a
     // shared x scale, else its place across the plot.
     const carried = (value: number, position: number) =>
       !from || !to || from.xGroup === to.xGroup
         ? value
         : to.x.invert(to.plot.x + (position - from.plot.x));
     let position = Math.max(0, current);
-    if (across)
+    if (cell !== undefined) position = cell;
+    else if (across)
       position = nearestTo(
         series,
         before?.axis === "x" ? carried(before.value, before.position) : undefined,
@@ -1266,23 +1291,28 @@ export class Chart implements Scheduled, SyncMember {
     this.flush();
     const inspection = this.#inspection();
     if (!inspection) return;
+    this.#keyboard.last = inspection;
     let text = describeInspection(inspection);
-    if (across || (inspection.panel !== undefined && before?.panel !== inspection.panel))
+    if (
+      inspection.panel !== undefined &&
+      (before?.panel !== inspection.panel || panel !== start.panel)
+    )
       text = `${panels.find(({ key }) => key === inspection.panel)?.label ?? inspection.panel}: ${text}`;
     // Shift selects a range along the axis the cursor steps along: for
     // brushes along that axis, and for rectangles and lassos, which the
     // keyboard cannot draw. A range does not go on into a panel with
     // another scale along that axis.
     const axis = inspection.axis;
-    const crossed = across && from?.xGroup !== to?.xGroup;
-    if (crossed) this.#brushAnchor = null;
+    // Nor does it go on along another axis.
+    const crossed = from?.xGroup !== to?.xGroup;
+    if (crossed || (this.#brushAnchor && this.#brushAnchor.axis !== axis)) this.#brushAnchor = null;
     if (
       event.shiftKey &&
       axis !== "item" &&
       (brush === axis || brush === "xy" || brush === "lasso")
     ) {
       const start = before?.axis === axis && !crossed ? before : inspection;
-      this.#brushAnchor ??= { value: start.value, label: start.label };
+      this.#brushAnchor ??= { value: start.value, label: start.label, axis };
       const range = [this.#brushAnchor.value, inspection.value] as const;
       this.select(
         { x: axis === "x" ? range : null, y: axis === "y" ? range : null, lasso: null },
@@ -1318,6 +1348,18 @@ export class Chart implements Scheduled, SyncMember {
     if (inspection) this.#live.textContent = describeInspection(inspection);
   }
 }
+
+/** Columns right and rows up each key moves in a grid of cells. */
+const CELL_STEPS: Record<string, readonly [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, 1],
+  ArrowDown: [0, -1],
+  Home: [Number.NEGATIVE_INFINITY, 0],
+  End: [Number.POSITIVE_INFINITY, 0],
+  PageUp: [0, Number.POSITIVE_INFINITY],
+  PageDown: [0, Number.NEGATIVE_INFINITY],
+};
 
 /** Steps for the keys that move through the items of a layout mark. */
 const ITEM_STEPS: Record<string, number> = {

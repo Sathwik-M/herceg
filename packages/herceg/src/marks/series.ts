@@ -40,6 +40,19 @@ export function rowOf(series: Series, position: number): number {
   return series.rows === undefined ? position : series.rows[position]!;
 }
 
+/**
+ * Whether two series place their points at the same positions along
+ * `axis`, position by position: the same array read through the same rows
+ * (fields of one table; facet panels hold a copy of the rows per series).
+ */
+export function samePositions(a: Series, b: Series, axis: "x" | "y"): boolean {
+  if (a[axis] !== b[axis] || a.length !== b.length) return false;
+  if (a.rows === b.rows) return true;
+  if (!a.rows || !b.rows) return false;
+  for (let i = 0; i < a.length; i++) if (a.rows[i] !== b.rows[i]) return false;
+  return true;
+}
+
 export function xAt(series: Series, position: number): number {
   return series.x[rowOf(series, position)]!;
 }

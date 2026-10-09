@@ -340,7 +340,7 @@ describe("maps", () => {
     const port = read[4]!.points[0]!;
     expect((model.inspect(port.px, port.py) as ItemInspection).key).toBe(read[4]!.key);
     expect(describeChart(model)).toBe(
-      "Map of 4 regions colored by gdp, from 10 (Ada) to 40 (Bel). 1 region has no value. 1 point on the map sized by size; largest Port (3).",
+      "Map of 4 regions colored by gdp, from 10 (Ada) to 40 (Bel). 1 region has no value. 1 point on the map sized by size; largest Port (3). Color shows gdp from 10 to 40. Size shows size: 3.",
     );
   });
 

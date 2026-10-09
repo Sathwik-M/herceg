@@ -944,14 +944,23 @@ application draws its own.
 - The chart root is a focusable `figure` named by the title, described by a
   generated summary (series count and, per series, point count, range, and
   last value; marks such as heatmaps, histograms, and layout marks write
-  their own) that is refreshed at most once a second. The summary does not
-  repeat the title, and the element holding it is hidden, so it is read
-  once, as the figure's description.
+  their own), followed by what color scales and size and shape keys show,
+  since their legends are drawn. It is refreshed at most once a second,
+  does not repeat the title, and its element is hidden, so it is read once,
+  as the figure's description.
 - Arrow keys, Page Up/Down, Home, and End move a cursor through the data; the
   values are announced whole through a polite, atomic live region and shown
   in the tooltip, which is hidden from assistive technology so they are not
-  read twice. Drawings (SVG and canvas) are hidden from it too.
-- Legend entries are buttons with `aria-pressed` in a group named "Legend".
+  read twice. Drawings (SVG and canvas) are hidden from it too. The cursor
+  stops at the series `ChartModel.keyboardStops` lists per panel. An
+  inspection along x (lines, areas, vertical bars) or y reports every series
+  with a point at exactly that place, so series sharing their positions
+  (fields of one table) share a stop; other series, and each series of
+  points or cells, are stops of their own. Up and Down move between stops
+  and panels. Heatmaps step cell by cell through `Mark.stepCell` (a scan per
+  key press), skipping empty cells and reading the row drawn in each.
+- Legend entries are buttons with `aria-pressed` in a group named "Legend",
+  hidden when there are none.
 - Static SVG output has `role="img"`, `<title>`, and `<desc>`.
 - Browser tests audit rendered charts with axe-core (WCAG 2.1 A and AA rules
   and best practices; `test/browser/accessibility.test.ts`): every chart

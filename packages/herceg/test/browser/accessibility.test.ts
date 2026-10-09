@@ -213,11 +213,15 @@ interface AXNode {
  * Nodes assistive technology ignores are left out.
  */
 async function accessibilityTree(): Promise<string[]> {
-  // Tests run in a frame of the page the session is attached to.
+  // Tests run in vitest's frame of the page the session is attached to.
   const { frameTree } = (await cdp().send("Page.getFrameTree")) as {
-    frameTree: { childFrames?: { frame: { id: string } }[] };
+    frameTree: { childFrames?: { frame: { id: string; name?: string } }[] };
   };
-  const frameId = frameTree.childFrames!.at(-1)!.frame.id;
+  const testers = (frameTree.childFrames ?? []).filter(
+    ({ frame }) => frame.name === "vitest-iframe",
+  );
+  expect(testers).toHaveLength(1);
+  const frameId = testers[0]!.frame.id;
   const { nodes } = (await cdp().send("Accessibility.getFullAXTree", { frameId })) as {
     nodes: AXNode[];
   };
@@ -314,5 +318,191 @@ describe("the accessibility tree", () => {
       charts.splice(charts.indexOf(chart), 1);
       chart.root.parentElement?.remove();
     }
+  });
+});
+
+describe("the keyboard", () => {
+  const said = (chart: Chart) => chart.root.querySelector("[aria-live]")!.textContent;
+  const step = async (chart: Chart, key: string) => {
+    press(chart, key);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return said(chart);
+  };
+
+  it("reaches every series of points, moving between them with Up and Down", async () => {
+    const places = table({
+      x: [1, 2, 3, 1.5, 2.5],
+      y: [10, 20, 30, 15, 25],
+      host: ["east", "east", "east", "west", "west"],
+    });
+    const chart = mount({
+      marks: [point(places, { x: "x", y: "y", series: "host" })],
+      locale: "en-US",
+    });
+    await chart.loading;
+    chart.root.focus();
+    expect(await step(chart, "ArrowRight")).toContain("east: 10");
+    expect(await step(chart, "ArrowRight")).toContain("east: 20");
+    // Down goes to the next series, at the point nearest the cursor's x.
+    expect(await step(chart, "ArrowDown")).toMatch(/west: (15|25)/);
+    expect(await step(chart, "ArrowRight")).toContain("west: 25");
+    // Past the last series, Down does nothing; Up goes back.
+    expect(await step(chart, "ArrowDown")).toContain("west: 25");
+    expect(await step(chart, "ArrowUp")).toMatch(/east: (20|30)/);
+  });
+
+  it("stops once at lines, which report every series at their x, and at each series of points", async () => {
+    const both = table({ x: [0, 1, 2], a: [1, 2, 3], b: [4, 5, 6], c: [7, 8, 9] });
+    const chart = mount({
+      marks: [line(both, { x: "x", y: ["a", "b"] }), point(both, { x: "x", y: "c" })],
+      locale: "en-US",
+    });
+    await chart.loading;
+    chart.root.focus();
+    const first = await step(chart, "ArrowRight");
+    expect(first).toContain("a: 1");
+    expect(first).toContain("b: 4");
+    expect(await step(chart, "ArrowDown")).toContain("c: 7");
+    expect(await step(chart, "ArrowDown")).toContain("c: 7");
+    expect(await step(chart, "ArrowUp")).toContain("a: 1");
+  });
+
+  it("walks a heatmap's rows and columns as they are drawn", async () => {
+    const grid = table({
+      x: ["a", "b", "a", "b"],
+      y: ["top", "top", "bottom", "bottom"],
+      v: [1, 2, 3, 4],
+    });
+    const chart = mount({
+      marks: [heatmap(grid, { x: "x", y: "y", value: "v" })],
+      locale: "en-US",
+    });
+    await chart.loading;
+    chart.root.focus();
+    // Category rows run down the plot: "top" is the first.
+    expect(await step(chart, "ArrowRight")).toBe("a. top: 1");
+    expect(await step(chart, "ArrowRight")).toBe("b. top: 2");
+    expect(await step(chart, "ArrowRight")).toBe("b. top: 2");
+    expect(await step(chart, "ArrowDown")).toBe("b. bottom: 4");
+    expect(await step(chart, "ArrowLeft")).toBe("a. bottom: 3");
+    expect(await step(chart, "ArrowUp")).toBe("a. top: 1");
+    // The top edge: nowhere further to go.
+    expect(await step(chart, "ArrowUp")).toBe("a. top: 1");
+  });
+
+  it("skips holes in a heatmap and reads the value drawn in each cell", async () => {
+    // (b, top) is empty; the second (b, bottom) row replaces the first, as drawn.
+    const sparse = table({
+      x: ["a", "b", "c", "b"],
+      y: ["top", "bottom", "top", "bottom"],
+      v: [1, 2, 3, 9],
+    });
+    const chart = mount({
+      marks: [heatmap(sparse, { x: "x", y: "y", value: "v" })],
+      locale: "en-US",
+    });
+    await chart.loading;
+    chart.root.focus();
+    expect(await step(chart, "ArrowRight")).toBe("a. top: 1");
+    expect(await step(chart, "ArrowRight")).toBe("c. top: 3");
+    // No cell under c: Down goes to the nearest cell in the next row down.
+    expect(await step(chart, "ArrowDown")).toBe("b. bottom: 9");
+    expect(await step(chart, "ArrowUp")).toBe("a. top: 1");
+    expect(await step(chart, "End")).toBe("c. top: 3");
+    expect(await step(chart, "Home")).toBe("a. top: 1");
+  });
+
+  it("reaches lines whose points are at different places, and recovers when its series hides", async () => {
+    const early = table({ t: [0, 2], v: [1, 2] });
+    const late = table({ t: [1, 3], v: [3, 4] });
+    const chart = mount({
+      marks: [
+        line(early, { x: "t", y: "v", label: "early" }),
+        line(late, { x: "t", y: "v", label: "late" }),
+      ],
+      locale: "en-US",
+    });
+    await chart.loading;
+    chart.root.focus();
+    expect(await step(chart, "ArrowRight")).toBe("0. early: 1");
+    expect(await step(chart, "ArrowDown")).toBe("1. late: 3");
+    // Hiding the series the cursor is on: Up and Down start again in what is left.
+    chart.root.querySelectorAll("button")[1]!.click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(await step(chart, "ArrowUp")).toMatch(/early: (1|2)/);
+  });
+
+  it("reads fields of one table row by row where x repeats, and keeps x when a series hides", async () => {
+    const repeats = table({ x: [0, 0, 10], a: [1, 2, 3], b: [10, 20, 30] });
+    const lines = mount({ marks: [line(repeats, { x: "x", y: ["a", "b"] })], locale: "en-US" });
+    await lines.loading;
+    lines.root.focus();
+    expect(await step(lines, "ArrowRight")).toBe("0. a: 1. b: 10");
+    expect(await step(lines, "ArrowRight")).toBe("0. a: 2. b: 20");
+    const host = lines.root.parentElement;
+    lines.destroy();
+    host?.remove();
+    charts.splice(0);
+    const points = mount({
+      marks: [point(repeats, { x: "x", y: "a" }), point(repeats, { x: "x", y: "b" })],
+      locale: "en-US",
+    });
+    await points.loading;
+    points.root.focus();
+    await step(points, "End");
+    expect(await step(points, "ArrowDown")).toBe("10. b: 30");
+    points.root.querySelectorAll("button")[1]!.click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(await step(points, "ArrowUp")).toBe("10. a: 3");
+  });
+
+  it("starts a keyboard selection afresh on another axis", async () => {
+    const line_ = table({ t: [10, 20], v: [1, 2] });
+    const bars = table({ category: ["a", "b"], v: [100, 200] });
+    const chart = mount({
+      marks: [line(line_, { x: "t", y: "v", axis: "right" }), bar(bars, { x: "v", y: "category" })],
+      interaction: { brush: "xy" },
+      locale: "en-US",
+    });
+    await chart.loading;
+    chart.root.focus();
+    press(chart, "End");
+    chart.root.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowLeft", shiftKey: true, bubbles: true }),
+    );
+    chart.root.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true }),
+    );
+    expect(chart.selection?.y).toEqual([0, 0]);
+  });
+});
+
+describe("text alternatives of legends", () => {
+  it("say what color scales and shape keys show", async () => {
+    const cells = table({ x: ["a", "b"], y: ["row", "row"], v: [2, 9] });
+    const chart = mount({
+      marks: [
+        heatmap(cells, { x: "x", y: "y", value: "v", colorDomain: [-100, 100], colorMidpoint: 0 }),
+      ],
+      locale: "en-US",
+    });
+    await chart.loading;
+    expect((await accessibilityTree())[0]).toContain(
+      "Color shows v from -100 to 100, diverging at 0.",
+    );
+    // A legend with no buttons is not announced as an empty group.
+    expect((await accessibilityTree()).join("\n")).not.toContain('group "Legend"');
+    const host = chart.root.parentElement;
+    chart.destroy();
+    host?.remove();
+    charts.splice(0);
+    const shapes = mount({
+      marks: [point(metrics, { x: "a", y: "b", symbol: "host" })],
+      locale: "en-US",
+    });
+    await shapes.loading;
+    expect((await accessibilityTree())[0]).toContain(
+      "Shape shows host: circle for west, square for east.",
+    );
   });
 });

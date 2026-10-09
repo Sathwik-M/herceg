@@ -211,6 +211,7 @@ export class GeoPointMark implements GeoLayer {
       const values = [...new Set([0.25, 0.5, 1].map((f) => nearest(lo + (hi - lo) * f)))];
       keys.push({
         title: field!,
+        channel: "size",
         entries: values.map((value) => {
           const r = radius(value);
           return { label: formatNumber(value, locale), glyph: symbolPath("circle", 0, 0, r), r };
