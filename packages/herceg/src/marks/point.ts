@@ -15,7 +15,7 @@ import {
 import { linearTicks } from "../scale/ticks.ts";
 import { CLOUD_POINTS, type PointCloud, type PointGeometry } from "../scene/scene.ts";
 import type { Frozen, PointSpec } from "../spec/spec.ts";
-import type { Theme } from "../theme.ts";
+import { surface, type Theme } from "../theme.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -54,6 +54,10 @@ export interface PointOptions<S extends Schema> {
   fill?: string;
   /** Opacity from 0 to 1, or a number field mapped from 0.15 to 1. */
   fillOpacity?: number | NumericField<S>;
+  /** Outline color of every point; the chart's background with only `strokeWidth`. */
+  stroke?: string;
+  /** Outline width in pixels: 1 with only `stroke`, none by default. */
+  strokeWidth?: number;
   /** A number field colored on a continuous scale, with a color legend. */
   color?: NumericField<S>;
   /**
@@ -119,6 +123,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly #symbol: SymbolName;
   /** The radius of every point, or with an `r` field the largest. */
   readonly #radius: number;
+  /** Outline width in pixels; 0 for none. */
+  readonly #ringWidth: number;
   /** How far each of SYMBOLS reaches per unit of radius. */
   readonly #reaches = SYMBOLS.map(symbolReach);
 
@@ -180,7 +186,15 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         ? Math.max(...this.#reaches)
         : this.#reaches[SYMBOLS.indexOf(this.#symbol)]!;
     this.#radius = radius;
-    this.inset = { x: radius * reach, y: radius * reach };
+    if (
+      spec.strokeWidth !== undefined &&
+      !(spec.strokeWidth >= 0 && Number.isFinite(spec.strokeWidth))
+    )
+      throw new RangeError(`point strokeWidth must be 0 or more pixels, not ${spec.strokeWidth}`);
+    this.#ringWidth = spec.strokeWidth ?? (spec.stroke !== undefined ? 1 : 0);
+    // Outlines reach half their width past the shape.
+    const outline = this.#ringWidth / 2;
+    this.inset = { x: radius * reach + outline, y: radius * reach + outline };
   }
 
   channelKind(axis: "x" | "y") {
@@ -235,6 +249,11 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         ? this.table.categories(this.#symbolField as never).codes
         : undefined;
     const shapeOf = codes && this.#shapesByCode();
+    // Outlined points are drawn one by one, each outline over its point, on the CPU.
+    const ring =
+      this.#ringWidth > 0
+        ? { color: this.spec.stroke ?? surface(frame.theme), width: this.#ringWidth }
+        : undefined;
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       const opaque =
@@ -251,6 +270,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       if (
         frame.clouds &&
         !this.view &&
+        !ring &&
         !sample &&
         !encoded &&
         linear &&
@@ -299,7 +319,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         const shape = codes ? (shapeOf![codes[row]!] ?? NO_SHAPE) : 0;
         if (!(r > 0 && tone >= 0 && Number.isFinite(alpha) && shape !== NO_SHAPE)) continue;
         // Points whose shape reaches into the plot are drawn.
-        const placed = place(s, row, frame, r * (codes ? reachOf[shape]! : fixedReach));
+        const reach = r * (codes ? reachOf[shape]! : fixedReach) + this.#ringWidth / 2;
+        const placed = place(s, row, frame, reach);
         if (!placed) continue;
         const [px, py] = placed;
         if (occupied) {
@@ -334,6 +355,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         colors: colorIndex && { index: colorIndex, palette: encoding.palette! },
         opacities,
         symbols,
+        ring,
       });
     }
     return out;
@@ -402,12 +424,18 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     return { stops: scale.legendStops(), domain, midpoint, title: this.spec.color! };
   }
 
-  /** Point series show their symbol; with a color field, in a neutral color. */
-  legendEntry(s: Series, theme: Theme): { color: string; glyph: string } {
-    return {
+  /**
+   * Point series show their symbol; with a color field, in a neutral color.
+   * An outline in a color of its own shows too, so hollow points have a
+   * swatch; one in the background color only keeps points apart.
+   */
+  legendEntry(s: Series, theme: Theme): { color: string; glyph: string; stroke?: string } {
+    const entry = {
       color: this.spec.color === undefined ? s.color : theme.muted,
       glyph: legendGlyph(this.#legendSymbol(s)).glyph,
     };
+    const stroke = this.spec.stroke;
+    return stroke !== undefined && this.#ringWidth > 0 ? { ...entry, stroke } : entry;
   }
 
   /** A series' shape: its own when the symbol field also splits series, else a circle. */
@@ -581,7 +609,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     return visibleRange(s, x.invert(plot.x - reach), x.invert(plot.x + plot.width + reach));
   }
 
-  /** How far a row's point reaches from its center, in pixels; NaN when it is not drawn. */
+  /** How far a row's point and outline reach from its center, in pixels; NaN when it is not drawn. */
   #reach(row: number, radiusOf: ((value: number) => number) | undefined): number {
     if (!this.#drawn(row)) return Number.NaN;
     const r = radiusOf ? radiusOf(this.table.numbers(this.#rField as never)[row]!) : this.#radius;
@@ -589,7 +617,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       this.#symbolField !== undefined
         ? this.#shapesByCode()[this.table.categories(this.#symbolField as never).codes[row]!]!
         : SYMBOLS.indexOf(this.#symbol);
-    return r > 0 ? r * this.#reaches[shape]! : Number.NaN;
+    return r > 0 ? r * this.#reaches[shape]! + this.#ringWidth / 2 : Number.NaN;
   }
 
   /**
@@ -685,6 +713,8 @@ export function point<S extends Schema>(
       "r",
       "fill",
       "fillOpacity",
+      "stroke",
+      "strokeWidth",
       "color",
       "colorMidpoint",
       "symbol",

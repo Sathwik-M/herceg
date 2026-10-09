@@ -263,7 +263,10 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
    * How a series appears in the legend: by default, a square of its color.
    * `false` leaves it out, for marks whose series colors mean nothing (heatmaps).
    */
-  legendEntry?(series: Series, theme: Theme): { color: string; glyph?: string } | false;
+  legendEntry?(
+    series: Series,
+    theme: Theme,
+  ): { color: string; glyph?: string; stroke?: string } | false;
   /** Legends of sizes or shapes the mark encodes by field. */
   glyphKeys?(series: readonly Series[], format: (value: number) => string): GlyphKey[];
 }

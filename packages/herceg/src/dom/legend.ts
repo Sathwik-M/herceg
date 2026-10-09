@@ -48,7 +48,7 @@ export class Legend {
         this.#entries.set(item.key, entry);
       }
       // Rewriting styles every frame would make the browser recompute them.
-      const shown = `${item.x}|${item.y}|${item.hidden}|${item.color}|${item.glyph}|${item.label}|${theme.text}|${theme.fontSize}|${theme.font}`;
+      const shown = `${item.x}|${item.y}|${item.hidden}|${item.color}|${item.glyph}|${item.stroke}|${item.label}|${theme.text}|${theme.fontSize}|${theme.font}`;
       if (shown !== entry.shown) {
         entry.shown = shown;
         show(entry, item, theme);
@@ -76,7 +76,7 @@ function show({ button, swatch, label }: Entry, item: LegendItem, theme: Theme):
   // Point series show their symbol, as the SVG legend draws it; others a rounded square.
   swatch.style.background = item.glyph ? "none" : item.color;
   swatch.innerHTML = item.glyph
-    ? `<svg width="10" height="10" style="display:block;overflow:visible"><path transform="translate(5 5)" d="${item.glyph}" fill="${escapeXml(item.color)}"/></svg>`
+    ? `<svg width="10" height="10" style="display:block;overflow:visible"><path transform="translate(5 5)" d="${item.glyph}" fill="${escapeXml(item.color)}"${item.stroke ? ` stroke="${escapeXml(item.stroke)}" stroke-width="1" stroke-linejoin="round"` : ""}/></svg>`
     : "";
   label.textContent = item.label;
   label.style.textDecoration = item.hidden ? "line-through" : "";

@@ -276,6 +276,7 @@ export function violin<S extends Schema>(table: Table<S>, options: ViolinOptions
     ...definedFields(options, [
       "series",
       "bandwidth",
+      "fill",
       "fillOpacity",
       "label",
       "axis",
