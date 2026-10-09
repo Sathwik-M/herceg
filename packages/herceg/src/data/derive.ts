@@ -29,6 +29,7 @@ import {
   type KindOf,
 } from "./expression.ts";
 import { type GeometrySet, geometryOf } from "./geometry.ts";
+import { rowComparator } from "./order.ts";
 import { quantile } from "./quantile.ts";
 import {
   type CategoryField,
@@ -612,26 +613,8 @@ function add(m: Moments, n: number, mean: number, m2: number, min: number, max: 
 }
 
 function sort(rows: Rows, field: string, order: "ascending" | "descending"): Rows {
-  const sign = order === "descending" ? -1 : 1;
   const indexes = Array.from({ length: rows.length }, (_, i) => i);
-  if (rows.kind(field) === "category") {
-    const { codes, dictionary } = rows.categories(field);
-    const label = (i: number) => (codes[i]! < 0 ? undefined : dictionary[codes[i]!]!);
-    // Missing values last, whatever the order.
-    indexes.sort((a, b) => {
-      const [x, y] = [label(a), label(b)];
-      if (x === undefined || y === undefined) return x === y ? 0 : x === undefined ? 1 : -1;
-      return x < y ? -sign : x > y ? sign : 0;
-    });
-  } else {
-    const values = rows.numbers(field);
-    indexes.sort((a, b) => {
-      const [x, y] = [values[a]!, values[b]!];
-      if (Number.isNaN(x) || Number.isNaN(y))
-        return Number.isNaN(x) === Number.isNaN(y) ? 0 : Number.isNaN(x) ? 1 : -1;
-      return (x - y) * sign;
-    });
-  }
+  indexes.sort(rowComparator(rows, [{ field, order }]));
   const sorted = rows.pick(indexes);
   return new Rows(sorted.length, sorted.columns, undefined);
 }

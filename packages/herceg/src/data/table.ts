@@ -164,6 +164,7 @@ export class Table<S extends Schema = Schema> {
   #capacity: number;
   #version = 0;
   #rowOffset = 0;
+  #generation = 0;
   #views = new Map<string, NumericArray | Int32Array>();
   #sorted = new Map<string, boolean>();
   /** Cached extents; null records that a field has no finite values. */
@@ -225,10 +226,16 @@ export class Table<S extends Schema = Schema> {
 
   /**
    * Rows dropped (or never kept) since the table was created or reset.
-   * `rowOffset + i` is a stable identity for row `i` across drops.
+   * `rowOffset + i` is a stable identity for row `i` across drops; with
+   * `generation`, across resets too.
    */
   get rowOffset(): number {
     return this.#rowOffset;
+  }
+
+  /** Counts resets, which start row identities (`rowOffset`) again from 0. */
+  get generation(): number {
+    return this.#generation;
   }
 
   /** Bytes reserved by column buffers, including unused capacity. */
@@ -519,6 +526,7 @@ export class Table<S extends Schema = Schema> {
     this.#length = length ?? 0;
     this.#capacity = this.#length;
     this.#rowOffset = 0;
+    this.#generation++;
     this.#sorted.clear();
     this.#extents.clear();
     this.#indexes.clear();

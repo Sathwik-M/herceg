@@ -39,6 +39,18 @@ export {
   geometry,
   geometryBytes,
 } from "./data/geometry.ts";
+export type { SortKey } from "./data/order.ts";
+export { RowSet } from "./data/row-set.ts";
+export { type RowQuery, type RowSnapshot, RowView, rowView } from "./data/row-view.ts";
+export {
+  type ConditionSelection,
+  type DataSelection,
+  type RowsSelection,
+  SelectionStore,
+  selectionStore,
+  selectRows,
+  selectWhere,
+} from "./data/selection.ts";
 export type {
   Batch,
   CategoryField,
