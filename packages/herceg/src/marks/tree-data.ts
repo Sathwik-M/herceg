@@ -29,6 +29,18 @@ export interface Branch {
   label: string;
 }
 
+/** Why a tree's fields name it neither or both ways (a path, or node and parent), if they do. */
+export function treeFormError(
+  fields: { path?: unknown; node?: unknown; parent?: unknown },
+  role: string,
+): string | undefined {
+  if (fields.path !== undefined && (fields.node !== undefined || fields.parent !== undefined))
+    return `${role} takes a path, or node and parent fields, not both`;
+  if (fields.path === undefined && (fields.node === undefined || fields.parent === undefined))
+    return `${role} needs a path of category fields, or node and parent fields`;
+  return undefined;
+}
+
 export class TreeData {
   readonly table: Table;
   readonly encoding: HierarchyEncoding;
@@ -38,19 +50,16 @@ export class TreeData {
     | undefined;
 
   constructor(table: Table, fields: TreeFields, role: string) {
-    if (fields.path && (fields.node !== undefined || fields.parent !== undefined)) {
-      throw new Error(`${role} takes a path, or node and parent fields, not both`);
-    }
+    const problem = treeFormError(fields, role);
+    if (problem) throw new Error(problem);
     if (fields.path) {
       if (fields.path.length === 0) throw new Error(`${role} path needs at least one field`);
       for (const field of fields.path) requireField(table, field, CATEGORY, `${role} path`);
       this.encoding = { path: fields.path };
-    } else if (fields.node !== undefined && fields.parent !== undefined) {
-      requireField(table, fields.node, CATEGORY, `${role} node`);
-      requireField(table, fields.parent, CATEGORY, `${role} parent`);
-      this.encoding = { id: fields.node, parent: fields.parent };
     } else {
-      throw new Error(`${role} needs a path of category fields, or node and parent fields`);
+      requireField(table, fields.node!, CATEGORY, `${role} node`);
+      requireField(table, fields.parent!, CATEGORY, `${role} parent`);
+      this.encoding = { id: fields.node!, parent: fields.parent! };
     }
     if (fields.value !== undefined) requireField(table, fields.value, ["number"], `${role} value`);
     this.table = table;

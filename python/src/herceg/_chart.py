@@ -40,6 +40,29 @@ SCHEMES = (
 Position = str | float | _dt.date
 
 
+#: Intl.NumberFormat options, as herceg's spec reader knows them.
+_NUMBER_FORMAT = frozenset(
+    ("localeMatcher", "numberingSystem", "style", "currency", "currencyDisplay")
+    + ("currencySign", "unit", "unitDisplay", "notation", "compactDisplay", "signDisplay")
+    + ("useGrouping", "minimumIntegerDigits", "minimumFractionDigits", "maximumFractionDigits")
+    + ("minimumSignificantDigits", "maximumSignificantDigits", "roundingMode")
+    + ("roundingPriority", "roundingIncrement", "trailingZeroDisplay")
+)
+#: Intl.DateTimeFormat options, likewise.
+_TIME_FORMAT = frozenset(
+    ("localeMatcher", "numberingSystem", "calendar", "timeZone", "hour12", "hourCycle")
+    + ("formatMatcher", "dateStyle", "timeStyle", "weekday", "era", "year", "month", "day")
+    + ("dayPeriod", "hour", "minute", "second", "fractionalSecondDigits", "timeZoneName")
+)
+
+
+def _check_format(format: dict[str, Any] | None, role: str, known: frozenset[str]) -> None:
+    """Refuses Intl options that do not exist, which Intl would silently ignore."""
+    unknown = [key for key in format or () if key not in known]
+    if unknown:
+        raise ValueError(f"{role}: {unknown[0]!r} is not an Intl format option")
+
+
 @dataclass
 class Axis:
     """Scale and axis options for x or y. Unset options use herceg's defaults."""
@@ -53,6 +76,9 @@ class Axis:
     ticks: int | None = None
     format: dict[str, Any] | None = None
     show: bool | None = None
+
+    def __post_init__(self) -> None:
+        _check_format(self.format, "axis format", _NUMBER_FORMAT | _TIME_FORMAT)
 
     def _spec(self) -> dict[str, Any]:
         spec = {
@@ -448,6 +474,8 @@ class Chart:
         ``labels=True`` writes each value at its bar's end (inside each segment
         when stacked); a dict of Intl.NumberFormat options formats them.
         """
+        if isinstance(labels, dict):
+            _check_format(labels, "bar labels", _NUMBER_FORMAT)
         table = self._mark_table(data)
         if isinstance(y, str) and self._kind(table, y) == "category":
             if axis == "right":
@@ -603,7 +631,8 @@ class Chart:
         scheme name such as ``"viridis"`` or a list of hex colors, centered on
         ``color_midpoint`` for diverging schemes. ``symbol`` is a shape
         (``"circle"``, ``"square"``, ``"triangle"``, ...) or a category column
-        with a shape per value.
+        with a shape per value; a column named like a shape must be renamed to
+        be encoded.
         """
         table = self._mark_table(data)
         self._require(table, x, _NUMERIC, "point x")
@@ -620,13 +649,17 @@ class Chart:
                 f"point fill_opacity must be from 0 to 1 or a column, not {fill_opacity!r}"
             )
         self._require(table, color, _NUMERIC, "point color")
-        if symbol is not None:
-            if self._kind(table, symbol) is not None:
-                self._require(table, symbol, ("category",), "point symbol")
-            elif symbol not in SYMBOLS:
+        if symbol in SYMBOLS and self._kind(table, symbol) is not None:
+            raise ValueError(
+                f"point symbol: {symbol!r} names both a shape and a column; "
+                "rename the column to encode it"
+            )
+        if symbol is not None and symbol not in SYMBOLS:
+            if self._kind(table, symbol) is None:
                 raise ValueError(
                     f"point symbol: {symbol!r} is neither a column nor one of {', '.join(SYMBOLS)}"
                 )
+            self._require(table, symbol, ("category",), "point symbol")
         return self._add(
             {
                 "type": "point",
@@ -806,6 +839,7 @@ class Chart:
         itself.
         """
         self._layout_alone("gauge")
+        _check_format(format, "gauge format", _NUMBER_FORMAT)
         table = self._mark_table(data)
         self._require(table, value, ("number",), "gauge value")
         low = 0.0 if min is None else min
@@ -2138,6 +2172,11 @@ _THEME_KEYS = {
     "tooltip_background": "tooltipBackground",
     "tooltip_border": "tooltipBorder",
 }
+#: Theme keys that are one word, the same in Python and in the spec.
+_THEME_WORDS = frozenset(
+    ("extends", "background", "text", "muted", "grid", "axis", "font")
+    + ("palette", "sequential", "diverging", "rise", "fall")
+)
 
 
 def _projection(projection: Any) -> Any:
@@ -2268,6 +2307,11 @@ def _take(column: Column, rows: np.ndarray) -> Column:
 def _theme(theme: str | dict[str, Any] | None) -> Any:
     if theme is None or isinstance(theme, str):
         return theme
+    known = _THEME_WORDS | _THEME_KEYS.keys() | set(_THEME_KEYS.values())
+    unknown = [key for key in theme if key not in known]
+    if unknown:
+        names = ", ".join(sorted(_THEME_WORDS | _THEME_KEYS.keys()))
+        raise ValueError(f"theme: unknown key {unknown[0]!r}; a theme takes {names}")
     return {_THEME_KEYS.get(key, key): value for key, value in theme.items()}
 
 

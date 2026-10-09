@@ -934,7 +934,11 @@ TypeScript API do not bundle it. `loadSpec(spec, buffers)` first checks the
 spec at runtime, since the type checker cannot see specs from other
 languages: structure, enumerations, booleans, finite numbers, field
 references, and column payloads, with errors that give the property path
-(`marks[2].strokeWidth`) or the table and column at fault. It then builds
+(`marks[2].strokeWidth`) or the table and column at fault. Properties the
+format does not have are allowed, so newer specs still load, but reported:
+logged by default, refused or ignored on request. The validator's checks are
+typed against the spec's types, so a spec property without a check fails to
+compile. It then builds
 tables from `data` and marks from `marks`. Columns are JSON arrays or binary: numbers and times as
 little-endian typed buffers (`{ type, dtype, buffer }`, where `buffer`
 indexes the buffers delivered next to the JSON), categories as int32

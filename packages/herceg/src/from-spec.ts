@@ -5,11 +5,13 @@ import { type Chart, createChart } from "./dom/chart.ts";
 import type { MeasureText } from "./layout/text.ts";
 import { renderToPDF } from "./pdf.ts";
 import { renderToSVG } from "./render/static.ts";
-import { type LoadedSpec, loadSpec, type SpecBuffer } from "./spec/load.ts";
+import { type LoadedSpec, type LoadOptions, loadSpec, type SpecBuffer } from "./spec/load.ts";
 import type { ChartSpec } from "./spec/spec.ts";
 
 export type * from "./spec/spec.ts";
-export { type LoadedSpec, loadSpec, type SpecBuffer };
+export { SPEC_VERSION } from "./spec/spec.ts";
+export { validateSpec } from "./spec/validate.ts";
+export { type LoadedSpec, type LoadOptions, loadSpec, type SpecBuffer };
 
 /** Creates a chart in `element` from a spec and the binary buffers it references. */
 export function chartFromSpec(

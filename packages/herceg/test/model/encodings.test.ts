@@ -346,6 +346,16 @@ describe("point symbols", () => {
     );
   });
 
+  it("refuses a name that is both a shape and a field, whatever the field holds", () => {
+    const named = table({ x: [0], y: [0], square: ["a"], circle: [1] });
+    expect(() => point(named, { x: "x", y: "y", symbol: "square" })).toThrow(
+      /names both a shape and a field/,
+    );
+    expect(() => point(named, { x: "x", y: "y", symbol: "circle" })).toThrow(
+      /names both a shape and a field/,
+    );
+  });
+
   it("gives each value of a category field a shape, with a shape key", () => {
     const { scene } = build({ marks: [point(cities, { x: "x", y: "y", symbol: "region" })] });
     const g = scene.panels[0]!.marks[0] as PointGeometry;

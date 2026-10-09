@@ -2,11 +2,48 @@
 // package, stored JSON), where the type checker cannot help: structure,
 // enumerations, booleans, finite numbers, and field references. Errors name
 // the offending property by its path, such as `marks[2].strokeWidth`.
-// Unknown properties are ignored, so newer specs still load.
+// Unknown properties are allowed, so newer specs still load, and reported,
+// so misspelled ones do not go unnoticed.
 
-import type { ChartSpec } from "./spec.ts";
+import { areaFormError } from "../marks/area.ts";
+import { errorBarForm } from "../marks/errorbar.ts";
+import { regionFormError } from "../marks/region.ts";
+import { ruleFormError } from "../marks/rule.ts";
+import { treeFormError } from "../marks/tree-data.ts";
+import {
+  type AnimationSpec,
+  type AxisSpec,
+  type BinaryColumnSpec,
+  type CategoryColumnSpec,
+  type ChartSpec,
+  type DerivedSpec,
+  type GeometryColumnSpec,
+  type GridFacetSpec,
+  type GridSpec,
+  type InteractionSpec,
+  type MarkSpec,
+  type PanelSpec,
+  type ProjectionSpec,
+  type ResolveSpec,
+  SPEC_VERSION,
+  type ThemeSpec,
+  type TimeColumnSpec,
+  type TooltipSpec,
+  type WrappedFacetSpec,
+} from "./spec.ts";
 
 type Check = (value: unknown, path: string) => void;
+
+/** Every property of any form of `T`. */
+type AllKeys<T> = T extends unknown ? keyof T : never;
+/**
+ * A check for each property of `T`, so that adding a property to a spec
+ * without checking it here fails to compile.
+ */
+type ChecksOf<T> = Record<AllKeys<T>, Check>;
+
+/** Paths of the properties no check knows, collected while `checkSpec` runs. */
+let unknownPaths: string[] | undefined;
 
 function fail(path: string, expected: string, value: unknown): never {
   throw new TypeError(`${path}: expected ${expected}, got ${describe(value)}`);
@@ -98,8 +135,19 @@ function oneOf(...values: readonly string[]): Check {
   };
 }
 
-/** Checks the listed properties of `value` that are present. */
-function properties(value: Record<string, unknown>, path: string, checks: Record<string, Check>) {
+/**
+ * Checks the listed properties of `value` that are present, and notes any
+ * property neither listed nor among `others`, which are checked elsewhere.
+ */
+function properties(
+  value: Record<string, unknown>,
+  path: string,
+  checks: Record<string, Check>,
+  others: readonly string[] = [],
+) {
+  for (const key of Object.keys(value)) {
+    if (!Object.hasOwn(checks, key) && !others.includes(key)) unknownPaths?.push(`${path}.${key}`);
+  }
   for (const [key, check] of Object.entries(checks)) {
     if (value[key] !== undefined) check(value[key], `${path}.${key}`);
   }
@@ -183,10 +231,9 @@ const transforms: Check = (v, path) => {
     if (!kind) fail(at, `a transform (${Object.keys(TRANSFORMS).join(", ")})`, item);
     const { required: keys, checks } = TRANSFORMS[kind]!;
     required(step, at, keys);
-    for (const key of Object.keys(step)) {
-      if (!(key in checks))
-        throw new TypeError(`${at}.${key}: not an option of a ${kind} transform`);
-    }
+    // A step naming two transforms is ambiguous; other keys are unknown.
+    const other = Object.keys(step).find((key) => key !== kind && Object.hasOwn(TRANSFORMS, key));
+    if (other) throw new TypeError(`${at}.${other}: a step is one transform, here ${kind}`);
     properties(step, at, checks);
   }
 };
@@ -212,8 +259,61 @@ function format(type: unknown): Check {
     } catch (error) {
       throw new TypeError(`${path}: ${(error as Error).message}`);
     }
+    // Intl ignores options it does not know, so misspelled ones are noted here.
+    // Without an axis type, either kind of option may be meant.
+    const known = [
+      ...(type !== "linear" && type !== "log" ? TIME_OPTIONS : []),
+      ...(type !== "time" ? NUMBER_OPTIONS : []),
+    ];
+    for (const key of keys) if (!known.includes(key)) unknownPaths?.push(`${path}.${key}`);
   };
 }
+
+const NUMBER_OPTIONS = [
+  "localeMatcher",
+  "numberingSystem",
+  "style",
+  "currency",
+  "currencyDisplay",
+  "currencySign",
+  "unit",
+  "unitDisplay",
+  "notation",
+  "compactDisplay",
+  "signDisplay",
+  "useGrouping",
+  "minimumIntegerDigits",
+  "minimumFractionDigits",
+  "maximumFractionDigits",
+  "minimumSignificantDigits",
+  "maximumSignificantDigits",
+  "roundingMode",
+  "roundingPriority",
+  "roundingIncrement",
+  "trailingZeroDisplay",
+];
+const TIME_OPTIONS = [
+  "localeMatcher",
+  "numberingSystem",
+  "calendar",
+  "timeZone",
+  "hour12",
+  "hourCycle",
+  "formatMatcher",
+  "dateStyle",
+  "timeStyle",
+  "weekday",
+  "era",
+  "year",
+  "month",
+  "day",
+  "dayPeriod",
+  "hour",
+  "minute",
+  "second",
+  "fractionalSecondDigits",
+  "timeZoneName",
+];
 
 const axis: Check = (v, path) => {
   object(v, path);
@@ -231,7 +331,7 @@ const axis: Check = (v, path) => {
     ticks: positive,
     format: format(spec.type),
     axis: boolean,
-  });
+  } satisfies ChecksOf<AxisSpec>);
 };
 
 const THEMES = ["light", "dark", "high-contrast", "high-contrast-dark", "auto"];
@@ -261,11 +361,11 @@ const theme: Check = (v, path) => {
     diverging: strings,
     rise: string,
     fall: string,
-  });
+  } satisfies ChecksOf<ThemeSpec>);
 };
 
 /** A tree's fields: a path of category fields, or node and parent fields. */
-function hierarchyChecks(): Record<string, Check> {
+function hierarchyChecks(): Record<"path" | "node" | "parent" | "value" | "labels", Check> {
   return {
     path: (v, path) => {
       if (!Array.isArray(v) || v.length === 0) fail(path, "a list of at least one field", v);
@@ -278,7 +378,21 @@ function hierarchyChecks(): Record<string, Check> {
   };
 }
 
-const MARKS: Record<string, { required: string[]; checks: Record<string, Check> }> = {
+/** Properties `mark` checks for every mark. */
+type CommonKey = "type" | "data" | "id" | "axis" | "facet" | "panel";
+
+/**
+ * The properties each mark takes, typed against its spec so that adding a
+ * property to a spec without checking it here fails to compile.
+ */
+type MarkChecks = {
+  [K in MarkSpec["type"]]: {
+    required: AllKeys<Extract<MarkSpec, { type: K }>>[];
+    checks: Record<Exclude<AllKeys<Extract<MarkSpec, { type: K }>>, CommonKey>, Check>;
+  };
+};
+
+const MARKS: MarkChecks = {
   line: {
     required: ["x", "y"],
     checks: {
@@ -630,13 +744,97 @@ const projection: Check = (v, path) => {
       if (!(south! < north!)) fail(`${at}[1][1]`, "a north above the south", north);
       if (west === east) fail(`${at}[1][0]`, "an east apart from the west", east);
     },
-  });
+  } satisfies ChecksOf<ProjectionSpec>);
+};
+
+/** A buffer index into the buffers delivered with the spec. */
+const bufferIndex: Check = (v, path) => {
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 0) fail(path, "a buffer index", v);
+};
+/** A buffer index, or the values as a JSON array. */
+const bufferOrArray: Check = (v, path) => {
+  if (!Array.isArray(v)) bufferIndex(v, path);
+};
+const array: Check = (v, path) => {
+  if (!Array.isArray(v)) fail(path, "an array", v);
+};
+
+/** The forms of column objects: their required properties and checks. */
+const COLUMNS = {
+  values: {
+    required: ["values"],
+    checks: { type: oneOf("time"), values: array } satisfies ChecksOf<TimeColumnSpec>,
+  },
+  binary: {
+    required: ["dtype", "buffer"],
+    checks: {
+      type: oneOf("number", "time"),
+      dtype: oneOf("float64", "float32", "int32", "uint32", "int16", "uint16", "int8", "uint8"),
+      buffer: bufferIndex,
+    } satisfies ChecksOf<BinaryColumnSpec>,
+  },
+  category: {
+    required: ["codes", "dictionary"],
+    checks: {
+      type: oneOf("category"),
+      codes: bufferOrArray,
+      dictionary: strings,
+    } satisfies ChecksOf<CategoryColumnSpec>,
+  },
+  geometry: {
+    required: ["coordinates", "ringOffsets", "polygonOffsets", "geometryOffsets"],
+    checks: {
+      type: oneOf("geometry"),
+      coordinates: bufferOrArray,
+      ringOffsets: bufferOrArray,
+      polygonOffsets: bufferOrArray,
+      geometryOffsets: bufferOrArray,
+      codes: bufferOrArray,
+    } satisfies ChecksOf<GeometryColumnSpec>,
+  },
+};
+
+/**
+ * A column's form and the types of its properties. Inline values are
+ * checked row by row when the table is built.
+ */
+const column: Check = (v, path) => {
+  if (Array.isArray(v)) return;
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  const form =
+    spec.type === "category" || spec.type === "geometry"
+      ? COLUMNS[spec.type]
+      : spec.type === "time" && spec.values !== undefined
+        ? COLUMNS.values
+        : spec.type === "number" || spec.type === "time"
+          ? COLUMNS.binary
+          : undefined;
+  if (!form) fail(`${path}.type`, '"number", "time", "category", or "geometry"', spec.type);
+  required(spec, path, form.required);
+  properties(spec, path, form.checks);
+};
+
+/** Marks whose properties come in forms that exclude each other: why a spec has no single one. */
+const FORMS: Partial<
+  Record<MarkSpec["type"], (spec: Record<string, unknown>) => string | undefined>
+> = {
+  area: areaFormError,
+  rule: ruleFormError,
+  region: regionFormError,
+  errorbar: (spec) => {
+    const form = errorBarForm(spec);
+    return typeof form === "string" ? form : undefined;
+  },
+  treemap: (spec) => treeFormError(spec, "treemap"),
+  sunburst: (spec) => treeFormError(spec, "sunburst"),
 };
 
 const mark: Check = (v, path) => {
   object(v, path);
   const spec = v as Record<string, unknown>;
-  const kind = Object.hasOwn(MARKS, spec.type as string) ? MARKS[spec.type as string] : undefined;
+  const kind: { required: readonly string[]; checks: Record<string, Check> } | undefined =
+    Object.hasOwn(MARKS, spec.type as string) ? MARKS[spec.type as MarkSpec["type"]] : undefined;
   if (!kind)
     fail(
       `${path}.type`,
@@ -646,126 +844,177 @@ const mark: Check = (v, path) => {
       spec.type,
     );
   required(spec, path, kind.required);
-  properties(spec, path, {
-    ...kind.checks,
-    data: field,
-    id: string,
-    axis: oneOf("left", "right"),
-    facet: oneOf("repeat"),
-    panel: string,
-  });
+  properties(
+    spec,
+    path,
+    {
+      ...kind.checks,
+      data: field,
+      id: string,
+      axis: oneOf("left", "right"),
+      facet: oneOf("repeat"),
+      panel: string,
+    },
+    ["type"],
+  );
+  const problem = FORMS[spec.type as MarkSpec["type"]]?.(spec);
+  if (problem) throw new TypeError(`${path}: ${problem}`);
 };
 
-/** Throws a TypeError naming the first property of `spec` that is not valid. */
+/**
+ * Throws a TypeError naming the first property of `spec` that is not valid.
+ * Properties it does not know are allowed (see `checkSpec`).
+ */
 export function validateSpec(spec: unknown): asserts spec is ChartSpec {
+  checkSpec(spec);
+}
+
+/**
+ * Checks `spec` like `validateSpec`, and returns the paths of the
+ * properties it does not know, such as `marks[0].strokeWidht`.
+ */
+export function checkSpec(spec: unknown): string[] {
+  const found: string[] = [];
+  const outer = unknownPaths;
+  unknownPaths = found;
+  try {
+    checkChart(spec);
+  } finally {
+    unknownPaths = outer;
+  }
+  return found;
+}
+
+function checkChart(spec: unknown): asserts spec is ChartSpec {
   object(spec, "spec");
   const chart = spec as Record<string, unknown>;
+  const version = chart.version;
+  if (version !== undefined && version !== 1 && version !== SPEC_VERSION) {
+    throw new TypeError(
+      `Unsupported spec version ${describe(version)}; this herceg reads versions 1 to ${SPEC_VERSION}`,
+    );
+  }
   if (!Array.isArray(chart.marks)) fail("spec.marks", "an array of marks", chart.marks);
   for (const [i, item] of chart.marks.entries()) mark(item, `marks[${i}]`);
-  properties(chart, "spec", {
-    title: string,
-    description: string,
-    width: positive,
-    height: positive,
-    data: (data, path) => {
-      object(data, path);
-      for (const [name, table] of Object.entries(data as Record<string, unknown>)) {
-        const at = `${path}.${name}`;
-        object(table, at);
-        const entry = table as Record<string, unknown>;
-        if (entry.source !== undefined) {
-          required(entry, at, ["transform"]);
-          properties(entry, at, { source: string, transform: transforms });
-        } else {
-          object(entry.columns, `${at}.columns`);
+  properties(
+    chart,
+    "spec",
+    {
+      title: string,
+      description: string,
+      width: positive,
+      height: positive,
+      data: (data, path) => {
+        object(data, path);
+        for (const [name, table] of Object.entries(data as Record<string, unknown>)) {
+          const at = `${path}.${name}`;
+          object(table, at);
+          const entry = table as Record<string, unknown>;
+          if (entry.source !== undefined) {
+            required(entry, at, ["transform"]);
+            properties(entry, at, {
+              source: string,
+              transform: transforms,
+            } satisfies ChecksOf<DerivedSpec>);
+          } else {
+            object(entry.columns, `${at}.columns`);
+            properties(entry, at, {}, ["columns"]);
+            for (const [name, values] of Object.entries(entry.columns as object))
+              column(values, `${at}.columns.${name}`);
+          }
         }
-      }
-    },
-    x: axis,
-    y: axis,
-    yRight: axis,
-    panels: (p, path) => {
-      if (!Array.isArray(p)) fail(path, "a list of panels", p);
-      const ids = new Set<string>();
-      for (const [i, item] of p.entries()) {
-        const at = `${path}[${i}]`;
-        object(item, at);
-        const panel = item as Record<string, unknown>;
-        required(panel, at, ["id"]);
-        properties(panel, at, { id: string, title: string, y: axis });
-        const id = panel.id as string;
-        if (id === "" || id === "*") fail(`${at}.id`, 'a name other than "" and "*"', id);
-        if (ids.has(id)) fail(`${at}.id`, "a name no other panel has", id);
-        ids.add(id);
-      }
-    },
-    grid: (g, path) => {
-      object(g, path);
-      properties(g as Record<string, unknown>, path, {
-        columns: count,
-        rowHeights: (v, at) => {
-          if (!Array.isArray(v) || v.length === 0) fail(at, "a list of relative heights", v);
-          for (const [i, height] of v.entries()) positive(height, `${at}[${i}]`);
-        },
-      });
-    },
-    resolve: (r, path) => {
-      object(r, path);
-      properties(r as Record<string, unknown>, path, {
-        y: oneOf("shared", "independent", "rows", "columns"),
-      });
-    },
-    facet: (f, path) => {
-      object(f, path);
-      const spec = f as Record<string, unknown>;
-      if ("field" in spec) {
-        properties(spec, path, { field, columns: count });
-        if ("row" in spec || "column" in spec)
-          fail(path, "a field to wrap, or row and column fields, not both", f);
-        return;
-      }
-      properties(spec, path, { row: field, column: field });
-      if (spec.row === undefined && spec.column === undefined)
-        fail(path, "a field, or a row or column field", f);
-      // A grid's columns are its column field's values.
-      if ("columns" in spec)
-        fail(`${path}.columns`, "absent in a grid of row and column fields", spec.columns);
-    },
-    legend: boolean,
-    tooltip: (t, path) => {
-      if (typeof t === "boolean") return;
-      object(t, path);
-      properties(t as Record<string, unknown>, path, {
-        mode: oneOf("nearest-x", "nearest-y", "nearest"),
-      });
-    },
-    interaction: (i, path) => {
-      object(i, path);
-      properties(i as Record<string, unknown>, path, {
-        zoom: (v, path) => {
-          if (typeof v !== "boolean" && v !== "x" && v !== "y" && v !== "xy")
-            fail(path, 'true, false, "x", "y", or "xy"', v);
-        },
-        brush: oneOf("x", "y", "xy", "lasso"),
-        sync: string,
-      });
-    },
-    animation: (a, path) => {
-      if (typeof a === "boolean") return;
-      object(a, path);
-      properties(a as Record<string, unknown>, path, {
-        duration: (v, at) => {
-          if (typeof v !== "number" || !(v >= 0) || !Number.isFinite(v))
-            fail(at, "milliseconds, at least 0", v);
-        },
-      });
-    },
-    renderer: oneOf("auto", "svg", "canvas"),
-    theme,
-    locale: string,
-    timeZone: string,
-    projection,
-  });
+      },
+      x: axis,
+      y: axis,
+      yRight: axis,
+      panels: (p, path) => {
+        if (!Array.isArray(p)) fail(path, "a list of panels", p);
+        const ids = new Set<string>();
+        for (const [i, item] of p.entries()) {
+          const at = `${path}[${i}]`;
+          object(item, at);
+          const panel = item as Record<string, unknown>;
+          required(panel, at, ["id"]);
+          properties(panel, at, {
+            id: string,
+            title: string,
+            y: axis,
+          } satisfies ChecksOf<PanelSpec>);
+          const id = panel.id as string;
+          if (id === "" || id === "*") fail(`${at}.id`, 'a name other than "" and "*"', id);
+          if (ids.has(id)) fail(`${at}.id`, "a name no other panel has", id);
+          ids.add(id);
+        }
+      },
+      grid: (g, path) => {
+        object(g, path);
+        properties(g as Record<string, unknown>, path, {
+          columns: count,
+          rowHeights: (v, at) => {
+            if (!Array.isArray(v) || v.length === 0) fail(at, "a list of relative heights", v);
+            for (const [i, height] of v.entries()) positive(height, `${at}[${i}]`);
+          },
+        } satisfies ChecksOf<GridSpec>);
+      },
+      resolve: (r, path) => {
+        object(r, path);
+        properties(r as Record<string, unknown>, path, {
+          y: oneOf("shared", "independent", "rows", "columns"),
+        } satisfies ChecksOf<ResolveSpec>);
+      },
+      facet: (f, path) => {
+        object(f, path);
+        const spec = f as Record<string, unknown>;
+        if ("field" in spec) {
+          properties(spec, path, { field, columns: count } satisfies ChecksOf<WrappedFacetSpec>);
+          if ("row" in spec || "column" in spec)
+            fail(path, "a field to wrap, or row and column fields, not both", f);
+          return;
+        }
+        properties(spec, path, { row: field, column: field } satisfies ChecksOf<GridFacetSpec>);
+        if (spec.row === undefined && spec.column === undefined)
+          fail(path, "a field, or a row or column field", f);
+        // A grid's columns are its column field's values.
+        if ("columns" in spec)
+          fail(`${path}.columns`, "absent in a grid of row and column fields", spec.columns);
+      },
+      legend: boolean,
+      tooltip: (t, path) => {
+        if (typeof t === "boolean") return;
+        object(t, path);
+        properties(t as Record<string, unknown>, path, {
+          mode: oneOf("nearest-x", "nearest-y", "nearest"),
+        } satisfies ChecksOf<TooltipSpec>);
+      },
+      interaction: (i, path) => {
+        object(i, path);
+        properties(i as Record<string, unknown>, path, {
+          zoom: (v, path) => {
+            if (typeof v !== "boolean" && v !== "x" && v !== "y" && v !== "xy")
+              fail(path, 'true, false, "x", "y", or "xy"', v);
+          },
+          brush: oneOf("x", "y", "xy", "lasso"),
+          sync: string,
+        } satisfies ChecksOf<InteractionSpec>);
+      },
+      animation: (a, path) => {
+        if (typeof a === "boolean") return;
+        object(a, path);
+        properties(a as Record<string, unknown>, path, {
+          duration: (v, at) => {
+            if (typeof v !== "number" || !(v >= 0) || !Number.isFinite(v))
+              fail(at, "milliseconds, at least 0", v);
+          },
+        } satisfies ChecksOf<AnimationSpec>);
+      },
+      renderer: oneOf("auto", "svg", "canvas"),
+      theme,
+      locale: string,
+      timeZone: string,
+      projection,
+    } satisfies ChecksOf<Omit<ChartSpec, "marks" | "version">>,
+    ["marks", "version"],
+  );
   // An older reader would draw shared axes or overlay panels; a spec asking
   // otherwise says so.
   for (const name of ["resolve", "panels", "grid"])

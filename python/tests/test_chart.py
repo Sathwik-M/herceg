@@ -382,6 +382,8 @@ def test_encodings_are_checked():
     values = {"x": np.array([1.0]), "y": np.array([2.0]), "kind": ["a"]}
     with pytest.raises(ValueError, match="neither a column nor one of circle"):
         hg.Chart(values).point("x", "y", symbol="hexagon")
+    with pytest.raises(ValueError, match="names both a shape and a column"):
+        hg.Chart({**values, "star": ["a"]}).point("x", "y", symbol="star")
     with pytest.raises(TypeError, match="point symbol"):
         hg.Chart(values).point("x", "y", symbol="x")
     with pytest.raises(TypeError, match="point color"):
@@ -450,7 +452,7 @@ def test_scheme_and_symbol_names_match_typescript():
 def test_theme_keys_and_names_match_typescript():
     from typing import get_args
 
-    from herceg._chart import _THEME_KEYS, ThemeName
+    from herceg._chart import _THEME_KEYS, _THEME_WORDS, ThemeName
 
     theme = {"extends": "high-contrast", "bar_radius": 0, "tooltip_border": "#000"}
     spec, _ = hg.Chart(DATA, theme=theme).line(x="t", y="p50").to_spec()
@@ -464,6 +466,26 @@ def test_theme_keys_and_names_match_typescript():
     body = source[source.index("export interface ThemeSpec") :]
     keys = re.findall(r"^  (\w+)\?:", body[: body.index("\n}")], re.MULTILINE)
     assert {key for key in keys if not key.islower()} == set(_THEME_KEYS.values())
+    assert {key for key in keys if key.islower()} == _THEME_WORDS
+    with pytest.raises(ValueError, match="theme: unknown key 'fontsize'"):
+        hg.Chart(DATA, theme={"fontsize": 12})
+
+
+def test_format_options_match_typescript():
+    from herceg._chart import _NUMBER_FORMAT, _TIME_FORMAT
+
+    with pytest.raises(ValueError, match="'maximumFractionDigts' is not an Intl format option"):
+        hg.Axis(format={"maximumFractionDigts": 2})
+    with pytest.raises(ValueError, match="bar labels: 'hour'"):
+        hg.Chart(DATA).bar(x="host", y="p50", labels={"hour": "2-digit"})
+    root = Path(__file__).resolve().parents[2] / "packages" / "herceg" / "src"
+    if not root.exists():
+        pytest.skip("needs a source checkout")
+    source = (root / "spec" / "validate.ts").read_text()
+    for name, options in (("NUMBER_OPTIONS", _NUMBER_FORMAT), ("TIME_OPTIONS", _TIME_FORMAT)):
+        body = source[source.index(f"const {name} = [") :]
+        listed = re.findall(r'^  "(\w+)",$', body[: body.index("];")], re.MULTILINE)
+        assert set(listed) == options
 
 
 def test_pies_send_their_fields_and_have_their_chart_to_themselves():

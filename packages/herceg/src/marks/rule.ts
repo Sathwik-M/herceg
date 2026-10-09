@@ -31,6 +31,13 @@ export type RuleDataOptions<S extends Schema> = RuleStyle &
     text?: TextField<S>;
   };
 
+/** Why a rule spec has no single position, if it has neither or both of x and y. */
+export function ruleFormError(spec: { x?: unknown; y?: unknown }): string | undefined {
+  return (spec.x === undefined) === (spec.y === undefined)
+    ? "A rule needs exactly one of x or y"
+    : undefined;
+}
+
 /**
  * Reference lines. Their values are included in the axis domain so
  * thresholds and events stay visible.
@@ -42,8 +49,8 @@ export class RuleMark implements Mark<RuleSpec> {
 
   constructor(spec: RuleSpec, table?: Table) {
     this.spec = spec;
-    if ((spec.x === undefined) === (spec.y === undefined))
-      throw new Error("A rule needs exactly one of x or y");
+    const problem = ruleFormError(spec);
+    if (problem) throw new Error(problem);
     this.#data = new AnnotationData(table, { x: spec.x, y: spec.y }, spec.label, spec.text, "rule");
   }
 

@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { encodedCategory, time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
-import { loadSpec, specToSVG } from "../../src/from-spec.ts";
+import { loadSpec, SPEC_VERSION, specToSVG, validateSpec } from "../../src/from-spec.ts";
 import { line } from "../../src/marks/line.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { renderToSVG } from "../../src/render/static.ts";
@@ -134,8 +134,12 @@ describe("loadSpec", () => {
       /row 0 holds code null/,
     );
     expect(() => load({ type: "category", codes: [0], dictionary: [123] })).toThrow(
-      /dictionary must be an array of strings/,
+      /columns\.c\.dictionary\[0\]: expected a string/,
     );
+    expect(() => load({ type: "time", values: 42 })).toThrow(
+      /columns\.c\.values: expected an array/,
+    );
+    expect(() => load({ type: "text", values: [] })).toThrow(/columns\.c\.type: expected "number"/);
     expect(() => load({ type: "time", values: ["nope"] })).toThrow(/"nope", not a time/);
     expect(() => load({ type: "number", dtype: "float64", buffer: -1 })).toThrow(/buffer index/);
   });
@@ -182,6 +186,104 @@ describe("loadSpec", () => {
     // Valid edge cases the TypeScript API produces still load.
     expect(check({ marks: [{ type: "rule", y: 1, strokeWidth: 0 }] })).not.toThrow();
     expect(check({ x: { type: "time", format: { hour: "2-digit" } }, marks: [] })).not.toThrow();
+  });
+
+  it("reports properties it does not know, as asked", () => {
+    // Misspellings, as JSON from elsewhere has them.
+    const json = {
+      version: 2,
+      data: { t: { columns: { x: [0, 1], y: [1, 2] } } },
+      marks: [{ type: "line", x: "x", y: "y", strokeWidht: 3 }],
+      theme: { fontSize: 12, fontsize: 12 },
+      y: { label: "ms", lable: "ms" },
+    };
+    const spec = json as ChartSpec;
+    const paths = ["marks[0].strokeWidht", "spec.y.lable", "spec.theme.fontsize"];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(loadSpec(spec).unknown.sort()).toEqual([...paths].sort());
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0]![0]).toContain("marks[0].strokeWidht");
+      warn.mockClear();
+      expect(loadSpec(spec, [], { unknown: "ignore" }).unknown).toHaveLength(3);
+      expect(warn).not.toHaveBeenCalled();
+      expect(() => loadSpec(spec, [], { unknown: "error" })).toThrow(/not a property/);
+      // Known properties only: nothing to report.
+      expect(loadSpec({ ...spec, marks: [], theme: "dark", y: {} }).unknown).toEqual([]);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("reports unknown properties of columns, formats, and transforms", () => {
+    const quiet = { unknown: "ignore" } as const;
+    const buffer = new Float64Array([1, 2]).buffer;
+    const json = {
+      version: 2,
+      data: {
+        t: {
+          columns: {
+            a: { type: "time", values: [1, 2], vaues: [2] },
+            b: { type: "number", dtype: "float64", buffer: 0 },
+          },
+        },
+        sorted: { source: "t", transform: [{ sort: "a", ordr: "descending" }] },
+      },
+      marks: [],
+      x: { format: { maximumFractionDigts: 2 } },
+    };
+    expect(loadSpec(json as ChartSpec, [buffer], quiet).unknown.sort()).toEqual([
+      "spec.data.sorted.transform[0].ordr",
+      "spec.data.t.columns.a.vaues",
+      "spec.x.format.maximumFractionDigts",
+    ]);
+    expect(() => loadSpec(json as ChartSpec, [buffer], { unknown: "error" })).toThrow(
+      /not a property/,
+    );
+    // Options formatters read, whichever formatter an untyped axis turns out to need.
+    for (const format of [
+      { numberingSystem: "arab" },
+      { timeZone: "UTC" },
+      { roundingIncrement: 5 },
+    ])
+      expect(loadSpec({ marks: [], x: { format } }, [], { unknown: "error" }).unknown).toEqual([]);
+    expect(
+      loadSpec({ marks: [], x: { type: "linear", format: { hour: "2-digit" } } }, [], quiet)
+        .unknown,
+    ).toEqual(["spec.x.format.hour"]);
+  });
+
+  it("keeps the properties an outer check found when a check runs inside it", () => {
+    const spec = {
+      marks: [],
+      theme: { fontsize: 12 },
+      get title() {
+        validateSpec({ marks: [] });
+        return "outer";
+      },
+    };
+    expect(loadSpec(spec as ChartSpec, [], { unknown: "ignore" }).unknown).toEqual([
+      "spec.theme.fontsize",
+    ]);
+  });
+
+  it("checks specs of unknown shape, and names the version it writes", () => {
+    const parsed: unknown = JSON.parse('{"version": 2, "marks": []}');
+    validateSpec(parsed);
+    expect(loadSpec(parsed).config.marks).toEqual([]);
+    expect(() => validateSpec({ marks: 1 })).toThrow(/spec\.marks/);
+    expect(() => validateSpec({ version: "banana", marks: [] })).toThrow(
+      /Unsupported spec version/,
+    );
+    // The forms a mark's type allows, as the TypeScript types describe them.
+    expect(() => validateSpec({ marks: [{ type: "area", x: "x" }] })).toThrow(
+      /marks\[0\]: An area needs y, or y1 and y2/,
+    );
+    expect(() => validateSpec({ marks: [{ type: "rule" }] })).toThrow(/exactly one of x or y/);
+    expect(SPEC_VERSION).toBe(2);
+    // An omitted version is 1, which has no panels.
+    expect(() => loadSpec({ marks: [], panels: [{ id: "a" }] })).toThrow(/"version": 2/);
   });
 
   it("refuses marks mixing forms rather than dropping options", () => {
