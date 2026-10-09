@@ -6,7 +6,8 @@
     "bench": "node --experimental-strip-types src/runner/run.ts",
     "react": "node --experimental-strip-types src/runner/run.ts --lib herceg,herceg-react --out results/react.json",
     "size": "node --experimental-strip-types src/size/size.ts",
-    "report": "node --experimental-strip-types src/report.ts"
+    "report": "node --experimental-strip-types src/report.ts",
+    "grid": "node --experimental-strip-types src/grid/run.ts"
   },
   "devDependencies": {
     "@types/d3-interpolate": "3.0.4",
@@ -14,15 +15,24 @@
     "@types/plotly.js": "3.0.14"
   },
   "dependencies": {
+    "@glideapps/glide-data-grid": "6.0.4-alpha24",
     "@tanstack/charts": "1.0.0",
+    "@tanstack/react-table": "9.2.8",
+    "@tanstack/react-virtual": "3.14.13",
+    "ag-grid-community": "36.2.0",
     "chart.js": "4.5.1",
     "chartjs-adapter-date-fns": "3.0.0",
     "d3-interpolate": "3.0.1",
     "d3-scale": "4.0.2",
     "date-fns": "4.1.0",
     "echarts": "6.1.0",
+    "lodash": "4.18.1",
+    "marked": "16.4.2",
     "plotly.js-basic-dist-min": "4.1.2",
     "plotly.js-dist-min": "4.1.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-responsive-carousel": "3.2.23",
     "uplot": "1.6.32"
   }
 }

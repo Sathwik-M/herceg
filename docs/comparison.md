@@ -47,7 +47,7 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 | Geographic maps | `geoshape` regions (choropleths by a number field on a continuous scale, or by category with a legend that grays categories out) and `geopoint` points and bubbles (sized by area, colored by series or a number field, ringed, largest first) on one projection: Equal Earth, Natural Earth, Mercator, equirectangular, or Albers' conic equal-area, with a central meridian and a fit to the data, the world, or a box of degrees. Shapes are a packed geometry column (GeoArrow-style offsets, binary in specs, codes per row shared by derived tables) from GeoJSON, GeoPandas, or Shapely without per-vertex objects; edges are planar in longitude and latitude, cut at the seam and the Mercator limit. Tooltips, hover outlines, clicks, keyboard reading, and a summary; SVG, Canvas, static SVG, and PDF; React, Vue, Svelte, and Python (with a Plotly-style `geojson`/`locations` join). Not benchmarked: one-off timings in Node for 200 regions of 1,000 vertices and 10,000 bubbles are ~20–30 ms for the first drawing, ~11 ms at a new size, ~2 ms to redraw after a value change, ~2 µs to find the region under the pointer. No base maps, zoom or pan, globes (orthographic) or other spherical rotation, lines (routes), labels on regions, or custom projections yet. | Documented. `map` series and the `geo` component over GeoJSON or SVG registered with `registerMap`, colored through `visualMap`; `scatter`, `effectScatter`, `lines`, and `heatmap` series on geo coordinates; `roam` zoom and pan, region labels and emphasis, and a `projection` of `project`/`unproject` functions (or a d3-geo projection stream). No bundled base maps. | Documented. `geoShape` in the opt-in `@tanstack/charts/geo` entry draws GeoJSON (polygons, lines, and points sized by a value) through any d3-geo projection factory fitted to the plot, including globes, with sphere and graticule layers; boundaries are the application's own GeoJSON. | No built-in maps (the `chartjs-chart-geo` plugin adds choropleth and bubble map charts). | Documented. `choropleth` and `scattergeo` traces with built-in base maps (countries, US states) and `locationmode`, or GeoJSON with `locations` and `featureidkey`; many projections (including orthographic and Albers USA), `fitbounds`, zoom and pan; tile-based maps (`choroplethmap`, `scattermap`) as well. |
 | 3D charts | `point3d` scatter (series colors or a number field on a color scale) and `surface` height fields over a grid of rows (number, time, or category x and y; irregular spacing; holes for missing values; up to 250,000 grid points), sharing one box with x, y, and z axes (linear, log, time), a cube or a given aspect, and an orthographic (default) or perspective camera. Drawn back to front as ordinary SVG, Canvas, and PDF geometry, so static export and the text alternative work: exactly for points and one surface with points (points under a surface are hidden by it), by cell depth for several surfaces. Opaque point clouds of 20,000+ points are drawn by WebGL with a depth test. Drag to turn, wheel zoom (opt-in), double-click reset, Shift+arrow keys and +/− to turn and zoom, buttons for people who cannot drag, a `camera` event and `setCamera`; tooltips and keyboard reading of every point and grid point with their values. Measured (see 3D charts below): turning 10,000 points ~2.0 ms (Plotly ~5.5 ms), 100,000 and 1,000,000 points on WebGL ~0.3–0.4 ms of JavaScript (Plotly ~11 ms at 100,000; at 1,000,000 its page failed to allocate an array buffer); a 50 x 50 surface ~3.0 ms (Plotly ~4.7 ms), but a 200 x 200 surface ~30 ms on the CPU against Plotly's ~7.2 ms on the GPU; mounting is faster than Plotly's (10,000 points ~2.8 ms against ~39 ms). No 3D lines, text, bars, meshes, parametric surfaces, isosurfaces, volumes, contours, or specular lighting; labels stay horizontal; flat shading only. | Documented. ECharts-GL (a separate package): `scatter3D`, `bar3D`, `line3D`, `lines3D`, `surface` (including parametric surfaces), `polygons3D`, `map3D`, and `globe`, in WebGL with realistic shading, post effects, and wireframes; mouse orbit, zoom, and pan; not measured here (its compatibility with ECharts 6 was not checked). | Not implemented. | Not implemented (no 3D chart types). | Documented. `scatter3d` (markers, lines, and text), `surface` (with contours and lighting, including parametric x and y), `mesh3d`, `cone`, `streamtube`, `isosurface`, and `volume`, all WebGL (gl3d), with orbit, turntable, zoom, and pan modes and camera relayout; no SVG or vector PDF of 3D scenes (static export rasterizes them). Measured below: faster than Herceg on large surfaces. |
 | Data preparation | Derived tables in the spec and in TypeScript (`derive`) and Python (`hg.derive`): filter and calculate with portable expressions, bin, aggregate (count, sum, mean, median, quantiles, min, max, stdev, variance, distinct, first, last), rolling windows, sort. Computed in the browser over typed columns and kept current as the source streams (incrementally for row-by-row steps): ~15 ms to filter and calculate 1M rows, ~9 ms to aggregate them by 20 groups, ~10 µs to follow a 100-row append (`npm run bench:core`). No joins, pivots, or calendar bins yet. | Documented. `dataset.transform` with filter, sort, and registered external transforms (ecStat for regression and clustering). | Data is prepared by the application. | Data is prepared by the application. | Documented. Plotly.js `transforms` (filter, groupby, aggregate, sort) are deprecated; Plotly Express prepares data in pandas. |
-| Data grid | `herceg/grid`: a DOM grid over a row view that mounts only the rows and columns in view, sorts by header clicks (several keys with Shift) through the view, and selects rows into a selection store other views can read; it follows the WAI grid pattern (one tab stop, a focused cell kept mounted while scrolled away, polite announcements) and takes the charts' themes. One level of groups (by one or more fields) from `groupRows`, whose aggregate table (count, sum, mean, min, max, updated incrementally on appends) charts draw too: header rows with aggregates, expansion by key, groups sorted by key or aggregate and rows within them, group selection into the same row set with mixed checkboxes, and the WAI tree grid pattern. Columns resize and move by dragging headers (previewed once a frame, Escape to cancel), by keys on a focused header, or from a column menu that also pins them left or right, hides them, and shows hidden ones; the layout is the model's column list, which applications can save and restore. Pinned columns stick to the edges in the same row elements (one row of cells in visual order for screen readers), and scroll with the others in grids too narrow to hold them. ~28 KiB gzip with the data layer it needs, none of it in a chart's bundle. One-off measurement outside the committed suite (headless Chrome 154, Apple M6, 1200 x 600 pixels of rows, 20 or 100 columns): mounting a grid on a prepared model takes ~1.9 ms including style and layout at 10k, 100k, and 1M rows (the page's first grid ~6–7 ms), with ~450 DOM nodes at every size; a scroll step of ten rows ~1.1–1.4 ms including style and layout; sorting 100k rows by a number ~14 ms and 1M ~0.13 s; the grid's own JS heap ~0.3 MB. Grouping 1M rows by a category (five aggregates) ~11–16 ms against ~35–50 ms for a derived table's aggregate (which also copies filtered columns), and following a 1,000-row append ~0.1 ms (one-off Node measurements); over 100k rows by 20 fields, a grouped grid's frame of model work is ~0.04–0.5 ms collapsed or expanded, ~0.2 ms after a 100-row append while collapsed and ~0.4 ms expanded (whose rows are listed again after each change: ~2 ms at 1M rows). With two columns pinned left and one right, 100k x 20 and 1M x 100 grids scrolled to their middle mount the same 588 cells as without pins; a scroll step of ten rows takes ~1.0 and ~1.1 ms including style and layout either way, a step of one column across ~0.6 and ~0.95 ms (without pins ~0.65 and ~0.95–1.0 ms, against ~0.64 and ~0.94 ms before column layout existed), and a resize preview frame ~0.6 ms, writing no cell's text. No nested groups, pivots, column groups, sizing to content, or editing yet; not yet compared with TanStack Table, AG Grid, or Glide Data Grid. | Documented. No data grid; the toolbox's `dataView` shows (and lets users edit) the chart's data as text. | No data grid; TanStack Table and TanStack Virtual are separate libraries. | No data grid. | Documented. `table` trace with cell values, formats, fills, and column order; no sorting or selection documented. |
+| Data grid | `herceg/grid`: a DOM grid over a row view that mounts only the rows and columns in view, sorts by header clicks (several keys with Shift) through the view, and selects rows into a selection store other views can read; it follows the WAI grid pattern (one tab stop, a focused cell kept mounted while scrolled away, polite announcements) and takes the charts' themes. One level of groups (by one or more fields) from `groupRows`, whose aggregate table (count, sum, mean, min, max, updated incrementally on appends) charts draw too: header rows with aggregates, expansion by key, groups sorted by key or aggregate and rows within them, group selection into the same row set with mixed checkboxes, and the WAI tree grid pattern. Columns resize and move by dragging headers (previewed once a frame, Escape to cancel), by keys on a focused header, or from a column menu that also pins them left or right, hides them, and shows hidden ones; the layout is the model's column list, which applications can save and restore. Pinned columns stick to the edges in the same row elements (one row of cells in visual order for screen readers), and scroll with the others in grids too narrow to hold them. ~28 KiB gzip with the data layer it needs, none of it in a chart's bundle. Measured against TanStack Table with TanStack Virtual, AG Grid Community, and Glide Data Grid (see [Grids](#grids)): over 100k rows by 20 fields, mounting from the table's typed columns takes ~3 ms (TanStack ~84 ms and AG Grid ~76 ms with the conversion to row objects they need, Glide ~1.7 ms), sorting by a number ~16 ms to the correct frame (TanStack and AG Grid ~80 ms), and the mounted grid keeps ~2 MB of heap without copying the data (TanStack ~54 MB and AG Grid ~27 MB on top of ~62 MB of row objects); it keeps up with 1,000-row appends at 10 Hz under a sort at every size, and mounts 1M x 100 fields, where the tabs of TanStack and AG Grid crash. Weaker than Glide's canvas on scroll steps (~2–4 ms against ~1 ms), and than plain typed-array code on filtering and on sorted appends at 1M rows. Grouping 1M rows by a category (five aggregates) ~11–16 ms against ~35–50 ms for a derived table's aggregate (which also copies filtered columns), and following a 1,000-row append ~0.1 ms (one-off Node measurements); over 100k rows by 20 fields, a grouped grid's frame of model work is ~0.04–0.5 ms collapsed or expanded, ~0.2 ms after a 100-row append while collapsed and ~0.4 ms expanded (whose rows are listed again after each change: ~2 ms at 1M rows). With two columns pinned left and one right, 100k x 20 and 1M x 100 grids scrolled to their middle mount the same 588 cells as without pins; a scroll step of ten rows takes ~1.0 and ~1.1 ms including style and layout either way, a step of one column across ~0.6 and ~0.95 ms (without pins ~0.65 and ~0.95–1.0 ms, against ~0.64 and ~0.94 ms before column layout existed), and a resize preview frame ~0.6 ms, writing no cell's text. No nested groups, pivots, column groups, sizing to content, or editing yet; grouping and column layout are not compared. | Documented. No data grid; the toolbox's `dataView` shows (and lets users edit) the chart's data as text. | No data grid; TanStack Table and TanStack Virtual are separate libraries, compared in [Grids](#grids). | No data grid. | Documented. `table` trace with cell values, formats, fills, and column order; no sorting or selection documented. |
 | Interaction | Wheel zoom and drag pan along x, y, or both; brushing along x or y, by rectangle, or by lasso (selections, or drag-to-zoom along zoomed axes); crosshair labels on the axes (`tooltip.axisLabels`); keyboard navigation with Shift-arrow range selection along the axis it steps along (rectangles and lassos are pointer-only); synced cursors, zoom, and selections (as data values: synced charts need the same category order; charts whose panels have x scales of their own sync cursors only); and `viewport` (x and both y ranges, once per change), `select`, `hover`, and `click` events (also React props, Vue events, and Svelte callback props, and Python widget callbacks with the same payloads); hovered and clicked points name their mark and the row of its table (none for bins, groups, and other points summarizing rows). Selections report ranges and outlines, not the rows inside them; no zoom slider; brushing is not benchmarked yet. | Documented. `dataZoom` (inside, slider), brush component (rectangle, polygon, x or y ranges), and an event API (`click`, `datazoom`, `brushSelected`, ...). | Not verified here. | Documented. `onClick`/`onHover` callbacks; zoom, pan, and drag-to-zoom through `chartjs-plugin-zoom`. | Documented. Zoom, pan, box and lasso selection, and events (`plotly_click`, `plotly_hover`, `plotly_selected`, `plotly_relayout`). |
 | Animation | Opt-in (`animation`): the axes move to a view asked for (`setViewport`, zooming to a brush, double-click reset) over 250 ms by default, eased without overshoot, in log space on log axes; tooltips follow the moving axes. With `values: true`, unstacked bars (vertical, horizontal, grouped) and pie slices move to changed values (in-place updates and resets), matched by category or position: bars grow and shrink from their base, through it when values change sign, and slices turn sharing their boundaries, opening and closing as categories come and go. Only while the axes, plot, and categories stay put: a change that grows an automatic domain, adds a category, or reorders sorted slices shows at once, as do appends and drops, frequent changes, stacked or labeled bars, more than 2,000 items, and inspected charts (pointer and keyboard read the new values first). Wheel zoom, panning, resizes, and export show at once; charts with several panels, linked charts, and pages preferring reduced motion do not animate, nor do charts whose frames would take over 10 ms of JavaScript, alone or together (a heuristic from earlier frames). No entrance animations, no motion of axes with values, points, lines, areas, or stacks yet; frame costs measured outside the benchmark suite (about 0.2 to 0.7 ms of JavaScript a frame for up to 2,000 bars, Chrome). | Documented. On by default: entrance animations, transitions of updated values (`animationDurationUpdate`, `animationEasingUpdate`), and `universalTransition` morphing between series; turned off above `animationThreshold` (2,000 items). | Not verified here. | Documented. On by default (1,000 ms, `easeOutQuart`): data updates animate per property (`animations`), with modes for show, hide, active, and resize (`transitions`); `animation: false` turns it off. | Documented. Off by default: `Plotly.animate` with frames and a `transition` (duration, easing) for data and layout, and `layout.transition` for `Plotly.react` updates. |
 | Composition | Line, area, bar, point, heatmap, error bar, and rule marks share scales, axes, tooltip, and legend in one chart; bars are vertical or horizontal. Rule, region, and text annotations from constants or one per table row (deploy markers, incident windows, labels), with text labels hidden or moved around their points where they would overlap, farther ones with leader lines that cross no other label, point, or line. Custom marks draw shapes with the chart's scales through the same SVG, Canvas, and static renderers; over x and y fields they show series with legend entries, tooltips at their points (custom text optional), keyboard stops, facet splits, and summaries (JavaScript only; no hit testing of the drawn shapes). Bars can write their values. A second y axis on the right for marks with `axis: "right"`. Small multiples by a category field wrapped into rows, or a grid with a row per value of one field and a column per value of another, and subplots: panels in a grid each drawing the marks that name them. x and y are shared or resolved per panel, row, or column (facets share both by default, subplots x; each subplot's x and y may be linear, log, or time), and each x scale zooms, pans, brushes, and resets on its own. Rows and columns may be weighted (`rowHeights`, `columnWidths`). A category axis of bars may be resolved per panel, row, or column too, each holding only the categories its panels' rows hold, and stacked bars stack within each facet panel; heatmaps, histograms, box plots, error bars, and candlesticks still need their category axes shared, and charts with categories per panel cannot be synced yet; no nested facets yet. | Documented. Many series types in one grid, `markLine`/`markArea`, `custom` series. | Documented. Grammar of marks; strongest composition model of the group. | Documented. Mixed chart types; annotations via plugin. | Documented. Traces, layout shapes and annotations, subplots. |
@@ -279,6 +279,224 @@ ones); its WebGL timings leave out the GPU's own work, as Plotly's do. ECharts
 | rotate-surface-200 (200 x 200 grid surface) | 29.8 ± 1.19 | 7.19 ± 0.47 |
 <!-- /results:three -->
 
+## Grids
+
+Herceg's grid (`herceg/grid`, and the same grid through
+`@herceg/react/grid`) against TanStack Table 9 with TanStack Virtual, AG Grid
+Community 36, and Glide Data Grid 6, from `npm run bench:grid` (methodology:
+`benchmarks/README.md`, "Grids"). Every grid shows the same seeded table (16
+number, 2 time, and 2 category fields per 20, with missing values, ties, and
+duplicated rows) in 1200 x 600 pixels with 28 px rows, a 32 px header,
+120 px columns, and the same cell text. A timing ends at the first frame
+whose rows, cells, selection, and row count match an independent reference,
+read just before the frame paints; a grid that never shows the right result
+is reported incorrect, not timed. Latency scenarios start from an idle page
+with the frame rate limit off; scroll traces and streaming run with vsync.
+
+Read these with the configurations in mind:
+
+- TanStack Table and AG Grid take row objects, so "from the columns" includes
+  converting the shared typed columns into them; "from native input" starts
+  from objects already made. Herceg reads the columns in place and Glide
+  through `getCellContent`.
+- Glide has no row model. Its sort and filter rows measure Glide drawing the
+  result of adapter code (a typed-array index sort and scan), labeled
+  external; they are not Glide's own processing. Glide draws on a canvas, and
+  what it shows is read from what it reports drawing, not from pixels. The
+  suite uses its 6.0.4 prerelease, the first to support React 19.
+- AG Grid Community has no set filter, so category membership goes through
+  its external filter; sorting uses a comparator that keeps missing values
+  last, with delta sorting for transactions.
+- Grouping, pivots, a grid linked to a chart, keyboard and screen reader
+  behavior, and bundle sizes are not compared here.
+
+<!-- results:grid -->
+- Date: 2026-10-09, commit a646d42 (uncommitted changes)
+- Machine: Apple M6, 12 cores, 32 GB, Darwin 27.0.0
+- Browser: Chrome 154.0.8037.99, GPU ANGLE (Apple, ANGLE Metal Renderer: Apple M6, Unspecified Version), headless, viewport 1280x720, device pixel ratio 1
+- Libraries: herceg 0.0.0 (a646d42); herceg-react 0.0.0 (a646d42) (react 19.3.0, react-dom 19.3.0); tanstack-table 9.2.8 (@tanstack/react-virtual 3.14.13, react 19.3.0, react-dom 19.3.0); ag-grid 36.2.0; glide 6.0.4-alpha24 (react 19.3.0, react-dom 19.3.0)
+- herceg: DOM rows and cells (10 rows and 2 columns of overscan); sort native (row view); filter native (row view, expression)
+- herceg-react: DOM rows and cells, mounted through @herceg/react/grid (React 19); sort native (row view); filter native (row view, expression)
+- tanstack-table: DOM table, React 19 (TanStack Virtual rows with 10 overscan, columns with 3); sort native (sorted row model); filter native (filtered row model)
+- ag-grid: DOM rows and cells (rowBuffer 10, column virtualization), Quartz theme; sort native (comparator keeping missing values last, delta sort); filter native number filter; external filter for category membership
+- glide: Canvas 2D, React 19 (pixel scrolling, no row markers); sort external: adapter code (typed-array index sort, merge on append); filter external: adapter code (typed-array scan)
+
+| Mount (ms, median ± MAD) | herceg | herceg-react | tanstack-table | ag-grid | glide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10k x 20: from native input | 3.17 ± 0.19 | 3.34 ± 0.17 | 7.12 ± 0.26 | 12.8 ± 0.50 | 1.75 ± 0.10 (3 frames) |
+| 10k x 20: from the columns, conversion included | 3.21 ± 0.16 | 3.43 ± 0.20 | 10.3 ± 0.30 | 16.2 ± 0.35 | 1.82 ± 0.22 |
+| 10k x 20: conversion alone | 0.07 ± 0.00 | 0.07 ± 0.01 | 3.21 ± 0.06 | 3.25 ± 0.06 | 0.00 ± 0.00 |
+| 10k x 20: destroy | 0.54 ± 0.03 | 0.53 ± 0.03 | 0.52 ± 0.04 | 1.22 ± 0.06 | 0.19 ± 0.03 |
+| 100k x 20: from native input | 2.94 ± 0.14 | 3.23 ± 0.12 | 44.8 ± 0.46 | 36.7 ± 0.53 | 1.66 ± 0.12 (3 frames) |
+| 100k x 20: from the columns, conversion included | 3.10 ± 0.15 | 3.29 ± 0.07 | 84.6 ± 0.62 | 75.8 ± 0.57 | 1.69 ± 0.17 |
+| 100k x 20: conversion alone | 0.13 ± 0.01 | 0.13 ± 0.01 | 41.1 ± 0.25 | 39.5 ± 0.21 | 0.00 ± 0.00 |
+| 100k x 20: destroy | 0.51 ± 0.05 | 0.49 ± 0.03 | 0.45 ± 0.01 | 1.16 ± 0.02 | 0.18 ± 0.03 |
+| 1M x 20: from native input | 3.23 ± 0.03 | 3.38 ± 0.14 | 540 ± 135 | 317 ± 0.57 | 2.17 ± 0.33 (3 frames) |
+| 1M x 20: from the columns, conversion included | 4.47 ± 0.09 | 4.14 ± 0.02 | 1474 ± 128 | 732 ± 13.4 | 1.99 ± 0.10 |
+| 1M x 20: conversion alone | 1.29 ± 0.00 | 0.86 ± 0.01 | 876 ± 21.8 | 416 ± 7.61 | 0.01 ± 0.00 |
+| 1M x 20: destroy | 0.53 ± 0.01 | 0.50 ± 0.02 | 2.53 ± 0.06 | 1.28 ± 0.00 | 0.20 ± 0.02 |
+| 1M x 100: from native input | 3.25 ± 0.17 | 3.59 ± 0.00 | error [1] | error [2] | 1.88 ± 0.43 (3 frames) |
+| 1M x 100: from the columns, conversion included | 7.44 ± 0.08 | 7.58 ± 0.14 | error [1] | error [2] | 1.94 ± 0.12 |
+| 1M x 100: conversion alone | 4.13 ± 0.00 | 4.12 ± 0.04 | error [1] | error [2] | 0.01 ± 0.00 |
+| 1M x 100: destroy | 0.49 ± 0.03 | 0.50 ± 0.02 | error [1] | error [2] | 0.13 ± 0.00 |
+
+| Scroll a step to its correct frame (ms) | herceg | herceg-react | tanstack-table | ag-grid | glide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10k x 20: a screen down | 3.08 ± 0.38 | 4.03 ± 0.40 | 4.94 ± 0.55 | 4.89 ± 0.71 | 0.81 ± 0.13 (2 frames) |
+| 10k x 20: three columns across | 2.64 ± 0.76 | 2.88 ± 0.84 | 2.66 ± 0.27 | 2.84 ± 0.38 | 0.67 ± 0.15 (2 frames) |
+| 10k x 20: both | 3.93 ± 0.36 | 4.12 ± 0.37 | 6.69 ± 0.81 | 5.75 ± 0.67 | 0.89 ± 0.13 (2 frames) |
+| 10k x 20: to the last row and back | 2.66 ± 0.29 | 3.03 ± 0.25 | 4.43 ± 0.57 | 5.65 ± 0.70 | 0.90 ± 0.17 (2 frames) |
+| 100k x 20: a screen down | 3.22 ± 0.37 | 3.07 ± 0.41 | 4.03 ± 0.49 | 4.05 ± 0.28 | 0.82 ± 0.14 (2 frames) |
+| 100k x 20: three columns across | 2.48 ± 0.77 | 2.60 ± 0.69 | 2.67 ± 0.38 | 2.54 ± 0.29 | 0.59 ± 0.13 (2 frames) |
+| 100k x 20: both | 4.52 ± 0.50 | 4.32 ± 0.66 | 7.43 ± 0.82 | 5.86 ± 0.45 | 0.88 ± 0.15 (2 frames) |
+| 100k x 20: to the last row and back | 2.50 ± 0.32 | 2.77 ± 0.19 | 3.82 ± 0.32 | 5.20 ± 0.43 | 0.86 ± 0.16 (2 frames) |
+| 1M x 20: a screen down | 3.46 ± 0.37 | 2.78 ± 0.19 | 4.81 ± 0.31 | 6.00 ± 0.51 | 1.16 ± 0.17 (2 frames) |
+| 1M x 20: to the last row and back | 3.94 ± 0.14 | 2.77 ± 0.47 | 5.19 ± 0.23 | 7.23 ± 0.21 | 1.39 ± 0.25 (2 frames) |
+| 1M x 100: a screen down | 2.71 ± 0.05 | 4.27 ± 0.22 | error [3] | error [4] | 1.06 ± 0.18 (2 frames) |
+| 1M x 100: to the last row and back | 3.26 ± 0.23 | 2.77 ± 0.17 | error [5] | error [6] | 1.10 ± 0.15 (2 frames) |
+
+| Continuous scrolling for 3 s with vsync (frame interval p50 / p95 / p99 ms; dropped frames; incomplete frames) | herceg | herceg-react | tanstack-table | ag-grid | glide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10k x 20: down, offset set every frame | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 180 of 181 incomplete |
+| 10k x 20: down and across, offset set every frame | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 180 of 181 incomplete |
+| 10k x 20: down, browser wheel events | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete; 170 wheel events, 8.6k px | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete; 173 wheel events, 8.7k px | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete; 172 wheel events, 8.6k px | 16.7 / 16.7 / 16.7; 1 dropped; 0 of 180.5 incomplete; 165.5 wheel events, 8.6k px | 16.7 / 16.7 / 16.7; 0 dropped; 116.5 of 181 incomplete; 174 wheel events, 8.7k px |
+| 100k x 20: down, offset set every frame | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 180 of 181 incomplete |
+| 100k x 20: down and across, offset set every frame | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete | 16.7 / 16.7 / 16.7; 0 dropped; 180 of 181 incomplete |
+| 100k x 20: down, browser wheel events | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete; 171 wheel events, 8.6k px | 16.7 / 16.7 / 16.7; 0.5 dropped; 0 of 180.5 incomplete; 172 wheel events, 8.6k px | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete; 172.5 wheel events, 8.7k px | 16.7 / 16.7 / 16.7; 0 dropped; 0 of 181 incomplete; 169.5 wheel events, 8.6k px | 16.7 / 16.7 / 16.7; 0 dropped; 118 of 181 incomplete; 174.5 wheel events, 8.7k px |
+
+| Sort and filter to the correct frame (ms; time inside the call) | herceg | herceg-react | tanstack-table | ag-grid | glide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10k x 20: sort a number ascending | 3.65 ± 0.04; 0.04 in call | 3.63 ± 0.11; 0.04 in call | 9.15 ± 0.32; 6.57 in call | 10.7 ± 0.58; 8.05 in call | 2.58 ± 0.13; 2.31 in call |
+| 10k x 20: sort a number descending | 3.59 ± 0.09; 0.03 in call | 3.77 ± 0.10; 0.04 in call | 9.16 ± 0.16; 6.59 in call | 9.85 ± 0.19; 7.25 in call | 2.49 ± 0.05; 2.23 in call |
+| 10k x 20: sort by category, then number | 4.84 ± 0.11; 0.04 in call | 4.83 ± 0.14; 0.04 in call | 12.1 ± 0.17; 9.53 in call | 11.9 ± 0.14; 9.14 in call | 3.40 ± 0.11; 3.12 in call |
+| 10k x 20: number range, ~1% kept | 2.86 ± 0.04; 0.05 in call | 2.93 ± 0.11; 0.06 in call | 4.16 ± 0.08; 1.64 in call | 6.08 ± 0.22; 3.55 in call | 0.97 ± 0.08; 0.72 in call |
+| 10k x 20: number range, ~50% kept | 2.78 ± 0.05; 0.06 in call | 2.59 ± 0.06; 0.06 in call | 3.50 ± 0.17; 1.78 in call | 5.63 ± 0.75; 3.56 in call | 1.00 ± 0.10; 0.72 in call |
+| 10k x 20: number range, ~99% kept | 1.00 ± 0.11; 0.05 in call | 1.16 ± 0.20; 0.05 in call | 2.15 ± 0.16; 1.52 in call | 2.28 ± 0.18; 1.56 in call | 1.05 ± 0.11; 0.76 in call |
+| 10k x 20: category membership, ~1% kept | 2.85 ± 0.24; 0.06 in call | 2.69 ± 0.09; 0.06 in call | 4.25 ± 0.12; 1.69 in call | 5.79 ± 0.47; 3.28 in call | 1.27 ± 0.14; 0.91 in call |
+| 10k x 20: category membership, ~50% kept | 2.53 ± 0.11; 0.10 in call | 2.53 ± 0.04; 0.10 in call | 3.26 ± 0.20; 1.72 in call | 3.46 ± 0.13; 2.09 in call | 2.00 ± 0.20; 1.69 in call |
+| 10k x 20: category membership, ~99% kept | 1.11 ± 0.07; 0.13 in call | 1.09 ± 0.08; 0.14 in call | 2.33 ± 0.24; 1.69 in call | 1.84 ± 0.16; 1.15 in call | 4.06 ± 0.37; 3.71 in call |
+| 100k x 20: sort a number ascending | 15.4 ± 0.11; 0.03 in call | 15.5 ± 0.14; 0.04 in call | 81.6 ± 2.65; 79.0 in call | 83.3 ± 4.86; 80.4 in call | 15.1 ± 0.17; 14.8 in call |
+| 100k x 20: sort a number descending | 15.6 ± 0.28; 0.04 in call | 15.6 ± 0.20; 0.04 in call | 83.0 ± 3.73; 80.4 in call | 82.0 ± 3.50; 79.3 in call | 15.0 ± 0.12; 14.7 in call |
+| 100k x 20: sort by category, then number | 24.6 ± 0.18; 0.04 in call | 24.7 ± 0.25; 0.04 in call | 91.7 ± 2.04; 89.1 in call | 81.8 ± 2.40; 79.1 in call | 23.6 ± 0.08; 23.3 in call |
+| 100k x 20: number range, ~1% kept | 5.33 ± 0.28; 0.05 in call | 5.36 ± 0.22; 0.06 in call | 8.86 ± 0.62; 6.25 in call | 11.3 ± 0.35; 8.78 in call | 1.07 ± 0.14; 0.79 in call |
+| 100k x 20: number range, ~50% kept | 5.34 ± 0.11; 0.06 in call | 5.32 ± 0.11; 0.05 in call | 10.7 ± 0.65; 8.96 in call | 11.8 ± 0.35; 10.1 in call | 1.44 ± 0.15; 1.15 in call |
+| 100k x 20: number range, ~99% kept | 3.67 ± 0.20; 0.05 in call | 3.68 ± 0.18; 0.05 in call | 8.86 ± 0.52; 8.25 in call | 9.43 ± 0.16; 8.66 in call | 1.12 ± 0.10; 0.85 in call |
+| 100k x 20: category membership, ~1% kept | 4.11 ± 0.25; 0.06 in call | 4.15 ± 0.27; 0.06 in call | 9.26 ± 0.29; 6.75 in call | 9.07 ± 0.85; 6.63 in call | 1.10 ± 0.09; 0.83 in call |
+| 100k x 20: category membership, ~50% kept | 4.48 ± 0.28; 0.10 in call | 4.52 ± 0.20; 0.10 in call | 11.2 ± 0.44; 9.64 in call | 8.96 ± 0.61; 7.38 in call | 2.10 ± 0.12; 1.82 in call |
+| 100k x 20: category membership, ~99% kept | 3.01 ± 0.19; 0.14 in call | 2.78 ± 0.09; 0.14 in call | 10.1 ± 0.44; 9.46 in call | 9.59 ± 0.23; 8.91 in call | 4.10 ± 0.27; 3.81 in call |
+| 1M x 20: sort a number descending | 171 ± 0.04; 0.05 in call | 173 ± 0.25; 0.06 in call | 2224 ± 15.7; 2221 in call | 1791 ± 104; 1788 in call | 181 ± 0.25; 181 in call |
+| 1M x 20: number range, ~50% kept | 28.8 ± 1.00; 0.09 in call | 28.4 ± 0.29; 0.10 in call | 135 ± 1.01; 133 in call | 90.3 ± 1.44; 88.5 in call | 6.55 ± 0.60; 6.25 in call |
+| 1M x 100: sort a number descending | 163 ± 1.18; 0.04 in call | 164 ± 0.44; 0.04 in call | error [7] | error [8] | 169 ± 1.94; 168 in call |
+| 1M x 100: number range, ~50% kept | 22.8 ± 0.51; 0.08 in call | 23.4 ± 0.10; 0.07 in call | error [9] | error [10] | 6.07 ± 0.85; 5.78 in call |
+
+| Select rows, sorted (ms to the correct frame) | herceg | herceg-react | tanstack-table | ag-grid | glide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10k x 20: one row | 0.81 ± 0.08 | 0.85 ± 0.11 | 1.21 ± 0.06 | 0.95 ± 0.11 | 0.91 ± 0.08 |
+| 10k x 20: half the rows in display order | 1.02 ± 0.14 | 1.05 ± 0.09 | 2.36 ± 0.22 | 3.22 ± 0.28 | 1.00 ± 0.11 |
+| 10k x 20: read the selection back | 0.08 ± 0.01 | 0.08 ± 0.01 | 0.40 ± 0.03 | 0.18 ± 0.01 | 0.10 ± 0.01 |
+| 100k x 20: one row | 0.79 ± 0.09 | 0.79 ± 0.07 | 1.43 ± 0.13 | 1.00 ± 0.13 | 0.98 ± 0.15 |
+| 100k x 20: half the rows in display order | 1.20 ± 0.20 | 1.27 ± 0.18 | 7.74 ± 0.21 | 17.0 ± 0.88 | 1.08 ± 0.11 |
+| 100k x 20: read the selection back | 0.55 ± 0.02 | 0.57 ± 0.02 | 4.26 ± 0.14 | 2.10 ± 0.21 | 0.97 ± 0.09 |
+
+| Streaming: ticks offered at 10 Hz for 5 s with vsync (tick to correct frame p50 / p95 ms, first tick; time in call; dropped frames; ticks delivered of those offered) | herceg | herceg-react | tanstack-table | ag-grid | glide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10k x 20: append 1,000 rows | 9.68 / 19.9 (first 17.3); 0.54 in call; 0 dropped; 50/50 delivered | 9.11 / 19.7 (first 17.3); 0.56 in call; 0 dropped; 50/50 delivered | 18.5 / 32.9 (first 10.7); 17.5 in call; 0.5 dropped; 50/50 delivered | 14.2 / 19.4 (first 15.6); 9.97 in call; 0 dropped; 50/50 delivered | 7.94 / 17.3 (first 14.0); 3.09 in call; 0 dropped; 50/50 delivered |
+| 10k x 20: append 1,000 rows, sorted | 10.2 / 21.4 (first 17.5); 2.45 in call; 0 dropped; 50/50 delivered | 11.8 / 22.2 (first 16.1); 2.59 in call; 0 dropped; 50/50 delivered | 42.5 / 74.6 (first 13.7); 41.9 in call; 41.5 dropped; 50/50 delivered | 27.2 / 37.9 (first 13.1); 26.0 in call; 2.5 dropped; 50/50 delivered | 8.24 / 17.3 (first 14.7); 5.59 in call; 0 dropped; 50/50 delivered |
+| 10k x 20: append 1,000, evict 1,000 | 10.0 / 18.9 (first 19.5); 0.12 in call; 2 dropped; 50/50 delivered | 16.2 / 27.8 (first 28.1); 0.60 in call; 11 dropped; 50/50 delivered | 23.4 / 28.7 (first 10.9); 19.6 in call; 0.5 dropped; 50/50 delivered | 16.6 / 26.9 (first 19.2); 7.16 in call; 0 dropped; 50/50 delivered | 6.07 / 17.2 (first 14.7); 3.00 in call; 0 dropped; 50/50 delivered |
+| 10k x 20: append 1,000, evict 1,000, sorted | 14.6 / 26.7 (first 18.5); 1.69 in call; 0 dropped; 50/50 delivered | 14.9 / 25.9 (first 17.3); 1.72 in call; 0 dropped; 50/50 delivered | 27.7 / 33.0 (first 16.2); 26.8 in call; 3 dropped; 50/50 delivered | 25.2 / 30.0 (first 15.8); 22.3 in call; 1 dropped; 50/50 delivered | 7.24 / 17.2 (first 14.7); 5.09 in call; 0 dropped; 50/50 delivered |
+| 10k x 20: change 100 rows, display field | 11.4 / 21.4 (first 19.1); 0.17 in call; 0 dropped; 50/50 delivered | 9.02 / 18.1 (first 17.7); 0.15 in call; 0 dropped; 50/50 delivered | 17.7 / 20.6 (first 11.8); 14.7 in call; 0.5 dropped; 50/50 delivered | 10.0 / 20.7 (first 14.8); 5.21 in call; 0 dropped; 50/50 delivered | 6.64 / 17.0 (first 16.1); 0.46 in call; 0 dropped; 50/50 delivered |
+| 10k x 20: change 100 rows, sort key | 8.60 / 18.7 (first 16.9); 1.14 in call; 0 dropped; 50/50 delivered | 17.6 / 26.9 (first 19.0); 7.55 in call; 1.5 dropped; 50/50 delivered | 11.7 / 17.6 (first 15.7); 10.1 in call; 0 dropped; 50/50 delivered | 23.7 / 27.4 (first 13.2); 19.9 in call; 1 dropped; 50/50 delivered | 7.57 / 14.5 (first 15.4); 0.97 in call; 0 dropped; 50/50 delivered |
+| 10k x 20: change 100 rows, filtered field | 10.9 / 24.9 (first 16.7); 0.27 in call; 1 dropped; 50/50 delivered | 18.1 / 28.4 (first 27.7); 1.83 in call; 6 dropped; 50/50 delivered | 23.3 / 26.4 (first 14.9); 20.4 in call; 0.5 dropped; 50/50 delivered | 12.7 / 18.8 (first 11.0); 3.12 in call; 0 dropped; 50/50 delivered | 5.80 / 16.8 (first 14.9); 0.80 in call; 0 dropped; 50/50 delivered |
+| 100k x 20: append 1,000 rows | 10.2 / 19.7 (first 16.8); 0.58 in call; 0 dropped; 50/50 delivered | 9.91 / 20.1 (first 16.3); 0.57 in call; 0 dropped; 50/50 delivered | 45.3 / 51.5 (first 36.0); 44.8 in call; 41.5 dropped; 50/50 delivered | 22.3 / 27.0 (first 10.7); 20.0 in call; 0.5 dropped; 50/50 delivered | 6.58 / 15.1 (first 14.8); 2.86 in call; 0 dropped; 50/50 delivered |
+| 100k x 20: append 1,000 rows, sorted | 10.3 / 18.8 (first 15.0); 5.81 in call; 0 dropped; 50/50 delivered | 9.87 / 19.6 (first 16.1); 5.63 in call; 0 dropped; 50/50 delivered | 179 / 216 (first 165); 178 in call; 204 dropped; 23/50 delivered | 46.8 / 55.2 (first 38.7); 46.2 in call; 46.5 dropped; 50/50 delivered | 10.9 / 17.2 (first 14.5); 4.90 in call; 0 dropped; 50/50 delivered |
+| 100k x 20: append 1,000, evict 1,000 | 18.0 / 29.5 (first 19.5); 0.62 in call; 8.5 dropped; 50/50 delivered | 7.81 / 18.7 (first 16.4); 0.12 in call; 0 dropped; 50/50 delivered | 39.0 / 41.1 (first 40.3); 37.7 in call; 19.5 dropped; 50/50 delivered | 26.9 / 32.1 (first 15.5); 24.6 in call; 1.5 dropped; 50/50 delivered | 6.20 / 15.7 (first 15.6); 3.10 in call; 0 dropped; 50/50 delivered |
+| 100k x 20: append 1,000, evict 1,000, sorted | 8.22 / 18.2 (first 15.6); 4.93 in call; 0 dropped; 50/50 delivered | 6.60 / 17.0 (first 13.8); 0.68 in call; 0 dropped; 50/50 delivered | 166 / 211 (first 183); 165 in call; 197.5 dropped; 23/50 delivered | 43.5 / 46.1 (first 42.2); 42.8 in call; 38 dropped; 50/50 delivered | 6.25 / 16.8 (first 15.6); 2.42 in call; 0 dropped; 50/50 delivered |
+| 100k x 20: change 100 rows, display field | 9.24 / 20.9 (first 17.4); 0.16 in call; 0 dropped; 50/50 delivered | 11.1 / 21.1 (first 16.3); 0.18 in call; 0 dropped; 50/50 delivered | 35.0 / 37.9 (first 36.5); 34.3 in call; 9 dropped; 50/50 delivered | 22.3 / 24.8 (first 12.9); 19.7 in call; 1.5 dropped; 50/50 delivered | 6.25 / 16.8 (first 14.6); 0.09 in call; 0 dropped; 50/50 delivered |
+| 100k x 20: change 100 rows, sort key | 15.8 / 17.6 (first 17.2); 13.8 in call; 1 dropped; 50/50 delivered | 16.1 / 18.8 (first 17.1); 13.9 in call; 1.5 dropped; 50/50 delivered | 175 / 196 (first 166); 174 in call; 200 dropped; 24.5/50 delivered | 40.1 / 43.7 (first 38.9); 39.1 in call; 22 dropped; 50/50 delivered | 6.22 / 16.8 (first 13.3); 4.35 in call; 0 dropped; 50/50 delivered |
+| 100k x 20: change 100 rows, filtered field | 13.8 / 22.4 (first 19.4); 1.99 in call; 0.5 dropped; 50/50 delivered | 21.1 / 25.4 (first 18.3); 12.6 in call; 1.5 dropped; 50/50 delivered | 44.7 / 51.1 (first 50.8); 43.6 in call; 38 dropped; 50/50 delivered | 19.1 / 32.8 (first 15.3); 17.8 in call; 1 dropped; 50/50 delivered | 5.75 / 16.8 (first 14.6); 2.94 in call; 0 dropped; 50/50 delivered |
+| 1M x 20: append 1,000 rows, sorted | 26.8 / 34.6 (first 14.5); 26.3 in call; 1 dropped; 50/50 delivered | 14.6 / 32.5 (first 15.1); 9.61 in call; 0 dropped; 50/50 delivered | 3136 / 3136 (first 3395); 3136 in call; 387 dropped; 2/50 delivered; 1553 ms to drain | 747 / 812 (first 626); 746 in call; 288 dropped; 7/50 delivered; 466 ms to drain | 13.0 / 30.7 (first 17.7); 9.36 in call; 0 dropped; 50/50 delivered |
+| 1M x 100: append 1,000 rows, sorted | 28.2 / 34.4 (first 57.0); 27.6 in call; 2 dropped; 50/50 delivered | 14.5 / 32.2 (first 55.8); 7.99 in call; 1 dropped; 50/50 delivered | error [11] | error [12] | 16.2 / 32.9 (first 53.4); 7.47 in call; 1 dropped; 50/50 delivered |
+
+| Memory with the grid mounted (retained heap, and growth of the reserved heap while mounting; native input; DOM nodes; canvas) | herceg | herceg-react | tanstack-table | ag-grid | glide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10k x 20: mounted | 2.0 MB (reserved +4.3); input 0.0 MB; 461 nodes | 2.0 MB (reserved +4.3); input 0.0 MB; 462 nodes | 8.5 MB (reserved +19); input 6.2 MB; 500 nodes | 7.8 MB (reserved +16); input 6.2 MB; 744 nodes | 1.5 MB (reserved +3.1); input 0.0 MB; 12 nodes; canvas 3.0 MB |
+| 100k x 20: mounted | 2.2 MB (reserved +4.5); input 0.0 MB; 461 nodes | 2.0 MB (reserved +4.3); input 0.0 MB; 462 nodes | 54 MB (reserved +108); input 62 MB; 500 nodes | 27 MB (reserved +59); input 62 MB; 744 nodes | 1.5 MB (reserved +3.1); input 0.0 MB; 12 nodes; canvas 3.0 MB |
+| 1M x 20: mounted | 2.0 MB (reserved +4.3); input 0.0 MB; 461 nodes | 2.0 MB (reserved +4.3); input 0.0 MB; 462 nodes | 515 MB (reserved +790); input 621 MB; 500 nodes | 224 MB (reserved +301); input 621 MB; 744 nodes | 1.5 MB (reserved +3.4); input 0.0 MB; 17 nodes; canvas 3.0 MB |
+| 1M x 100: mounted | 2.0 MB (reserved +4.8); input 0.1 MB; 461 nodes | 2.3 MB (reserved +4.8); input 0.1 MB; 462 nodes | error [13] | error [14] | 1.5 MB (reserved +3.1); input 0.0 MB; 17 nodes; canvas 3.0 MB |
+
+| Heap kept 1 s after destroying the grid (after one mount / after five more); growth per further mount; kept after releasing the data too | herceg | herceg-react | tanstack-table | ag-grid | glide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 10k x 20: destroy and remount | 0.9 / 0.9 MB; 0.0 MB per mount; 1.1 MB after release | 0.9 / 1.2 MB; 0.0 MB per mount; 1.5 MB after release | 1.2 / 6.7 MB; 0.0 MB per mount; 13 MB after release | 2.3 / 2.6 MB; 0.1 MB per mount; 3.2 MB after release | 1.8 / 2.1 MB; 0.0 MB per mount; 3.9 MB after release |
+| 100k x 20: destroy and remount | 0.9 / 0.9 MB; 0.0 MB per mount; 1.1 MB after release | 0.9 / 1.2 MB; 0.0 MB per mount; 1.5 MB after release | 1.2 / 51 MB; 0.0 MB per mount; 113 MB after release | 2.3 / 2.6 MB; 0.1 MB per mount; 3.2 MB after release | 2.2 / 2.1 MB; 0.0 MB per mount; 18 MB after release |
+| 1M x 20: destroy and remount | 0.9 / 0.9 MB; 0.0 MB per mount; 1.1 MB after release | 0.9 / 1.2 MB; 0.0 MB per mount; 1.5 MB after release | 1.2 / 493 MB; 0.0 MB per mount; 1115 MB after release | 2.3 / 2.6 MB; 0.1 MB per mount; 3.2 MB after release | 5.8 / 2.1 MB; 0.0 MB per mount; 154 MB after release |
+| 1M x 100: destroy and remount | 0.9 / 0.9 MB; 0.0 MB per mount; 1.1 MB after release | 0.9 / 1.2 MB; 0.0 MB per mount; 1.6 MB after release | error [13] | error [14] | 5.8 / 2.2 MB; 0.0 MB per mount; 762 MB after release |
+
+1. tanstack-table, grid-1m-wide-mount: page.evaluate: Target crashed 
+2. ag-grid, grid-1m-wide-mount: page.evaluate: Target crashed 
+3. tanstack-table, grid-1m-wide-scroll-vertical: page.evaluate: Target crashed 
+4. ag-grid, grid-1m-wide-scroll-vertical: page.evaluate: Target crashed 
+5. tanstack-table, grid-1m-wide-scroll-end: page.evaluate: Target crashed 
+6. ag-grid, grid-1m-wide-scroll-end: page.evaluate: Target crashed 
+7. tanstack-table, grid-1m-wide-sort-number-desc: page.evaluate: Target crashed 
+8. ag-grid, grid-1m-wide-sort-number-desc: page.evaluate: Target crashed 
+9. tanstack-table, grid-1m-wide-filter-range-50: page.evaluate: Target crashed 
+10. ag-grid, grid-1m-wide-filter-range-50: page.evaluate: Target crashed 
+11. tanstack-table, grid-1m-wide-append-sorted: page.evaluate: Target crashed 
+12. ag-grid, grid-1m-wide-append-sorted: page.evaluate: Target crashed 
+13. tanstack-table, grid-1m-wide-memory: page.evaluate: Target crashed 
+14. ag-grid, grid-1m-wide-memory: page.evaluate: Target crashed 
+<!-- /results:grid -->
+
+### What the grid results show
+
+- **Data held twice.** TanStack Table and AG Grid need one object per row: at
+  100k x 20 converting the columns takes ~40 ms and ~62 MB, and at 1M x 20
+  ~0.4–0.9 s and ~620 MB. With the grid mounted they keep ~54 MB (TanStack)
+  and ~27 MB (AG Grid) more at 100k rows, ~0.5 GB and ~0.2 GB at 1M. At
+  1M x 100 their tabs crash. Herceg (its table adopts the typed columns) and
+  Glide (reading them through a callback) mount every size in ~2–3 ms from
+  their native input and keep ~2 MB; from the shared columns Herceg takes
+  ~4–7 ms at 1M rows, where building its table checks every category code.
+- **Sorting and filtering.** Herceg sorts 100k rows by a number in ~16 ms to
+  the correct frame and 1M in ~0.17 s, against ~80 ms and ~1.8–2.2 s for
+  TanStack Table and AG Grid, whose comparators read row objects. Glide over
+  a plain typed-array sort is as fast as Herceg; over a plain typed-array
+  scan it filters faster unless nearly every row passes (~1–2 ms at 100k
+  against ~3–5 ms for Herceg's filter expressions, ~7 ms against ~29 ms at
+  1M). TanStack and AG Grid filter 100k rows in ~9–12 ms.
+- **Streaming.** Under a sort, Herceg merges appended rows into its view: a
+  1,000-row append at 10 Hz shows in ~10 ms at 100k rows (mostly the wait
+  for the next frame), with every tick delivered at every size. AG Grid's
+  delta sort takes ~47 ms per tick at 100k and gets 7 of 50 ticks through at
+  1M; TanStack Table re-sorts every row on each change, ~180 ms per tick at
+  100k, and receives about half the ticks (2 of 50 at 1M). Changing the sort
+  key of 100 rows costs Herceg ~14 ms per tick at 100k, since its view
+  rebuilds the order when a sort key changes, against ~4 ms for Glide's
+  adapter, which moves only the changed rows (AG Grid ~39 ms, TanStack Table
+  ~175 ms). At 1M rows the per-tick cost of sorted appends alternates
+  between ~6–10 ms and ~25–35 ms for Herceg and Glide's adapter alike, so
+  medians there differ from run to run. Rolling windows cost Herceg ~8–18 ms
+  per tick at 100k, also varying between runs, with up to ~9 dropped frames
+  in five seconds; Glide stays at ~6 ms.
+- **Scrolling.** Every DOM grid shows a scroll step in its first frame:
+  ~2.5–4.5 ms for Herceg, ~2.5–7.5 ms for TanStack Table and AG Grid (about
+  the same for all three on horizontal steps, AG Grid slowest at 1M rows).
+  Glide redraws its canvas in ~1 ms but in a React update after the frame
+  the scroll happened in, so its content trails the scroll position by a
+  frame: in three seconds of wheel scrolling about two frames in three
+  showed content for an earlier offset, against none for the DOM grids. No
+  grid dropped more than a frame or two scrolling at display rate.
+- **Selection.** Selecting half of 100k sorted rows takes ~1 ms in Herceg
+  and Glide (a row set, or one range), ~8 ms in TanStack Table (an object of
+  ids), and ~17 ms in AG Grid.
+- **React.** Herceg through `@herceg/react/grid` measures like the plain
+  grid (data, sorting, and scrolling bypass React), apart from the
+  run-to-run variance in streaming noted above.
+- **After destroying.** A second after being destroyed, Herceg and AG Grid
+  have released their grids. TanStack Table keeps its last table, with its
+  row objects, reachable until another is created (~50 MB at 100k), and
+  Glide the last data it drew from.
+
 ## WebKit
 
 The same suite in WebKit, the engine of Safari, through Playwright's WebKit
@@ -472,3 +690,12 @@ Measured 2026-10-07 at commit 413a800 (uncommitted changes) with react 19.3.0, r
 - Plotly's WebGL hover over 1M points takes hundreds of milliseconds per move;
   its SVG scatter is slower to mount at 10k points than its WebGL scatter is at
   200k.
+- Grids over shared typed columns (Herceg, and Glide reading them through a
+  callback) mount any size in a few milliseconds and keep ~2 MB, where
+  TanStack Table and AG Grid first build ~620 MB of row objects for 1M rows
+  and crash at 1M x 100. Herceg's row views sort 100k rows in ~16 ms
+  against ~80 ms for their comparators over row objects, and keep sorted
+  grids current under 10 Hz appends at 1M rows; plain typed-array code
+  (Glide's external adapter) still filters and merges appends faster than
+  Herceg's views, and Glide's canvas is fastest per scroll step but shows
+  content a frame behind the scroll position. See [Grids](#grids).

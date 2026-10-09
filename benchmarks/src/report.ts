@@ -5,6 +5,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { gridSection } from "./grid/report.ts";
 import { ROOT } from "./runner/build.ts";
 
 interface Summary {
@@ -343,6 +344,10 @@ if (existsSync(webkitResults)) {
 const threeResults = join(RESULTS, "three.json");
 if (existsSync(threeResults)) {
   sections.three = threeSection(JSON.parse(readFileSync(threeResults, "utf8")));
+}
+const gridResults = join(RESULTS, "grid.json");
+if (existsSync(gridResults)) {
+  sections.grid = gridSection(JSON.parse(readFileSync(gridResults, "utf8")));
 }
 const reactResults = join(RESULTS, "react.json");
 if (existsSync(reactResults)) {

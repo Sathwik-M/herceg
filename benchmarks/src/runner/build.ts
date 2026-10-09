@@ -16,25 +16,47 @@ export const HERCEG_ALIAS = {
 };
 const OUT = join(ROOT, ".build");
 
-/** Production bundle of the harness plus one adapter, so each page loads one library. */
-export async function buildPage(library: string): Promise<void> {
+/** The chart harness and adapters, or the grid harness and grid adapters. */
+const SUITES = {
+  charts: {
+    adapters: "./src/adapters",
+    harness: "./src/page/harness.ts",
+    install: "installHarness",
+  },
+  grid: {
+    adapters: "./src/grid/adapters",
+    harness: "./src/grid/harness.ts",
+    install: "installGridHarness",
+  },
+};
+
+/**
+ * Production bundle of a harness plus one adapter, so each page loads one
+ * library. Grid pages are named `grid-<library>`.
+ */
+export async function buildPage(
+  library: string,
+  suite: keyof typeof SUITES = "charts",
+): Promise<void> {
   mkdirSync(OUT, { recursive: true });
+  const { adapters, harness, install } = SUITES[suite];
+  const name = suite === "grid" ? `grid-${library}` : library;
   await esbuild.build({
     stdin: {
       contents: [
-        `import { adapter } from "./src/adapters/${library}";`,
-        `import { installHarness } from "./src/page/harness.ts";`,
-        "installHarness(adapter);",
+        `import { adapter } from "${adapters}/${library}";`,
+        `import { ${install} } from "${harness}";`,
+        `${install}(adapter);`,
       ].join("\n"),
       resolveDir: ROOT,
-      sourcefile: `${library}-entry.ts`,
+      sourcefile: `${name}-entry.ts`,
       loader: "ts",
     },
     bundle: true,
     minify: true,
     format: "esm",
     target: "es2022",
-    outfile: join(OUT, `${library}.js`),
+    outfile: join(OUT, `${name}.js`),
     define: { "process.env.NODE_ENV": '"production"' },
     jsx: "automatic",
     alias: HERCEG_ALIAS,

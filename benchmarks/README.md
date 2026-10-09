@@ -11,6 +11,7 @@ npm run bench -- --out results/browser.json   # refresh the committed results
 npm run bench:size -- --out results/size.json # bundle sizes
 npm run bench -- --browser webkit --headless --out results/browser-webkit.json   # the suite in WebKit
 npm run bench:react                  # herceg vs herceg through @herceg/react -> results/react.json
+npm run bench:grid                   # grid suite (see "Grids") -> tmp/benchmarks/grid-<time>.json
 npm run bench:report                 # regenerate the tables in docs/comparison.md
 ```
 
@@ -28,6 +29,7 @@ machine otherwise idle while it runs.
 | `src/adapters/` | One adapter per library. Each documents the configuration it uses. |
 | `src/runner/` | Node runner: builds pages, serves them, drives Chrome, records results. |
 | `src/size/` | Bundle size benchmark and its entry points. JavaScript and required CSS are reported separately. |
+| `src/grid/` | The grid suite: fixture, reference, scenarios, harness, runner, report, and one adapter per grid in `src/grid/adapters/`. |
 | `src/report.ts` | Writes Markdown tables into `docs/comparison.md`. |
 | `results/` | Committed results with environment details. |
 
@@ -199,3 +201,176 @@ compiled with `svelte/compiler`, and that component is measured with it.
 The `herceg-grid` entry mounts a two-column grid (`herceg/grid`) over the
 same data instead of a chart; none of the other libraries has a grid to
 compare it with.
+
+## Grids
+
+`npm run bench:grid` compares Herceg's grid (`herceg/grid`, and the same grid
+through `@herceg/react/grid`) with TanStack Table and TanStack Virtual, AG
+Grid Community, and Glide Data Grid.
+
+```sh
+npm run bench:grid                                   # every scenario -> tmp/benchmarks/grid-<time>.json
+npm run bench:grid -- --size 10k,100k --lib herceg,ag-grid --filter sort
+npm run bench:grid -- --out results/grid.json        # refresh the committed results
+node --experimental-strip-types benchmarks/src/grid/report.ts <results file>   # print the tables
+```
+
+Options: `--lib`, `--size` (`10k`, `100k`, `1m`, `1m-wide`), `--scenario`,
+`--filter`, `--sample-scale`, `--timeout` (seconds), `--headless`, `--dpr`
+(device pixel ratio, 1 by default), `--seed` (the fixture's values), and
+`--order-seed` (libraries run in a seeded random order within each scenario,
+so drift over a run does not favor one of them). Every scenario runs in a fresh page; a crash or timeout is
+recorded as an error and the browser is restarted.
+
+### Fixture
+
+One seeded columnar table (`src/grid/fixture.ts`): per group of 20 fields, 16
+numbers, 2 times, and 2 categories. Numbers follow different distributions
+(uniform, integer with many ties, heavy-tailed, tiny, large, constant), some
+with missing values; one time increases with the row and one is random with
+missing values; one category has 8 labels with skewed frequencies and one has
+1,000, both with missing values and with dictionary codes that do not follow
+label order. About 0.5% of rows repeat the previous row in every field.
+Sizes: 10,000 x 20 (overhead), 100,000 x 20 (the primary workload), and
+1,000,000 x 20 and 1,000,000 x 100 (five independent groups; about 760 MB of
+column buffers) as stress cases, which run a smaller set of scenarios once or
+a few times. A stress case that fails is recorded as failing.
+
+Numbers and times are `Float64Array` (NaN for missing values) and categories
+`Int32Array` codes into a dictionary. Grids that take row objects get them
+from `rowObjects` (missing values `undefined`, categories as labels); that
+conversion is timed with mounting in "from the columns" and alone as
+"conversion". Herceg adopts the arrays without copying them; Glide's adapter
+reads them through `getCellContent`.
+
+### Same grid for every library
+
+1200 x 600 CSS pixels, 28 px rows, a 32 px header, 120 px columns, Arial
+13 px, no wrapping, autosizing, or animation, and 10 rows of overscan where
+it can be set. Cells read the same: `en-US` numbers with two decimals and no
+minus sign on values that round to zero, times in UTC as `MM/DD/YYYY,
+HH:MM:SS`, and an em dash for missing values (`FORMAT` in the fixture).
+Herceg takes these as Intl options on its columns; the other adapters call
+the same formatters when they render a cell.
+
+### Verification
+
+`src/grid/reference.ts` computes, independently of the adapters, what each
+grid should show: rows filtered (ranges inclusive, missing values never
+pass), sorted (numbers and times numerically, categories by label, missing
+values last in both directions, ties by row identity), with each cell's
+text. Every adapter reports what it shows (`visible()`): the row count its
+rendered extent stands for, row identities, cell text, and selection, read
+from its DOM rows and cells by geometry, or for Glide, which draws on a
+canvas, the region it reported drawing and, for each cell, the row identity,
+text, and highlight Glide last drew there, recorded through its `drawCell`
+hook (which then draws the cell as usual; canvas pixels are not read).
+Herceg's rows carry no identity in the DOM, so they are checked by their
+cells' text alone: a row that repeats its neighbor in every field could
+stand in for it unnoticed. A timed operation
+ends at the first frame whose row count, rows, columns, text, and selection
+match the reference at the grid's scroll offset, so a frame with blank rows,
+stale cells, or a change not yet applied does not count; a grid that never
+shows the right result within 30 s is reported `incorrect` and not timed.
+Before timing, each scenario also compares the library's complete display
+order and row count with the reference, and streaming trials compare them
+after their last tick.
+
+Changes that the checks would not see are avoided: updates change a field
+in view, and appends below the viewport change the row count. Adapters made
+to drop, halve, or misapply updates, appends, sorts, selections, or scroll
+offsets were all reported incorrect when this was written; one that delays
+updates came out slow, with unresolved ticks.
+
+### Timing
+
+As for charts, an operation starts when the harness calls the adapter. The
+harness checks what the grid shows just before each frame paints, in a
+ResizeObserver callback (which runs after the frame's animation callbacks
+and layout), and the time is taken when that frame has been produced.
+Checking after the frame instead would count work done in tasks queued
+before the check, such as a React update scheduled by a scroll event, as if
+the frame had shown it. This is the state observed at that point, not proof
+of what the compositor presented: a library's own ResizeObserver running
+later in the same frame could still change it (none does in these
+scenarios, which do not resize). A frame in which the observer did not run
+is counted as unobserved and never as correct. Times are raw: they include
+the check (reading the visible rows and cells), whose cost is recorded as
+`checkTime`.
+Results record how many frames each operation took (`frames`): Glide, which
+redraws after a scroll in a React update that runs after the frame, takes
+two.
+
+Between samples the harness collects garbage and pauses on a timer: after
+frames that change nothing, Chrome waits for the display's next refresh
+before producing another frame even with the frame rate limit off, which
+would add about a refresh interval to whatever came next. Measurements are
+therefore of an idle start with garbage collected; paced scenarios run with
+vsync.
+
+| Operation | Measures |
+| --- | --- |
+| `mount` | Create the grid from prepared native input, and from the shared columns (conversion included), to the first correct frame; destroy it. |
+| `scroll` | 40 steps of the body's scroll offset (a screen down, three columns across, both, or to the last row and back), each to its correct frame. Herceg's grid scales scrolling above 8 million pixels of rows, so at 1M rows a scroll lands within one scaled pixel of the requested offset. |
+| `scroll-trace` | Three seconds with vsync of scrolling down at 3,000 px/s (and across at 1,500 px/s for `diagonal`), the offset set every frame from the time elapsed; or (`wheel`) wheel events of 50 px every 16 ms, which the runner sends through the DevTools protocol on a fixed schedule without waiting for the page, while the page asks for them. Frame intervals, dropped frames, long animation frames, incomplete frames (frames that, just before painting, did not show the rows for the offset the body was at: blank rows on a DOM grid, content drawn for an earlier offset on a canvas grid), and for wheel traces the events received and distance scrolled within the trial. |
+| `sort`, `filter` | From source order to the result, each sample from a reset grid; also the time inside the library's call. |
+| `select` | Under a sort, select one displayed row, or the first half of the rows in display order, and read the selection back. |
+| `append` | An offered load with vsync: 50 slots over 5 s, one per 100 ms, each after the first moved by a seeded amount up to a refresh interval (so ticks do not all land at one phase of the frame), in which ticks append 1,000 rows each (evicting the oldest 1,000 in the `rolling` cases, under a number sort in the `sorted` ones). Latency from each call to the frame showing its result, the first tick (which may copy data before its first write) apart from the rest, time inside the call, how late each tick was against the schedule, ticks delivered of those offered (a grid that blocks the main thread past its next slots misses them), ticks overtaken before they showed, and the intervals, dropped frames, and long animation frames of the frames that began within the offered period. Every trial starts from a newly mounted grid. |
+| `update` | The same with 100 rows changed per tick, 10 of them on screen: a field no query reads, the sort key, or the filtered field. |
+| `memory` | Heap after creating the fixture, after converting it, with the grid mounted, after a sort, a second after destroying the grid, after two rounds of five more mounts, and after releasing everything; each sample in a fresh page. |
+
+Streaming ticks keep the grid at the top (`scrollTo(0, 0)` after each
+change), as a live view of the top of its order does: Herceg keeps the rows
+in view in place when sorted rows arrive above them, so it has to be asked;
+for the other grids, which keep the pixel offset, the call does nothing.
+
+### Memory
+
+Heap readings are those of the chart suite (V8, Blink, and ArrayBuffer
+backing stores after forced garbage collection), one fresh page per sample.
+What the harness needs to check the sort is computed before the readings
+that count. "Reserved" growth is the heap V8 has committed (with the Blink
+heap and backing stores), without collecting garbage, after mounting less
+before: how much mounting made the heap grow, not its peak, which these
+readings cannot see. The heap a second after destroying a grid, and after
+five more mounts, shows what a library keeps once destroyed; the growth per
+further mount is the difference between two rounds of five. When this was
+written, heap snapshots showed TanStack Table keeping its last destroyed
+table, with its row objects, reachable through V8's allocation feedback for
+an object with getters, and Glide keeping the last data it drew from
+through a module-level object, each until another grid is created; AG Grid
+keeps its grid for a timer's length (less than the second waited); none grew
+per mount. DOM nodes are the elements under the grid's container; canvas memory
+counts the canvases in the DOM, not those a grid keeps off-screen.
+
+### Configurations
+
+Each adapter documents its configuration at the top of its file.
+
+| Grid | Input | Sorting and filtering | Updates | Rendering |
+| --- | --- | --- | --- | --- |
+| Herceg | Table over the fixture's arrays | Row view (`setQuery`): typed-array comparators, filter expressions | `Table.append`, `dropFirst`, `set` | DOM rows and cells, 10 rows and 2 columns of overscan |
+| TanStack Table 9 + Virtual 3 | Row objects | Native sorted and filtered row models (`basic` comparator, `sortUndefined: "last"`, `inNumberRange`, a membership filter function) | A new data array keeping unchanged row objects | React 19 DOM table, flushSync, 10 rows and 3 columns of overscan |
+| AG Grid Community 36 | Row objects, `getRowId` | Native sorting with a comparator keeping missing values last, `deltaSort`; native number filter; the external filter for membership (Community has no set filter) | Synchronous transactions (`applyTransaction`) | DOM rows and cells, `rowBuffer` 10, animations off |
+| Glide Data Grid 6 | The fixture's arrays through `getCellContent` | External: adapter code, labeled as such | Writes to the arrays; `updateCells` when order is unchanged | Canvas 2D, React 19 |
+
+### Fairness notes
+
+- Glide has no row model; its sorting and filtering are adapter code, so its
+  sort and filter rows measure Glide rendering that code's result, not
+  processing of Glide's own. The results label them as external.
+- Glide draws on a canvas; DOM grids create elements for the cells in view.
+  Their DOM node counts and memory are not comparable one to one, and
+  Glide's visible content is the region it reports drawing, not pixels.
+- Glide 6.0.4-alpha24 is a prerelease: the latest stable release (6.0.3)
+  declares React 16 to 18 as peers, and the suite uses React 19 throughout.
+- AG Grid's async transactions batch for 50 ms; the scenarios deliver one
+  batch per tick and use the synchronous path.
+- Herceg is measured from source at the current commit; the competitors are
+  pinned in `package.json`.
+- Not measured yet: grouping, aggregation, and pivots (AG Grid's are
+  Enterprise features), a separate comparison of rendering a prepared result,
+  a grid linked to a chart, a high-cardinality category stress case,
+  keyboard and screen reader behavior, and grid bundle sizes. Committed
+  results use one data seed (`--seed` changes it) and device pixel ratio 1
+  (`--dpr 2`).
