@@ -8,18 +8,19 @@ import {
 } from "../data/table.ts";
 import { rasterDrawing } from "../draw/raster.ts";
 import { CellIndex } from "../lod/cell-index.ts";
+import type { LegendPart } from "../model/legend.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RasterGeometry } from "../scene/scene.ts";
 import type { Frozen, HeatmapSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
+import { rampLegend } from "./legend-parts.ts";
 import { definedFields } from "./line.ts";
 import {
   type BandContext,
   type BandList,
   type Bands,
   bandIndices,
-  type ColorRamp,
   type Frame,
   fieldBands,
   frozen,
@@ -240,11 +241,13 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     return false;
   }
 
-  colorRamp(series: readonly Series[], theme: Theme): ColorRamp | undefined {
+  /** The legend of the scale coloring cells. */
+  legends(series: readonly Series[], theme: Theme): LegendPart[] {
     const scale = this.#colorScale(theme);
-    if (!scale || series.length === 0) return undefined;
+    if (!scale || series.length === 0) return [];
     const title = this.spec.label ?? this.spec.value;
-    return { stops: scale.legendStops(), domain: scale.domain, title, midpoint: scale.midpoint };
+    const { domain, midpoint } = scale;
+    return [rampLegend({ stops: scale.legendStops(), domain, title, midpoint })];
   }
 
   /** The scale coloring cells: over `colorDomain` or the values' extent. */

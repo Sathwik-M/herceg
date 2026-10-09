@@ -494,12 +494,22 @@ export interface LegendItem {
 }
 
 /**
+ * How a color ramp or a key of glyphs is drawn as SVG, carried by the legend
+ * so charts without one carry no drawing code for it. `id` is unique in the
+ * document, for definitions such as a ramp's gradient.
+ */
+export interface LegendDrawing<L> {
+  readonly svg: (legend: L, theme: Theme, id: string) => string;
+}
+
+/**
  * Legend of point sizes or shapes: a title, then glyphs in the theme's muted
  * color, each followed by its label. Glyphs are SVG path data centered on
  * (0, 0), drawn at (x, y); other positions are left edges, and `y` is the
  * middle of an item's row.
  */
 export interface GlyphLegend {
+  draw: LegendDrawing<GlyphLegend>;
   title: { text: string; x: number; y: number };
   entries: { glyph: string; x: number; y: number; label: { text: string; x: number } }[];
 }
@@ -509,6 +519,7 @@ export interface GlyphLegend {
  * ramp, high label. Positions are left edges; `y` is the row's middle.
  */
 export interface ColorLegend {
+  draw: LegendDrawing<ColorLegend>;
   stops: readonly string[];
   /**
    * Where the ramp's middle color sits, from 0 to 1, for diverging scales:

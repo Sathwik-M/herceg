@@ -24,7 +24,7 @@ import {
   usableDomain,
   valueFormatter,
 } from "../model/axis.ts";
-import type { LegendEntry } from "../model/legend.ts";
+import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { TIME_UNIT_MS } from "../scale/time.ts";
 import type { CloudLayer3D, FaceGeometry, Geometry, PointCloud3D, Rect } from "../scene/scene.ts";
@@ -41,6 +41,7 @@ import {
 } from "../three/camera.ts";
 import { FaceBuffer, FaceIndex } from "../three/faces.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import { legendParts } from "./legend-parts.ts";
 import type { ColorRamp, GlyphKey } from "./mark.ts";
 
 export const AXES = ["x", "y", "z"] as const;
@@ -176,15 +177,8 @@ export class Plot3D implements LayoutMark {
   }
 
   /** Every layer's scales, each with a legend of its own. */
-  scales(theme: Theme, locale: string | undefined): [ColorRamp[], GlyphKey[]] {
-    const ramps: ColorRamp[] = [];
-    const keys: GlyphKey[] = [];
-    for (const layer of this.layers) {
-      const [r, k] = layer.scales(theme, locale);
-      ramps.push(...r);
-      keys.push(...k);
-    }
-    return [ramps, keys];
+  legends(theme: Theme, locale: string | undefined): LegendPart[] {
+    return this.layers.flatMap((layer) => legendParts(...layer.scales(theme, locale)));
   }
 
   /** The chart's x, y, and z axes, planned over every layer's data. */

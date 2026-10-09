@@ -6,6 +6,7 @@ import type { TimeZone } from "../format/zone.ts";
 import type { MeasureText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
+import type { LegendPart } from "../model/legend.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
@@ -262,8 +263,6 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
    * domains leave that much room.
    */
   headroom?(series: readonly Series[], context: BandContext): number;
-  /** The continuous color scale the mark draws with, if any. */
-  colorRamp?(series: readonly Series[], theme: Theme): ColorRamp | undefined;
   /**
    * How a series appears in the legend: by default, a square of its color.
    * `false` leaves it out, for marks whose series colors mean nothing (heatmaps).
@@ -272,8 +271,15 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
     series: Series,
     theme: Theme,
   ): { color: string; glyph?: string; stroke?: string } | false;
-  /** Legends of sizes or shapes the mark encodes by field. */
-  glyphKeys?(series: readonly Series[], format: (value: number) => string): GlyphKey[];
+  /**
+   * Legends of the color scales, sizes, or shapes the mark encodes by field
+   * (see legend-parts.ts); `format` writes numbers in the chart's locale.
+   */
+  legends?(
+    series: readonly Series[],
+    theme: Theme,
+    format: (value: number) => string,
+  ): LegendPart[];
 }
 
 /**

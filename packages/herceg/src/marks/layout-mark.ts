@@ -7,13 +7,13 @@
 import type { RowView } from "../data/row-view.ts";
 import type { Table } from "../data/table.ts";
 import type { MeasureText } from "../layout/text.ts";
-import type { LegendEntry } from "../model/legend.ts";
+import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
-import type { ColorRamp, GlyphKey, Mark } from "./mark.ts";
+import type { Mark } from "./mark.ts";
 
 /** What a layout mark lays out with: its room and the chart's settings. */
 export interface LayoutFrame {
@@ -87,8 +87,8 @@ export interface LayoutMark {
   readonly measure: string;
   /** Entries for the legend, which toggles items by key; `id` as in `LayoutFrame`. */
   legend(id: string | number, color: (key: string) => string, theme: Theme): LegendEntry[];
-  /** Continuous color scales and size keys for the legend, for marks encoding values that way. */
-  scales?(theme: Theme, locale: string | undefined): [ColorRamp[], GlyphKey[]];
+  /** Legends of color scales and size keys, for marks encoding values that way. */
+  legends?(theme: Theme, locale: string | undefined): LegendPart[];
   draw(frame: LayoutFrame): LayoutResult;
   /**
    * Marks that can share a chart (maps' layers) give the one mark that draws

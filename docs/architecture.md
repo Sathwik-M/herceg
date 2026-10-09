@@ -739,7 +739,7 @@ layers) in item, legend, and geometry keys, and their own legends and color
 scales, since fields of the same name in two layers may measure different
 things. Items are read layer by layer; the pointer tries layers from the
 last drawn. Layout marks gained two optional members for this, `join` and
-`scales` (continuous color ramps and size keys for the legend header),
+`legends` (continuous color ramps and size keys for the legend header),
 `legend` receives the theme (points colored by a field show their series in
 a neutral color), and items an optional `measure` (the tooltip's heading, which differs between a
 map's layers).
@@ -1532,9 +1532,13 @@ document when `OffscreenCanvas` is unavailable.
 - Python derived tables count their source's rows through one of its
   columns, so a source whose columns nothing reads needs at least one that
   converts (numbers, strings, or dates).
-- The model always carries band-axis, color-legend, inspection-along-y, and
-  right-axis logic, so a line-only bundle includes some bar, heatmap, and
-  second-axis support it does not use.
+- The model always carries band-axis, inspection-along-y, and right-axis
+  logic, so a line-only bundle includes some bar, heatmap, and second-axis
+  support it does not use. Color ramps and size and shape keys are not among
+  it: marks that encode values those ways add legend parts
+  (`marks/legend-parts.ts`) that lay themselves out, draw their SVG, and
+  describe themselves, so the model and the renderers only flow and call
+  them.
 - Bands, log scales, long-format series, and stacked areas with gaps in view
   re-scan the visible range on every frame; whole-column lines, areas filled
   to zero, and long gap-free stacks on linear scales use min/max indexes.
