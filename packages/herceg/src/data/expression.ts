@@ -105,6 +105,14 @@ function compile(e: Expression, table: Fields): Compiled {
   if (op === "and" || op === "or") {
     if (args.length < 1) throw new TypeError(`"${op}" needs operands`);
     const parts = args.map((arg) => typed(arg, "boolean", op, table).at);
+    // Two operands, the common case, without a loop per row.
+    const [p, q] = parts as [(row: number) => boolean, (row: number) => boolean];
+    if (parts.length === 2)
+      return {
+        type: "boolean",
+        // Booleans whatever the operands: a missing one (NaN) is false.
+        at: op === "and" ? (row) => !!(p(row) && q(row)) : (row) => !!(p(row) || q(row)),
+      };
     return {
       type: "boolean",
       at:
@@ -208,6 +216,8 @@ function compare(op: string, args: readonly Expression[], table: Fields): Compil
       at: op === "==" ? (row) => codes[row] === target : (row) => codes[row] !== target,
     };
   }
+  if (a.type === "number")
+    return { type: "boolean", at: numberComparison(op, left!, right!, a, b, table) };
   const test = comparison(op);
   return {
     type: "boolean",
@@ -220,6 +230,56 @@ function compare(op: string, args: readonly Expression[], table: Fields): Compil
     },
   };
 }
+
+/**
+ * A comparison of numbers. NaN, the missing number, compares false and
+ * unequal on its own, as missing values do, so values are compared as they
+ * are; a number field against a literal reads its array directly.
+ */
+function numberComparison(
+  op: string,
+  left: Expression,
+  right: Expression,
+  a: Compiled,
+  b: Compiled,
+  table: Fields,
+): (row: number) => boolean {
+  const name = fieldName(left);
+  if (name !== undefined && typeof right === "number") {
+    const v = table.numbers(name);
+    const c = right;
+    switch (op) {
+      case "==":
+        return (row) => v[row] === c;
+      case "!=":
+        return (row) => v[row] !== c;
+      case "<":
+        return (row) => v[row]! < c;
+      case "<=":
+        return (row) => v[row]! <= c;
+      case ">":
+        return (row) => v[row]! > c;
+      default:
+        return (row) => v[row]! >= c;
+    }
+  }
+  // A literal on the left is the same comparison turned around.
+  if (fieldName(right) !== undefined && typeof left === "number")
+    return numberComparison(FLIPPED[op]!, right, left, b, a, table);
+  const x = a.at as (row: number) => number;
+  const y = b.at as (row: number) => number;
+  const test = comparison(op);
+  return (row) => test(x(row), y(row));
+}
+
+const FLIPPED: Record<string, string> = {
+  "==": "==",
+  "!=": "!=",
+  "<": ">",
+  "<=": ">=",
+  ">": "<",
+  ">=": "<=",
+};
 
 function comparison(
   op: string,
@@ -271,6 +331,23 @@ function membership(args: readonly Expression[], table: Fields): Compiled {
   }
   const set = new Set(candidates);
   const missing = candidates.includes(null);
+  // A category field reads its codes: whether each is a member, found the
+  // first time a row holds it (1 or -1), so a pass over a few rows costs no
+  // look at every label. Codes are as of compiling.
+  const name = fieldName(value!);
+  if (name !== undefined && table.kind(name) === "category") {
+    const { codes, dictionary } = table.categories(name);
+    const member = new Int8Array(dictionary.length);
+    return {
+      type: "boolean",
+      at: (row) => {
+        const code = codes[row]!;
+        if (code < 0) return missing;
+        if (member[code] === 0) member[code] = set.has(dictionary[code]!) ? 1 : -1;
+        return member[code] === 1;
+      },
+    };
+  }
   return {
     type: "boolean",
     at: (row) => {

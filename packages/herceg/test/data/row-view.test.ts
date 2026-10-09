@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { col } from "../../src/data/expression.ts";
+import { category } from "../../src/data/column.ts";
+import { col, when } from "../../src/data/expression.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
@@ -197,6 +198,25 @@ describe("row views", () => {
     t.set("x", 20, -1);
     expect(shown(view).slice(0, 3)).toEqual([19, 0, 1]);
     expect(view.indexOf(19)).toBe(0);
+  });
+
+  it("leave out rows whose filter is missing, keeping the rows around them", () => {
+    const t = table({ x: [0, 1, 2] });
+    const view = rowView(t, { filter: when(col("x").eq(1), null, true) });
+    expect(shown(view)).toEqual([0, 2]);
+    t.append({ x: [1, 3] });
+    expect(shown(view)).toEqual([0, 2, 4]);
+  });
+
+  it("match category members that arrive after the filter was set", () => {
+    const t = table({ tag: category(["a", "b"]) });
+    const view = rowView(t, { filter: col("tag").isIn("b", "late") });
+    expect(shown(view)).toEqual([1]);
+    t.append({ tag: ["late", "a", "other", "late"] });
+    expect(shown(view)).toEqual([1, 2, 5]);
+    t.dropFirst(2);
+    t.append({ tag: ["b"] });
+    expect(shown(view)).toEqual([0, 3, 4]);
   });
 
   it("reorder when the fields they filter or sort by change, and keep rows otherwise", () => {

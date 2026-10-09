@@ -94,6 +94,89 @@ describe("expressions", () => {
     expect(evaluate(col("site").eq("west").toJSON())).toEqual(Array(6).fill(false));
   });
 
+  it("compare numbers either way round, missing ones false except as unequal", () => {
+    const t = table({ a: [1, 2, Number.NaN, 3, Number.NaN], b: [2, 2, 1, Number.NaN, Number.NaN] });
+    const at = (row: number, field: "a" | "b") => t.value(field, row) as number | null;
+    const operators = {
+      "==": (x: number, y: number) => x === y,
+      "!=": (x: number, y: number) => x !== y,
+      "<": (x: number, y: number) => x < y,
+      "<=": (x: number, y: number) => x <= y,
+      ">": (x: number, y: number) => x > y,
+      ">=": (x: number, y: number) => x >= y,
+    };
+    const expected = (op: keyof typeof operators, x: number | null, y: number | null) =>
+      x === null || y === null ? op === "!=" : operators[op](x, y);
+    for (const op of Object.keys(operators) as (keyof typeof operators)[]) {
+      const rows = [0, 1, 2, 3, 4];
+      const field = (name: string): Expression => ["field", name];
+      expect(evaluate([op, field("a"), 2], t as never)).toEqual(
+        rows.map((row) => expected(op, at(row, "a"), 2)),
+      );
+      expect(evaluate([op, 2, field("a")], t as never)).toEqual(
+        rows.map((row) => expected(op, 2, at(row, "a"))),
+      );
+      expect(evaluate([op, field("a"), field("b")], t as never)).toEqual(
+        rows.map((row) => expected(op, at(row, "a"), at(row, "b"))),
+      );
+      expect(evaluate([op, ["+", field("a"), 1], ["*", field("b"), 1]], t as never)).toEqual(
+        rows.map((row) => {
+          const [x, y] = [at(row, "a"), at(row, "b")];
+          return expected(op, x === null ? null : x + 1, y);
+        }),
+      );
+    }
+  });
+
+  it("match categories by code, and combine any number of tests", () => {
+    const t = table({ k: category(["a", null, "b", "c", "a"]), v: [1, 2, 3, 4, 5] });
+    const tested = (e: Expression) => evaluate(e, t as never);
+    expect(tested(col("k").isIn("a", "zzz").toJSON())).toEqual([true, false, false, false, true]);
+    expect(tested(col("k").isIn("c", null).toJSON())).toEqual([false, true, false, true, false]);
+    const [low, odd, notB] = [col("v").lt(5), col("v").ne(2).and(col("v").ne(4)), col("k").ne("b")];
+    expect(tested(low.and(odd).toJSON())).toEqual([true, false, true, false, false]);
+    expect(tested(low.and(odd).and(notB).toJSON())).toEqual([true, false, false, false, false]);
+    expect(tested(["or", low.toJSON(), odd.toJSON(), notB.toJSON()])).toEqual(Array(5).fill(true));
+    expect(tested(["or", col("v").gt(4).toJSON(), col("k").eq("b").toJSON()])).toEqual([
+      false,
+      false,
+      true,
+      false,
+      true,
+    ]);
+    expect(tested(["-", ["field", "v"], 1])).toEqual([0, 1, 2, 3, 4]);
+    expect(tested(["/", ["field", "v"], 2])).toEqual([0.5, 1, 1.5, 2, 2.5]);
+    expect(tested(["%", ["field", "v"], 2])).toEqual([1, 0, 1, 0, 1]);
+  });
+
+  it("give booleans from and and or, false where an operand is missing", () => {
+    const missing: Expression = ["if", false, true, null];
+    const t = table({ v: [1] }) as unknown as Table;
+    for (const e of [
+      ["and", missing, true],
+      ["and", true, missing],
+      ["or", false, missing],
+      ["or", missing, false],
+    ] as Expression[]) {
+      expect(evaluate(e, t)).toEqual([false]);
+      expect(evaluate(["missing", e], t)).toEqual([false]);
+    }
+    expect(evaluate(["or", missing, true], t)).toEqual([true]);
+  });
+
+  it("compare times, signed zeros, and infinities as numbers", () => {
+    const start = Date.UTC(2026, 0, 1);
+    const t = table({
+      at: time([start, start + 1000, Number.NaN]),
+      v: [-0, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY],
+    }) as unknown as Table;
+    expect(evaluate([">=", ["field", "at"], start + 1], t)).toEqual([false, true, false]);
+    expect(evaluate(["<", start + 1, ["field", "at"]], t)).toEqual([false, true, false]);
+    expect(evaluate(["==", ["field", "v"], 0], t)).toEqual([true, false, false]);
+    expect(evaluate([">", ["field", "v"], 1e308], t)).toEqual([false, true, false]);
+    expect(evaluate(["<", ["field", "v"], -1e308], t)).toEqual([false, false, true]);
+  });
+
   it("names what is wrong", () => {
     const t = readings as unknown as Table;
     expect(() => compileExpression(["field", "wind"], t)).toThrow(/Unknown field "wind".*"site"/);

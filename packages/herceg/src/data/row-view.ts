@@ -406,10 +406,21 @@ export class RowView<S extends Schema = Schema> {
     if (restriction && !restriction.current) return new Uint32Array(0);
     const kept = new Uint32Array(to - from);
     let n = 0;
-    for (let row = from; row < to; row++) {
-      if (test && !test.at(row)) continue;
-      if (restriction && !restriction.has(row)) continue;
-      kept[n++] = row;
+    if (test && !restriction) {
+      // Each row is written and kept by the count, without a branch on the
+      // test: filters that keep rows at random would mispredict it. A
+      // missing result (NaN, from a branch of `if`) keeps no row.
+      const at = test.at;
+      for (let row = from; row < to; row++) {
+        kept[n] = row;
+        n += +!!at(row);
+      }
+    } else {
+      for (let row = from; row < to; row++) {
+        if (test && !test.at(row)) continue;
+        if (restriction && !restriction.has(row)) continue;
+        kept[n++] = row;
+      }
     }
     return n === kept.length ? kept : kept.slice(0, n);
   }
