@@ -4,20 +4,24 @@
 // in the chart's one list of marks, so their identity, colors, and legend
 // state do not depend on the panel they draw in.
 
-import type { Mark } from "../marks/mark.ts";
+import type { Bands, Mark } from "../marks/mark.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
 import type { AxisSpec, GridSpec, PanelSpec, ScaleResolution } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
   across,
+  checkBands,
   groups,
   type LayoutOptions,
+  PanelBands,
+  type PanelChart,
   type PanelCheck,
   type PanelGrid,
   type PanelGroups,
   type PanelLayout,
   type PanelSplit,
+  type PanelSplitter,
 } from "./panel-layout.ts";
 
 /** The `panel` that draws a mark in every panel. */
@@ -133,6 +137,12 @@ export class Panels implements PanelLayout {
       throw new Error("Charts with panels can zoom and brush along x only");
     this.#agree("x", marks, options.resolve?.x ?? "shared", options.x);
     this.#agree("y", marks, options.resolve?.y ?? "independent", options.y);
+    checkBands(marks, options, this.yDefault);
+  }
+
+  /** Panels draw their marks whole. */
+  splits(): boolean {
+    return false;
   }
 
   /**
@@ -169,18 +179,26 @@ export class Panels implements PanelLayout {
     });
   }
 
-  splitter(): { split(base: readonly MarkSeries[], check: PanelCheck): PanelSplit } {
-    return { split: (base, check) => this.#split(base, check) };
+  /** A chart's splitter, which keeps its panels' categories (see PanelBands). */
+  splitter(): PanelSplitter {
+    const placed = new PanelBands();
+    return { split: (base, check, chart, bands) => this.#split(base, check, chart, bands, placed) };
   }
 
   /** Every mark in the panels it names, with all of its series there. */
-  #split(base: readonly MarkSeries[], check: PanelCheck): PanelSplit {
+  #split(
+    base: readonly MarkSeries[],
+    check: PanelCheck,
+    chart: PanelChart,
+    bands: Bands,
+    placed: PanelBands,
+  ): PanelSplit {
     const columns = Math.min(this.columns, this.list.length);
     check({ rows: Math.ceil(this.list.length / columns), columns }, this.list.length);
     const members = this.list.map(({ id }) =>
       base.map(({ mark }) => mark.spec.panel === id || mark.spec.panel === EVERY_PANEL),
     );
-    return {
+    const split: PanelSplit = {
       keys: this.list.map(({ id }) => id),
       values: this.list.map(({ id, title }) => [title ?? id]),
       dimensions: [],
@@ -190,6 +208,8 @@ export class Panels implements PanelLayout {
       members,
       all: [...base],
     };
+    placed.place(split, columns, bands, chart.config.resolve, this.yDefault);
+    return split;
   }
 
   grid(_split: PanelSplit, lineHeight: number): PanelGrid {
@@ -222,23 +242,27 @@ export class Panels implements PanelLayout {
     return [{ text, x: plot.x, y: plot.y - grid.header / 2, anchor: "start", angle: 0 }];
   }
 
-  /** A group's axis is its first panel's, which the others agree with (see `check`). */
+  /**
+   * A group's axis is its first panel's, which the others agree with (see
+   * `check`); a category axis is one in every panel.
+   */
   groupAxis(
     axis: "x" | "y",
     index: number,
     drawn: readonly MarkSeries[],
     chart: AxisSpec | undefined,
+    chartType: AxisType,
   ): { type: AxisType; spec: AxisSpec | undefined } {
     const spec = this.panelAxis(axis, index, chart);
-    return {
-      type:
-        spec?.type ??
-        typeOf(
-          drawn.map(({ mark }) => mark),
-          axis,
-        ),
-      spec,
-    };
+    const type =
+      chartType === "band"
+        ? chartType
+        : (spec?.type ??
+          typeOf(
+            drawn.map(({ mark }) => mark),
+            axis,
+          ));
+    return { type, spec };
   }
 
   /** The chart's `x` or `y`, with the panel's own settings in place of its. */
@@ -247,8 +271,13 @@ export class Panels implements PanelLayout {
     return own ? { ...chart, ...own } : chart;
   }
 
-  groups(resolution: ScaleResolution, split: PanelSplit, columns: number): PanelGroups {
-    return groups(resolution, split, columns);
+  groups(
+    resolution: ScaleResolution,
+    split: PanelSplit,
+    columns: number,
+    axis: "x" | "y",
+  ): PanelGroups {
+    return groups(resolution, split, columns, axis);
   }
 
   across(

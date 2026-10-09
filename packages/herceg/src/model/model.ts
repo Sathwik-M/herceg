@@ -482,13 +482,24 @@ export class ChartModel {
   }
 
   #resolveSeries(bands: Bands, context: BandContext): MarkSeries[] {
+    const layout = this.#panels;
     return this.#marks.map((mark, index) => ({
       mark,
-      series: mark.series(mark.spec.id ?? index, this.#palette, this.hidden, bands, context),
+      series: mark.series(
+        mark.spec.id ?? index,
+        this.#palette,
+        this.hidden,
+        bands,
+        context,
+        layout?.splits(mark),
+      ),
     }));
   }
 
-  /** The chart's panels and what each draws: without facets, one panel with every series. */
+  /**
+   * The chart's panels and what each draws: without facets, one panel with
+   * every series. Bands are the chart's last (`#bands`).
+   */
   #split(base: MarkSeries[]): PanelSplit {
     const layout = this.#panels;
     if (!layout) {
@@ -499,10 +510,15 @@ export class ChartModel {
     if (this.#splitter?.layout !== layout) this.#splitter = { layout, splitter: layout.splitter() };
     // Panels that could never fit are refused before they are listed.
     const { width, height } = this;
-    return this.#splitter.splitter.split(base, ({ rows, columns }, panels) => {
-      if (rows > height / MIN_PANEL || columns > width / MIN_PANEL)
-        throw tooSmall(panels, columns, width, height, layout.remedy);
-    });
+    return this.#splitter.splitter.split(
+      base,
+      ({ rows, columns }, panels) => {
+        if (rows > height / MIN_PANEL || columns > width / MIN_PANEL)
+          throw tooSmall(panels, columns, width, height, layout.remedy);
+      },
+      this,
+      this.#bands,
+    );
   }
 
   /** x extent of all data drawn, ignoring the viewport. */
@@ -667,6 +683,9 @@ export class ChartModel {
     this.#bands = bands;
     const base = this.#resolveSeries(bands, context);
     const split = this.#split(base);
+    // Each panel's bands on a band axis: the chart's, or its group's own (see PanelBands).
+    const bandsOf = (axis: "x" | "y", panel: number) =>
+      (split.bands?.[axis]?.[panel] ?? bands[axis])!;
     // Domains and layout consider what every panel draws.
     const marks = split.all;
     const layout = this.#panels;
@@ -717,8 +736,7 @@ export class ChartModel {
     // panels (each alone, a row, or a column), from what the group draws.
     const xResolution = this.#resolutionX;
     const xGroups =
-      xResolution === "shared" ? undefined : layout!.groups(xResolution, split, columns);
-    if (xGroups && xType === "band") throw new Error("Panels always share a category x axis");
+      xResolution === "shared" ? undefined : layout!.groups(xResolution, split, columns, "x");
     const xGroupAt = xGroups?.groupOf ?? new Array<number>(panelCount).fill(0);
     // Each group's marks, with every mark's series in the group's panels.
     const xMarks = xGroups?.drawn ?? [marks];
@@ -758,7 +776,7 @@ export class ChartModel {
       xDomains[h] = [-Infinity, Infinity];
       autoX[h] = false;
       if (type === "band") {
-        xHas[h] = (bands.x?.keys.length ?? 0) > 0;
+        xHas[h] = bandsOf("x", xGroupAt.indexOf(h)).keys.length > 0;
         return;
       }
       const log = type === "log";
@@ -790,8 +808,10 @@ export class ChartModel {
     const leftMarks = marks.filter(({ mark }) => sideOf(mark) === "left");
     const rightMarks = marks.filter(({ mark }) => sideOf(mark) === "right");
     // With x scales of their own, what panels draw counts within their own x
-    // domain, so zooming one group can change a y scale it shares.
-    const leftParts = xGroups ? xMarks.map(part) : [part(leftMarks, 0)];
+    // domain, so zooming one group can change a y scale it shares; category
+    // x scales show all of theirs.
+    const byX = xType !== "band" && xGroups;
+    const leftParts = byX ? xMarks.map(part) : [part(leftMarks, 0)];
     // A y axis is shown when one of its marks places values along y, and
     // the left one also when the right one is not.
     const placesY = (side: readonly MarkSeries[]) => side.some(({ mark }) => usesY(mark));
@@ -928,7 +948,7 @@ export class ChartModel {
     // Subplots always plan by group, to read each panel's own settings; a
     // shared category axis is the one plan.
     const byGroup = config.panels ? yType !== "band" || resolution !== "shared" : !sharedY;
-    const groups = byGroup ? layout!.groups(resolution, split, columns) : undefined;
+    const groups = byGroup ? layout!.groups(resolution, split, columns, "y") : undefined;
     const groupOf = groups?.groupOf ?? new Array<number>(panelCount).fill(0);
     const contexts = groups
       ? groups.drawn.map(
@@ -939,12 +959,12 @@ export class ChartModel {
           }),
         )
       : [yContext];
-    /** The category y axis over the plot from `y`, `size` tall. */
-    const planCategories = (y: number, size: number): AxisPlan => {
+    /** The category y axis of panel `i` over the plot from `y`, `size` tall. */
+    const planCategories = (y: number, size: number, i: number): AxisPlan => {
       // Categories read top to bottom; bands of numbers rise like a numeric axis.
       const upward = bands.y !== undefined && numericBands(bands.y);
       const plan = planBandAxis(
-        bands.y?.labels ?? [],
+        bandsOf("y", i).labels,
         upward ? [y + size, y] : [y, y + size],
         padding("y"),
         lineHeight,
@@ -965,8 +985,9 @@ export class ChartModel {
     // Groups of panels with nothing to show along y have no y labels.
     const emptyGroups = new Set<number>();
     if (yType === "band") {
-      if (groups) throw new Error("Panels always share a category y axis");
-      groupPlans.push(planCategories(plotTop, groupHeight(0)));
+      contexts.forEach((_, g) => {
+        groupPlans[g] = planCategories(plotTop, groupHeight(g), groupOf.indexOf(g));
+      });
     } else if (!groups) {
       groupPlans.push(
         planValueAxis(yContext, yBase, leftMarks, yView !== undefined, groupHeight(0)),
@@ -974,7 +995,7 @@ export class ChartModel {
     } else {
       // With x scales of their own, a y group's panels are read by x group:
       // what the panels of both draw, within that x group's domain.
-      const crossed = xGroups && layout!.across(split, groupOf, xGroupAt);
+      const crossed = byX && layout!.across(split, groupOf, xGroupAt);
       groups.drawn.forEach((drawn, g) => {
         const parts = crossed ? crossed[g]!.map(([h, among]) => part(among, h)) : [part(drawn, 0)];
         // A group shows something when its marks place a value along y,
@@ -998,7 +1019,7 @@ export class ChartModel {
       const size = rowHeights[row]!;
       if (size === groupHeight(g)) return shiftPlan(plan, context, rowOffset(row));
       const y = plotTop + rowOffset(row);
-      if (yType === "band") return planCategories(y, size);
+      if (yType === "band") return planCategories(y, size, i);
       const [d0, d1] = plan.scale.domain;
       const count = tickCount(context.spec, size);
       return planAxis(context, [d0!, d1!], [y + size, y], count, plan.within);
@@ -1082,14 +1103,15 @@ export class ChartModel {
     const xTicks = ({ type, spec }: AxisContext, size: number) =>
       spec?.ticks ?? Math.max(2, Math.round(size / (type === "time" ? 100 : 80)));
     // Each x group's plan for panels `plotWidth` wide, the first starting at `left`.
-    const categories = bands.x?.labels ?? [];
-    const widest = xType === "band" ? this.#widest(categories, measure, font) : 0;
+    const planCategoriesX = (h: number, range: readonly [number, number]): AxisPlan => {
+      const categories = bandsOf("x", xGroupAt.indexOf(h)).labels;
+      const widest = this.#widest(categories, measure, font);
+      return planBandAxis(categories, range, padding("x"), widest);
+    };
     const planX = (plotWidth: number, h: number): AxisPlan => {
       const context = xContexts[h]!;
       const { type, spec } = context;
-      if (type === "band") {
-        return planBandAxis(categories, [left, left + plotWidth], padding("x"), widest);
-      }
+      if (type === "band") return planCategoriesX(h, [left, left + plotWidth]);
       const count = xTicks(context, plotWidth);
       const range = [left, left + plotWidth] as const;
       if (!autoX[h]) return planAxis(context, xDomains[h]!, range, count);
@@ -1137,7 +1159,7 @@ export class ChartModel {
       if (size === groupWidths[h]) return plan;
       const context = xContexts[h]!;
       const range = [left, left + size] as const;
-      if (context.type === "band") return planBandAxis(categories, range, padding("x"), widest);
+      if (context.type === "band") return planCategoriesX(h, range);
       const [d0, d1] = plan.scale.domain;
       return planAxis(context, [d0!, d1!], range, xTicks(context, size), plan.within);
     };

@@ -135,12 +135,6 @@ describe("facets", () => {
       build({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })], facet: panels }),
     ).toThrow(/heatmap mark over a table cannot be split into panels yet/);
     expect(() =>
-      build({
-        marks: [bar(sales, { x: "t", y: "units", series: "region", stack: true })],
-        facet: panels,
-      }),
-    ).toThrow(/Stacked bars cannot be split/);
-    expect(() =>
       build({ marks: [line(sales, { x: "t", y: "units", axis: "right" })], facet: panels }),
     ).toThrow(/cannot use the right axis yet/);
     expect(() =>
@@ -622,15 +616,7 @@ describe("facet panels with y scales of their own", () => {
     expect(() => model.setYViewport({ y: [0, 50], yRight: null })).toThrow("no one y viewport");
   });
 
-  it("refuse category y axes and y zoom, and need spec version 2", () => {
-    const bars = table({ c: ["a", "b"], v: [1, 2], p: ["P", "Q"] });
-    expect(() =>
-      build({
-        marks: [bar(bars, { x: "v", y: "c" })],
-        facet: facet("p"),
-        resolve: { y: "independent" },
-      }),
-    ).toThrow("Panels always share a category y axis");
+  it("refuse y zoom, and need spec version 2", () => {
     expect(() =>
       build({
         marks,
@@ -892,13 +878,6 @@ describe("facet panels with x scales of their own", () => {
     expect(model.viewportOf(a)).toBeNull();
   });
 
-  it("refuse category x axes", () => {
-    const bars = table({ c: ["a", "b"], v: [1, 2], p: ["P", "Q"] });
-    expect(() =>
-      build({ marks: [bar(bars, { x: "c", y: "v" })], facet: facet("p"), resolve: { x: "rows" } }),
-    ).toThrow("Panels always share a category x axis");
-  });
-
   it("load from specs of version 3 and check the resolution", () => {
     const spec =
       (resolve: unknown, version: 2 | 3 = 3) =>
@@ -950,10 +929,12 @@ describe("panel groups", () => {
       .split(
         model.series().length ? [{ mark: marks[0] as LineMark, series: model.series() }] : [],
         () => {},
+        model,
+        {},
       );
-    const byPanel = layout.groups("independent", split, 2);
+    const byPanel = layout.groups("independent", split, 2, "x");
     expect(byPanel.keys).toEqual(['["a"]', '["b"]', '["c"]', '["d"]']);
-    const byRow = layout.groups("rows", split, 2);
+    const byRow = layout.groups("rows", split, 2, "y");
     expect(byRow.keys).toEqual(['["a","b"]', '["c","d"]']);
     // Rows by panels: each row has its two panels, and no other pairs.
     const parts = layout.across(split, byRow.groupOf, byPanel.groupOf);

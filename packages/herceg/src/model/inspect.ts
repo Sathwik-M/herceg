@@ -7,6 +7,7 @@ import type { Frame, Hit, Mark } from "../marks/mark.ts";
 import {
   lowerPosition,
   nearestPosition,
+  placeAt,
   rowOf,
   type Series,
   samePositions,
@@ -187,7 +188,9 @@ export class Inspector {
       // The heading names where the point is placed: its x, or its y
       // category for marks along y.
       const axis = this.#markOf.get(hit.series)?.tooltip === "y" ? "y" : "x";
-      return this.#inspection(axis, hit.series[axis][rowOf(hit.series, hit.position)]!, [point]);
+      return this.#inspection(axis, placeAt(hit.series, axis, rowOf(hit.series, hit.position)), [
+        point,
+      ]);
     }
     // Snap to the data value nearest the pointer across every visible
     // series, among points drawn in view. Values along y compare within one
@@ -214,7 +217,7 @@ export class Inspector {
             : this.#scanNearest(s, "x", target, lo, hi, scale)
           : this.#scanNearest(s, "y", target, lo, hi, scale);
       if (position < 0) continue;
-      const value = s[axis][rowOf(s, position)]!;
+      const value = placeAt(s, axis, rowOf(s, position));
       const distance = Math.abs(place(value) - place(target));
       if (Number.isNaN(snapped) || distance < Math.abs(place(snapped) - place(target)))
         snapped = value;
@@ -295,13 +298,12 @@ export class Inspector {
     hi: number,
     scale = this.frame[axis],
   ): number {
-    const column = s[axis];
     const at0 = scale.map(target);
     let best = -1;
     let bestDistance = Infinity;
     for (let k = 0; k < s.length; k++) {
       const row = rowOf(s, k);
-      const at = column[row]!;
+      const at = placeAt(s, axis, row);
       if (!(at >= lo && at <= hi)) continue;
       const distance = Math.abs(scale.map(at) - at0);
       if (distance >= bestDistance || !this.#drawn(s, row)) continue;
@@ -353,10 +355,11 @@ export class Inspector {
     const y = this.#yOf(s);
     const placed = (scale: PositionScale, value: number) =>
       Number.isFinite(scale.map(value)) && !(scale.type === "band" && value < 0);
-    if (!Number.isFinite(s.values[row]!) || !placed(x, s.x[row]!) || !placed(y, s.y[row]!))
+    const at = placeAt(s, "x", row);
+    if (!Number.isFinite(s.values[row]!) || !placed(x, at) || !placed(y, placeAt(s, "y", row)))
       return false;
     // Points inside an axis break are not drawn.
-    if (x.breaks?.hides(s.x[row]!)) return false;
+    if (x.breaks?.hides(at)) return false;
     const mark = this.#markOf.get(s);
     if (mark?.shows && !mark.shows(s, row, y)) return false;
     if (!s.range) return true;
@@ -370,7 +373,10 @@ export class Inspector {
     let best: Hit | undefined;
     const consider = (s: Series, k: number) => {
       const row = rowOf(s, k);
-      const distance = Math.hypot(x.map(s.x[row]!) - px, this.#yOf(s).map(s.y[row]!) - py);
+      const distance = Math.hypot(
+        x.map(placeAt(s, "x", row)) - px,
+        this.#yOf(s).map(placeAt(s, "y", row)) - py,
+      );
       if (distance < (best?.distance ?? Infinity) && this.#drawn(s, row))
         best = { series: s, position: k, distance };
     };
@@ -415,7 +421,7 @@ export class Inspector {
     const anchor = series.find((s) => s.key === seriesKey);
     if (!anchor || position < 0 || position >= anchor.length) return undefined;
     const axis = this.#markOf.get(anchor)?.tooltip === "y" ? "y" : "x";
-    const value = anchor[axis][rowOf(anchor, position)]!;
+    const value = placeAt(anchor, axis, rowOf(anchor, position));
     // The cursor needs a place along its axis; a point that is not drawn
     // there (a zero on a log axis, say) leaves the other series' points.
     const scale = this.frame[axis];
@@ -491,8 +497,8 @@ export class Inspector {
     const value = s.values[row]!;
     // What a scale cannot place (log axes, missing ends) is not drawn, so not reported.
     if (!this.#placeable(s, row)) return undefined;
-    const px = x.map(s.x[row]!);
-    const py = y.map(s.y[row]!);
+    const px = x.map(placeAt(s, "x", row));
+    const py = y.map(placeAt(s, "y", row));
     const mark = this.#markOf.get(s);
     const tooltip = mark?.tooltip;
     // A cell's label is its y category and its value a measure; marks

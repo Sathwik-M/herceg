@@ -358,6 +358,45 @@ def test_panels_can_have_x_scales_of_their_own():
         hg.Chart(data, resolve_x="rows")
 
 
+def test_panels_can_have_categories_of_their_own():
+    sales = {
+        "region": ["N", "S", "E", "N", "S"],
+        "product": ["b", "a", "c", "d", "c"],
+        "kind": ["p", "p", "q", "q", "q"],
+        "units": [1, 2, 3, 4, 5],
+    }
+    chart = hg.Chart(sales, facet="region", resolve_x="independent", width=500, height=250).bar(
+        x="product", y="units", series="kind", stack=True
+    )
+    spec, _ = chart.to_spec()
+    assert spec["resolve"] == {"x": "independent"}
+    assert spec["version"] == 3
+    assert spec["marks"][0]["stack"] is True
+    svg = chart.to_svg()
+    # Each panel labels its own categories: N's b and d, S's a and c, E's c.
+    assert all(f">{label}</text>" in svg for label in "abcd")
+    subplots = (
+        hg.Chart(panels=["fruit", "cars"], panel_columns=2, width=500, height=250)
+        .bar(x="v", y="name", data={"name": ["apple", "pear"], "v": [3, 4]}, panel="fruit")
+        .bar(x="v", y="name", data={"name": ["vw", "audi"], "v": [5, 6]}, panel="cars")
+    )
+    assert ">audi</text>" in subplots.to_svg()
+    with pytest.raises(ValueError, match="heatmap marks over a table cannot be split"):
+        hg.Chart(sales, facet="region").heatmap(x="product", y="kind", value="units")
+    with pytest.raises(ValueError, match="heatmap mark's categories cannot be resolved per panel"):
+        hg.Chart(sales, facet="region", resolve_x="independent").heatmap(
+            x="product", y="kind", value="units", repeat=True
+        )
+    with pytest.raises(ValueError, match="cannot be synced yet"):
+        hg.Chart(sales, facet="region", resolve_x="rows", sync="board").bar(x="product", y="units")
+    with pytest.raises(ValueError, match="can brush along x only"):
+        hg.Chart(sales, facet="region", resolve_y="independent", brush="xy").bar(
+            x="units", y="product"
+        )
+    # Shared, as before, the same marks are fine.
+    hg.Chart(sales, facet="region", sync="board").bar(x="product", y="units")
+
+
 def test_candlesticks_send_their_four_prices():
     prices = {
         "day": np.array(["2026-01-05", "2026-01-06"], dtype="datetime64[ms]"),

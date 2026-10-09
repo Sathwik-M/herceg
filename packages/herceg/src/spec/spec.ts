@@ -134,11 +134,15 @@ export type FacetSpec = WrappedFacetSpec | GridFacetSpec;
  */
 export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
 
-/** Scale sharing between panels; needs spec version 2 (3 for `x`). Category axes are always shared. */
+/**
+ * Scale sharing between panels; needs spec version 2 (3 for `x`). A category
+ * axis of bars that panels do not share holds only the categories of the
+ * rows they draw; other marks on category axes need them shared.
+ */
 export interface ResolveSpec {
-  /** A continuous x axis; shared by default. */
+  /** Shared by default. */
   x?: ScaleResolution;
-  /** A continuous y axis; shared by default in facets, independent in subplots. */
+  /** Shared by default in facets, independent in subplots. */
   y?: ScaleResolution;
 }
 

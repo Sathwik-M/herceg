@@ -4,6 +4,7 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import type { ChartEvents } from "../../src/dom/events.ts";
+import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { line } from "../../src/marks/line.ts";
 import type { ChartMark } from "../../src/marks/mark.ts";
@@ -736,6 +737,98 @@ describe("subplots with x scales of their own", () => {
     expect(lo).toBeGreaterThan(10);
     expect(hi).toBeLessThan(30);
     expect(events.map((e) => e.panels)).toEqual([["spread"]]);
+    chart.destroy();
+  });
+});
+
+describe("facet panels with categories of their own", () => {
+  // N holds b and d, S a and c: band 0 is b in N and a in S.
+  const sales = () =>
+    table({ region: ["N", "S", "N", "S"], product: ["b", "a", "d", "c"], units: [1, 2, 3, 4] });
+  const options = (data = sales()): ChartOptions => ({
+    locale: "en-US",
+    marks: [bar(data, { x: "product", y: "units" })],
+    facet: facet("region"),
+    resolve: { x: "independent" },
+  });
+
+  it("brush a panel's own categories, and clear the selection when they change", async () => {
+    const data = table({
+      region: ["N", "N", "S", "S", "E"],
+      product: ["b", "d", "a", "c", "x"],
+      units: [1, 3, 2, 4, 5],
+    });
+    const chart = createChart(host, { ...options(data), interaction: { brush: "x" } });
+    await chart.loading;
+    const selections: ChartEvents["select"][] = [];
+    chart.on("select", (event) => selections.push(event));
+    const [, s] = modelOf(chart).panels();
+    const y = s!.plot.y + s!.plot.height / 2;
+    pointer(chart.root, "pointerdown", s!.x.map(0) - 5, y);
+    pointer(chart.root, "pointermove", s!.x.map(1), y);
+    pointer(chart.root, "pointerup", s!.x.map(1), y);
+    expect(chart.selection!.x).toEqual([0, 1]);
+    expect(chart.selectionPanels).toEqual(["S"]);
+    await frame();
+    const bands = [...chart.root.querySelectorAll('svg path[fill-opacity="0.18"]')].filter(
+      (r) => r.getAttribute("visibility") === "visible",
+    );
+    expect(bands).toHaveLength(1);
+    expect(bandBox(bands[0]!).x).toBeGreaterThanOrEqual(s!.plot.x);
+    // Other panels leaving, or their categories changing, leave it be.
+    data.dropFirst(2);
+    data.append({ region: ["E"], product: ["y"], units: [6] });
+    chart.render();
+    expect(
+      modelOf(chart)
+        .panels()
+        .map((p) => p.key),
+    ).toEqual(["S", "E"]);
+    expect(chart.selection!.x).toEqual([0, 1]);
+    expect(chart.selectionPanels).toEqual(["S"]);
+    // Its own changing, band 1 would be another category (b keeps its place
+    // in the table's dictionary, before a): it is cleared.
+    data.append({ region: ["S"], product: ["b"], units: [7] });
+    chart.render();
+    expect(modelOf(chart).panels()[0]!.x.categories).toEqual(["b", "a", "c"]);
+    expect(chart.selection).toBeNull();
+    expect(selections.at(-1)).toEqual({ x: null, y: null, lasso: null, panels: ["S"] });
+    chart.destroy();
+  });
+
+  it("read each panel's categories with the keyboard, carrying the cursor across by place", () => {
+    const chart = createChart(host, options());
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toBe("N: b. units: 1");
+    key(chart, "ArrowRight");
+    expect(live.textContent).toBe("d. units: 3");
+    // S's second band, where N's d was, is c.
+    key(chart, "ArrowDown");
+    expect(live.textContent).toBe("S: c. units: 4");
+    chart.destroy();
+  });
+
+  it("paint each panel's bars at its own categories on a canvas", () => {
+    const chart = createChart(host, {
+      ...options(),
+      renderer: "canvas",
+      theme: { palette: ["#ff0000"] },
+    });
+    const canvas = host.querySelector("canvas")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    const pixel = (x: number, y: number) =>
+      Array.from(
+        canvas.getContext("2d")!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1)
+          .data,
+      );
+    const [n, s] = modelOf(chart).panels();
+    // S's c (band 1) is 4 tall; N's d (band 1) 3.
+    expect(pixel(s!.x.map(1), s!.y.map(3.5))).toEqual([255, 0, 0, 255]);
+    expect(pixel(n!.x.map(1), n!.y.map(3.5))).not.toEqual([255, 0, 0, 255]);
+    expect(pixel(n!.x.map(1), n!.y.map(2.5))).toEqual([255, 0, 0, 255]);
+    const labels = [...host.querySelectorAll("svg text")].map((node) => node.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["a", "b", "c", "d"]));
     chart.destroy();
   });
 });

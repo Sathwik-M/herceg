@@ -217,7 +217,9 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   /**
    * Resolves series for the current data. `key` prefixes series keys,
    * `palette` returns the color for a series key, `hidden` holds keys of
-   * series the user hid, and `bands` gives the band axes' categories.
+   * series the user hid, and `bands` gives the band axes' categories. With
+   * `split`, facets split the series' rows into panels next, and marks that
+   * combine rows (stacks) leave that to `stackPanels`.
    */
   series(
     key: MarkKey,
@@ -225,7 +227,14 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
     hidden: ReadonlySet<string>,
     bands: Bands,
     context: BandContext,
+    split?: boolean,
   ): Series[];
+  /**
+   * Stacks each panel's series apart, for series resolved with `split`:
+   * `panels` holds the mark's series in each panel (split from those
+   * `series` returned), whose values it stacks in place.
+   */
+  stackPanels?(panels: readonly (readonly Series[])[], hidden: ReadonlySet<string>): void;
   /** The axis whose domain includes zero, for marks drawn from a zero baseline. */
   readonly zero?: "x" | "y" | undefined;
   /**

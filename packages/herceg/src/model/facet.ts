@@ -7,7 +7,7 @@
 
 import type { Table } from "../data/table.ts";
 import type { CustomSpec } from "../marks/custom.ts";
-import type { Mark } from "../marks/mark.ts";
+import type { Bands, Mark } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
 import type { AxisSpec, FacetSpec, ScaleResolution } from "../spec/spec.ts";
@@ -15,8 +15,11 @@ import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
   across,
+  checkBands,
   groups,
   type LayoutOptions,
+  PanelBands,
+  type PanelChart,
   type PanelCheck,
   type PanelGrid,
   type PanelGroups,
@@ -100,6 +103,7 @@ export class Facet implements PanelLayout {
    * yet, and a y zoom over panels with y scales of their own.
    */
   check(marks: readonly Mark[], options: LayoutOptions = {}): void {
+    checkBands(marks, options, this.yDefault);
     const zoom = options.interaction?.zoom;
     if (
       (options.resolve?.y ?? "shared") !== "shared" &&
@@ -129,14 +133,17 @@ export class Facet implements PanelLayout {
       // their `draw` reads the table whole.
       if (type === "custom" && (mark.spec as CustomSpec).y === undefined)
         throw new Error(`A custom mark without series cannot be split into panels; ${repeat}`);
-      if (type === "bar" && (mark.spec as { stack?: boolean }).stack)
-        throw new Error(`Stacked bars cannot be split into panels yet; ${repeat}`);
     }
+  }
+
+  /** Marks over a table split its rows, unless they repeat. */
+  splits(mark: Mark): boolean {
+    return mark.table !== undefined && mark.spec.facet !== "repeat";
   }
 
   /** Splits one chart's series into panels, keeping splits from one scene to the next. */
   splitter(): Splitter {
-    return new Splitter(this.fields, (counts) => this.shape(counts));
+    return new Splitter(this, (counts) => this.shape(counts));
   }
 
   /**
@@ -183,8 +190,13 @@ export class Facet implements PanelLayout {
     return chart;
   }
 
-  groups(resolution: ScaleResolution, split: PanelSplit, columns: number): PanelGroups {
-    return groups(resolution, split, columns);
+  groups(
+    resolution: ScaleResolution,
+    split: PanelSplit,
+    columns: number,
+    axis: "x" | "y",
+  ): PanelGroups {
+    return groups(resolution, split, columns, axis);
   }
 
   across(
@@ -288,31 +300,41 @@ interface PanelValues {
 
 export class Splitter {
   readonly fields: readonly string[];
+  readonly #facet: Pick<Facet, "fields" | "splits" | "yDefault">;
   readonly #shape: (counts: readonly number[]) => { rows: number; columns: number };
   /** Each field's values, in order of first appearance across the split tables. */
   #dimensions: string[][];
   /** Every combination of the fields' values, rows by columns. */
   #panels: readonly PanelValues[] = [];
   readonly #appearance = new WeakMap<Table, Map<string, Appearance>>();
-  readonly #splits = new Map<string, Split>();
+  /** Each series' split by its key; series of one table's rows share one. */
+  readonly #bySeries = new Map<string, Split>();
+  readonly #bands = new PanelBands();
 
   constructor(
-    fields: readonly string[],
+    facet: Pick<Facet, "fields" | "splits" | "yDefault">,
     shape: (counts: readonly number[]) => { rows: number; columns: number },
   ) {
-    this.fields = fields;
+    this.fields = facet.fields;
+    this.#facet = facet;
     this.#shape = shape;
-    this.#dimensions = fields.map(() => []);
+    this.#dimensions = this.fields.map(() => []);
   }
 
   /**
    * A panel per facet value, or per pair of values of two fields, in which
    * marks over a table draw the rows with those values and other marks
    * repeat. Rows without a value are in no panel; with no values at all,
-   * there is one empty panel.
+   * there is one empty panel. Marks whose drawing combines rows (stacks)
+   * combine each panel's apart.
    */
-  split(base: readonly MarkSeries[], check: PanelCheck): PanelSplit {
-    const splits = (mark: Mark) => mark.table !== undefined && mark.spec.facet !== "repeat";
+  split(
+    base: readonly MarkSeries[],
+    check: PanelCheck,
+    chart: PanelChart,
+    bands: Bands,
+  ): PanelSplit {
+    const splits = (mark: Mark) => this.#facet.splits(mark);
     const tables = new Set(base.filter(({ mark }) => splits(mark)).map(({ mark }) => mark.table!));
     this.#update(tables, check);
     const empty = this.#panels.length === 0;
@@ -327,18 +349,25 @@ export class Splitter {
         return this.#split(s, mark.table!);
       });
     });
-    for (const key of this.#splits.keys()) if (!used.has(key)) this.#splits.delete(key);
+    for (const key of this.#bySeries.keys()) if (!used.has(key)) this.#bySeries.delete(key);
+    // Each mark's series in each panel, in the chart's order.
+    const byPanel = base.map(({ series }, i) =>
+      keys.map((_, p) => (parts[i] ? parts[i].flatMap((panels) => panels[p] ?? []) : series)),
+    );
+    base.forEach(({ mark }, i) => {
+      if (parts[i]) mark.stackPanels?.(byPanel[i]!, chart.hidden);
+    });
     const panels = keys.map((_, p) =>
-      base.map(({ mark, series }, i) => ({
-        mark,
-        series: parts[i] ? parts[i].flatMap((byPanel) => byPanel[p] ?? []) : series,
-      })),
+      base.map(({ mark }, i) => ({ mark, series: byPanel[i]![p]! })),
     );
     const all = base.map(({ mark, series }, i) => ({
       mark,
       series: parts[i] ? parts[i].flat() : series,
     }));
-    return { keys, values, dimensions: this.#dimensions.map((d) => [...d]), panels, all };
+    const split = { keys, values, dimensions: this.#dimensions.map((d) => [...d]), panels, all };
+    const { columns } = this.#shape(split.dimensions.map((d) => d.length));
+    this.#bands.place(split, columns, bands, chart.config.resolve, this.#facet.yDefault);
+    return split;
   }
 
   /**
@@ -406,16 +435,16 @@ export class Splitter {
 
   /** One series per panel holding the rows of `s` with that panel's values. */
   #split(s: Series, table: Table): Series[] {
-    let split = this.#splits.get(s.key);
-    if (
-      !split ||
-      split.table !== table ||
-      split.version !== table.version ||
-      split.rows !== s.rows ||
-      split.x !== s.x ||
-      split.panels !== this.#panels
-    ) {
-      split = {
+    const current = (split: Split | undefined): split is Split =>
+      split?.table === table &&
+      split.version === table.version &&
+      split.rows === s.rows &&
+      split.x === s.x &&
+      split.panels === this.#panels;
+    let split = this.#bySeries.get(s.key);
+    if (!current(split)) {
+      // Fields of one table split alike: they share their rows in each panel.
+      split = [...this.#bySeries.values()].find(current) ?? {
         table,
         version: table.version,
         rows: s.rows,
@@ -423,7 +452,7 @@ export class Splitter {
         panels: this.#panels,
         byPanel: this.#bucket(s, table),
       };
-      this.#splits.set(s.key, split);
+      this.#bySeries.set(s.key, split);
     }
     // A panel's rows are a subset, which no longer streams as its group does.
     return split.byPanel.map(({ rows, sorted }) => ({

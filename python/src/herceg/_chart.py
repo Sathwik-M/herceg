@@ -2458,16 +2458,46 @@ class Chart:
             for field in self._facets:
                 self._require(table, field, ("category",), "facet")
             kind = spec["type"]
-            if kind in ("heatmap", "histogram", "boxplot", "violin", "rule", "region", "text") or (
-                kind == "bar" and spec.get("stack")
-            ):
-                name = "stacked bar" if kind == "bar" else kind
+            if kind in ("heatmap", "histogram", "boxplot", "violin", "rule", "region", "text"):
                 raise ValueError(
-                    f"{name} marks over a table cannot be split into panels yet; "
+                    f"{kind} marks over a table cannot be split into panels yet; "
                     "pass repeat=True to draw them whole in every panel"
                 )
+        self._check_categories(spec, table)
         self._marks.append((spec, table))
         return self
+
+    def _check_categories(self, spec: dict[str, Any], table: int | None) -> None:
+        """Refuses, as the browser would, what panels with categories of their own
+        (``resolve_x`` or ``resolve_y`` other than ``"shared"`` on a category axis)
+        cannot draw yet: marks other than bars on such an axis, synced charts, and
+        brushes along a y axis of such categories."""
+        if table is None or not (self._facets or self._panels):
+            return
+        kind = spec["type"]
+        for axis in ("x", "y"):
+            default = "independent" if axis == "y" and self._panels else "shared"
+            resolution = self._settings[f"resolve_{axis}"] or default
+            field = spec.get(axis)
+            banded = kind == "heatmap" or (
+                isinstance(field, str) and self._kind(table, field) == "category"
+            )
+            if resolution == "shared" or not banded:
+                continue
+            if kind != "bar":
+                raise ValueError(
+                    f"a {kind} mark's categories cannot be resolved per panel yet; "
+                    f"pass resolve_{axis}='shared'"
+                )
+            if self._settings["sync"] is not None:
+                raise ValueError(
+                    f"charts whose panels have categories of their own (resolve_{axis}) "
+                    "cannot be synced yet"
+                )
+            if axis == "y" and self._settings["brush"] not in (None, "x"):
+                raise ValueError(
+                    "charts whose panels have y categories of their own can brush along x only"
+                )
 
 
 #: Marks that lay out their own chart, with no axes.

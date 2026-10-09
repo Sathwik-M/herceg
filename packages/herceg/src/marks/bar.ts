@@ -102,6 +102,20 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
   /** Stacks of fields over positions that never repeat, kept current as rows stream. */
   readonly #rowStack = new RowStack("signed");
   readonly #increasing = new IncreasingRows();
+  /**
+   * Each chart's stacks of its panels' bars, by the rows of its first panel
+   * part (charts split rows apart), while the table, the panels' rows, and
+   * the shown series stay the same.
+   */
+  readonly #panelStacks = new WeakMap<
+    Uint32Array,
+    {
+      version: number;
+      signature: string;
+      rows: (Uint32Array | undefined)[];
+      stacks: Map<string, readonly [Float64Array, Float64Array]>;
+    }
+  >();
   /** Slots of bars on a number or time position axis. */
   #slots: Slots | undefined;
   #formatter: { locale: string | undefined; format: Formatter } | undefined;
@@ -159,6 +173,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     hidden: ReadonlySet<string>,
     bands: Bands,
     context: BandContext,
+    split = false,
   ): Series[] {
     const { spec, table } = this;
     // Categorical positions: each row's band index is its position.
@@ -171,7 +186,8 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         )
       : table.numbers(this.#position as never);
     const series = buildSeries(table, this.#split.sources(), positions, key, palette, spec.fill);
-    if (spec.stack) {
+    // Rows facets split into panels stack within their panel (stackPanels).
+    if (spec.stack && !split) {
       const shown = series.map((s) => !hidden.has(s.key));
       const signature = shown.map(Number).join("");
       // Fields sharing rows whose positions never repeat stack row by row,
@@ -211,6 +227,61 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       }
     }
     return series;
+  }
+
+  /**
+   * Stacks each panel's bars apart, as `series` stacks a whole table's:
+   * panels hold disjoint rows, and series of one field disjoint rows too, so
+   * each field's tops and bases fill one pair of table-sized arrays.
+   */
+  stackPanels(panels: readonly (readonly Series[])[], hidden: ReadonlySet<string>): void {
+    if (!this.spec.stack) return;
+    const { table } = this;
+    const horizontal = this.#horizontal;
+    const signature = panels[0]?.map((s) => Number(!hidden.has(s.key))).join("") ?? "";
+    const rows = panels.flatMap((series) => series.map((s) => s.rows));
+    const key = rows[0];
+    const cached = key && this.#panelStacks.get(key);
+    const kept =
+      cached?.version === table.version &&
+      cached.signature === signature &&
+      cached.rows.length === rows.length &&
+      cached.rows.every((r, i) => r === rows[i]);
+    const stacks = kept ? cached.stacks : new Map<string, readonly [Float64Array, Float64Array]>();
+    if (key && !kept)
+      this.#panelStacks.set(key, { version: table.version, signature, rows, stacks });
+    for (const series of panels) {
+      // Positive values stack up and negative ones down, per panel and position.
+      const positive = new Map<number, number>();
+      const negative = new Map<number, number>();
+      for (const s of series) {
+        const field = s.field ?? s.key;
+        let stack = stacks.get(field);
+        if (!stack) {
+          stack = [nans(s.values.length), nans(s.values.length)];
+          stacks.set(field, stack);
+        }
+        const [top, base] = stack;
+        if (!kept) {
+          const shown = !hidden.has(s.key);
+          const positions = horizontal ? s.y : s.x;
+          for (let k = 0; k < s.length; k++) {
+            const row = rowOf(s, k);
+            const value = shown ? s.values[row]! : 0;
+            if (!Number.isFinite(value)) continue;
+            const at = positions[row]!;
+            const sums = value >= 0 ? positive : negative;
+            const below = sums.get(at) ?? 0;
+            base[row] = below;
+            top[row] = below + value;
+            sums.set(at, below + value);
+          }
+        }
+        // Horizontal stack ends on x no longer ascend as the lengths may have.
+        if (horizontal) [s.x, s.x0, s.sorted] = [top, base, false];
+        else [s.y, s.y0] = [top, base];
+      }
+    }
   }
 
   xExtent(series: readonly Series[], log: boolean, breaks?: Breaks) {
@@ -280,6 +351,8 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         ? [0, s.length]
         : visibleRange(s, along.domain[0], along.domain[1]);
       const positions = horizontal ? s.y : s.x;
+      // On a panel's own categories, chart bands are read through their places (see placeAt).
+      const places = s.places?.[horizontal ? "y" : "x"];
       const ends = horizontal ? s.x : s.y;
       const bases = horizontal ? s.x0 : s.y0;
       const rects = frame.floats(s.key, "rect", (end - start) * 4);
@@ -289,14 +362,15 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         !this.spec.stack && frame.theme.barRadius > 0
           ? frame.bytes(s.key, "ends", Math.ceil(rects.length / 4))
           : undefined;
-      const places = keyed ? frame.doubles(s.key, "at", end - start) : undefined;
+      const shown = keyed ? frame.doubles(s.key, "at", end - start) : undefined;
       const span = keyed ? frame.floats(s.key, "span", (end - start) * 2) : undefined;
       let count = 0;
       // Bars at times an axis break leaves out are not drawn.
       const breaks = along.breaks;
       for (let k = start; k < end; k++) {
         const row = rowOf(s, k);
-        const at = positions[row]!;
+        const band = positions[row]!;
+        const at = places && band >= 0 ? places.at(band) : band;
         const value = ends[row]!;
         if (!Number.isFinite(value) || (this.#categorical && at < 0)) continue;
         if (breaks?.hides(at)) continue;
@@ -320,8 +394,8 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         }
         if (rounding)
           rounding[count] = horizontal ? (tip > root ? RIGHT : LEFT) : tip < root ? TOP : BOTTOM;
-        if (places) {
-          places[count] = at;
+        if (shown) {
+          shown[count] = at;
           span![count * 2] = root;
           span![count * 2 + 1] = tip;
         }
@@ -347,7 +421,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         rects,
         count,
         rounded: rounding && { radius: frame.theme.barRadius, ends: rounding },
-        bars: places && { horizontal, at: places, span: span! },
+        bars: shown && { horizontal, at: shown, span: span! },
       });
       if (labeled) out.push(...labeled.flush(s.key));
     });
@@ -682,8 +756,7 @@ function stackBars(series: readonly Series[], shown: readonly boolean[]): Stack 
   const negative = new Map<number, number>();
   const tops: Float64Array[] = [];
   const bases: Float64Array[] = [];
-  const allocate = (length: number) =>
-    [new Float64Array(length).fill(Number.NaN), new Float64Array(length).fill(Number.NaN)] as const;
+  const allocate = (length: number) => [nans(length), nans(length)] as const;
   // Series split by a category field cover disjoint rows of one field, so
   // they share table-sized arrays; series of different fields need their own.
   let shared: readonly [Float64Array, Float64Array] | undefined;
@@ -705,6 +778,11 @@ function stackBars(series: readonly Series[], shown: readonly boolean[]): Stack 
     bases.push(base);
   });
   return { tops, bases };
+}
+
+/** An array of `length` NaNs: stack ends of rows not stacked are not drawn. */
+function nans(length: number): Float64Array {
+  return new Float64Array(length).fill(Number.NaN);
 }
 
 /**

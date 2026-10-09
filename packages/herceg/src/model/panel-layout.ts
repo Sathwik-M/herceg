@@ -2,9 +2,10 @@
 // values, or subplots, whose marks name their panel. The model reads either
 // through these types; their code loads only with a facet or panels.
 
-import type { Mark } from "../marks/mark.ts";
+import type { BandList, Bands, Mark } from "../marks/mark.ts";
+import { type BandPlaces, rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
-import type { AxisSpec, ChartSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisSpec, ChartSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 
@@ -36,6 +37,20 @@ export interface PanelSplit {
   members?: boolean[][];
   /** Each mark's series in all panels; marks that repeat, once. */
   all: MarkSeries[];
+  /**
+   * With categories resolved per panel along an axis, each panel's bands on
+   * it: its group's (see PanelBands).
+   */
+  bands?: { x?: readonly BandList[]; y?: readonly BandList[] };
+}
+
+/**
+ * What preparing panels' series reads of the chart: the series its legend
+ * hid, which stacks count as zero, and its `resolve`.
+ */
+export interface PanelChart {
+  readonly hidden: ReadonlySet<string>;
+  readonly config: Pick<ChartSpec, "resolve">;
 }
 
 /** Sees a split's rows and columns of panels, and throws if the chart cannot draw them. */
@@ -46,11 +61,27 @@ export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y"> & {
   x?: AxisSpec | undefined;
 };
 
+/**
+ * Splits a chart's series into panels, keeping what it can from one scene
+ * to the next; `bands` are the chart's band axes' bands, in order.
+ */
+export interface PanelSplitter {
+  split(
+    base: readonly MarkSeries[],
+    check: PanelCheck,
+    chart: PanelChart,
+    bands: Bands,
+  ): PanelSplit;
+}
+
 export interface PanelLayout {
   /** Rejects marks and options the panels cannot draw. */
   check(marks: readonly Mark[], options: LayoutOptions): void;
-  /** Splits a chart's series into panels, keeping what it can from one scene to the next. */
-  splitter(): { split(base: readonly MarkSeries[], check: PanelCheck): PanelSplit };
+  /** Whether the panels split the mark's rows (see `Mark.series`), rather than draw it whole. */
+  splits(mark: Mark): boolean;
+  /** How panels share y when the chart's `resolve` does not say. */
+  readonly yDefault: ScaleResolution;
+  splitter(): PanelSplitter;
   grid(split: PanelSplit, lineHeight: number): PanelGrid;
   /** The headers panel `index`, named by `values`, at `plot`, carries. */
   headers(
@@ -64,8 +95,6 @@ export interface PanelLayout {
   ): SceneText[];
   /** What to do when the panels do not fit, for the error saying so. */
   readonly remedy: string;
-  /** How panels share y when the chart's `resolve` does not say. */
-  readonly yDefault: ScaleResolution;
   /**
    * The `axis` of a group of panels sharing a scale, whose first is panel
    * `index` and which draws `drawn`: its settings over the chart's, and its type.
@@ -79,7 +108,12 @@ export interface PanelLayout {
   ): { type: AxisType; spec: AxisSpec | undefined };
   /** Panel `index`'s `axis` settings: the chart's, with the panel's own. */
   panelAxis(axis: "x" | "y", index: number, chart: AxisSpec | undefined): AxisSpec | undefined;
-  groups(resolution: ScaleResolution, split: PanelSplit, columns: number): PanelGroups;
+  groups(
+    resolution: ScaleResolution,
+    split: PanelSplit,
+    columns: number,
+    axis: "x" | "y",
+  ): PanelGroups;
   /** See `across`. */
   across(
     split: PanelSplit,
@@ -94,21 +128,44 @@ export interface PanelLayout {
 export interface PanelGroups {
   groupOf: number[];
   drawn: MarkSeries[][];
-  /** Its panels' keys, so a group whose panels change is another group. */
+  /**
+   * Its panels' keys, so a group whose panels change is another group; on
+   * an axis of their own categories, and the number of those, as a group
+   * whose categories change places other categories at its band indices.
+   */
   keys: string[];
 }
 
 /**
- * The groups of a split's panels that share a scale under `resolution`
- * (each panel alone, or the panels of a row or of a column, in rows of
- * `columns`): each panel's group, and what each group's panels draw.
+ * The groups of a split's panels that share a scale along `axis` under
+ * `resolution` (each panel alone, or the panels of a row or of a column, in
+ * rows of `columns`): each panel's group, and what each group's panels draw.
  */
 export function groups(
   resolution: ScaleResolution,
   split: PanelSplit,
   columns: number,
+  axis: "x" | "y",
 ): PanelGroups {
-  const groupOf = split.panels.map((_, i) =>
+  const groupOf = groupsOf(resolution, split.panels.length, columns);
+  const drawn = drawnBy(split, groupOf) as MarkSeries[][];
+  const members: (string | number)[][] = drawn.map(() => []);
+  groupOf.forEach((g, i) => {
+    members[g]!.push(split.keys[i]!);
+  });
+  const lists = split.bands?.[axis];
+  return {
+    groupOf,
+    drawn,
+    keys: members.map((keys, g) =>
+      JSON.stringify(lists ? [...keys, numbers.get(lists[groupOf.indexOf(g)]!)!] : keys),
+    ),
+  };
+}
+
+/** The group of each of `count` panels in rows of `columns` that share a scale under `resolution`. */
+function groupsOf(resolution: ScaleResolution, count: number, columns: number): number[] {
+  return Array.from({ length: count }, (_, i) =>
     resolution === "independent"
       ? i
       : resolution === "rows"
@@ -117,12 +174,6 @@ export function groups(
           ? i % columns
           : 0,
   );
-  const drawn = drawnBy(split, groupOf) as MarkSeries[][];
-  const members: string[][] = drawn.map(() => []);
-  groupOf.forEach((g, i) => {
-    members[g]!.push(split.keys[i]!);
-  });
-  return { groupOf, drawn, keys: members.map((keys) => JSON.stringify(keys)) };
 }
 
 /**
@@ -179,4 +230,241 @@ function drawnBy(split: PanelSplit, groupOf: readonly number[]): (MarkSeries[] |
     });
   });
   return Array.from(drawn, (group) => group?.filter((entry) => entry !== undefined));
+}
+
+/**
+ * Refuses what panels with categories of their own cannot draw yet: with
+ * `resolve` other than "shared" on a category axis, marks other than bars
+ * banding it, synced charts (a band index means another category in each
+ * panel), and brushes along a y axis of such categories.
+ */
+export function checkBands(
+  marks: readonly Mark[],
+  options: LayoutOptions,
+  yDefault: ScaleResolution,
+): void {
+  for (const axis of ["x", "y"] as const) {
+    const resolution = options.resolve?.[axis] ?? (axis === "x" ? "shared" : yDefault);
+    const banding = marks.filter((mark) => mark.channelKind(axis) === "category");
+    if (resolution === "shared" || banding.length === 0) continue;
+    const other = banding.find((mark) => mark.spec.type !== "bar");
+    if (other)
+      throw new Error(
+        `A ${other.spec.type} mark's categories cannot be resolved per panel yet; give the chart resolve: { ${axis}: "shared" }`,
+      );
+    const { brush, sync } = options.interaction ?? {};
+    if (sync)
+      throw new Error(
+        `Charts whose panels have categories of their own (resolve.${axis}) cannot be synced yet`,
+      );
+    if (axis === "y" && brush !== undefined && brush !== "x")
+      throw new Error("Charts whose panels have y categories of their own can brush along x only");
+  }
+}
+
+/** Band lists of groups of panels, numbered: a list of other keys has another number. */
+const numbers = new WeakMap<BandList, number>();
+let numbered = 0;
+
+/** A group's bands: the chart bands its panels hold, and where each is among them. */
+interface GroupBands {
+  /** The chart's bands they were taken from. */
+  chart: BandList;
+  /** The chart bands the group's panels hold, ascending. */
+  held: Int32Array;
+  list: BandList;
+  /** Undefined when they are the chart's first bands, each at its own place. */
+  places: BandPlaces | undefined;
+}
+
+/**
+ * Categories resolved per panel (`resolve` other than "shared" on a band
+ * axis): each group of panels sharing the axis gets the chart's bands that
+ * the rows its panels draw hold, in the chart's order, and every series
+ * banding that axis reads its rows' chart band indices through their
+ * places there (`Series.places`), so no panel copies or remaps a table's
+ * rows. Marks drawn whole (facet repeats, subplots) count all their rows in
+ * every panel they draw in. A chart keeps one, so groups keep their bands
+ * while they are unchanged.
+ */
+export class PanelBands {
+  /** Each group's bands as of the last split, by its panels' keys: a group of other panels is another. */
+  #groups = new Map<string, GroupBands>();
+  /** The chart bands rows hold, by the rows (or the whole column) and their band indices. */
+  readonly #held = new WeakMap<object, { bands: Series["x"]; held: Int32Array }>();
+  /** A flag per chart band, cleared after each use. */
+  #seen = new Uint8Array(0);
+
+  /**
+   * Gives `split`'s panels, in rows of `columns`, their groups' bands along
+   * the axis whose categories they resolve apart, if any, from the chart's
+   * `bands`; `yDefault` is how they share y unless the chart's `resolve` says.
+   */
+  place(
+    split: PanelSplit,
+    columns: number,
+    bands: Bands,
+    resolve: ResolveSpec | undefined,
+    yDefault: ScaleResolution,
+  ): void {
+    const resolution = { x: resolve?.x ?? "shared", y: resolve?.y ?? yDefault };
+    const axis =
+      bands.x && resolution.x !== "shared" ? "x" : bands.y && resolution.y !== "shared" ? "y" : "";
+    if (!axis) {
+      this.#groups.clear();
+      return;
+    }
+    const chart = bands[axis]!;
+    const count = chart.keys.length;
+    if (this.#seen.length < count) this.#seen = new Uint8Array(count);
+    const groupOf = groupsOf(resolution[axis], split.panels.length, columns);
+    const panelsOf: number[][] = [];
+    groupOf.forEach((g, p) => {
+      panelsOf[g] ??= [];
+      panelsOf[g].push(p);
+    });
+    const last = this.#groups;
+    this.#groups = new Map();
+    const groups = panelsOf.map((panels) => {
+      const found: number[] = [];
+      for (const p of panels)
+        split.panels[p]!.forEach(({ mark, series }, m) => {
+          if (split.members?.[p]?.[m] === false || mark.channelKind(axis) !== "category") return;
+          for (const s of series)
+            for (const band of this.#rowBands(s, axis, count)) found.push(band);
+        });
+      const members = JSON.stringify(panels.map((p) => split.keys[p]));
+      const group = this.#group(last.get(members), chart, this.#distinct(found).sort());
+      this.#groups.set(members, group);
+      return group;
+    });
+    // Series share a copy per group, as they share the group's places. Their
+    // chart band indices may ascend where their places do not reach the
+    // panel's domain, so they are searched as unsorted.
+    const copies = groups.map(() => new Map<Series, Series>());
+    split.panels = split.panels.map((marks, p) => {
+      const g = groupOf[p]!;
+      const { places: at } = groups[g]!;
+      const places = { [axis]: at };
+      return marks.map(({ mark, series }) => ({
+        mark,
+        series:
+          !at || mark.channelKind(axis) !== "category"
+            ? series
+            : series.map((s) => {
+                let copy = copies[g]!.get(s);
+                if (!copy) {
+                  copy = { ...s, places, sorted: false };
+                  copies[g]!.set(s, copy);
+                }
+                return copy;
+              }),
+      }));
+    });
+    split.bands = { [axis]: groupOf.map((g) => groups[g]!.list) };
+  }
+
+  /** A group's bands for `held`, keeping its `last` ones, or their list, while they are the same. */
+  #group(last: GroupBands | undefined, chart: BandList, held: Int32Array): GroupBands {
+    if (last?.chart === chart && same(last.held, held)) return last;
+    const keys = Array.from(held, (band) => chart.keys[band]!);
+    const labels = Array.from(held, (band) => chart.labels[band]!);
+    // Bands at their own places need none (as when every panel holds all of them).
+    const places = held.every((band, place) => band === place) ? undefined : new Places(held);
+    const sameKeys = last !== undefined && same(last.list.keys, keys);
+    if (sameKeys && same(last.list.labels, labels)) return { chart, held, list: last.list, places };
+    // Frozen: axes share the labels with the chart's panels, which show them to applications.
+    const list = { keys, labels: Object.freeze(labels) };
+    // Labels alone changing (another locale) leaves the bands the same.
+    numbers.set(list, sameKeys ? numbers.get(last.list)! : ++numbered);
+    return { chart, held, list, places };
+  }
+
+  /**
+   * The chart bands the rows of `s` hold, found once per rows and band
+   * indices: facets split a table's rows once per version, and series drawn
+   * whole read whole columns.
+   */
+  #rowBands(s: Series, axis: "x" | "y", count: number): Int32Array {
+    const bands = s[axis];
+    const key = s.rows ?? bands;
+    const cached = this.#held.get(key);
+    if (cached?.bands === bands) return cached.held;
+    const seen = this.#seen;
+    const found: number[] = [];
+    for (let k = 0; k < s.length; k++) {
+      const band = bands[rowOf(s, k)]!;
+      if (band < 0 || band >= count || seen[band]) continue;
+      seen[band] = 1;
+      found.push(band);
+    }
+    for (const band of found) seen[band] = 0;
+    const held = Int32Array.from(found);
+    this.#held.set(key, { bands, held });
+    return held;
+  }
+
+  /** The distinct bands of `bands`, in order of first appearance. */
+  #distinct(bands: readonly number[]): Int32Array {
+    const seen = this.#seen;
+    const out: number[] = [];
+    for (const band of bands) {
+      if (seen[band]) continue;
+      seen[band] = 1;
+      out.push(band);
+    }
+    for (const band of out) seen[band] = 0;
+    return Int32Array.from(out);
+  }
+}
+
+/**
+ * Groups whose bands span at most this many chart bands, or this many times
+ * as many as they hold, look places up in an array over the span.
+ */
+const SPAN = 4096;
+const SPREAD = 8;
+
+/**
+ * Where chart bands are among the ascending ones a group holds: by an
+ * array over the chart bands from its first to its last, when that is
+ * short or they are close together (as in data sorted by panel), else by a
+ * binary search of those it holds, so many panels of few categories each
+ * keep nothing as long as the chart's band list per panel.
+ */
+class Places implements BandPlaces {
+  readonly #held: Int32Array;
+  readonly #first: number;
+  readonly #span: Int32Array | undefined;
+
+  constructor(held: Int32Array) {
+    this.#held = held;
+    this.#first = held[0] ?? 0;
+    const length = held.length && held[held.length - 1]! - this.#first + 1;
+    if (length > Math.max(SPAN, held.length * SPREAD)) return;
+    const span = new Int32Array(length).fill(-1);
+    held.forEach((band, place) => {
+      span[band - this.#first] = place;
+    });
+    this.#span = span;
+  }
+
+  at(band: number): number {
+    if (this.#span) return this.#span[band - this.#first] ?? -1;
+    const held = this.#held;
+    let lo = 0;
+    let hi = held.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (held[mid]! < band) lo = mid + 1;
+      else hi = mid;
+    }
+    return held[lo] === band ? lo : -1;
+  }
+}
+
+function same<T>(a: ArrayLike<T>, b: ArrayLike<T>): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
