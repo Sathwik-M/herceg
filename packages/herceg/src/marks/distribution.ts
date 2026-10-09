@@ -97,6 +97,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   readonly spec: Frozen<T>;
   readonly table: Table;
   readonly tooltip: "x" | "y";
+  readonly summarizes = true;
   readonly bandPadding = 0.2;
   abstract readonly inset: { readonly x: number; readonly y: number };
   /** True when categories are on y and values on x. */

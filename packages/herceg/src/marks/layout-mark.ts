@@ -44,6 +44,10 @@ export interface LayoutItem {
   outline: string;
   /** What `value` measures, when it differs from the mark's `measure` (items of several marks). */
   measure?: string;
+  /** The row of the mark's table the item is, for items that are one row. */
+  row?: number;
+  /** In a map of several layers, the index of the item's layer among them. */
+  layer?: number;
 }
 
 /** What a layout mark drew in one scene. */

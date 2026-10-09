@@ -1,6 +1,8 @@
 """Type-checked by mypy (`npm run lint:python`), never run: each ignore must be needed."""
 
 import herceg as hg
+from herceg.streamlit import ChartState
+from herceg.widget import ChartWidget
 
 data = {"t": [1.0, 2.0], "v": [3.0, 4.0]}
 
@@ -18,3 +20,18 @@ hg.area(data, "t", y1="v", y2="v", fill_opacity=0.3)
 hg.line(data, "t", "v", stroke_width="2")  # type: ignore[arg-type]
 update: hg.ChartUpdate = {"title": None, "theme": "light"}
 not_live: hg.ChartUpdate = {"facet": "host"}  # type: ignore[typeddict-unknown-key]
+
+
+def live(widget: ChartWidget, state: ChartState) -> None:
+    widget.viewport = (1.0, 2.0)
+    widget.viewport = hg.Viewport(x=(1.0, 2.0), y=(0.0, 5.0))
+    widget.viewport = None
+    widget.selection = hg.Selection(y=("a", "b"), lasso=((0.0, 1.0), (1.0, 1.0), (1.0, 0.0)))
+    widget.selection = ("a", "c")
+    widget.viewport = "x"  # type: ignore[assignment]
+    widget.viewport.x[0]  # type: ignore[index]
+    widget.on_select(lambda selection: selection and selection.lasso)
+    widget.on_viewport(lambda viewport: viewport.y_right)
+    widget.on_click(lambda inspection: [point.row for point in inspection.points])
+    if state.selection is not None:
+        print(state.selection.y)

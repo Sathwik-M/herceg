@@ -169,14 +169,14 @@ export class GeoMap implements LayoutMark {
       itemAt(px, py) {
         for (let l = results.length - 1; l >= 0; l--) {
           const item = results[l]!.itemAt(px, py);
-          if (item) return item;
+          if (item) return { ...item, layer: l };
         }
         return undefined;
       },
       count: starts[results.length]!,
       item(index): LayoutItem {
         const l = layerOf(index);
-        return results[l]!.item(index - starts[l]!);
+        return { ...results[l]!.item(index - starts[l]!), layer: l };
       },
       indexOf(key) {
         for (let l = 0; l < results.length; l++) {

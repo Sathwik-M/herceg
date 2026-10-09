@@ -396,6 +396,17 @@ describe("<Chart>", () => {
     expect(seen).toEqual(["two:1-2"]);
   });
 
+  it("emits the whole view", () => {
+    const { view, chart } = chartRef();
+    const seen: unknown[] = [];
+    mount(
+      `<Chart ref="view" @viewport="record"><Line :data="metrics" x="t" y="a" /></Chart>`,
+      () => ({ metrics, view, record: (event: unknown) => seen.push(event) }),
+    );
+    chart().setViewport({ x: [1, 2], y: [0, 5] });
+    expect(seen).toEqual([{ x: [1, 2], y: [0, 5], yRight: null }]);
+  });
+
   it("supports event modifiers and keeps native events off chart listeners", () => {
     const { view, chart } = chartRef();
     const seen: unknown[] = [];

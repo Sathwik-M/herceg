@@ -586,12 +586,24 @@ def test_pie_slices_decode_as_item_inspections():
             "value": 40,
             "time": False,
             "label": "revenue",
-            "points": [{"series": "North", "value": 40, "text": "40 (40%)"}],
+            "points": [
+                {
+                    "mark": 0,
+                    "markId": None,
+                    "key": '[0,"North"]',
+                    "label": "North",
+                    "row": None,
+                    "value": 40,
+                    "text": "40 (40%)",
+                }
+            ],
         }
     )
+    assert inspection is not None
     assert inspection.axis == "item"
     assert inspection.value == 40
-    assert inspection.points[0].series == "North"
+    # A slice sums rows: it is no one row.
+    assert inspection.points[0].label == "North" and inspection.points[0].row is None
 
 
 def test_gauges_send_their_dial_and_bands():

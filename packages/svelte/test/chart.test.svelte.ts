@@ -267,6 +267,13 @@ describe("<Chart>", () => {
     expect(subscriptions).toBe(0);
   });
 
+  it("passes the whole view to onviewport", () => {
+    const seen: unknown[] = [];
+    const props = lines({ options: { onviewport: (view: unknown) => seen.push(view) } });
+    props.chart.setViewport({ x: [1, 2], y: [0, 5] });
+    expect(seen).toEqual([{ x: [1, 2], y: [0, 5], yRight: null }]);
+  });
+
   it("listens only while a handler is given", () => {
     const seen: unknown[] = [];
     const props = lines();

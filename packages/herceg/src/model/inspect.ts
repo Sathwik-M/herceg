@@ -14,9 +14,24 @@ import {
 } from "../marks/series.ts";
 import type { PositionScale } from "../scale/scale.ts";
 
+/** One point of an inspection: a series' point, or a layout mark's item. */
 export interface InspectedPoint {
+  /** The point's mark: its index in the chart's `marks`. */
+  mark: number;
+  /** The mark's `id`, when it has one. */
+  markId: string | undefined;
+  /** Identifies the point's series, or a layout mark's item, in the chart. */
   key: string;
+  /** What the tooltip names the point by: its series' name, a heatmap cell's row category, or an item's name. */
   label: string;
+  /**
+   * The position in the mark's table of the row the point is, which
+   * `table.value(field, row)` reads (rows dropped from the front renumber
+   * the others). Undefined when no one row is the point: histogram bins,
+   * box plot and violin groups, pie slices, funnel stages, tree nodes, and
+   * network and Sankey nodes and links summarize rows.
+   */
+  row: number | undefined;
   color: string;
   /** Formatted value, or "low – high" for bands. */
   text: string;
@@ -71,6 +86,11 @@ export interface MarkSeries {
   series: Series[];
 }
 
+/** A mark a panel inspects: its series there, and its index in the chart's marks. */
+export interface InspectedMark extends MarkSeries {
+  index: number;
+}
+
 /** A y axis: the frame its marks draw with and the formatter of its values. */
 export interface YAxisView {
   frame: Frame;
@@ -79,7 +99,7 @@ export interface YAxisView {
 
 /** What an Inspector needs from the scene it inspects. */
 export interface DrawnScene {
-  marks: MarkSeries[];
+  marks: InspectedMark[];
   /** The frame of marks on the left y axis; its x scale is every mark's. */
   frame: Frame;
   /** The right y axis and the marks on it, when any are. */
@@ -93,7 +113,7 @@ export interface DrawnScene {
 }
 
 export class Inspector {
-  readonly marks: MarkSeries[];
+  readonly marks: InspectedMark[];
   readonly frame: Frame;
   readonly mode: TooltipMode;
   readonly formatX: Formatter;
@@ -114,6 +134,8 @@ export class Inspector {
   }
   /** The mark of each series, for how its points are inspected and formatted. */
   readonly #markOf = new Map<Series, Mark>();
+  /** The chart's index of each series' mark, which inspected points name. */
+  readonly #indexOf = new Map<Series, number>();
 
   constructor(scene: DrawnScene) {
     this.marks = scene.marks;
@@ -125,7 +147,12 @@ export class Inspector {
     this.#hidden = scene.hidden;
     this.#left = { frame: scene.frame, formatY: scene.formatY };
     this.#right = scene.right;
-    for (const { mark, series } of scene.marks) for (const s of series) this.#markOf.set(s, mark);
+    for (const { mark, series, index } of scene.marks) {
+      for (const s of series) {
+        this.#markOf.set(s, mark);
+        this.#indexOf.set(s, index);
+      }
+    }
   }
 
   #visibleSeries(filter: (mark: Mark) => boolean): Series[] {
@@ -472,8 +499,12 @@ export class Inspector {
     const formatValue = along ? this.formatX : this.#axisOf(s).formatY;
     const low = s.range ? (along ? s.x0 : s.y0)![row]! : Number.NaN;
     return {
+      mark: this.#indexOf.get(s)!,
+      markId: mark?.spec.id,
       key: s.key,
       label: tooltip === "cell" ? this.formatY(s.y[row]!) : s.label,
+      // Summarizing marks' series index rows of their summaries.
+      row: mark?.summarizes ? undefined : row,
       color: mark?.pointColor ? mark.pointColor(s, row, this.frame.theme) : s.color,
       value,
       text: mark?.pointText

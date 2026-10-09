@@ -60,7 +60,8 @@ export const options: ChartProps = {
   y: { label: "ms" },
   interaction: { zoom: true },
   onselect: ({ x }) => x?.[0].toFixed(),
-  onhover: ({ inspection }) => inspection?.points,
+  onviewport: ({ x, y, yRight }) => [x, y, yRight],
+  onhover: ({ inspection }) => inspection?.points.map(({ mark, row }) => [mark, row]),
 };
 // @ts-expect-error chart options keep herceg's types
 export const wrongTitle: ChartProps = { title: 3 };

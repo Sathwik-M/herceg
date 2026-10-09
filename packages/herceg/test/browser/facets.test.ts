@@ -294,8 +294,11 @@ describe("facet panels with y scales of their own", () => {
   it("refuse a y viewport, which no one scale could show", () => {
     const data = table({ x: [0, 1, 0, 1], y: [1, 2, 100, 200], f: ["A", "A", "B", "B"] });
     const chart = grouped(line(data, { x: "x", y: "y" }));
-    expect(() => chart.setYViewport([500, 600])).toThrow("no one y viewport");
-    chart.setYViewport(null);
+    expect(() => chart.setViewport({ y: [500, 600] })).toThrow("no one y viewport");
+    // A change refused in part changes nothing.
+    expect(() => chart.setViewport({ x: [0, 0.5], y: [500, 600] })).toThrow("no one y viewport");
+    expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: null });
+    chart.setViewport({ y: null });
     chart.destroy();
   });
 });
@@ -376,7 +379,7 @@ describe("facet panels with x scales of their own", () => {
     expect(zoomed!.x.map(104)).toBeCloseTo(px, 0);
     expect(views(chart)[0]).toBeNull();
     expect(views(chart)[1]).not.toBeNull();
-    expect(events).toEqual([{ domain: views(chart)[1], y: null, panels: ["b"] }]);
+    expect(events).toEqual([{ x: views(chart)[1], y: null, yRight: null, panels: ["b"] }]);
     // Over the gap between panels, the wheel scrolls the page.
     expect(wheel(chart, a!.plot.x + a!.plot.width + 4, mid).defaultPrevented).toBe(false);
     // Dragging pans the panel pressed.
@@ -392,7 +395,7 @@ describe("facet panels with x scales of their own", () => {
     expect(views(chart)[1]).toBeNull();
     dblclick(chart, 2, 2);
     expect(views(chart)).toEqual([null, null]);
-    expect(events.map((e) => [e.domain, e.panels])).toEqual([
+    expect(events.map((e) => [e.x, e.panels])).toEqual([
       [null, ["b"]],
       [null, ["a"]],
     ]);
@@ -435,13 +438,66 @@ describe("facet panels with x scales of their own", () => {
     // A y range applies to every panel: one event per x scale.
     const events: ChartEvents["viewport"][] = [];
     chart.on("viewport", (event) => events.push(event));
-    chart.setYViewport([0, 50]);
+    chart.setViewport({ y: [0, 50] });
     expect(events).toEqual([
-      { domain: null, y: [0, 50], panels: ["a"] },
-      { domain: [101, 102], y: [0, 50], panels: ["b"] },
+      { x: null, y: [0, 50], yRight: null, panels: ["a"] },
+      { x: [101, 102], y: [0, 50], yRight: null, panels: ["b"] },
     ]);
+    expect(chart.getViewport({ panel: "b" })).toEqual({ x: [101, 102], y: [0, 50], yRight: null });
+    expect(() => chart.getViewport()).toThrow("need a panel");
+    // A listener changing the view again while the first scale's event is
+    // reported: its change reports both scales, and the outer report does
+    // not report the second scale again.
+    events.length = 0;
+    const stop = chart.on("viewport", ({ y }) => {
+      if (y?.[1] === 60) chart.setViewport({ y: [0, 70] });
+    });
+    chart.setViewport({ y: [0, 60] });
+    expect(events.map((e) => [e.y, e.panels])).toEqual([
+      [[0, 60], ["a"]],
+      [[0, 70], ["a"]],
+      [[0, 70], ["b"]],
+    ]);
+    stop();
     chart.setViewport(null);
     expect(views(chart)).toEqual([null, null]);
+    chart.destroy();
+  });
+
+  it("report letting go of a y zoom when panels get y scales of their own", () => {
+    const chart = independent({ resolve: { x: "independent", y: "shared" } });
+    const events: ChartEvents["viewport"][] = [];
+    chart.on("viewport", (event) => events.push(event));
+    chart.setViewport({ y: [0, 10] });
+    chart.update({ resolve: { x: "independent", y: "independent" } });
+    expect(chart.getViewport({ panel: "a" }).y).toBeNull();
+    chart.update({ resolve: { x: "independent", y: "shared" } });
+    // The same zoom again is a change, and is reported.
+    chart.setViewport({ y: [0, 10] });
+    expect(events.map((e) => [e.y, e.panels])).toEqual([
+      [[0, 10], ["a"]],
+      [[0, 10], ["b"]],
+      [null, ["a"]],
+      [null, ["b"]],
+      [[0, 10], ["a"]],
+      [[0, 10], ["b"]],
+    ]);
+    // A listener the drawing calls (hover) changing the view: its change
+    // is reported once, within the report of the y zoom let go.
+    events.length = 0;
+    const [a] = chart.model.panels();
+    let zoomed = false;
+    chart.on("hover", () => {
+      if (zoomed) return;
+      zoomed = true;
+      chart.setViewport([101, 102], { panel: "a" });
+    });
+    pointer(chart.root, "pointermove", a!.plot.x + 10, a!.plot.y + 10);
+    chart.update({ resolve: { x: "independent", y: "independent" } });
+    expect(events.map((e) => [e.x, e.y, e.panels])).toEqual([
+      [[101, 102], null, ["a"]],
+      [null, null, ["b"]],
+    ]);
     chart.destroy();
   });
 

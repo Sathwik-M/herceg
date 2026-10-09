@@ -18,6 +18,7 @@ import {
   ChartModel,
   type Inspection,
   type PanelInfo,
+  type Viewport,
   type YViewport,
 } from "../model/model.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
@@ -169,6 +170,15 @@ export class Chart implements Scheduled, SyncMember {
   readonly #events = new Emitter();
   /** What the last hover event reported, to emit only changes. */
   #hovered = "";
+  /** Inside `#changeView`, whose end reports the change. */
+  #changingView = false;
+  /**
+   * What viewport events reported for each x scale while a change of view
+   * is being reported (see `#reporting`): a listener's own change, reported
+   * inside the report of another, is not reported again by the outer one.
+   */
+  readonly #reported = new Map<string, Viewport>();
+  #reportDepth = 0;
   readonly #cleanup: (() => void)[] = [];
   /** Subscriptions to the tables the marks read and the row views some show. */
   readonly #tables = new Map<Table | RowView, () => void>();
@@ -261,32 +271,75 @@ export class Chart implements Scheduled, SyncMember {
     const next: Record<string, unknown> = { ...this.#options, ...options };
     for (const [key, value] of Object.entries(options)) if (value === undefined) delete next[key];
     this.#options = next as unknown as ChartOptions;
+    const y = this.model.yViewport;
     readPage(this.#container, (page) => this.model.update(this.#options, page));
     // The page was just read; a change it had is in the theme now.
     this.#pageChanged = false;
     this.#settle();
     this.#applyOptions();
     this.#invalidate();
+    // Panels given y scales of their own let go of the y viewport. Which x
+    // scales there are now is known once drawn; listeners drawing calls
+    // (hover, select) may change the view, which this report then includes.
+    if (this.model.yViewport !== y) {
+      this.#reporting(() => {
+        this.flush();
+        const scales = this.#xScales();
+        this.#reportViews(
+          scales,
+          scales.map((first) => ({ ...y, x: this.model.viewportOf(first?.key) })),
+        );
+      });
+    }
   }
 
   /**
-   * Shows an x range (epoch ms for time axes), or null to fit the data. In
-   * charts whose panels have x scales of their own, a range needs the
-   * `panel` whose scale shows it, and null without one fits every scale.
+   * Zooms: each axis given (`x`, `y`, `yRight`) shows a range (epoch ms on
+   * time axes), or with null its configured domain or its data; axes left
+   * out keep their view. A pair is an x range, and null resets every axis.
+   * In charts whose panels have x scales of their own, an x range needs the
+   * `panel` whose scale shows it, and null without one resets every scale;
+   * y ranges are the chart's, whatever the panel.
    */
-  setViewport(domain: readonly [number, number] | null, target: PanelTarget = {}): void {
+  setViewport(
+    view: Partial<Viewport> | readonly [number, number] | null,
+    target: PanelTarget = {},
+  ): void {
     const { panel } = target;
     this.#current(panel);
-    this.#animated(() => this.#setViewport(domain, panel));
+    const change: Partial<Viewport> = Array.isArray(view)
+      ? { x: view as readonly [number, number] }
+      : ((view as Partial<Viewport> | null) ?? { x: null, y: null, yRight: null });
+    // Checked whole, so a change the chart refuses changes nothing.
+    if (change.x && panel === undefined) this.model.xGroupOf();
+    this.model.checkYViewport(change);
+    this.#animated(() =>
+      this.#changeView(() => {
+        if (change.x !== undefined) this.model.setViewport(change.x, panel);
+        if (change.y !== undefined || change.yRight !== undefined) {
+          const kept = this.model.yViewport;
+          this.model.setYViewport({
+            y: change.y === undefined ? kept.y : change.y,
+            yRight: change.yRight === undefined ? kept.yRight : change.yRight,
+          });
+        }
+      }, change.x !== undefined),
+    );
   }
 
-  #setViewport(domain: readonly [number, number] | null, panel?: string): void {
-    this.#applyViewport(domain, panel);
-    // A viewport listener may have changed the viewport again; share where
-    // it ended up, not the request. Charts whose panels have x scales of
-    // their own share cursors only: a viewport belongs to some panels.
-    const sync = this.#options.interaction?.sync;
-    if (sync && this.model.sharesX) broadcastViewport(sync, this, this.model.viewport);
+  /**
+   * What the chart shows: the x range of the x scale every panel shares
+   * (or, in charts whose panels have x scales of their own, of `panel`'s),
+   * and the y ranges, each null when that axis is not zoomed.
+   */
+  getViewport(target: PanelTarget = {}): Viewport {
+    this.#current(target.panel);
+    return this.#viewOf(target.panel);
+  }
+
+  #viewOf(panel?: string): Viewport {
+    const { y, yRight } = this.model.yViewport;
+    return { x: this.model.viewportOf(panel), y, yRight };
   }
 
   /**
@@ -301,19 +354,6 @@ export class Chart implements Scheduled, SyncMember {
     if (this.#dirty && !(this.model.sharesX && find()?.xGroup === "")) this.flush();
     this.model.xGroupOf(panel);
     return find();
-  }
-
-  /**
-   * Shows a y range of the left axis, or null to fit the data. In charts with
-   * a right axis, `right` is its range; by default it shows what the same
-   * pixels show there.
-   */
-  setYViewport(domain: readonly [number, number] | null, right?: readonly [number, number]): void {
-    const panel = this.model.panels()[0];
-    const scale = panel?.yRight;
-    const across = (value: number) => scale!.invert(panel!.y.map(value));
-    const mapped = domain && scale ? ([across(domain[0]), across(domain[1])] as const) : undefined;
-    this.#animated(() => this.#setYViewport(domain && { y: domain, yRight: right ?? mapped }));
   }
 
   /**
@@ -477,21 +517,65 @@ export class Chart implements Scheduled, SyncMember {
   syncViewport(domain: readonly [number, number] | null): void {
     if (!this.model.sharesX) return;
     this.#settle();
-    this.#applyViewport(domain);
+    this.#changeView(() => this.model.setViewport(domain), false);
   }
 
-  #applyViewport(domain: readonly [number, number] | null, panel?: string): void {
-    // Fitting every x scale fits each in turn, reporting each.
-    if (!domain && panel === undefined && !this.model.sharesX) {
-      // A listener may change the panels; those gone are left alone.
-      for (const first of this.#xScales())
-        if (first && this.#still(first)) this.#applyViewport(null, first.key);
+  /**
+   * Makes the view changes `change` makes, then reports each x scale whose
+   * view changed (its x range, or the y ranges every scale shares) once,
+   * and with `shareX`, shares the x range with synced charts. Listeners run
+   * once the change is complete; changes made inside it report with it.
+   */
+  #changeView(change: () => void, shareX: boolean): void {
+    if (this.#changingView) {
+      change();
       return;
     }
-    const before = this.model.viewportOf(panel);
-    this.model.setViewport(domain, panel);
+    const scales = this.#xScales();
+    const before = scales.map((first) => this.#viewOf(first?.key));
+    this.#changingView = true;
+    try {
+      change();
+    } finally {
+      this.#changingView = false;
+    }
     this.#invalidate();
-    if (!sameRange(before, this.model.viewportOf(panel))) this.#reportViewport(panel);
+    this.#reportViews(scales, before);
+    // A listener may have changed the view again: share where it ended up.
+    // Charts whose panels have x scales of their own share cursors only: a
+    // viewport belongs to some panels.
+    const sync = this.#options.interaction?.sync;
+    if (shareX && sync && this.model.sharesX) broadcastViewport(sync, this, this.model.viewport);
+  }
+
+  /**
+   * Reports each x scale (named by its first panel) whose view is not what
+   * it was `before`, once: a listener's own change of view, made while
+   * these are reported, reports itself, and the views it reported are not
+   * reported again.
+   */
+  #reportViews(scales: readonly (PanelInfo | undefined)[], before: readonly Viewport[]): void {
+    this.#reporting(() =>
+      scales.forEach((first, i) => {
+        // A listener may have changed the panels; those gone are left alone.
+        if (first && !this.#still(first)) return;
+        const view = this.#viewOf(first?.key);
+        const group = first?.xGroup ?? "";
+        if (sameView(view, before[i]!) || sameView(view, this.#reported.get(group))) return;
+        this.#reported.set(group, view);
+        this.#events.emit("viewport", { ...view, ...(group && { panels: this.#keysOf(group) }) });
+      }),
+    );
+  }
+
+  /** Runs `report` as part of the report of a change of view that `#reported` records. */
+  #reporting(report: () => void): void {
+    this.#reportDepth++;
+    try {
+      report();
+    } finally {
+      if (--this.#reportDepth === 0) this.#reported.clear();
+    }
   }
 
   /** The first panel of each x scale; one undefined when every panel shares x. */
@@ -508,16 +592,6 @@ export class Chart implements Scheduled, SyncMember {
       .panels()
       .filter(({ xGroup }) => xGroup === x)
       .map(({ key }) => key);
-  }
-
-  /** Emits the view of `panel`'s x scale, naming its panels when other panels have other x scales. */
-  #reportViewport(panel?: string): void {
-    const x = panel === undefined ? undefined : this.model.xGroupOf(panel);
-    this.#events.emit("viewport", {
-      domain: this.model.viewportOf(panel),
-      y: this.model.yViewport?.y ?? null,
-      ...(x && { panels: this.#keysOf(x) }),
-    });
   }
 
   #invalidate() {
@@ -1011,24 +1085,25 @@ export class Chart implements Scheduled, SyncMember {
         const { plot, x: scale } = panel;
         const zoom = this.#zoomAxes(panel);
         const factor = Math.exp(event.deltaY * 0.002);
-        if (zoom.x) {
-          const px = Math.min(plot.x + plot.width, Math.max(plot.x, point.x));
-          this.#setViewport(
-            [
-              scale.invert(px - (px - plot.x) * factor),
-              scale.invert(px + (plot.x + plot.width - px) * factor),
-            ],
-            panel.key,
-          );
-        }
-        if (zoom.y) {
-          const py = Math.min(plot.y + plot.height, Math.max(plot.y, point.y));
-          this.#zoomY(
-            panel,
-            py + (plot.y + plot.height - py) * factor,
-            py - (py - plot.y) * factor,
-          );
-        }
+        const px = Math.min(plot.x + plot.width, Math.max(plot.x, point.x));
+        const py = Math.min(plot.y + plot.height, Math.max(plot.y, point.y));
+        this.#changeView(() => {
+          if (zoom.x) {
+            this.model.setViewport(
+              [
+                scale.invert(px - (px - plot.x) * factor),
+                scale.invert(px + (plot.x + plot.width - px) * factor),
+              ],
+              panel.key,
+            );
+          }
+          if (zoom.y)
+            this.#zoomY(
+              panel,
+              py + (plot.y + plot.height - py) * factor,
+              py - (py - plot.y) * factor,
+            );
+        }, zoom.x);
       },
       { passive: false },
     );
@@ -1105,10 +1180,12 @@ export class Chart implements Scheduled, SyncMember {
       if (this.#legend.element.contains(event.target as Node)) return;
       const { x, y } = local(event);
       const panel = this.model.sharesX ? undefined : this.#panelAt(x, y)?.key;
-      this.#animated(() => {
-        this.#setViewport(null, panel);
-        this.#setYViewport(null);
-      });
+      this.#animated(() =>
+        this.#changeView(() => {
+          this.model.setViewport(null, panel);
+          this.model.setYViewport({ y: null, yRight: null });
+        }, true),
+      );
     });
 
     on("keydown", (event) => this.#key(event));
@@ -1125,17 +1202,15 @@ export class Chart implements Scheduled, SyncMember {
     const { panel } = press;
     const { plot } = panel;
     const zoom = this.#zoomAxes(panel);
-    if (zoom.x) {
-      const shift = press.x - x;
-      this.#setViewport(
-        [panel.x.invert(plot.x + shift), panel.x.invert(plot.x + plot.width + shift)],
-        panel.key,
-      );
-    }
-    if (zoom.y) {
-      const shift = press.y - y;
-      this.#zoomY(panel, plot.y + plot.height + shift, plot.y + shift);
-    }
+    const [dx, dy] = [press.x - x, press.y - y];
+    this.#changeView(() => {
+      if (zoom.x)
+        this.model.setViewport(
+          [panel.x.invert(plot.x + dx), panel.x.invert(plot.x + plot.width + dx)],
+          panel.key,
+        );
+      if (zoom.y) this.#zoomY(panel, plot.y + plot.height + dy, plot.y + dy);
+    }, zoom.x);
   }
 
   /**
@@ -1180,10 +1255,13 @@ export class Chart implements Scheduled, SyncMember {
 
   /** Zooms to a brushed selection. */
   #zoomTo(selection: Selection, panel: PanelInfo) {
-    this.#animated(() => {
-      if (selection.x) this.#setViewport(selection.x, panel.key);
-      if (selection.y) this.#zoomY(panel, panel.y.map(selection.y[0]), panel.y.map(selection.y[1]));
-    });
+    const { x, y } = selection;
+    this.#animated(() =>
+      this.#changeView(() => {
+        if (x) this.model.setViewport(x, panel.key);
+        if (y) this.#zoomY(panel, panel.y.map(y[0]), panel.y.map(y[1]));
+      }, x !== null),
+    );
   }
 
   /**
@@ -1192,17 +1270,11 @@ export class Chart implements Scheduled, SyncMember {
    */
   #zoomY(panel: PanelInfo, bottom: number, top: number) {
     const range = (scale: PositionScale) => [scale.invert(bottom), scale.invert(top)] as const;
-    this.#setYViewport({ y: range(panel.y), yRight: panel.yRight && range(panel.yRight) });
-  }
-
-  #setYViewport(viewport: YViewport | null) {
-    const before = this.model.yViewport;
-    this.model.setYViewport(viewport);
-    this.#invalidate();
-    // Every x scale's view changed: one event for each.
-    if (!sameRange(before?.y ?? null, this.model.yViewport?.y ?? null))
-      for (const first of this.#xScales())
-        if (!first || this.#still(first)) this.#reportViewport(first?.key);
+    const view: YViewport = {
+      y: range(panel.y),
+      yRight: panel.yRight ? range(panel.yRight) : null,
+    };
+    this.model.setYViewport(view);
   }
 
   /** The panel whose plot holds a point of the chart. */
@@ -1480,6 +1552,13 @@ function sameSelection(a: Selection | null, b: Selection | null): boolean {
       a.lasso.length === b.lasso.length &&
       a.lasso.every(([x, y], i) => x === b.lasso![i]![0] && y === b.lasso![i]![1]));
   return sameRange(a.x, b.x) && sameRange(a.y, b.y) && sameLasso;
+}
+
+/** Two viewports show the same ranges. */
+function sameView(a: Viewport, b: Viewport | undefined): boolean {
+  return (
+    b !== undefined && sameRange(a.x, b.x) && sameRange(a.y, b.y) && sameRange(a.yRight, b.yRight)
+  );
 }
 
 /** Two ranges hold the same values, or are both null. */

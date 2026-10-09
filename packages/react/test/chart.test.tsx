@@ -422,6 +422,24 @@ describe("<Chart>", () => {
     expect(seen).toEqual(["two:1-2"]);
   });
 
+  it("passes the whole view to onViewportChange", () => {
+    let chart: HercegChart | null = null;
+    const views: unknown[] = [];
+    function App() {
+      const ref = useRef<HercegChart | null>(null);
+      chart = ref.current ?? chart;
+      return (
+        <Chart ref={ref} onViewportChange={(view) => views.push(view)}>
+          <Line data={metrics} x="t" y="a" />
+        </Chart>
+      );
+    }
+    act(() => root.render(<App />));
+    act(() => root.render(<App />));
+    act(() => (chart as unknown as HercegChart).setViewport({ x: [1, 2], y: [0, 5] }));
+    expect(views).toEqual([{ x: [1, 2], y: [0, 5], yRight: null }]);
+  });
+
   it("keeps the committed handler while a transition is suspended", async () => {
     let chart: HercegChart | null = null;
     const seen: string[] = [];

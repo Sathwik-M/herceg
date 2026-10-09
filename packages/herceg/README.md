@@ -799,8 +799,8 @@ beside the first panel of each row, or beside every panel when a row's
 panels differ. Specs with `resolve` need `"version": 2`, and with
 `resolve.x` `"version": 3`, so that readers from before them refuse them
 rather than draw shared axes. Charts whose panels have
-y scales of their own cannot zoom along y or take a y viewport
-(`setYViewport`) yet. Pointer, brush, and zoom work in any panel and act on
+y scales of their own cannot zoom along y or take y ranges in
+`setViewport` yet. Pointer, brush, and zoom work in any panel and act on
 its x scale; the arrow keys step through a panel and Up and Down move
 between its series and on to the next panel. Heatmaps, histograms, stacked bars, annotations over a
 table, and custom marks over a table without series can only repeat for
@@ -814,9 +814,9 @@ on the panel under the pointer, double-clicking a panel resets its scale,
 and double-clicking outside the panels resets every one. A shared y scale
 still fits what every panel shows of its own x range, so zooming one panel
 can change the y of the others. `setViewport([from, to], { panel })` names
-the panel whose scale shows the range (null without a panel fits every
+the panel whose scale shows the range (null without a panel resets every
 scale), and `viewport` events carry `panels`, the keys of the panels whose
-range `domain` is, one event per scale. A selection belongs to the panels
+range `x` is, one event per scale. A selection belongs to the panels
 sharing the x scale of the panel it was made in: it is drawn only there,
 `select(range, { panel })` needs that panel, and `select` events and
 `chart.selectionPanels` name them; a selection whose panels go (their facet
@@ -960,20 +960,32 @@ the thousands, not millions.
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |
-| `animation` | `true` or `{ duration }` (milliseconds, 250 by default) moves the axes gradually to a view asked for: `setViewport`, `setYViewport`, zooming to a brush, and double-click reset. Off by default. Wheel zoom, panning, new data, resizes, and export always show at once; charts with several panels or `sync`, pages preferring reduced motion, and charts whose frames seem to take over 10 ms (judged from earlier frames, alone or with the charts beside them) do not animate. The animation code loads with the first chart that asks for it. |
+| `animation` | `true` or `{ duration }` (milliseconds, 250 by default) moves the axes gradually to a view asked for: `setViewport` (both axes of one call together), zooming to a brush, and double-click reset. Off by default. Wheel zoom, panning, new data, resizes, and export always show at once; charts with several panels or `sync`, pages preferring reduced motion, and charts whose frames seem to take over 10 ms (judged from earlier frames, alone or with the charts beside them) do not animate. The animation code loads with the first chart that asks for it. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 | `projection` | How maps are projected: a projection's name or `{ type, centralMeridian?, parallels?, fit? }` (see Maps). |
 
-The returned `Chart` has `update(options)`, `setViewport([from, to] | null,
-{ panel? })` and `setYViewport([from, to] | null)` (the left axis; a right
-axis shows what the same pixels show on it), `select(selection | [from, to] |
-null, { panel? })` (a pair is shorthand for an x range), `selection` and
+The returned `Chart` has `update(options)`, `setViewport(view | [from, to] |
+null, { panel? })` and `getViewport({ panel? })`, `select(selection | [from,
+to] | null, { panel? })` (a pair is shorthand for an x range), `selection` and
 `selectionPanels` (see Small multiples for `panel`), `on(event, listener)`,
 `render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
 painter for large point series or the animation code loads, otherwise
 undefined).
+
+A `Viewport` is `{ x, y, yRight }`: the visible x range and the left and right
+y axes' ranges, in data values (epoch ms on time axes), each null when that
+axis is not zoomed and shows its configured `domain` or its data.
+`setViewport` changes the axes it is given (`setViewport({ y: [0, 100] })`
+zooms y alone; `{ x: null }` resets x) and keeps the others; a pair is an x
+range, and null resets every axis. Its changes are one change of view: one
+animation and one `viewport` event. `getViewport()` returns all three, so a
+saved view restores with `chart.setViewport(saved)`. In charts whose panels
+have x scales of their own, x ranges need the `panel` whose scale shows them;
+y ranges are the chart's. Code written for the earlier API reads the event's
+`x` for its `domain`, and calls `setViewport({ y })` for `setYViewport(y)`,
+giving `yRight` too where the right axis should move with it.
 
 `update` takes a `ChartUpdate`: each option given replaces the chart's,
 nested options (an axis, `interaction`, `tooltip`) whole, so pass every
@@ -1043,17 +1055,41 @@ const stop = chart.on("select", ({ x }) => {
   if (x) detail.setViewport(x); // show the brushed range in another chart
 });
 chart.on("select", ({ x, y, lasso }) => filterRows(x, y, lasso)); // ranges, and a lasso's outline
-chart.on("viewport", ({ domain, y }) => saveView(domain, y)); // zoom, pan, reset, sync
-chart.on("viewport", ({ domain, panels }) => saveView(domain, panels)); // panels' own x scales
+chart.on("viewport", ({ x, y, yRight }) => saveView({ x, y, yRight })); // zoom, pan, reset, sync
+chart.on("viewport", ({ x, panels }) => saveView(x, panels)); // panels' own x scales
 chart.on("hover", ({ inspection }) => showOwnTooltip(inspection)); // with tooltip: false
-chart.on("click", ({ inspection }) => openDetails(inspection?.points[0]));
+chart.on("click", ({ inspection }) => {
+  const point = inspection?.points[0];
+  // The row of the mark's table the point is: the record clicked.
+  if (point?.markId === "orders" && point.row !== undefined) openOrder(orders.value("id", point.row));
+});
 ```
 
-Events report changes only: a re-inspected point or an unchanged range does
-not repeat them. An inspection's `axis` says what it is on: `"x"` or `"y"`
-for a position along that axis (with its `position` in pixels), `"item"` for
-an item of a layout mark (a pie slice, a tree's node, a gauge's dial, a
-funnel's stage), whose `value` is the item's and whose one point names it. Keyboard users select a range with Shift and the arrow keys
+Events report changes only: a re-inspected point or an unchanged view does
+not repeat them. A `viewport` event reports a change of several axes (an xy
+wheel zoom, a brushed rectangle zoomed to) once, with every axis' range. An
+inspection's `axis` says what it is on: `"x"` or `"y"` for a position along
+that axis (with its `position` in pixels), `"item"` for an item of a layout
+mark (a pie slice, a tree's node, a gauge's dial, a funnel's stage), whose
+`value` is the item's and whose one point names it.
+
+Each of an inspection's `points` says where it comes from: `mark`, the
+mark's index in the chart's `marks`, and `markId`, its `id` if it has one;
+`key`, an opaque string identifying the point's series (or a layout mark's
+item) in the chart; `label`, what the tooltip names it by; and `row`, the position
+in the mark's table (for a mark over a row view, the view's table) of the
+row the point is, which `table.value(field, row)` reads and a `RowSet` adds
+(`picked.add(point.row)`). Points at
+the same coordinates have their own rows (the pointer reports the first
+drawn there; the keyboard reaches each). A point that is no one row has no
+`row`: histogram bins, box plot and violin groups, pie slices, funnel stages,
+tree nodes, and network and Sankey nodes and links summarize rows. A
+heatmap cell's row is the last row in that cell, which colors it; a gauge's,
+the row of the value it shows; a radar point's, the last row giving its
+series that spoke's value. Positions count from the table's first current
+row, so dropping rows from a stream renumbers the others: read a row, or
+add it to a `RowSet`, which holds rows by identity, in the listener that
+receives it. Keyboard users select a range with Shift and the arrow keys
 along the axis the keys step along (x for lines and vertical bars, y for
 horizontal bars), with brushes along that axis or rectangle and lasso
 brushes, which only the pointer draws; Enter zooms to the range when zoom is

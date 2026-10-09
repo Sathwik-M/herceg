@@ -147,6 +147,7 @@ export type {
   InspectedPoint,
   Inspection,
   ItemInspection,
+  Viewport,
   XAxisConfig,
 } from "./model/model.ts";
 export { type Panels, panels } from "./model/panels.ts";

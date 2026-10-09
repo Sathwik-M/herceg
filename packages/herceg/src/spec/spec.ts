@@ -71,8 +71,8 @@ export interface ChartSpec {
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
   /**
-   * Moves the axes gradually to a view asked for: `setViewport` and
-   * `setYViewport`, zooming to a brush, and double-click reset. Off by
+   * Moves the axes gradually to a view asked for: `setViewport`, zooming
+   * to a brush, and double-click reset. Off by
    * default; `true` takes 250 ms. Never for wheel zoom, panning, streaming,
    * linked charts, panels, or slow frames, nor where the page prefers
    * reduced motion.

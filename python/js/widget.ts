@@ -21,7 +21,16 @@ import {
   SPEC_VERSION,
   type SpecBuffer,
 } from "herceg/spec";
-import { chartRange, inspectionPayload, rangePayload } from "./events.ts";
+import {
+  chartSelection,
+  chartViewport,
+  inspectionPayload,
+  namesCategories,
+  type SelectionPayload,
+  selectionPayload,
+  type ViewportPayload,
+  viewportPayload,
+} from "./events.ts";
 
 /** The parts of an anywidget model this module uses. */
 export interface Model {
@@ -30,8 +39,9 @@ export interface Model {
   on(event: string, callback: (...args: never[]) => void): void;
 }
 
-type Ends = [number, number] | [string, string];
-type RangeEvent = "select" | "viewport";
+/** The events whose state Python keeps: the selection and the viewport. */
+type ViewEvent = "select" | "viewport";
+type ViewState = SelectionPayload | ViewportPayload | null;
 
 /** The whole chart as Python sends it when a browser connects. */
 export interface Snapshot {
@@ -39,21 +49,22 @@ export interface Snapshot {
   revision: number;
   spec: ChartSpec;
   buffers: SpecBuffer[];
-  selection: { x: Ends } | null;
-  viewport: { x: Ends } | null;
+  selection: SelectionPayload | null;
+  viewport: ViewportPayload | null;
 }
 
 type Columns = Record<string, ColumnSpec>;
 
 /**
  * Updates from Python. Columns index the buffers sent with the message. A
- * range comes from Python or, with its `origin`, from a browser.
+ * selection or viewport comes from Python or, with its `origin`, from a browser.
  */
 export type Update = { revision: number } & (
   | { type: "append"; table: string; columns: Columns; maxRows?: number }
   | { type: "replace"; table: string; columns: Columns }
   | { type: "options"; options: Record<string, unknown> }
-  | { type: RangeEvent; x: Ends | null; origin?: string }
+  | { type: "select"; selection: SelectionPayload | null; origin?: string }
+  | { type: "viewport"; viewport: ViewportPayload | null; origin?: string }
 );
 
 interface View {
@@ -85,8 +96,8 @@ class Widget {
   /** The spec's chart options, which option updates change. */
   #options: Record<string, unknown> = {};
   #error: unknown;
-  /** The ranges Python and the browser last agreed on, to drop echoes. */
-  #ranges: Record<RangeEvent, Ends | null> = { select: null, viewport: null };
+  /** The selection and viewport Python and the browser last agreed on, to drop echoes. */
+  #states: Record<ViewEvent, ViewState> = { select: null, viewport: null };
 
   constructor(model: Model) {
     this.#model = model;
@@ -128,13 +139,10 @@ class Widget {
   #load(snapshot: Snapshot) {
     this.#revision = snapshot.revision;
     this.#resyncing = false;
-    // Ranges waiting to be reported predate the snapshot's.
+    // Views waiting to be reported predate the snapshot's.
     this.#outbox.cancel("select");
     this.#outbox.cancel("viewport");
-    this.#ranges = {
-      select: snapshot.selection?.x ?? null,
-      viewport: snapshot.viewport?.x ?? null,
-    };
+    this.#states = { select: snapshot.selection, viewport: snapshot.viewport };
     const {
       data: _data,
       marks: _marks,
@@ -176,10 +184,17 @@ class Widget {
     }
     view.chart = chart;
     // Restored before listening, so restoring does not echo back to Python.
-    chart.setViewport(chartRange(chart, this.#ranges.viewport));
-    chart.select(chartRange(chart, this.#ranges.select));
-    chart.on("select", ({ x }) => this.#reportRange("select", view, x));
-    chart.on("viewport", ({ domain }) => this.#reportRange("viewport", view, domain));
+    this.#show(chart, "viewport", this.#states.viewport);
+    this.#show(chart, "select", this.#states.select);
+    chart.on("select", (selection) =>
+      this.#report("select", view, selectionPayload(chart, selection)),
+    );
+    chart.on("viewport", (viewport) =>
+      this.#report("viewport", view, viewportPayload(chart, viewport)),
+    );
+    // A selection whose categories are gone, or moved under its lasso, goes,
+    // and Python hears so.
+    if (this.#states.select && !chart.selection) this.#report("select", view, null);
     chart.on("hover", ({ inspection }) => {
       if (!this.#listening("hover")) return;
       this.#outbox.post("hover", {
@@ -203,16 +218,53 @@ class Widget {
     return ((this.#model.get("_listening") as string[] | undefined) ?? []).includes(event);
   }
 
-  /** A view's range changed: the other views follow, and Python hears of it. */
-  #reportRange(event: RangeEvent, source: View, range: readonly [number, number] | null) {
-    const payload = rangePayload(source.chart!, range);
-    const x = payload?.x ?? null;
-    if (JSON.stringify(x) === JSON.stringify(this.#ranges[event])) return;
-    this.#ranges[event] = x;
-    for (const view of this.#views) if (view !== source) setRange(view.chart, event, range);
-    // The revision tells Python which of its changes this range was made after.
-    const report = { type: event, range: payload, origin: this.#origin, revision: this.#revision };
+  /** A view's selection or viewport changed: the other views follow, and Python hears of it. */
+  #report(event: ViewEvent, source: View, payload: ViewState) {
+    const same = valuesOf(payload) === valuesOf(this.#states[event]);
+    // The same values, perhaps saying better which axes hold times.
+    if (payload || !same) this.#states[event] = payload;
+    if (same) return;
+    for (const view of this.#views)
+      if (view !== source && view.chart) this.#show(view.chart, event, payload);
+    // The revision tells Python which of its changes this one was made after.
+    const value = event === "select" ? { selection: payload } : { viewport: payload };
+    const report = { type: event, ...value, origin: this.#origin, revision: this.#revision };
     this.#outbox.post(event, report);
+  }
+
+  /**
+   * Shows a selection or viewport in a chart. Category labels are found in
+   * the bands of the current data, so the chart first draws any data
+   * changes it has not drawn yet.
+   */
+  #show(chart: Chart, event: ViewEvent, payload: ViewState) {
+    if (event === "select") {
+      const selection = payload as SelectionPayload | null;
+      if (namesCategories(selection) || selection?.lasso) chart.render();
+      chart.select(chartSelection(chart, selection));
+      if (selection?.lasso && !selection.categories) this.#learnCategories(chart, selection);
+      return;
+    }
+    const viewport = payload as ViewportPayload | null;
+    const labels = [viewport?.x, viewport?.y].some((ends) => typeof ends?.[0] === "string");
+    if (labels) chart.render();
+    const view = chartViewport(chart, viewport);
+    // Charts whose panels have y scales of their own have no y viewport.
+    chart.setViewport(chart.model.sharesY ? view : { x: view.x, y: null, yRight: null });
+  }
+
+  /**
+   * A lasso from Python is over the categories a chart draws when it first
+   * shows it: they are kept with it, here and in Python, so that it goes
+   * when they move.
+   */
+  #learnCategories(chart: Chart, selection: SelectionPayload) {
+    const categories = selectionPayload(chart, chart.selection)?.categories;
+    if (!categories) return;
+    const known = { ...selection, categories };
+    this.#states.select = known;
+    const report = { type: "select", selection: known, origin: this.#origin };
+    this.#outbox.post("select", { ...report, revision: this.#revision });
   }
 
   #receive(message: Update, buffers: readonly DataView[]) {
@@ -254,39 +306,30 @@ class Widget {
         return;
       case "select":
       case "viewport": {
-        // This browser's own range, back from Python: it is already drawn,
-        // and newer ranges may be on their way.
+        // This browser's own view, back from Python: it is already drawn,
+        // and newer ones may be on their way.
         if (message.origin === this.#origin) return;
-        // A range from Python or another browser replaces any not yet reported.
+        // A view from Python or another browser replaces any not yet reported.
         this.#outbox.cancel(message.type);
-        this.#ranges[message.type] = message.x;
-        for (const view of this.#views) {
-          if (view.chart) setRange(view.chart, message.type, this.#resolve(view.chart, message.x));
-        }
+        const payload = message.type === "select" ? message.selection : message.viewport;
+        this.#states[message.type] = payload;
+        for (const view of this.#views)
+          if (view.chart) this.#show(view.chart, message.type, payload);
         return;
       }
     }
   }
 
   /**
-   * A range in the chart's terms. Category labels are found in the bands of
-   * the current data, so the chart first draws any data changes it has not
-   * drawn yet.
-   */
-  #resolve(chart: Chart, x: Ends | null): [number, number] | null {
-    if (x && typeof x[0] === "string") chart.render();
-    return chartRange(chart, x);
-  }
-
-  /**
    * A selection on a category axis is its labels: when the data changes, the
    * brush moves to where they are now, or goes (and Python hears so) when
-   * they are gone.
+   * they are gone. A lasso's outline is in band positions, so it goes when
+   * the categories change.
    */
   #keepCategorySelection() {
-    const x = this.#ranges.select;
-    if (!x || typeof x[0] !== "string") return;
-    for (const view of this.#views) view.chart?.select(this.#resolve(view.chart, x));
+    const selection = this.#states.select as SelectionPayload | null;
+    if (!namesCategories(selection)) return;
+    for (const { chart } of this.#views) if (chart) this.#show(chart, "select", selection);
   }
 
   #table(name: string): Table {
@@ -365,13 +408,15 @@ function resetColumns(table: Table, rows: Table): Parameters<Table["reset"]>[0] 
   return columns as Parameters<Table["reset"]>[0];
 }
 
-function setRange(
-  chart: Chart | undefined,
-  event: RangeEvent,
-  range: readonly [number, number] | null,
-) {
-  if (event === "select") chart?.select(range);
-  else chart?.setViewport(range);
+/**
+ * A selection's or viewport's values, whichever axes hold times: equal for
+ * an echo of the same state. A viewport of no zoom is no viewport.
+ */
+function valuesOf(state: ViewState): string {
+  const { x = null, y = null } = state ?? {};
+  const yRight = state && "yRight" in state ? state.yRight : null;
+  const lasso = state && "lasso" in state ? state.lasso : null;
+  return JSON.stringify([x, y, yRight, lasso]);
 }
 
 function showError(view: View, error: unknown) {

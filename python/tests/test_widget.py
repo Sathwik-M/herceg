@@ -7,7 +7,14 @@ import pytest
 
 import herceg as hg
 from herceg import Inspection
-from herceg._events import InspectedPoint, decode_inspection, decode_range, encode_range
+from herceg._events import (
+    InspectedPoint,
+    decode_inspection,
+    decode_selection,
+    decode_viewport,
+    encode_selection,
+    encode_viewport,
+)
 
 pytest.importorskip("anywidget")
 
@@ -329,71 +336,166 @@ def test_appended_categories_join_in_row_order_as_in_the_browser():
     assert values["host"] == ["a", "b", "d", "c", "d"]
 
 
-def test_ranges_from_the_browser_become_properties_and_callbacks():
-    widget, browser = live(brush="x")
+def test_selections_from_the_browser_become_properties_and_callbacks():
+    widget, browser = live(brush="xy")
     selections = []
     widget.on_select(selections.append)
-    payload = {"x": [MS0, MS0 + 60_000], "time": True}
-    browser.reply({"type": "select", "range": payload})
-    browser.reply({"type": "select", "range": payload})  # another view echoing it
-    assert selections == [(T0, T0 + dt.timedelta(minutes=1))]
-    assert widget.selection == (T0, T0 + dt.timedelta(minutes=1))
-    browser.reply({"type": "select", "range": None})
+    payload = {"x": [MS0, MS0 + 60_000], "y": [1.0, 2.0], "lasso": None, "time": ["x"]}
+    browser.reply({"type": "select", "selection": payload})
+    browser.reply({"type": "select", "selection": payload})  # another view echoing it
+    rectangle = hg.Selection(x=(T0, T0 + dt.timedelta(minutes=1)), y=(1.0, 2.0))
+    assert selections == [rectangle]
+    assert widget.selection == rectangle
+    browser.reply({"type": "select", "selection": None})
     assert selections[-1] is None and widget.selection is None
+    lasso = {"x": [0.0, 2.0], "y": [1.0, 3.0], "lasso": [[0, 1], [2, 1], [2, 3]], "time": []}
+    browser.reply({"type": "select", "selection": lasso})
+    assert widget.selection == hg.Selection(
+        x=(0.0, 2.0), y=(1.0, 3.0), lasso=((0, 1), (2, 1), (2, 3))
+    )
     widget.on_select(selections.append, remove=True)
-    browser.reply({"type": "select", "range": payload})
-    assert len(selections) == 2
-    # New browsers start from the current ranges.
+    browser.reply({"type": "select", "selection": payload})
+    assert len(selections) == 3
+    # New browsers start from the current selection.
     assert widget.get_state()["_chart"]["selection"] == payload
 
 
-def test_setting_a_range_sends_it_and_reports_it_once():
-    widget, browser = live(zoom=True)
+def test_setting_a_viewport_sends_it_whole_and_reports_it_once():
+    widget, browser = live(zoom="xy")
     viewports = []
     widget.on_viewport(viewports.append)
     end = T0 + dt.timedelta(minutes=1)
+    assert widget.viewport == hg.Viewport()
     widget.viewport = (end, T0)
-    assert browser.last[0] == {"type": "viewport", "x": [MS0, MS0 + 60_000], "revision": 1}
-    assert widget.viewport == (T0, end)
-    # The browser confirms the same range: no second callback.
-    payload = {"x": [MS0, MS0 + 60_000], "time": True}
-    browser.reply({"type": "viewport", "range": payload, "origin": "A", "revision": 1})
-    assert viewports == [(T0, end)]
+    whole = {"x": [MS0, MS0 + 60_000], "y": None, "yRight": None, "time": ["x"]}
+    assert browser.last[0] == {"type": "viewport", "viewport": whole, "revision": 1}
+    assert widget.viewport == hg.Viewport(x=(T0, end))
+    # The browser confirms the same view, numbers flagged as times: no second callback.
+    browser.reply({"type": "viewport", "viewport": whole, "origin": "A", "revision": 1})
+    assert viewports == [hg.Viewport(x=(T0, end))]
+    # A viewport replaces every axis' view.
+    widget.viewport = hg.Viewport(y=(0, 5))
+    assert browser.last[0]["viewport"] == {"x": None, "y": [0, 5], "yRight": None, "time": []}
+    assert viewports[-1] == hg.Viewport(y=(0.0, 5.0))
     widget.viewport = None
-    assert browser.last[0]["x"] is None and viewports[-1] is None
+    assert browser.last[0]["viewport"]["y"] is None and viewports[-1] == hg.Viewport()
+    # Zooming both y axes in the browser reports both.
+    both = {"x": None, "y": [1.0, 2.0], "yRight": [10.0, 20.0], "time": []}
+    browser.reply({"type": "viewport", "viewport": both, "origin": "A", "revision": 4})
+    assert widget.viewport == hg.Viewport(y=(1.0, 2.0), y_right=(10.0, 20.0))
+
+
+def test_equal_values_keep_the_newer_form_and_call_back_once():
+    widget, browser = live(zoom=True)
+    viewports = []
+    widget.on_viewport(viewports.append)
+    widget.viewport = (0, 60_000)
+    end = dt.datetime(1970, 1, 1, 0, 1)
+    widget.viewport = (dt.datetime(1970, 1, 1), end)
+    # The same range, now known to be times: nothing more is sent or called.
+    assert len(browser.messages) == 1 and len(viewports) == 1
+    assert widget.viewport.x == (dt.datetime(1970, 1, 1), end)
+
+
+def test_a_lassos_categories_stay_known():
+    widget, browser = live(brush="lasso")
+    selections = []
+    widget.on_select(selections.append)
+    outline = [[0, 0], [1, 0], [1, 1]]
+    widget.selection = hg.Selection(x=("a", "b"), lasso=[tuple(p) for p in outline])
+    # A browser drawing it tells which categories it is over: kept, without a callback.
+    learned = {
+        "x": ["a", "b"],
+        "y": None,
+        "lasso": outline,
+        "categories": [["a", "b"], None],
+        "time": [],
+    }
+    browser.reply({"type": "select", "selection": learned, "origin": "A", "revision": 1})
+    assert widget.get_state()["_chart"]["selection"]["categories"] == [["a", "b"], None]
+    # Assigning the same selection again keeps them.
+    widget.selection = widget.selection
+    assert widget.get_state()["_chart"]["selection"]["categories"] == [["a", "b"], None]
+    assert len(selections) == 1 and len(browser.messages) == 1
+
+
+def test_malformed_reports_from_the_browser_change_nothing():
+    widget, browser = live(brush="lasso")
+    good = {"x": [0, 1], "y": [0, 1], "lasso": [[0, 0], [1, 0], [1, 1]], "time": []}
+    browser.reply({"type": "select", "selection": good})
+    for bad in (
+        {"x": [0], "y": None, "lasso": None},
+        {"x": None, "y": None, "lasso": [[0]]},
+        {"x": None, "y": None, "lasso": [[0, 0], [1, 1]]},
+        {"x": [0, float("nan")], "y": None, "lasso": None},
+        {"x": [0, 1], "y": None, "lasso": None, "time": ["z"]},
+        "x",
+    ):
+        browser.reply({"type": "select", "selection": bad})
+    assert widget.selection == hg.Selection(x=(0, 1), y=(0, 1), lasso=((0, 0), (1, 0), (1, 1)))
+    assert widget.get_state()["_chart"]["selection"] == good
+    # A selection of nothing is none.
+    browser.reply({"type": "select", "selection": {"x": None, "y": None, "lasso": None}})
+    assert widget.selection is None
+
+
+def test_giving_panels_y_scales_of_their_own_lets_go_of_the_y_viewport():
+    widget = hg.Chart(data(), zoom="x", facet="host").line(x="t", y="v").widget()
+    browser = Browser(widget)
+    viewports = []
+    widget.on_viewport(viewports.append)
+    widget.viewport = hg.Viewport(y=(0, 10))
+    widget.update(resolve_y="independent")
+    assert widget.viewport == hg.Viewport() and viewports[-1] == hg.Viewport()
+    assert browser.last[0]["viewport"]["y"] is None
+    widget.update(resolve_y="shared")
+    # The same zoom again is a change.
+    widget.viewport = hg.Viewport(y=(0, 10))
+    assert len(viewports) == 3 and browser.last[0]["viewport"]["y"] == [0, 10]
+
+
+def test_charts_without_one_y_scale_refuse_a_y_viewport():
+    widget = (
+        hg.Chart(data(), zoom="x", facet="host", resolve_y="independent")
+        .line(x="t", y="v")
+        .widget()
+    )
+    widget.viewport = (T0, T0 + dt.timedelta(seconds=30))
+    with pytest.raises(ValueError, match="no one y viewport"):
+        widget.viewport = hg.Viewport(y=(0, 1))
 
 
 def zoom(browser, seconds, origin, revision):
     """A browser reports zooming to the first `seconds` of the data."""
-    payload = {"x": [MS0, MS0 + seconds * 1000], "time": True}
-    browser.reply({"type": "viewport", "range": payload, "origin": origin, "revision": revision})
+    payload = {"x": [MS0, MS0 + seconds * 1000], "y": None, "yRight": None, "time": ["x"]}
+    browser.reply({"type": "viewport", "viewport": payload, "origin": origin, "revision": revision})
 
 
-def test_browser_ranges_made_before_another_change_are_dropped():
+def test_browser_viewports_made_before_another_change_are_dropped():
     widget, browser = live(zoom=True)
     viewports = []
     widget.on_viewport(viewports.append)
     widget.viewport = (T0, T0 + dt.timedelta(minutes=1))  # revision 1
     # Browser A zoomed before it drew Python's viewport: out of date.
     zoom(browser, 30, "A", 0)
-    assert widget.viewport == (T0, T0 + dt.timedelta(minutes=1)) and len(viewports) == 1
+    assert widget.viewport.x == (T0, T0 + dt.timedelta(minutes=1)) and len(viewports) == 1
     # After: it counts, and goes to the other browsers marked as A's.
     zoom(browser, 30, "A", 1)
-    assert widget.viewport == (T0, T0 + dt.timedelta(seconds=30))
+    assert widget.viewport.x == (T0, T0 + dt.timedelta(seconds=30))
     assert browser.last[0] == {
         "type": "viewport",
-        "x": [MS0, MS0 + 30_000],
+        "viewport": {"x": [MS0, MS0 + 30_000], "y": None, "yRight": None, "time": ["x"]},
         "origin": "A",
         "revision": 2,
     }
-    # A's next zoom, made before its own range came back, counts too.
+    # A's next zoom, made before its own view came back, counts too.
     zoom(browser, 20, "A", 1)
-    assert widget.viewport == (T0, T0 + dt.timedelta(seconds=20))
+    assert widget.viewport.x == (T0, T0 + dt.timedelta(seconds=20))
     # Browser B's zoom, made before A's, does not.
     zoom(browser, 10, "B", 2)
-    assert widget.viewport == (T0, T0 + dt.timedelta(seconds=20))
+    assert widget.viewport.x == (T0, T0 + dt.timedelta(seconds=20))
     assert len(viewports) == 3
-    # New browsers start from the current range.
+    # New browsers start from the current view.
     assert widget.get_state()["_chart"]["revision"] == 3
 
 
@@ -404,38 +506,71 @@ def test_hover_and_click_callbacks_receive_inspections():
     widget.on_hover(hovered.append)
     widget.on_click(clicked.append)
     assert sorted(widget._listening) == ["click", "hover"]
+    point = {"mark": 0, "markId": None, "key": '[0,"a"]', "label": "a", "row": 0}
     inspection = {
         "axis": "x",
         "value": MS0,
         "time": True,
         "label": "00:00",
-        "points": [{"series": "a", "value": 1.0, "text": "1"}],
+        "points": [{**point, "value": 1.0, "text": "1"}],
     }
     browser.reply({"type": "hover", "inspection": inspection})
     browser.reply({"type": "hover", "inspection": None})
     browser.reply({"type": "click", "inspection": inspection})
     expected = Inspection(
-        axis="x", value=T0, label="00:00", points=(InspectedPoint("a", 1.0, "1"),)
+        axis="x",
+        value=T0,
+        label="00:00",
+        points=(InspectedPoint("a", 1.0, "1", row=0, mark=0, key='[0,"a"]'),),
     )
     assert hovered == [expected, None]
     assert clicked == [expected]
+    # Points summarizing rows have none; marks with an id name it.
+    summary = {**point, "markId": "bins", "row": None, "value": 2.0, "text": "2"}
+    decoded = decode_inspection({**inspection, "points": [summary]})
+    assert decoded is not None and decoded.points[0].row is None
+    assert decoded.points[0].mark_id == "bins"
 
 
 def test_event_payloads_decode_to_python_values():
-    assert decode_range({"x": [1.5, 3.0], "time": False}) == (1.5, 3.0)
-    assert decode_range({"x": ["a", "c"], "time": False}) == ("a", "c")
-    assert decode_range(None) is None
+    assert decode_viewport({"x": [1.5, 3.0], "y": ["a", "c"], "yRight": None}) == hg.Viewport(
+        x=(1.5, 3.0), y=("a", "c")
+    )
+    assert decode_viewport(None) == hg.Viewport()
+    times = {"x": [MS0, MS0], "y": [MS0, MS0], "lasso": [[MS0, MS0]] * 3, "time": ["y"]}
+    assert decode_selection(times) == hg.Selection(x=(MS0, MS0), y=(T0, T0), lasso=((MS0, T0),) * 3)
+    assert decode_selection(None) is None
     category = decode_inspection(
         {"axis": "y", "value": "west", "time": False, "label": "west", "panel": "eu", "points": []}
     )
     assert category == Inspection(axis="y", value="west", label="west", points=(), panel="eu")
-    assert encode_range((3, 1)) == {"x": [1.0, 3.0], "time": False}
-    assert encode_range((np.datetime64("2026-01-01"), pd.Timestamp("2026-01-01 00:01"))) == {
-        "x": [MS0, MS0 + 60_000],
-        "time": True,
+
+
+def test_viewports_and_selections_encode_for_the_browser():
+    assert encode_viewport((3, 1)) == {"x": [1.0, 3.0], "y": None, "yRight": None, "time": []}
+    stamps = (np.datetime64("2026-01-01"), pd.Timestamp("2026-01-01 00:01"))
+    assert encode_viewport(hg.Viewport(y_right=stamps))["yRight"] == [MS0, MS0 + 60_000]
+    assert encode_viewport(None) == {"x": None, "y": None, "yRight": None, "time": []}
+    assert encode_selection(("b", "a")) == {
+        "x": ["b", "a"],
+        "y": None,
+        "lasso": None,
+        "time": [],
     }
-    assert encode_range(("b", "a")) == {"x": ["b", "a"], "time": False}
+    lasso = encode_selection(hg.Selection(lasso=[(T0, 1), (T0, 2), (stamps[1], 2)]))
+    assert lasso == {
+        "x": None,
+        "y": None,
+        "lasso": [[MS0, 1.0], [MS0, 2.0], [MS0 + 60_000, 2.0]],
+        "time": ["x"],
+    }
+    # A selection of nothing is none.
+    assert encode_selection(hg.Selection()) is None
     with pytest.raises(ValueError, match="pair"):
-        encode_range(5)
+        encode_viewport(5)
     with pytest.raises(ValueError, match="two category labels"):
-        encode_range(("a", 1))
+        encode_selection(("a", 1))
+    with pytest.raises(ValueError, match="finite"):
+        encode_viewport((0, float("nan")))
+    with pytest.raises(ValueError, match="at least 3 points"):
+        encode_selection(hg.Selection(lasso=[(0, 0), (1, 1)]))

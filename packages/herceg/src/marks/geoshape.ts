@@ -260,6 +260,7 @@ export class GeoShapeMark implements GeoLayer {
         py,
         outline: polygonPath(shape),
         measure,
+        row,
       };
     };
     let index: ShapeIndex | undefined;

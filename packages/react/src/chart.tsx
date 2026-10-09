@@ -34,9 +34,9 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   style?: CSSProperties;
   /** The underlying chart, for imperative calls such as `setViewport` or `toSVG`. */
   ref?: Ref<HercegChart | null>;
-  /** The visible x range changed (zoom, pan, reset, sync); null when fitted to the data. */
+  /** The view changed (zoom, pan, reset, sync): x, y, and right y ranges, each null when not zoomed. */
   onViewportChange?: ChartListener<"viewport">;
-  /** The brushed x range changed (`interaction.brush`); null when cleared. */
+  /** The selection changed (`interaction.brush`): x and y ranges and a lasso's outline, null when cleared. */
   onSelect?: ChartListener<"select">;
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
   onHover?: ChartListener<"hover">;
