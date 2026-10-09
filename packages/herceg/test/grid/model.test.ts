@@ -65,7 +65,7 @@ describe("grid columns", () => {
     expect(make([{ field: "x" }, { field: "x" }] as never)).toThrow(
       /Two grid columns have the id "x"/,
     );
-    expect(make([{ field: "x", width: 0 }] as never)).toThrow(/positive width/);
+    expect(make([{ field: "x", width: 0 }] as never)).toThrow(/width of at least 32 pixels/);
     expect(make([{ field: "host", format: { style: "percent" } }] as never)).toThrow(
       /take no format/,
     );

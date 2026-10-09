@@ -560,7 +560,7 @@ describe("grids", () => {
       (line) => !line.trim().startsWith("StaticText"),
     );
     expect(tree[0]).toMatch(
-      /^grid "Requests" \(Arrow keys, .* adds it to the sort\.\) multiselectable=true$/,
+      /^grid "Requests" \(Arrow keys, .* adds it to the sort\. On a column header, .* hides, and shows columns\.\) multiselectable=true$/,
     );
     expect(tree.slice(1, 7)).toEqual([
       '  rowgroup ""',
@@ -665,6 +665,92 @@ describe("grids", () => {
     expect(tree.filter((line) => line.includes("focused=true"))).toEqual([
       '      gridcell "4" focused=true',
     ]);
+  });
+
+  /** The requests with `id` pinned left and `host` right, scrolled across, a row selected, and a cell focused. */
+  function pinned() {
+    const host = document.createElement("div");
+    host.style.cssText = "width:500px;height:300px;background:#ffffff";
+    document.body.append(host);
+    const rows = 200;
+    const data = table({
+      id: Float64Array.from({ length: rows }, (_, i) => i),
+      ms: Float64Array.from({ length: rows }, (_, i) => (i * 37) % 500),
+      host: category(Array.from({ length: rows }, (_, i) => ["web", "api", "db"][i % 3]!)),
+    });
+    const model = createGridModel({
+      data: rowView(data),
+      columns: [
+        { field: "id", pin: "left", width: 60 },
+        { field: "ms", title: "Latency" },
+        ...Array.from({ length: 6 }, (_, k) => ({
+          field: "ms" as const,
+          id: `ms${k}`,
+          title: `Latency ${k}`,
+        })),
+        { field: "host", pin: "right", width: 80 },
+      ],
+      locale: "en-US",
+    });
+    const created = createGrid(host, { model, ariaLabel: "Requests" });
+    grids.push(created as unknown as Grid<never>);
+    model.select(1);
+    model.scrollTo({ left: 400 });
+    created.focusCell(1, "ms5");
+    return created;
+  }
+
+  it("pass audits with pinned columns scrolled across, and with a column's menu open", async () => {
+    const created = pinned();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(await violations(created.root.parentElement!)).toEqual([]);
+    created.focusCell(-1, "ms5");
+    created.root
+      .querySelector("[role=columnheader][aria-colindex='8']")!
+      .dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, bubbles: true }),
+      );
+    expect(created.root.querySelector("[role=menu]")).not.toBeNull();
+    expect(await violations(created.root.parentElement!)).toEqual([]);
+  });
+
+  it("expose pinned cells where they show, in one row, and a column's menu of actions and checks", async () => {
+    const created = pinned();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const tree = (await treeUnder("grid", ["selected", "focused"])).filter(
+      (line) => !line.trim().startsWith("StaticText"),
+    );
+    // The pinned id first and host last, the scrolled columns in view between them.
+    expect(tree.slice(1, 3)).toEqual([
+      '  rowgroup ""',
+      expect.stringMatching(/^ {4}row "id .* host"$/),
+    ]);
+    const row = tree.findIndex((line) => line.startsWith('    row "1 '));
+    expect(tree[row]).toMatch(/^ {4}row "1 37 37 37 .* api" selected=true$/);
+    const cells = tree.slice(row + 1).findIndex((line) => line.startsWith("    row"));
+    const names = tree.slice(row + 1, row + 1 + cells);
+    expect(names[0]).toBe('      gridcell "1"');
+    expect(names.at(-1)).toBe('      gridcell "api"');
+    expect(names).toContain('      gridcell "37" focused=true');
+    created.focusCell(-1, "ms5");
+    created.root
+      .querySelector("[role=columnheader][aria-colindex='8']")!
+      .dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowDown", altKey: true, bubbles: true }),
+      );
+    const menu = (
+      await treeUnder("menu", ["checked", "disabled", "focused", "keyshortcuts"])
+    ).filter((line) => !line.trim().startsWith("StaticText"));
+    // The keys' hints are for the eye; the shortcuts are named for screen readers.
+    expect(menu.slice(0, 4)).toEqual([
+      'menu "Latency 5 column"',
+      '  menuitem "Move left" focused=true keyshortcuts=Shift+ArrowLeft',
+      '  menuitem "Move right" disabled=true keyshortcuts=Shift+ArrowRight',
+      '  menuitem "Narrower" keyshortcuts=Alt+ArrowLeft',
+    ]);
+    expect(menu).toContain('  menuitem "Pin to the left"');
+    expect(menu).toContain('  group "Columns"');
+    expect(menu).toContain('    menuitemcheckbox "host" checked=true');
   });
 
   it("announce what sorting and selecting did, politely and outside the grid", async () => {

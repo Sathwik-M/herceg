@@ -77,7 +77,7 @@ export function headerTexts(
   // Keys as the first column showing their field writes its values, or plainly.
   const formats = by.map(
     (field) =>
-      layout.find((column) => column.field === field)?.format ??
+      layout.find((column) => column.field === field)?.content.format ??
       valueFormatter(source.kind(field) as "number" | "time" | "category", undefined, settings),
   );
   const missing = settings.missing || "(missing)";
@@ -91,15 +91,15 @@ export function headerTexts(
       return (group) =>
         `${by.map((_, k) => value(group, k)).join(", ")} (${count(groups.size(group))})`;
     const k = by.indexOf(column.field);
-    if (k >= 0) return (group) => value(group, k, column.format);
-    const aggregate = groups.aggregates.find(({ name }) => name === column.aggregate);
+    if (k >= 0) return (group) => value(group, k, column.content.format);
+    const aggregate = groups.aggregates.find(({ name }) => name === column.content.aggregate);
     if (!aggregate) return () => "";
     const { name, op, field } = aggregate;
     const kind = groups.table.kind(name) as "number" | "time";
     // The column's format suits aggregates of its own field that keep its kind, not counts.
     const format =
       field === column.field && kind === column.kind && op !== "count"
-        ? column.format
+        ? column.content.format
         : valueFormatter(kind, undefined, settings);
     return (group) => format(groups.table.numbers(name)[group]!);
   });

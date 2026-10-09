@@ -1,13 +1,17 @@
 // A grid in the page, imported with its model as `herceg/grid`. It scrolls a
 // spacer as tall as its rows and mounts only the rows and cells in view, with
 // a few more around them, updated in place as it scrolls and as its model
-// changes. It follows the WAI grid pattern (the treegrid pattern when its
-// rows are grouped): one tab stop, a roving focused cell, logical row and
-// column indexes on what is mounted, and a polite live region saying what
-// sorting, selecting, expanding, and collapsing did.
+// changes; cells of pinned columns stick to the edges (CSS sticky, so they
+// keep up with the browser's scrolling). It follows the WAI grid pattern (the
+// treegrid pattern when its rows are grouped): one tab stop, a roving focused
+// cell, logical row and column indexes on what is mounted, and a polite live
+// region saying what sorting, selecting, expanding, collapsing, and changing
+// columns did. Headers resize and move their columns by dragging, or by keys
+// and a column menu.
 
 import type { GroupKey, RowGroups } from "../data/groups.ts";
 import type { Schema } from "../data/table.ts";
+import type { ColumnContent, PlacedColumn } from "../grid/columns.ts";
 import type {
   GridColumnLayout,
   GridFocus,
@@ -18,6 +22,7 @@ import type {
 } from "../grid/model.ts";
 import type { ThemeName, ThemeSpec } from "../spec/spec.ts";
 import { resolveTheme, themeReadsPage } from "../theme.ts";
+import { ColumnControls } from "./grid-columns.ts";
 import { GRID_CSS, themeProperties } from "./grid-style.ts";
 import { readPage, watchPage } from "./page-theme.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
@@ -48,12 +53,12 @@ const HEADER_HEIGHT = 32;
 /** Height of grids whose container has none. */
 const DEFAULT_HEIGHT = 320;
 const OVERSCAN = { rows: 10, columns: 2 };
-/** How far a press may move and still be a click; farther, it selects text. */
+/** How far a press may move and still be a click; farther, it selects text or drags a header. */
 const CLICK_SLOP = 4;
 const HIDDEN_TEXT =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0";
 const INSTRUCTIONS =
-  "Arrow keys, Page Up, Page Down, Home, and End move between cells. Space selects a row, Shift with arrow keys selects a range, and Control A selects every row. Enter on a column header sorts by it; Shift and Enter adds it to the sort.";
+  "Arrow keys, Page Up, Page Down, Home, and End move between cells. Space selects a row, Shift with arrow keys selects a range, and Control A selects every row. Enter on a column header sorts by it; Shift and Enter adds it to the sort. On a column header, Shift with Left or Right Arrow moves the column, Alt with Left or Right Arrow resizes it, and Alt and Down Arrow opens its menu, which also pins, hides, and shows columns.";
 const GROUP_INSTRUCTIONS =
   " Rows are grouped. Enter on a group expands or collapses it, and Space selects its rows. On a row's first cell, Right Arrow expands a group, Left Arrow collapses it, and Left Arrow on a group's row goes to the group.";
 
@@ -70,6 +75,8 @@ const MOVES = {
 
 /** A mounted cell: a body cell, or a header cell (with `sort` for its sort mark). */
 interface Cell {
+  /** What column's content its text was written for. */
+  content: ColumnContent | null;
   readonly element: HTMLDivElement;
   readonly text: Text;
   readonly sort: Text | undefined;
@@ -94,7 +101,10 @@ interface Row {
   generation: number;
   /** The group it is the header of, among which groups; null for a table row. */
   group: { id: string; key: GroupKey; groups: RowGroups } | null;
-  /** The table's `modifiedVersion`, the groups' revision, and the columns its text was written for. */
+  /**
+   * The table's `modifiedVersion`, the groups' revision, and the columns its
+   * text was written for: a group's header writes its first cell otherwise.
+   */
   written: { modified: number; groups: number; layout: readonly GridColumnLayout[] } | null;
   y: number;
   width: number;
@@ -118,6 +128,8 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   readonly #body: HTMLDivElement;
   readonly #description: HTMLDivElement;
   readonly #live: HTMLDivElement;
+  /** What the headers do to their columns: drags, keys, and the column menu. */
+  readonly #controls: ColumnControls<S>;
   readonly #cells = new WeakMap<Element, Cell>();
   #options: GridOptions<S>;
   #headerHeight = HEADER_HEIGHT;
@@ -176,6 +188,19 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     this.#live.style.cssText = HIDDEN_TEXT;
     this.root.append(style, this.#scroller, description, this.#live);
     container.append(this.root);
+    this.#controls = new ColumnControls({
+      model: this.model,
+      root: this.root,
+      scroller: this.#scroller,
+      headerCells: () => this.#headerCells,
+      cellOf: (element) => this.#cellOf(element),
+      render: (focus) => {
+        if (focus) this.#focusRequested = true;
+        this.render();
+      },
+      invalidate: () => this.#invalidate(),
+      say: (text) => this.#say(text),
+    });
 
     try {
       this.#applyOptions();
@@ -246,6 +271,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   /** Removes the grid and stops everything it listens to; the model, its view, and its table stay. */
   destroy(): void {
     if (this.#destroyed) return;
+    this.#controls.destroy();
     this.#destroyed = true;
     unschedule(this);
     for (const stop of this.#stops) stop();
@@ -256,6 +282,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   /** Called by the scheduler. */
   flush(): void {
     if (this.#destroyed) return;
+    this.#controls.flush();
     if (this.#pageChanged) {
       this.#applyTheme();
       this.#dirty = true;
@@ -314,7 +341,10 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     this.#rendering = true;
     try {
       const count = model.rowCount;
-      const layout = model.columnLayout;
+      // The model's layout is of placed columns, which say what they show.
+      const layout = model.columnLayout as readonly PlacedColumn[];
+      // A column's menu closing with its column gives the focus back to the grid.
+      if (this.#controls.sync()) this.#focusRequested = true;
       const shift = this.#scroll();
       const shown = model.visibleRange(OVERSCAN);
       const focus = model.focus;
@@ -376,11 +406,22 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       this.#spacer.height = height;
       this.#body.style.height = `${height}px`;
     }
-    if (model.width !== this.#spacer.width) {
-      this.#spacer.width = model.width;
-      this.#body.style.width = this.#headerRow.style.width = `${model.width}px`;
+    const span = this.#span();
+    if (span !== this.#spacer.width) {
+      this.#spacer.width = span;
+      this.#body.style.width = this.#headerRow.style.width = `${span}px`;
     }
     return height;
+  }
+
+  /**
+   * How wide rows are: as the columns, or as the viewport when they are
+   * narrower and some are held at the right edge, which they then reach.
+   * Either way nothing scrolls past the columns.
+   */
+  #span(): number {
+    const { width, viewportWidth, columnLayout } = this.model;
+    return columnLayout.at(-1)?.pinned === "right" ? Math.max(width, viewportWidth) : width;
   }
 
   /**
@@ -411,16 +452,18 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     return Math.round(top - this.#scrollTop);
   }
 
-  #drawHeader(shown: GridRange, keep: GridFocus | null, layout: readonly GridColumnLayout[]) {
-    const columns = columnsOf(shown, keep?.rowIndex === -1 ? keep : null);
+  #drawHeader(shown: GridRange, keep: GridFocus | null, layout: readonly PlacedColumn[]) {
+    const columns = columnsOf(shown, keep?.rowIndex === -1 ? keep : null, layout);
     const cells = this.#mountCells(this.#headerRow, null, this.#headerCells, columns, layout);
     this.#headerCells = cells;
     const sort = this.model.sort;
     const changed = this.#header?.layout !== layout || this.#header.sort !== sort;
     this.#header = { layout, sort };
+    const moving = this.#controls.moving;
     for (const cell of cells) {
       const column = layout[cell.column]!;
-      if (!this.#place(cell, column) && !changed) continue;
+      cell.element.toggleAttribute("data-moving", cell.id === moving);
+      if (!this.#place(cell, column, layout) && !changed) continue;
       setText(cell.text, column.title);
       const at = sort.findIndex(({ field }) => field === column.field);
       const order = at < 0 ? undefined : (sort[at]!.order ?? "ascending");
@@ -438,7 +481,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     shown: GridRange,
     keep: GridFocus | null,
     shift: number,
-    layout: readonly GridColumnLayout[],
+    layout: readonly PlacedColumn[],
   ) {
     const model = this.model;
     const { rowStart, rowEnd } = shown;
@@ -514,9 +557,9 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
         row.y = y;
         row.element.style.transform = `translateY(${y}px)`;
       }
-      if (row.width !== model.width) {
-        row.width = model.width;
-        row.element.style.width = `${model.width}px`;
+      if (row.width !== this.#spacer.width) {
+        row.width = this.#spacer.width;
+        row.element.style.width = `${row.width}px`;
       }
       this.#placeInTree(row.element, entry, grouped);
       const selected = model.selectionState(index);
@@ -527,20 +570,25 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
         else row.element.setAttribute("aria-selected", String(selected === "all"));
         row.element.dataset.selection = selected;
       }
+      // A table row's cells keep their text while their columns only move or
+      // resize; a group's header's first cell names the group, so its text
+      // goes with the columns' places.
       const written = row.written;
       const stale =
         written?.modified !== modified ||
-        written.layout !== layout ||
-        (entry.kind === "group" && written.groups !== revision);
+        (entry.kind === "group" && (written.groups !== revision || written.layout !== layout));
       row.written = { modified, groups: revision, layout };
-      const columns = columnsOf(shown, keep?.rowIndex === index ? keep : null);
+      const columns = columnsOf(shown, keep?.rowIndex === index ? keep : null, layout);
       row.cells = this.#mountCells(row.element, row, row.cells, columns, layout);
       for (const cell of row.cells) {
         const column = layout[cell.column]!;
         const controls = entry.kind === "group" && cell.column === 0;
-        const placed = this.#place(cell, column);
+        this.#place(cell, column, layout);
         const decorated = this.#decorate(cell, controls, selected);
-        if (placed || decorated || stale) setText(cell.text, model.textAt(index, cell.column));
+        if (stale || decorated || cell.content !== column.content) {
+          cell.content = column.content;
+          setText(cell.text, model.textAt(index, cell.column));
+        }
       }
     }
   }
@@ -668,9 +716,17 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       mark.setAttribute("aria-hidden", "true");
       sort = document.createTextNode("");
       mark.append(sort);
-      element.append(mark);
+      // For pointers: the keys and the context menu do what these do.
+      const button = document.createElement("span");
+      button.className = "hg-menu-button";
+      button.setAttribute("aria-hidden", "true");
+      const edge = document.createElement("span");
+      edge.className = "hg-resize";
+      edge.setAttribute("aria-hidden", "true");
+      element.append(mark, button, edge);
     }
     const cell: Cell = {
+      content: null,
       element,
       text,
       sort,
@@ -684,15 +740,35 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     return cell;
   }
 
-  /** Places a cell for its column; whether it was not placed for it already (its text must be written). */
-  #place(cell: Cell, column: GridColumnLayout): boolean {
+  /**
+   * Places a cell for its column; whether it was not placed for it already.
+   * Cells of columns held at an edge are in the row's flow and stick there
+   * (sticky offsets are their distances from the edge); the others are
+   * placed absolutely, and scroll under them.
+   */
+  #place(cell: Cell, column: GridColumnLayout, layout: readonly GridColumnLayout[]): boolean {
     if (cell.placed === column) return false;
     cell.placed = column;
     const { element } = cell;
-    element.style.left = `${column.x}px`;
-    element.style.width = `${column.width}px`;
-    element.dataset.align = column.align;
-    element.setAttribute("aria-colindex", String(cell.column + 1));
+    const style = element.style;
+    const { pinned } = column;
+    const index = cell.column;
+    // The first cell held at the right goes after the others in the row's flow.
+    const first = pinned === "right" && layout[index - 1]?.pinned !== "right";
+    const last = pinned === "left" && layout[index + 1]?.pinned !== "left";
+    // Most cells keep their place when one column resizes: write only what changed.
+    const set = (name: "left" | "right" | "marginLeft" | "width", value: string) => {
+      if (style[name] !== value) style[name] = value;
+    };
+    set("left", pinned === "right" ? "" : `${column.x}px`);
+    set("right", pinned === "right" ? `${this.model.width - column.x - column.width}px` : "");
+    set("marginLeft", first ? "auto" : "");
+    set("width", `${column.width}px`);
+    setAttribute(element, "data-pin", pinned ?? "");
+    // The boundary between held columns and those scrolling under them.
+    setAttribute(element, "data-edge", first || last ? pinned! : "");
+    setAttribute(element, "data-align", column.align);
+    setAttribute(element, "aria-colindex", String(index + 1));
     return true;
   }
 
@@ -763,6 +839,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   #onKeyDown = (event: KeyboardEvent) => {
     const model = this.model;
     const focus = model.focus;
+    if (focus && focus.rowIndex < 0 && this.#controls.keyDown(event, focus.column)) return;
     if (!focus || event.altKey) return;
     const command = event.ctrlKey || event.metaKey;
     const key = event.key;
@@ -810,6 +887,8 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   #onClick = (event: MouseEvent) => {
     const press = this.#press;
     this.#press = null;
+    // Drags of headers, their edges, and their menu buttons are not clicks on cells.
+    if (this.#controls.click(event)) return;
     // A press that moved selected text.
     if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > CLICK_SLOP) return;
     const clicked = event.target as Element;
@@ -933,25 +1012,38 @@ function element(document: Document, className?: string): HTMLDivElement {
   return div;
 }
 
+/** Sets an attribute unless it has the value; an empty value for `data-` attributes removes it. */
 function setAttribute(target: Element, name: string, value: string) {
-  if (target.getAttribute(name) !== value) target.setAttribute(name, value);
+  if (value === "" && name.startsWith("data-")) {
+    if (target.hasAttribute(name)) target.removeAttribute(name);
+  } else if (target.getAttribute(name) !== value) target.setAttribute(name, value);
 }
 
 function setText(text: Text, value: string) {
   if (text.data !== value) text.data = value;
 }
 
-/** The shown columns in range, with the focused cell's column in order when outside it. */
+/**
+ * The shown columns to mount, in order: those held at the left edge, the
+ * scrolling ones in range (with the focused cell's column when outside it),
+ * and those held at the right edge.
+ */
 function columnsOf(
   { columnStart: start, columnEnd: end }: GridRange,
   keep: GridFocus | null,
+  layout: readonly GridColumnLayout[],
 ): number[] {
   const indices: number[] = [];
-  const extra =
-    keep && (keep.columnIndex < start || keep.columnIndex >= end) ? keep.columnIndex : -1;
+  let left = 0;
+  while (left < layout.length && layout[left]!.pinned === "left") indices.push(left++);
+  let right = layout.length;
+  while (right > left && layout[right - 1]!.pinned === "right") right--;
+  const index = keep?.columnIndex ?? -1;
+  const extra = index >= left && index < right && (index < start || index >= end) ? index : -1;
   if (extra >= 0 && extra < start) indices.push(extra);
   for (let i = start; i < end; i++) indices.push(i);
   if (extra >= end) indices.push(extra);
+  for (let i = right; i < layout.length; i++) indices.push(i);
   return indices;
 }
 

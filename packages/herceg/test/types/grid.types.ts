@@ -50,6 +50,28 @@ model.setSort([{ field: "latency", order: "descending" }]);
 // @ts-expect-error sort keys are the table's fields
 model.setSort([{ field: "missing" }]);
 
+// Column layout: pins are a side, and the commands name columns by id.
+createGridModel({
+  data: rowView(requests),
+  columns: [{ field: "at", pin: "left" }, { field: "latency" }, { field: "host", pin: "right" }],
+});
+createGridModel({
+  data: rowView(requests),
+  // @ts-expect-error columns pin to the left or the right
+  columns: [{ field: "at", pin: "top" }],
+});
+model.resizeColumn("latency", 160);
+model.moveColumn("host", null);
+model.pinColumn("at", "left");
+model.pinColumn("at", null);
+// @ts-expect-error columns pin to the left or the right
+model.pinColumn("at", "top");
+model.setColumnVisible("host", false);
+expectTypeOf(model.canPin("at")).toEqualTypeOf<boolean>();
+expectTypeOf(model.columnLayout[0]!.pinned).toEqualTypeOf<"left" | "right" | null>();
+// What the model gives back, it takes again.
+model.setColumns(model.columns);
+
 // Tables whose fields are only known at runtime take any field and either format.
 const loose = new Table({ x: [1] });
 const columns: GridColumn<Schema>[] = [{ field: "anything", format: { dateStyle: "medium" } }];
