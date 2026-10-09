@@ -6,7 +6,14 @@
 // the widget's tables and marks, so each update is decoded once and every
 // view redraws from the same data.
 
-import { type Chart, type ChartOptions, createChart, encodedCategory, type Table } from "herceg";
+import {
+  type Chart,
+  type ChartOptions,
+  createChart,
+  encodedCategory,
+  geometry,
+  type Table,
+} from "herceg";
 import { type ChartSpec, type ColumnSpec, loadSpec, type SpecBuffer } from "herceg/spec";
 import { chartRange, inspectionPayload, rangePayload } from "./events.ts";
 
@@ -321,6 +328,8 @@ function fieldRecord(): Record<string, unknown> {
 function appendBatch(table: Table, rows: Table): Parameters<Table["append"]>[0] {
   const batch = fieldRecord();
   for (const field of table.fields()) {
+    // Python sends tables of shapes whole (replace), never appended.
+    if (table.kind(field) === "geometry") throw new Error(`Field "${field}" holds shapes`);
     if (table.kind(field) !== "category") {
       batch[field] = rows.numbers(field);
       continue;
@@ -334,6 +343,11 @@ function appendBatch(table: Table, rows: Table): Parameters<Table["append"]>[0] 
 function resetColumns(table: Table, rows: Table): Parameters<Table["reset"]>[0] {
   const columns = fieldRecord();
   for (const field of table.fields()) {
+    if (table.kind(field) === "geometry") {
+      const { codes, set } = rows.geometries(field);
+      columns[field] = geometry(set, codes);
+      continue;
+    }
     if (table.kind(field) !== "category") {
       columns[field] = rows.numbers(field);
       continue;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
 import { category, time } from "../../src/data/column.ts";
+import { fromGeoJSON } from "../../src/data/geojson.ts";
 import { table } from "../../src/data/table.ts";
 import { lineDrawing } from "../../src/draw/line.ts";
 import { rectDrawing } from "../../src/draw/rect.ts";
@@ -17,6 +18,8 @@ import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
+import { geopoint } from "../../src/marks/geopoint.ts";
+import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
@@ -539,6 +542,55 @@ describe("renderToPDF", () => {
     expect(nodes).toHaveLength(3);
     for (const [node] of nodes) expect(node.match(/ c\n/g)).toHaveLength(8);
     for (const name of ["Ana", "Bo", "Cy"]) expect(fontOf(pdf, name)).toEqual(["Helvetica", 12]);
+  });
+
+  it("draws maps: regions filled even-odd and bordered, points ringed one by one", () => {
+    const square = (x: number, s: number) => [
+      [x, 0],
+      [x + s, 0],
+      [x + s, s],
+      [x, s],
+      [x, 0],
+    ];
+    const regions = fromGeoJSON({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: { v: 1 },
+          geometry: { type: "Polygon", coordinates: [square(0, 10), square(3, 2)] },
+        },
+        {
+          type: "Feature",
+          properties: { v: 2 },
+          geometry: { type: "Polygon", coordinates: [square(10, 10)] },
+        },
+      ],
+    });
+    const places = table({ lon: [5, 15], lat: [5, 5], n: [1, 4] });
+    const pdf = readPdf(
+      renderToPDF({
+        width: 400,
+        height: 240,
+        locale: "en-US",
+        projection: "equirectangular",
+        marks: [
+          geoshape(regions, { color: "v" }),
+          geopoint(places, { longitude: "lon", latitude: "lat", r: "n", fillOpacity: 1 }),
+        ],
+      }),
+    );
+    // Each region: its rings (a lake inside the first) filled with the even-odd rule, then bordered.
+    const regionsDrawn = [
+      ...pdf.content.matchAll(/q [\d. ]+ rg 1 1 1 RG 0.75 w 0 J 1 j\n([^Q]*?)f\*\n[^Q]*?S\nQ/g),
+    ];
+    expect(regionsDrawn).toHaveLength(2);
+    expect(regionsDrawn[0]![1]!.match(/ m\n/g)).toHaveLength(2);
+    // Each point: filled, then ringed in white.
+    const pointsDrawn = [
+      ...pdf.content.matchAll(/q [\d. ]+ rg 1 1 1 RG 1 w[^Q]*? c\nf\n[^Q]*? c\nS\nQ/g),
+    ];
+    expect(pointsDrawn).toHaveLength(2);
   });
 
   it("embeds heatmaps as compressed images, with a soft mask for missing cells", () => {

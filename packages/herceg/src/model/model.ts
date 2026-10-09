@@ -1189,7 +1189,8 @@ export class ChartModel {
     const theme = this.#theme;
     const mark = this.#layouts[0]!;
     const id = mark.spec.id ?? 0;
-    const header = this.#header(mark.legend(id, this.#palette), [], [], measure);
+    const [ramps, keys] = mark.scales?.(theme, this.#config.locale) ?? [[], []];
+    const header = this.#header(mark.legend(id, this.#palette, this.#theme), ramps, keys, measure);
     const bounds: Rect = {
       x: EDGE,
       y: header.top,
@@ -1408,7 +1409,7 @@ export class ChartModel {
       axis: "item",
       key,
       value,
-      label: this.#layouts[0]!.measure,
+      label: item.measure ?? this.#layouts[0]!.measure,
       points: [{ key, label, color, text, value, px, py }],
       outline,
     };
@@ -1489,14 +1490,16 @@ function usesY(mark: Mark): boolean {
  */
 function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
   const marks: Mark[] = [];
-  const layouts: LayoutMark[] = [];
+  let layouts: LayoutMark[] = [];
   for (const mark of config.marks) {
     if (isLayoutMark(mark)) layouts.push(mark);
     else marks.push(mark);
   }
-  if (layouts.length > 0) {
-    const [layout] = layouts;
-    const type = layout!.spec.type;
+  const [layout] = layouts;
+  if (layout) {
+    const type = layout.spec.type;
+    // Layers of a map share its chart; they are drawn as one mark.
+    if (layout.join) layouts = [layout.join(layouts, config)];
     if (layouts.length > 1 || marks.length > 0)
       throw new Error(`A ${type} mark has its chart to itself; draw other marks in another chart`);
     if (config.facet || config.panels)

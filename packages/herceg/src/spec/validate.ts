@@ -539,6 +539,42 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       label: string,
     },
   },
+  geoshape: {
+    required: [],
+    checks: {
+      geometry: field,
+      name: field,
+      color: field,
+      colors: ramp,
+      colorDomain: range,
+      colorMidpoint: finite,
+      fill: string,
+      fillOpacity: fraction,
+      stroke: string,
+      strokeWidth: width,
+      label: string,
+    },
+  },
+  geopoint: {
+    required: ["longitude", "latitude"],
+    checks: {
+      longitude: field,
+      latitude: field,
+      name: field,
+      series: field,
+      r: (v, path) => (typeof v === "string" ? field(v, path) : positive(v, path)),
+      rRange: range,
+      color: field,
+      colors: ramp,
+      colorDomain: range,
+      colorMidpoint: finite,
+      fill: string,
+      fillOpacity: fraction,
+      stroke: string,
+      strokeWidth: width,
+      label: string,
+    },
+  },
   heatmap: {
     required: ["x", "y", "value"],
     checks: {
@@ -552,6 +588,49 @@ const MARKS: Record<string, { required: string[]; checks: Record<string, Check> 
       label: string,
     },
   },
+};
+
+const PROJECTIONS = [
+  "equal-earth",
+  "natural-earth",
+  "mercator",
+  "equirectangular",
+  "conic-equal-area",
+] as const;
+/** A longitude, latitude pair: within ±540 and ±90 degrees, as geometry is. */
+const lonLat: Check = (v, path) => {
+  if (
+    !Array.isArray(v) ||
+    v.length !== 2 ||
+    !v.every((x) => typeof x === "number" && Number.isFinite(x)) ||
+    !(Math.abs(v[0]) <= 540 && Math.abs(v[1]) <= 90)
+  )
+    fail(path, "[longitude, latitude] in degrees", v);
+};
+const projection: Check = (v, path) => {
+  if (typeof v === "string") return oneOf(...PROJECTIONS)(v, path);
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  required(spec, path, ["type"]);
+  properties(spec, path, {
+    type: oneOf(...PROJECTIONS),
+    centralMeridian: finite,
+    parallels: (p, at) => {
+      range(p, at);
+      if (!(p as number[]).every((x) => Math.abs(x) <= 90))
+        fail(at, "two latitudes from -90 to 90", p);
+    },
+    fit: (f, at) => {
+      if (f === "data" || f === "world") return;
+      if (!Array.isArray(f) || f.length !== 2)
+        fail(at, '"data", "world", or [[west, south], [east, north]]', f);
+      lonLat(f[0], `${at}[0]`);
+      lonLat(f[1], `${at}[1]`);
+      const [[west, south], [east, north]] = f as [number[], number[]];
+      if (!(south! < north!)) fail(`${at}[1][1]`, "a north above the south", north);
+      if (west === east) fail(`${at}[1][0]`, "an east apart from the west", east);
+    },
+  });
 };
 
 const mark: Check = (v, path) => {
@@ -685,6 +764,7 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
     theme,
     locale: string,
     timeZone: string,
+    projection,
   });
   // An older reader would draw shared axes or overlay panels; a spec asking
   // otherwise says so.
@@ -695,6 +775,18 @@ export function validateSpec(spec: unknown): asserts spec is ChartSpec {
         'a spec with "version": 2, so that older readers refuse it',
         chart[name],
       );
+  // A projection places maps' marks; a chart of other marks has nothing to project.
+  if (
+    chart.projection !== undefined &&
+    !(chart.marks as Record<string, unknown>[]).some(
+      ({ type }) => type === "geoshape" || type === "geopoint",
+    )
+  )
+    fail(
+      "spec.projection",
+      "a spec with geoshape or geopoint marks: a projection needs geoshape or geopoint marks",
+      chart.projection,
+    );
   // Marks name panels the chart has; with panels, every mark names one.
   const panels = chart.panels as { id: string }[] | undefined;
   if (chart.grid !== undefined && !panels) fail("spec.grid", "a spec with panels", chart.grid);

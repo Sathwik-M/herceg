@@ -4,6 +4,7 @@
 
 import { type ColumnInput, encodedCategory, type NumericArray, time } from "../data/column.ts";
 import { deriveTable } from "../data/derive.ts";
+import { geometry } from "../data/geometry.ts";
 import { type Table, table } from "../data/table.ts";
 import { readsTable } from "../marks/annotation.ts";
 import { AreaMark } from "../marks/area.ts";
@@ -13,6 +14,8 @@ import { CandlestickMark } from "../marks/candlestick.ts";
 import { ErrorBarMark } from "../marks/errorbar.ts";
 import { FunnelMark } from "../marks/funnel.ts";
 import { GaugeMark } from "../marks/gauge.ts";
+import { GeoPointMark } from "../marks/geopoint.ts";
+import { GeoShapeMark } from "../marks/geoshape.ts";
 import { GraphMark } from "../marks/graph.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
 import { HistogramMark } from "../marks/histogram.ts";
@@ -180,6 +183,29 @@ function loadColumn(column: ColumnSpec, buffers: readonly SpecBuffer[]): ColumnI
           : inlineCodes(column.codes, column.dictionary.length);
       return encodedCategory(codes, column.dictionary);
     }
+    case "geometry": {
+      // Offsets and codes are int32, coordinates float64, as buffers or JSON arrays.
+      const ints = (value: unknown, name: string) => {
+        if (typeof value === "number") return binary("int32", value, buffers) as Int32Array;
+        const list = numberList(value, name);
+        const bad = list.findIndex((v) => !Number.isInteger(v) || Math.abs(v) > 2 ** 31 - 1);
+        if (bad >= 0) throw new TypeError(`${name}[${bad}] holds ${list[bad]}, not an int32`);
+        return Int32Array.from(list);
+      };
+      const coordinates =
+        typeof column.coordinates === "number"
+          ? (binary("float64", column.coordinates, buffers) as Float64Array)
+          : Float64Array.from(numberList(column.coordinates, "coordinates"));
+      return geometry(
+        {
+          coordinates,
+          ringOffsets: ints(column.ringOffsets, "ringOffsets"),
+          polygonOffsets: ints(column.polygonOffsets, "polygonOffsets"),
+          geometryOffsets: ints(column.geometryOffsets, "geometryOffsets"),
+        },
+        column.codes === undefined ? undefined : ints(column.codes, "codes"),
+      );
+    }
     default:
       throw new TypeError(
         `Unknown column type ${JSON.stringify((column as { type: unknown }).type)}`,
@@ -202,6 +228,16 @@ function inlineValues(values: unknown[]): ColumnInput {
     if (type !== kind) throw new TypeError(`row ${row} mixes ${type}s into a column of ${kind}s`);
   });
   return values as ColumnInput;
+}
+
+/** A JSON array of finite numbers. */
+function numberList(values: unknown, name: string): number[] {
+  if (!Array.isArray(values)) throw new TypeError(`${name} must be a buffer index or an array`);
+  values.forEach((value, i) => {
+    if (typeof value !== "number" || !Number.isFinite(value))
+      throw new TypeError(`${name}[${i}] holds ${JSON.stringify(value)}, not a finite number`);
+  });
+  return values;
 }
 
 function timeValues(values: unknown): number[] {
@@ -315,6 +351,10 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new RadarMark(spec, source);
       case "sankey":
         return new SankeyMark(spec, source);
+      case "geoshape":
+        return new GeoShapeMark(withScheme(spec), source);
+      case "geopoint":
+        return new GeoPointMark(withScheme(spec), source);
       case "graph":
         return new GraphMark(
           spec,

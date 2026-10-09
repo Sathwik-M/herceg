@@ -50,6 +50,7 @@ const optionProps = {
   theme: [String, Object] as Option<"theme">,
   locale: String,
   timeZone: String,
+  projection: [String, Object] as Option<"projection">,
 } satisfies { [K in keyof Options]-?: unknown };
 
 const OPTION_KEYS = Object.keys(optionProps) as (keyof Options)[];
@@ -120,6 +121,8 @@ const PORTABLE = new Set([
   "radar",
   "sankey",
   "graph",
+  "geoshape",
+  "geopoint",
   "rule",
   "region",
   "text",
@@ -167,7 +170,7 @@ export const Chart = defineComponent({
   },
   emits,
   slots: Object as SlotsType<{
-    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <Rule>, <Region>, <Text>, <Custom>. */
+    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Rule>, <Region>, <Text>, <Custom>. */
     default?: () => VNode[];
   }>,
   expose: ["chart"],

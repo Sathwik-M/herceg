@@ -273,3 +273,120 @@ describe("loadSpec", () => {
     );
   });
 });
+
+describe("maps in specs", () => {
+  const square = (x: number) => [x, 0, x + 1, 0, x + 1, 1, x, 1];
+  const geometryColumn = {
+    type: "geometry" as const,
+    coordinates: 0,
+    ringOffsets: 1,
+    polygonOffsets: [0, 1, 2],
+    geometryOffsets: [0, 1, 2],
+    codes: [1, -1, 0],
+  };
+  const buffers = [Float64Array.from([...square(0), ...square(5)]), Int32Array.from([0, 4, 8])];
+
+  it("loads geometry columns from buffers and arrays, with codes", () => {
+    const { tables } = loadSpec(
+      {
+        data: { regions: { columns: { name: ["b", "none", "a"], shape: geometryColumn } } },
+        marks: [],
+      },
+      buffers,
+    );
+    const regions = tables.get("regions")!;
+    expect(regions.kind("shape")).toBe("geometry");
+    const { codes, set } = regions.geometries("shape");
+    expect(Array.from(codes)).toEqual([1, -1, 0]);
+    // Aligned buffers are used in place.
+    expect(set.coordinates.buffer).toBe(buffers[0]!.buffer);
+    expect(Array.from(set.polygonOffsets)).toEqual([0, 1, 2]);
+  });
+
+  it("refuses geometry columns with bad arrays, naming the column", () => {
+    const load = (column: object) => () =>
+      loadSpec({ data: { regions: { columns: { shape: column as never } } }, marks: [] }, buffers);
+    expect(load({ ...geometryColumn, ringOffsets: [0, 4.5, 8] })).toThrow(
+      /Column "shape" of table "regions": ringOffsets\[1\] holds 4.5, not an int32/,
+    );
+    expect(load({ ...geometryColumn, coordinates: 7 })).toThrow(/Buffer 7 is missing/);
+    expect(
+      load({ ...geometryColumn, coordinates: [...square(0), 5, 0, 6, 0, 6, 1, 5, 100] }),
+    ).toThrow(/WGS 84/);
+    expect(load({ ...geometryColumn, codes: [0, 2, 0] })).toThrow(/code 2 at row 1/);
+  });
+
+  it("draws geoshape and geopoint marks with the spec's projection", () => {
+    const spec: ChartSpec = {
+      width: 300,
+      height: 200,
+      projection: { type: "mercator", centralMeridian: 10, fit: "data" },
+      data: {
+        regions: { columns: { name: ["b", "none", "a"], shape: geometryColumn } },
+        places: { columns: { lon: [0.5], lat: [0.5] } },
+      },
+      marks: [
+        { type: "geoshape", data: "regions", name: "name", color: "name" },
+        { type: "geopoint", data: "places", longitude: "lon", latitude: "lat", r: 3 },
+      ],
+    };
+    const svg = specToSVG(spec, buffers);
+    expect(svg.match(/fill-rule="evenodd"/g)).toHaveLength(2);
+    expect(svg).toContain('stroke-width="1"');
+  });
+
+  it("checks projections and geo marks", () => {
+    const base = {
+      marks: [{ type: "geopoint", longitude: "x", latitude: "y" }],
+      data: { t: { columns: { x: [0], y: [0] } } },
+    };
+    const fails = (change: object) => () => loadSpec({ ...base, ...change } as ChartSpec);
+    expect(fails({ projection: "robinson" })).toThrow(/spec.projection: expected "equal-earth"/);
+    expect(fails({ projection: { type: "conic-equal-area", parallels: [10, 100] } })).toThrow(
+      /spec.projection.parallels/,
+    );
+    expect(
+      fails({
+        projection: {
+          type: "mercator",
+          fit: [
+            [0, 10],
+            [5, 5],
+          ],
+        },
+      }),
+    ).toThrow(/a north above the south/);
+    expect(fails({ projection: { centralMeridian: 3 } })).toThrow(/spec.projection.type: required/);
+    expect(
+      fails({
+        projection: {
+          type: "mercator",
+          fit: [
+            [1e20, 0],
+            [1e20 + 1, 10],
+          ],
+        },
+      }),
+    ).toThrow(/spec.projection.fit\[0\]: expected \[longitude, latitude\]/);
+    expect(
+      fails({
+        projection: {
+          type: "mercator",
+          fit: [
+            [180, 0],
+            [180, 10],
+          ],
+        },
+      }),
+    ).toThrow(/an east apart from the west/);
+    expect(fails({ marks: [{ type: "geopoint", longitude: "x" }] })).toThrow(
+      /marks\[0\].latitude: required/,
+    );
+    expect(fails({ marks: [{ type: "geoshape", strokeWidth: -1 }] })).toThrow(
+      /marks\[0\].strokeWidth/,
+    );
+    expect(fails({ projection: "mercator", marks: [{ type: "line", x: "x", y: "y" }] })).toThrow(
+      /projection needs geoshape or geopoint marks/,
+    );
+  });
+});

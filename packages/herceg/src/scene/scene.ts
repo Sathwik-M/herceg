@@ -228,6 +228,12 @@ export interface PointGeometry extends Geometry {
   opacities?: Float32Array | undefined;
   /** Per point: an index into SYMBOLS. */
   symbols?: Uint8ClampedArray | undefined;
+  /**
+   * A ring around each point, such as a map's points over its regions:
+   * points with one are drawn one by one, each ring over its point, so
+   * rings keep overlapping points apart.
+   */
+  ring?: { color: string; width: number } | undefined;
   /** Set when the series is left to a GPU painter instead of `coords`. */
   cloud?: PointCloud;
 }
@@ -322,6 +328,33 @@ export interface ArcGeometry extends Geometry {
   gap: number;
 }
 
+/** One shape of a polygons geometry: rings of points, filled together. */
+export interface PolygonShape {
+  /** x, y per point in CSS pixels. */
+  coords: Float32Array;
+  /** Where each ring starts, in points, and where the last one ends. */
+  rings: Uint32Array;
+  /** SVG path data of the rings, kept once made: the same shape is drawn again as colors change. */
+  path: string | undefined;
+}
+
+/**
+ * Filled polygons, such as a map's regions: each shape's rings filled
+ * together with the even-odd rule (so holes stay empty), then bordered.
+ */
+export interface PolygonGeometry extends Geometry {
+  kind: "polygons";
+  draw: Drawing<PolygonGeometry>;
+  shapes: readonly PolygonShape[];
+  /** The colors shapes are filled with, and each shape's index into them. */
+  colors: readonly string[];
+  colorIndex: Uint32Array;
+  fillOpacity: number;
+  stroke: string;
+  /** 0 for no border. */
+  strokeWidth: number;
+}
+
 /** The geometry of the built-in marks, for code that narrows by kind. */
 export type MarkGeometry =
   | ArcGeometry
@@ -333,7 +366,8 @@ export type MarkGeometry =
   | PointGeometry
   | RasterGeometry
   | ShapesGeometry
-  | SegmentGeometry;
+  | SegmentGeometry
+  | PolygonGeometry;
 
 export interface AxisTick {
   /** Pixel position along the axis. */

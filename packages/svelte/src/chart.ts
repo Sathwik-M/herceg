@@ -11,7 +11,7 @@ import type { ClassValue } from "svelte/elements";
 export interface ChartProps extends Omit<ChartOptions, "marks"> {
   /** Marks built with herceg's functions; mark components among the children are added after them. */
   marks?: readonly ChartMark[] | undefined;
-  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <Rule>, <Region>, <Text>, <Custom>. */
+  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: Snippet | undefined;
   class?: ClassValue | undefined;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -61,6 +61,8 @@ const PORTABLE = new Set([
   "radar",
   "sankey",
   "graph",
+  "geoshape",
+  "geopoint",
   "rule",
   "region",
   "text",

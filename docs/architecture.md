@@ -11,9 +11,10 @@ One name per concept, used the same way in code and docs.
 | --- | --- |
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
-| **Column** | The typed storage behind a field: numbers, times (epoch ms), or dictionary-encoded categories. |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`) place their own geometry instead of using x and y scales. |
-| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, or a Sankey diagram's or network's node or link: what its tooltips and the keyboard visit. |
+| **Column** | The typed storage behind a field: numbers, times (epoch ms), dictionary-encoded categories, or geometries (codes into a shared set of shapes). |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, and the map layers `geoshape` and `geopoint`) place their own geometry instead of using x and y scales. |
+| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, or a map's region or point: what its tooltips and the keyboard visit. |
+| **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -21,7 +22,7 @@ One name per concept, used the same way in code and docs.
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), rules, text, or shapes (custom marks, a gauge's value, funnel connectors, network nodes and links). |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, or shapes (custom marks, a gauge's value, funnel connectors, network nodes and links). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
@@ -84,6 +85,21 @@ There are no per-row objects anywhere in the pipeline.
 - **Rolling categories.** When a category dictionary holds more than twice as
   many entries as there are live rows, unused entries are dropped and codes
   renumbered, so long-running streams over changing categories stay bounded.
+- **Geometry columns.** Shapes for maps are stored as category labels are:
+  an `Int32Array` code per row (-1 for none) into a set of polygons packed as
+  GeoArrow nests multipolygons (`data/geometry.ts`): float64 longitude,
+  latitude pairs and int32 offsets of rings, polygons, and geometries. The
+  set is checked once (offsets that start at 0, never decrease, and end at
+  the next array's length; coordinates within ±540 degrees of longitude and
+  ±90 of latitude, which catches data in projected reference systems), never
+  written, and shared: tables move, drop, filter, and sort 4 bytes per row,
+  derived tables hold their source's set, and appended rows name existing
+  shapes by code (checked before anything changes). New shapes come with a
+  new column (`reset`). A table's `byteLength` counts the codes; the set is
+  counted once wherever it is shared (`geometryBytes`). Derived steps carry
+  geometry fields through and refuse them as values (expressions, bins,
+  sorts, groups). Tables do not depend on the geometry module: a geometry
+  input builds its own column, so line charts do not bundle it.
 
 Memory amplification over the source data is therefore: reserved capacity
 for tables that grow (about 0.5x the live rows right after growth; at most
@@ -409,8 +425,9 @@ room below the title and legend (`LayoutFrame`: bounds, theme, text
 measurement, hidden keys, and stable colors per item key) and draws what it
 returns (`LayoutResult`: geometry, an item lookup by pixel, the items in
 reading order, and a summary). A chart holds marks along axes or one layout
-mark, never both, so the Cartesian layout code runs unchanged and a line
-chart carries only the small dispatch, not the pie.
+mark (or the layers of one map, drawn as one; see Maps), never both, so the
+Cartesian layout code runs unchanged and a line chart carries only the small
+dispatch, not the pie.
 
 What a tooltip or keyboard cursor is on is an `Inspection`: an axis
 inspection (a position along x or y and each series' point there) or an item
@@ -509,6 +526,93 @@ largest first, each filled and ringed in the surface color, so overlaps stay
 legible in SVG, Canvas, and PDF without a geometry kind of their own; links
 are one path per width and color. The pointer lookup scans every node, then
 every link.
+
+## Maps
+
+Maps are layout marks too, but a map's layers (`geoshape` regions and
+`geopoint` points) share a chart and the chart's `projection`. Layout marks
+that offer `join` (only maps' layers) are drawn as one mark: the model's
+`validate()` replaces the chart's layout marks with what the first one's
+`join` returns, a `GeoMap` (`marks/geo.ts`) that refuses other kinds of
+layout marks and repeated ids. The map settles the projection, fits what
+every layer draws into the room, and lets each layer draw with the same
+transform; layers keep their own identity (`id`, or their place among the
+layers) in item, legend, and geometry keys, and their own legends and color
+scales, since fields of the same name in two layers may measure different
+things. Items are read layer by layer; the pointer tries layers from the
+last drawn. Layout marks gained two optional members for this, `join` and
+`scales` (continuous color ramps and size keys for the legend header),
+`legend` receives the theme (points colored by a field show their series in
+a neutral color), and items an optional `measure` (the tooltip's heading, which differs between a
+map's layers).
+
+Projections (`geo/projection.ts`) are d3-geo's raw forward projections, in
+radians and units of the Earth's radius: Equal Earth (the default), Natural
+Earth I, Mercator, equirectangular, and Albers' conic equal-area (cylindrical
+equal-area when its parallels are symmetric about the equator). Only
+longitude rotation is supported (`centralMeridian`), so there is no horizon
+to clip and no spherical clipping. Edges are straight lines in longitude and
+latitude, as GeoJSON (RFC 7946) defines them, not great circles, so cutting
+shapes at the map's edges is plane clipping (`geo/clip.ts`): longitudes are
+shifted by the central meridian, each 360-degree window a ring reaches is
+cut out of it and moved back (with the central meridian at 0, rings within
+±180 need no cutting), and latitudes are cut at Mercator's limit (85.05
+degrees). A cut follows the cutting line between where the ring leaves it
+and where it comes back, pairing those crossings in order along the line, so
+a concave ring cut in several places becomes several rings without
+zero-width connectors that a border would trace; rings are cut one by one
+and filled with the even-odd rule, so holes stay holes, and a ring that
+crosses itself is kept in order around it. Edges longer than a degree are
+divided, and in pixels each edge is halved again (at most 16 times) until
+its projected midpoint is within a quarter pixel of the chord drawn for it,
+as d3-geo resamples, so the seam, the poles, and parallels follow the
+projection's curves at any zoom; edges under 2 pixels are drawn straight.
+Fit boxes and rings span at most a turn of longitude (wider ones are
+refused, or left out), so cutting visits at most two windows. A conic projection without a central meridian takes
+the middle of the data's longitudes, across the widest gap between them in
+1-degree columns, and its parallels a sixth of the data's latitudes in from
+either end.
+
+Fitting (`geo/project.ts`) scales and centers the plane box of what the
+layers draw (or of the world's outline, or of a box of degrees) into the
+room, leaving the largest point's radius and half its ring; a single point
+spans about two degrees, and a map of nothing, or a box beyond the
+projection's latitudes, shows the world. The box does not depend on
+values or hidden categories, so recoloring and the legend never move the
+map. Shapes are projected per geometry set (`geo/shapes.ts`), shared by
+every mark and chart drawing it: a plane box per geometry and projection,
+and pixels per projection and fit (the three most recent fits, so a few
+charts or sizes drawing one set do not evict each other). Points within
+0.35 px of the last one kept are dropped, rings left with fewer than three
+points too, and the holes of a polygon whose exterior is dropped. A resize
+projects again rather than keeping every point in the plane as well as in
+pixels; changes of values, colors, the legend, or the theme reuse the pixels
+and the SVG path data, which is made once per shape. The plane boxes come
+from vertices with edges divided at a degree, so at extreme zooms a curve
+can reach a pixel or two past the box, and the plot's clip.
+
+Regions are a `polygons` geometry: per shape, Float32 pixels and ring
+offsets, filled with the even-odd rule and bordered shape by shape (one SVG
+path element each, so a change of colors only changes fill attributes;
+`fill("evenodd")` on a canvas; `f*` in PDF), and drawn in row order. A layer's points
+are one point geometry with a ring (in the background color by default)
+that point drawing strokes over each point, drawn one by one, largest first
+across every series (each with its series' color by index), so smaller
+points stay on top. The
+pointer finds the last-drawn point whose disc it is within 3 px of through a
+uniform grid of centers searched as far as the largest radius, else the
+last-drawn region containing it: a uniform 32-pixel grid of each polygon's
+box (polygons covering more than 64 cells are kept in a list tested on
+every query, so the grid's size follows the room) narrows the candidates,
+and an even-odd crossing test over all of a shape's rings decides. The
+keyboard's tooltip anchors a region at the middle of the widest stretch
+inside it along the middle of its largest polygon's box, which lies in the
+shape, never in a hole.
+
+200 regions of 1,000 vertices and 10,000 points take about 20 to 30 ms to
+measure, project, cut, divide, simplify, and fit the first time (in Node,
+one machine), 11 ms at a new size, 2 ms to draw again after a value
+changes, and about 2 µs to find the region under the pointer.
 
 ## Annotations
 
@@ -795,10 +899,16 @@ references, and column payloads, with errors that give the property path
 (`marks[2].strokeWidth`) or the table and column at fault. It then builds
 tables from `data` and marks from `marks`. Columns are JSON arrays or binary: numbers and times as
 little-endian typed buffers (`{ type, dtype, buffer }`, where `buffer`
-indexes the buffers delivered next to the JSON) and categories as int32
-dictionary codes. Binary columns become typed-array views of the delivered
+indexes the buffers delivered next to the JSON), categories as int32
+dictionary codes, and geometries as a float64 buffer of coordinates and
+int32 buffers of offsets (and of codes, when rows do not hold geometry i in
+row i). Binary columns become typed-array views of the delivered
 bytes, copied only when misaligned, so large data never passes through JSON
 number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec.
+Maps did not change the format's version: a reader that predates them
+refuses their mark types and geometry columns with an error rather than
+drawing something else, and `projection` only applies to those marks (a
+spec with `projection` but no map marks is refused).
 
 ## Package layout
 
@@ -906,8 +1016,7 @@ document when `OffscreenCanvas` is unavailable.
   band indices); text can hide or move labels that would overlap, but has
   no leader lines and does not avoid other marks' geometry. Bar value
   labels estimate text widths from the font size to decide what fits.
-- Continuous color only for heatmaps; points cannot be colored by a numeric
-  field.
+- Continuous color for heatmaps, points, and map regions and points only.
 - One x axis and at most two y axes per chart; category values and marks
   placed along y (horizontal bars and error bars) only on the left.
 - Subplots share x and route whole marks; they have no right axes, shared
@@ -943,8 +1052,8 @@ document when `OffscreenCanvas` is unavailable.
   charts with facets rather than splitting. On a log axis, a box or violin
   whose median is zero or below has no tooltip or keyboard stop, though
   its positive part is drawn.
-- A pie, treemap, sunburst, gauge, funnel, radar, Sankey diagram, or network has its chart to itself: no
-  other marks, facets, zoom, brushing, or sync. Pie labels go beside the pie
+- A pie, treemap, sunburst, gauge, funnel, radar, Sankey diagram, network, or map has its chart to itself: no
+  other marks (a map's layers excepted), facets, zoom, brushing, or sync. Pie labels go beside the pie
   only; treemaps and sunbursts have no drill-down, and their pointer lookup
   scans each level's children. A gauge shows one value, with no needle, ticks,
   or threshold marker; a funnel colors every stage alike and has no
@@ -971,6 +1080,15 @@ document when `OffscreenCanvas` is unavailable.
   Synced selections are data values, so charts with differently ordered
   categories select different categories. The keyboard selects ranges only;
   rectangles and lassos need a pointer.
+- Maps have no zoom or pan, base maps, globes or other spherical rotation
+  (only the central meridian moves), great-circle edges, lines or routes,
+  labels on regions, or custom projections. Shapes that cross the
+  antimeridian must be cut there, as RFC 7946 asks, or they are drawn the
+  long way round; shapes of one feature cut apart show the cut as a border.
+  Geometry columns hold polygons and multipolygons only (points are number
+  fields), take new shapes only by `reset`, and a table holding one cannot be
+  appended to from Python, which replaces it whole. Regions are projected
+  again at every new size, and picking tests a shape's every ring.
 - Rolling statistics over values whose differences exceed the largest double
   (about 1.8e308) overflow to Infinity.
 - Python derived tables count their source's rows through one of its

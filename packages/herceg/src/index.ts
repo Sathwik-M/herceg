@@ -26,10 +26,24 @@ export {
   variance,
 } from "./data/derive.ts";
 export { col, Expr, type Operand, when } from "./data/expression.ts";
+export {
+  type Feature,
+  type FeatureCollection,
+  fromGeoJSON,
+  type GeoJsonGeometry,
+  type GeoJsonOptions,
+} from "./data/geojson.ts";
+export {
+  type GeometryInput,
+  type GeometrySet,
+  geometry,
+  geometryBytes,
+} from "./data/geometry.ts";
 export type {
   Batch,
   CategoryField,
   FieldName,
+  GeometryField,
   NumberField,
   NumericField,
   Row,
@@ -74,6 +88,8 @@ export {
 } from "./marks/errorbar.ts";
 export { type FunnelMark, type FunnelOptions, funnel } from "./marks/funnel.ts";
 export { type GaugeMark, type GaugeOptions, gauge } from "./marks/gauge.ts";
+export { type GeoPointMark, type GeoPointOptions, geopoint } from "./marks/geopoint.ts";
+export { type GeoShapeMark, type GeoShapeOptions, geoshape } from "./marks/geoshape.ts";
 export { type GraphMark, type GraphOptions, graph } from "./marks/graph.ts";
 export { type HeatmapMark, type HeatmapOptions, heatmap } from "./marks/heatmap.ts";
 export { type HistogramMark, type HistogramOptions, histogram } from "./marks/histogram.ts";

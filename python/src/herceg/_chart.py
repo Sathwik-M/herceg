@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from . import _render
+from . import _geo, _render
 from ._data import Column, Table
 from ._derive import Derived
 
@@ -65,6 +65,81 @@ class Axis:
             "ticks": self.ticks,
             "format": self.format,
             "axis": self.show,
+        }
+        return {key: value for key, value in spec.items() if value is not None}
+
+
+ProjectionName = Literal[
+    "equal-earth", "natural-earth", "mercator", "equirectangular", "conic-equal-area"
+]
+PROJECTIONS = ("equal-earth", "natural-earth", "mercator", "equirectangular", "conic-equal-area")
+
+
+@dataclass
+class Projection:
+    """How a map is projected (the chart's ``projection``).
+
+    ``type`` is ``"equal-earth"`` (the default, for world maps),
+    ``"natural-earth"``, ``"mercator"``, ``"equirectangular"``, or
+    ``"conic-equal-area"`` (Albers, for countries and continents).
+    ``central_meridian`` is the longitude at the map's center (0, or for the
+    conic projection the middle of the data); ``parallels`` are the conic
+    projection's standard parallels (by default a sixth of the data's
+    latitudes in from either end). ``fit`` is what the map fits into its
+    plot: ``"data"`` (the default), ``"world"``, or a box
+    ``((west, south), (east, north))`` in degrees, whose west may lie east
+    of its east to cross the antimeridian.
+    """
+
+    type: ProjectionName = "equal-earth"
+    central_meridian: float | None = None
+    parallels: tuple[float, float] | None = None
+    fit: Literal["data", "world"] | tuple[tuple[float, float], tuple[float, float]] | None = None
+
+    def _spec(self) -> dict[str, Any]:
+        if self.type not in PROJECTIONS:
+            raise ValueError(
+                f"projection must be one of {', '.join(map(repr, PROJECTIONS))}, not {self.type!r}"
+            )
+        if self.central_meridian is not None and not _finite(self.central_meridian):
+            raise ValueError(
+                f"central_meridian must be a finite longitude, not {self.central_meridian!r}"
+            )
+        parallels = None
+        if self.parallels is not None:
+            parallels = _range(self.parallels, "projection parallels", minimum=-90)
+            if parallels[1] > 90:
+                raise ValueError(f"projection parallels must be latitudes, not {self.parallels!r}")
+        fit: Any = self.fit
+        if fit not in (None, "data", "world"):
+            try:
+                (west, south), (east, north) = fit
+                box = [[float(west), float(south)], [float(east), float(north)]]
+            except (TypeError, ValueError):
+                raise ValueError(
+                    'projection fit must be "data", "world", or ((west, south), (east, north)), '
+                    f"not {fit!r}"
+                ) from None
+            (west, south), (east, north) = box
+            if not (
+                all(map(math.isfinite, [west, south, east, north]))
+                and abs(west) <= 540
+                and abs(east) <= 540
+                and -90 <= south < north <= 90
+                and west != east
+            ):
+                raise ValueError(
+                    "projection fit needs longitudes and latitudes in degrees, south below "
+                    f"north and west apart from east, not {fit!r}"
+                )
+            fit = box
+        spec = {
+            "type": self.type,
+            "centralMeridian": None
+            if self.central_meridian is None
+            else float(self.central_meridian),
+            "parallels": parallels,
+            "fit": fit,
         }
         return {key: value for key, value in spec.items() if value is not None}
 
@@ -130,6 +205,7 @@ class Chart:
         theme: ThemeName | dict[str, Any] | None = None,
         locale: str | None = None,
         time_zone: str | None = None,
+        projection: ProjectionName | Projection | dict[str, Any] | None = None,
     ) -> None:
         if facet_columns is not None and facet is None:
             raise ValueError("facet_columns needs facet")
@@ -217,6 +293,8 @@ class Chart:
         self._marks: list[tuple[dict[str, Any], int | None]] = []
         # The nodes table of each network, by the network's place in `_marks`.
         self._node_tables: dict[int, int] = {}
+        # Tables of features joined with rows of data, by table, for live updates.
+        self._joins: dict[int, _JoinedShapes] = {}
         # The keyword arguments as given, so live charts can change some later.
         self._settings: dict[str, Any] = {
             "title": title,
@@ -237,6 +315,7 @@ class Chart:
             "theme": theme,
             "locale": locale,
             "time_zone": time_zone,
+            "projection": projection,
         }
         self._options = spec_options(self._settings)
 
@@ -1211,6 +1290,184 @@ class Chart:
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
             raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
 
+    def geoshape(
+        self,
+        geometry: str | None = None,
+        *,
+        data: Any = None,
+        name: str | None = None,
+        color: str | None = None,
+        colors: str | Sequence[str] | None = None,
+        color_domain: tuple[float, float] | None = None,
+        color_midpoint: float | None = None,
+        fill: str | None = None,
+        fill_opacity: float | None = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
+        label: str | None = None,
+        geojson: Any = None,
+        locations: str | None = None,
+        featureidkey: str = "id",
+        id: str | None = None,
+    ) -> Chart:
+        """Regions of a map: each row's shape, filled by ``color``, a numeric column
+        on a continuous scale (a choropleth) or a category column with a color per
+        value, whose legend grays its regions out.
+
+        The data holds the shapes in its ``geometry`` column (by default the one
+        named "geometry", or a GeoDataFrame's): a GeoDataFrame, a GeoJSON
+        FeatureCollection (its properties become columns), or any table whose
+        column holds GeoJSON geometries or objects with ``__geo_interface__``.
+        Shapes are polygons and multipolygons in longitude and latitude.
+
+        Or, as in Plotly, the values come from ``data`` and the shapes from
+        ``geojson``: each row's ``locations`` value names its feature by
+        ``featureidkey`` (``"id"`` or ``"properties.<name>"``), compared as text.
+        Every feature is drawn; those no row names have no value. ``name``
+        labels regions in tooltips, keyboard reading, and the summary.
+        Geoshape and geopoint marks share a chart, projected by its
+        ``projection``.
+        """
+        self._map_alone("geoshape")
+        if geojson is not None:
+            if locations is None:
+                raise ValueError(
+                    "geoshape geojson needs locations, the column naming each row's feature"
+                )
+            values = self._mark_table(data)
+            # Layers joining the same rows to the same features share their table.
+            same = next(
+                (
+                    index
+                    for index, join in self._joins.items()
+                    if join.made_from(self._tables[values][0], geojson, locations, featureidkey)
+                ),
+                None,
+            )
+            if same is None:
+                joined = _JoinedShapes(self, values, geojson, locations, featureidkey)
+                table = self._table(joined, joined.table)
+                self._joins[table] = joined
+            else:
+                table = same
+        else:
+            if locations is not None:
+                raise ValueError("geoshape locations needs geojson, the shapes the rows name")
+            table = self._mark_table(data)
+        if geometry is None:
+            geometry = _geometry_column(self._tables[table][0], self._tables[table][1])
+        self._require(table, geometry, ("geometry",), "geoshape geometry")
+        self._require(table, name, ("category",), "geoshape name")
+        self._require(table, color, ("number", "category"), "geoshape color")
+        numeric = color is not None and self._kind(table, color) == "number"
+        if not numeric and (
+            colors is not None or color_domain is not None or color_midpoint is not None
+        ):
+            raise ValueError(
+                "geoshape colors, color_domain, and color_midpoint need a numeric color column"
+            )
+        if fill_opacity is not None and not (_finite(fill_opacity) and 0 <= fill_opacity <= 1):
+            raise ValueError(f"geoshape fill_opacity must be from 0 to 1, not {fill_opacity!r}")
+        if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
+            raise ValueError(
+                f"geoshape stroke_width must be 0 or more pixels, not {stroke_width!r}"
+            )
+        return self._add(
+            {
+                "type": "geoshape",
+                "geometry": geometry,
+                "name": name,
+                "color": color,
+                "colors": _colors(colors, "geoshape colors"),
+                "colorDomain": _range(color_domain, "geoshape color_domain"),
+                "colorMidpoint": _midpoint(color_midpoint, color_domain, "geoshape"),
+                "fill": fill,
+                "fillOpacity": fill_opacity,
+                "stroke": stroke,
+                "strokeWidth": stroke_width,
+                "label": label,
+                "id": id,
+            },
+            table,
+        )
+
+    def geopoint(
+        self,
+        longitude: str,
+        latitude: str,
+        *,
+        data: Any = None,
+        name: str | None = None,
+        series: str | None = None,
+        r: float | str | None = None,
+        r_range: tuple[float, float] | None = None,
+        color: str | None = None,
+        colors: str | Sequence[str] | None = None,
+        color_domain: tuple[float, float] | None = None,
+        color_midpoint: float | None = None,
+        fill: str | None = None,
+        fill_opacity: float | None = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
+        label: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """Points of a map at ``longitude`` and ``latitude`` columns (degrees):
+        places, or bubbles sized by area with a numeric ``r`` column.
+
+        ``series`` gives a color and legend entry per category, ``color`` colors
+        points by a numeric column. Points are drawn largest first, each ringed
+        in the background color (``stroke``, ``stroke_width``). For a
+        GeoDataFrame of points, add the columns first:
+        ``gdf.assign(lon=gdf.geometry.x, lat=gdf.geometry.y)``.
+        """
+        self._map_alone("geopoint")
+        table = self._mark_table(data)
+        self._require(table, longitude, ("number",), "geopoint longitude")
+        self._require(table, latitude, ("number",), "geopoint latitude")
+        self._require(table, name, ("category",), "geopoint name")
+        self._require(table, series, ("category",), "geopoint series")
+        if isinstance(r, str):
+            self._require(table, r, ("number",), "geopoint r")
+        elif r is not None and not (_finite(r) and r > 0):
+            raise ValueError(f"geopoint r must be a positive radius or a column, not {r!r}")
+        self._require(table, color, ("number",), "geopoint color")
+        if fill_opacity is not None and not (_finite(fill_opacity) and 0 <= fill_opacity <= 1):
+            raise ValueError(f"geopoint fill_opacity must be from 0 to 1, not {fill_opacity!r}")
+        if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
+            raise ValueError(
+                f"geopoint stroke_width must be 0 or more pixels, not {stroke_width!r}"
+            )
+        return self._add(
+            {
+                "type": "geopoint",
+                "longitude": longitude,
+                "latitude": latitude,
+                "name": name,
+                "series": series,
+                "r": r,
+                "rRange": _range(r_range, "geopoint r_range", minimum=0),
+                "color": color,
+                "colors": _colors(colors, "geopoint colors"),
+                "colorDomain": _range(color_domain, "geopoint color_domain"),
+                "colorMidpoint": _midpoint(color_midpoint, color_domain, "geopoint"),
+                "fill": fill,
+                "fillOpacity": fill_opacity,
+                "stroke": stroke,
+                "strokeWidth": stroke_width,
+                "label": label,
+                "id": id,
+            },
+            table,
+        )
+
+    def _map_alone(self, kind: str) -> None:
+        """Maps have no axes to facet, zoom, brush, or sync."""
+        if self._facets or self._panels:
+            raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
+        if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
+            raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
+
     def heatmap(
         self,
         x: str,
@@ -1408,6 +1665,10 @@ class Chart:
 
     def to_spec(self) -> tuple[dict[str, Any], list[bytes]]:
         """The portable chart spec and the binary buffers its columns reference."""
+        if self._settings.get("projection") is not None and not any(
+            mark["type"] in _MAP_MARKS for mark, _ in self._marks
+        ):
+            raise ValueError("a projection needs geoshape or geopoint marks to project")
         return assemble_spec(
             self._options,
             self._layout_spec(),
@@ -1620,9 +1881,17 @@ class Chart:
         return table
 
     def _add(self, spec: dict[str, Any], table: int | None) -> Chart:
-        layouts = [mark["type"] for mark, _ in self._marks if mark["type"] in _LAYOUT_MARKS]
-        if layouts or (spec["type"] in _LAYOUT_MARKS and self._marks):
+        kinds = [mark["type"] for mark, _ in self._marks]
+        layouts = [kind for kind in kinds if kind in _LAYOUT_MARKS]
+        # The layers of a map share their chart with each other, and only with them.
+        layers = spec["type"] in _MAP_MARKS and set(kinds) <= set(_MAP_MARKS)
+        if not layers and (layouts or (spec["type"] in _LAYOUT_MARKS and self._marks)):
             kind = layouts[0] if layouts else spec["type"]
+            if kind in _MAP_MARKS:
+                raise ValueError(
+                    f"a {kind} shares its chart only with geoshape and geopoint marks; "
+                    "draw other marks in another chart"
+                )
             raise ValueError(f"a {kind} has its chart to itself; draw other marks in another chart")
         if spec.get("axis") not in (None, "left", "right"):
             raise ValueError(f"axis must be 'left' or 'right', not {spec['axis']!r}")
@@ -1661,7 +1930,13 @@ class Chart:
 
 
 #: Marks that lay out their own chart, with no axes.
-_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey", "graph")
+_LAYOUT_MARKS = (
+    *("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey", "graph"),
+    *("geoshape", "geopoint"),
+)
+
+#: The layers of maps, which share a chart and its projection.
+_MAP_MARKS = ("geoshape", "geopoint")
 
 #: The most nodes and links a graph lays out, as the browser enforces.
 MAX_NODES = 5000
@@ -1676,7 +1951,7 @@ _NODE_FIELDS = ("node", "group", "size")
 OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
     *("zoom", "brush", "sync", "animation", "resolve_y", "renderer", "theme", "locale"),
-    "time_zone",
+    *("time_zone", "projection"),
 )
 
 
@@ -1712,6 +1987,7 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "theme": _theme(settings["theme"]),
         "locale": settings["locale"],
         "timeZone": settings["time_zone"],
+        "projection": _projection(settings.get("projection")),
     }
     return {key: value for key, value in options.items() if value is not None}
 
@@ -1794,6 +2070,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
         *("path", "node", "parent", "source", "target"),
         *("open", "high", "low", "close"),
         *("r", "fillOpacity", "color", "symbol"),
+        *("geometry", "name", "longitude", "latitude"),
     ):
         value = spec.get(key)
         if isinstance(value, str):
@@ -1804,6 +2081,23 @@ def _fields(spec: dict[str, Any]) -> set[str]:
 
 
 def _column_spec(column: Column, buffers: list[bytes]) -> dict[str, Any]:
+    if column.kind == "geometry":
+        shapes = column.shapes
+        assert shapes is not None
+        arrays = {
+            "coordinates": shapes.coordinates,
+            "ringOffsets": shapes.ring_offsets,
+            "polygonOffsets": shapes.polygon_offsets,
+            "geometryOffsets": shapes.geometry_offsets,
+        }
+        # Row i holds geometry i unless rows name their shapes otherwise.
+        if not np.array_equal(column.values, np.arange(len(column.values))):
+            arrays["codes"] = column.values
+        spec: dict[str, Any] = {"type": "geometry"}
+        for key, array in arrays.items():
+            buffers.append(array.tobytes())
+            spec[key] = len(buffers) - 1
+        return spec
     buffers.append(column.values.tobytes())
     index = len(buffers) - 1
     if column.kind == "category":
@@ -1829,6 +2123,131 @@ _THEME_KEYS = {
     "tooltip_background": "tooltipBackground",
     "tooltip_border": "tooltipBorder",
 }
+
+
+def _projection(projection: Any) -> Any:
+    """A projection's spec from a name, a Projection, or a dict of its fields."""
+    if projection is None:
+        return None
+    if isinstance(projection, str):
+        projection = Projection(projection)  # type: ignore[arg-type]
+    elif isinstance(projection, dict):
+        projection = Projection(**projection)
+    return projection._spec()
+
+
+def _geometry_column(source: Any, columns: Any) -> str:
+    """The column of shapes when a geoshape names none: "geometry", or a GeoDataFrame's."""
+    active = getattr(source, "_geometry_column_name", None)
+    for name in ("geometry", active):
+        if name is not None and name in columns.names:
+            return name
+    raise ValueError("geoshape needs geometry=, the column holding the shapes")
+
+
+class _JoinedShapes:
+    """A GeoJSON collection's features, with the values of the rows naming them,
+    as Plotly's ``locations`` and ``featureidkey`` join them: a row per feature,
+    with missing values where no row names it. Live charts join new rows the
+    same way (``rejoin``)."""
+
+    def __init__(self, chart: Chart, table: int, geojson: Any, locations: str, key: str) -> None:
+        if table in chart._derived:
+            raise ValueError(
+                "geoshape joins the rows of a table to the shapes, not those of a derived "
+                "table, which the browser computes; join before deriving"
+            )
+        interface = getattr(geojson, "__geo_interface__", geojson)
+        if not _geo.is_feature_collection(interface):
+            raise TypeError("geoshape geojson must be a GeoJSON FeatureCollection")
+        _geo.check_crs(geojson)
+        chart._require(table, locations, ("category", "number"), "geoshape locations")
+        self.source = chart._tables[table][0]
+        self._geojson = geojson
+        self._locations = locations
+        self._key = key
+        self._keys = [_geo.key_text(_geo.feature_key(f, key)) for f in interface["features"]]
+        self._shapes = Table(interface)
+        self.table = self.rejoin(chart._tables[table][1])
+
+    def made_from(self, source: Any, geojson: Any, locations: str, key: str) -> bool:
+        """Whether this join is of the same rows and features, by the same keys."""
+        return (
+            self.source is source
+            and self._geojson is geojson
+            and (self._locations, self._key) == (locations, key)
+        )
+
+    def rejoin(self, source: Table) -> _Joined:
+        """The features joined with the rows of `source`."""
+        if self._locations not in source.names:
+            raise KeyError(f"geoshape locations: the rows have no column {self._locations!r}")
+        located = source.column(self._locations)
+        if located.kind not in ("category", "number"):
+            raise TypeError(
+                f"geoshape locations: column {self._locations!r} holds {located.kind} values"
+            )
+        values = (
+            [None if code < 0 else located.dictionary[code] for code in located.values]
+            if located.kind == "category"
+            else located.values.tolist()
+        )
+        row_of: dict[str, int] = {}
+        for row, value in enumerate(values):
+            text = _geo.key_text(value)
+            if text is None:
+                continue
+            if text in row_of:
+                raise ValueError(
+                    f"geoshape locations name {text!r} twice; aggregate the rows to one per feature"
+                )
+            row_of[text] = row
+        keys = self._keys
+        rows = np.array([-1 if k is None else row_of.get(k, -1) for k in keys], dtype=np.intp)
+        if values and not (rows >= 0).any():
+            raise ValueError(
+                f"no feature's {self._key} matches a value of {self._locations!r} (features: "
+                f"{keys[:3]!r}; rows: {[_geo.key_text(v) for v in values[:3]]!r})"
+            )
+        if "geometry" in source.names:
+            raise ValueError('geoshape: the data has a column named "geometry", as the shapes')
+        return _Joined(source, rows, self._shapes)
+
+
+class _Joined:
+    """The joined rows' columns, converted when a mark first reads them: the
+    data's taken at each feature's row, then the features' own."""
+
+    def __init__(self, source: Table, rows: np.ndarray, shapes: Table) -> None:
+        self._source = source
+        self._rows = rows
+        self._shapes = shapes
+        self.names = (*source.names, *(n for n in shapes.names if n not in source.names))
+        self._columns: dict[str, Column] = {}
+
+    def column(self, name: str) -> Column:
+        column = self._columns.get(name)
+        if column is None:
+            if name in self._source.names:
+                column = _take(self._source.column(name), self._rows)
+            else:
+                column = self._shapes.column(name)
+            self._columns[name] = column
+        return column
+
+
+def _take(column: Column, rows: np.ndarray) -> Column:
+    """A column's values at `rows`, missing where a row is -1."""
+    missing = rows < 0
+    picked = (
+        column.values[np.where(missing, 0, rows)]
+        if len(column.values)
+        else np.zeros(len(rows), dtype=column.values.dtype)
+    )
+    if column.kind in ("category", "geometry"):
+        values = np.where(missing, -1, picked).astype("<i4")
+        return Column(column.kind, values, column.dictionary, column.shapes)
+    return Column(column.kind, np.where(missing, np.nan, picked).astype(column.values.dtype))
 
 
 def _theme(theme: str | dict[str, Any] | None) -> Any:
@@ -2184,6 +2603,64 @@ def graph(
     """A network of links from ``source`` to ``target``, with ``nodes`` for groups and sizes."""
     return Chart(data, **options).graph(
         source, target, value, nodes=nodes, node=node, group=group, size=size, labels=labels
+    )
+
+
+def choropleth(
+    data: Any,
+    color: str | None = None,
+    *,
+    geometry: str | None = None,
+    geojson: Any = None,
+    locations: str | None = None,
+    featureidkey: str = "id",
+    name: str | None = None,
+    colors: str | Sequence[str] | None = None,
+    color_domain: tuple[float, float] | None = None,
+    color_midpoint: float | None = None,
+    **options: Any,
+) -> Chart:
+    """A map of regions colored by ``color`` (see ``Chart.geoshape``): shapes from
+    ``data`` (a GeoDataFrame or GeoJSON FeatureCollection), or values from ``data``
+    joined to the features of ``geojson`` by ``locations`` and ``featureidkey``.
+    Remaining keyword arguments are chart options (title, projection, ...)."""
+    return Chart(data if geojson is None else None, **options).geoshape(
+        geometry,
+        data=data if geojson is not None else None,
+        geojson=geojson,
+        locations=locations,
+        featureidkey=featureidkey,
+        name=name,
+        color=color,
+        colors=colors,
+        color_domain=color_domain,
+        color_midpoint=color_midpoint,
+    )
+
+
+def scatter_geo(
+    data: Any,
+    longitude: str,
+    latitude: str,
+    *,
+    name: str | None = None,
+    series: str | None = None,
+    r: float | str | None = None,
+    r_range: tuple[float, float] | None = None,
+    color: str | None = None,
+    colors: str | Sequence[str] | None = None,
+    **options: Any,
+) -> Chart:
+    """Points or bubbles on a map at ``longitude`` and ``latitude`` (see ``Chart.geopoint``)."""
+    return Chart(data, **options).geopoint(
+        longitude,
+        latitude,
+        name=name,
+        series=series,
+        r=r,
+        r_range=r_range,
+        color=color,
+        colors=colors,
     )
 
 

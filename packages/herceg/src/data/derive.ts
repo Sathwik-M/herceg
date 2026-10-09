@@ -28,6 +28,7 @@ import {
   type Fields,
   type KindOf,
 } from "./expression.ts";
+import { type GeometrySet, geometryOf } from "./geometry.ts";
 import { quantile } from "./quantile.ts";
 import {
   type CategoryField,
@@ -40,10 +41,15 @@ import {
   table,
 } from "./table.ts";
 
-/** A column between steps. Columns read from the source are not owned and are copied at the end. */
+/**
+ * A column between steps. Columns read from the source are not owned and
+ * are copied at the end. Geometry columns carry their codes through steps
+ * and share their source's shapes.
+ */
 type Column =
   | { kind: "number" | "time"; values: NumericArray; owned: boolean }
-  | { kind: "category"; codes: Int32Array; dictionary: readonly string[]; owned: boolean };
+  | { kind: "category"; codes: Int32Array; dictionary: readonly string[]; owned: boolean }
+  | { kind: "geometry"; codes: Int32Array; set: GeometrySet; owned: boolean };
 
 /** Rows between steps: columns of one length, and each row's source row identity. */
 class Rows implements Fields {
@@ -69,7 +75,8 @@ class Rows implements Fields {
   }
   numbers(name: string): NumericArray {
     const column = this.#column(name);
-    if (column.kind === "category") throw new TypeError(`Field "${name}" is a category`);
+    if (column.kind === "category" || column.kind === "geometry")
+      throw new TypeError(`Field "${name}" is a ${column.kind}`);
     return column.values;
   }
   categories(name: string): { codes: Int32Array; dictionary: readonly string[] } {
@@ -94,7 +101,7 @@ class Rows implements Fields {
     const n = indexes.length;
     const columns = new Map<string, Column>();
     for (const [name, column] of this.columns) {
-      if (column.kind === "category") {
+      if (column.kind === "category" || column.kind === "geometry") {
         const codes = new Int32Array(n);
         for (let i = 0; i < n; i++) codes[i] = column.codes[indexes[i]!]!;
         columns.set(name, { ...column, codes, owned: true });
@@ -134,6 +141,9 @@ function rowsOf(source: Table, from = 0): Rows {
         dictionary: [...dictionary],
         owned: false,
       });
+    } else if (kind === "geometry") {
+      const { codes, set } = source.geometries(name);
+      columns.set(name, { kind, codes: codes.subarray(from), set, owned: false });
     } else {
       columns.set(name, { kind, values: source.numbers(name).subarray(from), owned: false });
     }
@@ -206,8 +216,8 @@ function bin(
   step: { bin: string; as?: string; step?: number; count?: number; start?: number },
 ): Rows {
   const kind = rows.kind(step.bin);
-  if (kind === "category")
-    throw new TypeError(`Field "${step.bin}" is a category; bins need numbers or times`);
+  if (kind === "category" || kind === "geometry")
+    throw new TypeError(`Field "${step.bin}" is a ${kind}; bins need numbers or times`);
   if (step.count !== undefined && !(Number.isInteger(step.count) && step.count >= 1))
     throw new RangeError(`Bin count must be a whole number of at least 1, not ${step.count}`);
   if (step.step !== undefined && !(step.step > 0 && Number.isFinite(step.step)))
@@ -636,6 +646,8 @@ function inputsOf(rows: Rows): Record<string, ColumnInput> {
         column.owned ? column.codes : column.codes.slice(),
         column.dictionary,
       );
+    } else if (column.kind === "geometry") {
+      inputs[name] = geometryOf(column.set, column.owned ? column.codes : column.codes.slice());
     } else {
       const values = column.owned ? column.values : column.values.slice();
       inputs[name] = column.kind === "time" ? time(values) : values;
@@ -723,7 +735,7 @@ export function deriveTable(
   return derived;
 }
 
-/** Rows as a batch for `Table.append`: categories as their labels. */
+/** Rows as a batch for `Table.append`: categories as their labels, geometries as codes. */
 function batchOf(rows: Rows): Record<string, ArrayLike<unknown>> {
   const batch: Record<string, ArrayLike<unknown>> = Object.create(null);
   for (const [name, column] of rows.columns) {
@@ -731,6 +743,8 @@ function batchOf(rows: Rows): Record<string, ArrayLike<unknown>> {
       batch[name] = Array.from(column.codes, (code) =>
         code < 0 ? null : column.dictionary[code]!,
       );
+    } else if (column.kind === "geometry") {
+      batch[name] = column.owned ? column.codes : column.codes.slice();
     } else {
       batch[name] = column.owned ? column.values : column.values.slice();
     }

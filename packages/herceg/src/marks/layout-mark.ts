@@ -7,9 +7,10 @@
 import type { Table } from "../data/table.ts";
 import type { MeasureText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
+import type { ChartConfig } from "../model/model.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
-import type { Mark } from "./mark.ts";
+import type { ColorRamp, GlyphKey, Mark } from "./mark.ts";
 
 /** What a layout mark lays out with: its room and the chart's settings. */
 export interface LayoutFrame {
@@ -40,6 +41,8 @@ export interface LayoutItem {
   py: number;
   /** SVG path data outlining the item, to highlight it. */
   outline: string;
+  /** What `value` measures, when it differs from the mark's `measure` (items of several marks). */
+  measure?: string;
 }
 
 /** What a layout mark drew in one scene. */
@@ -70,8 +73,16 @@ export interface LayoutMark {
   /** What the values are, for tooltip headers: the value field, or "Count". */
   readonly measure: string;
   /** Entries for the legend, which toggles items by key; `id` as in `LayoutFrame`. */
-  legend(id: string | number, color: (key: string) => string): LegendEntry[];
+  legend(id: string | number, color: (key: string) => string, theme: Theme): LegendEntry[];
+  /** Continuous color scales and size keys for the legend, for marks encoding values that way. */
+  scales?(theme: Theme, locale: string | undefined): [ColorRamp[], GlyphKey[]];
   draw(frame: LayoutFrame): LayoutResult;
+  /**
+   * Marks that can share a chart (maps' layers) give the one mark that draws
+   * a chart's layout marks together, with the chart's options (a map's
+   * projection); it throws for marks it cannot draw with.
+   */
+  join?(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark;
 }
 
 /** Any mark a chart takes: one along axes, or a layout mark. */

@@ -21,9 +21,12 @@ export function Latency() {
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 children are mark elements: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
-`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Radar>`, `<Sankey>`, `<Graph>`, `<Rule>`, `<Region>`, `<Text>`, and `<Custom>`. Each mark element takes the
+`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Radar>`, `<Sankey>`, `<Graph>`, `<GeoShape>`, `<GeoPoint>`, `<Rule>`, `<Region>`, `<Text>`, and `<Custom>`. Each mark element takes the
 table it reads as `data`, so field names are checked against that table's
 columns; `<Graph>` takes its links as `data` and a table of nodes as `nodes`.
+`<GeoShape>` and `<GeoPoint>` share a chart with each other, projected by the
+chart's `projection` prop: `<Chart projection="equal-earth"><GeoShape
+data={countries} color="gdp" /></Chart>`.
 Annotations (`<Rule>`, `<Region>`, `<Text>`) take `data` only when
 they draw one item per row: `<Rule data={deploys} x="time" text="version" />`. Marks built
 with herceg's functions can also be passed as a `marks` prop.

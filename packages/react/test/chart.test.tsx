@@ -1,6 +1,7 @@
 import {
   custom,
   facet,
+  geometry,
   type Chart as HercegChart,
   type Mark as HercegMark,
   line,
@@ -16,6 +17,8 @@ import {
   Custom,
   Funnel,
   Gauge,
+  GeoPoint,
+  GeoShape,
   Graph,
   Line,
   Pie,
@@ -209,6 +212,41 @@ describe("<Chart>", () => {
     await frame();
     expect(host.textContent).toContain("Ops");
     expect(host.textContent).not.toContain("Sales");
+  });
+
+  it("draws a map's regions and points from their elements, with its projection", async () => {
+    const square = (x: number) => [x, 0, x + 10, 0, x + 10, 10, x, 10];
+    const shapes = geometry({
+      coordinates: Float64Array.from([...square(0), ...square(10)]),
+      ringOffsets: Int32Array.from([0, 4, 8]),
+      polygonOffsets: Int32Array.from([0, 1, 2]),
+      geometryOffsets: Int32Array.from([0, 1, 2]),
+    });
+    const regions = table({ name: ["Ada", "Bel"], gdp: [1, 2], shape: shapes });
+    const places = table({ lon: [5], lat: [5] });
+    const ref: { current: HercegChart | null } = { current: null };
+    const map = (projection: "mercator" | "equirectangular") => (
+      <Chart ref={ref} projection={projection} locale="en-US">
+        <GeoShape data={regions} name="name" color="gdp" />
+        <GeoPoint data={places} longitude="lon" latitude="lat" />
+      </Chart>
+    );
+    act(() => root.render(map("mercator")));
+    const filled = [...paths()].filter((path) => path.getAttribute("fill-rule") === "evenodd");
+    expect(filled).toHaveLength(2);
+    expect(host.textContent).toContain("Map of 2 regions colored by gdp");
+    const chart = ref.current!;
+    const seen: unknown[] = [];
+    const update = chart.update.bind(chart);
+    chart.update = (options) => {
+      seen.push(options);
+      update(options);
+    };
+    act(() => root.render(map("mercator")));
+    expect(seen).toHaveLength(0);
+    act(() => root.render(map("equirectangular")));
+    expect(seen).toHaveLength(1);
+    await frame();
   });
 
   it("builds annotations from constants or from their own data", () => {
