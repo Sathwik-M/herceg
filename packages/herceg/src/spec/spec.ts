@@ -72,10 +72,10 @@ export interface ChartSpec {
   interaction?: InteractionSpec;
   /**
    * Moves the axes gradually to a view asked for: `setViewport`, zooming
-   * to a brush, and double-click reset; with `values`, bars and pie slices
-   * to changed values too. Off by default; `true` takes 250 ms. Never for
-   * wheel zoom, panning, streaming, linked charts, panels, or slow frames,
-   * nor where the page prefers reduced motion.
+   * to a brush, and double-click reset; with `values`, marks (and the axes
+   * with them) to changed values too. Off by default; `true` takes 250 ms.
+   * Never for wheel zoom, panning, streaming, linked charts, panels, or
+   * slow frames, nor where the page prefers reduced motion.
    */
   animation?: boolean | AnimationSpec;
   /** Renderer for marks. "auto" picks per mark by data size. */
@@ -462,11 +462,13 @@ export interface AnimationSpec {
   /** Milliseconds a change takes; 0 shows it at once. */
   duration?: number;
   /**
-   * Bars and pie slices move from the values shown to new ones when a
-   * table's values change in place or are replaced (`replace`, `set`,
-   * `setColumn`, `reset`), as well as the axes moving to views asked for.
-   * Appended and dropped rows, changed options, and changes that move the
-   * axes or the plot show at once.
+   * Marks move from the values shown to new ones when a table's values
+   * change in place or are replaced (`replace`, `set`, `setColumn`,
+   * `reset`), and axes whose automatic domains change move with them, as
+   * well as the axes moving to views asked for: bars, pie slices, points
+   * (by row, so not across `reset`), and lines and areas whose rows keep
+   * their x positions. Appended and dropped rows, changed options, and
+   * changes that move the plot or the categories show at once.
    */
   values?: boolean;
 }

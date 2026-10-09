@@ -65,8 +65,7 @@ live.reset({ time: newTimes, cpu: newValues });
 {
   const sales = table({ region: ["N", "S"], revenue: [40, 60] });
   createChart(element, {
-    marks: [bar(sales, { x: "region", y: "revenue" })],
-    y: { domain: [0, 100] },
+    marks: [bar(sales, { x: "region", y: "revenue" }), rule({ y: 50 })],
     animation: { values: true },
   });
   sales.setColumn("revenue", [55, 45]);

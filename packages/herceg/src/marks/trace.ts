@@ -174,10 +174,13 @@ export function tracePath(
   path.reset();
   const [start, end] = curve === "monotone" ? curveRows(series, frame) : drawnRange(series, frame);
   reduce(series, y, start, end, frame, path, index);
-  if (curve !== "monotone") return stepped(path, frame, series.key, stage, curve);
-  const curved = frame.polyline(series.key, `${stage}-curve`);
-  monotonePolyline(path, curved);
-  return curved;
+  const traced =
+    curve === "monotone"
+      ? frame.polyline(series.key, `${stage}-curve`)
+      : stepped(path, frame, series.key, stage, curve);
+  if (curve === "monotone") monotonePolyline(path, traced);
+  traced.whole = path.count === end - start;
+  return traced;
 }
 
 function placeable(mapping: Mapping, value: number): boolean {
@@ -220,37 +223,37 @@ export function traceBand(
   ) {
     reduce(series, top, start, end, frame, upper, indexes.top);
     reduce(series, bottom, start, end, frame, lower, indexes.bottom);
-    return {
-      upper: stepped(upper, frame, series.key, "upper", curve),
-      lower: stepped(lower, frame, series.key, "lower", curve),
-    };
-  }
-  let runStart = -1;
-  const breaks = xMap.breaks;
-  for (let k = start; k <= end; k++) {
-    let valid = false;
-    if (k < end) {
-      const row = rowOf(series, k);
-      // Rows inside an axis break are left out without ending a run.
-      if (breaks?.hides(series.x[row]!)) continue;
-      valid =
-        placeable(xMap, series.x[row]!) &&
-        placeable(yMap, top[row]!) &&
-        placeable(yMap, bottom[row]!);
-    }
-    if (valid && runStart < 0) runStart = k;
-    else if (!valid && runStart >= 0) {
-      upper.break();
-      lower.break();
-      reduce(series, top, runStart, k, frame, upper);
-      reduce(series, bottom, runStart, k, frame, lower);
-      runStart = -1;
+  } else {
+    let runStart = -1;
+    const breaks = xMap.breaks;
+    for (let k = start; k <= end; k++) {
+      let valid = false;
+      if (k < end) {
+        const row = rowOf(series, k);
+        // Rows inside an axis break are left out without ending a run.
+        if (breaks?.hides(series.x[row]!)) continue;
+        valid =
+          placeable(xMap, series.x[row]!) &&
+          placeable(yMap, top[row]!) &&
+          placeable(yMap, bottom[row]!);
+      }
+      if (valid && runStart < 0) runStart = k;
+      else if (!valid && runStart >= 0) {
+        upper.break();
+        lower.break();
+        reduce(series, top, runStart, k, frame, upper);
+        reduce(series, bottom, runStart, k, frame, lower);
+        runStart = -1;
+      }
     }
   }
-  return {
+  const whole = upper.count === end - start && lower.count === end - start;
+  const edges = {
     upper: stepped(upper, frame, series.key, "upper", curve),
     lower: stepped(lower, frame, series.key, "lower", curve),
   };
+  edges.upper.whole = edges.lower.whole = whole;
+  return edges;
 }
 
 const extremes: RangeExtremes = { low: -1, high: -1, gap: false };
@@ -329,6 +332,42 @@ export function traceCurvedLayers(
       above[i] = stacked && Number.isNaN(value) ? base : value;
     }
   });
+  const edges = layers.map(({ series }) => ({
+    upper: frame.polyline(series.key, "upper"),
+    lower: frame.polyline(series.key, "lower"),
+  }));
+  // A stack's layer is drawn where it has its value.
+  const drawn = (j: number, i: number) => {
+    const { series, top } = layers[j]!;
+    return !stacked || Number.isFinite(top[rowOf(series, rows[i]!)]!);
+  };
+  curveLayers(xs, positions, tangents, curves, edges, drawn);
+  for (const { upper, lower } of edges)
+    upper.whole = lower.whole = n === end - start && upper.count === n;
+  if (layerFloats.length > RETAINED) layerFloats = new Float64Array(0);
+  return edges;
+}
+
+/**
+ * Curves layers' edges through x positions `xs` and their boundaries'
+ * `positions` (boundary 0 the lowest, boundary j + 1 layer j's top; NaN
+ * where one has none), into each layer's `edges`: monotone tangents per
+ * boundary, written to `tangents`; each segment curved for every boundary,
+ * or (too narrow, or where two boundaries could cross) straight for all of
+ * them, as `curves` records (1 or 0); and each layer's edges drawn over the
+ * runs where it has both boundaries and `drawn(layer, i)` holds. Value
+ * transitions curve the layers between two scenes with it too.
+ */
+export function curveLayers(
+  xs: Float64Array,
+  positions: readonly Float64Array[],
+  tangents: readonly Float64Array[],
+  curves: Float64Array,
+  edges: readonly { upper: Polyline; lower: Polyline }[],
+  drawn: (layer: number, i: number) => boolean,
+): void {
+  const n = xs.length;
+  const count = positions.length;
   for (let b = 0; b < count; b++) {
     const ys = positions[b]!;
     const ts = tangents[b]!;
@@ -338,8 +377,6 @@ export function traceCurvedLayers(
       (a, z) => monotoneTangents(xs, ys, a, z, ts),
     );
   }
-  // Each segment is curved for every boundary, or (too narrow, or where two
-  // boundaries could cross) straight for all of them.
   for (let i = 0; i < n - 1; i++) {
     let curved = Math.abs(xs[i + 1]! - xs[i]!) >= MIN_CURVE_WIDTH;
     for (let b = 1; b < count && curved; b++) {
@@ -367,27 +404,20 @@ export function traceCurvedLayers(
       );
     }
   };
-  const edges = layers.map(({ series, top }, j) => {
-    const upper = frame.polyline(series.key, "upper");
-    const lower = frame.polyline(series.key, "lower");
+  edges.forEach(({ upper, lower }, j) => {
     upper.reset();
     lower.reset();
     const above = positions[j + 1]!;
     const below = positions[j]!;
-    const drawn = (i: number) =>
-      !Number.isNaN(xs[i]! + above[i]! + below[i]!) &&
-      (!stacked || Number.isFinite(top[rowOf(series, rows[i]!)]!));
-    forEachRun(n, drawn, (a, z) => {
+    const shown = (i: number) => !Number.isNaN(xs[i]! + above[i]! + below[i]!) && drawn(j, i);
+    forEachRun(n, shown, (a, z) => {
       upper.break();
       lower.break();
       edge(upper, above, tangents[j + 1]!, a, z);
       edge(lower, below, tangents[j]!, a, z);
     });
-    return { upper, lower };
   });
-  if (layerFloats.length > RETAINED) layerFloats = new Float64Array(0);
   releaseScratch();
-  return edges;
 }
 
 /**

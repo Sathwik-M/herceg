@@ -14,6 +14,12 @@ export class Polyline {
    */
   controls = new Float32Array(0);
   curved = false;
+  /**
+   * Set by the tracers (marks/trace.ts): there is a point for every row
+   * traced, none left out by level of detail, a missing value, or an axis
+   * break. Value transitions move only lines and areas traced whole.
+   */
+  whole = false;
 
   reset(): void {
     this.count = 0;

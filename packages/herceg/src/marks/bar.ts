@@ -6,7 +6,7 @@ import { type Formatter, numberFormatter } from "../format/format.ts";
 import { estimateText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
 import { contrastingText } from "../scale/color.ts";
-import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
+import { MOVING_BARS, type RectGeometry, type TextGeometry } from "../scene/scene.ts";
 import type { BarSpec, Frozen } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import { definedFields } from "./line.ts";
@@ -362,8 +362,9 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         !this.spec.stack && frame.theme.barRadius > 0
           ? frame.bytes(s.key, "ends", Math.ceil(rects.length / 4))
           : undefined;
-      const shown = keyed ? frame.doubles(s.key, "at", end - start) : undefined;
-      const span = keyed ? frame.floats(s.key, "span", (end - start) * 2) : undefined;
+      const items = keyed && end - start <= MOVING_BARS;
+      const shown = items ? frame.doubles(s.key, "at", end - start) : undefined;
+      const span = items ? frame.floats(s.key, "span", (end - start) * 2) : undefined;
       let count = 0;
       // Bars at times an axis break leaves out are not drawn.
       const breaks = along.breaks;

@@ -9,9 +9,12 @@
 import type { RowView } from "../data/row-view.ts";
 import type { Table, TableChange } from "../data/table.ts";
 import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
+import { Polyline } from "../lod/polyline.ts";
+import { monotonePolyline } from "../marks/curve.ts";
 import { tablesOf, viewOf } from "../marks/layout-mark.ts";
 import { type AxisFormat, keyOwner } from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
+import { planAxis } from "../model/axis.ts";
 import { describeChart } from "../model/describe.ts";
 import {
   type ChartConfig,
@@ -156,7 +159,7 @@ export class MountedChart implements Chart {
   /** Moves the axes to views asked for, once loaded for `animation`; null if it failed to load. */
   #animation: ViewAnimation | null | undefined;
   #animationLoading: Promise<void> | undefined;
-  /** Moves bars and slices to changed values, once loaded for `animation.values`; null if it failed to load. */
+  /** Moves marks and axes to changed values, once loaded for `animation.values`; null if it failed to load. */
   #values: ValueAnimation | null | undefined;
   #valuesLoading: Promise<void> | undefined;
   /** How long the last frame took to plan and paint, in milliseconds. */
@@ -940,7 +943,7 @@ export class MountedChart implements Chart {
     }
     const started = performance.now();
     // Changed values on their way draw the scene they move to, which stays
-    // the model's last, with its bars and slices between.
+    // the model's last, with its marks and axes between.
     const build = () => this.#model.scene(measure, cloudsAllowed);
     const scene = this.#values?.frame(build, this.#drawTime) ?? build();
     if (this.#values?.playing) this.#invalidate(false);
@@ -1115,6 +1118,7 @@ export class MountedChart implements Chart {
             this.root.ownerDocument.defaultView,
             // The scene on screen shows the chart's options, unless a frame is pending.
             !this.#dirty,
+            { planAxis, Polyline, monotonePolyline },
           ),
       )
       // Without it, values change at once.

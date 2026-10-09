@@ -14,7 +14,12 @@ import {
   SequentialScale,
 } from "../scale/color.ts";
 import { linearTicks } from "../scale/ticks.ts";
-import { CLOUD_POINTS, type PointCloud, type PointGeometry } from "../scene/scene.ts";
+import {
+  CLOUD_POINTS,
+  MOVING_POINTS,
+  type PointCloud,
+  type PointGeometry,
+} from "../scene/scene.ts";
 import type { Frozen, PointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { legendParts } from "./legend-parts.ts";
@@ -356,6 +361,11 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       const colorIndex = tones && frame.bytes(s.key, "color", length);
       const opacities = alphas && frame.floats(s.key, "opacity", length);
       const symbols = codes && frame.bytes(s.key, "symbol", length);
+      // Charts that animate changed values learn the row of each point.
+      const ids =
+        frame.keyed && !sample && length <= MOVING_POINTS
+          ? frame.doubles(s.key, "id", length)
+          : undefined;
       let count = 0;
       for (let k = start; k < end; k++) {
         const row = rowOf(s, k);
@@ -385,6 +395,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         if (colorIndex) colorIndex[count] = tone;
         if (opacities) opacities[count] = alpha;
         if (symbols) symbols[count] = shape;
+        if (ids) ids[count] = this.table.rowOffset + row;
         count++;
       }
       out.push({
@@ -403,6 +414,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
         opacities,
         symbols,
         ring,
+        items: ids && { table: this.table, generation: this.table.generation, ids },
       });
     }
     return out;
