@@ -20,11 +20,24 @@ ${G} [role=columnheader]{line-height:calc(var(--hg-header-height) - 1px);color:v
 ${G} [data-align=end]{text-align:end;font-variant-numeric:tabular-nums}
 ${G} [data-align=center]{text-align:center}
 ${G} .hg-sort{margin-inline-start:4px;font-size:0.85em}
-${G} [aria-selected=true]{background:var(--hg-selected);box-shadow:inset 3px 0 var(--hg-accent)}
+${G} [aria-selected=true],${G} [aria-expanded][data-selection=all]{background:var(--hg-selected);box-shadow:inset 3px 0 var(--hg-accent)}
 ${G} [role=gridcell]:focus,${G} [role=columnheader]:focus{outline:2px solid var(--hg-accent);outline-offset:-2px}
+${G} .hg-body [aria-expanded]{font-weight:600}
+${G} .hg-body [aria-expanded]>[aria-colindex="1"]{text-align:start}
+${G} .hg-body [aria-level="2"]>[aria-colindex="1"]{padding-inline-start:calc(34px + 1em)}
+${G} .hg-controls{display:inline-flex;align-items:center;gap:6px;height:100%;margin-inline-end:6px;vertical-align:top}
+${G} .hg-toggle{width:1em;text-align:center;cursor:pointer;color:var(--hg-muted)}
+${G} .hg-toggle::before{content:"\\25B8"}
+${G} [aria-expanded=true] .hg-toggle::before{content:"\\25BE"}
+${G} .hg-check{width:12px;height:12px;box-sizing:border-box;border:1px solid var(--hg-muted);border-radius:2px;cursor:pointer}
+${G} .hg-check[aria-checked=true]{background:var(--hg-accent);border-color:var(--hg-accent)}
+${G} .hg-check[aria-checked=mixed]{background:linear-gradient(var(--hg-accent),var(--hg-accent)) center/6px 2px no-repeat}
 @media (forced-colors:active){
-${G} [aria-selected=true]{forced-color-adjust:none;background:Highlight;color:HighlightText;box-shadow:none}
+${G} [aria-selected=true],${G} [aria-expanded][data-selection=all]{forced-color-adjust:none;background:Highlight;color:HighlightText;box-shadow:none}
 ${G} [role=gridcell]:focus,${G} [role=columnheader]:focus,${G} .hg-scroller:focus-visible{outline-color:CanvasText}
+${G} .hg-check{forced-color-adjust:none;border-color:currentColor}
+${G} .hg-check[aria-checked=true]{background:currentColor}
+${G} .hg-check[aria-checked=mixed]{background:linear-gradient(currentColor,currentColor) center/6px 2px no-repeat}
 }`;
 
 /** The theme as the custom properties the stylesheet reads. */

@@ -71,7 +71,7 @@ export function xAt(series: Series, position: number): number {
 }
 
 /** Splits rows by category code. Missing values (-1) belong to no group. */
-export function groupRows(codes: Int32Array, groups: number, rows?: Uint32Array): Uint32Array[] {
+export function rowsByCode(codes: Int32Array, groups: number, rows?: Uint32Array): Uint32Array[] {
   // Every row, or only `rows` (a row view's), in their order.
   const length = rows ? rows.length : codes.length;
   const rowAt = (k: number) => (rows ? rows[k]! : k);

@@ -1,11 +1,11 @@
-// Long-format rows grouped by a series field and kept current as their table
-// streams. Loaded the first time a chart groups a whole table's rows by a
+// Long-format rows split by a series field and kept current as their table
+// streams. Loaded the first time a chart splits a whole table's rows by a
 // field (see SeriesSplitter), so charts without a series field carry none of it.
 
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 
-/** One category's rows in `RowGroups`: positions, ascending, in `buffer[0, count)`. */
+/** One category's rows in `SplitRows`: positions, ascending, in `buffer[0, count)`. */
 interface Group {
   readonly name: string;
   buffer: Uint32Array;
@@ -18,8 +18,8 @@ interface Group {
   readonly key: object;
 }
 
-/** One category's rows, as `RowGroups.groups` gives them. */
-export interface RowGroup {
+/** One category's rows, as `SplitRows.groups` gives them. */
+export interface CategoryRows {
   readonly name: string;
   readonly rows: Uint32Array;
   readonly sorted: boolean;
@@ -34,7 +34,7 @@ export interface RowGroup {
  * per group plus a pass over the rows that stay. Other changes regroup.
  * Groups are keyed by name, since a rolling window may renumber codes.
  */
-export class RowGroups {
+export class SplitRows {
   readonly #table: Table;
   readonly #field: string;
   readonly #x: string | undefined;
@@ -52,11 +52,11 @@ export class RowGroups {
   }
 
   /** The groups with rows, in the order of the field's dictionary. */
-  groups(): RowGroup[] {
+  groups(): CategoryRows[] {
     const table = this.#table;
     if (table.version !== this.#version) this.#update();
     const { dictionary } = table.categories(this.#field as never);
-    const out: RowGroup[] = [];
+    const out: CategoryRows[] = [];
     for (const name of dictionary) {
       const group = this.#groups.get(name);
       if (!group || group.count === 0) continue;

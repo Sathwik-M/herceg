@@ -26,7 +26,7 @@ import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import { type ColorRamp, frozen, type GlyphKey, requireField } from "./mark.ts";
-import { groupRows } from "./series.ts";
+import { rowsByCode } from "./series.ts";
 
 export interface GeoPointOptions<S extends Schema> {
   /** Number field: each point's longitude, in degrees east. */
@@ -172,7 +172,7 @@ export class GeoPointMark implements GeoLayer {
     if (spec.series === undefined)
       return [{ label: spec.label ?? "Points", rows: undefined, category: undefined }];
     const { codes, dictionary } = table.categories(spec.series as never);
-    const rows = groupRows(codes, dictionary.length);
+    const rows = rowsByCode(codes, dictionary.length);
     return dictionary.flatMap((category, code) =>
       rows[code]!.length > 0 ? [{ label: category, rows: rows[code], category }] : [],
     );

@@ -12,8 +12,14 @@ import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
 import type { Frozen } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
-import type { RowGroups } from "./row-groups.ts";
-import { groupRows, isSortedSubset, type Series, type SeriesStream, TableCache } from "./series.ts";
+import {
+  isSortedSubset,
+  rowsByCode,
+  type Series,
+  type SeriesStream,
+  TableCache,
+} from "./series.ts";
+import type { SplitRows } from "./split.ts";
 
 /**
  * Identifies a mark within a chart: its explicit `id`, or its index. Series
@@ -326,7 +332,7 @@ export interface SeriesSource {
 }
 
 /** What keeps long-format rows grouped as tables stream, loaded the first time a splitter needs it. */
-let rowGroups: Promise<typeof import("./row-groups.ts")> | undefined;
+let splitRows: Promise<typeof import("./split.ts")> | undefined;
 
 /**
  * Splits a table into series sources: one per y field, or one per category of
@@ -347,7 +353,7 @@ export class SeriesSplitter {
    * A whole table's rows by the series field, kept current as it streams;
    * until its code loads, rows are grouped again each change.
    */
-  #groups: RowGroups | undefined;
+  #groups: SplitRows | undefined;
   #loading = false;
 
   constructor(
@@ -410,10 +416,10 @@ export class SeriesSplitter {
       }
       if (!shown && !this.#loading) {
         this.#loading = true;
-        rowGroups ??= import("./row-groups.ts");
-        rowGroups.then(
+        splitRows ??= import("./split.ts");
+        splitRows.then(
           (loaded) => {
-            this.#groups = new loaded.RowGroups(this.table, field, xField);
+            this.#groups = new loaded.SplitRows(this.table, field, xField);
           },
           // Without it, rows are grouped again each change, as before it loaded.
           () => {},
@@ -421,7 +427,7 @@ export class SeriesSplitter {
       }
       const x = xField === undefined ? undefined : this.table.numbers(xField as never);
       const { codes, dictionary } = this.table.categories(field as never);
-      const groups = groupRows(codes, dictionary.length, shown);
+      const groups = rowsByCode(codes, dictionary.length, shown);
       // Categories with no remaining rows (for example after a rolling
       // window moved past them) produce no series.
       return dictionary.flatMap((name, code) => {

@@ -28,7 +28,8 @@ One name per concept, used the same way in code and docs.
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 | **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
-| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, drawn from a grid model (`GridModel`), which holds its columns, scroll position, focus, and selection without a DOM. |
+| **Row groups** | A row view's rows grouped by the values of some fields (`RowGroups`, made by `groupRows`): each group's key (its value of each field), the positions of its rows, and a table with one row of aggregates per group. |
+| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, or its row groups as header rows each followed by its rows when expanded, drawn from a grid model (`GridModel`), which holds its columns, scroll position, expansion, focus, and selection without a DOM. |
 | **Grid column** | A field a grid shows, with its id, title, width, alignment, and format (`GridColumn`). Not a table's column (its storage). |
 
 ## Pipeline
@@ -114,7 +115,7 @@ layer for stacked areas and bars (top and base, with up to 0.5x room to grow
 like a table's), and geometry buffers bounded by the plot width.
 
 Rows of a whole table split by a series field are grouped once and kept
-current (`RowGroups` in `marks/row-groups.ts`): appended rows are filed
+current (`SplitRows` in `marks/split.ts`): appended rows are filed
 into their groups, and rows a rolling window drops leave the front of each
 group (a binary search) while the rest move down into a buffer sized for
 them, instead of the table being grouped again each change. Rows given out
@@ -123,7 +124,7 @@ still read them; appends only write past their end. Groups are keyed by name, si
 may renumber a category's codes; a change to values in place, or a reset,
 groups again. A row view's rows are grouped from scratch. Each group counts
 the rows it has lost, which lets GPU uploads follow it (below). Its code
-(`marks/row-groups.ts`) loads the first time a chart groups a whole table's
+(`marks/split.ts`) loads the first time a chart groups a whole table's
 rows; until then, and for good if it cannot load, rows are grouped again each
 change, with the same result. The grouping itself costs about what
 grouping again did (both are passes over typed arrays; a rolling window's
@@ -223,6 +224,73 @@ over views only repeat in facets for now. Adapters treat marks over different vi
 The WebGL painter uploads whole columns, so points of a view stay on the
 CPU path for now.
 
+## Row groups
+
+Row groups (`data/groups.ts`) group the rows a view shows by the values of
+some fields and keep count, sum, mean, minimum, and maximum per group, with
+derived tables' semantics (a count without a field counts rows, with one its
+finite values; the others leave out missing and infinite values). Groups are
+numbered in the order they first appeared, and group `g` is row `g` of their
+table, an ordinary `Table` charts and grids read.
+
+Each grouping field gives its values ids in order of first appearance
+(category codes map to ids through an `Int32Array` per dictionary, numbers
+through a `Map` in which NaN is one key, so missing values form a group and
+-0 joins 0); with one field the id is the group, with several, ids combine
+pairwise (`id × 2^26 + id`) through a map per further field. The group of
+every position the view shows is kept in an `Int32Array` over the table's
+rows (-1 for rows it leaves out), and running aggregates in `Float64Array`s
+per group. Rows are visited in table order, whatever the view's sort: the
+view's positions are marked in that array, then read in order. So sums add
+up as derived tables add them (equal to `derive(...).filter(...).aggregate()`
+to the bit), and sorting the view changes no aggregate.
+
+Groups follow the view's table through its change events (which also give
+the fields an update touched) and the view through its `queryRevision`.
+Appended rows only (no drop, reset, query change, or update of a field the
+groups read: grouping fields, aggregated fields, and the view's filter's) are
+marked, found a group (new keys add groups at the end), and added to its
+aggregates: O(appended), plus a scan of the view's positions for sorted
+views, where appended rows merge anywhere. Anything else computes every
+group again (O(rows)), starting from the same ids, so groups that remain
+keep their numbers; groups left without rows are then dropped, their keys'
+ids forgotten, and the rest renumbered in order. The table is changed where
+values differ: a `replace` of each aggregate over each run of groups whose
+value changed (runs closer than 64 groups merge, since another call costs
+about as much as copying them), then an `append` of new groups; a group that
+vanished resets it. So an append costs O(appended × aggregates), not
+O(groups), however far apart the groups it touches are. The groups' table is
+a `Table` subclass of the module's own whose listeners hear those writes as
+one change, after the last one (its appended rows, the updated range, and
+the fields): none of them sees some aggregates updated and others not. A
+`Table` method writing several fields at once would do the same, but every
+chart would bundle it. An update of a field only the view's sort reads keeps
+the aggregates and only reorders the groups' rows. Reads catch up first, so a listener of the table that runs
+before the groups heard of a change reads it already (a change no listener
+call described, seen only through the version, is treated as an update of
+every field); a listener of the groups' table that changes their source is
+caught up with once the groups' own changes are written.
+
+The positions of each group's rows, in the view's order, are listed only
+when a reader asks (a grid with a group expanded, or selecting a group): one
+`Uint32Array` of the view's positions, group after group, and where each
+group starts, built by counting sort in two passes over the view and kept
+until the groups next change. `memberIndex` finds a row among its group's by
+binary search with the view's comparator. A group's key is its value of each
+field (labels, numbers, or null), and its id the key as JSON with infinities
+as text: keys, not numbers or codes, name groups to readers, since numbers
+change when groups are renumbered and codes when dictionaries are compacted.
+The groups' table keeps the groups alive (a `WeakMap`), and the table and
+view hold them weakly, as views are held.
+
+Memory: 4 bytes per table row (each row's group, with half again as room
+once rows are appended), 4 bytes per shown row once rows are listed, and
+8 bytes per group per running value. At a million rows and a thousand
+groups, the groups take 4 MiB at first and grouping takes about 11 ms, where
+a derived table's filter and aggregate take about 40 ms and allocate
+copies of the filtered columns (about 98 MiB for 20 fields); 1,000 appended
+rows update them in about 0.1 ms (one-off Node measurements, Apple M6).
+
 ## Grids
 
 A grid (`herceg/grid`) shows a row view's rows. Its state lives in a
@@ -251,6 +319,34 @@ the row leaves, the focus goes to the row now at its last index, or to the
 header row when none is left; a hidden column's focus goes to the nearest
 shown one. Formatting reads values through one Intl formatter per column,
 made once (format/format.ts caches them), and keeps no strings.
+
+Grouped grids show a row groups' groups (`grid/grouped.ts`), each a header
+row followed by its group's rows when expanded. The model keeps the
+expansion as the ids of groups expanded otherwise than by default (all
+collapsed, or all expanded after `expandAll`), so groups keep it as rows
+stream and through resets; ids of groups gone are forgotten once they
+outnumber the groups present. The display is the groups in order (by the
+group sort over the groups' table, or as they appeared), each header's row
+index as prefix counts of header and expanded rows (a `Float64Array` per
+group, no object per row), so a row index finds its group by binary search
+and its row as an offset into the group's rows. It is rebuilt (O(groups),
+plus a sort of the groups when sorted) when the groups, their order, or the
+expansion change. Rows of a collapsed group are not shown; the focus, the
+row at the top, and a range's anchor follow table rows by identity and
+headers by key, and a row hidden by its group collapsing resolves to the
+group's header. Expanding or collapsing keeps the top row in place; new
+groups or a new group order keep the pixel offset, as a new query does.
+
+Selecting a header selects its group's rows into the row set (its rows are
+listed for it). How many rows of each group are selected is counted once per
+selection and change of the groups' rows: a pass over the row set's members,
+or for a condition over the table, finding each row's group. Appends leave
+the counts of row sets alone (appended rows are in none, and new groups have
+none selected), so streaming into a grouped grid counts nothing again, and
+the model's own clicks and keys adjust the counts they change instead of
+counting again. Headers' cells are written from the groups' table through
+the columns' formatters, the first naming the group by key and counting its
+rows.
 
 Selection commands write a `RowSet` into the store's channel. Toggles and
 ranges change the set the model last put there when the channel still holds
@@ -298,6 +394,20 @@ leaves the model's top alone, which anchoring may have moved since, so
 targets of the keyboard and the last row are reached exactly; other offsets,
 the user's, map by the ratio. A million 28-pixel rows scroll 3.5 times as
 far per pixel.
+
+Grouped grids follow the WAI tree grid pattern (`role="treegrid"`): rows
+carry `aria-level`, `aria-posinset`, and `aria-setsize` (their place among
+the groups, or among their group's rows, since most are not mounted), and
+headers `aria-expanded`. Since `aria-selected` has no mixed value, a header's
+first cell holds a checkbox (`role="checkbox"`, `aria-checked` true, false,
+or mixed) beside a toggle drawn for the eye only; its rows keep
+`aria-selected`. Focus stays on cells, so the keys adapt the pattern's: a
+row's first cell stands for the row (where the pattern would focus rows),
+so Right and Left there expand and collapse a group and Left on a group's
+row goes to its header, while elsewhere the arrows move between cells, as in
+the pattern's cell focus; Enter on any cell of a header toggles it (the
+pattern's cell focus takes Enter on the first cell only), and the live
+region says what expanding and collapsing did.
 
 Keyboard focus follows the WAI grid pattern: one tab stop, held by the
 focused cell when it is mounted and by the grid otherwise (Tab into the grid
@@ -1686,8 +1796,20 @@ document when `OffscreenCanvas` is unavailable.
   show as white paper, and halos of labels are read twice by readers that
   ignore replacement text (macOS Preview).
 - Grids have rows of one height and columns of set widths, with no
-  resizing or reordering by dragging, pinned columns, grouping, custom cell
-  content, editing, or copying, and only a React adapter. Sorting runs on
+  resizing or reordering by dragging, pinned columns, nested groups,
+  pivots, custom cell content, editing, or copying, and only a React
+  adapter. Row groups recompute every group (a pass over the rows) on any
+  change but appends, so a rolling window recomputes them on every append,
+  and a new sort of the view recomputes them to find the aggregates
+  unchanged; they compute count, sum, mean, minimum, and maximum only, and
+  have no place in portable specs yet. Nearly unique keys cost a key array
+  and map entries per group: about 0.25 s to group a million rows into
+  630,000 groups (appends stay about 1 ms per 1,000 rows). Listing groups' rows, which a grid
+  with groups expanded does, is a pass over the view after each change
+  (about 0.3 ms per 100,000 rows); groups sort again after each change when
+  sorted. There is no "select this group, rows to come included" condition
+  yet: selecting a group takes the rows it has. Group headers say "(missing)"
+  for missing keys without a `missing` text. Sorting runs on
   the main thread (about 0.13 s for a million rows by a number, 0.25 s by a
   category and a number). Wheel scrolling past 8 million pixels of rows moves
   more than a pixel per pixel. Mounted rows and cells are only those in view,

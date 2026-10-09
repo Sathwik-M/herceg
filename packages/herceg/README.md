@@ -104,8 +104,9 @@ when they give text and numbers otherwise, even a copy of a time field.
 Ungrouped aggregates give one row even for no rows (a count of 0, missing
 statistics). Aggregates are `count`, `sum`, `mean`, `median`, `min`, `max`,
 `q1`, `q3`, `stdev`, `variance` (sample statistics), `distinct`, `first`,
-and `last`, over finite values; quantiles interpolate as NumPy and pandas
-do. Rolling windows are trailing windows of rows (within `groupby` groups),
+and `last`, over finite values (`count()` counts rows, `count(field)` the
+field's finite values); quantiles interpolate as NumPy and pandas do.
+Rolling windows are trailing windows of rows (within `groupby` groups),
 with `count`, `sum`, `mean`, `min`, `max`, and `stdev`. Bins hold their
 start: `step` wide from `start` (by default at multiples of the step), or
 about `count` round bins (default 10; 1 wide when all values are equal);
@@ -161,6 +162,49 @@ of the data. Points of a view are drawn on the CPU (not the WebGL painter),
 size and color scales span the whole table, facets repeat them in every
 panel (`facet: "repeat"`) rather than splitting them, and views have no
 place in portable specs yet; other marks take tables only.
+
+### Row groups
+
+`groupRows` groups the rows a view shows by the values of some fields, and
+keeps each group's aggregates in an ordinary table, one row per group, that
+charts draw and grids show:
+
+```ts
+import { col, count, groupRows, max, mean, rowView } from "herceg";
+
+const failed = rowView(requests, { filter: col("status").ge(500) });
+const byService = groupRows(failed, {
+  by: ["service"],
+  ops: { errors: count(), latency: mean("latency"), worst: max("latency") },
+});
+bar(byService.table, { x: "service", y: "errors" });
+```
+
+Values are read through the view's positions, so no column is copied. The
+view's filter and restriction choose the rows; its sort orders each group's
+rows (`byService.members(g)`, positions in the view's order) but not the
+aggregates, which add up rows in table order: the values
+`derive(...).filter(...).aggregate(...)` gives, from `count` (rows, or with a
+field its finite values), `sum`, `mean`, `min`, and `max`, which leave out
+missing and infinite values. Groups come in the order they first appeared.
+
+The table follows the view. Appended rows update the groups they join and
+add rows for the groups they start, reading no other row; anything else
+(rows dropped, a value the groups read changed in place, a new filter or
+restriction, a reset) computes the groups again and changes the table where
+its values differ, keeping the groups that remain in their order, and
+resetting the table only when a group lost its last row. Each change of the
+view's table is one change of the groups' table, whose listeners find every
+aggregate and new group in place. Treat it as read-only; it keeps the groups
+following, and `dispose()` stops them.
+
+A group's key is its value of each grouping field (`byService.keyOf(g)`):
+a label for categories, a number for numbers and times, null where the value
+is missing. Keys name groups however rows come, go, and sort, and across
+resets: `indexOf(key)` finds a group's row of the table, `groupOf(position)`
+the group of a table row. Groups hold 4 bytes per table row (each row's
+group), 4 bytes per row of the view once a reader lists groups' rows, and
+their running aggregates.
 
 ## Marks
 
@@ -1416,8 +1460,59 @@ How they link is the application's choice; nothing filters automatically.
 Rows that a filter takes out of the grid stay selected, so the chart keeps
 showing them.
 
+A grid shows its view's rows in groups (see Row groups) given as `groups`:
+a header row per group, followed by the group's rows when it is expanded.
+
+```ts
+import { bar, count, groupRows, mean, rowView } from "herceg";
+
+const view = rowView(requests);
+const byService = groupRows(view, {
+  by: ["service"],
+  ops: { n: count(), latency: mean("latency") },
+});
+const model = createGridModel({
+  data: view,
+  groups: byService,
+  columns: [
+    { field: "service" },
+    { field: "time" },
+    { field: "latency", aggregate: "latency", format: { maximumFractionDigits: 1 } },
+  ],
+});
+bar(byService.table, { x: "service", y: "latency" }); // the same groups, charted
+```
+
+A header's first cell names its group by key and counts its rows
+("api (1,204)"); a column of a grouping field shows the key's value, and a
+column with an `aggregate` the group's value of it, in the column's format
+when the aggregate is a sum, mean, minimum, or maximum of the column's own
+field. Groups start collapsed: `model.setExpanded(key, true)`,
+`expandAll()`, and `collapseAll()` change that by key, so groups keep it as
+rows stream and through resets (`model.setGroups` shows other groups, or
+none). `model.row(i)` tells a group's header (`kind: "group"`, with its key,
+row count, and expansion) from a table row (`kind: "row"`). Clicking a
+column's header sorts each group's rows by its field and the groups by the
+column's aggregate, or by key for a grouping field; `model.setGroupSort`
+orders groups by any field of the groups' table, and without it they keep
+the order they appeared in.
+
+Selecting a group's header selects every row of the group that the view
+shows, collapsed or not, into the grid's row set; its checkbox is checked
+when all of them are selected and mixed when some are
+(`model.selectionState(i)`), and Shift ranges take whole groups whose
+headers they cover. Rows appended to a group later are not selected. When a
+group collapses around the focused cell, the focus goes to its header.
+Grouped grids are WAI tree grids: rows say their level, their place among
+the group's rows or the groups, and whether they are expanded. Since the
+focus is always on a cell, a row's first cell stands for the row, as the
+pattern's focused rows do: there Right expands a group, Left collapses it,
+and Left on a group's row goes to its header (elsewhere the arrows move
+between cells); Enter on any cell of a header expands or collapses it, and
+Space selects its rows.
+
 Rows have one height (`rowHeight`, 28 pixels by default) and columns explicit
 widths. Rows taller together than 8 million pixels scroll scaled: the
 scrollbar covers them all, and a pixel scrolled moves more than one. Not yet
 available: resizing or reordering columns by dragging, pinned columns,
-grouping, custom cell content, editing, and copying.
+nested groups, pivots, custom cell content, editing, and copying.
