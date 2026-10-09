@@ -4,6 +4,12 @@ import type { Inspection } from "../model/model.ts";
 import type { Selection } from "./brush.ts";
 import { report } from "./scheduler.ts";
 
+/** The panel a view or selection is set in, for charts whose panels have scales of their own. */
+export interface PanelTarget {
+  /** A panel's key: its facet value (both, in a grid, as a JSON array) or subplot id. */
+  panel?: string;
+}
+
 /** Chart events by name, with what their listeners receive. */
 export interface ChartEvents {
   /**
@@ -14,12 +20,24 @@ export interface ChartEvents {
     domain: readonly [number, number] | null;
     /** The visible y range of the left axis; null when it fits the data. */
     y: readonly [number, number] | null;
+    /**
+     * In charts whose panels have x scales of their own, the keys of the
+     * panels whose x range `domain` is; a change for several reports each.
+     */
+    panels?: readonly string[];
   };
   /**
    * The selection changed: its x and y ranges and a lasso's outline, all
    * null when the selection was cleared.
    */
-  select: Selection;
+  select: Selection & {
+    /**
+     * In charts whose panels have x scales of their own, the keys of the
+     * panels sharing the selection's x scale; for a cleared selection, those
+     * it belonged to.
+     */
+    panels?: readonly string[];
+  };
   /** The data under the pointer or cursor changed; undefined when there is none. */
   hover: { inspection: Inspection | undefined };
   /** The plot was clicked (not dragged), with the data under the pointer. */

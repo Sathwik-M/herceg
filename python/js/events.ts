@@ -51,13 +51,14 @@ export function inspectionPayload(
   inspection: Inspection | undefined,
 ): InspectionPayload | null {
   if (!inspection) return null;
+  // The panel's scales, which may differ from other panels'.
+  const panel = chart.model.panels().find(({ key }) => key === inspection.panel);
   const scale =
     inspection.axis === "item"
       ? undefined
       : inspection.axis === "x"
-        ? chart.model.xScale()
-        : (chart.model.panels().find(({ key }) => key === inspection.panel)?.y ??
-          chart.model.yScale());
+        ? (panel?.x ?? chart.model.xScale())
+        : (panel?.y ?? chart.model.yScale());
   const categories = scale?.type === "band" ? scale.categories : undefined;
   return {
     axis: inspection.axis,

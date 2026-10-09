@@ -191,6 +191,14 @@ describe("notebook widget", () => {
     expect(figure(host!).getAttribute("aria-label")).toBe("Chart");
   });
 
+  it("changes options of charts whose specs need a later version", () => {
+    const resolved = snapshot({ version: 3, resolve: { x: "shared", y: "shared" } });
+    const model = new MockModel({ _chart: resolved, _listening: [] });
+    const [host] = mount(model);
+    model.receive({ type: "options", revision: 1, options: { title: "After" } });
+    expect(figure(host!).getAttribute("aria-label")).toBe("After");
+  });
+
   it("loads a network grown past its limit, and draws it once updates bring it back", async () => {
     // A snapshot after Python streamed nodes in: 5,001 of them, one link.
     const names = Array.from({ length: 5001 }, (_, i) => `n${i}`);

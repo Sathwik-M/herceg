@@ -14,11 +14,13 @@ import type { AxisSpec, ChartSpec, FacetSpec, ScaleResolution } from "../spec/sp
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
+  across,
+  groups,
   type PanelCheck,
   type PanelGrid,
+  type PanelGroups,
   type PanelLayout,
   type PanelSplit,
-  yGroups,
 } from "./panel-layout.ts";
 
 export interface FacetOptions {
@@ -98,7 +100,7 @@ export class Facet implements PanelLayout {
    */
   check(
     marks: readonly Mark[],
-    options: Pick<ChartSpec, "resolve" | "interaction" | "y"> = {},
+    options: Pick<ChartSpec, "resolve" | "interaction" | "x" | "y"> = {},
   ): void {
     const zoom = options.interaction?.zoom;
     if (
@@ -168,8 +170,9 @@ export class Facet implements PanelLayout {
       : "facet by fields with fewer values";
   }
 
-  /** Every panel's y axis is the chart's. */
+  /** Every panel's axes are the chart's. */
   groupAxis(
+    _axis: "x" | "y",
     _index: number,
     _drawn: readonly MarkSeries[],
     chart: AxisSpec | undefined,
@@ -178,16 +181,20 @@ export class Facet implements PanelLayout {
     return { type, spec: chart };
   }
 
-  panelAxis(_index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
+  panelAxis(_axis: "x" | "y", _index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
     return chart;
   }
 
-  yGroups(
-    resolution: ScaleResolution,
+  groups(resolution: ScaleResolution, split: PanelSplit, columns: number): PanelGroups {
+    return groups(resolution, split, columns);
+  }
+
+  across(
     split: PanelSplit,
-    columns: number,
-  ): { groupOf: number[]; drawn: MarkSeries[][] } {
-    return yGroups(resolution, split, columns);
+    groupOf: readonly number[],
+    by: readonly number[],
+  ): [number, MarkSeries[]][][] {
+    return across(split, groupOf, by);
   }
 
   /** How a split's panels are placed, with headers a line of text tall. */

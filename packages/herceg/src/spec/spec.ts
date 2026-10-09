@@ -11,10 +11,12 @@ import type { Expression } from "../data/expression.ts";
 export type { Expression, Operator } from "../data/expression.ts";
 
 /**
- * The spec format this herceg writes. It reads version 1 too; version 2
- * adds `resolve`, which a version 1 reader would ignore and draw shared axes.
+ * The spec format this herceg writes; it reads the earlier ones too. Each
+ * version adds what an older reader would ignore and draw differently:
+ * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x` and
+ * panels' own `x`.
  */
-export const SPEC_VERSION = 2;
+export const SPEC_VERSION = 3;
 
 /** Column name in a table. */
 export type Field = string;
@@ -22,10 +24,10 @@ export type Field = string;
 export interface ChartSpec {
   /**
    * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
-   * `grid` must give 2, so that readers of version 1 refuse them rather than
-   * draw them differently.
+   * `grid` must give 2 or later, and those using `resolve.x` or a panel's `x`
+   * 3, so that older readers refuse them rather than draw them differently.
    */
-  version?: 1 | 2;
+  version?: 1 | 2 | 3;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -46,13 +48,13 @@ export interface ChartSpec {
   /** Small multiples: the chart drawn once per value of a category field. */
   facet?: FacetSpec;
   /**
-   * Which panels share a y scale: all facet panels by default; each of the
-   * `panels` its own by default.
+   * Which panels share an x or y scale: all panels share x by default, and
+   * y in facets; each of the `panels` has a y scale of its own by default.
    */
   resolve?: ResolveSpec;
   /**
    * Subplots: panels in a grid, each drawing the marks that name it in their
-   * `panel`, sharing x. Needs spec version 2; not with `facet`.
+   * `panel`. Needs spec version 2; not with `facet`.
    */
   panels?: PanelSpec[];
   /** How `panels` are placed: in rows of `columns` (1 by default), in order. */
@@ -97,9 +99,11 @@ export type FacetSpec = WrappedFacetSpec | GridFacetSpec;
  */
 export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
 
-/** Scale sharing between facet panels; needs spec version 2. */
+/** Scale sharing between panels; needs spec version 2 (3 for `x`). Category axes are always shared. */
 export interface ResolveSpec {
-  /** A continuous y axis; category axes are always shared. */
+  /** A continuous x axis; shared by default. */
+  x?: ScaleResolution;
+  /** A continuous y axis; shared by default in facets, independent in subplots. */
   y?: ScaleResolution;
 }
 
@@ -109,6 +113,12 @@ export interface PanelSpec {
   id: string;
   /** Drawn above the panel. */
   title?: string;
+  /**
+   * The panel's x axis: the chart's `x`, with these settings in place of
+   * its own (`format` replaces the chart's whole). Panels sharing an x
+   * scale take their first panel's.
+   */
+  x?: AxisSpec;
   /**
    * The panel's y axis: the chart's `y`, with these settings in place of
    * its own (`format` replaces the chart's whole).

@@ -889,7 +889,15 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
   object(spec, "spec");
   const chart = spec as Record<string, unknown>;
   const version = chart.version;
-  if (version !== undefined && version !== 1 && version !== SPEC_VERSION) {
+  if (
+    version !== undefined &&
+    !(
+      typeof version === "number" &&
+      Number.isInteger(version) &&
+      version >= 1 &&
+      version <= SPEC_VERSION
+    )
+  ) {
     throw new TypeError(
       `Unsupported spec version ${describe(version)}; this herceg reads versions 1 to ${SPEC_VERSION}`,
     );
@@ -938,6 +946,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           properties(panel, at, {
             id: string,
             title: string,
+            x: axis,
             y: axis,
           } satisfies ChecksOf<PanelSpec>);
           const id = panel.id as string;
@@ -959,6 +968,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       resolve: (r, path) => {
         object(r, path);
         properties(r as Record<string, unknown>, path, {
+          x: oneOf("shared", "independent", "rows", "columns"),
           y: oneOf("shared", "independent", "rows", "columns"),
         } satisfies ChecksOf<ResolveSpec>);
       },
@@ -1017,13 +1027,23 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
   );
   // An older reader would draw shared axes or overlay panels; a spec asking
   // otherwise says so.
+  const declared = (version as number | undefined) ?? 1;
   for (const name of ["resolve", "panels", "grid"])
-    if (chart[name] !== undefined && chart.version !== 2)
+    if (chart[name] !== undefined && declared < 2)
       fail(
         `spec.${name}`,
-        'a spec with "version": 2, so that older readers refuse it',
+        'a spec with "version": 2 or later, so that older readers refuse it',
         chart[name],
       );
+  const ownX = [
+    ["spec.resolve.x", (chart.resolve as { x?: unknown } | undefined)?.x],
+    ...((chart.panels as { x?: unknown }[] | undefined) ?? []).map(
+      ({ x }, i) => [`spec.panels[${i}].x`, x] as const,
+    ),
+  ] as const;
+  for (const [path, value] of ownX)
+    if (value !== undefined && declared < 3)
+      fail(path, 'a spec with "version": 3, so that older readers refuse it', value);
   // A projection places maps' marks; a chart of other marks has nothing to project.
   if (
     chart.projection !== undefined &&

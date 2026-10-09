@@ -24,6 +24,7 @@ Message = tuple[dict[str, Any], list[bytes]]
 
 class LiveChart:
     def __init__(self, chart: Chart) -> None:
+        _check_live(chart._settings)
         self._settings = dict(chart._settings)
         self._options = spec_options(self._settings)
         self._layout = chart._layout_spec()
@@ -97,6 +98,7 @@ class LiveChart:
             hint = " (data and facets cannot change; make a new chart)" if fixed else ""
             raise TypeError(f"unknown chart option {', '.join(map(repr, unknown))}{hint}")
         settings = {**self._settings, **changes}
+        _check_live(settings)
         options = spec_options(settings)
         changed = {
             key: options.get(key)
@@ -150,6 +152,17 @@ class LiveChart:
         if len(set(lengths.values())) > 1:
             raise ValueError(f"columns differ in length: {lengths}")
         return batch
+
+
+def _check_live(settings: dict[str, Any]) -> None:
+    """Live charts report one x range for zooming and brushing, so their
+    panels share x."""
+    if settings["resolve_x"] not in (None, "shared"):
+        raise ValueError(
+            "live charts carry one x range for zoom and selection, so their panels "
+            "share x: resolve_x must be 'shared' (show charts whose panels have x "
+            "scales of their own with chart.show() or to_html())"
+        )
 
 
 def _one_row(rows: Any) -> Any:

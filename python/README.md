@@ -83,12 +83,13 @@ Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 `facet_columns` (a panel per value of a category column, wrapped into rows),
 or `facet_row` and `facet_col` (a grid with a row per value of one category
 column and a column per value of another; either may be left out), with
-`resolve_y` (`"shared"` by default, `"independent"`, `"rows"`, or `"columns"`)
-choosing which panels share a y scale; marks with `repeat=True` draw all their
+`resolve_x` and `resolve_y` (`"shared"`, `"independent"`, `"rows"`, or
+`"columns"`) choosing which panels share an x or a y scale (facets share
+both by default, subplots x); marks with `repeat=True` draw all their
 rows in every panel; `panels` (ids or `hg.Panel("latency", title="Latency",
-y=hg.Axis(label="ms"))`), `panel_columns`, and `panel_row_heights` (relative
-heights of the rows) for subplots, whose marks name
-their panel with `panel="latency"` (or `"*"` for all),
+x=hg.Axis(label="Time"), y=hg.Axis(label="ms"))`), `panel_columns`, and
+`panel_row_heights` (relative heights of the rows) for subplots, whose marks
+name their panel with `panel="latency"` (or `"*"` for all),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`), `zoom`
 (`True` or `"x"`, `"y"`, `"xy"`: wheel zoom and drag pan along those axes),
 `brush` (`"x"`, `"y"`: drag to select a range; `"xy"`: a rectangle; `"lasso"`: a
@@ -320,6 +321,10 @@ npm run test:python    # build, then run pytest in a uv environment
   once. Live charts were tested in JupyterLab 4; Notebook 7, VS Code, and
   Colab support anywidget but have not been tested here.
 - Hover and click events report values, not row numbers.
+- Live charts report one x range, so `chart.widget()` refuses charts whose
+  panels have x scales of their own (`resolve_x`); display them statically.
+  In Streamlit they show (each panel keeping its zoom across reruns) and
+  report clicks, but `on_select` is refused.
 - In Streamlit, a chart that changes between script runs is sent whole: its
   data and, since the component's code travels inline with it, the engine
   (about 143 KiB, 52 KiB gzipped). Streamlit sends unchanged charts as a

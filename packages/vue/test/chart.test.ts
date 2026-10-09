@@ -466,6 +466,27 @@ describe("<Chart>", () => {
     expect(updates).toHaveLength(0);
   });
 
+  it("passes how panels share scales to the chart", async () => {
+    const sales = table({ t: [0, 1, 10, 11], v: [1, 2, 3, 4], region: ["N", "N", "S", "S"] });
+    const { view, chart } = chartRef();
+    const resolve = shallowRef<{ x?: "independent" }>({ x: "independent" });
+    mount(
+      `<Chart ref="view" :facet="by" :resolve="resolve"><Line :data="sales" x="t" y="v" /></Chart>`,
+      () => ({ sales, view, by: facet("region"), resolve }),
+    );
+    const groups = () =>
+      new Set(
+        chart()
+          .model.panels()
+          .map((p) => p.xGroup),
+      ).size;
+    expect(groups()).toBe(2);
+    resolve.value = {};
+    await nextTick();
+    chart().render();
+    expect(groups()).toBe(1);
+  });
+
   it("keeps unchanged marks when a sibling mark changes", async () => {
     const { view, chart } = chartRef();
     const limit = ref(2);

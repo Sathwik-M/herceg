@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
+import type { ChartEvents } from "../../src/dom/events.ts";
 import { custom } from "../../src/marks/custom.ts";
 import type { ChartMark } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
@@ -322,6 +323,338 @@ describe("subplots", () => {
     expect(live.textContent).toMatch(/^Latency: /);
     key(chart, "ArrowDown");
     expect(live.textContent).toMatch(/^Requests: /);
+    chart.destroy();
+  });
+});
+
+describe("facet panels with x scales of their own", () => {
+  // Region a over 0..9 at 1..10, region b over 100..109 at 100..109.
+  const spread = () =>
+    table({
+      t: Array.from({ length: 20 }, (_, i) => (i < 10 ? i : 90 + i)),
+      v: Array.from({ length: 20 }, (_, i) => (i < 10 ? i + 1 : 90 + i)),
+      region: Array.from({ length: 20 }, (_, i) => (i < 10 ? "a" : "b")),
+    });
+  const independent = (options: Partial<ChartOptions> = {}) =>
+    createChart(host, {
+      locale: "en-US",
+      marks: [line(spread(), { x: "t", y: "v" })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+      ...options,
+    });
+  const wheel = (chart: Chart, x: number, y: number) => {
+    const rect = chart.root.getBoundingClientRect();
+    const event = new WheelEvent("wheel", {
+      deltaY: -200,
+      clientX: rect.left + x,
+      clientY: rect.top + y,
+      bubbles: true,
+      cancelable: true,
+    });
+    chart.root.dispatchEvent(event);
+    return event;
+  };
+  const dblclick = (chart: Chart, x: number, y: number, target: Element = chart.root) => {
+    const rect = chart.root.getBoundingClientRect();
+    target.dispatchEvent(
+      new MouseEvent("dblclick", { bubbles: true, clientX: rect.left + x, clientY: rect.top + y }),
+    );
+  };
+  const views = (chart: Chart) => ["a", "b"].map((panel) => chart.model.viewportOf(panel));
+
+  it("zoom, pan, and reset the x scale of the panel the gesture is in", () => {
+    const chart = independent({ interaction: { zoom: true } });
+    const events: ChartEvents["viewport"][] = [];
+    chart.on("viewport", (event) => events.push(event));
+    const [a, b] = chart.model.panels();
+    const mid = b!.plot.y + b!.plot.height / 2;
+    const px = b!.x.map(104);
+    wheel(chart, px, mid);
+    chart.render();
+    const [, zoomed] = chart.model.panels();
+    expect(zoomed!.x.map(104)).toBeCloseTo(px, 0);
+    expect(views(chart)[0]).toBeNull();
+    expect(views(chart)[1]).not.toBeNull();
+    expect(events).toEqual([{ domain: views(chart)[1], y: null, panels: ["b"] }]);
+    // Over the gap between panels, the wheel scrolls the page.
+    expect(wheel(chart, a!.plot.x + a!.plot.width + 4, mid).defaultPrevented).toBe(false);
+    // Dragging pans the panel pressed.
+    pointer(chart.root, "pointerdown", a!.x.map(5), mid);
+    pointer(chart.root, "pointermove", a!.x.map(3), mid);
+    pointer(chart.root, "pointerup", a!.x.map(3), mid);
+    expect(views(chart)[0]![0]).toBeCloseTo(2, 6);
+    expect(events.at(-1)!.panels).toEqual(["a"]);
+    // Double click on a panel resets its scale; elsewhere, every scale.
+    events.length = 0;
+    dblclick(chart, b!.x.map(104), mid);
+    expect(views(chart)[0]).not.toBeNull();
+    expect(views(chart)[1]).toBeNull();
+    dblclick(chart, 2, 2);
+    expect(views(chart)).toEqual([null, null]);
+    expect(events.map((e) => [e.domain, e.panels])).toEqual([
+      [null, ["b"]],
+      [null, ["a"]],
+    ]);
+    chart.destroy();
+  });
+
+  it("let a drag go when its panel does, and leave views alone on the legend", () => {
+    const data = spread();
+    const chart = createChart(host, {
+      interaction: { zoom: true },
+      legend: true,
+      marks: [line(data, { x: "t", y: "v" })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+    });
+    const [, b] = chart.model.panels();
+    const y = b!.plot.y + b!.plot.height / 2;
+    pointer(chart.root, "pointerdown", b!.x.map(105), y);
+    pointer(chart.root, "pointermove", b!.x.map(104), y);
+    expect(chart.model.viewportOf("b")).not.toBeNull();
+    // b's rows go while the button is down: the drag pans nothing more.
+    data.reset({ t: [0, 1], v: [1, 2], region: ["a", "a"] });
+    chart.render();
+    pointer(chart.root, "pointermove", b!.x.map(100), y);
+    pointer(chart.root, "pointerup", b!.x.map(100), y);
+    expect(chart.model.panels().map((p) => p.key)).toEqual(["a"]);
+    chart.setViewport([0, 0.5], { panel: "a" });
+    const button = chart.root.querySelector("button")!;
+    dblclick(chart, 0, 0, button);
+    expect(chart.model.viewportOf("a")).toEqual([0, 0.5]);
+    chart.destroy();
+  });
+
+  it("set views by panel, refusing ranges without one", () => {
+    const chart = independent();
+    expect(() => chart.setViewport([1, 2])).toThrow("need a panel");
+    expect(() => chart.setViewport([1, 2], { panel: "c" })).toThrow('no panel "c"');
+    chart.setViewport([101, 102], { panel: "b" });
+    expect(views(chart)).toEqual([null, [101, 102]]);
+    // A y range applies to every panel: one event per x scale.
+    const events: ChartEvents["viewport"][] = [];
+    chart.on("viewport", (event) => events.push(event));
+    chart.setYViewport([0, 50]);
+    expect(events).toEqual([
+      { domain: null, y: [0, 50], panels: ["a"] },
+      { domain: [101, 102], y: [0, 50], panels: ["b"] },
+    ]);
+    chart.setViewport(null);
+    expect(views(chart)).toEqual([null, null]);
+    chart.destroy();
+  });
+
+  it("brush in one panel and select in the panels sharing its x scale", async () => {
+    const data = spread();
+    const chart = createChart(host, {
+      interaction: { brush: "x" },
+      marks: [line(data, { x: "t", y: "v" })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+    });
+    const selections: ChartEvents["select"][] = [];
+    chart.on("select", (event) => selections.push(event));
+    const [, b] = chart.model.panels();
+    const y = b!.plot.y + b!.plot.height / 2;
+    pointer(chart.root, "pointerdown", b!.x.map(102), y);
+    pointer(chart.root, "pointermove", b!.x.map(104), y);
+    pointer(chart.root, "pointerup", b!.x.map(104), y);
+    expect(chart.selection!.x![0]).toBeCloseTo(102, 6);
+    expect(chart.selectionPanels).toEqual(["b"]);
+    expect(selections.at(-1)!.panels).toEqual(["b"]);
+    await frame();
+    const bands = [...chart.root.querySelectorAll('svg path[fill-opacity="0.18"]')].filter(
+      (r) => r.getAttribute("visibility") === "visible",
+    );
+    expect(bands.map((r) => bandBox(r).x)).toEqual([expect.closeTo(b!.x.map(102), 1)]);
+    // Without a panel, a selection could be in either scale.
+    expect(() => chart.select([1, 2])).toThrow("need a panel");
+    chart.select([1, 2], { panel: "a" });
+    expect(chart.selectionPanels).toEqual(["a"]);
+    // A selection whose panels go goes too.
+    data.reset({ t: [0, 1], v: [1, 2], region: ["b", "b"] });
+    chart.render();
+    expect(chart.selection).toBeNull();
+    expect(selections.at(-1)).toEqual({ x: null, y: null, lasso: null, panels: ["a"] });
+    chart.destroy();
+  });
+
+  it("zoom to a keyboard selection only while its panel stays", () => {
+    const data = spread();
+    const chart = createChart(host, {
+      interaction: { brush: "x", zoom: true },
+      marks: [line(data, { x: "t", y: "v" })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+    });
+    chart.select([102, 104], { panel: "b" });
+    // Clearing the selection, which Enter does first, takes b away.
+    chart.on("select", ({ x }) => {
+      if (x) return;
+      data.reset({ t: [0, 1], v: [1, 2], region: ["a", "a"] });
+      chart.render();
+    });
+    // Errors in event handlers reach the window, not the dispatcher.
+    const errors: unknown[] = [];
+    const onError = (event: ErrorEvent) => {
+      errors.push(event.error);
+      event.preventDefault();
+    };
+    window.addEventListener("error", onError);
+    key(chart, "Enter");
+    window.removeEventListener("error", onError);
+    expect(errors).toEqual([]);
+    expect(chart.model.viewportOf("a")).toBeNull();
+    chart.destroy();
+  });
+
+  it("zoom to a keyboard selection only where it still is, when a listener changes panels", () => {
+    const data = spread();
+    const chart = createChart(host, {
+      interaction: { brush: "x", zoom: true },
+      marks: [line(data, { x: "t", y: "v" })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+    });
+    const events: ChartEvents["viewport"][] = [];
+    chart.on("viewport", (event) => events.push(event));
+    chart.select([102, 104], { panel: "b" });
+    // The listener changes the data and leaves drawing to the next frame.
+    chart.on("select", ({ x }) => {
+      if (!x) data.reset({ t: [0, 1], v: [1, 2], region: ["a", "a"] });
+    });
+    key(chart, "Enter");
+    expect(events).toEqual([]);
+    expect(chart.model.panels().map((p) => p.key)).toEqual(["a"]);
+    chart.destroy();
+  });
+
+  it("set views and selections by panel right after options change how panels share x", () => {
+    const chart = independent();
+    chart.update({ resolve: { x: "shared" } });
+    chart.setViewport([100, 101], { panel: "b" });
+    chart.select([100, 100.5], { panel: "b" });
+    chart.render();
+    expect(chart.model.viewport).toEqual([100, 101]);
+    expect(chart.selection!.x).toEqual([100, 100.5]);
+    expect(chart.selectionPanels).toEqual(["a", "b"]);
+    chart.update({ resolve: { x: "independent" } });
+    chart.setViewport([1, 2], { panel: "a" });
+    chart.render();
+    expect([chart.model.viewportOf("a"), chart.model.viewportOf("b")]).toEqual([[1, 2], null]);
+    chart.destroy();
+  });
+
+  it("name the panels of a selection on a shared x scale as they come and go", () => {
+    const data = spread();
+    const chart = createChart(host, {
+      marks: [line(data, { x: "t", y: "v" })],
+      facet: facet("region"),
+    });
+    chart.select([1, 2]);
+    expect(chart.selectionPanels).toEqual(["a", "b"]);
+    data.reset({ t: [0, 1, 2], v: [1, 2, 3], region: ["b", "c", "d"] });
+    chart.render();
+    expect(chart.selectionPanels).toEqual(["b", "c", "d"]);
+    expect(chart.selection!.x).toEqual([1, 2]);
+    chart.destroy();
+  });
+
+  it("zoom a brushed range in its own panel's scale", () => {
+    const chart = independent({ interaction: { brush: "x", zoom: true } });
+    const [a] = chart.model.panels();
+    const y = a!.plot.y + a!.plot.height / 2;
+    pointer(chart.root, "pointerdown", a!.x.map(2), y);
+    pointer(chart.root, "pointermove", a!.x.map(6), y);
+    pointer(chart.root, "pointerup", a!.x.map(6), y);
+    expect(views(chart)[0]![0]).toBeCloseTo(2, 6);
+    expect(views(chart)[1]).toBeNull();
+    chart.destroy();
+  });
+
+  it("select with the keyboard within a scale, and carry the cursor across scales by its place", () => {
+    const chart = independent({ interaction: { brush: "x", zoom: true } });
+    const live = chart.root.querySelector("[aria-live]")!;
+    const shift = (name: string) =>
+      chart.root.dispatchEvent(
+        new KeyboardEvent("keydown", { key: name, shiftKey: true, bubbles: true }),
+      );
+    key(chart, "End");
+    shift("ArrowLeft");
+    expect(chart.selectionPanels).toEqual(["a"]);
+    expect(chart.selection!.x).toEqual([8, 9]);
+    // Down to b, at the same place across its plot: 8 of 0..9 is 108 of 100..109.
+    key(chart, "ArrowDown");
+    expect(live.textContent).toMatch(/^b: 108\. /);
+    // A range does not reach from a's values into b's.
+    shift("ArrowLeft");
+    expect(chart.selection!.x).toEqual([107, 108]);
+    expect(chart.selectionPanels).toEqual(["b"]);
+    key(chart, "Enter");
+    expect(views(chart)).toEqual([null, [107, 108]]);
+    chart.destroy();
+  });
+
+  it("share cursors but not views or selections with synced charts", async () => {
+    const other = document.createElement("div");
+    other.style.cssText = "width:600px;height:300px";
+    document.body.append(other);
+    const plain = createChart(other, {
+      interaction: { sync: "split", zoom: true, brush: "x" },
+      marks: [line(spread(), { x: "t", y: "v" })],
+    });
+    const split = independent({ interaction: { sync: "split", zoom: true, brush: "x" } });
+    plain.setViewport([100, 105]);
+    plain.select([101, 102]);
+    expect(views(split)).toEqual([null, null]);
+    expect(split.selection).toBeNull();
+    split.setViewport([2, 3], { panel: "a" });
+    split.select([4, 5], { panel: "a" });
+    expect(plain.model.viewport).toEqual([100, 105]);
+    expect(plain.selection!.x).toEqual([101, 102]);
+    // A cursor at 104 shows in b, whose scale holds it, and not in a.
+    split.syncCursor(104);
+    await frame();
+    expect(visibleLines(split)).toHaveLength(1);
+    plain.destroy();
+    split.destroy();
+    other.remove();
+  });
+});
+
+describe("subplots with x scales of their own", () => {
+  it("zoom the panel under the pointer, in its own units, and report its key", () => {
+    const day = Date.UTC(2026, 0, 1);
+    const series = table({ t: time([day, day + 60_000, day + 120_000]), v: [1, 3, 2] });
+    const spread = table({ ms: [10, 20, 30], n: [4, 9, 2] });
+    const chart = createChart(host, {
+      interaction: { zoom: true },
+      marks: [
+        line(series, { x: "t", y: "v", panel: "series" }),
+        line(spread, { x: "ms", y: "n", panel: "spread" }),
+      ],
+      panels: panels([{ id: "series" }, { id: "spread" }], { rowHeights: [2, 1] }),
+      resolve: { x: "independent" },
+    });
+    const events: ChartEvents["viewport"][] = [];
+    chart.on("viewport", (event) => events.push(event));
+    const [, spreadPanel] = chart.model.panels();
+    const rect = chart.root.getBoundingClientRect();
+    chart.root.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: -200,
+        clientX: rect.left + spreadPanel!.x.map(20),
+        clientY: rect.top + spreadPanel!.plot.y + 5,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(chart.model.viewportOf("series")).toBeNull();
+    const [lo, hi] = chart.model.viewportOf("spread")!;
+    expect(lo).toBeGreaterThan(10);
+    expect(hi).toBeLessThan(30);
+    expect(events.map((e) => e.panels)).toEqual([["spread"]]);
     chart.destroy();
   });
 });

@@ -59,9 +59,11 @@ def chart(
     them in the browser; ``"rerun"`` reruns the script, whose call then
     returns them; a function is called first, then the script reruns. Inside
     ``st.form``, a selection reaches the script when the form is submitted,
-    and clicks cannot react. Give the chart a ``key`` to keep its selection
-    when its data changes, and to show several charts with the same content.
-    Charts without a ``theme`` follow the app's light or dark theme.
+    and clicks cannot react. Charts whose panels have x scales of their own
+    (``resolve_x``) cannot report selections. Give the chart a ``key`` to
+    keep its selection when its data changes, and to show several charts
+    with the same content. Charts without a ``theme`` follow the app's light
+    or dark theme.
     """
     reactions = {"select": on_select, "click": on_click}
     for name, reaction in reactions.items():
@@ -69,6 +71,11 @@ def chart(
             raise ValueError(
                 f"on_{name} must be 'ignore', 'rerun', or a function, not {reaction!r}"
             )
+    if on_select != "ignore" and chart._settings["resolve_x"] not in (None, "shared"):
+        raise ValueError(
+            "on_select reports one x range, so it needs a chart whose panels share x "
+            "(resolve_x='shared')"
+        )
     if on_click != "ignore" and _in_form():
         raise ValueError(
             "on_click cannot react inside st.form: Streamlit does not send clicks from "

@@ -174,15 +174,17 @@ class Projection:
 class Panel:
     """One of a chart's ``panels``: marks with ``panel=id`` draw in it.
 
-    ``y`` sets the panel's own y axis over the chart's ``y``.
+    ``x`` and ``y`` set the panel's own axes over the chart's ``x`` and ``y``;
+    panels sharing an x scale take the first one's.
     """
 
     id: str
     title: str | None = None
     y: Axis | dict[str, Any] | None = None
+    x: Axis | dict[str, Any] | None = None
 
     def _spec(self) -> dict[str, Any]:
-        spec = {"id": self.id, "title": self.title, "y": _axis(self.y)}
+        spec = {"id": self.id, "title": self.title, "x": _axis(self.x), "y": _axis(self.y)}
         return {key: value for key, value in spec.items() if value is not None}
 
 
@@ -217,6 +219,7 @@ class Chart:
         facet_columns: int | None = None,
         facet_row: str | None = None,
         facet_col: str | None = None,
+        resolve_x: Literal["shared", "independent", "rows", "columns"] | None = None,
         resolve_y: Literal["shared", "independent", "rows", "columns"] | None = None,
         panels: Sequence[Panel | str] | None = None,
         panel_columns: int | None = None,
@@ -274,18 +277,18 @@ class Chart:
             raise ValueError("a chart has facets or panels, not both")
         if panel_list and (zoom in ("y", "xy") or brush in ("y", "xy", "lasso")):
             raise ValueError("charts with panels can zoom and brush along x only")
-        if resolve_y not in (None, "shared", "independent", "rows", "columns"):
-            raise ValueError(
-                "resolve_y must be 'shared', 'independent', 'rows', or 'columns', "
-                f"not {resolve_y!r}"
-            )
-        if resolve_y not in (None, "shared"):
-            if facet is None and facet_row is None and facet_col is None and not panel_list:
-                raise ValueError("resolve_y needs facet, facet_row, facet_col, or panels")
-            if zoom in ("y", "xy"):
+        for name, resolution in (("resolve_x", resolve_x), ("resolve_y", resolve_y)):
+            if resolution not in (None, "shared", "independent", "rows", "columns"):
                 raise ValueError(
-                    "charts whose panels have y scales of their own cannot zoom along y"
+                    f"{name} must be 'shared', 'independent', 'rows', or 'columns', "
+                    f"not {resolution!r}"
                 )
+            if resolution not in (None, "shared") and not (
+                facet is not None or facet_row is not None or facet_col is not None or panel_list
+            ):
+                raise ValueError(f"{name} needs facet, facet_row, facet_col, or panels")
+        if resolve_y not in (None, "shared") and zoom in ("y", "xy"):
+            raise ValueError("charts whose panels have y scales of their own cannot zoom along y")
         if not isinstance(animation, bool) and not (
             isinstance(animation, int | float) and math.isfinite(animation) and animation >= 0
         ):
@@ -332,6 +335,7 @@ class Chart:
             "y_right": y_right,
             "legend": legend,
             "tooltip": tooltip,
+            "resolve_x": resolve_x,
             "resolve_y": resolve_y,
             "zoom": zoom,
             "brush": brush,
@@ -1728,7 +1732,8 @@ class Chart:
 
     def widget(self) -> ChartWidget:
         """A live notebook widget of this chart: Python can update it after display,
-        and it reports zooming, brushing, hovering, and clicks back.
+        and it reports zooming, brushing, hovering, and clicks back. It reports
+        one x range, so its panels share x (``resolve_x`` is ``"shared"``).
 
         Needs the ``notebook`` extra (``pip install 'herceg[notebook]'``).
         """
@@ -1999,8 +2004,8 @@ _NODE_FIELDS = ("node", "group", "size")
 #: which decide the columns sent.
 OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
-    *("zoom", "brush", "sync", "animation", "resolve_y", "renderer", "theme", "locale"),
-    *("time_zone", "projection"),
+    *("zoom", "brush", "sync", "animation", "resolve_x", "resolve_y", "renderer", "theme"),
+    *("locale", "time_zone", "projection"),
 )
 
 
@@ -2031,7 +2036,10 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "animation": (animation or None)
         if isinstance(animation, bool)
         else {"duration": animation},
-        "resolve": {"y": settings["resolve_y"]} if settings["resolve_y"] else None,
+        "resolve": {
+            axis: settings[f"resolve_{axis}"] for axis in ("x", "y") if settings[f"resolve_{axis}"]
+        }
+        or None,
         "renderer": settings["renderer"],
         "theme": _theme(settings["theme"]),
         "locale": settings["locale"],
@@ -2051,7 +2059,7 @@ def assemble_spec(
     """A spec and its buffers from chart options, columns by table name, mark
     specs, and derived tables by name."""
     buffers: list[bytes] = []
-    spec: dict[str, Any] = {"version": 2, **options}
+    spec: dict[str, Any] = {"version": 3, **options}
     for key, value in layout.items():
         spec[key] = (
             {k: v for k, v in value.items() if v is not None} if isinstance(value, dict) else value

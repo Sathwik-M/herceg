@@ -18,7 +18,7 @@ One name per concept, used the same way in code and docs.
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
-| **Viewport** | The visible x range when zoomed, and the visible y ranges when zoomed along y; null means "fit the data". |
+| **Viewport** | The visible x range when zoomed (one per x scale when panels have x scales of their own), and the visible y ranges when zoomed along y; null means "fit the data". |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
@@ -286,11 +286,11 @@ order of first appearance across the tables of the marks that split, every
 pair drawn, rows by columns). Facet headers are scene text (`Scene.headers`),
 so every renderer and static export draws them the same way. With
 `resolve.y`, panels are grouped (each alone, by row, or by column) and each
-group gets a y plan from the data its panels draw within the shared x
-domain, the same nice, headroom, and inset rules as a shared axis; a group
-with nothing to show draws no y labels. The spec format's version 2 adds
-`resolve`; version 1 specs still load, and a spec with `resolve` must say
-version 2, since a version 1 reader would ignore it. Rows
+group gets a y plan from the data its panels draw within their x domains,
+the same nice, headroom, and inset rules as a shared axis; a group with
+nothing to show draws no y labels. The spec format's version 2 adds
+`resolve` and version 3 `resolve.x`; older specs still load, and a spec
+using either must say its version, since an older reader would ignore it. Rows
 are split after series are resolved: a facet split of a series is the same
 columns read through a list of the rows in each panel (4 bytes per row),
 computed in two passes per series (with a transient 4-byte panel index per
@@ -321,6 +321,49 @@ it from what its panels draw, with the chart's `y` and its first panel's own
 settings, and subplots infer each group's type (linear or time) from their
 own marks.
 
+`resolve.x` groups panels for x the same way (`PanelLayout.groups`), and the
+model plans each group as it plans the one shared x scale: the x extent of
+what its panels draw, its viewport or the configured domain (for subplots,
+its first panel's `x` settings over the chart's, and a time axis when its
+marks place times), its nice, headroom, and inset rules at the common plot
+width, its ticks, and its tooltip formatter, moved to each panel's column. A
+y extent then reads each panel's series within that panel's x domain: each
+y group is split by the x groups of its panels (`PanelLayout.across`, only
+the pairs that occur), the raw extents of the parts are unioned, and the y
+group's zero rule is applied once, so a bar's baseline counts even where the
+bar is out of view. With one x scale this is the single computation it was
+before, and its scenes are unchanged. A shared y scale therefore follows
+every panel's own x view: zooming one x scale can change the y of panels on
+the others. Labels go under every panel when x is resolved by panel or by
+row (a column's panels then differ), and a scale's title goes once under
+its lowest labels, centered under its panel, its row, or the grid; rows
+leave room between them for both. Widening the margins and the gaps between
+columns checks the first and last labels of every labeled panel's scale.
+
+Viewports are kept per x scale, keyed by its panels' keys: a scale whose
+panels change (a new facet value wraps the panels anew, or a row gains a
+column) is a new scale and fits its data, rather than handing one
+category's zoom to another, and the keys of scales no longer drawn are
+dropped. The browser runtime acts on the scale of the panel a gesture is in:
+the wheel (not over the gaps between panels, where the page scrolls), drag
+pans (with the scales the press started on; a press whose panel leaves the
+scene mid-drag stops), brush-to-zoom, double-click on a panel (elsewhere,
+every scale; never on the legend), and Enter after a keyboard selection. A
+chart keeps one selection, owned by the panels sharing the x scale of the
+panel it was made in: drawn only there, reported with their keys, and
+cleared (with an event naming them) once no panel of that scale is drawn.
+Up and Down carry the keyboard cursor's x value between panels sharing a
+scale and its place across the plot otherwise, and a keyboard range never
+reaches across scales. Synced charts share cursors with such charts (each
+panel draws a cursor its scale holds) but neither send them nor take
+viewports and selections, which belong to some panels only; applications
+that link scales of the same quantity set them with `setViewport` and a
+panel. Python's live widgets report one x range and refuse charts whose
+panels have x scales of their own; the Streamlit component shows them and
+reports clicks (the clicked panel's scale decides whether values are
+times), keeps each panel's zoom across reruns by panel key, and refuses
+`on_select`.
+
 ## Points and rasters
 
 Points are drawn per series into a packed coordinate buffer. Opaque points
@@ -334,7 +377,9 @@ a uniform grid index over the points drawn inside the plot (two
 per frame, so charts sharing a mark keep separate indexes. Automatic domains
 leave room for the point radius at the plot edges: after rounding to nice
 values, the domain widens by the radius in pixels, so points at the data
-extremes are drawn whole and ticks stay round.
+extremes are drawn whole and ticks stay round: they are chosen in the
+rounded domain, since choosing them in the widened one could take a coarser
+step (a short axis rounded to -20..40 at two ticks would keep only 0).
 
 Point series of at least 100,000 visible points are drawn by the GPU in the
 browser. The point mark then emits a point cloud instead of pixel
@@ -816,7 +861,7 @@ frame, takes over 10 ms. Intermediate frames keep the margins planned for
 the new view, so passing tick labels never move the plot.
 
 Charts that set the same `interaction.sync` name share the cursor x and the
-viewport. Charts inspected along y (horizontal bars) measure values on x, so
+viewport (charts whose panels have x scales of their own, the cursor only). Charts inspected along y (horizontal bars) measure values on x, so
 they neither share nor follow the cursor; linking them by category is not
 supported.
 
@@ -1059,15 +1104,16 @@ document when `OffscreenCanvas` is unavailable.
   no leader lines and does not avoid other marks' geometry. Bar value
   labels estimate text widths from the font size to decide what fits.
 - Continuous color for heatmaps, points, and map regions and points only.
-- One x axis and at most two y axes per chart; category values and marks
-  placed along y (horizontal bars and error bars) only on the left.
-- Subplots share x and route whole marks; they have no right axes, shared
-  category y only, x-only zoom and brushing, columns of equal width (rows
+- One x axis per panel and at most two y axes per chart; category values
+  and marks placed along y (horizontal bars and error bars) only on the
+  left.
+- Subplots route whole marks; they have no right axes, shared category x
+  and y axes only, x-only zoom and brushing, columns of equal width (rows
   may be weighted), and no facets inside a panel.
 - Facets wrap one category field into rows of panels, or lay out a grid by
-  two, sharing x; y is shared or resolved per panel, row, or column, for
-  continuous axes only. No independent x scales, y zoom with independent y,
-  or right axes in faceted charts, and
+  two; x and y are shared or resolved per panel, row, or column, for
+  continuous axes only. No y zoom with independent y, or right axes in
+  faceted charts, and
   heatmaps, histograms, box plots, violins, stacked bars, annotations over a
   table, and custom marks over a table without series can only repeat in
   every panel. Panel splits are recomputed whenever their
@@ -1118,6 +1164,11 @@ document when `OffscreenCanvas` is unavailable.
   nodes between. Nodes cannot be dragged or placed by hand, and there is no
   highlighting of a node's links on hover. The whole layout is recomputed
   when the table changes, and the pointer lookup scans every node and link.
+- In charts whose panels have x scales of their own, one scale at a time
+  has a selection, synced charts share only cursors with them, and Python's
+  live widgets refuse them (Streamlit shows them without reporting
+  selections). Annotations repeated in panels whose x scales differ in type
+  are described in the text alternative with their first panel's formats.
 - Selections report ranges and lasso outlines, not the rows inside them.
   Synced selections are data values, so charts with differently ordered
   categories select different categories. The keyboard selects ranges only;

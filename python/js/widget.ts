@@ -14,7 +14,13 @@ import {
   geometry,
   type Table,
 } from "herceg";
-import { type ChartSpec, type ColumnSpec, loadSpec, type SpecBuffer } from "herceg/spec";
+import {
+  type ChartSpec,
+  type ColumnSpec,
+  loadSpec,
+  SPEC_VERSION,
+  type SpecBuffer,
+} from "herceg/spec";
 import { chartRange, inspectionPayload, rangePayload } from "./events.ts";
 
 /** The parts of an anywidget model this module uses. */
@@ -297,8 +303,9 @@ class Widget {
       else next[key] = value;
     }
     if (!this.#config) throw new Error("the chart did not load");
-    // Checked as loadSpec checks a whole spec, with the same errors.
-    const { config } = loadSpec({ ...next, marks: [] } as ChartSpec);
+    // Checked as loadSpec checks a whole spec, with the same errors; Python
+    // writes the current version, so options of any version are allowed.
+    const { config } = loadSpec({ version: SPEC_VERSION, ...next, marks: [] } as ChartSpec);
     const update = Object.fromEntries(
       Object.keys(changes).map((key) => [key, (config as Record<string, unknown>)[key]]),
     ) as Partial<ChartOptions>;
