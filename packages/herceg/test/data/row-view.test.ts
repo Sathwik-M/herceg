@@ -97,7 +97,109 @@ describe("row views", () => {
     expect(shown(streaming)).toEqual(shown(rowView(t, query)));
   });
 
-  it("rebuild when the fields they filter or sort by change, and keep rows otherwise", () => {
+  it("stay equal to a fresh view as rows they filter and sort by change in place", () => {
+    const next = random(11);
+    const value = () => (next() < 0.05 ? Number.NaN : Math.round(next() * 50));
+    const tag = () => ["a", "b", "c", "d", null][Math.floor(next() * 5)]!;
+    const t = table(
+      { x: Array.from({ length: 400 }, value), tag: Array.from({ length: 400 }, tag) },
+      { maxRows: 600 },
+    );
+    const sorted = {
+      filter: col("x").gt(5),
+      sort: [{ field: "tag" as const }, { field: "x" as const, order: "descending" as const }],
+    };
+    const filtered = { filter: col("tag").isIn("a", "c") };
+    const members = new RowSet(t);
+    for (let row = 0; row < t.length; row += 3) members.add(row);
+    const restricted = () => {
+      const view = rowView(t, { sort: [{ field: "x" }] });
+      view.restrict(members);
+      return view;
+    };
+    const views = [rowView(t, sorted), rowView(t, filtered), restricted()];
+    const fresh = () => [rowView(t, sorted), rowView(t, filtered), restricted()];
+    for (let step = 0; step < 80; step++) {
+      // A few rows change, now and then many, between appends and drops.
+      const changes = step % 10 === 9 ? 120 : 1 + Math.floor(next() * 6);
+      for (let i = 0; i < changes; i++) {
+        const row = Math.floor(next() * t.length);
+        if (next() < 0.5) t.set("x", row, value());
+        else t.set("tag", row, step % 13 === 0 ? `new ${step}` : tag());
+      }
+      if (step % 4 === 1) t.replace("x", Math.floor(next() * (t.length - 5)), [1, 60, 2, 59, 3]);
+      if (step % 5 === 2) t.append({ x: [value(), value()], tag: [tag(), tag()] });
+      if (step % 6 === 4) t.dropFirst(3);
+      // Read on most steps, so several changes sometimes catch up at once.
+      if (step % 3 === 2) continue;
+      const expected = fresh();
+      views.forEach((view, i) => {
+        const order = shown(expected[i]!);
+        expect(shown(view)).toEqual(order);
+        for (const at of [0, order.length >> 1, order.length - 1])
+          if (at >= 0) expect(view.indexOf(order[at]!)).toBe(at);
+      });
+    }
+  });
+
+  it("place updated rows anew in large and selective views alike", () => {
+    const n = 20_000;
+    const t = table({ x: Float64Array.from({ length: n }, (_, i) => i) });
+    // A view of most rows marks updated ones; one of a few searches for them.
+    const wide = rowView(t, { sort: [{ field: "x", order: "descending" }] });
+    const narrow = rowView(t, { filter: col("x").lt(10).or(col("x").gt(19_990)) });
+    shown(wide);
+    shown(narrow);
+    for (const [row, value] of [
+      [5, 50_000],
+      [19_995, 3],
+      [12_000, 7],
+      [3, 15_000],
+    ] as const)
+      t.set("x", row, value);
+    expect(shown(wide).slice(0, 3)).toEqual([5, 19_999, 19_998]);
+    expect(shown(wide).at(-1)).toBe(0);
+    expect(shown(narrow)).toEqual(shown(rowView(t, { filter: narrow.query.filter })));
+    expect(narrow.indexOf(12_000)).toBeGreaterThanOrEqual(0);
+    expect(narrow.indexOf(3)).toBe(-1);
+  });
+
+  it("place updated rows anew across drops, evicting appends, resets, and rows not placed yet", () => {
+    const t = table({ x: [5, 4, 3, 2, 1, 0] }, { maxRows: 6 });
+    const view = rowView(t, { sort: [{ field: "x" }] });
+    expect(shown(view)).toEqual([5, 4, 3, 2, 1, 0]);
+    // Updated, then evicted by an append larger than the window, unread.
+    t.set("x", 2, 100);
+    t.append({ x: [9, 8, 7, 6, 5, 4, 3] });
+    expect(shown(view)).toEqual(shown(rowView(t, { sort: [{ field: "x" }] })));
+    // Rows appended and updated before the view placed them.
+    t.append({ x: [50, 60] });
+    t.set("x", 5, -1);
+    t.set("x", 0, 70);
+    expect(shown(view)).toEqual(shown(rowView(t, { sort: [{ field: "x" }] })));
+    // Updated rows pending when the table is reset.
+    t.set("x", 1, -5);
+    t.reset({ x: [2, 1] });
+    expect(shown(view)).toEqual([1, 0]);
+  });
+
+  it("place an updated row by where it is when a listener before them moved it", () => {
+    const t = table({ x: Float64Array.from({ length: 100 }, (_, i) => i) });
+    let dropping = true;
+    t.subscribe((change) => {
+      if (dropping && change.updated) {
+        dropping = false;
+        t.dropFirst(1);
+      }
+    });
+    const view = rowView(t, { sort: [{ field: "x" }] });
+    shown(view);
+    t.set("x", 20, -1);
+    expect(shown(view).slice(0, 3)).toEqual([19, 0, 1]);
+    expect(view.indexOf(19)).toBe(0);
+  });
+
+  it("reorder when the fields they filter or sort by change, and keep rows otherwise", () => {
     const t = table({ x: [3, 1, 2], label: [10, 20, 30] });
     const view = rowView(t, { sort: [{ field: "x" }] });
     expect(shown(view)).toEqual([1, 2, 0]);

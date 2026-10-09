@@ -95,11 +95,11 @@ to compare it with.
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-grid | 0.0.0 (ec8716b) | 83.9 | 29.0 | 26.2 | - | - |
-| herceg-line | 0.0.0 (ec8716b) | 112.5 | 42.1 | 37.7 | - | 16.9 |
-| herceg-react-line | 0.0.0 (ec8716b) | 115.1 | 43.2 | 38.7 | - | 16.9 |
-| herceg-svelte-line | 0.0.0 (ec8716b) | 116.5 | 43.8 | 39.2 | - | 16.9 |
-| herceg-vue-line | 0.0.0 (ec8716b) | 116.1 | 43.6 | 39.0 | - | 16.9 |
+| herceg-grid | 0.0.0 (0d4d2f2) | 85.0 | 29.4 | 26.5 | - | - |
+| herceg-line | 0.0.0 (0d4d2f2) | 112.5 | 42.1 | 37.7 | - | 16.9 |
+| herceg-react-line | 0.0.0 (0d4d2f2) | 115.1 | 43.2 | 38.7 | - | 16.9 |
+| herceg-svelte-line | 0.0.0 (0d4d2f2) | 116.5 | 43.8 | 39.2 | - | 16.9 |
+| herceg-vue-line | 0.0.0 (0d4d2f2) | 116.1 | 43.6 | 39.0 | - | 16.9 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |
@@ -470,10 +470,15 @@ Read these with the configurations in mind:
   delta sort takes ~47 ms per tick at 100k and gets 7 of 50 ticks through at
   1M; TanStack Table re-sorts every row on each change, ~180 ms per tick at
   100k, and receives about half the ticks (2 of 50 at 1M). Changing the sort
-  key of 100 rows costs Herceg ~14–27 ms per tick at 100k, since its view
-  rebuilds the order when a sort key changes, against ~4–22 ms for Glide's
-  adapter, which moves only the changed rows (both varied this much between
-  runs; AG Grid ~38 ms, TanStack Table ~160–175 ms). At 1M rows the per-tick cost of sorted appends alternates
+  key of 100 rows cost Herceg ~14–27 ms per tick at 100k in these runs,
+  when its view rebuilt the order after any change to a sort key, against
+  ~4–22 ms for Glide's adapter, which moves only the changed rows (both
+  varied this much between runs; AG Grid ~38 ms, TanStack Table
+  ~160–175 ms). The view now moves only the changed rows too: in an
+  interleaved A/B run of these scenarios after the table above (other work
+  on the machine), 100 changed sort keys at 100k took ~4 ms in the call
+  instead of ~25 ms and ~16 ms to the correct frame instead of ~28 ms, and
+  100 changed filtered values ~1.2 ms instead of ~13 ms. At 1M rows the per-tick cost of sorted appends alternates
   between ~6–10 ms and ~25–35 ms for Herceg and Glide's adapter alike, so
   medians there differ from run to run. Rolling windows cost Herceg ~8–20 ms
   per tick at 100k, also varying between runs, with up to ~9 dropped frames

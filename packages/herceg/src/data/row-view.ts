@@ -35,8 +35,10 @@ export interface RowSnapshot {
  * sorted by keys, as positions into the table: no column is copied. Changes
  * to the table mark the view out of date at once and are caught up on the
  * next `read`: appended rows are filtered and merged into the order, dropped
- * rows leave it, and updates to the fields it filters or sorts by rebuild it.
- * Views follow their table until disposed or collected.
+ * rows leave it, and rows whose filtered or sorted fields were updated leave
+ * it and are merged back where they now belong, unless so many changed that
+ * rebuilding it costs less. Views follow their table until disposed or
+ * collected.
  */
 export class RowView<S extends Schema = Schema> {
   readonly source: Table<S>;
@@ -60,6 +62,13 @@ export class RowView<S extends Schema = Schema> {
   /** Identity past the last row the positions have considered. */
   #end = 0;
   #rebuild = true;
+  /**
+   * Rows updated in fields the view reads since it was last brought up to
+   * date, as ranges of row identities (start, end, ...), and how many rows
+   * they cover at most.
+   */
+  #moved: number[] = [];
+  #movedRows = 0;
   /** The table's version as of the last change the view was told about. */
   #told: number;
   #revision = 0;
@@ -180,6 +189,7 @@ export class RowView<S extends Schema = Schema> {
     this.#indices = undefined;
     this.#spare = undefined;
     this.#compare = undefined;
+    this.#moved = [];
   }
 
   #apply(query: RowQuery<S>) {
@@ -213,13 +223,30 @@ export class RowView<S extends Schema = Schema> {
   }
 
   #changed(change: TableChange) {
+    // A change made by a listener before this one ran moved positions since
+    // the change was described: what it updated is no longer where it says.
+    if (this.source.version !== this.#told + 1) this.#rebuild = true;
     this.#told = this.source.version;
     // It holds the table's old arrays.
     this.#compare = undefined;
     if (change.reset) this.#rebuild = true;
-    else if (change.updated && change.fields.some((field) => this.#reads.has(field)))
-      this.#rebuild = true;
-    // Appends and drops are caught up on the next read.
+    else if (
+      !this.#rebuild &&
+      change.updated &&
+      change.fields.some((field) => this.#reads.has(field))
+    ) {
+      const { start, end } = change.updated;
+      const offset = this.source.rowOffset;
+      this.#moved.push(offset + start, offset + end);
+      this.#movedRows += end - start;
+      // Past an eighth of the rows (a rough crossover), rebuilding costs
+      // about as little as merging them back and keeps no record of them.
+      if (this.#movedRows > this.source.length / 8) {
+        this.#rebuild = true;
+        this.#moved = [];
+      }
+    }
+    // Appends, drops, and updated rows are caught up on the next read.
     this.#invalidate();
   }
 
@@ -249,8 +276,11 @@ export class RowView<S extends Schema = Schema> {
       if (dropped > 0) this.#drop(dropped);
       // Rows appended since, less any an oversized append evicted at once.
       const from = Math.max(0, this.#end - source.rowOffset);
+      if (this.#moved.length > 0) this.#replace(Math.min(from, source.length));
       if (from < source.length) this.#append(from);
     }
+    this.#moved.length = 0;
+    this.#movedRows = 0;
     this.#rebuild = false;
     this.#version = source.version;
     this.#generation = source.generation;
@@ -280,17 +310,69 @@ export class RowView<S extends Schema = Schema> {
   #append(from: number) {
     const fresh = this.#matching(from, this.source.length);
     if (fresh.length === 0) return;
-    const length = this.#length + fresh.length;
     if (this.#sort.length === 0) {
       // Filtered rows keep table order: new rows go at the end.
+      const length = this.#length + fresh.length;
       this.#reserve(length);
       this.#indices!.set(fresh, this.#length);
       this.#length = length;
       return;
     }
-    const compare = this.#comparator();
+    this.#merge(fresh, this.#comparator());
+  }
+
+  /**
+   * Takes the rows updated in fields the view reads, among the first `end`
+   * rows (those it has placed), out of its order and merges those that still
+   * pass back in where they now belong: the other rows keep their keys, so
+   * their order holds.
+   */
+  #replace(end: number) {
+    const source = this.source as unknown as Table;
+    const offset = source.rowOffset;
+    const moved = this.#moved;
+    // The updated rows the view has placed: not dropped since, nor appended
+    // after it last caught up.
+    const changed: number[] = [];
+    for (let r = 0; r < moved.length; r += 2) {
+      const stop = Math.min(end, moved[r + 1]! - offset);
+      for (let row = Math.max(0, moved[r]! - offset); row < stop; row++) changed.push(row);
+    }
+    if (changed.length === 0) return;
+    const rows = Uint32Array.from(changed).sort();
+    const first = rows[0]!;
+    const last = rows[rows.length - 1]!;
+    // A byte per row over their span, or for a view of few rows next to it
+    // a search per row shown.
+    const span = last - first + 1;
+    const marked =
+      this.#length * Math.log2(rows.length + 1) < span ? undefined : new Uint8Array(span);
+    if (marked) for (const row of rows) marked[row - first] = 1;
+    const indices = this.#indices!;
+    let kept = 0;
+    for (let i = 0; i < this.#length; i++) {
+      const row = indices[i]!;
+      if (row < first || row > last || !(marked ? marked[row - first] : contains(rows, row)))
+        indices[kept++] = row;
+    }
+    this.#length = kept;
+    // Compiled now: a column's array can move and its category codes change as the table does.
+    const test = this.#filter === undefined ? undefined : compileExpression(this.#filter, source);
+    const restriction = this.#restriction;
+    if (restriction && !restriction.current) return;
+    const fresh = rows.filter(
+      (row, i) =>
+        row !== rows[i - 1] && (!test || test.at(row)) && (!restriction || restriction.has(row)),
+    );
+    // Filtered rows keep table order.
+    if (fresh.length > 0)
+      this.#merge(fresh, this.#sort.length > 0 ? this.#comparator() : (a, b) => a - b);
+  }
+
+  /** Merges `fresh` rows into the order by `compare`: one merge of the batch, not an insertion per row. */
+  #merge(fresh: Uint32Array, compare: (a: number, b: number) => number) {
     fresh.sort(compare);
-    // One merge of the batch, not an insertion per row.
+    const length = this.#length + fresh.length;
     const out =
       this.#spare && this.#spare.length >= length ? this.#spare : new Uint32Array(grown(length));
     const old = this.#indices!;
@@ -343,6 +425,17 @@ export class RowView<S extends Schema = Schema> {
 /** Views a table's rows; see `RowView`. */
 export function rowView<S extends Schema>(source: Table<S>, query?: RowQuery<S>): RowView<S> {
   return new RowView(source, query);
+}
+
+/** Whether ascending `values` hold `value`. */
+function contains(values: Uint32Array, value: number): boolean {
+  let [lo, hi] = [0, values.length];
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (values[mid]! < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return values[lo] === value;
 }
 
 /** Capacity for `length` positions, with room to grow. */

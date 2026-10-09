@@ -195,14 +195,18 @@ Catching up works from row identities (`rowOffset + position`), so several
 changes are caught up together: rows that left a rolling window are dropped
 and the rest rebased (O(kept)), appended rows (less any an oversized append
 evicted) are filtered and, in sorted views, sorted on their own and merged
-into the order in one pass (O(kept + appended log appended)), and an in-place
-update of a field the filter or sort reads, a reset, or a new query
-rebuilds the view (O(rows), plus the sort). Filters compile when they run,
-since a column's array can move and category codes change as rows drop. The
-comparator (`data/order.ts`, shared with derived tables' sort) compares keys
-in order, puts missing values last in either direction, orders infinities,
-ranks categories by label once per sort, and breaks ties by position, so
-orders are stable and settle the same way after updates. Like derived
+into the order in one pass (O(kept + appended log appended)), rows updated
+in place in a field the filter or sort reads (recorded as ranges of
+identities) leave the order and those that still pass are sorted and merged
+back the same way (O(kept + changed log changed), with a byte per row over
+the updated rows' span, or a search per row shown where the view is small
+next to it), since the other rows keep their keys, and updates covering more than an eighth of the rows, a reset,
+or a new query rebuild the view (O(rows), plus the sort). Filters compile
+when they run, since a column's array can move and category codes change as
+rows drop. The comparator (`data/order.ts`, shared with derived tables'
+sort) compares keys in order, puts missing values last in either direction,
+orders infinities, ranks categories by label once per sort, and breaks ties
+by position, so orders are stable and settle the same way after updates. Like derived
 tables, views are held weakly by their table's subscription.
 
 A table's `generation` counts resets, which start identities again, so a
