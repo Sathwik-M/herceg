@@ -290,6 +290,13 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   /** Nearest point to a pixel, for marks with a faster lookup than the chart's generic search. */
   pick?(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined;
   /**
+   * For marks that pair rows of their series (stacks of a series field):
+   * the position of `s` to read beside the point of `anchor` at
+   * `position`, where the keyboard is, or -1 for none; undefined leaves it
+   * to the chart, which reads the first point drawn at the anchor's x.
+   */
+  alongside?(s: Series, anchor: Series, position: number): number | undefined;
+  /**
    * Tooltip text for a row of a series, for marks that show more than one
    * value per point (candlesticks, histogram bins); `format` formats values
    * of the x axis and of the series' y axis.

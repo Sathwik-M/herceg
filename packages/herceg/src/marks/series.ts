@@ -39,11 +39,32 @@ export interface Series {
   /** For `rows` grouped from a whole table as it streams. */
   stream?: SeriesStream | undefined;
   /**
+   * For a layer of a stack drawn through edges of its own rather than
+   * through its rows: series split by a field stack on the x positions of
+   * all of them (see marks/union-stack.ts).
+   */
+  edges?: LayerEdges | undefined;
+  /**
    * On a band axis holding only some of the chart's bands (a panel's own
    * categories), where its bands are: `x` or `y` then holds chart band
    * indices, which `placeAt` reads through this.
    */
   places?: { readonly x?: BandPlaces; readonly y?: BandPlaces } | undefined;
+}
+
+/**
+ * A stacked layer's edges at every x position of its stack, which it is
+ * drawn through: where the layer has no row, it counts as zero or as
+ * interpolated (`StackGaps`). Views valid until the stack's next update.
+ */
+export interface LayerEdges {
+  /** Ascending; an x is repeated for each of the rows a layer has there. */
+  x: Float64Array;
+  top: Float64Array;
+  /** Undefined for the bottom layer, which stands on zero. */
+  bottom: Float64Array | undefined;
+  /** Min/max indexes of the edges, for long stacks. */
+  indexes: { top: RangeIndex; bottom: RangeIndex | undefined } | undefined;
 }
 
 /**

@@ -4,7 +4,7 @@
 // here; `Readme.svelte` holds the README's examples.
 import { type Chart as HercegChart, table, time } from "herceg";
 import type { ComponentProps } from "svelte";
-import { type Chart, Custom, Line, Point, Rule, Text } from "../src/index.js";
+import { Area, type Chart, Custom, Line, Point, Rule, Text } from "../src/index.js";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -25,6 +25,19 @@ Line(internals, { data: metrics, x: "time", y: "service" });
 Point(internals, { data: metrics, x: "service", y: "p50" });
 // @ts-expect-error point sizes are number fields
 Point(internals, { data: metrics, x: "service", y: "p50", r: "service" });
+
+// Areas of a series field stack on every x any of them has.
+Area(internals, { data: metrics, x: "time", y: "p50", series: "service", stack: true });
+Area(internals, {
+  data: metrics,
+  x: "time",
+  y: "p50",
+  series: "service",
+  stack: true,
+  stackGaps: "interpolate",
+});
+// @ts-expect-error gaps are zero or interpolated
+Area(internals, { data: metrics, x: "time", y: "p50", stack: true, stackGaps: "linear" });
 
 Rule(internals, { y: 250, label: "SLO" });
 Rule(internals, { data: deploys, x: "at", text: "version" });

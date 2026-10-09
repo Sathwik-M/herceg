@@ -21,6 +21,8 @@ One call makes a chart of one kind:
 ```python
 hg.line(df, x="time", y="latency", series="service")
 hg.area(df, x="time", y=["user", "system"], stack=True)
+hg.area(responses, x="minute", y="count", series="status", stack=True)  # long format
+hg.area(cpu, x="time", y="load", series="host", stack=True, stack_gaps="interpolate")
 hg.bar(sales, x="region", y=["q1", "q2"])
 hg.bar(sales, x="q1", y="region")  # a category y gives horizontal bars
 hg.bar(sales, x="region", y="q1", labels=True)  # values at the bar ends

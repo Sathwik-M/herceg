@@ -447,6 +447,7 @@ const MARKS: MarkChecks = {
       y2: field,
       series: field,
       stack: boolean,
+      stackGaps: oneOf("zero", "interpolate"),
       fill: string,
       fillOpacity: fraction,
       line: boolean,

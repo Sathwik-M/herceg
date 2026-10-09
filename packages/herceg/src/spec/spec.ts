@@ -634,14 +634,31 @@ interface AreaStyle extends MarkBase {
 }
 
 /**
+ * What a layer of a stack of series split by a field counts as at an x
+ * other shown layers have rows at but it has not: "zero" (the default),
+ * or "interpolate", the value on the straight line between its rows on
+ * either side (zero beyond its first and last rows).
+ */
+export type StackGaps = "zero" | "interpolate";
+
+/**
  * Filled areas. With `y`, each series is filled down to zero (or stacked on
- * the previous series with `stack`). With `y1` and `y2`, the band between two
- * fields is filled.
+ * the previous series with `stack`: several y fields row by row, or the
+ * series of a `series` field on the x positions any of them has). With
+ * `y1` and `y2`, the band between two fields is filled.
  */
 export type AreaSpec = AreaStyle &
   (
-    | { y: Field | readonly Field[]; series?: Field; stack?: boolean; y1?: never; y2?: never }
-    | { y1: Field; y2: Field; y?: never; series?: never; stack?: never }
+    | {
+        y: Field | readonly Field[];
+        series?: Field;
+        stack?: boolean;
+        /** With `stack` and `series`: what a series counts as where it has no row. */
+        stackGaps?: StackGaps;
+        y1?: never;
+        y2?: never;
+      }
+    | { y1: Field; y2: Field; y?: never; series?: never; stack?: never; stackGaps?: never }
   );
 
 /**

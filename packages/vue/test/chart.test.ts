@@ -321,6 +321,20 @@ describe("<Chart>", () => {
     expect(optionsOf(chart()).legend).toBe(true);
   });
 
+  it("stacks areas by a series field, with the gaps a template names", () => {
+    const { view, chart } = chartRef();
+    const hosts = table({ t: [0, 1, 0], cpu: [1, 2, 3], host: ["a", "a", "b"] });
+    mount(
+      `<Chart ref="view">
+        <Area :data="hosts" x="t" y="cpu" series="host" stack stack-gaps="interpolate" />
+      </Chart>`,
+      () => ({ hosts, view }),
+    );
+    const [area] = optionsOf(chart()).marks;
+    expect(area!.spec).toMatchObject({ series: "host", stack: true, stackGaps: "interpolate" });
+    expect(paths()).toHaveLength(2);
+  });
+
   it("keeps marks from v-for and v-if in template order", async () => {
     const { view, chart } = chartRef();
     const band = ref(false);

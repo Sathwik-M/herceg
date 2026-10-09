@@ -258,12 +258,33 @@ line(requests, { x: "time", y: "latency", series: "service" });
 const usage = table({ time: time(timestamps), user: userCpu, system: systemCpu });
 area(usage, { x: "time", y: "user" }); // filled to zero
 area(usage, { x: "time", y: ["user", "system"], stack: true });
+// Long format: a layer per category value, stacked on every x any of them has.
+const responses = table({ minute: time(minutes), status: statusCodes, count: counts });
+area(responses, { x: "minute", y: "count", series: "status", stack: true });
+area(responses, { x: "minute", y: "count", series: "status", stack: true, stackGaps: "interpolate" });
 area(metrics, { x: "time", y1: "p50", y2: "p99" }); // band between two fields
 // A single area is outlined along its top in its own color; stacks and bands
 // are not unless `line: true`. `stroke` and `strokeWidth` style the outline and
 // turn it on; `line: false` or a width of 0 turns it off.
 
 ```
+
+Stacks put the first layer at the bottom: fields in the order given, a
+series field's values in the order of its legend. Areas of a series field
+stack on every x any shown series has a row at. At an x where a series has
+no row it counts as zero (`stackGaps: "zero"`, the default, right for counts
+a query leaves out), or with `"interpolate"` as the straight line between
+its rows on either side (right for series sampled at different times), and
+as zero beyond its first and last rows. A missing value draws nothing and
+counts as zero for the layers above, as in stacks of fields. Several rows of
+a series at one x pair up with the others' rows there in order, a series
+with fewer holding its last, so steps drawn by every series stay steps.
+Tooltips, the keyboard, and the text alternative read each series' own rows,
+at the top of its layer (at an x where the keyboard's series has several
+rows, the others' rows of the same occurrence); hidden series leave the
+stack, and the x positions only they had. On a log y axis, stacks stand on
+the axis' low end, and layers standing on zero are drawn down to it, in
+stacks of fields too.
 
 Annotations take constant positions (numbers, or `Date`s on time axes), or
 draw one item per row of a table when a position is a field. `label` is
@@ -1077,8 +1098,8 @@ rather than draw shared axes. Charts whose panels have
 y scales of their own cannot zoom along y or take y ranges in
 `setViewport` yet. Pointer, brush, and zoom work in any panel and act on
 its x scale; the arrow keys step through a panel and Up and Down move
-between its series and on to the next panel. Stacked bars stack within each
-panel, and each panel's heatmap cell shows the last of that panel's rows
+between its series and on to the next panel. Stacked bars and areas stack within each
+panel (areas of a series field on the x positions of that panel's rows), and each panel's heatmap cell shows the last of that panel's rows
 with a value there; a heatmap's colors follow one scale in every panel,
 over all its table's values. Histograms count, and box plots and violins
 summarize, each panel's rows apart. Annotations over a table (which read it
@@ -1678,6 +1699,15 @@ time axis with breaks, columns are columns of time shown, and points inside
 breaks are left out without splitting the run.
 `renderer: "auto"` moves charts with many drawn points to Canvas. See
 `docs/architecture.md` in the repository for details.
+
+Stacks follow streaming tables: appended rows and rows a rolling window
+drops restack only what they touch (the rows themselves for fields, the
+positions they are at for bars of a series field, and for areas of a series
+field the x positions from the earliest one they change), instead of every
+row. Areas of a series field have an edge for every layer at every x any
+shown layer has, 16 bytes a layer and x (plus 16 bytes a row for each row's
+top and bottom), so series with few x positions in common cost more than
+their rows.
 
 ## Grids
 
