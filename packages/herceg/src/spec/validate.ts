@@ -15,6 +15,7 @@ import {
   type AnimationSpec,
   type AxisSpec,
   type BinaryColumnSpec,
+  type CameraSpec,
   type CategoryColumnSpec,
   type ChartSpec,
   type DerivedSpec,
@@ -729,6 +730,64 @@ const MARKS: MarkChecks = {
       label: string,
     },
   },
+  point3d: {
+    required: ["x", "y", "z"],
+    checks: {
+      x: field,
+      y: field,
+      z: field,
+      series: field,
+      name: field,
+      r: positive,
+      color: field,
+      colors: ramp,
+      colorDomain: range,
+      colorMidpoint: finite,
+      fill: string,
+      fillOpacity: fraction,
+      label: string,
+    },
+  },
+  surface: {
+    required: ["x", "y", "z"],
+    checks: {
+      x: field,
+      y: field,
+      z: field,
+      color: field,
+      colors: ramp,
+      colorDomain: range,
+      colorMidpoint: finite,
+      fillOpacity: fraction,
+      shading: boolean,
+      wireframe: boolean,
+      label: string,
+    },
+  },
+};
+
+const camera: Check = (v, path) => {
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    azimuth: finite,
+    elevation: (e, at) => {
+      if (typeof e !== "number" || !(e >= -90 && e <= 90)) fail(at, "degrees from -90 to 90", e);
+    },
+    zoom: (z, at) => {
+      if (typeof z !== "number" || !(z >= 0.5 && z <= 10)) fail(at, "a number from 0.5 to 10", z);
+    },
+    perspective: boolean,
+  } satisfies ChecksOf<CameraSpec>);
+};
+
+/** Three positive numbers: the relative lengths of a 3D box's sides. */
+const boxAspect: Check = (v, path) => {
+  if (
+    !Array.isArray(v) ||
+    v.length !== 3 ||
+    !v.every((x) => typeof x === "number" && x > 0 && Number.isFinite(x))
+  )
+    fail(path, "three positive numbers", v);
 };
 
 const PROJECTIONS = [
@@ -1037,6 +1096,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           },
           brush: oneOf("x", "y", "xy", "lasso"),
           sync: string,
+          rotate: boolean,
         } satisfies ChecksOf<InteractionSpec>);
       },
       animation: (a, path) => {
@@ -1054,6 +1114,9 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       locale: string,
       timeZone: string,
       projection,
+      z: axis,
+      camera,
+      boxAspect,
     } satisfies ChecksOf<Omit<ChartSpec, "marks" | "version">>,
     ["marks", "version"],
   );
@@ -1089,6 +1152,14 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       "a spec with geoshape or geopoint marks: a projection needs geoshape or geopoint marks",
       chart.projection,
     );
+  // A 3D chart's options mean nothing to other charts, which an older
+  // reader might draw without them.
+  const threeD = (chart.marks as Record<string, unknown>[]).some(
+    ({ type }) => type === "point3d" || type === "surface",
+  );
+  for (const name of ["z", "camera", "boxAspect"])
+    if (chart[name] !== undefined && !threeD)
+      fail(`spec.${name}`, "a spec with point3d or surface marks", chart[name]);
   // Marks name panels the chart has; with panels, every mark names one.
   const panels = chart.panels as { id: string }[] | undefined;
   if (chart.grid !== undefined && !panels) fail("spec.grid", "a spec with panels", chart.grid);

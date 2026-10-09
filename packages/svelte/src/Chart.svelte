@@ -27,6 +27,7 @@
     onselect,
     onhover,
     onclick,
+    oncamera,
     ...options
   }: ChartProps = $props();
 
@@ -127,6 +128,7 @@
   listen("select", () => onselect);
   listen("hover", () => onhover);
   listen("click", () => onclick);
+  listen("camera", () => oncamera);
 
   const size = (value: number | undefined, fallback: string) =>
     value === undefined ? fallback : `${value}px`;

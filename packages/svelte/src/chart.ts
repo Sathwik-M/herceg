@@ -13,7 +13,7 @@ import type { ClassValue } from "svelte/elements";
 export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   /** Marks built with herceg's functions; mark components among the children are added after them. */
   marks?: readonly ChartMark[] | undefined;
-  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Rule>, <Region>, <Text>, <Custom>. */
+  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: Snippet | undefined;
   class?: ClassValue | undefined;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -28,6 +28,8 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   onhover?: ChartListener<"hover"> | undefined;
   /** The plot was clicked, with the data under the pointer. */
   onclick?: ChartListener<"click"> | undefined;
+  /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
+  oncamera?: ChartListener<"camera"> | undefined;
 }
 
 /** JSON with object keys sorted, so equal settings written in any order compare equal. */
@@ -65,6 +67,8 @@ const PORTABLE = new Set([
   "graph",
   "geoshape",
   "geopoint",
+  "point3d",
+  "surface",
   "rule",
   "region",
   "text",

@@ -3,11 +3,19 @@
 // it. One WebGL context serves every chart on the page: browsers allow only
 // a few contexts, and dashboards can hold many charts. Each cloud is drawn
 // into the shared, plot-sized canvas and copied into the chart's 2D canvas at
-// its place in mark order.
+// its place in mark order. 3D charts' clouds are drawn with a depth test, so
+// nearer points cover farther ones whatever order they come in.
 
 import type { NumericArray } from "../data/column.ts";
 import type { Mapping } from "../lod/m4.ts";
-import type { CloudPainter, PointCloud, PointGeometry, Rect } from "../scene/scene.ts";
+import type {
+  CloudLayer3D,
+  CloudPainter,
+  FaceGeometry,
+  PointCloud,
+  PointGeometry,
+  Rect,
+} from "../scene/scene.ts";
 
 /** Marks missing values; uploaded values otherwise lie in [0, 1]. */
 const MISSING = 3e38;
@@ -45,6 +53,85 @@ void main() {
   float distance = length(gl_PointCoord - 0.5) * size;
   fragment = color * clamp(radius + 0.5 - distance, 0.0, 1.0);
 }`;
+
+// 3D points: each value in the box's units as the axes mapped it when
+// uploaded (log10 units on log axes), placed in the box as they map it now
+// and projected by the view. Points
+// outside the box, missing values (the sentinel), and rows not drawn (style
+// 255) are moved off the screen. Square sprites' corners are discarded, so
+// they never hide what is behind them in the depth buffer.
+const VERTEX_3D = `#version 300 es
+in vec3 value;
+in float style;
+uniform vec3 factor;
+uniform vec3 shift;
+uniform vec2 right;
+uniform vec3 up;
+uniform vec3 toward;
+uniform vec2 center;
+uniform vec2 plot;
+uniform float scale;
+uniform float distance;
+uniform float size;
+uniform sampler2D palette;
+out vec4 color;
+void main() {
+  vec3 u = value * factor + shift;
+  if (style > 254.5 || any(greaterThan(abs(u), vec3(1.000001)))) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    return;
+  }
+  float depth = dot(u, toward);
+  float k = distance > 0.0 ? scale * distance / (distance - depth) : scale;
+  vec2 p = center + vec2(dot(u.xy, right), -dot(u, up)) * k;
+  gl_Position = vec4(p.x / plot.x * 2.0 - 1.0, 1.0 - p.y / plot.y * 2.0, -depth * 0.5, 1.0);
+  gl_PointSize = size;
+  color = texelFetch(palette, ivec2(int(style), 0), 0);
+}`;
+
+const FRAGMENT_3D = `#version 300 es
+precision highp float;
+in vec4 color;
+uniform float size;
+uniform float radius;
+out vec4 fragment;
+void main() {
+  if (length(gl_PointCoord - 0.5) * size > radius + 0.5) discard;
+  fragment = color;
+}`;
+
+/**
+ * A 3D layer's columns on the GPU, as float32: each value (log10 units on
+ * log axes) less its axis' origin, times its factor. The origins are the
+ * centers of the axes' domains when uploaded, so values of any magnitude in
+ * the box come out near [-1, 1] and keep their precision.
+ */
+interface Values3D {
+  x: NumericArray;
+  y: NumericArray;
+  z: NumericArray;
+  version: number;
+  logs: string;
+  origins: [number, number, number];
+  factors: [number, number, number];
+  length: number;
+  buffer: WebGLBuffer;
+  bytes: number;
+  owners: Set<object>;
+}
+
+/** A 3D layer's color index per row on the GPU. */
+interface Styles3D {
+  buffer: WebGLBuffer;
+  bytes: number;
+  owners: Set<object>;
+}
+
+/** Float32 keeps 24 bits; positions in the box may be off by this share of their distance from the origin. */
+const FLOAT32_ERROR = 2 ** -24;
+/** How far an axis' factor may move from the one values were uploaded with before they are uploaded again. */
+const RATIO_RANGE = 1e6;
 
 /** How one axis was normalized: uploaded u = (v - min) / span, v in log10 units on log axes. */
 interface Normalized {
@@ -113,8 +200,21 @@ class Painter implements CloudPainter {
    * column), otherwise its y column.
    */
   readonly #uploads = new Map<object, Upload>();
+  /** 3D layers' values by their z column (layers sharing it may differ in x and y), and their colors. */
+  readonly #values3d = new Map<object, Values3D[]>();
+  readonly #styles3d = new Map<Uint8Array, Styles3D>();
+  #vao3d: WebGLVertexArrayObject | undefined;
+  /** Where the 3D program reads each row's values and color index. */
+  #attributes = { value: 0, style: 1 };
+  /** Palettes as RGBA bytes, by their colors. */
+  readonly #palettes = new Map<string, Uint8Array>();
+  #program3d:
+    | { program: WebGLProgram; uniforms: Record<string, WebGLUniformLocation | null> }
+    | null
+    | undefined;
+  #palette: WebGLTexture | undefined;
   /** Uploads each chart painted since its last `endFrame`. */
-  readonly #painted = new Map<object, Set<Upload>>();
+  readonly #painted = new Map<object, Set<Upload | Values3D | Styles3D>>();
   #bytes = 0;
   #usable = true;
 
@@ -123,14 +223,15 @@ class Painter implements CloudPainter {
       typeof OffscreenCanvas !== "undefined"
         ? new OffscreenCanvas(1, 1)
         : globalThis.document?.createElement("canvas");
+    // A depth buffer for 3D clouds; 2D clouds leave it off.
     const gl = canvas?.getContext("webgl2", {
       premultipliedAlpha: true,
       antialias: false,
-      depth: false,
+      depth: true,
       stencil: false,
     }) as WebGL2RenderingContext | null | undefined;
     if (!canvas || !gl) return null;
-    const program = link(gl);
+    const program = link(gl, VERTEX, FRAGMENT);
     return program ? new Painter(canvas, gl, program) : null;
   }
 
@@ -151,6 +252,11 @@ class Painter implements CloudPainter {
       event.preventDefault();
       this.#usable = false;
       this.#uploads.clear();
+      this.#values3d.clear();
+      this.#styles3d.clear();
+      this.#vao3d = undefined;
+      this.#program3d = undefined;
+      this.#palette = undefined;
       this.#painted.clear();
       this.#bytes = 0;
     });
@@ -186,9 +292,7 @@ class Painter implements CloudPainter {
       upload = this.#upload(cloud, true);
     }
     upload.owners.add(owner);
-    const painted = this.#painted.get(owner) ?? new Set<Upload>();
-    this.#painted.set(owner, painted);
-    painted.add(upload);
+    this.#paintedBy(owner).add(upload);
 
     // Clip space from the scales' mappings: pixel = offset + (v - origin) * factor,
     // with v = min + u * span for the uploaded u.
@@ -251,12 +355,289 @@ class Painter implements CloudPainter {
     return true;
   }
 
+  #paintedBy(owner: object): Set<Upload | Values3D | Styles3D> {
+    let painted = this.#painted.get(owner);
+    if (!painted) {
+      painted = new Set();
+      this.#painted.set(owner, painted);
+    }
+    return painted;
+  }
+
+  paint3d(
+    context: CanvasRenderingContext2D,
+    mark: FaceGeometry,
+    plot: Rect,
+    pixelRatio: number,
+    owner: object,
+  ): boolean {
+    const cloud = mark.cloud;
+    if (!cloud || !this.usable) return false;
+    const program = this.#link3d();
+    if (!program) return false;
+    // Sprites larger than the device allows would be cut off.
+    if (cloud.layers.some((layer) => 2 * layer.radius * pixelRatio + 2 > this.#maxPointSize))
+      return false;
+    // Axes mapping no finite range of values are drawn on the CPU.
+    if (
+      !cloud.axes.every(
+        (axis) => Number.isFinite(axis.factor) && axis.factor !== 0 && Number.isFinite(axis.origin),
+      )
+    )
+      return false;
+    const gl = this.#gl;
+    const width = Math.max(1, Math.round(plot.width * pixelRatio));
+    const height = Math.max(1, Math.round(plot.height * pixelRatio));
+    if (this.#canvas.width !== width || this.#canvas.height !== height) {
+      this.#canvas.width = width;
+      this.#canvas.height = height;
+    }
+    gl.viewport(0, 0, width, height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clearDepth(1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(program.program);
+    gl.disable(gl.BLEND);
+    gl.enable(gl.DEPTH_TEST);
+    // Of points at one depth the later shows, as on the CPU and to the pointer.
+    gl.depthFunc(gl.LEQUAL);
+    const u = program.uniforms;
+    const m = cloud.view;
+    gl.uniform2f(u.right!, m[0]!, m[1]!);
+    gl.uniform3f(u.up!, m[2]!, m[3]!, m[4]!);
+    gl.uniform3f(u.toward!, m[5]!, m[6]!, m[7]!);
+    gl.uniform2f(u.center!, (cloud.cx - plot.x) * pixelRatio, (cloud.cy - plot.y) * pixelRatio);
+    gl.uniform2f(u.plot!, width, height);
+    gl.uniform1f(u.scale!, cloud.scale * pixelRatio);
+    gl.uniform1f(u.distance!, Number.isFinite(cloud.distance) ? cloud.distance : 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.#paletteTexture());
+    gl.uniform1i(u.palette!, 0);
+    const painted = this.#paintedBy(owner);
+    const vao = this.#vertexArray(program.program);
+    gl.bindVertexArray(vao);
+    // A pixel's worth of the box's units at the scale drawn.
+    const pixel = 1 / Math.max(1e-9, cloud.scale * pixelRatio);
+    for (const layer of cloud.layers) {
+      const values = this.#values(layer, cloud.axes, pixel);
+      const styles = this.#styles(layer.style, values.length);
+      for (const upload of [values, styles]) {
+        upload.owners.add(owner);
+        painted.add(upload);
+      }
+      const factor = cloud.axes.map((axis, k) => axis.factor / values.factors[k]!);
+      const shift = cloud.axes.map(
+        (axis, k) => axis.offset + (values.origins[k]! - axis.origin) * axis.factor,
+      );
+      gl.uniform3f(u.factor!, factor[0]!, factor[1]!, factor[2]!);
+      gl.uniform3f(u.shift!, shift[0]!, shift[1]!, shift[2]!);
+      const radius = layer.radius * pixelRatio;
+      gl.uniform1f(u.size!, 2 * radius + 2);
+      gl.uniform1f(u.radius!, radius);
+      this.#writePalette(context, layer.palette);
+      gl.bindBuffer(gl.ARRAY_BUFFER, values.buffer);
+      gl.vertexAttribPointer(this.#attributes.value, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, styles.buffer);
+      gl.vertexAttribPointer(this.#attributes.style, 1, gl.UNSIGNED_BYTE, false, 0, 0);
+      gl.drawArrays(gl.POINTS, 0, values.length);
+    }
+    gl.bindVertexArray(null);
+    gl.disable(gl.DEPTH_TEST);
+    context.drawImage(this.#canvas, plot.x, plot.y, plot.width, plot.height);
+    return true;
+  }
+
+  #link3d() {
+    if (this.#program3d === undefined) {
+      const gl = this.#gl;
+      const program = link(gl, VERTEX_3D, FRAGMENT_3D);
+      const names = [
+        "factor",
+        "shift",
+        "right",
+        "up",
+        "toward",
+        "center",
+        "plot",
+        "scale",
+        "distance",
+        "size",
+        "radius",
+        "palette",
+      ];
+      this.#program3d = program && {
+        program,
+        uniforms: Object.fromEntries(
+          names.map((name) => [name, gl.getUniformLocation(program, name)]),
+        ),
+      };
+    }
+    return this.#program3d;
+  }
+
+  #paletteTexture(): WebGLTexture {
+    const gl = this.#gl;
+    if (!this.#palette) {
+      this.#palette = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.#palette);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    }
+    return this.#palette;
+  }
+
+  /** Writes a layer's colors into the palette texture, bound at unit 0. */
+  #writePalette(context: CanvasRenderingContext2D, palette: readonly string[]): void {
+    if (palette.length === 0) return;
+    const key = palette.join();
+    let bytes = this.#palettes.get(key);
+    if (!bytes) {
+      bytes = new Uint8Array(palette.length * 4);
+      for (const [i, color] of palette.entries()) {
+        const [r, g, b] = rgba(context, color);
+        bytes.set([Math.round(r * 255), Math.round(g * 255), Math.round(b * 255), 255], i * 4);
+      }
+      if (this.#palettes.size >= 32) this.#palettes.clear();
+      this.#palettes.set(key, bytes);
+    }
+    const gl = this.#gl;
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, palette.length, 1, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+  }
+
+  /** The vertex array of 3D layers, with both attributes enabled; buffers are bound per layer. */
+  #vertexArray(program: WebGLProgram): WebGLVertexArrayObject {
+    const gl = this.#gl;
+    if (!this.#vao3d) {
+      this.#vao3d = gl.createVertexArray()!;
+      gl.bindVertexArray(this.#vao3d);
+      this.#attributes = {
+        value: gl.getAttribLocation(program, "value"),
+        style: gl.getAttribLocation(program, "style"),
+      };
+      gl.enableVertexAttribArray(this.#attributes.value);
+      gl.enableVertexAttribArray(this.#attributes.style);
+      gl.bindVertexArray(null);
+    }
+    return this.#vao3d;
+  }
+
+  /**
+   * A 3D layer's values on the GPU, uploaded again when its columns, their
+   * version, or the axes' log flags change, or when points in the box would
+   * be off by more than a quarter pixel, or out of float32's range, as the
+   * axes map them now (a domain changed, or the first upload's was elsewhere).
+   */
+  #values(layer: CloudLayer3D, axes: readonly Mapping[], pixel: number): Values3D {
+    const logs = axes.map((axis) => axis.log).join();
+    const uploads = this.#values3d.get(layer.z) ?? [];
+    // An axis' domain center, in its units, and how far from it its domain reaches.
+    const center = axes.map((axis) => axis.origin - axis.offset / axis.factor);
+    const reach = axes.map((axis) => 1 / Math.abs(axis.factor));
+    const precise = (upload: Values3D) =>
+      upload.origins.every((origin, k) => {
+        const factor = Math.abs(axes[k]!.factor);
+        const ratio = factor / Math.abs(upload.factors[k]!);
+        return (
+          ratio > RATIO_RANGE ** -1 &&
+          ratio < RATIO_RANGE &&
+          (Math.abs(center[k]! - origin) + reach[k]!) * FLOAT32_ERROR * factor < pixel / 4
+        );
+      });
+    const index = uploads.findIndex(
+      (upload) => upload.x === layer.x && upload.y === layer.y && upload.logs === logs,
+    );
+    const cached = index >= 0 ? uploads[index] : undefined;
+    if (cached && cached.version === layer.version && precise(cached)) return cached;
+    const owners = cached?.owners ?? new Set<object>();
+    if (cached) this.#discardValues(layer.z, cached);
+    const gl = this.#gl;
+    const length = Math.min(layer.x.length, layer.y.length, layer.z.length, layer.style.length);
+    const columns = [layer.x, layer.y, layer.z];
+    const origins = center.map((c) => (Number.isFinite(c) ? c : 0)) as [number, number, number];
+    const factors = axes.map((axis) => axis.factor) as [number, number, number];
+    const data = new Float32Array(length * 3);
+    for (let k = 0; k < 3; k++) {
+      const column = columns[k]!;
+      const log = axes[k]!.log;
+      const origin = origins[k]!;
+      const factor = factors[k]!;
+      for (let i = 0; i < length; i++) {
+        const v = ((log ? Math.log10(column[i]!) : column[i]!) - origin) * factor;
+        data[i * 3 + k] = Math.abs(v) < MISSING ? v : MISSING;
+      }
+    }
+    const buffer = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    const upload: Values3D = {
+      x: layer.x,
+      y: layer.y,
+      z: layer.z,
+      version: layer.version,
+      logs,
+      origins,
+      factors,
+      length,
+      buffer,
+      bytes: data.byteLength,
+      owners,
+    };
+    const list = this.#values3d.get(layer.z) ?? [];
+    list.push(upload);
+    this.#values3d.set(layer.z, list);
+    this.#bytes += upload.bytes;
+    return upload;
+  }
+
+  /** A 3D layer's colors on the GPU: one upload per color array, which a layer replaces when they change. */
+  #styles(style: Uint8Array, length: number): Styles3D {
+    const cached = this.#styles3d.get(style);
+    if (cached) return cached;
+    const gl = this.#gl;
+    const buffer = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, style.subarray(0, length), gl.STATIC_DRAW);
+    const upload: Styles3D = { buffer, bytes: length, owners: new Set() };
+    this.#styles3d.set(style, upload);
+    this.#bytes += upload.bytes;
+    return upload;
+  }
+
+  #discardValues(z: object, upload: Values3D): void {
+    this.#gl.deleteBuffer(upload.buffer);
+    const list = this.#values3d.get(z)?.filter((other) => other !== upload) ?? [];
+    if (list.length > 0) this.#values3d.set(z, list);
+    else this.#values3d.delete(z);
+    this.#bytes -= upload.bytes;
+    for (const painted of this.#painted.values()) painted.delete(upload);
+  }
+
+  #discardStyles(style: Uint8Array, upload: Styles3D): void {
+    this.#gl.deleteBuffer(upload.buffer);
+    this.#styles3d.delete(style);
+    this.#bytes -= upload.bytes;
+    for (const painted of this.#painted.values()) painted.delete(upload);
+  }
+
   endFrame(owner: object): void {
     const painted = this.#painted.get(owner);
     for (const [key, upload] of this.#uploads) {
       if (!upload.owners.has(owner) || painted?.has(upload)) continue;
       upload.owners.delete(owner);
       if (upload.owners.size === 0) this.#discard(key, upload);
+    }
+    for (const [z, uploads] of this.#values3d) {
+      for (const upload of uploads) {
+        if (!upload.owners.has(owner) || painted?.has(upload)) continue;
+        upload.owners.delete(owner);
+        if (upload.owners.size === 0) this.#discardValues(z, upload);
+      }
+    }
+    for (const [style, upload] of this.#styles3d) {
+      if (!upload.owners.has(owner) || painted?.has(upload)) continue;
+      upload.owners.delete(owner);
+      if (upload.owners.size === 0) this.#discardStyles(style, upload);
     }
     this.#painted.delete(owner);
   }
@@ -503,15 +884,19 @@ function normalization(values: NumericArray): Normalized {
   return { min, span: span > 0 ? span : 1, finite: true };
 }
 
-function link(gl: WebGL2RenderingContext): WebGLProgram | null {
+function link(
+  gl: WebGL2RenderingContext,
+  vertexSource: string,
+  fragmentSource: string,
+): WebGLProgram | null {
   const compile = (type: number, source: string) => {
     const shader = gl.createShader(type)!;
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
     return gl.getShaderParameter(shader, gl.COMPILE_STATUS) ? shader : null;
   };
-  const vertex = compile(gl.VERTEX_SHADER, VERTEX);
-  const fragment = compile(gl.FRAGMENT_SHADER, FRAGMENT);
+  const vertex = compile(gl.VERTEX_SHADER, vertexSource);
+  const fragment = compile(gl.FRAGMENT_SHADER, fragmentSource);
   if (!vertex || !fragment) return null;
   const program = gl.createProgram()!;
   gl.attachShader(program, vertex);

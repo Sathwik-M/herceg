@@ -24,12 +24,21 @@ import {
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import { type CloudPainter, type PointGeometry, type Scene, tickLabelGap } from "../scene/scene.ts";
+import {
+  type CloudPainter,
+  type FaceGeometry,
+  type PointGeometry,
+  type Scene,
+  tickLabelGap,
+} from "../scene/scene.ts";
+import type { CameraSpec } from "../spec/spec.ts";
 import { surface, themeReadsPage } from "../theme.ts";
+import type { Camera } from "../three/camera.ts";
 import type { CrosshairLabels } from "./axis-labels.ts";
 import { ascending, Brush, DRAG_THRESHOLD, normalize, type Selection } from "./brush.ts";
 import { type ChartEvents, type ChartListener, Emitter, type PanelTarget } from "./events.ts";
 import { Legend } from "./legend.ts";
+import type { Orbit } from "./orbit.ts";
 import { readPage, watchPage } from "./page-theme.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
 import { SvgLayer, svgElement } from "./svg-layer.ts";
@@ -83,11 +92,13 @@ function measurer(document: Document): MeasureText {
   return sharedMeasure;
 }
 
-/** Whether a scene leaves large point series to the GPU painter. */
+/** Whether a scene leaves large point series (or a 3D chart's points) to the GPU painter. */
 function hasClouds(scene: Scene): boolean {
   return scene.panels.some((panel) =>
     panel.marks.some(
-      (mark) => mark.kind === "point" && (mark as unknown as PointGeometry).cloud !== undefined,
+      (mark) =>
+        (mark.kind === "point" || mark.kind === "faces") &&
+        (mark as unknown as PointGeometry | FaceGeometry).cloud !== undefined,
     ),
   );
 }
@@ -158,7 +169,12 @@ export class Chart implements Scheduled, SyncMember {
     moved: boolean;
   } | null = null;
   /** A press in a chart of a layout mark, which has nothing to drag: a click if released in place. */
-  #tap: { x: number; y: number; moved: boolean } | null = null;
+  #tap: { pointer: number; x: number; y: number; moved: boolean } | null = null;
+  /** Turns a 3D chart's camera, once loaded; null if it failed to load. */
+  #orbit: Orbit | null | undefined;
+  #orbitLoading: Promise<void> | undefined;
+  /** The camera moved since the last `camera` event, which the next frame reports. */
+  #cameraMoved = false;
   readonly #brush: Brush;
   /**
    * The panels the selection belongs to: the x scale they share ("" for
@@ -446,10 +462,34 @@ export class Chart implements Scheduled, SyncMember {
    * nothing is pending.
    */
   get loading(): Promise<void> | undefined {
-    const pending = [this.#cloudsLoading, this.#animationLoading, this.#crosshairLoading].filter(
-      (loading) => loading !== undefined,
-    );
+    const pending = [
+      this.#cloudsLoading,
+      this.#animationLoading,
+      this.#crosshairLoading,
+      this.#orbitLoading,
+    ].filter((loading) => loading !== undefined);
     return pending.length > 1 ? Promise.all(pending).then(() => {}) : pending[0];
+  }
+
+  /** Where a 3D chart is seen from (a copy); undefined for other charts. */
+  get camera(): Camera | undefined {
+    return this.model.camera;
+  }
+
+  /**
+   * Turns a 3D chart's camera: the settings given replace the current ones;
+   * null goes back to the configured camera. A `camera` event follows on
+   * the next frame.
+   */
+  setCamera(camera: CameraSpec | null): void {
+    this.#turn(camera, false);
+  }
+
+  #turn(camera: CameraSpec | null, announce: boolean): void {
+    if (!this.model.setCamera(camera)) return;
+    this.#cameraMoved = true;
+    this.#invalidate();
+    if (announce && this.#orbit) this.#live.textContent = this.#orbit.describe(this.model.camera!);
   }
 
   /** Renders now instead of on the next frame. */
@@ -484,10 +524,12 @@ export class Chart implements Scheduled, SyncMember {
     for (const stop of this.#tables.values()) stop();
     this.#tables.clear();
     this.#clouds?.release(this);
+    this.#orbit?.dispose();
     // A transition waiting for its first frame leaves the frame's batch.
     this.#animation?.settle();
     this.#events.clear();
     this.model.dispose();
+    this.#scene = undefined;
     this.root.remove();
   }
 
@@ -507,6 +549,12 @@ export class Chart implements Scheduled, SyncMember {
       this.#draw();
     }
     this.#drawOverlay();
+    // Camera events come once a frame, however many moves a drag made.
+    const camera = this.model.camera;
+    if (this.#cameraMoved && camera) {
+      this.#cameraMoved = false;
+      this.#events.emit("camera", { camera });
+    }
   }
 
   syncCursor(x: number | null): void {
@@ -649,6 +697,12 @@ export class Chart implements Scheduled, SyncMember {
         : along.includes("x")
           ? "pan-y"
           : "pan-x";
+    if (this.model.camera) this.#loadOrbit();
+    else {
+      this.#orbit?.dispose();
+      this.#orbit = undefined;
+    }
+    this.#orbit?.update(options.interaction?.rotate !== false, !!zoom);
     // Themes that follow the page re-read it when it may have switched themes.
     const follows = themeReadsPage(options.theme);
     if (follows && !this.#unwatchPage) {
@@ -766,6 +820,7 @@ export class Chart implements Scheduled, SyncMember {
     this.#clouds?.endFrame(this);
     this.#svg.render(scene, { marks: !this.#onCanvas });
     this.#legend.update(scene.legend, scene.theme);
+    this.#orbit?.style(scene.theme);
     this.#drawTime = performance.now() - started;
     this.#describe();
   }
@@ -802,6 +857,34 @@ export class Chart implements Scheduled, SyncMember {
     if (!this.#animation?.playing) return;
     this.#animation.settle();
     this.#invalidate();
+  }
+
+  /** Loads what turns 3D charts the first time a chart draws one. */
+  #loadOrbit(): void {
+    if (this.#orbit !== undefined || this.#orbitLoading) return;
+    this.#orbitLoading = import("./orbit.ts")
+      .then(
+        ({ Orbit }) =>
+          new Orbit(this.root, {
+            camera: () => this.model.camera,
+            turn: (camera, announce) => this.#turn(camera, announce),
+            onPlot: (target) => !this.#legend.element.contains(target as Node),
+          }),
+      )
+      .catch(() => null)
+      .then((orbit) => {
+        this.#orbitLoading = undefined;
+        // A chart destroyed, or no longer 3D, while it loaded does without.
+        if (orbit && (this.#destroyed || !this.model.camera)) {
+          orbit.dispose();
+          return;
+        }
+        this.#orbit = orbit;
+        if (!orbit) return;
+        const { interaction } = this.#options;
+        orbit.update(interaction?.rotate !== false, !!interaction?.zoom);
+        if (this.#scene) orbit.style(this.#scene.theme);
+      });
   }
 
   /** Loads the animation module the first time a chart asks for `animation`. */
@@ -858,12 +941,17 @@ export class Chart implements Scheduled, SyncMember {
     }
     this.#describedAt = performance.now();
     this.#described = { config, key };
-    this.#description.textContent = `${describeChart(this.model)} Focus the chart and use the arrow keys to read values.`;
+    const turn = this.model.camera
+      ? " Shift with the arrow keys turns it, and plus and minus zoom."
+      : "";
+    this.#description.textContent = `${describeChart(this.model)} Focus the chart and use the arrow keys to read values.${turn}`;
   }
 
   /** The point the pointer or the keyboard is on. */
   #inspection(): Inspection | undefined {
     if (!this.#scene) return undefined;
+    // A chart being turned shows no tooltip.
+    if (this.#orbit?.turning) return undefined;
     // The model applies the configured tooltip mode.
     if (this.#pointer) return this.model.inspect(this.#pointer.x, this.#pointer.y);
     const keyboard = this.#keyboard;
@@ -1034,7 +1122,8 @@ export class Chart implements Scheduled, SyncMember {
       const { x, y } = this.#pointer;
       const tap = this.#tap;
       // A press that strays is not a click, even if it comes back.
-      if (tap) tap.moved ||= Math.hypot(x - tap.x, y - tap.y) >= DRAG_THRESHOLD;
+      if (tap?.pointer === event.pointerId)
+        tap.moved ||= Math.hypot(x - tap.x, y - tap.y) >= DRAG_THRESHOLD;
       if (press && !this.#still(press.panel)) this.#cancelPress();
       else if (press) {
         press.moved ||= Math.hypot(x - press.x, y - press.y) >= DRAG_THRESHOLD;
@@ -1055,11 +1144,11 @@ export class Chart implements Scheduled, SyncMember {
         broadcastCursor(sync, this, panel ? panel.x.invert(x) : null);
       }
     });
-    on("pointerleave", () => {
+    on("pointerleave", (event) => {
       this.#pointer = null;
       // A captured drag leaves only when released; any other press ends here.
       this.#press = null;
-      this.#tap = null;
+      if (this.#tap?.pointer === event.pointerId) this.#tap = null;
       this.#brush.cancel();
       schedule(this);
       const sync = this.#options.interaction?.sync;
@@ -1116,7 +1205,9 @@ export class Chart implements Scheduled, SyncMember {
       }
       const { x, y } = local(event);
       if (this.model.layout) {
-        this.#tap = { x, y, moved: false };
+        // A second pointer down makes neither a click (a pinch, say).
+        if (this.#tap) this.#tap.moved = true;
+        else this.#tap = { pointer: event.pointerId, x, y, moved: false };
         return;
       }
       // Presses on the axes, titles, gaps, or legend are not on the data.
@@ -1131,8 +1222,9 @@ export class Chart implements Scheduled, SyncMember {
     });
     on("pointerup", (event) => {
       const tap = this.#tap;
-      this.#tap = null;
       if (tap) {
+        if (tap.pointer !== event.pointerId) return;
+        this.#tap = null;
         if (!tap.moved) this.#click(local(event));
         return;
       }
@@ -1164,13 +1256,14 @@ export class Chart implements Scheduled, SyncMember {
       }
     });
     // The browser took the pointer (a touch turned into scrolling, say).
-    const cancel = () => {
+    // A tap ends only with its own pointer.
+    const cancel = (event: PointerEvent) => {
       this.#cancelPress();
-      this.#tap = null;
+      if (this.#tap?.pointer === event.pointerId) this.#tap = null;
     };
     on("pointercancel", cancel);
-    on("lostpointercapture", () => {
-      if (this.#press) cancel();
+    on("lostpointercapture", (event) => {
+      if (this.#press || this.#tap?.pointer === event.pointerId) cancel(event);
     });
     // Double click resets both axes, also one zoomed before `interaction.zoom`
     // stopped naming it: on a plot, its x scale; elsewhere, every one. The

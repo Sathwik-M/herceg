@@ -20,6 +20,9 @@ hg.area(data, "t", y1="v", y2="v", fill_opacity=0.3)
 hg.line(data, "t", "v", stroke_width="2")  # type: ignore[arg-type]
 update: hg.ChartUpdate = {"title": None, "theme": "light"}
 not_live: hg.ChartUpdate = {"facet": "host"}  # type: ignore[typeddict-unknown-key]
+hg.scatter_3d(data, "t", "v", "v", camera=hg.Camera(azimuth=30), z_axis=hg.Axis(label="z"))
+hg.surface(z=[[1.0, 2.0], [3.0, 4.0]], box_aspect=(2, 2, 1), rotate=False)
+hg.scatter_3d(data, "t", "v", z=hg.Axis())  # type: ignore[arg-type]
 
 
 def live(widget: ChartWidget, state: ChartState) -> None:

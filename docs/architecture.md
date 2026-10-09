@@ -12,9 +12,10 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), dictionary-encoded categories, or geometries (codes into a shared set of shapes). |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, and the map layers `geoshape` and `geopoint`) place their own geometry instead of using x and y scales. |
-| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, or a map's region or point: what its tooltips and the keyboard visit. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
+| **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, a map's region or point, or a 3D chart's point or surface grid point: what its tooltips and the keyboard visit. |
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
+| **Camera** | Where a 3D chart is seen from: an azimuth about the vertical axis, an elevation above the floor, a zoom, and orthographic or perspective projection (`camera`, a chart option for the first view; then chart state the pointer and keyboard change). |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
@@ -23,7 +24,7 @@ One name per concept, used the same way in code and docs.
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, or shapes (custom marks, a gauge's value, funnel connectors, network nodes and links). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, network nodes and links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
 
@@ -811,6 +812,146 @@ measure, project, cut, divide, simplify, and fit the first time (in Node,
 one machine), 11 ms at a new size, 2 ms to draw again after a value
 changes, and about 2 µs to find the region under the pointer.
 
+## 3D charts
+
+3D charts are layout marks too: `point3d` points and `surface` surfaces are
+the layers of one chart, joined (as a map's layers are) into a `Plot3D`
+(`marks/plot3d.ts`) that plans the axes, fits the box, orders what every
+layer draws, and finds what the pointer is on. Everything they draw is
+ordinary scene geometry: the box's grid lines and edges are line geometry
+drawn below the data, its tick labels and titles text drawn above, and the
+layers' points and cells one `faces` geometry, so SVG, Canvas, PDF, static
+export, and the text alternative need no 3D code of their own.
+
+Each axis is planned over every layer's data as a 2D axis is (`planAxis`,
+over a range of -1 to 1: linear, log, and time axes, nice domains, ticks,
+and formats; categories of a surface's floor evenly spaced), and normalized
+coordinates are scaled by the box's aspect (a cube by default). The camera
+(`three/camera.ts`) is an eye direction from an azimuth and an elevation,
+with the screen's right and up vectors computed from the angles, so the
+basis is defined straight above and below. Projection is orthographic, or in
+perspective from an eye five half-sides away (zoom magnifies the picture; it
+does not move the eye). The box is fitted by bounds that hold at every angle
+(its floor's half diagonal across, its half diagonal up and down, or in
+perspective the silhouette of the sphere around it), so it keeps its size as
+it turns. The model owns the camera: it starts as the configured one,
+interaction and `setCamera` change it, and an update that configures a
+different camera (compared after filling in defaults) replaces it, so
+framework adapters that re-render with the same props keep the view the user
+turned to. The DOM chart turns it on drags, the wheel, keys, and buttons
+(`dom/orbit.ts`, loaded the first time a chart draws a 3D mark) and reports
+it once a frame. The box's far walls carry the grid; x and y are labeled
+along the lowest edges on screen and z along the leftmost (ties going to the
+nearer edge), with labels pushed out along the edge's normal on screen and
+thinned to every n-th tick, against each other and against the titles and
+the labels of axes placed before; an edge seen nearly end on gets no labels.
+
+Faces (`three/faces.ts`, drawn by `draw/faces.ts`) are packed: screen
+vertices with their depths, each face's corners as vertex indices (one
+corner for a disc, three or four for a cell, more for a triangle of a cell
+cut at the box's walls), a style index per face (fill, opacity, disc radius,
+outline), and a sort key and depth.
+Faces are sorted by key, then depth, with two 16-bit counting passes per key
+(stable, so ties keep the order they were written in), and drawn in that
+order; consecutive opaque faces of one style are filled as one path (of at
+most 64 faces: Chrome fills one path of thousands of arcs slower than many
+short ones), translucent ones, and ones outlined in another color, one by
+one. A polygon is filled as the fan of triangles from its first corner, each
+turned the same way, so a cell folded edge on still covers what its
+triangles do under the nonzero rule; opaque cells are outlined in their own
+color by half a pixel, which closes the seams antialiasing would leave
+between neighbors, and wireframes are each cell's outline drawn right after
+its fill, so cells in front hide the lines behind (cells cut at the walls,
+drawn as triangles, have no wire, which would show their diagonals).
+
+The order is exact where it can be. Points alone are drawn by depth. For one
+surface, with any points, the key is the surface's: along the eye's
+direction a height field can hide only what lies farther along both grid
+axes, so its cells are ranked row by row and, within a row, column by column
+from the far side (in perspective, toward the eye's position from both
+sides), and drawing in that order paints every cell before any that can
+cover it. Points take the rank of the cell they lie over (or of where they
+fall between cells outside the grid), drawn just before that cell when the
+ray from them to the eye crosses its triangles, else just after; a
+brute-force test
+compares this with the nearest triangle at every pixel from several angles,
+including from below, in perspective with the eye above the grid, on a
+reversed axis, and around missing values. Several surfaces fall back to
+sorting every face by the mean depth of its corners, which can be wrong
+where they approach or cross.
+
+A disc, though, covers more than the point at its center: ranked by its
+center, the cells around it drawn after it would cut its edge though they
+lie behind it (seen from above, every point over a surface would show a
+crescent), and two overlapping points over different cells would be drawn
+in the cells' order, not by depth. So once the order is known, each disc is
+placed among the polygons it overlaps on screen: after those behind it and
+before those in front. A polygon covering the disc's center is in front when
+the exact order draws it after the disc; others (and all of them in the
+approximate order) are judged by their depth where they come nearest the
+center, interpolated from their vertices. Where these disagree, the polygons
+over the center win (a point shows exactly when its center does), then
+those in front at the edge. Each disc goes as early as that allows, but no
+earlier than the farther discs it overlaps (placed first), unless that
+would draw it over a polygon in front of it; discs in one place are drawn by
+depth. In grid cells crowded with discs (more than 16), every disc counts as
+overlapping, which can only move a disc later among discs, so points piled
+on one spot are not compared pair by pair. The result is drawn whole, so a
+point shows as a marker would: its outline cut only by the polygons in front
+of it. This costs most where many points lie over a dense surface: ordering
+the faces of 10,000 points of radius 3.5 over a 100 by 100 grid takes 15 to
+25 ms a scene in Node, about 40 ms at radius 10, and 10,000 or 20,000 points
+piled on one spot under 30 ms (each disc is checked against the cells it
+overlaps, found through two more grids like the pointer's).
+
+A surface's grid is built once per table version: the distinct numbers or
+times of x and y, sorted (or the categories rows hold, in dictionary order),
+and per grid point the last row with a value, refused before allocation when
+the grid would exceed 250,000 points. Per scene it projects each grid point
+once, then writes a face per cell with three or four corners holding values;
+cells reaching past the box (a configured domain narrower than the data) are
+cut at its walls triangle by triangle, as drawn (Sutherland–Hodgman in
+normalized coordinates), so a cut follows the surface. Shading is
+flat per cell: the cell's normal in the box's units (across its diagonals),
+two-sided against a light above and left of the eye, in 16 steps that
+multiply the ramp color by 0.72 to 1.1, so styles stay few enough to share.
+
+The pointer finds the face drawn last under it through a uniform grid
+(`FaceIndex`, cells sized for a few faces each, 6 to 24 px a side): polygons
+are filed in each cell their box covers, discs by their center, and a query
+looks as far around as discs reach. A surface's cell reports its drawn
+corner nearest the pointer. Grid points outside the box at the corners of
+cells cut at its walls are items too, anchored at the drawn vertex nearest
+them, so the pointer and the keyboard reach every cell drawn. Items are rows: points in
+row order, a surface's grid points in grid order, keyed by the table's row
+identity (`rowOffset` + row), so keys survive rows dropped from a stream.
+Inspections of 3D items carry their values by field.
+
+Point layers of at least 20,000 points, all opaque, on linear, time, or log
+axes, are drawn by the GPU in the browser instead (`paint3d` in
+`render/webgl.ts`, the painter 2D clouds use). Each layer's columns are
+uploaded once per table version as float32 values mapped by the axes then
+(less the centers of their domains, times their factors, so values of any
+magnitude come out near the box's [-1, 1]), and uploaded again only if the
+domains move so far that points in the box would be off by a quarter pixel
+(float32's error grows with the distance from those centers) or the factors
+change a millionfold; axes without a finite mapping draw on the CPU; each row's color is a byte into a
+256-entry palette texture (255 for rows not drawn), uploaded per color array,
+which the layer replaces when the table, the hidden series, or the colors
+change, and palettes are kept as bytes by their colors. Uploads are kept by
+their columns, so layers and charts drawing the same columns share them. The
+axes' mappings and the view are uniforms, so turning the camera uploads
+nothing. The vertex shader places points in the box, moves those outside it
+(and missing values, a sentinel) off the screen, and a depth test, not
+drawing order, decides what shows (at equal depths the later point, as on
+the CPU); sprites' corners are discarded, so they never hide what is behind
+them. The context now has a depth buffer (2D clouds leave it unused). The faces of such a chart are
+built only when something reads them: the pointer's first query after a
+turn, the keyboard, the summary, or a canvas without the painter. Turning a
+million points costs under a millisecond of JavaScript a frame (GPU time not
+included), against about 200 ms on the CPU path; the first tooltip after a
+turn projects, sorts, and indexes every point, about 50 ms at a million.
+
 ## Annotations
 
 Rules, regions, and text share one model (`marks/annotation.ts`): each
@@ -1330,8 +1471,8 @@ document when `OffscreenCanvas` is unavailable.
   charts with facets rather than splitting. On a log axis, a box or violin
   whose median is zero or below has no tooltip or keyboard stop, though
   its positive part is drawn.
-- A pie, treemap, sunburst, gauge, funnel, radar, Sankey diagram, network, or map has its chart to itself: no
-  other marks (a map's layers excepted), facets, zoom, brushing, or sync. Pie labels go beside the pie
+- A pie, treemap, sunburst, gauge, funnel, radar, Sankey diagram, network, map, or 3D chart has its chart to itself: no
+  other marks (a map's or 3D chart's layers excepted), facets, zoom (3D charts' camera aside), brushing, or sync. Pie labels go beside the pie
   only; treemaps and sunbursts have no drill-down, and their pointer lookup
   scans each level's children. A gauge shows one value, with no needle, ticks,
   or threshold marker; a funnel colors every stage alike and has no
@@ -1372,6 +1513,20 @@ document when `OffscreenCanvas` is unavailable.
   fields), take new shapes only by `reset`, and a table holding one cannot be
   appended to from Python, which replaces it whole. Regions are projected
   again at every new size, and picking tests a shape's every ring.
+- 3D charts draw points and rectilinear height-field surfaces only: no
+  lines, text, or bars in 3D, meshes (`mesh3d`), parametric surfaces,
+  isosurfaces, volumes, cones, or contours, and no shading beyond flat
+  diffuse light. Several surfaces in one chart are ordered by their cells'
+  depth, which can draw them wrongly where they come close or cross. A
+  surface's grid has at most 250,000 points and is never reduced, so large
+  surfaces cost their size every frame on the CPU (about 28 ms for 200 by
+  200 on the benchmark machine). Points sharing a chart with a surface, and
+  translucent points, are drawn on the CPU however many they are. Points are
+  ordered as wholes: one whose center a surface hides is hidden but for what
+  reaches past the surface's outline, and one whose center shows is drawn
+  whole, even where its edge passes behind a nearer cell. Charts of a 3D mark
+  have no facets, panels, brushing, or sync, and labels and titles stay
+  horizontal. Streaming tables upload a GPU layer whole on every change.
 - Rolling statistics over values whose differences exceed the largest double
   (about 1.8e308) overflow to Infinity.
 - Python derived tables count their source's rows through one of its

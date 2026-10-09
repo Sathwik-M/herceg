@@ -90,6 +90,33 @@ export interface ChartSpec {
    * name, or one with parameters. Equal Earth by default.
    */
   projection?: ProjectionName | ProjectionSpec;
+  /**
+   * The vertical axis of 3D charts (`point3d` and `surface` marks), whose
+   * `x` and `y` are the floor's. Only for 3D charts.
+   */
+  z?: AxisSpec;
+  /** Where a 3D chart is seen from at first; the pointer and keyboard turn it. Only for 3D charts. */
+  camera?: CameraSpec;
+  /**
+   * The relative lengths of a 3D chart's x, y, and z sides: [1, 1, 1], a
+   * cube, by default. Only for 3D charts.
+   */
+  boxAspect?: readonly [number, number, number];
+}
+
+/**
+ * The view of a 3D chart: the eye's direction from the box's center, and
+ * how the box is drawn. Angles are in degrees.
+ */
+export interface CameraSpec {
+  /** About the vertical z axis, counterclockwise from +x seen from above; -60 by default. */
+  azimuth?: number;
+  /** Above the x-y plane, from -90 (from below) to 90 (from above); 25 by default. */
+  elevation?: number;
+  /** Magnification from 0.5 to 10; 1, the default, fits the box in the chart. */
+  zoom?: number;
+  /** Perspective, nearer things larger, rather than orthographic projection (the default). */
+  perspective?: boolean;
 }
 
 /**
@@ -418,6 +445,11 @@ export interface InteractionSpec {
   brush?: BrushSpec;
   /** Charts with the same sync name share their cursor, x range, and selection. */
   sync?: string;
+  /**
+   * Dragging turns 3D charts; true by default. Their `zoom` is `true` or
+   * false: the wheel magnifies them.
+   */
+  rotate?: boolean;
 }
 
 export interface AnimationSpec {
@@ -491,7 +523,9 @@ export type MarkSpec =
   | SankeySpec
   | GraphSpec
   | GeoShapeSpec
-  | GeoPointSpec;
+  | GeoPointSpec
+  | Point3DSpec
+  | SurfaceSpec;
 
 interface MarkBase {
   /** Name of the table in `ChartSpec.data`; defaults to the only table. */
@@ -1132,5 +1166,68 @@ export interface HeatmapSpec extends MarkBase {
    * (the default), the "max", or the "min".
    */
   reduce?: "mean" | "max" | "min";
+  label?: string;
+}
+
+/**
+ * Points at (x, y, z) in a 3D chart: number or time fields, z vertical.
+ * Points share the chart's box with the chart's other 3D marks.
+ */
+export interface Point3DSpec {
+  type: "point3d";
+  data?: string;
+  id?: string;
+  x: Field;
+  y: Field;
+  z: Field;
+  /** Category field: one colored set of points per value, with a legend. */
+  series?: Field;
+  /** Category field naming each point, for tooltips and keyboard reading. */
+  name?: Field;
+  /** Radius in pixels; default 3.5. */
+  r?: number;
+  /** A number field colored on a continuous scale, with a color legend. */
+  color?: Field;
+  /** Colors for `color`, low to high, or a scheme name such as "viridis". */
+  colors?: readonly string[] | string;
+  colorDomain?: readonly [number, number];
+  colorMidpoint?: number;
+  fill?: string;
+  /** Default 1. */
+  fillOpacity?: number;
+  /** Legend and tooltip name of points without `series`. */
+  label?: string;
+}
+
+/**
+ * A surface over a grid in a 3D chart: each row is a grid point, at the
+ * distinct values of `x` and `y` (numbers or times in order, categories
+ * evenly spaced in dictionary order), at the height of `z`. Cells between
+ * four grid points with values are drawn; points without a value leave holes.
+ */
+export interface SurfaceSpec {
+  type: "surface";
+  data?: string;
+  id?: string;
+  x: Field;
+  y: Field;
+  /** Number field: the height at each grid point. */
+  z: Field;
+  /** A number field coloring the surface in place of `z`. */
+  color?: Field;
+  /** Colors from low to high values, or a scheme name; the theme's ramp by default. */
+  colors?: readonly string[] | string;
+  colorDomain?: readonly [number, number];
+  colorMidpoint?: number;
+  /** Default 1. */
+  fillOpacity?: number;
+  /**
+   * Shades cells by how they face a light above and behind the viewer; true
+   * by default. Without shading, colors read exactly as the legend shows.
+   */
+  shading?: boolean;
+  /** Draws the grid's lines over the surface; false by default. */
+  wireframe?: boolean;
+  /** What the surface is, in tooltips. */
   label?: string;
 }

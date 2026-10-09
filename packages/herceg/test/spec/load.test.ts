@@ -2,10 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import { encodedCategory, time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { loadSpec, SPEC_VERSION, specToSVG, validateSpec } from "../../src/from-spec.ts";
+import { estimateText } from "../../src/layout/text.ts";
 import { line } from "../../src/marks/line.ts";
+import { point3d } from "../../src/marks/point3d.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { surface } from "../../src/marks/surface.ts";
+import { ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
+import { viridis } from "../../src/scale/schemes.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
+import { checkSpec } from "../../src/spec/validate.ts";
 
 const start = Date.UTC(2026, 0, 1);
 
@@ -505,5 +511,71 @@ describe("maps in specs", () => {
     expect(fails({ projection: "mercator", marks: [{ type: "line", x: "x", y: "y" }] })).toThrow(
       /projection needs geoshape or geopoint marks/,
     );
+  });
+});
+
+describe("3D charts in specs", () => {
+  const data = {
+    grid: { columns: { x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [1, 2, 3, 4] } },
+    points: { columns: { x: [0.5], y: [0.5], z: [3], kind: ["a"] } },
+  };
+  const marks: ChartSpec["marks"] = [
+    { type: "surface", data: "grid", x: "x", y: "y", z: "z", colors: "viridis", wireframe: true },
+    { type: "point3d", data: "points", x: "x", y: "y", z: "z", series: "kind", r: 4 },
+  ];
+
+  it("draw the same SVG as the TypeScript API, from the spec's camera", () => {
+    const spec: ChartSpec = {
+      width: 400,
+      height: 300,
+      data,
+      marks,
+      camera: { azimuth: 30, elevation: 40 },
+      z: { label: "Height" },
+      boxAspect: [2, 1, 1],
+      interaction: { zoom: true, rotate: false },
+    };
+    const svg = specToSVG(spec, [], { measureText: estimateText });
+    expect(svg).toContain(">Height</text>");
+    const grid = table({ x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [1, 2, 3, 4] });
+    const points = table({ x: [0.5], y: [0.5], z: [3], kind: ["a"] });
+    const same = renderToSVG({
+      width: 400,
+      height: 300,
+      marks: [
+        surface(grid, { x: "x", y: "y", z: "z", colors: viridis, wireframe: true }),
+        point3d(points, { x: "x", y: "y", z: "z", series: "kind", r: 4 }),
+      ],
+      camera: { azimuth: 30, elevation: 40 },
+      z: { label: "Height" },
+      boxAspect: [2, 1, 1],
+      interaction: { zoom: true, rotate: false },
+    });
+    // Output differs only in element ids.
+    const ids = (text: string) => text.replace(/herceg-svg-\d+/g, "id");
+    expect(ids(svg)).toBe(ids(same));
+    const model = new ChartModel(loadSpec(spec).config);
+    expect(model.camera).toEqual({ azimuth: 30, elevation: 40, zoom: 1, perspective: false });
+    expect(checkSpec(spec)).toEqual([]);
+  });
+
+  it("check cameras, box aspects, and 3D marks", () => {
+    const fails = (change: object) => () => loadSpec({ data, marks, ...change } as ChartSpec);
+    expect(fails({ camera: { elevation: 120 } })).toThrow(
+      /spec.camera.elevation: expected degrees from -90 to 90/,
+    );
+    expect(fails({ camera: { zoom: 20 } })).toThrow(/spec.camera.zoom/);
+    expect(fails({ boxAspect: [1, 0, 1] })).toThrow(
+      /spec.boxAspect: expected three positive numbers/,
+    );
+    expect(fails({ marks: [{ type: "point3d", data: "points", x: "x", y: "y" }] })).toThrow(
+      /marks\[0\].z: required/,
+    );
+    expect(
+      fails({ marks: [{ type: "line", data: "points", x: "x", y: "y" }], camera: {} }),
+    ).toThrow(/spec.camera: expected a spec with point3d or surface marks/);
+    expect(checkSpec({ data, marks, camera: { azimuth: 1, roll: 3 } } as ChartSpec)).toEqual([
+      "spec.camera.roll",
+    ]);
   });
 });

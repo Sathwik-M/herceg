@@ -8,6 +8,8 @@ import {
   histogram,
   line,
   point,
+  point3d,
+  surface,
   table,
   time,
 } from "herceg";
@@ -17,9 +19,11 @@ import {
   type CandleData,
   type CategoryData,
   type GridData,
+  type Point3Data,
   type PointData,
   type SampleData,
   type SeriesData,
+  type SurfaceData,
 } from "../datasets.ts";
 import type { Adapter, ChartHandle, ChartKind, ChartOptions } from "../page/adapter.ts";
 import { clientPoint } from "../page/adapter.ts";
@@ -117,6 +121,30 @@ function candleColumns(data: CandleData) {
   return { t: time(data.x), o: data.open, h: data.high, l: data.low, c: data.close };
 }
 
+// A surface's grid points as one row each, as a long table gives them.
+function surfaceColumns(data: SurfaceData) {
+  const side = data.x.length;
+  const x = new Float64Array(data.z.length);
+  const y = new Float64Array(data.z.length);
+  for (let k = 0; k < data.z.length; k++) {
+    x[k] = data.x[k % side]!;
+    y[k] = data.y[Math.floor(k / side)]!;
+  }
+  return { x, y, z: data.z };
+}
+
+/** A 3D chart's handle: `setCamera` turns it; there are no x and y scales to aim pointers with. */
+function solid(chart: Chart): Omit<ChartHandle<never>, "setData"> {
+  return {
+    pixelOf: () => clientPoint(chart.root, 0, 0),
+    resize: (width, height) => chart.update({ width, height }),
+    destroy: () => chart.destroy(),
+    // Large point clouds wait for the GPU painter, which loads on demand.
+    rendered: () => chart.loading,
+    setCamera: (azimuth, elevation) => chart.setCamera({ azimuth, elevation }),
+  };
+}
+
 // Heatmap cells as one row each: column index, row index, value.
 function gridColumns(data: GridData) {
   const count = data.columns * data.rows;
@@ -131,7 +159,10 @@ function gridColumns(data: GridData) {
 
 export const adapter: Adapter = {
   id: "herceg",
-  renderer: { normal: "auto (svg below 4,000 drawn points, canvas above)", large: "auto" },
+  renderer: {
+    normal: "auto (svg below 4,000 drawn points, canvas above; 3D points from 20,000 on WebGL)",
+    large: "auto",
+  },
   line: lineKind(false),
   area: lineKind(true),
   bar: {
@@ -233,6 +264,40 @@ export const adapter: Adapter = {
         ],
       });
       return { ...common(chart), setData: (next) => source.reset(bubbleColumns(next)) };
+    },
+  },
+  // Orthographic projection and the default camera, with 3.5 px points of
+  // one color; surfaces colored by height and shaded, Herceg's defaults.
+  scatter3d: {
+    prepare: (data) => table({ x: data.x, y: data.y, z: data.z }),
+    create(container, data, options) {
+      const source = table({ x: data.x, y: data.y, z: data.z });
+      const chart = createChart(container, {
+        width: options.width,
+        height: options.height,
+        tooltip: options.tooltip,
+        marks: [point3d(source, { x: "x", y: "y", z: "z" })],
+      });
+      return {
+        ...solid(chart),
+        setData: (next: Point3Data) => source.reset({ x: next.x, y: next.y, z: next.z }),
+      };
+    },
+  },
+  surface: {
+    prepare: (data) => table(surfaceColumns(data)),
+    create(container, data, options) {
+      const source = table(surfaceColumns(data));
+      const chart = createChart(container, {
+        width: options.width,
+        height: options.height,
+        tooltip: options.tooltip,
+        marks: [surface(source, { x: "x", y: "y", z: "z" })],
+      });
+      return {
+        ...solid(chart),
+        setData: (next: SurfaceData) => source.reset(surfaceColumns(next)),
+      };
     },
   },
 };

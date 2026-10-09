@@ -21,12 +21,14 @@ export function Latency() {
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 children are mark elements: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
-`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Radar>`, `<Sankey>`, `<Graph>`, `<GeoShape>`, `<GeoPoint>`, `<Rule>`, `<Region>`, `<Text>`, and `<Custom>`. Each mark element takes the
+`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`, `<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`, `<Radar>`, `<Sankey>`, `<Graph>`, `<GeoShape>`, `<GeoPoint>`, `<Point3D>`, `<Surface>`, `<Rule>`, `<Region>`, `<Text>`, and `<Custom>`. Each mark element takes the
 table it reads as `data`, so field names are checked against that table's
 columns; `<Graph>` takes its links as `data` and a table of nodes as `nodes`.
 `<GeoShape>` and `<GeoPoint>` share a chart with each other, projected by the
 chart's `projection` prop: `<Chart projection="equal-earth"><GeoShape
-data={countries} color="gdp" /></Chart>`.
+data={countries} color="gdp" /></Chart>`. `<Point3D>` and `<Surface>` share
+a 3D chart, seen from its `camera` prop; a re-render with the same camera
+keeps the view the user turned to, a different one shows it.
 Annotations (`<Rule>`, `<Region>`, `<Text>`) take `data` only when
 they draw one item per row: `<Rule data={deploys} x="time" text="version" />`. Marks built
 with herceg's functions can also be passed as a `marks` prop.
@@ -34,7 +36,7 @@ with herceg's functions can also be passed as a `marks` prop.
 The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or `style` says otherwise. A `ref` gives the underlying chart for imperative
 calls (`setViewport`, `select`, `toSVG`). Chart events are props:
-`onViewportChange`, `onSelect`, `onHover`, and `onClick`; the latest handler
+`onViewportChange`, `onSelect`, `onHover`, `onClick`, and `onCameraChange`; the latest handler
 is called, so inline functions do not resubscribe.
 
 ## Reusing groups of marks

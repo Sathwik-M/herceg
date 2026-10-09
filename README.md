@@ -7,7 +7,8 @@ applications. Today it provides:
 - a serializable chart specification (`ChartSpec`);
 - columnar, typed-array tables with streaming updates and rolling windows;
 - line, area, bar, scatter, and heatmap marks, plus rule, region, and text
-  annotations, that compose in one chart;
+  annotations, that compose in one chart, and part-to-whole, hierarchy,
+  flow, network, map, and 3D (scatter and surface) charts;
 - SVG and Canvas rendering, chosen per chart by how much it draws, and WebGL
   for large point series, loaded only when a chart needs it;
 - level-of-detail reduction for large line and area series;
@@ -48,7 +49,10 @@ opacity, and shape encoded by fields), heatmap, error bar, candlestick (and
 OHLC bars), histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge,
 funnel, radar, Sankey, network (graph), and map marks (choropleth regions and
 points on Equal Earth, Natural Earth, Mercator, equirectangular, and conic
-equal-area projections, from GeoJSON or packed geometry columns), monotone curves, named
+equal-area projections, from GeoJSON or packed geometry columns), 3D scatter
+and surface charts (orthographic or perspective, turned by dragging, keys,
+and buttons, drawn back to front in SVG, Canvas, and PDF, and on the GPU for
+large point clouds), monotone curves, named
 color schemes and diverging color, built-in themes (light, dark, high
 contrast, and one that follows the page) with CSS-variable theming, rule,
 region, and text annotations from constants or data (with labels hidden or
@@ -76,7 +80,7 @@ Next, in order:
 3. Animation of changed values (bars, pies) and of panels; leader lines for
    moved labels.
 4. More financial tools (a range navigator, drawing tools, markers at
-   breaks) and 3D.
+   breaks); 3D lines, meshes, parametric surfaces, and surfaces on the GPU.
 5. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 

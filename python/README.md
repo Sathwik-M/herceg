@@ -47,7 +47,20 @@ hg.graph(talks, "from", "to", nodes=people, node="name", group="team")  # a netw
 hg.choropleth(countries_gdf, "gdp", name="name", projection="equal-earth")  # a map
 hg.choropleth(rates, "rate", geojson=counties, locations="fips")  # values joined to shapes
 hg.scatter_geo(cities, "lon", "lat", r="population", name="city")  # bubbles on a map
+hg.scatter_3d(iris, x="sepal_length", y="sepal_width", z="petal_length", series="species")
+hg.surface(terrain, x="east", y="north", z="height")  # a grid of rows
+hg.surface(z=heights, x=eastings, y=northings)  # a 2D array: row i, column j at y[i], x[j]
 ```
+
+3D charts draw `.point3d(...)` points and `.surface(...)` surfaces in one box
+(they share a chart with each other only), seen from `camera=hg.Camera(azimuth=-60,
+elevation=25, zoom=1, perspective=False)` (or a dict of those) and turned by
+dragging (`rotate=False` stops that), the wheel with `zoom=True`, the
+keyboard, and buttons in the chart's corner. `z=hg.Axis(...)` sets the
+vertical axis, `box_aspect=(2, 2, 1)` the box's proportions. A surface from a
+matrix travels as three columns with a row per grid point; a surface has at
+most 250,000 grid points, and rows not on a grid must be binned or
+aggregated first. Static SVG, PNG, and PDF show the starting camera.
 
 Maps read shapes from GeoPandas GeoDataFrames, GeoJSON FeatureCollection
 dicts (properties become columns), or columns of GeoJSON geometries or
@@ -278,6 +291,7 @@ live.on_viewport(lambda viewport: print(viewport.x, viewport.y))
 live.on_hover(lambda inspection: print(inspection))   # None when the pointer leaves
 live.on_click(lambda inspection: print(df.iloc[inspection.points[0].row]))
 live.on_click(callback, remove=True)     # stop calling it
+live.on_camera(lambda camera: print(camera.azimuth, camera.elevation))  # a 3D chart turned
 ```
 
 An `hg.Viewport` holds the visible `x` range and the ranges of the left and
@@ -303,7 +317,10 @@ dataframe given), `mark`, the mark's index in the order marks were added,
 no one row has `row` None: histogram bins, box plot and violin groups, pie
 slices, funnel stages, tree nodes, and network and Sankey nodes and links
 summarize rows. The rows of a derived table (`hg.derive`) are the derived
-table's, and a choropleth joined with `geojson=` has a row per feature.
+table's, and a choropleth joined with `geojson=` has a row per feature. A 3D
+chart's inspection also has `values`, the point's (or grid point's) columns
+by name (datetimes as epoch milliseconds). `on_camera` receives an
+`hg.Camera`, at most every 100 ms while a chart is dragged.
 
 Selection and viewport callbacks also run when Python sets them. Hover,
 zoom, and selection reach Python at most every 100 ms, always ending with

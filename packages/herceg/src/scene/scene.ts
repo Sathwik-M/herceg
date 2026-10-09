@@ -118,6 +118,17 @@ export interface CloudPainter {
   endFrame(owner: object): void;
   /** Releases everything `owner` uploaded that no other chart uses. */
   release(owner: object): void;
+  /**
+   * Draws a 3D chart's point cloud (a faces geometry with `cloud`) with a
+   * depth test, as `paint` draws 2D clouds; false when it cannot.
+   */
+  paint3d?(
+    context: CanvasRenderingContext2D,
+    mark: FaceGeometry,
+    plot: Rect,
+    pixelRatio: number,
+    owner: object,
+  ): boolean;
   /** Bytes of point data currently uploaded. */
   readonly bytes: number;
   /** False once the browser has taken the GPU context away. */
@@ -362,6 +373,76 @@ export interface PolygonGeometry extends Geometry {
   strokeWidth: number;
 }
 
+/** How faces of one style are drawn. */
+export interface FaceStyle {
+  fill: string;
+  /** From 0 to 1. */
+  opacity: number;
+  /** The radius of the style's discs, in pixels. */
+  radius: number;
+  /** Polygons' outline color, or undefined for none. */
+  stroke: string | undefined;
+  strokeWidth: number;
+}
+
+/**
+ * Polygons and discs over shared vertices, drawn in order: a 3D chart's
+ * surface cells and points, back to front. A face of one corner is a disc;
+ * a polygon is filled as a fan of triangles from its first corner, each
+ * turned the same way, so a cell folded edge-on covers what its triangles
+ * do, and its outline is stroked after.
+ */
+export interface FaceGeometry extends Geometry {
+  kind: "faces";
+  draw: Drawing<FaceGeometry>;
+  /** x, y per vertex in CSS pixels. */
+  vertices: Float32Array;
+  /** Vertex indices of every face's corners, face after face in drawing order. */
+  corners: Uint32Array;
+  /** Where each face's corners start in `corners`; entry `count` ends the last face. */
+  starts: Uint32Array;
+  count: number;
+  /** Each face's index into `styles`. */
+  style: Uint16Array;
+  styles: readonly FaceStyle[];
+  /** Set when a GPU painter draws the points instead of these faces (see PointCloud3D). */
+  cloud?: PointCloud3D | undefined;
+}
+
+/** One layer of a 3D point cloud: its source columns and each row's color. */
+export interface CloudLayer3D {
+  /** Values per row, as the table holds them. */
+  x: NumericArray;
+  y: NumericArray;
+  z: NumericArray;
+  /** Table version of the columns: with their identity, it tells whether uploaded copies are current. */
+  version: number;
+  /** Per row: an index into `palette`, or 255 for rows not drawn. */
+  style: Uint8Array;
+  /** CSS colors, opaque. */
+  palette: readonly string[];
+  radius: number;
+}
+
+/**
+ * The points of a 3D chart for a GPU painter, which draws them with a depth
+ * test rather than in order: the layers' columns, how each axis maps values
+ * into the box (as a scale's mapping onto -1 to 1), and the view.
+ */
+export interface PointCloud3D {
+  layers: readonly CloudLayer3D[];
+  axes: readonly [Mapping, Mapping, Mapping];
+  /** Screen x and y, and depth, per normalized coordinate: right x, y; up x, y, z; eye x, y, z. */
+  view: Float64Array;
+  cx: number;
+  cy: number;
+  scale: number;
+  /** The eye's distance in perspective; Infinity when orthographic. */
+  distance: number;
+  /** The same points as faces in depth order, made when a canvas draws them without a GPU. */
+  faces(): FaceGeometry;
+}
+
 /** The geometry of the built-in marks, for code that narrows by kind. */
 export type MarkGeometry =
   | ArcGeometry
@@ -374,7 +455,8 @@ export type MarkGeometry =
   | RasterGeometry
   | ShapesGeometry
   | SegmentGeometry
-  | PolygonGeometry;
+  | PolygonGeometry
+  | FaceGeometry;
 
 export interface AxisTick {
   /** Pixel position along the axis. */

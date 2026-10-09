@@ -532,6 +532,37 @@ def test_hover_and_click_callbacks_receive_inspections():
     assert decoded.points[0].mark_id == "bins"
 
 
+def test_camera_callbacks_and_3d_items_receive_their_values():
+    widget, browser = live()
+    cameras, clicked = [], []
+    widget.on_camera(cameras.append)
+    widget.on_click(clicked.append)
+    assert sorted(widget._listening) == ["camera", "click"]
+    browser.reply({"type": "camera", "camera": {"azimuth": 30, "elevation": 10, "zoom": 2}})
+    assert cameras == [hg.Camera(azimuth=30, elevation=10, zoom=2)]
+    item = {
+        "axis": "item",
+        "value": 9,
+        "time": False,
+        "label": "Points",
+        "points": [
+            {
+                "mark": 1,
+                "markId": None,
+                "key": "[1,4]",
+                "label": "a",
+                "row": 4,
+                "value": 9,
+                "text": "x 1, y 2, z 9",
+            }
+        ],
+        "values": {"x": 1, "y": 2, "z": 9, "kind": "a"},
+    }
+    browser.reply({"type": "click", "inspection": item})
+    assert clicked[0].values == {"x": 1, "y": 2, "z": 9, "kind": "a"}
+    assert (clicked[0].points[0].mark, clicked[0].points[0].row) == (1, 4)
+
+
 def test_event_payloads_decode_to_python_values():
     assert decode_viewport({"x": [1.5, 3.0], "y": ["a", "c"], "yRight": None}) == hg.Viewport(
         x=(1.5, 3.0), y=("a", "c")

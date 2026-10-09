@@ -37,8 +37,9 @@ import {
   type SceneText,
   tickLabelGap,
 } from "../scene/scene.ts";
-import type { AxisSpec, ChartSpec, ScaleResolution, XAxisSpec } from "../spec/spec.ts";
+import type { AxisSpec, CameraSpec, ChartSpec, ScaleResolution, XAxisSpec } from "../spec/spec.ts";
 import { resolveTheme, type Theme, type ThemeEnvironment } from "../theme.ts";
+import type { Camera } from "../three/camera.ts";
 import {
   type AxisBreaks,
   type AxisContext,
@@ -213,11 +214,17 @@ export class ChartModel {
   /** Palette slot per series key, assigned on first appearance and kept. */
   #slots = new Map<string, number>();
 
+  /** A 3D chart's camera, and the configured one it starts from; undefined for other charts. */
+  #camera: Camera | undefined;
+  #configured: Camera | undefined;
+
   /** `page` resolves themes that follow the page: "auto" and CSS variables. */
   constructor(config: ChartConfig, page?: ThemeEnvironment) {
     [this.#marks, this.#layouts] = validate(config);
     this.#config = config;
     this.#theme = resolveTheme(config.theme, page);
+    this.#configured = this.#layouts[0]?.camera?.(config.camera);
+    this.#camera = this.#configured;
   }
 
   get config(): ChartConfig {
@@ -239,10 +246,38 @@ export class ChartModel {
 
   update(config: ChartConfig, page?: ThemeEnvironment): void {
     [this.#marks, this.#layouts] = validate(config);
+    // A camera configured differently is shown; the same one keeps the view turned.
+    const configured = this.#layouts[0]?.camera?.(config.camera);
+    if (
+      !this.#camera ||
+      !configured ||
+      JSON.stringify(configured) !== JSON.stringify(this.#configured)
+    )
+      this.#camera = configured;
+    this.#configured = configured;
     this.#config = config;
     if (!this.sharesY) this.#yViewport = NO_Y_VIEW;
     this.#theme = resolveTheme(config.theme, page);
     this.#layoutKey = "";
+  }
+
+  /** The camera of a 3D chart (a copy), which the pointer and keyboard turn; undefined for other charts. */
+  get camera(): Camera | undefined {
+    return this.#camera && { ...this.#camera };
+  }
+
+  /**
+   * Moves a 3D chart's camera: settings given replace the current ones; null
+   * goes back to the configured camera. Whether the camera changed.
+   */
+  setCamera(camera: CameraSpec | null): boolean {
+    const resolve = this.#layouts[0]?.camera;
+    if (!resolve || !this.#camera)
+      throw new Error("Only 3D charts (point3d and surface marks) have a camera");
+    const next = camera ? resolve.call(this.#layouts[0], camera, this.#camera) : this.#configured!;
+    if (JSON.stringify(next) === JSON.stringify(this.#camera)) return false;
+    this.#camera = next;
+    return true;
   }
 
   /**
@@ -596,7 +631,7 @@ export class ChartModel {
    * `clouds`, large point series are left to a GPU painter (see PointCloud).
    */
   scene(measure: MeasureText, clouds = false): Scene {
-    if (this.#layouts.length > 0) return this.#layoutScene(measure);
+    if (this.#layouts.length > 0) return this.#layoutScene(measure, clouds);
     this.#layout = undefined;
     const config = this.#config;
     const theme = this.#theme;
@@ -1450,7 +1485,7 @@ export class ChartModel {
   }
 
   /** A chart of one layout mark: the header, and the mark in the room below it. */
-  #layoutScene(measure: MeasureText): Scene {
+  #layoutScene(measure: MeasureText, clouds: boolean): Scene {
     const { width, height } = this;
     const theme = this.#theme;
     const mark = this.#layouts[0]!;
@@ -1471,6 +1506,8 @@ export class ChartModel {
       measure,
       hidden: this.hidden,
       color: this.#palette,
+      camera: this.#camera,
+      clouds,
     });
     this.#layout = result;
     // Nothing is drawn along axes: let go of what the last such scene kept.
@@ -1740,8 +1777,8 @@ export class ChartModel {
 
   #item(item: LayoutItem | undefined): Inspection | undefined {
     if (!item) return undefined;
-    const { key, label, color, text, value, px, py, outline } = item;
-    // The chart's marks are the layout mark, or the layers of a map.
+    const { key, label, color, text, value, px, py, outline, values } = item;
+    // The chart's marks are the layout mark, or the layers of a map or a 3D box.
     const mark = item.layer ?? 0;
     return {
       axis: "item",
@@ -1763,6 +1800,7 @@ export class ChartModel {
         },
       ],
       outline,
+      ...(values && { values }),
     };
   }
 
@@ -1782,6 +1820,8 @@ export class ChartModel {
     this.#base = undefined;
     this.#splitter = undefined;
     this.#layout = undefined;
+    // Joined layout marks (a 3D chart's box) keep their geometry buffers.
+    this.#layouts = [];
   }
 }
 
@@ -1871,7 +1911,9 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
     if (config.facet || config.panels)
       throw new Error(`Charts of a ${type} mark cannot have facets or panels yet`);
     const interaction = config.interaction;
-    if (interaction?.zoom || interaction?.brush || interaction?.sync)
+    // 3D charts zoom their camera.
+    const zooms = interaction?.zoom && !layouts[0]!.camera;
+    if (zooms || interaction?.brush || interaction?.sync)
       throw new Error(`Charts of a ${type} mark have no x axis to zoom, brush, or sync`);
   }
   const ids = new Set<string>();

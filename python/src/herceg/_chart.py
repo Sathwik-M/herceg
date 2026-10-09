@@ -328,6 +328,46 @@ class Tooltip:
 
 
 @dataclass
+class Camera:
+    """Where a 3D chart is seen from at first (the chart's ``camera``).
+
+    ``azimuth`` is the eye's direction around the vertical z axis, in degrees
+    counterclockwise from +x seen from above; ``elevation`` its height above
+    the floor, from -90 (from below) to 90 (from above). ``zoom`` magnifies
+    the box (1 fits it in the chart; from 0.5 to 10), and ``perspective``
+    draws nearer things larger instead of projecting orthographically.
+    Dragging, the wheel (with ``zoom=True``), and the keyboard turn it after.
+    """
+
+    azimuth: float = -60
+    elevation: float = 25
+    zoom: float = 1
+    perspective: bool = False
+
+    def _spec(self) -> dict[str, Any]:
+        if not _finite(self.azimuth):
+            raise ValueError(
+                f"camera azimuth must be a finite number of degrees, not {self.azimuth!r}"
+            )
+        if not (_finite(self.elevation) and -90 <= self.elevation <= 90):
+            raise ValueError(
+                f"camera elevation must be from -90 to 90 degrees, not {self.elevation!r}"
+            )
+        if not (_finite(self.zoom) and 0.5 <= self.zoom <= 10):
+            raise ValueError(f"camera zoom must be from 0.5 to 10, not {self.zoom!r}")
+        if not isinstance(self.perspective, bool):
+            raise ValueError(f"camera perspective must be True or False, not {self.perspective!r}")
+        spec: dict[str, Any] = {
+            "azimuth": float(self.azimuth),
+            "elevation": float(self.elevation),
+            "zoom": float(self.zoom),
+        }
+        if self.perspective:
+            spec["perspective"] = True
+        return spec
+
+
+@dataclass
 class Panel:
     """One of a chart's ``panels``: marks with ``panel=id`` draw in it.
 
@@ -369,6 +409,9 @@ class _SharedOptions(TypedDict, total=False):
     locale: str | None
     time_zone: str | None
     projection: ProjectionName | Projection | dict[str, Any] | None
+    camera: Camera | dict[str, Any] | None
+    box_aspect: tuple[float, float, float] | None
+    rotate: bool | None
 
 
 class _LayoutOptions(TypedDict, total=False):
@@ -388,6 +431,7 @@ class ChartUpdate(_SharedOptions, total=False):
 
     x: Axis | dict[str, Any] | None
     y: Axis | dict[str, Any] | None
+    z: Axis | dict[str, Any] | None
 
 
 class ChartOptions(ChartUpdate, _LayoutOptions, total=False):
@@ -396,11 +440,13 @@ class ChartOptions(ChartUpdate, _LayoutOptions, total=False):
 
 class HelperOptions(_SharedOptions, _LayoutOptions, total=False):
     """Chart options as the one-call helpers (``hg.line``, ``hg.scatter``, ...)
-    take them, after their own: ``x_axis`` and ``y_axis`` are the chart's ``x``
-    and ``y``, since the helpers' ``x`` and ``y`` name columns."""
+    take them, after their own: ``x_axis``, ``y_axis``, and ``z_axis`` are the
+    chart's ``x``, ``y``, and ``z``, since the helpers' ``x``, ``y``, and ``z``
+    name columns."""
 
     x_axis: Axis | dict[str, Any] | None
     y_axis: Axis | dict[str, Any] | None
+    z_axis: Axis | dict[str, Any] | None
 
 
 class Chart:
@@ -451,6 +497,10 @@ class Chart:
         locale: str | None = None,
         time_zone: str | None = None,
         projection: ProjectionName | Projection | dict[str, Any] | None = None,
+        z: Axis | dict[str, Any] | None = None,
+        camera: Camera | dict[str, Any] | None = None,
+        box_aspect: tuple[float, float, float] | None = None,
+        rotate: bool | None = True,
     ) -> None:
         if facet_columns is not None and facet is None:
             raise ValueError("facet_columns needs facet")
@@ -564,6 +614,10 @@ class Chart:
             "locale": locale,
             "time_zone": time_zone,
             "projection": projection,
+            "z": z,
+            "camera": camera,
+            "box_aspect": box_aspect,
+            "rotate": rotate,
         }
         self._options = spec_options(self._settings)
 
@@ -1783,6 +1837,142 @@ class Chart:
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
             raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
 
+    def point3d(
+        self,
+        x: str,
+        y: str,
+        z: str,
+        *,
+        data: Any = None,
+        series: str | None = None,
+        name: str | None = None,
+        r: float | None = None,
+        color: str | None = None,
+        colors: str | Sequence[str] | None = None,
+        color_domain: tuple[float, float] | None = None,
+        color_midpoint: float | None = None,
+        fill: str | None = None,
+        fill_opacity: float | None = None,
+        label: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """Points in a 3D chart at the numeric or datetime columns ``x``, ``y``,
+        and ``z`` (z is vertical).
+
+        ``series`` gives a color and legend entry per category, ``color``
+        colors points by a numeric column, and ``name`` names each point in
+        tooltips. ``r`` is the radius in pixels (3.5 by default). 3D marks
+        share their chart, its box, and its ``camera``.
+        """
+        self._alone_3d("point3d")
+        table = self._mark_table(data)
+        for axis, field in (("x", x), ("y", y), ("z", z)):
+            self._require(table, field, _NUMERIC, f"point3d {axis}")
+        self._require(table, series, ("category",), "point3d series")
+        self._require(table, name, ("category",), "point3d name")
+        self._require(table, color, ("number",), "point3d color")
+        if r is not None and not (_finite(r) and r > 0):
+            raise ValueError(f"point3d r must be a positive radius in pixels, not {r!r}")
+        if fill_opacity is not None and not (_finite(fill_opacity) and 0 <= fill_opacity <= 1):
+            raise ValueError(f"point3d fill_opacity must be from 0 to 1, not {fill_opacity!r}")
+        return self._add(
+            {
+                "type": "point3d",
+                "x": x,
+                "y": y,
+                "z": z,
+                "series": series,
+                "name": name,
+                "r": r,
+                "color": color,
+                "colors": _colors(colors, "point3d colors"),
+                "colorDomain": _range(color_domain, "point3d color_domain"),
+                "colorMidpoint": _midpoint(color_midpoint, color_domain, "point3d"),
+                "fill": fill,
+                "fillOpacity": fill_opacity,
+                "label": label,
+                "id": id,
+            },
+            table,
+        )
+
+    def surface(
+        self,
+        x: Any = None,
+        y: Any = None,
+        z: Any = None,
+        *,
+        data: Any = None,
+        color: str | None = None,
+        colors: str | Sequence[str] | None = None,
+        color_domain: tuple[float, float] | None = None,
+        color_midpoint: float | None = None,
+        fill_opacity: float | None = None,
+        shading: bool | None = None,
+        wireframe: bool | None = None,
+        label: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A surface in a 3D chart, from a grid of rows or from a matrix.
+
+        With column names, each row is a grid point: ``x`` and ``y`` (numbers,
+        datetimes, or categories) pick its place, and ``z`` is its height;
+        points without a value leave holes. With a 2D array ``z`` (as in
+        ``go.Surface(z=...)``), row ``i`` and column ``j`` is the height at
+        ``y[i]`` and ``x[j]``, where ``x`` and ``y`` are optional sequences
+        (positions 0, 1, 2, ... by default). The matrix is sent as three
+        columns with a row per grid point, so its x and y positions take as
+        much room as its heights.
+
+        The surface is colored by height, or by a numeric ``color`` column,
+        and shaded by how it faces a light (``shading=False`` keeps colors as
+        the legend shows them); ``wireframe=True`` draws its grid lines.
+        """
+        self._alone_3d("surface")
+        if z is None:
+            raise TypeError("surface needs z: a column name, or a 2D array of heights")
+        if not isinstance(z, str):
+            if data is not None or color is not None:
+                raise ValueError("a surface from a matrix takes no data or color column")
+            data = _grid_columns(z, x, y)
+            x, y, z = "x", "y", "z"
+        elif not (isinstance(x, str) and isinstance(y, str)):
+            raise TypeError("a surface of a z column needs x and y column names")
+        table = self._mark_table(data)
+        self._require(table, x, (*_NUMERIC, "category"), "surface x")
+        self._require(table, y, (*_NUMERIC, "category"), "surface y")
+        self._require(table, z, ("number",), "surface z")
+        self._require(table, color, ("number",), "surface color")
+        if fill_opacity is not None and not (_finite(fill_opacity) and 0 <= fill_opacity <= 1):
+            raise ValueError(f"surface fill_opacity must be from 0 to 1, not {fill_opacity!r}")
+        return self._add(
+            {
+                "type": "surface",
+                "x": x,
+                "y": y,
+                "z": z,
+                "color": color,
+                "colors": _colors(colors, "surface colors"),
+                "colorDomain": _range(color_domain, "surface color_domain"),
+                "colorMidpoint": _midpoint(color_midpoint, color_domain, "surface"),
+                "fillOpacity": fill_opacity,
+                "shading": shading,
+                "wireframe": wireframe,
+                "label": label,
+                "id": id,
+            },
+            table,
+        )
+
+    def _alone_3d(self, kind: str) -> None:
+        """3D charts have no x axis to facet, brush, or sync, and zoom only their camera."""
+        if self._facets or self._panels:
+            raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
+        if any(self._settings.get(name) for name in ("brush", "sync")):
+            raise ValueError(f"charts of a {kind} have no x axis to brush or sync")
+        if self._settings.get("zoom") not in (True, False, None):
+            raise ValueError(f"charts of a {kind} zoom their camera with zoom=True, not an axis")
+
     def heatmap(
         self,
         x: str,
@@ -1984,6 +2174,10 @@ class Chart:
             mark["type"] in _MAP_MARKS for mark, _ in self._marks
         ):
             raise ValueError("a projection needs geoshape or geopoint marks to project")
+        three_d = any(mark["type"] in _MARKS_3D for mark, _ in self._marks)
+        for name in ("z", "camera", "box_aspect"):
+            if self._settings.get(name) is not None and not three_d:
+                raise ValueError(f"{name} is an option of 3D charts: add point3d or surface marks")
         return assemble_spec(
             self._options,
             self._layout_spec(),
@@ -2206,13 +2400,20 @@ class Chart:
     def _add(self, spec: dict[str, Any], table: int | None) -> Chart:
         kinds = [mark["type"] for mark, _ in self._marks]
         layouts = [kind for kind in kinds if kind in _LAYOUT_MARKS]
-        # The layers of a map share their chart with each other, and only with them.
-        layers = spec["type"] in _MAP_MARKS and set(kinds) <= set(_MAP_MARKS)
+        # The layers of a map, and of a 3D chart, share their chart with each other only.
+        layers = any(
+            spec["type"] in group and set(kinds) <= set(group) for group in (_MAP_MARKS, _MARKS_3D)
+        )
         if not layers and (layouts or (spec["type"] in _LAYOUT_MARKS and self._marks)):
             kind = layouts[0] if layouts else spec["type"]
             if kind in _MAP_MARKS:
                 raise ValueError(
                     f"a {kind} shares its chart only with geoshape and geopoint marks; "
+                    "draw other marks in another chart"
+                )
+            if kind in _MARKS_3D:
+                raise ValueError(
+                    f"a {kind} shares its chart only with point3d and surface marks; "
                     "draw other marks in another chart"
                 )
             raise ValueError(f"a {kind} has its chart to itself; draw other marks in another chart")
@@ -2255,11 +2456,14 @@ class Chart:
 #: Marks that lay out their own chart, with no axes.
 _LAYOUT_MARKS = (
     *("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey", "graph"),
-    *("geoshape", "geopoint"),
+    *("geoshape", "geopoint", "point3d", "surface"),
 )
 
 #: The layers of maps, which share a chart and its projection.
 _MAP_MARKS = ("geoshape", "geopoint")
+
+#: The layers of 3D charts, which share a chart, its box, and its camera.
+_MARKS_3D = ("point3d", "surface")
 
 #: The most nodes and links a graph lays out, as the browser enforces.
 MAX_NODES = 5000
@@ -2274,7 +2478,7 @@ _NODE_FIELDS = ("node", "group", "size")
 OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
     *("zoom", "brush", "sync", "animation", "resolve_x", "resolve_y", "renderer", "theme"),
-    *("locale", "time_zone", "projection"),
+    *("locale", "time_zone", "projection", "z", "camera", "box_aspect", "rotate"),
 )
 
 
@@ -2291,6 +2495,9 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         }.items()
         if value
     }
+    # Dragging turns 3D charts unless asked not to.
+    if settings.get("rotate") is False:
+        interaction["rotate"] = False
     options = {
         "title": settings["title"],
         "description": settings["description"],
@@ -2318,6 +2525,9 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "locale": settings["locale"],
         "timeZone": settings["time_zone"],
         "projection": _projection(settings.get("projection")),
+        "z": _axis(settings.get("z"), "z"),
+        "camera": _camera(settings.get("camera")),
+        "boxAspect": _box_aspect(settings.get("box_aspect")),
     }
     return {key: value for key, value in options.items() if value is not None}
 
@@ -2409,7 +2619,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
         *("path", "node", "parent", "source", "target"),
         *("open", "high", "low", "close"),
         *("r", "fillOpacity", "color", "symbol"),
-        *("geometry", "name", "longitude", "latitude"),
+        *("geometry", "name", "longitude", "latitude", "z"),
     ):
         value = spec.get(key)
         if isinstance(value, str):
@@ -2480,6 +2690,53 @@ def _projection(projection: Any) -> Any:
     elif isinstance(projection, dict):
         projection = Projection(**projection)
     return projection._spec()
+
+
+def _camera(camera: Any) -> dict[str, Any] | None:
+    """A camera's spec from a Camera or a dict of its fields."""
+    if camera is None:
+        return None
+    if isinstance(camera, dict):
+        camera = Camera(**camera)
+    if not isinstance(camera, Camera):
+        raise TypeError(f"camera must be a Camera or a dict of its fields, not {camera!r}")
+    return camera._spec()
+
+
+def _box_aspect(aspect: Any) -> list[float] | None:
+    if aspect is None:
+        return None
+    try:
+        sides = [float(side) for side in aspect]
+    except (TypeError, ValueError):
+        sides = []
+    if len(sides) != 3 or not all(0 < side < math.inf for side in sides):
+        raise ValueError(f"box_aspect must be three positive lengths, not {aspect!r}")
+    return sides
+
+
+def _grid_columns(z: Any, x: Any, y: Any) -> dict[str, np.ndarray]:
+    """A matrix of heights as columns of one row per grid point: row i, column j
+    at ``y[i]``, ``x[j]``. Without ``x`` or ``y``, positions are 0, 1, 2, ..."""
+    heights = np.asarray(z, dtype=np.float64)
+    if heights.ndim != 2:
+        raise ValueError(f"a surface's z matrix must be 2D, not of shape {heights.shape}")
+    rows, columns = heights.shape
+
+    def positions(values: Any, count: int, name: str) -> np.ndarray:
+        if values is None:
+            return np.arange(count, dtype=np.float64)
+        if isinstance(values, str):
+            raise TypeError(f"a surface from a matrix takes {name} as values, not a column name")
+        array = np.asarray(values)
+        if array.ndim != 1 or len(array) != count:
+            side = "column" if name == "x" else "row"
+            raise ValueError(f"surface {name} needs {count} values, one per matrix {side}")
+        return array
+
+    xs = positions(x, columns, "x")
+    ys = positions(y, rows, "y")
+    return {"x": np.tile(xs, rows), "y": np.repeat(ys, columns), "z": heights.reshape(-1)}
 
 
 def _geometry_column(source: Any, columns: Any) -> str:
@@ -2710,9 +2967,10 @@ def _position(value: Any) -> str | float | None:
 
 
 def _chart_of(data: Any, options: HelperOptions) -> Chart:
-    """A helper's chart: its ``x_axis`` and ``y_axis`` are the chart's ``x`` and ``y``."""
+    """A helper's chart: its ``x_axis``, ``y_axis``, and ``z_axis`` are the chart's
+    ``x``, ``y``, and ``z``."""
     settings: dict[str, Any] = dict(options)
-    for axis in ("x", "y"):
+    for axis in ("x", "y", "z"):
         if f"{axis}_axis" in settings:
             settings[axis] = settings.pop(f"{axis}_axis")
     return Chart(data, **settings)
@@ -2876,6 +3134,86 @@ def scatter(
         axis=axis,
         repeat=repeat,
         panel=panel,
+        id=id,
+    )
+
+
+def scatter_3d(
+    data: Any,
+    x: str,
+    y: str,
+    z: str,
+    *,
+    series: str | None = None,
+    name: str | None = None,
+    r: float | None = None,
+    color: str | None = None,
+    colors: str | Sequence[str] | None = None,
+    color_domain: tuple[float, float] | None = None,
+    color_midpoint: float | None = None,
+    fill: str | None = None,
+    fill_opacity: float | None = None,
+    label: str | None = None,
+    id: str | None = None,
+    **options: Unpack[HelperOptions],
+) -> Chart:
+    """A 3D scatter plot (see ``Chart.point3d``). Remaining keyword arguments
+    are chart options (``HelperOptions``), such as ``camera``; ``z_axis`` is
+    the chart's ``z``."""
+    return _chart_of(data, options).point3d(
+        x,
+        y,
+        z,
+        series=series,
+        name=name,
+        r=r,
+        color=color,
+        colors=colors,
+        color_domain=color_domain,
+        color_midpoint=color_midpoint,
+        fill=fill,
+        fill_opacity=fill_opacity,
+        label=label,
+        id=id,
+    )
+
+
+def surface(
+    data: Any = None,
+    x: Any = None,
+    y: Any = None,
+    z: Any = None,
+    *,
+    color: str | None = None,
+    colors: str | Sequence[str] | None = None,
+    color_domain: tuple[float, float] | None = None,
+    color_midpoint: float | None = None,
+    fill_opacity: float | None = None,
+    shading: bool | None = None,
+    wireframe: bool | None = None,
+    label: str | None = None,
+    id: str | None = None,
+    **options: Unpack[HelperOptions],
+) -> Chart:
+    """A 3D surface from a grid of rows or a matrix (see ``Chart.surface``).
+    Remaining keyword arguments are chart options (``HelperOptions``);
+    ``z_axis`` is the chart's ``z``::
+
+        hg.surface(df, x="east", y="north", z="height")
+        hg.surface(z=heights, x=eastings, y=northings)
+    """
+    return _chart_of(data, options).surface(
+        x,
+        y,
+        z,
+        color=color,
+        colors=colors,
+        color_domain=color_domain,
+        color_midpoint=color_midpoint,
+        fill_opacity=fill_opacity,
+        shading=shading,
+        wireframe=wireframe,
+        label=label,
         id=id,
     )
 

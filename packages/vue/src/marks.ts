@@ -33,9 +33,11 @@ import {
   type LineOptions,
   line,
   type PieOptions,
+  type Point3DOptions,
   type PointOptions,
   pie,
   point,
+  point3d,
   type RadarOptions,
   type RegionDataOptions,
   type RegionOptions,
@@ -48,8 +50,10 @@ import {
   type SankeyOptions,
   type Schema,
   type SunburstOptions,
+  type SurfaceOptions,
   sankey,
   sunburst,
+  surface,
   type Table,
   type TextDataOptions,
   type TextOptions,
@@ -277,6 +281,21 @@ export const GeoPoint = /* @__PURE__ */ markComponent(
   "GeoPoint",
   ({ data, ...options }: WithData<GeoPointOptions<Schema>, Schema>) => geopoint(data, options),
 ) as unknown as <S extends Schema>(props: WithData<GeoPointOptions<S>, S>) => null;
+
+/**
+ * Points in a 3D chart at the number or time fields `x`, `y`, and `z`; 3D
+ * marks share a chart, its box, and its `camera`.
+ */
+export const Point3D = /* @__PURE__ */ markComponent(
+  "Point3D",
+  ({ data, ...options }: WithData<Point3DOptions<Schema>, Schema>) => point3d(data, options),
+) as unknown as <S extends Schema>(props: WithData<Point3DOptions<S>, S>) => null;
+
+/** A surface in a 3D chart over a grid of rows: `x` and `y` pick a grid point, `z` is its height. */
+export const Surface = /* @__PURE__ */ markComponent(
+  "Surface",
+  ({ data, ...options }: WithData<SurfaceOptions<Schema>, Schema>) => surface(data, options),
+) as unknown as <S extends Schema>(props: WithData<SurfaceOptions<S>, S>) => null;
 
 /** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */
 export const Candlestick = /* @__PURE__ */ markComponent(

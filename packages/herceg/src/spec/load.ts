@@ -24,11 +24,13 @@ import { LineMark } from "../marks/line.ts";
 import type { Mark } from "../marks/mark.ts";
 import { PieMark } from "../marks/pie.ts";
 import { PointMark } from "../marks/point.ts";
+import { Point3DMark } from "../marks/point3d.ts";
 import { RadarMark } from "../marks/radar.ts";
 import { RegionMark } from "../marks/region.ts";
 import { RuleMark } from "../marks/rule.ts";
 import { SankeyMark } from "../marks/sankey.ts";
 import { SunburstMark } from "../marks/sunburst.ts";
+import { SurfaceMark } from "../marks/surface.ts";
 import { TextMark } from "../marks/text.ts";
 import { TreemapMark } from "../marks/treemap.ts";
 import { ViolinMark } from "../marks/violin.ts";
@@ -380,6 +382,10 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new GeoShapeMark(withScheme(spec), source);
       case "geopoint":
         return new GeoPointMark(withScheme(spec), source);
+      case "point3d":
+        return new Point3DMark(withScheme(spec), source);
+      case "surface":
+        return new SurfaceMark(withScheme(spec), source);
       case "graph":
         return new GraphMark(
           spec,

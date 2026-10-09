@@ -11,6 +11,7 @@
 
 import { arcSweep, sectorsByColor, traceArcs } from "../draw/arc.ts";
 import { traceArea } from "../draw/area.ts";
+import { type FaceSink, faceRuns, traceFace, traceOutline } from "../draw/faces.ts";
 import { traceLine } from "../draw/line.ts";
 import { KAPPA, type PathSink } from "../draw/markup.ts";
 import { placeCloud } from "../draw/point.ts";
@@ -469,6 +470,26 @@ function paintGeometry(
           join: "round",
         });
       });
+      return;
+    case "faces":
+      // Run by run, as SVG and canvas draw them; outlines after each run's fill.
+      for (const { start, end, style } of faceRuns(mark)) {
+        const fill = new PathBuilder();
+        const sink: FaceSink = Object.assign(fill, {
+          disc: (x: number, y: number, r: number) => fill.circle(x, y, r),
+        });
+        for (let f = start; f < end; f++) traceFace(sink, mark, f);
+        paint(page, fill, { fill: style.fill, fillOpacity: style.opacity });
+        if (style.stroke === undefined || !(style.strokeWidth > 0)) continue;
+        const outline = new PathBuilder();
+        const lines: FaceSink = Object.assign(outline, { disc: () => {} });
+        for (let f = start; f < end; f++) traceOutline(lines, mark, f);
+        paint(page, outline, {
+          stroke: style.stroke,
+          strokeWidth: style.strokeWidth,
+          join: "round",
+        });
+      }
       return;
     case "shapes":
       for (const shape of mark.shapes) {

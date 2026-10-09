@@ -8,7 +8,9 @@ export type ChartType =
   | "heatmap"
   | "candlestick"
   | "histogram"
-  | "bubble";
+  | "bubble"
+  | "scatter3d"
+  | "surface";
 
 export type Operation =
   /** Create the chart and wait for the first frame. */
@@ -28,7 +30,9 @@ export type Operation =
   /** Retained heap, DOM nodes, and canvas pixels after creating the chart(s). */
   | "memory"
   /** Create `charts` line charts at once (dashboard), then refresh them all. */
-  | "dashboard";
+  | "dashboard"
+  /** Turn a 3D chart's camera through a sequence of angles, waiting for each frame. */
+  | "rotate";
 
 export interface Scenario {
   id: string;
@@ -36,7 +40,7 @@ export interface Scenario {
   operation: Operation;
   /** Series count (line/area/bar) or 1. */
   series: number;
-  /** Points per series, categories for bars, cells for heatmaps. */
+  /** Points per series, categories for bars, cells for heatmaps and surfaces. */
   points: number;
   /** Use each library's documented large-data configuration. */
   large: boolean;
@@ -594,6 +598,92 @@ export const SCENARIOS: Scenario[] = [
     samples: 3,
     warmup: 0,
     description: "100 charts x 2 series x 100 points",
+  }),
+  // 3D charts: mount, and turning the camera (each library's documented camera path)
+  s({
+    id: "scatter3d-10k-init",
+    chart: "scatter3d",
+    operation: "init",
+    series: 1,
+    points: 10_000,
+    large: false,
+    tooltip: true,
+    samples: 10,
+    warmup: 3,
+    description: "10,000 points in 3D",
+  }),
+  s({
+    id: "rotate-scatter3d-10k",
+    chart: "scatter3d",
+    operation: "rotate",
+    series: 1,
+    points: 10_000,
+    large: false,
+    tooltip: true,
+    samples: 30,
+    warmup: 5,
+    description: "10,000 points in 3D",
+  }),
+  s({
+    id: "rotate-scatter3d-100k",
+    chart: "scatter3d",
+    operation: "rotate",
+    series: 1,
+    points: 100_000,
+    large: true,
+    tooltip: true,
+    samples: 20,
+    warmup: 3,
+    description: "100,000 points in 3D",
+  }),
+  s({
+    id: "rotate-scatter3d-1m",
+    chart: "scatter3d",
+    operation: "rotate",
+    series: 1,
+    points: 1_000_000,
+    large: true,
+    tooltip: true,
+    samples: 10,
+    warmup: 2,
+    timeout: 240,
+    description: "1,000,000 points in 3D",
+  }),
+  s({
+    id: "surface-100-init",
+    chart: "surface",
+    operation: "init",
+    series: 1,
+    points: 10_000,
+    large: false,
+    tooltip: true,
+    samples: 10,
+    warmup: 3,
+    description: "100 x 100 grid surface",
+  }),
+  s({
+    id: "rotate-surface-50",
+    chart: "surface",
+    operation: "rotate",
+    series: 1,
+    points: 2_500,
+    large: false,
+    tooltip: true,
+    samples: 30,
+    warmup: 5,
+    description: "50 x 50 grid surface",
+  }),
+  s({
+    id: "rotate-surface-200",
+    chart: "surface",
+    operation: "rotate",
+    series: 1,
+    points: 40_000,
+    large: false,
+    tooltip: true,
+    samples: 20,
+    warmup: 3,
+    description: "200 x 200 grid surface",
   }),
 ];
 

@@ -18,12 +18,16 @@ import {
   continueSeries,
   type GridData,
   grid,
+  type Point3Data,
   type PointData,
+  points3d,
   random,
   type SampleData,
   type SeriesData,
+  type SurfaceData,
   samples,
   scatterPoints,
+  surfaceGrid,
   timeSeries,
 } from "../datasets.ts";
 import type { Scenario } from "../scenarios.ts";
@@ -40,7 +44,15 @@ export interface PageResult {
   metrics: Record<string, Metric>;
 }
 
-type AnyData = SeriesData | PointData | CategoryData | GridData | CandleData | SampleData;
+type AnyData =
+  | SeriesData
+  | PointData
+  | CategoryData
+  | GridData
+  | CandleData
+  | SampleData
+  | Point3Data
+  | SurfaceData;
 type AnyHandle = ChartHandle<AnyData>;
 
 const WIDTH = 800;
@@ -96,6 +108,10 @@ function makeData(s: Scenario, seed: number): AnyData {
       return samples(s.points, seed);
     case "bubble":
       return bubbles(s.points, seed);
+    case "scatter3d":
+      return points3d(s.points, seed);
+    case "surface":
+      return surfaceGrid(Math.round(Math.sqrt(s.points)), seed);
   }
 }
 
@@ -484,6 +500,40 @@ async function runZoom(
   return { supported: true, metrics: { viewportToFrame: frame } };
 }
 
+/**
+ * Camera angles a rotation steps through: around the vertical axis in steps
+ * of 7 degrees, tilting between 10 and 50 degrees above the floor.
+ */
+function cameraAngles(count: number): [number, number][] {
+  return Array.from({ length: count }, (_, i) => [-60 + i * 7, 30 + 20 * Math.sin(i / 3)]);
+}
+
+async function runRotate(
+  adapter: Adapter,
+  kind: ChartKind<AnyData>,
+  s: Scenario,
+): Promise<PageResult> {
+  const handle = await create(kind, makeData(s, 1), optionsFor(s));
+  if (!handle.setCamera) {
+    handle.destroy();
+    clearStage();
+    return { supported: false, reason: `${adapter.id} adapter has no camera path`, metrics: {} };
+  }
+  const frame = metric("ms");
+  const angles = cameraAngles(s.warmup + s.samples);
+  for (let i = 0; i < angles.length; i++) {
+    const [azimuth, elevation] = angles[i]!;
+    const elapsed = await timed(
+      () => handle.setCamera!(azimuth, elevation),
+      () => handle,
+    );
+    if (i >= s.warmup) frame.samples.push(elapsed.complete);
+  }
+  handle.destroy();
+  clearStage();
+  return { supported: true, metrics: { cameraToFrame: frame } };
+}
+
 async function runResize(kind: ChartKind<AnyData>, s: Scenario): Promise<PageResult> {
   const options = optionsFor(s);
   const handle = await create(kind, makeData(s, 1), options);
@@ -618,6 +668,8 @@ export function installHarness(adapter: Adapter): void {
           return runZoom(adapter, kind, s);
         case "dashboard":
           return runDashboard(kind, s);
+        case "rotate":
+          return runRotate(adapter, kind, s);
         default:
           throw new Error(`${s.operation} is driven by the runner`);
       }
