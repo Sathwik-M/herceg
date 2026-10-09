@@ -36,6 +36,36 @@ const cities = table({
   region: ["n", "s", "n", "s", "e"],
 });
 
+describe("legends of encodings", () => {
+  it("show one legend for marks that encode the same way", () => {
+    const sized = () => point(cities, { x: "x", y: "y", r: "pop" });
+    const colored = () => point(cities, { x: "x", y: "y", color: "growth" });
+    const { scene } = build({ marks: [sized(), sized(), colored(), colored()] });
+    expect(scene.glyphLegends).toHaveLength(1);
+    expect(scene.colorLegends).toHaveLength(1);
+  });
+
+  it("describe color scales before keys, as the legend shows them", () => {
+    const { model } = build({
+      marks: [
+        point(cities, { x: "x", y: "y", r: "pop" }),
+        point(cities, { x: "x", y: "y", color: "growth" }),
+      ],
+    });
+    const [first, second] = model.legendSummaries();
+    expect(first).toMatch(/^Color shows growth/);
+    expect(second).toMatch(/^Size shows pop/);
+  });
+
+  it("build no keys when legends are off", () => {
+    const { scene, model } = build({
+      legend: false,
+      marks: [point(cities, { x: "x", y: "y", r: "pop", color: "growth" })],
+    });
+    expect([scene.glyphLegends, scene.colorLegends, model.legendSummaries()]).toEqual([[], [], []]);
+  });
+});
+
 describe("point size by field", () => {
   it("sizes points by area within rRange, from zero", () => {
     const [g] = points({

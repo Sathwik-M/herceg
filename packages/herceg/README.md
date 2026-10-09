@@ -283,6 +283,8 @@ points by area, from zero (or the least value, when values are negative) at
 of round values below the legend. `fillOpacity` names a field mapped from
 0.15 to opaque. `color` names a number field colored on a continuous scale,
 with a color legend; series then appear in the legend in a neutral color.
+Marks with the same color scale, or the same key of sizes or shapes, share
+one legend.
 `symbol` is one shape (`"circle"`, `"square"`, `"triangle"`, `"diamond"`,
 `"cross"`, `"star"`, `"wye"`, `"triangle-down"`) or a category field whose
 values take the shapes in that order, with a key unless the field also splits

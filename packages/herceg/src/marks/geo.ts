@@ -17,10 +17,11 @@ import {
   type Transform,
   worldBox,
 } from "../geo/project.ts";
-import type { LegendEntry } from "../model/legend.ts";
+import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ProjectionName, ProjectionSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import { legendParts } from "./legend-parts.ts";
 import type { ColorRamp, GlyphKey } from "./mark.ts";
 
 /** Plane units a map of a single point spans: about two degrees. */
@@ -107,15 +108,8 @@ export class GeoMap implements LayoutMark {
    * Every layer's scales, each with a legend of its own: fields of the same
    * name in different layers may measure different things.
    */
-  scales(theme: Theme, locale: string | undefined): [ColorRamp[], GlyphKey[]] {
-    const ramps: ColorRamp[] = [];
-    const keys: GlyphKey[] = [];
-    for (const layer of this.layers) {
-      const [r, k] = layer.scales(theme, locale);
-      ramps.push(...r);
-      keys.push(...k);
-    }
-    return [ramps, keys];
+  legends(theme: Theme, locale: string | undefined): LegendPart[] {
+    return this.layers.flatMap((layer) => legendParts(...layer.scales(theme, locale)));
   }
 
   /** The projection with its parameters settled; conic ones read where the data lies. */

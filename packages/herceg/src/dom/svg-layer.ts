@@ -1,12 +1,5 @@
 import { canvasRasterUrl } from "../render/canvas.ts";
-import {
-  axisElements,
-  colorLegendElement,
-  glyphLegendElements,
-  gridPath,
-  headerElements,
-  titleElement,
-} from "../render/svg.ts";
+import { axisElements, gridPath, headerElements, titleElement } from "../render/svg.ts";
 import type { Geometry, Panel, Scene, SvgContext, SvgElement } from "../scene/scene.ts";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -172,9 +165,9 @@ export class SvgLayer {
     markup += headerElements(scene.headers, theme);
     markup += titleElement(scene);
     scene.colorLegends.forEach((legend, i) => {
-      markup += colorLegendElement(legend, theme, `${this.#id}-ramp-${i}`);
+      markup += legend.draw.svg(legend, theme, `${this.#id}-ramp-${i}`);
     });
-    markup += glyphLegendElements(scene.glyphLegends, theme);
+    for (const legend of scene.glyphLegends) markup += legend.draw.svg(legend, theme, this.#id);
     if (markup !== this.#guideMarkup) {
       this.#guides.innerHTML = markup;
       this.#guideMarkup = markup;

@@ -4,6 +4,7 @@ import { pointDrawing } from "../draw/point.ts";
 import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../draw/symbols.ts";
 import { GridIndex } from "../lod/grid-index.ts";
 import type { Breaks } from "../lod/m4.ts";
+import type { LegendPart } from "../model/legend.ts";
 import {
   checkColorScale,
   checkRamp,
@@ -16,6 +17,7 @@ import { linearTicks } from "../scale/ticks.ts";
 import { CLOUD_POINTS, type PointCloud, type PointGeometry } from "../scene/scene.ts";
 import type { Frozen, PointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
+import { legendParts } from "./legend-parts.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -417,11 +419,24 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
 
   #palettes: { key: string; colors: readonly string[] } | undefined;
 
-  colorRamp(series: readonly Series[], theme: Theme): ColorRamp | undefined {
-    const scale = this.#colorScale(theme);
-    if (!scale || series.length === 0) return undefined;
-    const { domain, midpoint } = scale;
-    return { stops: scale.legendStops(), domain, midpoint, title: this.spec.color! };
+  /** A color legend for a `color` field, and keys of sizes and shapes encoded by field. */
+  legends(
+    series: readonly Series[],
+    theme: Theme,
+    format: (value: number) => string,
+  ): LegendPart[] {
+    const scale = series.length > 0 ? this.#colorScale(theme) : undefined;
+    const ramps: ColorRamp[] = scale
+      ? [
+          {
+            stops: scale.legendStops(),
+            domain: scale.domain,
+            midpoint: scale.midpoint,
+            title: this.spec.color!,
+          },
+        ]
+      : [];
+    return legendParts(ramps, this.#glyphKeys(series, format));
   }
 
   /**
@@ -451,7 +466,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
    * A key of sizes (three round values of the `r` field) and of shapes (each
    * value of a symbol field that does not also split series).
    */
-  glyphKeys(series: readonly Series[], format: (value: number) => string): GlyphKey[] {
+  #glyphKeys(series: readonly Series[], format: (value: number) => string): GlyphKey[] {
     if (series.length === 0) return [];
     const out: GlyphKey[] = [];
     const radius = this.#radiusScale();

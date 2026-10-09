@@ -5,13 +5,10 @@
 import { escapeXml, n } from "../draw/markup.ts";
 import {
   type AxisGeometry,
-  type ColorLegend,
   type Geometry,
-  type GlyphLegend,
   LEGEND_SWATCH,
   type LegendItem,
   type Panel,
-  rampOffsets,
   type Scene,
   type SceneText,
   type SvgContext,
@@ -89,40 +86,6 @@ export function legendElements(legend: readonly LegendItem[], theme: Theme): str
   return out;
 }
 
-/** Continuous color legend; `id` must be unique in the document (for the gradient). */
-export function colorLegendElement(legend: ColorLegend, theme: Theme, id: string): string {
-  const offsets = rampOffsets(legend);
-  const stops = legend.stops
-    .map((color, i) => `<stop offset="${n(offsets[i]! * 100)}%" stop-color="${escapeXml(color)}"/>`)
-    .join("");
-  const y = legend.y;
-  const text = (item: { text: string; x: number }, fill: string) =>
-    `<text x="${n(item.x)}" y="${n(y)}" dominant-baseline="middle" fill="${escapeXml(fill)}">${escapeXml(item.text)}</text>`;
-  return (
-    `<defs><linearGradient id="${id}">${stops}</linearGradient></defs>` +
-    text(legend.title, theme.text) +
-    text(legend.low, theme.muted) +
-    `<rect x="${n(legend.ramp.x)}" y="${n(y - LEGEND_SWATCH / 2)}" width="${n(legend.ramp.width)}" height="${LEGEND_SWATCH}" rx="2" fill="url(#${id})"/>` +
-    text(legend.high, theme.muted)
-  );
-}
-
-/** Legends of point sizes and shapes. */
-export function glyphLegendElements(legends: readonly GlyphLegend[], theme: Theme): string {
-  let out = "";
-  const text = (x: number, y: number, value: string, fill: string) =>
-    `<text x="${n(x)}" y="${n(y)}" dominant-baseline="middle" fill="${escapeXml(fill)}">${escapeXml(value)}</text>`;
-  for (const { title, entries } of legends) {
-    out += text(title.x, title.y, title.text, theme.text);
-    out += `<g fill="${escapeXml(theme.muted)}" fill-opacity="0.6">`;
-    for (const { glyph, x, y } of entries)
-      out += `<path transform="translate(${n(x)} ${n(y)})" d="${glyph}"/>`;
-    out += "</g>";
-    for (const { y, label } of entries) out += text(label.x, y, label.text, theme.muted);
-  }
-  return out;
-}
-
 /** Facet headers: panels' values, or a grid's column and row values. */
 export function headerElements(headers: readonly SceneText[], theme: Theme): string {
   let out = "";
@@ -186,8 +149,8 @@ export function renderSvg(scene: Scene, options: SvgOptions = {}): string {
   out += titleElement(scene);
   if (options.legend ?? true) out += legendElements(scene.legend, theme);
   scene.colorLegends.forEach((legend, i) => {
-    out += colorLegendElement(legend, theme, `${id}-ramp-${i}`);
+    out += legend.draw.svg(legend, theme, `${id}-ramp-${i}`);
   });
-  out += glyphLegendElements(scene.glyphLegends, theme);
+  for (const legend of scene.glyphLegends) out += legend.draw.svg(legend, theme, id);
   return `${out}</svg>`;
 }

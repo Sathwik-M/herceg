@@ -18,9 +18,7 @@ import {
   type BandContext,
   type BandList,
   type Bands,
-  type ColorRamp,
   type Frame,
-  type GlyphKey,
   type Mark,
   numericBands,
 } from "../marks/mark.ts";
@@ -55,7 +53,7 @@ import {
   valueFormatter,
 } from "./axis.ts";
 import type { Facet } from "./facet.ts";
-import { EDGE, type LegendEntry, layoutLegends } from "./legend.ts";
+import { EDGE, type LegendEntry, type LegendPart, layoutLegends } from "./legend.ts";
 import type { PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
 import type { Panels } from "./panels.ts";
 
@@ -210,7 +208,8 @@ export class ChartModel {
   /** Every mark's series before facets split them, for legends and summaries. */
   #base: MarkSeries[] | undefined;
   /** The color scales and size and shape keys the last scene's legends show. */
-  #scales: { ramps: readonly ColorRamp[]; keys: readonly GlyphKey[] } = { ramps: [], keys: [] };
+  /** The last scene's legends of color scales, sizes, and shapes. */
+  #legendParts: readonly LegendPart[] = [];
   /** Palette slot per series key, assigned on first appearance and kept. */
   #slots = new Map<string, number>();
 
@@ -798,13 +797,13 @@ export class ChartModel {
     const hasData = xHas.includes(true);
 
     // Vertical layout depends only on fonts, titles, and the legends.
-    // One color legend per distinct scale: marks sharing a scale share one.
-    const ramps = new Map<string, ColorRamp>();
-    for (const { mark, series } of base) {
-      const ramp = mark.colorRamp?.(series, theme);
-      if (!ramp) continue;
-      const key = `${ramp.title}|${ramp.domain.join()}|${ramp.midpoint}|${ramp.stops.join()}`;
-      if (!ramps.has(key)) ramps.set(key, ramp);
+    // One legend per distinct scale or key: marks sharing a scale share one.
+    const legends = config.legend ?? true;
+    const format = (value: number) => formatNumber(value, locale);
+    const parts = new Map<string, LegendPart>();
+    for (const { mark, series } of legends ? base : []) {
+      for (const part of mark.legends?.(series, theme, format) ?? [])
+        if (!parts.has(part.key)) parts.set(part.key, part);
     }
     const entries = base.flatMap(({ mark, series }) =>
       series.flatMap((s) => {
@@ -816,14 +815,7 @@ export class ChartModel {
         return [item];
       }),
     );
-    const legends = config.legend ?? true;
-    const format = (value: number) => formatNumber(value, locale);
-    const head = this.#header(
-      entries,
-      legends ? [...ramps.values()] : [],
-      legends ? base.flatMap(({ mark, series }) => mark.glyphKeys?.(series, format) ?? []) : [],
-      measure,
-    );
+    const head = this.#header(entries, [...parts.values()], measure);
     const top = head.top;
     const showY = config.y?.axis ?? true;
     // x labels go under the lowest panel of each column, and under every
@@ -1450,14 +1442,14 @@ export class ChartModel {
   }
 
   /** The title and legends at the top of a chart, and where the panels start below them. */
-  #header(
-    entries: readonly LegendEntry[],
-    ramps: readonly ColorRamp[],
-    keys: readonly GlyphKey[],
-    measure: MeasureText,
-  ) {
+  #header(entries: readonly LegendEntry[], parts: readonly LegendPart[], measure: MeasureText) {
     const { title, legend, locale } = this.#config;
-    this.#scales = { ramps, keys };
+    // Parts that start rows of their own (keys) follow the others (ramps),
+    // in the legend and in the chart's description alike.
+    this.#legendParts = [
+      ...parts.filter((part) => !part.breaks),
+      ...parts.filter((part) => part.breaks),
+    ];
     const theme = this.#theme;
     const font = `${theme.fontSize}px ${theme.font}`;
     const lineHeight = Math.round(theme.fontSize * 1.25);
@@ -1468,8 +1460,7 @@ export class ChartModel {
       {
         // Without an explicit setting, one series needs no legend.
         entries: (legend ?? entries.length > 1) ? entries : [],
-        ramps,
-        keys,
+        parts: this.#legendParts,
         hidden: this.hidden,
       },
       top - lineHeight / 2,
@@ -1490,8 +1481,8 @@ export class ChartModel {
     const theme = this.#theme;
     const mark = this.#layouts[0]!;
     const id = mark.spec.id ?? 0;
-    const [ramps, keys] = mark.scales?.(theme, this.#config.locale) ?? [[], []];
-    const header = this.#header(mark.legend(id, this.#palette, this.#theme), ramps, keys, measure);
+    const parts = mark.legends?.(theme, this.#config.locale) ?? [];
+    const header = this.#header(mark.legend(id, this.#palette, this.#theme), parts, measure);
     const bounds: Rect = {
       x: EDGE,
       y: header.top,
@@ -1756,18 +1747,7 @@ export class ChartModel {
    * technology.
    */
   legendSummaries(): string[] {
-    const f = (value: number) => formatNumber(value, this.#config.locale);
-    const { ramps, keys } = this.#scales;
-    return [
-      ...ramps.map(({ title, domain, midpoint }) => {
-        const middle = midpoint === undefined ? "" : `, diverging at ${f(midpoint)}`;
-        return `Color shows ${title} from ${f(domain[0])} to ${f(domain[1])}${middle}.`;
-      }),
-      ...keys.map(({ title, channel, entries }) => {
-        const values = entries.map(({ label, shape }) => (shape ? `${shape} for ${label}` : label));
-        return `${channel === "size" ? "Size" : "Shape"} shows ${title}: ${values.join(", ")}.`;
-      }),
-    ];
+    return this.#legendParts.map((part) => part.describe(this.#config.locale));
   }
 
   /** A sentence describing the layout mark's last scene. */
