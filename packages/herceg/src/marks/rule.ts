@@ -1,7 +1,7 @@
 import type { NumericField, Schema, Table } from "../data/table.ts";
 import { ruleDrawing } from "../draw/rule.ts";
 import type { RuleGeometry } from "../scene/scene.ts";
-import type { RuleSpec } from "../spec/spec.ts";
+import type { RulePosition, RuleSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
 import { definedFields } from "./line.ts";
 import type { AxisFormat, Frame, Mark, MarkKey } from "./mark.ts";
@@ -22,18 +22,14 @@ interface RuleStyle {
 }
 
 /** A rule at a constant value: `y` for a horizontal rule, `x` for a vertical one. */
-export interface RuleOptions extends RuleStyle {
-  x?: number | Date;
-  y?: number | Date;
-}
+export type RuleOptions = RuleStyle & RulePosition<number | Date>;
 
 /** Rules from a table, one per row; positions may also be constants. */
-export interface RuleDataOptions<S extends Schema> extends RuleStyle {
-  x?: NumericField<S> | number | Date;
-  y?: NumericField<S> | number | Date;
-  /** Field with each rule's text. */
-  text?: TextField<S>;
-}
+export type RuleDataOptions<S extends Schema> = RuleStyle &
+  RulePosition<NumericField<S> | number | Date> & {
+    /** Field with each rule's text. */
+    text?: TextField<S>;
+  };
 
 /**
  * Reference lines. Their values are included in the axis domain so
@@ -131,9 +127,9 @@ export function rule<S extends Schema>(
 ): RuleMark {
   const table = second ? (first as Table<S>) : undefined;
   const options = (second ?? first) as RuleDataOptions<S>;
-  const spec: RuleSpec = {
+  const spec = {
     type: "rule",
-    ...(definedFields(
+    ...definedFields(
       {
         ...options,
         x: position(options.x),
@@ -141,8 +137,8 @@ export function rule<S extends Schema>(
         dash: options.dash && [...options.dash],
       },
       ["id", "x", "y", "stroke", "strokeWidth", "dash", "label", "text", "axis", "facet", "panel"],
-    ) as Omit<RuleSpec, "type">),
-  };
+    ),
+  } as unknown as RuleSpec;
   if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.text)) spec.data = table.name;
   return new RuleMark(spec, table as unknown as Table | undefined);
 }

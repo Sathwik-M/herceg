@@ -81,6 +81,16 @@ describe("error bars", () => {
     expect(() => errorBar(stats, { x: "group", y1: "low" } as never)).toThrow(/x with y1 and y2/);
   });
 
+  it("refuse fields of another form rather than dropping them", () => {
+    const t = table({ x: [0], a: [1], b: [2] });
+    expect(() => errorBar(t, { x: "x", y1: "a", y2: "b", x1: "a" } as never)).toThrow(
+      /from x, y1, y2 cannot also take x1/,
+    );
+    expect(() => errorBar(t, { x: "x", y: "a", yError: "b", y1: "a" } as never)).toThrow(
+      /cannot also take y1/,
+    );
+  });
+
   it("take a center and a symmetric error", () => {
     const means = table({ g: ["a", "b"], mean: [5, 8], se: [1, -2] });
     const { scene, model } = build({

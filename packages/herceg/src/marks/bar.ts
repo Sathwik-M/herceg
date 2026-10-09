@@ -1,5 +1,5 @@
 import type { NumericArray } from "../data/column.ts";
-import type { CategoryField, FieldName, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { BOTTOM, LEFT, RIGHT, rectDrawing, TOP } from "../draw/rect.ts";
 import { textDrawing } from "../draw/text.ts";
 import { type Formatter, numberFormatter } from "../format/format.ts";
@@ -56,7 +56,7 @@ interface BarStyle<S extends Schema> {
 /** Vertical bars: positions on x, lengths on y. */
 export interface VerticalBarOptions<S extends Schema> extends BarStyle<S> {
   /** Category field (one band per value) or a numeric or time field. */
-  x: FieldName<S>;
+  x: PositionField<S>;
   /** Bar lengths: one field, or several fields drawn side by side or stacked. */
   y: NumericField<S> | readonly NumericField<S>[];
 }

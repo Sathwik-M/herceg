@@ -12,6 +12,7 @@ import {
   type Palette,
   requireField,
   SeriesSplitter,
+  valueKind,
 } from "./mark.ts";
 import { type Series, xExtent, yExtent } from "./series.ts";
 import { IndexUse, tracePath, unionExtent } from "./trace.ts";
@@ -31,7 +32,7 @@ export interface LineOptions<S extends Schema> {
   /** Constant color for every line of the mark. */
   stroke?: string;
   strokeWidth?: number;
-  dash?: number[];
+  dash?: readonly number[];
   curve?: Curve;
   /** Name of a single line in legends and tooltips. Defaults to the y field. */
   label?: string;
@@ -56,7 +57,9 @@ export class LineMark implements Mark<LineSpec> {
   }
 
   channelKind(axis: "x" | "y") {
-    return axis === "x" ? this.table.kind(this.spec.x) : "number";
+    const { spec, table } = this;
+    if (axis === "x") return table.kind(spec.x);
+    return valueKind(table, typeof spec.y === "string" ? [spec.y] : spec.y);
   }
 
   series(key: MarkKey, palette: Palette) {
@@ -124,7 +127,6 @@ export function line<S extends Schema>(table: Table<S>, options: LineOptions<S>)
       "series",
       "stroke",
       "strokeWidth",
-      "dash",
       "curve",
       "label",
       "id",
@@ -133,6 +135,7 @@ export function line<S extends Schema>(table: Table<S>, options: LineOptions<S>)
       "panel",
     ]),
   };
+  if (options.dash !== undefined) spec.dash = [...options.dash];
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new LineMark(spec, table as unknown as Table);

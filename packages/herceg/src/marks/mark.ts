@@ -236,6 +236,14 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
   glyphKeys?(series: readonly Series[], format: (value: number) => string): GlyphKey[];
 }
 
+/**
+ * The kind of a channel several fields place values on: time when any of
+ * them holds times, as an axis is a time axis when any mark's field is.
+ */
+export function valueKind(table: Table, fields: readonly string[]): "time" | "number" {
+  return fields.some((field) => table.kind(field) === "time") ? "time" : "number";
+}
+
 export function requireField(
   table: Table,
   field: string,

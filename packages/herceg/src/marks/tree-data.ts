@@ -38,6 +38,9 @@ export class TreeData {
     | undefined;
 
   constructor(table: Table, fields: TreeFields, role: string) {
+    if (fields.path && (fields.node !== undefined || fields.parent !== undefined)) {
+      throw new Error(`${role} takes a path, or node and parent fields, not both`);
+    }
     if (fields.path) {
       if (fields.path.length === 0) throw new Error(`${role} path needs at least one field`);
       for (const field of fields.path) requireField(table, field, CATEGORY, `${role} path`);

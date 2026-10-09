@@ -23,6 +23,7 @@ import {
   requireField,
   SeriesSplitter,
   seriesKey,
+  valueKind,
 } from "./mark.ts";
 import { type Series, xExtent, yExtent } from "./series.ts";
 import { unionExtent } from "./trace.ts";
@@ -239,7 +240,7 @@ export class CustomMark implements Mark<CustomSpec> {
   channelKind(axis: "x" | "y") {
     const fields = axis === "x" ? this.#x : this.#y;
     if (fields.length === 0) return undefined;
-    return fields.some((field) => this.table!.kind(field as never) === "time") ? "time" : "number";
+    return valueKind(this.table!, fields);
   }
 
   series(key: MarkKey, palette: Palette): Series[] {

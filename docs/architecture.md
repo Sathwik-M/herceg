@@ -919,7 +919,14 @@ builds the same structures: `line(table, options)` returns a mark whose
 `spec` is the portable part. Mark implementations are attached to the mark
 objects rather than looked up in a registry, so unused mark types are tree
 shaken away. Field options are typed from the table schema: numeric encodings
-only accept number or time fields, `series` only accepts category fields.
+only accept number or time fields, positions also take categories but never
+geometry, and `series` only accepts category fields. Options whose forms
+exclude each other (an area's `y` or its `y1` and `y2`, an error bar's
+orientation, a tree's `path` or its `node` and `parent`) are unions the
+compiler keeps apart, in mark options and portable specs alike, and the
+marks refuse mixed forms from untyped callers and loaded specs too. Tables built with `new Table` rather
+than `table()` have no inferred schema, so marks check their fields only at
+runtime.
 
 Specs written elsewhere (the Python package, stored JSON) are loaded by
 `herceg/spec`, a separate entry point so applications built with the

@@ -1,5 +1,5 @@
 import type { NumericArray } from "../data/column.ts";
-import type { CategoryField, FieldName, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import type { Rect, SegmentGeometry } from "../scene/scene.ts";
 import type { ErrorBarSpec } from "../spec/spec.ts";
@@ -20,6 +20,7 @@ import {
   type Palette,
   requireField,
   SeriesSplitter,
+  valueKind,
 } from "./mark.ts";
 import { lowerPosition, rowOf, type Series, TableCache, visibleRange, xExtent } from "./series.ts";
 import { unionExtent } from "./trace.ts";
@@ -43,32 +44,52 @@ interface ErrorBarStyle<S extends Schema> {
 
 /** Vertical error bars at each `x`, from `y1` to `y2`. */
 export interface VerticalErrorBarOptions<S extends Schema> extends ErrorBarStyle<S> {
-  x: FieldName<S>;
+  x: PositionField<S>;
   y1: NumericField<S>;
   y2: NumericField<S>;
+  y?: never;
+  yError?: never;
+  x1?: never;
+  x2?: never;
+  xError?: never;
 }
 
 /** Vertical error bars at each `x`, from `y - yError` to `y + yError`. */
 export interface VerticalSymmetricErrorBarOptions<S extends Schema> extends ErrorBarStyle<S> {
-  x: FieldName<S>;
+  x: PositionField<S>;
   y: NumericField<S>;
   yError: NumericField<S>;
+  y1?: never;
+  y2?: never;
+  x1?: never;
+  x2?: never;
+  xError?: never;
 }
 
 /** Horizontal error bars at each `y`, from `x1` to `x2`. */
 export interface HorizontalErrorBarOptions<S extends Schema> extends ErrorBarStyle<S> {
-  y: FieldName<S>;
+  y: PositionField<S>;
   x1: NumericField<S>;
   x2: NumericField<S>;
+  x?: never;
+  xError?: never;
+  y1?: never;
+  y2?: never;
+  yError?: never;
   /** Positions along y are on the left axis; only vertical error bars use the right one. */
   axis?: "left";
 }
 
 /** Horizontal error bars at each `y`, from `x - xError` to `x + xError`. */
 export interface HorizontalSymmetricErrorBarOptions<S extends Schema> extends ErrorBarStyle<S> {
-  y: FieldName<S>;
+  y: PositionField<S>;
   x: NumericField<S>;
   xError: NumericField<S>;
+  x1?: never;
+  x2?: never;
+  y1?: never;
+  y2?: never;
+  yError?: never;
   /** Positions along y are on the left axis; only vertical error bars use the right one. */
   axis?: "left";
 }
@@ -80,6 +101,7 @@ export type ErrorBarOptions<S extends Schema> =
   | HorizontalSymmetricErrorBarOptions<S>;
 
 const CAP = 8;
+const ENDS = ["x", "y", "x1", "x2", "y1", "y2", "xError", "yError"] as const;
 
 /** Where an interval's ends come from: two fields, or a center and a symmetric error. */
 type Ends = { low: string; high: string } | { center: string; error: string };
@@ -136,6 +158,11 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
       requireField(table, high, NUMERIC, `error bar ${across}2`);
       this.#ends = { low, high };
     }
+    // A field of another form would be dropped quietly, so it is refused.
+    const used: string[] =
+      error !== undefined ? [along, across, `${across}Error`] : [along, `${across}1`, `${across}2`];
+    const extra = ENDS.find((key) => spec[key] !== undefined && !used.includes(key));
+    if (extra) throw new Error(`Error bars from ${used.join(", ")} cannot also take ${extra}`);
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "error bar series");
     this.#categorical = table.kind(position) === "category";
     this.tooltip = horizontal ? "y" : "x";
@@ -157,8 +184,7 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
   channelKind(axis: "x" | "y") {
     if ((axis === "y") === this.#horizontal) return this.table.kind(this.#position);
     const ends = this.#ends;
-    const fields = "center" in ends ? [ends.center] : [ends.low, ends.high];
-    return fields.some((field) => this.table.kind(field as never) === "time") ? "time" : "number";
+    return valueKind(this.table, "center" in ends ? [ends.center] : [ends.low, ends.high]);
   }
 
   bands(axis: "x" | "y", context: BandContext): BandList | undefined {
@@ -421,9 +447,9 @@ export function errorBar<S extends Schema>(
   table: Table<S>,
   options: ErrorBarOptions<S>,
 ): ErrorBarMark {
-  const spec: ErrorBarSpec = {
+  const spec = {
     type: "errorbar",
-    ...(definedFields(options as Partial<Record<keyof ErrorBarSpec, unknown>>, [
+    ...definedFields(options as Partial<Record<keyof ErrorBarSpec, unknown>>, [
       "x",
       "y",
       "x1",
@@ -441,8 +467,8 @@ export function errorBar<S extends Schema>(
       "axis",
       "facet",
       "panel",
-    ]) as Omit<ErrorBarSpec, "type">),
-  };
+    ]),
+  } as ErrorBarSpec;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new ErrorBarMark(spec, table as unknown as Table);

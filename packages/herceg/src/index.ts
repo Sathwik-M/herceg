@@ -46,6 +46,7 @@ export type {
   GeometryField,
   NumberField,
   NumericField,
+  PositionField,
   Row,
   Schema,
   SchemaOf,
@@ -60,7 +61,13 @@ export type { SymbolName } from "./draw/symbols.ts";
 export type { MeasureText } from "./layout/text.ts";
 export type { TextField } from "./marks/annotation.ts";
 export { type AreaMark, type AreaOptions, area } from "./marks/area.ts";
-export { type BarMark, type BarOptions, bar } from "./marks/bar.ts";
+export {
+  type BarMark,
+  type BarOptions,
+  bar,
+  type HorizontalBarOptions,
+  type VerticalBarOptions,
+} from "./marks/bar.ts";
 export { type BoxPlotMark, type BoxPlotOptions, boxplot } from "./marks/boxplot.ts";
 export {
   type CandlestickMark,
@@ -84,7 +91,9 @@ export {
   type ErrorBarOptions,
   errorBar,
   type HorizontalErrorBarOptions,
+  type HorizontalSymmetricErrorBarOptions,
   type VerticalErrorBarOptions,
+  type VerticalSymmetricErrorBarOptions,
 } from "./marks/errorbar.ts";
 export { type FunnelMark, type FunnelOptions, funnel } from "./marks/funnel.ts";
 export { type GaugeMark, type GaugeOptions, gauge } from "./marks/gauge.ts";

@@ -68,6 +68,13 @@ export type GeometryField<S extends Schema> = string extends keyof S
   ? string
   : { [K in keyof S & string]: S[K] extends "geometry" ? K : never }[keyof S & string];
 
+/** Fields that place marks along an axis: numbers, times, and categories. */
+export type PositionField<S extends Schema> = string extends keyof S
+  ? string
+  : {
+      [K in keyof S & string]: S[K] extends "number" | "time" | "category" ? K : never;
+    }[keyof S & string];
+
 export type FieldName<S extends Schema> = keyof S & string;
 
 /**
@@ -134,6 +141,10 @@ function requireCount(value: number, name: string): void {
 
 /**
  * Columnar data with equal-length typed columns.
+ *
+ * Create tables with `table()`, which infers the schema so marks only accept
+ * the table's fields. `new Table` gives a table whose fields are known only
+ * at runtime: marks accept any field name and check it when created.
  *
  * Rows live in a contiguous slice `[start, start + length)` of each column
  * buffer. Appends write after the slice; drops advance `start`. When the end

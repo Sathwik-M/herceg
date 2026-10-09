@@ -184,6 +184,21 @@ describe("loadSpec", () => {
     expect(check({ x: { type: "time", format: { hour: "2-digit" } }, marks: [] })).not.toThrow();
   });
 
+  it("refuses marks mixing forms rather than dropping options", () => {
+    const check = (mark: object) => () =>
+      loadSpec({
+        data: { t: { columns: { x: [0, 1], a: [1, 2], b: [2, 3], g: ["p", "q"] } } },
+        marks: [mark],
+      } as ChartSpec);
+    expect(check({ type: "area", x: "x", y1: "a", y2: "b", stack: true })).toThrow(/not both/);
+    expect(check({ type: "area", x: "x", y1: "a", y2: "b", series: "g" })).toThrow(/not both/);
+    expect(check({ type: "errorbar", x: "x", y1: "a", y2: "b", x1: "a" })).toThrow(
+      /cannot also take x1/,
+    );
+    expect(check({ type: "treemap", path: ["g"], node: "g", parent: "g" })).toThrow(/not both/);
+    expect(check({ type: "sunburst", path: ["g"], node: "g", parent: "g" })).toThrow(/not both/);
+  });
+
   it("draws horizontal bars from a category y", () => {
     const svg = specToSVG(
       {

@@ -4,7 +4,7 @@ import { textDrawing } from "../draw/text.ts";
 import type { Formatter } from "../format/format.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
-import type { Position, RegionSpec } from "../spec/spec.ts";
+import type { Position, RegionRange, RegionSpec } from "../spec/spec.ts";
 import {
   AnnotationData,
   type Channel,
@@ -30,23 +30,15 @@ interface RegionStyle {
   id?: string;
 }
 
-/** A region between constant values. */
-export interface RegionOptions extends RegionStyle {
-  x1?: number | Date;
-  x2?: number | Date;
-  y1?: number | Date;
-  y2?: number | Date;
-}
+/** A region between constant values: an x range, a y range, or both (a rectangle). */
+export type RegionOptions = RegionStyle & RegionRange<number | Date>;
 
 /** Regions from a table, one per row; positions may also be constants. */
-export interface RegionDataOptions<S extends Schema> extends RegionStyle {
-  x1?: NumericField<S> | number | Date;
-  x2?: NumericField<S> | number | Date;
-  y1?: NumericField<S> | number | Date;
-  y2?: NumericField<S> | number | Date;
-  /** Field with each region's text. */
-  text?: TextField<S>;
-}
+export type RegionDataOptions<S extends Schema> = RegionStyle &
+  RegionRange<NumericField<S> | number | Date> & {
+    /** Field with each region's text. */
+    text?: TextField<S>;
+  };
 
 const PADDING = 4;
 
@@ -244,9 +236,9 @@ export function region<S extends Schema>(
 ): RegionMark {
   const table = second ? (first as Table<S>) : undefined;
   const options = (second ?? first) as RegionDataOptions<S>;
-  const spec: RegionSpec = {
+  const spec = {
     type: "region",
-    ...(definedFields(
+    ...definedFields(
       {
         ...options,
         x1: position(options.x1),
@@ -268,8 +260,8 @@ export function region<S extends Schema>(
         "facet",
         "panel",
       ],
-    ) as Omit<RegionSpec, "type">),
-  };
+    ),
+  } as RegionSpec;
   if (table?.name !== undefined && readsTable([spec.x1, spec.x2, spec.y1, spec.y2], spec.text)) {
     spec.data = table.name;
   }

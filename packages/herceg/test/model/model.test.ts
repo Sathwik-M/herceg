@@ -5,6 +5,7 @@ import { estimateText } from "../../src/layout/text.ts";
 import type { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
 import { line } from "../../src/marks/line.ts";
+import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
@@ -297,6 +298,38 @@ describe("areas", () => {
     model.hidden.add('[0,"a"]');
     model.scene(estimateText);
     expect(Array.from(model.series()[1]!.y)).toEqual([10, Number.NaN, 30]);
+  });
+
+  it("refuses areas mixing a filled y with a band's edges", () => {
+    const data = table({ x: [0, 1], a: [1, 2], b: [2, 3] });
+    // Types refuse these; JavaScript callers get errors rather than a dropped field.
+    expect(() => area(data, { x: "x", y: "a", y1: "a", y2: "b" } as never)).toThrow(/not both/);
+    expect(() => area(data, { x: "x", y1: "a", y2: "b", stack: true } as never)).toThrow(
+      /not both/,
+    );
+  });
+
+  it("puts time y fields on a time axis whatever the mark", () => {
+    const start = Date.UTC(2026, 0, 1);
+    const runs = table({
+      n: [0, 1],
+      done: time([start, start + 86_400_000]),
+      queued: time([start - 3_600_000, start]),
+      size: [3, 4],
+    });
+    const marks = [
+      line(runs, { x: "n", y: "done" }),
+      area(runs, { x: "n", y: "done" }),
+      area(runs, { x: "n", y1: "queued", y2: "done" }),
+      point(runs, { x: "n", y: "done" }),
+      // Mixed fields: times decide, as they do between marks.
+      line(runs, { x: "n", y: ["size", "done"] }),
+    ];
+    for (const mark of marks) {
+      expect(sceneOf({ marks: [mark] }).model.yScale()!.type).toBe("time");
+    }
+    const linear = sceneOf({ marks: [line(runs, { x: "n", y: "done" })], y: { type: "linear" } });
+    expect(linear.model.yScale()!.type).toBe("linear");
   });
 
   it("draws bands between two fields", () => {
