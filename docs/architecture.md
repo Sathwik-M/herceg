@@ -491,8 +491,9 @@ Unsorted x is drawn point by point without reduction.
 The y domain comes from the same visible range: sorted series are trimmed to
 the points inside it, so whole columns reduce to a plain min/max scan.
 
-Lines, and areas filled to zero, over whole columns of at least 262,144
-points use a min/max index of their y field. The table owns the index and keeps it
+Lines, and areas filled to zero, over whole columns of at least 4,096
+points use a min/max index of their y field (five columns of 200,000 points
+zoom in about 1.2 ms instead of 2.2 ms with them). The table owns the index and keeps it
 current: appends recompute only the trailing blocks, drops leave it valid
 (it covers the column's whole buffer, so positions do not move), small
 in-place updates recompute their blocks, and when the table moves its rows
