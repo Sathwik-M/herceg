@@ -11,6 +11,7 @@ import {
   rowOf,
   type Series,
   samePositions,
+  valueAt,
   xAt,
 } from "../marks/series.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -494,7 +495,7 @@ export class Inspector {
     const { x } = this.frame;
     const y = this.#yOf(s);
     const row = rowOf(s, position);
-    const value = s.values[row]!;
+    const value = valueAt(s, row);
     // What a scale cannot place (log axes, missing ends) is not drawn, so not reported.
     if (!this.#placeable(s, row)) return undefined;
     const px = x.map(placeAt(s, "x", row));
@@ -510,7 +511,7 @@ export class Inspector {
       mark: this.#indexOf.get(s)!,
       markId: mark?.spec.id,
       key: s.key,
-      label: tooltip === "cell" ? this.formatY(s.y[row]!) : s.label,
+      label: tooltip === "cell" ? this.formatY(placeAt(s, "y", row)) : s.label,
       // Summarizing marks' series index rows of their summaries.
       row: mark?.summarizes ? undefined : row,
       color: mark?.pointColor ? mark.pointColor(s, row, this.frame.theme) : s.color,

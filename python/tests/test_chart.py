@@ -381,11 +381,9 @@ def test_panels_can_have_categories_of_their_own():
         .bar(x="v", y="name", data={"name": ["vw", "audi"], "v": [5, 6]}, panel="cars")
     )
     assert ">audi</text>" in subplots.to_svg()
-    with pytest.raises(ValueError, match="heatmap marks over a table cannot be split"):
-        hg.Chart(sales, facet="region").heatmap(x="product", y="kind", value="units")
-    with pytest.raises(ValueError, match="heatmap mark's categories cannot be resolved per panel"):
-        hg.Chart(sales, facet="region", resolve_x="independent").heatmap(
-            x="product", y="kind", value="units", repeat=True
+    with pytest.raises(ValueError, match="boxplot mark's categories cannot be resolved per panel"):
+        hg.Chart(sales, facet="region", resolve_x="independent").boxplot(
+            x="product", y="units", repeat=True
         )
     with pytest.raises(ValueError, match="cannot be synced yet"):
         hg.Chart(sales, facet="region", resolve_x="rows", sync="board").bar(x="product", y="units")
@@ -395,6 +393,40 @@ def test_panels_can_have_categories_of_their_own():
         )
     # Shared, as before, the same marks are fine.
     hg.Chart(sales, facet="region", sync="board").bar(x="product", y="units")
+
+
+def test_heatmaps_and_points_have_categories_of_their_own():
+    load = {
+        "region": ["N", "S", "N", "S"],
+        "hour": ["b", "a", "d", "a"],
+        "host": ["p", "q", "q", "p"],
+        "cpu": [1.0, 2.0, 3.0, 4.0],
+    }
+    cells = hg.Chart(
+        load,
+        facet="region",
+        resolve_x="independent",
+        resolve_y="independent",
+        width=500,
+        height=250,
+    ).heatmap(x="hour", y="host", value="cpu")
+    spec, _ = cells.to_spec()
+    assert spec["resolve"] == {"x": "independent", "y": "independent"}
+    assert spec["marks"][0]["type"] == "heatmap"
+    assert "facet" not in spec["marks"][0]
+    svg = cells.to_svg()
+    # One image of cells per panel, each panel labeling its own categories.
+    assert svg.count("<image ") == 2
+    assert all(f">{label}</text>" in svg for label in ("a", "b", "d", "p", "q"))
+    strip = hg.Chart(load, facet="region", resolve_x="independent", width=500, height=250).point(
+        x="hour", y="cpu"
+    )
+    spec, _ = strip.to_spec()
+    assert (spec["marks"][0]["x"], spec["marks"][0]["y"]) == ("hour", "cpu")
+    assert ">d</text>" in strip.to_svg()
+    assert ">q</text>" in hg.scatter(load, x="cpu", y="host").to_svg()
+    with pytest.raises(TypeError, match="point r: column 'host' holds category values"):
+        hg.scatter(load, x="hour", y="cpu", r="host")
 
 
 def test_candlesticks_send_their_four_prices():

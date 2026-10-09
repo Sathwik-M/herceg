@@ -58,7 +58,7 @@ export function facet(by: string | FacetGrid, options: FacetOptions = {}): Facet
 }
 
 /** Marks that cannot split their rows into panels yet; they can repeat in every panel. */
-const UNSPLIT = new Set(["heatmap", "histogram", "boxplot", "violin", "rule", "region", "text"]);
+const UNSPLIT = new Set(["histogram", "boxplot", "violin", "rule", "region", "text"]);
 
 export class Facet implements PanelLayout {
   /** The field whose values wrap into rows of `columns` panels. */

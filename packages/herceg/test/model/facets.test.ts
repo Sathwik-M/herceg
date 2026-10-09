@@ -5,6 +5,7 @@ import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
+import { histogram } from "../../src/marks/histogram.ts";
 import { type LineMark, line } from "../../src/marks/line.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
@@ -131,9 +132,9 @@ describe("facets", () => {
       build({ marks: [line(sales, { x: "t", y: "units" })], facet: facet("units") }),
     ).toThrow(/Facet field "units" is number/);
     const cells = table({ x: ["a"], y: ["b"], v: [1], region: ["N"] });
-    expect(() =>
-      build({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })], facet: panels }),
-    ).toThrow(/heatmap mark over a table cannot be split into panels yet/);
+    expect(() => build({ marks: [histogram(cells, { x: "v" })], facet: panels })).toThrow(
+      /histogram mark over a table cannot be split into panels yet/,
+    );
     expect(() =>
       build({ marks: [line(sales, { x: "t", y: "units", axis: "right" })], facet: panels }),
     ).toThrow(/cannot use the right axis yet/);
@@ -143,9 +144,11 @@ describe("facets", () => {
         facet: facet("region", { columns: 0 }),
       }),
     ).toThrow(/at least 1/);
-    // Repeated, a heatmap is fine.
-    const repeated = heatmap(cells, { x: "x", y: "y", value: "v", facet: "repeat" });
+    // Repeated, a histogram is fine; heatmaps split.
+    const repeated = histogram(cells, { x: "v", facet: "repeat" });
     expect(() => build({ marks: [repeated], facet: panels })).not.toThrow();
+    const split = heatmap(cells, { x: "x", y: "y", value: "v" });
+    expect(() => build({ marks: [split], facet: panels })).not.toThrow();
   });
 
   it("inspect the panel under the pointer, and report it", () => {

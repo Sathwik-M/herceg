@@ -316,6 +316,7 @@ point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
 point(countries, { x: "gdp", y: "life", r: "population", series: "continent" }); // bubbles
 point(stations, { x: "lon", y: "lat", color: "temperature", colors: viridis });
 point(cars, { x: "weight", y: "mpg", symbol: "origin" }); // a shape per origin
+point(requests, { x: "region", y: "latency" }); // a category x places points in its bands
 errorBar(stats, { x: "group", y1: "low", y2: "high" }); // y, x1, x2 for horizontal ones
 errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
@@ -337,11 +338,15 @@ violin(requests, { x: "region", y: "latency" }); // kernel densities, quartiles 
 
 Bar labels go past each bar's end, or for stacks inside each segment in a
 color that contrasts with it; labels that do not fit are left out. A category
-field on `x` or `y` (bars) or on `x` and `y` (heatmaps) gives a
+field on `x` or `y` (bars, points) or on `x` and `y` (heatmaps, points) gives a
 band axis. Categories on a y axis run top to bottom; long names are shortened
-with an ellipsis. Horizontal bars default to "nearest-y" tooltips, which
-report every series in the band under the pointer. Heatmaps also accept number and time fields, with one column or row per
-distinct value, and show a color legend instead of series entries.
+with an ellipsis. Points on a category axis sit at the centers of its bands
+(strip and dot plots, over bars too), and are drawn on the CPU however many
+there are; on a category y axis, a point's tooltip shows its category and
+its reported `value` is the category's band index. Horizontal bars default
+to "nearest-y" tooltips, which report every series in the band under the
+pointer. Heatmaps also accept number and time fields, with one column or row
+per distinct value, and show a color legend instead of series entries.
 
 A heatmap draws one pixel per cell while its grid fits the plot's device
 pixels. A grid with more columns (or rows) than that, such as 4,000 x 4,000
@@ -961,6 +966,13 @@ createChart(element, {
   facet: facet("region"),
   resolve: { x: "independent" }, // in a spec: "resolve": { "x": "independent" }
 });
+
+// A heatmap per region, each over the hours and hosts its own rows hold.
+createChart(element, {
+  marks: [heatmap(load, { x: "hour", y: "host", value: "cpu" })],
+  facet: facet("region"),
+  resolve: { x: "independent", y: "independent" },
+});
 ```
 
 Panels follow the order in which values first appear in the data; rows
@@ -987,9 +999,11 @@ y scales of their own cannot zoom along y or take y ranges in
 `setViewport` yet. Pointer, brush, and zoom work in any panel and act on
 its x scale; the arrow keys step through a panel and Up and Down move
 between its series and on to the next panel. Stacked bars stack within each
-panel. Heatmaps, histograms, box plots, annotations over a table, and custom
-marks over a table without series can only repeat for now, and charts with
-facets have no right axis. A chart too small for its
+panel, and each panel's heatmap cell shows the last of that panel's rows
+with a value there; a heatmap's colors follow one scale in every panel,
+over all its table's values. Histograms, box plots, annotations over a
+table, and custom marks over a table without series can only repeat for
+now, and charts with facets have no right axis. A chart too small for its
 panels (under 20 pixels a side) throws an error naming the grid; give it
 more room or fewer columns.
 
@@ -1012,8 +1026,8 @@ values mean the same thing. A scale's zoom is kept while its panels stay the
 same: when they change (a new facet value wraps the panels anew), it fits
 its data again.
 
-A category axis of bars that panels do not share holds only the categories
-of the rows its panels draw, in the order the shared axis would have them
+A category axis of bars, heatmaps, or points that panels do not share holds
+only the categories of the rows its panels draw, in the order the shared axis would have them
 (dictionary order, across the marks' tables in the chart's order), so a
 category's band index can differ from one panel to the next: tooltips,
 `toPixel`, `formatValue`, and selections read each panel's own (its axis'
@@ -1024,10 +1038,11 @@ every category, whichever series a panel has, and stacks, split into panels
 first, never reach across them. A selection on such an axis is cleared when
 its panels' categories change, since its band indices would then name other
 categories (the axis' `group` changes with them), and the keyboard carries
-its cursor to another scale by its place across the plot. Only bars can have
-categories of their own so far: heatmaps, box plots, violins, error bars, and
-candlesticks on a category axis need it shared, and such charts cannot be
-synced or brushed along a y axis of categories.
+its cursor to another scale by its place across the plot (into a heatmap,
+at its top left cell). Only bars, heatmaps, and points can have categories
+of their own so far: box plots, violins, error bars, and candlesticks on a
+category axis need it shared, and such charts cannot be synced or brushed
+along a y axis of categories.
 
 ### Subplots
 

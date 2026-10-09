@@ -136,8 +136,9 @@ export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
 
 /**
  * Scale sharing between panels; needs spec version 2 (3 for `x`). A category
- * axis of bars that panels do not share holds only the categories of the
- * rows they draw; other marks on category axes need them shared.
+ * axis of bars, heatmaps, or points that panels do not share holds only the
+ * categories of the rows they draw; other marks on category axes need them
+ * shared.
  */
 export interface ResolveSpec {
   /** Shared by default. */
@@ -1125,6 +1126,7 @@ export interface HistogramSpec extends MarkBase {
 /** Points at (x, y): scatter plots. */
 export interface PointSpec extends MarkBase {
   type: "point";
+  /** A number, time, or category field; a category field places points in its bands. */
   x: Field;
   y: Field;
   series?: Field;

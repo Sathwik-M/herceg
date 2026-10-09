@@ -232,11 +232,15 @@ function drawnBy(split: PanelSplit, groupOf: readonly number[]): (MarkSeries[] |
   return Array.from(drawn, (group) => group?.filter((entry) => entry !== undefined));
 }
 
+/** Marks that read their categorical positions through panels' places. */
+const PLACED = new Set(["bar", "heatmap", "point"]);
+
 /**
  * Refuses what panels with categories of their own cannot draw yet: with
- * `resolve` other than "shared" on a category axis, marks other than bars
- * banding it, synced charts (a band index means another category in each
- * panel), and brushes along a y axis of such categories.
+ * `resolve` other than "shared" on a category axis, marks other than bars,
+ * heatmaps, and points banding it, synced charts (a band index means
+ * another category in each panel), and brushes along a y axis of such
+ * categories.
  */
 export function checkBands(
   marks: readonly Mark[],
@@ -247,7 +251,7 @@ export function checkBands(
     const resolution = options.resolve?.[axis] ?? (axis === "x" ? "shared" : yDefault);
     const banding = marks.filter((mark) => mark.channelKind(axis) === "category");
     if (resolution === "shared" || banding.length === 0) continue;
-    const other = banding.find((mark) => mark.spec.type !== "bar");
+    const other = banding.find((mark) => !PLACED.has(mark.spec.type));
     if (other)
       throw new Error(
         `A ${other.spec.type} mark's categories cannot be resolved per panel yet; give the chart resolve: { ${axis}: "shared" }`,
@@ -284,20 +288,30 @@ interface GroupBands {
  * banding that axis reads its rows' chart band indices through their
  * places there (`Series.places`), so no panel copies or remaps a table's
  * rows. Marks drawn whole (facet repeats, subplots) count all their rows in
- * every panel they draw in. A chart keeps one, so groups keep their bands
- * while they are unchanged.
+ * every panel they draw in. Both axes may be resolved apart (heatmaps,
+ * points over two category fields). A chart keeps one, so groups keep
+ * their bands while they are unchanged.
  */
 export class PanelBands {
-  /** Each group's bands as of the last split, by its panels' keys: a group of other panels is another. */
-  #groups = new Map<string, GroupBands>();
-  /** The chart bands rows hold, by the rows (or the whole column) and their band indices. */
-  readonly #held = new WeakMap<object, { bands: Series["x"]; held: Int32Array }>();
+  /**
+   * Each axis' groups' bands as of the last split, by their panels' keys: a
+   * group of other panels is another.
+   */
+  readonly #groups = { x: new Map<string, GroupBands>(), y: new Map<string, GroupBands>() };
+  /**
+   * Per axis, the chart bands rows hold, by the rows (or the whole column)
+   * and their band indices: a heatmap's rows are banded along both.
+   */
+  readonly #held = {
+    x: new WeakMap<object, { bands: Series["x"]; held: Int32Array }>(),
+    y: new WeakMap<object, { bands: Series["x"]; held: Int32Array }>(),
+  };
   /** A flag per chart band, cleared after each use. */
   #seen = new Uint8Array(0);
 
   /**
    * Gives `split`'s panels, in rows of `columns`, their groups' bands along
-   * the axis whose categories they resolve apart, if any, from the chart's
+   * the axes whose categories they resolve apart, if any, from the chart's
    * `bands`; `yDefault` is how they share y unless the chart's `resolve` says.
    */
   place(
@@ -308,23 +322,66 @@ export class PanelBands {
     yDefault: ScaleResolution,
   ): void {
     const resolution = { x: resolve?.x ?? "shared", y: resolve?.y ?? yDefault };
-    const axis =
-      bands.x && resolution.x !== "shared" ? "x" : bands.y && resolution.y !== "shared" ? "y" : "";
-    if (!axis) {
-      this.#groups.clear();
-      return;
-    }
-    const chart = bands[axis]!;
+    const axes = (["x", "y"] as const).flatMap((axis) => {
+      const chart = bands[axis];
+      if (chart && resolution[axis] !== "shared")
+        return [{ axis, ...this.#placeAxis(split, columns, chart, resolution[axis], axis) }];
+      this.#groups[axis].clear();
+      return [];
+    });
+    // Series share a copy per pair of groups, as they share the groups'
+    // places. Their chart band indices may ascend where their places do not
+    // reach the panel's domain, so they are searched as unsorted.
+    const copies = new Map<string, Map<Series, Series>>();
+    split.panels = split.panels.map((marks, p) => {
+      const at = axes.map(({ groupOf, groups }) => groups[groupOf[p]!]!.places);
+      if (at.every((places) => !places)) return marks;
+      const pair = axes.map(({ groupOf }) => groupOf[p]).join();
+      const copied = copies.get(pair) ?? new Map<Series, Series>();
+      copies.set(pair, copied);
+      return marks.map(({ mark, series }) => {
+        // Only the axes a mark bands: its other positions are values.
+        const own = axes.flatMap(({ axis }, i) =>
+          at[i] && mark.channelKind(axis) === "category" ? [[axis, at[i]] as const] : [],
+        );
+        if (own.length === 0) return { mark, series };
+        const places = Object.fromEntries(own);
+        return {
+          mark,
+          series: series.map((s) => {
+            let copy = copied.get(s);
+            if (!copy) {
+              copy = { ...s, places, sorted: false };
+              copied.set(s, copy);
+            }
+            return copy;
+          }),
+        };
+      });
+    });
+  }
+
+  /**
+   * The groups of `split`'s panels along `axis` under `resolution`, and each
+   * group's bands from the chart's `chart`; sets the panels' band lists.
+   */
+  #placeAxis(
+    split: PanelSplit,
+    columns: number,
+    chart: BandList,
+    resolution: ScaleResolution,
+    axis: "x" | "y",
+  ): { groupOf: number[]; groups: GroupBands[] } {
     const count = chart.keys.length;
     if (this.#seen.length < count) this.#seen = new Uint8Array(count);
-    const groupOf = groupsOf(resolution[axis], split.panels.length, columns);
+    const groupOf = groupsOf(resolution, split.panels.length, columns);
     const panelsOf: number[][] = [];
     groupOf.forEach((g, p) => {
       panelsOf[g] ??= [];
       panelsOf[g].push(p);
     });
-    const last = this.#groups;
-    this.#groups = new Map();
+    const last = this.#groups[axis];
+    const kept = new Map<string, GroupBands>();
     const groups = panelsOf.map((panels) => {
       const found: number[] = [];
       for (const p of panels)
@@ -335,33 +392,12 @@ export class PanelBands {
         });
       const members = JSON.stringify(panels.map((p) => split.keys[p]));
       const group = this.#group(last.get(members), chart, this.#distinct(found).sort());
-      this.#groups.set(members, group);
+      kept.set(members, group);
       return group;
     });
-    // Series share a copy per group, as they share the group's places. Their
-    // chart band indices may ascend where their places do not reach the
-    // panel's domain, so they are searched as unsorted.
-    const copies = groups.map(() => new Map<Series, Series>());
-    split.panels = split.panels.map((marks, p) => {
-      const g = groupOf[p]!;
-      const { places: at } = groups[g]!;
-      const places = { [axis]: at };
-      return marks.map(({ mark, series }) => ({
-        mark,
-        series:
-          !at || mark.channelKind(axis) !== "category"
-            ? series
-            : series.map((s) => {
-                let copy = copies[g]!.get(s);
-                if (!copy) {
-                  copy = { ...s, places, sorted: false };
-                  copies[g]!.set(s, copy);
-                }
-                return copy;
-              }),
-      }));
-    });
-    split.bands = { [axis]: groupOf.map((g) => groups[g]!.list) };
+    this.#groups[axis] = kept;
+    split.bands = { ...split.bands, [axis]: groupOf.map((g) => groups[g]!.list) };
+    return { groupOf, groups };
   }
 
   /** A group's bands for `held`, keeping its `last` ones, or their list, while they are the same. */
@@ -388,7 +424,7 @@ export class PanelBands {
   #rowBands(s: Series, axis: "x" | "y", count: number): Int32Array {
     const bands = s[axis];
     const key = s.rows ?? bands;
-    const cached = this.#held.get(key);
+    const cached = this.#held[axis].get(key);
     if (cached?.bands === bands) return cached.held;
     const seen = this.#seen;
     const found: number[] = [];
@@ -400,7 +436,7 @@ export class PanelBands {
     }
     for (const band of found) seen[band] = 0;
     const held = Int32Array.from(found);
-    this.#held.set(key, { bands, held });
+    this.#held[axis].set(key, { bands, held });
     return held;
   }
 
@@ -460,6 +496,10 @@ class Places implements BandPlaces {
       else hi = mid;
     }
     return held[lo] === band ? lo : -1;
+  }
+
+  band(place: number): number {
+    return this.#held[place] ?? -1;
   }
 }
 

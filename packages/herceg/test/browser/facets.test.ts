@@ -6,8 +6,10 @@ import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.
 import type { ChartEvents } from "../../src/dom/events.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
+import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import type { ChartMark } from "../../src/marks/mark.ts";
+import { point } from "../../src/marks/point.ts";
 import { facet } from "../../src/model/facet.ts";
 import { panels } from "../../src/model/panels.ts";
 import { bandBox, modelOf } from "./helpers.ts";
@@ -829,6 +831,93 @@ describe("facet panels with categories of their own", () => {
     expect(pixel(n!.x.map(1), n!.y.map(2.5))).toEqual([255, 0, 0, 255]);
     const labels = [...host.querySelectorAll("svg text")].map((node) => node.textContent);
     expect(labels).toEqual(expect.arrayContaining(["a", "b", "c", "d"]));
+    chart.destroy();
+  });
+});
+
+describe("facet panels with heatmaps and points on categories of their own", () => {
+  // N holds hours b and d, S a and c: place 1 is d in N and c in S.
+  const load = () =>
+    table({
+      region: ["N", "S", "N", "S", "N"],
+      hour: ["b", "a", "d", "c", "b"],
+      host: ["p", "q", "q", "p", "p"],
+      cpu: [1, 2, 4, 5, 6],
+    });
+  const cells = (data = load()): ChartOptions => ({
+    locale: "en-US",
+    marks: [
+      heatmap(data, {
+        x: "hour",
+        y: "host",
+        value: "cpu",
+        colors: ["#000000", "#ffffff"],
+        colorDomain: [0, 10],
+      }),
+    ],
+    facet: facet("region"),
+    resolve: { x: "independent", y: "independent" },
+  });
+
+  /** The color of a CSS pixel of a chart's canvas. */
+  const pixelOf = (chart: Chart) => {
+    const canvas = host.querySelector("canvas")!;
+    const ratio = canvas.width / chart.root.clientWidth;
+    return (x: number, y: number) =>
+      Array.from(
+        canvas.getContext("2d")!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1)
+          .data,
+      );
+  };
+
+  it("paint each panel's cells at its own categories on a canvas", () => {
+    const chart = createChart(host, { ...cells(), renderer: "canvas" });
+    const pixel = pixelOf(chart);
+    const [n, s] = modelOf(chart).panels();
+    const gray = (value: number) => Math.round((value / 10) * 255);
+    // N's (d, q) is 4 and its (b, p) 6, the later of its two rows there.
+    expect(pixel(n!.x.map(1), n!.y.map(1))[0]).toBeCloseTo(gray(4), -1);
+    expect(pixel(n!.x.map(0), n!.y.map(0))[0]).toBeCloseTo(gray(6), -1);
+    // At the same places, S's cells are its own: (c, p) and (a, q), and no (c, q).
+    expect(pixel(s!.x.map(1), s!.y.map(0))[0]).toBeCloseTo(gray(5), -1);
+    expect(pixel(s!.x.map(0), s!.y.map(1))[0]).toBeCloseTo(gray(2), -1);
+    expect(pixel(s!.x.map(1), s!.y.map(1))[3]).toBe(0);
+    chart.destroy();
+  });
+
+  it("read each panel's cells with the keyboard, entering a panel at its top left cell", () => {
+    const chart = createChart(host, cells());
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toBe("N: b. p: 6");
+    key(chart, "ArrowDown");
+    expect(live.textContent).toBe("d. q: 4");
+    // The bottom of N's grid: Down leaves it for S's.
+    key(chart, "ArrowDown");
+    expect(live.textContent).toBe("S: c. p: 5");
+    key(chart, "ArrowDown");
+    expect(live.textContent).toBe("a. q: 2");
+    chart.destroy();
+  });
+
+  it("paint each panel's points at its own categories on a canvas", () => {
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [point(load(), { x: "hour", y: "cpu", r: 4 })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+      renderer: "canvas",
+      theme: { palette: ["#ff0000"] },
+    });
+    const pixel = pixelOf(chart);
+    const [n, s] = modelOf(chart).panels();
+    // S's c (place 1) is at 5, N's d (place 1) at 4.
+    expect(pixel(s!.x.map(1), s!.y.map(5))).toEqual([255, 0, 0, 255]);
+    expect(pixel(n!.x.map(1), n!.y.map(5))).not.toEqual([255, 0, 0, 255]);
+    expect(pixel(n!.x.map(1), n!.y.map(4))).toEqual([255, 0, 0, 255]);
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toBe("N: b. cpu: 1");
     chart.destroy();
   });
 });
