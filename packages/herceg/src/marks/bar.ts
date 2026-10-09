@@ -27,6 +27,7 @@ import {
 } from "./mark.ts";
 import { rowOf, type Series, TableCache, visibleRange, xExtent, yExtent } from "./series.ts";
 import { Slots } from "./slots.ts";
+import { RowStack, type StackedLayers } from "./stack.ts";
 import { unionExtent } from "./trace.ts";
 
 interface BarStyle<S extends Schema> {
@@ -92,7 +93,10 @@ export class BarMark implements Mark<BarSpec> {
   readonly #position: string;
   readonly #categorical: boolean;
   readonly #split: SeriesSplitter;
-  readonly #stacks = new TableCache<Map<string, Stack>>();
+  #stacks = new TableCache<Map<string, Stack>>();
+  /** Stacks of fields over positions that never repeat, kept current as rows stream. */
+  readonly #rowStack = new RowStack("signed");
+  readonly #increasing = new IncreasingRows();
   /** Slots of bars on a number or time position axis. */
   #slots: Slots | undefined;
   #formatter: { locale: string | undefined; format: Formatter } | undefined;
@@ -163,12 +167,30 @@ export class BarMark implements Mark<BarSpec> {
     if (spec.stack) {
       const shown = series.map((s) => !hidden.has(s.key));
       const signature = shown.map(Number).join("");
-      const cache = this.#stacks.get(table, () => new Map());
-      let stack = cache.get(signature);
-      if (!stack || stack.tops[0]?.length !== positions.length) {
-        stack = stackBars(series, shown);
-        if (cache.size >= 4) cache.clear();
-        cache.set(signature, stack);
+      // Fields sharing rows whose positions never repeat stack row by row,
+      // which streams; otherwise bars stack by position.
+      const rowWise =
+        series.every((s) => s.rows === undefined) &&
+        this.#increasing.check(table, positions, !this.#categorical);
+      let stack: Pick<StackedLayers, "tops" | "bases">;
+      // Only the stack in use keeps its buffers.
+      if (rowWise) {
+        this.#stacks = new TableCache();
+        stack = this.#rowStack.update(
+          table,
+          series.map((s, i) => (shown[i] ? s.values : undefined)),
+          signature,
+        );
+      } else {
+        this.#rowStack.clear();
+        const cache = this.#stacks.get(table, () => new Map());
+        let byPosition = cache.get(signature);
+        if (!byPosition || byPosition.tops[0]?.length !== positions.length) {
+          byPosition = stackBars(series, shown);
+          if (cache.size >= 4) cache.clear();
+          cache.set(signature, byPosition);
+        }
+        stack = byPosition;
       }
       series.forEach((s, i) => {
         s.y = stack.tops[i]!;
@@ -579,6 +601,53 @@ class BarLabels {
       this.#groups.set(stage, group);
     }
     group.items.push({ x, y, text });
+  }
+}
+
+/**
+ * Whether a table's positions strictly increase (NaN breaks it), checked
+ * again only for the rows appended since, while the positions array is the
+ * table's own column view of unchanged rows; other arrays (band indices) are
+ * checked once each.
+ */
+class IncreasingRows {
+  #positions: ArrayLike<number> | undefined;
+  #version = -1;
+  #table: Table | undefined;
+  #modified = -1;
+  /** Row identities checked so far: up to, not including, this one. */
+  #end = 0;
+  #increasing = false;
+
+  /** `column`: positions are a field's values, so rows keep theirs as rows stream. */
+  check(table: Table, positions: ArrayLike<number>, column: boolean): boolean {
+    // A replace can change values in an array the table hands out again.
+    if (positions === this.#positions && table.version === this.#version) return this.#increasing;
+    const end = table.rowOffset + table.length;
+    // Rows only added at the end and dropped from the front since: the
+    // ones already checked still increase, so only the rest need checking.
+    const continues =
+      column &&
+      this.#table === table &&
+      this.#modified === table.modifiedVersion &&
+      this.#increasing &&
+      this.#end > table.rowOffset &&
+      end >= this.#end;
+    let from = continues ? this.#end - table.rowOffset : 1;
+    let increasing = true;
+    for (from = Math.max(1, from); from < positions.length; from++) {
+      if (!(positions[from]! > positions[from - 1]!)) {
+        increasing = false;
+        break;
+      }
+    }
+    this.#positions = positions;
+    this.#version = table.version;
+    this.#table = table;
+    this.#modified = table.modifiedVersion;
+    this.#end = end;
+    this.#increasing = increasing;
+    return increasing;
   }
 }
 

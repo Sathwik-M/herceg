@@ -8,6 +8,7 @@ import { table } from "../src/data/table.ts";
 import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
+import { RowStack } from "../src/marks/stack.ts";
 import { LinearScale } from "../src/scale/scale.ts";
 
 function measure(name: string, run: () => void, { warmup = 20, samples = 50, repeat = 1 } = {}) {
@@ -114,4 +115,26 @@ measure("derive: append 100 rows to a following filter, 100k window", () => {
   const t = Float64Array.from({ length: 100 }, (_, i) => next + i);
   stream.append({ t, v: t.map((value) => Math.sin(value)) });
   next += 100;
+});
+// Five stacked layers over a million-row window, 10,000 rows per tick.
+const layers = ["a", "b", "c", "d", "e"];
+const stacked = table(
+  Object.fromEntries([["t", x], ...layers.map((name, l) => [name, y.map((v) => v + l)])]),
+  { maxRows: N },
+);
+const stack = new RowStack("sum");
+const update = () =>
+  stack.update(
+    stacked,
+    layers.map((name) => stacked.numbers(name)),
+    "11111",
+  );
+update();
+let tick = N;
+measure("stack: 5 layers, append 10,000 rows, 1M window", () => {
+  const t = Float64Array.from({ length: 10_000 }, (_, i) => tick + i);
+  const v = t.map((value) => Math.sin(value / 1000));
+  stacked.append(Object.fromEntries([["t", t], ...layers.map((name) => [name, v])]));
+  tick += 10_000;
+  update();
 });

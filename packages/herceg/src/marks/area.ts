@@ -1,6 +1,6 @@
-import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { areaDrawing } from "../draw/area.ts";
+import type { RangeIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { AreaGeometry } from "../scene/scene.ts";
 import type { AreaSpec, Curve } from "../spec/spec.ts";
@@ -17,7 +17,8 @@ import {
   SeriesSplitter,
   seriesKey,
 } from "./mark.ts";
-import { type Series, TableCache, xExtent, yExtent } from "./series.ts";
+import { type Series, xExtent, yExtent } from "./series.ts";
+import { RowStack } from "./stack.ts";
 import {
   curveRows,
   IndexUse,
@@ -67,7 +68,9 @@ export class AreaMark implements Mark<AreaSpec> {
   readonly spec: AreaSpec;
   readonly table: Table<Schema>;
   readonly #split: SeriesSplitter | undefined;
-  readonly #stacks = new TableCache<Map<string, StackLayers>>();
+  readonly #stack = new RowStack("sum", { indexed: true });
+  /** Indexes of each stacked layer's edges, by series key, for long stacks. */
+  #stackIndexes = new Map<string, { top: RangeIndex; bottom: RangeIndex | undefined }>();
   readonly #indexes = new IndexUse();
   readonly zero: "y" | undefined;
 
@@ -128,17 +131,17 @@ export class AreaMark implements Mark<AreaSpec> {
     if (spec.stack) {
       // Hidden layers drop out of the stack, so the layers above settle down.
       const shown = series.map((s) => !hidden.has(s.key));
-      const byVisibility = this.#stacks.get(table, () => new Map());
-      const signature = shown.map(Number).join("");
-      let layers = byVisibility.get(signature);
-      if (!layers) {
-        layers = stackLayers(series.map((s, i) => (shown[i] ? s.values : undefined)));
-        if (byVisibility.size >= 4) byVisibility.clear();
-        byVisibility.set(signature, layers);
-      }
+      const layers = this.#stack.update(
+        table,
+        series.map((s, i) => (shown[i] ? s.values : undefined)),
+        shown.map(Number).join(""),
+      );
+      this.#stackIndexes.clear();
       series.forEach((s, i) => {
         s.y = layers.tops[i]!;
         s.y0 = layers.bases[i];
+        const indexes = layers.indexes?.[i];
+        if (indexes) this.#stackIndexes.set(s.key, indexes);
       });
     }
     return series;
@@ -151,10 +154,14 @@ export class AreaMark implements Mark<AreaSpec> {
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
     const curved = this.spec.curve === "monotone";
     return unionExtent(
-      series.flatMap((s) => [
-        yExtent(s, x0, x1, s.y, log, this.#indexes.index(this.table, s), curved),
-        s.y0 ? yExtent(s, x0, x1, s.y0, log, undefined, curved) : undefined,
-      ]),
+      series.flatMap((s) => {
+        const stacked = this.#stackIndexes.get(s.key);
+        const top = stacked?.top ?? this.#indexes.index(this.table, s);
+        return [
+          yExtent(s, x0, x1, s.y, log, top, curved),
+          s.y0 ? yExtent(s, x0, x1, s.y0, log, stacked?.bottom, curved) : undefined,
+        ];
+      }),
     );
   }
 
@@ -189,9 +196,12 @@ export class AreaMark implements Mark<AreaSpec> {
     const curve = spec.curve === "monotone" && layered ? "linear" : spec.curve;
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
-      // Areas filled to zero read their field's index; bands and stacks scan.
+      // Areas filled to zero read their field's index, and long stacks their
+      // own; bands scan.
+      const stacked = this.#stackIndexes.get(s.key);
+      const both = stacked?.bottom && { top: stacked.top, bottom: stacked.bottom };
       const edges = s.y0
-        ? traceBand(s, s.y, s.y0, frame, curve)
+        ? traceBand(s, s.y, s.y0, frame, curve, both)
         : {
             upper: tracePath(
               s,
@@ -199,12 +209,14 @@ export class AreaMark implements Mark<AreaSpec> {
               frame,
               "upper",
               curve,
-              this.#indexes.index(
-                this.table,
-                s,
-                frame.owner,
-                frame.x.type !== "log" && frame.y.type !== "log",
-              ),
+              stacked && frame.x.type !== "log" && frame.y.type !== "log"
+                ? stacked.top
+                : this.#indexes.index(
+                    this.table,
+                    s,
+                    frame.owner,
+                    frame.x.type !== "log" && frame.y.type !== "log",
+                  ),
             ),
             lower: null,
           };
@@ -232,40 +244,6 @@ export class AreaMark implements Mark<AreaSpec> {
       strokeWidth,
     };
   }
-}
-
-interface StackLayers {
-  /** Top of each layer; NaN where the layer's own value is missing. */
-  tops: Float64Array[];
-  /** Bottom of each layer (undefined for the first, which starts at zero); always finite. */
-  bases: (Float64Array | undefined)[];
-}
-
-/**
- * Cumulative stack layers. A missing value leaves a gap in its own layer
- * only: it counts as zero for the layers above, which keep a finite base. An
- * undefined (hidden) layer has zero height.
- */
-function stackLayers(layers: readonly (NumericArray | undefined)[]): StackLayers {
-  const length = layers.find((layer) => layer)?.length ?? 0;
-  const running = new Float64Array(length);
-  const tops: Float64Array[] = [];
-  const bases: (Float64Array | undefined)[] = [];
-  layers.forEach((values, index) => {
-    bases.push(index === 0 ? undefined : running.slice());
-    const top = new Float64Array(length);
-    for (let i = 0; i < length; i++) {
-      const value = values ? values[i]! : 0;
-      if (Number.isFinite(value)) {
-        running[i]! += value;
-        top[i] = running[i]!;
-      } else {
-        top[i] = Number.NaN;
-      }
-    }
-    tops.push(top);
-  });
-  return { tops, bases };
 }
 
 /**
