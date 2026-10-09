@@ -101,16 +101,16 @@ same data by a field of four values (`herceg/pivot`, no DOM), and
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-area | 0.0.0 (818da45) | 130.5 | 48.8 | 43.4 | - | 23.7 |
-| herceg-bar | 0.0.0 (818da45) | 128.2 | 48.3 | 43.1 | - | 23.7 |
-| herceg-grid-pivot | 0.0.0 (818da45) | 129.8 | 44.3 | 39.6 | - | - |
-| herceg-grid | 0.0.0 (818da45) | 86.8 | 30.1 | 27.2 | - | - |
-| herceg-line | 0.0.0 (818da45) | 113.2 | 42.4 | 38.0 | - | 23.7 |
-| herceg-pivot | 0.0.0 (818da45) | 59.6 | 19.9 | 18.0 | - | - |
-| herceg-react-line | 0.0.0 (818da45) | 115.8 | 43.5 | 39.0 | - | 23.7 |
-| herceg-scatter | 0.0.0 (818da45) | 130.2 | 49.1 | 43.7 | - | 23.7 |
-| herceg-svelte-line | 0.0.0 (818da45) | 117.2 | 44.1 | 39.5 | - | 23.7 |
-| herceg-vue-line | 0.0.0 (818da45) | 116.8 | 43.9 | 39.3 | - | 23.7 |
+| herceg-area | 0.0.0 (d6bfbb1) | 130.5 | 48.8 | 43.4 | - | 23.7 |
+| herceg-bar | 0.0.0 (d6bfbb1) | 128.2 | 48.3 | 43.1 | - | 23.7 |
+| herceg-grid-pivot | 0.0.0 (d6bfbb1) | 129.8 | 44.3 | 39.6 | - | - |
+| herceg-grid | 0.0.0 (d6bfbb1) | 86.8 | 30.1 | 27.2 | - | - |
+| herceg-line | 0.0.0 (d6bfbb1) | 113.2 | 42.4 | 38.0 | - | 23.7 |
+| herceg-pivot | 0.0.0 (d6bfbb1) | 59.6 | 19.9 | 18.0 | - | - |
+| herceg-react-line | 0.0.0 (d6bfbb1) | 115.8 | 43.5 | 39.0 | - | 23.7 |
+| herceg-scatter | 0.0.0 (d6bfbb1) | 130.2 | 49.1 | 43.7 | - | 23.7 |
+| herceg-svelte-line | 0.0.0 (d6bfbb1) | 117.2 | 44.1 | 39.5 | - | 23.7 |
+| herceg-vue-line | 0.0.0 (d6bfbb1) | 116.8 | 43.9 | 39.3 | - | 23.7 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |
