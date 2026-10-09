@@ -93,7 +93,7 @@ const SLOW_FRAME = 10;
  */
 export const MOVING_ITEMS = 2000;
 /**
- * Points at most in either scene of a change: a frame of this many takes
+ * Points at most in a frame, including exits: a frame of this many takes
  * less JavaScript than drawing the change at once, and the copies about 40
  * bytes a point (docs/architecture.md). Marks bound each series alike
  * (scene.ts MOVING_POINTS).
@@ -569,6 +569,11 @@ export function plan(
   const still = new Set<unknown>();
   // Moving scales move the axes and grid lines, whatever marks do.
   let moves = scales;
+  // Include still points and exits in the per-frame budget across the chart.
+  let pointsDrawn = drawn.marks.reduce(
+    (count, mark) => count + (mark.kind === "point" ? (mark as PointGeometry).count : 0),
+    0,
+  );
   for (const [index, mark] of drawn.marks.entries()) {
     // Seams of time breaks (scale/breaks.ts names them) follow x alone: they
     // stay put while only y moves.
@@ -584,7 +589,17 @@ export function plan(
       if (bars) tween.bars.push(bars.moving);
       moved = bars;
     } else if (item?.kind === "points" && mark.kind === "point") {
-      const points = movePoints(index, item, mark as PointGeometry, side, motions.x, motions[side]);
+      const target = mark as PointGeometry;
+      const points = movePoints(
+        index,
+        item,
+        target,
+        side,
+        motions.x,
+        motions[side],
+        MOVING_POINTS - pointsDrawn + target.count,
+      );
+      if (points) pointsDrawn += points.moving.count - target.count;
       if (points) tween.points.push(points.moving);
       moved = points;
     } else if (item?.kind === "trace" && (mark.kind === "line" || mark.kind === "area")) {

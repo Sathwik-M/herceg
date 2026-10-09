@@ -62,6 +62,20 @@ def test_animation_is_off_true_a_duration_or_options():
         hg.Chart(DATA, animation=hg.Animation(duration=-5))
 
 
+@pytest.mark.parametrize("key", ["host", "unused", "t"])
+def test_point_animation_keys_serialize_and_send_the_key_column(key):
+    spec, buffers = hg.scatter(DATA, "p50", "p99", animation_key=key).to_spec()
+    assert spec["version"] == 4
+    assert spec["marks"][0]["animationKey"] == key
+    columns = spec["data"]["data"]["columns"]
+    assert sorted(columns) == sorted(["p50", "p99", key])
+    assert len(buffers) == 3
+    direct, _ = hg.Chart(DATA).point("p50", "p99", animation_key=key).to_spec()
+    assert direct == spec
+    with pytest.raises(KeyError, match="point animation_key.*missing"):
+        hg.scatter(DATA, "p50", "p99", animation_key="missing")
+
+
 def test_categories_travel_as_codes_and_dictionary():
     spec, buffers = hg.Chart(DATA).bar(x="host", y="p50").to_spec()
     host = spec["data"]["data"]["columns"]["host"]

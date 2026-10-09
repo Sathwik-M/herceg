@@ -1,9 +1,9 @@
-// Points moving to changed values (value-transition.ts): matched by the row
-// they show, their centers moving with the scales, their encoded size,
-// color, and opacity changing with them, and points that come or go
+// Points moving to changed values (value-transition.ts): matched by row
+// identity or explicit key values, their centers moving with the scales,
+// their encoded size, color, and opacity changing with them, and points that come or go
 // growing from or shrinking to nothing.
 
-import type { PointGeometry } from "../scene/scene.ts";
+import type { PointGeometry, PointItems } from "../scene/scene.ts";
 import { after, type Blend, before, blend, type ScaleMotion } from "./value-motion.ts";
 
 /** One series' points as drawn, owned: centers, rows, and what they encode. */
@@ -12,8 +12,9 @@ export interface ShownPoints {
   count: number;
   /** x, y per point. */
   coords: Float32Array;
-  /** Per point, its row's identity in `table` until its next reset (`generation`). */
-  ids: Float64Array;
+  /** Row identities or explicit key values, in drawing order. */
+  ids: PointItems["ids"];
+  key: PointItems["key"];
   table: object;
   generation: number;
   radius: number;
@@ -24,7 +25,7 @@ export interface ShownPoints {
   symbols: Uint8ClampedArray | undefined;
 }
 
-/** A copy of a series' points, if they say which rows they show (not clouds or sampled points). */
+/** A copy of a series' points with animation identity (not clouds or sampled points). */
 export function copyPoints(mark: PointGeometry): ShownPoints | undefined {
   return pointsOf(mark, true);
 }
@@ -41,7 +42,13 @@ function pointsOf(mark: PointGeometry, own: boolean): ShownPoints | undefined {
     kind: "points",
     count,
     coords: take(mark.coords, count * 2)!,
-    ids: take(items.ids)!,
+    ids:
+      items.ids instanceof Float64Array
+        ? take(items.ids)!
+        : own
+          ? items.ids.slice(0, count)
+          : items.ids,
+    key: items.key,
     table: items.table,
     generation: items.generation,
     radius: mark.radius,
@@ -78,7 +85,7 @@ export interface MovingPoints {
 /**
  * How `shown` moves to `mark`, its series in the new scene, along scales
  * moving as `x` and `y` do; undefined when its points cannot be matched to
- * the rows they show (another table, a reset, a cloud, sampled points) or
+ * their identity (a different key, an unkeyed reset, a cloud, sampled points) or
  * show them otherwise (other encodings or shapes). Points of rows that came
  * grow from nothing, and of rows that went shrink to nothing, where those
  * rows' values are, as they move with the scales.
@@ -90,12 +97,12 @@ export function movePoints(
   side: "y" | "yRight",
   x: ScaleMotion,
   y: ScaleMotion,
+  budget: number,
 ): { moving: MovingPoints; moves: boolean } | undefined {
   const next = pointsOf(mark, false);
   if (
     !next ||
-    next.table !== shown.table ||
-    next.generation !== shown.generation ||
+    !sameIdentity(shown, next) ||
     !next.radii !== !shown.radii ||
     !next.tones !== !shown.tones ||
     !next.opacities !== !shown.opacities ||
@@ -103,15 +110,24 @@ export function movePoints(
     !samePalette(next.palette, shown.palette)
   )
     return undefined;
-  // Where each row's point was, and which rows still have one.
-  const was = new Map<number, number>();
-  for (let i = 0; i < shown.count; i++) was.set(shown.ids[i]!, i);
-  const kept = new Set<number>();
-  for (let j = 0; j < next.count; j++) kept.add(next.ids[j]!);
+  // Explicit keys must be valid and unique in each rendered series.
+  const was = new Map<number | string, number>();
+  for (let i = 0; i < shown.count; i++) {
+    const key = shown.ids[i];
+    if (!validKey(key) || was.has(key)) return undefined;
+    was.set(key, i);
+  }
+  const kept = new Set<number | string>();
+  for (let j = 0; j < next.count; j++) {
+    const key = next.ids[j];
+    if (!validKey(key) || kept.has(key)) return undefined;
+    kept.add(key);
+  }
   let exits = 0;
   for (let i = 0; i < shown.count; i++) if (!kept.has(shown.ids[i]!)) exits++;
   const enters = next.count - (shown.count - exits);
   const count = next.count + exits;
+  if (count > budget) return undefined;
   const from = new Float32Array(count * 2);
   const to = new Float32Array(count * 2);
   // Points that come or go change size, whether or not their sizes are encoded.
@@ -185,6 +201,22 @@ export function movePoints(
   };
   const moving = { index, mark, side, count, from, to, radii, tones, opacities, out };
   return { moving, moves };
+}
+
+/** Explicit keys supersede row identity; neither side can silently change its key. */
+function sameIdentity(a: ShownPoints, b: ShownPoints): boolean {
+  if (a.key || b.key)
+    return (
+      a.key !== undefined &&
+      b.key !== undefined &&
+      a.key.field === b.key.field &&
+      a.key.kind === b.key.kind
+    );
+  return a.table === b.table && a.generation === b.generation;
+}
+
+function validKey(key: number | string | undefined): key is number | string {
+  return typeof key === "string" || (typeof key === "number" && Number.isFinite(key));
 }
 
 /** Colors of two continuous scales, alike when their colors are, whatever their domains. */

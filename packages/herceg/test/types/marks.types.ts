@@ -13,6 +13,7 @@ import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
+import { point } from "../../src/marks/point.ts";
 import { region } from "../../src/marks/region.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { sankey } from "../../src/marks/sankey.ts";
@@ -27,6 +28,16 @@ import type {
 } from "../../src/spec/spec.ts";
 
 const readings = table({ at: time([0]), cpu: [1], stage: ["a"] });
+
+// Explicit animation keys infer number or category fields.
+point(readings, { x: "at", y: "cpu", animationKey: "cpu" });
+point(readings, { x: "at", y: "cpu", animationKey: "stage" });
+// @ts-expect-error the key must be a field of the table
+point(readings, { x: "at", y: "cpu", animationKey: "missing" });
+// @ts-expect-error the typed key API accepts number and category fields
+point(readings, { x: "at", y: "cpu", animationKey: "at" });
+// @ts-expect-error animation keys belong to point marks
+line(readings, { x: "at", y: "cpu", animationKey: "stage" });
 
 // Gauges show, and funnels sum, numbers: not times or categories.
 gauge(readings, { value: "cpu" });
@@ -95,6 +106,8 @@ region({});
 declare const shapes: GeometryInput;
 const regions = table({ shape: shapes, name: ["a"], sales: [1] });
 bar(regions, { x: "name", y: "sales" });
+// @ts-expect-error geometry cannot identify animated points
+point(regions, { x: "sales", y: "sales", animationKey: "shape" });
 // @ts-expect-error geometry is not a bar position
 bar(regions, { x: "shape", y: "sales" });
 // @ts-expect-error geometry is not a heatmap column

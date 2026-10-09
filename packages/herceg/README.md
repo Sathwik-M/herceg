@@ -1478,8 +1478,17 @@ log space.
   `setColumn` move each point from its row's old values to its new ones,
   with sizes, colors, and opacities they encode. A row whose point appears
   (its value was missing) grows from nothing, and one whose point goes
-  shrinks, where its values are. Points do not move across `reset`, which
-  makes new rows, nor when sampled (`sampling: "pixel"`) or drawn on the GPU.
+  shrinks, where its values are. To match points across `reset` or reordered
+  API responses, set `point(data, { x: "x", y: "y", animationKey: "id" })`.
+  The key names a number or category field (portable specs also accept time
+  fields). Both scenes must use the same field and kind; equal finite numbers
+  (`-0` equals `0`) or category labels match within each series. Dictionary
+  codes can change. Explicit keys replace row matching: missing or duplicate
+  keys in either rendered series show that series' new values at once, and
+  if its axes move the whole change shows at once. Retained points move, new
+  keys grow from zero radius, and removed keys shrink to zero. Without a key,
+  points do not move across `reset`, which makes new rows. Sampled points
+  (`sampling: "pixel"`) and GPU points do not move.
   A point that moves outside a fixed or zoomed axis' domain shrinks rather
   than leaving the plot.
 - **Lines and areas** move when both scenes draw them through the same x
@@ -1492,8 +1501,9 @@ log space.
   as the same points.
 
 Only the drawing moves: data, tooltips, events, and summaries have the new
-values at once. A derived table is recomputed whenever its source changes,
-so marks of an aggregate over rows that keep arriving move with each change
+values at once. Animation keys do not preserve selections, row identities,
+or hover state across resets. A derived table is recomputed whenever its
+source changes, so marks of an aggregate over rows that keep arriving move with each change
 that comes after the last has settled (every few seconds, say) and show more
 frequent ones at once.
 
@@ -1507,7 +1517,8 @@ with axes that stay, such marks show their new values while the others move.
 So do appended and dropped rows, changes while values move and until the data
 has been still for a change's duration, changes of options and of hidden
 series, bars on log axes, bars sharing a position in one series, x axes with
-breaks, scenes of more than 2,000 bars, slices, and rules, 10,000 points, or
+breaks, scenes of more than 2,000 bars, slices, and rules, 10,000 points
+(including points shrinking on exit across all series), or
 10,000 points of lines and areas, point clouds, marks over row views, charts with
 several panels or `sync`, charts off screen, charts the pointer is over,
 pressed, or read with the keyboard, pages preferring reduced motion, and

@@ -377,6 +377,48 @@ describe("value transitions", () => {
     expect(chart(moving)).toEqual(chart(still));
   });
 
+  it("animate points across keyed resets in SVG and Canvas, settling before inspection", async () => {
+    for (const renderer of ["svg", "canvas"] as const) {
+      const data = table({ x: [1, 2, 3], y: [10, 20, 30], id: ["a", "b", "c"] });
+      const marks = () => [point(data, { x: "x", y: "y", animationKey: "id" })];
+      const moving = await mount({
+        animation: VALUES,
+        renderer,
+        marks: marks(),
+        x: { domain: [0, 4] },
+        y: { domain: [0, 100] },
+      });
+      const still = await mount({
+        animation: false,
+        renderer,
+        marks: marks(),
+        x: { domain: [0, 4] },
+        y: { domain: [0, 100] },
+      });
+      await controlTime();
+      const animations: ValueAnimation[] = [];
+      const start = ValueAnimation.prototype.start;
+      const spy = vi.spyOn(ValueAnimation.prototype, "start").mockImplementation(function (
+        this: ValueAnimation,
+        ...args
+      ) {
+        animations.push(this);
+        return start.apply(this, args);
+      });
+      data.reset({ x: [1, 2, 3], y: [60, 70, 50], id: ["c", "a", "d"] });
+      tick(50);
+      expect(animations.some((animation) => animation.playing)).toBe(true);
+      moving.root.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, clientX: 200, clientY: 100 }),
+      );
+      expect(animations.every((animation) => !animation.playing)).toBe(true);
+      expect(chart(moving)).toEqual(chart(still));
+      spy.mockRestore();
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    }
+  });
+
   for (const curve of ["linear", "monotone"] as const) {
     it(`move areas stacked by a series field together, their shared edges as one (${curve})`, async () => {
       const data = table({

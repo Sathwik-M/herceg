@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { encodedCategory, time } from "../../src/data/column.ts";
-import { table } from "../../src/data/table.ts";
+import { geometry } from "../../src/data/geometry.ts";
+import { type Table, table } from "../../src/data/table.ts";
 import { loadSpec, SPEC_VERSION, specToSVG, validateSpec } from "../../src/from-spec.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { tablesOf } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
+import { PointMark, point } from "../../src/marks/point.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { surface } from "../../src/marks/surface.ts";
@@ -53,6 +55,57 @@ describe("loadSpec", () => {
     expect(metrics.kind("at")).toBe("time");
     expect([0, 1, 2].map((row) => metrics.value("host", row))).toEqual(["web", null, "db"]);
     expect([0, 1, 2].map((row) => metrics.value("zone", row))).toEqual(["eu", "eu", null]);
+  });
+
+  it("round trips point animation keys in every supported spec version", () => {
+    const data = table({ x: [1, 2], y: [3, 4], id: ["a", "b"] }, { name: "data" });
+    const mark = point(data, { x: "x", y: "y", animationKey: "id" });
+    expect(SPEC_VERSION).toBe(5);
+    for (const version of [undefined, 1, 2, 3, 4, 5] as const) {
+      const spec: ChartSpec = {
+        ...(version === undefined ? {} : { version }),
+        data: { data: { columns: { x: [1, 2], y: [3, 4], id: ["a", "b"] } } },
+        marks: [JSON.parse(JSON.stringify(mark.spec))],
+      };
+      expect(checkSpec(spec)).toEqual([]);
+      expect(loadSpec(spec, [], { unknown: "error" }).config.marks[0]!.spec).toEqual(mark.spec);
+    }
+    const spec = { marks: [{ type: "point", x: "x", y: "y", animationKey: 42 }] };
+    expect(() => validateSpec(spec)).toThrow(/animationKey.*field name/);
+    expect(
+      () =>
+        new PointMark(
+          { type: "point", x: "x", y: "y", animationKey: "missing" },
+          data as unknown as Table,
+        ),
+    ).toThrow(/animationKey/);
+    const shapes = table({
+      x: [1],
+      y: [2],
+      id: geometry({
+        coordinates: Float64Array.from([0, 0, 1, 0, 1, 1]),
+        ringOffsets: Int32Array.from([0, 3]),
+        polygonOffsets: Int32Array.from([0, 1]),
+        geometryOffsets: Int32Array.from([0, 1]),
+      }),
+    });
+    expect(
+      () =>
+        new PointMark(
+          { type: "point", x: "x", y: "y", animationKey: "id" },
+          shapes as unknown as Table,
+        ),
+    ).toThrow(/geometry.*animationKey/);
+    const columns = { x: [1], y: [2], id: { type: "time" as const, values: [100] } };
+    expect(() =>
+      loadSpec({
+        data: { data: { columns } },
+        marks: [{ type: "point", x: "x", y: "y", animationKey: "id" }],
+      }),
+    ).not.toThrow();
+    expect(checkSpec({ marks: [{ type: "line", x: "x", y: "y", animationKey: "id" }] })).toContain(
+      "marks[0].animationKey",
+    );
   });
 
   it("copies binary columns only when their bytes are misaligned", () => {

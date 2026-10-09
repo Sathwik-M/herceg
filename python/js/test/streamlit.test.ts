@@ -139,6 +139,40 @@ async function brush(root: ParentNode, from: number, to: number) {
 }
 
 describe("Streamlit component", () => {
+  it("remounts keyed points when only data changes", () => {
+    const spec: Header["spec"] = {
+      width: 400,
+      height: 200,
+      renderer: "svg",
+      animation: { values: true, duration: 300 },
+      x: { domain: [0, 4] },
+      y: { domain: [0, 100] },
+      data: {
+        data: {
+          columns: {
+            x: { type: "number", dtype: "float64", buffer: 0 },
+            y: { type: "number", dtype: "float64", buffer: 1 },
+            id: { type: "category", codes: 2, dictionary: ["a", "b", "c"] },
+          },
+        },
+      },
+      marks: [{ type: "point", x: "x", y: "y", data: "data", animationKey: "id" }],
+    };
+    const parent = host();
+    const buffers = (ys: number[], ids: number[]) => [
+      new Float64Array([1, 2, 3]),
+      new Float64Array(ys),
+      new Int32Array(ids),
+    ];
+    run(parent, payload(spec, buffers([10, 20, 30], [0, 1, 2]), []));
+    const root = figure(parent);
+    const before = parent.querySelector('[data-kind="point"]')!.getAttribute("d");
+    const updated = run(parent, payload(spec, buffers([70, 60, 50], [2, 0, 1]), []));
+    expect(figure(parent)).not.toBe(root);
+    expect(parent.querySelector('[data-kind="point"]')!.getAttribute("d")).not.toBe(before);
+    updated.cleanup();
+  });
+
   it("draws the payload and keeps the chart while runs send the same bytes", () => {
     const parent = host();
     run(parent, lineChart("Latency", []));

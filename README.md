@@ -90,7 +90,7 @@ Next, in order:
 1. Layout: annotations over a table split by facets, and error bars and
    candlesticks on categories per panel.
 2. Animation of stacked and labeled bars, of categories that come and go,
-   of panels, and of points across resets (by a key field).
+   and of panels.
 3. More financial tools (drawing tools, range navigators
    in charts with panels); 3D lines, meshes, parametric surfaces, and
    surfaces on the GPU.

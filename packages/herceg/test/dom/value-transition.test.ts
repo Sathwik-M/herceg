@@ -2,7 +2,7 @@
 // and interpolated, evaluated at explicit times.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { category, encodedCategory, time } from "../../src/data/column.ts";
-import { type TableChange, table } from "../../src/data/table.ts";
+import { type Table, type TableChange, table } from "../../src/data/table.ts";
 import {
   frameAt,
   MOVING_ITEMS,
@@ -21,7 +21,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { monotonePolyline } from "../../src/marks/curve.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
-import { point } from "../../src/marks/point.ts";
+import { PointMark, point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { planAxis } from "../../src/model/axis.ts";
 import { facet } from "../../src/model/facet.ts";
@@ -36,6 +36,7 @@ import {
   CLOUD_POINTS,
   type LineGeometry,
   type PointGeometry,
+  type PointItems,
   type RectGeometry,
   type RuleGeometry,
   type Scene,
@@ -594,6 +595,183 @@ describe("points changing values", () => {
     ).toBeUndefined();
     const sampled = scatter({ x: [1, 2, 3], y: [10, 20, 30] }, { sampling: "pixel" }).model;
     expect(snapshot(sampled.scene(estimateText), sampled.panels()[0], 0)).toBeUndefined();
+  });
+
+  it("match numeric keys across reordered resets, entering and exiting in destination order", () => {
+    const { data, model } = scatter(
+      { x: [1, 2, 3], y: [10, 20, 30], id: [-0, 2, 3] },
+      { animationKey: "id" },
+    );
+    const before = centers(pointsOf(model.scene(estimateText))[0]!);
+    const { tween } = change(model, () =>
+      data.reset({ x: [1, 2, 3], y: [60, 50, 40], id: [3, 0, 4] }),
+    );
+    const start = pointsOf(frameAt(tween!, 0))[0]!;
+    const target = centers(pointsOf(tween!.scene)[0]!);
+    expectRects(centers(start), [before[2]!, before[0]!, target[2]!, before[1]!]);
+    expect(Array.from(start.radii!)).toEqual([2.5, 2.5, 0, 2.5]);
+    const middle = centers(pointsOf(frameAt(tween!, 100))[0]!);
+    expect(middle[0]![1]).toBeCloseTo(before[2]![1]! + (target[0]![1]! - before[2]![1]!) * HALF, 3);
+    const end = pointsOf(frameAt(tween!, 200))[0]!;
+    expectRects(centers(end).slice(0, 3), target);
+    expect(end.radii![3]).toBe(0);
+  });
+
+  it("match category labels after dictionary recoding and keep snapshots independent of later scenes", () => {
+    const data = table({
+      x: [1, 2, 3],
+      y: [10, 20, 30],
+      id: encodedCategory(Int32Array.from([0, 1, 2]), ["a", "b", "c"]),
+    });
+    const model = chart({
+      marks: [point(data, { x: "x", y: "y", animationKey: "id" })],
+      x: { domain: [0, 4] },
+      y: { domain: [0, 100] },
+    });
+    const before = centers(pointsOf(model.scene(estimateText))[0]!);
+    const { shown, tween } = change(model, () =>
+      data.reset({
+        x: [1, 2, 3],
+        y: [50, 60, 70],
+        id: encodedCategory(Int32Array.from([0, 1, 2]), ["c", "a", "b"]),
+      }),
+    );
+    expectRects(centers(pointsOf(frameAt(tween!, 0))[0]!), [before[2]!, before[0]!, before[1]!]);
+    const copy = [...shown.items.values()][0]!;
+    expect(copy.kind).toBe("points");
+    if (copy.kind !== "points") throw new Error("expected points");
+    expect(copy.ids).toEqual(["a", "b", "c"]);
+    data.setColumn("id", ["new", "new", "new"]);
+    model.scene(estimateText);
+    expect(copy.ids).toEqual(["a", "b", "c"]);
+  });
+
+  it.each(["before", "after"] as const)(
+    "show a series at once with invalid keys %s, without falling back to rows",
+    (side) => {
+      for (const bad of [
+        [1, 1, 3],
+        [1, Number.NaN, 3],
+        [1, Infinity, 3],
+      ]) {
+        const { data, model } = scatter(
+          { x: [1, 2, 3], y: [10, 20, 30], id: side === "before" ? bad : [1, 2, 3] },
+          { animationKey: "id" },
+        );
+        expect(
+          change(model, () => {
+            data.setColumn("id", side === "after" ? bad : [1, 2, 3]);
+            data.setColumn("y", [30, 20, 10]);
+          }).tween,
+        ).toBeUndefined();
+      }
+      for (const bad of [
+        ["a", "a", "c"],
+        ["a", null, "c"],
+      ]) {
+        const data = table({
+          x: [1, 2, 3],
+          y: [10, 20, 30],
+          id: category(side === "before" ? bad : ["a", "b", "c"]),
+        });
+        const model = chart({
+          marks: [point(data, { x: "x", y: "y", animationKey: "id" })],
+          x: { domain: [0, 4] },
+          y: { domain: [0, 100] },
+        });
+        expect(
+          change(model, () => {
+            data.setColumn("id", side === "after" ? bad : ["a", "b", "c"]);
+            data.setColumn("y", [30, 20, 10]);
+          }).tween,
+        ).toBeUndefined();
+      }
+    },
+  );
+
+  it("scope keys and invalid-key fallback to each series, with a whole-chart fallback for moving axes", () => {
+    const data = table({
+      x: [1, 2, 1, 2],
+      y: [10, 20, 30, 40],
+      id: [1, 1, 1, 2],
+      group: ["a", "a", "b", "b"],
+    });
+    const marks = [point(data, { x: "x", y: "y", series: "group", animationKey: "id" })];
+    const fixed = chart({ marks, x: { domain: [0, 4] }, y: { domain: [0, 100] } });
+    const automatic = chart({ marks });
+    const old = snapshot(automatic.scene(estimateText), automatic.panels()[0], 0)!;
+    const { tween } = change(fixed, () =>
+      data.reset({
+        x: [1, 2, 1, 2],
+        y: [20, 10, 60, 70],
+        id: [1, 1, 2, 1],
+        group: ["a", "a", "b", "b"],
+      }),
+    );
+    expect(tween!.points).toHaveLength(1);
+    expect(tween!.points[0]!.mark.key).toContain('"b"');
+    expect(centers(pointsOf(frameAt(tween!, 0))[0]!)).toEqual(centers(pointsOf(tween!.scene)[0]!));
+    expect(
+      plan(old, automatic.scene(estimateText), automatic.panels()[0], 200, BUILDERS),
+    ).toBeUndefined();
+  });
+
+  it("capture no identities in static charts, and accept time keys in portable marks", () => {
+    const data = table({ x: [1, 2], y: [10, 20], id: time([100, 200]) });
+    const model = chart({
+      marks: [
+        new PointMark(
+          { type: "point", x: "x", y: "y", animationKey: "id" },
+          data as unknown as Table,
+        ),
+      ],
+    });
+    expect(
+      change(model, () => data.reset({ x: [1, 2], y: [30, 40], id: time([200, 100]) })).tween,
+    ).toBeDefined();
+    model.update({ ...model.config, animation: false });
+    expect(pointsOf(model.scene(estimateText))[0]!.items).toBeUndefined();
+  });
+
+  it("require both scenes to declare the same key field and kind", () => {
+    const { data, model } = scatter(
+      { x: [1, 2, 3], y: [10, 20, 30], id: [1, 2, 3] },
+      { animationKey: "id" },
+    );
+    const { shown, tween } = change(model, () => data.setColumn("y", [30, 20, 10]));
+    const scene = tween!.scene;
+    const panel = scene.panels[0]!;
+    const mark = pointsOf(scene)[0]!;
+    const items = mark.items!;
+    const variants: PointItems[] = [
+      { ...items, ids: new Float64Array([1, 2, 3]), key: undefined },
+      { ...items, ids: new Float64Array([1, 2, 3]), key: { field: "other", kind: "number" } },
+      { ...items, ids: new Float64Array([1, 2, 3]), key: { field: "id", kind: "time" } },
+      { ...items, ids: ["1", "2", "3"], key: { field: "id", kind: "category" } },
+    ];
+    for (const identity of variants) {
+      const changed = { ...scene, panels: [{ ...panel, marks: [{ ...mark, items: identity }] }] };
+      expect(plan(shown, changed, model.panels()[0], 200, BUILDERS)).toBeUndefined();
+    }
+  });
+
+  it("bound retained, entering, and exiting points across all series, including still points", () => {
+    const rows = (offset: number) => ({
+      x: Float64Array.from({ length: 3000 }, (_, i) => i),
+      y: new Float64Array(3000).fill(1),
+      id: Float64Array.from({ length: 3000 }, (_, i) => offset + i),
+    });
+    const data = table(rows(0));
+    const model = chart({
+      marks: [
+        point(data, { x: "x", y: "y", animationKey: "id", id: "first" }),
+        point(data, { x: "x", y: "y", animationKey: "id", id: "second" }),
+      ],
+    });
+    const { tween } = change(model, () => data.reset(rows(3000)));
+    expect(tween!.points).toHaveLength(1);
+    const total = pointsOf(frameAt(tween!, 100)).reduce((sum, mark) => sum + mark.count, 0);
+    expect(total).toBeLessThanOrEqual(MOVING_POINTS);
   });
 
   it("leave out clouds, and more points than move every frame, before copying them", () => {
