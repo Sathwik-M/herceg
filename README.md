@@ -77,8 +77,7 @@ Next, in order:
 1. Large data: incremental updates for bars and point clouds split by a
    series field.
 2. Layout: categories resolved per panel.
-3. Animation of changed values (bars, pies) and of panels; leader lines for
-   moved labels.
+3. Animation of changed values (bars, pies) and of panels.
 4. More financial tools (a range navigator, drawing tools, markers at
    breaks); 3D lines, meshes, parametric surfaces, and surfaces on the GPU.
 5. Screen-reader verification, benchmarks in Firefox and on other machines

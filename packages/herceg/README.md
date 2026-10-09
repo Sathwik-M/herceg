@@ -208,8 +208,12 @@ cover an earlier label of the same mark, in row order, are drawn anyway by
 default. With `overlap: "hide"` they are left out. With `overlap: "move"`,
 a label goes where `anchor`, `dx`, and `dy` put it if that is free and in
 the plot; otherwise it tries above, below, after, before, and at the corners
-of its point, a few pixels away and off the other rows' points, and is left
-out if none of those is free (sort the table to label what matters first).
+of its point, a few pixels away and off the other rows' points, then the same
+places a label's height or two farther out, with a thin line back to its
+point that crosses no other label, point, or line, and is left out if none
+of those is free. Every label tries its near places before any goes farther
+out, so sorting the table sets which labels win within each of the two
+rounds.
 Empty labels take no room. Placement measures text with the browser's fonts
 on screen and with estimated widths in static SVG and PDF output, so the two
 can place labels differently. Text is meant for annotations and labeling a
