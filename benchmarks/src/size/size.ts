@@ -4,7 +4,7 @@
 //   npm run size -- [--out results/size.json]
 
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 import * as esbuild from "esbuild";
@@ -35,9 +35,13 @@ const ENTRY_PACKAGES: Record<string, string> = {
 };
 
 interface Bundle {
-  js: Uint8Array;
+  /**
+   * What a page loads before the chart can render: the entry chunk and the
+   * chunks it imports statically, fetched (and compressed) one by one.
+   */
+  initial: Uint8Array[];
   css: Uint8Array | undefined;
-  /** Chunks the entry imports dynamically, loaded only when needed. */
+  /** Chunks reached only through dynamic imports, loaded when needed. */
   lazy: Uint8Array[];
 }
 
@@ -77,22 +81,42 @@ async function bundle(entry: string, minify: boolean, external: string[]): Promi
     define: { "process.env.NODE_ENV": '"production"' },
     alias: HERCEG_ALIAS,
     plugins: [svelte],
+    metafile: true,
     logLevel: "error",
   });
   const name = basename(entry).replace(/\.tsx?$/, "");
-  const js = result.outputFiles.filter((output) => output.path.endsWith(".js"));
-  const main = js.find((output) => basename(output.path) === `${name}.js`)!;
-  const css = result.outputFiles.find((output) => output.path.endsWith(".css"));
+  const outputs = result.metafile.outputs;
+  // Metafile paths are relative and use forward slashes, on Windows too.
+  const contents = new Map(
+    result.outputFiles.map((file) => [
+      relative(process.cwd(), file.path).split(sep).join("/"),
+      file.contents,
+    ]),
+  );
+  // The entry and what it imports statically, transitively.
+  const initial = new Set<string>();
+  const visit = (path: string) => {
+    if (initial.has(path)) return;
+    initial.add(path);
+    for (const { path: imported, kind } of outputs[path]!.imports)
+      if (kind === "import-statement" && outputs[imported]) visit(imported);
+  };
+  visit(Object.keys(outputs).find((path) => basename(path) === `${name}.js`)!);
+  const js = Object.keys(outputs).filter((path) => path.endsWith(".js"));
+  const css = Object.keys(outputs).find((path) => path.endsWith(".css"));
   return {
-    js: main.contents,
-    css: css?.contents,
-    lazy: js.filter((output) => output !== main).map((output) => output.contents),
+    initial: [...initial].map((path) => contents.get(path)!),
+    css: css === undefined ? undefined : contents.get(css),
+    lazy: js.filter((path) => !initial.has(path)).map((path) => contents.get(path)!),
   };
 }
 
 const gzip = (bytes: Uint8Array) => gzipSync(bytes, { level: 9 }).byteLength;
 const brotli = (bytes: Uint8Array) =>
   brotliCompressSync(bytes, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).byteLength;
+/** Bytes of chunks fetched one by one: each compressed on its own. */
+const total = (chunks: Uint8Array[], size: (bytes: Uint8Array) => number) =>
+  chunks.reduce((sum, chunk) => sum + size(chunk), 0);
 
 const rows = [];
 // Entries are scripts; components they render sit next to them.
@@ -111,17 +135,19 @@ for (const file of readdirSync(ENTRIES)
     entry: name,
     package: pkg,
     version: packageVersion(pkg),
-    raw: raw.js.byteLength,
-    minified: minified.js.byteLength,
-    gzip: gzip(minified.js),
-    brotli: brotli(minified.js),
+    raw: total(raw.initial, (bytes) => bytes.byteLength),
+    minified: total(minified.initial, (bytes) => bytes.byteLength),
+    gzip: total(minified.initial, gzip),
+    brotli: total(minified.initial, brotli),
+    // Herceg loads a few small chunks with the entry; competitors load one.
+    chunks: minified.initial.length,
     // Stylesheets the library requires, reported separately from JavaScript.
     css: css ? { minified: css.byteLength, gzip: gzip(css), brotli: brotli(css) } : null,
     // Code split off for on-demand loading, such as Herceg's GPU painter.
     lazy: minified.lazy.length
       ? {
-          minified: minified.lazy.reduce((sum, chunk) => sum + chunk.byteLength, 0),
-          gzip: minified.lazy.reduce((sum, chunk) => sum + gzip(chunk), 0),
+          minified: total(minified.lazy, (bytes) => bytes.byteLength),
+          gzip: total(minified.lazy, gzip),
         }
       : null,
   });
@@ -145,7 +171,7 @@ if (args.out) {
     date: new Date().toISOString(),
     commit: commit(),
     method:
-      "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; the entry chunk is measured, chunks loaded on demand and required CSS are reported separately; gzip level 9; brotli quality 11",
+      "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
     environment: { ...machine(), esbuild: esbuild.version },
     results: rows,
   };

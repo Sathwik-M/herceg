@@ -185,6 +185,12 @@ its own React root here, so per-root setup (event delegation on the
 container) is counted once per chart; an application with one root pays it
 once.
 
+Bundle sizes count what a page loads before the chart renders: the entry
+chunk and the chunks it imports statically, each compressed on its own as
+browsers fetch them. Chunks reached only through dynamic imports (Herceg's
+WebGL painter, animation, crosshair labels) are reported separately as
+loaded on demand.
+
 The `herceg-react-line` size entry leaves React and React DOM out of the
 bundle, since an application using the adapter already ships them;
 `herceg-vue-line` leaves Vue out and `herceg-svelte-line` Svelte's runtime
