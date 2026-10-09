@@ -110,7 +110,7 @@ There are no per-row objects anywhere in the pipeline.
 Memory amplification over the source data is therefore: reserved capacity
 for tables that grow (about 0.5x the live rows right after growth; at most
 0.5x `maxRows` for rolling windows; after drops, up to about six times the
-live rows until an explicit drop shrinks the buffer), 4 to 6 bytes per row for long-format grouping (each group's positions, with room for half as many again and at least 16), two `Float64Array`s per
+live rows until an explicit drop shrinks the buffer), 4 to 6 bytes per row for long-format grouping (each group's positions, with room for half as many again and at least 16), about 0.16 bytes per row for each field a long-format line or area indexes (up to twice that as a series grows, and about four times after its rows shrink; see Level of detail), two `Float64Array`s per
 layer for stacked areas and bars (top and base, with up to 0.5x room to grow
 like a table's), and geometry buffers bounded by the plot width.
 
@@ -123,15 +123,21 @@ are never written again, since scenes and other charts sharing the mark may
 still read them; appends only write past their end. Groups are keyed by name, since a window
 may renumber a category's codes; a change to values in place, or a reset,
 groups again. A row view's rows are grouped from scratch. Each group counts
-the rows it has lost, which lets GPU uploads follow it (below). Its code
-(`marks/split.ts`) loads the first time a chart groups a whole table's
-rows; until then, and for good if it cannot load, rows are grouped again each
-change, with the same result. The grouping itself costs about what
-grouping again did (both are passes over typed arrays; a rolling window's
-drops still move every kept row), and extents of long-format series still
-scan their rows each scene. What it buys is uploads: a point cloud of a
-million rows in two series, streaming 1,000 rows per tick, takes about
-3 ms of JavaScript per frame instead of 13 ms (Chrome, interleaved runs).
+the rows it has lost, which lets GPU uploads follow it (below), and keeps
+min/max indexes of the fields lines and areas read over its rows (see Level
+of detail). Its code (`marks/split.ts`, with the indexes and the reduction
+through rows) loads the first time a chart groups a whole table's rows;
+until then, and for good if it cannot load, rows are grouped again each
+change, with the same result. Once it loads, the next scene groups through
+it, whether or not the table has changed, and charts made later group
+through it from their first scene. The grouping itself costs about
+what grouping again did (both are passes over typed arrays; a rolling
+window's drops still move every kept row). What it buys is what follows a
+group from one change to the next: uploads, so a point cloud of a million
+rows in two series, streaming 1,000 rows per tick, takes about 3 ms of
+JavaScript per frame instead of 13 ms (Chrome, interleaved runs), and
+indexes, so long-format lines zoom and stream at about the cost of whole
+columns.
 
 Stacks of several fields sharing rows (`marks/stack.ts`) are kept current
 as the table streams: appended rows are stacked on their own and dropped
@@ -474,15 +480,19 @@ scanned pixel column by pixel column: x is compared with a threshold just
 left of the column's right edge rather than mapped. The threshold is checked
 with the exact column formula, and points at or past it get the exact test;
 because the floating-point mapping never decreases, the result is identical
-to mapping every point. Gaps end a column in the same pass. Log scales and
-row subsets of long-format tables use a per-point loop. Unsorted x is drawn
-point by point without reduction.
+to mapping every point. Gaps end a column in the same pass. Long-format
+series whose rows follow their table (see the data model) are scanned the
+same way through their rows, by a loop of their own (`lod/m4-rows.ts`,
+loaded with the grouping): looking up rows in the loop that scans whole
+columns would slow it by half. Log scales and other row subsets (facet
+panels, and the scene before the grouping loads) use a per-point loop.
+Unsorted x is drawn point by point without reduction.
 
 The y domain comes from the same visible range: sorted series are trimmed to
 the points inside it, so whole columns reduce to a plain min/max scan.
 
-Line series, and areas filled to zero, of at least 262,144 points use a
-min/max index of their y field. The table owns the index and keeps it
+Lines, and areas filled to zero, over whole columns of at least 262,144
+points use a min/max index of their y field. The table owns the index and keeps it
 current: appends recompute only the trailing blocks, drops leave it valid
 (it covers the column's whole buffer, so positions do not move), small
 in-place updates recompute their blocks, and when the table moves its rows
@@ -504,9 +514,44 @@ output is identical either way. Zooming into ten million points takes about
 1.3 ms instead of 3 ms. Streaming 10,000 points per tick into a
 million-point window takes a median of about 1.5 ms instead of 2.7 ms (p95
 2.0 instead of 3.4 ms); the ticks that move the window's storage also
-rebuild its index and take up to about 5 ms instead of 4 ms. Bands and
-long-format series (row subsets) are not indexed; long stacks have indexes
-of their own (see the data model).
+rebuild its index and take up to about 5 ms instead of 4 ms. Bands are not
+indexed; long stacks have indexes of their own (see the data model), and
+long-format series their group's (below).
+
+Long-format lines, and areas filled to zero, of at least 4,096 rows a
+series use a min/max index of their group: one per group and y field
+(`RowsIndex` in `lod/rows-index.ts`), owned by the grouping and so shared
+by every chart drawing the mark. It has the table index's blocks, over
+positions in the group's rows, reading values through them (`y[rows[k]]`),
+so no value is copied; queries take and give positions, as M4 and extents
+use them. Blocks are numbered from the group's first row ever (the rows it
+has dropped plus the position), so a rolling window's drops discard the
+blocks they empty and summarize again the one they cut, instead of moving
+every block, and extremes are kept as offsets in their block, so nothing is
+rewritten as positions move down. A chart's request brings the index up to
+date: appended rows cost their own blocks, a drop a block per level and a
+shift of the remaining summaries. A change to values in place, or a reset,
+groups the rows again, and the indexes go with the old groups, so a chart
+builds one only when nothing changed values in place since its previous
+draw. Groups take a lower threshold than columns: without an index, extents
+read every row in view through the rows (about 2.5 ns a row), while the
+index takes about 0.16 bytes a row (160 KB for a million rows; storage
+grows by doubling and shrinks only when four times larger than needed, so
+up to twice that as a series grows, as in a window that has turned over,
+and about four times after its rows shrink), beside the 4 to 6 bytes of the
+rows themselves. Dense pixel columns are reduced through the
+index as whole columns are. Over five series of 200,000 rows each (800 by
+400 pixels at 2x, Node, medians of interleaved runs), a zoom step showing
+every row takes about 1.3 ms instead of 6.0 ms, for lines and for areas
+(the same data as five columns, below the column threshold, takes 2.1 ms), and
+streaming 10,000 rows per tick into the million-row window takes a median
+of about 2.1 ms instead of 5.8 ms (p95 2.3 instead of 6.6 ms; five
+columns: 1.8 ms), as does a row per series per tick; what remains is mostly
+the reduction through rows and the drops' move of every kept row. A skewed
+split (600,000, 250,000, 100,000, 40,000, and 10,000 rows) zooms in about
+1.2 ms instead of 6.2 ms. The scene that first builds the indexes takes
+about 4.9 ms. Facet panels' rows are subsets of their series' and keep
+scanning.
 
 Histograms keep their bins, not their values: whenever the table changes,
 one pass finds the extremes and another counts each series' values (by
@@ -608,7 +653,8 @@ runs by binary search (`shownFrom`, `shownBefore`) and measures distances on
 screen. Lines join the points either side.
 
 **Level of detail** stays in data space: the min/max index of y is the same
-index, queried over shown ranges. M4 over breaks (`lod/m4-breaks.ts`) takes
+index (a long-format series' is its group's, read through its rows), queried
+over shown ranges. M4 over breaks (`lod/m4-breaks.ts`) takes
 a pixel column as the floor of `xo + (collapse(x) - origin) * xf`, the same
 arithmetic on every path, and keeps a column open across shown ranges, so a
 column with a break inside it still emits at most four points. Columns of
@@ -1845,9 +1891,12 @@ document when `OffscreenCanvas` is unavailable.
   (`marks/legend-parts.ts`) that lay themselves out, draw their SVG, and
   describe themselves, so the model and the renderers only flow and call
   them.
-- Bands, log scales, long-format series, and stacked areas with gaps in view
-  re-scan the visible range on every frame; whole-column lines, areas filled
-  to zero, and long gap-free stacks on linear scales use min/max indexes.
+- Bands, log scales, facet panels' rows, and stacked areas with gaps in view
+  re-scan the visible range on every frame; lines and areas filled to zero
+  (whole columns, or long-format series following their table) and long
+  gap-free stacks on linear scales use min/max indexes. A change to values
+  of a long-format table in place groups its rows again and rebuilds their
+  indexes, and a rolling window's drops move every row its groups keep.
   Stacked bars split by a series field restack every row on each change.
 - Renderer thresholds are not tuned.
 - Rules and text are always drawn above other marks, regardless of mark order.

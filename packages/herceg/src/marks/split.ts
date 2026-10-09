@@ -1,9 +1,14 @@
 // Long-format rows split by a series field and kept current as their table
-// streams. Loaded the first time a chart splits a whole table's rows by a
-// field (see SeriesSplitter), so charts without a series field carry none of it.
+// streams, with min/max indexes of their fields. Loaded the first time a
+// chart splits a whole table's rows by a field (see SeriesSplitter), so
+// charts without a series field carry none of it.
 
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
+import { rowsM4 } from "../lod/m4-rows.ts";
+import type { RangeIndex } from "../lod/minmax-index.ts";
+import { RowsIndex } from "../lod/rows-index.ts";
+import type { SeriesStream } from "./series.ts";
 
 /** One category's rows in `SplitRows`: positions, ascending, in `buffer[0, count)`. */
 interface Group {
@@ -16,6 +21,11 @@ interface Group {
   sorted: boolean;
   /** One object per group while it follows its table, as streamed GPU uploads key them. */
   readonly key: object;
+  /**
+   * Min/max indexes of fields over the rows, by field, from the first time
+   * a chart asks for one; brought up to date when asked again.
+   */
+  indexes: Map<string, RowsIndex> | undefined;
 }
 
 /** One category's rows, as `SplitRows.groups` gives them. */
@@ -23,8 +33,8 @@ export interface CategoryRows {
   readonly name: string;
   readonly rows: Uint32Array;
   readonly sorted: boolean;
-  readonly dropped: number;
-  readonly key: object;
+  /** The group as it follows the table: see `Series.stream`. */
+  readonly stream: SeriesStream;
 }
 
 /**
@@ -60,8 +70,8 @@ export class SplitRows {
     for (const name of dictionary) {
       const group = this.#groups.get(name);
       if (!group || group.count === 0) continue;
-      const { buffer, count, sorted, dropped, key } = group;
-      out.push({ name, rows: buffer.subarray(0, count), sorted, dropped, key });
+      const rows = group.buffer.subarray(0, group.count);
+      out.push({ name, rows, sorted: group.sorted, stream: new GroupRows(table, group, rows) });
     }
     return out;
   }
@@ -144,6 +154,7 @@ export class SplitRows {
             dropped: 0,
             sorted: x !== undefined,
             key: {},
+            indexes: undefined,
           };
           this.#groups.set(name, group);
         }
@@ -166,6 +177,66 @@ export class SplitRows {
     return x === undefined || this.#table.kind(x as never) === "category"
       ? undefined
       : this.#table.numbers(x as never);
+  }
+}
+
+/**
+ * A group's rows at one version of its table, as series hold them: the
+ * group's identity and drops, and min/max indexes of fields over these rows.
+ */
+class GroupRows implements SeriesStream {
+  readonly key: object;
+  readonly dropped: number;
+  readonly m4 = rowsM4;
+  readonly #table: Table;
+  readonly #version: number;
+  readonly #group: Group;
+  readonly #rows: Uint32Array;
+  /** Index views for this version, by field. */
+  #views: Map<string, RangeIndex> | undefined;
+
+  constructor(table: Table, group: Group, rows: Uint32Array) {
+    this.key = group.key;
+    this.dropped = group.dropped;
+    this.#table = table;
+    this.#version = table.version;
+    this.#group = group;
+    this.#rows = rows;
+  }
+
+  hasMinMaxIndex(field: string): boolean {
+    return this.#group.indexes?.has(field) ?? false;
+  }
+
+  minMaxIndex(field: string): RangeIndex {
+    this.#views ??= new Map();
+    let view = this.#views.get(field);
+    if (view) return view;
+    const table = this.#table;
+    const version = this.#version;
+    const stale = () =>
+      new Error(`The rows of "${this.#group.name}" were read before the table changed`);
+    if (table.version !== version) throw stale();
+    const values = table.numbers(field as never);
+    const rows = this.#rows;
+    this.#group.indexes ??= new Map();
+    let index = this.#group.indexes.get(field);
+    if (!index) {
+      index = new RowsIndex();
+      this.#group.indexes.set(field, index);
+    }
+    index.update(values, rows, this.dropped, rows.length);
+    const covered = index;
+    view = {
+      length: rows.length,
+      gapShare: covered.gapShare,
+      query: (_values, from, to, out) => {
+        if (table.version !== version) throw stale();
+        return covered.query(values, rows, from, to, out);
+      },
+    };
+    this.#views.set(field, view);
+    return view;
   }
 }
 

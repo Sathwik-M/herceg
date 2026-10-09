@@ -2,8 +2,9 @@
 // queries, point by point) gives what a plain reference gives.
 import { describe, expect, it } from "vitest";
 import { type Breaks, type Mapping, m4, mapValue } from "../../src/lod/m4.ts";
-import { MinMaxIndex } from "../../src/lod/minmax-index.ts";
+import { MinMaxIndex, type RangeIndex } from "../../src/lod/minmax-index.ts";
 import { Polyline } from "../../src/lod/polyline.ts";
+import { RowsIndex } from "../../src/lod/rows-index.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 
 const MINUTE = 60_000;
@@ -127,6 +128,39 @@ describe("m4 with axis breaks", () => {
       const indexed = new Polyline();
       m4(x, y, from, to, xMap, yMap, ratio, indexed, undefined, new MinMaxIndex(y));
       expect(points(indexed)).toEqual(expected);
+    }
+  });
+
+  it("gives the reference's output through rows, with and without their index", () => {
+    // Every other row, as one series of long-format data, and the same points gathered.
+    const rows = Uint32Array.from({ length: n >> 1 }, (_, k) => 2 * k + (k % 3 === 0 ? 1 : 0));
+    const xs = Float64Array.from(rows, (row) => x[row]!);
+    const ys = Float64Array.from(rows, (row) => y[row]!);
+    const summaries = new RowsIndex();
+    summaries.update(y, rows, 0, rows.length);
+    const index: RangeIndex = {
+      length: rows.length,
+      gapShare: summaries.gapShare,
+      query: (_values, from, to, out) => summaries.query(y, rows, from, to, out),
+    };
+    for (const { from, to, width, ratio } of cases) {
+      const [a, b] = [from >> 1, to >> 1];
+      const lo = breaks.collapse(xs[a]!);
+      const hi = breaks.collapse(xs[b - 1]!);
+      const xMap: Mapping = {
+        origin: lo,
+        offset: 40,
+        factor: width / (hi - lo),
+        log: false,
+        breaks,
+      };
+      const yMap: Mapping = { origin: 0, offset: 300, factor: -1, log: false };
+      const expected = points(reference(breaks, xs, ys, a, b, xMap, yMap, ratio));
+      for (const through of [undefined, index]) {
+        const out = new Polyline();
+        m4(x, y, a, b, xMap, yMap, ratio, out, rows, through);
+        expect(points(out)).toEqual(expected);
+      }
     }
   });
 
