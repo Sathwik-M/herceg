@@ -18,7 +18,7 @@ from ._derive import Derived
 if TYPE_CHECKING:
     from .widget import ChartWidget
 
-Tooltip = Literal["nearest-x", "nearest-y", "nearest"]
+TooltipMode = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after", "monotone"]
 ThemeName = Literal["light", "dark", "high-contrast", "high-contrast-dark", "auto"]
 
@@ -38,6 +38,130 @@ SCHEMES = (
 # An annotation position: a column name, a number, or a date or datetime
 # (pandas Timestamps and NumPy datetime64 values work too).
 Position = str | float | _dt.date
+
+
+_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+@dataclass(frozen=True)
+class Break:
+    """Time a time axis leaves out, in the chart's ``time_zone``, so the time
+    left (trading sessions) is drawn without gaps. Give exactly one of:
+
+    - ``weekdays``: days of the week, ``("sat", "sun")``;
+    - ``hours``: a daily span of wall-clock time, ``("16:00", "09:30")``
+      (strings or ``datetime.time``), wrapping past midnight when it ends
+      earlier than it starts; across a clock change, the instants whose
+      wall-clock time is in it;
+    - ``dates``: whole calendar days, as dates or ``"YYYY-MM-DD"`` strings;
+    - ``start`` and ``end``: a span of instants (naive datetimes are UTC).
+
+    Starts are included, ends are not. Data inside a break is not drawn;
+    lines and areas join the points on either side.
+    """
+
+    weekdays: Sequence[str] | None = None
+    hours: tuple[str | _dt.time, str | _dt.time] | None = None
+    dates: Sequence[str | _dt.date] | None = None
+    start: Any = None
+    end: Any = None
+
+    def _spec(self) -> dict[str, Any]:
+        given = [
+            name
+            for name, value in (
+                ("weekdays", self.weekdays),
+                ("hours", self.hours),
+                ("dates", self.dates),
+                ("start", self.start),
+            )
+            if value is not None
+        ]
+        if len(given) != 1 and not (not given and self.end is not None):
+            raise ValueError(
+                "a Break has one of weekdays, hours, dates, or start and end, "
+                f"not {' and '.join(given) or 'none'}"
+            )
+        if self.weekdays is not None:
+            days = [self.weekdays] if isinstance(self.weekdays, str) else list(self.weekdays)
+            bad = [day for day in days if day not in _WEEKDAYS]
+            if not days or bad:
+                raise ValueError(
+                    f"weekdays must be names from {', '.join(_WEEKDAYS)}, not {self.weekdays!r}"
+                )
+            return {"weekdays": days}
+        if self.hours is not None:
+            if isinstance(self.hours, str) or len(self.hours) != 2:
+                raise ValueError(
+                    f'hours must be two times of day, ("16:00", "09:30"), not {self.hours!r}'
+                )
+            return {"hours": [_clock(value) for value in self.hours]}
+        if self.dates is not None:
+            dates = [self.dates] if isinstance(self.dates, str | _dt.date) else list(self.dates)
+            if not dates:
+                raise ValueError("dates needs at least one date")
+            return {"dates": [_iso_date(value) for value in dates]}
+        if self.start is None or self.end is None:
+            raise ValueError("a Break of instants needs both start and end")
+        start, end = _instant(self.start, "start"), _instant(self.end, "end")
+        if not end > start:
+            raise ValueError(f"a Break must end after it starts, not at {self.end!r}")
+        return {"from": start, "to": end}
+
+
+def _clock(value: str | _dt.time) -> str:
+    """A time of day as "HH:MM"."""
+    if isinstance(value, _dt.time):
+        if value.second or value.microsecond:
+            raise ValueError(f"break hours are whole minutes, not {value!r}")
+        return f"{value.hour:02d}:{value.minute:02d}"
+    if not isinstance(value, str) or len(value.split(":")) != 2:
+        raise ValueError(f'break hours are times of day, "HH:MM", not {value!r}')
+    return value
+
+
+def _iso_date(value: str | _dt.date) -> str:
+    if isinstance(value, _dt.datetime):
+        raise ValueError(f"break dates are whole days; pass a date, not {value!r}")
+    if isinstance(value, _dt.date):
+        return value.isoformat()
+    try:
+        _dt.date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise ValueError(f'break dates are dates or "YYYY-MM-DD" strings, not {value!r}') from None
+    if len(value) != 10:
+        raise ValueError(f'break dates are dates or "YYYY-MM-DD" strings, not {value!r}')
+    return value
+
+
+def _instant(value: Any, role: str) -> int:
+    """An instant as whole epoch milliseconds."""
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        ms = float(value)
+    else:
+        from ._data import _time_ms
+
+        ms = _time_ms(value)
+    if not (math.isfinite(ms) and ms == int(ms)):
+        raise ValueError(f"a Break's {role} must be a whole millisecond, not {value!r}")
+    return int(ms)
+
+
+def _break(rule: Break | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(rule, Break):
+        return rule._spec()
+    if isinstance(rule, dict):
+        fields = dict(rule)
+        # The spec's names for a span of instants.
+        if "from" in fields or "to" in fields:
+            fields["start"], fields["end"] = fields.pop("from", None), fields.pop("to", None)
+        try:
+            return Break(**fields)._spec()
+        except TypeError:
+            raise ValueError(
+                f"a break has weekdays, hours, dates, or from and to, not {sorted(rule)}"
+            ) from None
+    raise TypeError(f"breaks are Break objects or dicts, not {rule!r}")
 
 
 #: Intl.NumberFormat options, as herceg's spec reader knows them.
@@ -65,7 +189,12 @@ def _check_format(format: dict[str, Any] | None, role: str, known: frozenset[str
 
 @dataclass
 class Axis:
-    """Scale and axis options for x or y. Unset options use herceg's defaults."""
+    """Scale and axis options for x or y. Unset options use herceg's defaults.
+
+    ``breaks``, on a time x axis only, leave out spans of time (see ``Break``)::
+
+        hg.Axis(breaks=[hg.Break(weekdays=("sat", "sun")), hg.Break(hours=("16:00", "09:30"))])
+    """
 
     type: Literal["linear", "log", "time"] | None = None
     domain: tuple[float, float] | None = None
@@ -76,6 +205,7 @@ class Axis:
     ticks: int | None = None
     format: dict[str, Any] | None = None
     show: bool | None = None
+    breaks: Sequence[Break | dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         _check_format(self.format, "axis format", _NUMBER_FORMAT | _TIME_FORMAT)
@@ -91,6 +221,7 @@ class Axis:
             "ticks": self.ticks,
             "format": self.format,
             "axis": self.show,
+            "breaks": [_break(rule) for rule in self.breaks] if self.breaks is not None else None,
         }
         return {key: value for key, value in spec.items() if value is not None}
 
@@ -171,6 +302,25 @@ class Projection:
 
 
 @dataclass
+class Tooltip:
+    """Tooltip options: ``mode`` ("nearest-x", "nearest-y", or "nearest"; by
+    default one suited to the marks) and ``axis_labels``, which labels the
+    crosshair on the axes, as financial charts do: the inspected value on the
+    axis it follows and the pointer's position on the other."""
+
+    mode: TooltipMode | None = None
+    axis_labels: bool = False
+
+    def _spec(self) -> dict[str, Any]:
+        spec: dict[str, Any] = {}
+        if self.mode is not None:
+            spec["mode"] = self.mode
+        if self.axis_labels:
+            spec["axisLabels"] = True
+        return spec
+
+
+@dataclass
 class Panel:
     """One of a chart's ``panels``: marks with ``panel=id`` draw in it.
 
@@ -184,7 +334,12 @@ class Panel:
     x: Axis | dict[str, Any] | None = None
 
     def _spec(self) -> dict[str, Any]:
-        spec = {"id": self.id, "title": self.title, "x": _axis(self.x), "y": _axis(self.y)}
+        spec = {
+            "id": self.id,
+            "title": self.title,
+            "x": _axis(self.x, "a panel's x"),
+            "y": _axis(self.y, "a panel's y"),
+        }
         return {key: value for key, value in spec.items() if value is not None}
 
 
@@ -225,7 +380,7 @@ class Chart:
         panel_columns: int | None = None,
         panel_row_heights: Sequence[float] | None = None,
         legend: bool | None = None,
-        tooltip: bool | Tooltip = True,
+        tooltip: bool | TooltipMode | Tooltip = True,
         zoom: bool | Literal["x", "y", "xy"] = False,
         brush: Literal["x", "y", "xy", "lasso"] | None = None,
         sync: str | None = None,
@@ -742,6 +897,7 @@ class Chart:
         close: str,
         *,
         data: Any = None,
+        variant: Literal["candlestick", "ohlc"] | None = None,
         rise: str | None = None,
         fall: str | None = None,
         label: str | None = None,
@@ -754,7 +910,11 @@ class Chart:
 
         Candles closing at or above their open are hollow in the ``rise``
         color, others filled in ``fall``; both default to the theme's.
+        ``variant="ohlc"`` draws bars instead: a line from low to high with
+        the open ticked to its left and the close to its right.
         """
+        if variant not in (None, "candlestick", "ohlc"):
+            raise ValueError(f"variant must be 'candlestick' or 'ohlc', not {variant!r}")
         table = self._mark_table(data)
         self._require(table, x, ("number", "time", "category"), "candlestick x")
         for role, field in (("open", open), ("high", high), ("low", low), ("close", close)):
@@ -767,6 +927,7 @@ class Chart:
                 "high": high,
                 "low": low,
                 "close": close,
+                "variant": variant,
                 "rise": rise,
                 "fall": fall,
                 "label": label,
@@ -2028,10 +2189,14 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "width": settings["width"],
         "height": settings["height"],
         "x": _axis(settings["x"]),
-        "y": _axis(settings["y"]),
-        "yRight": _axis(settings["y_right"]),
+        "y": _axis(settings["y"], "y"),
+        "yRight": _axis(settings["y_right"], "y_right"),
         "legend": settings["legend"],
-        "tooltip": tooltip if tooltip is None or isinstance(tooltip, bool) else {"mode": tooltip},
+        "tooltip": tooltip
+        if tooltip is None or isinstance(tooltip, bool)
+        else tooltip._spec()
+        if isinstance(tooltip, Tooltip)
+        else {"mode": tooltip},
         "interaction": interaction or None,
         "animation": (animation or None)
         if isinstance(animation, bool)
@@ -2163,11 +2328,13 @@ def _column_spec(column: Column, buffers: list[bytes]) -> dict[str, Any]:
     return {"type": column.kind, "dtype": dtype, "buffer": index}
 
 
-def _axis(axis: Axis | dict[str, Any] | None) -> dict[str, Any] | None:
+def _axis(axis: Axis | dict[str, Any] | None, role: str = "x") -> dict[str, Any] | None:
     if axis is None:
         return None
     if isinstance(axis, dict):
         axis = Axis(**axis)
+    if role != "x" and axis.breaks is not None:
+        raise ValueError(f"breaks are for the chart's x axis only, not {role}")
     return axis._spec() or None
 
 
@@ -2739,12 +2906,14 @@ def candlestick(
     low: str,
     close: str,
     *,
+    variant: Literal["candlestick", "ohlc"] | None = None,
     rise: str | None = None,
     fall: str | None = None,
     label: str | None = None,
     **options: Any,
 ) -> Chart:
-    """A candlestick chart of open, high, low, and close prices."""
+    """A candlestick chart of open, high, low, and close prices; OHLC bars with
+    ``variant="ohlc"``."""
     return Chart(data, **options).candlestick(
-        x, open, high, low, close, rise=rise, fall=fall, label=label
+        x, open, high, low, close, variant=variant, rise=rise, fall=fall, label=label
     )

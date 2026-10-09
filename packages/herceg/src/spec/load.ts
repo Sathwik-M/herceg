@@ -35,6 +35,7 @@ import { ViolinMark } from "../marks/violin.ts";
 import { Facet } from "../model/facet.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { Panels } from "../model/panels.ts";
+import { timeBreaks } from "../scale/breaks.ts";
 import { scheme } from "../scale/schemes.ts";
 import type { BinaryType, ChartSpec, ColumnSpec, ColumnsSpec, DataSpec, MarkSpec } from "./spec.ts";
 import { checkSpec } from "./validate.ts";
@@ -106,12 +107,22 @@ export function loadSpec(
     facet: split,
     panels,
     grid,
+    x,
     ...chart
   } = spec;
   const facet = split && new Facet(split);
   const subplots = panels && new Panels(panels, grid);
+  // Breaks become the TimeBreaks that resolve them.
+  const { breaks, ...axis } = x ?? {};
+  const xAxis = x && { ...axis, ...(breaks && { breaks: timeBreaks(breaks) }) };
   return {
-    config: { ...chart, marks, ...(facet && { facet }), ...(subplots && { panels: subplots }) },
+    config: {
+      ...chart,
+      marks,
+      ...(xAxis && { x: xAxis }),
+      ...(facet && { facet }),
+      ...(subplots && { panels: subplots }),
+    },
     tables,
     unknown,
   };

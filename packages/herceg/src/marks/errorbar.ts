@@ -1,6 +1,7 @@
 import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { segmentDrawing } from "../draw/segments.ts";
+import type { Breaks } from "../lod/m4.ts";
 import type { Rect, SegmentGeometry } from "../scene/scene.ts";
 import type { ErrorBarSpec } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
@@ -245,8 +246,9 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
     return this.#categorical ? undefined : unionExtent(series.map((s) => xExtent(s, log)));
   }
 
-  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
-    if (!this.#horizontal) return unionExtent(series.map((s) => this.#interval(s, log, x0, x1)));
+  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
+    if (!this.#horizontal)
+      return unionExtent(series.map((s) => this.#interval(s, log, x0, x1, breaks)));
     return this.#categorical ? undefined : unionExtent(series.map((s) => xExtent(swap(s), log)));
   }
 
@@ -278,6 +280,8 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
         const row = rowOf(s, k);
         const at = positions[row]!;
         if (this.#categorical && at < 0) continue;
+        // Intervals at times an axis break leaves out are not drawn.
+        if (along.breaks?.hides(at)) continue;
         const p = along.map(at);
         const lo = across.map(lows[row]!);
         const hi = across.map(highs[row]!);
@@ -366,6 +370,7 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
     log: boolean,
     from = Number.NEGATIVE_INFINITY,
     to = Number.POSITIVE_INFINITY,
+    breaks?: Breaks,
   ): [number, number] | undefined {
     const { positions, lows, highs } = columns(s, this.#horizontal);
     const lo = this.#categorical ? 0 : Math.min(from, to);
@@ -377,7 +382,7 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
     for (let k = start; k < end; k++) {
       const row = rowOf(s, k);
       const at = positions[row]!;
-      if (!(at >= lo && at <= hi) || !Number.isFinite(at)) continue;
+      if (!(at >= lo && at <= hi) || !Number.isFinite(at) || breaks?.hides(at)) continue;
       const a = lows[row]!;
       const b = highs[row]!;
       if (!(usable(a) && usable(b))) continue;

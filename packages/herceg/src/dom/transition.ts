@@ -1,6 +1,7 @@
 // Moving a chart's axes gradually to a view asked for (the `animation`
 // option). Charts load this module only when they animate.
 
+import type { Breaks } from "../lod/m4.ts";
 import type { ChartModel, PanelInfo, ViewDomains } from "../model/model.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { AnimationSpec } from "../spec/spec.ts";
@@ -20,6 +21,8 @@ export interface ViewStart {
   domains: ViewDomains;
   /** Log axes move evenly in log space. */
   log: { x: boolean; y: boolean; yRight: boolean };
+  /** An x axis with breaks moves evenly in the time it shows. */
+  breaks?: Breaks | undefined;
 }
 
 /** A change of view playing. */
@@ -159,6 +162,7 @@ function startOf(panel: PanelInfo): ViewStart {
       y: panel.y.type === "log",
       yRight: panel.yRight?.type === "log",
     },
+    breaks: panel.x.breaks,
   };
 }
 
@@ -180,9 +184,9 @@ function rangeOf(scale: PositionScale): readonly [number, number] | null {
 /** The ranges `elapsed` milliseconds into a transition. */
 export function domainsAt(transition: Transition, to: ViewDomains, elapsed: number): ViewDomains {
   const t = ease(Math.min(1, Math.max(0, elapsed / transition.duration)));
-  const { domains: from, log } = transition;
+  const { domains: from, log, breaks } = transition;
   return {
-    x: between(from.x, to.x, t, log.x),
+    x: between(from.x, to.x, t, log.x, breaks),
     y: between(from.y, to.y, t, log.y),
     yRight: between(from.yRight, to.yRight, t, log.yRight),
   };
@@ -198,11 +202,16 @@ function between(
   to: readonly [number, number] | null,
   t: number,
   log: boolean,
+  breaks?: Breaks,
 ): readonly [number, number] | null {
   if (!from || !to) return to;
   // A log axis whose ranges are not both positive cannot move through log space.
   if (log && !(from[0] > 0 && to[0] > 0)) return to;
-  const lerp = (a: number, b: number) =>
-    log ? 10 ** (Math.log10(a) + (Math.log10(b) - Math.log10(a)) * t) : a + (b - a) * t;
+  const lerp = (a: number, b: number) => {
+    if (log) return 10 ** (Math.log10(a) + (Math.log10(b) - Math.log10(a)) * t);
+    if (!breaks) return a + (b - a) * t;
+    const start = breaks.collapse(a);
+    return breaks.expand(start + (breaks.collapse(b) - start) * t);
+  };
   return [lerp(from[0], to[0]), lerp(from[1], to[1])];
 }

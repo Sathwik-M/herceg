@@ -3,6 +3,7 @@
 // wide (bars, candlesticks) never overlap their neighbors.
 
 import { lowerBound, type Table, upperBound } from "../data/table.ts";
+import type { Breaks } from "../lod/m4.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TableCache } from "./series.ts";
 
@@ -22,6 +23,8 @@ export class Slots {
   readonly #table: Table;
   readonly #field: string;
   readonly #positions = new TableCache<Positions>();
+  /** The smallest gap in time shown, per table version and breaks. */
+  readonly #shownGap = new TableCache<{ breaks: Breaks; gap: number }>();
 
   constructor(table: Table, field: string) {
     this.#table = table;
@@ -48,9 +51,16 @@ export class Slots {
 
   /**
    * `extent` widened by half a slot at each end, measured on the axis' own
-   * scale so log axes keep positive bounds.
+   * scale so log axes keep positive bounds; with `breaks`, in time shown,
+   * so the room is not lost inside a break before the first position.
    */
-  pad(extent: readonly [number, number], log: boolean): readonly [number, number] {
+  pad(extent: readonly [number, number], log: boolean, breaks?: Breaks): readonly [number, number] {
+    if (breaks) {
+      const lo = breaks.collapse(extent[0]);
+      const hi = breaks.collapse(extent[1]);
+      const half = (this.#gapShown(breaks) || hi - lo || 1) / 2;
+      return [breaks.expand(lo - half), breaks.expand(hi + half)];
+    }
     const { gap, logGap } = this.positions();
     const [lo, hi] = log ? [Math.log10(extent[0]), Math.log10(extent[1])] : extent;
     const half = ((log ? logGap : gap) || hi - lo || 1) / 2;
@@ -60,7 +70,25 @@ export class Slots {
     return [usable(start) ? start : extent[0], usable(end) ? end : extent[1]];
   }
 
-  /** Smallest pixel distance between neighboring positions in view. */
+  /** Smallest gap between neighboring positions that `breaks` do not hide, in time shown. */
+  #gapShown(breaks: Breaks): number {
+    const cached = this.#shownGap.get(this.#table, () => ({ breaks, gap: Number.NaN }));
+    if (cached.breaks !== breaks || Number.isNaN(cached.gap)) {
+      let best = Infinity;
+      let previous = Number.NaN;
+      for (const value of this.positions().values) {
+        if (breaks.hides(value)) continue;
+        const position = breaks.collapse(value);
+        if (position - previous < best) best = position - previous;
+        previous = position;
+      }
+      cached.breaks = breaks;
+      cached.gap = Number.isFinite(best) ? best : 0;
+    }
+    return cached.gap;
+  }
+
+  /** Smallest pixel distance between neighboring positions in view (and shown). */
   pixelGap(scale: PositionScale): number {
     const positions = this.positions().values;
     const lo = Math.min(scale.domain[0], scale.domain[1]);
@@ -70,7 +98,10 @@ export class Slots {
     const end = Math.min(positions.length, upperBound(positions, hi) + 1);
     let best = Infinity;
     let previous = Number.NaN;
+    const breaks = scale.breaks;
     for (let i = start; i < end; i++) {
+      // Positions inside breaks are not drawn, and share their seam.
+      if (breaks?.hides(positions[i]!)) continue;
       const pixel = scale.map(positions[i]!);
       if (!Number.isFinite(pixel)) continue;
       const gap = Math.abs(pixel - previous);

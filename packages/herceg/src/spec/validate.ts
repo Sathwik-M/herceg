@@ -10,6 +10,7 @@ import { errorBarForm } from "../marks/errorbar.ts";
 import { regionFormError } from "../marks/region.ts";
 import { ruleFormError } from "../marks/rule.ts";
 import { treeFormError } from "../marks/tree-data.ts";
+import { checkBreaks } from "../scale/breaks.ts";
 import {
   type AnimationSpec,
   type AxisSpec,
@@ -30,6 +31,7 @@ import {
   type TimeColumnSpec,
   type TooltipSpec,
   type WrappedFacetSpec,
+  type XAxisSpec,
 } from "./spec.ts";
 
 type Check = (value: unknown, path: string) => void;
@@ -315,10 +317,9 @@ const TIME_OPTIONS = [
   "timeZoneName",
 ];
 
-const axis: Check = (v, path) => {
-  object(v, path);
-  const spec = v as Record<string, unknown>;
-  properties(spec, path, {
+/** The checks of an axis' options. */
+function axisChecks(spec: Record<string, unknown>): ChecksOf<AxisSpec> {
+  return {
     type: oneOf("linear", "log", "time"),
     domain: (d, p) => {
       numbers(d, p);
@@ -331,7 +332,26 @@ const axis: Check = (v, path) => {
     ticks: positive,
     format: format(spec.type),
     axis: boolean,
-  } satisfies ChecksOf<AxisSpec>);
+  };
+}
+
+const axis: Check = (v, path) => {
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  // Only the x axis has breaks: refuse them elsewhere rather than ignore them.
+  if (spec.breaks !== undefined)
+    fail(`${path}.breaks`, "breaks on the chart's x axis only", spec.breaks);
+  properties(spec, path, axisChecks(spec));
+};
+
+const xAxis: Check = (v, path) => {
+  object(v, path);
+  const spec = v as Record<string, unknown>;
+  properties(spec, path, {
+    ...axisChecks(spec),
+    // Whether any x scale is a time scale shows only once panels are planned.
+    breaks: checkBreaks,
+  } satisfies ChecksOf<XAxisSpec>);
 };
 
 const THEMES = ["light", "dark", "high-contrast", "high-contrast-dark", "auto"];
@@ -630,6 +650,7 @@ const MARKS: MarkChecks = {
       high: field,
       low: field,
       close: field,
+      variant: oneOf("candlestick", "ohlc"),
       rise: string,
       fall: string,
       label: string,
@@ -932,7 +953,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           }
         }
       },
-      x: axis,
+      x: xAxis,
       y: axis,
       yRight: axis,
       panels: (p, path) => {
@@ -994,6 +1015,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
         object(t, path);
         properties(t as Record<string, unknown>, path, {
           mode: oneOf("nearest-x", "nearest-y", "nearest"),
+          axisLabels: boolean,
         } satisfies ChecksOf<TooltipSpec>);
       },
       interaction: (i, path) => {
@@ -1025,8 +1047,8 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
     } satisfies ChecksOf<Omit<ChartSpec, "marks" | "version">>,
     ["marks", "version"],
   );
-  // An older reader would draw shared axes or overlay panels; a spec asking
-  // otherwise says so.
+  // An older reader would draw shared axes or overlay panels, or the time
+  // breaks leave out; a spec asking otherwise says so.
   const declared = (version as number | undefined) ?? 1;
   for (const name of ["resolve", "panels", "grid"])
     if (chart[name] !== undefined && declared < 2)
@@ -1037,6 +1059,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       );
   const ownX = [
     ["spec.resolve.x", (chart.resolve as { x?: unknown } | undefined)?.x],
+    ["spec.x.breaks", (chart.x as { breaks?: unknown } | undefined)?.breaks],
     ...((chart.panels as { x?: unknown }[] | undefined) ?? []).map(
       ({ x }, i) => [`spec.panels[${i}].x`, x] as const,
     ),

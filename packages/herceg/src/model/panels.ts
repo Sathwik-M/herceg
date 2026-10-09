@@ -6,12 +6,13 @@
 
 import type { Mark } from "../marks/mark.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
-import type { AxisSpec, ChartSpec, GridSpec, PanelSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisSpec, GridSpec, PanelSpec, ScaleResolution } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
   across,
   groups,
+  type LayoutOptions,
   type PanelCheck,
   type PanelGrid,
   type PanelGroups,
@@ -95,10 +96,7 @@ export class Panels implements PanelLayout {
    * axes of their own cannot do yet: right axes, and zooming or brushing
    * along y.
    */
-  check(
-    marks: readonly Mark[],
-    options: Pick<ChartSpec, "resolve" | "interaction" | "x" | "y">,
-  ): void {
+  check(marks: readonly Mark[], options: LayoutOptions): void {
     const ids = new Set(this.list.map(({ id }) => id));
     for (const mark of marks) {
       const { type, panel } = mark.spec;

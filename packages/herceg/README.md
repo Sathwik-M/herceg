@@ -189,6 +189,7 @@ heatmap(load, { x: "hour", y: "host", value: "cpu" });
 heatmap(spectrum, { x: "time", y: "frequency", value: "power", reduce: "max" }); // grids larger than the plot
 
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
+candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close", variant: "ohlc" });
 
 histogram(requests, { x: "latency" }); // counts in round bins
 histogram(requests, { x: "latency", series: "region", bins: { step: 10 }, normalize: "percent" });
@@ -259,6 +260,9 @@ and close. When more candles are in view than the plot has pixels, each pixel
 column's candles merge into one: the open of its earliest candle, the close
 of its latest, and its highest high and lowest low. Merged candles are too
 thin to show hollow bodies, so there direction is shown by color only.
+`variant: "ohlc"` draws bars instead: a line from low to high with the open
+ticked to its left and the close to its right, in `rise` or `fall`, so the
+order of the ticks shows direction too.
 
 Histograms count values in bins shared by all their series. Bin edges are
 round numbers (multiples of 1, 2, or 5 times a power of ten) or, for times,
@@ -629,6 +633,63 @@ bars) stay on the left; custom marks take `axis` too. Two scales in one plot inv
 heights that mean different things; for unrelated measures, two charts
 sharing x through `interaction: { sync }` are often easier to read.
 
+### Financial charts
+
+Prices trade in sessions: nights, weekends, and holidays leave gaps on a time
+axis. The x axis' `breaks` leave that time out, so sessions sit side by side:
+
+```ts
+import { candlestick, createChart, timeBreaks } from "herceg";
+
+createChart(element, {
+  marks: [candlestick(prices, { x: "time", open: "o", high: "h", low: "l", close: "c" })],
+  timeZone: "America/New_York",
+  x: {
+    breaks: timeBreaks([
+      { weekdays: ["sat", "sun"] }, // whole days, midnight to midnight
+      { hours: ["16:00", "09:30"] }, // every day, wrapping past midnight
+      { dates: ["2025-12-25", "2026-01-01"] }, // holidays
+      { from: Date.UTC(2025, 10, 28, 18), to: Date.UTC(2025, 11, 1, 14, 30) }, // instants
+    ]),
+  },
+  tooltip: { axisLabels: true },
+});
+```
+
+Breaks follow the chart's `timeZone`, wall-clock time included: a span of
+`hours` leaves out the instants whose clock time is in it, so on the day
+clocks change a night lasts an hour more or less, a span in a repeated hour
+is left out both times, and a skipped one takes no time. Starts are
+included, ends are not; a candle stamped 16:00 is inside a break from 16:00.
+In a spec, `breaks` is the same list (spec version 3); `timeBreaks` brings
+the code that resolves them, so charts without breaks do not bundle it.
+
+The axis then measures the time it shows. Lines and areas join the points
+either side of a break; points, bars, candles, and error bars inside a break
+are not drawn, and neither count toward y nor show in tooltips (the
+keyboard steps over them). Bars and candles are as wide as the gap between
+neighbors in time shown, and room at the axis' ends is time shown too, so
+Monday's first candle is not clipped by the weekend before it. Ticks fall
+on the calendar of the time shown: a tick that would fall in a break moves
+to the end of it, where the next session opens, and reads as the day,
+month, or year that begins there ("Oct 13", "Nov"); ticks too close to such
+a tick give way. Wheel zoom, panning, brushes, synced cursors, and view
+transitions work in time shown; a pixel on a seam reads as the session that
+opens there, and a synced cursor at a time this chart leaves out is not
+drawn. A view entirely inside a break widens to the hour shown on either
+side of it; a fixed `domain` like that is refused. Breaks need a time x
+axis; with x scales of their own (`resolve.x`), every panel's time scale
+leaves them out, and panels over numbers have none. Rules, regions, and
+text inside a break are drawn at its seam.
+
+`tooltip: { axisLabels: true }` labels the crosshair on the axes: the value
+it marks on the axis it follows, and the pointer's position on the other
+axes (both y axes when there are two), across a dashed line through the
+plot. The keyboard and synced cursors label only the value they mark.
+Labels go only on axes the chart draws: none for `axis: false`, and no y
+label in facet columns that share the first column's y axis. The labels' code loads the first time a
+chart asks for them.
+
 ### Small multiples
 
 `facet` draws the chart once per value of a category field, wrapped into
@@ -838,13 +899,13 @@ the thousands, not millions.
 | `marks` | Marks to draw, bottom to top (rules are drawn on top). |
 | `title`, `description` | Accessible name and description; the title is drawn. |
 | `width`, `height` | Fixed size; omitted dimensions follow the container. |
-| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`. |
+| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`; on a time x axis, `breaks: timeBreaks([...])` (see Financial charts). |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `resolve` | `{ x?, y? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x or y scale (see Small multiples and Subplots). |
 | `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights? })`: subplots whose marks name them in `panel` (see Subplots). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
-| `tooltip` | `true` (default), `false`, or `{ mode: "nearest-x" \| "nearest-y" \| "nearest" }`. |
+| `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |
 | `animation` | `true` or `{ duration }` (milliseconds, 250 by default) moves the axes gradually to a view asked for: `setViewport`, `setYViewport`, zooming to a brush, and double-click reset. Off by default. Wheel zoom, panning, new data, resizes, and export always show at once; charts with several panels or `sync`, pages preferring reduced motion, and charts whose frames seem to take over 10 ms (judged from earlier frames, alone or with the charts beside them) do not animate. The animation code loads with the first chart that asks for it. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
@@ -1037,7 +1098,8 @@ createChart(element, config);
 
 Every point is drawn by default. In the browser, point series of 100,000
 points or more are drawn with WebGL2, loaded on demand the first time a chart
-needs it; `chart.loading` settles once they are on screen. With
+needs it; `chart.loading` settles once they are on screen (points on a time
+axis with breaks are placed on the CPU). With
 `sampling: "pixel"`, opaque points
 whose centers land on the same device pixel are drawn once (above 4,096
 points per series), which is faster for dense scatter plots but can drop
@@ -1050,6 +1112,8 @@ device-pixel column, only the first, lowest, highest, and last points of an
 unbroken run are kept, so a million-point series draws as a few thousand
 points while keeping every column's extremes. Missing values split a line into
 separately reduced runs, so data with very many gaps reduces less; dash
-patterns can shift slightly because intermediate points are removed.
+patterns can shift slightly because intermediate points are removed. On a
+time axis with breaks, columns are columns of time shown, and points inside
+breaks are left out without splitting the run.
 `renderer: "auto"` moves charts with many drawn points to Canvas. See
 `docs/architecture.md` in the repository for details.

@@ -2,6 +2,7 @@ import type { CategoryField, NumericField, Schema, Table } from "../data/table.t
 import { pointDrawing } from "../draw/point.ts";
 import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../draw/symbols.ts";
 import { GridIndex } from "../lod/grid-index.ts";
+import type { Breaks } from "../lod/m4.ts";
 import {
   checkColorScale,
   checkRamp,
@@ -194,8 +195,8 @@ export class PointMark implements Mark<PointSpec> {
     return unionExtent(series.map((s) => xExtent(s, log)));
   }
 
-  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
-    return unionExtent(series.map((s) => yExtent(s, x0, x1, s.y, log)));
+  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
+    return unionExtent(series.map((s) => yExtent(s, x0, x1, s.y, log, undefined, false, breaks)));
   }
 
   geometry(series: readonly Series[], frame: Frame): PointGeometry[] {
@@ -237,7 +238,9 @@ export class PointMark implements Mark<PointSpec> {
       // since overlapping translucent or varied points look different from one.
       const sample = this.spec.sampling === "pixel" && opaque && !encoded;
       const [start, end] = this.#visible(s, frame);
-      if (frame.clouds && !sample && !encoded && end - start >= CLOUD_POINTS) {
+      // The GPU maps linearly; points on an axis with breaks are placed here.
+      const linear = frame.x.breaks === undefined;
+      if (frame.clouds && !sample && !encoded && linear && end - start >= CLOUD_POINTS) {
         out.push({
           kind: "point",
           draw: pointDrawing,
@@ -607,6 +610,8 @@ export class PointMark implements Mark<PointSpec> {
  * or farther outside the plot than points reach.
  */
 function place(s: Series, row: number, frame: Frame, reach: number): [number, number] | undefined {
+  // Points inside an axis break are not drawn.
+  if (frame.x.breaks?.hides(s.x[row]!)) return undefined;
   const px = frame.x.map(s.x[row]!);
   const py = frame.y.map(s.y[row]!);
   if (!(Number.isFinite(px) && Number.isFinite(py))) return undefined;

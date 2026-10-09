@@ -10,12 +10,13 @@ import type { CustomSpec } from "../marks/custom.ts";
 import type { Mark } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
-import type { AxisSpec, ChartSpec, FacetSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisSpec, FacetSpec, ScaleResolution } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
   across,
   groups,
+  type LayoutOptions,
   type PanelCheck,
   type PanelGrid,
   type PanelGroups,
@@ -98,10 +99,7 @@ export class Facet implements PanelLayout {
    * Rejects marks that cannot be split by the fields, panels cannot draw
    * yet, and a y zoom over panels with y scales of their own.
    */
-  check(
-    marks: readonly Mark[],
-    options: Pick<ChartSpec, "resolve" | "interaction" | "x" | "y"> = {},
-  ): void {
+  check(marks: readonly Mark[], options: LayoutOptions = {}): void {
     const zoom = options.interaction?.zoom;
     if (
       (options.resolve?.y ?? "shared") !== "shared" &&

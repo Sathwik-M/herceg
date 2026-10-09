@@ -17,6 +17,7 @@ One name per concept, used the same way in code and docs.
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
+| **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
 | **Viewport** | The visible x range when zoomed (one per x scale when panels have x scales of their own), and the visible y ranges when zoomed along y; null means "fit the data". |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
@@ -192,6 +193,9 @@ never overlap. Bands and stacks on log y axes are drawn straight. Missing values
 that are reduced separately, so data that alternates between values and gaps
 can still produce one run per few points.
 
+On a time axis with breaks, columns are columns of time shown and points
+inside breaks are left out without ending a run (see Time axis breaks).
+
 The reduction scans the visible index range (found by binary search) on every
 frame: O(visible points), about 0.8 ms for one million points
 (`npm run bench:core`). On linear scales a whole column of the table is
@@ -240,7 +244,7 @@ most a thousand bars are drawn, whatever the data size. Series split by a
 category field also keep their row indexes (4 bytes per row), as long-format
 series do. Streaming recounts every value on each change.
 
-Candlesticks merge rather than sample: with more candles in view than the
+Candlesticks (and OHLC bars, their `variant`) merge rather than sample: with more candles in view than the
 plot has pixel columns, each column draws one candle with the open of its
 earliest candle, the close of its latest, and its highest high and lowest low,
 so no price extreme is lost. The merge works in any row order, and the
@@ -277,6 +281,81 @@ hidden series, so the layout stays put while they change; a configured
 domain alone adds no axis. The text alternative names each series' axis when
 both have series. Zooming and panning along y move both sides over the same
 pixels: the y viewport holds a range for each.
+
+## Time axis breaks
+
+A time x axis can leave out time: `breaks` rules name days of the week,
+daily spans of wall-clock time, calendar dates, or spans of instants
+(`scale/breaks.ts`). The rules are portable JSON; in TypeScript,
+`timeBreaks(rules)` returns a `TimeBreaks` that carries the code resolving
+them, as `facet()` and `panels()` carry theirs, so the model and level of
+detail reach breaks only through an interface (`Breaks` in `lod/m4.ts`) and
+a chart without breaks bundles a few hooks, not the breaks. It serializes
+as its rules (`toJSON`), which is what adapters compare and specs store.
+
+**Resolution.** A `Calendar` (one per `TimeBreaks` and time zone) resolves
+the rules over a span of time into sorted, disjoint, merged intervals
+[from, to), stored as `Float64Array`s with the break time before each (24
+bytes per interval: about 60 KB for ten years of nights and weekends).
+Wall-clock rules follow the zone by membership: an instant is in an
+`hours` span when its clock time is, so across a change of offset a span
+is up to two intervals (a span inside a repeated hour is left out twice,
+and skipped clock times take no time), and a date is a calendar day of 23
+or 25 hours where clocks change. Offsets come from sampling the zone every
+four days and a binary search of quarter hours where samples differ, so
+resolving ten years asks the zone about a thousand times rather than for
+every interval (about 0.7 ms). The span resolved grows when a value outside
+it is asked about, by at least 28 days or half its length, so streaming
+data and zooming out resolve rarely; growth is exact, never extrapolated,
+and refused past 250,000 intervals.
+
+**Positions.** A value's position is the value less the break time between
+the first span resolved and it; every value inside a break is at its seam.
+Positions are measured from a fixed start, so growing the span never moves
+one: scales built before keep their meaning, and arrays are replaced, never
+changed. Bounds are whole milliseconds, so positions of whole-millisecond
+times are exact. The inverse at a seam is the end of the break, the first
+value shown after it, which is what a pointer on a seam reads.
+
+**Scale.** `BrokenTimeScale` keeps its domain in epoch milliseconds and maps
+linearly over positions: its `mapping()` is the linear coefficients over
+positions plus the calendar, so code that inlines mappings applies
+`collapse` where it reads raw values. Ticks are calendar ticks of an
+interval chosen from the time shown; a tick inside a break moves to its
+end, labeled by the coarsest calendar field that changes across the break
+(`tickContexts`, which `timeTickLabels` reads), and regular ticks closer
+than half a label's room to a moved one give way. Breaks of eight
+intervals or longer are checked for a tick by flooring their end rather
+than walked, so a closure of years costs one check. When many short
+sessions keep moving ticks, coarser intervals are tried.
+
+**Data inside breaks** is not drawn and does not count: `hides` filters
+points, bars, candles, and error bars; y extents and level of detail work
+over the *shown ranges* of sorted rows (`shown`: a galloping search per
+break, and breaks holding no rows leave one range); inspection jumps hidden
+runs by binary search (`shownFrom`, `shownBefore`) and measures distances on
+screen. Lines join the points either side.
+
+**Level of detail** stays in data space: the min/max index of y is the same
+index, queried over shown ranges. M4 over breaks (`lod/m4-breaks.ts`) takes
+a pixel column as the floor of `xo + (collapse(x) - origin) * xf`, the same
+arithmetic on every path, and keeps a column open across shown ranges, so a
+column with a break inside it still emits at most four points. Columns of
+linear data are scanned with a threshold (the column's edge taken back to a
+value and checked with the exact formula) or, for dense data with an index,
+ended by a binary search of x for the edge, corrected with the exact
+formula, and an index query. Over a million minute bars of ten years of New
+York sessions, a whole-series reduction takes about 1.6 ms (0.9 ms
+without breaks) and 0.8 ms with the index (0.5 ms) in Node
+(`npm run bench:core`).
+
+**Domains.** Room at the ends of an automatic domain (half a bar or candle
+slot, glyph insets, headroom) is applied in positions, since padding in
+time would vanish inside a break before the first session; slots measure
+the smallest gap between shown positions. Nice domains choose their
+interval from the time shown. A view entirely inside a break widens to the
+hour shown either side of its seam; a configured domain like that is
+refused. Animated view changes interpolate positions.
 
 ## Small multiples
 
@@ -933,6 +1012,13 @@ axis, and with rectangle and lasso brushes, which only the pointer draws.
 The live region announces selections made with the keyboard and the
 pointer.
 
+With `tooltip.axisLabels`, the overlay also labels the crosshair on the
+axes: the inspected value on the axis it follows, and for the pointer, its
+position on the other axes (both y axes when there are two) across a dashed
+line. The labels live in `dom/axis-labels.ts`, loaded the first time a
+chart asks for them, which imports no code of its own so that loading it
+moves nothing out of a chart's bundle.
+
 Charts emit `viewport`, `select`, `hover`, and `click` events. Each reports
 changes only (hover compares the inspected values), and a listener that
 throws is reported without stopping the others or the chart. Hover listeners
@@ -1010,10 +1096,15 @@ int32 buffers of offsets (and of codes, when rows do not hold geometry i in
 row i). Binary columns become typed-array views of the delivered
 bytes, copied only when misaligned, so large data never passes through JSON
 number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec.
-Maps did not change the format's version: a reader that predates them
-refuses their mark types and geometry columns with an error rather than
-drawing something else, and `projection` only applies to those marks (a
-spec with `projection` but no map marks is refused).
+A spec says which format version it is written in when it uses a feature an
+older reader would silently ignore and draw something else for: version 2
+adds `resolve` and `panels`, version 3 `resolve.x`, panels' own `x`, and
+the x axis' `breaks`. The loader
+reads every version up to its own and refuses later ones. Maps did not
+change the format's version: a reader that predates them refuses their mark
+types and geometry columns with an error rather than drawing something
+else, and `projection` only applies to those marks (a spec with
+`projection` but no map marks is refused).
 
 ## Package layout
 
@@ -1125,6 +1216,16 @@ document when `OffscreenCanvas` is unavailable.
 - One x axis per panel and at most two y axes per chart; category values
   and marks placed along y (horizontal bars and error bars) only on the
   left.
+- Breaks only on time x axes, the same for every panel (a panel's own `x`
+  cannot change them). Histograms count values inside breaks (their bins
+  span them), custom marks draw what their `draw` draws, annotations inside
+  a break sit at its seam, and text summaries count points inside breaks.
+  Breaks have no drawn marker at their seams (ECharts draws a zigzag). Each
+  scene finds shown ranges per series with a search per break in view
+  (about 0.1 ms for 2,600 breaks over a million rows), and a streamed
+  million-point line with ten years of sessions takes about 1.2 ms a scene
+  instead of 0.6 ms. A calendar keeps every span it resolved for as long as
+  its `TimeBreaks` lives (24 bytes per interval).
 - Subplots route whole marks; they have no right axes, shared category x
   and y axes only, x-only zoom and brushing, columns of equal width (rows
   may be weighted), and no facets inside a panel.

@@ -4,6 +4,7 @@ import { BOTTOM, LEFT, RIGHT, rectDrawing, TOP } from "../draw/rect.ts";
 import { textDrawing } from "../draw/text.ts";
 import { type Formatter, numberFormatter } from "../format/format.ts";
 import { estimateText } from "../layout/text.ts";
+import type { Breaks } from "../lod/m4.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { BarSpec } from "../spec/spec.ts";
@@ -206,7 +207,7 @@ export class BarMark implements Mark<BarSpec> {
     return series;
   }
 
-  xExtent(series: readonly Series[], log: boolean) {
+  xExtent(series: readonly Series[], log: boolean, breaks?: Breaks) {
     if (this.#horizontal) {
       return unionExtent(
         series.flatMap((s) => [
@@ -218,10 +219,10 @@ export class BarMark implements Mark<BarSpec> {
     if (this.#categorical) return undefined;
     const extent = unionExtent(series.map((s) => xExtent(s, log)));
     // Leave half a bar slot of room at each end.
-    return extent && this.#slotsOf().pad(extent, log);
+    return extent && this.#slotsOf().pad(extent, log, breaks);
   }
 
-  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
+  yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
     // Horizontal bars put bands on y, which take their categories instead.
     if (this.#horizontal) return undefined;
     // Rows without a band (missing categories, index -1) are not drawn.
@@ -229,8 +230,8 @@ export class BarMark implements Mark<BarSpec> {
     const hi = this.#categorical ? Number.POSITIVE_INFINITY : x1;
     return unionExtent(
       series.flatMap((s) => [
-        yExtent(s, lo, hi, s.y, log),
-        s.y0 ? yExtent(s, lo, hi, s.y0, log) : undefined,
+        yExtent(s, lo, hi, s.y, log, undefined, false, breaks),
+        s.y0 ? yExtent(s, lo, hi, s.y0, log, undefined, false, breaks) : undefined,
       ]),
     );
   }
@@ -280,11 +281,14 @@ export class BarMark implements Mark<BarSpec> {
           ? frame.bytes(s.key, "ends", Math.ceil(rects.length / 4))
           : undefined;
       let count = 0;
+      // Bars at times an axis break leaves out are not drawn.
+      const breaks = along.breaks;
       for (let k = start; k < end; k++) {
         const row = rowOf(s, k);
         const at = positions[row]!;
         const value = ends[row]!;
         if (!Number.isFinite(value) || (this.#categorical && at < 0)) continue;
+        if (breaks?.hides(at)) continue;
         const base = bases ? bases[row]! : Number.NaN;
         const center = along.map(at);
         const tip = across.map(value);

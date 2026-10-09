@@ -13,6 +13,7 @@ function partsFormatter(zone: string): Intl.DateTimeFormat {
     formatter = new Intl.DateTimeFormat("en-US", {
       timeZone: zone,
       hourCycle: "h23",
+      era: "short",
       year: "numeric",
       month: "numeric",
       day: "numeric",
@@ -46,17 +47,16 @@ export function zoneOffset(zone: TimeZone, t: number): number {
 
 function intlOffset(zone: string, t: number): number {
   const fields: Record<string, number> = {};
+  let bc = false;
   for (const part of partsFormatter(zone).formatToParts(t)) {
-    if (part.type !== "literal") fields[part.type] = Number(part.value);
+    if (part.type === "era") bc = part.value.startsWith("B");
+    else if (part.type !== "literal") fields[part.type] = Number(part.value);
   }
-  const wall = Date.UTC(
-    fields.year!,
-    fields.month! - 1,
-    fields.day!,
-    fields.hour!,
-    fields.minute!,
-    fields.second!,
-  );
+  // Years before Christ count down from 1 BC, the astronomical year 0;
+  // setUTCFullYear, unlike Date.UTC, keeps years 0 to 99 as they are.
+  const date = new Date(0);
+  date.setUTCFullYear(bc ? 1 - fields.year! : fields.year!, fields.month! - 1, fields.day!);
+  const wall = date.getTime() + ((fields.hour! * 60 + fields.minute!) * 60 + fields.second!) * 1000;
   // `t` is a quarter-hour boundary, so it has no milliseconds to drop.
   return wall - t;
 }

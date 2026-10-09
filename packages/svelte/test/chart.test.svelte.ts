@@ -7,6 +7,8 @@ import {
   type Mark as HercegMark,
   line,
   table,
+  time,
+  timeBreaks,
 } from "herceg";
 import { type Component, flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +20,7 @@ import Lollipops from "./Lollipops.svelte";
 import Maps from "./Maps.svelte";
 import Parent from "./Parent.svelte";
 import Pies from "./Pies.svelte";
+import Prices from "./Prices.svelte";
 import Stray from "./Stray.svelte";
 
 let host: HTMLDivElement;
@@ -73,6 +76,36 @@ const order = (chart: HercegChart) =>
   });
 
 describe("<Chart>", () => {
+  it("draws OHLC bars, and keeps equal breaks without updating", () => {
+    const day = 86_400_000;
+    const data = table({
+      t: time([0, 1, 4].map((d) => Date.UTC(2025, 9, 9) + d * day)),
+      o: [10, 12, 9],
+      h: [13, 12.5, 9.5],
+      l: [9, 8, 8.5],
+      c: [12, 9, 9],
+    });
+    const props = $state({
+      data,
+      breaks: timeBreaks([{ weekdays: ["sat", "sun"] }]),
+      chart: null as HercegChart | null,
+    });
+    render(Prices, props);
+    const chart = props.chart!;
+    expect(host.querySelector("svg g[clip-path] rect")).toBeNull();
+    const x = chart.model.xScale()!;
+    const [thu, fri, mon] = [0, 1, 4].map((d) => x.map(Date.UTC(2025, 9, 9) + d * day));
+    expect(mon! - fri!).toBeCloseTo(fri! - thu!, 6);
+    const updates = spyUpdates(chart);
+    // New breaks with the same rules are the same option; other rules are not.
+    props.breaks = timeBreaks([{ weekdays: ["sat", "sun"] }]);
+    flushSync();
+    expect(updates).toHaveLength(0);
+    props.breaks = timeBreaks([{ weekdays: ["sun"] }]);
+    flushSync();
+    expect(updates).toHaveLength(1);
+  });
+
   it("renders marks from its children, one path per series", () => {
     lines({ fields: ["a", "b"], limit: 2, options: { title: "Load" } });
     expect(paths()).toHaveLength(2);

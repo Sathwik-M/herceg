@@ -11,6 +11,8 @@ import {
   line,
   type Schema,
   table,
+  time,
+  timeBreaks,
 } from "herceg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -28,6 +30,7 @@ import {
 import {
   Area,
   Bar,
+  Candlestick,
   Chart,
   Custom,
   Funnel,
@@ -62,6 +65,7 @@ const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
 const components = {
   Chart,
+  Candlestick,
   Line,
   Area,
   Bar,
@@ -443,6 +447,35 @@ describe("<Chart>", () => {
     await nextTick();
     expect(host.querySelector("p")!.textContent).toBe("2");
     expect(updates).toHaveLength(0);
+  });
+
+  it("draws OHLC bars from a static variant, and keeps equal breaks without updating", async () => {
+    const day = 86_400_000;
+    const prices = table({
+      t: time([0, 1, 4].map((d) => Date.UTC(2025, 9, 9) + d * day)),
+      o: [10, 12, 9],
+      h: [13, 12.5, 9.5],
+      l: [9, 8, 8.5],
+      c: [12, 9, 9],
+    });
+    const { view, chart } = chartRef();
+    const breaks = shallowRef(timeBreaks([{ weekdays: ["sat", "sun"] }]));
+    mount(
+      `<Chart ref="view" time-zone="UTC" :x="{ breaks }">
+        <Candlestick :data="prices" x="t" open="o" high="h" low="l" close="c" variant="ohlc" />
+      </Chart>`,
+      () => ({ prices, view, breaks }),
+    );
+    expect(chart().model.config.marks[0]!.spec).toMatchObject({ variant: "ohlc" });
+    expect(host.querySelector("svg g[clip-path] rect")).toBeNull();
+    const updates = spyUpdates(chart());
+    // New breaks with the same rules are the same option; other rules are not.
+    breaks.value = timeBreaks([{ weekdays: ["sat", "sun"] }]);
+    await nextTick();
+    expect(updates).toHaveLength(0);
+    breaks.value = timeBreaks([{ weekdays: ["sun"] }]);
+    await nextTick();
+    expect(updates).toHaveLength(1);
   });
 
   it("draws a panel per facet value and keeps equal facets without updating", async () => {

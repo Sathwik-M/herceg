@@ -3,6 +3,7 @@ import type { Schema, Table } from "../data/table.ts";
 import { formatNumber, timeTickLabels } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
 import type { MeasureText } from "../layout/text.ts";
+import type { Breaks } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
@@ -175,14 +176,25 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
   ): Series[];
   /** The axis whose domain includes zero, for marks drawn from a zero baseline. */
   readonly zero?: "x" | "y" | undefined;
-  /** x extent; with `log`, of positive values only. */
-  xExtent(series: readonly Series[], log: boolean): readonly [number, number] | undefined;
-  /** y extent of what the x range [x0, x1] shows; with `log`, of positive values only. */
+  /**
+   * x extent; with `log`, of positive values only. On a time axis with
+   * `breaks`, room a mark leaves at the ends is time shown.
+   */
+  xExtent(
+    series: readonly Series[],
+    log: boolean,
+    breaks?: Breaks,
+  ): readonly [number, number] | undefined;
+  /**
+   * y extent of what the x range [x0, x1] shows; with `log`, of positive
+   * values only; with x `breaks`, of points they do not hide.
+   */
   yExtent(
     series: readonly Series[],
     x0: number,
     x1: number,
     log: boolean,
+    breaks?: Breaks,
   ): readonly [number, number] | undefined;
   /**
    * The mark's part of the scene. `key` identifies the mark, for marks whose

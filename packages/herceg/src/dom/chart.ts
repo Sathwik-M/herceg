@@ -22,8 +22,9 @@ import {
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { CloudPainter, PointGeometry, Scene } from "../scene/scene.ts";
-import { themeReadsPage } from "../theme.ts";
+import { type CloudPainter, type PointGeometry, type Scene, tickLabelGap } from "../scene/scene.ts";
+import { surface, themeReadsPage } from "../theme.ts";
+import type { CrosshairLabels } from "./axis-labels.ts";
 import { ascending, Brush, DRAG_THRESHOLD, normalize, type Selection } from "./brush.ts";
 import { type ChartEvents, type ChartListener, Emitter, type PanelTarget } from "./events.ts";
 import { Legend } from "./legend.ts";
@@ -103,6 +104,9 @@ export class Chart implements Scheduled, SyncMember {
   /** A crosshair per panel shown; the first stays, hidden, when none is. */
   readonly #crosshairs: SVGLineElement[];
   readonly #dots: SVGGElement;
+  /** Labels on the axes at the crosshair, once loaded for `tooltip.axisLabels`; null if it failed to load. */
+  #crosshair: CrosshairLabels | null | undefined;
+  #crosshairLoading: Promise<void> | undefined;
   #canvas: HTMLCanvasElement | null = null;
   #onCanvas = false;
   /** GPU painter for large point series once loaded; null when unavailable. */
@@ -384,15 +388,15 @@ export class Chart implements Scheduled, SyncMember {
 
   /**
    * Pending while the chart loads code it needs: its GPU painter for large
-   * point series, which it draws once loaded, or its `animation`, without
-   * which views change at once. Undefined when nothing is pending.
+   * point series, which it draws once loaded, its `animation`, without
+   * which views change at once, or its crosshair labels. Undefined when
+   * nothing is pending.
    */
   get loading(): Promise<void> | undefined {
-    const clouds = this.#cloudsLoading;
-    const animation = this.#animationLoading;
-    return clouds && animation
-      ? Promise.all([clouds, animation]).then(() => {})
-      : (clouds ?? animation);
+    const pending = [this.#cloudsLoading, this.#animationLoading, this.#crosshairLoading].filter(
+      (loading) => loading !== undefined,
+    );
+    return pending.length > 1 ? Promise.all(pending).then(() => {}) : pending[0];
   }
 
   /** Renders now instead of on the next frame. */
@@ -542,6 +546,7 @@ export class Chart implements Scheduled, SyncMember {
     this.#leaveSync = sync ? join(sync, this) : undefined;
     this.#brush.mode = options.interaction?.brush ?? "x";
     if (options.animation) this.#loadAnimation();
+    if (typeof options.tooltip === "object" && options.tooltip.axisLabels) this.#loadCrosshair();
     // Drags pan or brush; the page still scrolls along an axis they leave alone.
     const { zoom, brush } = options.interaction ?? {};
     const along = `${zoom === true ? "x" : zoom || ""}${brush === "lasso" ? "xy" : (brush ?? "")}`;
@@ -722,6 +727,25 @@ export class Chart implements Scheduled, SyncMember {
       });
   }
 
+  /** Loads the crosshair labels the first time a chart asks for `tooltip.axisLabels`. */
+  #loadCrosshair(): void {
+    if (this.#crosshair !== undefined || this.#crosshairLoading) return;
+    this.#crosshairLoading = import("./axis-labels.ts")
+      .then(({ CrosshairLabels }) => {
+        const labels = new CrosshairLabels(this.root.ownerDocument);
+        this.#dots.before(labels.line);
+        this.#svg.overlay.append(labels.labels);
+        return labels;
+      })
+      // Without it, the crosshair has no labels.
+      .catch(() => null)
+      .then((labels) => {
+        this.#crosshair = labels;
+        this.#crosshairLoading = undefined;
+        if (!this.#destroyed) schedule(this);
+      });
+  }
+
   #describe() {
     const { config } = this.model;
     const key = `${config.marks.flatMap((mark) => tablesOf(mark).map((table) => table.version)).join(",")}|${[...this.model.hidden].join(",")}`;
@@ -762,9 +786,10 @@ export class Chart implements Scheduled, SyncMember {
     const x = this.#syncedX;
     if (x === null || !this.#sharesCursor() || this.model.series().length === 0) return [];
     return this.model.panels().flatMap(({ plot, x: scale }) => {
-      // Outside a panel's x range, the pixel would land in a neighboring panel.
+      // Outside a panel's x range, the pixel would land in a neighboring panel;
+      // a time an axis break leaves out has no place.
       const px = scale.map(x);
-      if (!(px >= plot.x && px <= plot.x + plot.width)) return [];
+      if (!(px >= plot.x && px <= plot.x + plot.width) || scale.breaks?.hides(x)) return [];
       const inspection = this.model.inspect(px, plot.y + plot.height / 2, "nearest-x");
       return inspection ? [inspection] : [];
     });
@@ -878,6 +903,19 @@ export class Chart implements Scheduled, SyncMember {
       }
     }
     this.#dots.replaceChildren(...dots);
+    const tooltip = this.#options.tooltip;
+    const crosshair = this.#crosshair;
+    if (crosshair && typeof tooltip === "object" && tooltip.axisLabels) {
+      crosshair.draw(drawn, active, this.#pointer, {
+        model: this.model,
+        scene,
+        measure: measurer(this.root.ownerDocument),
+        labelGap: tickLabelGap(theme.fontSize),
+        surface: surface(theme),
+      });
+    } else {
+      crosshair?.hide();
+    }
     if (!active || !showTooltip) this.#tooltip.hide();
   }
 
@@ -1278,6 +1316,7 @@ export class Chart implements Scheduled, SyncMember {
       position = nearestTo(
         series,
         before?.axis === "x" ? carried(before.value, before.position) : undefined,
+        to!.x,
       );
     else if (event.key === "ArrowLeft") position -= 1;
     else if (event.key === "ArrowRight") position = current < 0 ? 0 : current + 1;
@@ -1286,6 +1325,14 @@ export class Chart implements Scheduled, SyncMember {
     else if (event.key === "Home") position = 0;
     else if (event.key === "End") position = series.length - 1;
     position = Math.min(series.length - 1, Math.max(0, position));
+    // Points an axis break hides are stepped over, in the direction of travel.
+    const breaks = to?.x.breaks;
+    if (breaks && !across) {
+      const back = event.key === "ArrowLeft" || event.key === "PageUp" || event.key === "End";
+      const { x, rows, length, sorted } = series;
+      const shown = breaks.nearestShown(x, position, length, back, sorted, rows);
+      if (shown >= 0) position = shown;
+    }
     this.#keyboard = { panel, key: series.key, position };
     this.#pointer = null;
     this.flush();
@@ -1373,13 +1420,19 @@ const ITEM_STEPS: Record<string, number> = {
   End: Infinity,
 };
 
-/** Position of the point of `series` whose x is nearest `x`; the first without one. */
-function nearestTo(series: Series, x: number | undefined): number {
+/**
+ * Position of the point of `series` whose x is nearest `x` on screen (on
+ * `scale`), never one an axis break hides; the first without an `x`.
+ */
+function nearestTo(series: Series, x: number | undefined, scale: PositionScale): number {
   if (x === undefined) return 0;
   let best = 0;
   let distance = Infinity;
+  const at = scale.map(x);
   for (let k = 0; k < series.length; k++) {
-    const d = Math.abs(series.x[rowOf(series, k)]! - x);
+    const value = series.x[rowOf(series, k)]!;
+    if (scale.breaks?.hides(value)) continue;
+    const d = Math.abs(scale.map(value) - at);
     if (d < distance) {
       best = k;
       distance = d;

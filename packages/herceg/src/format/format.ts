@@ -2,7 +2,7 @@
 // they serialize unchanged between TypeScript, JSON specs, and Python.
 
 import { stepDecimals } from "../scale/ticks.ts";
-import { TIME_UNIT_MS, type TimeInterval, type TimeUnit } from "../scale/time.ts";
+import { TIME_UNIT_MS, type TickContext, type TimeInterval, type TimeUnit } from "../scale/time.ts";
 import { type TimeZone, toWall } from "./zone.ts";
 
 export type NumberFormat = Intl.NumberFormatOptions;
@@ -122,13 +122,16 @@ function alignment(wall: number): keyof typeof FORMATS {
 /**
  * Labels for time ticks. Each tick is labeled by the finest calendar field it
  * is not aligned to, so midnight shows the date and January 1 shows the year,
- * the way people read time axes.
+ * the way people read time axes. A tick's context, when given, is a coarser
+ * field it stands for (a session opening after a break over midnight shows
+ * its date).
  */
 export function timeTickLabels(
   ticks: readonly number[],
   interval: TimeInterval,
   zone: TimeZone,
   locale?: string,
+  contexts?: readonly (TickContext | undefined)[],
 ): string[] {
   const finest: keyof typeof FORMATS =
     interval.unit === "millisecond"
@@ -143,10 +146,12 @@ export function timeTickLabels(
               ? "month"
               : "year";
   const order = Object.keys(FORMATS) as (keyof typeof FORMATS)[];
-  return ticks.map((t) => {
-    const aligned = alignment(toWall(zone, t));
+  const coarser = (a: keyof typeof FORMATS, b: keyof typeof FORMATS) =>
+    order.indexOf(a) < order.indexOf(b) ? b : a;
+  return ticks.map((t, i) => {
+    const aligned = coarser(alignment(toWall(zone, t)), contexts?.[i] ?? "fraction");
     // Never print finer than the interval resolution.
-    const key = order.indexOf(aligned) < order.indexOf(finest) ? finest : aligned;
+    const key = coarser(aligned, finest);
     return timeFormatter(FORMATS[key], zone, locale)(t);
   });
 }

@@ -6,6 +6,7 @@ import {
   timeTickLabels,
 } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
+import type { Breaks } from "../lod/m4.ts";
 import {
   BandScale,
   LinearScale,
@@ -14,7 +15,7 @@ import {
   niceLogDomain,
   type PositionScale,
 } from "../scale/scale.ts";
-import { niceTimeDomain, TimeScale } from "../scale/time.ts";
+import { type CalendarScale, niceTimeDomain, TimeScale } from "../scale/time.ts";
 import type { AxisSpec } from "../spec/spec.ts";
 
 export type AxisType = "linear" | "log" | "time" | "band";
@@ -32,6 +33,24 @@ export interface AxisContext {
   spec: AxisSpec | undefined;
   zone: TimeZone;
   locale: string | undefined;
+  /** Time a time axis leaves out, resolved in `zone` (scale/breaks.ts). */
+  breaks?: AxisBreaks | undefined;
+}
+
+/** A time axis' breaks as axes use them; implemented by scale/breaks.ts. */
+export interface AxisBreaks extends Breaks {
+  /** A time scale over `domain` that leaves the breaks out. */
+  scale(domain: readonly [number, number], range: readonly [number, number]): PositionScale;
+  /** `domain` changed by `change` in positions (time shown), as room at its ends is. */
+  inPositions(
+    domain: [number, number],
+    change: (positions: [number, number]) => [number, number],
+  ): [number, number];
+  /**
+   * `domain`, or when it shows no time (it is inside a break), the hour
+   * either side of the break's seam; refused when `configured`.
+   */
+  showing(domain: [number, number], configured: boolean): [number, number];
 }
 
 /** Widens empty or zero-width domains so a scale can be built. */
@@ -109,7 +128,12 @@ export function niceAxisDomain(
 ): [number, number] {
   if (!nice) return domain;
   if (context.type === "log") return niceLogDomain(domain[0], domain[1]);
-  if (context.type === "time") return niceTimeDomain(domain[0], domain[1], count, context.zone);
+  if (context.type === "time") {
+    const breaks = context.breaks;
+    // With breaks, the interval follows the time shown.
+    const span = breaks && breaks.collapse(domain[1]) - breaks.collapse(domain[0]);
+    return niceTimeDomain(domain[0], domain[1], count, context.zone, span);
+  }
   return niceDomain(domain[0], domain[1], count);
 }
 
@@ -119,6 +143,7 @@ export function createScale(
   range: readonly [number, number],
 ): PositionScale {
   if (context.type === "log") return new LogScale(domain, range);
+  if (context.type === "time" && context.breaks) return context.breaks.scale(domain, range);
   if (context.type === "time") return new TimeScale(domain, range, context.zone);
   return new LinearScale(domain, range);
 }
@@ -148,8 +173,10 @@ export function planAxis(
         ? timeFormatter(format as Intl.DateTimeFormatOptions, context.zone, context.locale)
         : numberFormatter(format as Intl.NumberFormatOptions, context.locale);
     labels = ticks.map(formatter);
-  } else if (ticker instanceof TimeScale) {
-    labels = timeTickLabels(ticks, ticker.interval(count), context.zone, context.locale);
+  } else if (ticker.type === "time") {
+    const time = ticker as CalendarScale;
+    const contexts = time.tickContexts?.(ticks);
+    labels = timeTickLabels(ticks, time.interval(count), context.zone, context.locale, contexts);
   } else {
     labels = numberTickLabels(ticks, context.locale);
   }

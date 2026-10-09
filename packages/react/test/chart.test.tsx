@@ -7,12 +7,14 @@ import {
   line,
   table,
   time,
+  timeBreaks,
 } from "herceg";
 import { act, StrictMode, Suspense, startTransition, use, useLayoutEffect, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   Bar,
+  Candlestick,
   Chart,
   Custom,
   Funnel,
@@ -451,6 +453,43 @@ describe("<Chart>", () => {
     // A new facet object for the same field is the same option.
     act(() => root.render(<App field="region" />));
     expect(updates).toBe(0);
+  });
+
+  it("draws OHLC bars, and keeps equal breaks without updating", () => {
+    const day = 86_400_000;
+    const prices = table({
+      t: time([0, 1, 4].map((d) => Date.UTC(2025, 9, 9) + d * day)),
+      o: [10, 12, 9],
+      h: [13, 12.5, 9.5],
+      l: [9, 8, 8.5],
+      c: [12, 9, 9],
+    });
+    const ref: { current: HercegChart | null } = { current: null };
+    function App({ days }: { days: ("sat" | "sun")[] }) {
+      return (
+        <Chart ref={ref} timeZone="UTC" x={{ breaks: timeBreaks([{ weekdays: days }]) }}>
+          <Candlestick data={prices} x="t" open="o" high="h" low="l" close="c" variant="ohlc" />
+        </Chart>
+      );
+    }
+    act(() => root.render(<App days={["sat", "sun"]} />));
+    const chart = ref.current!;
+    expect(host.querySelector("svg g[clip-path] rect")).toBeNull();
+    const x = chart.model.xScale()!;
+    // Thursday, Friday, and Monday a day apart.
+    const [thu, fri, mon] = [0, 1, 4].map((d) => x.map(Date.UTC(2025, 9, 9) + d * day));
+    expect(mon! - fri!).toBeCloseTo(fri! - thu!, 6);
+    let updates = 0;
+    const update = chart.update.bind(chart);
+    chart.update = (options) => {
+      updates++;
+      update(options);
+    };
+    // New breaks with the same rules are the same option; other rules are not.
+    act(() => root.render(<App days={["sat", "sun"]} />));
+    expect(updates).toBe(0);
+    act(() => root.render(<App days={["sun"]} />));
+    expect(updates).toBe(1);
   });
 
   it("keeps unchanged marks when a sibling mark changes", () => {

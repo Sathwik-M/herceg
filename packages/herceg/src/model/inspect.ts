@@ -5,8 +5,8 @@
 import type { Formatter } from "../format/format.ts";
 import type { Frame, Hit, Mark } from "../marks/mark.ts";
 import {
+  lowerPosition,
   nearestPosition,
-  nearestPositionWithin,
   rowOf,
   type Series,
   samePositions,
@@ -107,6 +107,11 @@ export class Inspector {
   get rightFrame(): Frame | undefined {
     return this.#right?.frame;
   }
+
+  /** How values of the right y axis are formatted, when marks are on it. */
+  get formatRight(): Formatter | undefined {
+    return this.#right?.formatY;
+  }
   /** The mark of each series, for how its points are inspected and formatted. */
   readonly #markOf = new Map<Series, Mark>();
 
@@ -169,17 +174,20 @@ export class Inspector {
     const target = scale.invert(axis === "x" ? px : py);
     const lo = Math.min(scale.domain[0], scale.domain[1]);
     const hi = Math.max(scale.domain[0], scale.domain[1]);
+    // Distances are compared on screen, where an axis with breaks shows no break.
+    const place = (value: number) => scale.map(value);
     let snapped = Number.NaN;
     for (const s of series) {
       const position =
         axis === "x"
           ? s.sorted
-            ? this.#drawnNear(s, nearestPositionWithin(s, target, lo, hi), target, lo, hi)
-            : this.#scanNearest(s, "x", target, lo, hi)
-          : this.#scanNearest(s, "y", target, lo, hi);
+            ? this.#drawnNear(s, this.#nearestWithin(s, target, lo, hi), target, lo, hi)
+            : this.#scanNearest(s, "x", target, lo, hi, scale)
+          : this.#scanNearest(s, "y", target, lo, hi, scale);
       if (position < 0) continue;
       const value = s[axis][rowOf(s, position)]!;
-      if (Number.isNaN(snapped) || Math.abs(value - target) < Math.abs(snapped - target))
+      const distance = Math.abs(place(value) - place(target));
+      if (Number.isNaN(snapped) || distance < Math.abs(place(snapped) - place(target)))
         snapped = value;
     }
     if (!Number.isFinite(snapped)) return undefined;
@@ -187,40 +195,86 @@ export class Inspector {
   }
 
   /**
-   * In a sorted series, `position`, or when its point is not drawn (a
-   * missing value, a candle missing a price), the drawn point nearest
-   * `target` in x within [lo, hi], looking at most GAP_WALK points either
-   * way; -1 for none. Inside a longer gap no point is near enough.
+   * In a sorted series, the position nearest `target` in x among those in
+   * [lo, hi] (and, on an axis with breaks, shown), or -1 when none is.
    */
-  #drawnNear(s: Series, position: number, target: number, lo: number, hi: number): number {
-    if (position < 0 || this.#drawn(s, rowOf(s, position))) return position;
-    const usable = (k: number) =>
-      k >= 0 && k < s.length && xAt(s, k) >= lo && xAt(s, k) <= hi && this.#drawn(s, rowOf(s, k));
-    let left = position - 1;
-    while (left >= 0 && position - left <= GAP_WALK && !usable(left)) left--;
-    let right = position + 1;
-    while (right < s.length && right - position <= GAP_WALK && !usable(right)) right++;
-    const [l, r] = [usable(left), usable(right)];
-    if (!l) return r ? right : -1;
-    if (!r) return left;
-    return target - xAt(s, left) <= xAt(s, right) - target ? left : right;
+  #nearestWithin(s: Series, target: number, lo: number, hi: number): number {
+    const breaks = this.frame.x.breaks;
+    let after = lowerPosition(s, target);
+    let before = after - 1;
+    if (breaks) {
+      after = breaks.shownFrom(s.x, after, s.length, s.rows);
+      before = breaks.shownBefore(s.x, before, s.rows);
+    }
+    const inView = (k: number) => k >= 0 && k < s.length && xAt(s, k) >= lo && xAt(s, k) <= hi;
+    const a = inView(before) ? before : -1;
+    const b = inView(after) ? after : -1;
+    if (a < 0 || b < 0) return a < 0 ? b : a;
+    return this.#closer(s, a, b, target);
   }
 
   /**
-   * Position of the point nearest `target` among those whose value on `axis`
-   * is in [lo, hi] and that are drawn, by a scan; -1 when none is. Unsorted
-   * series may hold several rows at one position (long-format bars), some of
-   * them missing, so every row is checked.
+   * In a sorted series, `position`, or when its point is not drawn (a
+   * missing value, a candle missing a price), the drawn point nearest
+   * `target` in x within [lo, hi], looking at most GAP_WALK points either
+   * way (points an axis break hides are jumped, however many); -1 for none.
+   * Inside a longer gap no point is near enough.
    */
-  #scanNearest(s: Series, axis: "x" | "y", target: number, lo: number, hi: number): number {
+  #drawnNear(s: Series, position: number, target: number, lo: number, hi: number): number {
+    if (position < 0 || this.#drawn(s, rowOf(s, position))) return position;
+    const breaks = this.frame.x.breaks;
+    const usable = (k: number) =>
+      k >= 0 && k < s.length && xAt(s, k) >= lo && xAt(s, k) <= hi && this.#drawn(s, rowOf(s, k));
+    const step = (k: number, by: number) => {
+      const next = k + by;
+      if (!breaks || next < 0 || next >= s.length) return next;
+      return by < 0
+        ? breaks.shownBefore(s.x, next, s.rows)
+        : breaks.shownFrom(s.x, next, s.length, s.rows);
+    };
+    let left = step(position, -1);
+    for (let walked = 1; left >= 0 && walked < GAP_WALK && !usable(left); walked++)
+      left = step(left, -1);
+    let right = step(position, 1);
+    for (let walked = 1; right < s.length && walked < GAP_WALK && !usable(right); walked++)
+      right = step(right, 1);
+    const [l, r] = [usable(left), usable(right)];
+    if (!l) return r ? right : -1;
+    if (!r) return left;
+    return this.#closer(s, left, right, target);
+  }
+
+  /** Of positions `a` before `b` in a sorted series, the one nearer `target` on screen; `a` on ties. */
+  #closer(s: Series, a: number, b: number, target: number): number {
+    const x = this.frame.x;
+    const at = x.map(target);
+    return Math.abs(at - x.map(xAt(s, a))) <= Math.abs(x.map(xAt(s, b)) - at) ? a : b;
+  }
+
+  /**
+   * Position of the point nearest `target` on screen (through `scale`) among
+   * those whose value on `axis` is in [lo, hi] and that are drawn, by a
+   * scan; -1 when none is. Unsorted series may hold several rows at one
+   * position (long-format bars), some of them missing, so every row is
+   * checked.
+   */
+  #scanNearest(
+    s: Series,
+    axis: "x" | "y",
+    target: number,
+    lo: number,
+    hi: number,
+    scale = this.frame[axis],
+  ): number {
     const column = s[axis];
+    const at0 = scale.map(target);
     let best = -1;
     let bestDistance = Infinity;
     for (let k = 0; k < s.length; k++) {
       const row = rowOf(s, k);
       const at = column[row]!;
       if (!(at >= lo && at <= hi)) continue;
-      const distance = Math.abs(at - target);
+      const distance = Math.abs(scale.map(at) - at0);
       if (distance >= bestDistance || !this.#drawn(s, row)) continue;
       best = k;
       bestDistance = distance;
@@ -272,6 +326,8 @@ export class Inspector {
       Number.isFinite(scale.map(value)) && !(scale.type === "band" && value < 0);
     if (!Number.isFinite(s.values[row]!) || !placed(x, s.x[row]!) || !placed(y, s.y[row]!))
       return false;
+    // Points inside an axis break are not drawn.
+    if (x.breaks?.hides(s.x[row]!)) return false;
     const mark = this.#markOf.get(s);
     if (mark?.shows && !mark.shows(s, row, y)) return false;
     if (!s.range) return true;
@@ -303,13 +359,18 @@ export class Inspector {
           for (let k = 0; k < s.length; k++) consider(s, k);
           continue;
         }
-        // Walk outward from the nearest x until points are horizontally
-        // farther than the best match.
-        const center = nearestPosition(s, target);
+        // Walk outward from the pointer's x on each side until points are
+        // horizontally farther than the best match: screen distance grows
+        // away from it either way, on any scale.
+        const after = lowerPosition(s, target);
         const within = (k: number) =>
           Math.abs(x.map(xAt(s, k)) - px) <= (best?.distance ?? Infinity);
-        for (let k = center; k >= 0 && within(k); k--) consider(s, k);
-        for (let k = center + 1; k < s.length && within(k); k++) consider(s, k);
+        // Hidden points all sit at their break's seam: they are jumped.
+        const breaks = x.breaks;
+        const back = (k: number) => (breaks ? breaks.shownBefore(s.x, k, s.rows) : k);
+        const ahead = (k: number) => (breaks ? breaks.shownFrom(s.x, k, s.length, s.rows) : k);
+        for (let k = back(after - 1); k >= 0 && within(k); k = back(k - 1)) consider(s, k);
+        for (let k = ahead(after); k < s.length && within(k); k = ahead(k + 1)) consider(s, k);
       }
     }
     return best;

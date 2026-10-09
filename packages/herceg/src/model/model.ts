@@ -26,6 +26,7 @@ import {
 } from "../marks/mark.ts";
 import { type Series, samePositions } from "../marks/series.ts";
 import { unionExtent } from "../marks/trace.ts";
+import type { TimeBreaks } from "../scale/breaks.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import {
@@ -36,9 +37,10 @@ import {
   type SceneText,
   tickLabelGap,
 } from "../scene/scene.ts";
-import type { AxisSpec, ChartSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisSpec, ChartSpec, ScaleResolution, XAxisSpec } from "../spec/spec.ts";
 import { resolveTheme, type Theme, type ThemeEnvironment } from "../theme.ts";
 import {
+  type AxisBreaks,
   type AxisContext,
   type AxisPlan,
   type AxisType,
@@ -59,15 +61,19 @@ import type { Panels } from "./panels.ts";
 /** Chart options with marks bound to their data. */
 export type ChartConfig = Omit<
   ChartSpec,
-  "marks" | "data" | "width" | "height" | "version" | "facet" | "panels" | "grid"
+  "marks" | "data" | "width" | "height" | "version" | "facet" | "panels" | "grid" | "x"
 > & {
   /** Marks along axes, or one layout mark (a pie) that has the chart to itself. */
   marks: readonly ChartMark[];
+  x?: XAxisConfig | undefined;
   /** Small multiples: a panel per value of a category field (see `facet`). */
   facet?: Facet | undefined;
   /** Subplots: panels drawing the marks that name them (see `panels`). */
   panels?: Panels | undefined;
 };
+
+/** The x axis' options: its `breaks` are built with `timeBreaks`. */
+export type XAxisConfig = Omit<XAxisSpec, "breaks"> & { breaks?: TimeBreaks | undefined };
 
 import {
   type AxisInspection,
@@ -86,11 +92,12 @@ interface PanelView {
   inspector: Inspector;
 }
 
-/** What a y extent reads: marks' series, within an x range. */
+/** What a y extent reads: marks' series, within an x range (and its breaks). */
 interface YPart {
   marks: readonly MarkSeries[];
   x0: number;
   x1: number;
+  breaks?: AxisBreaks | undefined;
 }
 
 /** A panel of the last scene, as the browser runtime reads it. */
@@ -434,10 +441,24 @@ export class ChartModel {
   dataXExtent(): [number, number] | undefined {
     const type = this.#axisType("x");
     if (type === "band") return undefined;
-    const marks = this.#split(this.#resolveSeries(this.#bands, this.#context())).all;
+    const context = this.#context();
+    const marks = this.#split(this.#resolveSeries(this.#bands, context)).all;
+    const breaks = this.#xBreaks(type, context.zone);
     return unionExtent(
-      marks.map(({ mark, series }) => mark.xExtent(this.#xSeries(mark, series), type === "log")),
+      marks.map(({ mark, series }) =>
+        mark.xExtent(this.#xSeries(mark, series), type === "log", breaks),
+      ),
     );
+  }
+
+  /**
+   * The x axis' breaks resolved in the chart's zone, for an x scale of
+   * `type`: every time x scale of a chart leaves the same time out (with x
+   * scales of their own, panels over numbers have none).
+   */
+  #xBreaks(type: AxisType, zone: string): AxisBreaks | undefined {
+    const breaks = this.#config.x?.breaks;
+    return breaks && type === "time" ? breaks.calendar(zone) : undefined;
   }
 
   /**
@@ -462,11 +483,11 @@ export class ChartModel {
     const log = type === "log";
     let stands = false;
     const data = unionExtent(
-      parts.flatMap(({ marks, x0, x1 }) =>
+      parts.flatMap(({ marks, x0, x1, breaks }) =>
         marks.map(({ mark, series }) => {
           const visible = series.filter((s) => !this.hidden.has(s.key));
           if (mark.zero === "y" && visible.length > 0) stands = true;
-          return mark.yExtent(visible, x0, x1, log);
+          return mark.yExtent(visible, x0, x1, log, breaks);
         }),
       ),
     );
@@ -633,15 +654,19 @@ export class ChartModel {
     const xGroupAt = xGroups?.groupOf ?? new Array<number>(panelCount).fill(0);
     // Each group's marks, with every mark's series in the group's panels.
     const xMarks = xGroups?.drawn ?? [marks];
-    const xContexts = xGroups
-      ? xMarks.map(
-          (among, h): AxisContext => ({
-            ...layout!.groupAxis("x", xGroupAt.indexOf(h), among, config.x, xType),
-            zone,
-            locale,
-          }),
-        )
-      : [xContext];
+    const xContexts = (
+      xGroups
+        ? xMarks.map(
+            (among, h): AxisContext => ({
+              ...layout!.groupAxis("x", xGroupAt.indexOf(h), among, config.x, xType),
+              zone,
+              locale,
+            }),
+          )
+        : [xContext]
+    ).map((context) => ({ ...context, breaks: this.#xBreaks(context.type, zone) }));
+    if (config.x?.breaks && !xContexts.some(({ breaks }) => breaks))
+      throw new Error(`Axis breaks need a time x axis, not a ${xContexts[0]!.type} one`);
     // Viewports are kept by group, named by its panels: a group whose panels
     // change (a facet value appears and the panels wrap anew) starts over.
     const xKeys = xGroups?.keys ?? [""];
@@ -669,8 +694,11 @@ export class ChartModel {
         return;
       }
       const log = type === "log";
+      const breaks = xContexts[h]!.breaks;
       let dataX = unionExtent(
-        xMarks[h]!.map(({ mark, series }) => mark.xExtent(this.#xSeries(mark, series), log)),
+        xMarks[h]!.map(({ mark, series }) =>
+          mark.xExtent(this.#xSeries(mark, series), log, breaks),
+        ),
       );
       if ((spec?.zero ?? xMeasures[h]) && !log) dataX = unionExtent([dataX, [0, 0]]);
       xHas[h] = dataX !== undefined;
@@ -679,13 +707,14 @@ export class ChartModel {
         view ? oriented(view, spec?.domain) : (spec?.domain ?? dataX),
         type,
       );
+      if (breaks) xDomains[h] = breaks.showing(xDomains[h]!, !view && spec?.domain !== undefined);
       autoX[h] = !view && !spec?.domain;
     });
     for (const key of this.#viewports.keys()) if (!xKeys.includes(key)) this.#viewports.delete(key);
     // What y extents read: marks' series within an x scale's domain.
     const part = (among: readonly MarkSeries[], h: number): YPart => {
       const [x0, x1] = xDomains[h]!;
-      return { marks: among, x0, x1 };
+      return { marks: among, x0, x1, breaks: xContexts[h]!.breaks };
     };
 
     // y domains from data visible in the x domains, unless they are fixed;
@@ -1001,12 +1030,18 @@ export class ChartModel {
       // As for y: ticks on the rounded domain, inside the room for glyphs.
       const nice = spec?.nice ?? xMeasures[h]!;
       const rounded = niceAxisDomain(xDomains[h]!, context, count, nice);
-      const domain = insetDomain(
-        headroomDomain(rounded, headroom("x", xDrawn[h]), plotWidth, type),
-        inset("x", xDrawn[h]),
-        plotWidth,
-        type,
-      );
+      // Room at the ends is time shown: on axes with breaks, positions.
+      const room = (d: [number, number], as: AxisType) =>
+        insetDomain(
+          headroomDomain(d, headroom("x", xDrawn[h]), plotWidth, as),
+          inset("x", xDrawn[h]),
+          plotWidth,
+          as,
+        );
+      const { breaks } = context;
+      const domain = breaks
+        ? breaks.inPositions(rounded, (d) => room(d, "linear"))
+        : room(rounded, type);
       return planAxis(context, domain, range, count, nice ? rounded : domain);
     };
     let plotWidth = Math.max(10, widthOf());
@@ -1128,20 +1163,16 @@ export class ChartModel {
             (only === "x" ? "nearest-x" : only === "y" ? "nearest-y" : "nearest"));
     };
     const mode = modeOf(drawn);
-    const valueFormat = (
-      context: AxisContext,
-      scale: PositionScale,
-      size = plotHeight,
-    ): Formatter =>
+    const valueFormat = (context: AxisContext, scale: PositionScale): Formatter =>
       context.type === "time"
-        ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale, size), zone, locale))
+        ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale), zone, locale))
         : valueFormatter(context, formatNumbers);
     const formatsX = xPlans.map(({ scale }, h) => {
       const context = xContexts[h]!;
       return context.type === "band"
         ? categoryOf(scale)
         : context.type === "time"
-          ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale, plotWidth), zone, locale))
+          ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale), zone, locale))
           : valueFormatter(context, formatNumbers);
     });
     // Tooltips show y values as precisely as their panel's height resolves:
@@ -1154,7 +1185,7 @@ export class ChartModel {
       let format = formats.get(key);
       if (!format) {
         const { scale } = yPlans[i]!;
-        format = yType === "band" ? categoryOf(scale) : valueFormat(contexts[g]!, scale, size);
+        format = yType === "band" ? categoryOf(scale) : valueFormat(contexts[g]!, scale);
         formats.set(key, format);
       }
       return format;
@@ -1549,6 +1580,11 @@ export class ChartModel {
     };
   }
 
+  /** How the last scene formats values of the right y axis in a panel, when marks are on it. */
+  yRightFormat(panel?: string): Formatter | undefined {
+    return this.#viewOf(undefined, panel)?.inspector.formatRight;
+  }
+
   /** Whether a series of the last scene is on the right y axis. */
   onRight(series: Series): boolean {
     const mark = this.markOf(series);
@@ -1702,9 +1738,12 @@ function categoryOf(scale: PositionScale): Formatter {
   return (value) => scale.categories?.[Math.round(value)] ?? "";
 }
 
-/** Precision for x values in tooltips: finer when each pixel covers less time. */
-function timeUnitFor(scale: PositionScale, pixels: number): TimeUnit {
-  const perPixel = Math.abs(scale.domain[1] - scale.domain[0]) / Math.max(1, pixels);
+/**
+ * Precision for x values in tooltips: finer when each pixel covers less
+ * time (on axes with breaks, less time shown).
+ */
+function timeUnitFor(scale: PositionScale): TimeUnit {
+  const perPixel = Math.abs(1 / scale.mapping().factor);
   if (perPixel < TIME_UNIT_MS.second) return "millisecond";
   if (perPixel < TIME_UNIT_MS.minute) return "second";
   if (perPixel < TIME_UNIT_MS.day) return "minute";

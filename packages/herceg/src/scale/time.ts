@@ -1,5 +1,5 @@
 import { fromWall, type TimeZone, toWall } from "../format/zone.ts";
-import { LinearScale } from "./scale.ts";
+import { LinearScale, type PositionScale } from "./scale.ts";
 import { tickStep } from "./ticks.ts";
 
 export type TimeUnit =
@@ -196,8 +196,26 @@ function calendarTicks(lo: number, hi: number, interval: TimeInterval, zone: Tim
   return ticks;
 }
 
+/** The calendar field a tick stands for when it is not its own instant's. */
+export type TickContext = "day" | "month" | "year";
+
+/** A scale of epoch milliseconds with calendar ticks in a time zone. */
+export interface CalendarScale extends PositionScale {
+  readonly type: "time";
+  readonly zone: TimeZone;
+  /** The calendar interval of `ticks(count)`. */
+  interval(count: number): TimeInterval;
+  /**
+   * For each of the ticks `ticks(count)` returned, the calendar field it
+   * labels when that is coarser than its own instant's: a tick moved out of
+   * an axis break to the session it opens stands for the day (or month, or
+   * year) that begins in the break.
+   */
+  tickContexts?(ticks: readonly number[]): readonly (TickContext | undefined)[] | undefined;
+}
+
 /** A linear scale over epoch milliseconds with calendar-aware ticks. */
-export class TimeScale extends LinearScale {
+export class TimeScale extends LinearScale implements CalendarScale {
   override readonly type = "time" as const;
 
   readonly zone: TimeZone;
@@ -220,15 +238,20 @@ export class TimeScale extends LinearScale {
   }
 }
 
-/** Extends a time domain to boundaries of the tick interval. */
+/**
+ * Extends a time domain to boundaries of the tick interval for `span`
+ * milliseconds (by default the domain's; on an axis with breaks, the time it
+ * shows).
+ */
 export function niceTimeDomain(
   start: number,
   stop: number,
   count: number,
   zone: TimeZone,
+  span = stop - start,
 ): [number, number] {
   if (!(stop > start)) return [start, stop];
-  const interval = chooseInterval(stop - start, count);
+  const interval = chooseInterval(span, count);
   const lo = fromWall(zone, floorWall(toWall(zone, start), interval));
   let hiWall = floorWall(toWall(zone, stop), interval);
   if (fromWall(zone, hiWall) < stop) hiWall = addWall(hiWall, interval, 1);
@@ -239,6 +262,11 @@ export function niceTimeDomain(
   const size = UNIT_MS[interval.unit] * interval.step;
   if (hi < stop && size < DAY) hi += Math.ceil((stop - hi) / size) * size;
   return [lo, Math.max(hi, stop)];
+}
+
+/** The latest boundary of `interval` in `zone` at or before `t`. */
+export function floorTime(t: number, interval: TimeInterval, zone: TimeZone): number {
+  return fromWall(zone, floorWall(toWall(zone, t), interval));
 }
 
 export const TIME_UNIT_MS = UNIT_MS;

@@ -134,9 +134,11 @@ export type {
   InspectedPoint,
   Inspection,
   ItemInspection,
+  XAxisConfig,
 } from "./model/model.ts";
 export { type Panels, panels } from "./model/panels.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
+export { type TimeBreaks, timeBreaks } from "./scale/breaks.ts";
 export * from "./scale/schemes.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
