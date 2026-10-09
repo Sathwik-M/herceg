@@ -200,7 +200,10 @@ for the same reason. The Svelte entry renders a component of its own,
 compiled with `svelte/compiler`, and that component is measured with it.
 The `herceg-grid` entry mounts a two-column grid (`herceg/grid`) over the
 same data instead of a chart; none of the other libraries has a grid to
-compare it with.
+compare it with. `herceg-bar`, `herceg-area`, and `herceg-scatter` chart
+the same data as stacked bars, stacked areas (both split by a series
+field), and points, to track what each mark adds; the other libraries
+have line entries only.
 
 ## Grids
 

@@ -1,9 +1,9 @@
 {
  "schema": 1,
- "date": "2026-10-09T22:55:26.756Z",
+ "date": "2026-10-09T22:56:04.399Z",
  "commit": {
-  "sha": "62356ab",
-  "dirty": false
+  "sha": "24cf1b7",
+  "dirty": true
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
  "environment": {
@@ -64,9 +64,39 @@
    "lazy": null
   },
   {
+   "entry": "herceg-area",
+   "package": "herceg",
+   "version": "0.0.0 (24cf1b7)",
+   "raw": 298938,
+   "minified": 133649,
+   "gzip": 49925,
+   "brotli": 44457,
+   "chunks": 3,
+   "css": null,
+   "lazy": {
+    "minified": 55633,
+    "gzip": 24313
+   }
+  },
+  {
+   "entry": "herceg-bar",
+   "package": "herceg",
+   "version": "0.0.0 (24cf1b7)",
+   "raw": 295204,
+   "minified": 131259,
+   "gzip": 49497,
+   "brotli": 44091,
+   "chunks": 3,
+   "css": null,
+   "lazy": {
+    "minified": 55633,
+    "gzip": 24313
+   }
+  },
+  {
    "entry": "herceg-grid",
    "package": "herceg",
-   "version": "0.0.0 (62356ab)",
+   "version": "0.0.0 (24cf1b7)",
    "raw": 187454,
    "minified": 87866,
    "gzip": 30425,
@@ -78,7 +108,7 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (62356ab)",
+   "version": "0.0.0 (24cf1b7)",
    "raw": 256291,
    "minified": 115890,
    "gzip": 43404,
@@ -93,7 +123,7 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (62356ab)",
+   "version": "0.0.0 (24cf1b7)",
    "raw": 261242,
    "minified": 118564,
    "gzip": 44569,
@@ -106,9 +136,24 @@
    }
   },
   {
+   "entry": "herceg-scatter",
+   "package": "herceg",
+   "version": "0.0.0 (24cf1b7)",
+   "raw": 293078,
+   "minified": 133302,
+   "gzip": 50242,
+   "brotli": 44704,
+   "chunks": 3,
+   "css": null,
+   "lazy": {
+    "minified": 55633,
+    "gzip": 24313
+   }
+  },
+  {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (62356ab)",
+   "version": "0.0.0 (24cf1b7)",
    "raw": 263662,
    "minified": 120036,
    "gzip": 45137,
@@ -123,7 +168,7 @@
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (62356ab)",
+   "version": "0.0.0 (24cf1b7)",
    "raw": 263980,
    "minified": 119627,
    "gzip": 44967,
