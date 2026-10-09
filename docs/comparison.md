@@ -90,10 +90,10 @@ dynamic imports are listed as loaded on demand.
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-line | 0.0.0 (f0737b1) | 109.8 | 41.1 | 36.8 | - | 5.5 |
-| herceg-react-line | 0.0.0 (f0737b1) | 112.2 | 42.1 | 37.8 | - | 5.5 |
-| herceg-svelte-line | 0.0.0 (f0737b1) | 113.6 | 42.7 | 38.3 | - | 5.5 |
-| herceg-vue-line | 0.0.0 (f0737b1) | 113.2 | 42.5 | 38.1 | - | 5.5 |
+| herceg-line | 0.0.0 (17dacaf) | 110.7 | 41.4 | 37.1 | - | 5.5 |
+| herceg-react-line | 0.0.0 (17dacaf) | 113.1 | 42.4 | 38.0 | - | 5.5 |
+| herceg-svelte-line | 0.0.0 (17dacaf) | 114.4 | 43.0 | 38.5 | - | 5.5 |
+| herceg-vue-line | 0.0.0 (17dacaf) | 114.1 | 42.8 | 38.4 | - | 5.5 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |
