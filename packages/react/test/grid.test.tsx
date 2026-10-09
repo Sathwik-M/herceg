@@ -69,7 +69,7 @@ describe("<Grid>", () => {
     expect(surface()).toBe("#ffffff");
   });
 
-  it("never renders React for data changes, scrolling, focus, or selection", async () => {
+  it("never renders React for data changes, scrolling, focus, selection, or column layout", async () => {
     const data = requests(1000);
     const model = createGridModel({
       data: rowView(data),
@@ -95,6 +95,14 @@ describe("<Grid>", () => {
     await frames();
     expect(model.selectedCount).toBe(2);
     expect(model.sort).toEqual([{ field: "id", order: "ascending" }]);
+    // Columns resized, moved, and pinned from the header's keys.
+    await userEvent.keyboard("{Alt>}{ArrowRight}{/Alt}{Shift>}{ArrowRight}{/Shift}");
+    model.pinColumn("ms", "left");
+    await frames();
+    expect(model.columnLayout.map(({ id, width, pinned }) => [id, width, pinned])).toEqual([
+      ["ms", 120, "left"],
+      ["id", 136, null],
+    ]);
     expect(commits).toBe(1);
   });
 

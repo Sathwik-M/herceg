@@ -76,7 +76,8 @@ Streamlit component, row views and selection stores shared by charts and
 grids, row groups whose aggregates charts and grids share, and an
 analytical grid (`herceg/grid`: virtualized rows and columns over the same
 tables, sorting, row selection, groups with aggregates as a tree grid,
-keyboard and ARIA navigation, and a React component).
+columns resized, moved, pinned, and hidden by dragging, keys, or a column
+menu, keyboard and ARIA navigation, and a React component).
 
 Next, in order:
 
@@ -87,9 +88,8 @@ Next, in order:
 4. More financial tools (a range navigator, drawing tools, markers at
    breaks); 3D lines, meshes, parametric surfaces, and surfaces on the GPU.
 5. Grid: benchmarks against TanStack Table with TanStack Virtual, AG Grid,
-   and Glide Data Grid; then nested groups, pivots, column resizing and
-   pinning, and a server-backed mode whose filters, sorts, and aggregates
-   run where the data lives.
+   and Glide Data Grid; then nested groups, pivots, and a server-backed
+   mode whose filters, sorts, and aggregates run where the data lives.
 6. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 

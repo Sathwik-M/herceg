@@ -303,8 +303,9 @@ A grid (`herceg/grid`) shows a row view's rows. Its state lives in a
 DOM-free model (`grid/model.ts`, also the entry point `herceg/grid/model`),
 in three parts kept apart: the query is the view's (filter and sort, which
 the model changes through `view.setQuery`, keeping the filter); the
-presentation is the column list (order, widths, hidden columns, formats),
-placed as prefix sums of widths; and the interaction is the model's own:
+presentation is the column list (order, widths, pins, hidden columns,
+formats), placed as prefix sums of widths; and the interaction is the
+model's own:
 viewport size and scroll offsets, the focused cell, and the selection anchor,
 with the selected rows themselves in a `SelectionStore` channel. The view,
 store, and table belong to the application, and several grids share them
@@ -325,6 +326,35 @@ the row leaves, the focus goes to the row now at its last index, or to the
 header row when none is left; a hidden column's focus goes to the nearest
 shown one. Formatting reads values through one Intl formatter per column,
 made once (format/format.ts caches them), and keeps no strings.
+
+The column list is the one record of the layout, keyed by column id:
+`resizeColumn`, `moveColumn`, `pinColumn`, and `setColumnVisible` replace
+one entry or reorder the list, and `model.columns` gives it back for
+`setColumns` to restore. What a column shows (its title, alignment,
+formatter, and reader) is made when the columns are set, for hidden columns
+too, and kept by the commands: placing the columns again is one pass over
+them (O(columns), as are the binary searches of the visible range), and the
+DOM grid tells by that content's identity that no cell's text needs writing
+when columns only move, resize, pin, or hide. Shown columns are placed
+pinned left, then unpinned, then pinned right, each in the list's order, so
+pinning keeps a column's place for when it is unpinned, and a move within a
+side is a move in the list. Widths are at least 32 pixels; the focus keeps
+to its column's id through every command.
+
+Pinned columns are held at their edges while together they leave the
+others 120 pixels of the viewport (`MIN_SCROLLING_WIDTH`), and otherwise let
+go: their layout entries say `pinned: null`, and they scroll with the
+others in the same order until the grid widens (before it is measured, they
+are held). Holding is the layout's only dependence on the viewport, so a
+resize of the container places the columns again only when it crosses that
+line. A held pinned column widens only as far as that room, and
+`pinColumn` refuses a column without room to be held (`canPin` asks first),
+so an interactive pin never lets go of the others; `setColumns` takes pins
+as given, to restore layouts on narrow screens. Held, they take no
+part in horizontal scrolling: the visible range and `reveal` cover the
+unpinned columns between the held widths, and the scroll range is unchanged
+(the content's width less the viewport's equals the unpinned columns' width
+less the room between the pins).
 
 Grouped grids show a row groups' groups (`grid/grouped.ts`), each a header
 row followed by its group's rows when expanded. The model keeps the
@@ -380,11 +410,54 @@ display order, which screen readers follow; nothing is pooled beyond the
 rows and cells in view. Clicks and focus resolve the row and column an
 element shows against the model as it is, since rows can move before the
 next frame redraws them. With no column shown the grid has no rows (a row
-needs cells), so it becomes a named group until columns return. Frames go
-through the shared scheduler, sizes come
-from a resize observer on the container and the scroller, and grids out of
-the page's view wait. A grid's container gets the grid's height, or 320
-pixels when it has none.
+needs cells), so it becomes a named group until columns return.
+
+Rows and the header row are flex boxes. Cells of held columns are in their
+flow, sticky (`position: sticky`, with their distance from the edge as the
+offset; the first one pinned right takes the free space before it), so the
+browser keeps them in place while it scrolls, with no frame of lag; the
+other cells are placed absolutely and scroll under them, opaque and drawn
+above with a rule at the boundary. So pinning duplicates nothing: each row
+is one element holding its cells in the order they show, with logical
+`aria-colindex` values, as one header row is, and screen readers read rows
+as they look. A row mounts its held cells, those of the unpinned columns in
+view, and two more on each side; with pinned columns taking room from the
+viewport, that is about as many cells as without them (a 1200 by 600 pixel
+grid of 100k rows by 20 columns mounts 588 cells in 42 rows with two
+columns pinned left and one right, as it does with none). Placing a cell
+writes only the styles that changed, so a resize restyles the cells of the
+resized column and those after it.
+
+What headers do to columns lives in `dom/grid-columns.ts`. A press on a
+header that moves farther than 4 pixels drags, with the pointer captured
+by the scroller (and released anywhere: the document hears the release
+while a press lasts, and a lost capture or a move with no button down ends
+it): on the header's edge it resizes the column, the width the pointer asks
+for applied once a frame in the grid's scheduled frame (any number of
+pointer moves make one model change, and one redraw); elsewhere
+it moves the column, a line showing where it would drop among the mounted
+headers of its side (the pointer kept within that side's part of the
+viewport), committed on release. Escape puts the place back, or the width
+as it was through `setColumns` (resizing would hold a pinned column to the
+room it has now, which a grid narrowed meanwhile may lack), and the click
+that ends a drag is swallowed, so a drag never sorts. Touches
+on headers scroll the grid rather than move columns. The keys on a focused
+header (Shift with arrows, Alt with arrows) and the column menu
+(`dom/grid-menu.ts`, a WAI menu outside the grid's own roles, of items and
+menu checkboxes with `aria-keyshortcuts` and disabled states, opened by Alt
+and Down, Shift+F10, a right click, or the header's button) call the same
+model commands, each checking again when chosen that it still applies. An
+open menu is written again before a frame in which the columns or the
+grid's width changed, and closes with its column, handing the focus to the
+grid's focused cell; otherwise it gives the focus back to the header when it
+closes, and the live region says what each change did. A header's button is not
+displayed until the header is hovered or focused: laid out in every
+header, its glyph made each horizontal scroll step about 0.08 ms slower in
+style and layout.
+
+Frames go through the shared scheduler, sizes come from a resize observer
+on the container and the scroller, and grids out of the page's view wait.
+A grid's container gets the grid's height, or 320 pixels when it has none.
 
 Browsers lay out boxes up to about 33.5 million pixels (Chrome and WebKit
 clamp element heights at 33,554,428) and Firefox about 17.9 million, but
@@ -427,10 +500,12 @@ focused element drops its focus. Rows carry `aria-rowindex` and
 `aria-selected`, cells `aria-colindex`, the grid `aria-rowcount` and
 `aria-colcount`, and the first sort key's header `aria-sort`; a hidden
 description gives the keys, and a polite live region outside the grid says
-what sorting and selecting did. Theme tokens become custom properties on the
-grid's root, read by one stylesheet each grid carries (so grids in shadow
-roots are styled); forced-colors mode uses system colors. `destroy()`
-unschedules the grid and removes its listeners, observers, and elements.
+what sorting, selecting, and changing columns did. Theme tokens become
+custom properties on the grid's root, read by one stylesheet each grid
+carries (so grids in shadow roots are styled); forced-colors mode uses
+system colors. `destroy()` unschedules the grid, puts back what a drag
+under way changed, closes a column's menu, and removes its listeners,
+observers, and elements.
 
 ## Level of detail
 

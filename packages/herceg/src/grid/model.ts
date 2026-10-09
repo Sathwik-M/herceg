@@ -1,8 +1,9 @@
 // A grid's state without a DOM, imported as `herceg/grid/model`: the columns
-// it shows, the rows of a row view (or the view's groups, each followed by
-// its rows when expanded), where it is scrolled, which cell has the focus,
-// and which rows are selected. A renderer (dom/grid.ts) draws it and turns
-// keys and clicks into its commands; applications call the same commands.
+// it shows (their order, widths, pins, and which are hidden), the rows of a
+// row view (or the view's groups, each followed by its rows when expanded),
+// where it is scrolled, which cell has the focus, and which rows are
+// selected. A renderer (dom/grid.ts) draws it and turns keys, clicks, and
+// drags into its commands; applications call the same commands.
 // One model serves one grid: grids showing the same rows share the view, the
 // groups, and the selection store, each with a model of its own.
 
@@ -20,10 +21,18 @@ import {
 import type { PositionField, Schema, Table } from "../data/table.ts";
 import type { TimeZone } from "../format/zone.ts";
 import {
+  type ColumnContent,
+  describeColumns,
   type GridColumn,
   type GridColumnLayout,
+  MIN_COLUMN_WIDTH,
+  MIN_SCROLLING_WIDTH,
+  type PinSide,
   type PlacedColumn,
+  pinnedWidth,
+  pinsHold,
   placeColumns,
+  widthOf,
 } from "./columns.ts";
 import {
   countSelected,
@@ -36,7 +45,13 @@ import {
   stamped,
 } from "./grouped.ts";
 
-export type { GridColumn, GridColumnLayout } from "./columns.ts";
+export {
+  type GridColumn,
+  type GridColumnLayout,
+  MIN_COLUMN_WIDTH,
+  MIN_SCROLLING_WIDTH,
+  type PinSide,
+} from "./columns.ts";
 
 export interface GridModelOptions<S extends Schema = Schema> {
   /** The rows to show, in order. The application owns the view; the grid sorts through it. */
@@ -70,7 +85,10 @@ export interface GridFocus {
   readonly column: string;
 }
 
-/** Rows `[rowStart, rowEnd)` and shown columns `[columnStart, columnEnd)`. */
+/**
+ * Rows `[rowStart, rowEnd)` and shown columns `[columnStart, columnEnd)`
+ * among those that scroll; columns held at the edges are always in view.
+ */
 export interface GridRange {
   readonly rowStart: number;
   readonly rowEnd: number;
@@ -170,6 +188,9 @@ interface Entry {
 
 const ROW_HEIGHT = 28;
 
+/** A column as the model keeps it: with its id. */
+type Column<S extends Schema> = GridColumn<S> & { readonly id: string };
+
 /**
  * The state of one grid over a row view. Every read brings it up to date
  * with its view, its groups, its table, and its selection store; listeners
@@ -182,9 +203,14 @@ export class GridModel<S extends Schema = Schema> {
   readonly rowHeight: number;
   readonly #table: Table;
   readonly #settings: { locale: string | undefined; timeZone: TimeZone; missing: string };
-  #columns: readonly GridColumn<S>[] = [];
+  /** The columns, shown or hidden, in order: the one record of their layout. */
+  #columns: readonly Column<S>[] = [];
+  /** What each column shows, by id, made when the columns are set. */
+  #contents = new Map<string, ColumnContent>();
   #layout: readonly PlacedColumn[] = [];
   #width = 0;
+  /** How many shown columns are held at each edge, and how wide they are. */
+  #pins = { left: 0, right: 0, leftWidth: 0, rightWidth: 0 };
 
   #groups: RowGroups | null = null;
   #groupSort: readonly SortKey[] = [];
@@ -268,12 +294,16 @@ export class GridModel<S extends Schema = Schema> {
 
   // Columns
 
-  /** Every column, shown or hidden, in order, with its id. */
+  /**
+   * Every column, shown or hidden, in order, with its id: their layout as
+   * resizing, moving, pinning, and hiding left it, which `setColumns` takes
+   * back.
+   */
   get columns(): readonly GridColumn<S>[] {
     return this.#columns;
   }
 
-  /** The shown columns, placed side by side. */
+  /** The shown columns, placed side by side: pinned left, the others, pinned right. */
   get columnLayout(): readonly GridColumnLayout[] {
     return this.#layout;
   }
@@ -283,21 +313,83 @@ export class GridModel<S extends Schema = Schema> {
     return this.#width;
   }
 
-  /** Replaces the columns: their order, widths, formats, aggregates, and which are hidden. */
+  /** Replaces the columns: their order, widths, pins, formats, aggregates, and which are hidden. */
   setColumns(columns: readonly GridColumn<S>[]): void {
-    const layout = placeColumns(this.#table, columns as readonly GridColumn[], this.#settings);
+    const contents = describeColumns(this.#table, columns as readonly GridColumn[], this.#settings);
     this.#checkGroups(this.#groups, columns);
-    // The focus moves to the columns as they are now: catch up with the rows first.
-    if (this.#display) this.#current();
-    this.#columns = Object.freeze(
-      columns.map((column) => Object.freeze({ ...column, id: column.id ?? column.field })),
-    ) as readonly GridColumn<S>[];
-    this.#layout = Object.freeze(layout);
-    const last = layout.at(-1);
-    this.#width = last ? last.x + last.width : 0;
-    this.#left = this.#clampLeft(this.#left);
-    this.#resolveFocus();
-    this.#notify();
+    this.#contents = contents;
+    this.#takeColumns(
+      columns.map((column) => ({ ...column, id: column.id ?? column.field })) as Column<S>[],
+    );
+  }
+
+  /**
+   * Sets a column's width, in CSS pixels, no narrower than
+   * `MIN_COLUMN_WIDTH`. A pinned column held at its edge widens only as far
+   * as the pinned columns leave the others `MIN_SCROLLING_WIDTH`.
+   */
+  resizeColumn(id: string, width: number): void {
+    const column = this.#column(id);
+    if (!Number.isFinite(width)) throw new RangeError(`Column "${id}" cannot be ${width} wide`);
+    const next = Math.max(MIN_COLUMN_WIDTH, Math.min(width, this.#widest(column)));
+    if (next === widthOf(column)) return;
+    this.#replace(column, { ...column, width: next });
+  }
+
+  /**
+   * Moves a column before the column `before` in the columns' order, or last
+   * with null. Pinned columns show at their edge in that order, so a move
+   * among them, or among the others, is a move on the screen.
+   */
+  moveColumn(id: string, before: string | null): void {
+    const column = this.#column(id);
+    if (before !== null) this.#column(before);
+    if (before === id) return;
+    const rest = this.#columns.filter((other) => other !== column);
+    const at = before === null ? rest.length : rest.findIndex((other) => other.id === before);
+    if (this.#columns[at] === column) return;
+    rest.splice(at, 0, column);
+    this.#takeColumns(rest);
+  }
+
+  /**
+   * Pins a column to the grid's left or right edge, or unpins it with null,
+   * back to its place among the others. A column the grid has no room to
+   * hold at an edge is refused (see `canPin`); `setColumns` takes pins as
+   * given, to restore a layout, and pinned columns the grid becomes too
+   * narrow for scroll with the others until it widens.
+   */
+  pinColumn(id: string, side: PinSide | null): void {
+    if (side !== null && side !== "left" && side !== "right")
+      throw new TypeError(`Columns pin to "left" or "right", not "${side}"`);
+    const column = this.#column(id);
+    if ((column.pin ?? null) === side) return;
+    if (side !== null && !this.canPin(id))
+      throw new RangeError(
+        `Pinning "${id}" would leave the other columns less than ${MIN_SCROLLING_WIDTH} pixels`,
+      );
+    const { pin: _, ...rest } = column;
+    this.#replace(column, (side === null ? rest : { ...rest, pin: side }) as Column<S>);
+  }
+
+  /**
+   * Whether `pinColumn` can pin the column: whether, pinned, it would leave
+   * the other columns at least `MIN_SCROLLING_WIDTH` of the grid as wide as
+   * it is now. Always for a column pinned already (to move it to the other
+   * side), a hidden one, or before the grid is measured.
+   */
+  canPin(id: string): boolean {
+    const column = this.#column(id);
+    if (column.pin !== undefined || column.hidden) return true;
+    return pinsHold(pinnedWidth(this.#columns) + widthOf(column), this.#viewWidth);
+  }
+
+  /** Shows or hides a column. The focus on a column hidden goes to the nearest shown one. */
+  setColumnVisible(id: string, visible: boolean): void {
+    const column = this.#column(id);
+    if (!column.hidden === visible) return;
+    const { hidden: _, ...rest } = column;
+    this.#replace(column, (visible ? rest : { ...rest, hidden: true }) as Column<S>);
   }
 
   /** Index of the shown column `id`, or -1. */
@@ -457,7 +549,7 @@ export class GridModel<S extends Schema = Schema> {
     const column = this.#layout[columnIndex];
     if (!column) throw new RangeError(`Column ${columnIndex} is not shown`);
     const { group, position } = this.#entry(rowIndex);
-    if (position >= 0) return column.text(this.#table, position);
+    if (position >= 0) return column.content.text(this.#table, position);
     return this.#textsOfGroups()[columnIndex]!(group);
   }
 
@@ -503,8 +595,12 @@ export class GridModel<S extends Schema = Schema> {
   /** Sets the size of the area rows show in (below the header), in CSS pixels. */
   setViewport(width: number, height: number): void {
     if (width === this.#viewWidth && height === this.#viewHeight) return;
+    const pinned = pinnedWidth(this.#columns);
+    const held = pinsHold(pinned, this.#viewWidth);
     this.#viewWidth = Math.max(0, width);
     this.#viewHeight = Math.max(0, height);
+    // Pinned columns are let go, or held again, as the grid narrows or widens.
+    if (pinsHold(pinned, this.#viewWidth) !== held) this.#placeColumns();
     this.#current();
     this.#scroll(this.#top, this.#left, true);
     this.#notify();
@@ -553,9 +649,12 @@ export class GridModel<S extends Schema = Schema> {
     const top = this.#top;
     const clamp = (value: number, max: number) => Math.max(0, Math.min(max, value));
     const layout = this.#layout;
-    // The first column whose `edge` is past `x`, by binary search.
+    // Columns between those held at the edges scroll, behind them.
+    const pins = this.#pins;
+    const [start, end] = [pins.left, layout.length - pins.right];
+    // The first scrolling column whose `edge` is past `x`, by binary search.
     const first = (x: number, edge: (column: GridColumnLayout) => number) => {
-      let [lo, hi] = [0, layout.length];
+      let [lo, hi] = [start, end];
       while (lo < hi) {
         const mid = (lo + hi) >>> 1;
         if (edge(layout[mid]!) <= x) lo = mid + 1;
@@ -563,14 +662,16 @@ export class GridModel<S extends Schema = Schema> {
       }
       return lo;
     };
-    const left = this.#left;
-    const right = left + this.#viewWidth;
+    const left = this.#left + pins.leftWidth;
+    const right = this.#left + this.#viewWidth - pins.rightWidth;
+    const within = (index: number) => Math.max(start, Math.min(end, index));
+    const columnStart = within(first(left, ({ x, width }) => x + width) - columns);
     return {
       rowStart: clamp(Math.floor(top / height) - rows, count),
       rowEnd: clamp(Math.ceil((top + this.#viewHeight) / height) + rows, count),
-      columnStart: clamp(first(left, ({ x, width }) => x + width) - columns, layout.length),
+      columnStart,
       // Columns starting before the right edge show.
-      columnEnd: clamp(first(right - 1e-6, ({ x }) => x) + columns, layout.length),
+      columnEnd: Math.max(columnStart, within(first(right - 1e-6, ({ x }) => x) + columns)),
     };
   }
 
@@ -793,6 +894,51 @@ export class GridModel<S extends Schema = Schema> {
     this.#notify();
   }
 
+  /** The column `id`, shown or hidden. */
+  #column(id: string): Column<S> {
+    const column = this.#columns.find((other) => other.id === id);
+    if (!column) throw new Error(`No grid column "${id}"`);
+    return column;
+  }
+
+  #replace(column: Column<S>, next: Column<S>) {
+    this.#takeColumns(this.#columns.map((other) => (other === column ? next : other)));
+  }
+
+  /** Takes these as the columns, placed anew; what they show stays. */
+  #takeColumns(columns: readonly Column<S>[]) {
+    // The focus moves to the columns as they are now: catch up with the rows first.
+    if (this.#display) this.#current();
+    this.#columns = Object.freeze(columns.map((column) => Object.freeze(column) as Column<S>));
+    this.#placeColumns();
+    this.#left = this.#clampLeft(this.#left);
+    this.#resolveFocus();
+    this.#notify();
+  }
+
+  /** Places the shown columns, holding pinned ones at the edges if the viewport leaves room. */
+  #placeColumns() {
+    const layout = placeColumns(this.#columns, this.#contents, this.#viewWidth);
+    this.#layout = Object.freeze(layout);
+    const last = layout.at(-1);
+    this.#width = last ? last.x + last.width : 0;
+    const pins = { left: 0, right: 0, leftWidth: 0, rightWidth: 0 };
+    while (pins.left < layout.length && layout[pins.left]!.pinned === "left")
+      pins.leftWidth += layout[pins.left++]!.width;
+    while (pins.right < layout.length && layout.at(-1 - pins.right)!.pinned === "right")
+      pins.rightWidth += layout.at(-1 - pins.right++)!.width;
+    this.#pins = pins;
+  }
+
+  /** The widest a column can be: pinned columns held at the edges leave the others room. */
+  #widest(column: Column<S>): number {
+    const pinned = pinnedWidth(this.#columns);
+    const room = this.#viewWidth;
+    if (column.pin === undefined || column.hidden || room <= 0 || !pinsHold(pinned, room))
+      return Number.POSITIVE_INFINITY;
+    return room - MIN_SCROLLING_WIDTH - (pinned - widthOf(column));
+  }
+
   /** Throws unless the groups are of the view and have the aggregates the columns show. */
   #checkGroups(
     groups: RowGroups<S> | RowGroups | null,
@@ -932,11 +1078,13 @@ export class GridModel<S extends Schema = Schema> {
       else if (y + this.rowHeight > top + this.#viewHeight)
         top = y + this.rowHeight - this.#viewHeight;
     }
+    // Columns held at the edges are always in view; the others scroll between them.
     const column = this.#layout[columnIndex];
-    if (column) {
-      if (column.x < left) left = column.x;
-      else if (column.x + column.width > left + this.#viewWidth)
-        left = column.x + column.width - this.#viewWidth;
+    if (column && column.pinned === null) {
+      const { leftWidth, rightWidth } = this.#pins;
+      if (column.x - leftWidth < left) left = column.x - leftWidth;
+      else if (column.x + column.width > left + this.#viewWidth - rightWidth)
+        left = column.x + column.width - this.#viewWidth + rightWidth;
     }
     return [top, left];
   }

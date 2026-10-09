@@ -1518,11 +1518,11 @@ The model holds what the grid shows apart from the rows themselves, which
 the view chooses and orders: the columns, where the grid is scrolled, the
 focused cell, and the selected rows. It has no DOM, and is also its own entry
 point, `herceg/grid/model`. Columns take Intl format options for their
-field's kind (none for categories) and a width (120 pixels by default);
-numbers align to the end. `model.setColumns` replaces them, to reorder,
-resize, or hide columns; `model.columns` gives them back. Missing values show
-as `missing` (empty by default). One model serves one grid: grids of the
-same rows share the view and the selection store.
+field's kind (none for categories) and a width (120 pixels by default, 32
+at least); numbers align to the end. `model.setColumns` replaces them, and
+`model.columns` gives them back. Missing values show as `missing` (empty by
+default). One model serves one grid: grids of the same rows share the view
+and the selection store.
 
 Clicking a column's header sorts by its field, ascending, then descending,
 then not at all; with Shift, the column's field is added to the other keys
@@ -1551,6 +1551,48 @@ selects the rows from the last one selected, Ctrl+A (Cmd+A) selects every
 row, and Escape clears the selection; Enter or Space on a header sorts by it.
 What sorting and selecting did is announced. Grids take the charts' themes
 (`theme`); without a height of its own, a grid's container gets 320 pixels.
+
+Columns are resized, moved, pinned to an edge, and hidden by the model's
+commands, which name them by id, and from the grid's headers:
+
+```ts
+model.resizeColumn("latency", 160); // no narrower than MIN_COLUMN_WIDTH, 32 pixels
+model.moveColumn("service", "time"); // before "time"; null puts it last
+model.pinColumn("time", "left"); // or "right"; null unpins it
+model.setColumnVisible("service", false);
+```
+
+Dragging a header's edge resizes its column (the right edge, or the left
+one of a column pinned right), and dragging the header moves the column
+among those pinned to the same side (or among the unpinned ones), dropped
+where a line shows; Escape puts it back, and a drag never sorts. On a
+focused header, Shift with Left or Right Arrow moves its column, Alt with
+Left or Right Arrow resizes it by 16 pixels, and Alt and Down Arrow (or
+Shift+F10, a right click, or the button on a hovered header) opens the
+column's menu: move, resize, pin, unpin, or hide it, and a check for every
+column, hidden ones too, to show or hide it. What each change did is
+announced, and the focus stays on the column's header. A resize drag
+changes the model once a frame as it goes, so the model's listeners hear
+those widths too, and Escape puts the width back. `model.columns` holds the
+layout the commands left (order, widths, pins, hidden columns), which
+`setColumns` takes back, so an application can keep a user's layout:
+
+```ts
+localStorage.layout = JSON.stringify(model.columns);
+model.setColumns(JSON.parse(localStorage.layout));
+```
+
+Pinned columns show first (pinned left) or last (pinned right), each side
+in the columns' order, and stay in place as the others scroll under them;
+unpinned, a column goes back to its place among the others. Each row is
+still one row of cells in the order they show, as screen readers read it.
+Pinned columns must leave the others at least 120 pixels
+(`MIN_SCROLLING_WIDTH`): `pinColumn` refuses a column the grid has no room
+to hold (`model.canPin(id)` says whether it has, and the menu offers no
+other pin), and a held pinned column widens only as far as that allows.
+`setColumns` takes pins as given, to restore a layout on any screen; in a
+grid too narrow for them, pinned columns scroll with the others, in the same
+order, until it is wide enough again.
 
 A grid and a chart linked both ways share one table: the grid's selected
 rows restrict what the chart shows, and the chart's brush filters the grid.
@@ -1644,12 +1686,17 @@ Space selects its rows.
 Rows have one height (`rowHeight`, 28 pixels by default) and columns explicit
 widths. Rows taller together than 8 million pixels scroll scaled: the
 scrollbar covers them all, and a pixel scrolled moves more than one. Not yet
-available: resizing or reordering columns by dragging, pinned columns,
-nested groups, pivots, custom cell content, editing, and copying.
+available: column groups (headers over several columns), sizing columns to
+their content, moving columns by touch (the menu moves them), nested groups,
+pivots, custom cell content, editing, and copying.
 
 ## Migrating from earlier versions
 
-Herceg is not yet at 1.0. Its chart handle now keeps the engine to itself:
+Herceg is not yet at 1.0. Grid columns are at least 32 pixels wide
+(`MIN_COLUMN_WIDTH`): `setColumns` and `createGridModel` refuse narrower
+widths, which they took before.
+
+Its chart handle now keeps the engine to itself:
 
 - `chart.model` is gone. `getPanels()` describes the panels and their axes
   (`model.panels()`, `xScale()`, `yScale()`, and `yRightScale()`), `toPixel`,

@@ -96,8 +96,9 @@ phase, so a parent's layout effect can already read them through `ref`.
 `<Grid>`, from `@herceg/react/grid` so that applications drawing only charts
 never load it, shows a grid model (see herceg's README, "Grids"). The
 application makes the model and owns it; data changes, scrolling, focus,
-selection, and sorting go through the model and the grid, never through
-React. A new `model` makes a new grid; `ariaLabel`, `theme`, and
+selection, sorting, and column layout (resizing, moving, pinning, hiding) go
+through the model and the grid, never through React; to keep a user's
+layout, read `model.columns` in a `model.subscribe` listener. A new `model` makes a new grid; `ariaLabel`, `theme`, and
 `headerHeight` change in place. A model no one keeps any more stops following
 its view on its own, so a model made with `useMemo` needs no cleanup.
 
