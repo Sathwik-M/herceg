@@ -743,7 +743,9 @@ one pass finds the extremes and another counts each series' values (by
 division for evenly spaced edges, binary search for calendar ones), and at
 most a thousand bars are drawn, whatever the data size. Series split by a
 category field also keep their row indexes (4 bytes per row), as long-format
-series do. Streaming recounts every value on each change.
+series do. Streaming recounts every value on each change. Split by facets, a
+histogram counts each panel's rows in one pass, by each row's series code
+(see Small multiples), and keeps no rows by series.
 
 Candlesticks (and OHLC bars, their `variant`) merge rather than sample: with more candles in view than the
 plot has pixel columns, each column draws one candle with the open of its
@@ -890,7 +892,30 @@ fill, kept while the table, the panels' rows, and the hidden series stay the
 same. Heatmaps split like row-aligned marks: each panel's raster and cell
 index read only its rows, so a cell takes the last row with a value among
 them, and equal cells of other panels never meet (see Points and rasters).
-Histograms and box plots refuse facets until they split before combining. Continuous domains come from every panel's series, so rows
+Marks whose series summarize rows (histograms, box plots, violins) are
+split before they combine them: with `split`, their `series` lists only
+their series' keys, labels, and colors (the legend's, `model.series()`'s),
+and the splitter hands them each panel's rows of their table
+(`Mark.summarizePanels`: one partition per table version and panel list, 4
+bytes per row, whatever series the rows are in) with the x group of each
+panel. A histogram chooses bins per x group from the rows of its panels
+(one set for a shared x, so rows without a facet value widen no bins, but
+rows without a series value do, as in one chart), then counts each panel's
+rows by series code in one pass; percent and density are over a panel
+series' own counts, stacks are of the visible series within a panel, and a
+series without rows in a panel has no bars there rather than empty bins.
+Box plots and violins summarize each panel's rows as one chart summarizes
+all of them, and list series in one chart's order (each series value by
+the first category it has values in: a pass over the rows, nothing
+summarized). Every panel lists every series, absent ones empty, so slots
+and keyboard stops agree across panels. Counts and summaries are kept per
+chart (by its first panel's rows) while the table, the panels' rows, the x
+groups, and the zone are the same; redrawing or hiding a series recounts
+and sorts nothing. A summary series finds its summary through its `values`
+(the summary's medians, which panels' copies share), and a box's band comes
+from the chart's band of a table row of its group, so panels read the
+chart's one mapping instead of making their own. Annotations over a table
+still read it whole, having no series, and only repeat. Continuous domains come from every panel's series, so rows
 without a facet value are left out of them; the bands of a shared category
 axis still come from whole tables. Each panel gets a frame whose scales are the
 shared plans moved to its row and column, and whose buffer pools are its
@@ -941,9 +966,10 @@ every scale; never on the legend), and Enter after a keyboard selection. A
 chart keeps one selection, owned by the panels sharing the x scale of the
 panel it was made in: drawn only there, reported with their keys, and
 cleared (with an event naming them) once no panel of that scale is drawn.
-Up and Down carry the keyboard cursor's x value between panels sharing a
-scale and its place across the plot otherwise, and a keyboard range never
-reaches across scales. Synced charts share cursors with such charts (each
+Up and Down carry the keyboard cursor's value along the axis it follows (x,
+or y for marks inspected along y) between panels sharing that axis' scale,
+and its place across the plot otherwise, and a keyboard range never reaches
+across scales. Synced charts share cursors with such charts (each
 panel draws a cursor its scale holds) but neither send them nor take
 viewports and selections, which belong to some panels only; applications
 that link scales of the same quantity set them with `setViewport` and a
@@ -995,8 +1021,9 @@ place is turned back into a chart band (`BandPlaces.band`) to look a cell up,
 and the keyboard compares cells at their places, as the panel draws them.
 Text summaries read series' parts in every panel, which hold chart band
 indices, so they name categories by the chart's bands (`SummaryContext.bands`)
-rather than one panel's. Bars, heatmaps, and points place categories per
-panel; other marks on such an axis (box plots, violins, error bars,
+rather than one panel's. Bars, heatmaps, points, box plots, and violins
+place categories per panel (box plots and violins hold the categories of
+their groups with values); other marks on such an axis (error bars,
 candlesticks), synced charts, and brushes along a y axis of such categories
 are refused, and category axes still do not zoom.
 
@@ -2106,17 +2133,18 @@ document when `OffscreenCanvas` is unavailable.
   instead of 0.6 ms. A calendar keeps every span it resolved for as long as
   its `TimeBreaks` lives (24 bytes per interval).
 - Subplots route whole marks; they have no right axes, categories of their
-  own only for bars, heatmaps, and points, x-only zoom and brushing, and no
+  own only for bars, heatmaps, points, box plots, and violins, x-only zoom
+  and brushing, and no
   facets inside a panel.
   Rows and columns may be weighted; a scale shared across sizes is planned
   over its smallest panel, so what marks draw past their values fits in
   every one, and the others keep its domain with ticks for their size.
 - Facets wrap one category field into rows of panels, or lay out a grid by
   two; x and y are shared or resolved per panel, row, or column, category
-  axes only for bars, heatmaps, and points. No y zoom with independent y,
-  sync of charts with categories per panel, or right axes in faceted
-  charts, and histograms, box plots, violins, annotations over a table, and
-  custom marks over a table without series can only repeat in every panel. Panel splits are recomputed whenever their
+  axes only for bars, heatmaps, points, box plots, and violins. No y zoom
+  with independent y, sync of charts with categories per panel, or right
+  axes in faceted charts, and annotations over a table and custom marks
+  over a table without series can only repeat in every panel. Panel splits are recomputed whenever their
   table changes, and rows of a faceted large line do not use its min/max
   index. A category whose rows all lack a facet value still gets an (empty)
   band. Panels smaller than 20 pixels a side are refused with an error
@@ -2138,8 +2166,8 @@ document when `OffscreenCanvas` is unavailable.
   points, lines, areas, panels, and the first appearance of a chart show at
   once.
 - Box plots and violins recompute every group's statistics (and violins
-  their densities) when their table changes, and repeat in every panel of
-  charts with facets rather than splitting. On a log axis, a box or violin
+  their densities) when their table changes, in every panel of charts with
+  facets. On a log axis, a box or violin
   whose median is zero or below has no tooltip or keyboard stop, though
   its positive part is drawn.
 - A pie, treemap, sunburst, gauge, funnel, radar, Sankey diagram, network, map, or 3D chart has its chart to itself: no

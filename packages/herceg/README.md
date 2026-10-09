@@ -425,7 +425,14 @@ right edge. Several series overlay translucently, or stack with `stack: true`.
 of x (per millisecond for times), so each series' bars cover an area of 1, like
 Plotly's "probability density". Tooltips report a bin's range and its bar;
 a bin is inspected through its center, so one zoomed so far that its center
-is out of view has no tooltip.
+is out of view has no tooltip. Split by facets, each panel counts its own
+rows, in bins chosen from the rows of the panels sharing its x scale: one set
+of bins for every panel when they share x, each panel's, row's, or column's
+own with `resolve: { x }` (rows without a facet value are drawn nowhere and
+widen no bins). Percent and density are over each panel's own counts of a
+series, stacks stack within each panel, and a series with no rows in a panel
+has no bars there. Bins are chosen again only when the table changes, never
+on zoom.
 
 Box plots summarize a number or time field per category of the other axis:
 a box from the lower to the upper quartile (linear interpolation between
@@ -436,8 +443,10 @@ category field side by side in each category, in its own color. Tooltips
 report a box's median, quartiles, whiskers, count, and outliers. Missing and
 non-finite values are left out. On a log axis, the parts of a box at zero or
 below are not drawn. Statistics are recomputed for every box when the table
-changes, so long streams of observations cost a full pass per frame. In
-charts with facets, box plots repeat in every panel (`facet: "repeat"`).
+changes, so long streams of observations cost a full pass per frame. Split
+by facets, each panel's boxes summarize its own rows, so a category in two
+panels has two boxes from different values; every series keeps its slot in
+every panel, and `facet: "repeat"` draws all rows' boxes in every panel.
 
 Violins take the same fields and options as box plots and draw each group's
 Gaussian kernel density instead, mirrored about the category's center: every
@@ -1001,9 +1010,10 @@ its x scale; the arrow keys step through a panel and Up and Down move
 between its series and on to the next panel. Stacked bars stack within each
 panel, and each panel's heatmap cell shows the last of that panel's rows
 with a value there; a heatmap's colors follow one scale in every panel,
-over all its table's values. Histograms, box plots, annotations over a
-table, and custom marks over a table without series can only repeat for
-now, and charts with facets have no right axis. A chart too small for its
+over all its table's values. Histograms count, and box plots and violins
+summarize, each panel's rows apart. Annotations over a table (which read it
+whole, having no series) and custom marks over a table without series can
+only repeat for now, and charts with facets have no right axis. A chart too small for its
 panels (under 20 pixels a side) throws an error naming the grid; give it
 more room or fewer columns.
 
@@ -1026,23 +1036,23 @@ values mean the same thing. A scale's zoom is kept while its panels stay the
 same: when they change (a new facet value wraps the panels anew), it fits
 its data again.
 
-A category axis of bars, heatmaps, or points that panels do not share holds
-only the categories of the rows its panels draw, in the order the shared axis would have them
+A category axis of bars, heatmaps, points, box plots, or violins that panels
+do not share holds only the categories of the rows its panels draw (for box
+plots and violins, of the rows with a value), in the order the shared axis would have them
 (dictionary order, across the marks' tables in the chart's order), so a
 category's band index can differ from one panel to the next: tooltips,
 `toPixel`, `formatValue`, and selections read each panel's own (its axis'
 `categories` in `getPanels()`). A mark with `facet: "repeat"`, or a subplot's
 mark, counts all its rows in every panel it draws in; an empty panel has an
-empty axis. Bars grouped by series keep a slot per series of the mark in
-every category, whichever series a panel has, and stacks, split into panels
-first, never reach across them. A selection on such an axis is cleared when
+empty axis. Bars, box plots, and violins grouped by series keep a slot per
+series of the mark in every category, whichever series a panel has, and
+stacks, split into panels first, never reach across them. A selection on such an axis is cleared when
 its panels' categories change, since its band indices would then name other
 categories (the axis' `group` changes with them), and the keyboard carries
 its cursor to another scale by its place across the plot (into a heatmap,
-at its top left cell). Only bars, heatmaps, and points can have categories
-of their own so far: box plots, violins, error bars, and candlesticks on a
-category axis need it shared, and such charts cannot be synced or brushed
-along a y axis of categories.
+at its top left cell). Error bars and candlesticks on a category axis still
+need it shared, and charts with categories of their own cannot be synced or
+brushed along a y axis of categories.
 
 ### Subplots
 
@@ -1076,7 +1086,8 @@ the rows' heights and the columns' widths relative to each other (a shared
 scale keeps one domain over rows or columns of different sizes, each with
 ticks for its size). They share the x axis, labeled under
 the lowest panel of each column, and each has a y scale of its own, from its
-marks (for horizontal bars, its own categories, as in Small multiples);
+marks (on a category y axis, of horizontal bars, box plots, violins,
+heatmaps, or points, its own categories, as in Small multiples);
 `resolve: { y: "shared" }` (or `"rows"`, `"columns"`) shares it
 instead, when the panels sharing it agree on its type, domain, `zero`, and
 `nice`. A panel's `y` takes the place of the chart's `y` settings for its
@@ -1108,8 +1119,8 @@ Marks keep their place in the chart's list as their identity, so colors,
 the legend, and hidden series do not depend on the panel a mark draws in. Inspections report the `panel`
 id. Specs with `panels` need `"version": 2`, and panels with their own `x`
 `"version": 3`. Charts with panels have no right
-axis, category y axes are shared by every panel, and zooming and brushing act
-on x only.
+axis, error bars and candlesticks on a category y axis need it shared
+(`resolve: { y: "shared" }`), and zooming and brushing act on x only.
 
 ### Custom marks
 

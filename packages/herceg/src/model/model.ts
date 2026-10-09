@@ -500,7 +500,7 @@ export class ChartModel {
    * The chart's panels and what each draws: without facets, one panel with
    * every series. Bands are the chart's last (`#bands`).
    */
-  #split(base: MarkSeries[]): PanelSplit {
+  #split(base: MarkSeries[], context: BandContext): PanelSplit {
     const layout = this.#panels;
     if (!layout) {
       // A previous facet's splits would keep its tables alive.
@@ -518,6 +518,7 @@ export class ChartModel {
       },
       this,
       this.#bands,
+      context,
     );
   }
 
@@ -526,7 +527,7 @@ export class ChartModel {
     const type = this.#axisType("x");
     if (type === "band") return undefined;
     const context = this.#context();
-    const marks = this.#split(this.#resolveSeries(this.#bands, context)).all;
+    const marks = this.#split(this.#resolveSeries(this.#bands, context), context).all;
     const breaks = this.#xBreaks(type, context.zone);
     return unionExtent(
       marks.map(({ mark, series }) =>
@@ -682,7 +683,7 @@ export class ChartModel {
     if (yType === "band") bands.y = this.#bandList("y", context);
     this.#bands = bands;
     const base = this.#resolveSeries(bands, context);
-    const split = this.#split(base);
+    const split = this.#split(base, context);
     // Each panel's bands on a band axis: the chart's, or its group's own (see PanelBands).
     const bandsOf = (axis: "x" | "y", panel: number) =>
       (split.bands?.[axis]?.[panel] ?? bands[axis])!;
@@ -1761,7 +1762,9 @@ export class ChartModel {
 
   /**
    * Series of the last scene, for legends, tooltips, and summaries; with
-   * facets, each series whole, before panels split it.
+   * facets, each series whole, before panels split it. Marks that summarize
+   * rows (histograms, box plots) and that facets split list their series
+   * without data: `parts` and `panelSeries` hold what each panel draws.
    */
   series(): Series[] {
     const marks = this.#base ?? this.#resolveSeries(this.#bands, this.#context());

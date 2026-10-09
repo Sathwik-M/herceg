@@ -132,8 +132,8 @@ describe("facets", () => {
       build({ marks: [line(sales, { x: "t", y: "units" })], facet: facet("units") }),
     ).toThrow(/Facet field "units" is number/);
     const cells = table({ x: ["a"], y: ["b"], v: [1], region: ["N"] });
-    expect(() => build({ marks: [histogram(cells, { x: "v" })], facet: panels })).toThrow(
-      /histogram mark over a table cannot be split into panels yet/,
+    expect(() => build({ marks: [rule(cells, { y: "v" })], facet: panels })).toThrow(
+      /rule mark over a table cannot be split into panels yet/,
     );
     expect(() =>
       build({ marks: [line(sales, { x: "t", y: "units", axis: "right" })], facet: panels }),
@@ -144,11 +144,12 @@ describe("facets", () => {
         facet: facet("region", { columns: 0 }),
       }),
     ).toThrow(/at least 1/);
-    // Repeated, a histogram is fine; heatmaps split.
-    const repeated = histogram(cells, { x: "v", facet: "repeat" });
+    // Repeated, a rule is fine; heatmaps and histograms split.
+    const repeated = rule(cells, { y: "v", facet: "repeat" });
     expect(() => build({ marks: [repeated], facet: panels })).not.toThrow();
     const split = heatmap(cells, { x: "x", y: "y", value: "v" });
     expect(() => build({ marks: [split], facet: panels })).not.toThrow();
+    expect(() => build({ marks: [histogram(cells, { x: "v" })], facet: panels })).not.toThrow();
   });
 
   it("inspect the panel under the pointer, and report it", () => {
@@ -934,6 +935,7 @@ describe("panel groups", () => {
         () => {},
         model,
         {},
+        { zone: "UTC", locale: undefined, theme: model.theme },
       );
     const byPanel = layout.groups("independent", split, 2, "x");
     expect(byPanel.keys).toEqual(['["a"]', '["b"]', '["c"]', '["d"]']);

@@ -116,14 +116,15 @@ describe("boxplot", () => {
     expect(hit.points.map((p) => p.label)).toEqual(["two"]);
   });
 
-  it("groups by a series field whatever its name, and repeats in facets", () => {
+  it("groups by a series field whatever its name, and splits by facets", () => {
     const named = table({ g: ["a", "a"], "": ["one", "two"], v: [1, 10] });
     const { scene } = build({ marks: [boxplot(named, { x: "g", y: "v", series: "" })] });
     expect(geometry<RectGeometry>(scene, "rect")).toHaveLength(2);
     const faceted = table({ g: ["a", "b"], p: ["P", "Q"], v: [1, 2] });
-    expect(() =>
-      build({ marks: [boxplot(faceted, { x: "g", y: "v" })], facet: facet("p") }),
-    ).toThrow("cannot be split into panels");
+    const split = build({ marks: [boxplot(faceted, { x: "g", y: "v" })], facet: facet("p") });
+    expect(split.model.panels().map((p) => split.model.panelSeries(p.key)[0]!.length)).toEqual([
+      1, 1,
+    ]);
   });
 
   it("refuses data without a category axis", () => {

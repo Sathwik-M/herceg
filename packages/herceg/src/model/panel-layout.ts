@@ -2,7 +2,7 @@
 // values, or subplots, whose marks name their panel. The model reads either
 // through these types; their code loads only with a facet or panels.
 
-import type { BandList, Bands, Mark } from "../marks/mark.ts";
+import type { BandContext, BandList, Bands, Mark } from "../marks/mark.ts";
 import { type BandPlaces, rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
 import type { AxisSpec, ChartSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
@@ -63,7 +63,8 @@ export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y"> & {
 
 /**
  * Splits a chart's series into panels, keeping what it can from one scene
- * to the next; `bands` are the chart's band axes' bands, in order.
+ * to the next; `bands` are the chart's band axes' bands, in order, and
+ * `context` what labels them (and the zone of calendar bins).
  */
 export interface PanelSplitter {
   split(
@@ -71,6 +72,7 @@ export interface PanelSplitter {
     check: PanelCheck,
     chart: PanelChart,
     bands: Bands,
+    context: BandContext,
   ): PanelSplit;
 }
 
@@ -164,7 +166,7 @@ export function groups(
 }
 
 /** The group of each of `count` panels in rows of `columns` that share a scale under `resolution`. */
-function groupsOf(resolution: ScaleResolution, count: number, columns: number): number[] {
+export function groupsOf(resolution: ScaleResolution, count: number, columns: number): number[] {
   return Array.from({ length: count }, (_, i) =>
     resolution === "independent"
       ? i
@@ -233,14 +235,14 @@ function drawnBy(split: PanelSplit, groupOf: readonly number[]): (MarkSeries[] |
 }
 
 /** Marks that read their categorical positions through panels' places. */
-const PLACED = new Set(["bar", "heatmap", "point"]);
+const PLACED = new Set(["bar", "heatmap", "point", "boxplot", "violin"]);
 
 /**
  * Refuses what panels with categories of their own cannot draw yet: with
  * `resolve` other than "shared" on a category axis, marks other than bars,
- * heatmaps, and points banding it, synced charts (a band index means
- * another category in each panel), and brushes along a y axis of such
- * categories.
+ * heatmaps, points, box plots, and violins banding it (error bars and
+ * candlesticks), synced charts (a band index means another category in
+ * each panel), and brushes along a y axis of such categories.
  */
 export function checkBands(
   marks: readonly Mark[],

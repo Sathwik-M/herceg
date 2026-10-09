@@ -197,11 +197,12 @@ describe("violin", () => {
     expect(Array.from(upper.coords.subarray(0, upper.count * 2)).every(Number.isFinite)).toBe(true);
   });
 
-  it("repeats in facets, and refuses data without a category axis", () => {
+  it("splits by facets, and refuses data without a category axis", () => {
     const faceted = table({ g: ["a", "b"], p: ["P", "Q"], v: [1, 2] });
-    expect(() =>
-      build({ marks: [violin(faceted, { x: "g", y: "v" })], facet: facet("p") }),
-    ).toThrow("cannot be split into panels");
+    const split = build({ marks: [violin(faceted, { x: "g", y: "v" })], facet: facet("p") });
+    expect(split.model.panels().map((p) => split.model.panelSeries(p.key)[0]!.length)).toEqual([
+      1, 1,
+    ]);
     const numbers = table({ a: [1, 2], b: [3, 4] });
     expect(() => violin(numbers, { x: "a" as never, y: "b" })).toThrow(
       "violin needs a category field on x or y",

@@ -677,10 +677,16 @@ describe("categories resolved per panel", () => {
     // Subplots' y categories are their own by default.
     expect(() =>
       build({
-        marks: [boxplot(data, { x: "units", y: "product", panel: "*" })],
+        marks: [errorBar(data, { x: "units", y: "product", xError: "units", panel: "*" })],
         panels: panels([{ id: "a" }]),
       }),
     ).toThrow(`give the chart resolve: { y: "shared" }`);
+    expect(() =>
+      build({
+        marks: [boxplot(data, { x: "units", y: "product", panel: "*" })],
+        panels: panels([{ id: "a" }]),
+      }),
+    ).not.toThrow();
     expect(() =>
       build({
         marks: [bar(data, { x: "product", y: "units" })],

@@ -5,10 +5,11 @@
 // without copying data: a panel's series is the same columns read through a
 // list of the rows in that panel.
 
+import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 import type { CustomSpec } from "../marks/custom.ts";
-import type { Bands, Mark } from "../marks/mark.ts";
-import { rowOf, type Series } from "../marks/series.ts";
+import type { BandContext, Bands, Mark } from "../marks/mark.ts";
+import type { Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
 import type { AxisSpec, FacetSpec, ScaleResolution } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
@@ -17,6 +18,7 @@ import {
   across,
   checkBands,
   groups,
+  groupsOf,
   type LayoutOptions,
   PanelBands,
   type PanelChart,
@@ -57,8 +59,11 @@ export function facet(by: string | FacetGrid, options: FacetOptions = {}): Facet
   return new Facet(options.columns === undefined ? { field: by } : { field: by, ...options });
 }
 
-/** Marks that cannot split their rows into panels yet; they can repeat in every panel. */
-const UNSPLIT = new Set(["histogram", "boxplot", "violin", "rule", "region", "text"]);
+/**
+ * Marks that cannot split their rows into panels yet; they can repeat in
+ * every panel. Annotations over a table read it whole, having no series.
+ */
+const UNSPLIT = new Set(["rule", "region", "text"]);
 
 export class Facet implements PanelLayout {
   /** The field whose values wrap into rows of `columns` panels. */
@@ -309,6 +314,11 @@ export class Splitter {
   readonly #appearance = new WeakMap<Table, Map<string, Appearance>>();
   /** Each series' split by its key; series of one table's rows share one. */
   readonly #bySeries = new Map<string, Split>();
+  /** Each table's rows in each panel, for marks that summarize them (see `#tableRows`). */
+  readonly #rows = new WeakMap<
+    Table,
+    { version: number; panels: readonly PanelValues[]; rows: Uint32Array[] }
+  >();
   readonly #bands = new PanelBands();
 
   constructor(
@@ -326,13 +336,15 @@ export class Splitter {
    * marks over a table draw the rows with those values and other marks
    * repeat. Rows without a value are in no panel; with no values at all,
    * there is one empty panel. Marks whose drawing combines rows (stacks)
-   * combine each panel's apart.
+   * combine each panel's apart; marks that summarize rows (histograms, box
+   * plots) summarize each panel's rows of their table.
    */
   split(
     base: readonly MarkSeries[],
     check: PanelCheck,
     chart: PanelChart,
     bands: Bands,
+    context: BandContext,
   ): PanelSplit {
     const splits = (mark: Mark) => this.#facet.splits(mark);
     const tables = new Set(base.filter(({ mark }) => splits(mark)).map(({ mark }) => mark.table!));
@@ -340,19 +352,39 @@ export class Splitter {
     const empty = this.#panels.length === 0;
     const keys = empty ? [""] : this.#panels.map(({ key }) => key);
     const values = empty ? [[]] : this.#panels.map(({ values }) => values);
+    const dimensions = this.#dimensions.map((d) => [...d]);
+    const { columns } = this.#shape(dimensions.map((d) => d.length));
     const used = new Set<string>();
-    // Per mark, each series' panel parts; undefined for marks that repeat.
+    // Per mark, each series' panel parts; undefined for marks that repeat
+    // and for marks that summarize rows.
     const parts = base.map(({ mark, series }) => {
-      if (!splits(mark)) return undefined;
+      if (!splits(mark) || mark.summarizePanels) return undefined;
       return series.map((s) => {
         used.add(s.key);
         return this.#split(s, mark.table!);
       });
     });
     for (const key of this.#bySeries.keys()) if (!used.has(key)) this.#bySeries.delete(key);
+    // Marks that summarize rows read each panel's rows of their table, and
+    // choose bins over the panels sharing an x scale.
+    const xGroupOf = groupsOf(chart.config.resolve?.x ?? "shared", keys.length, columns);
+    const summaries = base.map(({ mark, series }) =>
+      splits(mark) && mark.summarizePanels
+        ? mark.summarizePanels(
+            series,
+            this.#tableRows(mark.table!),
+            xGroupOf,
+            chart.hidden,
+            bands,
+            context,
+          )
+        : undefined,
+    );
     // Each mark's series in each panel, in the chart's order.
-    const byPanel = base.map(({ series }, i) =>
-      keys.map((_, p) => (parts[i] ? parts[i].flatMap((panels) => panels[p] ?? []) : series)),
+    const byPanel = base.map(
+      ({ series }, i) =>
+        summaries[i] ??
+        keys.map((_, p) => (parts[i] ? parts[i].flatMap((panels) => panels[p] ?? []) : series)),
     );
     base.forEach(({ mark }, i) => {
       if (parts[i]) mark.stackPanels?.(byPanel[i]!, chart.hidden);
@@ -362,10 +394,9 @@ export class Splitter {
     );
     const all = base.map(({ mark, series }, i) => ({
       mark,
-      series: parts[i] ? parts[i].flat() : series,
+      series: summaries[i]?.flat() ?? parts[i]?.flat() ?? series,
     }));
-    const split = { keys, values, dimensions: this.#dimensions.map((d) => [...d]), panels, all };
-    const { columns } = this.#shape(split.dimensions.map((d) => d.length));
+    const split = { keys, values, dimensions, panels, all };
     this.#bands.place(split, columns, bands, chart.config.resolve, this.#facet.yDefault);
     return split;
   }
@@ -450,7 +481,7 @@ export class Splitter {
         rows: s.rows,
         x: s.x,
         panels: this.#panels,
-        byPanel: this.#bucket(s, table),
+        byPanel: this.#bucket(table, s.rows, s.length, s.x, s.sorted),
       };
       this.#bySeries.set(s.key, split);
     }
@@ -464,8 +495,36 @@ export class Splitter {
     }));
   }
 
-  /** The rows of `s` by panel, in series order, and whether each panel's x is ascending. */
-  #bucket(s: Series, table: Table): { rows: Uint32Array; sorted: boolean }[] {
+  /**
+   * The rows of `table` in each panel, ascending: what marks that summarize
+   * rows read, whatever series their rows are in. Kept while the table and
+   * the panels are unchanged.
+   */
+  #tableRows(table: Table): Uint32Array[] {
+    const cached = this.#rows.get(table);
+    if (cached?.version === table.version && cached.panels === this.#panels) return cached.rows;
+    // Without facet values, the one panel is empty.
+    const rows =
+      this.#panels.length === 0
+        ? [new Uint32Array(0)]
+        : this.#bucket(table, undefined, table.length).map((panel) => panel.rows);
+    this.#rows.set(table, { version: table.version, panels: this.#panels, rows });
+    return rows;
+  }
+
+  /**
+   * The first `length` of `rows` (every row without them) by panel, in
+   * order, and whether each panel's `x` is ascending (known for subsets of
+   * a `sorted` x).
+   */
+  #bucket(
+    table: Table,
+    rows: Uint32Array | undefined,
+    length: number,
+    x?: NumericArray,
+    sorted = false,
+  ): { rows: Uint32Array; sorted: boolean }[] {
+    const rowOf = (k: number) => (rows ? rows[k]! : k);
     // Per field, each code's value's place among the field's values times
     // the field's stride: the last field varies fastest, as panels are listed.
     const places = this.fields.map((field, f) => {
@@ -484,17 +543,17 @@ export class Splitter {
     // series whenever its table changes, so one field's lookup is kept apart
     // from two fields'.
     const [first, second] = places as unknown as [Place, Place | undefined];
-    const panelAt = new Int32Array(s.length);
+    const panelAt = new Int32Array(length);
     const { codes: a, place: placeA } = first;
     if (!second) {
-      for (let k = 0; k < s.length; k++) {
-        const code = a[rowOf(s, k)]!;
+      for (let k = 0; k < length; k++) {
+        const code = a[rowOf(k)]!;
         panelAt[k] = code >= 0 ? placeA[code]! : -1;
       }
     } else {
       const { codes: b, place: placeB } = second;
-      for (let k = 0; k < s.length; k++) {
-        const row = rowOf(s, k);
+      for (let k = 0; k < length; k++) {
+        const row = rowOf(k);
         const [codeA, codeB] = [a[row]!, b[row]!];
         const pa = codeA >= 0 ? placeA[codeA]! : -1;
         const pb = codeB >= 0 ? placeB[codeB]! : -1;
@@ -502,7 +561,7 @@ export class Splitter {
       }
     }
     const sizes = new Uint32Array(this.#panels.length);
-    for (let k = 0; k < s.length; k++) {
+    for (let k = 0; k < length; k++) {
       const panel = panelAt[k]!;
       if (panel >= 0) sizes[panel]!++;
     }
@@ -512,18 +571,19 @@ export class Splitter {
       filled: 0,
       last: Number.NEGATIVE_INFINITY,
     }));
-    for (let k = 0; k < s.length; k++) {
+    for (let k = 0; k < length; k++) {
       const at = panelAt[k]!;
       if (at < 0) continue;
       const panel = byPanel[at]!;
-      const row = rowOf(s, k);
+      const row = rowOf(k);
       panel.rows[panel.filled++] = row;
+      if (!x) continue;
       // A subset of an unsorted series may still be sorted (rows grouped by
       // panel); as in isSortedSubset, a missing x leaves it unsorted.
-      const x = s.x[row]!;
-      if (!(x >= panel.last)) panel.sorted = false;
-      panel.last = x;
+      const value = x[row]!;
+      if (!(value >= panel.last)) panel.sorted = false;
+      panel.last = value;
     }
-    return byPanel.map(({ rows, sorted }) => ({ rows, sorted: s.sorted || sorted }));
+    return byPanel.map((panel) => ({ rows: panel.rows, sorted: sorted || (!!x && panel.sorted) }));
   }
 }

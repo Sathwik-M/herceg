@@ -1,3 +1,4 @@
+import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { formatNumber } from "../format/format.ts";
@@ -20,7 +21,6 @@ import {
   NUMERIC,
   type Palette,
   requireField,
-  type SeriesSource,
   SeriesSplitter,
   type SummaryContext,
   seriesKey,
@@ -47,7 +47,10 @@ export interface HistogramOptions<S extends Schema> {
   label?: string;
   /** The y axis the bars are on: "left" (default) or "right", the chart's `yRight`. */
   axis?: "left" | "right";
-  /** With the chart's `facet`, draw all rows in every panel; histograms cannot be split yet. */
+  /**
+   * With the chart's `facet`, draw all rows in every panel instead of
+   * counting each panel's rows in bins of its x scale.
+   */
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
@@ -59,12 +62,40 @@ const MAX_BINS = 1000;
 /** Pixels left between neighboring bars when bins are wide enough. */
 const GAP = 1;
 
-/** Bin edges and each series' counts in them, as of a table version. */
+/** What one series counted: per bin, in all, and how many rows it has. */
+interface Counted {
+  counts: Float64Array;
+  total: number;
+  size: number;
+}
+
+/** The edges a series was counted in, and what it counted. */
+interface Bins extends Counted {
+  edges: Float64Array;
+}
+
+/** Bin edges, their centers, and what each series source counted in them. */
 interface Binned {
   edges: Float64Array;
-  /** Per series source id: counts per bin, and how many values were counted. */
-  counts: Map<string, { counts: Float64Array; total: number }>;
+  centers: Float64Array;
+  /** By series source, in order. */
+  counted: Counted[];
 }
+
+/** A facet split's counts: each x group's bins and each panel's counts, as of what they were made from. */
+interface PanelCounts {
+  version: number;
+  zone: TimeZone;
+  /** The panels' rows, and the x group of each. */
+  rows: readonly Uint32Array[];
+  groups: string;
+  /** Per x group. */
+  bins: { edges: Float64Array; centers: Float64Array }[];
+  /** Per panel, by series code (0 without a series field), for codes with rows there. */
+  counted: Map<number, Counted>[];
+}
+
+const NO_BINS = new Float64Array(0);
 
 /**
  * Bars counting how many values fall in each bin of x. Bins are shared by
@@ -72,7 +103,9 @@ interface Binned {
  * (multiples of 1, 2, or 5 times a power of ten, or calendar intervals for
  * times), each bin holding values from its left edge up to its right one,
  * the last also its right edge. Series reads the bars, with bin centers as
- * x, so tooltips report a bin's range and its count.
+ * x, so tooltips report a bin's range and its count. Split by facets, each
+ * panel counts its own rows, in bins chosen from the rows of the panels
+ * sharing its x scale.
  */
 export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   declare readonly [MARK]: true;
@@ -82,15 +115,19 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   readonly summarizes = true;
   readonly zero = "y";
   readonly #split: SeriesSplitter;
-  /** Bins per time zone (calendar bins depend on it), as of a table version. */
+  /** One chart's bins per time zone (calendar bins depend on it), as of a table version. */
   readonly #binned = new Map<TimeZone, Binned & { table: Table; version: number }>();
-  /** The bins each resolved series was counted in, for its drawing, tooltips, and summary. */
-  readonly #binsOf = new WeakMap<
-    Series,
-    { edges: Float64Array; counts: Float64Array; total: number; size: number }
-  >();
-  /** The zone of the chart resolving series; charts sharing the mark may differ. */
-  #zone: TimeZone = "local";
+  /** The series a split histogram lists, as of a table version (see `#present`). */
+  #seriesPresent:
+    | { version: number; sources: { id: string; label: string }[]; codes: number[] }
+    | undefined;
+  /** Facet splits' counts, by their first panel's rows: charts split rows apart. */
+  readonly #panels = new WeakMap<Uint32Array, PanelCounts>();
+  /**
+   * The bins each series was counted in, for its drawing, tooltips, and
+   * summary, by its values, which only it holds.
+   */
+  readonly #bins = new WeakMap<NumericArray, Bins>();
 
   constructor(input: HistogramSpec, table: Table<Schema>) {
     this.spec = frozen(input);
@@ -119,46 +156,87 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     hidden: ReadonlySet<string>,
     _bands: unknown,
     context: BandContext,
+    split = false,
   ): Series[] {
-    this.#zone = context.zone;
-    const sources = this.#split.sources();
-    const { edges, counts } = this.#bins(sources);
-    const bins = Math.max(0, edges.length - 1);
-    const centers = new Float64Array(bins);
-    // Halves first, so centers of edges near the number range's ends stay finite.
-    for (let i = 0; i < bins; i++) centers[i] = edges[i]! / 2 + edges[i + 1]! / 2;
+    // Facets count each panel's rows (summarizePanels), so need no rows by series.
+    const sources = split ? this.#present().sources : this.#split.sources();
+    const roster = sources.map((source) => {
+      const id = seriesKey(key, source.id);
+      return { key: id, label: source.label, color: this.spec.fill ?? palette(id) };
+    });
+    if (split) return roster.map(({ key, label, color }) => withoutBins(key, label, color));
+    const { edges, centers, counted } = this.#binsIn(context.zone);
+    return this.#bars(roster, edges, centers, counted, hidden);
+  }
+
+  /** Each panel's bars: its rows counted in the bins of its x scale's panels. */
+  summarizePanels(
+    roster: readonly Series[],
+    rows: readonly Uint32Array[],
+    xGroupOf: readonly number[],
+    hidden: ReadonlySet<string>,
+    _bands: unknown,
+    context: BandContext,
+  ): Series[][] {
+    const { bins, counted } = this.#panelCounts(rows, xGroupOf, context.zone);
+    const { codes } = this.#present();
+    return rows.map((_, p) => {
+      const { edges, centers } = bins[xGroupOf[p]!]!;
+      const found = codes.map((code) => counted[p]!.get(code));
+      return this.#bars(roster, edges, centers, found, hidden);
+    });
+  }
+
+  /**
+   * The roster's bars over `edges` (bin `centers` as x): each series'
+   * counts (`counted`, in order), measured as `normalize` says over its
+   * own, and stacked on the visible series before it. A series without
+   * rows here has no bars.
+   */
+  #bars(
+    roster: readonly Pick<Series, "key" | "label" | "color">[],
+    edges: Float64Array,
+    centers: Float64Array,
+    counted: readonly (Counted | undefined)[],
+    hidden: ReadonlySet<string>,
+  ): Series[] {
+    const bins = centers.length;
     const normalize = this.spec.normalize ?? "count";
     // Stacked series sit on the visible ones before them.
     const base = this.spec.stack ? new Float64Array(bins) : undefined;
-    return sources.map((source) => {
-      const id = seriesKey(key, source.id);
-      const { counts: binCounts, total } = counts.get(source.id) ?? {
-        counts: new Float64Array(bins),
-        total: 0,
-      };
+    return roster.map((entry, i) => {
+      const found = counted[i];
+      if (!found) {
+        const empty = withoutBins(entry.key, entry.label, entry.color);
+        this.#bins.set(empty.values, { edges, counts: NO_BINS, total: 0, size: 0 });
+        return empty;
+      }
+      const { counts, total } = found;
       const values = new Float64Array(bins);
-      for (let i = 0; i < bins; i++) {
-        const count = binCounts[i]!;
-        values[i] =
+      for (let b = 0; b < bins; b++) {
+        const count = counts[b]!;
+        values[b] =
           normalize === "count"
             ? count
             : total === 0
               ? 0
               : normalize === "percent"
                 ? (count / total) * 100
-                : count / total / (edges[i + 1]! - edges[i]!);
+                : count / total / (edges[b + 1]! - edges[b]!);
       }
       let y = values;
       let y0: Float64Array | undefined;
       if (base) {
         y0 = Float64Array.from(base);
-        y = Float64Array.from(values, (value, i) => value + y0![i]!);
-        if (!hidden.has(id)) base.set(y);
+        y = Float64Array.from(values, (value, b) => value + y0![b]!);
+        if (!hidden.has(entry.key)) base.set(y);
       }
-      const series: Series = {
-        key: id,
-        label: source.label,
-        color: this.spec.fill ?? palette(id),
+      this.#bins.set(values, { edges, ...found });
+      // A literal like other marks' series, so code reading series sees one shape.
+      return {
+        key: entry.key,
+        label: entry.label,
+        color: entry.color,
         x: centers,
         y,
         y0,
@@ -169,26 +247,29 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
         length: bins,
         sorted: true,
       };
-      const size = source.rows?.length ?? this.table.length;
-      this.#binsOf.set(series, { edges, counts: binCounts, total, size });
-      return series;
     });
   }
 
   xExtent(series: readonly Series[]) {
-    const edges = this.#edgesFor(series[0]);
-    return edges.length > 1 && series.length > 0
-      ? ([edges[0]!, edges[edges.length - 1]!] as const)
-      : undefined;
+    let lo = Infinity;
+    let hi = -Infinity;
+    // Series of panels with x scales of their own may have other bins.
+    for (const s of series) {
+      if (s.length === 0) continue;
+      const { edges } = this.#binsOf(s);
+      lo = Math.min(lo, edges[0]!);
+      hi = Math.max(hi, edges[edges.length - 1]!);
+    }
+    return lo <= hi ? ([lo, hi] as const) : undefined;
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
-    const edges = this.#edgesFor(series[0]);
     const lo = Math.min(x0, x1);
     const hi = Math.max(x0, x1);
     let min = Infinity;
     let max = -Infinity;
     for (const s of series) {
+      const { edges } = this.#binsOf(s);
       for (let i = 0; i < s.length; i++) {
         // Bins reaching into the view.
         if (!(edges[i + 1]! >= lo && edges[i]! <= hi)) continue;
@@ -212,7 +293,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     const zero = y.type === "log" ? y.range[0] : y.map(0);
     const out: RectGeometry[] = [];
     for (const s of visible) {
-      const edges = this.#edgesFor(s);
+      const { edges } = this.#binsOf(s);
       const rects = frame.floats(s.key, "rect", s.length * 4);
       let count = 0;
       for (let i = 0; i < s.length; i++) {
@@ -248,110 +329,325 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
 
   /** A bin's range and what its bar measures. */
   pointText(series: Series, row: number, format: AxisFormat): string {
-    const edges = this.#edgesFor(series);
+    const { edges } = this.#binsOf(series);
     return `${format.x(edges[row]!)} – ${format.x(edges[row + 1]!)}: ${format.y(series.values[row]!)}`;
   }
 
-  /** How many values a series counted, in how many bins over what range, and its fullest bin. */
+  /**
+   * How many values a series counted, in how many bins over what range (in
+   * every panel: the bins of each x scale), and its fullest bin.
+   */
   summarize(parts: readonly Series[], name: string, { format, locale }: SummaryContext): string {
-    const [series] = parts;
-    const bins = series && this.#binsOf.get(series);
-    if (!series || !bins || bins.total === 0) return `${name}: no values in bins`;
-    const { edges, counts, total, size } = bins;
     const f = (value: number) => formatNumber(value, locale);
-    // Counts, whatever the bars measure.
-    let fullest = 0;
-    for (let i = 1; i < counts.length; i++) if (counts[i]! > counts[fullest]!) fullest = i;
-    const count = edges.length - 1;
-    const outside = size - total;
+    let [total, outside, lo, hi] = [0, 0, Infinity, -Infinity];
+    const grids = new Set<Float64Array>();
+    // The fullest bar of any panel: counts, whatever the bars measure.
+    let fullest: { edges: Float64Array; bin: number; count: number } | undefined;
+    for (const part of parts) {
+      const bins = this.#binsOf(part);
+      total += bins.total;
+      outside += bins.size - bins.total;
+      const { edges, counts } = bins;
+      if (counts.length === 0) continue;
+      grids.add(edges);
+      lo = Math.min(lo, edges[0]!);
+      hi = Math.max(hi, edges[edges.length - 1]!);
+      for (let bin = 0; bin < counts.length; bin++)
+        if (!fullest || counts[bin]! > fullest.count) fullest = { edges, bin, count: counts[bin]! };
+    }
+    const left = outside > 0 ? `; ${f(outside)} missing or outside the bins` : "";
+    if (total === 0 || !fullest) return `${name}: no values in bins${left}`;
+    const [grid] = grids;
+    const count = grid!.length - 1;
+    const where =
+      grids.size === 1
+        ? `${count} ${count === 1 ? "bin" : "bins"}`
+        : `the bins of ${grids.size} x scales`;
+    const { edges, bin } = fullest;
     return (
-      `${name}: ${f(total)} values in ${count} ${count === 1 ? "bin" : "bins"} from ` +
-      `${format.x(edges[0]!)} to ${format.x(edges[count]!)}; the fullest, ` +
-      `${format.x(edges[fullest]!)} – ${format.x(edges[fullest + 1]!)}, holds ${f(counts[fullest]!)}` +
-      (outside > 0 ? `; ${f(outside)} missing or outside the bins` : "")
+      `${name}: ${f(total)} ${total === 1 ? "value" : "values"} in ${where} from ` +
+      `${format.x(lo)} to ${format.x(hi)}; ` +
+      `the fullest, ${format.x(edges[bin]!)} – ${format.x(edges[bin + 1]!)}, holds ${f(fullest.count)}${left}`
     );
   }
 
-  /** The edges a series was counted in, or the current ones. */
-  #edgesFor(series: Series | undefined): Float64Array {
-    return (series && this.#binsOf.get(series)?.edges) ?? this.#bins(this.#split.sources()).edges;
-  }
-
-  /** The bins, computed again when the table or the time zone changes. */
-  #bins(sources: readonly SeriesSource[]): Binned {
-    const { table } = this;
-    const cached = this.#binned.get(this.#zone);
-    if (cached?.table === table && cached.version === table.version) return cached;
-    const binned = this.#count(sources);
-    this.#binned.set(this.#zone, { ...binned, table, version: table.version });
-    return binned;
-  }
-
-  /** Bin edges from all of the field's values, and each series' counts in them. */
-  #count(sources: readonly SeriesSource[]): Binned {
-    const values = this.table.numbers(this.spec.x as never);
-    let min = Infinity;
-    let max = -Infinity;
-    let finite = 0;
-    for (let i = 0; i < values.length; i++) {
-      const value = values[i]!;
-      if (!Number.isFinite(value)) continue;
-      finite++;
-      if (value < min) min = value;
-      if (value > max) max = value;
-    }
-    const edges = finite > 0 ? this.#edges(min, max, finite) : new Float64Array(0);
-    const counts = new Map<string, { counts: Float64Array; total: number }>();
-    const bins = Math.max(0, edges.length - 1);
-    // Edges a step apart (all but calendar bins) give a value's bin by division.
-    const step = bins > 0 ? (edges[bins]! - edges[0]!) / bins : 0;
-    const even =
-      bins > 0 && edges.every((edge, i) => Math.abs(edge - (edges[0]! + i * step)) <= step * 1e-9);
-    for (const source of sources) {
-      const binCounts = new Float64Array(bins);
-      let total = 0;
-      const { rows } = source;
-      const length = rows?.length ?? values.length;
-      for (let k = 0; k < length; k++) {
-        const value = values[rows ? rows[k]! : k]!;
-        const bin = even ? evenBinOf(edges, step, value) : binOf(edges, value);
-        if (bin < 0) continue;
-        binCounts[bin]!++;
-        total++;
-      }
-      counts.set(source.id, { counts: binCounts, total });
-    }
-    return { edges, counts };
+  /** The bins a series of this mark was counted in. */
+  #binsOf(series: Series): Bins {
+    return this.#bins.get(series.values) ?? { edges: NO_BINS, counts: NO_BINS, total: 0, size: 0 };
   }
 
   /**
-   * Bin edges covering [min, max] (from the start, with an explicit one):
-   * round values, or calendar boundaries for times; evenly spaced edges when
-   * round ones cannot be represented. `size` is how many values there are.
+   * The series a split histogram lists, as one chart's sources list them
+   * (each series value with rows, in the field's order), and each one's
+   * series code (0 without a series field): one pass over the codes per
+   * table version, without grouping rows.
    */
-  #edges(min: number, max: number, size: number): Float64Array {
+  #present(): { sources: { id: string; label: string }[]; codes: number[] } {
+    const { table } = this;
+    if (this.#seriesPresent?.version === table.version) return this.#seriesPresent;
+    const field = this.spec.series;
+    let present: { sources: { id: string; label: string }[]; codes: number[] };
+    if (field === undefined) {
+      present = {
+        sources: [{ id: this.spec.x, label: this.spec.label ?? this.spec.x }],
+        codes: [0],
+      };
+    } else {
+      const { codes, dictionary } = table.categories(field as never);
+      const seen = new Uint8Array(dictionary.length);
+      for (let row = 0; row < codes.length; row++) if (codes[row]! >= 0) seen[codes[row]!] = 1;
+      const found = Array.from(dictionary, (_, code) => code).filter((code) => seen[code]);
+      present = {
+        sources: found.map((code) => ({ id: dictionary[code]!, label: dictionary[code]! })),
+        codes: found,
+      };
+    }
+    this.#seriesPresent = { version: table.version, ...present };
+    return present;
+  }
+
+  /** One chart's bins, from all of the field's values, counted again when the table changes. */
+  #binsIn(zone: TimeZone): Binned {
+    const { table } = this;
+    const cached = this.#binned.get(zone);
+    if (cached?.table === table && cached.version === table.version) return cached;
+    const values = table.numbers(this.spec.x as never);
+    const edges = this.#edges(finiteRange(values, undefined, RANGE), zone);
+    const binned = { edges, centers: centersOf(edges), counted: this.#countSources(edges) };
+    this.#binned.set(zone, { ...binned, table, version: table.version });
+    return binned;
+  }
+
+  /**
+   * A facet split's bins and counts: each x group's bins from the values of
+   * its panels' rows, and each panel's rows counted in its group's bins.
+   * Kept while the table, the panels' rows, their x groups, and the zone are
+   * the same, so redrawing and hiding series count nothing again.
+   */
+  #panelCounts(rows: readonly Uint32Array[], xGroupOf: readonly number[], zone: TimeZone) {
+    const { table } = this;
+    const groups = xGroupOf.join();
+    const key = rows[0]!;
+    const cached = this.#panels.get(key);
+    if (
+      cached?.version === table.version &&
+      cached.zone === zone &&
+      cached.groups === groups &&
+      cached.rows.length === rows.length &&
+      cached.rows.every((r, p) => r === rows[p])
+    )
+      return cached;
+    const values = table.numbers(this.spec.x as never);
+    const ranges: { min: number; max: number; finite: number }[] = [];
+    rows.forEach((panel, p) => {
+      const g = xGroupOf[p]!;
+      ranges[g] = finiteRange(
+        values,
+        panel,
+        ranges[g] ?? { min: Infinity, max: -Infinity, finite: 0 },
+      );
+    });
+    const bins = Array.from(ranges, (range) => {
+      const edges = range ? this.#edges(range, zone) : NO_BINS;
+      return { edges, centers: centersOf(edges) };
+    });
+    // Each series code's place among those a panel counts, -1 until it has
+    // one: one array for every panel, which each leaves as it found it.
+    const field = this.spec.series;
+    const slots = new Int32Array(
+      field === undefined ? 1 : table.categories(field as never).dictionary.length,
+    ).fill(-1);
+    const counts: PanelCounts = {
+      version: table.version,
+      zone,
+      rows,
+      groups,
+      bins,
+      counted: rows.map((panel, p) => this.#countRows(bins[xGroupOf[p]!]!.edges, panel, slots)),
+    };
+    this.#panels.set(key, counts);
+    return counts;
+  }
+
+  /** What each series source counted in the bins of `edges`, over its rows. */
+  #countSources(edges: Float64Array): Counted[] {
+    const values = this.table.numbers(this.spec.x as never);
+    const bins = Math.max(0, edges.length - 1);
+    const step = bins > 0 ? (edges[bins]! - edges[0]!) / bins : 0;
+    const even = evenlySpaced(edges, step);
+    // A loop, not a callback: values a callback reads from outside it cost
+    // the counting loop about a tenth more time.
+    const counted: Counted[] = [];
+    for (const { rows } of this.#split.sources()) {
+      const counts = new Float64Array(bins);
+      let total = 0;
+      const length = rows?.length ?? values.length;
+      for (let k = 0; k < length; k++) {
+        const value = values[rows ? rows[k]! : k]!;
+        const at = even ? evenBinOf(edges, step, value) : binOf(edges, value);
+        if (at < 0) continue;
+        counts[at]!++;
+        total++;
+      }
+      counted.push({ counts, total, size: length });
+    }
+    return counted;
+  }
+
+  /**
+   * What each series code counted at a panel's `rows` in the bins of
+   * `edges`, in one pass: rows without a series value are not counted.
+   * `slots` holds -1 for every code, as it does again after.
+   */
+  #countRows(edges: Float64Array, rows: Uint32Array, slots: Int32Array): Map<number, Counted> {
+    const values = this.table.numbers(this.spec.x as never);
+    const field = this.spec.series;
+    const categories = field === undefined ? undefined : this.table.categories(field as never);
+    const codes = categories?.codes;
+    const bins = Math.max(0, edges.length - 1);
+    const step = bins > 0 ? (edges[bins]! - edges[0]!) / bins : 0;
+    const even = evenlySpaced(edges, step);
+    // Per code found, in one buffer: its size, its total, then its counts.
+    const width = bins + 2;
+    const found: number[] = [];
+    let buffer = new Float64Array(4 * width);
+    for (let k = 0; k < rows.length; k++) {
+      const row = rows[k]!;
+      const code = codes ? codes[row]! : 0;
+      if (code < 0) continue;
+      let slot = slots[code]!;
+      if (slot < 0) {
+        slot = found.length;
+        slots[code] = slot;
+        found.push(code);
+        if (found.length * width > buffer.length) {
+          const grown = new Float64Array(buffer.length * 2);
+          grown.set(buffer);
+          buffer = grown;
+        }
+      }
+      const base = slot * width;
+      buffer[base]!++;
+      const value = values[row]!;
+      const at = even ? evenBinOf(edges, step, value) : binOf(edges, value);
+      if (at < 0) continue;
+      buffer[base + 1]!++;
+      buffer[base + 2 + at]!++;
+    }
+    for (const code of found) slots[code] = -1;
+    return new Map(
+      found.map((code, slot) => {
+        const base = slot * width;
+        const counts = buffer.subarray(base + 2, base + width);
+        return [code, { counts, total: buffer[base + 1]!, size: buffer[base]! }];
+      }),
+    );
+  }
+
+  /**
+   * Bin edges covering the `range` of values (from the start, with an
+   * explicit one): round values, or calendar boundaries in `zone` for
+   * times; evenly spaced edges when round ones cannot be represented. None
+   * for no values.
+   */
+  #edges({ min, max, finite }: { min: number; max: number; finite: number }, zone: TimeZone) {
+    if (finite === 0) return NO_BINS;
     const { bins } = this.spec;
     const time = this.table.kind(this.spec.x as never) === "time";
     if (typeof bins === "object") return Float64Array.from(fixedEdges(min, max, bins));
     // One value, or values all alike: one bin around them.
     if (min === max) return Float64Array.from(around(min, time ? 1_800_000 : 0.5));
     // Sturges' rule unless a count is given; coarser when round edges overflow the limit.
-    const target = Math.min(MAX_BINS, bins ?? Math.min(50, Math.ceil(Math.log2(size)) + 1));
+    const target = Math.min(MAX_BINS, bins ?? Math.min(50, Math.ceil(Math.log2(finite)) + 1));
     for (let count = target; count >= 1; count = Math.floor(count / 2)) {
-      const edges = time ? this.#calendarEdges(min, max, count) : roundEdges(min, max, count);
+      const edges = time ? calendarEdges(min, max, count, zone) : roundEdges(min, max, count);
       if (valid(edges, min, max)) return Float64Array.from(edges);
     }
     return Float64Array.from(evenEdges(min, max, target));
   }
+}
 
-  /** Calendar boundaries in the chart's zone, about `count` bins covering [min, max]. */
-  #calendarEdges(min: number, max: number, count: number): number[] {
-    const [lo, hi] = niceTimeDomain(min, max, count, this.#zone);
-    const edges = timeTicks(lo, hi, chooseInterval(hi - lo, count), this.#zone);
-    if (edges[0] !== lo) edges.unshift(lo);
-    if (edges[edges.length - 1] !== hi) edges.push(hi);
-    return edges;
+/** A range of no values, to start from. */
+const RANGE = { min: Infinity, max: -Infinity, finite: 0 } as const;
+
+/** A series of no bars (yet), with its own empty values, which name its bins. */
+function withoutBins(key: string, label: string, color: string): Series {
+  const values = new Float64Array(0);
+  return {
+    key,
+    label,
+    color,
+    x: NO_BINS,
+    y: values,
+    y0: undefined,
+    values,
+    field: undefined,
+    range: false,
+    rows: undefined,
+    length: 0,
+    sorted: true,
+  };
+}
+
+/** The center of each bin; halves first, so centers of edges near the number range's ends stay finite. */
+function centersOf(edges: Float64Array): Float64Array {
+  const bins = Math.max(0, edges.length - 1);
+  const centers = new Float64Array(bins);
+  for (let i = 0; i < bins; i++) centers[i] = edges[i]! / 2 + edges[i + 1]! / 2;
+  return centers;
+}
+
+/**
+ * Whether `edges` are `step` apart (all but calendar bins), so that a
+ * value's bin is found by division, not search. Counting loops call the two
+ * lookups directly rather than through a closure choosing one, which costs
+ * them about a tenth more time.
+ */
+function evenlySpaced(edges: Float64Array, step: number): boolean {
+  return (
+    edges.length > 1 &&
+    edges.every((edge, i) => Math.abs(edge - (edges[0]! + i * step)) <= step * 1e-9)
+  );
+}
+
+/**
+ * `range` widened by the finite values at `rows` (every row without them):
+ * the least, the greatest, and how many there are.
+ */
+function finiteRange(
+  values: NumericArray,
+  rows: Uint32Array | undefined,
+  range: { readonly min: number; readonly max: number; readonly finite: number },
+): { min: number; max: number; finite: number } {
+  let { min, max, finite } = range;
+  // A whole column, the one chart's case, in a loop of its own.
+  if (!rows) {
+    for (let row = 0; row < values.length; row++) {
+      const value = values[row]!;
+      if (!Number.isFinite(value)) continue;
+      finite++;
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+    return { min, max, finite };
   }
+  for (let k = 0; k < rows.length; k++) {
+    const value = values[rows[k]!]!;
+    if (!Number.isFinite(value)) continue;
+    finite++;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  return { min, max, finite };
+}
+
+/** Calendar boundaries in `zone`, about `count` bins covering [min, max]. */
+function calendarEdges(min: number, max: number, count: number, zone: TimeZone): number[] {
+  const [lo, hi] = niceTimeDomain(min, max, count, zone);
+  const edges = timeTicks(lo, hi, chooseInterval(hi - lo, count), zone);
+  if (edges[0] !== lo) edges.unshift(lo);
+  if (edges[edges.length - 1] !== hi) edges.push(hi);
+  return edges;
 }
 
 /** Edges usable for counting: finite, increasing, at most MAX_BINS bins, and covering [min, max]. */

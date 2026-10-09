@@ -1714,19 +1714,22 @@ export class MountedChart implements Chart {
     event.preventDefault();
     const before = keyboard ? (this.#inspection() ?? keyboard.last) : undefined;
     const page = Math.max(1, Math.round(series.length / 10));
-    // Up and Down carry the cursor's x to the next stop: its value on a
-    // shared x scale, else its place across the plot.
-    const carried = (value: number, position: number) =>
-      !from || !to || from.xGroup === to.xGroup
-        ? value
-        : to.x.invert(to.plot.x + (position - from.plot.x));
+    // Up and Down carry the cursor's place along the axis it follows (x, or
+    // y for marks along y) to the next stop: its value on a shared scale,
+    // else its place across the plot.
+    const along = before?.axis === "y" ? "y" : "x";
     let position = Math.max(0, current);
     if (cell !== undefined) position = cell;
     else if (across)
       position = nearestTo(
         series,
-        before?.axis === "x" ? carried(before.value, before.position) : undefined,
-        to!.x,
+        before?.axis !== along
+          ? undefined
+          : !from || !to || from[`${along}Group`] === to[`${along}Group`]
+            ? before.value
+            : to[along].invert(to.plot[along] + before.position - from.plot[along]),
+        to![along],
+        along,
       );
     else if (event.key === "ArrowLeft") position -= 1;
     else if (event.key === "ArrowRight") position = current < 0 ? 0 : current + 1;
@@ -1848,18 +1851,24 @@ const ITEM_STEPS: Record<string, number> = {
 };
 
 /**
- * Position of the point of `series` whose x is nearest `x` on screen (on
- * `scale`), never one an axis break hides; the first without an `x`.
+ * Position of the point of `series` placed nearest `value` along `axis` on
+ * screen (on `scale`), never one an axis break hides; the first without a
+ * `value`.
  */
-function nearestTo(series: Series, x: number | undefined, scale: PositionScale): number {
-  if (x === undefined) return 0;
+function nearestTo(
+  series: Series,
+  value: number | undefined,
+  scale: PositionScale,
+  axis: "x" | "y",
+): number {
+  if (value === undefined) return 0;
   let best = 0;
   let distance = Infinity;
-  const at = scale.map(x);
+  const at = scale.map(value);
   for (let k = 0; k < series.length; k++) {
-    const value = placeAt(series, "x", rowOf(series, k));
-    if (scale.breaks?.hides(value)) continue;
-    const d = Math.abs(scale.map(value) - at);
+    const place = placeAt(series, axis, rowOf(series, k));
+    if (scale.breaks?.hides(place)) continue;
+    const d = Math.abs(scale.map(place) - at);
     if (d < distance) {
       best = k;
       distance = d;

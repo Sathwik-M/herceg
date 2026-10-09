@@ -15,10 +15,15 @@ import type {
 } from "../scene/scene.ts";
 import type { Frozen, ViolinSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
-import { DistributionMark, type DistributionOptions, type Stat } from "./distribution.ts";
+import {
+  DistributionMark,
+  type DistributionOptions,
+  type Stat,
+  type Summary,
+} from "./distribution.ts";
 import { definedFields } from "./line.ts";
 import type { AxisFormat, ChartMark, Frame } from "./mark.ts";
-import { rowOf, type Series } from "./series.ts";
+import { placeAt, rowOf, type Series } from "./series.ts";
 
 export type ViolinOptions<S extends Schema> = DistributionOptions<S> & {
   /**
@@ -83,11 +88,15 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
    * The density's span, and for log axes, which cannot place all of it, the
    * values and statistics drawn and where the density turns positive.
    */
-  protected drawnValues(row: number, add: (value: number) => void): void {
-    const { min, max, density } = this.summary().groups[row]!;
+  protected drawnValues(
+    { stats, groups }: Summary<Shape>,
+    row: number,
+    add: (value: number) => void,
+  ): void {
+    const { min, max, density } = groups[row]!;
     add(min);
     add(max);
-    for (const stat of ["low", "q1", "median", "q3", "high"] as const) add(this.stat(stat)[row]!);
+    for (const stat of ["low", "q1", "median", "q3", "high"] as const) add(stats[stat][row]!);
     if (!density) return;
     const { lo, hi, values } = density;
     add(lo);
@@ -110,13 +119,13 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
     const horizontal = this.horizontal;
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
-    const [q1, median, q3, low, high] = (["q1", "median", "q3", "low", "high"] as const).map(
-      (stat) => this.stat(stat),
-    );
-    const shapes = this.summary().groups;
     const fillOpacity = this.spec.fillOpacity ?? 0.25;
     const ok = Number.isFinite;
     for (const [s, { offset, share }] of this.placements(series, frame)) {
+      // A series without groups in a panel draws nothing there, but keeps its slot.
+      if (s.length === 0) continue;
+      const { stats, groups: shapes } = this.summaryOf(s);
+      const { q1, median, q3, low, high } = stats;
       const half = (share * VIOLIN) / 2;
       const box = Math.min(BOX_MAX, Math.max(BOX_MIN, share * VIOLIN * BOX));
       // The violin's two edges as an area, and its outline as one closed line each.
@@ -136,7 +145,8 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
       const at = (a: number, c: number) => (horizontal ? [c, a] : [a, c]) as [number, number];
       for (let k = 0; k < s.length; k++) {
         const row = rowOf(s, k);
-        const position = horizontal ? s.y[row]! : s.x[row]!;
+        // A panel's own categories are read at their places.
+        const position = placeAt(s, horizontal ? "y" : "x", row);
         if (position < 0) continue;
         const center = along.map(position) + offset;
         if (!ok(center)) continue;
@@ -245,16 +255,17 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
   }
 
   /** From one end of a violin to the other. */
-  span(_series: Series, row: number): readonly [number, number] {
-    const { min, max, density } = this.summary().groups[row]!;
+  span(series: Series, row: number): readonly [number, number] {
+    const { min, max, density } = this.summaryOf(series).groups[row]!;
     return density ? [density.lo, density.hi] : [min, max];
   }
 
   /** A violin's statistics, formatted as its value axis formats values. */
-  pointText(_series: Series, row: number, format: AxisFormat): string {
+  pointText(series: Series, row: number, format: AxisFormat): string {
     const f = this.horizontal ? format.x : format.y;
-    const stat = (name: Stat) => this.stat(name)[row]!;
-    const { min, max } = this.summary().groups[row]!;
+    const { stats, groups } = this.summaryOf(series);
+    const stat = (name: Stat) => stats[name][row]!;
+    const { min, max } = groups[row]!;
     const n = stat("count");
     return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, values from ${f(min)} to ${f(max)}, ${n} ${n === 1 ? "value" : "values"}`;
   }
