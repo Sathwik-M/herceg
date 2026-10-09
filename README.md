@@ -77,8 +77,8 @@ navigation, and a React component).
 
 Next, in order:
 
-1. Large data: incremental updates for bars and point clouds split by a
-   series field.
+1. Large data: incremental stacks for bars split by a series field, and
+   min/max indexes for long-format series.
 2. Layout: categories resolved per panel.
 3. Animation of changed values (bars, pies) and of panels.
 4. More financial tools (a range navigator, drawing tools, markers at

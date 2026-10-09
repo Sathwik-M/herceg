@@ -35,6 +35,18 @@ export interface Series {
   length: number;
   /** x is ascending over the series' points, enabling binary search and M4. */
   sorted: boolean;
+  /** For `rows` grouped from a whole table as it streams. */
+  stream?: SeriesStream | undefined;
+}
+
+/**
+ * A long-format series' rows as their group follows a streaming table: one
+ * object per group while it does, and how many rows the group has lost from
+ * its front, so GPU uploads take appended points and skip dropped ones.
+ */
+export interface SeriesStream {
+  readonly key: object;
+  readonly dropped: number;
 }
 
 export function rowOf(series: Series, position: number): number {
