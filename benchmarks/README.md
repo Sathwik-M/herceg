@@ -9,6 +9,7 @@ npm run bench                        # full browser suite -> tmp/benchmarks/benc
 npm run bench -- --lib echarts,uplot --filter line- --sample-scale 0.5
 npm run bench -- --out results/browser.json   # refresh the committed results
 npm run bench:size -- --out results/size.json # bundle sizes
+npm run bench -- --browser webkit --out results/browser-webkit.json   # the suite in WebKit
 npm run bench:react                  # herceg vs herceg through @herceg/react -> results/react.json
 npm run bench:report                 # regenerate the tables in docs/comparison.md
 ```
@@ -52,6 +53,19 @@ px, device pixel ratio 2, cross-origin isolated pages (COOP/COEP) so
   --disable-gpu-vsync`: frames are produced as soon as work allows, so waiting
   for a frame measures work instead of vsync alignment. Paced ingestion runs in
   a second browser with normal vsync, because frame pacing is what it measures.
+
+`--browser webkit` runs the suite in Playwright's WebKit build (the engine of
+Safari, not Safari itself; `npx playwright install webkit`), and `--browser
+firefox` in its Firefox build with `layout.frame_rate` 0 so frames come as
+soon as work allows. WebKit has no such setting: frames follow the display,
+so every WebKit timing includes waiting for the next frame from wherever the
+operation started (pointer moves from when the event arrives), and
+differences under a frame are noise. Results record the Playwright version,
+the browser build, and the idle frame cadence. Memory scenarios need Chrome's
+DevTools protocol and are skipped in other browsers, as are long-animation-
+frame counts in browsers that do not report them. Playwright's Firefox build
+does not start on macOS 27 ("Could not find profile folder"), so no Firefox
+results are committed.
 
 ### Timing
 

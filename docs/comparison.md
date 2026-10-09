@@ -231,6 +231,22 @@ included.
 | memory-small-100 (100 charts x 2 series x 100 points; source 0.3 MB) | 8.8 MB heap, 0.0 MB canvas, 3637 nodes | 24 MB heap, 72 MB canvas, 400 nodes | 31 MB heap, 72 MB canvas, 300 nodes | 28 MB heap, 0.0 MB canvas, 13061 nodes | 21 MB heap, 0.0 MB canvas, 2274 nodes | 11 MB heap, 72 MB canvas, 3000 nodes |
 <!-- /results:memory -->
 
+## WebKit
+
+The same suite in WebKit, the engine of Safari, through Playwright's WebKit
+build (`npm run bench -- --browser webkit`; not Safari itself). WebKit cannot
+produce frames faster than the display, so every timing below is the latency
+from the operation to the next frame, including the wait for it: operations
+start wherever in a frame they are issued (pointer moves from the event), and
+differences smaller than a frame (the idle cadence below) are noise. Compare
+libraries within these tables, not with the Chrome tables above, which
+disable the frame rate limit. Memory is not measured (it needs Chrome's
+DevTools protocol), nor are long frames. Firefox is not included: Playwright's
+Firefox build does not start on this machine's macOS.
+
+<!-- results:webkit -->
+<!-- /results:webkit -->
+
 ## React integration
 
 Herceg through `@herceg/react` next to plain herceg, from `npm run bench:react`.
