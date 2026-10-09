@@ -348,7 +348,21 @@ context serves every chart on the page, since browsers allow only a few; each
 cloud is drawn into its plot-sized canvas and copied into the chart's 2D
 canvas at the mark's place in drawing order. Uploads (16 bytes per point)
 belong to the charts that draw them and are released when a chart stops
-drawing them or is destroyed. Until the painter has loaded, cloud series are
+drawing them or is destroyed. Clouds of whole columns follow their table as
+it streams: they are keyed by table and field pair (so charts drawing the
+same columns share one upload) and carry the table's `rowOffset` and
+`modifiedVersion`. The first change uploads the cloud again with room for
+half as many points again and a normalized range reaching half the data's
+span past each end; later changes that only append and drop rows write the
+new points with `bufferSubData` and draw from a later first point, until
+the buffers fill, a point falls outside the range, or the window shrinks to
+under a quarter of the buffers, which uploads again; a stream whose range
+still spans dropped outliers is refitted once if that range would cost the
+GPU its precision.
+Streaming 10,000 points per tick into a million-point window then costs
+about 0.1 ms of JavaScript a frame instead of 4 ms (one-off measurement in
+Chrome; GPU time not included). Clouds that never change keep exact-size
+uploads. Until the painter has loaded, cloud series are
 not drawn (`chart.loading` settles once they are). The CPU places the points
 instead when the painter cannot represent them faithfully (a data range that
 overflows, position error above a quarter pixel at the current zoom, points
@@ -1121,8 +1135,9 @@ document when `OffscreenCanvas` is unavailable.
 - Renderer thresholds are not tuned.
 - Rules and text are always drawn above other marks, regardless of mark order.
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use
-  Canvas or SVG. Uploads are not incremental: streaming a large point series
-  uploads it again on every change.
+  Canvas or SVG. Streaming uploads only new points for whole columns on
+  linear or log axes; long-format series (split by a field) and values
+  replaced in place upload again.
 - PDF text is limited to the standard fonts' Windows-1252 characters (others
   print as "?"); fonts are not embedded, so Greek, Cyrillic, and CJK labels
   need SVG or PNG export. PDFs are not tagged for assistive technology,
