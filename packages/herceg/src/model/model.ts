@@ -778,8 +778,10 @@ export class ChartModel {
           )
         : [xContext]
     ).map((context) => ({ ...context, breaks: this.#xBreaks(context.type, zone) }));
+    const seams = config.x?.seams;
     if (config.x?.breaks && !xContexts.some(({ breaks }) => breaks))
       throw new Error(`Axis breaks need a time x axis, not a ${xContexts[0]!.type} one`);
+    if (seams && !config.x?.breaks) throw new Error("x axis seams need x axis breaks to mark");
     // Viewports are kept by group, named by its panels: a group whose panels
     // change (a facet value appears and the panels wrap anew) starts over.
     const xKeys = xGroups?.keys ?? [""];
@@ -1465,6 +1467,10 @@ export class ChartModel {
           ? []
           : mark.geometry(series, frameOf(mark), mark.spec.id ?? index),
       );
+      if (seams) {
+        const segments = xContexts[h]!.breaks?.seams?.(x, plot, seams, theme.grid);
+        if (segments) geometry.unshift(segments);
+      }
       const inspected = panelMarks.flatMap((entry, index) =>
         members && !members[index] ? [] : [{ ...entry, index }],
       );
@@ -2020,8 +2026,10 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
     const interaction = config.interaction;
     // 3D charts zoom their camera.
     const zooms = interaction?.zoom && !layouts[0]!.camera;
-    if (zooms || interaction?.brush || interaction?.sync)
-      throw new Error(`Charts of a ${type} mark have no x axis to zoom, brush, or sync`);
+    if (zooms || interaction?.brush || interaction?.sync || config.x?.seams)
+      throw new Error(
+        `Charts of a ${type} mark have no x axis to zoom, brush, sync, or mark seams on`,
+      );
   }
   const ids = new Set<string>();
   for (const mark of marks) {

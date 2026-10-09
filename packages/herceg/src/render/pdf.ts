@@ -440,7 +440,7 @@ function paintGeometry(
         path.moveTo(c[i * 4]!, c[i * 4 + 1]!);
         path.lineTo(c[i * 4 + 2]!, c[i * 4 + 3]!);
       }
-      paint(page, path, { stroke: mark.stroke, strokeWidth: mark.strokeWidth });
+      paint(page, path, { stroke: mark.stroke, strokeWidth: mark.strokeWidth, dash: mark.dash });
       return;
     }
     case "point":

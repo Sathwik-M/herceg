@@ -16,7 +16,8 @@ import {
   type PositionScale,
 } from "../scale/scale.ts";
 import { type CalendarScale, niceTimeDomain, TimeScale } from "../scale/time.ts";
-import type { AxisSpec } from "../spec/spec.ts";
+import type { Rect, SegmentGeometry } from "../scene/scene.ts";
+import type { AxisSpec, XAxisSpec } from "../spec/spec.ts";
 
 export type AxisType = "linear" | "log" | "time" | "band";
 
@@ -45,6 +46,13 @@ export interface AxisContext {
 
 /** A time axis' breaks as axes use them; implemented by scale/breaks.ts. */
 export interface AxisBreaks extends Breaks {
+  /** Decorative segments behind data, thinned on the final panel scale. */
+  seams?(
+    scale: PositionScale,
+    plot: Rect,
+    options: NonNullable<XAxisSpec["seams"]>,
+    color: string,
+  ): SegmentGeometry | undefined;
   /** A time scale over `domain` that leaves the breaks out. */
   scale(domain: readonly [number, number], range: readonly [number, number]): PositionScale;
   /** `domain` changed by `change` in positions (time shown), as room at its ends is. */

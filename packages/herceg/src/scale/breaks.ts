@@ -5,12 +5,14 @@
 // only through `timeBreaks` (or the spec loader), so others do not bundle it.
 
 import type { NumericArray } from "../data/column.ts";
+import { seamDrawing } from "../draw/seams.ts";
 import { type TimeZone, toWall, zoneOffset } from "../format/zone.ts";
 import type { Breaks, Mapping } from "../lod/m4.ts";
 import { brokenM4 } from "../lod/m4-breaks.ts";
 import type { RangeIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
-import type { TimeBreakSpec, Weekday } from "../spec/spec.ts";
+import type { Rect, SegmentGeometry } from "../scene/scene.ts";
+import type { TimeBreakSpec, Weekday, XAxisSpec } from "../spec/spec.ts";
 import { BrokenTimeScale } from "./broken-time.ts";
 import type { PositionScale } from "./scale.ts";
 
@@ -144,6 +146,8 @@ export function timeBreaks(rules: readonly TimeBreakSpec[]): TimeBreaks {
 }
 
 export class TimeBreaks {
+  /** Explains omitted time in the chart's accessible description. */
+  readonly description = "The time axis leaves out breaks in time.";
   readonly #spec: TimeBreakSpec[];
   readonly #rules: readonly Rule[];
   /** Resolved per time zone, and kept: a chart rarely changes zones. */
@@ -516,6 +520,51 @@ export class Calendar implements Breaks {
     let end = this.#index(hi) + 1;
     if (end < start) end = start;
     return { from, to, start, end };
+  }
+
+  /** Time-break seams on the final panel scale, thinned in CSS pixels. */
+  seams(
+    scale: PositionScale,
+    plot: Rect,
+    options: NonNullable<XAxisSpec["seams"]>,
+    color: string,
+  ): SegmentGeometry | undefined {
+    if (options === false) return undefined;
+    const minSpacing = typeof options === "boolean" ? 40 : (options.minSpacing ?? 40);
+    if (!(minSpacing > 0) || !Number.isFinite(minSpacing))
+      throw new RangeError("x.seams.minSpacing must be finite and positive");
+    const lo = Math.min(...scale.domain);
+    const hi = Math.max(...scale.domain);
+    const left = plot.x;
+    const right = left + plot.width;
+    const { to, start, end } = this.within(lo, hi);
+    const coords: number[] = [];
+    let previous = Infinity;
+    for (let i = start; i < end; i++) {
+      if (to[i]! > hi) continue;
+      // Drawn on a pixel's center, so a 1-pixel line is crisp, and only
+      // where both that and the seam are inside the plot: every renderer
+      // draws these positions.
+      const at = scale.map(to[i]!);
+      const x = Math.round(at) + 0.5;
+      const inside = at > left && at < right && x > left && x < right;
+      if (inside && Math.abs(x - previous) >= minSpacing) {
+        coords.push(x, plot.y, x, plot.y + plot.height);
+        previous = x;
+      }
+    }
+    if (coords.length === 0) return undefined;
+    return {
+      kind: "segments",
+      // Value transitions (dom/value-transition.ts) know seams by this key.
+      key: "time-break-seams",
+      draw: seamDrawing,
+      stroke: color,
+      strokeWidth: 1,
+      dash: [3, 3],
+      coords: new Float32Array(coords),
+      count: coords.length / 4,
+    };
   }
 
   shownFrom(x: NumericArray, k: number, end: number, rows?: Uint32Array): number {

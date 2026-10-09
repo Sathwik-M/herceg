@@ -822,6 +822,24 @@ changed. Bounds are whole milliseconds, so positions of whole-millisecond
 times are exact. The inverse at a seam is the end of the break, the first
 value shown after it, which is what a pointer on a seam reads.
 
+**Seam markers.** `x.seams: true` or `{ minSpacing?: number }` opts into
+one-CSS-pixel dashed vertical lines behind data inside the plot (spec version
+5). `Calendar.seams` in `scale/breaks.ts` uses the final panel scale and
+`within` to map merged intervals' ends onto pixel centers (which every
+renderer draws as placed), excludes plot edges, and keeps seams
+greedily in chronological order at least `minSpacing` CSS pixels apart (finite and
+positive, default 40), normalizing reversed domains and using absolute pixel
+distances. The work is O(log B + visible breaks), with output bounded by plot
+width and spacing. The model prepends ordinary `SegmentGeometry` to each
+panel's marks, so data draws over seams. The geometry carries the resolved
+grid color and a `[3, 3]` dash. `draw/seams.ts`, imported only by the break
+code, draws the SVG path and Canvas segments, and provides retained SVG
+elements; PDF uses its existing segments case with dash support. Charts
+without breaks bundle no seam planning or drawing code. SVG paths are
+aria-hidden, unfocusable, and pointer-transparent. The chart description explains omitted
+time even when markers are thinned. The navigator keeps its compressed scale
+and ticks but omits seam markers. Omission or `false` needs no new spec version.
+
 **Scale.** `BrokenTimeScale` keeps its domain in epoch milliseconds and maps
 linearly over positions: its `mapping()` is the linear coefficients over
 positions plus the calendar, so code that inlines mappings applies
@@ -2167,8 +2185,9 @@ number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec
 A spec says which format version it is written in when it uses a feature an
 older reader would silently ignore and draw something else for: version 2
 adds `resolve` and `panels`, version 3 `resolve.x`, panels' own `x`, and
-the x axis' `breaks`, and version 4 `navigator` (`false` needs none). The
-loader reads every version up to its own and refuses later ones. Maps did not
+the x axis' `breaks`, version 4 `navigator`, and version 5 enabled x axis
+`seams` (`false` needs none for either). The loader reads every version up to
+its own and refuses later ones. Maps did not
 change the format's version: a reader that predates them refuses their mark
 types and geometry columns with an error rather than drawing something
 else, and `projection` only applies to those marks (a spec with
@@ -2298,7 +2317,7 @@ document when `OffscreenCanvas` is unavailable.
   cannot change them). Histograms count values inside breaks (their bins
   span them), custom marks draw what their `draw` draws, annotations inside
   a break sit at its seam, and text summaries count points inside breaks.
-  Breaks have no drawn marker at their seams (ECharts draws a zigzag). Each
+  Opt-in `x.seams` draws dashed vertical markers (ECharts draws a zigzag). Each
   scene finds shown ranges per series with a search per break in view
   (about 0.1 ms for 2,600 breaks over a million rows), and a streamed
   million-point line with ten years of sessions takes about 1.2 ms a scene

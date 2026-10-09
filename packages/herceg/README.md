@@ -889,6 +889,7 @@ createChart(element, {
   marks: [candlestick(prices, { x: "time", open: "o", high: "h", low: "l", close: "c" })],
   timeZone: "America/New_York",
   x: {
+    seams: true,
     breaks: timeBreaks([
       { weekdays: ["sat", "sun"] }, // whole days, midnight to midnight
       { hours: ["16:00", "09:30"] }, // every day, wrapping past midnight
@@ -907,6 +908,16 @@ is left out both times, and a skipped one takes no time. Starts are
 included, ends are not; a candle stamped 16:00 is inside a break from 16:00.
 In a spec, `breaks` is the same list (spec version 3); `timeBreaks` brings
 the code that resolves them, so charts without breaks do not bundle it.
+
+Set `x.seams: true` to mark collapsed boundaries with dashed vertical lines,
+one CSS pixel wide, behind the data and inside the plot. Use
+`x.seams: { minSpacing: 40 }` to set the minimum distance in CSS pixels;
+it must be finite and positive and defaults to 40. Seams are kept greedily
+in chronological order, excluding plot edges, so markers become selective
+when zoomed out. They follow each panel's shown domain; the navigator strip
+draws none. Omission or `false` disables them. Enabled seams require time-axis
+breaks and spec version 5. Seams use the theme's resolved `grid` color and
+a `[3, 3]` dash, independently of `gridDash`.
 
 The axis then measures the time it shows. Lines and areas join the points
 either side of a break; points, bars, candles, and error bars inside a break
@@ -1244,7 +1255,7 @@ is internal, and charts take only marks the mark functions make.
 | `marks` | Marks to draw, bottom to top (rules are drawn on top). |
 | `title`, `description` | Accessible name and description; the title is drawn. |
 | `width`, `height` | Fixed size; omitted dimensions follow the container. |
-| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`; on a time x axis, `breaks: timeBreaks([...])` (see Financial charts). |
+| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`; on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `resolve` | `{ x?, y? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x or y scale (see Small multiples and Subplots). |
@@ -1625,8 +1636,9 @@ a mark, build a new one and pass it to `chart.update({ marks })`.
 Specs say which format `version` they are; one without is version 1. Specs
 using `resolve`, `panels`, or `grid` must say 2 or later, those using
 `resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later, and
-those with a `navigator` 4 (`SPEC_VERSION`, the version this herceg
-writes), so that older readers refuse what they would draw differently. Loading checks a spec and names the property at
+those with a `navigator` 4 or later, and those with enabled x axis `seams` 5
+(`SPEC_VERSION`, the version this herceg writes), so that older readers refuse
+what they would draw differently. Loading checks a spec and names the property at
 fault in errors. Properties herceg does not know, misspelled or from a newer
 version, are logged with `console.warn` and otherwise ignored;
 `loadSpec(spec, buffers, { unknown: "error" })` refuses them instead, and

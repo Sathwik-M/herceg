@@ -32,6 +32,7 @@ import { type PdfOptions, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
 import { cellRepeat, renderPdf } from "../../src/render/pdf.ts";
 import { encodeText, standardFont, textWidth } from "../../src/render/pdf-fonts.ts";
+import { timeBreaks } from "../../src/scale/breaks.ts";
 import type {
   Geometry,
   LineGeometry,
@@ -744,6 +745,26 @@ describe("renderToPDF", () => {
     expect(pdf.page).toContain("/MediaBox [0 0 225 112.5]");
     expect(specToSVG(spec)).toContain('width="300"');
     expect(pdf.content).toContain("(Spec) Tj");
+  });
+});
+
+describe("PDF seams", () => {
+  it("draws a clipped one-pixel seam with its own style before the data", () => {
+    const data = table({ t: time([0, 20]), v: [1, 2] });
+    const { content } = readPdf(
+      renderToPDF({
+        width: 400,
+        height: 200,
+        marks: [line(data, { x: "t", y: "v", stroke: "#0000ff" })],
+        x: { domain: [0, 20], breaks: timeBreaks([{ from: 4, to: 8 }]), seams: true },
+        theme: { grid: "#ff0000" },
+      }),
+    );
+    const seam = "q 1 0 0 RG 1 w 0 J 0 j 4 M [3 3] 0 d";
+    expect(content).toContain(seam);
+    expect(content.indexOf("re W n")).toBeLessThan(content.indexOf(seam));
+    expect(content.indexOf(seam)).toBeLessThan(content.indexOf("0 0 1 RG 2 w"));
+    expect(content.slice(content.indexOf(seam))).toMatch(/m\n[\d. ]+ l\nS\nQ/);
   });
 });
 

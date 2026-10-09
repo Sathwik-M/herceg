@@ -201,6 +201,9 @@ class Axis:
     ``breaks``, on a time x axis only, leave out spans of time (see ``Break``)::
 
         hg.Axis(breaks=[hg.Break(weekdays=("sat", "sun")), hg.Break(hours=("16:00", "09:30"))])
+
+    ``seams=True`` marks their collapsed boundaries with dashed vertical lines;
+    ``seams={"min_spacing": 40}`` sets their minimum spacing in CSS pixels.
     """
 
     type: Literal["linear", "log", "time"] | None = None
@@ -213,11 +216,27 @@ class Axis:
     format: dict[str, Any] | None = None
     show: bool | None = None
     breaks: Sequence[Break | dict[str, Any]] | None = None
+    seams: bool | dict[str, float] | None = None
 
     def __post_init__(self) -> None:
         _check_format(self.format, "axis format", _NUMBER_FORMAT | _TIME_FORMAT)
 
     def _spec(self) -> dict[str, Any]:
+        seams = self.seams
+        if seams is not None and not isinstance(seams, bool):
+            if not isinstance(seams, dict) or any(key != "min_spacing" for key in seams):
+                raise ValueError("seams must be a bool or a dict with min_spacing")
+            spacing = seams.get("min_spacing", 40)
+            if (
+                isinstance(spacing, bool)
+                or not isinstance(spacing, (int, float))
+                or not math.isfinite(spacing)
+                or spacing <= 0
+            ):
+                raise ValueError("seams min_spacing must be finite and positive")
+            seams = {"minSpacing": seams["min_spacing"]} if seams else {}
+        if seams is not None and seams is not False and self.breaks is None:
+            raise ValueError("seams need breaks on a time x axis")
         spec = {
             "type": self.type,
             "domain": list(self.domain) if self.domain is not None else None,
@@ -229,6 +248,7 @@ class Axis:
             "format": self.format,
             "axis": self.show,
             "breaks": [_break(rule) for rule in self.breaks] if self.breaks is not None else None,
+            "seams": seams,
         }
         return {key: value for key, value in spec.items() if value is not None}
 
@@ -2633,7 +2653,9 @@ def assemble_spec(
     """A spec and its buffers from chart options, columns by table name, mark
     specs, and derived tables by name."""
     buffers: list[bytes] = []
-    spec: dict[str, Any] = {"version": 4, **options}
+    seams = (options.get("x") or {}).get("seams")
+    version = 5 if seams is not None and seams is not False else 4
+    spec: dict[str, Any] = {"version": version, **options}
     for key, value in layout.items():
         spec[key] = (
             {k: v for k, v in value.items() if v is not None} if isinstance(value, dict) else value
@@ -2753,6 +2775,8 @@ def _axis(axis: Axis | dict[str, Any] | None, role: str = "x") -> dict[str, Any]
         axis = Axis(**axis)
     if role != "x" and axis.breaks is not None:
         raise ValueError(f"breaks are for the chart's x axis only, not {role}")
+    if role != "x" and axis.seams is not None:
+        raise ValueError(f"seams are for the chart's x axis only, not {role}")
     return axis._spec() or None
 
 
