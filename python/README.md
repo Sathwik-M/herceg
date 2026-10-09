@@ -155,7 +155,8 @@ rows into one series per value. A mark can read other data with `data=`.
 Points can size (`r`), color (`color`), fade (`fill_opacity`), and shape
 (`symbol`) by column; `colors` takes a scheme name from `hg.SCHEMES` or a list
 of hex colors, and `symbol` a shape from `hg.SYMBOLS` or a category column
-(not one named like a shape).
+(not one named like a shape). `stroke` and `stroke_width` outline points and
+areas, and `fill` gives every box plot or violin one color.
 Column names are checked when the mark is added, with the available columns
 in the error message.
 

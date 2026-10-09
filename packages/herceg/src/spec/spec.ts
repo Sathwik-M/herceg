@@ -539,8 +539,12 @@ interface AreaStyle extends MarkBase {
   x: Field;
   fill?: string;
   fillOpacity?: number;
-  /** Outline the top edge. Default true for unstacked single areas. */
+  /** Outline the top edge. Default true for unstacked single areas, and with `stroke`. */
   line?: boolean;
+  /** Outline color; each area's own color by default. */
+  stroke?: string;
+  /** Outline width in pixels; the theme's line width by default. */
+  strokeWidth?: number;
   curve?: Curve;
   label?: string;
 }
@@ -777,6 +781,8 @@ export interface BoxPlotSpec extends MarkBase {
   y: Field;
   /** Category field: a box per value in each category, side by side. */
   series?: Field;
+  /** Constant color for every shape; colors come from the palette otherwise. */
+  fill?: string;
   /** Opacity of the boxes' fill; 0.25 by default. */
   fillOpacity?: number;
   label?: string;
@@ -801,6 +807,8 @@ export interface ViolinSpec extends MarkBase {
    * violin; by default each violin's by Silverman's rule of thumb.
    */
   bandwidth?: number;
+  /** Constant color for every shape; colors come from the palette otherwise. */
+  fill?: string;
   /** Opacity of the violins' fill; 0.25 by default. */
   fillOpacity?: number;
   label?: string;
@@ -1076,6 +1084,10 @@ export interface PointSpec extends MarkBase {
   r?: number | Field;
   /** Radii of the smallest and largest values of an `r` field. Default [2, 12]. */
   rRange?: readonly [number, number];
+  /** Outline color of every point; the chart's background with only `strokeWidth`. */
+  stroke?: string;
+  /** Outline width in pixels: 1 with only `stroke`, none by default. */
+  strokeWidth?: number;
   fill?: string;
   /** Opacity from 0 to 1, or a number field mapped from 0.15 to 1. */
   fillOpacity?: number | Field;

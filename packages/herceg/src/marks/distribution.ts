@@ -52,6 +52,8 @@ export type DistributionOptions<S extends Schema> = (
 ) & {
   /** Category field: a shape per value in each category, side by side. */
   series?: CategoryField<S>;
+  /** Constant color for every shape of the mark; colors come from the palette otherwise. */
+  fill?: string;
   /** Opacity of the shapes' fill; 0.25 by default. */
   fillOpacity?: number;
   label?: string;
@@ -220,7 +222,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     const { table: summary, split } = this.summary();
     const keys = (this.horizontal ? bands.y : bands.x)?.keys ?? [];
     const positions = bandIndices(summary, "category", keys, context);
-    const series = buildSeries(summary, split.sources(), positions, key, palette, undefined);
+    const series = buildSeries(summary, split.sources(), positions, key, palette, this.spec.fill);
     // Series are built with positions on x; horizontal shapes swap them onto y.
     if (this.horizontal) for (const s of series) [s.x, s.y] = [s.y, s.x];
     return series;

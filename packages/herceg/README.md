@@ -175,6 +175,9 @@ const usage = table({ time: time(timestamps), user: userCpu, system: systemCpu }
 area(usage, { x: "time", y: "user" }); // filled to zero
 area(usage, { x: "time", y: ["user", "system"], stack: true });
 area(metrics, { x: "time", y1: "p50", y2: "p99" }); // band between two fields
+// A single area is outlined along its top in its own color; stacks and bands
+// are not unless `line: true`. `stroke` and `strokeWidth` style the outline and
+// turn it on; `line: false` or a width of 0 turns it off.
 
 ```
 
@@ -241,6 +244,7 @@ histogram(requests, { x: "latency", series: "region", bins: { step: 10 }, normal
 boxplot(requests, { x: "region", y: "latency", series: "version" });
 boxplot(requests, { x: "latency", y: "region" }); // a category y lays boxes along y
 violin(requests, { x: "region", y: "latency" }); // kernel densities, quartiles inside
+// `fill` gives every box or violin one color; `fillOpacity` is 0.25 by default.
 ```
 
 Bar labels go past each bar's end, or for stacks inside each segment in a
@@ -280,6 +284,11 @@ rename it to encode it. Every shape covers the area of a circle of the same radi
 missing a value they encode are not drawn, and tooltips name the encoded
 values. Encoded points are drawn on the CPU (Canvas or SVG), not by the WebGL
 painter; opaque ones are drawn one color at a time, high values last.
+`stroke` and `strokeWidth` outline every point: `stroke` alone draws a 1 pixel
+outline, and `strokeWidth` alone one in the chart's background color, which
+keeps overlapping points apart; a width of 0 draws none. Legends show outlines
+of a color of their own, so hollow points (`fill: "transparent"`) keep a
+swatch. Outlined points are drawn one by one on the CPU too.
 
 Continuous color (`colors` on heatmaps and on points with `color`) takes a
 ramp of `#rgb` or `#rrggbb` colors from low to high. Named schemes are

@@ -331,7 +331,7 @@ function paintEncoded(page: PdfPage, mark: PointGeometry): void {
 
 /** The paint style of a points' ring, if they have one. */
 function ringStyle(mark: PointGeometry): PaintStyle {
-  return mark.ring ? { stroke: mark.ring.color, strokeWidth: mark.ring.width } : {};
+  return mark.ring ? { stroke: mark.ring.color, strokeWidth: mark.ring.width, join: "round" } : {};
 }
 
 function paintPoints(page: PdfPage, mark: PointGeometry): void {
@@ -637,7 +637,16 @@ export function renderPdf(scene: Scene, info: DocumentInfo = {}): Uint8Array {
     // Point series show their symbol; others a rounded square.
     if (item.glyph) tracePath(item.glyph, shifted(swatch, item.x + LEGEND_SWATCH / 2, item.y));
     else swatch.roundedRect(item.x, item.y - LEGEND_SWATCH / 2, LEGEND_SWATCH, LEGEND_SWATCH, 2);
-    paint(page, swatch, { fill: item.color, fillOpacity: opacity });
+    paint(page, swatch, {
+      fill: item.color,
+      fillOpacity: opacity,
+      ...(item.stroke && {
+        stroke: item.stroke,
+        strokeWidth: 1,
+        strokeOpacity: opacity,
+        join: "round",
+      }),
+    });
     text(page, item.label, item.x + LEGEND_SWATCH + 6, item.y, {
       ...label,
       fill: theme.text,

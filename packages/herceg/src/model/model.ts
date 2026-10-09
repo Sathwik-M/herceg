@@ -765,6 +765,7 @@ export class ChartModel {
         if (!entry) return [];
         const item: LegendEntry = { key: s.key, label: s.label, color: entry.color };
         if (entry.glyph) item.glyph = entry.glyph;
+        if (entry.stroke) item.stroke = entry.stroke;
         return [item];
       }),
     );

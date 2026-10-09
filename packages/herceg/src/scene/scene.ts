@@ -404,6 +404,8 @@ export interface LegendItem {
    * (0, 0); otherwise the swatch is a rounded square.
    */
   glyph?: string | undefined;
+  /** The glyph's outline color, drawn 1 pixel wide, for outlined points. */
+  stroke?: string | undefined;
   hidden: boolean;
   x: number;
   y: number;

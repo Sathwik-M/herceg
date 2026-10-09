@@ -593,6 +593,23 @@ describe("renderToPDF", () => {
     expect(pointsDrawn).toHaveLength(2);
   });
 
+  it("joins point outlines round, and outlines hollow points' legend swatches", () => {
+    const data = table({ x: [1, 2], y: [1, 2], kind: ["a", "b"] });
+    const hollow = point(data, {
+      x: "x",
+      y: "y",
+      series: "kind",
+      symbol: "triangle",
+      fill: "transparent",
+      stroke: "#000000",
+      strokeWidth: 2,
+    });
+    const pdf = readPdf(renderToPDF({ width: 300, height: 200, locale: "en-US", marks: [hollow] }));
+    // Two points, then two swatches, each stroked in black.
+    expect(pdf.content.match(/0 0 0 RG 2 w 0 J 1 j\n/g)).toHaveLength(2);
+    expect(pdf.content.match(/0 0 0 RG 1 w 0 J 1 j\n/g)).toHaveLength(2);
+  });
+
   it("embeds heatmaps as compressed images, with a soft mask for missing cells", () => {
     const render = (x: number[], y: number[], v: (number | null)[]) =>
       readPdf(

@@ -124,6 +124,31 @@ def test_area_and_series_options_are_checked_like_the_spec_loader():
         hg.Chart(DATA).line(x="t", y=["p50", "p99"], series="host")
 
 
+def test_outlines_and_constant_fills_reach_the_spec():
+    values = {"x": [1.0, 2.0, 3.0], "y": [2.0, 3.0, 1.0], "c": ["a", "b", "a"]}
+    outlined = (
+        hg.Chart(values, width=300, height=200)
+        .point("x", "y", stroke="#ffffff", stroke_width=1.5)
+        .area("x", "y", stroke="#000000", stroke_width=2)
+    )
+    spec, _ = outlined.to_spec()
+    point, area = spec["marks"]
+    assert (point["stroke"], point["strokeWidth"]) == ("#ffffff", 1.5)
+    assert (area["stroke"], area["strokeWidth"]) == ("#000000", 2)
+    assert 'stroke-width="1.5"' in outlined.to_svg()
+    filled = (
+        hg.Chart(values, width=300, height=200)
+        .boxplot("c", "y", fill="#2a9d8f")
+        .violin("c", "y", fill="#2a9d8f")
+    )
+    spec, _ = filled.to_spec()
+    assert [mark["fill"] for mark in spec["marks"]] == ["#2a9d8f", "#2a9d8f"]
+    assert "#2a9d8f" in filled.to_svg()
+    for mark in ("point", "area"):
+        with pytest.raises(ValueError, match=f"{mark} stroke_width must be 0 or more pixels"):
+            getattr(hg.Chart(values), mark)("x", "y", stroke_width=-1)
+
+
 def test_a_category_y_makes_bars_horizontal():
     spec, _ = hg.bar(DATA, x=["p50", "p99"], y="host", stack=True).to_spec()
     assert spec["marks"][0] == {

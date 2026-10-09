@@ -41,8 +41,12 @@ interface AreaCommon {
   /** Constant fill color for every area of the mark. */
   fill?: string;
   fillOpacity?: number;
-  /** Outline the top edge. */
+  /** Outline the top edge; on by default for unstacked areas filled to zero, or with `stroke`. */
   line?: boolean;
+  /** Outline color; each area's own color by default. */
+  stroke?: string;
+  /** Outline width in pixels; the theme's line width by default. */
+  strokeWidth?: number;
   curve?: Curve;
   label?: string;
   id?: string;
@@ -104,6 +108,11 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
     const spec = this.spec;
     this.table = table;
     requireField(table, spec.x, NUMERIC, "area x");
+    if (
+      spec.strokeWidth !== undefined &&
+      !(spec.strokeWidth >= 0 && Number.isFinite(spec.strokeWidth))
+    )
+      throw new RangeError(`area strokeWidth must be 0 or more pixels, not ${spec.strokeWidth}`);
     const problem = areaFormError(spec);
     if (problem) throw new Error(problem);
     const band = spec.y === undefined;
@@ -197,14 +206,18 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
     const stacked = spec.stack === true;
     const band = this.#split === undefined;
     const fillOpacity = spec.fillOpacity ?? (stacked ? 0.85 : band ? 0.2 : 0.25);
-    const outline = spec.line ?? (!stacked && !band);
+    const strokeWidth = spec.strokeWidth ?? frame.theme.lineWidth;
+    const outline =
+      strokeWidth > 0 &&
+      (spec.line ??
+        (spec.stroke !== undefined || spec.strokeWidth !== undefined || (!stacked && !band)));
     const zero = frame.y.type === "log" ? Number.NaN : frame.y.map(0);
     const bottom = frame.plot.y + frame.plot.height;
     const baseline = Number.isFinite(zero)
       ? Math.min(Math.max(zero, frame.plot.y), bottom)
       : bottom;
     const out: AreaGeometry[] = [];
-    const style = { baseline, fillOpacity, outline, strokeWidth: frame.theme.lineWidth };
+    const style = { baseline, fillOpacity, outline, strokeWidth };
     this.#indexes.drew(frame.owner, frame.scene, this.table);
     // Bands and stacks curve all their boundaries together, so layers share
     // edges and never overlap. When they cannot (log y, or too dense), every
@@ -267,7 +280,7 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       upper: edges.upper,
       lower: edges.lower,
       baseline,
-      stroke: outline ? s.color : null,
+      stroke: outline ? (this.spec.stroke ?? s.color) : null,
       strokeWidth,
     };
   }
@@ -295,6 +308,8 @@ export function area<S extends Schema>(table: Table<S>, options: AreaOptions<S>)
       "fill",
       "fillOpacity",
       "line",
+      "stroke",
+      "strokeWidth",
       "curve",
       "label",
       "id",

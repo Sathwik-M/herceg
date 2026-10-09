@@ -77,8 +77,11 @@ export function legendElements(legend: readonly LegendItem[], theme: Theme): str
     const swatchY = item.y - LEGEND_SWATCH / 2;
     const fill = escapeXml(item.color);
     // Point series show their symbol.
+    const outline = item.stroke
+      ? ` stroke="${escapeXml(item.stroke)}" stroke-width="1" stroke-linejoin="round"`
+      : "";
     const swatch = item.glyph
-      ? `<path transform="translate(${n(item.x + LEGEND_SWATCH / 2)} ${n(item.y)})" d="${item.glyph}" fill="${fill}"/>`
+      ? `<path transform="translate(${n(item.x + LEGEND_SWATCH / 2)} ${n(item.y)})" d="${item.glyph}" fill="${fill}"${outline}/>`
       : `<rect x="${n(item.x)}" y="${n(swatchY)}" width="${LEGEND_SWATCH}" height="${LEGEND_SWATCH}" rx="2" fill="${fill}"/>`;
     out += `<g${opacity}>${swatch}`;
     out += `<text x="${n(item.x + LEGEND_SWATCH + 6)}" y="${n(item.y)}" dominant-baseline="middle" fill="${escapeXml(theme.text)}">${escapeXml(item.label)}</text></g>`;

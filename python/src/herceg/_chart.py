@@ -620,6 +620,8 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         line: bool | None = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
         curve: Curve | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
@@ -627,7 +629,14 @@ class Chart:
         panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
-        """Filled areas: down to zero, stacked, or the band between ``y1`` and ``y2``."""
+        """Filled areas: down to zero, stacked, or the band between ``y1`` and ``y2``.
+
+        A single area has an outline along its top in its own color; stacked
+        and band areas have none unless ``line=True``. ``stroke`` and
+        ``stroke_width`` set the outline's color and width, and turn it on.
+        """
+        if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
+            raise ValueError(f"area stroke_width must be 0 or more pixels, not {stroke_width!r}")
         table = self._mark_table(data)
         self._require(table, x, _NUMERIC, "area x")
         band = y1 is not None or y2 is not None
@@ -659,6 +668,8 @@ class Chart:
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "line": line,
+                "stroke": stroke,
+                "strokeWidth": stroke_width,
                 "curve": curve,
                 "label": label,
                 "axis": axis,
@@ -830,6 +841,8 @@ class Chart:
         r_range: tuple[float, float] | None = None,
         fill: str | None = None,
         fill_opacity: float | str | None = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
         color: str | None = None,
         colors: str | Sequence[str] | None = None,
         color_domain: tuple[float, float] | None = None,
@@ -846,7 +859,8 @@ class Chart:
 
         ``r`` is a radius in pixels or a numeric column sized by area within
         ``r_range`` (bubbles); ``fill_opacity`` is a number or a numeric
-        column. ``color`` colors points by a numeric column on ``colors``, a
+        column. ``stroke`` and ``stroke_width`` ring each point, in the
+        background color by default. ``color`` colors points by a numeric column on ``colors``, a
         scheme name such as ``"viridis"`` or a list of hex colors, centered on
         ``color_midpoint`` for diverging schemes. ``symbol`` is a shape
         (``"circle"``, ``"square"``, ``"triangle"``, ...) or a category column
@@ -868,6 +882,8 @@ class Chart:
             raise ValueError(
                 f"point fill_opacity must be from 0 to 1 or a column, not {fill_opacity!r}"
             )
+        if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
+            raise ValueError(f"point stroke_width must be 0 or more pixels, not {stroke_width!r}")
         self._require(table, color, _NUMERIC, "point color")
         if symbol in SYMBOLS and self._kind(table, symbol) is not None:
             raise ValueError(
@@ -890,6 +906,8 @@ class Chart:
                 "rRange": _range(r_range, "point r_range", minimum=0),
                 "fill": fill,
                 "fillOpacity": fill_opacity,
+                "stroke": stroke,
+                "strokeWidth": stroke_width,
                 "color": color,
                 "colors": _colors(colors, "point colors"),
                 "colorDomain": _range(color_domain, "point color_domain"),
@@ -1132,6 +1150,7 @@ class Chart:
         *,
         data: Any = None,
         series: str | None = None,
+        fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
@@ -1146,9 +1165,20 @@ class Chart:
         quartiles with a line at the median; whiskers reach the most extreme
         values within 1.5 interquartile ranges, and values beyond are dots.
         ``series`` puts a box per value of a category column side by side.
+        ``fill`` gives every box one color instead of the palette's.
         """
         return self._distribution(
-            {"type": "boxplot"}, x, y, data, series, fill_opacity, label, axis, repeat, panel, id
+            {"type": "boxplot", "fill": fill},
+            x,
+            y,
+            data,
+            series,
+            fill_opacity,
+            label,
+            axis,
+            repeat,
+            panel,
+            id,
         )
 
     def violin(
@@ -1159,6 +1189,7 @@ class Chart:
         data: Any = None,
         series: str | None = None,
         bandwidth: float | None = None,
+        fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
         axis: Literal["left", "right"] | None = None,
@@ -1176,7 +1207,8 @@ class Chart:
         wide at its densest. ``bandwidth`` sets the kernel's standard
         deviation in data units for every violin; by default each has its
         own by Silverman's rule of thumb. ``series`` puts a violin per value
-        of a category column side by side.
+        of a category column side by side. ``fill`` gives every violin one
+        color instead of the palette's.
         """
         if bandwidth is not None and not (
             isinstance(bandwidth, numbers.Real)
@@ -1186,7 +1218,7 @@ class Chart:
         ):
             raise ValueError(f"bandwidth must be a positive number, not {bandwidth!r}")
         return self._distribution(
-            {"type": "violin", "bandwidth": bandwidth},
+            {"type": "violin", "bandwidth": bandwidth, "fill": fill},
             x,
             y,
             data,

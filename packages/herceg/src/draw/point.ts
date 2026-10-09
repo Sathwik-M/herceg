@@ -91,9 +91,17 @@ function encodedElements(mark: PointGeometry): SvgElement[] {
   });
 }
 
-/** SVG attributes of a points' ring, if they have one. */
+/**
+ * SVG attributes of a points' ring, if they have one. Joins are round in every
+ * renderer, so corners reach no farther than half the ring's width.
+ */
 function ringAttributes(mark: PointGeometry): Record<string, string> {
-  return mark.ring ? { stroke: mark.ring.color, "stroke-width": String(mark.ring.width) } : {};
+  if (!mark.ring) return {};
+  return {
+    stroke: mark.ring.color,
+    "stroke-width": String(mark.ring.width),
+    "stroke-linejoin": "round",
+  };
 }
 
 /** Strokes a point's ring on a canvas, after its fill. */
@@ -102,6 +110,7 @@ function strokeRing(context: CanvasRenderingContext2D, mark: PointGeometry): voi
   context.globalAlpha = 1;
   context.strokeStyle = mark.ring.color;
   context.lineWidth = mark.ring.width;
+  context.lineJoin = "round";
   context.stroke();
 }
 

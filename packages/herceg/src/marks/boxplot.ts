@@ -183,7 +183,16 @@ export function boxplot<S extends Schema>(
     type: "boxplot",
     x: options.x,
     y: options.y,
-    ...definedFields(options, ["series", "fillOpacity", "label", "axis", "facet", "panel", "id"]),
+    ...definedFields(options, [
+      "series",
+      "fill",
+      "fillOpacity",
+      "label",
+      "axis",
+      "facet",
+      "panel",
+      "id",
+    ]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

@@ -230,6 +230,22 @@ describe("interaction", () => {
     chart.destroy();
   });
 
+  it("outlines hollow points' legend swatches", () => {
+    const data = table({ x: [1, 2, 3, 4], y: [3, 1, 4, 2], kind: ["a", "b", "a", "b"] });
+    const chart = createChart(host, {
+      marks: [
+        point(data, { x: "x", y: "y", series: "kind", fill: "transparent", stroke: "#000000" }),
+      ],
+    });
+    const swatches = chart.root.querySelectorAll("button svg path");
+    expect(swatches).toHaveLength(2);
+    for (const swatch of swatches) {
+      expect(swatch.getAttribute("fill")).toBe("transparent");
+      expect(swatch.getAttribute("stroke")).toBe("#000000");
+    }
+    chart.destroy();
+  });
+
   it("reads values with the keyboard", () => {
     const data = table({ t: [0, 1, 2], v: [10, 20, 30] });
     const chart = createChart(host, { marks: [line(data, { x: "t", y: "v" })] });
