@@ -119,14 +119,21 @@ export interface PanelInfo {
 }
 
 /**
- * The visible y ranges when zoomed along y, ascending: the left axis', and
- * the right axis' in charts that have one. Axes with a reversed domain show
- * them reversed.
+ * What a chart shows when zoomed: the visible x range, and the left and
+ * right y axes' ranges, each ascending (axes with a reversed domain show
+ * them reversed), and null for an axis that is not zoomed, which shows its
+ * configured domain or its data.
  */
-export interface YViewport {
-  y: readonly [number, number];
-  yRight?: readonly [number, number] | undefined;
+export interface Viewport {
+  x: readonly [number, number] | null;
+  y: readonly [number, number] | null;
+  yRight: readonly [number, number] | null;
 }
+
+/** The y ranges of a viewport, which every panel shares. */
+export type YViewport = Pick<Viewport, "y" | "yRight">;
+
+const NO_Y_VIEW: YViewport = { y: null, yRight: null };
 
 /**
  * Ascending x and y ranges drawn while a change of view plays; null for an
@@ -175,7 +182,7 @@ export class ChartModel {
   readonly hidden = new Set<string>();
   /** Visible x ranges by x scale (see `xGroupOf`). */
   readonly #viewports = new Map<string, [number, number]>();
-  #yViewport: YViewport | null = null;
+  #yViewport: YViewport = NO_Y_VIEW;
   #transition: ViewDomains | null = null;
   #polylines = new Map<string, Polyline>();
   #floats = new Map<string, Float32Array>();
@@ -233,7 +240,7 @@ export class ChartModel {
   update(config: ChartConfig, page?: ThemeEnvironment): void {
     [this.#marks, this.#layouts] = validate(config);
     this.#config = config;
-    if (!this.#sharesY) this.#yViewport = null;
+    if (!this.sharesY) this.#yViewport = NO_Y_VIEW;
     this.#theme = resolveTheme(config.theme, page);
     this.#layoutKey = "";
   }
@@ -302,16 +309,21 @@ export class ChartModel {
     else this.#viewports.delete(this.xGroupOf(panel));
   }
 
-  /** The visible y ranges, or null to fit the data. Band y axes ignore it. */
-  get yViewport(): YViewport | null {
+  /** The visible y ranges, each null when not zoomed. Band y axes ignore them. */
+  get yViewport(): YViewport {
     return this.#yViewport;
   }
 
-  setYViewport(viewport: YViewport | null): void {
-    if (viewport && !this.#sharesY)
+  /** Shows y ranges; throws for ranges the chart cannot show (see `checkYViewport`). */
+  setYViewport(viewport: YViewport): void {
+    this.checkYViewport(viewport);
+    this.#yViewport = { y: range(viewport.y), yRight: range(viewport.yRight) };
+  }
+
+  /** Throws for y ranges in charts whose panels have y scales of their own: they have no one y viewport. */
+  checkYViewport(viewport: Partial<YViewport>): void {
+    if ((viewport.y || viewport.yRight) && !this.sharesY)
       throw new Error("Charts whose panels have y scales of their own have no one y viewport");
-    const y = range(viewport?.y ?? null);
-    this.#yViewport = y && { y, yRight: range(viewport?.yRight ?? null) ?? undefined };
   }
 
   /**
@@ -324,7 +336,7 @@ export class ChartModel {
   }
 
   /** Whether every panel shares the y scale: without facets, or without `resolve.y`. */
-  get #sharesY(): boolean {
+  get sharesY(): boolean {
     return !this.#config.panels && this.#resolutionY === "shared";
   }
 
@@ -679,8 +691,8 @@ export class ChartModel {
     // consider positive values. Band axes take their categories instead.
     // A playing change of view draws its own ranges.
     const shown = this.#transition;
-    const yView = shown?.y ?? this.#yViewport?.y;
-    const yRightView = shown?.yRight ?? this.#yViewport?.yRight;
+    const yView = shown?.y ?? this.#yViewport.y ?? undefined;
+    const yRightView = shown?.yRight ?? this.#yViewport.yRight ?? undefined;
     // Whether each group has data to label, and its domain before rounding.
     const xHas: boolean[] = [];
     const xDomains: [number, number][] = [];
@@ -730,7 +742,7 @@ export class ChartModel {
     const rightUsed = placesY(rightMarks);
     const yRightType = rightUsed ? this.#axisType("yRight") : "linear";
     // Facet panels share one y scale unless `resolve.y` groups them.
-    const sharedY = this.#sharesY;
+    const sharedY = this.sharesY;
     let yBase: [number, number] = [0, 1];
     let leftUsed = true;
     // Whether the left axis has anything to label: a band axis may have no bands.
@@ -1296,7 +1308,9 @@ export class ChartModel {
           ? []
           : mark.geometry(series, frameOf(mark), mark.spec.id ?? index),
       );
-      const inspected = members ? panelMarks.filter((_, index) => members[index]) : panelMarks;
+      const inspected = panelMarks.flatMap((entry, index) =>
+        members && !members[index] ? [] : [{ ...entry, index }],
+      );
       const inspector = new Inspector({
         marks: inspected,
         frame,
@@ -1684,12 +1698,27 @@ export class ChartModel {
   #item(item: LayoutItem | undefined): Inspection | undefined {
     if (!item) return undefined;
     const { key, label, color, text, value, px, py, outline } = item;
+    // The chart's marks are the layout mark, or the layers of a map.
+    const mark = item.layer ?? 0;
     return {
       axis: "item",
       key,
       value,
       label: item.measure ?? this.#layouts[0]!.measure,
-      points: [{ key, label, color, text, value, px, py }],
+      points: [
+        {
+          mark,
+          markId: this.#config.marks[mark]?.spec.id,
+          key,
+          label,
+          row: item.row,
+          color,
+          text,
+          value,
+          px,
+          py,
+        },
+      ],
       outline,
     };
   }

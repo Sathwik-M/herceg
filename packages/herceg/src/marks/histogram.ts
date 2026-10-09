@@ -76,6 +76,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   readonly spec: Frozen<HistogramSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "x";
+  readonly summarizes = true;
   readonly zero = "y";
   readonly #split: SeriesSplitter;
   /** Bins per time zone (calendar bins depend on it), as of a table version. */

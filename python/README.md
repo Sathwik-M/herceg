@@ -250,8 +250,10 @@ live                                     # display it
 live.append(new_rows, max_rows=10_000)   # stream rows, keeping the last 10,000
 live.replace(today)                      # replace every row
 live.update(title="CPU, today", theme="dark")
-live.viewport = (start, end)             # zoom; None fits the data
-live.selection = (start, end)            # brush; None clears it
+live.viewport = (start, end)             # zoom x (y fits its data); None resets every axis
+live.viewport = hg.Viewport(x=(start, end), y=(0, 100))
+live.selection = (start, end)            # brush an x range; None clears it
+live.selection = hg.Selection(x=(start, end), y=(50, 100))
 ```
 
 `append` and `replace` take a table like the chart's data, or for `append`
@@ -267,25 +269,46 @@ facets; `None` restores an option's default.
 Interaction comes back as properties and callbacks:
 
 ```python
-live.selection                           # the brushed x range, or None (y and lasso selections are not reported yet)
-live.viewport                            # the visible x range when zoomed, or None
+live.selection                           # an hg.Selection, or None
+live.viewport                            # an hg.Viewport: x, y, y_right, each None when not zoomed
 
 live.on_select(lambda selection: print(selection))
-live.on_viewport(lambda viewport: print(viewport))
+live.on_viewport(lambda viewport: print(viewport.x, viewport.y))
 live.on_hover(lambda inspection: print(inspection))   # None when the pointer leaves
-live.on_click(lambda inspection: print(inspection.value, inspection.points))
+live.on_click(lambda inspection: print(df.iloc[inspection.points[0].row]))
 live.on_click(callback, remove=True)     # stop calling it
 ```
 
-Ranges and inspections hold Python values: datetimes on time axes (naive, in
-UTC, like the datetimes herceg reads), category labels on category axes, and
-numbers otherwise. An `hg.Inspection` is what the tooltip shows: the
-inspected `axis` (`"y"` for horizontal bars), the snapped `value` there and
-its axis `label`, the facet `panel`, and `points`, one `hg.InspectedPoint`
-per series with its `series` name, `value`, and tooltip `text`. Selection
-and viewport callbacks also run when Python sets them. Hover, zoom, and selection
-reach Python at most every 100 ms, always ending with the latest; hover and
-click are only sent while a callback listens.
+An `hg.Viewport` holds the visible `x` range and the ranges of the left and
+right y axes, `y` and `y_right`, each None when that axis is not zoomed. An
+`hg.Selection` holds the brushed `x` and `y` ranges (None along an axis the
+brush leaves alone; a lasso's extent) and a `lasso`'s outline as `(x, y)`
+points. Assigning either replaces the whole state: an `(start, end)` pair is
+an x range, so `live.viewport = (start, end)` also resets y. Values are
+Python values: datetimes on time axes (naive, in UTC, like the datetimes
+herceg reads), category labels for ranges on category axes (a lasso's points
+there are band positions, the first category at 0, of the categories it
+was first drawn over, and the lasso goes when new data moves them), and
+numbers otherwise.
+In subplots whose y axes differ, y values are read on the first panel's.
+
+An `hg.Inspection` is what the tooltip shows: the inspected `axis` (`"y"`
+for horizontal bars), the snapped `value` there and its axis `label`, the
+facet `panel`, and `points`, one `hg.InspectedPoint` per series with its
+`label`, `value`, and tooltip `text`, and where it comes from: `row`, the
+point's row in its mark's data as the chart holds it (`df.iloc[row]` of the
+dataframe given), `mark`, the mark's index in the order marks were added,
+`mark_id`, its `id`, and `key`, which identifies its series. A point that is
+no one row has `row` None: histogram bins, box plot and violin groups, pie
+slices, funnel stages, tree nodes, and network and Sankey nodes and links
+summarize rows. The rows of a derived table (`hg.derive`) are the derived
+table's, and a choropleth joined with `geojson=` has a row per feature.
+
+Selection and viewport callbacks also run when Python sets them. Hover,
+zoom, and selection reach Python at most every 100 ms, always ending with
+the latest; hover and click are only sent while a callback listens.
+Earlier versions returned the x range itself where `.x` now holds it, and
+named a point's `label` `series`.
 
 A widget displayed in several cells is one chart: updates and brushing reach
 every output. A browser that opens the notebook later, or reloads it, draws
@@ -304,20 +327,19 @@ import herceg.streamlit as hst
 chart = hg.Chart(df, brush="x").line(x="time", y="latency")
 state = hst.chart(chart, key="latency", on_select="rerun", on_click="rerun")
 
-if state.selection:
-    start, end = state.selection
+if state.selection and state.selection.x:
+    start, end = state.selection.x
     st.dataframe(df[df["time"].between(start, end)])
 if state.click:
     st.write(state.click.label, state.click.points)
 ```
 
-`on_select` (brushing an x range, in charts with `brush="x"`) and `on_click`
-(clicking data) take `"ignore"`, the default, which keeps them in the
-browser; `"rerun"`, which reruns the script so that its `chart(...)` call
-returns them; or a function, called before the rerun as Streamlit widget
-callbacks are. `state.selection` is the brushed x range, with the same
-values as live notebook charts (datetimes on time axes), and stays until the
-user changes it. `state.click` is an `hg.Inspection` in the run a click
+`on_select` (brushing, in charts with `brush=`) and `on_click` (clicking
+data) take `"ignore"`, the default, which keeps them in the browser;
+`"rerun"`, which reruns the script so that its `chart(...)` call returns
+them; or a function, called before the rerun as Streamlit widget callbacks
+are. `state.selection` is an `hg.Selection`, as live notebook charts report
+it, and stays until the user changes it. `state.click` is an `hg.Inspection` in the run a click
 caused, and None otherwise. Inside `st.form`, a selection reaches the script
 when the form is submitted, and `on_click` cannot react, since Streamlit
 sends no clicks from forms. Give a chart a `key` to keep its selection when
@@ -350,7 +372,7 @@ npm run test:python    # build, then run pytest in a uv environment
   the chart itself for a static copy.
 - `sync` does not link separate widgets, since each loads its own copy of
   the engine. Link them from Python instead:
-  `a.on_viewport(lambda viewport: setattr(b, "viewport", viewport))`.
+  `a.on_viewport(lambda view: setattr(b, "viewport", dataclasses.replace(b.viewport, x=view.x)))`.
 - Python keeps the live chart's current data, so a browser that connects
   later can draw it, and `append` copies the table's columns on each call
   (about 0.35 ms for 100 rows into a million-row, three-column window on an
@@ -358,9 +380,14 @@ npm run test:python    # build, then run pytest in a uv environment
 - Each widget sends the engine (about 146 KiB, 53 KiB gzipped) to the browser
   once. Live charts were tested in JupyterLab 4; Notebook 7, VS Code, and
   Colab support anywidget but have not been tested here.
-- Hover and click events report values, not row numbers.
-- Live charts report one x range, so `chart.widget()` refuses charts whose
-  panels have x scales of their own (`resolve_x`); display them statically.
+- A point's `row` is its position in the data the browser drew when it
+  reported the point. In a chart streaming with `max_rows`, rows dropped
+  before the callback runs renumber the rest, so by then the row may name
+  another record.
+- Live charts report one viewport and selection, so `chart.widget()` refuses
+  charts whose panels have x scales of their own (`resolve_x`); display them
+  statically. Charts whose panels have y scales of their own (`resolve_y`,
+  subplots) take no y viewport.
   In Streamlit they show (each panel keeping its zoom across reruns) and
   report clicks, but `on_select` is refused.
 - In Streamlit, a chart that changes between script runs is sent whole: its

@@ -72,7 +72,7 @@ describe("view transitions", () => {
     const chart = await mount({});
     await controlTime();
     const viewports: unknown[] = [];
-    chart.on("viewport", ({ domain }) => viewports.push(domain));
+    chart.on("viewport", ({ x }) => viewports.push(x));
     const [lo, hi] = x(chart) as [number, number];
     chart.setViewport([20_000, 40_000]);
     expect(chart.model.viewport).toEqual([20_000, 40_000]);
@@ -108,11 +108,29 @@ describe("view transitions", () => {
     expect(x(moving)).toEqual(x(still));
     expect(y(moving)).toEqual(y(still));
     expect(plot(moving)).toEqual(plot(still));
-    moving.setYViewport([0, 5]);
+    moving.setViewport({ y: [0, 5] });
     tick(16);
     expect(y(moving)).not.toEqual([0, 5]);
     tick(400);
     expect(y(moving)).toEqual([0, 5]);
+  });
+
+  it("move both axes of one change together, reported once", async () => {
+    const chart = await mount({});
+    await controlTime();
+    const viewports: unknown[] = [];
+    chart.on("viewport", (view) => viewports.push(view));
+    chart.setViewport({ x: [20_000, 40_000], y: [0, 5] });
+    expect(viewports).toEqual([{ x: [20_000, 40_000], y: [0, 5], yRight: null }]);
+    tick(50);
+    // Both axes are on their way: the y change did not end the x one.
+    expect(x(chart)).not.toEqual([20_000, 40_000]);
+    expect(y(chart)).not.toEqual([0, 5]);
+    tick(400);
+    expect([x(chart), y(chart)]).toEqual([
+      [20_000, 40_000],
+      [0, 5],
+    ]);
   });
 
   it("show the view asked for after leaving the screen", async () => {

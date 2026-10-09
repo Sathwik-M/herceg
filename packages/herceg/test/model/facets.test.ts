@@ -615,11 +615,11 @@ describe("facet panels with y scales of their own", () => {
 
   it("let go of a y zoom when panels get y scales of their own", () => {
     const model = new ChartModel({ marks, facet: facet("region") });
-    model.setYViewport({ y: [0, 50] });
-    expect(model.yViewport).not.toBeNull();
+    model.setYViewport({ y: [0, 50], yRight: null });
+    expect(model.yViewport.y).toEqual([0, 50]);
     model.update({ marks, facet: facet("region"), resolve: { y: "independent" } });
-    expect(model.yViewport).toBeNull();
-    expect(() => model.setYViewport({ y: [0, 50] })).toThrow("no one y viewport");
+    expect(model.yViewport).toEqual({ y: null, yRight: null });
+    expect(() => model.setYViewport({ y: [0, 50], yRight: null })).toThrow("no one y viewport");
   });
 
   it("refuse category y axes and y zoom, and need spec version 2", () => {

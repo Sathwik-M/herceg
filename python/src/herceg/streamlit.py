@@ -2,7 +2,7 @@
 
 The chart is a Streamlit custom component (components v2, Streamlit 1.51 or
 newer; the ``streamlit`` extra). It travels to the browser as one binary
-payload, the spec followed by the column buffers, and the brushed x range and
+payload, the spec followed by the column buffers, and the selection and the
 clicked data come back to the script.
 """
 
@@ -23,7 +23,7 @@ except ImportError as error:  # pragma: no cover - depends on the environment
     ) from error
 
 from . import _render
-from ._events import Inspection, Value, decode_inspection, decode_range
+from ._events import Inspection, Selection, checked, decode_inspection, decode_selection
 
 if TYPE_CHECKING:
     from ._chart import Chart
@@ -39,8 +39,9 @@ Reaction = Literal["ignore", "rerun"] | Callable[[], Any]
 class ChartState:
     """What the user did with a chart, as of this script run."""
 
-    #: The brushed x range, or None; it stays until the user changes it.
-    selection: tuple[Value, Value] | None = None
+    #: What is brushed (x and y ranges, a lasso's outline), or None; it stays
+    #: until the user changes it.
+    selection: Selection | None = None
     #: The data under a click, in the run the click started; None otherwise.
     click: Inspection | None = None
 
@@ -54,10 +55,10 @@ def chart(
 ) -> ChartState:
     """Shows ``chart`` in the app and returns what the user did with it.
 
-    ``on_select`` is what brushing an x range does (charts with
-    ``brush="x"``), ``on_click`` what clicking data does: ``"ignore"`` keeps
-    them in the browser; ``"rerun"`` reruns the script, whose call then
-    returns them; a function is called first, then the script reruns. Inside
+    ``on_select`` is what brushing does (charts with ``brush=``),
+    ``on_click`` what clicking data does: ``"ignore"`` keeps them in the
+    browser; ``"rerun"`` reruns the script, whose call then returns them; a
+    function is called first, then the script reruns. Inside
     ``st.form``, a selection reaches the script when the form is submitted,
     and clicks cannot react. Charts whose panels have x scales of their own
     (``resolve_x``) cannot report selections. Give the chart a ``key`` to
@@ -73,7 +74,7 @@ def chart(
             )
     if on_select != "ignore" and chart._settings["resolve_x"] not in (None, "shared"):
         raise ValueError(
-            "on_select reports one x range, so it needs a chart whose panels share x "
+            "on_select reports one selection, so it needs a chart whose panels share x "
             "(resolve_x='shared')"
         )
     if on_click != "ignore" and _in_form():
@@ -124,11 +125,12 @@ def _payload(spec: dict[str, Any], buffers: list[bytes], events: list[str]) -> b
 
 
 def _state(result: Mapping[str, Any]) -> ChartState:
-    """The component's result as Python values."""
-    return ChartState(
-        selection=decode_range(result.get("selection")),
-        click=decode_inspection(result.get("click")),
-    )
+    """The component's result as Python values; a selection of another shape is none."""
+    try:
+        selection = decode_selection(checked("select", result.get("selection")))
+    except ValueError:
+        selection = None
+    return ChartState(selection=selection, click=decode_inspection(result.get("click")))
 
 
 def _aligned(size: int) -> int:

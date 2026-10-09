@@ -20,9 +20,9 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   style?: string | undefined;
   /** The underlying chart once mounted (`bind:chart`), for imperative calls such as `setViewport` or `toSVG`. */
   chart?: HercegChart | null | undefined;
-  /** The visible x range changed (zoom, pan, reset, sync); null when fitted to the data. */
+  /** The view changed (zoom, pan, reset, sync): x, y, and right y ranges, each null when not zoomed. */
   onviewport?: ChartListener<"viewport"> | undefined;
-  /** The brushed x range changed (`interaction.brush`); null when cleared. */
+  /** The selection changed (`interaction.brush`): x and y ranges and a lasso's outline, null when cleared. */
   onselect?: ChartListener<"select"> | undefined;
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
   onhover?: ChartListener<"hover"> | undefined;

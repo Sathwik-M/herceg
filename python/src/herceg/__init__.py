@@ -55,7 +55,7 @@ from ._chart import (
     violin,
 )
 from ._derive import Derived, Expr, col, derive, when
-from ._events import InspectedPoint, Inspection
+from ._events import InspectedPoint, Inspection, Selection, Viewport
 
 __all__ = [
     "SCHEMES",
@@ -68,7 +68,9 @@ __all__ = [
     "HelperOptions",
     "Panel",
     "Projection",
+    "Selection",
     "Tooltip",
+    "Viewport",
     "Derived",
     "Expr",
     "InspectedPoint",

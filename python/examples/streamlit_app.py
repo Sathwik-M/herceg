@@ -42,10 +42,10 @@ chart = (
 )
 state = hst.chart(chart, key="latency", on_select="rerun", on_click="rerun")
 
-if state.selection is None:
+if state.selection is None or state.selection.x is None:
     st.caption("Drag across the chart to select a time range.")
 else:
-    start, end = state.selection
+    start, end = state.selection.x
     selected = df[df["time"].between(start, end)]
     over = int((selected["p99"] > slo).sum())
     st.subheader(f"{start:%H:%M} to {end:%H:%M} UTC")
@@ -55,5 +55,5 @@ else:
     right.metric("Minutes over the SLO", f"{over:,}")
 
 if state.click is not None:
-    values = ", ".join(f"{point.series} {point.text} ms" for point in state.click.points)
+    values = ", ".join(f"{point.label} {point.text} ms" for point in state.click.points)
     st.info(f"Clicked {state.click.label}: {values}")

@@ -57,21 +57,26 @@ def test_the_payload_is_the_spec_then_aligned_buffers():
 def test_the_result_decodes_to_python_values():
     state = hst._state(
         {
-            "selection": {"x": [MS0, MS0 + 60_000], "time": True},
+            "selection": {"x": [MS0, MS0 + 60_000], "y": ["a", "b"], "lasso": None, "time": ["x"]},
             "click": {
                 "axis": "x",
                 "value": MS0,
                 "time": True,
                 "label": "00:00",
-                "points": [{"series": "a", "value": 1.0, "text": "1"}],
+                "points": [
+                    {"mark": 0, "markId": None, "key": '[0,"a"]', "label": "a", "row": 1}
+                    | {"value": 1.0, "text": "1"}
+                ],
             },
         }
     )
-    assert state.selection == (T0, T0 + dt.timedelta(minutes=1))
-    assert state.click == hg.Inspection(
-        axis="x", value=T0, label="00:00", points=(hg.InspectedPoint("a", 1.0, "1"),)
-    )
+    assert state.selection == hg.Selection(x=(T0, T0 + dt.timedelta(minutes=1)), y=("a", "b"))
+    point = hg.InspectedPoint("a", 1.0, "1", row=1, mark=0, key='[0,"a"]')
+    assert state.click == hg.Inspection(axis="x", value=T0, label="00:00", points=(point,))
     assert hst._state({}) == hst.ChartState(selection=None, click=None)
+    # A selection of another shape, or of nothing, is none.
+    for odd in ({"x": [1.0], "y": None, "lasso": None}, {"x": None, "y": None, "lasso": None}):
+        assert hst._state({"selection": odd}) == hst.ChartState()
 
 
 def test_reactions_are_checked():
@@ -84,7 +89,7 @@ def test_charts_with_x_scales_of_their_own_show_but_cannot_report_selections():
     split = hg.Chart(data, facet="g", resolve_x="independent", brush="x").line(x="x", y="y")
     assert hst.chart(split) == hst.ChartState()
     assert hst.chart(split, on_click="rerun") == hst.ChartState()
-    with pytest.raises(ValueError, match="on_select reports one x range"):
+    with pytest.raises(ValueError, match="on_select reports one selection"):
         hst.chart(split, on_select="rerun")
 
 
@@ -102,7 +107,8 @@ def app():
     data = {"x": np.arange(3.0), "y": np.array([1.0, 3.0, 2.0])}
     chart = hg.Chart(data, brush="x").line(x="x", y="y")
     state = hst.chart(chart, key="chart", on_select="rerun", on_click=lambda: None)
-    st.json({"selection": state.selection, "click": state.click and state.click.label})
+    selection = state.selection and state.selection.x
+    st.json({"selection": selection, "click": state.click and state.click.label})
     hst.chart(hg.Chart(data, theme="dark").point(x="x", y="y"), key="other")
 
 
@@ -120,7 +126,8 @@ def test_an_app_sends_the_chart_and_reads_its_selection():
     assert "theme" not in header["spec"]
     assert read(second.bytes)[0]["spec"]["theme"] == "dark"
     # The browser reports a brushed range: the next run returns it.
-    at.session_state["chart"] = {"selection": {"x": [0.5, 1.5], "time": False}}
+    brushed = {"x": [0.5, 1.5], "y": None, "lasso": None, "time": []}
+    at.session_state["chart"] = {"selection": brushed}
     at.run()
     assert json.loads(at.json[0].proto.body) == {"selection": [0.5, 1.5], "click": None}
 

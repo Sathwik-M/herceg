@@ -390,6 +390,7 @@ export class GeoPointMark implements GeoLayer {
         py,
         outline: symbolPath("circle", px, py, r + 1.5),
         measure,
+        row,
       };
     };
     let grid: PointGrid | undefined;

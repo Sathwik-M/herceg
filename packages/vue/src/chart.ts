@@ -65,9 +65,9 @@ const UNSET = Object.fromEntries(OPTION_KEYS.map((key) => [key, undefined]));
  * listens, which costs little next to drawing.
  */
 const emits = {
-  /** The visible x range changed (zoom, pan, reset, sync); null when fitted to the data. */
+  /** The view changed (zoom, pan, reset, sync): x, y, and right y ranges, each null when not zoomed. */
   viewport: (_: ChartEvents["viewport"]) => true,
-  /** The brushed x range changed (`interaction.brush`); null when cleared. */
+  /** The selection changed (`interaction.brush`): x and y ranges and a lasso's outline, null when cleared. */
   select: (_: ChartEvents["select"]) => true,
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
   hover: (_: ChartEvents["hover"]) => true,

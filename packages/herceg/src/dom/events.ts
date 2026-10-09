@@ -1,6 +1,6 @@
 // Events a chart emits to the application.
 
-import type { Inspection } from "../model/model.ts";
+import type { Inspection, Viewport } from "../model/model.ts";
 import type { Selection } from "./brush.ts";
 import { report } from "./scheduler.ts";
 
@@ -13,16 +13,14 @@ export interface PanelTarget {
 /** Chart events by name, with what their listeners receive. */
 export interface ChartEvents {
   /**
-   * The visible x range changed: zoom, pan, reset, `setViewport`, or a
-   * synced chart. `domain` is null when the chart fits its data.
+   * The view changed (zoom, pan, reset, `setViewport`, or a synced chart):
+   * the x range and the left and right y axes' ranges, each null when that
+   * axis is not zoomed. One event reports a change of several axes.
    */
-  viewport: {
-    domain: readonly [number, number] | null;
-    /** The visible y range of the left axis; null when it fits the data. */
-    y: readonly [number, number] | null;
+  viewport: Viewport & {
     /**
      * In charts whose panels have x scales of their own, the keys of the
-     * panels whose x range `domain` is; a change for several reports each.
+     * panels whose x range `x` is; a change for several reports each.
      */
     panels?: readonly string[];
   };

@@ -73,6 +73,8 @@ interface Values {
   /** Each entry's spoke (there are at most MAX_SPOKES) and its finite value. */
   spoke: Uint8Array;
   value: Float64Array;
+  /** Each entry's row: the last of its series to give its spoke a value. */
+  row: Uint32Array;
 }
 
 /** Where a radar is drawn. */
@@ -151,6 +153,7 @@ export class RadarMark implements LayoutMark {
     const starts = new Int32Array(names.length + 1);
     const spoke: number[] = [];
     const value: number[] = [];
+    const row: number[] = [];
     // Too many spokes are not drawn, so not read: that would cost time per series and spoke.
     if (spokes.length <= MAX_SPOKES) {
       const { offsets, order } = rowsBySeries(table.length, names.length, (row) => {
@@ -162,21 +165,27 @@ export class RadarMark implements LayoutMark {
       const columns = category ? [] : spokes.map((field) => table.numbers(field));
       // One series at a time, its latest value per spoke.
       const latest = new Float64Array(spokes.length);
+      const latestRow = new Uint32Array(spokes.length);
       for (let s = 0; s < names.length; s++) {
         latest.fill(Number.NaN);
         for (let i = offsets[s]!; i < offsets[s + 1]!; i++) {
-          const row = order[i]!;
+          const at = order[i]!;
           if (category) {
-            const code = category.codes[row]!;
-            if (code >= 0) latest[category.place[code]!] = numbers![row]!;
+            const code = category.codes[at]!;
+            if (code < 0) continue;
+            const k = category.place[code]!;
+            latest[k] = numbers![at]!;
+            latestRow[k] = at;
           } else {
-            for (let k = 0; k < columns.length; k++) latest[k] = columns[k]![row]!;
+            for (let k = 0; k < columns.length; k++) latest[k] = columns[k]![at]!;
+            latestRow.fill(at);
           }
         }
         for (let k = 0; k < spokes.length; k++) {
           if (!Number.isFinite(latest[k]!)) continue;
           spoke.push(k);
           value.push(latest[k]!);
+          row.push(latestRow[k]!);
         }
         starts[s + 1] = spoke.length;
       }
@@ -188,6 +197,7 @@ export class RadarMark implements LayoutMark {
       starts,
       spoke: Uint8Array.from(spoke),
       value: Float64Array.from(value),
+      row: Uint32Array.from(row),
     };
     return this.#read;
   }
@@ -277,6 +287,7 @@ export class RadarMark implements LayoutMark {
         px,
         py,
         outline: symbolPath("circle", px, py, POINT_RADIUS + 3),
+        row: data.row[entries[i]!]!,
       };
     };
     let places: Map<string, number> | undefined;

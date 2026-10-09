@@ -23,16 +23,29 @@ except ImportError as error:  # pragma: no cover - depends on the environment
 
 from . import _render
 from ._chart import ChartUpdate, Unpack
-from ._events import Inspection, Value, decode_inspection, decode_range, encode_range
+from ._events import (
+    Inspection,
+    Range,
+    Selection,
+    Viewport,
+    checked,
+    decode_inspection,
+    decode_selection,
+    decode_viewport,
+    encode_selection,
+    encode_viewport,
+    same_values,
+)
 from ._live import LiveChart, Message
 
 if TYPE_CHECKING:
     from ._chart import Chart
 
-__all__ = ["ChartWidget", "Inspection"]
+__all__ = ["ChartWidget", "Inspection", "Selection", "Viewport"]
 
-Range = tuple[Value, Value]
 Event = Literal["select", "viewport", "hover", "click"]
+#: The key of each event's state in messages and the snapshot.
+_STATE_KEYS = {"select": "selection", "viewport": "viewport"}
 
 
 class ChartWidget(anywidget.AnyWidget):
@@ -48,7 +61,7 @@ class ChartWidget(anywidget.AnyWidget):
 
         live.append(new_rows, max_rows=10_000)
         live.update(title="CPU, live")
-        live.on_select(lambda selection: print(selection))
+        live.on_select(lambda selection: print(selection and selection.x))
 
     Several outputs of one widget show the same chart and stay in step.
     """
@@ -67,12 +80,12 @@ class ChartWidget(anywidget.AnyWidget):
         # Counts the changes sent to browsers, so a browser that missed one
         # (it was not open yet, say) asks for the whole chart again.
         self._revision = 0
-        # The x ranges, as last set here or in a browser.
-        self._ranges: dict[str, dict[str, Any] | None] = {"select": None, "viewport": None}
-        # Who changed each range (a browser's origin, None for Python) and at
-        # which revision. A browser's report based on an earlier revision than
+        # The selection and the viewport, as last set here or in a browser.
+        self._states: dict[str, dict[str, Any] | None] = {"select": None, "viewport": None}
+        # Who changed each (a browser's origin, None for Python) and at which
+        # revision. A browser's report based on an earlier revision than
         # someone else's change was made without seeing it, and is dropped.
-        self._range_changes: dict[str, tuple[str | None, int]] = {
+        self._state_changes: dict[str, tuple[str | None, int]] = {
             "select": (None, 0),
             "viewport": (None, 0),
         }
@@ -112,34 +125,51 @@ class ChartWidget(anywidget.AnyWidget):
         ``None`` restores an option's default."""
         with self._lock:
             self._push(self._live.update(options))
+            # Panels given y scales of their own let go of the y viewport, as
+            # the browser's chart does.
+            viewport = self._states["viewport"]
+            cleared = False
+            if viewport and (viewport["y"] or viewport["yRight"]) and not self._live.shares_y:
+                cleared = self._change("viewport", {**viewport, "y": None, "yRight": None}, None)
+        if cleared:
+            self._callbacks["viewport"](_decoded("viewport", self._states["viewport"]))
 
     @property
-    def selection(self) -> Range | None:
-        """The brushed x range, or None. Setting it brushes the chart."""
-        return decode_range(self._ranges["select"])
+    def selection(self) -> Selection | None:
+        """What is brushed (x and y ranges, a lasso's outline), or None. Setting a
+        ``Selection``, or an x range as a ``(start, end)`` pair, brushes the chart;
+        None clears it."""
+        return decode_selection(self._states["select"])
 
     @selection.setter
-    def selection(self, value: Range | None) -> None:
-        self._set_range("select", value)
+    def selection(self, value: Selection | Range | None) -> None:
+        self._set("select", encode_selection(value))
 
     @property
-    def viewport(self) -> Range | None:
-        """The visible x range when zoomed, or None when the chart fits its data.
-        Setting it zooms the chart."""
-        return decode_range(self._ranges["viewport"])
+    def viewport(self) -> Viewport:
+        """The visible x and y ranges, each None when that axis is not zoomed.
+        Setting a ``Viewport`` zooms the chart to it; an x range as a ``(start,
+        end)`` pair zooms x and resets y; None resets every axis."""
+        return decode_viewport(self._states["viewport"])
 
     @viewport.setter
-    def viewport(self, value: Range | None) -> None:
-        self._set_range("viewport", value)
+    def viewport(self, value: Viewport | Range | None) -> None:
+        payload = encode_viewport(value)
+        if (payload["y"] or payload["yRight"]) and not self._live.shares_y:
+            raise ValueError(
+                "charts whose panels have y scales of their own (resolve_y, panels) "
+                "have no one y viewport"
+            )
+        self._set("viewport", payload)
 
     # Events ----------------------------------------------------------------
 
-    def on_select(self, callback: Callable[[Range | None], Any], remove: bool = False) -> None:
-        """Calls ``callback(selection)`` when the brushed x range changes."""
+    def on_select(self, callback: Callable[[Selection | None], Any], remove: bool = False) -> None:
+        """Calls ``callback(selection)`` when what is brushed changes."""
         self._listen("select", callback, remove)
 
-    def on_viewport(self, callback: Callable[[Range | None], Any], remove: bool = False) -> None:
-        """Calls ``callback(viewport)`` when the chart zooms or pans."""
+    def on_viewport(self, callback: Callable[[Viewport], Any], remove: bool = False) -> None:
+        """Calls ``callback(viewport)`` when the chart zooms, pans, or resets."""
         self._listen("viewport", callback, remove)
 
     def on_hover(self, callback: Callable[[Inspection | None], Any], remove: bool = False) -> None:
@@ -160,8 +190,8 @@ class ChartWidget(anywidget.AnyWidget):
                 "revision": self._revision,
                 "spec": spec,
                 "buffers": buffers,
-                "selection": self._ranges["select"],
-                "viewport": self._ranges["viewport"],
+                "selection": self._states["select"],
+                "viewport": self._states["viewport"],
             }
 
     def send_state(self, key: Any = None) -> None:
@@ -178,22 +208,31 @@ class ChartWidget(anywidget.AnyWidget):
         self._revision += 1
         self.send({**content, "revision": self._revision}, buffers)
 
-    def _set_range(self, event: str, value: Any) -> None:
-        payload = encode_range(value)
+    def _set(self, event: str, payload: dict[str, Any] | None) -> None:
         with self._lock:
-            changed = self._change_range(event, payload, None)
+            changed = self._change(event, payload, None)
         if changed:
-            self._callbacks[event](decode_range(payload))
+            self._callbacks[event](_decoded(event, payload))
 
-    def _change_range(self, event: str, payload: dict[str, Any] | None, origin: str | None) -> bool:
-        """Records a range and sends it to every browser, unless it is unchanged.
-        Called with the lock held; the browser it came from (`origin`) ignores it."""
-        if payload == self._ranges[event]:
+    def _change(self, event: str, payload: dict[str, Any] | None, origin: str | None) -> bool:
+        """Records a selection or viewport and sends it to every browser, unless its
+        values are unchanged. Called with the lock held; the browser it came from
+        (`origin`) ignores it."""
+        stored = self._states[event]
+        if same_values(payload, stored):
+            # The same values: only what is said of them may be news (which
+            # axes hold times, the categories a lasso is over), and a lasso's
+            # categories stay known when assigned again from Python.
+            if payload is not None:
+                kept = (
+                    {} if stored is None else {k: v for k, v in stored.items() if k == "categories"}
+                )
+                self._states[event] = {**kept, **payload}
             return False
-        self._ranges[event] = payload
-        message = {"type": event, "x": payload and payload["x"]}
+        self._states[event] = payload
+        message = {"type": event, _STATE_KEYS[event]: payload}
         self._push(({**message, "origin": origin} if origin else message, []))
-        self._range_changes[event] = (origin, self._revision)
+        self._state_changes[event] = (origin, self._revision)
         return True
 
     def _listen(self, event: Event, callback: Callable[..., Any], remove: bool) -> None:
@@ -211,14 +250,24 @@ class ChartWidget(anywidget.AnyWidget):
             # A browser that missed an update.
             self.send_state("_chart")
         elif kind in ("select", "viewport"):
-            payload, origin = content.get("range"), content.get("origin")
+            try:
+                payload = checked(kind, content.get(_STATE_KEYS[kind]))
+            except ValueError:
+                # Nothing this module reads; the state stays as it was.
+                return
+            origin = content.get("origin")
             with self._lock:
-                changer, revision = self._range_changes[kind]
+                changer, revision = self._state_changes[kind]
                 stale = changer != origin and revision > content.get("revision", 0)
-                changed = not stale and self._change_range(kind, payload, origin)
+                changed = not stale and self._change(kind, payload, origin)
             if changed:
-                self._callbacks[kind](decode_range(payload))
+                self._callbacks[kind](_decoded(kind, payload))
         elif kind in ("hover", "click"):
             inspection = decode_inspection(content.get("inspection"))
             if kind == "hover" or inspection is not None:
                 self._callbacks[kind](inspection)
+
+
+def _decoded(event: str, payload: dict[str, Any] | None) -> Selection | Viewport | None:
+    """A selection or viewport as Python reads it."""
+    return decode_selection(payload) if event == "select" else decode_viewport(payload)

@@ -167,6 +167,11 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> {
    */
   readonly tooltip: "x" | "y" | "point" | "cell";
   /**
+   * The series' points summarize rows of the table (histogram bins, box
+   * plot groups) rather than being its rows, so inspections name no row.
+   */
+  readonly summarizes?: boolean;
+  /**
    * Resolves series for the current data. `key` prefixes series keys,
    * `palette` returns the color for a series key, `hidden` holds keys of
    * series the user hid, and `bands` gives the band axes' categories.

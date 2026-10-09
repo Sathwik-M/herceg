@@ -5,6 +5,7 @@ import { geometry } from "../../src/data/geometry.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
+import type { ChartEvents } from "../../src/dom/events.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
@@ -363,7 +364,7 @@ describe("events and brushing", () => {
       marks: [line(series(100), { x: "t", y: "s0" })],
     });
     const viewports: (readonly [number, number] | null)[] = [];
-    chart.on("viewport", ({ domain }) => viewports.push(domain));
+    chart.on("viewport", ({ x }) => viewports.push(x));
     drag(chart, 20_000, 60_000);
     const [lo, hi] = chart.model.viewport!;
     expect(lo).toBeCloseTo(20_000, -3);
@@ -427,6 +428,38 @@ describe("events and brushing", () => {
     press(chart.root, "pointerleave", 0, 0);
     await frame();
     expect(hovers.at(-1)).toBeUndefined();
+    chart.destroy();
+  });
+
+  it("names the record clicked, among points at the same place", async () => {
+    const orders = table({ x: [1, 2, 2], y: [5, 6, 6], id: ["o1", "o2", "o3"] });
+    const chart = createChart(host, { marks: [point(orders, { x: "x", y: "y", id: "orders" })] });
+    const clicked: (string | number | null)[] = [];
+    chart.on("click", ({ inspection }) => {
+      const [p] = inspection!.points;
+      if (p!.markId === "orders" && p!.row !== undefined) clicked.push(orders.value("id", p!.row));
+    });
+    const hovers: (number | undefined)[] = [];
+    chart.on("hover", ({ inspection }) => hovers.push(inspection?.points[0]?.row));
+    const [x, y] = [chart.model.xScale()!, chart.model.yScale()!];
+    press(chart.root, "pointermove", x.map(1), y.map(5));
+    await frame();
+    press(chart.root, "pointerdown", x.map(1), y.map(5));
+    press(chart.root, "pointerup", x.map(1), y.map(5));
+    press(chart.root, "pointerdown", x.map(2), y.map(6));
+    press(chart.root, "pointerup", x.map(2), y.map(6));
+    // Of rows drawn at one place, the first is the one reported.
+    expect(clicked).toEqual(["o1", "o2"]);
+    // The keyboard reaches the other, and hover reports it: its row is a change.
+    press(chart.root, "pointerleave", 0, 0);
+    chart.root.focus();
+    for (const key of ["ArrowRight", "ArrowRight"])
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    await frame();
+    expect(hovers.at(-1)).toBe(1);
+    chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await frame();
+    expect(hovers.at(-1)).toBe(2);
     chart.destroy();
   });
 
@@ -533,8 +566,8 @@ describe("events and brushing", () => {
     const a = createChart(host, { interaction, marks: [line(data, { x: "t", y: "s0" })] });
     const b = createChart(other, { interaction, marks: [line(data, { x: "t", y: "s1" })] });
     // A clamps every viewport to at most 1,000 wide.
-    a.on("viewport", ({ domain }) => {
-      if (domain && domain[1] - domain[0] > 1000) a.setViewport([domain[0], domain[0] + 1000]);
+    a.on("viewport", ({ x }) => {
+      if (x && x[1] - x[0] > 1000) a.setViewport([x[0], x[0] + 1000]);
     });
     a.setViewport([0, 2000]);
     expect(a.model.viewport).toEqual([0, 1000]);
@@ -556,8 +589,8 @@ describe("events and brushing", () => {
       createChart(element, { interaction, marks: [line(data, { x: "t", y: "s0" })] }),
     ) as [Chart, Chart, Chart];
     // B clamps the range it receives and shares the result.
-    b.on("viewport", ({ domain }) => {
-      if (domain && domain[1] - domain[0] > 1000) b.setViewport([domain[0], domain[0] + 1000]);
+    b.on("viewport", ({ x }) => {
+      if (x && x[1] - x[0] > 1000) b.setViewport([x[0], x[0] + 1000]);
     });
     a.setViewport([0, 2000]);
     for (const chart of [a, b, c]) expect(chart.model.viewport).toEqual([0, 1000]);
@@ -1408,9 +1441,9 @@ describe("zooming and brushing in two dimensions", () => {
     chart.on("viewport", ({ y }) => viewports.push(y));
     at(chart, "wheel", ...center(chart));
     expect(chart.model.viewport).toBeNull();
-    const [lo, hi] = chart.model.yViewport!.y;
+    const [lo, hi] = chart.getViewport().y!;
     expect(hi - lo).toBeLessThan(45);
-    expect(viewports).toEqual([chart.model.yViewport!.y]);
+    expect(viewports).toEqual([chart.getViewport().y]);
     chart.update({ interaction: { zoom: "xy" } });
     chart.render();
     at(chart, "wheel", ...center(chart));
@@ -1418,7 +1451,7 @@ describe("zooming and brushing in two dimensions", () => {
     // Double click resets both, also after y stopped zooming.
     chart.update({ interaction: { zoom: "x" } });
     chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    expect([chart.model.viewport, chart.model.yViewport]).toEqual([null, null]);
+    expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: null });
     chart.destroy();
   });
 
@@ -1427,7 +1460,7 @@ describe("zooming and brushing in two dimensions", () => {
       interaction: { brush: "xy", zoom: "xy" },
       marks: [point(points(), { x: "x", y: "y" })],
     });
-    chart.setYViewport([10, 40]);
+    chart.setViewport({ y: [10, 40] });
     chart.render();
     const { x, y } = chart.model.panels()[0]!;
     const flat = () => {
@@ -1438,7 +1471,7 @@ describe("zooming and brushing in two dimensions", () => {
     // A flat rectangle does not zoom, so y keeps its zoom.
     flat();
     expect(chart.model.viewport).toBeNull();
-    expect(chart.model.yViewport!.y).toEqual([10, 40]);
+    expect(chart.getViewport().y).toEqual([10, 40]);
     // Without zoom, it selects nothing; nor does a flat lasso.
     for (const brush of ["xy", "lasso"] as const) {
       chart.update({ interaction: { brush } });
@@ -1528,13 +1561,13 @@ describe("zooming and brushing in two dimensions", () => {
       ],
     });
     enter();
-    expect([b.model.viewport, b.model.yViewport]).toEqual([null, null]);
+    expect(b.getViewport()).toEqual({ x: null, y: null, yRight: null });
     expect(b.selection?.lasso).toHaveLength(3);
     // A rectangle needs both axes to zoom; an x range only x.
     b.update({ interaction: { brush: "x", zoom: "x", sync: "enter" } });
     a.select({ x: [10, 30], y: [10, 30], lasso: null });
     enter();
-    expect([b.model.viewport, b.model.yViewport]).toEqual([null, null]);
+    expect(b.getViewport()).toEqual({ x: null, y: null, yRight: null });
     a.select([10, 30]);
     enter();
     expect(b.model.viewport).toEqual([10, 30]);
@@ -1545,7 +1578,7 @@ describe("zooming and brushing in two dimensions", () => {
     a.select({ x: [10, 30], y: [10, 30], lasso: null });
     enter();
     expect(b.model.viewport).toEqual([10, 30]);
-    const [y0, y1] = b.model.yViewport!.y;
+    const [y0, y1] = b.getViewport().y!;
     expect([y0, y1].map((y) => y.toFixed(6))).toEqual(["10.000000", "30.000000"]);
     a.select({ x: [10, 20], y: [10, 20], lasso: null });
     b.root.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -1641,7 +1674,7 @@ describe("zooming and brushing in two dimensions", () => {
     at(chart, "pointerup", x.map(30), y.map(20));
     expect(chart.selection).toBeNull();
     expect(chart.model.viewport![0]).toBeCloseTo(10, 6);
-    expect(chart.model.yViewport!.y[1]).toBeCloseTo(40, 6);
+    expect(chart.getViewport().y![1]).toBeCloseTo(40, 6);
     expect(plot.width).toBeGreaterThan(0);
     chart.destroy();
   });
@@ -1668,21 +1701,87 @@ describe("zooming and brushing in two dimensions", () => {
     other.remove();
   });
 
-  it("zooms the right axis with the left one", () => {
+  it("zooms the right axis with the left one, or each alone", () => {
     const data = table({ t: [0, 1, 2, 3], a: [0, 10, 20, 30], b: [0, 1000, 2000, 3000] });
     const chart = createChart(host, {
+      interaction: { zoom: "y" },
       marks: [line(data, { x: "t", y: "a" }), line(data, { x: "t", y: "b", axis: "right" })],
       y: { domain: [0, 30] },
       yRight: { domain: [0, 3000] },
     });
-    chart.setYViewport([10, 20]);
-    const viewport = chart.model.yViewport!;
-    expect(viewport.y).toEqual([10, 20]);
-    expect(viewport.yRight![0]).toBeCloseTo(1000, 6);
-    expect(viewport.yRight![1]).toBeCloseTo(2000, 6);
+    const viewports: ChartEvents["viewport"][] = [];
+    chart.on("viewport", (view) => viewports.push(view));
+    // The wheel zooms both axes at the same pixels, in one event.
+    at(chart, "wheel", ...center(chart));
+    const zoomed = chart.getViewport();
+    expect(zoomed.y![0] * 100).toBeCloseTo(zoomed.yRight![0], 6);
+    expect(zoomed.y![1] * 100).toBeCloseTo(zoomed.yRight![1], 6);
+    expect(viewports).toEqual([zoomed]);
+    // Axes left out keep their view: a right range alone moves only the right axis.
+    chart.setViewport({ y: null, yRight: [1000, 2000] });
+    expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: [1000, 2000] });
     chart.render();
-    expect(chart.model.yRightScale()!.domain).toEqual([viewport.yRight![0], viewport.yRight![1]]);
+    expect(chart.model.yScale()!.domain).toEqual([0, 30]);
+    expect(chart.model.yRightScale()!.domain).toEqual([1000, 2000]);
+    chart.setViewport({ y: [10, 20] });
+    expect(chart.getViewport()).toEqual({ x: null, y: [10, 20], yRight: [1000, 2000] });
+    expect(viewports).toHaveLength(3);
+    chart.setViewport(null);
+    expect(viewports.at(-1)).toEqual({ x: null, y: null, yRight: null });
     chart.destroy();
+  });
+
+  it("reports a change of both axes once, and a listener's own change once", () => {
+    const chart = createChart(host, {
+      interaction: { zoom: "xy" },
+      marks: [point(points(), { x: "x", y: "y" })],
+    });
+    const viewports: ChartEvents["viewport"][] = [];
+    chart.on("viewport", (view) => viewports.push(view));
+    at(chart, "wheel", ...center(chart));
+    expect(viewports).toHaveLength(1);
+    expect(viewports[0]).toEqual(chart.getViewport());
+    expect(viewports[0]!.x && viewports[0]!.y).not.toBeNull();
+    // A pair is an x range: y keeps its view.
+    const { y } = chart.getViewport();
+    chart.setViewport([5, 15]);
+    expect(chart.getViewport()).toEqual({ x: [5, 15], y, yRight: null });
+    // A listener changing the view again reports that change, and the first
+    // change is not reported a second time with it.
+    const stop = chart.on("viewport", (view) => {
+      if (view.y) chart.setViewport({ y: null });
+    });
+    viewports.length = 0;
+    chart.setViewport({ x: [0, 10], y: [0, 10] });
+    expect(viewports).toEqual([
+      { x: [0, 10], y: [0, 10], yRight: null },
+      { x: [0, 10], y: null, yRight: null },
+    ]);
+    stop();
+    chart.destroy();
+  });
+
+  it("shares x ranges with synced charts, not y ranges", () => {
+    const other = document.createElement("div");
+    other.style.cssText = "width:600px;height:300px";
+    document.body.append(other);
+    const options = {
+      interaction: { zoom: "xy" as const, sync: "views" },
+      marks: [point(points(), { x: "x", y: "y" })],
+    };
+    const a = createChart(host, options);
+    const b = createChart(other, options);
+    const seen: ChartEvents["viewport"][] = [];
+    b.on("viewport", (view) => seen.push(view));
+    b.setViewport({ y: [0, 20] });
+    a.setViewport({ y: [10, 30] });
+    expect(b.getViewport().y).toEqual([0, 20]);
+    a.setViewport({ x: [5, 15], y: [10, 20] });
+    expect(b.getViewport()).toEqual({ x: [5, 15], y: [0, 20], yRight: null });
+    expect(seen.map((view) => view.x)).toEqual([null, [5, 15]]);
+    a.destroy();
+    b.destroy();
+    other.remove();
   });
 });
 

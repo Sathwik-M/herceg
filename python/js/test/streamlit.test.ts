@@ -165,9 +165,9 @@ describe("Streamlit component", () => {
     await frame();
     expect(state).toHaveLength(1);
     const [name, value] = state[0]!;
-    const { x, time } = value as { x: [number, number]; time: boolean };
+    const { x, ...rest } = value as { x: [number, number] };
     expect(name).toBe("selection");
-    expect(time).toBe(false);
+    expect(rest).toEqual({ y: null, lasso: null, time: [] });
     expect(0 < x[0] && x[0] < x[1] && x[1] < 2).toBe(true);
     // A click clears the brush and reports the data under it.
     press(parent, "pointerdown", 0.5);
@@ -181,7 +181,9 @@ describe("Streamlit component", () => {
           value: 1,
           time: false,
           label: "1",
-          points: [{ series: "y", value: 3, text: "3" }],
+          points: [
+            { mark: 0, markId: null, key: '[0,"y"]', label: "y", row: 1, value: 3, text: "3" },
+          ],
         },
       ],
     ]);
@@ -222,6 +224,12 @@ describe("Streamlit component", () => {
     expect(figure(parent).getAttribute("aria-label")).toBe("After");
     expect(drawn()).toEqual(before);
     expect(next.state).toEqual([]);
+    // The script has the rectangle whole.
+    press(parent, "pointerdown", 0.2, 0.2);
+    press(parent, "pointermove", 0.4, 0.4);
+    press(parent, "pointerup", 0.6, 0.6);
+    const rectangle = next.state[0]![1] as { x: number[]; y: number[] };
+    expect(rectangle.x[0]! < rectangle.x[1]! && rectangle.y[0]! < rectangle.y[1]!).toBe(true);
   });
 
   it("keeps the zoom of both y axes on a redraw, even when the data changes", async () => {
@@ -267,7 +275,7 @@ describe("Streamlit component", () => {
 
   it("keeps a lasso over categories only while they stay where they were", async () => {
     const parent = host();
-    run(parent, bars(["a", "b", "c"], "lasso"));
+    const first = run(parent, bars(["a", "b", "c"], "lasso"));
     press(parent, "pointerdown", 0.2, 0.3);
     for (const [x, y] of [
       [0.5, 0.3],
@@ -278,6 +286,10 @@ describe("Streamlit component", () => {
     press(parent, "pointerup", 0.2, 0.8);
     await frame();
     expect(band(parent)!.getAttribute("visibility")).toBe("visible");
+    // The script has the outline, in band positions, and its extent's categories.
+    const lasso = first.state[0]![1] as { x: string[]; lasso: number[][] };
+    expect(lasso.x).toEqual(["a", "b"]);
+    expect(lasso.lasso.length).toBeGreaterThanOrEqual(4);
     // A new chart with the same categories, which redraws.
     run(parent, bars(["a", "b", "c"], "lasso", "Again"));
     await frame();
@@ -306,10 +318,11 @@ describe("Streamlit component", () => {
     // Across the first two of three bands.
     brush(parent, 0.15, 0.45);
     await frame();
-    expect(state).toEqual([["selection", { x: ["a", "b"], time: false }]]);
+    const whole = { y: null, lasso: null, time: [] };
+    expect(state).toEqual([["selection", { x: ["a", "b"], ...whole }]]);
     // Reordered: the brush covers "a" and "b" where they are now.
     const reordered = run(parent, bars(["b", "a", "c"]));
-    expect(reordered.state).toEqual([["selection", { x: ["b", "a"], time: false }]]);
+    expect(reordered.state).toEqual([["selection", { x: ["b", "a"], ...whole }]]);
     await frame();
     expect(band(parent)!.getAttribute("visibility")).toBe("visible");
     // Gone: the brush goes, and the script hears so.

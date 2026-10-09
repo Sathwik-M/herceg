@@ -39,6 +39,11 @@ class LiveChart:
             (join.source, table_name(index), join) for index, join in chart._joins.items()
         ]
 
+    @property
+    def shares_y(self) -> bool:
+        """Whether every panel shares one y scale, so the chart has one y viewport."""
+        return self._settings["resolve_y"] in (None, "shared") and "panels" not in self._layout
+
     def to_spec(self) -> Message:
         return assemble_spec(self._options, self._layout, self._tables, self._marks, self._derived)
 

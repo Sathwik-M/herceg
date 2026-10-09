@@ -19,7 +19,7 @@ One name per concept, used the same way in code and docs.
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
-| **Viewport** | The visible x range when zoomed (one per x scale when panels have x scales of their own), and the visible y ranges when zoomed along y; null means "fit the data". |
+| **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
@@ -479,8 +479,8 @@ reaches across scales. Synced charts share cursors with such charts (each
 panel draws a cursor its scale holds) but neither send them nor take
 viewports and selections, which belong to some panels only; applications
 that link scales of the same quantity set them with `setViewport` and a
-panel. Python's live widgets report one x range and refuse charts whose
-panels have x scales of their own; the Streamlit component shows them and
+panel. Python's live widgets report one viewport and selection and refuse
+charts whose panels have x scales of their own; the Streamlit component shows them and
 reports clicks (the clicked panel's scale decides whether values are
 times), keeps each panel's zoom across reruns by panel key, and refuses
 `on_select`.
@@ -955,8 +955,8 @@ each dirty chart once, however many changes arrived. Charts outside the
 viewport (IntersectionObserver) stay dirty and render when they become
 visible. A chart's first frame renders synchronously when it is created.
 
-With `animation`, a view asked for (`setViewport`, `setYViewport`, zooming
-to a brush, double-click reset) is shown gradually, by `dom/transition.ts`,
+With `animation`, a view asked for (`setViewport`, zooming to a brush,
+double-click reset) is shown gradually, by `dom/transition.ts`,
 which a chart loads the first time its options ask for animation (until
 then, views change at once). The model's viewports
 take the new view at once, and the `viewport` event reports it once. The
@@ -1066,6 +1066,31 @@ changes only (hover compares the inspected values), and a listener that
 throws is reported without stopping the others or the chart. Hover listeners
 receive inspections even with the built-in tooltip off, which is how an
 application draws its own.
+
+Every change of view (a public `setViewport`, a wheel step, a pan move, a
+brush zoomed to, a double-click reset, a synced chart's range) runs in one
+`#changeView` call: it snapshots each x scale's viewport and the y viewport,
+makes the change, then emits one `viewport` event per x scale whose view
+changed, with all three ranges, after the change is complete. Listeners may
+change the view again; their change reports itself, and the outer call skips
+x scales whose view a listener's change already reported. An `update` that
+gives panels y scales of their own reports the y viewport it lets go of.
+Only changes that set x share the final x range with synced charts; y
+ranges are not synced.
+`setViewport` checks a whole change (an x range without a panel where
+panels have x scales of their own, y ranges where panels have y scales of
+their own) before it changes anything.
+
+An inspected point carries its identity: the mark's index in the chart's
+marks (each panel's inspector is given the index of every mark it inspects,
+since subplots inspect some marks only and one mark object may be listed
+twice) and `id`, the series key, and the row of the mark's table, which is
+`rowOf(series, position)` for every mark whose series index table rows.
+Marks whose series index rows of a summary (histograms, box plots, violins)
+say so with `summarizes`, and their points have no row. Layout items carry a
+row where one row is the item (gauges, radar points, map shapes and points);
+a map of several layers tags its items with the layer's index. Building an
+inspection costs three more fields per point and one map lookup.
 
 ## Accessibility
 
@@ -1227,8 +1252,8 @@ offsets, events the script reacts to), and the buffers at 8-byte aligned
 offsets, viewed in place as typed arrays. Streamlit calls the component
 again on every run and on theme changes; equal bytes keep the drawn chart,
 and changed bytes redraw it in place, keeping the zoom along x and y and the
-whole selection (on category axes, by its categories' labels), though the
-script hears only of x ranges. Charts without a theme read the app's from the
+whole selection (on category axes, by its categories' labels), which the
+script receives whole; it does not hear of zooming. Charts without a theme read the app's from the
 CSS variables Streamlit gives components, since Python may not know it.
 
 A test (`test/architecture.test.ts`) keeps the core directories (`data`,

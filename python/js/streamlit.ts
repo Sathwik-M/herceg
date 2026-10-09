@@ -1,6 +1,6 @@
 // The Streamlit component's front end (st.components.v2): draws the chart
 // that herceg.streamlit.chart (python/src/herceg/streamlit.py) sends as one
-// binary payload, and reports the brushed range and clicks to the script.
+// binary payload, and reports the selection and clicks to the script.
 //
 // Streamlit calls the default export on every script run, and when the app's
 // theme changes, with the same parent element while the component stays on
@@ -10,7 +10,7 @@
 
 import { type Chart, createChart, type ThemeName } from "herceg";
 import { type ChartSpec, loadSpec } from "herceg/spec";
-import { inspectionPayload, rangePayload } from "./events.ts";
+import { inspectionPayload, selectionPayload } from "./events.ts";
 
 /** What Streamlit passes the component, as far as it is used here. */
 export interface Component {
@@ -99,7 +99,7 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     const [first] = kept.panels;
     // A panel's x range carries to the panel of the same key; one every panel
     // shares, also to a panel that is new. Panels sharing a scale take the
-    // first one's. Set on the model, nothing is drawn yet: setYViewport
+    // first one's. Set on the model, nothing is drawn yet: setViewport
     // below draws them all at once.
     const zoomed = new Set<string>();
     for (const { key, x: scale, xGroup } of panels) {
@@ -110,14 +110,11 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
       const range = carry(before.viewport, before.x, scale);
       if (range) model.setViewport(range, key);
     }
-    const y = (range: Range | null) => carry(range, first?.y, model.yScale());
-    const left = y(kept.yViewport?.y ?? null);
-    const right = carry(kept.yViewport?.yRight ?? null, kept.yRight, model.yRightScale());
-    // Both axes keep their ranges, or neither: one alone would show other values.
-    chart.setYViewport(
-      left && (!kept.yViewport?.yRight || right) ? left : null,
-      right ?? undefined,
-    );
+    // Each y axis keeps its range where it can; charts whose panels have y
+    // scales of their own have none.
+    const y = carry(kept.yViewport.y, first?.y, model.yScale());
+    const yRight = carry(kept.yViewport.yRight, kept.yRight, model.yRightScale());
+    chart.setViewport(model.sharesY ? { y, yRight } : { y: null, yRight: null });
     // The selection carries to a panel it was in, through its scales, or to
     // the scale every panel shares.
     const { selection, selectionPanels } = kept;
@@ -191,7 +188,7 @@ function sameCategories(from: Axis, to: Axis): boolean {
 /** Sends the chart's selection to the script, unless the script has it already. */
 function reportSelection(instance: Instance) {
   if (!instance.events.includes("select")) return;
-  const payload = rangePayload(instance.chart, instance.chart.selection?.x ?? null);
+  const payload = selectionPayload(instance.chart, instance.chart.selection);
   const sent = JSON.stringify(payload);
   if (sent === instance.sent) return;
   instance.sent = sent;

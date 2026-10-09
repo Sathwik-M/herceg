@@ -2,6 +2,7 @@
 // what Python sends is applied to the chart, and interaction reaches Python.
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import type { SelectionPayload, ViewportPayload } from "../events.ts";
 import widgetModule, { type Model, type Snapshot, type Update } from "../widget.ts";
 
 type Handler = (...args: never[]) => void;
@@ -393,23 +394,30 @@ describe("notebook widget", () => {
     press(first!, "pointermove", 0.7);
     press(first!, "pointerup", 0.7);
     await frame();
-    const [selected] = model.messages("select") as { range: { x: number[]; time: boolean } }[];
-    const [lo, hi] = selected!.range.x;
-    expect(selected!.range.time).toBe(false);
+    const [selected] = model.messages("select") as { selection: SelectionPayload }[];
+    const [lo, hi] = selected!.selection.x as number[];
+    expect(selected!.selection).toMatchObject({ y: null, lasso: null, time: [] });
     expect(0 < lo! && lo! < hi! && hi! < 2).toBe(true);
     expect(band(second!)!.getAttribute("visibility")).toBe("visible");
     // A selection from Python is drawn without being echoed back.
-    model.receive({ type: "select", revision: 1, x: [0.5, 1] });
+    model.receive({
+      type: "select",
+      revision: 1,
+      selection: { x: [0.5, 1], y: null, lasso: null },
+    });
     await frame();
     expect(model.messages("select")).toHaveLength(1);
-    model.receive({ type: "select", revision: 2, x: null });
+    model.receive({ type: "select", revision: 2, selection: null });
     await frame();
     expect(band(first!)!.getAttribute("visibility")).toBe("hidden");
   });
 
   it("starts from Python's viewport, reports zooming, and follows Python", async () => {
     const model = new MockModel({
-      _chart: { ...snapshot({ interaction: { zoom: true } }), viewport: { x: [0.5, 1.5] } },
+      _chart: {
+        ...snapshot({ interaction: { zoom: true } }),
+        viewport: { x: [0.5, 1.5], y: null, yRight: null },
+      },
       _listening: [],
     });
     const [host] = mount(model);
@@ -420,23 +428,236 @@ describe("notebook widget", () => {
     figure(host!).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     await frame();
     const [reset] = model.messages("viewport");
-    expect(reset).toEqual({ type: "viewport", range: null, origin: reset!.origin, revision: 0 });
+    expect(reset).toEqual({
+      type: "viewport",
+      viewport: { x: null, y: null, yRight: null, time: [] },
+      origin: reset!.origin,
+      revision: 0,
+    });
     expect(labels()).not.toBe(zoomed);
     // Python's broadcast of this browser's own range changes nothing here.
     model.receive({
       type: "viewport",
       revision: 1,
-      x: [0.5, 1.5],
+      viewport: { x: [0.5, 1.5], y: null, yRight: null },
       origin: reset!.origin as string,
     });
     await frame();
     expect(labels()).not.toBe(zoomed);
     // A viewport from Python is drawn without being echoed back.
-    model.receive({ type: "viewport", revision: 2, x: [0.5, 1.5] });
+    model.receive({
+      type: "viewport",
+      revision: 2,
+      viewport: { x: [0.5, 1.5], y: null, yRight: null },
+    });
     await frame();
     expect(labels()).toBe(zoomed);
     expect(model.messages("viewport")).toHaveLength(1);
   });
+
+  it("reports both y axes with the axes holding times, and shows Python's whole viewport", async () => {
+    const base = snapshot({ interaction: { zoom: "xy" } });
+    const spec = {
+      ...base.spec,
+      data: {
+        data: {
+          columns: {
+            t: { type: "time" as const, dtype: "float64" as const, buffer: 0 },
+            v: number(1),
+          },
+        },
+      },
+      marks: [
+        { type: "line" as const, x: "t", y: "v", data: "data" },
+        { type: "line" as const, x: "t", y: "v", data: "data", axis: "right" as const },
+      ],
+    };
+    const model = new MockModel({ _chart: { ...base, spec }, _listening: [] });
+    const [host] = mount(model);
+    const rect = figure(host!).getBoundingClientRect();
+    figure(host!).dispatchEvent(
+      new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: -100,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }),
+    );
+    const [zoomed] = model.messages("viewport") as { viewport: ViewportPayload }[];
+    const { x, y, yRight, time } = zoomed!.viewport;
+    expect(time).toEqual(["x"]);
+    expect([x, y, yRight].every((ends) => ends !== null && ends[0] < ends[1])).toBe(true);
+    // Python's viewport replaces the whole view: the right axis no longer zoomed.
+    const ticks = () =>
+      [...figure(host!).querySelectorAll("svg text")].map((t) => t.textContent).join(" ");
+    model.receive({
+      type: "viewport",
+      revision: 1,
+      viewport: { x: [0, 2], y: [0, 10], yRight: null },
+    });
+    await frame();
+    expect(ticks()).toContain("10");
+    expect(model.messages("viewport")).toHaveLength(1);
+  });
+
+  it("reports y and lasso selections, and lets a lasso go when its categories move", async () => {
+    const bars = (dictionary: string[], brush: string): Snapshot => ({
+      ...snapshot(),
+      spec: {
+        width: 400,
+        height: 200,
+        renderer: "svg",
+        interaction: { brush: brush as "y" },
+        data: {
+          data: { columns: { c: { type: "category", codes: 0, dictionary }, v: number(1) } },
+        },
+        marks: [{ type: "bar", x: "v", y: "c", data: "data" }],
+      },
+      buffers: [
+        new DataView(new Int32Array([0, 1]).buffer),
+        new DataView(new Float64Array([1, 2]).buffer),
+      ],
+    });
+    const model = new MockModel({ _chart: bars(["a", "b"], "y"), _listening: [] });
+    const [host] = mount(model);
+    model.receive({
+      type: "select",
+      revision: 1,
+      selection: { x: null, y: ["b", "b"], lasso: null },
+    });
+    await frame();
+    expect(band(host!)!.getAttribute("visibility")).toBe("visible");
+    expect(model.messages("select")).toEqual([]);
+    // A lasso's outline is band positions, kept while the categories stay.
+    const outline: [number, number][] = [
+      [0, 0],
+      [2, 0],
+      [2, 1],
+    ];
+    // As a browser reports it: with the categories its outline is over.
+    const lasso = {
+      x: [0, 2] as [number, number],
+      y: ["a", "b"] as [string, string],
+      lasso: outline,
+      categories: [null, ["a", "b"]] as [null, string[]],
+    };
+    model.receive({ type: "select", revision: 2, selection: lasso });
+    const replace = (revision: number, dictionary: string[]) =>
+      model.receive(
+        {
+          type: "replace",
+          revision,
+          table: "data",
+          columns: { c: { type: "category", codes: 0, dictionary }, v: number(1) },
+        },
+        [new Int32Array([0, 1]), new Float64Array([1, 2])],
+      );
+    replace(3, ["a", "b"]);
+    await frame();
+    expect(model.messages("select")).toEqual([]);
+    replace(4, ["b", "a"]);
+    await frame();
+    expect(model.messages("select").map(({ selection }) => selection)).toEqual([null]);
+    // Drawn by the pointer, a lasso reports the categories it is over.
+    model.receive({ type: "select", revision: 5, selection: null });
+    const rect = figure(host!).getBoundingClientRect();
+    const at = (type: string, x: number, y: number) =>
+      figure(host!).dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          clientX: rect.left + rect.width * x,
+          clientY: rect.top + rect.height * y,
+          pointerId: 1,
+        }),
+      );
+    model.receive({
+      type: "options",
+      revision: 6,
+      options: { interaction: { brush: "lasso" } },
+    });
+    at("pointerdown", 0.3, 0.3);
+    for (const [x, y] of [
+      [0.6, 0.3],
+      [0.6, 0.8],
+      [0.3, 0.8],
+    ] as const)
+      at("pointermove", x, y);
+    at("pointerup", 0.3, 0.8);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const drawn = model.messages("select").at(-1)!.selection as SelectionPayload;
+    expect(drawn.categories).toEqual([null, ["b", "a"]]);
+    expect(drawn.lasso!.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("lets a lasso go that a remounted output finds over moved categories", async () => {
+    // Python's lasso names no categories: the first chart to show it learns
+    // them and tells Python, so later outputs and browsers check them too.
+    for (const categories of [[["a", "b"], null] as [string[], null], undefined]) {
+      for (const cleanup of cleanups.splice(0)) cleanup();
+      const model = new MockModel({ _chart: lassoed(categories), _listening: [] });
+      const widget = widgetModule();
+      cleanups.push(widget.initialize({ model }));
+      const host = document.createElement("div");
+      host.style.width = "400px";
+      document.body.append(host);
+      hosts.push(host);
+      const unmount = widget.render({ model, el: host });
+      await frame();
+      expect(band(host)!.getAttribute("visibility")).toBe("visible");
+      const learned = model.messages("select").map(({ selection }) => selection);
+      expect(learned).toEqual(
+        categories ? [] : [expect.objectContaining({ categories: [["a", "b"], null] })],
+      );
+      unmount();
+      // The categories reorder while no output shows the chart.
+      model.receive(
+        {
+          type: "replace",
+          revision: 1,
+          table: "data",
+          columns: { c: { type: "category", codes: 0, dictionary: ["b", "a"] }, v: number(1) },
+        },
+        [new Int32Array([0, 1]), new Float64Array([1, 2])],
+      );
+      cleanups.push(widget.render({ model, el: host }));
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(band(host)?.getAttribute("visibility") ?? "hidden").toBe("hidden");
+      expect(model.messages("select").at(-1)!.selection).toBeNull();
+    }
+  });
+
+  function lassoed(categories: [string[], null] | undefined): Snapshot {
+    return {
+      ...snapshot(),
+      spec: {
+        width: 400,
+        height: 200,
+        renderer: "svg",
+        interaction: { brush: "lasso" },
+        data: {
+          data: {
+            columns: { c: { type: "category", codes: 0, dictionary: ["a", "b"] }, v: number(1) },
+          },
+        },
+        marks: [{ type: "bar", x: "c", y: "v", data: "data" }],
+      },
+      buffers: [
+        new DataView(new Int32Array([0, 1]).buffer),
+        new DataView(new Float64Array([1, 2]).buffer),
+      ],
+      selection: {
+        x: ["a", "b"],
+        y: [0, 1],
+        lasso: [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+        ],
+        ...(categories && { categories }),
+      },
+    };
+  }
 
   it("drops zooming not yet reported when Python sets the viewport", async () => {
     // The throttle's timer runs only when the test says so; frames still run.
@@ -467,7 +688,11 @@ describe("notebook widget", () => {
     wheel(-100);
     // The first zoom is sent at once; the second waits for the throttle.
     expect(model.messages("viewport")).toHaveLength(1);
-    model.receive({ type: "viewport", revision: 1, x: [0.25, 0.75] });
+    model.receive({
+      type: "viewport",
+      revision: 1,
+      viewport: { x: [0.25, 0.75], y: null, yRight: null },
+    });
     vi.advanceTimersByTime(200);
     expect(model.messages("viewport")).toHaveLength(1);
   });
@@ -514,7 +739,11 @@ describe("notebook widget", () => {
           .getAttribute("d")!
           .match(/-?[\d.]+/)![0],
       );
-    model.receive({ type: "select", revision: 1, x: ["a", "a"] });
+    model.receive({
+      type: "select",
+      revision: 1,
+      selection: { x: ["a", "a"], y: null, lasso: null },
+    });
     await frame();
     const before = left();
     // "a" moves to the second band: the brush follows it.
@@ -525,7 +754,11 @@ describe("notebook widget", () => {
     // Data without the selected labels clears the selection, and Python hears
     // so; labels of data not drawn yet are found in it.
     replace(3, ["c", "d"]);
-    model.receive({ type: "select", revision: 4, x: ["d", "d"] });
+    model.receive({
+      type: "select",
+      revision: 4,
+      selection: { x: ["d", "d"], y: null, lasso: null },
+    });
     await frame();
     expect(band(host!)!.getAttribute("visibility")).toBe("visible");
     expect(left()).toBeGreaterThan(before);
@@ -535,7 +768,9 @@ describe("notebook widget", () => {
     // The second report waits out the throttle.
     await new Promise((resolve) => setTimeout(resolve, 250));
     // Python drops the first report: it was made before Python selected "d".
-    const reports = model.messages("select").map(({ range, revision }) => [range, revision]);
+    const reports = model
+      .messages("select")
+      .map(({ selection, revision }) => [selection, revision]);
     expect(reports).toEqual([
       [null, 3],
       [null, 5],
@@ -561,7 +796,7 @@ describe("notebook widget", () => {
       value: 1,
       time: false,
       label: "1",
-      points: [{ series: "v", value: 3, text: "3" }],
+      points: [{ mark: 0, markId: null, key: '[0,"v"]', label: "v", row: 1, value: 3, text: "3" }],
     };
     expect(model.messages("hover")).toEqual([{ type: "hover", inspection }]);
     expect(model.messages("click")).toEqual([{ type: "click", inspection }]);

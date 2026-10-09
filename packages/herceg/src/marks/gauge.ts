@@ -92,14 +92,12 @@ export class GaugeMark implements LayoutMark {
     return [];
   }
 
-  /** The field's last finite value; NaN when it has none. */
-  #value(): number {
+  /** The row holding the field's last finite value, or -1 when none does. */
+  #row(): number {
     const values = this.table.numbers(this.spec.value);
-    for (let row = values.length - 1; row >= 0; row--) {
-      const value = values[row]!;
-      if (Number.isFinite(value)) return value;
-    }
-    return Number.NaN;
+    let row = values.length - 1;
+    while (row >= 0 && !Number.isFinite(values[row]!)) row--;
+    return row;
   }
 
   #bands(theme: Theme): Band[] {
@@ -119,7 +117,8 @@ export class GaugeMark implements LayoutMark {
     const { bounds, theme, measure, locale } = frame;
     const min = this.#min;
     const max = this.#max;
-    const value = this.#value();
+    const row = this.#row();
+    const value = row < 0 ? Number.NaN : this.table.numbers(this.spec.value)[row]!;
     const format: Formatter = this.spec.format
       ? numberFormatter(this.spec.format, locale)
       : (v) => formatNumber(v, locale);
@@ -254,6 +253,7 @@ export class GaugeMark implements LayoutMark {
       px: cx + middle * Math.cos(end),
       py: cy + middle * Math.sin(end),
       outline: outline.d,
+      ...(row >= 0 && { row }),
     };
     return {
       geometry,
