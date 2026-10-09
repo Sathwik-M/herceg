@@ -168,9 +168,7 @@ describe("time-axis seam markers", () => {
       marks: ["a", "b", "c"].map((panel) => line(data, { x: "t", y: "v", panel })),
     });
     const views = model.panels();
-    expect(positions(scene.panels[0]!)).toEqual(
-      [8, 12].map((t) => placed(views[0]!.x.map(t))),
-    );
+    expect(positions(scene.panels[0]!)).toEqual([8, 12].map((t) => placed(views[0]!.x.map(t))));
     expect(positions(scene.panels[1]!)).toEqual([placed(views[1]!.x.map(12))]);
     expect(positions(scene.panels[2]!)).toBeUndefined();
   });
