@@ -1,10 +1,22 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = join(import.meta.dirname, "..", "src");
 // The chart engine must run without a DOM (servers, workers, Python exports).
-const CORE = ["data", "geo", "scale", "format", "lod", "marks", "model", "scene", "spec", "three"];
+const CORE = [
+  "data",
+  "geo",
+  "grid",
+  "scale",
+  "format",
+  "lod",
+  "marks",
+  "model",
+  "scene",
+  "spec",
+  "three",
+];
 const DOM = /\b(document|window|HTMLElement|SVGElement|requestAnimationFrame|getComputedStyle)\b/;
 
 function files(directory: string): string[] {
@@ -50,6 +62,24 @@ describe("architecture", () => {
       expect(/\b(TextEncoder|btoa|atob|Blob|CompressionStream)\b/.test(code), file).toBe(false);
       for (const path of imports)
         expect(path, `${file} imports browser code`).not.toMatch(/\/dom\//);
+    }
+  });
+
+  // `herceg/grid/model` runs without a DOM (servers, workers, tests in Node):
+  // nothing it imports, however indirectly, may reach browser code.
+  it("herceg/grid/model imports only DOM-free modules", () => {
+    const seen = new Set<string>();
+    const visit = (file: string) => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const source = readFileSync(file, "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
+      for (const [, path] of source.matchAll(/from "(\.[^"]+)"/g))
+        visit(resolve(dirname(file), path!));
+    };
+    visit(join(SRC, "grid", "model.ts"));
+    for (const file of seen) {
+      const directory = file.slice(SRC.length + 1).split("/")[0]!;
+      expect(CORE, `herceg/grid/model reaches ${file}`).toContain(directory);
     }
   });
 

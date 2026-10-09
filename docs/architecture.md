@@ -27,6 +27,9 @@ One name per concept, used the same way in code and docs.
 | **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, network nodes and links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`). |
+| **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
+| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, drawn from a grid model (`GridModel`), which holds its columns, scroll position, focus, and selection without a DOM. |
+| **Grid column** | A field a grid shows, with its id, title, width, alignment, and format (`GridColumn`). Not a table's column (its storage). |
 
 ## Pipeline
 
@@ -180,7 +183,10 @@ A table's `generation` counts resets, which start identities again, so a
 row's identity across resets is its table, generation, and `rowOffset +
 position`. `RowSet`s (`data/row-set.ts`) are bitsets over identities from
 the first row they could hold, bound to a generation; dropped rows' bits
-are trimmed as the set is read (O(words)). `SelectionStore`
+are trimmed as the set is read (O(words)); `addAll` sets many bits in one
+pass. `RowView.indexOf` finds a row's place by binary search, over positions
+in unsorted views and with the sort's comparator (cached per table version)
+in sorted ones. `SelectionStore`
 (`data/selection.ts`) keeps an application's selections of one table by
 channel, as portable conditions or local row sets; consumers choose which
 channels they read and whether to filter or highlight, so a chart's brush
@@ -197,6 +203,99 @@ as to their tables. Facet panels are found from whole tables, so marks
 over views only repeat in facets for now. Adapters treat marks over different views as different marks.
 The WebGL painter uploads whole columns, so points of a view stay on the
 CPU path for now.
+
+## Grids
+
+A grid (`herceg/grid`) shows a row view's rows. Its state lives in a
+DOM-free model (`grid/model.ts`, also the entry point `herceg/grid/model`),
+in three parts kept apart: the query is the view's (filter and sort, which
+the model changes through `view.setQuery`, keeping the filter); the
+presentation is the column list (order, widths, hidden columns, formats),
+placed as prefix sums of widths; and the interaction is the model's own:
+viewport size and scroll offsets, the focused cell, and the selection anchor,
+with the selected rows themselves in a `SelectionStore` channel. The view,
+store, and table belong to the application, and several grids share them
+with a model each, since a model holds one viewport and one focus.
+
+The model is lazy like the view. Changes to the view, its table, or the
+store notify the model's listeners at once, and the next read catches up,
+without notifying again (readers inside listeners would otherwise loop).
+Rows are followed by identity (generation and `rowOffset + position`),
+found again with `RowView.indexOf`, whose search is exact since sorted
+views break ties by position. Catching up after a change of the
+table, but not of the query (`RowView.queryRevision`, which counts
+`setQuery` and `restrict`), puts the row that was at the top back where it
+was, so rows dropped from a rolling window or sorted in above do not move
+the rows in view; a new query, a reset, or a top row gone keep the pixel
+offset. The focused cell keeps to its row through sorts and streaming; when
+the row leaves, the focus goes to the row now at its last index, or to the
+header row when none is left; a hidden column's focus goes to the nearest
+shown one. Formatting reads values through one Intl formatter per column,
+made once (format/format.ts caches them), and keeps no strings.
+
+Selection commands write a `RowSet` into the store's channel. Toggles and
+ranges change the set the model last put there when the channel still holds
+it, nothing replaced it since (the store's revision), and the table was not
+reset (a set from before a reset refuses changes); otherwise they start a
+new set from the channel's rows, evaluating a condition there once. Ranges
+are in the grid's order: the view's positions between two places, added in
+one pass (`RowSet.addAll`), or as one range when the view shows every row. A
+condition in the channel shows as selected rows, compiled once per change;
+counting it scans the table, so it is counted after commands, not per
+frame. Like views, models are held weakly by what they follow, so a model
+no one keeps stops on its own; `dispose()` stops it at once.
+
+The DOM grid (`dom/grid.ts`) is a scroll container (`role="grid"`) holding a
+sticky header row and a spacer as tall as the rows, in which only the rows
+in view, with ten more above and below, are mounted, each holding the cells
+of the columns in view and two more on each side. A mounted row follows
+its row's identity, and a cell its column's id: a row still shown keeps its
+element, so rows moved by a rolling window or a sort move without rewriting
+their text, a focused cell keeps its element when columns move, and text is
+written only for rows newly shown, after an in-place change of the table
+(`modifiedVersion`), or for new columns. Elements of rows that left are
+reused for rows that entered and moved into place, so the DOM order is the
+display order, which screen readers follow; nothing is pooled beyond the
+rows and cells in view. Clicks and focus resolve the row and column an
+element shows against the model as it is, since rows can move before the
+next frame redraws them. With no column shown the grid has no rows (a row
+needs cells), so it becomes a named group until columns return. Frames go
+through the shared scheduler, sizes come
+from a resize observer on the container and the scroller, and grids out of
+the page's view wait. A grid's container gets the grid's height, or 320
+pixels when it has none.
+
+Browsers lay out boxes up to about 33.5 million pixels (Chrome and WebKit
+clamp element heights at 33,554,428) and Firefox about 17.9 million, but
+Chrome stops drawing one-pixel lines past 2^24 pixels (measured: row borders
+vanish at 16.8 million), and single precision keeps half pixels exact only
+below 2^23. The spacer is therefore at most 8 million pixels tall; taller
+rows scroll scaled, the logical offset being the scroller's times
+(rows − viewport) / (spacer − viewport), with rows placed at their logical
+offset less the difference. Each frame pairs the scroller's offset, as the
+browser took it, with the model's top it stands for: a scroll event
+reporting that offset is the grid's own scrolling (or a scroll along x) and
+leaves the model's top alone, which anchoring may have moved since, so
+targets of the keyboard and the last row are reached exactly; other offsets,
+the user's, map by the ratio. A million 28-pixel rows scroll 3.5 times as
+far per pixel.
+
+Keyboard focus follows the WAI grid pattern: one tab stop, held by the
+focused cell when it is mounted and by the grid otherwise (Tab into the grid
+then reveals and focuses the focused cell). Keys move the model's focus,
+which scrolls the target into view, and the grid draws at once and focuses
+the cell. While the page's focus is inside the grid, the focused cell is
+never recycled: its row (and column) stay mounted outside the window when
+scrolled away, clipped by the spacer (`overflow: clip`, so they do not
+extend the scroll range), and other elements move around it, since moving a
+focused element drops its focus. Rows carry `aria-rowindex` and
+`aria-selected`, cells `aria-colindex`, the grid `aria-rowcount` and
+`aria-colcount`, and the first sort key's header `aria-sort`; a hidden
+description gives the keys, and a polite live region outside the grid says
+what sorting and selecting did. Theme tokens become custom properties on the
+grid's root, read by one stylesheet each grid carries (so grids in shadow
+roots are styled); forced-colors mode uses system colors. `destroy()`
+unschedules the grid and removes its listeners, observers, and elements.
 
 ## Level of detail
 
@@ -1325,6 +1424,14 @@ differ. One package avoids version skew between engine pieces. PDF export
 is a subpath, `herceg/pdf`, so that unbundled imports of `herceg` (from a
 CDN or in Node) do not load it either.
 
+Grids are the subpaths `herceg/grid` (the DOM grid and its model) and
+`herceg/grid/model` (the model alone, without a DOM), so applications that
+draw charts load none of it; a line chart's bundle contains no grid module.
+React's `<Grid>` is likewise `@herceg/react/grid`: it creates the grid in a
+layout effect, applies `ariaLabel`, `theme`, and `headerHeight` with
+`update`, makes a new grid for a new model, and renders React for none of the
+grid's changes.
+
 `@herceg/react` is a thin layer over the same engine. `<Chart>` creates one
 chart in a layout effect and destroys it on unmount; mark elements (`<Line>`,
 `<Bar>`, ...) render nothing and are read as mark specs, so there is no React
@@ -1398,8 +1505,10 @@ script receives whole; it does not hear of zooming. Charts without a theme read 
 CSS variables Streamlit gives components, since Python may not know it.
 
 A test (`test/architecture.test.ts`) keeps the core directories (`data`,
-`scale`, `format`, `lod`, `marks`, `model`, `scene`, `spec`) free of DOM
-access. Marks import their drawings (`draw`), which write SVG without a DOM
+`geo`, `grid`, `scale`, `format`, `lod`, `marks`, `model`, `scene`, `spec`,
+`three`) free of DOM access, and checks that everything `herceg/grid/model`
+imports, however indirectly, is in them. Marks import their drawings
+(`draw`), which write SVG without a DOM
 and paint canvases through the context they are handed; only raster
 painting reaches the DOM, creating an offscreen canvas in that canvas'
 document when `OffscreenCanvas` is unavailable.
@@ -1551,5 +1660,14 @@ document when `OffscreenCanvas` is unavailable.
   colors must be hex, `rgb()`, `hsl()`, or names, transparent backgrounds
   show as white paper, and halos of labels are read twice by readers that
   ignore replacement text (macOS Preview).
+- Grids have rows of one height and columns of set widths, with no
+  resizing or reordering by dragging, pinned columns, grouping, custom cell
+  content, editing, or copying, and only a React adapter. Sorting runs on
+  the main thread (about 0.13 s for a million rows by a number, 0.25 s by a
+  category and a number). Wheel scrolling past 8 million pixels of rows moves
+  more than a pixel per pixel. Mounted rows and cells are only those in view,
+  so text selection and the browser's find cover only those, and screen
+  readers can only read rows the grid has mounted; announcements are in
+  English. The grid has not been tried with screen readers themselves.
 - No adapters for frameworks other than React, Vue, and Svelte. See the
   roadmap in the repository README.

@@ -21,6 +21,7 @@ const ENTRIES = join(ROOT, "src", "size", "entries");
 /** The npm package each entry measures, for version reporting. */
 const ENTRY_PACKAGES: Record<string, string> = {
   "herceg-line": "herceg",
+  "herceg-grid": "herceg",
   "herceg-react-line": "@herceg/react",
   "herceg-vue-line": "@herceg/vue",
   "herceg-svelte-line": "@herceg/svelte",
@@ -41,7 +42,7 @@ interface Bundle {
    */
   initial: Uint8Array[];
   css: Uint8Array | undefined;
-  /** Chunks reached only through dynamic imports, loaded when needed. */
+  /** Chunks the page can reach only through dynamic imports, loaded when needed. */
   lazy: Uint8Array[];
 }
 
@@ -102,12 +103,23 @@ async function bundle(entry: string, minify: boolean, external: string[]): Promi
       if (kind === "import-statement" && outputs[imported]) visit(imported);
   };
   visit(Object.keys(outputs).find((path) => basename(path) === `${name}.js`)!);
-  const js = Object.keys(outputs).filter((path) => path.endsWith(".js"));
+  // Chunks the initial ones can import later, transitively: code split off
+  // for modules a page leaves out is never loaded.
+  const lazy = new Set<string>();
+  const reach = (path: string) => {
+    for (const { path: imported, kind } of outputs[path]!.imports) {
+      if (!outputs[imported] || initial.has(imported) || lazy.has(imported)) continue;
+      if (kind !== "dynamic-import" && !lazy.has(path)) continue;
+      lazy.add(imported);
+      reach(imported);
+    }
+  };
+  for (const path of initial) reach(path);
   const css = Object.keys(outputs).find((path) => path.endsWith(".css"));
   return {
     initial: [...initial].map((path) => contents.get(path)!),
     css: css === undefined ? undefined : contents.get(css),
-    lazy: js.filter((path) => !initial.has(path)).map((path) => contents.get(path)!),
+    lazy: [...lazy].map((path) => contents.get(path)!),
   };
 }
 

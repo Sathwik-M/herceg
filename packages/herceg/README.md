@@ -138,7 +138,10 @@ field the view filters or sorts by changes in place (or the table resets).
 Sorts are stable, with missing values last in either direction and
 categories by label. A view with neither filter nor sort holds no
 positions. `view.subscribe(listener)` is told when it goes out of date;
-`view.dispose()` stops it following its table.
+`view.dispose()` stops it following its table. `view.query` gives back the
+filter and sort, to change one and keep the other
+(`view.setQuery({ ...view.query, sort })`), and `view.indexOf(position)`
+finds where a table row shows in the view, or -1.
 
 A `RowSet` is a set of a table's rows by identity, a bit per row, such as
 the rows picked in a grid: its rows stay members as others are appended and
@@ -1309,3 +1312,72 @@ time axis with breaks, columns are columns of time shown, and points inside
 breaks are left out without splitting the run.
 `renderer: "auto"` moves charts with many drawn points to Canvas. See
 `docs/architecture.md` in the repository for details.
+
+## Grids
+
+`herceg/grid` shows the rows of a row view in a grid. Rows and columns
+are virtualized: a grid of a million rows mounts only what is in view, and
+each cell's text is formatted as it is drawn.
+
+```ts
+import { rowView } from "herceg";
+import { createGrid, createGridModel } from "herceg/grid";
+
+const model = createGridModel({
+  data: rowView(requests),
+  columns: [
+    { field: "time", format: { timeStyle: "medium" } },
+    { field: "service", title: "Service" },
+    { field: "latency", title: "Latency (ms)", format: { maximumFractionDigits: 1 } },
+  ],
+  timeZone: "UTC",
+});
+const grid = createGrid(document.querySelector("#requests")!, {
+  model,
+  ariaLabel: "Requests",
+});
+```
+
+The model holds what the grid shows apart from the rows themselves, which
+the view chooses and orders: the columns, where the grid is scrolled, the
+focused cell, and the selected rows. It has no DOM, and is also its own entry
+point, `herceg/grid/model`. Columns take Intl format options for their
+field's kind (none for categories) and a width (120 pixels by default);
+numbers align to the end. `model.setColumns` replaces them, to reorder,
+resize, or hide columns; `model.columns` gives them back. Missing values show
+as `missing` (empty by default). One model serves one grid: grids of the
+same rows share the view and the selection store.
+
+Clicking a column's header sorts by its field, ascending, then descending,
+then not at all; with Shift, the column's field is added to the other keys
+instead of replacing them. Sorting goes through the view, keeping its filter
+(`model.setSort(keys)` does the same). Clicking a row selects it, Ctrl or
+Cmd toggles it, and Shift selects the rows from the last one clicked, in the
+grid's order. The selection is a row set in the model's selection store,
+under the channel "grid-rows" (the `selection` and `channel` options), where
+an application can read it, for example to restrict a chart's view to the
+selected rows; a condition put in that channel shows as selected rows too.
+
+The grid follows its table and view. Rows appended below the ones in view
+cost nothing to draw; when rows drop out of a rolling window, or sorted rows
+arrive above the top row, the rows in view stay where they were; and the
+focused cell keeps to its row through sorting and streaming, or goes to the
+row taking its place when its own leaves. The model, view, and table belong
+to the application: `grid.destroy()` leaves them, and `model.dispose()`
+stops the model following the view, as it does on its own once no one keeps
+the model.
+
+The grid is one tab stop. Arrow keys, Page Up and Page Down, Home and End
+(a row's ends), and Ctrl+Home and Ctrl+End (the first and last cells) move
+the focus through the header and the rows, scrolling the cell into view
+first. Space toggles the focused row's selection, Shift with the arrow keys
+selects the rows from the last one selected, Ctrl+A (Cmd+A) selects every
+row, and Escape clears the selection; Enter or Space on a header sorts by it.
+What sorting and selecting did is announced. Grids take the charts' themes
+(`theme`); without a height of its own, a grid's container gets 320 pixels.
+
+Rows have one height (`rowHeight`, 28 pixels by default) and columns explicit
+widths. Rows taller together than 8 million pixels scroll scaled: the
+scrollbar covers them all, and a pixel scrolled moves more than one. Not yet
+available: resizing or reordering columns by dragging, pinned columns,
+grouping, custom cell content, editing, and copying.

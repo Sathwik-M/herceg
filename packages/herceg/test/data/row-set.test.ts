@@ -35,6 +35,17 @@ describe("row sets", () => {
     expect(set.add(1).positions()).toEqual(Uint32Array.of(1));
   });
 
+  it("add many rows at once, in any order, after drops too", () => {
+    const t = table({ x: Float64Array.from({ length: 200 }, (_, i) => i) }, { maxRows: 200 });
+    t.append({ x: Float64Array.from({ length: 37 }, (_, i) => 200 + i) });
+    const set = new RowSet(t).add(5).addAll(Uint32Array.of(150, 5, 33, 199, 0));
+    expect(set.size).toBe(5);
+    expect(Array.from(set.positions())).toEqual([0, 5, 33, 150, 199]);
+    expect(set.addAll([]).size).toBe(5);
+    expect(() => set.addAll([3, 200])).toThrow(RangeError);
+    expect(() => set.addAll([1.5])).toThrow(RangeError);
+  });
+
   it("are empty after their table resets, which starts identities again", () => {
     const t = table({ x: [1, 2, 3] });
     const set = new RowSet(t).add(1);

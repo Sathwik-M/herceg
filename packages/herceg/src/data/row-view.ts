@@ -42,6 +42,9 @@ export class RowView<S extends Schema = Schema> {
   readonly source: Table<S>;
   #filter: Expression | undefined;
   #sort: readonly SortKey[] = [];
+  #query: Readonly<RowQuery<S>> = {};
+  /** The comparator of #sort for one version of the table: it holds that version's arrays. */
+  #compare: { version: number; compare: (a: number, b: number) => number } | undefined;
   #restriction: RowSet<S> | null = null;
   /** Fields the filter and sort read; updates to others keep rows and order. */
   #reads = new Set<string>();
@@ -60,6 +63,7 @@ export class RowView<S extends Schema = Schema> {
   /** The table's version as of the last change the view was told about. */
   #told: number;
   #revision = 0;
+  #queryRevision = 0;
   #listeners = new Set<() => void>();
   #unsubscribe: () => void;
 
@@ -83,6 +87,15 @@ export class RowView<S extends Schema = Schema> {
     return this.#revision;
   }
 
+  /**
+   * Increments when `setQuery` or `restrict` changes which rows the view
+   * selects and how it orders them, and not when its table changes: readers
+   * tell a new question from new data with it.
+   */
+  get queryRevision(): number {
+    return this.#queryRevision;
+  }
+
   /** Bytes the view's positions hold, not counting its table. */
   get byteLength(): number {
     return (this.#indices?.byteLength ?? 0) + (this.#spare?.byteLength ?? 0);
@@ -93,10 +106,36 @@ export class RowView<S extends Schema = Schema> {
     return this.read().length;
   }
 
+  /** The filter (as an expression) and sort keys the view applies, to change one and keep the other. */
+  get query(): Readonly<RowQuery<S>> {
+    return this.#query;
+  }
+
+  /**
+   * Where the view shows the table's row at `position`: its index in the
+   * view's order, or -1 when the view leaves it out. A binary search, so
+   * readers can follow a row by identity as the view changes.
+   */
+  indexOf(position: number): number {
+    const { indices, length } = this.read();
+    if (!(Number.isInteger(position) && position >= 0 && position < this.source.length)) return -1;
+    if (!indices) return position;
+    // Sorted views order by the keys, then by position: a total order to search by.
+    const compare = this.#sort.length > 0 ? this.#comparator() : (a: number, b: number) => a - b;
+    let [lo, hi] = [0, length];
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (compare(indices[mid]!, position) < 0) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo < length && indices[lo] === position ? lo : -1;
+  }
+
   /** Changes the filter and sort; the restriction stays. */
   setQuery(query: RowQuery<S>): void {
     this.#apply(query);
     this.#rebuild = true;
+    this.#queryRevision++;
     this.#invalidate();
   }
 
@@ -110,6 +149,7 @@ export class RowView<S extends Schema = Schema> {
       throw new Error("A view can only be restricted to rows of its own table");
     this.#restriction = rows;
     this.#rebuild = true;
+    this.#queryRevision++;
     this.#invalidate();
   }
 
@@ -139,19 +179,23 @@ export class RowView<S extends Schema = Schema> {
     this.#listeners.clear();
     this.#indices = undefined;
     this.#spare = undefined;
+    this.#compare = undefined;
   }
 
   #apply(query: RowQuery<S>) {
     const source = this.source as unknown as Table;
-    const filter = query.filter instanceof Expr ? query.filter.expression : query.filter;
+    // Copied and frozen: an expression the caller changes later must not change the view.
+    const filter = frozen(query.filter instanceof Expr ? query.filter.expression : query.filter);
     if (filter !== undefined) {
       const test = compileExpression(filter, source);
       if (test.type !== "boolean")
         throw new TypeError(`A filter needs a true or false expression, not a ${test.type}`);
     }
     // Copied: keys the caller keeps could change under an incremental merge.
-    const sort = (query.sort ?? []).map(({ field, order }) =>
-      order === undefined ? { field } : { field, order },
+    const sort = Object.freeze(
+      (query.sort ?? []).map(({ field, order }) =>
+        Object.freeze(order === undefined ? { field } : { field, order }),
+      ),
     );
     for (const { field } of sort) {
       if (!source.has(field)) throw new Error(`Unknown sort field "${field}"`);
@@ -160,11 +204,18 @@ export class RowView<S extends Schema = Schema> {
     }
     this.#filter = filter === true ? undefined : filter;
     this.#sort = sort;
+    this.#compare = undefined;
+    this.#query = Object.freeze({
+      ...(this.#filter !== undefined && { filter: this.#filter }),
+      ...(sort.length > 0 && { sort: sort as readonly SortKey<PositionField<S>>[] }),
+    });
     this.#reads = new Set([...fieldsOf(filter), ...sort.map(({ field }) => field)]);
   }
 
   #changed(change: TableChange) {
     this.#told = this.source.version;
+    // It holds the table's old arrays.
+    this.#compare = undefined;
     if (change.reset) this.#rebuild = true;
     else if (change.updated && change.fields.some((field) => this.#reads.has(field)))
       this.#rebuild = true;
@@ -209,8 +260,7 @@ export class RowView<S extends Schema = Schema> {
 
   #build() {
     const kept = this.#matching(0, this.source.length);
-    if (this.#sort.length > 0)
-      kept.sort(rowComparator(this.source as unknown as Table, this.#sort));
+    if (this.#sort.length > 0) kept.sort(this.#comparator());
     this.#indices = kept;
     this.#spare = undefined;
     this.#length = kept.length;
@@ -238,7 +288,7 @@ export class RowView<S extends Schema = Schema> {
       this.#length = length;
       return;
     }
-    const compare = rowComparator(this.source as unknown as Table, this.#sort);
+    const compare = this.#comparator();
     fresh.sort(compare);
     // One merge of the batch, not an insertion per row.
     const out =
@@ -252,6 +302,17 @@ export class RowView<S extends Schema = Schema> {
     this.#spare = old;
     this.#indices = out;
     this.#length = length;
+  }
+
+  /** The sort's comparator for the table as it is now. */
+  #comparator(): (a: number, b: number) => number {
+    const version = this.source.version;
+    if (this.#compare?.version !== version)
+      this.#compare = {
+        version,
+        compare: rowComparator(this.source as unknown as Table, this.#sort),
+      };
+    return this.#compare.compare;
   }
 
   /** Positions from `from` to `to` that pass the filter and restriction, ascending. */
@@ -287,6 +348,11 @@ export function rowView<S extends Schema>(source: Table<S>, query?: RowQuery<S>)
 /** Capacity for `length` positions, with room to grow. */
 function grown(length: number): number {
   return Math.max(64, Math.ceil(length * 1.5));
+}
+
+/** A frozen copy of an expression. */
+function frozen<E extends Expression | boolean | undefined>(expression: E): E {
+  return (Array.isArray(expression) ? Object.freeze(expression.map(frozen)) : expression) as E;
 }
 
 /** The fields an expression reads. */

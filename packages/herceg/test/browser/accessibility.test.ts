@@ -1,14 +1,16 @@
 // Automated accessibility audits (axe-core, WCAG 2.1 A and AA plus best
-// practices) of charts as they render in the browser and as static SVG,
-// and checks of the accessibility tree Chrome gives screen readers: what a
-// chart is called, what it says about itself, and what it announces. They
-// do not replace testing with screen readers.
+// practices) of charts as they render in the browser and as static SVG, and
+// of grids, and checks of the accessibility tree Chrome gives screen
+// readers: what a chart or grid is called, what it says about itself, and
+// what it announces. They do not replace testing with screen readers.
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { cdp } from "vitest/browser";
-import { time } from "../../src/data/column.ts";
+import { category, time } from "../../src/data/column.ts";
+import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
+import { createGrid, type Grid } from "../../src/dom/grid.ts";
+import { createGridModel } from "../../src/grid/model.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { funnel } from "../../src/marks/funnel.ts";
@@ -28,6 +30,7 @@ import { treemap } from "../../src/marks/treemap.ts";
 import { facet } from "../../src/model/facet.ts";
 import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
+import { accessibilityTree as treeUnder } from "./helpers.ts";
 
 const RULES: axe.RunOptions = {
   runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] },
@@ -215,54 +218,8 @@ describe("accessibility audits", () => {
   });
 });
 
-interface AXNode {
-  nodeId: string;
-  ignored: boolean;
-  role?: { value: string };
-  name?: { value: string };
-  description?: { value: string };
-  childIds?: string[];
-  properties?: { name: string; value: { value: unknown } }[];
-}
-
-/**
- * The accessibility tree under the chart's figure, one node a line:
- * `role "name"`, then its description and states, indented by depth.
- * Nodes assistive technology ignores are left out.
- */
-async function accessibilityTree(): Promise<string[]> {
-  // Tests run in vitest's frame of the page the session is attached to.
-  const { frameTree } = (await cdp().send("Page.getFrameTree")) as {
-    frameTree: { childFrames?: { frame: { id: string; name?: string } }[] };
-  };
-  const testers = (frameTree.childFrames ?? []).filter(
-    ({ frame }) => frame.name === "vitest-iframe",
-  );
-  expect(testers).toHaveLength(1);
-  const frameId = testers[0]!.frame.id;
-  const { nodes } = (await cdp().send("Accessibility.getFullAXTree", { frameId })) as {
-    nodes: AXNode[];
-  };
-  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
-  const figures = nodes.filter((node) => node.role?.value === "figure");
-  expect(figures).toHaveLength(1);
-  const lines: string[] = [];
-  const walk = (node: AXNode, depth: number) => {
-    const shown = !node.ignored && node.role?.value !== "InlineTextBox";
-    if (shown) {
-      const states = (node.properties ?? [])
-        .filter(({ name }) => ["pressed", "live", "atomic", "focused"].includes(name))
-        .map(({ name, value }) => `${name}=${value.value}`);
-      const description = node.description?.value ? [`(${node.description.value})`] : [];
-      lines.push(
-        `${"  ".repeat(depth)}${[node.role?.value, JSON.stringify(node.name?.value ?? ""), ...description, ...states].join(" ")}`,
-      );
-    }
-    for (const id of node.childIds ?? []) walk(byId.get(id)!, shown ? depth + 1 : depth);
-  };
-  walk(figures[0]!, 0);
-  return lines;
-}
+/** The accessibility tree under the chart's figure; see `treeUnder`. */
+const accessibilityTree = () => treeUnder("figure", ["pressed", "live", "atomic", "focused"]);
 
 const press = (chart: Chart, key: string) =>
   chart.root.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
@@ -522,5 +479,115 @@ describe("text alternatives of legends", () => {
     expect((await accessibilityTree())[0]).toContain(
       "Shape shows host: circle for west, square for east.",
     );
+  });
+});
+
+describe("grids", () => {
+  const grids: Grid<never>[] = [];
+  afterEach(() => {
+    for (const grid of grids.splice(0)) {
+      const host = grid.root.parentElement;
+      grid.destroy();
+      host?.remove();
+    }
+  });
+
+  /** A grid of 1,000 requests, sorted, with rows selected and a cell focused. */
+  function grid(theme: "light" | "dark" | "high-contrast" | "high-contrast-dark", page: string) {
+    const host = document.createElement("div");
+    host.style.cssText = `width:600px;height:300px;background:${page}`;
+    document.body.append(host);
+    const rows = 1000;
+    const data = table({
+      id: Float64Array.from({ length: rows }, (_, i) => i),
+      ms: Float64Array.from({ length: rows }, (_, i) =>
+        i % 13 === 0 ? Number.NaN : (i * 37) % 500,
+      ),
+      at: time(Float64Array.from({ length: rows }, (_, i) => start + i * 60_000)),
+      host: category(Array.from({ length: rows }, (_, i) => ["web", "api", "db"][i % 3]!)),
+    });
+    const model = createGridModel({
+      data: rowView(data),
+      columns: [
+        { field: "id" },
+        { field: "ms", title: "Latency" },
+        { field: "at" },
+        { field: "host" },
+      ],
+      locale: "en-US",
+      timeZone: "UTC",
+    });
+    const created = createGrid(host, { model, ariaLabel: "Requests", theme });
+    grids.push(created as unknown as Grid<never>);
+    model.cycleSort("host");
+    model.select(1);
+    model.select(3, "range");
+    created.focusCell(2, "ms");
+    return created;
+  }
+
+  for (const [theme, page] of [
+    ["light", "#ffffff"],
+    ["dark", "#121212"],
+    ["high-contrast", "#ffffff"],
+    ["high-contrast-dark", "#000000"],
+  ] as const) {
+    it(`pass audits in the ${theme} theme, sorted, with rows selected and a cell focused`, async () => {
+      const created = grid(theme, page);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(await violations(created.root.parentElement!)).toEqual([]);
+    });
+  }
+
+  it("pass audits with no column shown, and with columns but no rows", async () => {
+    const created = grid("light", "#ffffff");
+    created.model.setColumns([{ field: "id", hidden: true }]);
+    created.render();
+    expect(await violations(created.root.parentElement!)).toEqual([]);
+    created.model.setColumns([{ field: "id" }]);
+    created.model.data.setQuery({ filter: false });
+    created.render();
+    expect(await violations(created.root.parentElement!)).toEqual([]);
+  });
+
+  it("expose a named grid of header cells and rows that say whether they are selected", async () => {
+    grid("light", "#ffffff");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    // Cells' text nodes repeat their names.
+    const tree = (await treeUnder("grid", ["multiselectable", "selected", "focused"])).filter(
+      (line) => !line.trim().startsWith("StaticText"),
+    );
+    expect(tree[0]).toMatch(
+      /^grid "Requests" \(Arrow keys, .* adds it to the sort\.\) multiselectable=true$/,
+    );
+    expect(tree.slice(1, 7)).toEqual([
+      '  rowgroup ""',
+      '    row "id Latency at host"',
+      '      columnheader "id"',
+      '      columnheader "Latency"',
+      '      columnheader "at"',
+      // The sort mark is hidden; aria-sort says the order.
+      '      columnheader "host"',
+    ]);
+    const rows = tree.filter((line) => line.trim().startsWith("row ")).slice(1);
+    // Sorted by host: api rows (1, 4, 7, ...) come first.
+    expect(rows.slice(0, 4)).toEqual([
+      '    row "1 37 Jan 1, 2026, 00:01:00 api" selected=false',
+      '    row "4 148 Jan 1, 2026, 00:04:00 api" selected=true',
+      '    row "7 259 Jan 1, 2026, 00:07:00 api" selected=true',
+      '    row "10 370 Jan 1, 2026, 00:10:00 api" selected=true',
+    ]);
+    expect(tree.filter((line) => line.includes("focused=true"))).toEqual([
+      '      gridcell "259" focused=true',
+    ]);
+  });
+
+  it("announce what sorting and selecting did, politely and outside the grid", async () => {
+    const created = grid("light", "#ffffff");
+    const live = created.root.querySelector("[aria-live]")!;
+    expect(live.closest("[role=grid]")).toBeNull();
+    expect(live.getAttribute("aria-live")).toBe("polite");
+    created.root.querySelector<HTMLElement>("[role=columnheader]")!.click();
+    expect(live.textContent).toBe("Sorted by id, ascending");
   });
 });
