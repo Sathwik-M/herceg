@@ -269,10 +269,12 @@ export interface PointCloud {
   /** Table version of the columns: with their identity, it tells whether uploaded copies are current. */
   version: number;
   /**
-   * For whole columns of a table: one object per table and field pair, the
-   * row identity (`rowOffset`) of the columns' first value, and the table's
-   * `modifiedVersion`. Uploaded copies then take appended rows and drop the
-   * first ones as the table streams, instead of being uploaded again.
+   * For whole columns of a table, or a series' rows as their group follows
+   * the table: one object per table and field pair (or group), how many
+   * points have left the front (the columns' `rowOffset`, or the rows the
+   * group dropped), and the table's `modifiedVersion`. Uploaded copies then
+   * take appended points and drop the first ones as the table streams,
+   * instead of being uploaded again.
    */
   stream?: { key: object; offset: number; modified: number } | undefined;
 }

@@ -425,7 +425,14 @@ export class Splitter {
       };
       this.#splits.set(s.key, split);
     }
-    return split.byPanel.map(({ rows, sorted }) => ({ ...s, rows, length: rows.length, sorted }));
+    // A panel's rows are a subset, which no longer streams as its group does.
+    return split.byPanel.map(({ rows, sorted }) => ({
+      ...s,
+      rows,
+      length: rows.length,
+      sorted,
+      stream: undefined,
+    }));
   }
 
   /** The rows of `s` by panel, in series order, and whether each panel's x is ascending. */

@@ -109,9 +109,28 @@ There are no per-row objects anywhere in the pipeline.
 Memory amplification over the source data is therefore: reserved capacity
 for tables that grow (about 0.5x the live rows right after growth; at most
 0.5x `maxRows` for rolling windows; after drops, up to about six times the
-live rows until an explicit drop shrinks the buffer), 4 bytes per row for long-format grouping, two `Float64Array`s per
+live rows until an explicit drop shrinks the buffer), 4 to 6 bytes per row for long-format grouping (each group's positions, with room for half as many again and at least 16), two `Float64Array`s per
 layer for stacked areas and bars (top and base, with up to 0.5x room to grow
 like a table's), and geometry buffers bounded by the plot width.
+
+Rows of a whole table split by a series field are grouped once and kept
+current (`RowGroups` in `marks/row-groups.ts`): appended rows are filed
+into their groups, and rows a rolling window drops leave the front of each
+group (a binary search) while the rest move down into a buffer sized for
+them, instead of the table being grouped again each change. Rows given out
+are never written again, since scenes and other charts sharing the mark may
+still read them; appends only write past their end. Groups are keyed by name, since a window
+may renumber a category's codes; a change to values in place, or a reset,
+groups again. A row view's rows are grouped from scratch. Each group counts
+the rows it has lost, which lets GPU uploads follow it (below). Its code
+(`marks/row-groups.ts`) loads the first time a chart groups a whole table's
+rows; until then, and for good if it cannot load, rows are grouped again each
+change, with the same result. The grouping itself costs about what
+grouping again did (both are passes over typed arrays; a rolling window's
+drops still move every kept row), and extents of long-format series still
+scan their rows each scene. What it buys is uploads: a point cloud of a
+million rows in two series, streaming 1,000 rows per tick, takes about
+3 ms of JavaScript per frame instead of 13 ms (Chrome, interleaved runs).
 
 Stacks of several fields sharing rows (`marks/stack.ts`) are kept current
 as the table streams: appended rows are stacked on their own and dropped
@@ -617,7 +636,9 @@ belong to the charts that draw them and are released when a chart stops
 drawing them or is destroyed. Clouds of whole columns follow their table as
 it streams: they are keyed by table and field pair (so charts drawing the
 same columns share one upload) and carry the table's `rowOffset` and
-`modifiedVersion`. The first change uploads the cloud again with room for
+`modifiedVersion`. Clouds of a series' rows follow their group the same way,
+keyed by the group and carrying the rows it has dropped; their new points
+are gathered from the group's last rows. The first change uploads the cloud again with room for
 half as many points again and a normalized range reaching half the data's
 span past each end; later changes that only append and drop rows write the
 new points with `bufferSubData` and draw from a later first point, until
@@ -1655,9 +1676,9 @@ document when `OffscreenCanvas` is unavailable.
 - Renderer thresholds are not tuned.
 - Rules and text are always drawn above other marks, regardless of mark order.
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use
-  Canvas or SVG. Streaming uploads only new points for whole columns on
-  linear or log axes; long-format series (split by a field) and values
-  replaced in place upload again.
+  Canvas or SVG. Streaming uploads only new points for whole columns and
+  for series split by a field on linear or log axes; series of a row view
+  and values replaced in place upload again.
 - PDF text is limited to the standard fonts' Windows-1252 characters (others
   print as "?"); fonts are not embedded, so Greek, Cyrillic, and CJK labels
   need SVG or PNG export. PDFs are not tagged for assistive technology,

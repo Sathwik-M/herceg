@@ -748,7 +748,7 @@ class Painter implements CloudPainter {
     const held = upload.stream;
     const stream = cloud.stream!;
     if (!held || held.modified !== stream.modified) return false;
-    const length = cloud.y.length;
+    const length = cloud.rows?.length ?? cloud.y.length;
     const dropped = stream.offset - held.offset;
     const kept = upload.length - dropped;
     if (dropped < 0 || kept < 0 || length < kept) return false;
@@ -760,13 +760,15 @@ class Painter implements CloudPainter {
       const count = length - kept;
       const high = new Float32Array(count * 2).fill(MISSING);
       const low = new Float32Array(count * 2);
+      // A series' new points are its last rows, gathered; whole columns' are their last values.
+      const tail = cloud.rows?.subarray(kept, length);
       const fits = encode(
-        cloud.x,
-        cloud.y,
+        tail ? axisValues(cloud.x, tail, count, false) : cloud.x,
+        tail ? axisValues(cloud.y, tail, count, false) : cloud.y,
         upload.xLog,
         upload.yLog,
-        kept,
-        length,
+        tail ? 0 : kept,
+        tail ? count : length,
         upload.axes,
         high,
         low,
@@ -785,6 +787,7 @@ class Painter implements CloudPainter {
     upload.version = cloud.version;
     upload.x = cloud.x;
     upload.y = cloud.y;
+    upload.rows = cloud.rows;
     return true;
   }
 

@@ -670,6 +670,59 @@ describe("point clouds on the GPU", () => {
     chart.destroy();
   });
 
+  it("follows streaming rows split by a series field by uploading only each series' new ones", async () => {
+    const n = 300_000;
+    const data = cloudTable(n);
+    const half = (count: number) => Array.from({ length: count }, (_, i) => (i % 2 ? "b" : "a"));
+    const rolling = table(
+      { x: data.numbers("x"), y: data.numbers("y"), kind: half(n) },
+      { maxRows: n },
+    );
+    const chart = createChart(host, {
+      x: { domain: [0, 10], grid: false },
+      y: { domain: [0, 10], grid: false },
+      marks: [point(rolling, { x: "x", y: "y", series: "kind", r: 6, fillOpacity: 0.5 })],
+    });
+    await chart.loading;
+    // What keeps grouped rows current as the table streams loads after the first scene.
+    chart.render();
+    await vi.dynamicImportSettled();
+    const proto = WebGL2RenderingContext.prototype;
+    const whole = vi.spyOn(proto, "bufferData");
+    const part = vi.spyOn(proto, "bufferSubData");
+    const append = (x: number, y: number) => {
+      // The series take unequal shares of each batch, and of each drop.
+      rolling.append({
+        x: new Float64Array(1000).fill(x),
+        y: new Float64Array(1000).fill(y),
+        kind: Array.from({ length: 1000 }, (_, i) => (i % 10 < 7 ? "a" : "b")),
+      });
+      chart.render();
+    };
+    // The first change groups the rows to follow and uploads them, the next
+    // with room to grow; later ones only add each series' rows.
+    append(3, 3);
+    append(3, 3);
+    const uploads = whole.mock.calls.length;
+    expect(uploads).toBeGreaterThan(0);
+    for (let tick = 0; tick < 20; tick++) append(1, 1);
+    append(2.5, 2.5);
+    expect(whole.mock.calls.length).toBe(uploads);
+    // Two series, high and low halves each, every tick.
+    expect(part.mock.calls.length).toBeGreaterThanOrEqual(21 * 2 * 2);
+    expect(pixel(chart, 3, 3)[3]).toBeGreaterThan(0);
+    expect(pixel(chart, 2.5, 2.5)[3]).toBeGreaterThan(0);
+    // The window dropped the lone point at (5, 5).
+    expect(pixel(chart, 5, 5)[3]).toBe(0);
+    // Values replaced in place upload again.
+    rolling.replace("y", 0, [2]);
+    chart.render();
+    expect(whole.mock.calls.length).toBeGreaterThan(uploads);
+    whole.mockRestore();
+    part.mockRestore();
+    chart.destroy();
+  });
+
   it("keeps precision for extreme values and resolves any CSS color", async () => {
     const chart = createChart(host, {
       x: { domain: [0, 10e100], grid: false },

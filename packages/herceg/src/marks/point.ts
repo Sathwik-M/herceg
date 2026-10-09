@@ -555,7 +555,12 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   #stream(s: Series): PointCloud["stream"] {
     const { table } = this;
     const x = this.spec.x as string;
-    if (s.rows !== undefined || s.field === undefined) return undefined;
+    // A series' rows grouped from the table stream as their group does.
+    if (s.rows !== undefined) {
+      if (!s.stream || s.x !== table.numbers(x as never)) return undefined;
+      return { key: s.stream.key, offset: s.stream.dropped, modified: table.modifiedVersion };
+    }
+    if (s.field === undefined) return undefined;
     if (s.x !== table.numbers(x as never) || s.y !== table.numbers(s.field as never))
       return undefined;
     let byX = streamKeys.get(table);
