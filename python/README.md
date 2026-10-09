@@ -104,9 +104,11 @@ double-click reset move the axes gradually in HTML output), `renderer`,
 `theme` (below), `locale`, `time_zone`, and `projection` (maps, above).
 
 The one-call helpers (`hg.line`, `hg.scatter`, which adds `point` marks,
-`hg.choropleth`, which adds `geoshape` marks, and the rest) take the same
-chart options after their own, except that their `x` and `y` name columns:
-the axes are `x_axis` and `y_axis` there. The options are typed
+`hg.choropleth`, which adds `geoshape` marks, and the rest) take their mark's
+keyword arguments and the same chart options together, as in
+`hg.line(df, x="time", y="p99", stroke="#d62728", title="Latency")` or the
+band `hg.area(df, x="time", y1="p25", y2="p75")`; their `x` and `y` name
+columns, so the axes are `x_axis` and `y_axis` there. The options are typed
 (`hg.ChartOptions`, `hg.HelperOptions`, and `hg.ChartUpdate` for live
 updates), so type checkers catch misspelled ones; `None` takes an option's
 default.

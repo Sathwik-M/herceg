@@ -1053,6 +1053,96 @@ def test_helpers_take_axes_as_x_axis_and_y_axis():
     assert spec["y"] == {"label": "ms"}
 
 
+HELPERS = {
+    "line": "line",
+    "area": "area",
+    "bar": "bar",
+    "scatter": "point",
+    "heatmap": "heatmap",
+    "histogram": "histogram",
+    "pie": "pie",
+    "gauge": "gauge",
+    "funnel": "funnel",
+    "boxplot": "boxplot",
+    "violin": "violin",
+    "treemap": "treemap",
+    "sunburst": "sunburst",
+    "radar": "radar",
+    "sankey": "sankey",
+    "graph": "graph",
+    "choropleth": "geoshape",
+    "scatter_geo": "geopoint",
+    "candlestick": "candlestick",
+}
+
+
+def _parameters(function):
+    """A function's parameters with their resolved annotations and defaults."""
+    import inspect
+
+    annotations = inspect.get_annotations(function, eval_str=True)
+    return {
+        name: (annotations.get(name), parameter.default, parameter.kind)
+        for name, parameter in inspect.signature(function).parameters.items()
+    }
+
+
+@pytest.mark.parametrize("helper", HELPERS)
+def test_helpers_take_every_keyword_argument_of_their_mark(helper):
+    import inspect
+
+    function = _parameters(getattr(hg, helper))
+    method = _parameters(getattr(hg.Chart, HELPERS[helper]))
+    # The helper's data is the chart's; it takes the rest of the mark's
+    # arguments in the mark's order, after those it takes positionally.
+    positional = [
+        name for name, (_, _, kind) in function.items() if kind != inspect.Parameter.KEYWORD_ONLY
+    ]
+    keywords = [
+        name for name, (_, _, kind) in function.items() if kind == inspect.Parameter.KEYWORD_ONLY
+    ]
+    expected = [name for name in method if name not in {"self", "data", *positional}]
+    assert keywords == expected
+    for name in keywords:
+        assert function[name][:2] == method[name][:2], name
+
+
+@pytest.mark.parametrize("helper", HELPERS)
+def test_helpers_pass_every_keyword_argument_to_their_mark(helper, monkeypatch):
+    import inspect
+
+    method = getattr(hg.Chart, HELPERS[helper])
+    calls = []
+
+    def record(self, *args, **kwargs):
+        calls.append(inspect.signature(method).bind(self, *args, **kwargs).arguments)
+        return self
+
+    monkeypatch.setattr(hg.Chart, HELPERS[helper], record)
+    parameters = list(inspect.signature(getattr(hg, helper)).parameters.values())
+    values = {p.name: f"<{p.name}>" for p in parameters[1:] if p.kind != p.VAR_KEYWORD}
+    positional = [values[p.name] for p in parameters[1:] if p.kind == p.POSITIONAL_OR_KEYWORD]
+    keywords = {p.name: values[p.name] for p in parameters if p.kind == p.KEYWORD_ONLY}
+    getattr(hg, helper)(DATA, *positional, **keywords)
+    (arguments,) = calls
+    del arguments["self"]
+    # A choropleth joining values to GeoJSON passes its data to the mark.
+    if helper == "choropleth":
+        values["data"] = DATA
+    assert arguments == values
+
+
+def test_helpers_pass_mark_keywords_to_the_mark_and_the_rest_to_the_chart():
+    spec, _ = hg.line(DATA, "t", "p50", stroke="#ff0000", stroke_width=2, title="Latency").to_spec()
+    assert spec["title"] == "Latency"
+    assert spec["marks"][0]["stroke"] == "#ff0000"
+    assert spec["marks"][0]["strokeWidth"] == 2
+    band, _ = hg.area(DATA, "t", y1="p50", y2="p99").to_spec()
+    assert band["marks"][0] == {"type": "area", "data": "data", "x": "t", "y1": "p50", "y2": "p99"}
+    with pytest.raises(TypeError, match="strok"):
+        hg.line(DATA, "t", "p50", strok="red")
+
+
 def test_none_takes_the_default_of_every_option_at_construction():
     import typing
 
