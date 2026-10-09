@@ -603,7 +603,8 @@ class Chart:
         scheme name such as ``"viridis"`` or a list of hex colors, centered on
         ``color_midpoint`` for diverging schemes. ``symbol`` is a shape
         (``"circle"``, ``"square"``, ``"triangle"``, ...) or a category column
-        with a shape per value.
+        with a shape per value; a column named like a shape must be renamed to
+        be encoded.
         """
         table = self._mark_table(data)
         self._require(table, x, _NUMERIC, "point x")
@@ -620,13 +621,17 @@ class Chart:
                 f"point fill_opacity must be from 0 to 1 or a column, not {fill_opacity!r}"
             )
         self._require(table, color, _NUMERIC, "point color")
-        if symbol is not None:
-            if self._kind(table, symbol) is not None:
-                self._require(table, symbol, ("category",), "point symbol")
-            elif symbol not in SYMBOLS:
+        if symbol in SYMBOLS and self._kind(table, symbol) is not None:
+            raise ValueError(
+                f"point symbol: {symbol!r} names both a shape and a column; "
+                "rename the column to encode it"
+            )
+        if symbol is not None and symbol not in SYMBOLS:
+            if self._kind(table, symbol) is None:
                 raise ValueError(
                     f"point symbol: {symbol!r} is neither a column nor one of {', '.join(SYMBOLS)}"
                 )
+            self._require(table, symbol, ("category",), "point symbol")
         return self._add(
             {
                 "type": "point",

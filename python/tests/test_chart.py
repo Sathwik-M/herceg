@@ -382,6 +382,8 @@ def test_encodings_are_checked():
     values = {"x": np.array([1.0]), "y": np.array([2.0]), "kind": ["a"]}
     with pytest.raises(ValueError, match="neither a column nor one of circle"):
         hg.Chart(values).point("x", "y", symbol="hexagon")
+    with pytest.raises(ValueError, match="names both a shape and a column"):
+        hg.Chart({**values, "star": ["a"]}).point("x", "y", symbol="star")
     with pytest.raises(TypeError, match="point symbol"):
         hg.Chart(values).point("x", "y", symbol="x")
     with pytest.raises(TypeError, match="point color"):

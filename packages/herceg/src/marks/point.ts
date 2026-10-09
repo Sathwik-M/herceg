@@ -63,7 +63,10 @@ export interface PointOptions<S extends Schema> {
   colorDomain?: readonly [number, number];
   /** The value at the ramp's middle, for diverging ramps. */
   colorMidpoint?: number;
-  /** A symbol, or a category field with a symbol per value. Default "circle". */
+  /**
+   * A shape's name, or a category field with a shape per value. Default
+   * "circle". A field named like a shape must be renamed to be encoded.
+   */
   symbol?: SymbolName | CategoryField<S>;
   /**
    * "pixel": draw opaque points whose centers share a device pixel once.
@@ -139,19 +142,27 @@ export class PointMark implements Mark<PointSpec> {
       throw new RangeError(`Point rRange must be two finite radii, ascending, not ${range}`);
     this.#rField = typeof spec.r === "string" ? spec.r : undefined;
     this.#opacityField = typeof spec.fillOpacity === "string" ? spec.fillOpacity : undefined;
-    // A symbol is a shape's name unless the table has a field by that name.
+    // A shape's name draws that shape and any other name is a category
+    // field. A name that is both would leave the choice to the table's
+    // columns, so it is refused.
     const symbol = spec.symbol;
-    if (symbol !== undefined && table.has(symbol)) {
-      requireField(table, symbol, CATEGORY, "point symbol");
-      this.#symbolField = symbol;
-      this.#symbol = "circle";
+    const shape = symbol === undefined || SYMBOLS.includes(symbol as SymbolName);
+    if (shape && symbol !== undefined && table.has(symbol)) {
+      throw new Error(
+        `Point symbol "${symbol}" names both a shape and a field; rename the field to encode it`,
+      );
+    }
+    if (shape) {
+      this.#symbol = (symbol as SymbolName | undefined) ?? "circle";
     } else {
-      if (symbol !== undefined && !SYMBOLS.includes(symbol as SymbolName)) {
+      if (!table.has(symbol)) {
         throw new RangeError(
           `Unknown symbol "${symbol}": use a category field or one of ${SYMBOLS.join(", ")}`,
         );
       }
-      this.#symbol = (symbol as SymbolName | undefined) ?? "circle";
+      requireField(table, symbol, CATEGORY, "point symbol");
+      this.#symbolField = symbol;
+      this.#symbol = "circle";
     }
     const radius =
       this.#rField !== undefined ? range[1] : typeof spec.r === "number" ? spec.r : DEFAULT_RADIUS;

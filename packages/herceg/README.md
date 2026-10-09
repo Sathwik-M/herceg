@@ -230,7 +230,8 @@ with a color legend; series then appear in the legend in a neutral color.
 `symbol` is one shape (`"circle"`, `"square"`, `"triangle"`, `"diamond"`,
 `"cross"`, `"star"`, `"wye"`, `"triangle-down"`) or a category field whose
 values take the shapes in that order, with a key unless the field also splits
-series. Every shape covers the area of a circle of the same radius. Points
+series; a field named like a shape is refused rather than guessed at, so
+rename it to encode it. Every shape covers the area of a circle of the same radius. Points
 missing a value they encode are not drawn, and tooltips name the encoded
 values. Encoded points are drawn on the CPU (Canvas or SVG), not by the WebGL
 painter; opaque ones are drawn one color at a time, high values last.

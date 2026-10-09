@@ -1023,7 +1023,10 @@ export interface PointSpec extends MarkBase {
   colorDomain?: [number, number];
   /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
   colorMidpoint?: number;
-  /** A symbol name ("circle", "square", "triangle", ...), or a category field with a symbol per value. */
+  /**
+   * A shape's name ("circle", "square", "triangle", ...), or a category
+   * field with a shape per value. A name that is both is refused.
+   */
   symbol?: string;
   /** "pixel" draws opaque points sharing a device pixel once. Default "none". */
   sampling?: "none" | "pixel";
