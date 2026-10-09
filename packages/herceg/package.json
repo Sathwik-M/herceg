@@ -28,5 +28,8 @@
     "test": "vitest run --project unit",
     "test:browser": "vitest run --project browser",
     "bench": "node --experimental-strip-types bench/core.ts"
+  },
+  "devDependencies": {
+    "axe-core": "^4.14.0"
   }
 }

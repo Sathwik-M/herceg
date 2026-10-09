@@ -768,6 +768,13 @@ application draws its own.
   values are announced through a polite live region and shown in the tooltip.
 - Legend entries are buttons with `aria-pressed`.
 - Static SVG output has `role="img"`, `<title>`, and `<desc>`.
+- Browser tests audit rendered charts with axe-core (WCAG 2.1 A and AA rules
+  and best practices; `test/browser/accessibility.test.ts`): every chart
+  family, SVG and Canvas rendering, facets, subplots, the four built-in
+  themes, a shown tooltip with the keyboard cursor on a point, and static
+  SVG. Automated rules check names, roles, focusable controls, and HTML text
+  contrast; they do not show how a screen reader reads a chart, which has
+  not been tested.
 
 ## Spec and API
 
