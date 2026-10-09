@@ -36,16 +36,8 @@ import { Facet } from "../model/facet.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { Panels } from "../model/panels.ts";
 import { scheme } from "../scale/schemes.ts";
-import {
-  type BinaryType,
-  type ChartSpec,
-  type ColumnSpec,
-  type ColumnsSpec,
-  type DataSpec,
-  type MarkSpec,
-  SPEC_VERSION,
-} from "./spec.ts";
-import { validateSpec } from "./validate.ts";
+import type { BinaryType, ChartSpec, ColumnSpec, ColumnsSpec, DataSpec, MarkSpec } from "./spec.ts";
+import { checkSpec } from "./validate.ts";
 
 /** Bytes of a binary column: an ArrayBuffer, or a view such as a Uint8Array or DataView. */
 export type SpecBuffer = ArrayBuffer | ArrayBufferView;
@@ -55,6 +47,18 @@ export interface LoadedSpec {
   config: ChartConfig & { width?: number; height?: number };
   /** The spec's tables by name; changing them updates charts built from the spec. */
   tables: Map<string, Table>;
+  /** Paths of the properties this herceg does not know, such as `marks[0].strokeWidht`. */
+  unknown: string[];
+}
+
+export interface LoadOptions {
+  /**
+   * What to do about properties this herceg does not know, misspelled or
+   * from a newer version: "warn" (the default) logs them, "error" throws,
+   * and "ignore" loads the spec quietly. Unknown properties never change
+   * the chart.
+   */
+  unknown?: "warn" | "error" | "ignore";
 }
 
 const TYPED: Record<
@@ -78,15 +82,21 @@ const TYPED: Record<
  * Builds tables and marks from a chart specification. Binary columns read
  * `buffers` (their `buffer` field is an index into it) without copying when
  * the bytes are aligned for their type. Errors name the offending table,
- * column, or mark.
+ * column, or mark. For a spec of unknown shape, such as parsed JSON, check
+ * it with `validateSpec` first.
  */
-export function loadSpec(spec: ChartSpec, buffers: readonly SpecBuffer[] = []): LoadedSpec {
-  if (spec?.version !== undefined && spec.version !== 1 && spec.version !== SPEC_VERSION) {
-    throw new Error(
-      `Unsupported spec version ${spec.version}; this herceg reads versions 1 to ${SPEC_VERSION}`,
-    );
+export function loadSpec(
+  spec: ChartSpec,
+  buffers: readonly SpecBuffer[] = [],
+  options: LoadOptions = {},
+): LoadedSpec {
+  const unknown = checkSpec(spec);
+  if (unknown.length > 0 && options.unknown === "error") {
+    throw new TypeError(`${unknown[0]}: not a property of herceg's spec format`);
   }
-  validateSpec(spec);
+  if (unknown.length > 0 && (options.unknown ?? "warn") === "warn") {
+    console.warn(`herceg: ignoring spec properties it does not know: ${unknown.join(", ")}`);
+  }
   const tables = loadTables(spec.data ?? {}, buffers);
   const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));
   const {
@@ -96,13 +106,14 @@ export function loadSpec(spec: ChartSpec, buffers: readonly SpecBuffer[] = []): 
     facet: split,
     panels,
     grid,
-    ...options
+    ...chart
   } = spec;
   const facet = split && new Facet(split);
   const subplots = panels && new Panels(panels, grid);
   return {
-    config: { ...options, marks, ...(facet && { facet }), ...(subplots && { panels: subplots }) },
+    config: { ...chart, marks, ...(facet && { facet }), ...(subplots && { panels: subplots }) },
     tables,
+    unknown,
   };
 }
 

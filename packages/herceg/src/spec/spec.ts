@@ -20,7 +20,11 @@ export const SPEC_VERSION = 2;
 export type Field = string;
 
 export interface ChartSpec {
-  /** Spec format version; defaults to the current version. */
+  /**
+   * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
+   * `grid` must give 2, so that readers of version 1 refuse them rather than
+   * draw them differently.
+   */
   version?: 1 | 2;
   /** Chart title, also its accessible name. */
   title?: string;

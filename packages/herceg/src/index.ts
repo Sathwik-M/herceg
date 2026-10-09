@@ -139,4 +139,5 @@ export { type Panels, panels } from "./model/panels.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
 export * from "./scale/schemes.ts";
 export type * from "./spec/spec.ts";
+export { SPEC_VERSION } from "./spec/spec.ts";
 export type { Theme } from "./theme.ts";

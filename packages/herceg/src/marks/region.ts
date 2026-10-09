@@ -47,6 +47,22 @@ const PADDING = 4;
  * and y2 across its width, or rectangles with both. Their ends are included
  * in the axis domains.
  */
+/** Why a region spec has no range, or half of one, if it does. */
+export function regionFormError(spec: {
+  x1?: unknown;
+  x2?: unknown;
+  y1?: unknown;
+  y2?: unknown;
+}): string | undefined {
+  if ((spec.x1 === undefined) !== (spec.x2 === undefined))
+    return "A region needs both x1 and x2, or neither";
+  if ((spec.y1 === undefined) !== (spec.y2 === undefined))
+    return "A region needs both y1 and y2, or neither";
+  if (spec.x1 === undefined && spec.y1 === undefined)
+    return "A region needs x1 and x2, y1 and y2, or both";
+  return undefined;
+}
+
 export class RegionMark implements Mark<RegionSpec> {
   readonly spec: RegionSpec;
   readonly tooltip = "x";
@@ -54,12 +70,8 @@ export class RegionMark implements Mark<RegionSpec> {
 
   constructor(spec: RegionSpec, table?: Table) {
     this.spec = spec;
-    for (const axis of ["x", "y"] as const) {
-      if ((spec[`${axis}1`] === undefined) !== (spec[`${axis}2`] === undefined))
-        throw new Error(`A region needs both ${axis}1 and ${axis}2, or neither`);
-    }
-    if (spec.x1 === undefined && spec.y1 === undefined)
-      throw new Error("A region needs x1 and x2, y1 and y2, or both");
+    const problem = regionFormError(spec);
+    if (problem) throw new Error(problem);
     this.#data = new AnnotationData(
       table,
       { x1: spec.x1, x2: spec.x2, y1: spec.y1, y2: spec.y2 },

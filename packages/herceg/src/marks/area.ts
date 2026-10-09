@@ -70,6 +70,22 @@ export type AreaOptions<S extends Schema> = AreaCommon &
       }
   );
 
+/** Why an area spec has neither or both of its forms (`y`, or `y1` and `y2`), if it does. */
+export function areaFormError(spec: {
+  y?: unknown;
+  y1?: unknown;
+  y2?: unknown;
+  series?: unknown;
+  stack?: unknown;
+}): string | undefined {
+  if (spec.y1 === undefined && spec.y2 === undefined)
+    return spec.y === undefined ? "An area needs y, or y1 and y2" : undefined;
+  if (spec.y1 === undefined || spec.y2 === undefined) return "A band area needs both y1 and y2";
+  if (spec.y !== undefined || spec.series !== undefined || spec.stack)
+    return "An area takes y (with series or stack), or y1 and y2, not both";
+  return undefined;
+}
+
 export class AreaMark implements Mark<AreaSpec> {
   readonly spec: AreaSpec;
   readonly table: Table<Schema>;
@@ -84,17 +100,13 @@ export class AreaMark implements Mark<AreaSpec> {
     this.spec = spec;
     this.table = table;
     requireField(table, spec.x, NUMERIC, "area x");
-    const band = spec.y1 !== undefined || spec.y2 !== undefined;
+    const problem = areaFormError(spec);
+    if (problem) throw new Error(problem);
+    const band = spec.y === undefined;
     if (band) {
-      if (spec.y1 === undefined || spec.y2 === undefined)
-        throw new Error("A band area needs both y1 and y2");
-      if (spec.y !== undefined || spec.series !== undefined || spec.stack) {
-        throw new Error("An area takes y (with series or stack), or y1 and y2, not both");
-      }
       requireField(table, spec.y1, NUMERIC, "area y1");
       requireField(table, spec.y2, NUMERIC, "area y2");
     } else {
-      if (spec.y === undefined) throw new Error("An area needs y, or y1 and y2");
       const ys = typeof spec.y === "string" ? [spec.y] : spec.y;
       for (const y of ys) requireField(table, y, NUMERIC, "area y");
       if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "area series");

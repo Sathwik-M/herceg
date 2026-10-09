@@ -935,6 +935,25 @@ row i holding geometry i without them).
 Marks are the same objects as a TypeScript mark's `spec`, with `data` naming
 their table.
 
+Specs say which format `version` they are; one without is version 1, and
+specs using `resolve`, `panels`, or `grid` must say 2 (`SPEC_VERSION`, the
+version this herceg writes). Loading checks a spec and names the property at
+fault in errors. Properties herceg does not know, misspelled or from a newer
+version, are logged with `console.warn` and otherwise ignored;
+`loadSpec(spec, buffers, { unknown: "error" })` refuses them instead, and
+`{ unknown: "ignore" }` loads quietly. `validateSpec(value)` checks a value
+of unknown type, such as parsed JSON, and narrows it to `ChartSpec`:
+
+```ts
+import { createChart } from "herceg";
+import { loadSpec, validateSpec } from "herceg/spec";
+
+const spec: unknown = await response.json();
+validateSpec(spec);
+const { config } = loadSpec(spec, [], { unknown: "error" });
+createChart(element, config);
+```
+
 ## Large data
 
 Every point is drawn by default. In the browser, point series of 100,000

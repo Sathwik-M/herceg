@@ -502,8 +502,13 @@ describe("derived tables in specs", () => {
     };
     expect(() => loadSpec(cycle)).toThrow(/derives from itself/);
     expect(() => loadSpec(spec([{ explode: true }]))).toThrow(/a transform \(filter/);
-    expect(() => loadSpec(spec([{ filter: [">", ["field", "v"], 1], as: "x" }]))).toThrow(
-      /not an option of a filter transform/,
+    // Unknown step options are reported like any others; two transforms in a step are refused.
+    const filter = [">", ["field", "v"], 1];
+    expect(() => loadSpec(spec([{ filter, as: "x" }]), [], { unknown: "error" })).toThrow(
+      /transform\[0\]\.as: not a property/,
+    );
+    expect(() => loadSpec(spec([{ filter, sort: "v" }]))).toThrow(
+      /a step is one transform, here filter/,
     );
     expect(() =>
       loadSpec(spec([{ rolling: [{ op: "median", field: "v", as: "m" }], size: 2 }])),

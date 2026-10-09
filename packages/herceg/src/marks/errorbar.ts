@@ -103,6 +103,32 @@ export type ErrorBarOptions<S extends Schema> =
 const CAP = 8;
 const ENDS = ["x", "y", "x1", "x2", "y1", "y2", "xError", "yError"] as const;
 
+/**
+ * The form of an error bar spec, vertical or horizontal, from two ends or a
+ * center and an error; or why it has none. A field of another form would
+ * be dropped quietly, so it is refused.
+ */
+export function errorBarForm(
+  spec: Partial<Record<(typeof ENDS)[number], unknown>>,
+): { horizontal: boolean; symmetric: boolean } | string {
+  const vertical = spec.yError !== undefined || (spec.y1 !== undefined && spec.y2 !== undefined);
+  const horizontal = spec.xError !== undefined || (spec.x1 !== undefined && spec.x2 !== undefined);
+  if (vertical === horizontal) {
+    return "Error bars need x with y1 and y2, or with y and yError (vertical); or y with x1 and x2, or with x and xError (horizontal)";
+  }
+  const [along, across] = horizontal ? (["y", "x"] as const) : (["x", "y"] as const);
+  if (spec[along] === undefined) return `Error bars need ${along}`;
+  const symmetric = spec[`${across}Error`] !== undefined;
+  if (symmetric && spec[across] === undefined)
+    return `Error bars with ${across}Error need ${across}`;
+  const used: string[] = symmetric
+    ? [along, across, `${across}Error`]
+    : [along, `${across}1`, `${across}2`];
+  const extra = ENDS.find((key) => spec[key] !== undefined && !used.includes(key));
+  if (extra) return `Error bars from ${used.join(", ")} cannot also take ${extra}`;
+  return { horizontal, symmetric };
+}
+
 /** Where an interval's ends come from: two fields, or a center and a symmetric error. */
 type Ends = { low: string; high: string } | { center: string; error: string };
 
@@ -130,24 +156,17 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
   constructor(spec: ErrorBarSpec, table: Table<Schema>) {
     this.spec = spec;
     this.table = table;
-    const vertical = spec.yError !== undefined || (spec.y1 !== undefined && spec.y2 !== undefined);
-    const horizontal =
-      spec.xError !== undefined || (spec.x1 !== undefined && spec.x2 !== undefined);
-    if (vertical === horizontal) {
-      throw new Error(
-        "Error bars need x with y1 and y2, or with y and yError (vertical); or y with x1 and x2, or with x and xError (horizontal)",
-      );
-    }
+    const form = errorBarForm(spec);
+    if (typeof form === "string") throw new Error(form);
+    const { horizontal, symmetric } = form;
     this.#horizontal = horizontal;
     const [along, across] = horizontal ? (["y", "x"] as const) : (["x", "y"] as const);
-    const position = spec[along];
-    if (position === undefined) throw new Error(`Error bars need ${along}`);
+    const position = spec[along]!;
     this.#position = position;
     requireField(table, position, [...NUMERIC, ...CATEGORY], `error bar ${along}`);
-    const error = horizontal ? spec.xError : spec.yError;
-    if (error !== undefined) {
-      const center = spec[across];
-      if (center === undefined) throw new Error(`Error bars with ${across}Error need ${across}`);
+    if (symmetric) {
+      const center = spec[across]!;
+      const error = spec[`${across}Error`]!;
       requireField(table, center, NUMERIC, `error bar ${across}`);
       requireField(table, error, NUMERIC, `error bar ${across}Error`);
       this.#ends = { center, error };
@@ -158,11 +177,6 @@ export class ErrorBarMark implements Mark<ErrorBarSpec> {
       requireField(table, high, NUMERIC, `error bar ${across}2`);
       this.#ends = { low, high };
     }
-    // A field of another form would be dropped quietly, so it is refused.
-    const used: string[] =
-      error !== undefined ? [along, across, `${across}Error`] : [along, `${across}1`, `${across}2`];
-    const extra = ENDS.find((key) => spec[key] !== undefined && !used.includes(key));
-    if (extra) throw new Error(`Error bars from ${used.join(", ")} cannot also take ${extra}`);
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "error bar series");
     this.#categorical = table.kind(position) === "category";
     this.tooltip = horizontal ? "y" : "x";
