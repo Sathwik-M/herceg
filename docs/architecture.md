@@ -1271,8 +1271,10 @@ document when `OffscreenCanvas` is unavailable.
   instead of 0.6 ms. A calendar keeps every span it resolved for as long as
   its `TimeBreaks` lives (24 bytes per interval).
 - Subplots route whole marks; they have no right axes, shared category x
-  and y axes only, x-only zoom and brushing, columns of equal width (rows
-  may be weighted), and no facets inside a panel.
+  and y axes only, x-only zoom and brushing, and no facets inside a panel.
+  Rows and columns may be weighted; a scale shared across sizes is planned
+  over its smallest panel, so what marks draw past their values fits in
+  every one, and the others keep its domain with ticks for their size.
 - Facets wrap one category field into rows of panels, or lay out a grid by
   two; x and y are shared or resolved per panel, row, or column, for
   continuous axes only. No y zoom with independent y, or right axes in

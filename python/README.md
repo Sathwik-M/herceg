@@ -89,7 +89,8 @@ column and a column per value of another; either may be left out), with
 both by default, subplots x); marks with `repeat=True` draw all their
 rows in every panel; `panels` (ids or `hg.Panel("latency", title="Latency",
 x=hg.Axis(label="Time"), y=hg.Axis(label="ms"))`), `panel_columns`, and
-`panel_row_heights` (relative heights of the rows) for subplots, whose marks
+`panel_row_heights` and `panel_column_widths` (relative heights of the rows
+and widths of the columns) for subplots, whose marks
 name their panel with `panel="latency"` (or `"*"` for all),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`, or
 `hg.Tooltip(mode=..., axis_labels=True)`, which also labels the crosshair on

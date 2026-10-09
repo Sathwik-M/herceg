@@ -53,6 +53,7 @@ export class Panels implements PanelLayout {
   readonly list: readonly PanelSpec[];
   readonly columns: number;
   readonly rowHeights: readonly number[] | undefined;
+  readonly columnWidths: readonly number[] | undefined;
   get yDefault(): ScaleResolution {
     return "independent";
   }
@@ -72,23 +73,36 @@ export class Panels implements PanelLayout {
       if (ids.has(id)) throw new TypeError(`Two panels have the id "${id}"`);
       ids.add(id);
     }
-    const { columns = 1, rowHeights } = grid;
+    const { columns = 1, rowHeights, columnWidths } = grid;
     if (!(Number.isInteger(columns) && columns >= 1))
       throw new RangeError(`A grid's columns must be a whole number of at least 1, not ${columns}`);
-    const rows = Math.ceil(list.length / Math.min(columns, list.length));
+    // A grid has no more columns than panels.
+    const used = Math.min(columns, list.length);
+    const rows = Math.ceil(list.length / used);
     if (rowHeights !== undefined) {
       if (rowHeights.length !== rows)
         throw new RangeError(
           `A grid of ${rows} rows needs ${rows} row heights, not ${rowHeights.length}`,
         );
-      if (!rowHeights.every((h) => h > 0 && Number.isFinite(h)))
+      if (!positive(rowHeights))
         throw new RangeError(
           `A grid's row heights must be positive numbers, not ${rowHeights.join(", ")}`,
+        );
+    }
+    if (columnWidths !== undefined) {
+      if (columnWidths.length !== used)
+        throw new RangeError(
+          `A grid of ${used} columns needs ${used} column widths, not ${columnWidths.length}`,
+        );
+      if (!positive(columnWidths))
+        throw new RangeError(
+          `A grid's column widths must be positive numbers, not ${columnWidths.join(", ")}`,
         );
     }
     this.list = list;
     this.columns = columns;
     this.rowHeights = rowHeights;
+    this.columnWidths = columnWidths;
   }
 
   /**
@@ -188,6 +202,7 @@ export class Panels implements PanelLayout {
       columnHeader: 0,
       rowHeader: 0,
       rowWeights: this.rowHeights,
+      columnWeights: this.columnWidths,
     };
   }
 
@@ -254,4 +269,10 @@ export class Panels implements PanelLayout {
 /** A time axis when marks place times along `axis`; else a linear one. */
 function typeOf(marks: readonly Mark[], axis: "x" | "y"): AxisType {
   return marks.some((mark) => mark.channelKind(axis) === "time") ? "time" : "linear";
+}
+
+/** Whether every weight is a positive number; `every` would skip a sparse array's holes. */
+function positive(weights: readonly number[]): boolean {
+  for (const weight of weights) if (!(weight > 0 && Number.isFinite(weight))) return false;
+  return true;
 }

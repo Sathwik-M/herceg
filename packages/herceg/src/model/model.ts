@@ -810,14 +810,8 @@ export class ChartModel {
             ? (aboveEmpty ? xLabels + lineHeight + titleRoom : Math.ceil(lineHeight / 2)) + 8
             : lineHeight + 10;
     // Rows share the height left for plots equally, or by the grid's weights.
-    // Weights are scaled to the largest first, so huge ones cannot overflow.
-    const weights = grid.rowWeights;
-    const largest = weights ? Math.max(...weights) : 1;
-    const share = (row: number) => (weights ? weights[row]! / largest : 1);
     const free = height - top - bottom - columnHeader - (rows - 1) * rowGap - rows * header;
-    let total = 0;
-    for (let r = 0; r < rows; r++) total += share(r);
-    const heights = Array.from({ length: rows }, (_, r) => (free * share(r)) / total);
+    const heights = trackSizes(free, rows, grid.rowWeights);
     if (panelCount > 1 && Math.min(...heights) < MIN_PANEL)
       throw tooSmall(panelCount, columns, width, height, layout!.remedy);
     const rowHeights = heights.map((h) => Math.max(10, h));
@@ -1014,7 +1008,18 @@ export class ChartModel {
         : 0;
     let columnGap = columns > 1 ? Math.max(16, labelRoom, sameLayout ? this.#columnGap : 0) : 0;
     if (frozen) columnGap = this.#columnGap;
-    const widthOf = () => (width - left - right - (columns - 1) * columnGap) / columns;
+    // Columns share the width left for plots as rows share the height.
+    const weighted = grid.columnWeights !== undefined;
+    const widthsOf = () =>
+      trackSizes(width - left - right - (columns - 1) * columnGap, columns, grid.columnWeights);
+    let widths: number[] = [];
+    // Where each column starts, from `left`; equal columns a whole step apart.
+    let offsets: number[] = [];
+    // Each x group is planned over its narrowest column, so what marks draw
+    // past their values fits in every column.
+    let groupWidths: number[] = [];
+    const xTicks = ({ type, spec }: AxisContext, size: number) =>
+      spec?.ticks ?? Math.max(2, Math.round(size / (type === "time" ? 100 : 80)));
     // Each x group's plan for panels `plotWidth` wide, the first starting at `left`.
     const categories = bands.x?.labels ?? [];
     const widest = xType === "band" ? this.#widest(categories, measure, font) : 0;
@@ -1024,8 +1029,7 @@ export class ChartModel {
       if (type === "band") {
         return planBandAxis(categories, [left, left + plotWidth], padding("x"), widest);
       }
-      const count =
-        spec?.ticks ?? Math.max(2, Math.round(plotWidth / (type === "time" ? 100 : 80)));
+      const count = xTicks(context, plotWidth);
       const range = [left, left + plotWidth] as const;
       if (!autoX[h]) return planAxis(context, xDomains[h]!, range, count);
       // As for y: ticks on the rounded domain, inside the room for glyphs.
@@ -1045,20 +1049,57 @@ export class ChartModel {
         : room(rounded, type);
       return planAxis(context, domain, range, count, nice ? rounded : domain);
     };
-    let plotWidth = Math.max(10, widthOf());
-    let xPlans = xContexts.map((_, h) => planX(plotWidth, h));
+    let xPlans: AxisPlan[] = [];
+    // Where each group's first label starts and last one ends, by column
+    // width, as if the column started at `left`; undefined without labels.
+    const ends = new Map<string, readonly [number, number] | undefined>();
+    const layoutColumns = () => {
+      widths = widthsOf().map((w) => Math.max(10, w));
+      offsets = widths.map((_, c) => (weighted ? 0 : c * (widths[0]! + columnGap)));
+      for (let c = 1; weighted && c < columns; c++)
+        offsets[c] = offsets[c - 1]! + widths[c - 1]! + columnGap;
+      groupWidths = xContexts.map(() => Number.POSITIVE_INFINITY);
+      for (let i = 0; i < panelCount; i++) {
+        const h = xGroupAt[i]!;
+        groupWidths[h] = Math.min(groupWidths[h]!, widths[i % columns]!);
+      }
+      xPlans = xContexts.map((_, h) => planX(groupWidths[h]!, h));
+      ends.clear();
+    };
+    layoutColumns();
+    /**
+     * Group `h`'s plan over a column `size` wide starting at `left`: the
+     * group's own, or for a wider column, the group's domain with ticks for it.
+     */
+    const sizedPlan = (h: number, size: number): AxisPlan => {
+      const plan = xPlans[h]!;
+      if (size === groupWidths[h]) return plan;
+      const context = xContexts[h]!;
+      const range = [left, left + size] as const;
+      if (context.type === "band") return planBandAxis(categories, range, padding("x"), widest);
+      const [d0, d1] = plan.scale.domain;
+      return planAxis(context, [d0!, d1!], range, xTicks(context, size), plan.within);
+    };
+    const labelEnds = (h: number, size: number) => {
+      const key = `${h} ${size}`;
+      if (!ends.has(key)) {
+        const { scale, ticks, labels } = sizedPlan(h, size);
+        const last = ticks.length - 1;
+        const half = (index: number) => measure(labels[index]!, font) / 2;
+        ends.set(
+          key,
+          last < 0
+            ? undefined
+            : [scale.map(ticks[0]!) - half(0), scale.map(ticks[last]!) + half(last)],
+        );
+      }
+      return ends.get(key);
+    };
     // Widen until the labels fit or the limits are reached. Whatever still
     // needs more after a few passes goes straight to its limit, so the margins
     // kept for the next scene are ones that scene keeps too.
     for (let pass = 0; pass < 10; pass++) {
       if (!hasData || !showX || frozen) break;
-      // Where each scale's first label starts and last one ends, in the first column.
-      const ends = xPlans.map(({ scale, ticks, labels }, h) => {
-        const last = ticks.length - 1;
-        if (last < 0 || !xHas[h]) return undefined;
-        const half = (index: number) => measure(labels[index]!, font) / 2;
-        return [scale.map(ticks[0]!) - half(0), scale.map(ticks[last]!) + half(last)] as const;
-      });
       // How far labeled panels' labels pass the chart's sides, and reach past
       // their panels' sides into the gaps between columns.
       let overflowLeft = 0;
@@ -1067,19 +1108,18 @@ export class ChartModel {
       let spillRight = 0;
       let labeled = false;
       for (let i = 0; i < panelCount; i++) {
-        const end = labelsX(i) && ends[xGroupAt[i]!];
+        const h = xGroupAt[i]!;
+        if (!labelsX(i) || !xHas[h]) continue;
+        const column = i % columns;
+        const end = labelEnds(h, widths[column]!);
         if (!end) continue;
         labeled = true;
         const [firstStart, lastEnd] = end;
-        const column = i % columns;
         if (column > 0) spillLeft = Math.max(spillLeft, left - firstStart);
         else overflowLeft = Math.max(overflowLeft, 2 - firstStart);
-        if (column < columns - 1) spillRight = Math.max(spillRight, lastEnd - (left + plotWidth));
-        else
-          overflowRight = Math.max(
-            overflowRight,
-            lastEnd + column * (plotWidth + columnGap) - (width - 2),
-          );
+        if (column < columns - 1)
+          spillRight = Math.max(spillRight, lastEnd - (left + widths[column]!));
+        else overflowRight = Math.max(overflowRight, lastEnd + offsets[column]! - (width - 2));
       }
       if (!labeled) break;
       const spill = spillRight + spillLeft;
@@ -1097,27 +1137,25 @@ export class ChartModel {
       left = nextLeft;
       right = nextRight;
       columnGap = nextGap;
-      plotWidth = Math.max(10, widthOf());
-      xPlans = xContexts.map((_, h) => planX(plotWidth, h));
+      layoutColumns();
     }
-    if (panelCount > 1 && widthOf() < MIN_PANEL)
+    if (panelCount > 1 && Math.min(...widthsOf()) < MIN_PANEL)
       throw tooSmall(panelCount, columns, width, height, layout!.remedy);
     if (!moving) {
       this.#left = left;
       this.#right = right;
       this.#columnGap = columnGap;
     }
-    const columnOffset = (column: number) => column * (plotWidth + columnGap);
 
     // Panels share their scale's x plan and their y plans, moved to their column and row.
     const shifted: AxisPlan[] = [];
     const xPlanOf = (h: number, column: number) =>
       (shifted[h * columns + column] ??= shiftPlan(
-        xPlans[h]!,
+        sizedPlan(h, widths[column]!),
         xContexts[h]!,
-        columnOffset(column),
+        offsets[column]!,
       ));
-    const gridWidth = columns * plotWidth + (columns - 1) * columnGap;
+    const gridWidth = offsets[columns - 1]! + widths[columns - 1]!;
     const gridHeight =
       rowHeights.reduce((sum, h) => sum + h, 0) + rows * header + (rows - 1) * rowGap;
     // Vertical grid lines where a group has data, as a subplot's own settings say.
@@ -1168,16 +1206,21 @@ export class ChartModel {
       context.type === "time"
         ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale), zone, locale))
         : valueFormatter(context, formatNumbers);
-    const formatsX = xPlans.map(({ scale }, h) => {
-      const context = xContexts[h]!;
-      return context.type === "band"
-        ? categoryOf(scale)
-        : context.type === "time"
-          ? valueFormatter(context, timeValueFormatter(timeUnitFor(scale), zone, locale))
-          : valueFormatter(context, formatNumbers);
-    });
-    // Tooltips show y values as precisely as their panel's height resolves:
-    // one formatter per group and row height.
+    // Tooltips show values as precisely as their panel resolves them: x
+    // values by one formatter per x group and column width, y values per y
+    // group and row height.
+    const xFormats = new Map<string, Formatter>();
+    const formatXOf = (h: number, column: number): Formatter => {
+      const key = `${h} ${widths[column]}`;
+      let format = xFormats.get(key);
+      if (!format) {
+        const context = xContexts[h]!;
+        const { scale } = xPlanOf(h, column);
+        format = context.type === "band" ? categoryOf(scale) : valueFormat(context, scale);
+        xFormats.set(key, format);
+      }
+      return format;
+    };
     const formats = new Map<string, Formatter>();
     const formatOf = (i: number): Formatter => {
       const g = groupOf[i]!;
@@ -1203,7 +1246,7 @@ export class ChartModel {
       const text = xContexts[h]!.spec?.label;
       if (!text || titleAt[h] !== i) return undefined;
       const rowEnd = Math.min(panelCount, (rowOf(i) + 1) * columns) - 1;
-      const end = left + columnOffset(rowEnd % columns) + plotWidth;
+      const end = left + offsets[rowEnd % columns]! + widths[rowEnd % columns]!;
       return {
         text,
         x: xGroups
@@ -1230,9 +1273,9 @@ export class ChartModel {
       const yAt = yPlans[i]!;
       const x = xAt.scale;
       const plot: Rect = {
-        x: left + columnOffset(column),
+        x: left + offsets[column]!,
         y: plotTop + rowOffset(row),
-        width: plotWidth,
+        width: widths[column]!,
         height: rowHeights[row]!,
       };
       const axes: AxisGeometry[] = [];
@@ -1303,7 +1346,7 @@ export class ChartModel {
         right: rightFrame && { marks: rightSet, frame: rightFrame, formatY: formatRight! },
         mode: members ? modeOf(inspected.filter(({ series }) => series.length > 0)) : mode,
         hidden: this.hidden,
-        formatX: formatsX[h]!,
+        formatX: formatXOf(h, column),
         formatY: formatOf(i),
         formatValue: formatNumbers,
       });
@@ -1743,6 +1786,18 @@ function categoryOf(scale: PositionScale): Formatter {
  * Precision for x values in tooltips: finer when each pixel covers less
  * time (on axes with breaks, less time shown).
  */
+/**
+ * `free` pixels shared by `count` rows or columns, equally or by `weights`.
+ * Weights are scaled to the largest first, so huge ones cannot overflow.
+ */
+function trackSizes(free: number, count: number, weights?: readonly number[]): number[] {
+  const largest = weights ? Math.max(...weights) : 1;
+  const share = (k: number) => (weights ? weights[k]! / largest : 1);
+  let total = 0;
+  for (let k = 0; k < count; k++) total += share(k);
+  return Array.from({ length: count }, (_, k) => (free * share(k)) / total);
+}
+
 function timeUnitFor(scale: PositionScale): TimeUnit {
   const perPixel = Math.abs(1 / scale.mapping().factor);
   if (perPixel < TIME_UNIT_MS.second) return "millisecond";

@@ -138,6 +138,8 @@ export interface GridSpec {
   columns?: number;
   /** The rows' heights relative to each other, one per row; equal by default. */
   rowHeights?: readonly number[];
+  /** The columns' widths relative to each other, one per column; equal by default. */
+  columnWidths?: readonly number[];
 }
 
 export interface WrappedFacetSpec {

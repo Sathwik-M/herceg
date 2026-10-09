@@ -334,6 +334,137 @@ describe("panels", () => {
   });
 });
 
+describe("panels in weighted columns", () => {
+  const side = panels(stacked.list, { columns: 2, columnWidths: [3, 1] });
+
+  it("size columns by their relative widths, sharing x over columns of different widths", () => {
+    const { scene, model } = build({ marks, panels: side });
+    const [left, right] = scene.panels as [Panel, Panel];
+    expect(left.plot.width / right.plot.width).toBeCloseTo(3, 1);
+    expect(right.plot.x).toBeGreaterThan(left.plot.x + left.plot.width);
+    const [a, b] = model.panels();
+    expect(b!.x.domain).toEqual(a!.x.domain);
+    expect(a!.x.range).toEqual([left.plot.x, left.plot.x + left.plot.width]);
+    expect(b!.x.range).toEqual([right.plot.x, right.plot.x + right.plot.width]);
+    // Each column's labels are on ticks for its width, inside its panel.
+    const ticks = (panel: Panel) => axis(panel, "bottom")!.ticks;
+    expect(ticks(left).length).toBeGreaterThan(ticks(right).length);
+    for (const panel of [left, right]) {
+      for (const { position } of ticks(panel)) {
+        expect(position).toBeGreaterThanOrEqual(panel.plot.x - 0.5);
+        expect(position).toBeLessThanOrEqual(panel.plot.x + panel.plot.width + 0.5);
+      }
+    }
+    // Tooltips resolve x as finely as each column's width does.
+    const times = table({ t: time([0, 3_600_000]), v: [1, 2] });
+    const timeline = (panel: string) => line(times, { x: "t", y: "v", panel });
+    const timed = build({
+      marks: [timeline("latency"), timeline("traffic")],
+      panels: panels(stacked.list, { columns: 2, columnWidths: [12, 1] }),
+    }).model;
+    const wide = timed.formatsOf(undefined, "latency").x(1_234_567);
+    const narrow = timed.formatsOf(undefined, "traffic").x(1_234_567);
+    expect(wide.length).toBeGreaterThan(narrow.length);
+  });
+
+  it("leave room for points at the ends of a shared x scale in every column", () => {
+    const ends = table({ t: [0, 1], v: [0, 100] });
+    const dots = (panel: string) => point(ends, { x: "t", y: "v", r: 10, panel });
+    const { model } = build({ marks: [dots("latency"), dots("traffic")], panels: side });
+    for (const { x, plot } of model.panels()) {
+      expect(x.map(0) - plot.x).toBeGreaterThanOrEqual(10 - 1e-9);
+      expect(plot.x + plot.width - x.map(1)).toBeGreaterThanOrEqual(10 - 1e-9);
+    }
+  });
+
+  it("keep x labels clear of the next column's y labels", () => {
+    const { scene } = build({ marks, panels: side, resolve: { y: "independent" } }, 500, 300);
+    const [left, right] = scene.panels as [Panel, Panel];
+    const last = axis(left, "bottom")!.ticks.at(-1)!;
+    const end = last.position + estimateText(last.label, scene.theme.font) / 2;
+    const widestY = Math.max(
+      ...axis(right, "left")!.ticks.map((t) => estimateText(t.label, scene.theme.font)),
+    );
+    expect(end).toBeLessThan(right.plot.x - widestY);
+  });
+
+  it("lay equal columns out as before weights existed", () => {
+    // Labels reaching into the gap between two columns once rounded it to 65 pixels.
+    const values = table({ x: [10000, 20000, 30000], y: [1, 4, 2] });
+    const { scene } = build(
+      {
+        marks: [point(values, { x: "x", y: "y", panel: "*" })],
+        panels: panels(
+          [
+            { id: "a", title: "A" },
+            { id: "b", title: "B" },
+          ],
+          { columns: 2 },
+        ),
+        x: { format: { useGrouping: false } },
+        theme: { font: "monospace", fontSize: 10 },
+      },
+      599,
+      600,
+    );
+    const [left, right] = scene.panels as [Panel, Panel];
+    expect([left.plot.width, right.plot.width]).toEqual([241, 241]);
+    expect(right.plot.x - (left.plot.x + left.plot.width)).toBe(65);
+  });
+
+  it("give x scales of their own and category axes each column's width", () => {
+    const { model, scene } = build({ marks, panels: side, resolve: { x: "independent" } });
+    for (const [i, { x }] of model.panels().entries()) {
+      const { plot } = scene.panels[i]!;
+      expect(x.range).toEqual([plot.x, plot.x + plot.width]);
+    }
+    const sales = table({ region: ["n", "s", "e"], v: [3, 5, 2] });
+    const bars = build({
+      marks: [bar(sales, { x: "region", y: "v", panel: "*" })],
+      panels: side,
+    });
+    const [wide, narrow] = bars.scene.panels as [Panel, Panel];
+    const [first, second] = bars.model.panels();
+    expect(first!.x.range).toEqual([wide.plot.x, wide.plot.x + wide.plot.width]);
+    expect(second!.x.range).toEqual([narrow.plot.x, narrow.plot.x + narrow.plot.width]);
+    // Bars fill the same share of each column.
+    const barWidth = (panel: Panel) =>
+      (panel.marks.find((m) => m.kind === "rect") as RectGeometry).rects[2]!;
+    expect(barWidth(wide) / barWidth(narrow)).toBeCloseTo(wide.plot.width / narrow.plot.width, 5);
+  });
+
+  it("check their widths, in options and in specs", () => {
+    expect(() => panels(stacked.list, { columns: 2, columnWidths: [1] })).toThrow(
+      "needs 2 column widths",
+    );
+    // A grid has no more columns than panels.
+    expect(() => panels(stacked.list, { columns: 3, columnWidths: [1, 1, 1] })).toThrow(
+      "A grid of 2 columns needs 2 column widths, not 3",
+    );
+    expect(() => panels(stacked.list, { columns: 2, columnWidths: [1, Number.NaN] })).toThrow(
+      "positive numbers",
+    );
+    // Holes in sparse arrays are not weights.
+    expect(() => panels(stacked.list, { columns: 2, columnWidths: new Array<number>(2) })).toThrow(
+      "positive numbers",
+    );
+    expect(() => panels(stacked.list, { rowHeights: new Array<number>(2) })).toThrow(
+      "positive numbers",
+    );
+    const spec = (columnWidths: unknown) => () =>
+      loadSpec({
+        version: 3,
+        data: { m: { columns: { t: [0, 1], v: [1, 2] } } },
+        panels: [{ id: "a" }, { id: "b" }],
+        grid: { columns: 2, columnWidths },
+        marks: [{ type: "line", data: "m", x: "t", y: "v", panel: "*" }],
+      } as never);
+    expect(spec([2, 1])().config.panels).toBeDefined();
+    expect(spec([2, -1])).toThrow("spec.grid.columnWidths[1]");
+    expect(spec([])).toThrow("spec.grid.columnWidths");
+  });
+});
+
 describe("panels with x scales of their own", () => {
   const day = Date.UTC(2026, 9, 9);
   const series = table({

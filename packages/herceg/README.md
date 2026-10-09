@@ -854,8 +854,10 @@ createChart(element, {
 Each mark names the panel it draws in with `panel`, or `"*"` for all of
 them; in a chart with panels, a mark without one is an error rather than
 drawn everywhere by accident. Panels fill rows of `columns` (one by default)
-in order, with their titles above them; `rowHeights` gives the rows' heights
-relative to each other. They share the x axis, labeled under
+in order, with their titles above them; `rowHeights` and `columnWidths` give
+the rows' heights and the columns' widths relative to each other (a shared
+scale keeps one domain over rows or columns of different sizes, each with
+ticks for its size). They share the x axis, labeled under
 the lowest panel of each column, and each has a y scale of its own, from its
 marks; `resolve: { y: "shared" }` (or `"rows"`, `"columns"`) shares it
 instead, when the panels sharing it agree on its type, domain, `zero`, and
@@ -956,7 +958,7 @@ the thousands, not millions.
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `resolve` | `{ x?, y? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x or y scale (see Small multiples and Subplots). |
-| `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights? })`: subplots whose marks name them in `panel` (see Subplots). |
+| `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. |

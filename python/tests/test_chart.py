@@ -926,6 +926,18 @@ def test_panels_draw_the_marks_that_name_them():
     assert "rowHeights" in weighted.to_html()
     with pytest.raises(ValueError, match="needs 2 heights"):
         hg.Chart(DATA, panels=["a", "b"], panel_row_heights=[1])
+    wide, _ = (
+        hg.Chart(DATA, panels=["a", "b", "c"], panel_columns=2, panel_column_widths=[2, 1])
+        .line(x="t", y="p50", panel="*")
+        .to_spec()
+    )
+    assert wide["grid"] == {"columns": 2, "columnWidths": [2.0, 1.0]}
+    with pytest.raises(ValueError, match="needs 2 widths, one per column"):
+        hg.Chart(DATA, panels=["a", "b"], panel_columns=3, panel_column_widths=[1, 1, 1])
+    with pytest.raises(ValueError, match="panel_column_widths must be positive"):
+        hg.Chart(DATA, panels=["a", "b"], panel_columns=2, panel_column_widths=[1, 0])
+    with pytest.raises(ValueError, match="panel_column_widths needs panels"):
+        hg.Chart(DATA, panel_column_widths=[1])
 
 
 def test_graphs_send_links_and_nodes_with_only_the_columns_they_read():
