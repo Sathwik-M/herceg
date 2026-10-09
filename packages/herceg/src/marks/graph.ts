@@ -11,7 +11,7 @@ import type { Geometry, PathShape, Rect, ShapesGeometry, TextGeometry } from "..
 import type { Frozen, GraphSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, frozen, requireField } from "./mark.ts";
+import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
   /** Category field naming one end of each row's link. */
@@ -118,6 +118,7 @@ interface Placement {
 }
 
 export class GraphMark implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec: Frozen<GraphSpec>;
   /** The table of links. */
@@ -769,7 +770,7 @@ function plural(count: number, one: string, many: string): string {
 export function graph<S extends Schema, N extends Schema = Schema>(
   links: Table<S>,
   options: GraphOptions<S, N>,
-): GraphMark {
+): ChartMark<Frozen<GraphSpec>> {
   const spec: GraphSpec = { type: "graph", source: options.source, target: options.target };
   if (options.value !== undefined) spec.value = options.value;
   if (options.nodes !== undefined) {

@@ -78,6 +78,10 @@ const emits = {
   click: (_: ChartEvents["click"]) => true,
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   camera: (_: ChartEvents["camera"]) => true,
+  /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
+  visibility: (_: ChartEvents["visibility"]) => true,
+  /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
+  render: (_: ChartEvents["render"]) => true,
 };
 
 function collectMarks(children: unknown, out: ChartMark[]): ChartMark[] {
@@ -107,9 +111,9 @@ function canonical(value: unknown): string {
 }
 
 /**
- * Mark types whose spec and table describe them completely. Other marks
- * (custom marks, whose `draw` may close over new props, and marks written
- * against the `Mark` interface) are only the same mark as themselves.
+ * Mark types whose spec and table describe them completely. Custom marks,
+ * whose `draw` may close over new props, are only the same mark as
+ * themselves.
  */
 const PORTABLE = new Set([
   "line",
@@ -223,8 +227,12 @@ export const Chart = defineComponent({
         created.on("hover", (event) => emit("hover", event));
         created.on("click", (event) => emit("click", event));
         created.on("camera", (event) => emit("camera", event));
+        created.on("visibility", (event) => emit("visibility", event));
+        created.on("render", (event) => emit("render", event));
         chart.value = created;
         applied = next;
+        // The first frame was drawn as the chart was created, before it had listeners.
+        emit("render", {});
         return;
       }
       // Unchanged marks keep their identity, so their caches survive.

@@ -2,7 +2,7 @@
 // option). Charts load this module only when they animate.
 
 import type { Breaks } from "../lod/m4.ts";
-import type { ChartModel, PanelInfo, ViewDomains } from "../model/model.ts";
+import type { ChartModel, DrawnPanel, ViewDomains } from "../model/model.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { AnimationSpec } from "../spec/spec.ts";
 import { frameCount, lastFrameTime } from "./scheduler.ts";
@@ -86,7 +86,7 @@ export class ViewAnimation {
    * `frameTime` is how long the chart's last frame took. Whether it started.
    */
   start(
-    from: PanelInfo,
+    from: DrawnPanel,
     animation: boolean | AnimationSpec | undefined,
     frameTime: number,
   ): boolean {
@@ -108,7 +108,7 @@ export class ViewAnimation {
    * transition; whether another frame follows. `plan` builds the scene of
    * the view asked for, which is never painted, and returns its panel.
    */
-  step(plan: () => PanelInfo | undefined, frameTime: number): boolean {
+  step(plan: () => DrawnPanel | undefined, frameTime: number): boolean {
     const transition = this.#transition;
     if (!transition) return false;
     if (!transition.to) {
@@ -154,7 +154,7 @@ export function durationOf(animation: boolean | AnimationSpec | undefined): numb
 }
 
 /** Where a change of view from what `panel` draws starts. */
-function startOf(panel: PanelInfo): ViewStart {
+function startOf(panel: DrawnPanel): ViewStart {
   return {
     domains: domainsOf(panel),
     log: {
@@ -167,7 +167,7 @@ function startOf(panel: PanelInfo): ViewStart {
 }
 
 /** The ranges a panel draws, ascending; null for category axes. */
-function domainsOf(panel: PanelInfo): ViewDomains {
+function domainsOf(panel: DrawnPanel): ViewDomains {
   return {
     x: rangeOf(panel.x),
     y: rangeOf(panel.y),

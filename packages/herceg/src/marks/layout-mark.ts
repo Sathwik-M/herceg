@@ -13,7 +13,7 @@ import type { Geometry, Rect } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
-import type { Mark } from "./mark.ts";
+import type { ChartMark, Mark } from "./mark.ts";
 
 /** What a layout mark lays out with: its room and the chart's settings. */
 export interface LayoutFrame {
@@ -76,10 +76,11 @@ export interface LayoutResult {
   summary(): string;
 }
 
-export interface LayoutMark {
+/** A mark that lays out its own geometry in a panel; internal, as `Mark` is. */
+export interface LayoutMark
+  extends ChartMark<{ readonly type: string; readonly id?: string | undefined }> {
   /** Tells layout marks from marks along axes. */
   readonly layout: true;
-  readonly spec: { readonly type: string; readonly id?: string | undefined };
   readonly table: Table | undefined;
   /** Tables the mark reads besides `table`, such as a network's nodes; charts follow their changes too. */
   readonly otherTables?: readonly Table[];
@@ -104,21 +105,25 @@ export interface LayoutMark {
   camera?(spec: CameraSpec | undefined, base?: Camera): Camera;
 }
 
-/** Any mark a chart takes: one along axes, or a layout mark. */
-export type ChartMark = Mark | LayoutMark;
-
 export function isLayoutMark(mark: object): mark is LayoutMark {
   return (mark as Partial<LayoutMark>).layout === true;
 }
 
-/** Every table a mark reads, which charts redraw on changes to. */
-/** The row view a mark shows the rows of, if it shows a view's rows rather than its table's. */
+/**
+ * The row view a mark shows the rows of, if it shows a view's rows rather
+ * than its table's: what a chart follows besides `tablesOf`.
+ */
 export function viewOf(mark: ChartMark): RowView | undefined {
-  return "view" in mark ? mark.view : undefined;
+  return "view" in mark ? (mark as Mark).view : undefined;
 }
 
+/**
+ * Every table a mark reads, which charts redraw on changes to, and which
+ * framework adapters compare to tell whether a rebuilt mark is the same.
+ */
 export function tablesOf(mark: ChartMark): Table[] {
-  const tables = mark.table ? [mark.table] : [];
+  const { table } = mark as Mark | LayoutMark;
+  const tables = table ? [table] : [];
   if (isLayoutMark(mark) && mark.otherTables) tables.push(...mark.otherTables);
   return tables;
 }

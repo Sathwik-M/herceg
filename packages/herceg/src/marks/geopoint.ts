@@ -25,7 +25,14 @@ import { surface, type Theme } from "../theme.ts";
 import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { type ColorRamp, frozen, type GlyphKey, requireField } from "./mark.ts";
+import {
+  type ChartMark,
+  type ColorRamp,
+  frozen,
+  type GlyphKey,
+  type MARK,
+  requireField,
+} from "./mark.ts";
 import { groupRows } from "./series.ts";
 
 export interface GeoPointOptions<S extends Schema> {
@@ -81,6 +88,7 @@ interface Drawn {
 }
 
 export class GeoPointMark implements GeoLayer {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly geo = true;
   readonly spec: Frozen<GeoPointSpec>;
@@ -535,7 +543,7 @@ function plural(count: number, one: string, many: string): string {
 export function geopoint<S extends Schema>(
   table: Table<S>,
   options: GeoPointOptions<S>,
-): GeoPointMark {
+): ChartMark<Frozen<GeoPointSpec>> {
   const spec: GeoPointSpec = {
     type: "geopoint",
     longitude: options.longitude,

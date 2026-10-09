@@ -26,7 +26,7 @@ import type {
 import type { Frozen, SankeySpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, frozen, requireField } from "./mark.ts";
+import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface SankeyOptions<S extends Schema> {
   /** Category field naming where each row's flow comes from. */
@@ -74,6 +74,7 @@ interface Flows {
 }
 
 export class SankeyMark implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec: Frozen<SankeySpec>;
   readonly table: Table;
@@ -520,7 +521,10 @@ function count(n: number, one: string, many: string): string {
  * sankey(energy, { source: "from", target: "to", value: "twh" })
  * ```
  */
-export function sankey<S extends Schema>(table: Table<S>, options: SankeyOptions<S>): SankeyMark {
+export function sankey<S extends Schema>(
+  table: Table<S>,
+  options: SankeyOptions<S>,
+): ChartMark<Frozen<SankeySpec>> {
   const spec: SankeySpec = { type: "sankey", source: options.source, target: options.target };
   if (options.value !== undefined) spec.value = options.value;
   if (options.labels !== undefined) spec.labels = options.labels;

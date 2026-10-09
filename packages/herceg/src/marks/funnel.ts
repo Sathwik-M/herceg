@@ -15,7 +15,7 @@ import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, FunnelSpec } from "../spec/spec.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, frozen, requireField } from "./mark.ts";
+import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface FunnelOptions<S extends Schema> {
   /** Category field: a stage per value, in the field's order unless `sort` says otherwise. */
@@ -46,6 +46,7 @@ interface Stage {
 }
 
 export class FunnelMark implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec: Frozen<FunnelSpec>;
   readonly table: Table;
@@ -317,7 +318,10 @@ export class FunnelMark implements LayoutMark {
  * funnel(signups, { category: "stage", value: "users" })
  * ```
  */
-export function funnel<S extends Schema>(table: Table<S>, options: FunnelOptions<S>): FunnelMark {
+export function funnel<S extends Schema>(
+  table: Table<S>,
+  options: FunnelOptions<S>,
+): ChartMark<Frozen<FunnelSpec>> {
   const spec: FunnelSpec = { type: "funnel", category: options.category };
   if (options.value !== undefined) spec.value = options.value;
   if (options.sort !== undefined) spec.sort = options.sort;

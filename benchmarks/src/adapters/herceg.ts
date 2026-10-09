@@ -25,7 +25,7 @@ import {
   type SeriesData,
   type SurfaceData,
 } from "../datasets.ts";
-import type { Adapter, ChartHandle, ChartKind, ChartOptions } from "../page/adapter.ts";
+import type { Adapter, ChartHandle, ChartKind, ChartOptions, Point } from "../page/adapter.ts";
 import { clientPoint } from "../page/adapter.ts";
 
 // Herceg reads the benchmark's typed arrays in place: a table wraps them
@@ -82,13 +82,7 @@ function lineKind(fill: boolean): ChartKind<SeriesData> {
         setData: (next) => source.reset(columnsOf(next)),
         append: (x, ys, keep) => appendTo(source, x, ys, keep),
         setViewport: (x0, x1) => chart.setViewport([x0, x1]),
-        pixelOf(_series, _index, x, y) {
-          return clientPoint(
-            chart.root,
-            chart.model.xScale()!.map(x),
-            chart.model.yScale()!.map(y),
-          );
-        },
+        pixelOf: (_series, _index, x, y) => pixelOf(chart, x, y),
         resize: (width, height) => chart.update({ width, height }),
         destroy: () => chart.destroy(),
       };
@@ -96,12 +90,20 @@ function lineKind(fill: boolean): ChartKind<SeriesData> {
   };
 }
 
+/** Where data values are on the page, as the chart last drew them. */
+export function pixelOf(chart: Chart, x: number, y: number): Point {
+  return clientPoint(
+    chart.root,
+    chart.toPixel(x, { axis: "x" })!,
+    chart.toPixel(y, { axis: "y" })!,
+  );
+}
+
 function common(
   chart: Chart,
 ): Pick<ChartHandle<unknown>, "pixelOf" | "resize" | "destroy" | "rendered"> {
   return {
-    pixelOf: (_series, _index, x, y) =>
-      clientPoint(chart.root, chart.model.xScale()!.map(x), chart.model.yScale()!.map(y)),
+    pixelOf: (_series, _index, x, y) => pixelOf(chart, x, y),
     resize: (width, height) => chart.update({ width, height }),
     destroy: () => chart.destroy(),
     // Large point series wait for the GPU painter, which loads on demand.

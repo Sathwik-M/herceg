@@ -11,6 +11,7 @@ import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { panels } from "../../src/model/panels.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
+import { modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -84,7 +85,7 @@ describe("time axes with breaks", () => {
     });
     // The pointer over Monday 2025-10-13, just past the first weekend's seam.
     const anchor = utc(2025, 10, 13, 2);
-    const scale = chart.model.xScale()!;
+    const scale = modelOf(chart).xScale()!;
     // Whole pixels, as pointer events report them.
     const px = Math.round(scale.map(anchor));
     const share = (px - scale.range[0]) / (scale.range[1] - scale.range[0]);
@@ -92,12 +93,12 @@ describe("time axes with breaks", () => {
     wheel(chart, px, -300);
     chart.render();
     // The anchor keeps its share of the view, in time shown.
-    const zoomed = chart.model.xScale()!;
+    const zoomed = modelOf(chart).xScale()!;
     const breaks = zoomed.breaks!;
     const [start, end] = zoomed.domain.map((t) => breaks.collapse(t));
     expect((breaks.collapse(value) - start!) / (end! - start!)).toBeCloseTo(share, 9);
     // A weekend inside the view takes no room.
-    const [lo, hi] = chart.model.viewport!;
+    const [lo, hi] = chart.getViewport().x!;
     expect(lo).toBeLessThan(utc(2025, 10, 11));
     expect(hi).toBeGreaterThan(utc(2025, 10, 13, 3));
     // Dragging 50 pixels moves the view 50 pixels of time shown, across the weekend.
@@ -105,7 +106,7 @@ describe("time axes with breaks", () => {
     const before = zoomed.map(friday);
     drag(chart, 300, 250);
     chart.render();
-    expect(chart.model.xScale()!.map(friday)).toBeCloseTo(before - 50, 1);
+    expect(chart.toPixel(friday, { axis: "x" })!).toBeCloseTo(before - 50, 1);
     chart.destroy();
   });
 
@@ -116,22 +117,22 @@ describe("time axes with breaks", () => {
       marks: [line(hourly(), { x: "t", y: "v" })],
       x: { breaks: weekend() },
     });
-    const x = chart.model.xScale()!;
+    const x = modelOf(chart).xScale()!;
     const from = utc(2025, 10, 10, 12);
     const to = utc(2025, 10, 13, 12);
     drag(chart, x.map(from), x.map(to));
-    const [lo, hi] = chart.model.viewport!;
+    const [lo, hi] = chart.getViewport().x!;
     expect(Math.abs(lo - from)).toBeLessThan(HOUR);
     expect(Math.abs(hi - to)).toBeLessThan(HOUR);
     chart.render();
     // A day of time shown: Friday's afternoon and Monday's morning, half each.
-    const zoomed = chart.model.xScale()!;
+    const zoomed = modelOf(chart).xScale()!;
     const seam = zoomed.map(utc(2025, 10, 13));
     expect(seam - zoomed.range[0]).toBeCloseTo((zoomed.range[1] - zoomed.range[0]) / 2, 0);
     // A brush on the seam selects the end of the break, the first time shown after it.
     chart.update({ interaction: { brush: "x" } });
     chart.render();
-    const scale = chart.model.xScale()!;
+    const scale = modelOf(chart).xScale()!;
     const start = scale.map(utc(2025, 10, 13));
     drag(chart, start, start + 40);
     await frame();
@@ -147,7 +148,7 @@ describe("time axes with breaks", () => {
       marks: [line(data, { x: "t", y: "v" })],
       x: { breaks: weekend() },
     });
-    const x = chart.model.xScale()!;
+    const x = modelOf(chart).xScale()!;
     const seam = x.map(utc(2025, 10, 13));
     pointer(chart.root, "pointermove", seam + 0.3, 150);
     await frame();
@@ -253,10 +254,10 @@ describe("time axes with breaks", () => {
         (line) => line.getAttribute("visibility") === "visible",
       );
     // On a Saturday in the plain chart.
-    pointer(plain.root, "pointermove", plain.model.xScale()!.map(utc(2025, 10, 11, 12)), 150);
+    pointer(plain.root, "pointermove", plain.toPixel(utc(2025, 10, 11, 12), { axis: "x" })!, 150);
     await frame();
     expect(crosshairs()).toHaveLength(0);
-    pointer(plain.root, "pointermove", plain.model.xScale()!.map(utc(2025, 10, 14, 12)), 150);
+    pointer(plain.root, "pointermove", plain.toPixel(utc(2025, 10, 14, 12), { axis: "x" })!, 150);
     await frame();
     expect(crosshairs()).toHaveLength(1);
     plain.destroy();
@@ -310,8 +311,8 @@ describe("crosshair labels", () => {
       marks: [line(data, { x: "t", y: "a" }), line(data, { x: "t", y: "b", axis: "right" })],
     });
     await chart.loading;
-    const x = chart.model.xScale()!;
-    const y = chart.model.yScale()!;
+    const x = modelOf(chart).xScale()!;
+    const y = modelOf(chart).yScale()!;
     pointer(chart.root, "pointermove", x.map(utc(2025, 1, 6, 2)), y.map(15));
     await frame();
     const shown = labels(chart);
@@ -337,7 +338,7 @@ describe("crosshair labels", () => {
       marks: [bar(data, { x: "sales", y: "region" })],
     });
     await chart.loading;
-    const y = chart.model.yScale()!;
+    const y = modelOf(chart).yScale()!;
     pointer(chart.root, "pointermove", 300, y.map(1));
     await frame();
     // The x axis is not drawn, so only the category is labeled.
@@ -357,8 +358,8 @@ describe("crosshair labels", () => {
       marks: [line(data, { x: "t", y: "v", axis: "right" })],
     });
     await right.loading;
-    const scale = right.model.yRightScale()!;
-    pointer(right.root, "pointermove", right.model.xScale()!.map(1), scale.map(2.5));
+    const scale = modelOf(right).yRightScale()!;
+    pointer(right.root, "pointermove", right.toPixel(1, { axis: "x" })!, scale.map(2.5));
     await frame();
     // The x value and the right axis' value; there is no left axis to label.
     const shown = labels(right);
@@ -374,7 +375,7 @@ describe("crosshair labels", () => {
       ],
     });
     await sub.loading;
-    const lower = sub.model.panels()[1]!;
+    const lower = modelOf(sub).panels()[1]!;
     pointer(sub.root, "pointermove", lower.x.map(1), lower.y.map(2));
     await frame();
     // The x axis under the lower panel; its y axis is not drawn.
@@ -395,7 +396,7 @@ describe("crosshair labels", () => {
       ],
     });
     await chart.loading;
-    const upper = chart.model.panels()[0]!;
+    const upper = modelOf(chart).panels()[0]!;
     pointer(chart.root, "pointermove", upper.x.map(5), upper.y.map(1.5));
     await frame();
     // Only the y value: the upper x axis is not drawn, and the lower one is another scale.

@@ -20,6 +20,17 @@ export interface Rect {
 }
 
 /**
+ * A plot's area in CSS pixels, as applications read it (in a custom mark's
+ * `draw`, and in a chart's panels): read-only, since the chart draws with it.
+ */
+export interface PlotRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
  * How one kind of geometry is drawn. A mark attaches the drawing to the
  * geometry it emits, so a bundle carries drawing code only for the marks it
  * uses, and custom marks can bring their own. Members are function

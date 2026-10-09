@@ -4,8 +4,8 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
-import { line } from "../../src/marks/line.ts";
-import type { Mark } from "../../src/marks/mark.ts";
+import { type LineMark, line } from "../../src/marks/line.ts";
+import type { MARK, Mark } from "../../src/marks/mark.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
@@ -114,9 +114,10 @@ describe("domains", () => {
 
   it("does not scan data for y when the domain is fixed", () => {
     const data = table({ x: [0, 1], y: [0, 1] });
-    const inner = line(data, { x: "x", y: "y" });
+    const inner = line(data, { x: "x", y: "y" }) as LineMark;
     let scans = 0;
-    const counting: Mark = {
+    // An engine mark written for the test, as applications cannot.
+    const counting: Omit<Mark, typeof MARK> = {
       spec: inner.spec,
       table: inner.table,
       tooltip: inner.tooltip,
@@ -129,7 +130,7 @@ describe("domains", () => {
       },
       geometry: (series, frame) => inner.geometry(series, frame),
     };
-    build({ marks: [counting], y: { domain: [0, 10] } });
+    build({ marks: [counting as Mark], y: { domain: [0, 10] } });
     expect(scans).toBe(0);
   });
 });

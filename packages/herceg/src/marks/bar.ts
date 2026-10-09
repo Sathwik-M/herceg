@@ -17,9 +17,11 @@ import {
   bandIndices,
   buildSeries,
   CATEGORY,
+  type ChartMark,
   type Frame,
   fieldBands,
   frozen,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -84,6 +86,7 @@ interface Stack {
 }
 
 export class BarMark implements Mark<Frozen<BarSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<BarSpec>;
   readonly table: Table<Schema>;
   readonly zero: "x" | "y";
@@ -703,7 +706,10 @@ function stackBars(series: readonly Series[], shown: readonly boolean[]): Stack 
  * bar(requests, { x: "minute", y: "count", series: "status", stack: true })
  * ```
  */
-export function bar<S extends Schema>(table: Table<S>, options: BarOptions<S>): BarMark {
+export function bar<S extends Schema>(
+  table: Table<S>,
+  options: BarOptions<S>,
+): ChartMark<Frozen<BarSpec>> {
   const fields = (value: string | readonly string[]) =>
     typeof value === "string" ? value : [...value];
   const spec: BarSpec = {

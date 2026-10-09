@@ -22,7 +22,14 @@ import type { FaceBuffer } from "../three/faces.ts";
 import { Traversal } from "../three/traversal.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { type ColorRamp, frozen, type GlyphKey, requireField } from "./mark.ts";
+import {
+  type ChartMark,
+  type ColorRamp,
+  frozen,
+  type GlyphKey,
+  type MARK,
+  requireField,
+} from "./mark.ts";
 import {
   type AxisData,
   type Frame3D,
@@ -109,6 +116,7 @@ interface Scratch {
 const scratches = new WeakMap<FaceBuffer, Map<string | number, Scratch>>();
 
 export class SurfaceMark implements Layer3D {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly dimensions = 3;
   readonly spec: Frozen<SurfaceSpec>;
@@ -711,7 +719,7 @@ function gridAxis(
 export function surface<S extends Schema>(
   table: Table<S>,
   options: SurfaceOptions<S>,
-): SurfaceMark {
+): ChartMark<Frozen<SurfaceSpec>> {
   const spec: SurfaceSpec = {
     type: "surface",
     x: options.x,

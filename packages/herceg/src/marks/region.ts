@@ -14,7 +14,16 @@ import {
   valueAt,
 } from "./annotation.ts";
 import { definedFields } from "./line.ts";
-import { type AxisFormat, type Frame, frozen, type Mark, type MarkKey, seriesKey } from "./mark.ts";
+import {
+  type AxisFormat,
+  type ChartMark,
+  type Frame,
+  frozen,
+  type MARK,
+  type Mark,
+  type MarkKey,
+  seriesKey,
+} from "./mark.ts";
 
 interface RegionStyle {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
@@ -64,6 +73,7 @@ export function regionFormError(spec: {
 }
 
 export class RegionMark implements Mark<Frozen<RegionSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<RegionSpec>;
   readonly tooltip = "x";
   readonly #data: AnnotationData;
@@ -239,15 +249,15 @@ function place(scale: PositionScale, value: number): number | undefined {
  * region({ y1: 200, y2: 300, fill: "#2a9d8f" })
  * ```
  */
-export function region(options: RegionOptions): RegionMark;
+export function region(options: RegionOptions): ChartMark<Frozen<RegionSpec>>;
 export function region<S extends Schema>(
   table: Table<S>,
   options: RegionDataOptions<S>,
-): RegionMark;
+): ChartMark<Frozen<RegionSpec>>;
 export function region<S extends Schema>(
   first: Table<S> | RegionOptions,
   second?: RegionDataOptions<S>,
-): RegionMark {
+): ChartMark<Frozen<RegionSpec>> {
   const table = second ? (first as Table<S>) : undefined;
   const options = (second ?? first) as RegionDataOptions<S>;
   const spec = {

@@ -9,15 +9,17 @@ import type { Frozen } from "../spec/spec.ts";
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { n } from "../draw/markup.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
-import type { PathShape, Rect, ShapesGeometry, TextShape } from "../scene/scene.ts";
+import type { PathShape, PlotRect, ShapesGeometry, TextShape } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
   buildSeries,
   CATEGORY,
+  type ChartMark,
   type Frame,
   frozen,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -62,7 +64,7 @@ export interface DrawContext {
   /** Band width in pixels on category axes; 0 on others. */
   bandwidth: { x: number; y: number };
   /** The area inside the axes; shapes are clipped to it. */
-  plot: Rect;
+  plot: PlotRect;
   theme: Theme;
   /** A path in SVG path syntax, such as "M0 0L10 10". */
   path(d: string, style?: ShapeStyle): void;
@@ -188,6 +190,7 @@ function fieldExtent(
 }
 
 export class CustomMark implements Mark<Frozen<CustomSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<CustomSpec>;
   readonly table: Table | undefined;
   readonly tooltip = "x";
@@ -368,15 +371,15 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
  * })
  * ```
  */
-export function custom(options: CustomOptions): CustomMark;
+export function custom(options: CustomOptions): ChartMark<Frozen<CustomSpec>>;
 export function custom<S extends Schema>(
   table: Table<S>,
   options: CustomDataOptions<S>,
-): CustomMark;
+): ChartMark<Frozen<CustomSpec>>;
 export function custom<S extends Schema>(
   first: Table<S> | CustomOptions,
   second?: CustomDataOptions<S>,
-): CustomMark {
+): ChartMark<Frozen<CustomSpec>> {
   const table = second ? (first as Table<S>) : undefined;
   const options = (second ?? first) as CustomDataOptions<S>;
   // Field names were checked against S above; marks work on the erased schema.

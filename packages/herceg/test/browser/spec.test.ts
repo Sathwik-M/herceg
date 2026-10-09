@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { chartFromSpec } from "../../src/from-spec.ts";
+import { modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -35,7 +36,11 @@ describe("chartFromSpec", () => {
       [new DataView(x.buffer), new Uint8Array(y.buffer), codes.buffer],
     );
     expect(chart.root.getAttribute("aria-label")).toBe("From a spec");
-    expect(chart.model.series().map((s) => s.label)).toEqual(["web"]);
+    expect(
+      modelOf(chart)
+        .series()
+        .map((s) => s.label),
+    ).toEqual(["web"]);
     expect(chart.root.querySelectorAll("svg g[clip-path] path")).toHaveLength(1);
     chart.destroy();
   });

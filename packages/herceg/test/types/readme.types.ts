@@ -266,3 +266,22 @@ chart.select([0, 1]);
 const selected: Selection | null = chart.selection;
 const brushed: readonly [number, number] | null | undefined = selected?.x;
 chart.on("select", ({ x, y, lasso }) => [x, y, lasso, brushed]);
+
+// Panels and pixels
+declare const event: PointerEvent;
+const box = chart.root.getBoundingClientRect();
+const [px, py] = [event.clientX - box.left, event.clientY - box.top];
+const at = { panel: "North", axis: "x" } as const;
+const where: number | undefined = chart.toPixel(Date.UTC(2026, 0, 5), at);
+const value = chart.fromPixel(px, at);
+const label: string | undefined = value === undefined ? "" : chart.formatValue(value, at);
+const found = chart.inspect(px, py);
+chart.on("render", () => chart.getPanels().map(({ plot, x }) => [plot.width, x?.domain]));
+[where, label, found?.points];
+
+// Hiding series
+const [first] = chart.getLegend();
+chart.setVisibility(first!.key, false);
+const hidden: readonly string[] = chart.getHiddenKeys();
+chart.setHiddenKeys(hidden);
+chart.on("visibility", ({ hiddenKeys }) => hiddenKeys.length);

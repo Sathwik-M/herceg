@@ -1041,7 +1041,9 @@ the `y` fields (both ends of horizontal spans, `x: ["start", "end"]`). Such
 marks have no series, and in charts with facets need `facet: "repeat"`.
 Custom marks are JavaScript only (a chart spec cannot hold a function), are
 found by their points rather than their shapes, and are meant for shapes in
-the thousands, not millions.
+the thousands, not millions. They are how applications add marks: what the
+built-in marks implement (how they resolve series, pick points, and lay out)
+is internal, and charts take only marks the mark functions make.
 
 ## Chart options
 
@@ -1065,14 +1067,17 @@ the thousands, not millions.
 | `projection` | How maps are projected: a projection's name or `{ type, centralMeridian?, parallels?, fit? }` (see Maps). |
 | `z`, `camera`, `boxAspect` | 3D charts' vertical axis (options as for `x` and `y`), where they are seen from at first (`{ azimuth?, elevation?, zoom?, perspective? }`), and their box's side lengths (see 3D charts). |
 
-The returned `Chart` has `update(options)`, `setViewport(view | [from, to] |
-null, { panel? })` and `getViewport({ panel? })`, `select(selection | [from,
-to] | null, { panel? })` (a pair is shorthand for an x range), `selection` and
-`selectionPanels` (see Small multiples for `panel`), `camera` and
-`setCamera(camera | null)` (3D charts), `on(event, listener)`, `render()`,
-`toSVG()`, `destroy()`, and `loading` (a promise while the GPU painter for
-large point series, the animation code, or a 3D chart's buttons load,
-otherwise undefined).
+The returned `Chart` has `root` (its element), `update(options)`,
+`setViewport(view | [from, to] | null, { panel? })` and `getViewport({ panel?
+})`, `select(selection | [from, to] | null, { panel? })` (a pair is shorthand
+for an x range), `selection` and `selectionPanels` (see Small multiples for
+`panel`), `camera` and `setCamera(camera | null)` (3D charts), `getPanels()`,
+`toPixel`, `fromPixel`, `formatValue`, and `inspect` (see Panels and pixels),
+`getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
+`setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
+`render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
+painter for large point series, the animation code, or a 3D chart's buttons
+load, otherwise undefined).
 
 A `Viewport` is `{ x, y, yRight }`: the visible x range and the left and right
 y axes' ranges, in data values (epoch ms on time axes), each null when that
@@ -1164,6 +1169,8 @@ chart.on("click", ({ inspection }) => {
   if (point?.markId === "orders" && point.row !== undefined) openOrder(orders.value("id", point.row));
 });
 chart.on("camera", ({ camera }) => saveView(camera)); // a 3D chart turned
+chart.on("visibility", ({ hiddenKeys }) => saveHidden(hiddenKeys)); // legend, setVisibility
+chart.on("render", () => placeOverlay(chart.getPanels())); // a frame of the data was drawn
 ```
 
 Events report changes only: a re-inspected point or an unchanged view does
@@ -1196,6 +1203,77 @@ horizontal bars), with brushes along that axis or rectangle and lasso
 brushes, which only the pointer draws; Enter zooms to the range when zoom is
 on along it, and Escape clears it. Selections made with the keyboard or the
 pointer are announced.
+
+## Panels and pixels
+
+`getPanels()` describes the panels of the last frame drawn, in reading order:
+each one's `key` and `label`, its `plot` (the area inside the axes), and its
+`x`, `y`, and, with marks on the right axis, `yRight` axes. An axis has its
+`type`, its `domain` (the values shown) and `range` (where they lie), and on
+category axes its `categories` and `bandwidth`; panels whose axis has the same
+`group` share its scale, and `canSetViewport` says whether `setViewport`
+zooms it (not category axes, nor y axes of panels with y scales of their
+own). A chart of a layout mark (a pie, a map, a 3D chart) has one panel,
+without axes. Pixels are CSS pixels from the top left corner of
+`chart.root`, whatever the device pixel ratio.
+
+```ts
+const box = chart.root.getBoundingClientRect();
+const [x, y] = [event.clientX - box.left, event.clientY - box.top]; // the chart's pixels
+const at = { panel: "North", axis: "x" } as const; // a panel only with several panels
+const px = chart.toPixel(Date.UTC(2026, 0, 5), at); // where a time is, or undefined
+const time = chart.fromPixel(x, at); // the value at a pixel
+const label = time === undefined ? "" : chart.formatValue(time, at); // as tooltips write it
+const found = chart.inspect(x, y); // what the tooltip would show there
+```
+
+Values are numbers, epoch milliseconds on time axes, and fractional band
+indices on category axes: `fromPixel` does not round them, and
+`formatValue` gives the category at the index. Values past the domain map
+past the plot, unclamped. `toPixel` gives undefined for what the axis cannot
+show (values that are not finite, values that are not positive on log axes,
+and times a break leaves out), and `fromPixel` at a break's seam gives the
+first time shown after it. Every method gives undefined for an axis the
+panel does not have, and throws for a panel the chart does not have; charts
+of several panels need `panel`, even where they share a scale, since each
+panel maps it to pixels of its own. `inspect` finds what the pointer would
+there, in the panel under the pixel or in `panel` (with `mode` to find it
+another way than the tooltip does), without moving the cursor, showing a
+tooltip, or emitting an event.
+
+Panels, pixels, legend entries, and inspections describe the last frame
+drawn, as what is on screen does: a change (an update, new data, a resize)
+shows in them once the chart draws it, on the next animation frame, or at
+once with `chart.render()`. They never draw a frame themselves, so reading
+them in a pointer handler costs no drawing. Inspections find points among
+the series the last frame drew but read their values from the tables, so
+after changing a table in place (`set`, `replace`, `dropFirst`), call
+`render()` before inspecting to find values where they are drawn. A `render` event follows each
+frame that draws the data (a cursor moving alone draws none), for overlays
+that follow the chart's panels; `createChart` draws the first frame before it
+returns, so read the panels once then. `loading` is about code the chart loads,
+not about frames still to draw.
+
+### Hiding series
+
+The legend's entries hide and show what they name, which the chart's
+methods do as well, with or without the built-in legend:
+
+```ts
+const [first] = chart.getLegend(); // { key, label, color } for each series, or each pie slice
+chart.setVisibility(first!.key, false); // or a list of keys
+const hidden = chart.getHiddenKeys(); // keep them, and restore them with setHiddenKeys
+chart.setHiddenKeys([]); // show everything
+```
+
+Keys are opaque and are the keys inspections name points by. Hidden series
+are not drawn, inspected, or visited by the keyboard, and value axes fitted
+to the data leave them out; each change reports one `visibility` event, the
+legend's buttons and these methods alike. Keys of series not drawn now (a stream
+moved past them) stay hidden for when they return. A mark's keys go with its
+identity, its `id` or else its index in `marks`: an update without the mark
+drops them, and a mark that takes its index keeps them, so give marks ids
+when their order changes.
 
 ## Accessibility
 
@@ -1421,3 +1499,27 @@ widths. Rows taller together than 8 million pixels scroll scaled: the
 scrollbar covers them all, and a pixel scrolled moves more than one. Not yet
 available: resizing or reordering columns by dragging, pinned columns,
 grouping, custom cell content, editing, and copying.
+
+## Migrating from earlier versions
+
+Herceg is not yet at 1.0. Its chart handle now keeps the engine to itself:
+
+- `chart.model` is gone. `getPanels()` describes the panels and their axes
+  (`model.panels()`, `xScale()`, `yScale()`, and `yRightScale()`), `toPixel`,
+  `fromPixel`, and `formatValue` map and write values (a scale's `map` and
+  `invert`), and `inspect` finds data (`model.inspect`). Viewports are read
+  with `getViewport({ panel })` (`model.viewport`, `viewportOf`, and
+  `yViewport`) and set with `setViewport`; an axis' `group` and
+  `canSetViewport` say what `model.sharesX` and `sharesY` did. Series are
+  hidden with `setVisibility` and `setHiddenKeys` rather than by changing
+  `model.hidden`, which also redraws and reports the change.
+- `syncCursor`, `syncViewport`, `syncSelection`, `flush`, and `visible` are
+  gone: charts with the same `interaction.sync` reach each other through
+  their group, and frames are drawn by the shared frame loop or `render()`.
+- The mark functions return a `ChartMark`, which shows its `spec`; the
+  classes behind them (`LineMark`, `BarMark`, and the others) and what marks
+  implement (`Mark`, `LayoutMark`, `LayoutFrame`, `LayoutItem`,
+  `LayoutResult`, and `Plot3D`) are no longer exported, and charts take only
+  marks the mark functions make. Marks of your own are `custom` marks, whose
+  `plot` is a read-only `PlotRect`; `tablesOf` and `viewOf` give the tables
+  and row view a mark follows.

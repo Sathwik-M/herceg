@@ -28,6 +28,8 @@
     onhover,
     onclick,
     oncamera,
+    onvisibility,
+    onrender,
     ...options
   }: ChartProps = $props();
 
@@ -68,47 +70,18 @@
     return () => observer.disconnect();
   });
 
-  $effect(() => {
-    // Reading every option and mark here re-runs this effect when one changes.
+  /** What the props describe; reading every option and mark tracks each one. */
+  const described: View = $derived.by(() => {
     void moves;
     const view = plain(options) as Options;
     const next = [...marks, ...entries.toSorted(byPosition).map((entry) => entry.mark)];
-    untrack(() => show({ marks: next, options: view, key: canonical(view) }));
+    return { marks: next, options: view, key: canonical(view) };
   });
 
-  function show(view: View) {
-    const last = applied;
-    if (!current || !last) {
-      // Options given as undefined take their defaults, as if left out.
-      const given = Object.entries(view.options).filter(([, value]) => value !== undefined);
-      current = createChart(container, {
-        ...(Object.fromEntries(given) as Omit<ChartOptions, "marks">),
-        marks: view.marks,
-      });
-      chart = current;
-      applied = view;
-      return;
-    }
-    // Unchanged marks keep their identity, so their caches survive.
-    const next = view.marks.map((mark, i) => {
-      const previous = last.marks[i];
-      return previous && sameMark(mark, previous) ? previous : mark;
-    });
-    const sameMarks =
-      next.length === last.marks.length && next.every((mark, i) => mark === last.marks[i]);
-    if (sameMarks && view.key === last.key) return;
-    // Props are the whole configuration: options no longer passed go back
-    // to their defaults rather than keeping their previous values.
-    const cleared = Object.keys(last.options).filter((key) => !(key in view.options));
-    const reset = Object.fromEntries(cleared.map((key) => [key, undefined]));
-    applied = { ...view, marks: next };
-    current.update({ ...reset, ...view.options, marks: next });
-  }
-
-  $effect(() => () => {
-    current?.destroy();
-    current = null;
-    chart = null;
+  // The chart is created before its handlers subscribe, and updated after
+  // they do (below), so events an update emits reach a handler given with it.
+  $effect(() => {
+    untrack(() => create(described));
   });
 
   /**
@@ -129,6 +102,56 @@
   listen("hover", () => onhover);
   listen("click", () => onclick);
   listen("camera", () => oncamera);
+  listen("visibility", () => onvisibility);
+  listen("render", () => onrender);
+
+  $effect(() => {
+    const view = described;
+    untrack(() => show(view));
+  });
+
+  function create(view: View) {
+    // Options given as undefined take their defaults, as if left out.
+    const given = Object.entries(view.options).filter(([, value]) => value !== undefined);
+    current = createChart(container, {
+      ...(Object.fromEntries(given) as Omit<ChartOptions, "marks">),
+      marks: view.marks,
+    });
+    chart = current;
+    applied = view;
+  }
+
+  /** Brings the chart up to date with the props. */
+  function show(view: View) {
+    const last = applied;
+    if (!current || !last) return;
+    // Unchanged marks keep their identity, so their caches survive.
+    const next = view.marks.map((mark, i) => {
+      const previous = last.marks[i];
+      return previous && sameMark(mark, previous) ? previous : mark;
+    });
+    const sameMarks =
+      next.length === last.marks.length && next.every((mark, i) => mark === last.marks[i]);
+    if (sameMarks && view.key === last.key) return;
+    // Props are the whole configuration: options no longer passed go back
+    // to their defaults rather than keeping their previous values.
+    const cleared = Object.keys(last.options).filter((key) => !(key in view.options));
+    const reset = Object.fromEntries(cleared.map((key) => [key, undefined]));
+    applied = { ...view, marks: next };
+    current.update({ ...reset, ...view.options, marks: next });
+  }
+
+  // The first frame was drawn as the chart was created: `onrender` hears of
+  // it once the handlers have subscribed.
+  $effect(() => {
+    if (current) untrack(() => onrender?.({}));
+  });
+
+  $effect(() => () => {
+    current?.destroy();
+    current = null;
+    chart = null;
+  });
 
   const size = (value: number | undefined, fallback: string) =>
     value === undefined ? fallback : `${value}px`;

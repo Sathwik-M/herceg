@@ -19,7 +19,14 @@ import { surface, type Theme } from "../theme.ts";
 import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { type ColorRamp, frozen, type GlyphKey, requireField } from "./mark.ts";
+import {
+  type ChartMark,
+  type ColorRamp,
+  frozen,
+  type GlyphKey,
+  type MARK,
+  requireField,
+} from "./mark.ts";
 
 export interface GeoShapeOptions<S extends Schema> {
   /** The geometry field; the table's only one by default. */
@@ -68,6 +75,7 @@ interface Drawn {
 }
 
 export class GeoShapeMark implements GeoLayer {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly geo = true;
   readonly spec: Frozen<GeoShapeSpec>;
@@ -360,7 +368,7 @@ function plural(count: number, one: string, many: string): string {
 export function geoshape<S extends Schema>(
   table: Table<S>,
   options: GeoShapeOptions<S> = {},
-): GeoShapeMark {
+): ChartMark<Frozen<GeoShapeSpec>> {
   const spec: GeoShapeSpec = {
     type: "geoshape",
     ...definedFields(options, [

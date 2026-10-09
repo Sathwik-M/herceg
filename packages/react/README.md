@@ -34,9 +34,11 @@ they draw one item per row: `<Rule data={deploys} x="time" text="version" />`. M
 with herceg's functions can also be passed as a `marks` prop.
 
 The chart fills its container's width and is 320 px tall unless `width`,
-`height`, or `style` says otherwise. A `ref` gives the underlying chart for imperative
-calls (`setViewport`, `select`, `toSVG`). Chart events are props:
-`onViewportChange`, `onSelect`, `onHover`, `onClick`, and `onCameraChange`; the latest handler
+`height`, or `style` says otherwise. A `ref` gives the underlying chart, herceg's
+`Chart`, for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibility`,
+`toSVG`). Chart events are props: `onViewportChange`, `onSelect`, `onHover`, `onClick`,
+`onCameraChange`, `onVisibilityChange` (series hidden or shown), and `onRender` (a frame
+of the data drawn, for overlays, the first one once the ref is set); the latest handler
 is called, so inline functions do not resubscribe.
 
 ## Reusing groups of marks

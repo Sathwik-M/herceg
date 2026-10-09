@@ -4,7 +4,7 @@ import type { RuleGeometry } from "../scene/scene.ts";
 import type { Frozen, RulePosition, RuleSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
 import { definedFields } from "./line.ts";
-import type { AxisFormat, Frame, Mark, MarkKey } from "./mark.ts";
+import type { AxisFormat, ChartMark, Frame, MARK, Mark, MarkKey } from "./mark.ts";
 import { frozen } from "./mark.ts";
 
 interface RuleStyle {
@@ -44,6 +44,7 @@ export function ruleFormError(spec: { x?: unknown; y?: unknown }): string | unde
  * thresholds and events stay visible.
  */
 export class RuleMark implements Mark<Frozen<RuleSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<RuleSpec>;
   readonly tooltip = "x";
   readonly #data: AnnotationData;
@@ -129,12 +130,15 @@ export class RuleMark implements Mark<Frozen<RuleSpec>> {
  * rule(deploys, { x: "time", text: "version" })
  * ```
  */
-export function rule(options: RuleOptions): RuleMark;
-export function rule<S extends Schema>(table: Table<S>, options: RuleDataOptions<S>): RuleMark;
+export function rule(options: RuleOptions): ChartMark<Frozen<RuleSpec>>;
+export function rule<S extends Schema>(
+  table: Table<S>,
+  options: RuleDataOptions<S>,
+): ChartMark<Frozen<RuleSpec>>;
 export function rule<S extends Schema>(
   first: Table<S> | RuleOptions,
   second?: RuleDataOptions<S>,
-): RuleMark {
+): ChartMark<Frozen<RuleSpec>> {
   const table = second ? (first as Table<S>) : undefined;
   const options = (second ?? first) as RuleDataOptions<S>;
   const spec = {

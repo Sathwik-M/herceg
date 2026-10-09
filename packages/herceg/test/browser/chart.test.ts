@@ -23,7 +23,7 @@ import { sankey } from "../../src/marks/sankey.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import type { ArcGeometry, ShapesGeometry, TextShape } from "../../src/scene/scene.ts";
 import { resolveTheme } from "../../src/theme.ts";
-import { bandBox } from "./helpers.ts";
+import { bandBox, modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -100,11 +100,11 @@ describe("mounting", () => {
     const t = table({ x: [1, 2, 3, 4], y: [4, 3, 2, 1] });
     const view = rowView(t, { filter: col("y").gt(1) });
     const chart = createChart(host, { renderer: "svg", marks: [point(view, { x: "x", y: "y" })] });
-    const before = chart.model.series()[0]!.length;
+    const before = modelOf(chart).series()[0]!.length;
     expect(before).toBe(3);
     view.setQuery({ filter: col("y").gt(3) });
     await frame();
-    expect(chart.model.series()[0]!.length).toBe(1);
+    expect(modelOf(chart).series()[0]!.length).toBe(1);
     chart.destroy();
   });
 
@@ -276,11 +276,11 @@ describe("interaction", () => {
         cancelable: true,
       }),
     );
-    expect(chart.model.viewport).not.toBeNull();
-    const [lo, hi] = chart.model.viewport!;
+    expect(chart.getViewport().x).not.toBeNull();
+    const [lo, hi] = chart.getViewport().x!;
     expect(hi - lo).toBeLessThan(99_000);
     chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    expect(chart.model.viewport).toBeNull();
+    expect(chart.getViewport().x).toBeNull();
     chart.destroy();
   });
 
@@ -301,7 +301,7 @@ describe("interaction", () => {
     await frame();
     expect(b.root.querySelector("svg line")!.getAttribute("visibility")).toBe("visible");
     a.setViewport([10_000, 20_000]);
-    expect(b.model.viewport).toEqual([10_000, 20_000]);
+    expect(b.getViewport().x).toEqual([10_000, 20_000]);
     a.destroy();
     b.destroy();
     other.remove();
@@ -322,8 +322,8 @@ describe("events and brushing", () => {
     );
   }
   function drag(chart: Chart, from: number, to: number, shiftKey = false) {
-    const x = chart.model.xScale()!;
-    const y = chart.model.yScale()!;
+    const x = modelOf(chart).xScale()!;
+    const y = modelOf(chart).yScale()!;
     const py = (y.range[0] + y.range[1]) / 2;
     press(chart.root, "pointerdown", x.map(from), py, shiftKey);
     press(chart.root, "pointermove", x.map((from + to) / 2), py, shiftKey);
@@ -347,8 +347,8 @@ describe("events and brushing", () => {
     expect(selections).toEqual([chart.selection!.x]);
     expect(band(chart)!.getAttribute("visibility")).toBe("visible");
     // A brush selects; it does not zoom.
-    expect(chart.model.viewport).toBeNull();
-    const x = chart.model.xScale()!;
+    expect(chart.getViewport().x).toBeNull();
+    const x = modelOf(chart).xScale()!;
     press(chart.root, "pointerdown", x.map(80_000), 150);
     press(chart.root, "pointerup", x.map(80_000), 150);
     await frame();
@@ -366,14 +366,14 @@ describe("events and brushing", () => {
     const viewports: (readonly [number, number] | null)[] = [];
     chart.on("viewport", ({ x }) => viewports.push(x));
     drag(chart, 20_000, 60_000);
-    const [lo, hi] = chart.model.viewport!;
+    const [lo, hi] = chart.getViewport().x!;
     expect(lo).toBeCloseTo(20_000, -3);
     expect(hi).toBeCloseTo(60_000, -3);
     expect(chart.selection).toBeNull();
     expect(viewports).toHaveLength(1);
     chart.render();
     drag(chart, 30_000, 40_000, true);
-    const [panLo, panHi] = chart.model.viewport!;
+    const [panLo, panHi] = chart.getViewport().x!;
     expect(panHi - panLo).toBeCloseTo(hi - lo, 0);
     expect(panLo).toBeLessThan(lo);
     chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
@@ -397,7 +397,7 @@ describe("events and brushing", () => {
     const live = chart.root.querySelector("[aria-live]")!;
     expect(live.textContent).toContain("Selected 0 to 2. Press Enter to zoom to it.");
     key("Enter");
-    expect(chart.model.viewport).toEqual([0, 2]);
+    expect(chart.getViewport().x).toEqual([0, 2]);
     expect(chart.selection).toBeNull();
     key("ArrowLeft", true);
     key("Escape");
@@ -412,7 +412,7 @@ describe("events and brushing", () => {
     chart.on("hover", ({ inspection }) => hovers.push(inspection?.value));
     const clicks: (number | undefined)[] = [];
     chart.on("click", ({ inspection }) => clicks.push(inspection?.value));
-    const x = chart.model.xScale()!;
+    const x = modelOf(chart).xScale()!;
     press(chart.root, "pointermove", x.map(1), 150);
     await frame();
     press(chart.root, "pointermove", x.map(1) + 1, 150);
@@ -441,7 +441,7 @@ describe("events and brushing", () => {
     });
     const hovers: (number | undefined)[] = [];
     chart.on("hover", ({ inspection }) => hovers.push(inspection?.points[0]?.row));
-    const [x, y] = [chart.model.xScale()!, chart.model.yScale()!];
+    const [x, y] = [modelOf(chart).xScale()!, modelOf(chart).yScale()!];
     press(chart.root, "pointermove", x.map(1), y.map(5));
     await frame();
     press(chart.root, "pointerdown", x.map(1), y.map(5));
@@ -470,7 +470,7 @@ describe("events and brushing", () => {
       x: { domain: [0, 3] },
     });
     expect(chart.root.style.touchAction).toBe("pan-y");
-    const x = chart.model.xScale()!;
+    const x = modelOf(chart).xScale()!;
     press(chart.root, "pointerdown", x.map(1), 150);
     press(chart.root, "pointermove", x.map(2), 150);
     press(chart.root, "pointermove", x.range[1] + 200, 150);
@@ -490,13 +490,13 @@ describe("events and brushing", () => {
       interaction: { brush: "x", zoom: true },
       marks: [bar(sales, { x: "region", y: "v" })],
     });
-    const x = chart.model.xScale()!;
+    const x = modelOf(chart).xScale()!;
     // From inside the first category to inside the third.
     press(chart.root, "pointerdown", x.map(0) + 5, 150);
     press(chart.root, "pointermove", x.map(1), 150);
     press(chart.root, "pointerup", x.map(2) - 5, 150);
     expect(chart.selection?.x).toEqual([0, 2]);
-    expect(chart.model.viewport).toBeNull();
+    expect(chart.getViewport().x).toBeNull();
     chart.select([1, 1]);
     await frame();
     const rect = band(chart)!;
@@ -536,7 +536,7 @@ describe("events and brushing", () => {
     const button = chart.root.querySelector("button")!;
     button.focus();
     button.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(chart.model.viewport).toBeNull();
+    expect(chart.getViewport().x).toBeNull();
     expect(chart.selection?.x).toEqual([1000, 5000]);
     chart.destroy();
   });
@@ -549,7 +549,7 @@ describe("events and brushing", () => {
     });
     const texts: (string | undefined)[] = [];
     chart.on("hover", ({ inspection }) => texts.push(inspection?.points[0]?.text));
-    press(chart.root, "pointermove", chart.model.xScale()!.map(1), 150);
+    press(chart.root, "pointermove", chart.toPixel(1, { axis: "x" })!, 150);
     await frame();
     band.set("lo", 1, 7);
     await frame();
@@ -570,8 +570,8 @@ describe("events and brushing", () => {
       if (x && x[1] - x[0] > 1000) a.setViewport([x[0], x[0] + 1000]);
     });
     a.setViewport([0, 2000]);
-    expect(a.model.viewport).toEqual([0, 1000]);
-    expect(b.model.viewport).toEqual([0, 1000]);
+    expect(a.getViewport().x).toEqual([0, 1000]);
+    expect(b.getViewport().x).toEqual([0, 1000]);
     a.destroy();
     b.destroy();
     other.remove();
@@ -593,7 +593,7 @@ describe("events and brushing", () => {
       if (x && x[1] - x[0] > 1000) b.setViewport([x[0], x[0] + 1000]);
     });
     a.setViewport([0, 2000]);
-    for (const chart of [a, b, c]) expect(chart.model.viewport).toEqual([0, 1000]);
+    for (const chart of [a, b, c]) expect(chart.getViewport().x).toEqual([0, 1000]);
     for (const chart of [a, b, c]) chart.destroy();
     for (const element of hosts.slice(1)) element.remove();
   });
@@ -625,7 +625,7 @@ describe("events and brushing", () => {
       marks: [line(table({ t: [0, 1, 2, 3], v: [1, 2, 3, 4] }), { x: "t", y: "v" })],
     });
     chart.select([1, 2]);
-    const x = chart.model.xScale()!;
+    const x = modelOf(chart).xScale()!;
     press(chart.root, "pointerdown", x.map(0.5), 150);
     press(chart.root, "pointermove", x.map(0.5) + 40, 150);
     await frame();
@@ -688,19 +688,19 @@ describe("themes that follow the page", () => {
       marks: [bar(table({ k: ["a", "b"], v: [1, 2] }), { x: "k", y: "v" })],
     });
     try {
-      expect(chart.model.theme.text).toBe("#223344");
+      expect(modelOf(chart).theme.text).toBe("#223344");
       // Colors in any syntax arrive as sRGB hex, which ramps and contrast checks read.
-      expect(chart.model.theme.palette[0]).toMatch(/^#[0-9a-f]{6}$/);
-      expect(chart.model.theme.palette[1]).toMatch(/^#[0-9a-f]{6}$/);
+      expect(modelOf(chart).theme.palette[0]).toMatch(/^#[0-9a-f]{6}$/);
+      expect(modelOf(chart).theme.palette[1]).toMatch(/^#[0-9a-f]{6}$/);
       expect(host.querySelector("span")).toBeNull();
       document.documentElement.classList.add("night");
       // The chart reads the page again on its next frame.
       await frame();
       await frame();
-      expect(chart.model.theme.text).toBe("#e6e6e6");
-      expect(chart.model.theme.palette[0]).toBe("#ff8800");
+      expect(modelOf(chart).theme.text).toBe("#e6e6e6");
+      expect(modelOf(chart).theme.palette[0]).toBe("#ff8800");
       // Light text on a light theme gets a dark tooltip.
-      expect(chart.model.theme.tooltipBackground).toBe(resolveTheme("dark").tooltipBackground);
+      expect(modelOf(chart).theme.tooltipBackground).toBe(resolveTheme("dark").tooltipBackground);
       expect(markPaths(chart)[0]!.getAttribute("fill")).toBe("#ff8800");
     } finally {
       chart.destroy();
@@ -717,10 +717,10 @@ describe("themes that follow the page", () => {
       theme: "auto",
       marks: [line(series(10), { x: "t", y: "s0" })],
     });
-    expect(chart.model.theme.text).toBe(dark);
+    expect(modelOf(chart).theme.text).toBe(dark);
     host.style.background = "#fafafa";
     chart.update({});
-    expect(chart.model.theme.text).toBe(light);
+    expect(modelOf(chart).theme.text).toBe(light);
     chart.destroy();
   });
 
@@ -730,7 +730,7 @@ describe("themes that follow the page", () => {
     const marks = [line(series(10), { x: "t", y: "s0" })];
     const textOn = (container: HTMLElement) => {
       const chart = createChart(container, { theme: "auto", marks });
-      const text = chart.model.theme.text;
+      const text = modelOf(chart).theme.text;
       chart.destroy();
       return text;
     };
@@ -772,11 +772,11 @@ describe("themes that follow the page", () => {
         theme: { text: "currentColor" },
         marks: [line(series(10), { x: "t", y: "s0" })],
       });
-      expect(chart.model.theme.text).toBe("#0a141e");
+      expect(modelOf(chart).theme.text).toBe("#0a141e");
       document.body.style.color = "rgb(200, 210, 220)";
       await frame();
       await frame();
-      expect(chart.model.theme.text).toBe("#c8d2dc");
+      expect(modelOf(chart).theme.text).toBe("#c8d2dc");
       chart.destroy();
     } finally {
       document.body.style.color = "";
@@ -801,11 +801,11 @@ describe("themes that follow the page", () => {
         theme: "auto",
         marks: [line(series(10), { x: "t", y: "s0" })],
       });
-      expect(chart.model.theme.text).toBe(resolveTheme("dark").text);
+      expect(modelOf(chart).theme.text).toBe(resolveTheme("dark").text);
       prefersDark = false;
       for (const listener of listeners) listener();
       chart.render();
-      expect(chart.model.theme.text).toBe(resolveTheme("light").text);
+      expect(modelOf(chart).theme.text).toBe(resolveTheme("light").text);
       // A theme that stops following the page stops listening.
       chart.update({ theme: "dark" });
       expect(listeners.size).toBe(0);
@@ -1028,7 +1028,7 @@ describe("gauges and funnels", () => {
     const pixel = (x: number, y: number) =>
       Array.from(context.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data);
     // The scene again, for positions: arcs do not depend on how text measures.
-    const marks = chart.model.scene(estimateText).panels[0]!.marks;
+    const marks = modelOf(chart).scene(estimateText).panels[0]!.marks;
     const arcs = (key: string) => (marks.find((m) => m.key === key) as ArcGeometry).arcs;
     const [cx, cy, r0, r, start, end] = arcs("gauge-dial").subarray(6, 12) as unknown as number[];
     const at = (angle: number, radius: number) =>
@@ -1109,7 +1109,7 @@ describe("sankey diagrams", () => {
       [0, "Electricity"],
       [0, "Coal", "Electricity"],
     ]) {
-      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      const { px, py } = modelOf(chart).inspectItem(JSON.stringify(key))!.points[0]!;
       chart.root.dispatchEvent(
         new PointerEvent("pointermove", {
           bubbles: true,
@@ -1129,7 +1129,7 @@ describe("sankey diagrams", () => {
     expect(tooltip.textContent).toBe("twhCoal → Electricity80");
     const clicks: (string | undefined)[] = [];
     chart.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.label));
-    const { px, py } = chart.model.inspectItem(JSON.stringify([0, "Gas"]))!.points[0]!;
+    const { px, py } = modelOf(chart).inspectItem(JSON.stringify([0, "Gas"]))!.points[0]!;
     for (const type of ["pointerdown", "pointerup"]) {
       chart.root.dispatchEvent(
         new PointerEvent(type, {
@@ -1197,7 +1197,7 @@ describe("networks", () => {
       [0, "Cy"],
       [0, "Cy", "Dee"],
     ]) {
-      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      const { px, py } = modelOf(chart).inspectItem(JSON.stringify(key))!.points[0]!;
       move(chart, px, py);
       await frame();
       expect(outline.getAttribute("visibility")).toBe("visible");
@@ -1211,7 +1211,7 @@ describe("networks", () => {
     expect(tooltip.textContent).toBe("nCy — Dee5");
     const clicks: (string | undefined)[] = [];
     chart.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.label));
-    const { px, py } = chart.model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
+    const { px, py } = modelOf(chart).inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
     move(chart, px, py, "pointerdown");
     move(chart, px, py, "pointerup");
     expect(clicks).toEqual(["Ana"]);
@@ -1235,7 +1235,7 @@ describe("networks", () => {
       "Network of 4 nodes and 4 links in 2 groups; most connected: Cy (3 links). Strongest link: Cy — Dee, n 5.",
     );
     // Hiding Sales leaves Dee and its link out, and the others where they were.
-    const before = chart.model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
+    const before = modelOf(chart).inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
     const [data, sales] = chart.root.querySelectorAll("button");
     expect(data!.textContent).toBe("Data");
     sales!.click();
@@ -1243,8 +1243,8 @@ describe("networks", () => {
     expect(sales!.getAttribute("aria-pressed")).toBe("false");
     key("End");
     expect(live.textContent).toBe("n. Bo — Cy: 2");
-    expect(chart.model.inspectItem(JSON.stringify([0, "Dee"]))).toBeUndefined();
-    const after = chart.model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
+    expect(modelOf(chart).inspectItem(JSON.stringify([0, "Dee"]))).toBeUndefined();
+    const after = modelOf(chart).inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
     expect([after.px, after.py]).toEqual([before.px, before.py]);
     chart.destroy();
   });
@@ -1262,7 +1262,7 @@ describe("networks", () => {
     ]);
     links.append({ from: ["Eve"], to: ["Ana"], n: [1] });
     await frame();
-    expect(chart.model.inspectItem(JSON.stringify([0, "Eve", "Ana"]))).toBeDefined();
+    expect(modelOf(chart).inspectItem(JSON.stringify([0, "Eve", "Ana"]))).toBeDefined();
     chart.destroy();
   });
 });
@@ -1315,7 +1315,7 @@ describe("maps", () => {
       [0, 0],
       [1, 0],
     ]) {
-      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      const { px, py } = modelOf(chart).inspectItem(JSON.stringify(key))!.points[0]!;
       move(chart, px, py);
       await frame();
       expect(outline.getAttribute("visibility")).toBe("visible");
@@ -1343,12 +1343,12 @@ describe("maps", () => {
       "Map of 3 regions colored by party: Red 2, Blue 1. 1 point on the map sized by people; largest Port (40).",
     );
     // Hiding Red grays its regions out; they stay on the map and in reading order.
-    const before = chart.model.inspectItem(JSON.stringify([0, 2]))!.points[0]!;
+    const before = modelOf(chart).inspectItem(JSON.stringify([0, 2]))!.points[0]!;
     const [red] = chart.root.querySelectorAll("button");
     expect(red!.textContent).toBe("Red");
     red!.click();
     chart.render();
-    const after = chart.model.inspectItem(JSON.stringify([0, 2]))!.points[0]!;
+    const after = modelOf(chart).inspectItem(JSON.stringify([0, 2]))!.points[0]!;
     expect([after.px, after.py]).toEqual([before.px, before.py]);
     expect(after.color).not.toBe(before.color);
     chart.destroy();
@@ -1368,7 +1368,7 @@ describe("maps", () => {
           .data,
       );
     // Ada's exterior, the first ring of its outline: its middle is the lake's.
-    const outline = chart.model.inspectItem(JSON.stringify([0, 0]))!;
+    const outline = modelOf(chart).inspectItem(JSON.stringify([0, 0]))!;
     const exterior = (outline as { outline: string }).outline.split("Z")[0]!;
     const values = exterior.match(/-?[\d.]+/g)!.map(Number);
     const xs = values.filter((_, i) => i % 2 === 0);
@@ -1382,11 +1382,11 @@ describe("maps", () => {
   it("redraw when values change, keeping the regions in place", async () => {
     const shapes = regions();
     const chart = createChart(host, { locale: "en-US", marks: map(shapes) });
-    const before = chart.model.inspectItem(JSON.stringify([0, 1]))!;
+    const before = modelOf(chart).inspectItem(JSON.stringify([0, 1]))!;
     expect(before.points[0]!.text).toBe("Blue");
     shapes.setColumn("party", ["Red", "Red", "Red"]);
     await frame();
-    const after = chart.model.inspectItem(JSON.stringify([0, 1]))!;
+    const after = modelOf(chart).inspectItem(JSON.stringify([0, 1]))!;
     expect(after.points[0]!.text).toBe("Red");
     expect([after.points[0]!.px, after.points[0]!.py]).toEqual([
       before.points[0]!.px,
@@ -1428,7 +1428,7 @@ describe("zooming and brushing in two dimensions", () => {
     );
   };
   const center = (chart: Chart) => {
-    const { plot } = chart.model.panels()[0]!;
+    const { plot } = modelOf(chart).panels()[0]!;
     return [plot.x + plot.width / 2, plot.y + plot.height / 2] as const;
   };
 
@@ -1440,14 +1440,14 @@ describe("zooming and brushing in two dimensions", () => {
     const viewports: (readonly [number, number] | null)[] = [];
     chart.on("viewport", ({ y }) => viewports.push(y));
     at(chart, "wheel", ...center(chart));
-    expect(chart.model.viewport).toBeNull();
+    expect(chart.getViewport().x).toBeNull();
     const [lo, hi] = chart.getViewport().y!;
     expect(hi - lo).toBeLessThan(45);
     expect(viewports).toEqual([chart.getViewport().y]);
     chart.update({ interaction: { zoom: "xy" } });
     chart.render();
     at(chart, "wheel", ...center(chart));
-    expect(chart.model.viewport).not.toBeNull();
+    expect(chart.getViewport().x).not.toBeNull();
     // Double click resets both, also after y stopped zooming.
     chart.update({ interaction: { zoom: "x" } });
     chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
@@ -1462,7 +1462,7 @@ describe("zooming and brushing in two dimensions", () => {
     });
     chart.setViewport({ y: [10, 40] });
     chart.render();
-    const { x, y } = chart.model.panels()[0]!;
+    const { x, y } = modelOf(chart).panels()[0]!;
     const flat = () => {
       at(chart, "pointerdown", x.map(10), y.map(20));
       at(chart, "pointermove", x.map(20), y.map(20) + 1);
@@ -1470,7 +1470,7 @@ describe("zooming and brushing in two dimensions", () => {
     };
     // A flat rectangle does not zoom, so y keeps its zoom.
     flat();
-    expect(chart.model.viewport).toBeNull();
+    expect(chart.getViewport().x).toBeNull();
     expect(chart.getViewport().y).toEqual([10, 40]);
     // Without zoom, it selects nothing; nor does a flat lasso.
     for (const brush of ["xy", "lasso"] as const) {
@@ -1497,7 +1497,7 @@ describe("zooming and brushing in two dimensions", () => {
       ],
     });
     chart.render();
-    const { plot, x, y } = chart.model.panels()[0]!;
+    const { plot, x, y } = modelOf(chart).panels()[0]!;
     const outline = chart.root.querySelector('svg path[fill-opacity="0.18"]')!;
     expect(x.map(-20)).toBeLessThan(plot.x);
     expect(outline.getAttribute("d")).toMatch(
@@ -1523,13 +1523,13 @@ describe("zooming and brushing in two dimensions", () => {
       yRight: { domain: [100, 0] },
       marks: [line(data, { x: "t", y: "a" }), line(data, { x: "t", y: "b", axis: "right" })],
     });
-    const before = chart.model.panels()[0]!;
+    const before = modelOf(chart).panels()[0]!;
     // Pointer events carry whole pixels.
     const [px, py] = center(chart).map(Math.round) as [number, number];
     const under = [before.x.invert(px), before.y.invert(py), before.yRight!.invert(py)];
     at(chart, "wheel", px, py);
     chart.render();
-    const after = chart.model.panels()[0]!;
+    const after = modelOf(chart).panels()[0]!;
     // The values under the pointer stay there, on every axis.
     expect(after.x.map(under[0]!)).toBeCloseTo(px, 6);
     expect(after.y.map(under[1]!)).toBeCloseTo(py, 6);
@@ -1570,14 +1570,14 @@ describe("zooming and brushing in two dimensions", () => {
     expect(b.getViewport()).toEqual({ x: null, y: null, yRight: null });
     a.select([10, 30]);
     enter();
-    expect(b.model.viewport).toEqual([10, 30]);
+    expect(b.getViewport().x).toEqual([10, 30]);
     // A chart that only zooms zooms to a rectangle it received, and Escape
     // clears one it did not zoom to.
     b.update({ interaction: { zoom: "xy", sync: "enter" } });
     b.setViewport(null);
     a.select({ x: [10, 30], y: [10, 30], lasso: null });
     enter();
-    expect(b.model.viewport).toEqual([10, 30]);
+    expect(b.getViewport().x).toEqual([10, 30]);
     const [y0, y1] = b.getViewport().y!;
     expect([y0, y1].map((y) => y.toFixed(6))).toEqual(["10.000000", "30.000000"]);
     a.select({ x: [10, 20], y: [10, 20], lasso: null });
@@ -1618,7 +1618,7 @@ describe("zooming and brushing in two dimensions", () => {
       interaction: { brush: "xy" },
       marks: [point(points(), { x: "x", y: "y" })],
     });
-    const { x, y } = chart.model.panels()[0]!;
+    const { x, y } = modelOf(chart).panels()[0]!;
     const live = chart.root.querySelector("[aria-live]")!;
     at(chart, "pointerdown", x.map(10), y.map(40));
     at(chart, "pointermove", x.map(20), y.map(30));
@@ -1638,7 +1638,7 @@ describe("zooming and brushing in two dimensions", () => {
       interaction: { brush: "xy" },
       marks: [point(points(), { x: "x", y: "y" })],
     });
-    const { plot, x, y } = chart.model.panels()[0]!;
+    const { plot, x, y } = modelOf(chart).panels()[0]!;
     at(chart, "pointerdown", x.map(10), y.map(40));
     at(chart, "pointermove", x.map(20), y.map(30));
     at(chart, "pointerup", x.map(30), y.map(20));
@@ -1673,7 +1673,7 @@ describe("zooming and brushing in two dimensions", () => {
     at(chart, "pointermove", x.map(20), y.map(30));
     at(chart, "pointerup", x.map(30), y.map(20));
     expect(chart.selection).toBeNull();
-    expect(chart.model.viewport![0]).toBeCloseTo(10, 6);
+    expect(chart.getViewport().x![0]).toBeCloseTo(10, 6);
     expect(chart.getViewport().y![1]).toBeCloseTo(40, 6);
     expect(plot.width).toBeGreaterThan(0);
     chart.destroy();
@@ -1721,8 +1721,8 @@ describe("zooming and brushing in two dimensions", () => {
     chart.setViewport({ y: null, yRight: [1000, 2000] });
     expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: [1000, 2000] });
     chart.render();
-    expect(chart.model.yScale()!.domain).toEqual([0, 30]);
-    expect(chart.model.yRightScale()!.domain).toEqual([1000, 2000]);
+    expect(modelOf(chart).yScale()!.domain).toEqual([0, 30]);
+    expect(modelOf(chart).yRightScale()!.domain).toEqual([1000, 2000]);
     chart.setViewport({ y: [10, 20] });
     expect(chart.getViewport()).toEqual({ x: null, y: [10, 20], yRight: [1000, 2000] });
     expect(viewports).toHaveLength(3);
@@ -1800,7 +1800,7 @@ describe("radars", () => {
     shown.on("hover", ({ inspection }) => hovers.push(inspection?.points[0]?.text));
     shown.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.label));
     // Ana's speed, the first value.
-    const first = shown.model.inspectItem(shown.model.stepItem(undefined, 1)!)!.points[0]!;
+    const first = modelOf(shown).inspectItem(modelOf(shown).stepItem(undefined, 1)!)!.points[0]!;
     const rect = shown.root.getBoundingClientRect();
     const at = (type: string, px: number, py: number) =>
       shown.root.dispatchEvent(
@@ -1830,7 +1830,8 @@ describe("radars", () => {
     });
     const canvas = painted.root.querySelector("canvas")!;
     const ratio = canvas.width / painted.root.clientWidth;
-    const { px, py } = painted.model.inspectItem(painted.model.stepItem(undefined, 1)!)!.points[0]!;
+    const { px, py } = modelOf(painted).inspectItem(modelOf(painted).stepItem(undefined, 1)!)!
+      .points[0]!;
     const pixel = canvas
       .getContext("2d")!
       .getImageData(Math.round(px * ratio), Math.round(py * ratio), 1, 1).data;

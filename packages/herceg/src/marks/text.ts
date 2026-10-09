@@ -6,7 +6,16 @@ import type { SegmentGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, TextSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
 import { definedFields } from "./line.ts";
-import { type AxisFormat, type Frame, frozen, type Mark, type MarkKey, seriesKey } from "./mark.ts";
+import {
+  type AxisFormat,
+  type ChartMark,
+  type Frame,
+  frozen,
+  type MARK,
+  type Mark,
+  type MarkKey,
+  seriesKey,
+} from "./mark.ts";
 
 interface TextStyle {
   /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
@@ -78,6 +87,7 @@ export type TextDataOptions<S extends Schema> = TextStyle & {
  * for labeling every point of a large series.
  */
 export class TextMark implements Mark<Frozen<TextSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<TextSpec>;
   readonly tooltip = "x";
   readonly #data: AnnotationData;
@@ -288,12 +298,15 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
  * text(peaks, { x: "time", y: "value", text: "value", dy: -10 })
  * ```
  */
-export function text(options: TextOptions): TextMark;
-export function text<S extends Schema>(table: Table<S>, options: TextDataOptions<S>): TextMark;
+export function text(options: TextOptions): ChartMark<Frozen<TextSpec>>;
+export function text<S extends Schema>(
+  table: Table<S>,
+  options: TextDataOptions<S>,
+): ChartMark<Frozen<TextSpec>>;
 export function text<S extends Schema>(
   first: Table<S> | TextOptions,
   second?: TextDataOptions<S>,
-): TextMark {
+): ChartMark<Frozen<TextSpec>> {
   const table = second ? (first as Table<S>) : undefined;
   const options = (second ?? first) as TextDataOptions<S>;
   const spec: TextSpec = {

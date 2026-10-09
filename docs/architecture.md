@@ -26,7 +26,7 @@ One name per concept, used the same way in code and docs.
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one. |
 | **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, network nodes and links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
-| **Chart** | A mounted, interactive chart in the browser (`createChart`). |
+| **Chart** | A mounted, interactive chart in the browser (`createChart`), and the handle applications hold to it (`Chart`). |
 | **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
 | **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, drawn from a grid model (`GridModel`), which holds its columns, scroll position, focus, and selection without a DOM. |
 | **Grid column** | A field a grid shows, with its id, title, width, alignment, and format (`GridColumn`). Not a table's column (its storage). |
@@ -1131,8 +1131,10 @@ fields, the fields only count toward the domains; such marks have no
 series, and in charts with facets must repeat. A custom mark's spec holds its type, id, and the fields of its
 series: functions cannot be serialized, so specs, and with them the Python
 package, cannot contain custom marks, and the framework adapters rebuild them
-whenever they render them again rather than comparing specs. Marks implement
-the `Mark` interface, whose spec only needs a type and an id (`MarkIdentity`).
+whenever they render them again rather than comparing specs. Custom marks
+implement the internal `Mark` interface as built-in marks do, with a spec of
+only a type and an id (`MarkIdentity`); they are the supported way to add
+marks (see The chart handle).
 
 ## Rendering
 
@@ -1322,9 +1324,11 @@ line. The labels live in `dom/axis-labels.ts`, loaded the first time a
 chart asks for them, which imports no code of its own so that loading it
 moves nothing out of a chart's bundle.
 
-Charts emit `viewport`, `select`, `hover`, and `click` events. Each reports
-changes only (hover compares the inspected values), and a listener that
-throws is reported without stopping the others or the chart. Hover listeners
+Charts emit `viewport`, `select`, `hover`, `click`, `camera`, `visibility`,
+and `render` events. Each reports changes only (hover compares the inspected
+values; `render` follows frames that draw the data, not those that only move
+the cursor), and a listener that throws is reported without stopping the
+others or the chart. Hover listeners
 receive inspections even with the built-in tooltip off, which is how an
 application draws its own.
 
@@ -1388,12 +1392,70 @@ inspection costs three more fields per point and one map lookup.
   a screen reader receives, not how one speaks it; the charts have not been
   tried with screen readers themselves.
 
+## The chart handle
+
+`createChart` returns `Chart`, an interface (`dom/handle.ts`) rather than the
+class behind it (`MountedChart` in `dom/chart.ts`), so what applications call
+is a deliberate list: options, viewports, selections, the camera, panels and
+pixel mapping, inspection, legend visibility, events, rendering, and export.
+The React, Vue, and Svelte adapters hand out the same interface. The chart's
+model, its entry in the shared frame loop (an object with `flush` and
+`visible`), and its member of a sync group (an object with `syncCursor`,
+`syncViewport`, and `syncSelection`, which also names it as the sender of its
+broadcasts) are private; what synced charts send is applied without being
+sent again, as before.
+
+`getPanels()` gives snapshots of the last scene's panels: plot rectangles and,
+per axis, its type, domain, range, categories, band width, the group of
+panels sharing its scale, and whether `setViewport` zooms it. They are copies
+(category lists, which the model never changes in place, are shared), not
+the engine's scales, so scales and their tick and break machinery stay free to
+change. Pixel mapping, formatting, legend entries, and inspection read the
+last scene too and never draw: what they report is what is on screen, and a
+pointer handler that reads them costs no frame. `render()` draws pending
+changes when a caller needs them now; `toSVG()` draws only what is pending,
+and reports that frame once its own scene is built, so render listeners may
+export and what they change is drawn on the next frame. The model caches its panel list per
+scene, so mapping many values allocates nothing.
+
+Hiding series has one path: the legend's buttons, `setVisibility`,
+`setHiddenKeys`, and updates that remove marks all change the model's hidden
+set, end a playing transition, draw, and report one `visibility` event when
+the set changed. Each scene draws and inspects with a copy of the set, and a
+layout mark's last scene keeps its measure and the chart's marks, so what
+inspection finds before the next frame is what is on screen; the values it
+reports are read from the tables, which an application changing them in
+place renders first. Pointer and keyboard routing follow the last scene's
+kind too (a layout mark's items, or panels), and keys draw pending changes
+before moving the cursor. Hidden keys outlive
+their series (a stream may bring them back) but not their mark: an update
+drops the keys of mark identities (ids, or indexes) it no longer has.
+
+Changes of view (`setViewport`, wheel and pan, synced ranges, transitions)
+mark the chart dirty without marking its panels changed, so a later call
+naming a panel does not draw first to find it: setting several panels' views
+and a selection draws once, on the next frame. Changes that may change the
+panels (options, data, size, hidden series) still draw before such a call.
+
+Marks are opaque: the mark functions return `ChartMark`, whose `spec` is
+public, and a type-only brand keeps charts to marks those functions made.
+What marks implement (`Mark`, `LayoutMark`, `Frame`, series, scene geometry,
+and drawings) is internal. Publishing it would commit to buffer reuse, scene
+counters, GPU decisions, the physical layout of series, and layout marks
+seeing the whole chart configuration, and the PDF renderer draws only known
+geometry kinds. `custom()` is the extension API: domains, scales, clipping,
+SVG and Canvas output, series with legend entries, tooltips, the keyboard,
+facets, and summaries. A lower-level extension API would follow demonstrated
+needs (custom picking, packed geometry, layouts) with its own lifecycle and
+export contract. The adapters reconcile marks with what is public: specs,
+constructors, and `tablesOf` and `viewOf`.
+
 ## Spec and API
 
 `ChartSpec` (in `src/spec/spec.ts`) is plain JSON: field names, constants,
 and Intl format options; no functions or typed arrays. The TypeScript API
-builds the same structures: `line(table, options)` returns a mark whose
-`spec` is the portable part, a frozen copy of what built it (`Frozen<T>`),
+builds the same structures: `line(table, options)` returns a mark (a
+`ChartMark`) whose `spec` is the portable part, a frozen copy of what built it (`Frozen<T>`),
 since the mark's caches depend on it: charts change by taking new marks.
 Mark implementations are attached to the mark
 objects rather than looked up in a registry, so unused mark types are tree

@@ -12,7 +12,7 @@ import type { Frozen, SunburstSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { frozen } from "./mark.ts";
+import { type ChartMark, frozen, type MARK } from "./mark.ts";
 import { type Branch, count, TreeData } from "./tree-data.ts";
 
 export type SunburstOptions<S extends Schema> = (
@@ -56,6 +56,7 @@ const BOX_POINTS = [
 const HOLE = 0.18;
 
 export class SunburstMark implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec: Frozen<SunburstSpec>;
   readonly table: Table;
@@ -275,7 +276,7 @@ export class SunburstMark implements LayoutMark {
 export function sunburst<S extends Schema>(
   table: Table<S>,
   options: SunburstOptions<S>,
-): SunburstMark {
+): ChartMark<Frozen<SunburstSpec>> {
   const { path } = options;
   // Every option is kept, so the mark refuses a tree named both ways.
   const spec = {

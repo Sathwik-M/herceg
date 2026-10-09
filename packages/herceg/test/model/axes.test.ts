@@ -8,7 +8,7 @@ import { custom } from "../../src/marks/custom.ts";
 import { line } from "../../src/marks/line.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
-import { text } from "../../src/marks/text.ts";
+import { type TextMark, text } from "../../src/marks/text.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { type AxisInspection, type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
@@ -291,7 +291,7 @@ describe("right y axis", () => {
       yRight: { domain: [0, 1000], format: { style: "unit", unit: "meter" } },
     });
     model.setViewport([1.5, 2]);
-    const extents = vi.spyOn(note, "yExtent");
+    const extents = vi.spyOn(note as TextMark, "yExtent");
     const scene = model.scene(estimateText);
     // The note is out of view, but still the right axis' mark.
     expect(axis(scene, "right")).toBeDefined();

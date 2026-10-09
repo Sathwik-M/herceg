@@ -6,8 +6,8 @@ import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
-import { line } from "../../src/marks/line.ts";
-import type { Mark } from "../../src/marks/mark.ts";
+import { type LineMark, line } from "../../src/marks/line.ts";
+import type { MARK, Mark } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
 import { region } from "../../src/marks/region.ts";
 import { rule } from "../../src/marks/rule.ts";
@@ -16,6 +16,7 @@ import { text } from "../../src/marks/text.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { RasterGeometry } from "../../src/scene/scene.ts";
+import { modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -53,8 +54,8 @@ describe("new marks in the browser", () => {
       y: Float64Array.from({ length: n }, (_, i) => Math.floor(i / 100)),
     });
     const chart = createChart(host, { marks: [point(pts, { x: "x", y: "y" })] });
-    const x = chart.model.xScale()!;
-    const y = chart.model.yScale()!;
+    const x = modelOf(chart).xScale()!;
+    const y = modelOf(chart).yScale()!;
     hover(chart.root, x.map(42) + 1, y.map(7) + 1);
     await frame();
     const tooltip = tooltipOf(chart.root);
@@ -81,8 +82,8 @@ describe("new marks in the browser", () => {
     expect(chart.root.querySelector("canvas")).not.toBeNull();
     expect(chart.root.querySelector("linearGradient")).not.toBeNull();
     expect(chart.root.textContent).toContain("Index");
-    const xs = chart.model.xScale()!;
-    const ys = chart.model.yScale()!;
+    const xs = modelOf(chart).xScale()!;
+    const ys = modelOf(chart).yScale()!;
     hover(chart.root, xs.map(3), ys.map(2));
     await frame();
     expect(tooltipOf(chart.root).textContent).toContain("203");
@@ -100,8 +101,8 @@ describe("new marks in the browser", () => {
     });
     const canvas = chart.root.querySelector("canvas")!;
     const ratio = canvas.width / canvas.clientWidth;
-    const xs = chart.model.xScale()!;
-    const ys = chart.model.yScale()!;
+    const xs = modelOf(chart).xScale()!;
+    const ys = modelOf(chart).yScale()!;
     hover(chart.root, xs.map(1234), ys.map(7));
     await frame();
     const tooltip = tooltipOf(chart.root);
@@ -117,7 +118,7 @@ describe("new marks in the browser", () => {
     await frame();
     expect(tooltip.style.display).toBe("none");
     // One raster pixel per device pixel across, one per cell down.
-    const raster = chart.model.scene(estimateText).panels[0]!.marks[0] as RasterGeometry;
+    const raster = modelOf(chart).scene(estimateText).panels[0]!.marks[0] as RasterGeometry;
     expect(raster.columns).toBe(Math.floor(raster.width * ratio));
     expect(raster.columns).toBeLessThan(columns);
     expect(raster.rows).toBe(rows);
@@ -151,7 +152,7 @@ describe("new marks in the browser", () => {
       });
       // Every other pixel gets a hot cell; a pixel lost in drawing would
       // drop a red run or merge two.
-      const across = (chart.model.scene(estimateText).panels[0]!.marks[0] as RasterGeometry)
+      const across = (modelOf(chart).scene(estimateText).panels[0]!.marks[0] as RasterGeometry)
         .columns;
       expect(across).toBeLessThan(columns);
       // The first cell of pixel j is the first whose left edge is in it.
@@ -163,7 +164,7 @@ describe("new marks in the browser", () => {
       );
       await frame();
       const canvas = chart.root.querySelector("canvas")!;
-      const y = Math.floor(chart.model.yScale()!.map(0) * ratio);
+      const y = Math.floor(chart.toPixel(0, { axis: "y" })! * ratio);
       const line = canvas.getContext("2d")!.getImageData(0, y, canvas.width, 1).data;
       let runs = 0;
       for (let i = 0; i < canvas.width; i++) {
@@ -183,7 +184,7 @@ describe("new marks in the browser", () => {
       tooltip: { mode: "nearest-x" },
       marks: [heatmap(cells, { x: "c", y: "r", value: "v" })],
     });
-    hover(chart.root, chart.model.xScale()!.map(0), chart.model.yScale()!.map(1));
+    hover(chart.root, chart.toPixel(0, { axis: "x" })!, chart.toPixel(1, { axis: "y" })!);
     await frame();
     const tooltip = tooltipOf(chart.root);
     expect(tooltip.style.display).toBe("block");
@@ -212,7 +213,7 @@ describe("new marks in the browser", () => {
     const canvas = chart.root.querySelector("canvas")!;
     const context = canvas.getContext("2d")!;
     const ratio = canvas.width / canvas.clientWidth;
-    const [px, py] = [chart.model.xScale()!.map(4), chart.model.yScale()!.map(4)];
+    const [px, py] = [chart.toPixel(4, { axis: "x" })!, chart.toPixel(4, { axis: "y" })!];
     const pixel = context.getImageData(Math.round((px + 8) * ratio), Math.round(py * ratio), 1, 1);
     expect(pixel.data[3]).toBeGreaterThan(0);
     chart.destroy();
@@ -232,8 +233,8 @@ describe("new marks in the browser", () => {
       const mark = point(pts, { x: "x", y: "y", r: 20, symbol: "kind", fill: "#000000" });
       const chart = createChart(host, { renderer: "canvas", marks: [mark] });
       // Inside both shapes, above the grid line at y = 0.
-      const x = chart.model.xScale()!.map(0);
-      const y = chart.model.yScale()!.map(0) - 8;
+      const x = chart.toPixel(0, { axis: "x" })!;
+      const y = chart.toPixel(0, { axis: "y" })! - 8;
       const alpha = (c: HTMLCanvasElement, scale: number) =>
         c.getContext("2d")!.getImageData(Math.round(x * scale), Math.round(y * scale), 1, 1)
           .data[3];
@@ -267,8 +268,8 @@ describe("new marks in the browser", () => {
   it("follows the pointer along y over horizontal bars", async () => {
     const sales = table({ region: ["North", "South"], a: [1, 2], b: [3, 4] });
     const chart = createChart(host, { marks: [bar(sales, { x: ["a", "b"], y: "region" })] });
-    const y = chart.model.yScale()!;
-    const [left, right] = chart.model.xScale()!.range;
+    const y = modelOf(chart).yScale()!;
+    const [left, right] = modelOf(chart).xScale()!.range;
     hover(chart.root, right - 4, y.map(1) + 3);
     await frame();
     const tooltip = tooltipOf(chart.root);
@@ -298,11 +299,11 @@ describe("new marks in the browser", () => {
     });
     const lines = createChart(other, { marks: [line(series, { x: "t", y: "v" })], interaction });
     const visibleCrosshair = (root: Element) => root.querySelector("svg line[visibility=visible]");
-    hover(bars.root, bars.model.xScale()!.map(1), bars.model.yScale()!.map(0));
+    hover(bars.root, bars.toPixel(1, { axis: "x" })!, bars.toPixel(0, { axis: "y" })!);
     await frame();
     expect(visibleCrosshair(bars.root)).not.toBeNull();
     expect(visibleCrosshair(lines.root)).toBeNull();
-    hover(lines.root, lines.model.xScale()!.map(1), 100);
+    hover(lines.root, lines.toPixel(1, { axis: "x" })!, 100);
     await frame();
     expect(visibleCrosshair(lines.root)).not.toBeNull();
     bars.root.dispatchEvent(new PointerEvent("pointerleave"));
@@ -370,8 +371,8 @@ describe("new marks in the browser", () => {
     const canvasChart = createChart(host, { marks, renderer: "canvas" });
     const canvas = host.querySelector("canvas")!;
     const ratio = canvas.width / canvasChart.root.clientWidth;
-    const px = canvasChart.model.xScale()!.map(5) * ratio;
-    const py = canvasChart.model.yScale()!.map(5) * ratio;
+    const px = canvasChart.toPixel(5, { axis: "x" })! * ratio;
+    const py = canvasChart.toPixel(5, { axis: "y" })! * ratio;
     const pixel = canvas.getContext("2d")!.getImageData(Math.round(px), Math.round(py), 1, 1).data;
     expect(Array.from(pixel)).toEqual([255, 0, 0, 255]);
     canvasChart.destroy();
@@ -390,7 +391,7 @@ describe("new marks in the browser", () => {
     const canvas = host.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
     const pixel = (key: unknown[]) => {
-      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      const { px, py } = modelOf(chart).inspectItem(JSON.stringify(key))!.points[0]!;
       const at = [Math.round(px * ratio), Math.round(py * ratio)] as const;
       return Array.from(canvas.getContext("2d")!.getImageData(...at, 1, 1).data);
     };
@@ -414,7 +415,7 @@ describe("new marks in the browser", () => {
     const canvas = host.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
     const pixel = (key: unknown[]) => {
-      const { px, py } = chart.model.inspectItem(JSON.stringify(key))!.points[0]!;
+      const { px, py } = modelOf(chart).inspectItem(JSON.stringify(key))!.points[0]!;
       const at = [Math.round(px * ratio), Math.round(py * ratio)] as const;
       return Array.from(canvas.getContext("2d")!.getImageData(...at, 1, 1).data);
     };
@@ -450,8 +451,8 @@ describe("new marks in the browser", () => {
     const alpha = (x: number, y: number) =>
       canvas.getContext("2d")!.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1)
         .data[3];
-    const sx = chart.model.xScale()!;
-    const sy = chart.model.yScale()!;
+    const sx = modelOf(chart).xScale()!;
+    const sy = modelOf(chart).yScale()!;
     // No round cap reaches past the line's end (y = 7.3 is between grid lines).
     expect(alpha(sx.map(4) - 2, sy.map(7.3))).toBe(255);
     expect(alpha(sx.map(4) + 3, sy.map(7.3))).toBe(0);
@@ -486,7 +487,7 @@ describe("new marks in the browser", () => {
     const chart = createChart(host, { renderer: "svg", marks: [lollipops] });
     const hovers: (string | undefined)[] = [];
     chart.on("hover", ({ inspection }) => hovers.push(inspection?.points[1]?.text));
-    hover(chart.root, chart.model.xScale()!.map(1) + 2, chart.model.yScale()!.map(3));
+    hover(chart.root, chart.toPixel(1, { axis: "x" })! + 2, chart.toPixel(3, { axis: "y" })!);
     await frame();
     expect(tooltipOf(chart.root).textContent).toBe("1a2%b5%");
     expect(hovers).toEqual(["5%"]);
@@ -549,8 +550,8 @@ describe("new marks in the browser", () => {
       canvas
         .getContext("2d")!
         .getImageData(
-          Math.round(chart.model.xScale()!.map(x) * ratio),
-          Math.round(chart.model.yScale()!.map(y) * ratio),
+          Math.round(chart.toPixel(x, { axis: "x" })! * ratio),
+          Math.round(chart.toPixel(y, { axis: "y" })! * ratio),
           1,
           1,
         ).data[3]!;
@@ -578,8 +579,8 @@ describe("point clouds on the GPU", () => {
     return canvas
       .getContext("2d")!
       .getImageData(
-        Math.round(chart.model.xScale()!.map(x) * ratio),
-        Math.round(chart.model.yScale()!.map(y) * ratio),
+        Math.round(chart.toPixel(x, { axis: "x" })! * ratio),
+        Math.round(chart.toPixel(y, { axis: "y" })! * ratio),
         1,
         1,
       ).data;
@@ -788,9 +789,10 @@ describe("point clouds on the GPU", () => {
   });
 
   it("loads the painter only for point clouds, and not again once unavailable", () => {
-    // A geometry of another kind with a `cloud` field is not a point cloud.
-    const lines = line(table({ x: [0, 1], y: [0, 1] }), { x: "x", y: "y" });
-    const odd: Mark = {
+    // A geometry of another kind with a `cloud` field is not a point cloud,
+    // drawn by an engine mark written for the test, as applications cannot.
+    const lines = line(table({ x: [0, 1], y: [0, 1] }), { x: "x", y: "y" }) as LineMark;
+    const odd: Omit<Mark, typeof MARK> = {
       spec: lines.spec,
       table: lines.table,
       tooltip: "x",
@@ -801,7 +803,7 @@ describe("point clouds on the GPU", () => {
       geometry: (series, frame) =>
         lines.geometry(series, frame).map((g) => Object.assign(g, { cloud: false })),
     };
-    const chart = createChart(host, { marks: [odd] });
+    const chart = createChart(host, { marks: [odd as Mark] });
     expect(chart.loading).toBeUndefined();
     chart.destroy();
   });
@@ -813,9 +815,9 @@ describe("point clouds on the GPU", () => {
       marks: [point(cloudTable(150_000), { x: "x", y: "y" })],
     });
     await chart.loading;
-    const inspection = chart.model.inspect(
-      chart.model.xScale()!.map(5),
-      chart.model.yScale()!.map(5),
+    const inspection = chart.inspect(
+      chart.toPixel(5, { axis: "x" })!,
+      chart.toPixel(5, { axis: "y" })!,
     );
     expect(inspection?.value).toBe(5);
     expect(chart.toSVG()).toContain("<path");

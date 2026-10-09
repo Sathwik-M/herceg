@@ -4,7 +4,7 @@ import { geometry } from "../../src/data/geometry.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { geopoint } from "../../src/marks/geopoint.ts";
-import { geoshape } from "../../src/marks/geoshape.ts";
+import { type GeoShapeMark, geoshape } from "../../src/marks/geoshape.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { describeChart } from "../../src/model/describe.ts";
@@ -171,7 +171,7 @@ describe("geoshape", () => {
       b: geometry(world.geometries("geometry").set),
     });
     expect(() => geoshape(two)).toThrow(/needs `geometry`: the table has "a", "b"/);
-    expect(geoshape(two, { geometry: "b" }).field).toBe("b");
+    expect((geoshape(two, { geometry: "b" }) as GeoShapeMark).field).toBe("b");
     expect(() => geoshape(world, { name: "gdp" as never })).toThrow(/needs category/);
     expect(() => geoshape(world, { color: "region", colors: ["#000000", "#ffffff"] })).toThrow(
       /for a number color field/,

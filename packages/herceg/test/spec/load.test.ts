@@ -3,6 +3,7 @@ import { encodedCategory, time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { loadSpec, SPEC_VERSION, specToSVG, validateSpec } from "../../src/from-spec.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { tablesOf } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { rule } from "../../src/marks/rule.ts";
@@ -340,7 +341,7 @@ describe("loadSpec", () => {
       ],
     });
     // Constant annotations read no table, even when the spec has several.
-    expect(config.marks.map((mark) => mark.table?.name)).toEqual([
+    expect(config.marks.map((mark) => tablesOf(mark)[0]?.name)).toEqual([
       "metrics",
       "deploys",
       undefined,

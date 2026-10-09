@@ -25,6 +25,7 @@ import {
   fieldBands,
   frozen,
   type Hit,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -94,6 +95,7 @@ export interface Placement {
 export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   implements Mark<Frozen<T>>
 {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<T>;
   readonly table: Table;
   readonly tooltip: "x" | "y";

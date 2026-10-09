@@ -5,11 +5,11 @@ import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import type { ChartEvents } from "../../src/dom/events.ts";
 import { custom } from "../../src/marks/custom.ts";
-import type { ChartMark } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
+import type { ChartMark } from "../../src/marks/mark.ts";
 import { facet } from "../../src/model/facet.ts";
 import { panels } from "../../src/model/panels.ts";
-import { bandBox } from "./helpers.ts";
+import { bandBox, modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -59,7 +59,7 @@ describe("facets in the browser", () => {
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
     });
-    const [, b] = chart.model.panels();
+    const [, b] = modelOf(chart).panels();
     pointer(chart.root, "pointermove", b!.x.map(4), b!.plot.y + 10);
     await frame();
     const [crosshair] = visibleLines(chart);
@@ -93,7 +93,7 @@ describe("facets in the browser", () => {
     });
     const chart = createChart(host, { locale: "en-US", marks: [ticks], facet: facet("region") });
     expect(rows).toEqual([10, 10]);
-    const [, b] = chart.model.panels();
+    const [, b] = modelOf(chart).panels();
     pointer(chart.root, "pointermove", b!.x.map(4), b!.plot.y + 10);
     await frame();
     const tooltip = [...chart.root.children].find(
@@ -114,7 +114,7 @@ describe("facets in the browser", () => {
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
     });
-    const [a, b] = chart.model.panels();
+    const [a, b] = modelOf(chart).panels();
     const y = b!.plot.y + b!.plot.height / 2;
     pointer(chart.root, "pointerdown", b!.x.map(2), y);
     pointer(chart.root, "pointermove", b!.x.map(4), y);
@@ -173,7 +173,7 @@ describe("facets in the browser", () => {
     expect(live.textContent).toMatch(/^a, x: /);
     key(chart, "ArrowDown");
     expect(live.textContent).toMatch(/^a, y: /);
-    const [, second] = chart.model.panels();
+    const [, second] = modelOf(chart).panels();
     expect(second!.key).toBe(JSON.stringify(["a", "y"]));
     expect(second!.label).toBe("a, y");
     chart.destroy();
@@ -183,20 +183,22 @@ describe("facets in the browser", () => {
     const other = document.createElement("div");
     other.style.cssText = "width:600px;height:300px";
     document.body.append(other);
+    // Wider than the facets' data, so its cursor can go past theirs.
+    const wide = table({ t: [0, 20], v: [0, 1] });
     const plain = createChart(other, {
       interaction: { sync: "group" },
-      marks: [line(data, { x: "t", y: "v" })],
+      marks: [line(wide, { x: "t", y: "v" })],
     });
     const faceted = createChart(host, {
       interaction: { sync: "group" },
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
     });
-    pointer(plain.root, "pointermove", plain.model.xScale()!.map(5), 150);
+    pointer(plain.root, "pointermove", plain.toPixel(5, { axis: "x" })!, 150);
     await frame();
     expect(visibleLines(faceted)).toHaveLength(2);
     // Past the data in x, no panel shows it, though the pixel lies in a neighbor.
-    faceted.syncCursor(15);
+    pointer(plain.root, "pointermove", plain.toPixel(15, { axis: "x" })!, 150);
     await frame();
     expect(visibleLines(faceted)).toHaveLength(0);
     plain.destroy();
@@ -210,7 +212,7 @@ describe("facets in the browser", () => {
       marks: [line(data, { x: "t", y: "v" })],
       facet: facet("region"),
     });
-    const [, b] = chart.model.panels();
+    const [, b] = modelOf(chart).panels();
     const px = b!.x.map(6);
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
@@ -223,7 +225,7 @@ describe("facets in the browser", () => {
       }),
     );
     chart.render();
-    const [, after] = chart.model.panels();
+    const [, after] = modelOf(chart).panels();
     expect(after!.x.map(6)).toBeCloseTo(px, 0);
     chart.destroy();
   });
@@ -252,7 +254,7 @@ describe("facet panels with y scales of their own", () => {
       interaction: { brush: "y" },
       y: { type: "time" },
     });
-    const b = chart.model.panels()[1]!;
+    const b = modelOf(chart).panels()[1]!;
     pointer(chart.root, "pointerdown", b.x.map(0.5), b.y.map(day + 2000));
     pointer(chart.root, "pointermove", b.x.map(0.5), b.y.map(day + 8000));
     pointer(chart.root, "pointerup", b.x.map(0.5), b.y.map(day + 8000));
@@ -273,7 +275,7 @@ describe("facet panels with y scales of their own", () => {
       y: { format: { minimumFractionDigits: 4 } },
     });
     // The first panel's x labels against the second panel's y labels.
-    const [first, second] = chart.model.panels();
+    const [first, second] = modelOf(chart).panels();
     const texts = [...chart.root.querySelectorAll("svg text")];
     const box = (text: Element) => (text as SVGGraphicsElement).getBBox();
     const xLabels = texts
@@ -317,10 +319,14 @@ describe("subplots", () => {
         { id: "traffic", title: "Requests" },
       ]),
     });
-    const [, bottom] = chart.model.panels();
-    pointer(chart.root, "pointermove", bottom!.x.map(1), bottom!.y.map(9));
+    const target = { panel: "traffic" };
+    const [px, py] = [
+      chart.toPixel(1, { ...target, axis: "x" })!,
+      chart.toPixel(9, { ...target, axis: "y" })!,
+    ];
+    pointer(chart.root, "pointermove", px, py);
     await frame();
-    expect(chart.model.inspect(bottom!.x.map(1), bottom!.y.map(9))?.panel).toBe("traffic");
+    expect(chart.inspect(px, py)?.panel).toBe("traffic");
     const live = chart.root.querySelector("[aria-live]")!;
     key(chart, "ArrowRight");
     expect(live.textContent).toMatch(/^Latency: /);
@@ -364,18 +370,18 @@ describe("facet panels with x scales of their own", () => {
       new MouseEvent("dblclick", { bubbles: true, clientX: rect.left + x, clientY: rect.top + y }),
     );
   };
-  const views = (chart: Chart) => ["a", "b"].map((panel) => chart.model.viewportOf(panel));
+  const views = (chart: Chart) => ["a", "b"].map((panel) => chart.getViewport({ panel: panel }).x);
 
   it("zoom, pan, and reset the x scale of the panel the gesture is in", () => {
     const chart = independent({ interaction: { zoom: true } });
     const events: ChartEvents["viewport"][] = [];
     chart.on("viewport", (event) => events.push(event));
-    const [a, b] = chart.model.panels();
+    const [a, b] = modelOf(chart).panels();
     const mid = b!.plot.y + b!.plot.height / 2;
     const px = b!.x.map(104);
     wheel(chart, px, mid);
     chart.render();
-    const [, zoomed] = chart.model.panels();
+    const [, zoomed] = modelOf(chart).panels();
     expect(zoomed!.x.map(104)).toBeCloseTo(px, 0);
     expect(views(chart)[0]).toBeNull();
     expect(views(chart)[1]).not.toBeNull();
@@ -411,21 +417,25 @@ describe("facet panels with x scales of their own", () => {
       facet: facet("region"),
       resolve: { x: "independent" },
     });
-    const [, b] = chart.model.panels();
+    const [, b] = modelOf(chart).panels();
     const y = b!.plot.y + b!.plot.height / 2;
     pointer(chart.root, "pointerdown", b!.x.map(105), y);
     pointer(chart.root, "pointermove", b!.x.map(104), y);
-    expect(chart.model.viewportOf("b")).not.toBeNull();
+    expect(chart.getViewport({ panel: "b" }).x).not.toBeNull();
     // b's rows go while the button is down: the drag pans nothing more.
     data.reset({ t: [0, 1], v: [1, 2], region: ["a", "a"] });
     chart.render();
     pointer(chart.root, "pointermove", b!.x.map(100), y);
     pointer(chart.root, "pointerup", b!.x.map(100), y);
-    expect(chart.model.panels().map((p) => p.key)).toEqual(["a"]);
+    expect(
+      modelOf(chart)
+        .panels()
+        .map((p) => p.key),
+    ).toEqual(["a"]);
     chart.setViewport([0, 0.5], { panel: "a" });
     const button = chart.root.querySelector("button")!;
     dblclick(chart, 0, 0, button);
-    expect(chart.model.viewportOf("a")).toEqual([0, 0.5]);
+    expect(chart.getViewport({ panel: "a" }).x).toEqual([0, 0.5]);
     chart.destroy();
   });
 
@@ -485,7 +495,7 @@ describe("facet panels with x scales of their own", () => {
     // A listener the drawing calls (hover) changing the view: its change
     // is reported once, within the report of the y zoom let go.
     events.length = 0;
-    const [a] = chart.model.panels();
+    const [a] = modelOf(chart).panels();
     let zoomed = false;
     chart.on("hover", () => {
       if (zoomed) return;
@@ -511,7 +521,7 @@ describe("facet panels with x scales of their own", () => {
     });
     const selections: ChartEvents["select"][] = [];
     chart.on("select", (event) => selections.push(event));
-    const [, b] = chart.model.panels();
+    const [, b] = modelOf(chart).panels();
     const y = b!.plot.y + b!.plot.height / 2;
     pointer(chart.root, "pointerdown", b!.x.map(102), y);
     pointer(chart.root, "pointermove", b!.x.map(104), y);
@@ -561,7 +571,7 @@ describe("facet panels with x scales of their own", () => {
     key(chart, "Enter");
     window.removeEventListener("error", onError);
     expect(errors).toEqual([]);
-    expect(chart.model.viewportOf("a")).toBeNull();
+    expect(chart.getViewport({ panel: "a" }).x).toBeNull();
     chart.destroy();
   });
 
@@ -582,7 +592,11 @@ describe("facet panels with x scales of their own", () => {
     });
     key(chart, "Enter");
     expect(events).toEqual([]);
-    expect(chart.model.panels().map((p) => p.key)).toEqual(["a"]);
+    expect(
+      modelOf(chart)
+        .panels()
+        .map((p) => p.key),
+    ).toEqual(["a"]);
     chart.destroy();
   });
 
@@ -592,13 +606,16 @@ describe("facet panels with x scales of their own", () => {
     chart.setViewport([100, 101], { panel: "b" });
     chart.select([100, 100.5], { panel: "b" });
     chart.render();
-    expect(chart.model.viewport).toEqual([100, 101]);
+    expect(chart.getViewport().x).toEqual([100, 101]);
     expect(chart.selection!.x).toEqual([100, 100.5]);
     expect(chart.selectionPanels).toEqual(["a", "b"]);
     chart.update({ resolve: { x: "independent" } });
     chart.setViewport([1, 2], { panel: "a" });
     chart.render();
-    expect([chart.model.viewportOf("a"), chart.model.viewportOf("b")]).toEqual([[1, 2], null]);
+    expect([chart.getViewport({ panel: "a" }).x, chart.getViewport({ panel: "b" }).x]).toEqual([
+      [1, 2],
+      null,
+    ]);
     chart.destroy();
   });
 
@@ -619,7 +636,7 @@ describe("facet panels with x scales of their own", () => {
 
   it("zoom a brushed range in its own panel's scale", () => {
     const chart = independent({ interaction: { brush: "x", zoom: true } });
-    const [a] = chart.model.panels();
+    const [a] = modelOf(chart).panels();
     const y = a!.plot.y + a!.plot.height / 2;
     pointer(chart.root, "pointerdown", a!.x.map(2), y);
     pointer(chart.root, "pointermove", a!.x.map(6), y);
@@ -667,10 +684,10 @@ describe("facet panels with x scales of their own", () => {
     expect(split.selection).toBeNull();
     split.setViewport([2, 3], { panel: "a" });
     split.select([4, 5], { panel: "a" });
-    expect(plain.model.viewport).toEqual([100, 105]);
+    expect(plain.getViewport().x).toEqual([100, 105]);
     expect(plain.selection!.x).toEqual([101, 102]);
     // A cursor at 104 shows in b, whose scale holds it, and not in a.
-    split.syncCursor(104);
+    pointer(plain.root, "pointermove", plain.toPixel(104, { axis: "x" })!, 150);
     await frame();
     expect(visibleLines(split)).toHaveLength(1);
     plain.destroy();
@@ -695,7 +712,7 @@ describe("subplots with x scales of their own", () => {
     });
     const events: ChartEvents["viewport"][] = [];
     chart.on("viewport", (event) => events.push(event));
-    const [, spreadPanel] = chart.model.panels();
+    const [, spreadPanel] = modelOf(chart).panels();
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
       new WheelEvent("wheel", {
@@ -706,8 +723,8 @@ describe("subplots with x scales of their own", () => {
         cancelable: true,
       }),
     );
-    expect(chart.model.viewportOf("series")).toBeNull();
-    const [lo, hi] = chart.model.viewportOf("spread")!;
+    expect(chart.getViewport({ panel: "series" }).x).toBeNull();
+    const [lo, hi] = chart.getViewport({ panel: "spread" }).x!;
     expect(lo).toBeGreaterThan(10);
     expect(hi).toBeLessThan(30);
     expect(events.map((e) => e.panels)).toEqual([["spread"]]);

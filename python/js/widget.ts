@@ -254,7 +254,12 @@ class Widget {
     if (labels) chart.render();
     const view = chartViewport(chart, viewport);
     // Charts whose panels have y scales of their own have no y viewport.
-    chart.setViewport(chart.model.sharesY ? view : { x: view.x, y: null, yRight: null });
+    const [first] = chart.getPanels();
+    chart.setViewport({
+      x: view.x,
+      y: first?.y?.canSetViewport ? view.y : null,
+      yRight: first?.yRight?.canSetViewport ? view.yRight : null,
+    });
   }
 
   /**
@@ -361,6 +366,9 @@ class Widget {
     for (const view of this.#views) {
       view.chart?.update(update);
       this.#size(view);
+      // Drawn at once: views shown next read the panels' axes as drawn,
+      // which options such as `resolve` change.
+      view.chart?.render();
     }
   }
 }

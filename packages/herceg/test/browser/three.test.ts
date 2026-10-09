@@ -6,6 +6,7 @@ import { line } from "../../src/marks/line.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { surface } from "../../src/marks/surface.ts";
 import type { Camera } from "../../src/three/camera.ts";
+import { modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -83,7 +84,7 @@ describe("3D charts", () => {
     const chart = await mount();
     const clicks: (string | undefined)[] = [];
     chart.on("click", ({ inspection }) => clicks.push(inspection?.points[0]?.text));
-    const first = chart.model.inspectItem(chart.model.stepItem(undefined, 1)!)!.points[0]!;
+    const first = modelOf(chart).inspectItem(modelOf(chart).stepItem(undefined, 1)!)!.points[0]!;
     at(chart, "pointermove", first.px + 1, first.py);
     await frame();
     expect(chart.root.textContent).toContain("x 0, y 3, z 0");
@@ -208,13 +209,13 @@ describe("3D charts", () => {
     });
     const chart = createChart(host, { marks: [point3d(big, { x: "x", y: "y", z: "z" })] });
     await chart.loading;
-    const faces = chart.model
+    const faces = modelOf(chart)
       .scene((text) => text.length * 6, true)
       .panels[0]!.marks.find((m) => m.kind === "faces") as unknown as { cloud?: unknown };
     expect(faces.cloud).toBeDefined();
     const canvas = chart.root.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
-    const first = chart.model.inspectItem(chart.model.stepItem(undefined, 1)!)!.points[0]!;
+    const first = modelOf(chart).inspectItem(modelOf(chart).stepItem(undefined, 1)!)!.points[0]!;
     // The frontmost point under the first one's center is drawn there.
     const pixel = canvas
       .getContext("2d")!
@@ -244,7 +245,7 @@ describe("3D charts", () => {
       const ratio = canvas.width / chart.root.clientWidth;
       const context = canvas.getContext("2d")!;
       for (const step of [1, 2, 3]) {
-        const { px, py } = chart.model.inspectItem(chart.model.stepItem(undefined, step)!)!
+        const { px, py } = modelOf(chart).inspectItem(modelOf(chart).stepItem(undefined, step)!)!
           .points[0]!;
         const [r, , , a] = context.getImageData(
           Math.round(px * ratio),
@@ -321,7 +322,7 @@ describe("3D charts", () => {
         surface(ridge, { x: "x", y: "y", z: "z", shading: false, colors: ["#00aa00", "#00aa00"] }),
       ],
     });
-    const scene = chart.model.scene((text) => text.length * 6);
+    const scene = modelOf(chart).scene((text) => text.length * 6);
     const mark = scene.panels[0]!.marks.find((m) => m.kind === "faces") as unknown as {
       count: number;
       starts: Uint32Array;
@@ -364,7 +365,7 @@ describe("3D charts", () => {
     const canvas = chart.root.querySelector("canvas")!;
     expect(canvas).not.toBeNull();
     const ratio = canvas.width / chart.root.clientWidth;
-    const first = chart.model.inspectItem(chart.model.stepItem(undefined, 40 * n + 40)!)!
+    const first = modelOf(chart).inspectItem(modelOf(chart).stepItem(undefined, 40 * n + 40)!)!
       .points[0]!;
     const pixel = canvas
       .getContext("2d")!

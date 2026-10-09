@@ -1,17 +1,17 @@
 import {
+  type ChartOptions,
   custom,
   type DrawContext,
   facet,
   geometry,
   type Chart as HercegChart,
-  type Mark as HercegMark,
   line,
   table,
   time,
   timeBreaks,
 } from "herceg";
 import { type Component, flushSync, mount, unmount } from "svelte";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Annotations from "./Annotations.svelte";
 import Faulty from "./Faulty.svelte";
 import Gauges from "./Gauges.svelte";
@@ -23,6 +23,27 @@ import Pies from "./Pies.svelte";
 import Prices from "./Prices.svelte";
 import Solids from "./Solids.svelte";
 import Stray from "./Stray.svelte";
+
+// The options each chart was last given, at creation and by `update`, which
+// tests compare with the props that made them.
+const given = vi.hoisted(() => new WeakMap<object, Record<string, unknown>>());
+vi.mock("herceg", async (original) => {
+  const herceg = await original<typeof import("herceg")>();
+  return {
+    ...herceg,
+    createChart(container: HTMLElement, options: ChartOptions) {
+      const chart = herceg.createChart(container, options);
+      given.set(chart, { ...options });
+      const update = chart.update.bind(chart);
+      chart.update = (changes) => {
+        Object.assign(given.get(chart)!, changes);
+        update(changes);
+      };
+      return chart;
+    },
+  };
+});
+const optionsOf = (chart: HercegChart) => given.get(chart) as unknown as ChartOptions;
 
 let host: HTMLDivElement;
 let mounted: Record<string, unknown> | undefined;
@@ -71,7 +92,7 @@ function spyUpdates(chart: HercegChart): (readonly unknown[])[] {
 }
 
 const order = (chart: HercegChart) =>
-  chart.model.config.marks.map((mark) => {
+  optionsOf(chart).marks.map((mark) => {
     const spec = mark.spec as { type: string; y?: unknown };
     return spec.type === "line" ? `line:${spec.y}` : spec.type;
   });
@@ -94,8 +115,9 @@ describe("<Chart>", () => {
     render(Prices, props);
     const chart = props.chart!;
     expect(host.querySelector("svg g[clip-path] rect")).toBeNull();
-    const x = chart.model.xScale()!;
-    const [thu, fri, mon] = [0, 1, 4].map((d) => x.map(Date.UTC(2025, 9, 9) + d * day));
+    const [thu, fri, mon] = [0, 1, 4].map(
+      (d) => chart.toPixel(Date.UTC(2025, 9, 9) + d * day, { axis: "x" })!,
+    );
     expect(mon! - fri!).toBeCloseTo(fri! - thu!, 6);
     const updates = spyUpdates(chart);
     // New breaks with the same rules are the same option; other rules are not.
@@ -239,29 +261,20 @@ describe("<Chart>", () => {
     render(Lollipops, props);
     const buttons = host.querySelectorAll("button");
     expect([...buttons].map((button) => button.textContent)).toEqual(["a", "b"]);
-    const { model } = props.chart!;
-    const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))!;
+    const chart = props.chart!;
+    const inspection = chart.inspect(
+      chart.toPixel(1, { axis: "x" })!,
+      chart.toPixel(2, { axis: "y" })!,
+    )!;
     expect(inspection.points.map((p) => p.text)).toEqual(["2 req", "3 req"]);
     buttons[0]!.click();
     props.chart!.render();
     expect(drawn.at(-1)).toEqual(["b"]);
   });
 
-  it("keeps marks written against the Mark interface only while they are the same object", async () => {
-    // A mark whose spec does not describe what it draws.
-    const badge = (label: string): HercegMark => {
-      const inner = custom({ draw: ({ text, x, y }) => text(x(1), y(2), label) });
-      return {
-        spec: { type: "badge" },
-        table: undefined,
-        tooltip: "x",
-        channelKind: () => undefined,
-        series: () => [],
-        xExtent: () => undefined,
-        yExtent: () => undefined,
-        geometry: (series, frame, key) => inner.geometry(series, frame, key),
-      };
-    };
+  it("keeps custom marks given as marks only while they are the same object", async () => {
+    // A custom mark's spec does not describe what it draws.
+    const badge = (label: string) => custom({ draw: ({ text, x, y }) => text(x(1), y(2), label) });
     const labels = () =>
       [...host.querySelectorAll('[data-kind="shapes"] text')].map((t) => t.textContent);
     const props = lines({ fields: [], marks: [line(metrics, { x: "t", y: "a" }), badge("first")] });
@@ -285,6 +298,26 @@ describe("<Chart>", () => {
     props.chart.select([1, 2]);
     expect(seen).toEqual(["two:1-2"]);
     expect(subscriptions).toBe(0);
+  });
+
+  it("tells onrender of the first frame once the chart's handlers listen", () => {
+    let renders = 0;
+    const hidden: (readonly string[])[] = [];
+    const props: LinesProps & { chart: HercegChart | null } = $state({
+      data: metrics,
+      chart: null,
+      options: {},
+    });
+    props.options = {
+      onrender: () => {
+        renders++;
+        props.chart!.setHiddenKeys([props.chart!.getLegend()[0]!.key]);
+      },
+      onvisibility: ({ hiddenKeys }: { hiddenKeys: readonly string[] }) => hidden.push(hiddenKeys),
+    };
+    render(Lines, props);
+    expect(renders).toBe(1);
+    expect(hidden).toHaveLength(1);
   });
 
   it("passes the whole view to onviewport", () => {
@@ -331,7 +364,7 @@ describe("<Chart>", () => {
       marks: [line(sales, { x: "t", y: "v" })],
       options: { facet: facet("region") },
     });
-    expect(props.chart.model.panels().map((p) => p.key)).toEqual(["N", "S"]);
+    expect(props.chart.getPanels().map((p) => p.key)).toEqual(["N", "S"]);
     const updates = spyUpdates(props.chart);
     props.options = { facet: facet("region") };
     flushSync();

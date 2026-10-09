@@ -21,10 +21,12 @@ import {
   type BandList,
   type Bands,
   bandIndices,
+  type ChartMark,
   type Frame,
   fieldBands,
   frozen,
   type Hit,
+  type MARK,
   type Mark,
   type MarkKey,
   NUMERIC,
@@ -89,6 +91,7 @@ interface Painted {
 }
 
 export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
+  declare readonly [MARK]: true;
   readonly spec: Frozen<HeatmapSpec>;
   readonly table: Table<Schema>;
   readonly tooltip = "cell";
@@ -476,7 +479,7 @@ function paintCells(
 export function heatmap<S extends Schema>(
   table: Table<S>,
   options: HeatmapOptions<S>,
-): HeatmapMark {
+): ChartMark<Frozen<HeatmapSpec>> {
   const spec: HeatmapSpec = {
     type: "heatmap",
     x: options.x,

@@ -22,7 +22,7 @@ import type { ProjectionName, ProjectionSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { legendParts } from "./legend-parts.ts";
-import type { ColorRamp, GlyphKey } from "./mark.ts";
+import type { ColorRamp, GlyphKey, MARK } from "./mark.ts";
 
 /** Plane units a map of a single point spans: about two degrees. */
 const POINT_SPAN = (2 * Math.PI) / 180;
@@ -77,6 +77,7 @@ export function joinLayers(
 
 /** The layers of one map, drawn as one layout mark. */
 export class GeoMap implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec = { type: "map" } as const;
   readonly table = undefined;

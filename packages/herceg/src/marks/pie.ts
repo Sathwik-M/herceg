@@ -9,7 +9,7 @@ import type { LegendEntry } from "../model/legend.ts";
 import type { ArcGeometry, Geometry, SegmentGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, PieSpec } from "../spec/spec.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, frozen, requireField } from "./mark.ts";
+import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface PieOptions<S extends Schema> {
   /** Category field: a slice per value. */
@@ -38,6 +38,7 @@ interface Slice {
 }
 
 export class PieMark implements LayoutMark {
+  declare readonly [MARK]: true;
   readonly layout = true;
   readonly spec: Frozen<PieSpec>;
   readonly table: Table;
@@ -310,7 +311,10 @@ export class PieMark implements LayoutMark {
  * pie(sales, { category: "region", value: "revenue", innerRadius: 0.6 })
  * ```
  */
-export function pie<S extends Schema>(table: Table<S>, options: PieOptions<S>): PieMark {
+export function pie<S extends Schema>(
+  table: Table<S>,
+  options: PieOptions<S>,
+): ChartMark<Frozen<PieSpec>> {
   const spec: PieSpec = { type: "pie", category: options.category };
   if (options.value !== undefined) spec.value = options.value;
   if (options.innerRadius !== undefined) spec.innerRadius = options.innerRadius;
