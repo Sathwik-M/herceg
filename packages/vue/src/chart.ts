@@ -83,7 +83,10 @@ function collectMarks(children: unknown, out: ChartMark[]): ChartMark[] {
   if (!isVNode(children) || children.type === Comment || children.type === Text) return out;
   if (children.type === Fragment) return collectMarks(children.children, out);
   const build = markBuilder(children.type);
-  if (!build) throw new Error("<Chart> children must be mark components such as <Line> or <Rule>");
+  if (!build)
+    throw new Error(
+      "<Chart> children must be mark components such as <Line> or <Rule>, not components wrapping them: pass marks built with herceg's functions as :marks",
+    );
   out.push(build(children.props));
   return out;
 }

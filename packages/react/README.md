@@ -37,6 +37,28 @@ calls (`setViewport`, `select`, `toSVG`). Chart events are props:
 `onViewportChange`, `onSelect`, `onHover`, and `onClick`; the latest handler
 is called, so inline functions do not resubscribe.
 
+## Reusing groups of marks
+
+`<Chart>` reads its children's props to build marks; it does not render
+them. Mark elements may sit in fragments and arrays, but not inside
+components of your own (`<LatencyMarks />` throws), whose output the chart
+cannot see. To reuse a group of marks, call a function that returns them,
+or build them with herceg's functions and pass them as `marks`:
+
+```tsx
+function latencyMarks(data: typeof metrics) {
+  return (
+    <>
+      <Line data={data} x="time" y={["p50", "p99"]} />
+      <Rule y={250} label="SLO" />
+    </>
+  );
+}
+
+<Chart title="Checkout">{latencyMarks(checkout)}</Chart>;
+<Chart title="Search" marks={[line(search, { x: "time", y: "p50" }), rule({ y: 250 })]} />;
+```
+
 ## Live data
 
 Mark elements do not create one React element per data point, and data

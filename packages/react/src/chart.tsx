@@ -74,7 +74,10 @@ function marksFrom(children: ReactNode, out: ChartMark[] = []): ChartMark[] {
       continue;
     }
     const build = markBuilder(child.type);
-    if (!build) throw new Error("<Chart> children must be mark elements such as <Line> or <Rule>");
+    if (!build)
+      throw new Error(
+        "<Chart> children must be mark elements such as <Line> or <Rule>, not components wrapping them: call a function that returns marks, or pass marks={...}",
+      );
     out.push(build(child.props));
   }
   return out;
