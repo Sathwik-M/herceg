@@ -122,8 +122,10 @@ def test_area_and_series_options_are_checked_like_the_spec_loader():
         hg.Chart(DATA).area(x="t", y="p50", y1="p50", y2="p99")
     with pytest.raises(ValueError, match="needs both y1 and y2"):
         hg.Chart(DATA).area(x="t", y1="p50")
-    with pytest.raises(ValueError, match="not a series column"):
-        hg.Chart(DATA).area(x="t", y="p50", series="host", stack=True)
+    with pytest.raises(ValueError, match="stack_gaps is for areas stacked by a series column"):
+        hg.Chart(DATA).area(x="t", y="p50", series="host", stack_gaps="zero")
+    with pytest.raises(ValueError, match='"zero" or "interpolate"'):
+        hg.Chart(DATA).area(x="t", y="p50", series="host", stack=True, stack_gaps="linear")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="several value columns or a series column"):
         hg.Chart(DATA).line(x="t", y=["p50", "p99"], series="host")
 
@@ -151,6 +153,23 @@ def test_outlines_and_constant_fills_reach_the_spec():
     for mark in ("point", "area"):
         with pytest.raises(ValueError, match=f"{mark} stroke_width must be 0 or more pixels"):
             getattr(hg.Chart(values), mark)("x", "y", stroke_width=-1)
+
+
+def test_areas_stack_by_a_series_column():
+    values = {"t": [0.0, 1.0, 2.0, 0.0, 2.0], "n": [1.0, 2.0, 3.0, 10.0, 30.0], "s": [*"aaabb"]}
+    chart = hg.area(values, "t", "n", series="s", stack=True, stack_gaps="interpolate")
+    spec, _ = chart.to_spec()
+    assert spec["marks"][0] == {
+        "type": "area",
+        "x": "t",
+        "y": "n",
+        "series": "s",
+        "stack": True,
+        "stackGaps": "interpolate",
+        "data": "data",
+    }
+    # Both series are drawn, b through the minute it has no row at.
+    assert chart.to_svg().count('fill-opacity="0.85"') == 2
 
 
 def test_a_category_y_makes_bars_horizontal():

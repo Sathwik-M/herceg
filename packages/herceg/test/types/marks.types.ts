@@ -64,6 +64,14 @@ area(band, { x: "x", y1: "low", y2: "high" });
 area(band, { x: "x", y: "low", y1: "low", y2: "high" });
 // @ts-expect-error bands do not stack
 area(band, { x: "x", y1: "low", y2: "high", stack: true });
+// Areas of a series field stack too, zero or interpolated where a series has no row.
+const usage = table({ t: [0], cpu: [1], host: ["a"] });
+area(usage, { x: "t", y: "cpu", series: "host", stack: true });
+area(usage, { x: "t", y: "cpu", series: "host", stack: true, stackGaps: "interpolate" });
+// @ts-expect-error gaps are zero or interpolated
+area(usage, { x: "t", y: "cpu", series: "host", stack: true, stackGaps: "linear" });
+// @ts-expect-error bands have no gaps to fill
+area(band, { x: "x", y1: "low", y2: "high", stackGaps: "zero" });
 errorBar(band, { x: "x", y1: "low", y2: "high" });
 // @ts-expect-error vertical error bars have no x range
 errorBar(band, { x: "x", y1: "low", y2: "high", x1: "low" });

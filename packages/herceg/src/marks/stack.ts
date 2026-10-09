@@ -29,6 +29,72 @@ const MIN_CAPACITY = 64;
 /** Scratch totals longer than this are not kept between updates. */
 const RETAINED = 1 << 16;
 
+// Stacks keep their buffers as tables keep columns: live entries in
+// `[start, start + length)` of buffers with room to grow, so appends write
+// past the end and drops from the front move the start. What the entries
+// are (rows by identity, positions along x) is each stack's own.
+
+type Buffer = Float64Array | Int32Array;
+
+/** Room for `count` entries and the appends to come: 1.5 times as many, at least 64. */
+export function capacityFor(count: number): number {
+  return Math.max(MIN_CAPACITY, Math.ceil(count * GROWTH));
+}
+
+/** A buffer of `capacity` entries holding `buffer[start, start + length)` at its front. */
+export function moved<T extends Buffer>(
+  buffer: T,
+  start: number,
+  length: number,
+  capacity: number,
+): T {
+  const next = new (buffer.constructor as new (length: number) => T)(capacity);
+  next.set(buffer.subarray(start, start + length));
+  return next;
+}
+
+/**
+ * Makes room for `count` entries after the `length` live ones at `start`
+ * of `buffers` (all of one capacity), as tables do: by moving them to the
+ * front when that leaves a third of the room free, else into buffers 1.5
+ * times as large as needed. Returns the buffers, live entries now at 0, or
+ * undefined when the entries fit where they are.
+ */
+export function makeRoom<T extends Buffer>(
+  buffers: T[],
+  start: number,
+  length: number,
+  count: number,
+): T[] | undefined {
+  const required = length + count;
+  const capacity = buffers[0]?.length ?? 0;
+  if (start + required <= capacity) return undefined;
+  if (required * GROWTH <= capacity) {
+    for (const buffer of buffers) buffer.copyWithin(0, start, start + length);
+    return buffers;
+  }
+  const grown = Math.ceil(required * GROWTH);
+  return buffers.map((buffer) => moved(buffer, start, length, grown));
+}
+
+/**
+ * Smaller buffers for the `length` live entries at `start` (and `count`
+ * more to come) once drops leave them less than a quarter full, as tables
+ * shrink theirs, so a window that shrinks gives memory back; undefined
+ * while they stay.
+ */
+export function shrunk<T extends Buffer>(
+  buffers: T[],
+  start: number,
+  length: number,
+  count = 0,
+): T[] | undefined {
+  const capacity = buffers[0]?.length ?? 0;
+  if (capacity <= MIN_CAPACITY || (length + count) * 4 >= capacity) return undefined;
+  const smaller = capacityFor(length + count);
+  return buffers.map((buffer) => moved(buffer, start, length, smaller));
+}
+
 /**
  * Stacked layers of fields sharing a table's rows, kept current as the
  * table streams: appended rows are stacked on their own and dropped rows
@@ -144,7 +210,7 @@ export class RowStack {
 
   #rebuild(table: Rows, layers: readonly (NumericArray | undefined)[], signature: string) {
     const length = table.length;
-    const capacity = Math.max(MIN_CAPACITY, Math.ceil(length * GROWTH));
+    const capacity = capacityFor(length);
     this.#tops = layers.map(() => new Float64Array(capacity));
     this.#bases = layers.map(() => new Float64Array(capacity));
     this.#topIndexes = undefined;
@@ -158,24 +224,21 @@ export class RowStack {
     this.#stack(layers, 0, length, 0);
   }
 
-  /**
-   * Moves the live rows into smaller buffers once drops leave them less than
-   * a quarter full, as tables do, so a window that shrinks gives memory back.
-   */
+  /** Moves the live rows into smaller buffers once drops leave them less than a quarter full. */
   #shrink() {
-    const capacity = this.#tops[0]?.length ?? 0;
-    if (capacity <= MIN_CAPACITY || this.#length * 4 >= capacity) return;
-    const smaller = Math.max(MIN_CAPACITY, Math.ceil(this.#length * GROWTH));
-    const move = (buffer: Float64Array) => {
-      const next = new Float64Array(smaller);
-      next.set(buffer.subarray(this.#start, this.#start + this.#length));
-      return next;
-    };
-    this.#tops = this.#tops.map(move);
-    this.#bases = this.#bases.map(move);
+    const smaller = shrunk([...this.#tops, ...this.#bases], this.#start, this.#length);
+    if (!smaller) return;
+    this.#split(smaller);
     this.#start = 0;
     this.#topIndexes = undefined;
     this.#baseIndexes = undefined;
+  }
+
+  /** Takes back buffers given out as tops then bases. */
+  #split(buffers: Float64Array[]) {
+    const count = this.#tops.length;
+    this.#tops = buffers.slice(0, count);
+    this.#bases = buffers.slice(count);
   }
 
   /** Lets go of every buffer; the next update stacks every row again. */
@@ -193,26 +256,12 @@ export class RowStack {
 
   /** Makes room for `count` rows after the live ones. */
   #reserve(count: number) {
-    const required = this.#length + count;
-    const capacity = this.#tops[0]?.length ?? 0;
-    if (this.#start + required <= capacity) return;
+    const room = makeRoom([...this.#tops, ...this.#bases], this.#start, this.#length, count);
+    if (!room) return;
     // Rows move, so indexes over buffer positions are built again.
     this.#topIndexes = undefined;
     this.#baseIndexes = undefined;
-    const buffers = [...this.#tops, ...this.#bases];
-    if (required * GROWTH <= capacity) {
-      // Move the live rows to the front, as the table does.
-      for (const buffer of buffers) buffer.copyWithin(0, this.#start, this.#start + this.#length);
-    } else {
-      const grown = Math.ceil(required * GROWTH);
-      const move = (buffer: Float64Array) => {
-        const next = new Float64Array(grown);
-        next.set(buffer.subarray(this.#start, this.#start + this.#length));
-        return next;
-      };
-      this.#tops = this.#tops.map(move);
-      this.#bases = this.#bases.map(move);
-    }
+    this.#split(room);
     this.#start = 0;
   }
 

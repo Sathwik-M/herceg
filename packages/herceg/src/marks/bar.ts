@@ -29,6 +29,7 @@ import {
   requireField,
   SeriesSplitter,
 } from "./mark.ts";
+import { PositionStack } from "./position-stack.ts";
 import { rowOf, type Series, TableCache, visibleRange, xExtent, yExtent } from "./series.ts";
 import { Slots } from "./slots.ts";
 import { RowStack, type StackedLayers } from "./stack.ts";
@@ -101,6 +102,8 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
   #stacks = new TableCache<Map<string, Stack>>();
   /** Stacks of fields over positions that never repeat, kept current as rows stream. */
   readonly #rowStack = new RowStack("signed");
+  /** Stacks of series split by a field, kept current as rows stream. */
+  readonly #positionStack = new PositionStack();
   readonly #increasing = new IncreasingRows();
   /**
    * Each chart's stacks of its panels' bars, by the rows of its first panel
@@ -186,12 +189,19 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         )
       : table.numbers(this.#position as never);
     const series = buildSeries(table, this.#split.sources(), positions, key, palette, spec.fill);
-    // Rows facets split into panels stack within their panel (stackPanels).
+    // Rows facets split into panels stack within their panel (stackPanels):
+    // the whole table's stacks let go of their buffers.
+    if (spec.stack && split) {
+      this.#stacks = new TableCache();
+      this.#rowStack.clear();
+      this.#positionStack.clear();
+    }
     if (spec.stack && !split) {
       const shown = series.map((s) => !hidden.has(s.key));
       const signature = shown.map(Number).join("");
       // Fields sharing rows whose positions never repeat stack row by row,
-      // which streams; otherwise bars stack by position.
+      // and series of a series field position by position, both of which
+      // stream; otherwise bars stack by position from scratch.
       const rowWise =
         series.every((s) => s.rows === undefined) &&
         this.#increasing.check(table, positions, !this.#categorical);
@@ -199,13 +209,27 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       // Only the stack in use keeps its buffers.
       if (rowWise) {
         this.#stacks = new TableCache();
+        this.#positionStack.clear();
         stack = this.#rowStack.update(
           table,
           series.map((s, i) => (shown[i] ? s.values : undefined)),
           signature,
         );
+      } else if (spec.series !== undefined) {
+        this.#stacks = new TableCache();
+        this.#rowStack.clear();
+        const { tops, bases } = this.#positionStack.update(
+          table,
+          positions,
+          table.numbers(this.#split.yFields[0] as never),
+          series.map((s, i) => ({ name: s.key, rows: s.rows!, shown: shown[i]! })),
+          this.#categorical,
+          this.#categorical ? (this.#horizontal ? bands.y : bands.x)?.keys : undefined,
+        );
+        stack = { tops: series.map(() => tops), bases: series.map(() => bases) };
       } else {
         this.#rowStack.clear();
+        this.#positionStack.clear();
         const cache = this.#stacks.get(table, () => new Map());
         let byPosition = cache.get(signature);
         if (!byPosition || byPosition.tops[0]?.length !== positions.length) {

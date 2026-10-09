@@ -453,11 +453,13 @@ export class Inspector {
     const points: InspectedPoint[] = [];
     for (const s of series) {
       // Series sharing the anchor's positions are read at its row: at an x
-      // several rows share, the first would hide the others.
+      // several rows share, the first would hide the others. Marks pairing
+      // rows of their series say which to read.
       const position =
         anchor && (s === anchor || samePositions(s, anchor, axis))
           ? anchorPosition!
-          : this.#positionAt(s, axis, value);
+          : ((anchor && this.#markOf.get(s)?.alongside?.(s, anchor, anchorPosition!)) ??
+            this.#positionAt(s, axis, value));
       if (position < 0) continue;
       const point = this.#point(s, position);
       if (point) points.push(point);

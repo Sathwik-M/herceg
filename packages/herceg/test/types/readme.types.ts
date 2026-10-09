@@ -28,6 +28,9 @@ declare const p50Latency: Float64Array;
 declare const p99Latency: number[];
 declare const latencies: Float64Array;
 declare const serviceNames: string[];
+declare const minutes: Float64Array;
+declare const statusCodes: string[];
+declare const counts: Float64Array;
 declare const userCpu: Float64Array;
 declare const systemCpu: Float64Array;
 declare const newTimes: Float64Array;
@@ -79,6 +82,15 @@ line(requests, { x: "time", y: "latency", series: "service" });
 const usage = table({ time: time(timestamps), user: userCpu, system: systemCpu });
 area(usage, { x: "time", y: "user" });
 area(usage, { x: "time", y: ["user", "system"], stack: true });
+const responses = table({ minute: time(minutes), status: statusCodes, count: counts });
+area(responses, { x: "minute", y: "count", series: "status", stack: true });
+area(responses, {
+  x: "minute",
+  y: "count",
+  series: "status",
+  stack: true,
+  stackGaps: "interpolate",
+});
 area(metrics, { x: "time", y1: "p50", y2: "p99" });
 rule({ y: 250, label: "SLO" });
 rule({ x: deployTime });

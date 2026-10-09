@@ -10,7 +10,10 @@ import { fromWall } from "../src/format/zone.ts";
 import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
+import { PositionStack } from "../src/marks/position-stack.ts";
+import { SplitRows } from "../src/marks/split.ts";
 import { RowStack } from "../src/marks/stack.ts";
+import { UnionStack } from "../src/marks/union-stack.ts";
 import { timeBreaks } from "../src/scale/breaks.ts";
 import { LinearScale } from "../src/scale/scale.ts";
 
@@ -171,6 +174,55 @@ measure("stack: 5 layers, append 10,000 rows, 1M window", () => {
   stacked.append(Object.fromEntries([["t", t], ...layers.map((name) => [name, v])]));
   tick += 10_000;
   update();
+});
+// Ten series of a category field, 10,000 positions in a rolling window, one
+// position (a row per series) appended per tick: bars stacked at positions,
+// areas on the union of the series' x.
+const SERIES = 10;
+const POSITIONS = 10_000;
+const positionRows = (from: number, count: number) => {
+  const t = new Float64Array(count * SERIES);
+  const v = new Float64Array(count * SERIES);
+  const s: string[] = [];
+  for (let p = 0; p < count; p++)
+    for (let k = 0; k < SERIES; k++) {
+      t[p * SERIES + k] = from + p;
+      v[p * SERIES + k] = 1 + (((from + p) * 7 + k * 13) % 17);
+      s.push(`s${k}`);
+    }
+  return { t, v, s };
+};
+const long = table(positionRows(0, POSITIONS), { maxRows: POSITIONS * SERIES });
+// Grouped as charts group a streaming table's rows, which the times include.
+const split = new SplitRows(long as unknown as Table, "s", "t");
+const groupsOf = () => split.groups().map(({ name, rows }) => ({ name, rows, shown: true }));
+const bars = new PositionStack();
+const areas = new UnionStack();
+const stackSeries = (layers = groupsOf()) => {
+  bars.update(long, long.numbers("t"), long.numbers("v"), layers, false, undefined);
+  areas.update(long, long.numbers("t"), long.numbers("v"), layers, "zero");
+};
+stackSeries();
+let position = POSITIONS;
+const appendPosition = () => {
+  long.append(positionRows(position++, 1));
+  return groupsOf();
+};
+measure("stack: bars of 10 series, append a position, 100k rows", () => {
+  const layers = appendPosition();
+  bars.update(long, long.numbers("t"), long.numbers("v"), layers, false, undefined);
+});
+measure("stack: areas of 10 series, append a position, 100k rows", () => {
+  const layers = appendPosition();
+  areas.update(long, long.numbers("t"), long.numbers("v"), layers, "zero");
+});
+measure("stack: bars of 10 series, 100k rows again", () => {
+  long.set("v", 0, long.numbers("v")[0]! + 1);
+  bars.update(long, long.numbers("t"), long.numbers("v"), groupsOf(), false, undefined);
+});
+measure("stack: areas of 10 series, 100k rows again", () => {
+  long.set("v", 0, long.numbers("v")[0]! + 1);
+  areas.update(long, long.numbers("t"), long.numbers("v"), groupsOf(), "zero");
 });
 // Row views over a million rows: positions only, no column copies.
 const hosts = Array.from({ length: 200 }, (_, i) => `host-${(i * 7919) % 1000}`);

@@ -112,8 +112,12 @@ Memory amplification over the source data is therefore: reserved capacity
 for tables that grow (about 0.5x the live rows right after growth; at most
 0.5x `maxRows` for rolling windows; after drops, up to about six times the
 live rows until an explicit drop shrinks the buffer), 4 to 6 bytes per row for long-format grouping (each group's positions, with room for half as many again and at least 16), about 0.16 bytes per row for each field a long-format line or area indexes (up to twice that as a series grows, and about four times after its rows shrink; see Level of detail), two `Float64Array`s per
-layer for stacked areas and bars (top and base, with up to 0.5x room to grow
-like a table's), and geometry buffers bounded by the plot width.
+layer for stacks of fields (top and base, with up to 0.5x room to grow
+like a table's), 28 bytes per row for bars stacked by a series field (each
+row's top, base, position, series, and next row at its position) and 29
+per position plus its `Map` entry, 16 bytes per row and 16 per layer and x position (plus 8
+per x) for areas stacked by a series field (see below), and geometry
+buffers bounded by the plot width.
 
 Rows of a whole table split by a series field are grouped once and kept
 current (`SplitRows` in `marks/split.ts`): appended rows are filed
@@ -148,13 +152,77 @@ values already present; anything else (a replace, a reset, a layer hidden
 or shown) stacks every row again. Long stacks (from 262,144 rows) keep
 min/max indexes over their tops and bases, so y extents and band tracing
 read a few blocks per pixel column rather than every row when the view has
-no gaps. Bars stack row by row only when their positions strictly increase;
-bars split by a series field, or with repeated positions, stack by position
-on every change. Over a million-row window with 10,000 rows appended per
-tick, five stacked area layers take about 4 ms a frame instead of 32 ms
-(unstacked, about 3 ms); five stacked bar fields over 100,000 rows take
-about 5 ms instead of 18 ms, as much as grouped bars (one-off Node
-measurements of the scene, Apple M6).
+no gaps. Bars of several fields stack row by row only when their positions
+strictly increase, and by position on every change when they repeat. Over a
+million-row window with 10,000 rows appended per tick, five stacked area
+layers take about 4 ms a frame instead of 32 ms (unstacked, about 3 ms);
+five stacked bar fields over 100,000 rows take about 5 ms instead of 18 ms,
+as much as grouped bars (one-off Node measurements of the scene, Apple M6).
+
+Bars split by a series field stack position by position
+(`marks/position-stack.ts`): each row links to the next row at its
+position (an x value, or a band index, numbered through a `Map` and a free
+list), in row order, so the rows a rolling window drops lead their
+positions' lists. Appended and dropped rows mark the positions they are at,
+and only those are restacked from their lists (series order, then row
+order, positive values up and negative down); a position left without rows
+gives its number back. Values replaced in place, a reset, series shown,
+hidden, added, or gone, or a change of the band list (categories are band
+indices) stack every row again. A window that leaves fewer than a quarter
+of the numbered positions live numbers them again, rewriting each row's
+position, so their arrays shrink; a stack rebuilt for the same layers
+reuses its buffers, others get new ones, since another chart sharing the
+mark may still read the old. Both stacks report the bytes they hold
+(`byteLength`). For ten series of
+10,000 positions in a rolling window, a position appended per tick costs
+the stack about 0.09 ms with the grouping of its rows, against about 2.7 ms
+to stack every row again (`npm run bench:core`). A chart's scene takes
+about 2.1 ms a tick instead of 4.6 ms when every row was stacked again
+(grouped bars: about 2.4 ms), a change of values in place about 4.1 ms
+instead of 4.7 ms, and the first scene about 4.8 ms instead of 6.0 ms; in
+Chrome at 60 Hz the stream costs about 4.0 ms of JavaScript a frame instead
+of 6.4 ms (one-off runs interleaved with the version before, medians of
+six in Node 22.23 and of three in Chrome 154, macOS 27, Apple M6). Bars of
+several fields with repeated positions still stack from scratch on every
+change.
+
+Areas split by a series field stack on the union of their x positions
+(`marks/union-stack.ts`): each shown layer has a top and a base at every x
+any shown layer has a row at, in typed arrays laid out like a table's
+columns (live positions in a buffer with room to grow), and each row also
+gets the top and base of its layer at its own position, so tooltips, the
+keyboard, events, and summaries read the series' real rows while geometry
+and y extents read the edges (`Series.edges`, traced as a whole sorted
+series of their own). A layer without a row at an x counts as zero there,
+or with `stackGaps: "interpolate"` as the straight line between its last
+row before and its first after (zero beyond its ends: zero at the union's
+outside positions, so its edge ramps to its first row), and a missing
+value at either end leaves the interpolation missing. Several rows of a
+layer at one x pair with the others' by occurrence, the stack having as
+many positions there as the layer with the most rows, and a layer with
+fewer holding its last row, missing or not. Layers whose x does not ascend,
+or is missing in some row, are merged through a private permutation sorted
+by x (the series' own rows keep their order) and restacked from scratch on
+every change. Otherwise an append restacks the positions from the first x
+it changes (its rows' first x, or with interpolation their layer's previous
+last x) to the end, after cutting the union there, and a rolling window's
+drops restack the positions up to the new first x of the layers that lost
+rows (as many or fewer than before, written where the old ones ended); the
+positions between stay. Overlapping ends, a head longer than half the
+union, or anything else stacks every row again. Unions of at least 262,144
+positions keep min/max indexes of their edges, updated over rewritten
+positions. The edges cost O(kU) for k layers over U positions, which is the
+table's size when the series share their x and up to k times it when they
+share none (100 series of 1,000 distinct x each: 160 MB of edges).
+Streaming ten series of 10,000 positions, a position per tick, costs the
+stack about 0.09 ms with its grouping, against about 2.4 ms to stack every
+row again (`npm run bench:core`), and a chart about 1.9 ms a scene
+(unstacked, 1.4 ms), the first scene about 3.9 ms (unstacked, 1.6 ms; the
+one-off runs above). Layers in an order of their own stay stacked while
+their table does not change. Facet panels stack their rows
+from scratch (`UnionStack.once`), writing rows' tops into one pair of
+table-sized arrays the panels share, and keep the result while the table,
+the panels' rows, and the hidden series stay the same.
 
 ## Derived tables
 
@@ -651,7 +719,9 @@ lowest and highest), each boundary is one curve through its own points (so
 none passes its data), shared by the layers on either side, and a segment
 where two boundaries could cross (the difference of their cubics has a
 Bezier ordinate of the wrong sign) is straight for all of them, so layers
-never overlap. Bands and stacks on log y axes are drawn straight. Missing values split a line into runs
+never overlap. Bands and stacks on log y axes are drawn straight, a stack's
+edges at zero at the axis' low end (the plot's top on a reversed axis),
+where it stands. Missing values split a line into runs
 that are reduced separately, so data that alternates between values and gaps
 can still produce one run per few points.
 
@@ -1009,7 +1079,8 @@ when a facet splits them (`Mark.series`'s `split`) and stack after the split
 (`stackPanels`), each panel, position, and sign apart: one pair of
 table-sized top and base arrays per field, which the panels' disjoint rows
 fill, kept while the table, the panels' rows, and the hidden series stay the
-same. Heatmaps split like row-aligned marks: each panel's raster and cell
+same. Areas stacked by a series field do the same, each panel's layers on
+the x positions of that panel's rows, with edges of their own. Heatmaps split like row-aligned marks: each panel's raster and cell
 index read only its rows, so a cell takes the last row with a value among
 them, and equal cells of other panels never meet (see Points and rasters).
 Marks whose series summarize rows (histograms, box plots, violins) are
@@ -1986,7 +2057,11 @@ kept ascending and shown the way the axis' configured domain runs, so
 reversed axes stay reversed. The y viewport is kept as domains for the left
 axis and, in charts with one, the right axis, each what the same pixels show
 on it. Keyboard navigation keeps a position within a series, so repeated x
-values are each reachable.
+values are each reachable. The other series are read at the first point
+each draws at the cursor's x, except where a mark pairs rows of its series
+(`Mark.alongside`): at an x where a layer of a series field's area stack
+has several rows, the stack's other layers are read at the same one of
+theirs, in row order, and left out where they have fewer.
 
 A press on the plot becomes one of three gestures once it moves 3 px: a
 brush (with `interaction.brush`), a pan (with zoom only, or Shift with
@@ -2449,7 +2524,12 @@ document when `OffscreenCanvas` is unavailable.
   gap-free stacks on linear scales use min/max indexes. A change to values
   of a long-format table in place groups its rows again and rebuilds their
   indexes, and a rolling window's drops move every row its groups keep.
-  Stacked bars split by a series field restack every row on each change.
+  Bars of several fields at repeated positions restack every row on each
+  change; so do areas stacked by a series field whose x does not ascend in
+  some series or is missing in some row, and their facet panels. A series
+  appending x positions far behind the others restacks every position from
+  there. On a log y axis, a stack's edges at zero are drawn at the axis'
+  low end, which costs a copy of each edge per frame.
 - Renderer thresholds are not tuned.
 - Rules and text are always drawn above other marks, regardless of mark order.
 - The GPU draws only large point series; lines, areas, bars, and heatmaps use

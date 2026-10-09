@@ -43,7 +43,9 @@ benchmark suite.
 
 ## Roadmap
 
-Done: columnar data model, scales, SVG and Canvas rendering, line, area, bar
+Done: columnar data model, scales, SVG and Canvas rendering, line, area
+(stacked from several fields or from long data split by a series field,
+zero or interpolated where a series has no row), bar
 (vertical and horizontal, with value labels), point (with size, color,
 opacity, and shape encoded by fields), heatmap, error bar, candlestick (and
 OHLC bars), histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge,
@@ -59,7 +61,8 @@ region, and text annotations from constants or data (with labels hidden or
 moved where they would overlap), custom marks drawing
 through the same renderers (with series, legends, and tooltips), derived
 tables (filter, calculate, bin, aggregate, rolling windows, sort) with
-portable expressions, level of detail, streaming updates, a shared
+portable expressions, level of detail, streaming updates (stacks of fields and of series
+restacking only what appended and dropped rows touch), a shared
 scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
 selections, animated changes of view and of values (bars, pies, points,
@@ -84,17 +87,16 @@ menu, keyboard and ARIA navigation, and a React component).
 
 Next, in order:
 
-1. Large data: incremental stacks for bars split by a series field.
-2. Layout: annotations over a table split by facets, and error bars and
+1. Layout: annotations over a table split by facets, and error bars and
    candlesticks on categories per panel.
-3. Animation of stacked and labeled bars, of categories that come and go,
+2. Animation of stacked and labeled bars, of categories that come and go,
    of panels, and of points across resets (by a key field).
-4. More financial tools (drawing tools, range navigators
+3. More financial tools (drawing tools, range navigators
    in charts with panels); 3D lines, meshes, parametric surfaces, and
    surfaces on the GPU.
-5. Grid: pivots, and a server-backed mode whose filters, sorts, and
+4. Grid: pivots, and a server-backed mode whose filters, sorts, and
    aggregates run where the data lives.
-6. Screen-reader verification, benchmarks in Firefox and on other machines
+5. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 
 ## Development

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 TooltipMode = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after", "monotone"]
+StackGaps = Literal["zero", "interpolate"]
 ThemeName = Literal["light", "dark", "high-contrast", "high-contrast-dark", "auto"]
 
 _NUMERIC = ("number", "time")
@@ -753,6 +754,7 @@ class Chart:
         y2: str | None = None,
         series: str | None = None,
         stack: bool = False,
+        stack_gaps: StackGaps | None = None,
         data: Any = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
@@ -767,6 +769,12 @@ class Chart:
         id: str | None = None,
     ) -> Chart:
         """Filled areas: down to zero, stacked, or the band between ``y1`` and ``y2``.
+
+        ``stack=True`` stacks several ``y`` columns row by row, or the
+        series of a ``series`` column on every x any of them has. There, a
+        series counts as zero at an x where it has no row, or with
+        ``stack_gaps="interpolate"`` as the straight line between its rows
+        on either side.
 
         A single area has an outline along its top in its own color; stacked
         and band areas have none unless ``line=True``. ``stroke`` and
@@ -785,8 +793,10 @@ class Chart:
             raise ValueError("an area needs y, or y1 and y2")
         if band and (series is not None or stack):
             raise ValueError("a band area (y1 and y2) cannot also have series or stack")
-        if stack and series is not None:
-            raise ValueError("stacked areas need several y columns sharing x, not a series column")
+        if stack_gaps is not None and not (stack and series is not None):
+            raise ValueError("stack_gaps is for areas stacked by a series column")
+        if stack_gaps not in (None, "zero", "interpolate"):
+            raise ValueError(f'stack_gaps must be "zero" or "interpolate", not {stack_gaps!r}')
         ys = self._require_many(table, y, _NUMERIC, "area y") if y is not None else None
         self._require(table, y1, _NUMERIC, "area y1")
         self._require(table, y2, _NUMERIC, "area y2")
@@ -802,6 +812,7 @@ class Chart:
                 "y2": y2,
                 "series": series,
                 "stack": stack or None,
+                "stackGaps": stack_gaps,
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "line": line,
@@ -3164,6 +3175,7 @@ def area(
     y2: str | None = None,
     series: str | None = None,
     stack: bool = False,
+    stack_gaps: StackGaps | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
     line: bool | None = None,
@@ -3177,7 +3189,12 @@ def area(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """An area chart, stacked with ``stack=True``, or the band between ``y1`` and ``y2``."""
+    """An area chart, stacked with ``stack=True``, or the band between ``y1`` and ``y2``.
+
+    Stacked by a ``series`` column, every series is drawn on every x any of
+    them has: ``stack_gaps`` says what a series counts as where it has no
+    row, ``"zero"`` (the default) or ``"interpolate"``.
+    """
     return _chart_of(data, options).area(
         x,
         y,
@@ -3185,6 +3202,7 @@ def area(
         y2=y2,
         series=series,
         stack=stack,
+        stack_gaps=stack_gaps,
         fill=fill,
         fill_opacity=fill_opacity,
         line=line,

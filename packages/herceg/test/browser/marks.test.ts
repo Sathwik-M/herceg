@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { graph } from "../../src/marks/graph.ts";
@@ -252,6 +253,54 @@ describe("new marks in the browser", () => {
       expect(alpha(raster, 1)).toBe(255);
       chart.destroy();
     }
+  });
+
+  it("draws areas stacked by a series field on SVG and canvas, with their rows in tooltips", async () => {
+    const requests = () =>
+      table(
+        {
+          minute: [0, 1, 2, 0, 2, 3, 1],
+          count: [1, 2, 3, 10, 20, 30, 5],
+          status: ["200", "200", "200", "500", "500", "500", "404"],
+        },
+        { maxRows: 9 },
+      );
+    const mark = (data: ReturnType<typeof requests>) =>
+      area(data, { x: "minute", y: "count", series: "status", stack: true });
+    const data = requests();
+    const chart = createChart(host, { marks: [mark(data)] });
+    const paths = () => chart.root.querySelectorAll('svg [data-kind="area"]');
+    expect(paths()).toHaveLength(3);
+    // The retained SVG draws what the chart exports.
+    const svg = chart.toSVG();
+    const drawn = [...paths()].map((path) => path.getAttribute("d"));
+    for (const d of drawn) expect(svg).toContain(`d="${d}"`);
+    // At minute 1 the 500s have no row: the tooltip names the series that do.
+    const x = modelOf(chart).xScale()!;
+    const y = modelOf(chart).yScale()!;
+    hover(chart.root, x.map(1), y.map(4));
+    await frame();
+    expect(tooltipOf(chart.root).textContent).toBe("120024045");
+    // Streamed rows restack the minutes they are at.
+    data.append({ minute: [4, 4], count: [1, 2], status: ["200", "500"] });
+    chart.render();
+    expect([...paths()].map((path) => path.getAttribute("d"))).not.toEqual(drawn);
+    chart.destroy();
+    const canvas = createChart(host, { renderer: "canvas", marks: [mark(requests())] });
+    const pixel = canvas.toPixel(1, { axis: "x" })!;
+    const context = canvas.root.querySelector("canvas")!.getContext("2d")!;
+    const scale = context.canvas.width / context.canvas.clientWidth;
+    const at = (value: number) =>
+      context.getImageData(
+        Math.round(pixel * scale),
+        Math.round(canvas.toPixel(value, { axis: "y" })! * scale),
+        1,
+        1,
+      ).data[3];
+    // Filled up to the 404s' top at minute 1 (7), and not above it.
+    expect(at(6)).toBeGreaterThan(200);
+    expect(at(12)).toBe(0);
+    canvas.destroy();
   });
 
   it("toggles bar series from the legend", () => {

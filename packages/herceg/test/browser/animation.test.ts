@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import { ValueAnimation } from "../../src/dom/value-transition.ts";
+import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { tablesOf } from "../../src/marks/layout-mark.ts";
@@ -375,6 +376,34 @@ describe("value transitions", () => {
     tick(400);
     expect(chart(moving)).toEqual(chart(still));
   });
+
+  for (const curve of ["linear", "monotone"] as const) {
+    it(`move areas stacked by a series field together, their shared edges as one (${curve})`, async () => {
+      const data = table({
+        t: [0, 1, 2, 0, 2, 1],
+        v: [10, 20, 15, 5, 5, 8],
+        s: ["a", "a", "a", "b", "b", "c"],
+      });
+      const marks = () => [area(data, { x: "t", y: "v", series: "s", stack: true, curve })];
+      const moving = await mount({ animation: VALUES, marks: marks(), y: { domain: [0, 80] } });
+      const still = await mount({ animation: false, marks: marks(), y: { domain: [0, 80] } });
+      await controlTime();
+      const layers = (chart: Chart) =>
+        [...chart.root.querySelectorAll('[data-kind="area"]')].map((p) => p.getAttribute("d"));
+      const before = layers(moving);
+      expect(before).toHaveLength(3);
+      data.set("v", 1, 40);
+      tick(66);
+      const passing = layers(moving);
+      // Every layer from the change up moves, none where it was or where it goes.
+      for (const [i, d] of passing.entries()) {
+        expect(d).not.toBe(before[i]);
+        expect(d).not.toBe(layers(still)[i]);
+      }
+      tick(400);
+      expect(chart(moving)).toEqual(chart(still));
+    });
+  }
 
   it("show the new values and axes before the pointer reads them", async () => {
     const data = sales();
