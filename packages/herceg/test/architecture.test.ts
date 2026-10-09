@@ -83,6 +83,23 @@ describe("architecture", () => {
     }
   });
 
+  // `herceg/pivot` is data: charts read its tables, and grids load it only to show one.
+  it("herceg/pivot imports only the data layer", () => {
+    const seen = new Set<string>();
+    const visit = (file: string) => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const source = readFileSync(file, "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
+      for (const [, path] of source.matchAll(/from "(\.[^"]+)"/g))
+        visit(resolve(dirname(file), path!));
+    };
+    visit(join(SRC, "pivot.ts"));
+    for (const file of seen) {
+      const directory = file.slice(SRC.length + 1).split("/")[0]!;
+      expect(["pivot.ts", "data", "lod"], `herceg/pivot reaches ${file}`).toContain(directory);
+    }
+  });
+
   for (const directory of CORE) {
     it(`src/${directory} does not use the DOM or import browser code`, () => {
       for (const file of files(join(SRC, directory))) {

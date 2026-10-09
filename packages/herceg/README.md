@@ -241,7 +241,119 @@ lists groups' rows, about 6 more per shown row, kept current as rows
 stream; and once the table drops rows (or from the start with `maxRows`),
 8 bytes per table row, shown or not, for each field the aggregates read:
 the values to take away. `byteLength` counts these and the groups' own
-arrays, not their keys and maps.
+arrays, not their keys and maps. `groups.subscribe(listener)` is told
+whenever the groups followed a change of their view or table, once they
+caught up with any change their tables' listeners made meanwhile.
+
+### Row pivots
+
+`pivotRows`, from `herceg/pivot`, shows a view's rows as a crosstab: a row
+for each value of one field, and a column for each value of another and
+each aggregate.
+
+```ts
+import { bar, count, mean, rowView } from "herceg";
+import { pivotRows } from "herceg/pivot";
+
+const traffic = pivotRows(rowView(requests), {
+  rows: "region",
+  pivot: "service",
+  ops: { requests: count(), latency: mean("latency") },
+  totals: true,
+});
+bar(traffic.table, { x: "region", y: "requests", series: "service" });
+
+const crosstab = traffic.read();
+crosstab.values; // the services the rows hold, in column order: ["api", "web", "db"]
+crosstab.value(0, crosstab.indexOf("web"), "latency"); // the first region's mean web latency
+```
+
+The aggregates are row groups' by the two fields, in one computation (see
+Row groups): `traffic.table` has a row for each combination of a region and
+a service that some request has, holding both fields and each aggregate,
+which charts read as any table, and `traffic.rowTable` a row per region
+with its totals, the aggregates of all its rows (a total mean is the mean of
+the region's requests, not of its services' means). `read()` gives the
+crosstab over them: its rows are `rowTable`'s, in the order their values
+first appeared, and its `values` are the pivot field's values the rows
+hold, in column order: categories in the order of their field's dictionary,
+numbers and times ascending, missing last. `cell(row, index)` is the
+position in `table` of a row's combination with the value at `index`, or -1
+where none of the row's rows has that value: the combination is absent.
+`value(row, index, aggregate)` reads an aggregate: undefined where absent;
+where present but its field's values are all missing, as groups have it: a
+count of rows the rows it has, a count of the field and a sum 0, a mean,
+minimum, or maximum NaN. With `zeroFill: "count"` absent combinations'
+counts read 0. `members(row)` and `cellMembers(row, value)` list the positions of a
+row's or a combination's rows, to drill down. Rows and value indexes are the
+crosstab's own, valid until it changes; values and keys are not.
+
+`crosstab.columns` lists the columns generated: each value's aggregates,
+then with `totals` a total per aggregate. A column's `id` is JSON text of
+the pivot field, the value with its kind (`category`, `number`, or `time`),
+and the aggregate's name, operation, and field, or a total's tag instead of
+a value: never a place, a label as shown, or a dictionary code, so ids stay
+as values come and go, and a category named "1", "null", or "Total" is not
+the number 1, the missing value, or the totals.
+
+The pivot follows its view as groups do: appended rows update the
+combinations they join and add those they start, and the crosstab extends
+with them; rows a rolling window drops leave theirs, and a combination or
+value left without rows goes. Its index is a dense array of every row and
+value while there are at most about a million of them (4 MiB), extended in
+place; past that it is sparse, each row's values and positions, built again
+whenever combinations are added (about 2–3 ms for 1,000 rows appended to
+70,000–80,000 combinations, where appends to existing combinations take
+about 0.7–1.3 ms, view and groups included; one-off Node measurements).
+
+Pivots are bounded. These are the defaults:
+
+```ts
+pivotRows(view, {
+  rows: "region",
+  pivot: "service",
+  ops: { requests: count() },
+  limits: { generatedColumns: 1024, observedCombinations: 1_000_000, ownedBytes: 128 * 2 ** 20 },
+});
+```
+
+Generated columns count each value's aggregates and the totals. Owned
+bytes limit an estimate of the memory the pivot keeps beyond its view and
+table: its groups' typed arrays as they hold them now, what growing takes,
+and the most that listing their rows and reading a group's rows again can
+still take; the index and the tables with their room; and maps, keys, and
+the generated columns by fixed allowances per entry. The typed arrays a
+pivot holds stay within it, but it is not a cap on the heap: strings longer
+than the allowances (long labels, which column ids repeat) and the
+runtime's own object overhead can take more, and neither the moment an
+array grows (when the old one and the new one are both held) nor the
+source counts. Over the workloads measured it came to 1.5 to 4.2 times the
+memory kept, before any rows were listed. `pivotRows` throws a `PivotLimitError`,
+naming the `limit`, what the pivot reached (`observed`), and its `budget`,
+as soon as one is passed and before the groups grow further. A pivot that
+is following its view counts what a change would make it before changing
+anything; when that passes a limit it stops where it was instead of
+throwing to the table's other listeners: its tables and crosstab keep what
+they held, its rows list their rows as they were then (those still in the
+table, whatever the view shows now), its `subscribe` listeners are told,
+and `failure` holds the error.
+No value is dropped to stay within a limit. Recreate the pivot over a
+narrower view, or with larger limits, to go on. While rows stream, a
+combination that a batch's dropped rows leave empty still counts as the
+batch is counted. A pivot's `subscribe` listeners hear of a change once it
+followed it (read its tables there, not in listeners of the view or table
+subscribed before it); `dispose()` stops a pivot, leaving its view.
+
+Over a million rows, a pivot of 100 regions by 10 or 100 services and three
+aggregates takes about 40 ms to build and keeps about 4–6 MiB, a sixth of
+the source's 23 MiB; with 100,000 regions each holding two of the
+services (about 200,000 combinations), about 0.16–0.28 s and 73 MiB, most of
+it the groups' maps, keys, and tables, of which 39 MiB are typed arrays
+(`byteLength`). The index takes at most about 5 ms of that; the rest is
+grouping, so a pivot costs about what grouping by its two fields does, up
+to a fifth more where nearly every row starts a group (one-off Node
+measurements, Apple M6). A thousand services of three
+aggregates pass the default column limit.
 
 ## Marks
 
@@ -1909,12 +2021,50 @@ group or a group's row goes to the group holding it (elsewhere the arrows
 move between cells); Enter on any cell of a header expands or collapses it,
 and Space selects its rows.
 
+A pivot (see Row pivots) shows in a grid from `herceg/grid/pivot`, which a
+grid that shows none never loads: a row per row of the pivot, and columns
+for the rows field, for each value and aggregate, and for the totals.
+
+```ts
+import { createPivotGrid, createPivotGridModel } from "herceg/grid/pivot";
+
+const model = createPivotGridModel({
+  data: traffic,
+  rowColumn: { title: "Region", width: 100 },
+  aggregates: { latency: { title: "Latency (ms)", format: { maximumFractionDigits: 1 } } },
+});
+const grid = createPivotGrid(element, { model, ariaLabel: "Requests by region and service" });
+model.pinColumn("region", "left");
+```
+
+With several aggregates, a header row of the pivot's values goes over their
+aggregates' headers, each value spanning its columns, and repeated where
+moving or pinning parts them; with one, each value heads its column. Absent
+combinations are blank, and missing values show as `missing`; a row whose
+key is missing reads "(missing)". The model is a grid model (`GridModel`)
+without groups or table rows of its own: generated columns are named by
+their ids in its commands (resizing, moving, pinning, hiding, focusing, and
+sorting), and `model.columns` lists them with full titles ("api, Latency
+(ms)"), which their headers carry as their accessible names. Layout and
+focus stay with ids: a value that streams in later gets columns of its own
+in column order, taking no other column's width, pin, or focus, and the
+columns in view do not move (after the user moved columns, new ones go just
+before the next column in column order, or last); layout that `setColumns`
+gives for columns not generated yet waits for them. Clicking a header sorts
+the rows by its column, absent and missing values last either way, without
+touching the view's order: sort keys name the rows field or generated ids.
+Selecting a row selects its rows of the view into the selection store, so
+a chart restricted to them shows them; its checkbox is mixed once more of
+its rows arrive. A pivot that stopped at a limit says so in a notice under
+the grid, which keeps showing what it held, and its rows select nothing
+more.
+
 Rows have one height (`rowHeight`, 28 pixels by default) and columns explicit
 widths. Rows taller together than 8 million pixels scroll scaled: the
 scrollbar covers them all, and a pixel scrolled moves more than one. Not yet
-available: column groups (headers over several columns), sizing columns to
-their content, moving columns by touch (the menu moves them), pivots, custom
-cell content, editing, and copying.
+available: column groups (headers over several columns) other than a
+pivot's values, sizing columns to their content, moving columns by touch
+(the menu moves them), custom cell content, editing, and copying.
 
 ## Migrating from earlier versions
 

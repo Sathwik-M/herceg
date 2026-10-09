@@ -4,6 +4,7 @@
 // header's cells say; and how many of each group's rows are selected. The
 // model (model.ts) keeps the expansion, order, and selection these follow.
 
+import type { Fields } from "../data/expression.ts";
 import type { RowGroups } from "../data/groups.ts";
 import { rowComparator, type SortKey } from "../data/order.ts";
 import type { RowView } from "../data/row-view.ts";
@@ -40,16 +41,18 @@ export interface Projection {
  * The groups of each level ordered by `sort` (by those of its keys the
  * level's table has, stably; as they appeared without any), under the
  * expanded groups above them, and the rows of expanded last-level groups.
- * Only the groups shown are sorted, and their expansion read.
+ * Only the groups shown are sorted, and their expansion read. `tables` are
+ * the fields each level shown sorts by, its table by default; a pivot shows
+ * its first level alone, sorted by its crosstab.
  */
 export function project(
   groups: RowGroups,
   sort: readonly SortKey[],
   isOpen: (id: string) => boolean,
+  tables: readonly Fields[] = groups.by.map((field) => groups.tableOf(field)),
 ): Projection {
-  const by = groups.by as readonly string[];
-  const last = by.length - 1;
-  const counts = by.map((_, depth) => groups.countAt(depth));
+  const last = tables.length - 1;
+  const counts = tables.map((_, depth) => groups.countAt(depth));
   const total = counts.reduce((sum, count) => sum + count, 0);
   const heads = new Int32Array(total);
   const depths = new Uint8Array(total);
@@ -58,8 +61,7 @@ export function project(
   const siblings = new Int32Array(total);
   const rank = counts.map((count) => new Int32Array(count).fill(-1));
   const open = counts.map((count) => new Uint8Array(count));
-  const orders = by.map((field) => {
-    const table = groups.tableOf(field);
+  const orders = tables.map((table) => {
     const keys = sort.filter(({ field }) => table.has(field));
     return keys.length > 0 ? rowComparator(table, keys) : null;
   });

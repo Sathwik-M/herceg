@@ -30,8 +30,9 @@ One name per concept, used the same way in code and docs.
 | **Chart** | A mounted, interactive chart in the browser (`createChart`), and the handle applications hold to it (`Chart`). |
 | **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
 | **Row groups** | A row view's rows grouped by the values of some fields, level by level (`RowGroups`, made by `groupRows`): each group's key path (its value of each field down to its level), its parent and children, the positions of its rows, and per level a table with one row of aggregates per group. |
-| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, or its row groups as header rows each followed by its groups below (or its rows) when expanded, drawn from a grid model (`GridModel`), which holds its columns, scroll position, expansion, focus, and selection without a DOM. |
-| **Grid column** | A field a grid shows, with its id, title, width, alignment, and format (`GridColumn`). Not a table's column (its storage). |
+| **Row pivot** | A row view's rows as a crosstab (`RowPivot`, made by `pivotRows`): a row per value of one field and a column per value of another and aggregate, over row groups by the two fields, with an index from each row and value to their combination's aggregates. A combination none of the rows holds is absent. |
+| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, or its row groups as header rows each followed by its groups below (or its rows) when expanded, or a row pivot's rows (`createPivotGrid`), drawn from a grid model (`GridModel`), which holds its columns, scroll position, expansion, focus, and selection without a DOM. |
+| **Grid column** | A column a grid shows, with its id, title, width, alignment, and format: a field (`GridColumn`), or a column a row pivot generates for a value and an aggregate (or a total), named by an id of those. Not a table's column (its storage). |
 
 ## Pipeline
 
@@ -405,7 +406,8 @@ treated as an update of every field); a listener of the groups' tables that
 changes their source is caught up with once the groups' own changes are
 told, and meanwhile reads the groups as they were before its change: their
 rows still in the table, listed for that read only, so no list built
-against a newer view outlives it.
+against a newer view outlives it. Listeners of the groups themselves
+(`subscribe`) are told once the groups caught up, such changes included.
 
 The rows of each last-level group, in the view's order, are listed only
 when a reader asks (a grid with a group expanded, selecting a group, or a
@@ -459,6 +461,118 @@ each level that lost one is renumbered and its table reset: 13 ms (38 ms
 before) collapsed, and as slow as before (about 36 ms) fully expanded,
 where 63,000 headers are placed again. (Interleaved Node measurements
 against the previous implementation, Apple M6.)
+
+## Row pivots
+
+A row pivot (`data/pivot.ts`, `herceg/pivot`) is row groups by its rows
+field and its pivot field, made with bounds (below), and an index over
+them, so pivots have no aggregation of their own: the first level's groups
+are the pivot's rows (their table, `rowTable`, holds each row's totals,
+folded from its rows' sums and counts like any level above the last), and
+the second level's groups its observed combinations, whose table is the
+long table charts read. A wide table of every value as a field would change
+its schema with every new value and cost rows × values × aggregates; the
+long table costs the combinations the rows hold.
+
+The crosstab (`read()`, data/pivot-index.ts) gives the pivot's values slots
+in the order they first appear among the combinations (category codes of
+the long table map to slots through an `Int32Array`, numbers through a
+`Map` in which missing is null), keeps each combination's slot (an
+`Int32Array` with room), and orders slots for columns: categories by their
+place in the source field's dictionary (found in one pass over it that
+stops once every value is placed), numbers and times ascending, missing
+last. The index maps a row (a first-level group) and a slot to the
+combination's position, from the second level's parents (`parentsAt`, a
+borrowed array): dense, an `Int32Array` of rows × slots, row-major with room
+for half again of each, while that is at most 2^20 entries (twice that for
+an index already dense, so a pivot near the line does not switch back and
+forth) or no larger than sparse; else sparse, compressed rows of slots,
+ascending, and positions, built by two counting sorts (by slot, then by row)
+and searched by bisection within a row. Snapshots are kept while the
+tables' generations and lengths are; appends that add rows, combinations, or
+values extend them (a dense index in place, unless it lacks room; a sparse
+one is built again), and a renumbering of either level (a group left
+without rows, a recomputation) builds them anew. What the next read would
+build anew is let go as soon as the groups followed the change (the
+crosstab of renumbered groups, an index that cannot take the combinations
+added in place), so a pivot never holds a stale index beside what it was
+counted for. Aggregates are read from
+the long table when asked for, so a snapshot holds no values.
+
+Generated columns are each value's aggregates, then a total per aggregate.
+Their ids are JSON arrays: a tag, the pivot field, the value's kind and
+value (numbers as text, so infinities keep apart from labels) or a missing
+or total tag, and the aggregate's name, operation, and field. They hold no
+place, code, or label as shown, so readers can key layout by them while
+values come and go; an aggregate redefined under the same name is another
+column.
+
+Limits are the groups' bounds (`GroupBounds`): before groups change they
+are asked what the change would make them, in table rows tracked and per
+level groups and values. Groups being made ask as they take room for the
+rows and as they add each group, so a refusal comes as the limit is passed,
+with what was made within it discarded. Groups following their view count
+first, without changing anything (a pass over the appended rows, or over
+every row for a recomputation, with temporary maps of the keys new to each
+level, asking as each is counted), so a refused change leaves them exactly
+as last published: they stop following and answer reads as they would
+have then, for rows still in the table, from their own record of each
+row's group rather than the view (whose query may have changed since),
+which the pivot's tables and crosstab go on showing; its grid selects
+nothing more. The table's other listeners hear nothing of it, and the
+pivot's listeners hear of it as of any change: they are its groups'
+(`RowGroups.subscribe`), told once the groups followed a change of their
+table or view, with any change their tables' listeners made meanwhile, or
+refused one. Bounded groups that compute
+every group again number them afresh rather than keeping their numbers, so
+groups the rows no longer hold, which would be dropped only afterwards,
+never count. A batch's dropped rows are counted as still there, so a
+combination they leave empty counts while the batch is counted. The pivot's
+bounds count generated columns as values × aggregates (and the totals),
+observed combinations as the second level's groups, and owned bytes as the
+groups' typed arrays (which the groups report, as part of what they are
+asked) and the pivot's own. The groups report what they hold now, measured,
+plus what growing to the count takes by their own policies (levels and
+tables to at least 64 groups, then half again; the row window to half
+again; code lookups to half again of their dictionaries), plus the most
+their readers can still make them take: every group's rows listed (runs
+with a quarter more room each, a quarter more after them, half again of a
+run once it grows; their places, which never shrink, counted apart), in a
+sorted view's order (with its ranks of category labels), the levels'
+children lists, and room to read a whole group's rows again. The pivot adds its index, each combination's slot, its
+tables with their room, and by fixed estimates per entry the JavaScript
+maps, keys, values, and category entries, and the generated columns. A
+pivot of no rows is weighed too (its totals' columns, its fields'
+dictionaries). So the typed arrays held stay within what was counted:
+bounded groups that compute every group again give back their levels' room,
+all groups give back a level's room once groups leaving it leave it more
+than twice what the rest need, and a category field's lookup once its
+dictionary shrank (rows dropped, a reset) below the room it took; the view's
+order the groups cache (with its ranks, and the table's arrays it reads) is
+dropped whenever they follow a change; and a randomized test of appends,
+drops, resets, filters, updates, and listed rows holds the pivot's typed
+arrays within the limit at every step. The limit guards an estimate, not
+the heap: JavaScript objects are counted by fixed allowances per entry,
+which long labels (repeated in column ids) or a runtime's own object
+overhead can exceed, and peaks while an array is reallocated are not
+counted. Over pivots of 100,000 and a million rows the estimate came to 1.5
+to 4.2 times the memory measured after the pivot was made, before any rows
+were listed: the most where groups have many rows each, whose lists it
+counts.
+
+A pivot of a million rows by 100 row keys and 10 or 100 values (three
+aggregates) builds in about 40 ms, as long as grouping by the two fields
+(up to a fifth longer where nearly every row starts a group, each asking
+the bounds),
+and keeps about 4–6 MiB beside the source's 23 MiB; with 100,000 row keys of
+two values each (about 200,000 combinations) it takes 0.16 to 0.28 s and
+73 MiB, of which 39 MiB are typed arrays, the rest the groups' maps, keys,
+and tables. The index takes at most about 5 ms of that. Following
+1,000-row appends to a pivot of 100,000 rows takes about 0.7–1.3 ms with
+the view and the groups, 2–3 ms when each adds combinations to a sparse
+index of 70,000–80,000, and 0.6–6.6 ms in a rolling window, where groups
+vanish and the index is built again (one-off Node measurements, Apple M6,
+other work on the machine).
 
 ## Grids
 
@@ -559,6 +673,43 @@ and those above; a group: it, its groups below, and the change in those
 above) instead of counting again. Headers' cells are written from their
 level's table through the columns' formatters, the first naming the group
 by its own key value and counting its rows.
+
+A pivot's grid (`grid/pivot.ts`, `createPivotGridModel`, with the DOM grid
+from `dom/grid-pivot.ts`, both in `herceg/grid/pivot`) is a grid model whose
+groups are the pivot's, shown one level deep and never expanded: its rows
+are the pivot's rows, followed by key and selecting their rows of the view
+through the same counting as groups' headers. The model takes the pivot
+through a small interface (`GridPivot`) so `herceg/grid` holds none of it:
+the columns generated with their layout, a revision of them, the
+crosstab's fields (the rows field and each generated id) for sorting, and
+the table cells read rows from. The column list stays the one record of the
+layout: when the pivot's values change, the columns are generated again
+and laid out from it by id; a value's columns arriving go in column order,
+or, once the user has moved columns, just before the next column in column
+order (last when none is placed), and the first scrolling column in view
+keeps its place on the screen. Layout of columns not generated (given by
+`setColumns`, or of values that left) waits for them, the oldest forgotten
+once they outnumber the generated columns twice over and 64; a column going
+from an order the user chose (moved, or given) keeps the column it
+followed, and goes back after it (or after the nearest one before it still
+there). Generated
+cells read the crosstab as it is when drawn. Sort keys name the crosstab's
+fields (those of columns gone are dropped with them) and order the rows (absent and missing values last either way,
+counts filled with zeros as zeros), leaving the view's order alone. The DOM
+grid writes a group row's cells again when the model's `groupsRevision`
+moves, which for a pivot is its groups' revision, so values that change
+under rows in view are written again. `createPivotGrid` gives the DOM grid
+a header row of the pivot's values over their aggregates' headers while
+any shown column has one (`HeaderRows`): each value spans a run of
+adjacent shown columns under it held at the same edge, so values parted by
+pinning or moving get a header each, and blanks hidden from assistive
+technology hold the place of held columns without a value. Only the
+headers over mounted columns are mounted, placed as cells are, with
+logical `aria-colindex` and `aria-colspan`; rows count both header rows in
+`aria-rowcount` and start at `aria-rowindex` 3, and the viewport is what
+both header rows leave. Headers under a value carry their full title as
+their accessible name. That row costs `herceg/grid` nothing; the hooks for
+it, the pivot's columns, and its rows cost about 400 bytes gzip.
 
 Selection commands write a `RowSet` into the store's channel. Toggles and
 ranges change the set the model last put there when the channel still holds

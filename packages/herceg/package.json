@@ -25,6 +25,14 @@
     "./grid/model": {
       "types": "./dist/grid/model.d.ts",
       "import": "./dist/grid/model.js"
+    },
+    "./grid/pivot": {
+      "types": "./dist/grid-pivot.d.ts",
+      "import": "./dist/grid-pivot.js"
+    },
+    "./pivot": {
+      "types": "./dist/pivot.d.ts",
+      "import": "./dist/pivot.js"
     }
   },
   "files": [

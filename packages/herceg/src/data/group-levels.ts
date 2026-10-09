@@ -141,6 +141,11 @@ export class GroupLevel {
     this.finite = this.low.map((low) => low && new Float64Array(0));
   }
 
+  /** Bytes the level's arrays take per group of room: its parent, rows, marks, and each aggregate's running values. */
+  get bytesPerGroup(): number {
+    return 14 + this.aggregates.reduce((sum, _, k) => sum + 8 + (this.low[k] ? 25 : 0), 0);
+  }
+
   get byteLength(): number {
     let bytes = this.parents.byteLength + this.rows.byteLength + 2 * this.stale.byteLength;
     for (const running of this.running) bytes += running.byteLength;
@@ -193,6 +198,25 @@ export class GroupLevel {
   /** Empties one group's aggregates. */
   empty(group: number) {
     this.clear(group, group + 1);
+  }
+
+  /** Forgets every group, and the room they took, to number them afresh. */
+  forget() {
+    this.unmark();
+    this.count = 0;
+    this.values = [];
+    this.keys = [];
+    this.ids = [];
+    this.parents = new Int32Array(0);
+    this.rows = new Float64Array(0);
+    this.running = this.running.map(() => new Float64Array(0));
+    this.low = this.low.map((low) => low && new Float64Array(0));
+    this.error = this.error.map((error) => error && new Float64Array(0));
+    this.overflowed = this.overflowed.map((overflowed) => overflowed && new Uint8Array(0));
+    this.finite = this.finite.map((finite) => finite && new Float64Array(0));
+    this.stale = new Uint8Array(0);
+    this.#marked = new Uint8Array(0);
+    this.staleCount = 0;
   }
 
   /**
@@ -516,11 +540,17 @@ export class GroupLevel {
     return change;
   }
 
-  /** Room for `capacity` groups. */
+  /** Gives back the room of groups gone once it is more than twice what the groups left need. */
+  trim() {
+    const capacity = Math.max(64, Math.ceil(this.count * 1.5));
+    if (this.rows.length > 2 * capacity) this.#reserve(capacity);
+  }
+
+  /** Room for `capacity` groups, at least as many as there are. */
   #reserve(capacity: number) {
     const grow = <A extends Float64Array | Int32Array | Uint8Array>(array: A): A => {
       const next = new (array.constructor as new (length: number) => A)(capacity);
-      next.set(array);
+      next.set(array.length > capacity ? array.subarray(0, capacity) : array);
       return next;
     };
     const old = this.rows.length;
@@ -533,7 +563,7 @@ export class GroupLevel {
     this.finite = this.finite.map((finite) => finite && grow(finite));
     this.stale = grow(this.stale);
     this.#marked = grow(this.#marked);
-    this.clear(old, capacity);
+    if (capacity > old) this.clear(old, capacity);
   }
 }
 

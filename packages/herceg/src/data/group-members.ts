@@ -81,6 +81,21 @@ export class MemberRuns {
     return this.#entries.byteLength + 4 * this.#start.byteLength;
   }
 
+  /**
+   * The most bytes runs can hold listing up to `rows` rows of `groups`
+   * groups, from `runs` (or listed anew): each group's place, whose room
+   * never shrinks (half again once it grows), and the entries, which packing
+   * replaces, at most each run with a quarter more room and one with half
+   * again, and a quarter more after them.
+   */
+  static bytesAt(runs: MemberRuns | null, rows: number, groups: number): number {
+    const places = runs ? runs.#start.length : 0;
+    const room = groups > places ? Math.max(16, Math.ceil(groups * 1.5)) : places;
+    const held = runs ? runs.#entries.length : 0;
+    const entries = Math.max(held, Math.ceil(1.875 * rows + 5 * groups + 65));
+    return 16 * room + 4 * entries;
+  }
+
   size(group: number): number {
     return this.#length[group]!;
   }

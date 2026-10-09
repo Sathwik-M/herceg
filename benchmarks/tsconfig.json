@@ -9,6 +9,8 @@
     "paths": {
       "herceg": ["../packages/herceg/src/index.ts"],
       "herceg/grid": ["../packages/herceg/src/grid.ts"],
+      "herceg/grid/pivot": ["../packages/herceg/src/grid-pivot.ts"],
+      "herceg/pivot": ["../packages/herceg/src/pivot.ts"],
       "@herceg/react": ["../packages/react/src/index.ts"],
       "@herceg/react/grid": ["../packages/react/src/grid.tsx"],
       "@herceg/vue": ["../packages/vue/src/index.ts"],

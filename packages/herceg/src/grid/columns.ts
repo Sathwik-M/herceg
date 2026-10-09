@@ -84,6 +84,8 @@ export interface ColumnContent {
   /** A value of the column's field as text: a label, a number, or a time; null for missing. */
   format(value: string | number | null): string;
   readonly aggregate: string | undefined;
+  /** A header over the column and its neighbors with the same one: a pivot's value over its aggregates. */
+  readonly heading?: { readonly id: string; readonly title: string };
 }
 
 /** A shown column with what it shows. */
