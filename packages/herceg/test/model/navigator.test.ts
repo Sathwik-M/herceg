@@ -13,6 +13,7 @@ import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { NAVIGATOR_PANEL, Navigator, rangeNavigator } from "../../src/model/navigator.ts";
@@ -122,6 +123,7 @@ describe("a navigator's strip", () => {
       135,
     );
     expect(tiny.scene.panels.map(({ key }) => key)).toEqual([""]);
+    expect(describeChart(tiny.model)).not.toContain("range navigator");
   });
 
   it("draws every line, area, bar, point, and candlestick mark, but no annotations", () => {
@@ -901,7 +903,95 @@ describe("a navigator's strip under panels", () => {
     const svg = renderToSVG(options);
     // Each panel's data and the strip's, each clipped.
     expect(svg.match(/<clipPath /g)).toHaveLength(3);
-    expect(new TextDecoder("latin1").decode(renderToPDF(options))).toMatch(/^%PDF-1\.4/);
+    const description = /<desc[^>]*>(.*?)<\/desc>/.exec(svg)![1]!;
+    expect(description).toContain("A range navigator shows the whole x range,");
+    expect(description).toContain("it controls every panel&#39;s x range.");
+    const pdf = new TextDecoder("latin1").decode(renderToPDF(options));
+    expect(pdf).toMatch(/^%PDF-1\.4/);
+    const alt = /\/Alt <FEFF([\dA-F]*)>/.exec(pdf)![1]!;
+    expect(Buffer.from(alt, "hex").swap16().toString("utf16le")).toContain(
+      "it controls every panel's x range.",
+    );
+  });
+});
+
+describe("a navigator's text alternative", () => {
+  it("is absent without a navigator", () => {
+    expect(
+      describeChart(build({ marks: [line(waves(10), { x: "t", y: "a" })] }).model),
+    ).not.toContain("range navigator");
+  });
+
+  it("formats the shown range as x tooltips do, and follows zoom and reset", () => {
+    const { model } = build({
+      marks: [line(waves(10), { x: "t", y: "a" })],
+      x: { domain: [9, 0], format: { style: "unit", unit: "meter" } },
+      navigator: rangeNavigator(),
+    });
+    const whole = "A range navigator shows the whole x range, with 0 m to 9 m in view.";
+    expect(describeChart(model)).toContain(whole);
+    model.setViewport([2, 5]);
+    model.scene(estimateText);
+    expect(describeChart(model)).toContain(
+      "A range navigator shows the whole x range, with 2 m to 5 m in view.",
+    );
+    model.setViewport(null);
+    model.scene(estimateText);
+    expect(describeChart(model)).toContain(whole);
+  });
+
+  it.each(["UTC", "America/New_York"])(
+    "formats time in %s, including a view over a break",
+    (timeZone) => {
+      const start = Date.UTC(2026, 0, 1);
+      const data = table({ t: time([start, start + DAY, start + 2 * DAY]), v: [1, 2, 3] });
+      const { model } = build({
+        marks: [line(data, { x: "t", y: "v" })],
+        timeZone,
+        x: { breaks: timeBreaks([{ hours: ["06:00", "12:00"] }]) },
+        navigator: rangeNavigator(),
+      });
+      model.setViewport([start + 3 * HOUR, start + 18 * HOUR]);
+      model.scene(estimateText);
+      const format = model.formatsOf().x;
+      const from = format(start + 3 * HOUR);
+      const to = format(start + 18 * HOUR);
+      expect(from).toContain(timeZone === "UTC" ? "03:00" : "22:00");
+      expect(describeChart(model)).toContain(
+        `A range navigator shows the whole x range, with ${from} to ${to} in view.`,
+      );
+    },
+  );
+
+  it.each(["facets", "subplots"])("names the shared x control in %s", (layout) => {
+    const data = table({ t: [0, 1, 2, 3], v: [1, 2, 3, 4], k: ["a", "b", "a", "b"] });
+    const { model } = build(
+      {
+        marks:
+          layout === "facets"
+            ? [line(data, { x: "t", y: "v" })]
+            : [
+                line(data, { x: "t", y: "v", panel: "a" }),
+                line(data, { x: "t", y: "v", panel: "b" }),
+              ],
+        ...(layout === "facets"
+          ? { facet: facet("k") }
+          : { panels: panels([{ id: "a" }, { id: "b" }]) }),
+        navigator: rangeNavigator(),
+      },
+      600,
+      400,
+    );
+    model.setViewport([1, 2]);
+    model.scene(estimateText);
+    expect(describeChart(model)).toContain(
+      "A range navigator shows the whole x range, with 1 to 2 in view; it controls every panel's x range.",
+    );
+    const config = { ...model.config };
+    delete config.navigator;
+    model.update(config);
+    model.scene(estimateText);
+    expect(describeChart(model)).not.toContain("range navigator");
   });
 });
 

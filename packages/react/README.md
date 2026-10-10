@@ -22,6 +22,8 @@ The `navigator` prop accepts `rangeNavigator()` from `herceg`. Its dense bar
 strip preserves every column intersected by a bar's placed rectangle and
 uses the same color rules as the core and static exports (see
 [Range navigator](../herceg/README.md#range-navigator)).
+The chart's text alternative describes its overview and current x range,
+and its control of every panel's x when there are several.
 
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its

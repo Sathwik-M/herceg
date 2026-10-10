@@ -71,24 +71,44 @@ function drawn(model: ChartModel) {
   return paths.sort(([a], [b]) => (a < b ? -1 : 1));
 }
 
-/**
- * What a chart of the same series as whole columns draws on its first
- * scene: a mark per series over a table of a copy of its rows, which reads
- * no index and no rows.
- */
-function reference(data: Table, kind: Kind, width: number, viewport: [number, number] | null) {
+/** Copies each series into whole columns, in source row order, for the reference. */
+function columns(data: Table) {
   const { codes, dictionary } = data.categories("kind");
   const x = data.numbers("x");
   const y = data.numbers("y");
-  const marks = dictionary.flatMap((name, code) => {
-    const rows = Array.from(codes.keys()).filter((row) => codes[row] === code);
-    if (rows.length === 0) return [];
-    const columns = table({
-      x: Float64Array.from(rows, (row) => x[row]!),
-      y: Float64Array.from(rows, (row) => y[row]!),
-    });
+  const counts = new Uint32Array(dictionary.length);
+  for (const code of codes) counts[code]!++;
+  const groups = dictionary.map((name, code) => ({
+    name,
+    x: new Float64Array(counts[code]!),
+    y: new Float64Array(counts[code]!),
+  }));
+  counts.fill(0);
+  for (let row = 0; row < codes.length; row++) {
+    const code = codes[row]!;
+    const group = groups[code]!;
+    const at = counts[code]!++;
+    group.x[at] = x[row]!;
+    group.y[at] = y[row]!;
+  }
+  return groups
+    .filter((group) => group.x.length > 0)
+    .map(({ name, x, y }) => ({ name, data: table({ x, y }) }));
+}
+
+/**
+ * What a chart of the same series as whole columns draws on its first
+ * scene: fresh marks and a fresh model, which read no index and no rows.
+ */
+function reference(
+  groups: ReturnType<typeof columns>,
+  kind: Kind,
+  width: number,
+  viewport: [number, number] | null,
+) {
+  const marks = groups.map(({ name, data }) => {
     const options = { x: "x", y: "y", label: name } as const;
-    return [kind === "line" ? line(columns, options) : area(columns, options)];
+    return kind === "line" ? line(data, options) : area(data, options);
   });
   const model = new ChartModel({
     marks,
@@ -124,15 +144,20 @@ describe("long-format indexes", () => {
       const queries = vi.spyOn(RowsIndex.prototype, "query");
       let viewport: [number, number] | null = null;
       let end = n;
+      let groups: ReturnType<typeof columns> | undefined;
       const expectReference = () => {
+        // Test mutations invalidate these copies independently of the table's version counter.
+        groups ??= columns(data as unknown as Table);
+        const expected = groups;
         models.forEach((model, i) => {
           const width = widths[i]!;
-          expect(drawn(model)).toEqual(reference(data as unknown as Table, kind, width, viewport));
+          expect(drawn(model)).toEqual(reference(expected, kind, width, viewport));
         });
       };
       const append = (count: number) => {
         data.append(rows(end, count, next));
         end += count;
+        groups = undefined;
       };
       expectReference();
       expectReference();
@@ -149,10 +174,12 @@ describe("long-format indexes", () => {
       expect(queries.mock.calls.length).toBeGreaterThan(300);
       // A change in place groups the rows again, with new indexes.
       data.set("y", 10, -100);
+      groups = undefined;
       expectReference();
       append(1_000);
       expectReference();
       data.reset(rows(0, 200_000, next) as never);
+      groups = undefined;
       end = 200_000;
       expectReference();
       append(2_000);

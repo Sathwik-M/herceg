@@ -1,4 +1,5 @@
 import { estimateText, type MeasureText } from "../layout/text.ts";
+import { describeChart } from "../model/describe.ts";
 import { type ChartConfig, ChartModel, STATIC_RASTER_RATIO } from "../model/model.ts";
 import { NO_PAGE } from "./fallbacks.ts";
 import { pngDataUrl } from "./png.ts";
@@ -29,6 +30,6 @@ export function renderToSVG(options: StaticOptions): string {
   return renderSvg(scene, {
     idPrefix: options.idPrefix ?? `herceg-svg-${++renders}`,
     encodeRaster: (mark) => pngDataUrl(mark.columns, mark.rows, mark.pixels),
-    ...(options.description ? { description: options.description } : {}),
+    description: describeChart(model),
   });
 }
