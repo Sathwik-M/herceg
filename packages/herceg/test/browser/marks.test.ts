@@ -20,7 +20,7 @@ import { violin } from "../../src/marks/violin.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { RasterGeometry, RectGeometry } from "../../src/scene/scene.ts";
-import { modelOf } from "./helpers.ts";
+import { MOUSE, modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -1073,7 +1073,7 @@ describe("heatmaps on number axes in the browser", () => {
     target.dispatchEvent(
       type === "wheel"
         ? new WheelEvent("wheel", { ...init, deltaY: -200 })
-        : new PointerEvent(type, { ...init, button: 0, pointerId: 1 }),
+        : new PointerEvent(type, { ...init, button: 0, pointerId: MOUSE }),
     );
   };
 

@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { MountedChart } from "../../../packages/herceg/src/dom/chart.ts";
+import { MOUSE } from "../../../scripts/browser/mouse.ts";
 import type { SelectionPayload, ViewportPayload } from "../events.ts";
 import widgetModule, { type Model, type Snapshot, type Update } from "../widget.ts";
 import { controlTime, pointPath } from "./animation.ts";
@@ -151,7 +152,7 @@ function press(host: HTMLElement, type: string, fraction: number) {
       bubbles: true,
       clientX: rect.left + rect.width * fraction,
       clientY: rect.top + rect.height / 2,
-      pointerId: 1,
+      pointerId: MOUSE,
     }),
   );
 }
@@ -845,7 +846,7 @@ describe("notebook widget", () => {
           bubbles: true,
           clientX: rect.left + rect.width * x,
           clientY: rect.top + rect.height * y,
-          pointerId: 1,
+          pointerId: MOUSE,
         }),
       );
     model.receive({
@@ -1094,7 +1095,7 @@ describe("notebook widget", () => {
         new PointerEvent(type, {
           bubbles: true,
           button: 0,
-          pointerId: 1,
+          pointerId: MOUSE,
           clientX: rect.left + x,
           clientY: rect.top + 100,
         }),

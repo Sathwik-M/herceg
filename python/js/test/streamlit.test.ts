@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MountedChart } from "../../../packages/herceg/src/dom/chart.ts";
+import { MOUSE } from "../../../scripts/browser/mouse.ts";
 import herceg, { type Component, type Header } from "../streamlit.ts";
 import { itemChart, key } from "./items.ts";
 import { focusMap, mapSpec } from "./maps.ts";
@@ -138,7 +139,7 @@ function press(root: ParentNode, type: string, fraction: number, down = 0.5) {
   target.dispatchEvent(
     type === "wheel"
       ? new WheelEvent(type, { ...at, deltaY: -200 })
-      : new PointerEvent(type, { ...at, pointerId: 1 }),
+      : new PointerEvent(type, { ...at, pointerId: MOUSE }),
   );
 }
 

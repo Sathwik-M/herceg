@@ -22,7 +22,7 @@ engineering decisions.
 | `python/` | The `herceg` Python package: a Pythonic chart builder that emits the portable spec, data conversion, HTML, notebook, SVG, PNG, and PDF output, live notebook widgets, and a Streamlit component. |
 | `benchmarks/` | Benchmark harness, competitor adapters, scenarios, and committed results in `benchmarks/results/`. |
 | `docs/` | Permanent documentation: architecture, vocabulary, comparison, benchmark methodology. |
-| `scripts/` | Contributor and CI checks, including tests of packed npm packages and Python distributions. |
+| `scripts/` | Contributor and CI checks: tests of packed npm packages and Python distributions, and in `scripts/browser/` the engines browser tests run in and the commands they reach them through. |
 | `tmp/` | Gitignored scratch space. Never commit anything from here. |
 
 The suggested package split (`@herceg/core`, `@herceg/svg`, `@herceg/canvas`,
@@ -43,7 +43,7 @@ npm run lint             # biome lint + format check
 npm run format           # apply biome formatting and safe fixes
 npm run typecheck        # type check all TypeScript, including compile-time tests
 npm test                 # unit tests (vitest, Node)
-npm run test:browser     # browser tests: herceg, the adapters, and python/js (local Chrome)
+npm run test:browser     # browser tests: herceg, the adapters, and python/js, in Chrome, Firefox, and WebKit (HERCEG_BROWSERS=chromium for one)
 npm run test:package     # test installed npm tarballs (run build first)
 npm run bench:core       # engine microbenchmarks (Node)
 npm run bench:size       # bundle size benchmark

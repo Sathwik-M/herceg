@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { cdp, userEvent } from "vitest/browser";
+import { userEvent } from "vitest/browser";
 import { category, time } from "../../src/data/column.ts";
 import { col } from "../../src/data/expression.ts";
 import { rowView } from "../../src/data/row-view.ts";
@@ -10,7 +10,7 @@ import { createGrid, type Grid, type GridOptions } from "../../src/dom/grid.ts";
 import { createGridModel, type GridColumn, type GridModel } from "../../src/grid/model.ts";
 import { point } from "../../src/marks/point.ts";
 import { resolveTheme } from "../../src/theme.ts";
-import { modelOf } from "./helpers.ts";
+import { collectGarbage, modelOf } from "./helpers.ts";
 
 const hosts: HTMLElement[] = [];
 const grids: { destroy(): void }[] = [];
@@ -666,9 +666,9 @@ describe("destroyed grids", () => {
     // Changes reaching the model reach no destroyed grid.
     t.append({ id: [1], ms: [1], at: [0], host: ["web"] });
     await frames();
-    await cdp().send("HeapProfiler.collectGarbage");
+    await collectGarbage();
     await frames();
-    await cdp().send("HeapProfiler.collectGarbage");
+    await collectGarbage();
     expect(refs.flatMap((ref, i) => (ref.deref() !== undefined ? [i] : []))).toEqual([]);
   });
 });

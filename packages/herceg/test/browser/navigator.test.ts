@@ -1,7 +1,7 @@
 // Range navigators in the browser: the sliders over the strip, dragging,
 // keys, staying in step with other changes of view, streaming, and removal.
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cdp } from "vitest/browser";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { cdp, page, server } from "vitest/browser";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
@@ -11,7 +11,18 @@ import { facet } from "../../src/model/facet.ts";
 import { rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
-import { accessibilityTree as treeUnder } from "./helpers.ts";
+import {
+  dateTimes,
+  MOUSE,
+  pageOrigin,
+  realMouse,
+  accessibilityTree as treeUnder,
+} from "./helpers.ts";
+
+// Real input goes where the page shows it: the charts here fit in the frame.
+const viewport = { width: window.innerWidth, height: window.innerHeight };
+beforeAll(() => page.viewport(1000, 700));
+afterAll(() => page.viewport(viewport.width, viewport.height));
 
 let host: HTMLDivElement;
 const charts: Chart[] = [];
@@ -72,7 +83,7 @@ function pointer(chart: Chart, target: Element, type: string, x: number, y: numb
     new PointerEvent(type, {
       bubbles: true,
       button: 0,
-      pointerId: 1,
+      pointerId: MOUSE,
       isPrimary: true,
       clientX: rect.left + x,
       clientY: rect.top + y,
@@ -100,19 +111,20 @@ async function mouse(
   y: number,
   clickCount = 1,
 ) {
-  const rect = chart.root.getBoundingClientRect();
-  const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
-  await cdp().send("Input.dispatchMouseEvent", {
-    type,
-    x: frame.left + rect.left + x,
-    y: frame.top + rect.top + y,
-    button: "left",
-    buttons: type === "mouseReleased" ? 0 : 1,
+  const at = pageOrigin(chart.root);
+  await realMouse({
+    type: type === "mousePressed" ? "press" : type === "mouseMoved" ? "move" : "release",
+    x: at.x + x,
+    y: at.y + y,
     clickCount,
   });
 }
 
-/** Real touches at x pixels of the chart's root, along the strip's middle. */
+/**
+ * Real touches at x pixels of the chart's root, along the strip's middle:
+ * Chrome's DevTools protocol makes them, which Playwright has no equivalent
+ * of in Firefox and WebKit (only taps).
+ */
 async function touch(
   chart: Chart,
   type: "touchStart" | "touchMove" | "touchEnd",
@@ -570,22 +582,26 @@ describe("a navigator's sliders", () => {
     expect(chart.getViewport().x).toEqual(held);
   });
 
-  it("follow one finger, and leave a second one alone", async () => {
-    const chart = await mount();
-    chart.setViewport([200, 400]);
-    chart.render();
-    const at = (value: number) => stripBox(chart).x + value * perUnit(chart);
-    await touch(chart, "touchStart", { 1: at(300) });
-    await touch(chart, "touchMove", { 1: at(350) });
-    expect(chart.getViewport().x![0]).toBeCloseTo(250, 0);
-    // Chrome's touch emulation lifts the first finger as the second lands,
-    // which is then not a primary pointer: it selects nothing.
-    await touch(chart, "touchStart", { 1: at(350), 2: at(700) });
-    await touch(chart, "touchMove", { 1: at(350), 2: at(750) });
-    await touch(chart, "touchEnd", {});
-    expect(chart.getViewport().x![0]).toBeCloseTo(250, 0);
-    expect(chart.getViewport().x![1]).toBeCloseTo(450, 0);
-  });
+  // Real fingers need Chrome's DevTools protocol (see `touch`).
+  it.skipIf(server.browser !== "chromium")(
+    "follow one finger, and leave a second one alone",
+    async () => {
+      const chart = await mount();
+      chart.setViewport([200, 400]);
+      chart.render();
+      const at = (value: number) => stripBox(chart).x + value * perUnit(chart);
+      await touch(chart, "touchStart", { 1: at(300) });
+      await touch(chart, "touchMove", { 1: at(350) });
+      expect(chart.getViewport().x![0]).toBeCloseTo(250, 0);
+      // Chrome's touch emulation lifts the first finger as the second lands,
+      // which is then not a primary pointer: it selects nothing.
+      await touch(chart, "touchStart", { 1: at(350), 2: at(700) });
+      await touch(chart, "touchMove", { 1: at(350), 2: at(750) });
+      await touch(chart, "touchEnd", {});
+      expect(chart.getViewport().x![0]).toBeCloseTo(250, 0);
+      expect(chart.getViewport().x![1]).toBeCloseTo(450, 0);
+    },
+  );
 
   it("keep the edge that stays where it is, inside a time axis' break", async () => {
     const day = 86_400_000;
@@ -1065,13 +1081,19 @@ describe("a navigator's accessibility tree", () => {
     ]);
     // Each slider's bounds: an edge goes as far as the strip and a few
     // pixels short of the other edge; the window, whose value is its start,
-    // as far as keeps its width.
-    const bounds = found.map((line) =>
-      line
-        .match(/valuemin=(\S+) valuemax=(\S+)/)!
-        .slice(1)
-        .map(Number),
-    );
+    // as far as keeps its width. Chrome's tree reports them; Firefox's and
+    // WebKit's protocols do not, so there they are the sliders' own.
+    const bounds =
+      server.browser === "chromium"
+        ? found.map((line) =>
+            line
+              .match(/valuemin=(\S+) valuemax=(\S+)/)!
+              .slice(1)
+              .map(Number),
+          )
+        : sliders(chart).map((slider) =>
+            ["aria-valuemin", "aria-valuemax"].map((name) => Number(slider.getAttribute(name))),
+          );
     const few = ((last - first) / stripBox(chart).width) * 3;
     const expected = [
       [first, end - few],
@@ -1084,7 +1106,7 @@ describe("a navigator's accessibility tree", () => {
       expect(Math.abs(max! - expected[i]![1]!)).toBeLessThan(150_000);
     });
     // Chrome's tree does not report value texts: they are the tooltips' own.
-    const texts = sliders(chart).map((slider) => slider.getAttribute("aria-valuetext"));
+    const texts = sliders(chart).map((slider) => dateTimes(slider.getAttribute("aria-valuetext")!));
     expect(texts).toEqual([
       "Jan 5, 2026, 00:00",
       "Jan 5, 2026, 00:00 to Jan 12, 2026, 00:00",

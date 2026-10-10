@@ -9,7 +9,7 @@ import { tablesOf } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
-import { modelOf } from "./helpers.ts";
+import { MOUSE, modelOf } from "./helpers.ts";
 
 const charts: Chart[] = [];
 
@@ -174,7 +174,12 @@ describe("view transitions", () => {
     chart.setViewport([0, 50_000]);
     tick(16);
     const rect = chart.root.getBoundingClientRect();
-    const at = { bubbles: true, clientX: rect.left + 300, clientY: rect.top + 150, pointerId: 1 };
+    const at = {
+      bubbles: true,
+      clientX: rect.left + 300,
+      clientY: rect.top + 150,
+      pointerId: MOUSE,
+    };
     chart.root.dispatchEvent(new PointerEvent("pointerdown", { ...at, button: 0 }));
     expect(x(chart)).toEqual([0, 50_000]);
     chart.root.dispatchEvent(new PointerEvent("pointerup", at));
@@ -215,7 +220,7 @@ describe("view transitions", () => {
       ["pointerup", 50_000],
     ] as const) {
       const clientX = rect.left + scale.map(value);
-      const init = { bubbles: true, clientX, clientY: rect.top + 150, pointerId: 1 };
+      const init = { bubbles: true, clientX, clientY: rect.top + 150, pointerId: MOUSE };
       chart.root.dispatchEvent(new PointerEvent(type, { ...init, button: 0 }));
     }
     const [from, to] = chart.getViewport().x!;
@@ -458,7 +463,12 @@ describe("value transitions", () => {
     tick(50);
     const passing = yLabels(moving);
     const rect = moving.root.getBoundingClientRect();
-    const at = { bubbles: true, clientX: rect.left + 480, clientY: rect.top + 150, pointerId: 1 };
+    const at = {
+      bubbles: true,
+      clientX: rect.left + 480,
+      clientY: rect.top + 150,
+      pointerId: MOUSE,
+    };
     moving.root.dispatchEvent(new PointerEvent("pointermove", at));
     // Drawn at once: the axis is the new one, and the tooltip has the new value.
     expect(yLabels(moving)).not.toEqual(passing);
@@ -497,7 +507,12 @@ describe("value transitions", () => {
     change([moving], [30, 20, 10]);
     tick(50);
     const rect = moving.root.getBoundingClientRect();
-    const at = { bubbles: true, clientX: rect.left + 300, clientY: rect.top + 150, pointerId: 1 };
+    const at = {
+      bubbles: true,
+      clientX: rect.left + 300,
+      clientY: rect.top + 150,
+      pointerId: MOUSE,
+    };
     moving.root.dispatchEvent(new PointerEvent("pointermove", at));
     tick(16);
     const destination = path(moving);
@@ -521,7 +536,12 @@ describe("value transitions", () => {
     const still = await bars(data, false);
     await controlTime();
     const rect = moving.root.getBoundingClientRect();
-    const at = { bubbles: true, clientX: rect.left + 300, clientY: rect.top + 150, pointerId: 1 };
+    const at = {
+      bubbles: true,
+      clientX: rect.left + 300,
+      clientY: rect.top + 150,
+      pointerId: MOUSE,
+    };
     let values = [30, 20, 10];
     for (const input of ["pointermove", "pointerdown", "keydown"]) {
       change([moving], values);
@@ -547,7 +567,7 @@ describe("value transitions", () => {
     // values at once, and the next change moves from them.
     change([moving], [30, 20, 10]);
     tick(50);
-    const at = { clientX: 150, clientY: 150, pointerId: 1, button: 0 };
+    const at = { clientX: 150, clientY: 150, pointerId: MOUSE, button: 0 };
     moving.root.dispatchEvent(new PointerEvent("pointermove", at));
     still.render();
     expect(path(moving)).toBe(path(still));
@@ -597,7 +617,7 @@ describe("value transitions", () => {
     const moving = await bars(data);
     const still = await bars(data, false);
     await controlTime();
-    const at = { clientX: 150, clientY: 150, pointerId: 1, button: 0 };
+    const at = { clientX: 150, clientY: 150, pointerId: MOUSE, button: 0 };
     for (const end of ["data", "options"]) {
       change([moving], [30, 20, 10]);
       tick(50);
@@ -625,7 +645,7 @@ describe("value transitions", () => {
     const moving = await bars(data);
     const still = await bars(data, false);
     await controlTime();
-    const at = { clientX: 150, clientY: 150, pointerId: 1, button: 0 };
+    const at = { clientX: 150, clientY: 150, pointerId: MOUSE, button: 0 };
     for (const input of ["pointermove", "pointerdown", "keydown"]) {
       change([moving], [30, 20, 10]);
       tick(50);
@@ -677,7 +697,12 @@ describe("value transitions", () => {
     await controlTime();
     // Under the pointer, the bars show what the tooltip reads.
     const rect = moving.root.getBoundingClientRect();
-    const at = { bubbles: true, clientX: rect.left + 300, clientY: rect.top + 150, pointerId: 1 };
+    const at = {
+      bubbles: true,
+      clientX: rect.left + 300,
+      clientY: rect.top + 150,
+      pointerId: MOUSE,
+    };
     moving.root.dispatchEvent(new PointerEvent("pointermove", at));
     change([moving], [30, 20, 10]);
     tick(16);

@@ -1,10 +1,11 @@
 // Automated accessibility audits (axe-core, WCAG 2.1 A and AA plus best
 // practices) of charts as they render in the browser and as static SVG, and
-// of grids, and checks of the accessibility tree Chrome gives screen
+// of grids, and checks of the accessibility tree each engine gives screen
 // readers: what a chart or grid is called, what it says about itself, and
 // what it announces. They do not replace testing with screen readers.
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
+import { server } from "vitest/browser";
 import { category, time } from "../../src/data/column.ts";
 import { count, mean } from "../../src/data/derive.ts";
 import { groupRows } from "../../src/data/groups.ts";
@@ -36,7 +37,7 @@ import { facet } from "../../src/model/facet.ts";
 import { rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
-import { accessibilityTree as treeUnder } from "./helpers.ts";
+import { dateTimes, MOUSE, accessibilityTree as treeUnder } from "./helpers.ts";
 
 const RULES: axe.RunOptions = {
   runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] },
@@ -199,7 +200,7 @@ describe("accessibility audits", () => {
         bubbles: true,
         clientX: rect.left + 300,
         clientY: rect.top + 150,
-        pointerId: 1,
+        pointerId: MOUSE,
       }),
     );
     await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -312,14 +313,58 @@ describe("the accessibility tree", () => {
     chart.root.focus();
     press(chart, "ArrowRight");
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const tree = await accessibilityTree();
+    const tree = (await accessibilityTree()).map(dateTimes);
     const live = tree.findIndex((line) => line.includes("live=polite"));
     expect(tree[live + 1]).toMatch(/^ {4}StaticText "Jan 1, 2026, 00:00\. a: 100\. b: 95"$/);
-    // The tooltip shows the same values, hidden from assistive technology.
-    expect(tree.filter((line) => line.includes('StaticText "a"'))).toHaveLength(1);
+    // The tooltip shows the same values, hidden from assistive technology
+    // (the legend's button "a" is named, its text presentational).
+    expect(tree.filter((line) => line.includes('StaticText "a"'))).toEqual([]);
     press(chart, "ArrowRight");
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    expect((await accessibilityTree()).join("\n")).toContain('StaticText "Jan 1, 2026, 01:00.');
+    expect((await accessibilityTree()).map(dateTimes).join("\n")).toContain(
+      'StaticText "Jan 1, 2026, 01:00.',
+    );
+  });
+
+  it("keeps what a button holds beyond its text, where the engine exposes it", async () => {
+    // Checks of how the trees are written: text under a button is its name,
+    // but a link, an alert, or a description there is the page's.
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div role="figure" aria-label="Fixture"><button>Open <span>it</span> <a href="#x">here</a><span role="alert">Now</span><span aria-description="More">!</span></button></div>';
+    document.body.append(host);
+    try {
+      const tree = await treeUnder("figure", []);
+      expect(tree[1]).toMatch(/^ {2}button "Open it here/);
+      // WebKit makes all that a button holds its name.
+      expect(tree.slice(2)).toEqual(
+        server.browser === "webkit"
+          ? []
+          : [
+              '    link "here"',
+              '      StaticText "here"',
+              '    alert ""',
+              '      StaticText "Now"',
+              '    generic "" (More)',
+              '      StaticText "!"',
+            ],
+      );
+    } finally {
+      host.remove();
+    }
+  });
+
+  it("reads descriptions in a shadow root from the shadow root", async () => {
+    const outer = document.createElement("div");
+    outer.innerHTML = '<p id="detail" hidden>Outside</p>';
+    document.body.append(outer);
+    outer.attachShadow({ mode: "open" }).innerHTML =
+      '<div role="group" aria-label="Shadowed" aria-describedby="detail"><p id="detail" hidden>Inside</p></div>';
+    try {
+      expect(await treeUnder("group", [])).toEqual(['group "Shadowed" (Inside)']);
+    } finally {
+      outer.remove();
+    }
   });
 
   it("keeps drawings out of the tree, whatever draws them", async () => {
@@ -535,6 +580,37 @@ describe("text alternatives of legends", () => {
 });
 
 describe("grids", () => {
+  /**
+   * A grid's tree as WebKit builds tables, to compare across engines: rows
+   * straight under the grid, without the row groups Chrome and Firefox
+   * keep, and no text nodes, whose cells' names repeat them.
+   */
+  const outline = (tree: readonly string[]) => {
+    const lines: string[] = [];
+    const groups: number[] = [];
+    for (const line of tree.map(dateTimes)) {
+      const depth = line.length - line.trimStart().length;
+      while (groups.length > 0 && depth <= groups.at(-1)!) groups.pop();
+      if (line.trim() === 'rowgroup ""') groups.push(depth);
+      else if (!line.trim().startsWith("StaticText")) lines.push(line.slice(2 * groups.length));
+    }
+    return lines;
+  };
+  /** Rows of a grid's outline, unindented. */
+  const rowsOf = (tree: readonly string[]) =>
+    outline(tree)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("row "));
+  // What a row that is not selected says: WebKit says only which rows are.
+  // (Firefox makes every row and cell selectable, a selected row's cells
+  // selected too; so `selected` is asked of rows alone here.)
+  const unselected = server.browser === "webkit" ? "" : " selected=false";
+  // Firefox 155 drops the levels and places of rows (aria-level,
+  // aria-posinset, aria-setsize) of grids that number their rows
+  // (aria-rowcount, aria-rowindex), as grids that draw only the rows in view
+  // must: its screen readers hear no levels. Other engines expose them.
+  const level = (n: number) => (server.browser === "firefox" ? "" : ` level=${n}`);
+
   const grids: Grid<never>[] = [];
   afterEach(() => {
     for (const grid of grids.splice(0)) {
@@ -605,32 +681,29 @@ describe("grids", () => {
   it("expose a named grid of header cells and rows that say whether they are selected", async () => {
     grid("light", "#ffffff");
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    // Cells' text nodes repeat their names.
-    const tree = (await treeUnder("grid", ["multiselectable", "selected", "focused"])).filter(
-      (line) => !line.trim().startsWith("StaticText"),
-    );
+    const tree = await treeUnder("grid", ["multiselectable"]);
     expect(tree[0]).toMatch(
       /^grid "Requests" \(Arrow keys, .* adds it to the sort\. On a column header, .* hides, and shows columns\.\) multiselectable=true$/,
     );
-    expect(tree.slice(1, 7)).toEqual([
-      '  rowgroup ""',
-      '    row "id Latency at host"',
-      '      columnheader "id"',
-      '      columnheader "Latency"',
-      '      columnheader "at"',
+    if (server.browser !== "webkit") expect(tree[1]).toBe('  rowgroup ""');
+    expect(outline(tree).slice(1, 6)).toEqual([
+      '  row "id Latency at host"',
+      '    columnheader "id"',
+      '    columnheader "Latency"',
+      '    columnheader "at"',
       // The sort mark is hidden; aria-sort says the order.
-      '      columnheader "host"',
+      '    columnheader "host"',
     ]);
-    const rows = tree.filter((line) => line.trim().startsWith("row ")).slice(1);
     // Sorted by host: api rows (1, 4, 7, ...) come first.
-    expect(rows.slice(0, 4)).toEqual([
-      '    row "1 37 Jan 1, 2026, 00:01:00 api" selected=false',
-      '    row "4 148 Jan 1, 2026, 00:04:00 api" selected=true',
-      '    row "7 259 Jan 1, 2026, 00:07:00 api" selected=true',
-      '    row "10 370 Jan 1, 2026, 00:10:00 api" selected=true',
+    expect(rowsOf(await treeUnder("grid", ["selected"])).slice(1, 5)).toEqual([
+      `row "1 37 Jan 1, 2026, 00:01:00 api"${unselected}`,
+      'row "4 148 Jan 1, 2026, 00:04:00 api" selected=true',
+      'row "7 259 Jan 1, 2026, 00:07:00 api" selected=true',
+      'row "10 370 Jan 1, 2026, 00:10:00 api" selected=true',
     ]);
-    expect(tree.filter((line) => line.includes("focused=true"))).toEqual([
-      '      gridcell "259" focused=true',
+    const focused = outline(await treeUnder("grid", ["focused"]));
+    expect(focused.filter((line) => line.includes("focused=true"))).toEqual([
+      '    gridcell "259" focused=true',
     ]);
   });
 
@@ -680,41 +753,38 @@ describe("grids", () => {
   it("expose groups as a tree grid whose rows say their level, place, expansion, and selection", async () => {
     grouped("light", "#ffffff");
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const tree = (
-      await treeUnder("treegrid", [
-        "multiselectable",
-        "level",
-        "expanded",
-        "selected",
-        "checked",
-        "focused",
-      ])
-    ).filter((line) => !line.trim().startsWith("StaticText"));
+    const tree = outline(
+      await treeUnder("treegrid", ["multiselectable", "level", "expanded", "checked", "focused"]),
+    );
     expect(tree[0]).toMatch(
       /^treegrid "Requests" \(Arrow keys, .* goes to the group holding it\.\) multiselectable=true$/,
     );
-    expect(tree.slice(6, 22)).toEqual([
-      '  rowgroup ""',
+    const web = tree.findIndex((line) => line.startsWith('  row "Select web'));
+    expect(tree.slice(web, web + 15)).toEqual([
       // The checkbox's name and state are read with the group's cell.
-      '    row "Select web (40) 265" level=1 expanded=false',
-      '      gridcell "Select web (40)"',
-      '        checkbox "Select" checked=true',
-      '      gridcell ""',
-      '      gridcell "265"',
-      '    row "Select api (40) 252" level=1 expanded=true',
-      '      gridcell "Select api (40)"',
-      '        checkbox "Select" checked=mixed',
-      '      gridcell ""',
-      '      gridcell "252"',
-      '    row "api 1 37" level=2 selected=true',
-      '      gridcell "api"',
-      '      gridcell "1"',
-      '      gridcell "37"',
-      '    row "api 4 148" level=2 selected=true',
+      `  row "Select web (40) 265"${level(1)} expanded=false`,
+      '    gridcell "Select web (40)"',
+      '      checkbox "Select" checked=true',
+      '    gridcell ""',
+      '    gridcell "265"',
+      `  row "Select api (40) 252"${level(1)} expanded=true`,
+      '    gridcell "Select api (40)"',
+      '      checkbox "Select" checked=mixed',
+      '    gridcell ""',
+      '    gridcell "252"',
+      `  row "api 1 37"${level(2)}`,
+      '    gridcell "api"',
+      '    gridcell "1"',
+      '    gridcell "37"',
+      `  row "api 4 148"${level(2)}`,
     ]);
     expect(tree.filter((line) => line.includes("focused=true"))).toEqual([
-      '      gridcell "4" focused=true',
+      '    gridcell "4" focused=true',
     ]);
+    const rows = rowsOf(await treeUnder("treegrid", ["selected"]));
+    expect(rows).toContain('row "api 1 37" selected=true');
+    expect(rows).toContain('row "api 4 148" selected=true');
+    expect(rows).toContain(`row "api 7 259"${unselected}`);
   });
 
   it("expose nested groups' levels and their places among their siblings, and pass audits", async () => {
@@ -743,19 +813,22 @@ describe("grids", () => {
     created.focusCell(2, "id");
     await new Promise((resolve) => requestAnimationFrame(resolve));
     expect(await violations(host)).toEqual([]);
-    const lines = await treeUnder("treegrid", ["level", "expanded", "selected", "checked"]);
-    expect(lines.filter((line) => line.includes("checkbox")).slice(0, 2)).toEqual([
-      '        checkbox "Select" checked=mixed',
-      '        checkbox "Select" checked=mixed',
+    const tree = outline(await treeUnder("treegrid", ["level", "expanded", "checked"]));
+    expect(tree.filter((line) => line.includes("checkbox")).slice(0, 2)).toEqual([
+      '      checkbox "Select" checked=mixed',
+      '      checkbox "Select" checked=mixed',
     ]);
-    const tree = lines.filter((line) => line.includes(" level=")).slice(0, 6);
-    expect(tree).toEqual([
-      '    row "Select web (40)" level=1 expanded=true',
-      '    row "Select gold (20) gold" level=2 expanded=true',
-      '    row "web gold 0" level=3 selected=true',
-      '    row "web gold 3" level=3 selected=false',
-      '    row "web gold 9" level=3 selected=false',
-      '    row "web gold 18" level=3 selected=false',
+    expect(rowsOf(tree).slice(1, 7)).toEqual([
+      `row "Select web (40)"${level(1)} expanded=true`,
+      `row "Select gold (20) gold"${level(2)} expanded=true`,
+      `row "web gold 0"${level(3)}`,
+      `row "web gold 3"${level(3)}`,
+      `row "web gold 9"${level(3)}`,
+      `row "web gold 18"${level(3)}`,
+    ]);
+    expect(rowsOf(await treeUnder("treegrid", ["selected"])).slice(3, 5)).toEqual([
+      'row "web gold 0" selected=true',
+      `row "web gold 3"${unselected}`,
     ]);
   });
 
@@ -809,21 +882,19 @@ describe("grids", () => {
   it("expose pinned cells where they show, in one row, and a column's menu of actions and checks", async () => {
     const created = pinned();
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const tree = (await treeUnder("grid", ["selected", "focused"])).filter(
-      (line) => !line.trim().startsWith("StaticText"),
-    );
+    const tree = outline(await treeUnder("grid", ["focused"]));
     // The pinned id first and host last, the scrolled columns in view between them.
-    expect(tree.slice(1, 3)).toEqual([
-      '  rowgroup ""',
-      expect.stringMatching(/^ {4}row "id .* host"$/),
-    ]);
-    const row = tree.findIndex((line) => line.startsWith('    row "1 '));
-    expect(tree[row]).toMatch(/^ {4}row "1 37 37 37 .* api" selected=true$/);
-    const cells = tree.slice(row + 1).findIndex((line) => line.startsWith("    row"));
+    expect(tree[1]).toMatch(/^ {2}row "id .* host"$/);
+    const row = tree.findIndex((line) => line.startsWith('  row "1 '));
+    expect(tree[row]).toMatch(/^ {2}row "1 37 37 37 .* api"$/);
+    expect(rowsOf(await treeUnder("grid", ["selected"]))[2]).toMatch(
+      /^row "1 37 37 37 .* api" selected=true$/,
+    );
+    const cells = tree.slice(row + 1).findIndex((line) => line.startsWith("  row"));
     const names = tree.slice(row + 1, row + 1 + cells);
-    expect(names[0]).toBe('      gridcell "1"');
-    expect(names.at(-1)).toBe('      gridcell "api"');
-    expect(names).toContain('      gridcell "37" focused=true');
+    expect(names[0]).toBe('    gridcell "1"');
+    expect(names.at(-1)).toBe('    gridcell "api"');
+    expect(names).toContain('    gridcell "37" focused=true');
     created.focusCell(-1, "ms5");
     created.root
       .querySelector("[role=columnheader][aria-colindex='8']")!
@@ -908,30 +979,25 @@ describe("grids", () => {
   it("expose a pivot's values over their aggregates, and rows that select theirs", async () => {
     const created = pivoted("light", "#ffffff");
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const tree = (
-      await treeUnder("grid", ["multiselectable", "selected", "checked", "focused"])
-    ).filter((line) => !line.trim().startsWith("StaticText"));
+    const tree = outline(await treeUnder("grid", ["multiselectable", "checked", "focused"]));
     expect(tree[0]).toMatch(/^grid "Requests by tier" \(Arrow keys, .*\) multiselectable=true$/);
-    expect(tree.slice(1, 15)).toEqual([
-      '  rowgroup ""',
+    expect(tree.slice(1, 14)).toEqual([
       // The values over their aggregates (those in view); nothing over the pinned tier.
-      '    row "web api db"',
-      '      columnheader "web"',
-      '      columnheader "api"',
-      '      columnheader "db"',
-      '    row "tier web, n web, Latency api, n api, Latency db, n db, Latency"',
-      '      columnheader "tier"',
-      '      columnheader "web, n"',
-      '      columnheader "web, Latency"',
-      '      columnheader "api, n"',
-      '      columnheader "api, Latency"',
-      '      columnheader "db, n"',
-      '      columnheader "db, Latency"',
-      '  rowgroup ""',
+      '  row "web api db"',
+      '    columnheader "web"',
+      '    columnheader "api"',
+      '    columnheader "db"',
+      '  row "tier web, n web, Latency api, n api, Latency db, n db, Latency"',
+      '    columnheader "tier"',
+      '    columnheader "web, n"',
+      '    columnheader "web, Latency"',
+      '    columnheader "api, n"',
+      '    columnheader "api, Latency"',
+      '    columnheader "db, n"',
+      '    columnheader "db, Latency"',
+      expect.stringMatching(/^ {2}row "Select (gold|free) /),
     ]);
-    const rows = tree.filter((line) => line.trim().startsWith("row ")).slice(2);
-    expect(rows[0]).toMatch(/^ {4}row "Select (gold|free) /);
-    expect(tree).toContain('        checkbox "Select" checked=mixed');
+    expect(tree).toContain('      checkbox "Select" checked=mixed');
     expect(tree.filter((line) => line.includes("focused=true"))).toHaveLength(1);
     // Logical indexes: the values span their aggregates' columns, after the tier's.
     const band = [...created.root.querySelectorAll(".hg-band [role=columnheader]")];
@@ -952,13 +1018,13 @@ describe("grids", () => {
     await new Promise((resolve) => requestAnimationFrame(resolve));
     expect(created.root.querySelector(".hg-band")).toBeNull();
     expect(await violations(created.root.parentElement!)).toEqual([]);
-    const tree = await treeUnder("grid", []);
+    const tree = outline(await treeUnder("grid", []));
     expect(tree.filter((line) => line.trim().startsWith("columnheader"))).toEqual([
-      '      columnheader "tier"',
-      '      columnheader "web"',
-      '      columnheader "api"',
-      '      columnheader "db"',
-      '      columnheader "Total"',
+      '    columnheader "tier"',
+      '    columnheader "web"',
+      '    columnheader "api"',
+      '    columnheader "db"',
+      '    columnheader "Total"',
     ]);
   });
 

@@ -130,7 +130,9 @@ Next, in order:
 
 Requires Node.js 22.12 or newer (TypeScript scripts run with
 `--experimental-strip-types`), Google Chrome for browser tests and
-benchmarks, and [uv](https://docs.astral.sh/uv/) for the Python package.
+benchmarks, Playwright's Firefox and WebKit builds for browser tests
+(`npx playwright install firefox webkit`), and
+[uv](https://docs.astral.sh/uv/) for the Python package.
 
 ```sh
 npm install
@@ -147,6 +149,12 @@ npm run bench
 ```
 
 See [AGENTS.md](AGENTS.md) for every command.
+
+`test:browser` runs every browser suite (the engine's, the three adapters',
+and the Python package's JavaScript) in Chrome, Firefox, and WebKit, in
+about a minute; `HERCEG_BROWSERS=chromium` (or `firefox,webkit`) runs only
+those. See [Browser tests](docs/architecture.md#browser-tests) for what each
+engine is checked through.
 
 `test:package` tests the built npm tarballs in a fresh consumer: packaged
 files, exports, licenses matching the root LICENSE byte for byte, Node imports,

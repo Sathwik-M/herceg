@@ -1,9 +1,9 @@
 // Maps, trees, and networks navigated with real pointer and keyboard input
-// (through the browser, over CDP): panning and zooming maps, lassoing their
-// rows, drilling into treemaps and sunbursts, and moving a network's nodes.
+// (through the browser): panning and zooming maps, lassoing their rows,
+// drilling into treemaps and sunbursts, and moving a network's nodes.
 
 import { afterEach, describe, expect, it } from "vitest";
-import { cdp, userEvent } from "vitest/browser";
+import { cdp, server, userEvent } from "vitest/browser";
 import { type FeatureCollection, fromGeoJSON } from "../../src/data/geojson.ts";
 import { selectionStore } from "../../src/data/selection.ts";
 import { table } from "../../src/data/table.ts";
@@ -17,7 +17,7 @@ import { sunburst } from "../../src/marks/sunburst.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import type { ItemInspection } from "../../src/model/model.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
-import { accessibilityTree, modelOf } from "./helpers.ts";
+import { accessibilityTree, MOUSE, modelOf, pageOrigin, realMouse } from "./helpers.ts";
 
 const mounted: Chart[] = [];
 const hosts: HTMLElement[] = [];
@@ -47,11 +47,7 @@ async function mount(options: ChartOptions): Promise<Chart> {
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 /** Where the chart's root is in the page the browser's input lands on. */
-function origin(chart: Chart) {
-  const rect = chart.root.getBoundingClientRect();
-  const page = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
-  return { x: page.left + rect.left, y: page.top + rect.top };
-}
+const origin = (chart: Chart) => pageOrigin(chart.root);
 
 /** Real mouse input at (x, y) of the chart's root; Shift when `shift`. */
 async function mouse(
@@ -59,20 +55,16 @@ async function mouse(
   type: "mousePressed" | "mouseMoved" | "mouseReleased" | "mouseWheel",
   x: number,
   y: number,
-  { shift = false, clickCount = 1, deltaY = 0, held = false } = {},
+  { shift = false, clickCount = 1, deltaY = 0 } = {},
 ) {
   const at = origin(chart);
-  await cdp().send("Input.dispatchMouseEvent", {
-    type,
-    x: at.x + x,
-    y: at.y + y,
-    button: type === "mouseWheel" || (type === "mouseMoved" && !held) ? "none" : "left",
-    buttons: type === "mousePressed" || held ? 1 : 0,
-    clickCount,
-    modifiers: shift ? 8 : 0,
-    deltaX: 0,
-    deltaY,
-  });
+  const types = {
+    mousePressed: "press",
+    mouseMoved: "move",
+    mouseReleased: "release",
+    mouseWheel: "wheel",
+  } as const;
+  await realMouse({ type: types[type], x: at.x + x, y: at.y + y, clickCount, deltaY, shift });
 }
 
 /** A drag from one pixel of the chart to another, in steps. */
@@ -82,7 +74,7 @@ async function drag(chart: Chart, from: [number, number], to: [number, number], 
   for (const t of [0.25, 0.5, 0.75, 1]) {
     const x = from[0] + (to[0] - from[0]) * t;
     const y = from[1] + (to[1] - from[1]) * t;
-    await mouse(chart, "mouseMoved", x, y, { shift, held: true });
+    await mouse(chart, "mouseMoved", x, y, { shift });
   }
   await mouse(chart, "mouseReleased", ...to, { shift });
 }
@@ -129,42 +121,47 @@ describe("maps", () => {
       ...options,
     });
 
-  it("keeps a map's first-touch pan and scale while ignoring a second touch", async () => {
-    const chart = await map();
-    const views = heard(chart, "viewport");
-    const at = origin(chart);
-    const first = { id: 1, x: at.x + 100, y: at.y + 100 };
-    const second = { id: 2, x: at.x + 200, y: at.y + 100 };
-    const zoom = plane(chart).zoom;
-    let active = false;
-    const touch = async (
-      type: "touchStart" | "touchMove" | "touchEnd",
-      points: (typeof first)[],
-    ) => {
-      await cdp().send("Input.dispatchTouchEvent", { type, touchPoints: points });
-      active = type !== "touchEnd";
-    };
-    try {
-      await touch("touchStart", [first]);
-      await touch("touchStart", [first, second]);
-      second.x += 20;
-      await touch("touchMove", [first, second]);
-      await frame();
-      expect(views).toEqual([]);
-      first.x += 15;
-      await touch("touchMove", [first, second]);
-      await frame();
-      expect(views.length).toBeGreaterThan(0);
-      const panned = chart.getViewport();
-      second.x += 20;
-      await touch("touchMove", [first, second]);
-      await frame();
-      expect(chart.getViewport()).toEqual(panned);
-      expect(plane(chart).zoom).toBeCloseTo(zoom, 9);
-    } finally {
-      if (active) await touch("touchEnd", []);
-    }
-  });
+  // Real fingers need Chrome's DevTools protocol: Playwright makes only taps
+  // in Firefox and WebKit.
+  it.skipIf(server.browser !== "chromium")(
+    "keeps a map's first-touch pan and scale while ignoring a second touch",
+    async () => {
+      const chart = await map();
+      const views = heard(chart, "viewport");
+      const at = origin(chart);
+      const first = { id: 1, x: at.x + 100, y: at.y + 100 };
+      const second = { id: 2, x: at.x + 200, y: at.y + 100 };
+      const zoom = plane(chart).zoom;
+      let active = false;
+      const touch = async (
+        type: "touchStart" | "touchMove" | "touchEnd",
+        points: (typeof first)[],
+      ) => {
+        await cdp().send("Input.dispatchTouchEvent", { type, touchPoints: points });
+        active = type !== "touchEnd";
+      };
+      try {
+        await touch("touchStart", [first]);
+        await touch("touchStart", [first, second]);
+        second.x += 20;
+        await touch("touchMove", [first, second]);
+        await frame();
+        expect(views).toEqual([]);
+        first.x += 15;
+        await touch("touchMove", [first, second]);
+        await frame();
+        expect(views.length).toBeGreaterThan(0);
+        const panned = chart.getViewport();
+        second.x += 20;
+        await touch("touchMove", [first, second]);
+        await frame();
+        expect(chart.getViewport()).toEqual(panned);
+        expect(plane(chart).zoom).toBeCloseTo(zoom, 9);
+      } finally {
+        if (active) await touch("touchEnd", []);
+      }
+    },
+  );
 
   it("zoom with the wheel at the pointer, pan when dragged, and reset on double-click", async () => {
     const chart = await map();
@@ -272,7 +269,7 @@ describe("maps", () => {
     const pointer = (type: string, x: number, buttons: number) =>
       chart.root.dispatchEvent(
         new PointerEvent(type, {
-          pointerId: 1,
+          pointerId: MOUSE,
           pointerType: "mouse",
           isPrimary: true,
           button: 0,
@@ -399,13 +396,13 @@ describe("maps", () => {
     const tree = await accessibilityTree("figure", ["pressed"]);
     expect(tree.filter((line) => line.includes("toolbar") || line.includes("button"))).toEqual([
       '  toolbar "Map"',
-      '    button "Zoom in" (Zoom in)',
-      '    button "Zoom out" (Zoom out)',
-      '    button "Pan left" (Pan left)',
-      '    button "Pan right" (Pan right)',
-      '    button "Pan up" (Pan up)',
-      '    button "Pan down" (Pan down)',
-      '    button "Show the whole map" (Show the whole map)',
+      '    button "Zoom in"',
+      '    button "Zoom out"',
+      '    button "Pan left"',
+      '    button "Pan right"',
+      '    button "Pan up"',
+      '    button "Pan down"',
+      '    button "Show the whole map"',
     ]);
   });
 
@@ -430,7 +427,7 @@ describe("maps", () => {
       [left, bottom],
       [left, top + 1],
     ] as const)
-      await mouse(chart, "mouseMoved", px, py, { held: true });
+      await mouse(chart, "mouseMoved", px, py);
     await mouse(chart, "mouseReleased", left, top + 1);
     await frame();
     const held = store.get("picked");
@@ -462,7 +459,7 @@ describe("maps", () => {
       [right, bottom],
       [left, bottom],
     ] as const)
-      await mouse(chart, "mouseMoved", px, py, { held: true });
+      await mouse(chart, "mouseMoved", px, py);
     await mouse(chart, "mouseReleased", left, bottom);
     await frame();
     const lasso = chart.selection!.lasso!;
@@ -506,7 +503,7 @@ describe("maps", () => {
       [left, bottom],
       [left, top + 1],
     ] as const)
-      await mouse(chart, "mouseMoved", px, py, { held: true });
+      await mouse(chart, "mouseMoved", px, py);
     await mouse(chart, "mouseReleased", left, top + 1);
     await frame();
     const picked = () => {
@@ -585,12 +582,14 @@ describe("treemaps and sunbursts", () => {
     // The breadcrumbs: buttons over the steps drawn, the last the current place.
     const tree = await accessibilityTree("figure", []);
     const nav = tree.findIndex((line) => line.includes("navigation"));
-    expect(tree.slice(nav, nav + 8)).toEqual([
+    // The place shown is text, in an element of its own: generic, which
+    // WebKit calls a group for its aria-current.
+    expect(
+      tree.slice(nav, nav + 6).map((line) => line.replace(/^ {4}group ""$/, '    generic ""')),
+    ).toEqual([
       '  navigation "Path"',
       '    button "All"',
-      '      StaticText "All"',
       '    button "Europe"',
-      '      StaticText "Europe"',
       '    generic ""',
       '      StaticText "France"',
       '  toolbar "Tree"',
@@ -955,7 +954,7 @@ describe("networks", () => {
     expect(chart.getViewport()).not.toEqual(view);
     const [x, y] = where(chart, "a");
     await mouse(chart, "mousePressed", x, y);
-    await mouse(chart, "mouseMoved", x + 10, y + 10, { held: true });
+    await mouse(chart, "mouseMoved", x + 10, y + 10);
     chart.setViewport(null);
     await mouse(chart, "mouseReleased", x + 10, y + 10);
     await frame();
@@ -983,7 +982,7 @@ describe("networks", () => {
         number,
         number,
       ][])
-        await mouse(chart, "mouseMoved", ...point, { held: true });
+        await mouse(chart, "mouseMoved", ...point);
       await mouse(chart, "mouseReleased", ...start);
       await frame();
       const held = store.get("picked");
@@ -1063,8 +1062,8 @@ describe("networks", () => {
     const [ax, ay] = where(chart, "a");
     await mouse(chart, "mouseMoved", ax, ay);
     await mouse(chart, "mousePressed", ax, ay);
-    await mouse(chart, "mouseMoved", ax + 20, ay + 10, { held: true });
-    await mouse(chart, "mouseMoved", ax + 40, ay + 20, { held: true });
+    await mouse(chart, "mouseMoved", ax + 20, ay + 10);
+    await mouse(chart, "mouseMoved", ax + 40, ay + 20);
     await frame();
     // Shown where the pointer is, not yet a move.
     expect(where(chart, "a")[0]).toBeCloseTo(ax + 40, 0);
@@ -1072,7 +1071,7 @@ describe("networks", () => {
     // The network changes under the drag: it ends without a move or an error.
     links.reset({ from: ["b", "c"], to: ["c", "d"] });
     await frame();
-    await mouse(chart, "mouseMoved", ax + 50, ay + 20, { held: true });
+    await mouse(chart, "mouseMoved", ax + 50, ay + 20);
     await mouse(chart, "mouseReleased", ax + 50, ay + 20);
     await frame();
     expect(moves).toEqual([]);
@@ -1088,7 +1087,7 @@ describe("networks", () => {
     const [ax, ay] = where(chart, "a");
     await mouse(chart, "mouseMoved", ax, ay);
     await mouse(chart, "mousePressed", ax, ay);
-    await mouse(chart, "mouseMoved", ax + 30, ay, { held: true });
+    await mouse(chart, "mouseMoved", ax + 30, ay);
     // No frame between the change and the release.
     links.reset({ from: ["b", "c"], to: ["c", "d"] });
     await mouse(chart, "mouseReleased", ax + 30, ay);
@@ -1097,30 +1096,37 @@ describe("networks", () => {
     expect(modelOf(chart).layoutSummary()).toMatch(/^Network of 3 nodes/);
   });
 
-  it("move a node dragged by touch, which leaves the page where it is", async () => {
-    const chart = await network();
-    const moves = heard(chart, "itemMove");
-    const [ax, ay] = where(chart, "a");
-    const at = origin(chart);
-    const touch = (type: "touchStart" | "touchMove" | "touchEnd", x: number, y: number) =>
-      cdp().send("Input.dispatchTouchEvent", {
-        type,
-        touchPoints:
-          type === "touchEnd"
-            ? []
-            : [{ x: at.x + x, y: at.y + y, radiusX: 1, radiusY: 1, force: 1 }],
-      });
-    expect(chart.root.style.touchAction).toBe("none");
-    await touch("touchStart", ax, ay);
-    await touch("touchMove", ax + 15, ay + 15);
-    await touch("touchMove", ax + 30, ay + 30);
-    await touch("touchEnd", ax + 30, ay + 30);
-    await frame();
-    expect(moves).toHaveLength(1);
-    expect(where(chart, "a")[0]).toBeCloseTo(ax + 30, 0);
-  });
+  // Real fingers need Chrome's DevTools protocol: Playwright makes only taps
+  // in Firefox and WebKit.
+  it.skipIf(server.browser !== "chromium")(
+    "move a node dragged by touch, which leaves the page where it is",
+    async () => {
+      const chart = await network();
+      const moves = heard(chart, "itemMove");
+      const [ax, ay] = where(chart, "a");
+      const at = origin(chart);
+      const touch = (type: "touchStart" | "touchMove" | "touchEnd", x: number, y: number) =>
+        cdp().send("Input.dispatchTouchEvent", {
+          type,
+          touchPoints:
+            type === "touchEnd"
+              ? []
+              : [{ x: at.x + x, y: at.y + y, radiusX: 1, radiusY: 1, force: 1 }],
+        });
+      expect(chart.root.style.touchAction).toBe("none");
+      await touch("touchStart", ax, ay);
+      await touch("touchMove", ax + 15, ay + 15);
+      await touch("touchMove", ax + 30, ay + 30);
+      await touch("touchEnd", ax + 30, ay + 30);
+      await frame();
+      expect(moves).toHaveLength(1);
+      expect(where(chart, "a")[0]).toBeCloseTo(ax + 30, 0);
+    },
+  );
 
-  it.each(["node", "pan"] as const)(
+  // Real fingers need Chrome's DevTools protocol: Playwright makes only taps
+  // in Firefox and WebKit.
+  it.skipIf(server.browser !== "chromium").each(["node", "pan"] as const)(
     "gives the first touch ownership from an unmoved %s press",
     async (owner) => {
       const chart = await network({ interaction: { zoom: true, drag: true } });
@@ -1181,7 +1187,9 @@ describe("networks", () => {
     },
   );
 
-  it.each(["node", "pan"] as const)(
+  // Real fingers need Chrome's DevTools protocol: Playwright makes only taps
+  // in Firefox and WebKit.
+  it.skipIf(server.browser !== "chromium").each(["node", "pan"] as const)(
     "releases a cancelled %s touch so the other controller can drag",
     async (owner) => {
       const chart = await network({ interaction: { zoom: true, drag: true } });
@@ -1261,7 +1269,7 @@ describe("networks", () => {
     const [ax, ay] = where(chart, "a");
     await mouse(chart, "mouseMoved", ax, ay);
     await mouse(chart, "mousePressed", ax, ay);
-    await mouse(chart, "mouseMoved", ax + 30, ay, { held: true });
+    await mouse(chart, "mouseMoved", ax + 30, ay);
     reset = true;
     await frame();
     await mouse(chart, "mouseReleased", ax + 30, ay);

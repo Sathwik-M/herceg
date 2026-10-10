@@ -71,8 +71,10 @@ frames (hundreds of milliseconds apart, for every library). Results record the P
 the browser build, and the idle frame cadence. Memory scenarios need Chrome's
 DevTools protocol and are skipped in other browsers, as are long-animation-
 frame counts in browsers that do not report them. Playwright's Firefox build
-does not start on macOS 27 ("Could not find profile folder"), so no Firefox
-results are committed.
+does not start on macOS 27 ("Could not find profile folder") unless
+`MOZ_APP_DATA` names a folder it may write, as the browser tests' launch
+does (`scripts/browser/browsers.ts`) and the harness's does not yet, so no
+Firefox results are committed.
 
 ### Timing
 

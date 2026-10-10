@@ -3,12 +3,13 @@
 // edges as the others scroll; and hiding and showing columns.
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { cdp, page, userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { category } from "../../src/data/column.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { createGrid, type Grid } from "../../src/dom/grid.ts";
 import { createGridModel, type GridColumn, MIN_COLUMN_WIDTH } from "../../src/grid/model.ts";
+import { MOUSE, realMouse } from "./helpers.ts";
 
 // Mouse input goes where the page shows it: the grids here fit in the frame.
 const viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -102,33 +103,21 @@ const items = (grid: Mounted) => [
 const item = (grid: Mounted, label: string) =>
   items(grid).find((element) => element.firstChild?.textContent === label)!;
 
-/** Real mouse input through the browser: press at a point, move in steps, release. */
+/** Real mouse input through the browser, at a point of the frame: press, move in steps, release. */
 const mouse = {
-  async send(
-    type: "mouseMoved" | "mousePressed" | "mouseReleased",
-    x: number,
-    y: number,
-    buttons: number,
-  ) {
-    const frame = window.frameElement?.getBoundingClientRect();
-    await cdp().send("Input.dispatchMouseEvent", {
-      type,
-      x: x + (frame?.left ?? 0),
-      y: y + (frame?.top ?? 0),
-      button: type === "mouseMoved" && buttons === 0 ? "none" : "left",
-      buttons,
-      clickCount: type === "mouseMoved" ? 0 : 1,
-    });
+  async send(type: "move" | "press" | "release", x: number, y: number) {
+    const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    await realMouse({ type, x: x + frame.left, y: y + frame.top });
   },
   async drag(from: [number, number], to: [number, number], { release = true, steps = 8 } = {}) {
-    await this.send("mouseMoved", ...from, 0);
-    await this.send("mousePressed", ...from, 1);
+    await this.send("move", ...from);
+    await this.send("press", ...from);
     for (let k = 1; k <= steps; k++) {
       const x = from[0] + ((to[0] - from[0]) * k) / steps;
       const y = from[1] + ((to[1] - from[1]) * k) / steps;
-      await this.send("mouseMoved", x, y, 1);
+      await this.send("move", x, y);
     }
-    if (release) await this.send("mouseReleased", ...to, 0);
+    if (release) await this.send("release", ...to);
   },
 };
 
@@ -155,7 +144,7 @@ describe("resizing grid columns by dragging", () => {
     expect(cellsOf(rowAt(grid, 0))[2]!.getBoundingClientRect().left).toBe(
       latency.getBoundingClientRect().left + 180,
     );
-    await mouse.send("mouseReleased", x + 60, y, 0);
+    await mouse.send("release", x + 60, y);
     await frames();
     expect(grid.model.columns[1]!.width).toBe(180);
     expect(said(grid)).toBe("Latency, 180 pixels wide");
@@ -184,7 +173,7 @@ describe("resizing grid columns by dragging", () => {
       bubbles: true,
       clientX: x + dx,
       clientY: y,
-      pointerId: 1,
+      pointerId: MOUSE,
       buttons: 1,
     });
     handle.dispatchEvent(new PointerEvent("pointerdown", { ...at(0), button: 0 }));
@@ -230,7 +219,7 @@ describe("resizing grid columns by dragging", () => {
     hosts[0]!.style.width = "400px";
     await frames();
     await userEvent.keyboard("{Escape}");
-    await mouse.send("mouseReleased", x - 200, y, 0);
+    await mouse.send("release", x - 200, y);
     await frames();
     // 300 pixels again, which a 400-pixel grid cannot hold at its edge.
     expect(grid.model.columnLayout[0]).toMatchObject({ id: "id", width: 300, pinned: null });
@@ -247,7 +236,7 @@ describe("resizing grid columns by dragging", () => {
     await frames();
     expect(grid.model.columnLayout[1]!.width).toBe(200);
     await userEvent.keyboard("{Escape}");
-    await mouse.send("mouseReleased", x + 80, y, 0);
+    await mouse.send("release", x + 80, y);
     await frames();
     expect(grid.model.columnLayout[1]!.width).toBe(120);
     expect(grid.model.sort).toEqual([]);
@@ -269,7 +258,7 @@ describe("moving grid columns by dragging", () => {
     );
     await frames();
     expect(at.hasAttribute("data-moving")).toBe(true);
-    await mouse.send("mouseReleased", x0 - 20, y, 0);
+    await mouse.send("release", x0 - 20, y);
     await frames();
     expect(headers(grid)).toEqual(["at", "id", "Latency", "host"]);
     expect(line.hidden).toBe(true);
@@ -283,8 +272,8 @@ describe("moving grid columns by dragging", () => {
     await mouse.drag([x, yy], [x + 30, yy], { steps: 3 });
     await mouse.drag([x + 30, yy], [x, yy], { steps: 3 });
     await mouse.drag([x, yy], [x + 40, yy], { steps: 2, release: false });
-    await mouse.send("mouseMoved", x, yy, 1);
-    await mouse.send("mouseReleased", x, yy, 0);
+    await mouse.send("move", x, yy);
+    await mouse.send("release", x, yy);
     await frames();
     expect(grid.model.sort).toEqual([]);
     expect(headers(grid)).toEqual(["at", "id", "Latency", "host"]);
@@ -296,14 +285,14 @@ describe("moving grid columns by dragging", () => {
   it("end a press let go outside the grid, so passing over headers later drags nothing", async () => {
     const grid = mount(COLUMNS);
     const [x, y] = middle(header(grid, "at"));
-    await mouse.send("mouseMoved", x, y, 0);
-    await mouse.send("mousePressed", x, y, 1);
+    await mouse.send("move", x, y);
+    await mouse.send("press", x, y);
     // Straight out of the grid, and let go there.
-    await mouse.send("mouseMoved", 900, y, 1);
-    await mouse.send("mouseReleased", 900, y, 0);
+    await mouse.send("move", 900, y);
+    await mouse.send("release", 900, y);
     const [x0] = middle(header(grid, "id"));
-    await mouse.send("mouseMoved", x0, y, 0);
-    await mouse.send("mouseMoved", x0 - 20, y, 0);
+    await mouse.send("move", x0, y);
+    await mouse.send("move", x0 - 20, y);
     await frames();
     expect(grid.root.hasAttribute("data-dragging")).toBe(false);
     expect(grid.root.querySelector<HTMLElement>(".hg-drop")!.hidden).toBe(true);
@@ -317,11 +306,11 @@ describe("moving grid columns by dragging", () => {
     const [x, y] = middle(header(grid, "at"));
     await mouse.drag([x, y], [x - 150, y], { release: false });
     expect(grid.root.dataset.dragging).toBe("move");
-    scroller(grid).releasePointerCapture(1);
+    scroller(grid).releasePointerCapture(MOUSE);
     // The loss is told before the pointer's next event.
-    await mouse.send("mouseMoved", x - 160, y, 1);
+    await mouse.send("move", x - 160, y);
     expect(grid.root.hasAttribute("data-dragging")).toBe(false);
-    await mouse.send("mouseReleased", x - 150, y, 0);
+    await mouse.send("release", x - 150, y);
     await frames();
     expect(headers(grid)).toEqual(["id", "Latency", "at", "host"]);
     expect(grid.model.sort).toEqual([]);
@@ -337,20 +326,33 @@ describe("moving grid columns by dragging", () => {
     await mouse.drag(middle(header(grid, "id")), [x, y], { release: false });
     await userEvent.keyboard("{Escape}");
     expect(grid.root.querySelector<HTMLElement>(".hg-drop")!.hidden).toBe(true);
-    await mouse.send("mouseReleased", x, y, 0);
+    await mouse.send("release", x, y);
     await frames();
     expect(headers(grid)).toEqual(["Latency", "at", "host", "id"]);
   });
 
   it("drop nothing when the columns were replaced while the pointer was down", async () => {
-    const grid = mount(COLUMNS);
-    const [x, y] = middle(header(grid, "host"));
-    await mouse.drag([x, y], [middle(header(grid, "Latency"))[0] - 30, y], { release: false });
-    grid.model.setColumns([{ field: "host" }, { field: "id" }]);
-    await mouse.send("mouseReleased", x, y, 0);
-    await frames();
-    expect(headers(grid)).toEqual(["host", "id"]);
-    expect(grid.model.sort).toEqual([]);
+    // Let go before the grid draws the new columns (in the same task), and
+    // after; columns of the same ids in another order drop nothing either.
+    for (const drawn of [false, true]) {
+      const grid = mount(COLUMNS);
+      const [x, y] = middle(header(grid, "host"));
+      await mouse.drag([x, y], [middle(header(grid, "Latency"))[0] - 30, y], { release: false });
+      expect(grid.root.dataset.dragging).toBe("move");
+      grid.model.setColumns([
+        { field: "ms", title: "Latency" },
+        ...COLUMNS.filter(({ field }) => field !== "ms"),
+      ]);
+      if (drawn) await frames();
+      else
+        document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: MOUSE }));
+      expect(grid.root.hasAttribute("data-dragging")).toBe(false);
+      await mouse.send("release", x, y);
+      await frames();
+      expect(headers(grid)).toEqual(["Latency", "id", "at", "host"]);
+      expect(grid.model.sort).toEqual([]);
+      grid.destroy();
+    }
   });
 
   it("moves pinned columns among the pinned, and the others among themselves", async () => {
@@ -602,6 +604,8 @@ describe("column menus", () => {
     await frames();
     expect(document.activeElement).toBe(item(grid, "Latency"));
     await userEvent.keyboard(" ");
+    // Hidden from the next frame on.
+    await frames();
     expect(headers(grid)).toEqual(["id", "at", "host"]);
     // Gone with the column it named, last in the menu: the item now last.
     grid.model.setColumns(COLUMNS.filter(({ field }) => field !== "ms"));

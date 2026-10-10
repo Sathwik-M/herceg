@@ -1,5 +1,5 @@
-import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vitest/config";
+import { browsers } from "../../scripts/browser/browsers.ts";
 
 export default defineConfig({
   resolve: {
@@ -15,8 +15,7 @@ export default defineConfig({
     browser: {
       enabled: true,
       headless: true,
-      provider: playwright({ launchOptions: { channel: "chrome" } }),
-      instances: [{ browser: "chromium" }],
+      instances: browsers,
     },
   },
 });
