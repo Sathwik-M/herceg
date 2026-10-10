@@ -628,19 +628,24 @@ describe("points changing values", () => {
       x: { domain: [0, 4] },
       y: { domain: [0, 100] },
     });
-    const before = centers(pointsOf(model.scene(estimateText))[0]!);
-    const { shown, tween } = change(model, () =>
-      data.reset({
-        x: [1, 2, 3],
-        y: [50, 60, 70],
-        id: encodedCategory(Int32Array.from([0, 1, 2]), ["c", "a", "b"]),
-      }),
-    );
-    expectRects(centers(pointsOf(frameAt(tween!, 0))[0]!), [before[2]!, before[0]!, before[1]!]);
+    const scene = model.scene(estimateText);
+    const geometry = pointsOf(scene)[0]!;
+    const before = centers(geometry);
+    const shown = snapshot(scene, model.panels()[0], 0)!;
     const copy = [...shown.items.values()][0]!;
     expect(copy.kind).toBe("points");
     if (copy.kind !== "points") throw new Error("expected points");
+    const ids = geometry.items!.ids as (string | undefined)[];
+    expect(copy.ids).not.toBe(ids);
+    ids[0] = "mutated";
     expect(copy.ids).toEqual(["a", "b", "c"]);
+    data.reset({
+      x: [1, 2, 3],
+      y: [50, 60, 70],
+      id: encodedCategory(Int32Array.from([0, 1, 2]), ["c", "a", "b"]),
+    });
+    const tween = plan(shown, model.scene(estimateText), model.panels()[0], 200, BUILDERS);
+    expectRects(centers(pointsOf(frameAt(tween!, 0))[0]!), [before[2]!, before[0]!, before[1]!]);
     data.setColumn("id", ["new", "new", "new"]);
     model.scene(estimateText);
     expect(copy.ids).toEqual(["a", "b", "c"]);
@@ -755,24 +760,66 @@ describe("points changing values", () => {
     }
   });
 
-  it("bound retained, entering, and exiting points across all series, including still points", () => {
-    const rows = (offset: number) => ({
-      x: Float64Array.from({ length: 3000 }, (_, i) => i),
-      y: new Float64Array(3000).fill(1),
-      id: Float64Array.from({ length: 3000 }, (_, i) => offset + i),
-    });
-    const data = table(rows(0));
-    const model = chart({
-      marks: [
-        point(data, { x: "x", y: "y", animationKey: "id", id: "first" }),
-        point(data, { x: "x", y: "y", animationKey: "id", id: "second" }),
-      ],
-    });
-    const { tween } = change(model, () => data.reset(rows(3000)));
-    expect(tween!.points).toHaveLength(1);
-    const total = pointsOf(frameAt(tween!, 100)).reduce((sum, mark) => sum + mark.count, 0);
-    expect(total).toBeLessThanOrEqual(MOVING_POINTS);
-  });
+  it.each([10_000, 10_001])(
+    "bound %i combined retained, entering, and exiting points with fixed or moving axes",
+    (combined) => {
+      const extra = combined - MOVING_POINTS;
+      const rows = (length: number, offset: number, factor: number) => ({
+        x: Float64Array.from({ length }, (_, i) => i % 3),
+        y: Float64Array.from({ length }, (_, i) => (10 + (i % 2) * 10) * factor),
+        id: Float64Array.from({ length }, (_, i) => offset + i),
+      });
+      const first = table(rows(3000, 0, 1));
+      const second = table(rows(3000, 0, 1));
+      const marks = [
+        point(first, { x: "x", y: "y", animationKey: "id", id: "first" }),
+        point(second, { x: "x", y: "y", animationKey: "id", id: "second" }),
+      ];
+      const fixed = chart({ marks, x: { domain: [0, 4] }, y: { domain: [0, 100] } });
+      const automatic = chart({ marks });
+      const old = snapshot(automatic.scene(estimateText), automatic.panels()[0], 0)!;
+      const before = centers(pointsOf(fixed.scene(estimateText))[0]!);
+      // Each series retains 2,000 keys, loses 1,000, and gains 2,000 (or 2,001).
+      // Their unions total 10,000 or 10,001, though both endpoint scenes fit.
+      const { tween } = change(fixed, () => {
+        first.reset(rows(4000, 1000, 2));
+        second.reset(rows(4000 + extra, 1000, 2));
+      });
+      expect(tween).toBeDefined();
+      const target = pointsOf(tween!.scene);
+      expect(target.map((mark) => mark.count)).toEqual([4000, 4000 + extra]);
+      expect(tween!.axes).toBeUndefined();
+      expect(tween!.points.map(({ mark }) => mark.key)).toEqual(
+        target.slice(0, extra === 0 ? 2 : 1).map((mark) => mark.key),
+      );
+      const expectedCounts = extra === 0 ? [5000, 5000] : [5000, 4001];
+      for (const elapsed of [0, 100, 200]) {
+        const frame = pointsOf(frameAt(tween!, elapsed));
+        expect(frame.map((mark) => mark.count)).toEqual(expectedCounts);
+        expect(frame.reduce((sum, mark) => sum + mark.count, 0)).toBeLessThanOrEqual(MOVING_POINTS);
+        if (extra === 1) expect(frame[1]).toBe(target[1]);
+      }
+      const start = pointsOf(frameAt(tween!, 0))[0]!;
+      expectRects(centers(start).slice(0, 1), [before[1000]!]);
+      expect(start.radii![0]).toBe(2.5); // retained
+      expect(start.radii![2000]).toBe(0); // entrant
+      expect(start.radii![4000]).toBe(2.5); // exit
+      const end = pointsOf(frameAt(tween!, 200))[0]!;
+      expect(end.radii![2000]).toBe(2.5);
+      expect(end.radii![4000]).toBe(0);
+
+      const scene = automatic.scene(estimateText);
+      expect(scene.panels[0]!.plot).toEqual(old.plot);
+      expect(automatic.panels()[0]!.y.domain).not.toEqual(old.panel!.y.domain);
+      const movingAxes = plan(old, scene, automatic.panels()[0], 200, BUILDERS);
+      if (extra === 0) {
+        expect(movingAxes!.axes).toBeDefined();
+        expect(movingAxes!.points).toHaveLength(2);
+      } else {
+        expect(movingAxes).toBeUndefined();
+      }
+    },
+  );
 
   it("leave out clouds, and more points than move every frame, before copying them", () => {
     const n = MOVING_POINTS + 1;

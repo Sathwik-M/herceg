@@ -170,23 +170,63 @@ describe("notebook widget", () => {
     const initial = rows([1, 2, 3], [10, 20, 30], ["a", "b", "c"]);
     state.spec.data = { data: { columns: initial.columns } };
     state.buffers = initial.buffers.map((buffer) => new DataView(buffer.buffer));
+    const next = rows([1, 2, 3], [70, 60, 50], ["c", "a", "d"]);
+    const reference = new MockModel({
+      _chart: {
+        ...state,
+        spec: { ...state.spec, animation: false, data: { data: { columns: next.columns } } },
+        buffers: next.buffers.map((buffer) => new DataView(buffer.buffer)),
+      } satisfies Snapshot,
+      _listening: [],
+    });
     const model = new MockModel({ _chart: state, _listening: [] });
     const [host] = mount(model);
+    const [staticHost] = mount(reference);
     host!.style.cssText = "position:fixed;left:0;top:0;width:400px";
+    // Each circle starts with M(x - radius) y, followed by its arc radii.
+    const circles = (element: HTMLElement) =>
+      pointPath(element)
+        .split("M")
+        .slice(1)
+        .map((command) => {
+          const [left, y, r] = command.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+          return { x: left! + r!, y: y!, r: r! };
+        });
     await controlTime(host!);
-    const before = pointPath(host!);
-    const next = rows([1, 2, 3], [70, 60, 50], ["c", "a", "d"]);
+    const before = circles(host!);
+    const target = circles(staticHost!);
+    // Flush the replacement's first frame while keeping elapsed time at zero.
+    const now = vi.spyOn(performance, "now").mockReturnValue(performance.now());
     model.receive(
       { type: "replace", revision: 1, table: "data", columns: next.columns },
       next.buffers,
     );
+    vi.advanceTimersByTime(16);
+    now.mockRestore();
+    const start = circles(host!);
+    expect(start).toHaveLength(4);
+    expect(start[0]).toEqual(before[2]); // c
+    expect(start[1]).toEqual(before[0]); // a
+    expect(start[2]!.r).toBe(0); // d
+    expect(start[2]!.x).toBeCloseTo(target[2]!.x, 2);
+    expect(start[2]!.y).toBe(target[2]!.y);
+    expect(start[3]).toEqual(before[1]); // b
     vi.advanceTimersByTime(80);
-    const middle = pointPath(host!);
+    const middle = circles(host!);
+    expect(middle).toHaveLength(4);
+    expect(middle[0]).not.toEqual(start[0]);
+    expect(middle[0]).not.toEqual(target[0]);
+    expect(middle[1]).not.toEqual(start[1]);
+    expect(middle[1]).not.toEqual(target[1]);
+    expect(middle[2]!.r).toBeGreaterThan(0);
+    expect(middle[2]!.r).toBeLessThan(target[2]!.r);
+    expect(middle[3]!.x).toBeCloseTo(before[1]!.x, 2);
+    expect(middle[3]!.y).toBe(before[1]!.y);
+    expect(middle[3]!.r).toBeGreaterThan(0);
+    expect(middle[3]!.r).toBeLessThan(before[1]!.r);
     vi.advanceTimersByTime(400);
-    const after = pointPath(host!);
-    expect(middle).not.toBe(before);
-    expect(middle).not.toBe(after);
-    expect(pointPath(host!)).toBe(after);
+    expect(circles(host!)).toHaveLength(3);
+    expect(pointPath(host!)).toBe(pointPath(staticHost!));
   });
 
   it("appends rows, keeps a rolling window, and replaces data", async () => {
