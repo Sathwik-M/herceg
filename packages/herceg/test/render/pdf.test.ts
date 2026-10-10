@@ -29,14 +29,18 @@ import { point } from "../../src/marks/point.ts";
 import { radar } from "../../src/marks/radar.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { violin } from "../../src/marks/violin.ts";
+import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
+import { ChartModel, STATIC_RASTER_RATIO } from "../../src/model/model.ts";
+import { panels } from "../../src/model/panels.ts";
 import { type PdfOptions, pdfFonts, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
+import { NO_PAGE } from "../../src/render/fallbacks.ts";
 import { cellRepeat, renderPdf } from "../../src/render/pdf.ts";
 import { fontChecksum } from "../../src/render/pdf-font-binary.ts";
 import { PdfFontResolver, type PdfFontSource } from "../../src/render/pdf-font-resolver.ts";
 import { subsetTrueType, writeSfnt } from "../../src/render/pdf-font-subset.ts";
-import { encodeText, standardFont, textWidth } from "../../src/render/pdf-fonts.ts";
+import { encodeText, measurePdfText, standardFont, textWidth } from "../../src/render/pdf-fonts.ts";
 import { parseTrueType } from "../../src/render/pdf-truetype.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
@@ -161,7 +165,151 @@ function closing(content: string, at: number): number {
 
 /** UTF-16BE hex of a text string, as PDF writes metadata. */
 const utf16 = (text: string) =>
-  `<FEFF${[...text].map((c) => c.charCodeAt(0).toString(16).padStart(4, "0").toUpperCase()).join("")}>`;
+  `<FEFF${text
+    .split("")
+    .map((c) => c.charCodeAt(0).toString(16).padStart(4, "0").toUpperCase())
+    .join("")}>`;
+
+/** PDF tokens outside literal and hex strings; names keep their leading slash. */
+function* contentTokens(content: string): Generator<string> {
+  const delimiter = /[\s\0()[\]<>/%]/;
+  for (let at = 0; at < content.length; ) {
+    const char = content[at]!;
+    if (/[\s\0]/.test(char)) {
+      at++;
+    } else if (char === "%") {
+      while (at < content.length && !/[\r\n]/.test(content[at]!)) at++;
+    } else if (char === "(") {
+      let depth = 1;
+      at++;
+      while (at < content.length && depth > 0) {
+        const next = content[at++]!;
+        if (next === "\\")
+          at++; // Escaped parentheses do not change nesting.
+        else if (next === "(") depth++;
+        else if (next === ")") depth--;
+      }
+      if (depth !== 0) throw new Error("Unterminated PDF literal string");
+    } else if (char === "<" && content[at + 1] !== "<") {
+      const end = content.indexOf(">", at + 1);
+      if (end < 0) throw new Error("Unterminated PDF hex string");
+      at = end + 1;
+    } else if (content.startsWith("<<", at) || content.startsWith(">>", at)) {
+      yield content.slice(at, at + 2);
+      at += 2;
+    } else if (delimiter.test(char) && char !== "/") {
+      yield char;
+      at++;
+    } else {
+      const start = at++;
+      while (at < content.length && !delimiter.test(content[at]!)) at++;
+      yield content.slice(start, at);
+    }
+  }
+}
+
+const paintingOperators = [
+  "f",
+  "S",
+  "B",
+  "b",
+  "f*",
+  "B*",
+  "b*",
+  "s",
+  "Do",
+  "sh",
+  "Tj",
+  "TJ",
+  "'",
+  '"',
+];
+
+/** Every paint belongs to one top-level Artifact or Figure, with balanced scopes. */
+function assertMarkedContent(content: string): void {
+  const scopes: string[] = [];
+  const containers: string[] = [];
+  let operands: string[] = [];
+  let figures = 0;
+  for (const token of contentTokens(content)) {
+    if (token === "<<" || token === "[") {
+      containers.push(token);
+    } else if (token === ">>" || token === "]") {
+      expect(containers.pop(), "PDF dictionary/array balance").toBe(token === ">>" ? "<<" : "[");
+      operands.push(token);
+      continue;
+    } else if (
+      containers.length === 0 &&
+      !token.startsWith("/") &&
+      !/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(token) &&
+      !["true", "false", "null"].includes(token)
+    ) {
+      if (token === "BMC" || token === "BDC") {
+        const tag = operands[0]!;
+        expect(tag).toMatch(/^\//);
+        if (tag === "/Artifact" && scopes.includes("/Figure"))
+          throw new Error("Artifact is nested inside Figure");
+        if (tag === "/Artifact" || tag === "/Figure") {
+          if (scopes.length !== 0) throw new Error(`${tag} must be a top-level scope`);
+          if (tag === "/Figure") {
+            expect(token).toBe("BDC");
+            expect(operands).toEqual(["/Figure", "<<", "/MCID", "0", ">>"]);
+            figures++;
+          }
+        }
+        scopes.push(tag);
+      } else if (token === "EMC") {
+        if (scopes.length === 0) throw new Error("Unmatched EMC");
+        scopes.pop();
+      } else if (paintingOperators.includes(token)) {
+        const owners = scopes.filter((tag) => tag === "/Artifact" || tag === "/Figure");
+        if (owners.length !== 1 || scopes[0] !== owners[0])
+          throw new Error(`Unscoped painting operator ${token}`);
+      }
+      operands = [];
+      continue;
+    }
+    operands.push(token);
+  }
+  if (scopes.length !== 0) throw new Error("Unclosed marked-content scope");
+  expect(containers, "PDF dictionary/array balance").toEqual([]);
+  expect(figures, "one Figure marked-content sequence").toBe(1);
+}
+
+function figureDictionary(pdf: ParsedPdf): string {
+  const root = pdf.objects.get(ref(pdf.catalog, "StructTreeRoot"))!.dictionary;
+  const document = pdf.objects.get(ref(root, "K"))!.dictionary;
+  return pdf.objects.get(ref(document, "K"))!.dictionary;
+}
+
+/** Follows both directions of the structure/content links and returns the Figure's alternative. */
+function figureAlt(pdf: ParsedPdf): string {
+  expect(pdf.catalog).toContain("/MarkInfo << /Marked true >>");
+  const rootId = ref(pdf.catalog, "StructTreeRoot");
+  const root = pdf.objects.get(rootId)!.dictionary;
+  expect(root).toContain("/Type /StructTreeRoot");
+  expect(root).toContain("/ParentTreeNextKey 1");
+  const documentId = ref(root, "K");
+  const document = pdf.objects.get(documentId)!.dictionary;
+  expect(document).toContain("/Type /StructElem /S /Document");
+  expect(ref(document, "P")).toBe(rootId);
+  const figureId = ref(document, "K");
+  const figure = pdf.objects.get(figureId)!.dictionary;
+  expect(figure).toContain("/Type /StructElem /S /Figure");
+  expect(ref(figure, "P")).toBe(documentId);
+  expect(pdf.objects.get(ref(figure, "Pg"))!.dictionary).toBe(pdf.page);
+  expect(figure).toMatch(/\/K 0\b/);
+  expect([...pdf.objects.values()].filter((o) => /\/S \/Figure\b/.test(o.dictionary))).toHaveLength(
+    1,
+  );
+  const parentKey = /\/StructParents (\d+)/.exec(pdf.page)![1];
+  const parents = pdf.objects.get(ref(root, "ParentTree"))!.dictionary;
+  expect(parents).toBe(`<< /Nums [${parentKey} [${figureId} 0 R]] >>`);
+  assertMarkedContent(pdf.content);
+  const alt = /\/Alt <FEFF([\dA-F]*)>/.exec(figure);
+  expect(alt).not.toBeNull();
+  return Buffer.from(alt![1]!, "hex").swap16().toString("utf16le");
+}
 
 const fontFixture = (name: string) =>
   new Uint8Array(readFileSync(new URL(`../fixtures/pdf-fonts/${name}.ttf`, import.meta.url)));
@@ -226,6 +374,39 @@ const latency: PdfOptions = {
   marks: [line(metrics, { x: "t", y: ["api", "db"] }), rule({ y: 150, label: "SLO" })],
   y: { label: "ms" },
 };
+
+describe("PDF marked-content assertions", () => {
+  const valid = String.raw`
+    /Artifact BMC 0 0 10 10 re f EMC
+    /Figure << /MCID 0 >> BDC
+    % EMC /Artifact BMC Do
+    BT (EMC (BMC) \(BDC\) \\ Tj) Tj [<BDC> 0 (EMC)] TJ ET
+    /Span << /ActualText (EMC) >> BDC (text) Tj EMC
+    EMC
+  `;
+
+  it("skips strings, escaped parentheses, hex strings, and comments", () => {
+    expect(() => assertMarkedContent(valid)).not.toThrow();
+  });
+
+  it("rejects deliberately malformed content streams", () => {
+    for (const operator of paintingOperators)
+      expect(() => assertMarkedContent(`${operator}\n${valid}`)).toThrow(
+        `Unscoped painting operator ${operator}`,
+      );
+    expect(() => assertMarkedContent("/Figure << /MCID 0 >> BDC /Artifact BMC f EMC EMC")).toThrow(
+      "Artifact is nested inside Figure",
+    );
+    expect(() => assertMarkedContent("/Artifact BMC /Figure << /MCID 0 >> BDC f EMC EMC")).toThrow(
+      "/Figure must be a top-level scope",
+    );
+    expect(() => assertMarkedContent("/Span BMC f EMC")).toThrow("Unscoped painting operator f");
+    expect(() => assertMarkedContent(`${valid}\nEMC`)).toThrow("Unmatched EMC");
+    expect(() => assertMarkedContent("/Figure << /MCID 0 >> BDC f")).toThrow(
+      "Unclosed marked-content scope",
+    );
+  });
+});
 
 describe("renderPdf", () => {
   it("writes a known scene as these operators", () => {
@@ -292,6 +473,7 @@ describe("renderPdf", () => {
     expect(pdf.content).toBe(
       [
         "0.75 0 0 -0.75 0 37.5 cm",
+        "/Artifact BMC",
         "q 1 1 1 rg",
         "0 0 100 50 re",
         "f",
@@ -301,6 +483,8 @@ describe("renderPdf", () => {
         "90 25.5 l",
         "S",
         "Q",
+        "EMC",
+        "/Figure << /MCID 0 >> BDC",
         "q 10 5 80 40 re W n",
         "q 1 0 0 RG 2 w 1 J 1 j [4 2] 0 d",
         "10 40 m",
@@ -317,6 +501,7 @@ describe("renderPdf", () => {
         "/Span << /ActualText () >> BDC BT /F1 12 Tf 1 Tr 1 0 0 -1 44.34 24.2 Tm (Hi) Tj ET EMC",
         "BT /F1 12 Tf 0 Tr 1 0 0 -1 44.34 24.2 Tm (Hi) Tj ET",
         "Q",
+        "EMC",
         "",
       ].join("\n"),
     );
@@ -327,6 +512,7 @@ describe("renderPdf", () => {
       "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
     );
     expect(pdf.info).toBe("<< /Producer (Herceg) >>");
+    expect(figureAlt(pdf)).toBe("");
   });
 
   it("refuses geometry it does not know and colors it cannot read", () => {
@@ -367,6 +553,175 @@ describe("renderPdf", () => {
 });
 
 describe("renderToPDF", () => {
+  it.each([false, true])(
+    "tags the full chart with its DOM description (embedded fonts: %s)",
+    (embedded) => {
+      const options: PdfOptions = {
+        ...latency,
+        title: "Latency é (EMC)",
+        // Metadata must retain Unicode even when standard fonts replace visible glyphs.
+        description: "API (requests) \\ Δ 𝌀.\nDatabase latency.",
+        theme: { font: "Fixture", background: "white" },
+        ...(embedded && { fonts: pdfFonts(embeddedFonts, { fallback: ["Symbols"] }) }),
+      };
+      const model = new ChartModel(options, NO_PAGE);
+      model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
+      model.scene(options.fonts?.createResolver().measure ?? measurePdfText);
+      const pdf = readPdf(renderToPDF(options));
+      expect(figureAlt(pdf)).toBe(`${options.title} ${describeChart(model)}`);
+      expect(pdf.catalog).toContain("/Lang (en-US)");
+      const decoration = /\/Artifact BMC\n([\s\S]*?)EMC\n/.exec(pdf.content)![1]!;
+      expect(decoration).toContain("0 0 480 240 re\n");
+      expect(decoration).toContain(`RG 1 w 0 J 0 j 4 M\n`);
+      expect(decoration).not.toMatch(/\/MCID|\bBT\b|\bDo\b/);
+      const drawing = /\/Figure << \/MCID 0 >> BDC\n([\s\S]*)EMC\n$/.exec(pdf.content)![1]!;
+      expect(drawing).toContain(" re W n\n");
+      expect(drawing).toContain(" Tj ET\n");
+      expect([...pdf.objects.values()].some((o) => o.dictionary.includes("/Subtype /Type0"))).toBe(
+        embedded,
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "sets the language of English summaries (embedded fonts: %s)",
+    (embedded) => {
+      for (const locale of ["fr-FR", "en-GB", "EN-gb", undefined]) {
+        const pdf = readPdf(
+          renderToPDF({
+            width: 300,
+            height: 150,
+            ...(locale !== undefined && { locale }),
+            marks: [line(metrics, { x: "t", y: "api" })],
+            theme: { font: "Fixture" },
+            ...(embedded && { fonts: pdfFonts(embeddedFonts) }),
+          }),
+        );
+        expect(figureAlt(pdf)).toMatch(/^Line chart with 1 series\./);
+        if (locale) expect(pdf.catalog).toContain(`/Lang (${locale})`);
+        else expect(pdf.catalog).not.toContain("/Lang");
+        if (locale?.toLowerCase() === "en-gb") expect(figureDictionary(pdf)).not.toContain("/Lang");
+        else expect(figureDictionary(pdf)).toContain("/Lang (en)");
+      }
+      const empty = readPdf(
+        renderToPDF({ width: 100, height: 50, marks: [], title: "Vide", locale: "fr-FR" }),
+      );
+      expect(figureAlt(empty)).toBe("Vide");
+      expect(figureDictionary(empty)).not.toContain("/Lang");
+    },
+  );
+
+  it.each([false, true])(
+    "keeps raster heatmaps and ramps inside the Figure (embedded fonts: %s)",
+    (embedded) => {
+      const pdf = readPdf(
+        renderToPDF({
+          width: 300,
+          height: 200,
+          title: "Heatmap (EMC)",
+          marks: [
+            heatmap(table({ x: [0, 1], y: [0, 0], v: [1, null] }), {
+              x: "x",
+              y: "y",
+              value: "v",
+            }),
+          ],
+          theme: { font: "Fixture" },
+          ...(embedded && { fonts: pdfFonts(embeddedFonts) }),
+        }),
+      );
+      expect(figureAlt(pdf)).toContain("Heatmap (EMC)");
+      expect(pdf.content).toContain("/Im1 Do");
+      expect(pdf.content).toContain("/Sh1 sh");
+    },
+  );
+
+  it.each([false, true])("keeps label halos inside the Figure (embedded fonts: %s)", (embedded) => {
+    const pdf = readPdf(
+      renderToPDF({
+        width: 300,
+        height: 150,
+        title: "Values (EMC)",
+        marks: [
+          bar(table({ region: category(["N", "S"]), q1: [10, 20] }), {
+            x: "region",
+            y: "q1",
+            labels: true,
+          }),
+        ],
+        theme: { font: "Fixture" },
+        ...(embedded && { fonts: pdfFonts(embeddedFonts) }),
+      }),
+    );
+    expect(figureAlt(pdf)).toContain("Values (EMC)");
+    expect(pdf.content).toContain("/Span << /ActualText () >> BDC BT");
+    expect(pdf.content).toContain(" 1 Tr ");
+  });
+
+  it.each([false, true])("keeps subplots in one Figure (embedded fonts: %s)", (embedded) => {
+    const pdf = readPdf(
+      renderToPDF({
+        width: 400,
+        height: 300,
+        title: "Subplots (EMC)",
+        marks: [
+          line(metrics, { x: "t", y: "api", panel: "api" }),
+          line(metrics, { x: "t", y: "db", panel: "db" }),
+        ],
+        panels: panels([
+          { id: "api", title: "API" },
+          { id: "db", title: "Database" },
+        ]),
+        theme: { font: "Fixture" },
+        ...(embedded && { fonts: pdfFonts(embeddedFonts) }),
+      }),
+    );
+    const alt = figureAlt(pdf);
+    expect(alt).toContain("Subplots (EMC)");
+    expect(alt).toContain("Panels: API, Database.");
+    expect(pdf.content.match(/ re W n\n/g)).toHaveLength(2);
+  });
+
+  it.each([false, true])(
+    "keeps facets in one figure with the complete summary (embedded fonts: %s)",
+    (embedded) => {
+      const data = table({
+        x: [0, 1, 0, 1],
+        y: [1, 2, 3, 4],
+        region: category(["North", "North", "South", "South"]),
+      });
+      const options: PdfOptions = {
+        width: 400,
+        height: 300,
+        title: "Sales (EMC)",
+        locale: "fr-FR",
+        marks: [line(data, { x: "x", y: "y" })],
+        facet: facet({ row: "region" }),
+        theme: { font: "Fixture", background: "transparent" },
+        ...(embedded && { fonts: pdfFonts(embeddedFonts) }),
+      };
+      const model = new ChartModel(options, NO_PAGE);
+      model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
+      model.scene(options.fonts?.createResolver().measure ?? measurePdfText);
+      const pdf = readPdf(renderToPDF(options));
+      const alt = figureAlt(pdf);
+      expect(alt).toBe(`${options.title} ${describeChart(model)}`);
+      expect(alt).toContain("North");
+      expect(alt).toContain("South");
+      expect(pdf.content.match(/ re W n\n/g)).toHaveLength(2);
+      expect(pdf.catalog).toContain("/Lang (fr-FR)");
+      expect(figureDictionary(pdf)).toContain("/Lang (en)");
+    },
+  );
+
+  it("describes an untitled chart and tags an empty chart", () => {
+    const { title: _title, description: _description, ...untitled } = latency;
+    expect(figureAlt(readPdf(renderToPDF(untitled)))).toMatch(/^Line chart with 2 series\./);
+    const empty = readPdf(renderToPDF({ width: 100, height: 50, marks: [], title: "Empty" }));
+    expect(figureAlt(empty)).toBe("Empty");
+    expect(empty.catalog).not.toContain("/Lang");
+  });
+
   it("writes a valid one-page document sized to the chart in points", () => {
     const pdf = readPdf(renderToPDF(latency));
     expect(pdf.page).toContain("/MediaBox [0 0 360 180]");
@@ -1635,11 +1990,12 @@ describe("PDF readers", () => {
   const unicode = join(directory, "unicode.pdf");
   writeFileSync(
     unicode,
-    renderPdf(
-      unicodeScene(),
-      {},
-      new PdfFontResolver({ fonts: embeddedFonts, fallback: ["Symbols"] }),
-    ),
+    renderToPDF({
+      ...latency,
+      title: unicodeText,
+      theme: { font: "Fixture" },
+      fonts: pdfFonts(embeddedFonts, { fallback: ["Symbols"] }),
+    }),
   );
 
   it.skipIf(!installed("qpdf"))("pass qpdf --check", () => {
@@ -1663,6 +2019,15 @@ describe("PDF readers", () => {
     const text = execFileSync("pdftotext", [chart, "-"], { encoding: "utf8" });
     for (const label of ["Latency é", "08:00", "SLO", "ms"]) expect(text).toContain(label);
     expect(execFileSync("pdftotext", [unicode, "-"], { encoding: "utf8" })).toContain(unicodeText);
+  });
+
+  it.skipIf(!installed("pdfinfo"))("exposes the structure and alternative text to Poppler", () => {
+    for (const file of [chart, cells, unicode]) {
+      const dump = execFileSync("pdfinfo", ["-struct-text", file], { encoding: "utf8" });
+      expect(dump).toMatch(/Document\b/);
+      expect(dump).toMatch(/Figure\b/);
+      expect(dump).toContain(figureAlt(readPdf(readFileSync(file))));
+    }
   });
 
   it.skipIf(!installed("mutool"))("renders composite subsets identically to the full font", () => {

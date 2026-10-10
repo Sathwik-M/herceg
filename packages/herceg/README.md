@@ -2141,6 +2141,11 @@ draws (its rows of annotations over a table, a subplot's own), which the
 description lists after each panel's name. Legend entries are toggle buttons, and a
 range navigator's window and edges are sliders (see Range navigator).
 
+PDF exports are tagged with one Figure for the chart, including facets and
+subplots. Its alternative text combines the title and the same generated
+summary used in the DOM. Backgrounds and grid lines are artifacts; text
+labels remain part of the figure. This does not claim PDF/UA conformance.
+
 ## Export
 
 `renderToSVG` and `renderToPDF` need no DOM, so they run on servers, in
@@ -2159,10 +2164,15 @@ PDF export is a separate entry point, `herceg/pdf`. Import `pdfFonts` to
 include the optional TrueType parser, subsetter, and embedded-font writer;
 plain PDF exports bundle none of them. The `herceg-pdf` and
 `herceg-pdf-fonts` size benchmarks include scene compilation and a line
-mark, without and with embedded-font support respectively (about 41 and
-48 KiB gzip, excluding supplied font bytes). The page is the chart's size
+mark, without and with embedded-font support respectively (about 42 and
+49.5 KiB gzip, excluding supplied font bytes). The page is the chart's size
 at 0.75 points per CSS pixel. Marks, axes, and legends are vectors, heatmaps are compressed images,
 and text is selectable. Title and description become document metadata.
+Both font paths also emit a `Document` containing one `Figure`, with the
+chart's title and generated summary as `/Alt`, drawing linked through marked
+content and a parent tree, and catalog `/Lang` when `locale` is supplied.
+The generated summary is English; the Figure has `/Lang (en)` unless it
+inherits an English locale from the catalog.
 
 Without `fonts`, text uses Helvetica, Times, or Courier (regular/bold),
 with the existing Windows-1252 encoding; uncovered characters print as "?".
@@ -2243,8 +2253,8 @@ incorrect checksums; generated subsets receive fresh checksums.
   and may split grapheme clusters; no grapheme-aware shortening yet.
 - Colors must be hex, `rgb()`, `hsl()`, or CSS color names.
   Give dark themes a background color; transparent pages appear as white paper.
-- Optional shipped fonts and tagged PDF remain open work. PDFs currently
-  have no structure tree for assistive technology.
+- Optional shipped fonts remain open work. Tagged PDFs provide a chart
+  alternative, without separate text-label semantics or PDF/UA conformance.
 
 ## Charts from specs
 

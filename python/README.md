@@ -444,7 +444,14 @@ one face, and replacement emits one scalar for the whole uncovered cluster.
 Unusually tall fallback fonts may need extra margins; layout currently measures
 width only, and code-point cuts in shortened labels may split grapheme clusters.
 Dark themes need a background color in PDFs, whose viewers show transparent
-pages as white. Optional shipped fonts and tagged PDFs are still open work.
+pages as white. Optional shipped fonts are still open work.
+
+`to_pdf()` and `save("chart.pdf")` automatically produce tagged PDFs with
+either standard or embedded fonts. One Figure contains the whole chart,
+including facets and subplots; its alternative text combines the title and
+the engine's generated chart summary. Backgrounds and grid lines are artifacts,
+and the document language comes from `locale` when supplied. Text labels stay
+inside the Figure; PDF/UA conformance is not claimed.
 
 ## Live notebook charts
 
