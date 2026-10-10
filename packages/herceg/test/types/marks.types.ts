@@ -260,3 +260,21 @@ const splitViolinSpec: ViolinSpec = {
 const invalidViolinSpec: ViolinSpec = { type: "violin", x: "g", y: "v", inner: "points" };
 void splitViolinSpec;
 void invalidViolinSpec;
+
+// Heatmaps: cells at x and y, placed along number and time axes, a step
+// wide, or banded; or the days of a time field as a calendar.
+const days = table({ day: time([0, 86_400_000]), hour: [0, 1], host: ["a", "b"], n: [1, 2] });
+heatmap(days, { x: "hour", y: "host", value: "n", xStep: 1 });
+heatmap(days, { x: "hour", y: "day", value: "n", xBanded: true, yStep: 3_600_000 });
+heatmap(days, { date: "day", value: "n", calendar: "months" });
+heatmap(days, { date: "day", value: "n", weekStart: "sun" });
+// @ts-expect-error a step is for cells along an axis, not bands
+heatmap(days, { x: "hour", y: "host", value: "n", xStep: 1, xBanded: true });
+// @ts-expect-error a calendar places its date itself
+heatmap(days, { date: "day", x: "hour", value: "n" });
+// @ts-expect-error a calendar's date is a time field
+heatmap(days, { date: "hour", value: "n" });
+// @ts-expect-error calendars are by weeks or months
+heatmap(days, { date: "day", value: "n", calendar: "years" });
+// @ts-expect-error a heatmap needs x and y, or a date
+heatmap(days, { x: "hour", value: "n" });

@@ -95,39 +95,94 @@ export class CellIndex {
    * it (the last with a value), in cell order: by row, then column.
    */
   forEachCell(visit: (c: number, r: number, position: number) => void): void {
+    this.forEachRun((c, r, _, to) => visit(c, r, this.positionAt(to - 1)));
+  }
+
+  /**
+   * Calls `visit` with each cell's column and row and the entries
+   * [from, to) of its positions (read with `positionAt`), in cell order:
+   * a cell's positions are adjacent, in their own order.
+   */
+  forEachRun(visit: (c: number, r: number, from: number, to: number) => void): void {
     const { x, y, order, rows } = this;
     const length = this.length;
-    const rowAt = (i: number) => {
-      const k = order ? order[i]! : i;
-      return rows ? rows[k]! : k;
-    };
-    for (let i = 0; i < length; i++) {
-      const row = rowAt(i);
-      const next = i + 1 < length ? rowAt(i + 1) : -1;
-      // Positions sharing a cell are adjacent; only the last is drawn.
-      if (next >= 0 && x[next] === x[row] && y[next] === y[row]) continue;
-      visit(x[row]!, y[row]!, order ? order[i]! : i);
+    // Rows are read inline: these loops run over every row of large grids.
+    let k = order ? order[0]! : 0;
+    let row = rows ? rows[k]! : k;
+    for (let from = 0; from < length; ) {
+      const c = x[row]!;
+      const r = y[row]!;
+      let to = from + 1;
+      for (; to < length; to++) {
+        k = order ? order[to]! : to;
+        row = rows ? rows[k]! : k;
+        if (x[row] !== c || y[row] !== r) break;
+      }
+      visit(c, r, from, to);
+      from = to;
     }
   }
 
   /** The last position with a value in the cell at column `c`, row `r`; -1 for none. */
   find(c: number, r: number): number {
-    const { x, y, order, rows } = this;
-    const rowAt = (k: number) => (rows ? rows[k]! : k);
-    // The first entry past the cell, comparing by row, then column.
+    const lo = this.#past(c, r);
+    if (lo === 0) return -1;
+    const k = this.positionAt(lo - 1);
+    const row = this.rowOf(k);
+    return this.x[row] === c && this.y[row] === r ? k : -1;
+  }
+
+  /**
+   * The last position with a value in the nearest cell of row `r` past
+   * column `c` (before it, unless `forward`), or -1 when the row has none
+   * there: a binary search, however long the row.
+   */
+  beside(c: number, r: number, forward: boolean): number {
+    const i = forward ? this.#past(c, r) : this.#past(c - 1, r) - 1;
+    if (i < 0 || i >= this.length) return -1;
+    const k = this.positionAt(i);
+    const row = this.rowOf(k);
+    if (this.y[row] !== r) return -1;
+    // Before the cell, the entry is its cell's last; past it, its cell's first.
+    return forward ? this.find(this.x[row]!, r) : k;
+  }
+
+  /**
+   * The last position with a value in the first or last cell of the first
+   * or last row, or -1 for an empty index.
+   */
+  corner(lastRow: boolean, lastColumn: boolean): number {
+    const n = this.length;
+    if (n === 0) return -1;
+    const r = this.y[this.rowOf(this.positionAt(lastRow ? n - 1 : 0))]!;
+    if (lastColumn) return this.positionAt(this.#past(Number.POSITIVE_INFINITY, r) - 1);
+    const first = this.rowOf(this.positionAt(this.#past(Number.NEGATIVE_INFINITY, r)));
+    return this.find(this.x[first]!, r);
+  }
+
+  /** The position of the entry at `i` in cell order. */
+  positionAt(i: number): number {
+    return this.order ? this.order[i]! : i;
+  }
+
+  /** The table row of position `k`. */
+  rowOf(k: number): number {
+    return this.rows ? this.rows[k]! : k;
+  }
+
+  /** How many entries come at or before cell (c, r), comparing by row, then column. */
+  #past(c: number, r: number): number {
+    const { x, y } = this;
     let lo = 0;
     let hi = this.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      const row = rowAt(order ? order[mid]! : mid);
+      const row = this.rowOf(this.positionAt(mid));
       const at = y[row]!;
       if (at < r || (at === r && x[row]! <= c)) lo = mid + 1;
       else hi = mid;
     }
-    if (lo === 0) return -1;
-    const k = order ? order[lo - 1]! : lo - 1;
-    const row = rowAt(k);
-    return x[row] === c && y[row] === r ? k : -1;
+    return lo;
   }
 }
 

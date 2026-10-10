@@ -948,7 +948,7 @@ export class ChartModel {
       // past their values.
       if (spec?.domain || zoomed)
         return planAxis(axisContext, base, [plotTop + size, plotTop], count);
-      const nice = spec?.nice ?? true;
+      const nice = spec?.nice ?? !sideDrawn.some(({ mark }) => mark.tight);
       const rounded = niceAxisDomain(base, axisContext, count, nice);
       const domain = insetDomain(
         headroomDomain(rounded, headroom("y", sideDrawn), size, axisContext.type),

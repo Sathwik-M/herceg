@@ -122,7 +122,7 @@ describe("brushes as conditions", () => {
 
   it("list the numbers of banded number fields", () => {
     const cells = table({ x: [10, 20, 30, 10], y: ["a", "a", "b", "b"], v: [1, 2, 3, 4] });
-    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })] });
+    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v", xBanded: true })] });
     const selection = brushedRows(model, cells, { x: [0, 1], y: [1, 1], lasso: null }, null);
     expect(expression(selection)).toEqual([
       "and",
@@ -130,6 +130,62 @@ describe("brushes as conditions", () => {
       ["in", ["field", "y"], "b"],
     ]);
     expect(rowsOf(selection, cells)).toEqual([3]);
+    // Along a number axis, cells whose values are in the range.
+    const along = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })] });
+    const ranged = brushedRows(along, cells, { x: [5, 22], y: [1, 1], lasso: null }, null);
+    expect(expression(ranged)).toEqual([
+      "and",
+      ["and", [">=", ["field", "x"], 5], ["<=", ["field", "x"], 22]],
+      ["in", ["field", "y"], "b"],
+    ]);
+    expect(rowsOf(ranged, cells)).toEqual([3]);
+  });
+
+  it("select the days a brush covers in a calendar, and a clicked day's rows", () => {
+    // Monday the 5th (twice) to Wednesday the 7th, and Monday the 12th.
+    const at = (day: number, hour = 0) => Date.UTC(2026, 0, day, hour);
+    const days = table({ day: time([at(5), at(5, 6), at(6), at(7), at(12)]), n: [1, 2, 3, 4, 5] });
+    const model = drawn({ marks: [heatmap(days, { date: "day", value: "n" })] });
+    // The first week, Monday and Tuesday.
+    const week = brushedRows(model, days, { x: [at(5), at(12) - 1], y: [0, 1], lasso: null }, null);
+    expect(rowsOf(week, days)).toEqual([0, 1, 2]);
+    const [px, py] = pixel(model, at(5, 12), 0);
+    expect(Array.from(clickedRows(model, new Set([days]), px, py)!.rows)).toEqual([0, 1]);
+    // A cell is at its center: the week's middle, Thursday the 8th at noon.
+    const middle = brushedRows(model, days, { x: [at(8), at(9)], y: [0, 0], lasso: null }, null);
+    expect(rowsOf(middle, days)).toEqual([0, 1]);
+    const lasso = [
+      [at(8), -0.4],
+      [at(9), -0.4],
+      [at(9), 0.4],
+      [at(8), 0.4],
+    ] as const;
+    expect(rowsOf(brushedRows(model, days, { x: null, y: null, lasso }, null), days)).toEqual([
+      0, 1,
+    ]);
+    const months = drawn({
+      marks: [heatmap(days, { date: "day", value: "n", calendar: "months" })],
+    });
+    // Days 5 to 7 of January.
+    const span = brushedRows(months, days, { x: [4, 6], y: [0, 0], lasso: null }, null);
+    expect(rowsOf(span, days)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("lasso heatmap cells at their centers, which their values need not be", () => {
+    // Cells of 0, 1, and 3 span [-0.5, 0.5], [0.5, 2], and [2, 4].
+    const cells = table({ x: [0, 1, 3], y: [0, 0, 0], v: [1, 2, 3] });
+    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })] });
+    const around = (x0: number, x1: number) =>
+      [
+        [x0, -0.5],
+        [x1, -0.5],
+        [x1, 0.5],
+        [x0, 0.5],
+      ] as const;
+    const lassoed = (x0: number, x1: number) =>
+      rowsOf(brushedRows(model, cells, { x: null, y: null, lasso: around(x0, x1) }, null), cells);
+    expect(lassoed(1.1, 1.4)).toEqual([1]);
+    expect(lassoed(0.8, 1.1)).toEqual([]);
   });
 
   it("select a row when any shown field of a mark of several is in range", () => {

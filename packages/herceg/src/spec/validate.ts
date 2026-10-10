@@ -8,6 +8,7 @@
 import { areaFormError } from "../marks/area.ts";
 import { boxPlotFormError } from "../marks/boxplot-input.ts";
 import { errorBarForm } from "../marks/errorbar.ts";
+import { heatmapFormError } from "../marks/heatmap.ts";
 import { regionFormError } from "../marks/region.ts";
 import { ruleFormError } from "../marks/rule.ts";
 import { treeFormError } from "../marks/tree-data.ts";
@@ -747,11 +748,18 @@ const MARKS: MarkChecks = {
     },
   },
   heatmap: {
-    required: ["x", "y", "value"],
+    required: ["value"],
     checks: {
       x: field,
       y: field,
+      date: field,
+      calendar: oneOf("weeks", "months"),
+      weekStart: oneOf("sun", "mon", "tue", "wed", "thu", "fri", "sat"),
       value: field,
+      xStep: positive,
+      yStep: positive,
+      xBanded: boolean,
+      yBanded: boolean,
       colors: ramp,
       colorDomain: range,
       colorMidpoint: finite,
@@ -947,6 +955,7 @@ const FORMS: Partial<
   Record<MarkSpec["type"], (spec: Record<string, unknown>) => string | undefined>
 > = {
   area: areaFormError,
+  heatmap: heatmapFormError,
   boxplot: boxPlotFormError,
   rule: ruleFormError,
   region: regionFormError,
@@ -1248,6 +1257,19 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           'a spec with "version": 7 or later, so that older readers refuse it',
           item.split === true ? item.split : item.inner,
         );
+    }
+    if (item.type === "heatmap") {
+      // Older readers band heatmaps' number and time fields, and have no steps or calendars.
+      for (const name of ["xStep", "yStep", "xBanded", "yBanded", "date"])
+        if (item[name] !== undefined && item[name] !== true && declared < 9)
+          fail(
+            `marks[${i}].${name}`,
+            'a spec with "version": 9 or later, so that older readers refuse it',
+            item[name],
+          );
+      for (const axis of ["x", "y"])
+        if (item[`${axis}Step`] !== undefined && item[`${axis}Banded`] === true)
+          fail(`marks[${i}].${axis}Step`, `no ${axis}Step with ${axis}Banded`, item[`${axis}Step`]);
     }
     if (item.type !== "boxplot" || item.median !== undefined) continue;
     if (

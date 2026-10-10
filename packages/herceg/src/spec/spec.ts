@@ -16,9 +16,10 @@ export type { Expression, Operator } from "../data/expression.ts";
  * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
  * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`,
  * version 5 enabled x axis `seams`, version 6 raw box plot notches and non-default whiskers,
- * version 7 split violins and non-default violin interiors, version 8 `rowSelection`.
+ * version 7 split violins and non-default violin interiors, version 8 `rowSelection`,
+ * version 9 heatmaps over number and time fields on number and time axes.
  */
-export const SPEC_VERSION = 8;
+export const SPEC_VERSION = 9;
 
 /** Column name in a table. */
 export type Field = string;
@@ -36,10 +37,12 @@ export interface ChartSpec {
    * `grid` must give 2 or later, those using `resolve.x`, a panel's `x`, or
    * x axis `breaks` 3 or later, those with a `navigator` 4 or later,
    * those with enabled x axis `seams` 5, raw box plot notches or non-default whiskers 6,
-   * split violins or non-default violin interiors 7, and `rowSelection` 8,
-   * so that older readers refuse them rather than draw them differently.
+   * split violins or non-default violin interiors 7, `rowSelection` 8, and
+   * heatmap `xStep`, `yStep`, `date`, or `xBanded` / `yBanded` false 9, so
+   * that older readers refuse them rather than draw them differently.
+   * Heatmaps in specs before 9 band number and time fields.
    */
-  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -1306,13 +1309,19 @@ export interface PointSpec extends MarkBase {
 }
 
 /**
- * A grid of cells colored by `value`. Category fields give one column (or
- * row) per category; number and time fields one per distinct value.
+ * A grid of cells colored by `value`: cells at `x` and `y`, or the days of
+ * a `date` laid out as a calendar. Category fields give one column (or
+ * row) per category. Number and time fields place a cell at each distinct
+ * value along a number or time axis, reaching halfway to the values beside
+ * it (or `xStep` / `yStep` wide); with `xBanded` / `yBanded`, they give one
+ * column (or row) per distinct value instead. Specs before version 9 band
+ * every field, as if both `xBanded` and `yBanded` were true.
  */
-export interface HeatmapSpec extends MarkBase {
+export type HeatmapSpec = HeatmapGridSpec | HeatmapCalendarSpec;
+
+/** The options both forms of heatmap share. */
+interface HeatmapBase extends MarkBase {
   type: "heatmap";
-  x: Field;
-  y: Field;
   value: Field;
   /** Color ramp from low to high values, or a scheme name; defaults to the theme's. */
   colors?: readonly string[] | string;
@@ -1327,6 +1336,51 @@ export interface HeatmapSpec extends MarkBase {
    */
   reduce?: "mean" | "max" | "min";
   label?: string;
+}
+
+/** A heatmap of cells at `x` and `y`. */
+export interface HeatmapGridSpec extends HeatmapBase {
+  x: Field;
+  y: Field;
+  /**
+   * Each cell's width along a number or time x (milliseconds for times),
+   * centered on its value but never past halfway to a closer neighbor, so
+   * values further apart leave gaps. Needs spec version 9; not with `xBanded`.
+   */
+  xStep?: number;
+  /** Each cell's height along a number or time y, as `xStep`. */
+  yStep?: number;
+  /**
+   * One column per distinct value of a number or time x, in ascending
+   * order, instead of cells along a number or time axis. `false` needs spec
+   * version 9, before which number and time fields are always banded.
+   */
+  xBanded?: boolean;
+  /** One row per distinct value of a number or time y, rising, as `xBanded`. */
+  yBanded?: boolean;
+  date?: never;
+  calendar?: never;
+  weekStart?: never;
+}
+
+/**
+ * A calendar heatmap: the days of a time field `date`, in the chart's
+ * `timeZone`. "weeks" (the default) puts a column per week along a time x
+ * axis and a row per day of the week, from `weekStart` ("mon" by default)
+ * down; "months" a row per month, from the first day's month down, and a
+ * column per day of the month, 1 to 31. Days without rows are empty. Needs
+ * spec version 9.
+ */
+export interface HeatmapCalendarSpec extends HeatmapBase {
+  date: Field;
+  calendar?: "weeks" | "months";
+  weekStart?: Weekday;
+  x?: never;
+  y?: never;
+  xStep?: never;
+  yStep?: never;
+  xBanded?: never;
+  yBanded?: never;
 }
 
 /**

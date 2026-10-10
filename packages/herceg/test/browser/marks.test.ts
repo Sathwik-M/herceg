@@ -999,3 +999,59 @@ describe("split violins", () => {
     },
   );
 });
+
+describe("heatmaps on number axes in the browser", () => {
+  const cells = () =>
+    table({
+      x: Float64Array.from({ length: 100 }, (_, i) => i % 10),
+      y: Float64Array.from({ length: 100 }, (_, i) => Math.floor(i / 10)),
+      v: Float64Array.from({ length: 100 }, (_, i) => i),
+    });
+  const at = (target: Element, type: string, px: number, py: number) => {
+    const rect = target.getBoundingClientRect();
+    const init = {
+      bubbles: true,
+      cancelable: true,
+      clientX: rect.left + px,
+      clientY: rect.top + py,
+    };
+    target.dispatchEvent(
+      type === "wheel"
+        ? new WheelEvent("wheel", { ...init, deltaY: -200 })
+        : new PointerEvent(type, { ...init, button: 0, pointerId: 1 }),
+    );
+  };
+
+  it("zoom with the wheel, zoom to a brushed rectangle, and show the cell under the pointer", async () => {
+    const chart = createChart(host, {
+      renderer: "canvas",
+      interaction: { zoom: "xy", brush: "xy" },
+      marks: [heatmap(cells(), { x: "x", y: "y", value: "v" })],
+    });
+    await chart.loading;
+    const { plot } = modelOf(chart).panels()[0]!;
+    at(chart.root, "wheel", plot.x + plot.width / 2, plot.y + plot.height / 2);
+    const zoomed = chart.getViewport();
+    expect(zoomed.x![1] - zoomed.x![0]).toBeLessThan(10);
+    expect(zoomed.y![1] - zoomed.y![0]).toBeLessThan(10);
+    chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    chart.render();
+    // A rectangle from cell (2, 2) to (6, 5) zooms to the values it covers.
+    const { x, y } = modelOf(chart).panels()[0]!;
+    at(chart.root, "pointerdown", x.map(2), y.map(2));
+    at(chart.root, "pointermove", x.map(4), y.map(4));
+    at(chart.root, "pointerup", x.map(6), y.map(5));
+    const view = chart.getViewport();
+    expect(view.x![0]).toBeCloseTo(2, 1);
+    expect(view.x![1]).toBeCloseTo(6, 1);
+    expect(view.y![0]).toBeCloseTo(2, 1);
+    expect(view.y![1]).toBeCloseTo(5, 1);
+    chart.render();
+    const panel = modelOf(chart).panels()[0]!;
+    hover(chart.root, panel.x.map(3), panel.y.map(4));
+    await frame();
+    expect(tooltipOf(chart.root).style.display).toBe("block");
+    expect(tooltipOf(chart.root).textContent).toContain("43");
+    chart.destroy();
+  });
+});

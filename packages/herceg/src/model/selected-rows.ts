@@ -18,7 +18,8 @@
 //   scales of their own) leave their rows out.
 // - A stack's rows are drawn at their tops, not their values: a brush
 //   along a stack's value axis selects the rows drawn in it, as a row set,
-//   and then the table's whole selection is a row set.
+//   and then the table's whole selection is a row set. So do calendar
+//   heatmaps, whose weekdays and months no field holds.
 // - Histograms are brushed along their bins' axis, box plots and violins
 //   along their categories' (the chart refuses the others; see `check` in
 //   row-selection.ts).
@@ -288,8 +289,10 @@ function brushCondition(
   keys: readonly string[],
 ): Expression | "rows" {
   const value = valueAxis(mark);
-  // A stack is drawn at its tops, and a view's row set is no condition: their drawn rows say.
-  if ((stacked(mark) && selection[value]) || mark.view?.restriction) return "rows";
+  // A stack is drawn at its tops, a calendar's days by their weekday or
+  // month, and a view's row set is no condition: their drawn rows say.
+  const calendar = (mark.spec as { date?: string }).date !== undefined;
+  if ((stacked(mark) && selection[value]) || calendar || mark.view?.restriction) return "rows";
   const [first] = parts;
   const shown = parts.filter((d) => !d.hidden);
   if (!first || shown.length === 0) return false;
@@ -344,18 +347,26 @@ function inRange(value: number, range: readonly [number, number] | null): boolea
 
 /**
  * The rows of `parts` drawn inside a range brush, for stacks brushed along
- * their values: where each row is placed, its stack's top on the value axis.
+ * their values and for calendars: where each row is placed, its stack's top
+ * on the value axis, or its cell's center.
  */
 function rowsInRanges(parts: readonly Drawn[], selection: Brushed, out: number[]): void {
   for (const d of parts) {
     if (d.hidden) continue;
     const y = selection.y && onAxis(selection.y, d.panel.y, d.y);
     const s = d.series;
+    // A calendar's cells are found at their centers (see `anchorOf`), read back as values.
+    const cells = d.mark.tooltip === "cell";
+    const frame = { x: d.x, y: d.y } as Frame;
+    const value = (scale: PositionScale, pixel: number) =>
+      scale.type === "band" ? Math.round(scale.invert(pixel)) : scale.invert(pixel);
     for (let k = 0; k < s.length; k++) {
       const row = rowOf(s, k);
-      const at = placeAt(s, "x", row);
-      const top = drawnY(d, row);
       if (!drawnRow(d, row)) continue;
+      const anchor = cells ? d.mark.pointAnchor!(s, row, frame) : undefined;
+      if (cells && !anchor) continue;
+      const at = anchor ? value(d.x, anchor[0]) : placeAt(s, "x", row);
+      const top = anchor ? value(d.y, anchor[1]) : drawnY(d, row);
       if (
         Number.isFinite(at) &&
         Number.isFinite(top) &&
@@ -446,6 +457,8 @@ function anchorOf(entry: MarkParts, d: Drawn, row: number): readonly [number, nu
   const s = d.series;
   if (mark.spec.type === "bar") return barAnchor(mark as unknown as BarMark, entry, s, row);
   if (!drawnRow(d, row)) return undefined;
+  // A heatmap's cell is at its center, which its value need not be.
+  if (mark.tooltip === "cell") return mark.pointAnchor!(s, row, entry.frame);
   const along = mark.tooltip === "y" ? "y" : "x";
   const low = s.range ? (along === "y" ? s.x0 : s.y0)?.[row] : undefined;
   const middle = (axis: "x" | "y") => {

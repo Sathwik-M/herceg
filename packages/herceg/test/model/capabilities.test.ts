@@ -518,9 +518,10 @@ describe("capabilities: per-panel scales", () => {
     for (const panel of scene.panels) expectGeometry(panel, c.kind);
     expect(new Set(model.panels().map((p) => p.xGroup)).size).toBe(2);
     expect(new Set(model.panels().map((p) => p.yGroup)).size).toBe(2);
-    if (!c.repeats && c.name !== "heatmap") {
+    if (!c.repeats) {
       const [a, b] = model.panels();
-      const axis = c.name === "histogram" ? "x" : "y";
+      // Heatmap cells are along x, over categories along y.
+      const axis = c.name === "histogram" || c.name === "heatmap" ? "x" : "y";
       expect(a![axis].domain).not.toEqual(b![axis].domain);
     }
   });
@@ -627,21 +628,18 @@ describe("capabilities: right axis", () => {
 });
 
 describe("capabilities: zoom and pan", () => {
-  it.each(cartesian.filter((c) => c.name !== "heatmap"))(
-    "$name moves a continuous axis with its viewport",
-    (c) => {
-      const { model, scene } = build({ marks: [c.make()], interaction: { zoom: "xy" } });
-      const alongY = model.xScale()!.type === "band";
-      const orient = alongY ? "left" : "bottom";
-      const before = scene.panels[0]!.axes.find((a) => a.orient === orient)!.ticks;
-      if (alongY) model.setYViewport({ y: [2, 6], yRight: null });
-      else model.setViewport([0.5, 1.5]);
-      const next = model.scene(estimateText);
-      const scale = alongY ? model.yScale()! : model.xScale()!;
-      expect(scale.domain).toEqual(alongY ? [2, 6] : [0.5, 1.5]);
-      expect(next.panels[0]!.axes.find((a) => a.orient === orient)!.ticks).not.toEqual(before);
-    },
-  );
+  it.each(cartesian)("$name moves a continuous axis with its viewport", (c) => {
+    const { model, scene } = build({ marks: [c.make()], interaction: { zoom: "xy" } });
+    const alongY = model.xScale()!.type === "band";
+    const orient = alongY ? "left" : "bottom";
+    const before = scene.panels[0]!.axes.find((a) => a.orient === orient)!.ticks;
+    if (alongY) model.setYViewport({ y: [2, 6], yRight: null });
+    else model.setViewport([0.5, 1.5]);
+    const next = model.scene(estimateText);
+    const scale = alongY ? model.yScale()! : model.xScale()!;
+    expect(scale.domain).toEqual(alongY ? [2, 6] : [0.5, 1.5]);
+    expect(next.panels[0]!.axes.find((a) => a.orient === orient)!.ticks).not.toEqual(before);
+  });
 
   it.each([
     { name: "bar", make: bar },
@@ -656,11 +654,22 @@ describe("capabilities: zoom and pan", () => {
     expect(model.scene(estimateText).panels[0]!.axes).toEqual(scene.panels[0]!.axes);
   });
 
-  it("heatmaps band numeric and time fields too, and ignore both viewports", () => {
+  it("heatmaps zoom number and time axes, and ignore viewports on banded ones", () => {
     for (const x of [[0, 1, 2], time([0, 1, 2])]) {
       const cells = table({ x, y: [0, 1, 2], value: [1, 2, 3] });
-      const { model, scene } = build({
+      const zoomed = build({
         marks: [heatmap(cells, { x: "x", y: "y", value: "value" })],
+        interaction: { zoom: "xy" },
+      });
+      const type = Array.isArray(x) ? "linear" : "time";
+      expect([zoomed.model.xScale()!.type, zoomed.model.yScale()!.type]).toEqual([type, "linear"]);
+      zoomed.model.setViewport([0.5, 1.5]);
+      zoomed.model.setYViewport({ y: [0.5, 1.5], yRight: null });
+      zoomed.model.scene(estimateText);
+      expect(zoomed.model.xScale()!.domain).toEqual([0.5, 1.5]);
+      expect(zoomed.model.yScale()!.domain).toEqual([0.5, 1.5]);
+      const { model, scene } = build({
+        marks: [heatmap(cells, { x: "x", y: "y", value: "value", xBanded: true, yBanded: true })],
         interaction: { zoom: "xy" },
       });
       expect([model.xScale()!.type, model.yScale()!.type]).toEqual(["band", "band"]);

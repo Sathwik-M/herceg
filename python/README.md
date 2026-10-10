@@ -32,7 +32,9 @@ hg.scatter(countries, x="gdp", y="life", r="population", series="continent")  # 
 hg.scatter(stations, x="lon", y="lat", color="anomaly", colors="rdbu", color_midpoint=0)
 hg.scatter(cars, x="weight", y="mpg", symbol="origin")  # a shape per origin
 hg.scatter(requests, x="region", y="latency")  # a category x places points in its bands
-hg.heatmap(load, x="hour", y="host", value="cpu", colors="viridis")
+hg.heatmap(load, x="hour", y="host", value="cpu", colors="viridis")  # hours along a time axis
+hg.heatmap(load, x="hour", y="host", value="cpu", x_banded=True)  # a column per distinct hour
+hg.heatmap(commits, date="day", value="count", calendar="months")  # a calendar
 hg.candlestick(prices, x="day", open="open", high="high", low="low", close="close")
 hg.candlestick(prices, "day", "open", "high", "low", "close", variant="ohlc")  # OHLC bars
 hg.histogram(requests, x="latency", series="region", bins={"step": 10})
@@ -84,6 +86,19 @@ field and count; unused dictionary values and missing/non-finite rows do not
 count. Both options work with facets, per-panel categories, either orientation,
 and SVG, Canvas, static SVG, and PDF output. Specs use version 7 only when
 `split=True` or a non-default `inner` needs it.
+
+Heatmaps over number and time columns place their cells along number and
+time axes, which zoom and pan: each cell reaches halfway to the values
+beside it, or with `x_step` / `y_step` (milliseconds for times) is that wide
+around its value, leaving gaps where values are missing. `x_banded=True` /
+`y_banded=True` give one column (or row) per distinct value instead, as
+category columns have. `date=` lays the days of a time column out as a
+calendar in the chart's `time_zone`: `calendar="weeks"` (the default) a
+column per week along a time axis and a row per day of the week from
+`week_start` (`"mon"` by default), `calendar="months"` a row per month and
+a column per day of the month. Specs use version 9 when a heatmap places a
+number or time column along an axis, has a step, or is a calendar; earlier
+readers band such columns, so they refuse it.
 
 ```python
 hg.violin(requests, x="region", y="latency", series="version", split=True, inner="quartiles")
