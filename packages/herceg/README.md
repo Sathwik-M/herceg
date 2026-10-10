@@ -596,6 +596,48 @@ zero or below is not drawn.
 
 Marks are drawn in array order; rules and text always draw above other marks.
 
+### What each mark supports
+
+Charts share their behaviors unevenly so far: the marks along x and y axes
+take part in everything, the others in less. ✓ supported, ◐ partly (see
+the notes), — not yet (refused with an error, or for heatmaps' zoom, without
+effect), · not applicable.
+
+| Marks | Facets | Subplots | Panel scales | Zoom and pan | Brushes | Synced selection | Legend toggle | Tooltip and keyboard | Value animation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| line, area, bar | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
+| point | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| histogram, boxplot, violin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | — |
+| errorbar, candlestick | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| heatmap | ✓ | ✓ | ✓ | — | ✓ | ✓ | · | ✓ | — |
+| rule, region, text | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | · | ◐ | ◐ |
+| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | — |
+| pie, treemap, sunburst, gauge, funnel, radar, sankey | — | — | — | — | — | — | ✓ | ✓ | ◐ |
+| graph | — | — | — | — | — | — | ◐ | ✓ | — |
+| geoshape, geopoint | — | — | — | — | — | — | ✓ | ✓ | — |
+| point3d, line3d, surface | — | — | — | turning | — | — | ✓ | ✓ | — |
+
+- Brushes and synced selections report ranges and outlines, not the rows
+  inside them; mapping them to rows (and to a selection store) is the
+  application's for now.
+- Zoom, pan, and brushes work on number and time axes; subplots zoom and
+  brush along x only, and facets with y scales of their own do not zoom
+  along y. A second y axis needs a single panel.
+- Points over a row view, annotations over a table, and custom marks
+  without series repeat in every facet panel instead of splitting; error
+  bars and candlesticks need their categories shared between panels.
+- Heatmaps band both axes, number and time fields too, so they neither zoom
+  nor pan.
+- Box plots and violins on log axes have no keyboard stop for groups whose
+  median is not positive; annotations are read in the chart's summary
+  rather than one by one; custom marks are read through their series.
+- Value animation moves unstacked, unlabeled bars, points, lines and areas
+  whose rows stay, rules, and pie slices (see [Animation](#animation)).
+- Every mark draws in SVG, Canvas, static SVG, and PDF; large point series
+  and 3D charts also draw with WebGL. Every mark has a React, Vue, and
+  Svelte component, and every mark but custom marks (JavaScript only) a
+  Python builder.
+
 ### Pies and donuts
 
 ```ts
