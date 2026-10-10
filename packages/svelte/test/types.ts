@@ -38,7 +38,7 @@ Line(internals, { data: metrics, x: "time", y: "service" });
 // A category field places points in its bands; sizes stay numeric.
 Point(internals, { data: metrics, x: "service", y: "p50" });
 // @ts-expect-error point sizes are number fields
-Point(internals, { data: metrics, x: "service", y: "p50", r: "service" });
+Point(internals, { data: metrics, x: "service", y: "p50", size: "service" });
 
 // Areas of a series field stack on every x any of them has.
 Area(internals, { data: metrics, x: "time", y: "p50", series: "service", stack: true });
@@ -54,11 +54,11 @@ Area(internals, {
 Area(internals, { data: metrics, x: "time", y: "p50", stack: true, stackGaps: "linear" });
 
 Rule(internals, { y: 250, label: "SLO" });
-Rule(internals, { data: deploys, x: "at", text: "version" });
+Rule(internals, { data: deploys, x: "at", textField: "version" });
 // @ts-expect-error rule positions from data are number or time fields
 Rule(internals, { data: deploys, x: "version" });
 // @ts-expect-error with data, text is a field of it, also next to constant positions
-Rule(internals, { data: deploys, x: 5, text: "missing" });
+Rule(internals, { data: deploys, x: 5, textField: "missing" });
 Text(internals, { x: Date.now(), y: 100, label: "now", anchor: "end" });
 // @ts-expect-error constant text needs a label
 Text(internals, { x: 1, y: 2 });
@@ -88,7 +88,7 @@ Custom(internals, { data: 5, draw: () => {} });
 type ChartProps = ComponentProps<typeof Chart>;
 export const options: ChartProps = {
   title: "Request latency",
-  y: { label: "ms" },
+  y: { title: "ms" },
   interaction: { zoom: true },
   onselect: ({ x }) => x?.[0].toFixed(),
   onviewport: ({ x, y, yRight }) => [x, y, yRight],

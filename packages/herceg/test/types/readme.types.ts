@@ -43,7 +43,7 @@ const metrics = table({ time: time(timestamps), p50: p50Latency, p99: p99Latency
 const chart = createChart(element, {
   title: "Request latency",
   marks: [line(metrics, { x: "time", y: ["p50", "p99"] }), rule({ y: 250, label: "SLO" })],
-  y: { label: "ms" },
+  y: { title: "ms" },
 });
 chart.setViewport([0, 1]);
 chart.update({ theme: "dark", interaction: { zoom: true, sync: "dashboard" } });
@@ -103,20 +103,20 @@ line(requests, { x: "time", y: "service" });
 const deploys = table({ at: time([Date.now()]), version: ["v2"], build: [42] });
 rule({ y: 250, label: "SLO" });
 rule({ x: new Date(), label: "now" });
-rule(deploys, { x: "at", text: "version" });
-rule(deploys, { x: "at", text: "build" });
+rule(deploys, { x: "at", textField: "version" });
+rule(deploys, { x: "at", textField: "build" });
 // @ts-expect-error rule positions are number or time fields
 rule(deploys, { x: "version" });
 // @ts-expect-error times cannot be drawn as text
-rule(deploys, { x: "at", text: "at" });
+rule(deploys, { x: "at", textField: "at" });
 region({ x1: new Date(0), x2: new Date(), label: "window" });
-region(deploys, { x1: "at", x2: Date.now(), text: "version" });
+region(deploys, { x1: "at", x2: Date.now(), textField: "version" });
 text({ x: 1, y: 2, label: "note" });
-text(deploys, { x: "at", y: "build", text: "version", dy: -8 });
+text(deploys, { x: "at", y: "build", textField: "version", dy: -8 });
 // @ts-expect-error constant text needs a label
 text({ x: 1, y: 2 });
 // @ts-expect-error text from data takes a label or a text field, not both
-text(deploys, { x: "at", y: "build", label: "a", text: "version" });
+text(deploys, { x: "at", y: "build", label: "a", textField: "version" });
 // @ts-expect-error text from data needs a label or a text field
 text(deploys, { x: "at", y: "build" });
 
@@ -133,8 +133,8 @@ createChart(element, {
     line(traffic, { x: "time", y: "requests", axis: "right" }),
     rule({ y: 5000, label: "capacity", axis: "right" }),
   ],
-  y: { label: "ms" },
-  yRight: { label: "requests/s" },
+  y: { title: "ms" },
+  yRight: { title: "requests/s" },
 });
 // @ts-expect-error marks go on the left or right axis
 line(traffic, { x: "time", y: "requests", axis: "top" });
@@ -151,7 +151,7 @@ createChart(element, {
   ],
   facet: facet("region"),
   resolve: { yRight: "independent" },
-  yRight: { label: "requests/s" },
+  yRight: { title: "requests/s" },
 });
 // @ts-expect-error a right axis is shared, independent, or by rows or columns
 createChart(element, { marks: [], facet: facet("region"), resolve: { yRight: "own" } });
@@ -166,7 +166,7 @@ createChart(element, {
     line(regional, { x: "week", y: "units" }),
     line(goals, { x: "week", y: "target", facet: "repeat" }),
     rule({ y: 100, label: "goal" }),
-    rule(launches, { x: "week", text: "product" }),
+    rule(launches, { x: "week", textField: "product" }),
   ],
   facet: facet("region", { columns: 3 }),
 });
@@ -188,17 +188,24 @@ bar(sales, { x: "team", y: "region" });
 bar(sales, { x: ["q1", "q2"], y: "q1" });
 // @ts-expect-error horizontal bars have no right axis
 bar(sales, { x: "q1", y: "region", axis: "right" });
-point(metrics, { x: "p50", y: "p99", r: 3 });
+point(metrics, { x: "p50", y: "p99", radius: 3 });
 point(sales, { x: "region", y: "q1" });
 point(sales, { x: "q1", y: "region", series: "team" });
 // @ts-expect-error point sizes must be numeric
-point(sales, { x: "region", y: "q1", r: "team" });
-// @ts-expect-error point colors must be numeric
+point(sales, { x: "region", y: "q1", size: "team" });
+// @ts-expect-error a point has a constant radius or a size field, not both
+point(metrics, { x: "p50", y: "p99", radius: 3, size: "p50" });
+// Colors follow a number field on a ramp, or a category field value by value.
+point(sales, { x: "region", y: "q1", color: "q2" });
 point(sales, { x: "region", y: "q1", color: "team" });
+// Shapes by a category field: its name, or { field }.
+point(sales, { x: "region", y: "q1", symbol: { field: "team" } });
+// @ts-expect-error symbol fields are category fields
+point(sales, { x: "region", y: "q1", symbol: { field: "q1" } });
 const load = table({ hour: time(timestamps), host: serviceNames, cpu: latencies });
-heatmap(load, { x: "hour", y: "host", value: "cpu" });
+heatmap(load, { x: "hour", y: "host", color: "cpu" });
 // @ts-expect-error heatmap values must be numeric
-heatmap(load, { x: "hour", y: "host", value: "host" });
+heatmap(load, { x: "hour", y: "host", color: "host" });
 
 // README: bars, points, heatmaps
 declare const regions: string[];
@@ -215,16 +222,16 @@ declare const cars: import("../../src/index.ts").Table<{
 const regionSales = table({ region: regions, q1: q1Sales, q2: q2Sales });
 bar(regionSales, { x: "region", y: ["q1", "q2"] });
 bar(requests, { x: "time", y: "latency" });
-point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
+point(cars, { x: "weight", y: "mpg", series: "origin", radius: 3 });
 const stats = table({ group: regions, low: q1Sales, high: q2Sales });
 errorBar(stats, { x: "group", y1: "low", y2: "high" });
 errorBar(stats, { x: "group", y: "low", yError: "high" });
 const hostLoad = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
-heatmap(hostLoad, { x: "hour", y: "host", value: "cpu" });
+heatmap(hostLoad, { x: "hour", y: "host", color: "cpu" });
 const spectrum = table({ time: time(hours), frequency: cpuValues, power: cpuValues });
-heatmap(spectrum, { x: "time", y: "frequency", value: "power", reduce: "max" });
+heatmap(spectrum, { x: "time", y: "frequency", color: "power", reduce: "max" });
 // @ts-expect-error reduce takes "mean", "max", or "min"
-heatmap(spectrum, { x: "time", y: "frequency", value: "power", reduce: "sum" });
+heatmap(spectrum, { x: "time", y: "frequency", color: "power", reduce: "sum" });
 
 // Custom marks
 custom({ draw: ({ circle, plot }) => circle(plot.x, plot.y, 3) });

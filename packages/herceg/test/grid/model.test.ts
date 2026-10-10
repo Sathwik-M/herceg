@@ -324,7 +324,7 @@ describe("grid selection", () => {
     expect(selected(model)).toEqual([1]);
     model.select(3, "range");
     expect(selected(model)).toEqual([1, 2, 3]);
-    const rows = model.selection.get("grid-rows");
+    const rows = model.selectionStore.get("grid-rows");
     expect(rows?.kind === "rows" && Array.from(rows.rows.positions())).toEqual([1, 2, 3]);
     model.select(0, "toggle");
     model.select(2, "toggle");
@@ -337,7 +337,7 @@ describe("grid selection", () => {
     expect(model.selectedCount).toBe(1);
     expect(model.clearSelection()).toBe(true);
     expect(model.clearSelection()).toBe(false);
-    expect(model.selection.get("grid-rows")).toBeNull();
+    expect(model.selectionStore.get("grid-rows")).toBeNull();
   });
 
   it("extends from the anchor with Shift moves, and selects every row the view shows", () => {
@@ -366,7 +366,7 @@ describe("grid selection", () => {
     const model = createGridModel({
       data: rowView(t),
       columns: [{ field: "x" }],
-      selection: store,
+      selectionStore: store,
     });
     store.set("grid-rows", selectWhere(col("x").gt(3)));
     expect(selected(model)).toEqual([1, 2]);
@@ -385,7 +385,7 @@ describe("grid selection", () => {
     const model = createGridModel({
       data: rowView(t),
       columns: [{ field: "x" }],
-      selection: store,
+      selectionStore: store,
     });
     const theirs = new RowSet(t).add(0);
     store.set("grid-rows", selectRows(theirs));
@@ -400,9 +400,9 @@ describe("grid selection", () => {
       createGridModel({
         data: rowView(t),
         columns: [],
-        selection: selectionStore(table({ x: [1] })),
+        selectionStore: selectionStore(table({ x: [1] })),
       }),
-    ).toThrow(/selection store must be of its view's table/);
+    ).toThrow(/grid selectionStore: the store is of another table/);
   });
 });
 

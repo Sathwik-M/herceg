@@ -25,12 +25,12 @@ def column(spec, buffers, name, table="data"):
 def test_point3d_emits_its_fields_and_the_chart_its_3d_options():
     chart = hg.Chart(
         points(),
-        z=hg.Axis(label="Height"),
+        z=hg.Axis(title="Height"),
         camera=hg.Camera(azimuth=30, elevation=40, perspective=True),
         box_aspect=(2, 1, 1),
         zoom=True,
         rotate=False,
-    ).point3d("x", "y", "z", series="kind", r=4, label="Readings")
+    ).point_3d("x", "y", "z", series="kind", radius=4, label="Readings")
     spec, buffers = chart.to_spec()
     assert spec["marks"] == [
         {
@@ -40,11 +40,11 @@ def test_point3d_emits_its_fields_and_the_chart_its_3d_options():
             "y": "y",
             "z": "z",
             "series": "kind",
-            "r": 4,
+            "radius": 4,
             "label": "Readings",
         }
     ]
-    assert spec["z"] == {"label": "Height"}
+    assert spec["z"] == {"title": "Height"}
     assert spec["camera"] == {"azimuth": 30.0, "elevation": 40.0, "zoom": 1.0, "perspective": True}
     assert spec["boxAspect"] == [2.0, 1.0, 1.0]
     assert spec["interaction"] == {"zoom": True, "rotate": False}
@@ -55,12 +55,12 @@ def test_point3d_emits_its_fields_and_the_chart_its_3d_options():
 
 def test_scatter_3d_takes_dates_and_chart_options():
     chart = hg.scatter_3d(
-        points(), x="when", y="x", z="z", color="y", camera={"azimuth": 10}, z_axis={"label": "H"}
+        points(), x="when", y="x", z="z", color="y", camera={"azimuth": 10}, z_axis={"title": "H"}
     )
     spec, _ = chart.to_spec()
     assert spec["marks"][0]["color"] == "y"
     assert spec["camera"]["azimuth"] == 10.0
-    assert spec["z"] == {"label": "H"}
+    assert spec["z"] == {"title": "H"}
     assert spec["data"]["data"]["columns"]["when"]["type"] == "time"
 
 
@@ -87,8 +87,8 @@ def test_surface_from_columns_and_from_a_matrix():
     assert list(column(spec, buffers, "y")) == [0, 0, 0, 1, 1, 1]
 
 
-def test_line3d_emits_its_fields_and_line_3d_takes_chart_options():
-    chart = hg.Chart(points()).line3d("x", "y", "z", series="kind", stroke_width=3, label="Paths")
+def test_line_3d_emits_its_fields_and_takes_chart_options():
+    chart = hg.Chart(points()).line_3d("x", "y", "z", series="kind", stroke_width=3, label="Paths")
     spec, buffers = chart.to_spec()
     assert spec["marks"] == [
         {
@@ -109,46 +109,64 @@ def test_line3d_emits_its_fields_and_line_3d_takes_chart_options():
     assert spec["camera"]["azimuth"] == 10.0
     assert spec["data"]["data"]["columns"]["when"]["type"] == "time"
     # Lines share a chart with the other 3D marks.
-    spec, _ = hg.Chart(points()).point3d("x", "y", "z").line3d("x", "y", "z").to_spec()
+    spec, _ = hg.Chart(points()).point_3d("x", "y", "z").line_3d("x", "y", "z").to_spec()
     assert [mark["type"] for mark in spec["marks"]] == ["point3d", "line3d"]
-    with pytest.raises(ValueError, match="stroke_width must be a positive width"):
-        hg.Chart(points()).line3d("x", "y", "z", stroke_width=0)
-    with pytest.raises(TypeError, match="line3d series: column 'x' holds number values"):
-        hg.Chart(points()).line3d("x", "y", "z", series="x")
-    svg = hg.Chart(points(), width=400, height=300).line3d("x", "y", "z").to_svg()
+    with pytest.raises(
+        ValueError, match="line_3d stroke_width: expected a positive number of pixels; received 0"
+    ):
+        hg.Chart(points()).line_3d("x", "y", "z", stroke_width=0)
+    with pytest.raises(TypeError, match="line_3d series: column 'x' holds number values"):
+        hg.Chart(points()).line_3d("x", "y", "z", series="x")
+    svg = hg.Chart(points(), width=400, height=300).line_3d("x", "y", "z").to_svg()
     assert 'stroke-linecap="round"' in svg
 
 
 def test_3d_marks_share_their_chart_only_with_each_other():
-    chart = hg.Chart(points()).point3d("x", "y", "z")
+    chart = hg.Chart(points()).point_3d("x", "y", "z")
     chart.surface(z=np.ones((2, 2)))
-    with pytest.raises(ValueError, match="shares its chart only with point3d, line3d, and surface"):
+    with pytest.raises(
+        ValueError,
+        match="point_3d: shares its chart only with point_3d, line_3d, and surface marks",
+    ):
         chart.line("x", "y")
-    with pytest.raises(ValueError, match="a point3d shares its chart only with"):
-        hg.Chart(points()).line("x", "y").point3d("x", "y", "z")
-    with pytest.raises(ValueError, match="no x axis to brush"):
-        hg.Chart(points(), brush="x").point3d("x", "y", "z")
-    with pytest.raises(ValueError, match="zoom their camera with zoom=True"):
-        hg.Chart(points(), zoom="x").point3d("x", "y", "z")
-    with pytest.raises(ValueError, match="camera is an option of 3D charts"):
+    with pytest.raises(
+        ValueError,
+        match="point_3d: shares its chart only with point_3d, line_3d, and surface marks",
+    ):
+        hg.Chart(points()).line("x", "y").point_3d("x", "y", "z")
+    with pytest.raises(ValueError, match="Chart brush: a point_3d has no x axis"):
+        hg.Chart(points(), brush="x").point_3d("x", "y", "z")
+    with pytest.raises(
+        ValueError, match='Chart zoom: 3D charts zoom their camera with zoom=True; received "x"'
+    ):
+        hg.Chart(points(), zoom="x").point_3d("x", "y", "z")
+    with pytest.raises(ValueError, match="Chart camera: an option of 3D charts"):
         hg.Chart(points(), camera=hg.Camera()).line("x", "y").to_spec()
 
 
 def test_3d_options_and_fields_are_checked():
-    with pytest.raises(ValueError, match="elevation must be from -90 to 90"):
-        hg.Chart(points(), camera={"elevation": 95}).point3d("x", "y", "z").to_spec()
-    with pytest.raises(ValueError, match="box_aspect must be three positive lengths"):
-        hg.Chart(points(), box_aspect=(1, 0, 1)).point3d("x", "y", "z").to_spec()
-    with pytest.raises(TypeError, match="point3d z: column 'kind' holds category values"):
-        hg.Chart(points()).point3d("x", "y", "kind")
-    with pytest.raises(ValueError, match="2D"):
+    with pytest.raises(
+        ValueError, match="Camera elevation: expected degrees from -90 to 90; received 95"
+    ):
+        hg.Chart(points(), camera={"elevation": 95}).point_3d("x", "y", "z").to_spec()
+    with pytest.raises(
+        ValueError, match=r"Chart box_aspect: expected three positive lengths; received \(1, 0, 1\)"
+    ):
+        hg.Chart(points(), box_aspect=(1, 0, 1)).point_3d("x", "y", "z").to_spec()
+    with pytest.raises(TypeError, match="point_3d z: column 'kind' holds category values"):
+        hg.Chart(points()).point_3d("x", "y", "kind")
+    with pytest.raises(
+        ValueError, match=r"surface z: expected a 2D matrix of heights; received shape \(3,\)"
+    ):
         hg.surface(z=[1, 2, 3])
-    with pytest.raises(ValueError, match="needs 3 values, one per matrix column"):
+    with pytest.raises(
+        ValueError, match="surface x: expected 3 values, one per matrix column; received 2"
+    ):
         hg.surface(z=np.ones((2, 3)), x=[1, 2])
 
 
 def test_3d_charts_export_to_svg_and_pdf():
-    chart = hg.Chart(points(), title="Clusters", width=400, height=300).point3d(
+    chart = hg.Chart(points(), title="Clusters", width=400, height=300).point_3d(
         "x", "y", "z", series="kind"
     )
     svg = chart.to_svg()

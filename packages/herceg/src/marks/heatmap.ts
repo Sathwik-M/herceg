@@ -44,8 +44,8 @@ import { type BandPlaces, placeAt, rowOf, type Series, TableCache } from "./seri
 import { unionExtent } from "./trace.ts";
 
 interface HeatmapCommon<S extends Schema> {
-  /** Cell value, mapped to color. */
-  value: NumericField<S>;
+  /** Number or time field: each cell's value, mapped to color. */
+  color: NumericField<S>;
   /**
    * Color ramp from low to high values, such as an imported scheme
    * (`viridis`, `rdbu`, ...). Defaults to the theme's sequential ramp, or its
@@ -151,15 +151,15 @@ export type HeatmapOptions<S extends Schema> = HeatmapCommon<S> &
 export function heatmapFormError(spec: Record<string, unknown>): string | undefined {
   if (spec.date === undefined) {
     if (spec.x === undefined || spec.y === undefined)
-      return "A heatmap needs x and y, or a date to lay out as a calendar";
+      return "heatmap: needs x and y, or a date to lay out as a calendar";
     if (spec.calendar !== undefined || spec.weekStart !== undefined)
-      return "calendar and weekStart are for heatmaps of a date";
+      return "heatmap: calendar and weekStart are for heatmaps of a date; give date or drop them";
     return undefined;
   }
   const grid = GRID.find((name) => spec[name] !== undefined);
-  if (grid) return `A calendar heatmap places its date itself; it takes no ${grid}`;
+  if (grid) return `heatmap ${grid}: a calendar places its date itself; drop ${grid}`;
   if (spec.calendar === "months" && spec.weekStart !== undefined)
-    return "weekStart is for calendars of weeks";
+    return 'heatmap weekStart: for calendars of weeks; drop it or use calendar: "weeks"';
   return undefined;
 }
 
@@ -243,17 +243,21 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
       requireField(table, spec.date, ["time"], "heatmap date");
       const { calendar = "weeks", weekStart = "mon" } = spec;
       if (calendar !== "weeks" && calendar !== "months")
-        throw new TypeError(`Heatmap calendar must be "weeks" or "months", not ${calendar}`);
+        throw new TypeError(
+          `heatmap calendar: expected "weeks" or "months"; received ${JSON.stringify(calendar)}`,
+        );
       if (!WEEK_STARTS.includes(weekStart))
-        throw new TypeError(`Heatmap weekStart must be a day such as "mon", not ${weekStart}`);
+        throw new TypeError(
+          `heatmap weekStart: expected a day such as "mon"; received ${JSON.stringify(weekStart)}`,
+        );
       this.#layout = { calendar, weekStart };
     }
-    requireField(table, spec.value, NUMERIC, "heatmap value");
+    requireField(table, spec.color, NUMERIC, "heatmap color");
     if (Array.isArray(spec.colors)) checkRamp(spec.colors, "heatmap colors");
-    checkColorScale(spec.colorDomain, spec.colorMidpoint, "Heatmap");
+    checkColorScale(spec.colorDomain, spec.colorMidpoint, "heatmap");
     if (spec.reduce !== undefined && !REDUCERS.includes(spec.reduce)) {
       throw new TypeError(
-        `Heatmap reduce must be "mean", "max", or "min", not ${JSON.stringify(spec.reduce)}`,
+        `heatmap reduce: expected "mean", "max", or "min"; received ${JSON.stringify(spec.reduce)}`,
       );
     }
     const banded = (axis: "x" | "y") => {
@@ -263,15 +267,19 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
       const option = axis === "x" ? spec.xBanded : spec.yBanded;
       const step = axis === "x" ? spec.xStep : spec.yStep;
       if (option !== undefined && typeof option !== "boolean")
-        throw new TypeError(`Heatmap ${axis}Banded must be true or false, not ${option}`);
+        throw new TypeError(
+          `heatmap ${axis}Banded: expected true or false; received ${JSON.stringify(option)}`,
+        );
       const category = table.kind(field) === "category";
       if (step !== undefined) {
         if (!(step > 0 && Number.isFinite(step)))
-          throw new RangeError(`Heatmap ${axis}Step must be a positive number, not ${step}`);
+          throw new RangeError(`heatmap ${axis}Step: expected a positive number; received ${step}`);
         if (category || option)
           throw new TypeError(
-            `Heatmap ${axis}Step sizes cells along a number or time ${axis} axis; ` +
-              (category ? `"${field}" holds categories` : `not with ${axis}Banded`),
+            `heatmap ${axis}Step: sizes cells along a number or time ${axis} axis; ` +
+              (category
+                ? `"${field}" holds categories, so drop ${axis}Step`
+                : `drop it or ${axis}Banded`),
           );
       }
       return category || option === true;
@@ -336,7 +344,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     context: BandContext,
   ): Series[] {
     const { spec, table } = this;
-    const values = table.numbers(spec.value as never);
+    const values = table.numbers(spec.color as never);
     const ramp = spec.colors ?? context.theme.sequential;
     // Band axes place rows by band index; others by their values.
     const position = (axis: "x" | "y") => {
@@ -352,7 +360,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     return [
       {
         key: seriesKey(key, "cells"),
-        label: spec.label ?? spec.value,
+        label: spec.label ?? spec.color,
         color: ramp[ramp.length - 1]!,
         x: position("x"),
         y: position("y"),
@@ -376,10 +384,12 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     s: Series | undefined,
     log = false,
   ): AxisCells {
-    if (log) throw new Error(`Heatmap cells cannot be placed on a log ${axis} axis yet`);
+    if (log)
+      throw new Error(`heatmap: cells cannot go on a log ${axis} axis yet; use a linear one`);
     const { spec, table } = this;
     if (this.#layout) {
-      if (breaks) throw new Error("Calendar heatmaps cannot leave out time breaks");
+      if (breaks)
+        throw new Error("heatmap date: calendars cannot leave out time breaks; drop x.breaks");
       // The weeks `s`'s days were placed in, in its chart's zone (see `series`).
       const placed = (s && this.#byDays.get(s.x)) ?? this.#calendars[0]?.placed;
       return (placed ?? this.#placedCalendar({ zone: "local", locale: undefined })).weeks!;
@@ -390,7 +400,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     const field = this.#field(axis);
     const step = axis === "x" ? spec.xStep : spec.yStep;
     const time = table.kind(field) === "time";
-    const name = `Heatmap ${axis}`;
+    const name = `heatmap ${axis}`;
     const cells = placeCells(table.numbers(field as never), step, time, breaks, name);
     if (found) [found.version, found.cells] = [table.version, cells];
     else {
@@ -622,7 +632,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
   legends(series: readonly Series[], theme: Theme): LegendPart[] {
     const scale = this.#colorScale(theme);
     if (!scale || series.length === 0) return [];
-    const title = this.spec.label ?? this.spec.value;
+    const title = this.spec.label ?? this.spec.color;
     const { domain, midpoint } = scale;
     return [rampLegend({ stops: scale.legendStops(), domain, title, midpoint })];
   }
@@ -637,7 +647,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
   }
 
   #valueExtent(): readonly [number, number] | undefined {
-    const values = this.table.numbers(this.spec.value as never);
+    const values = this.table.numbers(this.spec.color as never);
     const extent = this.#extent.get(this.table, () => scanExtent(values, 0, values.length) ?? null);
     return extent ?? undefined;
   }
@@ -867,7 +877,7 @@ function bandOf(places: BandPlaces | undefined, place: number): number {
  * A grid of colored cells: heatmaps and matrices.
  *
  * ```ts
- * heatmap(load, { x: "hour", y: "host", value: "cpu" })
+ * heatmap(load, { x: "hour", y: "host", color: "cpu" })
  * ```
  */
 export function heatmap<S extends Schema>(
@@ -884,12 +894,12 @@ export function heatmap<S extends Schema>(
   ]);
   let spec: HeatmapSpec;
   if (options.date !== undefined) {
-    const { date, value } = options;
-    spec = { type: "heatmap", date, value, ...shared };
+    const { date, color } = options;
+    spec = { type: "heatmap", date, color, ...shared };
     Object.assign(spec, definedFields(options, ["calendar", "weekStart"]));
   } else {
     const grid = options as HeatmapCommon<S> & GridOptions<S>;
-    spec = { type: "heatmap", x: grid.x, y: grid.y, value: grid.value, ...shared };
+    spec = { type: "heatmap", x: grid.x, y: grid.y, color: grid.color, ...shared };
     Object.assign(spec, definedFields(grid, ["xStep", "yStep", "xBanded", "yBanded"]));
   }
   if (options.colors) spec.colors = [...options.colors];

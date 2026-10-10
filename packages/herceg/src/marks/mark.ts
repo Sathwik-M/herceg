@@ -203,15 +203,16 @@ export interface ColorRamp {
 }
 
 /**
- * A legend of the point sizes or shapes a mark encodes by field: each glyph
- * is SVG path data centered on (0, 0), reaching `r` pixels from its center.
+ * A legend of the point sizes, shapes, or category colors a mark encodes by
+ * field: each glyph is SVG path data centered on (0, 0), reaching `r` pixels
+ * from its center, in `color` or else the theme's muted color.
  */
 export interface GlyphKey {
   title: string;
   /** What the glyphs vary in, for the chart's text alternative. */
-  channel: "size" | "shape";
+  channel: "size" | "shape" | "color";
   /** For shapes, `shape` is the symbol's name. */
-  entries: { label: string; glyph: string; r: number; shape?: string }[];
+  entries: { label: string; glyph: string; r: number; shape?: string; color?: string }[];
 }
 
 /**
@@ -532,7 +533,7 @@ export function requireField(
 ): void {
   if (!table.has(field)) {
     throw new Error(
-      `Unknown field "${field}" for ${role}; the table has ${table
+      `${role}: no field "${field}"; the table has ${table
         .fields()
         .map((f) => `"${f}"`)
         .join(", ")}`,
@@ -540,7 +541,9 @@ export function requireField(
   }
   const kind = table.kind(field);
   if (!kinds.includes(kind))
-    throw new TypeError(`Field "${field}" is ${kind}; ${role} needs ${kinds.join(" or ")}`);
+    throw new TypeError(
+      `${role}: field "${field}" holds ${kind} values; expected ${kinds.join(" or ")}`,
+    );
 }
 
 export const NUMERIC: readonly FieldKind[] = ["number", "time"];
@@ -600,11 +603,11 @@ export class SeriesSplitter {
     this.#seriesField = seriesField;
     this.#label = label;
     if (seriesField !== undefined && yFields.length > 1) {
-      throw new Error("Use either several y fields or a series field, not both");
+      throw new Error("y: several fields or a series field, not both; drop one");
     }
     // Each y field is one series, identified by its name.
     const repeated = yFields.find((y, i) => yFields.indexOf(y) !== i);
-    if (repeated !== undefined) throw new Error(`The y field "${repeated}" is listed twice`);
+    if (repeated !== undefined) throw new Error(`y: field "${repeated}" is listed twice`);
   }
 
   sources(): SeriesSource[] {

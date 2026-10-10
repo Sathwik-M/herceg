@@ -283,7 +283,7 @@ describe("<Chart>", () => {
     const teams = table({ name: ["Ana", "Bo", "Cy"], team: ["Data", "Data", "Sales"] });
     const alone = (people: typeof teams) => (
       <Chart ref={ref} locale="en-US" title="Talks">
-        <Graph data={talks} source="from" target="to" nodes={people} node="name" group="team" />
+        <Graph data={talks} source="from" target="to" nodes={people} node="name" color="team" />
       </Chart>
     );
     act(() => root.render(alone(teams)));
@@ -321,7 +321,7 @@ describe("<Chart>", () => {
     const ref: { current: HercegChart | null } = { current: null };
     const map = (projection: "mercator" | "equirectangular") => (
       <Chart ref={ref} projection={projection} locale="en-US">
-        <GeoShape data={regions} name="name" color="gdp" />
+        <GeoShape data={regions} labelField="name" color="gdp" />
         <GeoPoint data={places} longitude="lon" latitude="lat" />
       </Chart>
     );
@@ -353,7 +353,7 @@ describe("<Chart>", () => {
         ref={ref}
         camera={{ azimuth }}
         locale="en-US"
-        onCameraChange={({ camera }) => cameras.push(camera.azimuth)}
+        onCamera={({ camera }) => cameras.push(camera.azimuth)}
       >
         <Surface data={grid} x="x" y="y" z="z" />
         <Point3D data={points} x="x" y="y" z="z" />
@@ -414,7 +414,7 @@ describe("<Chart>", () => {
         <Chart>
           <Region x1={0.5} x2={1.5} />
           <Line data={metrics} x="t" y="a" />
-          <Rule data={events} x="at" text="name" />
+          <Rule data={events} x="at" textField="name" />
           <Text x={3} y={4} label="peak" />
         </Chart>,
       ),
@@ -571,7 +571,7 @@ describe("<Chart>", () => {
       return (
         <Chart
           ref={ref}
-          onVisibilityChange={({ hiddenKeys }) => seen.push(`${name}:${hiddenKeys.length}`)}
+          onVisibility={({ hiddenKeys }) => seen.push(`${name}:${hiddenKeys.length}`)}
         >
           <Line data={metrics} x="t" y="a" />
           {both && <Line data={metrics} x="t" y="b" />}
@@ -585,14 +585,14 @@ describe("<Chart>", () => {
     expect(seen).toEqual(["one:1", "two:0"]);
   });
 
-  it("passes the whole view to onViewportChange", () => {
+  it("passes the whole view to onViewport", () => {
     let chart: HercegChart | null = null;
     const views: unknown[] = [];
     function App() {
       const ref = useRef<HercegChart | null>(null);
       chart = ref.current ?? chart;
       return (
-        <Chart ref={ref} onViewportChange={(view) => views.push(view)}>
+        <Chart ref={ref} onViewport={(view) => views.push(view)}>
           <Line data={metrics} x="t" y="a" />
         </Chart>
       );
@@ -653,7 +653,7 @@ describe("<Chart>", () => {
     // The parent re-renders with a new prop; the chart's own props stay equal.
     function App(_: { tick: number }) {
       return (
-        <Chart ref={ref} y={{ label: "ms" }}>
+        <Chart ref={ref} y={{ title: "ms" }}>
           <Line data={metrics} x="t" y="a" />
         </Chart>
       );
@@ -833,19 +833,19 @@ describe("<Chart>", () => {
 
   it("treats options written in another key order as unchanged", () => {
     const ref: { current: HercegChart | null } = { current: null };
-    const view = (x: { label: string; grid: boolean }) => (
+    const view = (x: { title: string; grid: boolean }) => (
       <Chart ref={ref} x={x}>
         <Line data={metrics} x="t" y="a" />
       </Chart>
     );
-    act(() => root.render(view({ label: "X", grid: true })));
+    act(() => root.render(view({ title: "X", grid: true })));
     let updates = 0;
     const update = ref.current!.update.bind(ref.current);
     ref.current!.update = (options) => {
       updates++;
       update(options);
     };
-    act(() => root.render(view({ grid: true, label: "X" })));
+    act(() => root.render(view({ grid: true, title: "X" })));
     expect(updates).toBe(0);
   });
 

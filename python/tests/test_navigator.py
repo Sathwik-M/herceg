@@ -8,9 +8,8 @@ import herceg as hg
 DATA = {"t": np.arange(500, dtype=np.float64), "v": np.sin(np.arange(500) / 20)}
 
 
-def test_a_navigator_travels_in_a_version_4_spec():
+def test_a_navigator_travels_in_the_spec():
     spec, _ = hg.Chart(DATA, navigator=True).line("t", "v").to_spec()
-    assert spec["version"] == 4
     assert spec["navigator"] is True
     spec, _ = (
         hg.Chart(DATA, navigator=hg.Navigator(height=48, marks=["price"]))
@@ -31,17 +30,23 @@ def test_a_navigator_travels_in_a_version_4_spec():
 
 def test_navigator_options_are_checked():
     for height in (8, float("nan"), True, "40"):
-        with pytest.raises((ValueError, TypeError), match="navigator height"):
+        with pytest.raises(
+            (ValueError, TypeError), match="Navigator height: expected at least 16 pixels"
+        ):
             hg.Chart(DATA, navigator=hg.Navigator(height=height))  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="list 'a' twice"):
+    with pytest.raises(ValueError, match='Navigator marks: "a" is listed twice'):
         hg.Chart(DATA, navigator=hg.Navigator(marks=["a", "a"]))
-    with pytest.raises(ValueError, match="list of mark ids"):
+    with pytest.raises(ValueError, match="Navigator marks: expected a list of mark ids"):
         hg.Chart(DATA, navigator=hg.Navigator(marks="a"))
-    with pytest.raises(TypeError, match="navigator must be True"):
+    with pytest.raises(TypeError, match="Chart navigator: expected True, False, an hg.Navigator"):
         hg.Chart(DATA, navigator=40)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="facets or panels cannot have a navigator"):
+    with pytest.raises(
+        ValueError, match="Chart navigator: charts with facets or panels have no navigator yet"
+    ):
         hg.Chart({**DATA, "k": ["a", "b"] * 250}, facet="k", navigator=True)
-    with pytest.raises(ValueError, match="facets or panels cannot have a navigator"):
+    with pytest.raises(
+        ValueError, match="Chart navigator: charts with facets or panels have no navigator yet"
+    ):
         hg.Chart(DATA, panels=["a"], navigator=True)
 
 
@@ -76,6 +81,9 @@ def test_live_charts_add_and_remove_a_navigator():
     ):
         faceted = LiveChart(chart)
         before = faceted.to_spec()[0]
-        with pytest.raises(ValueError, match="facets or panels cannot have a navigator"):
+        with pytest.raises(
+            ValueError,
+            match="widget.update navigator: charts with facets or panels have no navigator yet",
+        ):
             faceted.update({"navigator": True})
         assert faceted.to_spec()[0] == before

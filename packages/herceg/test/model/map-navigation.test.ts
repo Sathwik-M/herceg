@@ -74,7 +74,9 @@ function zoomTo(model: ChartModel, lon: number, lat: number, span: number) {
 
 describe("map viewports", () => {
   it("draw the fitted map exactly, and report its plane", () => {
-    const { model, scene } = build({ marks: [geoshape(fromGeoJSON(row()), { name: "name" })] });
+    const { model, scene } = build({
+      marks: [geoshape(fromGeoJSON(row()), { labelField: "name" })],
+    });
     const [regions] = polygons(scene);
     expect(regions!.transform).toBeUndefined();
     expect(regions!.shapes).toHaveLength(10);
@@ -87,7 +89,7 @@ describe("map viewports", () => {
   });
 
   it("zoom and pan by the plane's ranges, projecting at a level and moving the pixels", () => {
-    const { model } = build({ marks: [geoshape(fromGeoJSON(row()), { name: "name" })] });
+    const { model } = build({ marks: [geoshape(fromGeoJSON(row()), { labelField: "name" })] });
     const fitted = plane(model);
     const scene = zoomTo(model, 25, 0, 20);
     const [regions] = polygons(scene);
@@ -125,7 +127,7 @@ describe("map viewports", () => {
   });
 
   it("keep tooltips, outlines, and the keyboard on what is drawn", () => {
-    const { model } = build({ marks: [geoshape(fromGeoJSON(row()), { name: "name" })] });
+    const { model } = build({ marks: [geoshape(fromGeoJSON(row()), { labelField: "name" })] });
     const scene = zoomTo(model, 25, 0, 20);
     const { plot } = scene.panels[0]!;
     const c2 = model.inspectItem(model.stepItem(undefined, 2)!) as ItemInspection;
@@ -171,7 +173,7 @@ describe("map viewports", () => {
   it("draw points at the zoomed scale, and leave out those outside the room", () => {
     const cities = table({ lon: [5, 25, 95], lat: [0, 0, 0], name: ["a", "b", "c"] });
     const { model } = build({
-      marks: [geopoint(cities, { longitude: "lon", latitude: "lat", name: "name" })],
+      marks: [geopoint(cities, { longitude: "lon", latitude: "lat", labelField: "name" })],
     });
     const scene = zoomTo(model, 15, 0, 30);
     const points = scene.panels[0]!.marks.find((m): m is PointGeometry => m.kind === "point")!;
@@ -195,12 +197,10 @@ describe("map viewports", () => {
   it("refuse zooming along one axis", () => {
     expect(() =>
       build({ marks: [geoshape(fromGeoJSON(row()))], interaction: { zoom: "x" } }),
-    ).toThrow(
-      'Charts of a geoshape mark zoom both ways: give interaction.zoom true or "xy", not "x"',
-    );
+    ).toThrow('geoshape zoom: expected interaction.zoom true or "xy"; received "x"');
     expect(() =>
       build({ marks: [geoshape(fromGeoJSON(row()))], interaction: { brush: "xy" } }),
-    ).toThrow('Charts of a geoshape mark take a "lasso" brush, not "xy"');
+    ).toThrow('geoshape brush: expected interaction.brush "lasso"; received "xy"');
     for (const interaction of [{ zoom: true }, { zoom: "xy" }, { brush: "lasso" }] as const)
       expect(
         build({ marks: [geoshape(fromGeoJSON(row()))], interaction }).model.controls?.kind,
@@ -294,7 +294,7 @@ describe("map row selection", () => {
     const store = selectionStore(regions);
     const model = bound(
       {
-        marks: [geoshape(regions, { name: "name" })],
+        marks: [geoshape(regions, { labelField: "name" })],
         projection: { type: "conic-equal-area", parallels: [89.999, 89.999] },
         interaction: { brush: "lasso" },
       },
@@ -359,7 +359,7 @@ describe("highlighted maps", () => {
     };
     const regions = fromGeoJSON(twice);
     const store = selectionStore(regions);
-    const model = bound({ marks: [geoshape(regions, { name: "name" })] }, store);
+    const model = bound({ marks: [geoshape(regions, { labelField: "name" })] }, store);
     const plot = model.scene(estimateText).panels[0]!.plot;
     const middle = [plot.x + plot.width / 2, plot.y + plot.height / 2] as const;
     const found = () => (model.inspect(...middle) as ItemInspection | undefined)?.key;
@@ -373,7 +373,7 @@ describe("highlighted maps", () => {
     const cities = table({ name: ["P0", "P1"], lon: [5, 5], lat: [0, 0] });
     const places = selectionStore(cities);
     const map = bound(
-      { marks: [geopoint(cities, { longitude: "lon", latitude: "lat", name: "name" })] },
+      { marks: [geopoint(cities, { longitude: "lon", latitude: "lat", labelField: "name" })] },
       places,
     );
     map.scene(estimateText);
@@ -421,7 +421,7 @@ describe("zoomed maps", () => {
       const model = new ChartModel({
         locale: "en-US",
         projection,
-        marks: [geoshape(fromGeoJSON(bowed), { name: "name" })],
+        marks: [geoshape(fromGeoJSON(bowed), { labelField: "name" })],
       });
       model.setSize(600, 400, 1);
       model.scene(estimateText);
@@ -474,7 +474,7 @@ describe("zoomed maps", () => {
         geometry: { type: "Polygon" as const, coordinates: [square(south!, north!)] },
       })),
     };
-    const { model } = build({ marks: [geoshape(fromGeoJSON(small), { name: "name" })] });
+    const { model } = build({ marks: [geoshape(fromGeoJSON(small), { labelField: "name" })] });
     const scene = zoomTo(model, 0.005, 51.001, 0.01 / 256);
     const { plot } = scene.panels[0]!;
     const middle = plot.y + plot.height / 2;
@@ -504,7 +504,7 @@ describe("zoomed maps", () => {
         },
       ],
     };
-    const { model } = build({ marks: [geoshape(fromGeoJSON(features), { name: "name" })] });
+    const { model } = build({ marks: [geoshape(fromGeoJSON(features), { labelField: "name" })] });
     // Inside the hole, then between the pair's squares: boxes overlap, nothing shows.
     for (const [lon, lat] of [
       [20, 0],
@@ -538,7 +538,7 @@ describe("zoomed maps", () => {
         },
       ],
     };
-    const { model } = build({ marks: [geoshape(fromGeoJSON(frame), { name: "name" })] });
+    const { model } = build({ marks: [geoshape(fromGeoJSON(frame), { labelField: "name" })] });
     model.setViewport([0, 2 * radians]);
     model.setYViewport({ y: [8.01 * radians, 9.01 * radians], yRight: null });
     const { plot } = model.scene(estimateText).panels[0]!;
@@ -565,7 +565,7 @@ describe("zoomed maps", () => {
     const model = new ChartModel({
       locale: "en-US",
       projection: { type: "equirectangular", fit: "world" },
-      marks: [geoshape(fromGeoJSON(far), { name: "name" })],
+      marks: [geoshape(fromGeoJSON(far), { labelField: "name" })],
     });
     model.setSize(600, 400, 1);
     model.scene(estimateText);
@@ -603,7 +603,7 @@ describe("zoomed maps", () => {
   });
 
   it("find nothing outside the room, where shapes reach but are not drawn", () => {
-    const { model } = build({ marks: [geoshape(fromGeoJSON(row()), { name: "name" })] });
+    const { model } = build({ marks: [geoshape(fromGeoJSON(row()), { labelField: "name" })] });
     const scene = zoomTo(model, 25, 0, 6);
     const { plot } = scene.panels[0]!;
     const middle = plot.x + plot.width / 2;

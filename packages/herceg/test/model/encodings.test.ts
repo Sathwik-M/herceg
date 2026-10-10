@@ -1,11 +1,13 @@
 // Point size, opacity, color, and shape by field; color schemes and
 // diverging ramps for points and heatmaps; their legends.
 import { describe, expect, it } from "vitest";
+import { encodedCategory } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../../src/draw/symbols.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { PointMark, point } from "../../src/marks/point.ts";
+import { describeChart } from "../../src/model/describe.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { renderSvg } from "../../src/render/svg.ts";
 import { SequentialScale } from "../../src/scale/color.ts";
@@ -38,7 +40,7 @@ const cities = table({
 
 describe("legends of encodings", () => {
   it("show one legend for marks that encode the same way", () => {
-    const sized = () => point(cities, { x: "x", y: "y", r: "pop" });
+    const sized = () => point(cities, { x: "x", y: "y", size: "pop" });
     const colored = () => point(cities, { x: "x", y: "y", color: "growth" });
     const { scene } = build({ marks: [sized(), sized(), colored(), colored()] });
     expect(scene.glyphLegends).toHaveLength(1);
@@ -48,7 +50,7 @@ describe("legends of encodings", () => {
   it("describe color scales before keys, as the legend shows them", () => {
     const { model } = build({
       marks: [
-        point(cities, { x: "x", y: "y", r: "pop" }),
+        point(cities, { x: "x", y: "y", size: "pop" }),
         point(cities, { x: "x", y: "y", color: "growth" }),
       ],
     });
@@ -60,16 +62,16 @@ describe("legends of encodings", () => {
   it("build no keys when legends are off", () => {
     const { scene, model } = build({
       legend: false,
-      marks: [point(cities, { x: "x", y: "y", r: "pop", color: "growth" })],
+      marks: [point(cities, { x: "x", y: "y", size: "pop", color: "growth" })],
     });
     expect([scene.glyphLegends, scene.colorLegends, model.legendSummaries()]).toEqual([[], [], []]);
   });
 });
 
 describe("point size by field", () => {
-  it("sizes points by area within rRange, from zero", () => {
+  it("sizes points by area within radiusRange, from zero", () => {
     const [g] = points({
-      marks: [point(cities, { x: "x", y: "y", r: "pop", rRange: [2, 20] })],
+      marks: [point(cities, { x: "x", y: "y", size: "pop", radiusRange: [2, 20] })],
     });
     // The missing size is not drawn.
     expect(g!.count).toBe(4);
@@ -82,19 +84,20 @@ describe("point size by field", () => {
   });
 
   it("leaves room for the largest radius at the plot edges", () => {
-    const mark = point(cities, { x: "x", y: "y", r: "pop", rRange: [1, 30] }) as PointMark;
+    const mark = point(cities, { x: "x", y: "y", size: "pop", radiusRange: [1, 30] }) as PointMark;
     expect(mark.inset).toEqual({ x: 30, y: 30 });
   });
 
   it("does not pick or report points it does not draw", () => {
-    const { model } = build({ marks: [point(cities, { x: "x", y: "y", r: "pop" })] });
+    const { model } = build({ marks: [point(cities, { x: "x", y: "y", size: "pop" })] });
     // Row 3 (x 4) has no size; the nearest drawn point is x 3 or x 5.
     const inspection = model.inspect(model.xScale()!.map(4), model.yScale()!.map(2))!;
     expect(inspection.value).not.toBe(4);
+    expect(describeChart(model)).toContain("y: 4 points, from 1 to 5, last 1.");
   });
 
   it("shows a size key with round values", () => {
-    const { scene } = build({ marks: [point(cities, { x: "x", y: "y", r: "pop" })] });
+    const { scene } = build({ marks: [point(cities, { x: "x", y: "y", size: "pop" })] });
     expect(scene.glyphLegends).toHaveLength(1);
     const [key] = scene.glyphLegends;
     expect(key!.title.text).toBe("pop");
@@ -112,7 +115,7 @@ describe("point size by field", () => {
     const keyOf = (values: number[]) => {
       const t = table({ x: values.map((_, i) => i), y: values, s: values });
       return build({
-        marks: [point(t, { x: "x", y: "y", r: "s" })],
+        marks: [point(t, { x: "x", y: "y", size: "s" })],
       }).scene.glyphLegends[0]!.entries.map((e) => e.label.text);
     };
     expect(keyOf([-10, -5, -1])).toEqual(["-8", "-6", "-2"]);
@@ -122,17 +125,20 @@ describe("point size by field", () => {
 
   it("validates sizes, opacities, and color options", () => {
     const make = (options: object) => () =>
-      point(cities, { x: "x", y: "y", ...(options as { r?: number }) });
-    expect(make({ r: "pop", rRange: [0, Number.POSITIVE_INFINITY] })).toThrow(/rRange/);
-    expect(make({ r: "pop", rRange: [-1, 4] })).toThrow(/rRange/);
-    expect(make({ r: 0 })).toThrow(/positive radius/);
+      point(cities, { x: "x", y: "y", ...(options as { radius?: number }) });
+    expect(make({ size: "pop", radiusRange: [0, Number.POSITIVE_INFINITY] })).toThrow(
+      /radiusRange/,
+    );
+    expect(make({ size: "pop", radiusRange: [-1, 4] })).toThrow(/radiusRange/);
+    expect(make({ radius: 0 })).toThrow(/point radius: expected a positive number.*; received 0/);
+    expect(make({ radius: 3, size: "pop" })).toThrow(/a constant radius or a size field, not both/);
     expect(make({ fillOpacity: 2 })).toThrow(/from 0 to 1/);
     expect(make({ color: "growth", colorMidpoint: Number.NaN })).toThrow(/finite/);
     expect(make({ color: "growth", colorDomain: [3, 1] })).toThrow(/ascending/);
     expect(make({ color: "growth", colorDomain: [0, 1], colorMidpoint: 5 })).toThrow(
-      /outside its colorDomain/,
+      /point colorMidpoint: 5 is outside colorDomain \[0,1\]/,
     );
-    expect(() => heatmap(cities, { x: "x", y: "y", value: "pop", colorDomain: [1, 1] })).toThrow(
+    expect(() => heatmap(cities, { x: "x", y: "y", color: "pop", colorDomain: [1, 1] })).toThrow(
       /ascending/,
     );
   });
@@ -142,7 +148,7 @@ describe("point size by field", () => {
     const xs = Float64Array.from({ length: 61 }, (_, i) => i * 0.05);
     const sorted = table({ x: xs, y: xs.map(() => 1), s: xs.map(() => 9) });
     const { model } = build({
-      marks: [point(sorted, { x: "x", y: "y", r: "s", rRange: [2, 80] })],
+      marks: [point(sorted, { x: "x", y: "y", size: "s", radiusRange: [2, 80] })],
     });
     model.setViewport([1, 2]);
     const scene = model.scene(estimateText);
@@ -161,7 +167,7 @@ describe("point size by field", () => {
     const t = table({ x: [0, 2, 10], y: [5, 5, 5], s: [1, 0, 100] });
     const { model, scene } = build({
       y: { domain: [0, 10] },
-      marks: [point(t, { x: "x", y: "y", r: "s", rRange: [0, 30] })],
+      marks: [point(t, { x: "x", y: "y", size: "s", radiusRange: [0, 30] })],
     });
     const y = model.yScale()!.map(5);
     // Sized to nothing: neither drawn nor picked.
@@ -205,11 +211,11 @@ describe("point size by field", () => {
   it("encodes the most extreme finite values", () => {
     const huge = [-1e308, 0, 1e308];
     const t = table({ x: [0, 1, 2], y: [0, 1, 2], v: huge });
-    for (const options of [{ r: "v" }, { fillOpacity: "v" }, { color: "v" }] as const) {
+    for (const options of [{ size: "v" }, { fillOpacity: "v" }, { color: "v" }] as const) {
       const [g] = points({ marks: [point(t, { x: "x", y: "y", ...options })] });
       expect(g!.count, Object.keys(options)[0]).toBe(3);
     }
-    const [g] = points({ marks: [point(t, { x: "x", y: "y", r: "v", rRange: [2, 12] })] });
+    const [g] = points({ marks: [point(t, { x: "x", y: "y", size: "v", radiusRange: [2, 12] })] });
     expect(Array.from(g!.radii!.subarray(0, 3))).toEqual([2, expect.closeTo(Math.sqrt(74), 3), 12]);
     const tiny = new SequentialScale([0, 1e-320], ["#000000", "#ffffff"]);
     expect([tiny.index(0), tiny.index(1e-320)]).toEqual([0, 254]);
@@ -222,11 +228,13 @@ describe("point size by field", () => {
     expect(legend.middle).toBeCloseTo(0.5);
     // Subnormal spans keep their resolution.
     const small = table({ x: [0, 1], y: [0, 1], v: [0, Number.MIN_VALUE] });
-    for (const options of [{ r: "v" }, { fillOpacity: "v" }, { color: "v" }] as const) {
+    for (const options of [{ size: "v" }, { fillOpacity: "v" }, { color: "v" }] as const) {
       const [g] = points({ marks: [point(small, { x: "x", y: "y", ...options })] });
       expect(g!.count, Object.keys(options)[0]).toBe(2);
     }
-    const [sized] = points({ marks: [point(small, { x: "x", y: "y", r: "v", rRange: [2, 12] })] });
+    const [sized] = points({
+      marks: [point(small, { x: "x", y: "y", size: "v", radiusRange: [2, 12] })],
+    });
     expect(Array.from(sized!.radii!.subarray(0, 2))).toEqual([2, 12]);
     const sub = new SequentialScale([0, Number.MIN_VALUE], ["#000000", "#ffffff"]);
     expect([sub.index(0), sub.index(Number.MIN_VALUE)]).toEqual([0, 254]);
@@ -244,7 +252,7 @@ describe("point size by field", () => {
 
   it("encodes fields whatever their names, including empty ones", () => {
     const odd = table({ x: [0, 1], y: [0, 1], "": [1, 4] });
-    const [sized] = points({ marks: [point(odd, { x: "x", y: "y", r: "" as never })] });
+    const [sized] = points({ marks: [point(odd, { x: "x", y: "y", size: "" as never })] });
     expect(sized!.radii).toBeDefined();
     const [faded] = points({ marks: [point(odd, { x: "x", y: "y", fillOpacity: "" as never })] });
     expect(faded!.opacities).toBeDefined();
@@ -255,7 +263,7 @@ describe("point size by field", () => {
 
   it("names encoded values in tooltips", () => {
     const { model } = build({
-      marks: [point(cities, { x: "x", y: "y", r: "pop", color: "growth" })],
+      marks: [point(cities, { x: "x", y: "y", size: "pop", color: "growth" })],
     });
     const inspection = model.inspect(model.xScale()!.map(2), model.yScale()!.map(4))!;
     expect(inspection.points[0]!.text).toBe("4, pop 100, growth -1");
@@ -356,13 +364,170 @@ describe("point color by field", () => {
   it("rejects colors it cannot interpolate, and names unresolved schemes", () => {
     expect(() =>
       point(cities, { x: "x", y: "y", color: "growth", colors: ["red", "blue"] }),
-    ).toThrow(/hex colors/);
+    ).toThrow(/point colors: expected "#rrggbb" colors; received "red"/);
     // Specs name schemes; marks built from specs outside loadSpec get no scheme table.
     const named = new PointMark(
       { type: "point", x: "x", y: "y", color: "growth", colors: "viridis" },
       cities as never,
     );
-    expect(() => build({ marks: [named] })).toThrow(/must be resolved first/);
+    expect(() => build({ marks: [named] })).toThrow(/colors: scheme "viridis" is unresolved/);
+  });
+});
+
+describe("point color by category", () => {
+  const colorOf = (g: PointGeometry, i: number) => g.colors!.palette[g.colors!.index[i]!];
+
+  it("gives each value the theme's next color, in order of appearance, with a color key", () => {
+    const { scene, model } = build({
+      marks: [point(cities, { x: "x", y: "y", color: "region" })],
+    });
+    const [g] = scene.panels[0]!.marks as PointGeometry[];
+    expect(g!.colors!.categorical).toBe(true);
+    // n, s, n, s, e: the theme's first, second, first, second, and third colors.
+    expect([0, 1, 2, 3, 4].map((i) => colorOf(g!, i))).toEqual(
+      [0, 1, 0, 1, 2].map((i) => LIGHT.palette[i]),
+    );
+    const key = scene.glyphLegends[0]!;
+    expect(key.title.text).toBe("region");
+    expect(key.entries.map((e) => [e.label.text, e.fill])).toEqual([
+      ["n", LIGHT.palette[0]],
+      ["s", LIGHT.palette[1]],
+      ["e", LIGHT.palette[2]],
+    ]);
+    expect(scene.colorLegends).toEqual([]);
+    expect(model.legendSummaries()).toEqual(["Color shows region: n, s, e."]);
+    const svg = renderSvg(scene);
+    expect(svg).toContain(`fill="${LIGHT.palette[2]}" fill-opacity="1"`);
+  });
+
+  it("reads the category in tooltips, swatches in its color, and leaves rows without one out", () => {
+    const sparse = table({ x: [1, 2, 3], y: [1, 2, 3], kind: ["a", null, "b"] });
+    const { model, scene } = build({ marks: [point(sparse, { x: "x", y: "y", color: "kind" })] });
+    const [g] = scene.panels[0]!.marks as PointGeometry[];
+    expect(g!.count).toBe(2);
+    const at = (i: number) => model.inspect(model.xScale()!.map(i), model.yScale()!.map(i));
+    expect(at(1)!.points[0]).toMatchObject({ text: "1, kind a", color: LIGHT.palette[0] });
+    expect(at(3)!.points[0]).toMatchObject({ text: "3, kind b", color: LIGHT.palette[1] });
+    expect(at(2)?.points.some((p) => p.text.startsWith("2,"))).not.toBe(true);
+    expect(describeChart(model)).toContain("y: 2 points, from 1 to 3, last 3.");
+  });
+
+  it("describes no data when no row has a category", () => {
+    const none = table({ x: [1, 2], y: [1, 2], kind: [null, null] as (string | null)[] });
+    const { model } = build({ marks: [point(none, { x: "x", y: "y", color: "kind" })] });
+    expect(describeChart(model)).toContain("y: no data.");
+  });
+
+  it("keeps a series' colors when the series field is the color field", () => {
+    const { scene } = build({
+      marks: [point(cities, { x: "x", y: "y", series: "region", color: "region" })],
+    });
+    expect((scene.panels[0]!.marks as PointGeometry[]).every((g) => !g.colors)).toBe(true);
+    expect(scene.glyphLegends).toEqual([]);
+    expect(scene.legend.map((item) => item.color)).toEqual(LIGHT.palette.slice(0, 3));
+  });
+
+  it("colors by category whatever the series, listing series in a neutral color", () => {
+    const tagged = table({
+      x: [1, 2, 3],
+      y: [1, 2, 3],
+      kind: ["p", "q", "p"],
+      tag: ["a", "b", "b"],
+    });
+    const { scene } = build({
+      marks: [point(tagged, { x: "x", y: "y", series: "kind", color: "tag" })],
+    });
+    expect(scene.legend.map((item) => [item.label, item.color])).toEqual([
+      ["p", LIGHT.muted],
+      ["q", LIGHT.muted],
+    ]);
+    expect(scene.glyphLegends[0]!.entries.map((e) => e.label.text)).toEqual(["a", "b"]);
+  });
+
+  it("keeps a value's color as the table streams", () => {
+    const stream = table({ x: [0], y: [0], kind: ["k0"] }, { maxRows: 2 });
+    const model = new ChartModel({
+      locale: "en-US",
+      marks: [point(stream, { x: "x", y: "y", color: "kind" })],
+    });
+    model.setSize(600, 300, 1);
+    const colors = new Map<string, string>();
+    for (let i = 1; i < 40; i++) {
+      stream.append({ x: [i], y: [i], kind: [`k${i}`] });
+      for (const { label, fill } of model.scene(estimateText).glyphLegends[0]!.entries) {
+        if (colors.has(label.text)) expect(fill, label.text).toBe(colors.get(label.text));
+        colors.set(label.text, fill!);
+      }
+    }
+  });
+
+  it("follows the rows' order of appearance, not the dictionary's", () => {
+    const flipped = table({
+      x: [1, 2],
+      y: [1, 2],
+      kind: encodedCategory(new Int32Array([1, 0]), ["A", "B"]),
+    });
+    const { scene } = build({ marks: [point(flipped, { x: "x", y: "y", color: "kind" })] });
+    expect(scene.glyphLegends[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
+      ["B", LIGHT.palette[0]],
+      ["A", LIGHT.palette[1]],
+    ]);
+  });
+
+  it("keeps the keys of marks coloring the same values differently apart", () => {
+    const first = table({ x: [1, 2], y: [1, 2], kind: ["a", "b"] });
+    const second = table({ x: [1, 2, 3], y: [1, 2, 3], kind: ["c", "a", "b"] });
+    const model = new ChartModel({
+      locale: "en-US",
+      marks: [
+        point(first, { x: "x", y: "y", color: "kind" }),
+        point(second, { x: "x", y: "y", color: "kind" }),
+      ],
+    });
+    model.setSize(600, 300, 1);
+    expect(model.scene(estimateText).glyphLegends).toHaveLength(2);
+    // Without c, the second mark's a and b keep the colors they had.
+    second.dropFirst(1);
+    const keys = model.scene(estimateText).glyphLegends;
+    expect(keys.map((key) => key.entries.map((e) => e.fill))).toEqual([
+      [LIGHT.palette[0], LIGHT.palette[1]],
+      [LIGHT.palette[1], LIGHT.palette[2]],
+    ]);
+  });
+
+  it("cycles through at most 255 colors, as the points and the key read them", () => {
+    const palette = Array.from({ length: 300 }, (_, i) => `#${i.toString(16).padStart(6, "0")}`);
+    const many = table({
+      x: Array.from({ length: 260 }, (_, i) => i),
+      y: Array.from({ length: 260 }, (_, i) => i),
+      kind: Array.from({ length: 260 }, (_, i) => `k${i}`),
+    });
+    const { scene, model } = build({
+      theme: { palette },
+      marks: [point(many, { x: "x", y: "y", color: "kind" })],
+    });
+    const [g] = scene.panels[0]!.marks as PointGeometry[];
+    expect(g!.colors!.palette).toHaveLength(255);
+    const fills = scene.glyphLegends[0]!.entries.map((e) => e.fill);
+    expect(fills[255]).toBe(palette[0]);
+    const at = model.inspect(model.xScale()!.map(255), model.yScale()!.map(255))!;
+    expect(at.points[0]!.color).toBe(palette[0]);
+  });
+
+  it("refuses ramp options for a category color", () => {
+    for (const options of [{ colors: viridis }, { colorDomain: [0, 1] }, { colorMidpoint: 0 }])
+      expect(() =>
+        point(cities, { x: "x", y: "y", color: "region", ...(options as object) }),
+      ).toThrow(/point colors: "region" is a category field/);
+  });
+
+  it("loads from specs and draws in static SVG", () => {
+    const spec: ChartSpec = {
+      data: { t: { columns: { x: [1, 2], y: [3, 4], c: ["p", "q"] } } },
+      marks: [{ type: "point", x: "x", y: "y", color: "c" }],
+    };
+    const { scene } = build(loadSpec(spec).config);
+    expect(scene.glyphLegends[0]!.entries.map((e) => e.fill)).toEqual(LIGHT.palette.slice(0, 2));
   });
 });
 
@@ -372,7 +537,7 @@ describe("point symbols", () => {
     expect(g!.symbol).toBe("diamond");
     expect(g!.symbols).toBeUndefined();
     expect(() => point(cities, { x: "x", y: "y", symbol: "hexagon" as never })).toThrow(
-      /Unknown symbol "hexagon"/,
+      /point symbol: no shape or field "hexagon"/,
     );
   });
 
@@ -382,8 +547,32 @@ describe("point symbols", () => {
       /names both a shape and a field/,
     );
     expect(() => point(named, { x: "x", y: "y", symbol: "circle" })).toThrow(
-      /names both a shape and a field/,
+      'point symbol: "circle" names both a shape and a field; give { field: "circle" } to encode the field',
     );
+  });
+
+  it("encode a field named like a shape when given as { field }, and write fields so", () => {
+    const named = table({ x: [0, 1], y: [0, 1], square: ["a", "b"] });
+    const mark = point(named, { x: "x", y: "y", symbol: { field: "square" } });
+    expect(mark.spec.symbol).toEqual({ field: "square" });
+    const [g] = points({ marks: [mark] });
+    expect(Array.from(g!.symbols!.subarray(0, 2))).toEqual([0, 1]);
+    expect(point(cities, { x: "x", y: "y", symbol: "region" }).spec.symbol).toEqual({
+      field: "region",
+    });
+    expect(point(cities, { x: "x", y: "y", symbol: "star" }).spec.symbol).toBe("star");
+    // Specs from elsewhere may name a field as a string where no shape has its name.
+    const loaded = loadSpec({
+      data: { t: { columns: { x: [0], y: [0], kind: ["a"] } } },
+      marks: [
+        { type: "point", x: "x", y: "y", symbol: "kind" },
+        { type: "point", x: "x", y: "y", symbol: { field: "kind" } },
+      ],
+    });
+    expect(points(loaded.config).every((p) => p.symbols !== undefined)).toBe(true);
+    expect(() =>
+      loadSpec({ marks: [{ type: "point", x: "x", y: "y", symbol: { name: "kind" } as never }] }),
+    ).toThrow(/marks\[0\]\.symbol\.field: required/);
   });
 
   it("gives each value of a category field a shape, with a shape key", () => {
@@ -414,10 +603,10 @@ describe("point symbols", () => {
   });
 
   it("leaves room for how far pointed shapes reach", () => {
-    const star = point(cities, { x: "x", y: "y", r: 10, symbol: "star" }) as PointMark;
+    const star = point(cities, { x: "x", y: "y", radius: 10, symbol: "star" }) as PointMark;
     expect(star.inset.y).toBeCloseTo(10 * symbolReach("star"));
     expect(symbolReach("star")).toBeGreaterThan(1.5);
-    const shapes = point(cities, { x: "x", y: "y", r: 10, symbol: "region" }) as PointMark;
+    const shapes = point(cities, { x: "x", y: "y", radius: 10, symbol: "region" }) as PointMark;
     expect(shapes.inset.y).toBeCloseTo(10 * Math.max(...SYMBOLS.map(symbolReach)));
     // The topmost star's tip stays inside the plot.
     const { scene } = build({ marks: [star] });
@@ -499,14 +688,14 @@ describe("heatmap colors", () => {
     `#${Array.from(g.pixels.subarray(i * 4, i * 4 + 3), (c) => c.toString(16).padStart(2, "0")).join("")}`;
 
   it("uses a named scheme's colors", () => {
-    const g = raster({ marks: [heatmap(grid, { x: "x", y: "y", value: "v", colors: viridis })] });
+    const g = raster({ marks: [heatmap(grid, { x: "x", y: "y", color: "v", colors: viridis })] });
     expect(rgb(g, 0)).toBe(viridis[0]);
     expect(rgb(g, 2)).toBe(viridis.at(-1));
   });
 
   it("maps the midpoint to the diverging ramp's middle", () => {
     const g = raster({
-      marks: [heatmap(grid, { x: "x", y: "y", value: "v", colorMidpoint: 0 })],
+      marks: [heatmap(grid, { x: "x", y: "y", color: "v", colorMidpoint: 0 })],
     });
     expect(rgb(g, 0)).toBe(LIGHT.diverging[0]);
     expect(rgb(g, 1)).toBe("#f7f7f7");
@@ -515,7 +704,7 @@ describe("heatmap colors", () => {
 
   it("clamps values outside a fixed color domain", () => {
     const g = raster({
-      marks: [heatmap(grid, { x: "x", y: "y", value: "v", colors: rdbu, colorDomain: [0, 1] })],
+      marks: [heatmap(grid, { x: "x", y: "y", color: "v", colors: rdbu, colorDomain: [0, 1] })],
     });
     expect(rgb(g, 0)).toBe(rdbu[0]);
     expect(rgb(g, 2)).toBe(rdbu.at(-1));
@@ -532,7 +721,7 @@ describe("sequential scale", () => {
     expect(scale.color(-5)).toBe("#000000");
     const positive = table({ x: ["a", "b"], y: ["r", "r"], v: [1, 4] });
     const { scene } = build({
-      marks: [heatmap(positive, { x: "x", y: "y", value: "v", colorMidpoint: 0 })],
+      marks: [heatmap(positive, { x: "x", y: "y", color: "v", colorMidpoint: 0 })],
     });
     expect(scene.colorLegends[0]).toMatchObject({
       low: { text: "0" },
@@ -586,8 +775,8 @@ describe("color schemes in specs", () => {
     (bad.marks[0] as { colorDomain?: unknown }).colorDomain = [3, 1];
     expect(() => loadSpec(bad)).toThrow(/colorDomain/);
     const sized = spec(undefined);
-    (sized.marks[0] as { r?: unknown; rRange?: unknown }).r = "y";
-    (sized.marks[0] as { rRange?: unknown }).rRange = [1, 8];
+    (sized.marks[0] as { size?: unknown }).size = "y";
+    (sized.marks[0] as { radiusRange?: unknown }).radiusRange = [1, 8];
     expect(build(loadSpec(sized).config).scene.glyphLegends).toHaveLength(1);
   });
 });

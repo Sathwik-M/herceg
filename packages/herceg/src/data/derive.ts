@@ -77,12 +77,13 @@ class Rows implements Fields {
   numbers(name: string): NumericArray {
     const column = this.#column(name);
     if (column.kind === "category" || column.kind === "geometry")
-      throw new TypeError(`Field "${name}" is a ${column.kind}`);
+      throw new TypeError(`field "${name}" holds ${column.kind} values; expected number or time`);
     return column.values;
   }
   categories(name: string): { codes: Int32Array; dictionary: readonly string[] } {
     const column = this.#column(name);
-    if (column.kind !== "category") throw new TypeError(`Field "${name}" is not a category`);
+    if (column.kind !== "category")
+      throw new TypeError(`field "${name}" holds ${column.kind} values; expected category`);
     return column;
   }
 
@@ -92,7 +93,7 @@ class Rows implements Fields {
       const known = this.fields()
         .map((f) => `"${f}"`)
         .join(", ");
-      throw new Error(`Unknown field "${name}"; the rows have ${known}`);
+      throw new Error(`no field "${name}"; the rows have ${known}`);
     }
     return column;
   }
@@ -163,16 +164,18 @@ function apply(rows: Rows, step: TransformSpec): Rows {
   if ("filter" in step) return filter(rows, step.filter);
   if ("calculate" in step) return calculate(rows, step);
   if ("bin" in step) return bin(rows, step);
-  if ("aggregate" in step) return aggregate(rows, step.aggregate, step.groupby ?? []);
-  if ("rolling" in step) return rolling(rows, step.rolling, step.size, step.groupby ?? []);
+  if ("aggregate" in step) return aggregate(rows, step.aggregate, step.by ?? []);
+  if ("rolling" in step) return rolling(rows, step.rolling, step.size, step.by ?? []);
   if ("sort" in step) return sort(rows, step.sort, step.order ?? "ascending");
-  throw new TypeError(`Unknown transform ${JSON.stringify(step)}`);
+  throw new TypeError(
+    `expected a filter, calculate, bin, aggregate, rolling, or sort step; received ${JSON.stringify(step)}`,
+  );
 }
 
 function filter(rows: Rows, expression: Expression): Rows {
   const test = compileExpression(expression, rows);
   if (test.type !== "boolean")
-    throw new TypeError(`A filter needs a true or false expression, not a ${test.type}`);
+    throw new TypeError(`expected a true or false expression; received a ${test.type}`);
   const kept: number[] = [];
   for (let i = 0; i < rows.length; i++) if (test.at(i)) kept.push(i);
   return kept.length === rows.length ? rows : rows.pick(kept);
@@ -218,13 +221,13 @@ function bin(
 ): Rows {
   const kind = rows.kind(step.bin);
   if (kind === "category" || kind === "geometry")
-    throw new TypeError(`Field "${step.bin}" is a ${kind}; bins need numbers or times`);
+    throw new TypeError(`field "${step.bin}" holds ${kind} values; expected number or time`);
   if (step.count !== undefined && !(Number.isInteger(step.count) && step.count >= 1))
-    throw new RangeError(`Bin count must be a whole number of at least 1, not ${step.count}`);
+    throw new RangeError(`count: expected a whole number of at least 1; received ${step.count}`);
   if (step.step !== undefined && !(step.step > 0 && Number.isFinite(step.step)))
-    throw new RangeError(`Bin step must be a positive number, not ${step.step}`);
+    throw new RangeError(`step: expected a positive number; received ${step.step}`);
   if (step.start !== undefined && !Number.isFinite(step.start))
-    throw new RangeError(`Bin start must be a finite number, not ${step.start}`);
+    throw new RangeError(`start: expected a finite number; received ${step.start}`);
   const values = rows.numbers(step.bin);
   const extent = scanExtent(values, 0, values.length);
   // Without a spread of values (none, or one), bins are 1 wide. Round steps
@@ -236,9 +239,7 @@ function bin(
       : 1;
   const width = step.step ?? automatic;
   if (!(width > 0 && Number.isFinite(width)))
-    throw new RangeError(
-      `No bin step fits values from ${extent![0]} to ${extent![1]}; give a step`,
-    );
+    throw new RangeError(`step: none fits values from ${extent![0]} to ${extent![1]}; give one`);
   // Without a start, edges are multiples of the step, the same for every
   // batch of appended rows.
   const edge = binEdges(step.start ?? 0, width);
@@ -344,17 +345,17 @@ const KEEPS_KIND = new Set<AggregateOp | RollingOp>([
   "last",
 ]);
 
-function aggregate(rows: Rows, specs: readonly AggregateSpec[], groupby: readonly string[]): Rows {
-  const { group, firsts } = groupsOf(rows, groupby);
+function aggregate(rows: Rows, specs: readonly AggregateSpec[], by: readonly string[]): Rows {
+  const { group, firsts } = groupsOf(rows, by);
   // Without groups there is always one row, even for no input: a count of 0.
-  const groups = groupby.length === 0 ? 1 : firsts.length;
+  const groups = by.length === 0 ? 1 : firsts.length;
   const columns = new Map<string, Column>();
   // Grouping fields keep the value of each group's first row.
   const firstRows = rows.pick(firsts);
-  for (const name of groupby) columns.set(name, firstRows.columns.get(name)!);
+  for (const name of by) columns.set(name, firstRows.columns.get(name)!);
   for (const spec of specs) {
     const values = spec.field === undefined ? undefined : rows.numbers(spec.field);
-    if (spec.op !== "count" && !values) throw new TypeError(`Aggregate "${spec.op}" needs a field`);
+    if (spec.op !== "count" && !values) throw new TypeError(`field: required for "${spec.op}"`);
     const out = aggregateOp(spec.op, values, group, groups, rows.length);
     const kind =
       spec.field !== undefined && KEEPS_KIND.has(spec.op) && rows.kind(spec.field) === "time"
@@ -455,18 +456,18 @@ function aggregateOp(
       return out;
     }
   }
-  throw new TypeError(`Unknown aggregate "${op as string}"`);
+  throw new TypeError(`op: expected an aggregate; received ${JSON.stringify(op)}`);
 }
 
 function rolling(
   rows: Rows,
   specs: readonly RollingSpec[],
   size: number,
-  groupby: readonly string[],
+  by: readonly string[],
 ): Rows {
   if (!(Number.isInteger(size) && size >= 1))
-    throw new RangeError(`Rolling size must be a whole number of at least 1, not ${size}`);
-  const { group, firsts } = groupsOf(rows, groupby);
+    throw new RangeError(`size: expected a whole number of at least 1; received ${size}`);
+  const { group, firsts } = groupsOf(rows, by);
   // Each group's rows, in order.
   const members = Array.from({ length: firsts.length }, () => [] as number[]);
   for (let i = 0; i < rows.length; i++) members[group[i]!]!.push(i);
@@ -646,7 +647,7 @@ function run(source: Table, transforms: readonly TransformSpec[], from = 0): Row
     try {
       rows = apply(rows, step);
     } catch (error) {
-      throw new Error(`Transform ${i} (${Object.keys(step)[0]}): ${(error as Error).message}`);
+      throw new Error(`transform[${i}] (${Object.keys(step)[0]}): ${(error as Error).message}`);
     }
   });
   return rows;
@@ -784,7 +785,7 @@ type ResultKind<S extends Schema, A> = A extends { op: KeepsKind; field: infer F
  * const hourly = derive(readings)
  *   .filter(col("temp").gt(-40))
  *   .bin("time", { step: 3_600_000, as: "hour" })
- *   .aggregate({ groupby: ["hour", "site"], ops: { mean: mean("temp"), n: count() } })
+ *   .aggregate({ by: ["hour", "site"], ops: { mean: mean("temp"), n: count() } })
  *   .table();
  * ```
  */
@@ -822,32 +823,32 @@ export class Derivation<S extends Schema> {
     return this.#then({ bin: field, ...options });
   }
 
-  /** One row per group of `groupby` values (one row without), with each operation's result. */
+  /** One row per group of `by` values (one row without), with each operation's result. */
   aggregate<
     G extends FieldName<S> = never,
     O extends Record<string, Aggregation<NumericField<S>>> = Record<never, never>,
   >(options: {
-    groupby?: readonly G[];
+    by?: readonly G[];
     ops: O;
   }): Derivation<Omit<Pick<S, G>, keyof O> & { [P in keyof O & string]: ResultKind<S, O[P]> }> {
     return this.#then({
       aggregate: Object.entries(options.ops).map(([as, { op, field }]) =>
         field === undefined ? { op, as } : { op, field, as },
       ),
-      ...(options.groupby ? { groupby: [...options.groupby] } : {}),
+      ...(options.by ? { by: [...options.by] } : {}),
     });
   }
 
-  /** Adds each operation over the trailing `size` rows, within each `groupby` group. */
+  /** Adds each operation over the trailing `size` rows, within each `by` group. */
   rolling<O extends Record<string, { op: RollingOp; field: NumericField<S> }>>(options: {
     size: number;
-    groupby?: readonly CategoryField<S>[];
+    by?: readonly CategoryField<S>[];
     ops: O;
   }): Derivation<Omit<S, keyof O> & { [P in keyof O & string]: ResultKind<S, O[P]> }> {
     return this.#then({
       rolling: Object.entries(options.ops).map(([as, { op, field }]) => ({ op, field, as })),
       size: options.size,
-      ...(options.groupby ? { groupby: [...options.groupby] } : {}),
+      ...(options.by ? { by: [...options.by] } : {}),
     });
   }
 

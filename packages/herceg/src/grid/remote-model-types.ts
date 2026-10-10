@@ -17,7 +17,7 @@ export interface RemoteGridModelOptions<S extends Schema = Schema> extends GridS
   query?: GridQueryInput<S>;
   columns: readonly GridColumn<S>[];
   /** Where the selection goes; a store of the grid's own when left out. */
-  selection?: RemoteSelectionStore;
+  selectionStore?: RemoteSelectionStore;
   /** The store's channel for the selection; "grid-rows" by default. */
   channel?: string;
   /** Rows a block holds: what one request asks for. 128 by default. */
@@ -35,7 +35,7 @@ export interface RemoteGridModelOptions<S extends Schema = Schema> extends GridS
    * settle before asking for rows, and never more than three times as long
    * while it goes on; 50 by default, 0 to ask at once.
    */
-  settle?: number;
+  settleDelay?: number;
 }
 
 /**

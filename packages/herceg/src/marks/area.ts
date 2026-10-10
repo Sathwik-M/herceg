@@ -120,14 +120,14 @@ export function areaFormError(spec: {
   stackGaps?: unknown;
 }): string | undefined {
   if (spec.y1 === undefined && spec.y2 === undefined) {
-    if (spec.y === undefined) return "An area needs y, or y1 and y2";
+    if (spec.y === undefined) return "area: needs y, or y1 and y2";
     if (spec.stackGaps !== undefined && !(spec.stack && spec.series !== undefined))
-      return "stackGaps is for areas stacked by a series field";
+      return "area stackGaps: for stacks by a series field; give stack and series, or drop it";
     return undefined;
   }
-  if (spec.y1 === undefined || spec.y2 === undefined) return "A band area needs both y1 and y2";
+  if (spec.y1 === undefined || spec.y2 === undefined) return "area: a band needs both y1 and y2";
   if (spec.y !== undefined || spec.series !== undefined || spec.stack || spec.stackGaps)
-    return "An area takes y (with series or stack), or y1 and y2, not both";
+    return "area: y (with series or stack) or y1 and y2, not both; drop one";
   return undefined;
 }
 
@@ -170,7 +170,9 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       spec.strokeWidth !== undefined &&
       !(spec.strokeWidth >= 0 && Number.isFinite(spec.strokeWidth))
     )
-      throw new RangeError(`area strokeWidth must be 0 or more pixels, not ${spec.strokeWidth}`);
+      throw new RangeError(
+        `area strokeWidth: expected 0 or more pixels; received ${spec.strokeWidth}`,
+      );
     const problem = areaFormError(spec);
     if (problem) throw new Error(problem);
     const band = spec.y === undefined;
@@ -183,7 +185,9 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "area series");
       const gaps = spec.stackGaps;
       if (gaps !== undefined && gaps !== "zero" && gaps !== "interpolate")
-        throw new RangeError(`stackGaps must be "zero" or "interpolate", not ${String(gaps)}`);
+        throw new RangeError(
+          `area stackGaps: expected "zero" or "interpolate"; received ${JSON.stringify(gaps)}`,
+        );
       this.#split = new SeriesSplitter(table, spec.x, ys, spec.series, spec.label);
       if (spec.stack && spec.series !== undefined) this.#union = new UnionStack();
     }

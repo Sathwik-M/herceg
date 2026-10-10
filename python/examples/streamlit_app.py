@@ -34,7 +34,7 @@ chart = (
         title="Latency by minute",
         height=360,
         brush="x",
-        y=hg.Axis(label="ms"),
+        y=hg.Axis(title="ms"),
         time_zone="UTC",
     )
     .line(x="time", y=["p50", "p99"])

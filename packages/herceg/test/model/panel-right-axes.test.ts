@@ -45,7 +45,7 @@ describe("right axes in facets", () => {
     const { model, scene } = build({
       marks: both(),
       facet: facet("region"),
-      yRight: { label: "requests" },
+      yRight: { title: "requests" },
     });
     const [n, s] = model.panels();
     expect(n!.yRight!.domain).toEqual(s!.yRight!.domain);
@@ -171,7 +171,7 @@ describe("right axes in facets", () => {
     // Giving the right side scales of its own lets go of its viewport only.
     model.update({ marks: both(), facet: facet("region"), resolve: { yRight: "independent" } });
     expect(model.yViewport).toEqual({ y: [0, 20], yRight: null });
-    expect(() => model.setYViewport({ y: null, yRight: [0, 1] })).toThrow("no one viewport");
+    expect(() => model.setYViewport({ y: null, yRight: [0, 1] })).toThrow("no one y range");
     model.setYViewport({ y: [0, 10], yRight: null });
     expect(model.yViewport.y).toEqual([0, 10]);
   });
@@ -210,7 +210,7 @@ describe("right axes in subplots", () => {
         rule({ x: 1, panel: "*" }),
       ],
       panels: panels([
-        { id: "latency", y: { label: "ms" }, yRight: { label: "requests", type: "log" } },
+        { id: "latency", y: { title: "ms" }, yRight: { title: "requests", type: "log" } },
         { id: "errors" },
       ]),
       yRight: { grid: false },
@@ -260,7 +260,7 @@ describe("right axes in subplots", () => {
     expect(a!.yRightGroup).toBe(b!.yRightGroup);
     expect(c!.yRight).toBeUndefined();
     expect(() => build(config({ type: "log" }))).toThrow(
-      'Panel "b" shares a right y scale with others but differs',
+      "panels[1].yRight: shares a right y scale with others but differs",
     );
     // By default, as `resolve.y` says: here each panel's own.
     const own = build({ ...config(), resolve: {} }).model.panels();
@@ -349,9 +349,9 @@ describe("right axes in subplots", () => {
           line(metrics, { x: "t", y: "ms", panel: "a" }),
           pie(table({ c: ["x", "y"], v: [1, 2] }), { category: "c", value: "v", panel: "b" }),
         ],
-        panels: panels([{ id: "a" }, { id: "b", yRight: { label: "no" } }]),
+        panels: panels([{ id: "a" }, { id: "b", yRight: { title: "no" } }]),
       }),
-    ).toThrow("it takes no x, y, or yRight settings");
+    ).toThrow("panels[1]: the pie mark it draws has no axes; drop its x, y, and yRight");
   });
 
   it("keep horizontal and category marks on the left", () => {
@@ -361,14 +361,13 @@ describe("right axes in subplots", () => {
         marks: [bar(sales, { x: "units", y: "product", axis: "right" as never, panel: "a" })],
         panels: panels([{ id: "a" }]),
       }),
-    ).toThrow("placed along y cannot use the right axis");
+    ).toThrow("marks along y cannot use the right axis");
   });
 });
 
 describe("right axes in panels from specs", () => {
-  it("load resolve.yRight and panels' own yRight without a new version", () => {
+  it("load resolve.yRight and panels' own yRight", () => {
     const spec = {
-      version: 2 as const,
       data: {
         traffic: {
           columns: {
@@ -385,7 +384,7 @@ describe("right axes in panels from specs", () => {
       ],
       facet: { field: "region" },
       resolve: { yRight: "independent" as const },
-      yRight: { label: "requests" },
+      yRight: { title: "requests" },
     };
     // Every property is known: none is refused as unknown.
     const { config } = loadSpec(spec, [], { unknown: "error" });
@@ -394,7 +393,6 @@ describe("right axes in panels from specs", () => {
     expect(renderToSVG({ ...config, width: 600, height: 300 })).toContain(">requests</text>");
     const subplots = loadSpec(
       {
-        version: 2,
         data: spec.data,
         marks: [{ ...spec.marks[1]!, panel: "a" }],
         panels: [{ id: "a", yRight: { type: "log" } }],

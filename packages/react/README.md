@@ -10,7 +10,7 @@ const metrics = table({ time: time(timestamps), p50, p99 });
 
 export function Latency() {
   return (
-    <Chart title="Request latency" y={{ label: "ms" }} interaction={{ zoom: true }}>
+    <Chart title="Request latency" y={{ title: "ms" }} interaction={{ zoom: true }}>
       <Line data={metrics} x="time" y={["p50", "p99"]} />
       <Rule y={250} label="SLO" />
     </Chart>
@@ -33,16 +33,16 @@ data={countries} color="gdp" /></Chart>`. `<Point3D>`, `<Line3D>`, and
 `<Surface>` share a 3D chart, seen from its `camera` prop; a re-render with the same camera
 keeps the view the user turned to, a different one shows it.
 Annotations (`<Rule>`, `<Region>`, `<Text>`) take `data` only when
-they draw one item per row: `<Rule data={deploys} x="time" text="version" />`. Marks built
+they draw one item per row: `<Rule data={deploys} x="time" textField="version" />`. Marks built
 with herceg's functions can also be passed as a `marks` prop.
 
 The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or `style` says otherwise. A `ref` gives the underlying chart, herceg's
 `Chart`, for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibility`,
-`toSVG`). Chart events are props: `onViewportChange`, `onSelect`, `onHover`, `onClick`,
+`toSVG`). Chart events are props: `onViewport`, `onSelect`, `onHover`, `onClick`,
 `onRowSelection` (a channel of the chart's `rowSelection` changed),
-`onCameraChange`, `onDrill` (a treemap or sunburst drilled into a node), `onItemMove` (a
-network's node moved), `onVisibilityChange` (series hidden or shown), and `onRender` (a frame
+`onCamera`, `onDrill` (a treemap or sunburst drilled into a node), `onItemMove` (a
+network's node moved), `onVisibility` (series hidden or shown), and `onRender` (a frame
 of the data drawn, for overlays, the first one once the ref is set); the latest handler
 is called, so inline functions do not resubscribe. A `rowSelection` prop
 (`rowSelection({ store, channel })`) made again each render is the same binding while it

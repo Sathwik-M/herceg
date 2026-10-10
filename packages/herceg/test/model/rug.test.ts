@@ -13,7 +13,6 @@ import { renderToSVG } from "../../src/render/static.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import type { Scene, SegmentGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
-import { SPEC_VERSION } from "../../src/spec/spec.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
 
 function build(config: ChartConfig) {
@@ -331,9 +330,8 @@ describe("rug", () => {
     expect(model.inspectPosition(model.series()[0]!.key, 0)!.points[0]!.row).toBe(0);
   });
 
-  it("loads a rug at the current version and renders a static segment path", () => {
+  it("loads a rug and renders a static segment path", () => {
     const spec = {
-      version: SPEC_VERSION as typeof SPEC_VERSION,
       data: { d: { columns: { v: [1, 2] } } },
       marks: [{ type: "rug" as const, x: "v", stroke: "#123456" }],
     };
@@ -362,7 +360,7 @@ describe("rug", () => {
     [{ x: "v", strokeWidth: -1 }, /marks\[0\].strokeWidth/],
     [{ x: "v", strokeWidth: null }, /marks\[0\].strokeWidth/],
     [{ x: "v", side: "inside" }, /marks\[0\].side/],
-    [{ x: "missing" }, /Mark 0 \(rug\).*Unknown field/],
+    [{ x: "missing" }, /marks\[0\]: rug x: no field "missing"/],
   ])("refuses invalid specs with paths: %j", (options, error) => {
     expect(() =>
       loadSpec({

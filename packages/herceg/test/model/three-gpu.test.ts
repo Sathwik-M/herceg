@@ -113,7 +113,7 @@ describe("3D charts for GPU painters", () => {
     expect(batches(scene)!.faces(true).count).toBe(0);
     expect(model.inspect(600, 500)).toBeUndefined();
     expect(() => batches(model.scene(estimateText, true))!.faces()).toThrow(
-      /drawn only on the GPU/,
+      /surface: .* grid points draw only on the GPU/,
     );
   });
 

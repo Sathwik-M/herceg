@@ -190,7 +190,7 @@ export const adapter: Adapter = {
         width: options.width,
         height: options.height,
         tooltip: options.tooltip,
-        marks: [point(source, { x: "x", y: "y", r: 1.5 })],
+        marks: [point(source, { x: "x", y: "y", radius: 1.5 })],
       });
       return {
         ...common(chart),
@@ -209,7 +209,7 @@ export const adapter: Adapter = {
         tooltip: options.tooltip,
         // Same ramp and no color legend, as configured for the other libraries.
         legend: false,
-        marks: [heatmap(source, { x: "c", y: "r", value: "v", colors: ["#f7fbff", "#08306b"] })],
+        marks: [heatmap(source, { x: "c", y: "r", color: "v", colors: ["#f7fbff", "#08306b"] })],
       });
       return { ...common(chart), setData: (next) => source.reset(gridColumns(next)) };
     },
@@ -259,8 +259,8 @@ export const adapter: Adapter = {
           point(source, {
             x: "x",
             y: "y",
-            r: "s",
-            rRange: [BUBBLE.minRadius, BUBBLE.maxRadius],
+            size: "s",
+            radiusRange: [BUBBLE.minRadius, BUBBLE.maxRadius],
             color: "v",
             colors: BUBBLE.colors,
           }),

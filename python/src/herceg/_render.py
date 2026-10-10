@@ -16,6 +16,8 @@ from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from ._data import shown
+
 if TYPE_CHECKING:
     from ._chart import Chart
 
@@ -128,13 +130,17 @@ def pdf(
         weights = source if isinstance(source, Mapping) else {"normal": source}
         for weight, data in weights.items():
             if weight not in ("normal", "bold"):
-                raise ValueError("PDF font weight must be normal or bold")
+                raise ValueError(
+                    f'to_pdf fonts: expected weights "normal" or "bold"; received {shown(weight)}'
+                )
             sources.append((family, weight, data))
             if len(sources) > 64:
-                raise ValueError("PDF export supports at most 64 font faces")
-    for _, _, data in sources:
+                raise ValueError("to_pdf fonts: a PDF embeds at most 64 font faces; give fewer")
+    for family, weight, data in sources:
         if isinstance(data, bytes) and len(data) > _PDF_FONT_LIMIT:
-            raise ValueError("PDF font exceeds the 32 MiB limit")
+            raise ValueError(
+                f"to_pdf fonts: the {shown(family)} {weight} face exceeds the 32 MiB limit"
+            )
     faces = []
     for family, weight, data in sources:
         if isinstance(data, bytes):
@@ -143,7 +149,9 @@ def pdf(
             with Path(data).open("rb") as font_file:
                 raw = font_file.read(_PDF_FONT_LIMIT + 1)
             if len(raw) > _PDF_FONT_LIMIT:
-                raise ValueError("PDF font exceeds the 32 MiB limit")
+                raise ValueError(
+                    f"to_pdf fonts: the {shown(family)} {weight} face exceeds the 32 MiB limit"
+                )
         faces.append(
             {"family": family, "weight": weight, "data": base64.b64encode(raw).decode("ascii")}
         )

@@ -28,7 +28,7 @@ const metrics = table({
   requests: [5, 9, 7, 6],
 });
 const stacked = panels([
-  { id: "latency", title: "Latency", y: { label: "ms" } },
+  { id: "latency", title: "Latency", y: { title: "ms" } },
   { id: "traffic", title: "Requests" },
 ]);
 const marks = [
@@ -120,14 +120,18 @@ describe("panels", () => {
         resolve: { y: "shared" },
         panels: panels([{ id: "latency", y: { type: "log" } }, { id: "traffic" }]),
       }),
-    ).toThrow('Panel "traffic" shares a y scale with others');
+    ).toThrow("panels[1].y: shares a y scale with others");
   });
 
   it("refuse marks without a panel or naming an unknown one, and what panels cannot do yet", () => {
     const loose = line(metrics, { x: "t", y: "latency" });
-    expect(() => build({ marks: [loose], panels: stacked })).toThrow("needs a panel");
+    expect(() => build({ marks: [loose], panels: stacked })).toThrow(
+      'line panel: missing; give the id of a panel, or "*" for every panel',
+    );
     const lost = line(metrics, { x: "t", y: "latency", panel: "errors" });
-    expect(() => build({ marks: [lost], panels: stacked })).toThrow('names the panel "errors"');
+    expect(() => build({ marks: [lost], panels: stacked })).toThrow(
+      'line panel: no panel "errors"; name one of "latency", "traffic"',
+    );
     expect(() => build({ marks, panels: stacked, interaction: { zoom: "xy" } })).toThrow(
       "along x only",
     );
@@ -137,20 +141,23 @@ describe("panels", () => {
         panels: stacked,
         facet: facet("g"),
       }),
-    ).toThrow("facets or panels, not both");
+    ).toThrow("chart: facet or panels, not both");
     const slices = pie(table({ k: ["a"], v: [1] }), { category: "k", value: "v" });
     expect(() => build({ marks: [slices], panels: stacked })).toThrow(
-      "needs the id of the panel it draws in",
+      "pie panel: expected the id of the panel it draws in; received none",
     );
-    expect(() => panels([])).toThrow("at least one panel");
-    expect(() => panels([{ id: "a" }, { id: "a" }])).toThrow('Two panels have the id "a"');
-    expect(() => panels([{ id: "*" }])).toThrow("other than");
-    expect(() => panels([{ id: "a" }], { columns: 0 })).toThrow("whole number");
+    expect(() => panels([])).toThrow("panels: expected at least one panel");
+    expect(() => panels([{ id: "a" }, { id: "a" }])).toThrow('panels[1].id: "a" names two panels');
+    expect(() => panels([{ id: "*" }])).toThrow(
+      'panels[0].id: expected a name other than "" and "*"',
+    );
+    expect(() => panels([{ id: "a" }], { columns: 0 })).toThrow(
+      "grid columns: expected a whole number of at least 1; received 0",
+    );
   });
 
-  it("load from spec version 2 and render titles in SVG", () => {
-    const spec = (version: 1 | 2) => ({
-      version,
+  it("load from specs and render titles in SVG", () => {
+    const spec = {
       data: { m: { columns: { t: [0, 1], a: [1, 2], b: [30, 40] } } },
       marks: [
         { type: "line" as const, x: "t", y: "a", panel: "top" },
@@ -158,18 +165,15 @@ describe("panels", () => {
       ],
       panels: [
         { id: "top", title: "Top" },
-        { id: "bottom", title: "Bottom", y: { label: "units" } },
+        { id: "bottom", title: "Bottom", y: { title: "units" } },
       ],
       grid: { columns: 1 },
-    });
-    const { config } = loadSpec(spec(2), []);
+    };
+    const { config } = loadSpec(spec, []);
     const svg = renderToSVG({ ...config, width: 400, height: 300 });
     expect(svg).toContain(">Top</text>");
     expect(svg).toContain(">units</text>");
-    expect(() => loadSpec(spec(1), [])).toThrow(
-      'spec.panels: expected a spec with "version": 2 or later',
-    );
-    const duplicated = { ...spec(2), panels: [{ id: "top" }, { id: "top" }] };
+    const duplicated = { ...spec, panels: [{ id: "top" }, { id: "top" }] };
     expect(() => loadSpec(duplicated, [])).toThrow("a name no other panel has");
   });
 
@@ -191,7 +195,7 @@ describe("panels", () => {
     // A time panel and a number panel cannot share a scale.
     const mixed = panels([{ id: "latency" }, { id: "traffic", y: { type: "time" } }]);
     expect(() => build({ marks, panels: mixed, resolve: { y: "shared" } })).toThrow(
-      'Panel "traffic" shares a y scale',
+      "panels[1].y: shares a y scale",
     );
     // Formats are part of a shared scale.
     const formats = panels(
@@ -204,8 +208,8 @@ describe("panels", () => {
   it("show, grid, and title each panel's y axis as its own settings say", () => {
     const own = panels(
       [
-        { id: "latency", y: { axis: false } },
-        { id: "traffic", y: { grid: true, label: "requests" } },
+        { id: "latency", y: { show: false } },
+        { id: "traffic", y: { grid: true, title: "requests" } },
       ],
       { columns: 2 },
     );
@@ -250,11 +254,10 @@ describe("panels", () => {
 
   it("refuse panels named without panels, in charts and specs", () => {
     const named = line(metrics, { x: "t", y: "latency", panel: "latency" });
-    expect(() => build({ marks: [named] })).toThrow("names a panel, but the chart has no panels");
+    expect(() => build({ marks: [named] })).toThrow("line panel: the chart has no panels; drop it");
     const spec = (extra: object) => () =>
       loadSpec(
         {
-          version: 2,
           data: { m: { columns: { t: [0, 1], a: [1, 2] } } },
           marks: [{ type: "line", x: "t", y: "a" }],
           ...extra,
@@ -290,13 +293,15 @@ describe("panels", () => {
         }
       }
     }
-    expect(() => panels(stacked.list, { rowHeights: [1] })).toThrow("needs 2 row heights");
+    expect(() => panels(stacked.list, { rowHeights: [1] })).toThrow(
+      "grid rowHeights: expected 2, one per row; received 1",
+    );
     expect(() => panels(stacked.list, { rowHeights: [1, 0] })).toThrow("positive numbers");
   });
 
   it("leave room for points at the ends of a shared scale in every row", () => {
     const ends = table({ t: [0, 1], v: [0, 100] });
-    const dots = (panel: string) => point(ends, { x: "t", y: "v", r: 10, panel });
+    const dots = (panel: string) => point(ends, { x: "t", y: "v", radius: 10, panel });
     const { model } = build({
       marks: [dots("latency"), dots("traffic")],
       panels: panels(stacked.list, { rowHeights: [3, 1] }),
@@ -369,7 +374,7 @@ describe("panels in weighted columns", () => {
 
   it("leave room for points at the ends of a shared x scale in every column", () => {
     const ends = table({ t: [0, 1], v: [0, 100] });
-    const dots = (panel: string) => point(ends, { x: "t", y: "v", r: 10, panel });
+    const dots = (panel: string) => point(ends, { x: "t", y: "v", radius: 10, panel });
     const { model } = build({ marks: [dots("latency"), dots("traffic")], panels: side });
     for (const { x, plot } of model.panels()) {
       expect(x.map(0) - plot.x).toBeGreaterThanOrEqual(10 - 1e-9);
@@ -435,11 +440,11 @@ describe("panels in weighted columns", () => {
 
   it("check their widths, in options and in specs", () => {
     expect(() => panels(stacked.list, { columns: 2, columnWidths: [1] })).toThrow(
-      "needs 2 column widths",
+      "grid columnWidths: expected 2, one per column; received 1",
     );
     // A grid has no more columns than panels.
     expect(() => panels(stacked.list, { columns: 3, columnWidths: [1, 1, 1] })).toThrow(
-      "A grid of 2 columns needs 2 column widths, not 3",
+      "grid columnWidths: expected 2, one per column; received 3",
     );
     expect(() => panels(stacked.list, { columns: 2, columnWidths: [1, Number.NaN] })).toThrow(
       "positive numbers",
@@ -453,7 +458,6 @@ describe("panels in weighted columns", () => {
     );
     const spec = (columnWidths: unknown) => () =>
       loadSpec({
-        version: 3,
         data: { m: { columns: { t: [0, 1], v: [1, 2] } } },
         panels: [{ id: "a" }, { id: "b" }],
         grid: { columns: 2, columnWidths },
@@ -479,8 +483,8 @@ describe("panels with x scales of their own", () => {
     ],
     panels: panels(
       [
-        { id: "series", title: "Over time", x: { label: "Time" } },
-        { id: "spread", title: "Spread", x: { label: "Latency (ms)" } },
+        { id: "series", title: "Over time", x: { title: "Time" } },
+        { id: "spread", title: "Spread", x: { title: "Latency (ms)" } },
       ],
       { rowHeights: [2, 1] },
     ),
@@ -518,8 +522,8 @@ describe("panels with x scales of their own", () => {
         bar(metrics, { x: "t", y: "requests", panel: "spread" }),
       ],
       panels: panels([
-        { id: "series", x: { label: "t" } },
-        { id: "spread", x: { label: "t" } },
+        { id: "series", x: { title: "t" } },
+        { id: "spread", x: { title: "t" } },
       ]),
     });
     expect(model.sharesX).toBe(true);
@@ -532,11 +536,11 @@ describe("panels with x scales of their own", () => {
         ...shared,
         marks: [line(metrics, { x: "t", y: "latency", panel: "series" })],
         panels: panels([
-          { id: "series", x: { label: "a" } },
-          { id: "spread", x: { label: "b" } },
+          { id: "series", x: { title: "a" } },
+          { id: "spread", x: { title: "b" } },
         ]),
       }),
-    ).toThrow('Panel "spread" shares an x scale with others but differs');
+    ).toThrow("panels[1].x: shares an x scale with others but differs");
     expect(() =>
       build({
         ...shared,
@@ -550,25 +554,25 @@ describe("panels with x scales of their own", () => {
   it("let a panel show the x axis the chart leaves out, and the other way round", () => {
     const { scene } = build({
       ...config({ x: "independent" }),
-      x: { axis: false },
-      panels: panels([{ id: "series" }, { id: "spread", x: { axis: true } }]),
+      x: { show: false },
+      panels: panels([{ id: "series" }, { id: "spread", x: { show: true } }]),
     });
     const [top, bottom] = scene.panels as [Panel, Panel];
     expect(axis(top, "bottom")).toBeUndefined();
     expect(axis(bottom, "bottom")!.ticks.length).toBeGreaterThan(0);
     const hidden = build({
       ...config({ x: "independent" }),
-      panels: panels([{ id: "series", x: { axis: false } }, { id: "spread" }]),
+      panels: panels([{ id: "series", x: { show: false } }, { id: "spread" }]),
     });
     expect(hidden.scene.panels.map((p) => axis(p, "bottom") !== undefined)).toEqual([false, true]);
   });
 
   it("center a row's x title under the row, whichever of its panels are labeled", () => {
-    const list = ["a", "b", "c"].map((id) => ({ id, x: { label: "t" } }));
+    const list = ["a", "b", "c"].map((id) => ({ id, x: { title: "t" } }));
     const { scene } = build({
       marks: ["a", "b", "c"].map((panel) => line(metrics, { x: "t", y: "latency", panel })),
       panels: panels(
-        list.map((p) => (p.id === "b" ? { ...p, x: { ...p.x, axis: false } } : p)),
+        list.map((p) => (p.id === "b" ? { ...p, x: { ...p.x, show: false } } : p)),
         { columns: 2 },
       ),
       resolve: { x: "rows" },
@@ -593,8 +597,8 @@ describe("panels with x scales of their own", () => {
         ],
         panels: panels(
           [
-            { id: "a", x: { label: "First" } },
-            { id: "b", x: { label: "Second" } },
+            { id: "a", x: { title: "First" } },
+            { id: "b", x: { title: "Second" } },
           ],
           { rowHeights: [2, 1] },
         ),
@@ -620,10 +624,9 @@ describe("panels with x scales of their own", () => {
   it("load panels' x settings from specs", () => {
     const { config: loaded } = loadSpec(
       {
-        version: 3,
         data: { m: { columns: { t: [0, 1], v: [1, 2] } } },
         marks: [{ type: "line", data: "m", x: "t", y: "v", panel: "a" }],
-        panels: [{ id: "a", x: { label: "Seconds", type: "log" } }, { id: "b" }],
+        panels: [{ id: "a", x: { title: "Seconds", type: "log" } }, { id: "b" }],
         resolve: { x: "independent" },
       },
       [],
@@ -634,16 +637,12 @@ describe("panels with x scales of their own", () => {
     expect(() =>
       loadSpec(
         {
-          version: 3,
           marks: [],
           panels: [{ id: "a", x: { type: "radial" } as never }],
         },
         [],
       ),
     ).toThrow("panels[0].x.type");
-    expect(() =>
-      loadSpec({ version: 2, marks: [], panels: [{ id: "a", x: { label: "s" } }] }, []),
-    ).toThrow('spec.panels[0].x: expected a spec with "version": 3');
   });
 
   it("leaves no label room between columns whose later panels hide their y axes", () => {
@@ -652,7 +651,7 @@ describe("panels with x scales of their own", () => {
     const gap = (hidden: boolean) => {
       const { scene } = build({
         marks: [point(rows, { x: "x", y: "y", panel: "*" })],
-        panels: panels([{ id: "main" }, { id: "side", y: { axis: !hidden } }], { columns: 2 }),
+        panels: panels([{ id: "main" }, { id: "side", y: { show: !hidden } }], { columns: 2 }),
       });
       const [main, side] = scene.panels;
       return side!.plot.x - (main!.plot.x + main!.plot.width);

@@ -34,7 +34,6 @@ def test_breaks_travel_in_the_x_axis_spec():
         "day", "o", "h", "l", "c"
     )
     spec, _ = chart.to_spec()
-    assert spec["version"] == 4
     assert spec["x"] == {
         "breaks": [
             {"weekdays": ["sat", "sun"]},
@@ -74,7 +73,6 @@ def test_seams_spec_and_static_svg(seams, expected):
         time_zone="UTC",
     ).line(x="day", y="c")
     spec, _ = chart.to_spec()
-    assert spec["version"] == 5
     assert spec["x"]["seams"] == expected
     assert spec["theme"] == {"grid": "#ff0000"}
     svg = chart.to_svg()
@@ -83,24 +81,29 @@ def test_seams_spec_and_static_svg(seams, expected):
 
 
 @pytest.mark.parametrize("seams", [None, False])
-def test_disabled_seams_keep_the_existing_spec_version(seams):
+def test_disabled_seams_are_written_as_given(seams):
     spec, _ = hg.Chart(PRICES, x=hg.Axis(seams=seams)).line(x="day", y="c").to_spec()
-    assert spec["version"] == 4
     assert (spec.get("x") or {}).get("seams") == seams
 
 
 @pytest.mark.parametrize("spacing", [0, -1, float("nan"), float("inf"), True, "40", None])
 def test_seam_spacing_is_finite_and_positive(spacing):
-    with pytest.raises(ValueError, match="finite and positive"):
+    with pytest.raises(
+        ValueError, match="Axis seams min_spacing: expected a finite, positive number of pixels"
+    ):
         hg.Axis(breaks=[], seams={"min_spacing": spacing})._spec()
 
 
 def test_seams_need_time_axis_breaks():
-    with pytest.raises(ValueError, match="need breaks on a time x axis"):
+    with pytest.raises(
+        ValueError, match="Axis seams: mark the breaks of a time x axis, and the axis has none"
+    ):
         hg.Chart(PRICES, x=hg.Axis(seams=True))
-    with pytest.raises(ValueError, match="x axis only"):
+    with pytest.raises(ValueError, match="Chart y seams: only the chart's x axis takes seams"):
         hg.Chart(PRICES, y=hg.Axis(seams=False))
-    with pytest.raises(ValueError, match="bool or a dict with min_spacing"):
+    with pytest.raises(
+        ValueError, match="Axis seams: expected True, False, or a dict with min_spacing"
+    ):
         hg.Axis(breaks=[], seams={"minSpacing": 40})._spec()
     numbers = hg.Chart(
         {"x": [0, 20], "v": [1, 2]}, x=hg.Axis(breaks=[hg.Break(start=4, end=8)], seams=True)
@@ -110,21 +113,29 @@ def test_seams_need_time_axis_breaks():
 
 
 def test_breaks_are_checked():
-    with pytest.raises(ValueError, match="weekdays must be names"):
+    with pytest.raises(
+        ValueError, match=r"Break weekdays: expected names from .*; received \['saturday'\]"
+    ):
         hg.Axis(breaks=[hg.Break(weekdays=["saturday"])])._spec()
-    with pytest.raises(ValueError, match="one of weekdays, hours, dates, or start and end"):
+    with pytest.raises(
+        ValueError,
+        match="Break: expected one of weekdays, hours, dates, .*; received weekdays and",
+    ):
         hg.Axis(breaks=[hg.Break(weekdays=["sat"], hours=("16:00", "09:30"))])._spec()
-    with pytest.raises(ValueError, match="whole minutes"):
+    with pytest.raises(ValueError, match="Break hours: expected whole minutes"):
         hg.Axis(breaks=[hg.Break(hours=(dt.time(16, 0, 30), "09:30"))])._spec()
-    with pytest.raises(ValueError, match="pass a date"):
+    with pytest.raises(ValueError, match="Break dates: expected dates, not datetimes"):
         hg.Axis(breaks=[hg.Break(dates=[dt.datetime(2025, 12, 25)])])._spec()
-    with pytest.raises(ValueError, match="end after it starts"):
+    with pytest.raises(ValueError, match="Break end: expected an instant after start; received 10"):
         hg.Axis(breaks=[hg.Break(start=10, end=10)])._spec()
-    with pytest.raises(ValueError, match="whole millisecond"):
+    with pytest.raises(ValueError, match="Break start: expected a whole millisecond; received 0.5"):
         hg.Axis(breaks=[hg.Break(start=0.5, end=10)])._spec()
-    with pytest.raises(ValueError, match="for the chart's x axis only, not y"):
+    with pytest.raises(ValueError, match="Chart y breaks: only the chart's x axis takes breaks"):
         hg.Chart(PRICES, y=hg.Axis(breaks=[hg.Break(weekdays=["sat"])]))
-    with pytest.raises(ValueError, match="a break has weekdays"):
+    with pytest.raises(
+        ValueError,
+        match=r"Axis breaks: expected keys weekdays, .*; received \['weekend'\]",
+    ):
         hg.Axis(breaks=[{"weekend": True}])._spec()
     # The engine reads hours itself: a time it cannot read is refused when drawn.
     unreadable = hg.Axis(breaks=[{"hours": ["25:00", "09:30"]}])
@@ -157,7 +168,9 @@ def test_weekends_take_no_room_in_svg():
 def test_ohlc_bars_and_crosshair_labels():
     spec, _ = hg.candlestick(PRICES, "day", "o", "h", "l", "c", variant="ohlc").to_spec()
     assert spec["marks"][0]["variant"] == "ohlc"
-    with pytest.raises(ValueError, match="variant must be"):
+    with pytest.raises(
+        ValueError, match='candlestick variant: expected "candlestick" or "ohlc"; received "bars"'
+    ):
         hg.Chart(PRICES).candlestick("day", "o", "h", "l", "c", variant="bars")
     svg = hg.candlestick(PRICES, "day", "o", "h", "l", "c", variant="ohlc").to_svg()
     assert "<path" in svg

@@ -37,7 +37,7 @@ describe("row groups", () => {
     const t = requests();
     const groups = groupRows(rowView(t), { by: ["host"], ops: OPS });
     const derived = derive(t)
-      .aggregate({ groupby: ["host"], ops: OPS })
+      .aggregate({ by: ["host"], ops: OPS })
       .table();
     expect(rows(groups.table)).toEqual(rows(derived));
     expect(rows(groups.table)).toEqual([
@@ -58,7 +58,7 @@ describe("row groups", () => {
     });
     const derived = derive(t)
       .filter(col("ms").lt(15))
-      .aggregate({ groupby: ["host"], ops: OPS })
+      .aggregate({ by: ["host"], ops: OPS })
       .table();
     expect(rows(filtered.table)).toEqual(rows(derived));
     // Sorting changes neither the groups nor their order: groups come in the
@@ -465,7 +465,7 @@ const derived = (t: Table, query: { filter?: unknown } = {}) =>
   BY.map((_, depth) => {
     let steps = derive(t);
     if (query.filter) steps = steps.filter(query.filter as never);
-    return rounded(rows(steps.aggregate({ groupby: BY.slice(0, depth + 1), ops: OPS }).table()));
+    return rounded(rows(steps.aggregate({ by: BY.slice(0, depth + 1), ops: OPS }).table()));
   });
 
 describe("nested row groups", () => {
@@ -639,7 +639,7 @@ describe("row groups in streams", () => {
       });
       const expected = rows(
         derive(t)
-          .aggregate({ groupby: ["k"], ops: { n: count(), total: sum("v") } })
+          .aggregate({ by: ["k"], ops: { n: count(), total: sum("v") } })
           .table(),
       );
       const byLabel = (list: Record<string, unknown>[]) =>
@@ -658,7 +658,7 @@ describe("row groups in streams", () => {
     expect(t.categories("k").dictionary[69]).toBe("k69");
     const expected = rows(
       derive(t)
-        .aggregate({ groupby: ["k"], ops: { n: count() } })
+        .aggregate({ by: ["k"], ops: { n: count() } })
         .table(),
     );
     const byLabel = (list: Record<string, unknown>[]) =>
@@ -844,7 +844,7 @@ describe("row groups in streams", () => {
         rounded(
           rows(
             derive(t)
-              .aggregate({ groupby: ["host"], ops: OPS })
+              .aggregate({ by: ["host"], ops: OPS })
               .table(),
           ),
         ),

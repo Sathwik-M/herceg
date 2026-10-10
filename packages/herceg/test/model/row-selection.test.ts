@@ -80,13 +80,15 @@ const noKeys = { shiftKey: false, ctrlKey: false, metaKey: false };
 describe("row selection bindings", () => {
   it("refuse bindings that are not ones", () => {
     const store = selectionStore(trips);
-    expect(() => rowSelection()).toThrow("needs a binding");
-    expect(() => rowSelection({ store, channel: "" })).toThrow("channel must be a name");
+    expect(() => rowSelection()).toThrow("rowSelection: expected a binding");
+    expect(() => rowSelection({ store, channel: "" })).toThrow(
+      'rowSelection channel: expected a name; received ""',
+    );
     expect(() => rowSelection({ store, channel: "c", events: ["drag" as "brush"] })).toThrow(
-      'events are "brush", "lasso", and "click"',
+      'rowSelection events: expected "brush", "lasso", or "click"; received "drag"',
     );
     expect(() => rowSelection({ store, channel: "c", effect: "filter" as "none" })).toThrow(
-      'effect is "highlight" or "none"',
+      'rowSelection effect: expected "highlight" or "none"; received "filter"',
     );
     expect(() =>
       rowSelection({ store, channel: "c" }, { store: selectionStore(trips), channel: "d" }),
@@ -97,18 +99,18 @@ describe("row selection bindings", () => {
   it("refuse charts whose rows cannot be selected yet", () => {
     const bound = rowSelection({ store: selectionStore(trips), channel: "c" });
     expect(() => drawn({ marks: [pie(trips, { category: "kind" })], rowSelection: bound })).toThrow(
-      "Charts of a pie mark cannot select rows yet",
+      "pie rowSelection: cannot select rows yet",
     );
     const other = table({ x: [1] });
     expect(() => drawn({ marks: [point(other, { x: "x", y: "x" })], rowSelection: bound })).toThrow(
-      "of a table no mark of the chart reads",
+      'rowSelection store: no mark reads its table (channel "c")',
     );
     const counted = { marks: [histogram(trips, { x: "km" })], rowSelection: bound };
     expect(() => drawn({ ...counted, interaction: { brush: "lasso" } })).toThrow(
-      "Lassos cannot select the rows of histogram marks yet",
+      'histogram brush: lassos cannot select its rows yet; leave "lasso" out of rowSelection events',
     );
     expect(() => drawn({ ...counted, interaction: { brush: "xy" } })).toThrow(
-      "brushed along its x axis only",
+      "histogram brush: its y axis holds statistics; brush along x only",
     );
     expect(() => drawn({ ...counted, interaction: { brush: "x" } })).not.toThrow();
     const boxes = { marks: [boxplot(trips, { x: "kind", y: "fare" })], rowSelection: bound };
@@ -122,16 +124,16 @@ describe("row selection bindings", () => {
     };
     for (const brush of ["y", "xy"] as const)
       expect(() => drawn({ ...ticks, interaction: { brush } })).toThrow(
-        "A rug mark's rows are brushed along its x axis only",
+        "rug brush: its ticks have no y value; brush along x only",
       );
     expect(() => drawn({ ...ticks, interaction: { brush: "x" } })).not.toThrow();
     expect(() => drawn({ ...ticks, interaction: { brush: "lasso" } })).not.toThrow();
     const sideways = { marks: [rug(trips, { y: "fare" })], rowSelection: bound };
     expect(() => drawn({ ...sideways, interaction: { brush: "x" } })).toThrow(
-      "brushed along its y axis only",
+      "rug brush: its ticks have no x value; brush along y only",
     );
     // Cells are lassoed at their centers.
-    const cells = { marks: [heatmap(trips, { x: "kind", y: "kind", value: "fare" })] };
+    const cells = { marks: [heatmap(trips, { x: "kind", y: "kind", color: "fare" })] };
     expect(() =>
       drawn({ ...cells, rowSelection: bound, interaction: { brush: "lasso" } }),
     ).not.toThrow();

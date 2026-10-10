@@ -117,18 +117,18 @@ describe("bar", () => {
     const mixed = table({ name: ["a"], x: [1], v: [1] });
     expect(() =>
       build({ marks: [bar(mixed, { x: "name", y: "v" }), line(mixed, { x: "x", y: "v" })] }),
-    ).toThrow(/cannot share a categorical x axis/);
+    ).toThrow(/x: numbers cannot share a category axis/);
     expect(() =>
       build({ marks: [bar(mixed, { x: "name", y: "v" }), bar(mixed, { x: "x", y: "v" })] }),
-    ).toThrow(/cannot share a categorical x axis/);
+    ).toThrow(/x: numbers cannot share a category axis/);
     expect(() =>
       build({
         marks: [
-          heatmap(mixed, { x: "name", y: "x", value: "v", yBanded: true }),
+          heatmap(mixed, { x: "name", y: "x", color: "v", yBanded: true }),
           bar(mixed, { x: "name", y: "v" }),
         ],
       }),
-    ).toThrow(/cannot share a categorical y axis/);
+    ).toThrow(/bar y: numbers cannot share a category axis/);
   });
 
   it("rejects a y field listed twice", () => {
@@ -352,7 +352,10 @@ describe("bar labels", () => {
     const values = table({ x: [1, 2], v: [10, 20] });
     const zeroAt = (labels: boolean) => {
       const { model } = build({
-        marks: [bar(values, { x: "x", y: "v", labels }), point(values, { x: "x", y: "v", r: 3 })],
+        marks: [
+          bar(values, { x: "x", y: "v", labels }),
+          point(values, { x: "x", y: "v", radius: 3 }),
+        ],
       });
       return model.yScale()!.map(0);
     };
@@ -598,7 +601,7 @@ describe("horizontal bar", () => {
 
   it("needs a category y for several x fields", () => {
     const options = { x: ["q1", "q2"], y: "q1" } as never;
-    expect(() => bar(sales, options)).toThrow(/several x fields/);
+    expect(() => bar(sales, options)).toThrow(/bar x: several fields make bars horizontal/);
   });
 });
 
@@ -617,7 +620,7 @@ describe("point", () => {
 
   it("leaves room for whole points at the plot edges", () => {
     const pts = table({ x: [0, 10, 3], y: [0, 7, 7], kind: ["a", "a", "b"] });
-    const { scene } = build({ marks: [point(pts, { x: "x", y: "y", series: "kind", r: 4 })] });
+    const { scene } = build({ marks: [point(pts, { x: "x", y: "y", series: "kind", radius: 4 })] });
     const { plot } = scene.panels[0]!;
     for (const g of scene.panels[0]!.marks as PointGeometry[]) {
       for (let i = 0; i < g.count; i++) {
@@ -732,7 +735,7 @@ describe("heatmap", () => {
   });
 
   it("rasterizes category rows top to bottom, in step with the axis", () => {
-    const { scene } = build({ marks: [heatmap(cells, { x: "col", y: "row", value: "v" })] });
+    const { scene } = build({ marks: [heatmap(cells, { x: "col", y: "row", color: "v" })] });
     const raster = scene.panels[0]!.marks[0] as RasterGeometry;
     expect([raster.columns, raster.rows]).toEqual([2, 2]);
     const alpha = (c: number, r: number) => raster.pixels[(r * 2 + c) * 4 + 3];
@@ -749,7 +752,7 @@ describe("heatmap", () => {
   it("rasterizes banded rows of numbers bottom to top, like a numeric axis", () => {
     const grid = table({ x: ["a", "a"], y: [1, 2], v: [Number.NaN, 5] });
     const { scene } = build({
-      marks: [heatmap(grid, { x: "x", y: "y", value: "v", yBanded: true })],
+      marks: [heatmap(grid, { x: "x", y: "y", color: "v", yBanded: true })],
     });
     const raster = scene.panels[0]!.marks[0] as RasterGeometry;
     const ticks = scene.panels[0]!.axes.find((a) => a.orient === "left")!.ticks;
@@ -763,7 +766,7 @@ describe("heatmap", () => {
   it("bands distinct numbers as ordered columns on request", () => {
     const grid = table({ x: [3, 1, 2, 1], y: [0, 0, 0, 1], v: [1, 2, 3, 4] });
     const { scene } = build({
-      marks: [heatmap(grid, { x: "x", y: "y", value: "v", xBanded: true })],
+      marks: [heatmap(grid, { x: "x", y: "y", color: "v", xBanded: true })],
     });
     expect(
       scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks.map((t) => t.label),
@@ -771,7 +774,7 @@ describe("heatmap", () => {
   });
 
   it("finds the cell under the pointer", () => {
-    const { model } = build({ marks: [heatmap(cells, { x: "col", y: "row", value: "v" })] });
+    const { model } = build({ marks: [heatmap(cells, { x: "col", y: "row", color: "v" })] });
     const inspection = model.inspect(model.xScale()!.map(1), model.yScale()!.map(0))!;
     expect(inspection.label).toBe("b");
     expect(inspection.points[0]).toMatchObject({ label: "low", value: 1, text: "1" });
@@ -779,7 +782,7 @@ describe("heatmap", () => {
   });
 
   it("describes its cells, lowest and highest, for assistive technology", () => {
-    const { model } = build({ marks: [heatmap(cells, { x: "col", y: "row", value: "v" })] });
+    const { model } = build({ marks: [heatmap(cells, { x: "col", y: "row", color: "v" })] });
     expect(describeChart(model)).toContain(
       "v: 3 cells in 2 columns and 2 rows, lowest 0 at a, low, highest 2 at a, high.",
     );
@@ -787,20 +790,20 @@ describe("heatmap", () => {
 
   it("keeps numbers whose labels coincide in separate columns", () => {
     const close = table({ x: [1.001, 1.002], y: [0, 0], v: [1, 2] });
-    const { scene } = build({ marks: [heatmap(close, { x: "x", y: "y", value: "v" })] });
+    const { scene } = build({ marks: [heatmap(close, { x: "x", y: "y", color: "v" })] });
     expect((scene.panels[0]!.marks[0] as RasterGeometry).columns).toBe(2);
   });
 
   it("finds cells after another mark changes the band order", () => {
     const later = table({ col: ["b", "c"], row: ["r", "r"], v: [1, 2] });
     const earlier = table({ col: ["a"], row: ["r"], v: [3] });
-    const mark = heatmap(later, { x: "col", y: "row", value: "v" });
+    const mark = heatmap(later, { x: "col", y: "row", color: "v" });
     const { model } = build({ marks: [mark] });
     expect(model.inspect(model.xScale()!.map(0), model.yScale()!.map(0))!.label).toBe("b");
     model.update({
       locale: "en-US",
       timeZone: "UTC",
-      marks: [heatmap(earlier, { x: "col", y: "row", value: "v" }), mark],
+      marks: [heatmap(earlier, { x: "col", y: "row", color: "v" }), mark],
     });
     model.scene(estimateText);
     const at = (column: number) =>
@@ -813,7 +816,7 @@ describe("heatmap", () => {
     const column = table({ c: ["a", "a"], r: ["r1", "r2"], v: [Number.NaN, 10] });
     const { model } = build({
       tooltip: { mode: "nearest-x" },
-      marks: [heatmap(column, { x: "c", y: "r", value: "v" })],
+      marks: [heatmap(column, { x: "c", y: "r", color: "v" })],
     });
     expect(model.tooltipMode()).toBe("nearest");
     const [px, py] = [model.xScale()!.map(0), model.yScale()!.map(1)];
@@ -827,8 +830,8 @@ describe("heatmap", () => {
     const above = table({ c: ["a", "b"], r: ["r", "r"], v: [2, Number.NaN] });
     const { model } = build({
       marks: [
-        heatmap(below, { x: "c", y: "r", value: "v" }),
-        heatmap(above, { x: "c", y: "r", value: "v" }),
+        heatmap(below, { x: "c", y: "r", color: "v" }),
+        heatmap(above, { x: "c", y: "r", color: "v" }),
       ],
     });
     const at = (column: number) =>
@@ -840,23 +843,23 @@ describe("heatmap", () => {
 
   it("keeps an earlier value when a later row for the cell is missing", () => {
     const repeated = table({ c: ["a", "a"], r: ["r", "r"], v: [5, Number.NaN] });
-    const { scene, model } = build({ marks: [heatmap(repeated, { x: "c", y: "r", value: "v" })] });
+    const { scene, model } = build({ marks: [heatmap(repeated, { x: "c", y: "r", color: "v" })] });
     expect((scene.panels[0]!.marks[0] as RasterGeometry).pixels[3]).toBe(255);
     expect(model.inspect(model.xScale()!.map(0), model.yScale()!.map(0))!.points[0]!.value).toBe(5);
   });
 
   it("rejects colors the raster cannot read", () => {
     expect(() =>
-      heatmap(cells, { x: "col", y: "row", value: "v", colors: ["white", "red"] }),
-    ).toThrow(/hex colors/);
+      heatmap(cells, { x: "col", y: "row", color: "v", colors: ["white", "red"] }),
+    ).toThrow(/heatmap colors: expected "#rrggbb" colors; received "white"/);
     expect(() => build({ theme: { sequential: ["#fff", "#0008"] }, marks: [] })).toThrow(
-      /hex colors/,
+      /theme.sequential: expected "#rrggbb" colors; received "#0008"/,
     );
   });
 
   it("shows a color legend instead of series entries", () => {
     const { scene } = build({
-      marks: [heatmap(cells, { x: "col", y: "row", value: "v", label: "Load" })],
+      marks: [heatmap(cells, { x: "col", y: "row", color: "v", label: "Load" })],
     });
     expect(scene.legend).toEqual([]);
     expect(scene.colorLegends[0]).toMatchObject({

@@ -11,7 +11,7 @@ const metrics = table({ time: time(timestamps), p50, p99 });
 </script>
 
 <template>
-  <Chart title="Request latency" :y="{ label: 'ms' }" :interaction="{ zoom: true }">
+  <Chart title="Request latency" :y="{ title: 'ms' }" :interaction="{ zoom: true }">
     <Line :data="metrics" x="time" :y="['p50', 'p99']" />
     <Rule :y="250" label="SLO" />
   </Chart>
@@ -32,7 +32,7 @@ share a chart with each other, projected by its `projection` prop, and
 `<Point3D>`, `<Line3D>`, and `<Surface>` a 3D chart seen from its `camera`
 prop. Annotations
 (`<Rule>`, `<Region>`, `<Text>`) take `data` only when they draw one item per
-row: `<Rule :data="deploys" x="time" text="version" />`. Marks built with
+row: `<Rule :data="deploys" x="time" textField="version" />`. Marks built with
 herceg's functions can also be passed as a `marks` prop. Options may be
 written in kebab-case (`:stroke-width="2"`), and boolean options as bare
 attributes (`<Area stack />`). The slot holds mark components directly:

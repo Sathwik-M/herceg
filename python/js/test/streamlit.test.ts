@@ -191,7 +191,7 @@ describe("Streamlit component", () => {
 
   it("draws a navigator, keeping its sliders and the x range when new bytes redraw it", async () => {
     const parent = host();
-    run(parent, lineChart("Navigated", [], { version: 4, navigator: true }));
+    run(parent, lineChart("Navigated", [], { navigator: true }));
     await vi.dynamicImportSettled();
     const sliders = () => parent.querySelectorAll('[aria-label="Range navigator"] [role="slider"]');
     expect(sliders()).toHaveLength(3);
@@ -203,7 +203,7 @@ describe("Streamlit component", () => {
     await frame();
     const shown = middle!.getAttribute("aria-valuetext");
     expect(shown).not.toBe(before);
-    run(parent, lineChart("Renamed", [], { version: 4, navigator: { height: 30 } }));
+    run(parent, lineChart("Renamed", [], { navigator: { height: 30 } }));
     await vi.dynamicImportSettled();
     await frame();
     expect(sliders()).toHaveLength(3);
@@ -268,7 +268,6 @@ describe("Streamlit component", () => {
     const bound = (title: string, epoch: string) =>
       payload(
         {
-          version: 8,
           title,
           width: 400,
           height: 200,
@@ -308,7 +307,6 @@ describe("Streamlit component", () => {
     const bound = (title: string) =>
       payload(
         {
-          version: 8,
           title,
           width: 400,
           height: 200,
@@ -349,7 +347,6 @@ describe("Streamlit component", () => {
     const bound = (x: Header["spec"]["x"]) =>
       payload(
         {
-          version: 8,
           width: 400,
           height: 200,
           renderer: "svg",
@@ -388,7 +385,6 @@ describe("Streamlit component", () => {
     const bound = (y: Header["spec"]["y"]) =>
       payload(
         {
-          version: 8,
           width: 400,
           height: 200,
           renderer: "svg",
@@ -431,7 +427,6 @@ describe("Streamlit component", () => {
     const bound = (events: Header["events"]) =>
       payload(
         {
-          version: 8,
           width: 400,
           height: 200,
           renderer: "svg",
@@ -481,7 +476,6 @@ describe("Streamlit component", () => {
     const bound = (events: Header["events"], epoch: string, y: number[]) =>
       payload(
         {
-          version: 8,
           width: 400,
           height: 200,
           renderer: "svg",
@@ -688,7 +682,6 @@ describe("Streamlit component with panels' own x scales", () => {
   function facets(title: string) {
     return payload(
       {
-        version: 3,
         title,
         width: 400,
         height: 200,
@@ -786,7 +779,6 @@ describe("Streamlit component with panels' own x scales", () => {
       parent,
       payload(
         {
-          version: 3,
           width: 400,
           height: 200,
           renderer: "svg",

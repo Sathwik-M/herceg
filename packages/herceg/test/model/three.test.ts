@@ -16,6 +16,7 @@ import { type ChartConfig, ChartModel, type ItemInspection } from "../../src/mod
 import { renderToPDF } from "../../src/pdf.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import type { FaceGeometry, Scene, TextGeometry } from "../../src/scene/scene.ts";
+import { LIGHT } from "../../src/theme.ts";
 import { View } from "../../src/three/camera.ts";
 import { FaceIndex } from "../../src/three/faces.ts";
 
@@ -176,6 +177,27 @@ describe("3D scatter", () => {
     ).toBe(6);
   });
 
+  it("colors by a category field with a color key", () => {
+    const { scene, model } = build({
+      marks: [point3d(clusters, { x: "x", y: "y", z: "z", color: "group" })],
+    });
+    const mark = faces(scene);
+    const fills = new Set(
+      Array.from(mark.style.subarray(0, mark.count), (s) => mark.styles[s]!.fill),
+    );
+    expect(fills).toEqual(new Set(LIGHT.palette.slice(0, 3)));
+    expect(scene.glyphLegends[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
+      ["a", LIGHT.palette[0]],
+      ["b", LIGHT.palette[1]],
+      ["c", LIGHT.palette[2]],
+    ]);
+    const first = model.inspectItem(model.stepItem(undefined, 1)!) as ItemInspection;
+    expect(first.points[0]).toMatchObject({
+      text: "x 0, y 5, z 0, group a",
+      color: LIGHT.palette[0],
+    });
+  });
+
   it("labels time axes as times", () => {
     const day = 86_400_000;
     const data = table({
@@ -235,7 +257,7 @@ describe("surfaces", () => {
       z: new Float64Array(n),
     });
     expect(() => surface(scattered, { x: "x", y: "y", z: "z" })).toThrow(
-      /holds at most 1,048,576 grid points/,
+      /surface x, y: expected at most 1,048,576 grid points/,
     );
     // A grid the GPU draws, but an export cannot.
     const side = Math.ceil(Math.sqrt(MAX_CPU_GRID_POINTS)) + 1;
@@ -243,7 +265,7 @@ describe("surfaces", () => {
     expect(() =>
       renderToSVG({ width: 300, height: 200, marks: [surface(large, { x: "x", y: "y", z: "z" })] }),
     ).toThrow(
-      /drawn only on the GPU: in the browser with WebGL2, opaque, without a wireframe.*at most 250,000/,
+      /draw only on the GPU, in the browser with WebGL2, opaque, without a wireframe.*at most 250,000/,
     );
   });
 
@@ -544,7 +566,7 @@ describe("points and surfaces", () => {
       {
         marks: [
           surface(grid, { x: "x", y: "y", z: "z" }),
-          point3d(point, { x: "x", y: "y", z: "z", r: 10 }),
+          point3d(point, { x: "x", y: "y", z: "z", radius: 10 }),
         ],
         camera: { azimuth: 108, elevation: 60 },
         x: unit,
@@ -563,7 +585,7 @@ describe("points and surfaces", () => {
     const flat = field(3, () => -1);
     for (const marks of [[], [surface(flat, { x: "x", y: "y", z: "z" })]]) {
       const { model, scene } = build({
-        marks: [...marks, point3d(points, { x: "x", y: "y", z: "z", r: 10 })],
+        marks: [...marks, point3d(points, { x: "x", y: "y", z: "z", radius: 10 })],
         camera: { azimuth: 90, elevation: 90 },
         x: unit,
         y: unit,
@@ -689,7 +711,7 @@ describe("3D charts", () => {
     expect(() => model.setCamera({ elevation: 100 })).toThrow(/elevation/);
     model.update({ marks: [line(clusters, { x: "x", y: "y" })] });
     expect(model.camera).toBeUndefined();
-    expect(() => model.setCamera({})).toThrow(/Only 3D charts/);
+    expect(() => model.setCamera({})).toThrow("setCamera: only 3D charts have a camera");
   });
 
   it("refuse options and marks they cannot draw", () => {
@@ -701,7 +723,7 @@ describe("3D charts", () => {
       () => new ChartModel({ marks: [scatter(), line(clusters, { x: "x", y: "y" })] }),
     ).toThrow(/its chart to itself/);
     expect(() => new ChartModel({ marks: [scatter()], interaction: { zoom: "x" } })).toThrow(
-      /interaction.zoom true/,
+      /chart interaction\.zoom: expected true or false in a 3D chart; received "x"/,
     );
     expect(() => new ChartModel({ marks: [scatter()], interaction: { brush: "x" } })).toThrow(
       /brush/,
@@ -712,7 +734,7 @@ describe("3D charts", () => {
     expect(() =>
       model.update({ marks: [scatter(), surface(mixed, { x: "x", y: "y", z: "z" })] }),
     ).not.toThrow();
-    expect(() => model.scene(estimateText)).toThrow(/x axis of a 3D chart is one kind of field/);
+    expect(() => model.scene(estimateText)).toThrow(/chart x: a 3D axis takes one kind of field/);
   });
 
   it("export to SVG and PDF", () => {
@@ -734,7 +756,7 @@ describe("3D charts", () => {
   });
 
   it("describe their axes and camera", () => {
-    const { model } = build({ title: "Clusters", marks: [scatter()], x: { label: "East" } });
+    const { model } = build({ title: "Clusters", marks: [scatter()], x: { title: "East" } });
     expect(describeChart(model)).toBe(
       "6 points at x, y, z. Axes: East from 0 to 5; y from 0 to 5; z from 0 to 10. Seen from azimuth -60°, elevation 25°.",
     );

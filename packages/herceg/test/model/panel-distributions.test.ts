@@ -256,7 +256,6 @@ describe("histograms split by facets", () => {
 
   it("load from specs and render statically", () => {
     const spec = {
-      version: 3 as const,
       data: {
         t: { columns: { region: ["A", "A", "B"], ms: [1, 2, 30] } },
       },

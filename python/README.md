@@ -27,14 +27,14 @@ hg.bar(sales, x="region", y=["q1", "q2"])
 hg.bar(sales, x="q1", y="region")  # a category y gives horizontal bars
 hg.bar(sales, x="region", y="q1", labels=True)  # values at the bar ends
 hg.Chart(stats).bar(x="group", y="mean").error_bar(x="group", y="mean", y_error="se")
-hg.scatter(cars, x="weight", y="mpg", series="origin", r=3)
-hg.scatter(countries, x="gdp", y="life", r="population", series="continent")  # bubbles
+hg.scatter(cars, x="weight", y="mpg", series="origin", radius=3)
+hg.scatter(countries, x="gdp", y="life", size="population", series="continent")  # bubbles
 hg.scatter(stations, x="lon", y="lat", color="anomaly", colors="rdbu", color_midpoint=0)
 hg.scatter(cars, x="weight", y="mpg", symbol="origin")  # a shape per origin
 hg.scatter(requests, x="region", y="latency")  # a category x places points in its bands
-hg.heatmap(load, x="hour", y="host", value="cpu", colors="viridis")  # hours along a time axis
-hg.heatmap(load, x="hour", y="host", value="cpu", x_banded=True)  # a column per distinct hour
-hg.heatmap(commits, date="day", value="count", calendar="months")  # a calendar
+hg.heatmap(load, x="hour", y="host", color="cpu", colors="viridis")  # hours along a time axis
+hg.heatmap(load, x="hour", y="host", color="cpu", x_banded=True)  # a column per distinct hour
+hg.heatmap(commits, date="day", color="count", calendar="months")  # a calendar
 hg.candlestick(prices, x="day", open="open", high="high", low="low", close="close")
 hg.candlestick(prices, "day", "open", "high", "low", "close", variant="ohlc")  # OHLC bars
 hg.histogram(requests, x="latency", series="region", bins={"step": 10})
@@ -48,17 +48,17 @@ hg.funnel(signups, "stage", "users")
 hg.radar(scores, "skill", "score", series="player")  # a spoke per skill
 hg.radar(players, fields=["speed", "power", "range"], series="name")  # a polygon per row
 hg.sankey(energy, "source", "target", "twh")  # flows between nodes; counts rows without a value
-hg.graph(talks, "from", "to", nodes=people, node="name", group="team")  # a network
-hg.choropleth(countries_gdf, "gdp", name="name", projection="equal-earth")  # a map
+hg.graph(talks, "from", "to", nodes=people, node="name", color="team")  # a network
+hg.choropleth(countries_gdf, "gdp", label_field="name", projection="equal-earth")  # a map
 hg.choropleth(rates, "rate", geojson=counties, locations="fips")  # values joined to shapes
-hg.scatter_geo(cities, "lon", "lat", r="population", name="city")  # bubbles on a map
+hg.scatter_geo(cities, "lon", "lat", size="population", label_field="city")  # bubbles on a map
 hg.scatter_3d(iris, x="sepal_length", y="sepal_width", z="petal_length", series="species")
 hg.line_3d(flights, x="east", y="north", z="altitude", series="flight")  # a path per flight
 hg.surface(terrain, x="east", y="north", z="height")  # a grid of rows
 hg.surface(z=heights, x=eastings, y=northings)  # a 2D array: row i, column j at y[i], x[j]
 ```
 
-3D charts draw `.point3d(...)` points, `.line3d(...)` lines (each `series`
+3D charts draw `.point_3d(...)` points, `.line_3d(...)` lines (each `series`
 category's rows, in order, one path, broken where a row has no value), and
 `.surface(...)` surfaces in one box (they share a chart with each other
 only), seen from `camera=hg.Camera(azimuth=-60,
@@ -83,13 +83,13 @@ network's nodes be dragged, staying where they are dropped (Shift with the
 arrow keys moves the node read). `row_selection` selects a region's or
 point's row, a tree node's rows, or a network node's or link's rows by
 click (lassos on maps). `.graph(..., directed=True)` draws links from
-source to target with arrowheads, and `link_label="kind"` writes a category
-along the links with room; both need spec version 11.
+source to target with arrowheads, and `link_label_field="kind"` writes a
+category along the links with room.
 
 ```python
 hg.Chart(countries, zoom=True, brush="lasso", row_selection=hg.SelectionBinding("picked")).geoshape(color="gdp")
 hg.Chart(sales, zoom=True).treemap(path=["region", "country"], value="revenue")
-hg.Chart(talks, drag=True).graph("from", "to", directed=True, link_label="kind")
+hg.Chart(talks, drag=True).graph("from", "to", directed=True, link_label_field="kind")
 ```
 
 Violins accept `split=True` and `inner="box" | "quartiles" | "none"` in both
@@ -103,8 +103,7 @@ color, legend entry, tooltip, keyboard stop, and
 summary. More than two values fails when rendered with an error naming the
 field and count; unused dictionary values and missing/non-finite rows do not
 count. Both options work with facets, per-panel categories, either orientation,
-and SVG, Canvas, static SVG, and PDF output. Specs use version 7 only when
-`split=True` or a non-default `inner` needs it.
+and SVG, Canvas, static SVG, and PDF output.
 
 Heatmaps over number and time columns place their cells along number and
 time axes, which zoom and pan: each cell reaches halfway to the values
@@ -115,9 +114,7 @@ category columns have. `date=` lays the days of a time column out as a
 calendar in the chart's `time_zone`: `calendar="weeks"` (the default) a
 column per week along a time axis and a row per day of the week from
 `week_start` (`"mon"` by default), `calendar="months"` a row per month and
-a column per day of the month. Specs use version 9 when a heatmap places a
-number or time column along an axis, has a step, or is a calendar; earlier
-readers band such columns, so they refuse it.
+a column per day of the month.
 
 ```python
 hg.violin(requests, x="region", y="latency", series="version", split=True, inner="quartiles")
@@ -149,7 +146,7 @@ data=values)` joins the new rows to the features again.
 
 ```python
 chart = (
-    hg.Chart(df, title="Request latency", y=hg.Axis(label="ms"), zoom=True)
+    hg.Chart(df, title="Request latency", y=hg.Axis(title="ms"), zoom=True)
     .line(x="time", y=["p50", "p99"])
     .rule(y=250, label="SLO")
 )
@@ -166,11 +163,11 @@ hg.Chart(sales, facet="region").pie("product", "revenue")
 ```
 
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
-(`hg.Axis(type="log", domain=(0, 100), label="ms", ...)` or a dict),
+(`hg.Axis(type="log", domain=(0, 100), title="ms", ...)` or a dict),
 `y_right` (the axis for marks added with `axis="right"`, in every panel
 that draws them), `facet` and
 `facet_columns` (a panel per value of a category column, wrapped into rows),
-or `facet_row` and `facet_col` (a grid with a row per value of one category
+or `facet_row` and `facet_column` (a grid with a row per value of one category
 column and a column per value of another; either may be left out), with
 `resolve_x`, `resolve_y`, and `resolve_y_right` (`"shared"`,
 `"independent"`, `"rows"`, or `"columns"`) choosing which panels share an x,
@@ -179,13 +176,13 @@ y as `resolve_y` unless given; on a category axis, panels that do not share
 it show only the categories their rows hold); histograms, box plots, and
 violins summarize each panel's rows (histograms in bins chosen from the rows
 of the panels sharing an x scale); annotations over a table draw each row in
-its own row's panel; marks with `repeat=True` draw all their rows in every
+its own row's panel; marks with `facet="repeat"` draw all their rows in every
 panel, which dendrograms need; pies, treemaps, sunbursts, gauges, funnels,
 radars, and Sankey diagrams draw each facet panel's rows in it, as a
 faceted chart's only mark, or fill a panel of their own with `panel=` (no
 `"*"`, and no other mark there), whose neighbors keep their axes; `panels` (ids or
-`hg.Panel("latency", title="Latency", x=hg.Axis(label="Time"),
-y=hg.Axis(label="ms"), y_right=hg.Axis(label="requests"))`), `panel_columns`, and
+`hg.Panel("latency", title="Latency", x=hg.Axis(title="Time"),
+y=hg.Axis(title="ms"), y_right=hg.Axis(title="requests"))`), `panel_columns`, and
 `panel_row_heights` and `panel_column_widths` (relative heights of the rows
 and widths of the columns) for subplots, whose marks
 name their panel with `panel="latency"` (or `"*"` for all),
@@ -281,8 +278,7 @@ one CSS pixel wide, behind the data and inside the plot. Set
 positive, default 40 CSS pixels). Seams are kept in chronological order;
 markers become selective when zoomed out and exclude plot edges. They
 follow each panel's shown domain; the navigator draws none. Omission or
-`False` disables them. Enabled seams need time-axis breaks and write spec
-version 5. Seams use the theme's resolved grid color and a `[3, 3]` dash.
+`False` disables them. Enabled seams need time-axis breaks. Seams use the theme's resolved grid color and a `[3, 3]` dash.
 
 `navigator=True` adds a range navigator: a strip under the plot drawing the
 chart's lines, areas, points, bars, and candlesticks over the whole x axis,
@@ -298,10 +294,13 @@ hg.line(prices, x="time", y="close", id="close", navigator=hg.Navigator(marks=["
 
 Mark methods take column names; `series` names a category column that splits
 rows into one series per value. A mark can read other data with `data=`.
-Points can size (`r`), color (`color`), fade (`fill_opacity`), and shape
-(`symbol`) by column; `colors` takes a scheme name from `hg.SCHEMES` or a list
-of hex colors, and `symbol` a shape from `hg.SYMBOLS` or a category column
-(not one named like a shape). `stroke` and `stroke_width` outline points and
+Points have one `radius` in pixels, or size (`size`, within `radius_range`),
+color (`color`), fade (`fill_opacity`), and shape (`symbol`) by column; a
+numeric `color` takes `colors`, a scheme name from `hg.SCHEMES` or a list of
+hex colors, and a category `color` the theme's palette, a color per value
+with a key in the legend; `symbol` takes a shape from `hg.SYMBOLS` or a
+category column, by name or as `{"field": column}` (which a column named like
+a shape needs). `stroke` and `stroke_width` outline points and
 areas, and `fill` gives every box plot or violin one color.
 Column names are checked when the mark is added, with the available columns
 in the error message.
@@ -326,8 +325,6 @@ chart redraws and streams:
 )
 hg.scatter(tips, x="day", y="tip", series="sex", dodge=True, jitter=0.5)
 ```
-
-These write spec version 10.
 
 Histograms take exactly one number or time column, `x` (vertical) or `y`
 (horizontal), in both `hg.histogram` and `Chart.histogram`:
@@ -361,8 +358,7 @@ is 1 (or the series' share with common normalization), or 0 for no counted
 values. Accumulation happens before stacking. `dodge=True` places the visible
 series side by side with opaque fills by default, giving hidden series' slots
 to the others. Dodge excludes `stack=True`; horizontal histograms exclude
-`axis="right"`. The new options write spec version 10; omitted/false flags keep
-the earlier version. A chart's version is the maximum required by its features.
+`axis="right"`.
 
 Box plots accept raw category/value columns or precomputed statistic columns:
 
@@ -391,14 +387,12 @@ the median, using the finite observation count for raw input. They are not
 clamped to the quartiles; small samples can produce a flipped outline. SVG,
 Canvas, static SVG, and PDF draw the same geometry. Tooltips, keyboard
 reading, legends, summaries, and facets work with both input forms; absent
-precomputed counts are omitted from tooltips. Raw notches and nondefault
-whiskers emit spec version 6 so older readers refuse them. Older readers
-already refuse precomputed boxes because they lack a raw value-axis field.
+precomputed counts are omitted from tooltips.
 
 ### Dendrograms
 
 `Chart.dendrogram(first, second, height, *, leaves, side=None, data=None,
-stroke=None, stroke_width=None, label=None, repeat=False, panel=None,
+stroke=None, stroke_width=None, label=None, facet=None, panel=None,
 id=None)` adds a clustering linkage tree. The three fields name number
 columns in SciPy's linkage layout: row k merges its two child ids into
 cluster n+k, with leaves 0 through n−1. Ids must be whole numbers naming a
@@ -423,7 +417,7 @@ Ties and decreasing heights are allowed; all-zero heights stay at the
 leaves' edge. A leaf missing from the axis omits links above it. The default
 stroke is muted theme text, with width 1 CSS pixel; `label` names a summary
 of leaf and merge counts and height range, with no legend or inspection.
-With facets, `repeat=True` is required.
+With facets, `facet="repeat"` is required.
 
 Compose a clustered heatmap with panels corner, top, left, matrix,
 `panel_columns=2`, `panel_row_heights=[1, 4]`,
@@ -438,7 +432,7 @@ The bands align across panels in SVG, Canvas, and static SVG/PNG/PDF.
 
 `Chart.rug(x=None, *, y=None, series=None, data=None, length=None,
 side=None, stroke=None, stroke_width=None, label=None, axis=None,
-repeat=False, panel=None, id=None)` adds one tick per observation of exactly
+facet=None, panel=None, id=None)` adds one tick per observation of exactly
 one number or time column. It composes with other marks:
 
 ```python
@@ -453,7 +447,7 @@ or left/right for `y`, and stay at that edge through zoom and pan.
 omit missing and infinite values (and nonpositive values on a log axis),
 and preserve coincident observations. Tooltips and keyboard reading report
 real rows and format the observed value using its axis; summaries give
-counts and ranges. Facets split rows, `repeat=True` repeats them, and
+counts and ranges. Facets split rows, `facet="repeat"` repeats them, and
 `panel` places rugs in subplots. A y rug refuses `axis="right"`;
 `side="right"` places its ticks at the right edge. There is no one-call
 `hg.rug` helper.
@@ -468,18 +462,18 @@ notebooks and Streamlit like any other chart:
 ```python
 import herceg.express as hx
 
-hx.barplot(tips, x="day", y="total_bill", hue="sex", seed=1)
-hx.lineplot(fmri, x="timepoint", y="signal", hue="event", errorbar=("se", 1))
-hx.regplot(tips, x="total_bill", y="tip", order=2)
-hx.histplot(penguins, x="flipper_length_mm", hue="species", kde=True)
-hx.pairplot(penguins, hue="species")
+hx.barplot(tips, x="day", y="total_bill", series="sex", seed=1)
+hx.lineplot(fmri, x="timepoint", y="signal", series="event", errorbar=("se", 1))
+hx.regplot(tips, x="total_bill", y="tip", order=2, facet_column="smoker")
+hx.histplot(penguins, x="flipper_length_mm", series="species", kde=True)
+hx.pairplot(penguins, series="species")
 hx.clustermap(flights_wide, z_score=1)
 ```
 
 | Function | Computes (NumPy) | Draws |
 | --- | --- | --- |
-| `barplot`, `pointplot` | an `estimator` ("mean" or "median") per category, and an interval | bars or points, with error bars dodged by `hue` |
-| `lineplot` | the estimate and interval at each distinct x | lines, with bands (`err_style="band"`) or error bars |
+| `barplot`, `pointplot` | an `estimator` ("mean" or "median") per category, and an interval | bars or points, with error bars dodged by `series` |
+| `lineplot` | the estimate and interval at each distinct x | lines, with bands (`error_style="band"`) or error bars |
 | `regplot` | least-squares polynomial fits (`order`), or `lowess`, with bootstrap bands | points, fit lines, bands |
 | `residplot` | residuals from a polynomial fit, optionally a lowess line through them | points around a rule at 0 |
 | `histplot` | Seaborn's bin edges; heights, and KDE overlays scaled to them | the histogram mark (counts in the browser), lines |
@@ -490,16 +484,28 @@ hx.clustermap(flights_wide, z_score=1)
 | `pairplot`, `jointplot` | bins, densities, fits | subplots: scatter plots with histograms or densities |
 | `clustermap` | hierarchical clustering of rows and columns | a reordered heatmap with dendrograms in side panels |
 
-Arguments follow Seaborn's names and are keyword-only after the data: `x`,
-`y`, `hue` (a category column, or numbers read as categories, splitting the
-marks' series in one legend group, so a hue level's bars and error bars, or
-line and band, share a legend entry and hide together), `order` and `hue_order`
-(which levels, in which order; rows of other levels are left out), `col`
-and `row` (facets), `palette` (a list of colors), and the chart options of
-the one-call helpers (`title`, `width`, `height`, `theme`, `x_axis`, ...).
-Axes are labeled with the columns' names unless `x_axis` or `y_axis` say
-otherwise. Rows missing a value the chart uses are left out, and the chart's
-description says how many.
+Arguments are keyword-only after the data, and what express shares with
+herceg's charts takes herceg's names: `x`, `y`, `series` (a category
+column, or numbers read as categories, splitting the marks' series in one
+legend group, so a series' bars and error bars, or line and band, share a
+legend entry and hide together), `order` and `series_order` (which levels,
+in which order; rows of other levels are left out), `palette` (a list of
+colors), and the chart options of the one-call helpers (`title`, `width`,
+`height`, `theme`, `x_axis`, ...). Among those options, `facet_row` and
+`facet_column` facet the chart, each panel with statistics of its own;
+`facet` and `panels` are refused, and `pairplot`, `jointplot`,
+`clustermap`, and `residplot` take no facets. Options a mark also takes
+mean what they mean there: histplot's `normalize` ("count", "probability",
+"percent", or "density") and `common_norm` (off by default), boxplot's
+`whiskers` ("tukey", 1.5 IQR, by default; "range"; or an IQR multiple) and
+`outliers`, violinplot's `inner` ("box", "quartiles", or "none"), and
+stripplot's `jitter`, the fraction of each category's band (or, with
+`dodge`, of each series' slot) the points spread across: `True` is 0.5,
+and an `hg.Jitter` brings its own seed. Statistical options keep Seaborn's
+names (`estimator`, `errorbar`, `n_boot`, `bw_method`, `bw_adjust`, `ci`,
+...). Axes are labeled with the columns' names unless `x_axis` or `y_axis`
+say otherwise. Rows missing a value the chart uses are left out, and the
+chart's description says how many.
 
 Intervals take Seaborn's `errorbar`: `("ci", 95)` resamples each group
 `n_boot` times (1,000) with `numpy.random.default_rng(seed)` and takes the
@@ -539,15 +545,23 @@ function again (Streamlit reruns do); a fixed seed keeps intervals from
 changing on every run. Live widgets refuse pair, joint, and cluster maps,
 whose panels have x scales of their own.
 
-Differences from Seaborn: `pointplot` draws no lines between its points
-(lines cannot run along a category axis yet); `violinplot` uses herceg's
-violin mark, each violin as wide as the others at its densest, with
-Silverman's rule (R's, 0.9 min(sd, IQR/1.34) n^-1/5) per violin or one
-`bandwidth` for all, not SciPy's Scott factor, and takes `split=True` (a
-hue of at most two levels, as halves) and `inner="box"`, `"quart"`, or
-None, but not `"stick"` or `"point"`; `histplot` has no
-`multiple="fill"`, `element="step"`, `stat="frequency"`, or weights, and
-draws densities over vertical bars only; `kdeplot` draws bivariate
+Differences from Seaborn: Seaborn's `hue`, `hue_order`, `row`, and `col`
+are `series`, `series_order`, `facet_row`, and `facet_column`; `stat` is
+`normalize` (its "proportion" is "probability"); boxplot's `whis` and
+`showfliers` are `whiskers` and `outliers`; kdeplot's `fill` is `filled`;
+`kde_kws`, `err_style`, and `gridsize` are `kde_options`, `error_style`,
+and `grid_size`; strip plots' `jitter` is a fraction of the band, not
+Seaborn's half-width in category spacing, and `common_norm` is off unless
+asked for (pair plots' diagonal densities each integrate to 1).
+`pointplot` draws no lines between its points (lines cannot run along a
+category axis yet); `violinplot` uses herceg's violin mark, each violin as
+wide as the others at its densest, with Silverman's rule (R's,
+0.9 min(sd, IQR/1.34) n^-1/5) per violin or one `bandwidth` for all, not
+SciPy's Scott factor, and takes `split=True` (a series of at most two
+levels, as halves) and `inner="box"`, `"quartiles"`, or `"none"`, but not
+`"stick"` or `"point"`; `histplot` has no
+`multiple="fill"`, `element="step"`, a "frequency" `normalize`, or weights,
+and draws densities over vertical bars only; `kdeplot` draws bivariate
 densities as a heatmap without contours; `kdeplot` and `ecdfplot` refuse
 `y` alone (a line along y would be read by its x in tooltips and keyboard
 reading, reporting the observation rather than the density or share);

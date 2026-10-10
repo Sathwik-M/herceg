@@ -211,13 +211,13 @@ describe("radar", () => {
   it("needs three to a hundred distinct spokes, and one form of data", () => {
     const two = table({ k: ["a", "b"], v: [1, 2] });
     expect(() => radar(two, { category: "k", value: "v" })).toThrow(
-      "radar needs at least 3 spokes; k has 2",
+      "radar category: expected 3 to 100 spokes; received 2",
     );
     expect(() => radar(players, { fields: ["speed", "power"] as never, series: "name" })).toThrow(
-      "at least 3 spokes",
+      "radar fields: expected 3 to 100 spokes; received 2",
     );
     expect(() => radar(players, { fields: ["speed", "power", "speed"], series: "name" })).toThrow(
-      'radar fields must be distinct; "speed" repeats',
+      'radar fields: "speed" repeats; list each field once',
     );
     // Hundreds of spokes are unreadable, and would cost memory per series.
     const many = table({
@@ -225,10 +225,10 @@ describe("radar", () => {
       v: new Float64Array(101),
     });
     expect(() => radar(many, { category: "k", value: "v" })).toThrow(
-      "radar draws at most 100 spokes; k has 101",
+      "radar category: expected 3 to 100 spokes; received 101",
     );
     expect(() => radar(players, { fields: ["speed", "power", "name" as never] })).toThrow(
-      "radar fields needs number",
+      'radar fields: field "name" holds category values; expected number',
     );
     expect(() => radar(scores, { category: "skill", value: "score", domain: [5, 5] })).toThrow(
       "domain",
@@ -371,7 +371,9 @@ describe("radar", () => {
     expect(() => build({ marks: [mark, line(series, { x: "t", y: "v" })] })).toThrow(
       "has its chart to itself",
     );
-    expect(() => build({ marks: [mark], interaction: { brush: "x" } })).toThrow("do not brush");
+    expect(() => build({ marks: [mark], interaction: { brush: "x" } })).toThrow(
+      "radar brush: no axes to brush",
+    );
   });
 
   it("summarizes one polygon by its spokes", () => {
@@ -412,7 +414,7 @@ describe("radar", () => {
       "marks[0].domain: expected two finite numbers, ascending",
     );
     expect(bad({ fields: ["x", "y", "z"], points: "yes" })).toThrow("marks[0].points");
-    expect(bad({ category: "name" })).toThrow("Mark 0 (radar): radar needs category and value");
+    expect(bad({ category: "name" })).toThrow("marks[0]: radar: needs category and value");
     expect(bad({ category: "name", value: "x", fields: ["x", "y", "z"] })).toThrow("not both");
   });
 });

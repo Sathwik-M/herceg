@@ -398,7 +398,7 @@ answered.
 Both grids have blocks of 128 rows, two requests in flight, and 16 blocks
 cached (Herceg: 16 besides the blocks its view wants). Each waits 50 ms for
 scrolling to settle, and every scenario also runs with 0 (`--settle 50,0`):
-Herceg's `settle` delays only jumps (rows in view more than two blocks from
+Herceg's `settleDelay` delays only jumps (rows in view more than two blocks from
 those last wanted), while AG Grid's `blockLoadDebounceMillis` delays every
 block it loads, so its scroll traces at 50 ms show more rows not loaded than
 at 0. AG Grid's datasource cannot abort a request (its `getRows` has no

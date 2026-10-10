@@ -91,19 +91,20 @@ export function compileExpression(expression: Expression, table: Fields): Compil
 function compile(e: Expression, table: Fields): Compiled {
   if (e === null) return { type: "number", at: () => Number.NaN };
   if (typeof e === "number") {
-    if (!Number.isFinite(e)) throw new TypeError(`Expression numbers must be finite, not ${e}`);
+    if (!Number.isFinite(e))
+      throw new TypeError(`expression: expected finite numbers; received ${e}`);
     return { type: "number", at: () => e };
   }
   if (typeof e === "string") return { type: "string", at: () => e };
   if (typeof e === "boolean") return { type: "boolean", at: () => e };
   if (!Array.isArray(e) || typeof e[0] !== "string") {
-    throw new TypeError(`Not an expression: ${JSON.stringify(e)}`);
+    throw new TypeError(`expression: expected [op, ...args]; received ${JSON.stringify(e)}`);
   }
   const [op, ...args] = e as readonly [string, ...Expression[]];
   if (op === "field") return field(args, table);
   if (COMPARE.has(op)) return compare(op, args, table);
   if (op === "and" || op === "or") {
-    if (args.length < 1) throw new TypeError(`"${op}" needs operands`);
+    if (args.length < 1) throw new TypeError(`"${op}": needs operands`);
     const parts = args.map((arg) => typed(arg, "boolean", op, table).at);
     // Two operands, the common case, without a loop per row.
     const [p, q] = parts as [(row: number) => boolean, (row: number) => boolean];
@@ -140,7 +141,7 @@ function compile(e: Expression, table: Fields): Compiled {
     return { type: "number", at: (row) => unary(a!(row) as number) };
   }
   if (op === "min" || op === "max") {
-    if (args.length < 1) throw new TypeError(`"${op}" needs operands`);
+    if (args.length < 1) throw new TypeError(`"${op}": needs operands`);
     const parts = args.map((arg) => typed(arg, "number", op, table).at);
     const pick = op === "min" ? Math.min : Math.max;
     return { type: "number", at: (row) => pick(...parts.map((part) => part(row) as number)) };
@@ -158,7 +159,7 @@ function compile(e: Expression, table: Fields): Compiled {
     const otherwise = no === null ? undefined : compile(no!, table);
     if (then && otherwise && then.type !== otherwise.type)
       throw new TypeError(
-        `"if" branches give ${then.type} and ${otherwise.type}; they need one type`,
+        `"if": branches give ${then.type} and ${otherwise.type}; give them one type`,
       );
     const type = then?.type ?? otherwise?.type ?? "number";
     const missing = type === "string" ? null : Number.NaN;
@@ -166,19 +167,19 @@ function compile(e: Expression, table: Fields): Compiled {
     const b = otherwise ? otherwise.at : () => missing;
     return { type, at: (row) => (test(row) ? a(row) : b(row)) };
   }
-  throw new TypeError(`Unknown expression operator "${op}"`);
+  throw new TypeError(`expression: no operator "${op}"`);
 }
 
 function field(args: readonly Expression[], table: Fields): Compiled {
   const name = args[0];
   if (args.length !== 1 || typeof name !== "string")
-    throw new TypeError(`"field" needs one field name, as ["field", "x"]`);
+    throw new TypeError(`"field": expected one field name, as ["field", "x"]`);
   if (!table.has(name)) {
     const known = table
       .fields()
       .map((f) => `"${f}"`)
       .join(", ");
-    throw new Error(`Unknown field "${name}" in an expression; the table has ${known}`);
+    throw new Error(`expression: no field "${name}"; the table has ${known}`);
   }
   if (table.kind(name) === "category") {
     const { codes, dictionary } = table.categories(name);
@@ -199,7 +200,8 @@ function compare(op: string, args: readonly Expression[], table: Fields): Compil
   const [left, right] = arity(op, args, 2);
   // Comparing with null tests for a missing value.
   if (left === null || right === null) {
-    if (op !== "==" && op !== "!=") throw new TypeError(`"${op}" cannot compare with null`);
+    if (op !== "==" && op !== "!=")
+      throw new TypeError(`"${op}": only "==" and "!=" compare with null`);
     const other = compile(left === null ? right! : left!, table);
     const equal = op === "==";
     return { type: "boolean", at: (row) => isMissing(other.at(row)) === equal };
@@ -207,7 +209,7 @@ function compare(op: string, args: readonly Expression[], table: Fields): Compil
   const a = compile(left!, table);
   const b = compile(right!, table);
   if (a.type !== b.type)
-    throw new TypeError(`"${op}" compares ${a.type} with ${b.type}; both sides need one type`);
+    throw new TypeError(`"${op}": compares ${a.type} with ${b.type}; give both sides one type`);
   const code = categoryLiteral(left!, right!, table);
   if (code && (op === "==" || op === "!=")) {
     const { codes, target } = code;
@@ -321,13 +323,13 @@ function fieldName(e: Expression): string | undefined {
 }
 
 function membership(args: readonly Expression[], table: Fields): Compiled {
-  if (args.length < 2) throw new TypeError(`"in" needs a value and at least one candidate`);
+  if (args.length < 2) throw new TypeError(`"in": needs a value and at least one candidate`);
   const [value, ...candidates] = args;
   const a = compile(value!, table);
   for (const candidate of candidates) {
     const type = candidate === null ? a.type : typeof candidate;
     if (Array.isArray(candidate) || type !== a.type)
-      throw new TypeError(`"in" candidates must be ${a.type} literals`);
+      throw new TypeError(`"in": expected ${a.type} literal candidates`);
   }
   const set = new Set(candidates);
   const missing = candidates.includes(null);
@@ -360,14 +362,14 @@ function membership(args: readonly Expression[], table: Fields): Compiled {
 function typed(e: Expression, type: ValueType, op: string, table: Fields): Compiled {
   const compiled = compile(e, table);
   if (compiled.type !== type)
-    throw new TypeError(`"${op}" needs ${type} operands, not ${compiled.type}`);
+    throw new TypeError(`"${op}": expected ${type} operands; received ${compiled.type}`);
   return compiled;
 }
 
 function arity(op: string, args: readonly Expression[], count: number): readonly Expression[] {
   if (args.length !== count)
     throw new TypeError(
-      `"${op}" takes ${count} operand${count === 1 ? "" : "s"}, not ${args.length}`,
+      `"${op}": expected ${count} operand${count === 1 ? "" : "s"}; received ${args.length}`,
     );
   return args;
 }

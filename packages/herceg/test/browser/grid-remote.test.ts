@@ -356,7 +356,7 @@ describe("remote grids in the browser", () => {
     const ref = await (async () => {
       const model = createRemoteGridModel({
         source,
-        selection: store,
+        selectionStore: store,
         columns: [{ field: "id" }],
       }) as unknown as RemoteGridModel;
       model.setViewport(400, 280);

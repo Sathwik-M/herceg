@@ -235,7 +235,7 @@ describe("a layout mark in a subplot", () => {
       const { scene } = build({
         marks,
         panels: panels([{ id: "trend", ...(titled && { title: "Trend" }) }, { id: "share" }]),
-        x: { label: "Week" },
+        x: { title: "Week" },
       });
       const [trend, share] = scene.panels;
       const title = trend!.axes.find(({ orient }) => orient === "bottom")!.title!;
@@ -268,14 +268,14 @@ describe("a layout mark in a subplot", () => {
     // Nor does a y title only the pie's panel would take.
     const untitled = build({
       marks,
-      panels: panels([{ id: "trend", y: { label: "" } }, { id: "share" }], { columns: 2 }),
-      y: { label: "Revenue" },
+      panels: panels([{ id: "trend", y: { title: "" } }, { id: "share" }], { columns: 2 }),
+      y: { title: "Revenue" },
     });
     expect(untitled.scene.panels[0]!.plot).toEqual(plain.scene.panels[0]!.plot);
   });
 
   it("leaves a scale's room for glyphs to the panels with axes, in weighted grids", () => {
-    const dots = point(sales, { x: "week", y: "revenue", r: 12, panel: "trend" });
+    const dots = point(sales, { x: "week", y: "revenue", radius: 12, panel: "trend" });
     for (const across of [true, false]) {
       const { model } = build({
         marks: [dots, shares({ panel: "share" })],

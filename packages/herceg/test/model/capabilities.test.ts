@@ -151,7 +151,7 @@ const cartesian: MarkCase[] = [
   },
   {
     name: "heatmap",
-    make: (p) => heatmap(samples, { x: "x", y: "category", value: "y", ...p }),
+    make: (p) => heatmap(samples, { x: "x", y: "category", color: "y", ...p }),
     kind: "raster",
     noLegend: true,
   },
@@ -286,7 +286,7 @@ const layouts: MarkCase[] = [
   {
     name: "graph",
     make: () =>
-      graph(links, { source: "source", target: "target", nodes, node: "node", group: "group" }),
+      graph(links, { source: "source", target: "target", nodes, node: "node", color: "group" }),
     kind: "point",
     selects: true,
     drags: true,
@@ -396,7 +396,7 @@ describe("capabilities: facets", () => {
 
   it.each(alone)("$name refuses facets", (c) => {
     expect(() => build({ marks: [c.make()], facet: facet("group") })).toThrow(
-      "cannot have facets or panels",
+      ": no facets or panels yet; draw it in a chart of its own",
     );
   });
 
@@ -413,7 +413,7 @@ describe("capabilities: facets", () => {
     const view = rowView(samples, {});
     expect(() =>
       build({ marks: [point(view, { x: "x", y: "y" })], facet: facet("group") }),
-    ).toThrow('over a row view cannot be split by facets yet; give it facet: "repeat"');
+    ).toThrow('point facet: a row view cannot split into facets yet; give it facet: "repeat"');
     const { model, scene } = build({
       marks: [line(samples, { x: "x", y: "y" }), point(view, { x: "x", y: "y", facet: "repeat" })],
       facet: facet("group"),
@@ -427,17 +427,17 @@ describe("capabilities: facets", () => {
   const boundAnnotations = [
     {
       name: "rule",
-      make: (p?: Placement) => rule(samples, { x: "x", text: "note", ...p }),
+      make: (p?: Placement) => rule(samples, { x: "x", textField: "note", ...p }),
       kind: "rule",
     },
     {
       name: "region",
-      make: (p?: Placement) => region(samples, { y1: "low", y2: "high", text: "note", ...p }),
+      make: (p?: Placement) => region(samples, { y1: "low", y2: "high", textField: "note", ...p }),
       kind: "rect",
     },
     {
       name: "text",
-      make: (p?: Placement) => text(samples, { x: "x", y: "y", text: "note", ...p }),
+      make: (p?: Placement) => text(samples, { x: "x", y: "y", textField: "note", ...p }),
       kind: "text",
     },
   ] satisfies MarkCase[];
@@ -480,7 +480,7 @@ describe("capabilities: facets", () => {
         },
       });
     expect(() => build({ marks: [make()], facet: facet("group") })).toThrow(
-      'custom mark without series cannot be split into panels; give it facet: "repeat"',
+      'custom facet: without series, it cannot split into panels; give it facet: "repeat"',
     );
     const { scene } = build({
       marks: [line(samples, { x: "x", y: "y" }), make({ facet: "repeat" })],
@@ -516,32 +516,32 @@ describe("capabilities: subplots", () => {
 
   it.each(alone)("$name refuses subplots", (c) => {
     expect(() => build({ marks: [c.make()], panels: subplot })).toThrow(
-      "cannot have facets or panels",
+      ": no facets or panels yet; draw it in a chart of its own",
     );
   });
 
   it.each(paneled)("$name has its subplot to itself", (c) => {
     expect(() => build({ marks: [c.make()], panels: subplot })).toThrow(
-      "needs the id of the panel it draws in",
+      "panel: expected the id of the panel it draws in",
     );
     expect(() => build({ marks: [c.make({ panel: "*" })], panels: subplot })).toThrow(
-      "needs the id of the panel it draws in",
+      "panel: expected the id of the panel it draws in",
     );
     expect(() =>
       build({ marks: [c.make({ panel: "b" }), c.make({ panel: "b" })], panels: subplot }),
-    ).toThrow('Panel "b" has two layout marks');
+    ).toThrow(`${c.name} panel: a ${c.name} mark has panel "b" too`);
     expect(() =>
       build({
         marks: [c.make({ panel: "b" }), line(samples, { x: "x", y: "y", panel: "b" })],
         panels: subplot,
       }),
-    ).toThrow(`names the panel "b", which a ${c.name} mark has to itself`);
+    ).toThrow(`line panel: a ${c.name} mark has panel "b" to itself`);
     expect(() =>
       build({
         marks: [c.make({ panel: "b" }), rule({ x: 1, panel: "*" })],
         panels: subplot,
       }),
-    ).toThrow('with panel "*" would draw in panel "b"');
+    ).toThrow('rule panel: "*" would draw in panel "b"');
   });
 });
 
@@ -575,7 +575,7 @@ describe("capabilities: per-panel scales", () => {
           ]),
         }),
       ),
-    ).toThrow(`Panel "b" draws a ${c.name} mark, which has no axes`);
+    ).toThrow(`panels[1]: the ${c.name} mark it draws has no axes`);
   });
 
   it.each(alone)("$name refuses panels with their own scales", (c) => {
@@ -588,7 +588,7 @@ describe("capabilities: per-panel scales", () => {
         ]),
         resolve: { x: "independent", y: "independent" },
       }),
-    ).toThrow("cannot have facets or panels");
+    ).toThrow(": no facets or panels yet");
   });
 
   const financial = [
@@ -657,7 +657,7 @@ describe("capabilities: right axis", () => {
   it("refuses it to marks placed along y", () => {
     const sideways = bar(samples, { x: "y", y: "category", axis: "right" as never });
     expect(() => build({ marks: [sideways], facet: facet("group") })).toThrow(
-      "A bar mark placed along y cannot use the right axis",
+      "bar axis: marks along y cannot use the right axis",
     );
   });
 });
@@ -693,7 +693,7 @@ describe("capabilities: zoom and pan", () => {
     for (const x of [[0, 1, 2], time([0, 1, 2])]) {
       const cells = table({ x, y: [0, 1, 2], value: [1, 2, 3] });
       const zoomed = build({
-        marks: [heatmap(cells, { x: "x", y: "y", value: "value" })],
+        marks: [heatmap(cells, { x: "x", y: "y", color: "value" })],
         interaction: { zoom: "xy" },
       });
       const type = Array.isArray(x) ? "linear" : "time";
@@ -704,7 +704,7 @@ describe("capabilities: zoom and pan", () => {
       expect(zoomed.model.xScale()!.domain).toEqual([0.5, 1.5]);
       expect(zoomed.model.yScale()!.domain).toEqual([0.5, 1.5]);
       const { model, scene } = build({
-        marks: [heatmap(cells, { x: "x", y: "y", value: "value", xBanded: true, yBanded: true })],
+        marks: [heatmap(cells, { x: "x", y: "y", color: "value", xBanded: true, yBanded: true })],
         interaction: { zoom: "xy" },
       });
       expect([model.xScale()!.type, model.yScale()!.type]).toEqual(["band", "band"]);
@@ -716,7 +716,7 @@ describe("capabilities: zoom and pan", () => {
 
   it.each(layouts.filter((c) => !c.turns && !c.navigates))("$name refuses zoom", (c) => {
     expect(() => build({ marks: [c.make()], interaction: { zoom: true } })).toThrow(
-      `Charts of a ${c.name} mark do not zoom`,
+      `${c.name} zoom: no axes to zoom; drop interaction.zoom`,
     );
   });
 
@@ -740,7 +740,7 @@ describe("capabilities: zoom and pan", () => {
         if (after) expect([after.px, after.py]).not.toEqual([before.px, before.py]);
       }
       expect(() => build({ marks: [c.make()], interaction: { zoom: "x" } })).toThrow(
-        "zoom both ways",
+        `${c.name} zoom: expected interaction.zoom true or "xy"; received "x"`,
       );
     },
   );
@@ -755,7 +755,7 @@ describe("capabilities: zoom and pan", () => {
       const keys = itemKeys(model);
       expect(keys.every((key) => key.startsWith('[0,"N"'))).toBe(true);
       expect(() => build({ marks: [c.make()], interaction: { zoom: "x" } })).toThrow(
-        "zoom with interaction.zoom true",
+        `${c.name} zoom: expected interaction.zoom true; received "x"`,
       );
       // In facet panels, nothing drills yet.
       expect(build({ marks: [c.make()], facet: facet("group") }).model.controls).toBeUndefined();
@@ -765,11 +765,11 @@ describe("capabilities: zoom and pan", () => {
   it.each(paneled)("$name panels refuse zoom unless a panel has axes", (c) => {
     const interaction = { zoom: "x" } as const;
     expect(() => build({ marks: [c.make()], facet: facet("group"), interaction })).toThrow(
-      "have no x axis to zoom, brush, sync",
+      `${c.name} zoom: no axes to zoom`,
     );
     expect(() =>
       build({ marks: [c.make({ panel: "a" })], panels: panels([{ id: "a" }]), interaction }),
-    ).toThrow("have no x axis to zoom, brush, sync");
+    ).toThrow(`${c.name} zoom: no axes to zoom`);
     const { model } = build(besideLine(c, { interaction }));
     model.setViewport([1, 2], "a");
     model.scene(estimateText);
@@ -823,7 +823,9 @@ describe("capabilities: brushes", () => {
 
   it.each(layouts)("$name refuses brushes but maps' lassos", (c) => {
     expect(() => build({ marks: [c.make()], interaction: { brush: "x" } })).toThrow(
-      c.navigates === "plane" ? 'take a "lasso" brush' : `Charts of a ${c.name} mark do not brush`,
+      c.navigates === "plane"
+        ? `${c.name} brush: expected interaction.brush "lasso"; received "x"`
+        : `${c.name} brush: no axes to brush; drop interaction.brush`,
     );
     if (c.navigates === "plane") build({ marks: [c.make()], interaction: { brush: "lasso" } });
   });
@@ -831,7 +833,7 @@ describe("capabilities: brushes", () => {
   it.each(layouts)("$name takes interaction.drag only if it moves items", (c) => {
     const config = { marks: [c.make()], interaction: { drag: true } };
     if (c.drags) expect(build(config).model.controls?.kind).toBe("drag");
-    else expect(() => build(config)).toThrow("have nothing to drag");
+    else expect(() => build(config)).toThrow(`${c.name} drag: no nodes to drag`);
   });
 
   it.each(paneled)("$name beside a line accepts an x brush for the line's panel", (c) => {
@@ -839,7 +841,7 @@ describe("capabilities: brushes", () => {
     expectGeometry(scene.panels[1]!, c.kind);
     expect(() =>
       build({ marks: [c.make()], facet: facet("group"), interaction: { brush: "x" } }),
-    ).toThrow("have no x axis to zoom, brush, sync");
+    ).toThrow(`${c.name} brush: no axes to brush`);
   });
 
   it.each(cartesian)("$name subplots accept x brushes and refuse other brushes", (c) => {
@@ -866,7 +868,7 @@ describe("capabilities: brushes", () => {
     expectGeometry(build({ ...config, interaction: { brush: "x" } }).scene.panels[0]!, "point");
     for (const brush of ["y", "xy", "lasso"] as const) {
       expect(() => build({ ...config, interaction: { brush } })).toThrow(
-        "y categories of their own can brush along x only",
+        "panels with y categories of their own brush along x only",
       );
     }
   });
@@ -894,14 +896,14 @@ describe("capabilities: synced selection", () => {
   it.each(layouts)("$name refuses synced selection", (c) => {
     expect(() =>
       build({ marks: [c.make()], interaction: { sync: "capability-contract" } }),
-    ).toThrow("have no x axis to sync");
+    ).toThrow(`${c.name} sync: no axes to sync; drop interaction.sync`);
   });
 
   it.each(paneled)("$name beside a line accepts a sync group for the line's panel", (c) => {
     const interaction = { sync: "capability-contract" };
     expectGeometry(build(besideLine(c, { interaction })).scene.panels[1]!, c.kind);
     expect(() => build({ marks: [c.make()], facet: facet("group"), interaction })).toThrow(
-      "have no x axis to zoom, brush, sync",
+      `${c.name} sync: no axes to sync`,
     );
   });
 
@@ -1365,7 +1367,7 @@ describe("capabilities: dendrogram", () => {
     expect(() => build({ marks: [make()], facet: facet("group") })).toThrow('facet: "repeat"');
     const faceted = build({
       marks: [
-        heatmap(samples, { x: "category", y: "group", value: "y" }),
+        heatmap(samples, { x: "category", y: "group", color: "y" }),
         make({ facet: "repeat" }),
       ],
       facet: facet("group"),
@@ -1386,8 +1388,8 @@ describe("capabilities: dendrogram", () => {
       legend: true,
       interaction: { zoom: "xy", brush: "x", sync: "dendrogram-contract" },
       animation: { values: true },
-      x: { axis: false },
-      y: { axis: false },
+      x: { show: false },
+      y: { show: false },
     });
     const geometry = scene.panels[0]!.marks[0] as SegmentGeometry;
     const before = Array.from(geometry.coords.subarray(0, geometry.count * 4));

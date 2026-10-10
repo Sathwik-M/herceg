@@ -117,7 +117,9 @@ describe("histogram options", () => {
     ].map((bins) => ({ bins })),
   )("refuses invalid explicit edges $bins", ({ bins }) => {
     expect(() => histogram(table({ v: [1] }), { x: "v", bins })).toThrow(RangeError);
-    expect(() => histogram(table({ v: [1] }), { x: "v", bins })).toThrow(/edges|increasing|finite/);
+    expect(() => histogram(table({ v: [1] }), { x: "v", bins })).toThrow(
+      /histogram bins(\[\d+\])?: expected (2 to 1001 edges|a finite number|a number above)/,
+    );
   });
 
   it.each([false, true])(
@@ -401,14 +403,14 @@ describe("histogram options", () => {
   it("refuses untyped invalid orientation and layout forms at construction", () => {
     const data = table({ v: [1] });
     for (const [spec, error] of [
-      [{ type: "histogram" }, /exactly one field/],
-      [{ type: "histogram", x: "v", y: "v" }, /exactly one field/],
-      [{ type: "histogram", y: "v", axis: "right" }, /right axis/],
-      [{ type: "histogram", x: "v", dodge: true, stack: true }, /dodge and stack/],
-      [{ type: "histogram", x: "v", commonNorm: 1 }, /boolean/],
-      [{ type: "histogram", x: "v", cumulative: "yes" }, /boolean/],
-      [{ type: "histogram", x: "v", dodge: "yes" }, /boolean/],
-      [{ type: "histogram", x: "v", normalize: "fraction" }, /normalize/],
+      [{ type: "histogram" }, /histogram: needs exactly one of x and y/],
+      [{ type: "histogram", x: "v", y: "v" }, /histogram: needs exactly one of x and y/],
+      [{ type: "histogram", y: "v", axis: "right" }, /histogram axis: .*no right axis/],
+      [{ type: "histogram", x: "v", dodge: true, stack: true }, /dodge or stack, not both/],
+      [{ type: "histogram", x: "v", commonNorm: 1 }, /commonNorm: expected true or false/],
+      [{ type: "histogram", x: "v", cumulative: "yes" }, /cumulative: .*received "yes"/],
+      [{ type: "histogram", x: "v", dodge: "yes" }, /dodge: expected true or false/],
+      [{ type: "histogram", x: "v", normalize: "fraction" }, /normalize: .*received "fraction"/],
     ] as const) {
       // @ts-expect-error these inputs also fail at compile time
       expect(() => new HistogramMark(spec, data)).toThrow(error);

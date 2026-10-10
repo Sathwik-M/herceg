@@ -35,7 +35,7 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   /** The underlying chart, for imperative calls such as `setViewport` or `toSVG`. */
   ref?: Ref<HercegChart | null>;
   /** The view changed (zoom, pan, reset, sync): x, y, and right y ranges, each null when not zoomed. */
-  onViewportChange?: ChartListener<"viewport">;
+  onViewport?: ChartListener<"viewport">;
   /** The selection changed (`interaction.brush`): x and y ranges and a lasso's outline, null when cleared. */
   onSelect?: ChartListener<"select">;
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
@@ -45,13 +45,13 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   /** A channel `rowSelection` binds changed, by any chart or grid: what it holds now. */
   onRowSelection?: ChartListener<"rowSelection">;
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
-  onCameraChange?: ChartListener<"camera">;
+  onCamera?: ChartListener<"camera">;
   /** A treemap or sunburst was drilled into a node or back out: its key (null for the whole tree) and path. */
   onDrill?: ChartListener<"drill">;
   /** A network's node was moved (dragged, keys, `setItemPosition`) or put back (null). */
   onItemMove?: ChartListener<"itemMove">;
   /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
-  onVisibilityChange?: ChartListener<"visibility">;
+  onVisibility?: ChartListener<"visibility">;
   /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
   onRender?: ChartListener<"render">;
 }
@@ -167,7 +167,7 @@ interface Applied {
  * directly, without re-rendering React.
  *
  * ```tsx
- * <Chart title="Latency" y={{ label: "ms" }}>
+ * <Chart title="Latency" y={{ title: "ms" }}>
  *   <Line data={metrics} x="time" y={["p50", "p99"]} />
  *   <Rule y={250} label="SLO" />
  * </Chart>
@@ -179,15 +179,15 @@ export function Chart({
   className,
   style,
   ref,
-  onViewportChange,
+  onViewport,
   onSelect,
   onHover,
   onClick,
   onRowSelection,
-  onCameraChange,
+  onCamera,
   onDrill,
   onItemMove,
-  onVisibilityChange,
+  onVisibility,
   onRender,
   ...options
 }: ChartProps) {
@@ -215,15 +215,15 @@ export function Chart({
     };
   }, []);
 
-  useChartEvent(chart, "viewport", onViewportChange);
+  useChartEvent(chart, "viewport", onViewport);
   useChartEvent(chart, "select", onSelect);
   useChartEvent(chart, "hover", onHover);
   useChartEvent(chart, "click", onClick);
   useChartEvent(chart, "rowSelection", onRowSelection);
-  useChartEvent(chart, "camera", onCameraChange);
+  useChartEvent(chart, "camera", onCamera);
   useChartEvent(chart, "drill", onDrill);
   useChartEvent(chart, "itemMove", onItemMove);
-  useChartEvent(chart, "visibility", onVisibilityChange);
+  useChartEvent(chart, "visibility", onVisibility);
   const render = useChartEvent(chart, "render", onRender);
 
   useImperativeHandle<HercegChart | null, HercegChart | null>(ref, () => chart.current, []);

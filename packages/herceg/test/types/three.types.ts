@@ -14,7 +14,7 @@ const data = table({
   kind: category(["p", "q"]),
 });
 
-point3d(data, { x: "a", y: "when", z: "c", series: "kind", name: "kind", color: "b" });
+point3d(data, { x: "a", y: "when", z: "c", series: "kind", labelField: "kind", color: "b" });
 // @ts-expect-error categories have no place along a 3D scatter's axes
 point3d(data, { x: "kind", y: "b", z: "c" });
 // @ts-expect-error series are categories

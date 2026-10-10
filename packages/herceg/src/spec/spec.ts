@@ -11,19 +11,10 @@ import type { Expression } from "../data/expression.ts";
 export type { Expression, Operator } from "../data/expression.ts";
 
 /**
- * The spec format this herceg writes; it reads the earlier ones too. Each
- * version adds what an older reader would ignore and draw differently:
- * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
- * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`,
- * version 5 enabled x axis `seams`, version 6 raw box plot notches and
- * non-default whiskers, version 7 split violins and non-default violin
- * interiors, version 8 `rowSelection`, version 9 heatmaps over number and
- * time fields on number and time axes, version 10 marks' `legendGroup`,
- * points' and error bars' `dodge`, points' `jitter`, and histograms' `y`,
- * bin edges, "probability", `commonNorm`, `cumulative`, and `dodge`, and
- * version 11 directed networks and link labels.
+ * The spec format version this herceg writes and reads. Readers refuse
+ * specs of later versions.
  */
-export const SPEC_VERSION = 11;
+export const SPEC_VERSION = 1;
 
 /** Column name in a table. */
 export type Field = string;
@@ -36,20 +27,8 @@ export type Field = string;
 export type Frozen<T> = T extends object ? { readonly [K in keyof T]: Frozen<T[K]> } : T;
 
 export interface ChartSpec {
-  /**
-   * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
-   * `grid` must give 2 or later, those using `resolve.x`, a panel's `x`, or
-   * x axis `breaks` 3 or later, those with a `navigator` 4 or later,
-   * those with enabled x axis `seams` 5, raw box plot notches or non-default
-   * whiskers 6, split violins or non-default violin interiors 7,
-   * `rowSelection` 8, heatmap `xStep`, `yStep`, `date`, or `xBanded` /
-   * `yBanded` false 9, and marks' `legendGroup`, points' and error bars'
-   * `dodge` and `jitter`, and histograms with `y`, bin edges, "probability",
-   * `commonNorm`, `cumulative`, or `dodge` 10, and directed networks or link
-   * labels 11, so that older readers refuse them rather than draw them
-   * differently. Heatmaps in specs before 9 band number and time fields.
-   */
-  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  /** Spec format version; 1, the only one so far, when omitted. */
+  version?: 1;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -77,7 +56,7 @@ export interface ChartSpec {
   resolve?: ResolveSpec;
   /**
    * Subplots: panels in a grid, each drawing the marks that name it in their
-   * `panel`. Needs spec version 2; not with `facet`.
+   * `panel`. Not with `facet`.
    */
   panels?: readonly PanelSpec[];
   /** How `panels` are placed: in rows of `columns` (1 by default), in order. */
@@ -90,16 +69,15 @@ export interface ChartSpec {
    * per table: brushes, lassos, and clicks write the rows they select
    * there, and the chart highlights the rows the channel holds, whoever
    * selected them (another chart, a grid). Stores are not part of the
-   * spec: `loadSpec` takes them, or makes them. Needs spec version 8, and
-   * marks along axes.
+   * spec: `loadSpec` takes them, or makes them. Needs marks along axes.
    */
   rowSelection?: RowSelectionSpec | readonly RowSelectionSpec[];
   /**
    * A range navigator: a strip under the plot drawing the chart's marks
    * over the whole x domain, with a window showing the x range in view,
    * which dragging and the keyboard move and resize. `true` uses the
-   * defaults. Needs spec version 4, a number or time x axis, and a chart
-   * without facets or panels.
+   * defaults. Needs a number or time x axis, and a chart without facets or
+   * panels.
    */
   navigator?: boolean | NavigatorSpec;
   /**
@@ -167,7 +145,7 @@ export type FacetSpec = WrappedFacetSpec | GridFacetSpec;
 export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
 
 /**
- * Scale sharing between panels; needs spec version 2 (3 for `x`). A category
+ * Scale sharing between panels. A category
  * axis that panels do not share holds only the categories of the rows they
  * draw. Histograms choose their bins from the rows of the panels sharing an
  * x scale.
@@ -286,18 +264,18 @@ export interface DerivedSpec {
  * - `calculate`: adds (or replaces) the field `as` with the expression's value.
  * - `bin`: replaces a number or time field (or adds `as`) with the start of
  *   its bin: `step` wide from `start`, or about `count` round bins.
- * - `aggregate`: one row per group of `groupby` values (one row without),
+ * - `aggregate`: one row per group of `by` values (one row without),
  *   with the group's fields and each operation's result.
  * - `rolling`: adds each operation over the trailing `size` rows (within
- *   each `groupby` group), in row order.
+ *   each `by` group), in row order.
  * - `sort`: orders rows by a field, stably.
  */
 export type TransformSpec =
   | { filter: Expression }
   | { calculate: Expression; as: Field }
   | { bin: Field; as?: Field; step?: number; count?: number; start?: number }
-  | { aggregate: readonly AggregateSpec[]; groupby?: readonly Field[] }
-  | { rolling: readonly RollingSpec[]; size: number; groupby?: readonly Field[] }
+  | { aggregate: readonly AggregateSpec[]; by?: readonly Field[] }
+  | { rolling: readonly RollingSpec[]; size: number; by?: readonly Field[] }
   | { sort: Field; order?: "ascending" | "descending" };
 
 /** An aggregate: its operation, the number field it reads (none for count), and its name. */
@@ -414,7 +392,7 @@ export interface AxisSpec {
   /** Include zero in the domain. Default true for the value axis of areas and bars. */
   zero?: boolean;
   /** Axis title. */
-  label?: string;
+  title?: string;
   /** Grid lines across the plot. Default true for y, and for x when it measures horizontal bars. */
   grid?: boolean;
   /** Approximate number of ticks. */
@@ -422,21 +400,21 @@ export interface AxisSpec {
   /** Intl.NumberFormat options, or Intl.DateTimeFormat options for time. */
   format?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
   /** Draw the axis. Default true. */
-  axis?: boolean;
+  show?: boolean;
 }
 
 /** The x axis: an axis whose time may leave out spans of time. */
 export interface XAxisSpec extends AxisSpec {
   /**
    * Time the axis leaves out, so that what is left is drawn without gaps:
-   * weekends, hours outside trading sessions, holidays. Needs a time axis
-   * and spec version 3. Data inside a break is not drawn; lines and areas
+   * weekends, hours outside trading sessions, holidays. Needs a time axis.
+   * Data inside a break is not drawn; lines and areas
    * join the points on either side.
    */
   breaks?: readonly TimeBreakSpec[];
   /**
    * Dashed vertical lines behind data at time breaks' seams. Default false;
-   * needs time-axis breaks and spec version 5. Seams are kept in chronological
+   * needs time-axis breaks. Seams are kept in chronological
    * order at least `minSpacing` CSS pixels apart (default 40), excluding plot edges.
    */
   seams?: boolean | { minSpacing?: number };
@@ -651,7 +629,7 @@ interface SeriesBase extends MarkBase {
    * Marks naming the same group share series by name: series of the same
    * name (a `series` value, or a mark's `label`) share a color, one legend
    * entry, and visibility, as a bar and its error bars or a line and its
-   * band do. Needs spec version 8.
+   * band do.
    */
   legendGroup?: string;
 }
@@ -744,7 +722,7 @@ interface RuleStyle extends MarkBase {
   /** Text drawn by every rule. */
   label?: string;
   /** Category or number field with each rule's text, for rules from data. */
-  text?: Field;
+  textField?: Field;
 }
 
 /** A SciPy-layout linkage tree, whose leaves stand on category bands. */
@@ -784,11 +762,11 @@ interface RegionStyle extends MarkBase {
   /** Text drawn in the top left corner of every region. */
   label?: string;
   /** Category or number field with each region's text. */
-  text?: Field;
+  textField?: Field;
 }
 
 /**
- * Text at (x, y): `label` for one constant text, or `text` for a field with
+ * Text at (x, y): `label` for one constant text, or `textField` for a field with
  * each row's text. Labels are drawn above the data and left out when their
  * point is outside the plot.
  */
@@ -798,7 +776,7 @@ export interface TextSpec extends MarkBase {
   y: Position;
   label?: string;
   /** Category or number field with each label's text. */
-  text?: Field;
+  textField?: Field;
   /** Defaults to the theme's text color. */
   fill?: string;
   /** Which end of the text is at the point. Default "middle". */
@@ -912,8 +890,7 @@ interface ErrorBarStyle extends SeriesBase {
   series?: Field;
   /**
    * With `series` and category positions, the series side by side in each
-   * band, as grouped bars are, so each interval stands on its bar. Needs
-   * spec version 8.
+   * band, as grouped bars are, so each interval stands on its bar.
    */
   dodge?: boolean;
   stroke?: string;
@@ -1236,20 +1213,20 @@ export interface GraphSpec {
   value?: Field;
   /**
    * Links go from `source` to `target`, with an arrowhead at the target;
-   * a pair's links one way and the other are two. Needs spec version 11.
+   * a pair's links one way and the other are two.
    */
   directed?: boolean;
   /**
    * Category field naming each link, written along those with room; a link
-   * of rows naming it differently has none. Needs spec version 11.
+   * of rows naming it differently has none.
    */
-  linkLabel?: Field;
+  linkLabelField?: Field;
   /** Name of a table in `ChartSpec.data` with a row per node; needs `node`. */
   nodes?: string;
   /** Category field of `nodes` naming each row's node, as `source` and `target` do. */
   node?: Field;
   /** Category field of `nodes`: nodes are colored by it, with a legend. */
-  group?: Field;
+  color?: Field;
   /** Number field of `nodes` sizing nodes by area. */
   size?: Field;
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
@@ -1269,7 +1246,7 @@ export interface GeoShapeSpec {
   /** The geometry field; the table's only one by default. */
   geometry?: Field;
   /** Category field naming each region, for tooltips, keyboard reading, and the summary. */
-  name?: Field;
+  labelField?: Field;
   /** A number field colored on a continuous scale, or a category field with a palette color per value. */
   color?: Field;
   /** Colors for a number `color`, low to high, or a scheme name such as "viridis". */
@@ -1294,20 +1271,30 @@ export interface GeoShapeSpec {
  * Points of a map at `longitude` and `latitude` (number fields, degrees),
  * sized, colored, and split into series as `point` marks are.
  */
-export interface GeoPointSpec {
+/**
+ * A point's size: a constant `radius` in pixels, or a number field `size`
+ * sized by area within `radiusRange` (bubbles); not both.
+ */
+export type PointSizeSpec =
+  | { radius?: number; size?: never; radiusRange?: never }
+  | { radius?: never; size?: Field; radiusRange?: readonly [number, number] };
+
+/**
+ * Points of a map: `GeoPointStyleSpec` with a radius of 4 pixels, or sizes
+ * from 2 to 16 pixels, by default.
+ */
+export type GeoPointSpec = GeoPointStyleSpec & PointSizeSpec;
+
+interface GeoPointStyleSpec {
   type: "geopoint";
   data?: string;
   id?: string;
   longitude: Field;
   latitude: Field;
   /** Category field naming each point, for tooltips, keyboard reading, and the summary. */
-  name?: Field;
+  labelField?: Field;
   /** Category field: one colored set of points per value, with a legend. */
   series?: Field;
-  /** Radius in pixels, or a number field sized by area within `rRange` (bubbles). */
-  r?: number | Field;
-  /** Radii of the smallest and largest values of an `r` field. Default [2, 16]. */
-  rRange?: readonly [number, number];
   /** A number field colored on a continuous scale. */
   color?: Field;
   colors?: readonly string[] | string;
@@ -1347,20 +1334,23 @@ export type HistogramSpec = SeriesBase & {
   normalize?: "count" | "probability" | "percent" | "density";
   /**
    * Weights normalized series by their share of the finite values of every
-   * series (in the panel, with facets), hidden ones included. Needs spec version 8.
+   * series (in the panel, with facets), hidden ones included.
    */
   commonNorm?: boolean;
-  /** Each bar measures its bin and the bins before it. Needs spec version 8. */
+  /** Each bar measures its bin and the bins before it. */
   cumulative?: boolean;
   fill?: string;
   fillOpacity?: number;
   label?: string;
 } & ({ x: Field; y?: never; axis?: "left" | "right" } | { y: Field; x?: never; axis?: "left" }) &
-  // Stacked, or with `dodge` (spec version 8) side by side within each bin.
+  // Stacked, or with `dodge` side by side within each bin.
   ({ stack?: boolean; dodge?: false } | { stack?: false; dodge?: boolean });
 
 /** Points at (x, y): scatter plots. */
-export interface PointSpec extends SeriesBase {
+/** Points: `PointStyleSpec` with a radius of 2.5 pixels, or sizes from 2 to 12 pixels, by default. */
+export type PointSpec = PointStyleSpec & PointSizeSpec;
+
+interface PointStyleSpec extends SeriesBase {
   type: "point";
   /** A number, time, or category field; a category field places points in its bands. */
   x: Field;
@@ -1368,10 +1358,6 @@ export interface PointSpec extends SeriesBase {
   series?: Field;
   /** Number, time, or category field matching points across resets when values animate. */
   animationKey?: Field;
-  /** Radius in pixels, or a number field sized by area within `rRange`. */
-  r?: number | Field;
-  /** Radii of the smallest and largest values of an `r` field. Default [2, 12]. */
-  rRange?: readonly [number, number];
   /** Outline color of every point; the chart's background with only `strokeWidth`. */
   stroke?: string;
   /** Outline width in pixels: 1 with only `stroke`, none by default. */
@@ -1389,40 +1375,41 @@ export interface PointSpec extends SeriesBase {
   colorMidpoint?: number;
   /**
    * A shape's name ("circle", "square", "triangle", ...), or a category
-   * field with a shape per value. A name that is both is refused.
+   * field with a shape per value: `{ field }`, as herceg writes it, or the
+   * field's name when no shape has it. A name that is both is refused.
    */
-  symbol?: string;
+  symbol?: string | { field: Field };
   /** "pixel" draws opaque points sharing a device pixel once. Default "none". */
   sampling?: "none" | "pixel";
   /**
    * With `series` and a category `x` or `y`, the series side by side in each
-   * band, as grouped bars are. Needs spec version 8.
+   * band, as grouped bars are.
    */
   dodge?: boolean;
   /**
    * With a category `x` or `y`, points spread across their band (or their
    * dodged share of it) over `width`, a fraction of it from 0 to 1, by a
-   * hash of each row's identity and `seed` (0 by default). Needs spec version 8.
+   * hash of each row's identity and `seed` (0 by default).
    */
   jitter?: { width: number; seed?: number };
   label?: string;
 }
 
 /**
- * A grid of cells colored by `value`: cells at `x` and `y`, or the days of
+ * A grid of cells colored by `color`: cells at `x` and `y`, or the days of
  * a `date` laid out as a calendar. Category fields give one column (or
  * row) per category. Number and time fields place a cell at each distinct
  * value along a number or time axis, reaching halfway to the values beside
  * it (or `xStep` / `yStep` wide); with `xBanded` / `yBanded`, they give one
- * column (or row) per distinct value instead. Specs before version 9 band
- * every field, as if both `xBanded` and `yBanded` were true.
+ * column (or row) per distinct value instead.
  */
 export type HeatmapSpec = HeatmapGridSpec | HeatmapCalendarSpec;
 
 /** The options both forms of heatmap share. */
 interface HeatmapBase extends MarkBase {
   type: "heatmap";
-  value: Field;
+  /** Number or time field: each cell's value, mapped to color. */
+  color: Field;
   /** Color ramp from low to high values, or a scheme name; defaults to the theme's. */
   colors?: readonly string[] | string;
   /** The values at the ends of the ramp; the values' extent by default. */
@@ -1445,15 +1432,14 @@ export interface HeatmapGridSpec extends HeatmapBase {
   /**
    * Each cell's width along a number or time x (milliseconds for times),
    * centered on its value but never past halfway to a closer neighbor, so
-   * values further apart leave gaps. Needs spec version 9; not with `xBanded`.
+   * values further apart leave gaps. Not with `xBanded`.
    */
   xStep?: number;
   /** Each cell's height along a number or time y, as `xStep`. */
   yStep?: number;
   /**
    * One column per distinct value of a number or time x, in ascending
-   * order, instead of cells along a number or time axis. `false` needs spec
-   * version 9, before which number and time fields are always banded.
+   * order, instead of cells along a number or time axis.
    */
   xBanded?: boolean;
   /** One row per distinct value of a number or time y, rising, as `xBanded`. */
@@ -1468,8 +1454,7 @@ export interface HeatmapGridSpec extends HeatmapBase {
  * `timeZone`. "weeks" (the default) puts a column per week along a time x
  * axis and a row per day of the week, from `weekStart` ("mon" by default)
  * down; "months" a row per month, from the first day's month down, and a
- * column per day of the month, 1 to 31. Days without rows are empty. Needs
- * spec version 9.
+ * column per day of the month, 1 to 31. Days without rows are empty.
  */
 export interface HeatmapCalendarSpec extends HeatmapBase {
   date: Field;
@@ -1497,9 +1482,9 @@ export interface Point3DSpec {
   /** Category field: one colored set of points per value, with a legend. */
   series?: Field;
   /** Category field naming each point, for tooltips and keyboard reading. */
-  name?: Field;
+  labelField?: Field;
   /** Radius in pixels; default 3.5. */
-  r?: number;
+  radius?: number;
   /** A number field colored on a continuous scale, with a color legend. */
   color?: Field;
   /** Colors for `color`, low to high, or a scheme name such as "viridis". */

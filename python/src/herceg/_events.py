@@ -13,6 +13,8 @@ import numbers
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ._data import _time_ms, shown
+
 #: A position on an axis as Python sees it: a number, a datetime on time
 #: axes (naive, in UTC, like the datetimes herceg reads), or a category label.
 Value = float | _dt.datetime | str
@@ -88,7 +90,7 @@ class Inspection:
     label: str
     points: tuple[InspectedPoint, ...]
     #: The facet value of the panel, in charts with facets; with ``facet_row``
-    #: and ``facet_col``, both values as a JSON array, as in ``'["North","A"]'``.
+    #: and ``facet_column``, both values as a JSON array, as in ``'["North","A"]'``.
     panel: str | None = None
     #: A 3D chart's point by column: numbers (datetimes as epoch milliseconds)
     #: and category labels; None for other charts.
@@ -115,7 +117,8 @@ def encode_viewport(value: Any) -> dict[str, Any]:
     elif not isinstance(value, Viewport):
         value = Viewport(x=value)
     axes = {"x": value.x, "y": value.y, "yRight": value.y_right}
-    encoded = {axis: _encode_range(ends, axis) for axis, ends in axes.items()}
+    names = {"x": "Viewport x", "y": "Viewport y", "yRight": "Viewport y_right"}
+    encoded = {axis: _encode_range(ends, names[axis]) for axis, ends in axes.items()}
     return {
         **{axis: ends for axis, (ends, _) in encoded.items()},
         "time": [axis for axis, (_, time) in encoded.items() if time],
@@ -144,13 +147,13 @@ def encode_selection(value: Any) -> dict[str, Any] | None:
         return None
     if not isinstance(value, Selection):
         value = Selection(x=value)
-    x, x_time = _encode_range(value.x, "x")
-    y, y_time = _encode_range(value.y, "y")
+    x, x_time = _encode_range(value.x, "Selection x")
+    y, y_time = _encode_range(value.y, "Selection y")
     lasso = None
     if value.lasso is not None:
         points = [_vertex(point) for point in value.lasso]
         if len(points) < 3:
-            raise ValueError(f"a lasso needs at least 3 points, not {len(points)}")
+            raise ValueError(f"Selection lasso: expected at least 3 points; received {len(points)}")
         lasso = [[px, py] for (px, _), (py, _) in points]
         x_time = x_time or any(px_time for (_, px_time), _ in points)
         y_time = y_time or any(py_time for _, (_, py_time) in points)
@@ -258,7 +261,7 @@ def _range(ends: Any, time: bool) -> Range | None:
     return start, end
 
 
-def _encode_range(value: Any, axis: str) -> tuple[list[Any] | None, bool]:
+def _encode_range(value: Any, role: str) -> tuple[list[Any] | None, bool]:
     """A range as the browser takes it, and whether it holds times: numbers in
     ascending order, datetimes as epoch milliseconds, category labels as given."""
     if value is None:
@@ -268,12 +271,16 @@ def _encode_range(value: Any, axis: str) -> tuple[list[Any] | None, bool]:
             raise TypeError
         start, end = value
     except (TypeError, ValueError):
-        raise ValueError(f"{axis} must be a (start, end) pair or None, not {value!r}") from None
+        raise ValueError(
+            f"{role}: expected a (start, end) pair or None; received {shown(value)}"
+        ) from None
     if isinstance(start, str) or isinstance(end, str):
         if not (isinstance(start, str) and isinstance(end, str)):
-            raise ValueError(f"a range of categories on {axis} needs two category labels")
+            raise ValueError(
+                f"{role}: a range of categories needs two category labels; received {value!r}"
+            )
         return [start, end], False
-    ends = [_milliseconds(start, axis), _milliseconds(end, axis)]
+    ends = [_milliseconds(start, role), _milliseconds(end, role)]
     time = not any(isinstance(end, numbers.Real) for end in (start, end))
     return sorted(ends), time
 
@@ -283,10 +290,12 @@ def _vertex(point: Any) -> tuple[tuple[float, bool], tuple[float, bool]]:
     try:
         x, y = point
     except (TypeError, ValueError):
-        raise ValueError(f"a lasso's points are (x, y) pairs, not {point!r}") from None
+        raise ValueError(
+            f"Selection lasso: expected (x, y) pairs; received {shown(point)}"
+        ) from None
     return (
-        (_milliseconds(x, "lasso x"), not isinstance(x, numbers.Real)),
-        (_milliseconds(y, "lasso y"), not isinstance(y, numbers.Real)),
+        (_milliseconds(x, "Selection lasso"), not isinstance(x, numbers.Real)),
+        (_milliseconds(y, "Selection lasso"), not isinstance(y, numbers.Real)),
     )
 
 
@@ -306,13 +315,16 @@ def _time(value: float, time: bool) -> float | _dt.datetime:
         return float(value)
 
 
-def _milliseconds(value: Any, axis: str) -> float:
+def _milliseconds(value: Any, role: str) -> float:
     if isinstance(value, numbers.Real):
         number = float(value)
     else:
-        from ._data import _time_ms
-
-        number = _time_ms(value)
+        try:
+            number = _time_ms(value)
+        except TypeError:
+            raise TypeError(
+                f"{role}: expected numbers or datetimes; received {shown(value)}"
+            ) from None
     if not math.isfinite(number):
-        raise ValueError(f"{axis} values must be finite, not {value!r}")
+        raise ValueError(f"{role}: expected finite values; received {value!r}")
     return number

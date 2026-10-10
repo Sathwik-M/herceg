@@ -132,7 +132,7 @@ function grid(source: Table, store: SelectionStore): Grid {
     model: createGridModel({
       data: rowView(source),
       columns: [{ field: "x" }, { field: "y" }],
-      selection: store,
+      selectionStore: store,
       channel: "focus",
     }),
     ariaLabel: "Points",

@@ -350,8 +350,7 @@ export class ChartModel {
    */
   setCamera(camera: CameraSpec | null): boolean {
     const resolve = this.#layouts[0]?.camera;
-    if (!resolve || !this.#camera)
-      throw new Error("Only 3D charts (point3d, line3d, and surface marks) have a camera");
+    if (!resolve || !this.#camera) throw new Error("setCamera: only 3D charts have a camera");
     const next = camera ? resolve.call(this.#layouts[0], camera, this.#camera) : this.#configured!;
     if (JSON.stringify(next) === JSON.stringify(this.#camera)) return false;
     this.#camera = next;
@@ -404,10 +403,10 @@ export class ChartModel {
   xGroupOf(panel?: string): string {
     if (panel === undefined) {
       if (this.sharesX) return "";
-      throw new Error("Charts whose panels have x scales of their own need a panel");
+      throw new Error("panel: required when panels have x scales of their own");
     }
     const view = this.#views.find(({ key }) => key === panel);
-    if (!view) throw new RangeError(`The chart has no panel "${panel}"`);
+    if (!view) throw new RangeError(`panel: no panel "${panel}"`);
     return view.xGroup;
   }
 
@@ -439,9 +438,7 @@ export class ChartModel {
    */
   checkYViewport(viewport: Partial<YViewport>): void {
     if ((viewport.y && !this.#shares("y")) || (viewport.yRight && !this.#shares("yRight")))
-      throw new Error(
-        "Charts whose panels have y scales of their own have no one viewport of them",
-      );
+      throw new Error("setViewport y: panels with y scales of their own have no one y range");
   }
 
   /**
@@ -503,17 +500,15 @@ export class ChartModel {
     );
     const kinds = marks.map((mark) => mark.channelKind(channel));
     if (kinds.includes("category")) {
-      if (axis === "yRight") throw new Error("Category y values cannot go on the right axis");
+      if (axis === "yRight") throw new Error('axis: "right" takes no category y values');
       // Every mark with a field on this channel must band it.
       const index = kinds.findIndex((kind) => kind !== undefined && kind !== "category");
       if (index >= 0) {
         const mark = marks[index]!;
-        throw new Error(
-          `A ${mark.spec.type} mark with a numeric ${axis} cannot share a categorical ${axis} axis`,
-        );
+        throw new Error(`${mark.spec.type} ${axis}: numbers cannot share a category axis`);
       }
       if (declared)
-        throw new Error(`The ${axis} axis is categorical; its type cannot be "${declared}"`);
+        throw new Error(`chart ${axis}.type: the axis shows categories; drop "${declared}"`);
       return "band";
     }
     if (declared) return declared;
@@ -827,8 +822,8 @@ export class ChartModel {
     }));
     const seams = config.x?.seams;
     if (config.x?.breaks && !xContexts.some(({ breaks }) => breaks))
-      throw new Error(`Axis breaks need a time x axis, not a ${xContexts[0]!.type} one`);
-    if (seams && !config.x?.breaks) throw new Error("x axis seams need x axis breaks to mark");
+      throw new Error(`chart x.breaks: need a time x axis; x is ${xContexts[0]!.type}`);
+    if (seams && !config.x?.breaks) throw new Error("chart x.seams: need x.breaks to mark");
     // Viewports are kept by group, named by its panels: a group whose panels
     // change (a facet value appears and the panels wrap anew) starts over.
     const xKeys = xGroups?.keys ?? [""];
@@ -933,22 +928,22 @@ export class ChartModel {
     });
     const head = this.#header(entries, [...parts.values()], measure);
     const top = head.top;
-    const showY = config.y?.axis ?? true;
+    const showY = config.y?.show ?? true;
     // x labels go under the lowest panel with axes of each column, and under
     // every panel when the panels of a column have x scales of their own, as
-    // each panel's `axis` setting (a subplot's own over the chart's) says.
+    // each panel's `show` setting (a subplot's own over the chart's) says.
     const xBetween = xResolution === "independent" || xResolution === "rows";
     const panelX = (i: number) => (layout ? layout.panelAxis("x", i, config.x) : config.x);
     const labelsX = (i: number) =>
       axesIn(i) &&
-      (panelX(i)?.axis ?? true) &&
+      (panelX(i)?.show ?? true) &&
       (xBetween || (grid.lowest?.[i] ?? i + columns >= panelCount));
     const showX = split.keys.some((_, i) => labelsX(i));
     // Room under the plot before the x labels' line of text: more for large
     // text, whose labels sit further below the axis.
     const xLabels = TICK + GAP + tickLabelGap(theme.fontSize) - tickLabelGap(0);
     // Each x scale's title goes once, under its lowest labels (see xTitleOf).
-    const xTitle = xContexts.some(({ spec }) => spec?.label) ? lineHeight + GAP : 0;
+    const xTitle = xContexts.some(({ spec }) => spec?.title) ? lineHeight + GAP : 0;
     // A navigator's strip goes under the x axis, when there is room for it.
     const navigator = config.navigator;
     const below = showX ? xLabels + lineHeight + xTitle + 2 : 4;
@@ -1121,7 +1116,7 @@ export class ChartModel {
       const labeled = drawn.map(
         (shows, i) =>
           shows &&
-          (panelAxis(i, axis)?.axis ?? true) &&
+          (panelAxis(i, axis)?.show ?? true) &&
           (side!.own ||
             (right ? i % columns === columns - 1 || i === panelCount - 1 : i % columns === 0)),
       );
@@ -1134,7 +1129,7 @@ export class ChartModel {
         ...labeled.flatMap((l, i) => (l ? labelsOf(i) : [])).map(measureLabel),
       );
       const room = labeled.includes(true) ? Math.ceil(widest) + GAP + 2 : 0;
-      const title = labeled.some((l, i) => l && panelAxis(i, axis)?.label) ? lineHeight + GAP : 0;
+      const title = labeled.some((l, i) => l && panelAxis(i, axis)?.title) ? lineHeight + GAP : 0;
       const between = side?.own
         ? layout!.columnGap(labeled, right, columns, room, config.panels ? title : 0)
         : 0;
@@ -1412,7 +1407,7 @@ export class ChartModel {
     const titleAt = xContexts.map(() => -1);
     for (let i = 0; i < panelCount; i++) if (labelsX(i)) titleAt[xGroupAt[i]!] = i;
     const xTitleOf = (h: number, i: number, plot: Rect): AxisGeometry["title"] => {
-      const text = xContexts[h]!.spec?.label;
+      const text = xContexts[h]!.spec?.title;
       if (!text || titleAt[h] !== i) return undefined;
       const rowEnd = Math.min(panelCount, (rowOf(i) + 1) * columns) - 1;
       const end = left + offsets[rowEnd % columns]! + widths[rowEnd % columns]!;
@@ -1492,7 +1487,7 @@ export class ChartModel {
         if (!labels.labeled[i]) continue;
         const title =
           config.panels || i === labels.first
-            ? panelAxis(i, right ? "yRight" : "y")?.label
+            ? panelAxis(i, right ? "yRight" : "y")?.title
             : undefined;
         const out = config.panels
           ? right
@@ -2027,7 +2022,7 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
   const ids = new Set<string>();
   config.marks.forEach((mark, index) => {
     const id = mark.spec.id;
-    if (id !== undefined && ids.has(id)) throw new Error(`Duplicate mark id "${id}"`);
+    if (id !== undefined && ids.has(id)) throw new Error(`id: "${id}" names two marks`);
     if (id !== undefined) ids.add(id);
     if (isLayoutMark(mark)) layouts.push(mark);
     else {
@@ -2038,24 +2033,25 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
   for (const mark of marks) {
     // The right axis measures values; marks placed along y belong on the left.
     if (sideOf(mark) === "right" && (mark.tooltip === "y" || mark.tooltip === "cell"))
-      throw new Error(`A ${mark.spec.type} mark placed along y cannot use the right axis`);
+      throw new Error(`${mark.spec.type} axis: marks along y cannot use the right axis`);
     // Facet panels come from whole tables; a view's rows would split by them wrongly.
     if (config.facet && mark.view && mark.spec.facet !== "repeat")
       throw new Error(
-        `A ${mark.spec.type} mark over a row view cannot be split by facets yet; give it facet: "repeat"`,
+        `${mark.spec.type} facet: a row view cannot split into facets yet; give it facet: "repeat"`,
       );
     const group = mark.spec.legendGroup;
     if (group !== undefined && !(typeof group === "string" && group !== ""))
-      throw new TypeError(`A ${mark.spec.type} mark's legendGroup must be a name, not ${group}`);
+      throw new TypeError(
+        `${mark.spec.type} legendGroup: expected a name; received ${JSON.stringify(group)}`,
+      );
   }
-  if (config.facet && config.panels) throw new Error("A chart has facets or panels, not both");
+  if (config.facet && config.panels) throw new Error("chart: facet or panels, not both");
   const duration = typeof config.animation === "object" ? config.animation.duration : undefined;
   if (duration !== undefined && !(Number.isFinite(duration) && duration >= 0))
-    throw new RangeError(`animation.duration must be milliseconds of at least 0, not ${duration}`);
+    throw new RangeError(`chart animation.duration: expected 0 or more ms; received ${duration}`);
   if (!config.panels) {
     const named = config.marks.find((mark) => mark.spec.panel !== undefined);
-    if (named)
-      throw new Error(`A ${named.spec.type} mark names a panel, but the chart has no panels`);
+    if (named) throw new Error(`${named.spec.type} panel: the chart has no panels; drop it`);
   }
   // Facets and panels check their marks, layout marks too, and refuse navigators.
   const panelled = config.facet ?? config.panels;

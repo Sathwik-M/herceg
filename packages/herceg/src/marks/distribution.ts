@@ -165,7 +165,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     this.horizontal = table.kind(y) === "category" && table.kind(x) !== "category";
     if (!this.horizontal && table.kind(x) !== "category") {
       throw new TypeError(
-        `${type} needs a category field on x or y, and a number or time field on the other`,
+        `${type} x, y: expected a category field and a number or time field; received ${table.kind(x)} and ${table.kind(y)}`,
       );
     }
     this.category = this.horizontal ? y : x;

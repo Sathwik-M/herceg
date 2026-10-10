@@ -69,8 +69,8 @@ describe("facets", () => {
     const { scene } = build({
       marks: [line(sales, { x: "t", y: "units" })],
       facet: facet("region", { columns: 2 }),
-      x: { label: "week" },
-      y: { label: "units" },
+      x: { title: "week" },
+      y: { title: "units" },
     });
     const [n, s, e] = scene.panels as [Panel, Panel, Panel];
     // N S / E: two columns, two rows, panels of equal size.
@@ -126,13 +126,13 @@ describe("facets", () => {
     const panels = facet("region");
     const other = table({ t: [0], v: [1] });
     expect(() => build({ marks: [line(other, { x: "t", y: "v" })], facet: panels })).toThrow(
-      /no field "region" to split into panels; give it facet: "repeat"/,
+      /line: no field "region" to split into facet panels; give it facet: "repeat"/,
     );
     expect(() =>
       build({ marks: [line(sales, { x: "t", y: "units" })], facet: facet("units") }),
-    ).toThrow(/Facet field "units" is number/);
+    ).toThrow(/facet: field "units" holds number values; expected category/);
     expect(() => build({ marks: [rule(other, { y: "v" })], facet: panels })).toThrow(
-      /rule mark's table has no field "region" to split into panels; give it facet: "repeat"/,
+      /rule: no field "region" to split into facet panels; give it facet: "repeat"/,
     );
     const cells = table({ x: ["a"], y: ["b"], v: [1], region: ["N"] });
     expect(() =>
@@ -140,12 +140,12 @@ describe("facets", () => {
         marks: [line(sales, { x: "t", y: "units" })],
         facet: facet("region", { columns: 0 }),
       }),
-    ).toThrow(/at least 1/);
+    ).toThrow(/facet columns: expected a whole number of at least 1; received 0/);
     // Rules split, or repeat; so do heatmaps and histograms.
     expect(() => build({ marks: [rule(cells, { y: "v" })], facet: panels })).not.toThrow();
     const repeated = rule(cells, { y: "v", facet: "repeat" });
     expect(() => build({ marks: [repeated], facet: panels })).not.toThrow();
-    const split = heatmap(cells, { x: "x", y: "y", value: "v" });
+    const split = heatmap(cells, { x: "x", y: "y", color: "v" });
     expect(() => build({ marks: [split], facet: panels })).not.toThrow();
     expect(() => build({ marks: [histogram(cells, { x: "v" })], facet: panels })).not.toThrow();
   });
@@ -447,11 +447,12 @@ describe("row and column facets", () => {
 
   it("refuse facets without fields, with one field twice, or with both forms", () => {
     expect(() => facet({})).toThrow("needs a field, or a row or column field");
-    expect(() => facet({ row: "region", column: "region" })).toThrow("must differ");
+    expect(() => facet({ row: "region", column: "region" })).toThrow(
+      'facet column: "region" is the row field too',
+    );
     const spec = (facet: unknown) => () =>
       loadSpec(
         {
-          version: 1,
           data: { t: { columns: { x: [1], y: [1] } } },
           marks: [{ type: "line", x: "x", y: "y" }],
           facet: facet as never,
@@ -461,7 +462,9 @@ describe("row and column facets", () => {
     expect(spec({ field: "a", row: "b" })).toThrow("not both");
     expect(spec({ columns: 2 })).toThrow("a field, or a row or column field");
     expect(spec({ row: "a", columns: 2 })).toThrow("facet.columns");
-    expect(() => facet({ column: "c", columns: 2 } as never)).toThrow("not columns");
+    expect(() => facet({ column: "c", columns: 2 } as never)).toThrow(
+      "facet columns: a grid of facets has a column per value of its column field",
+    );
   });
 
   it("draw one empty panel without headers until values arrive, and again after they go", () => {
@@ -518,7 +521,6 @@ describe("row and column facets", () => {
   it("load from specs and render headers in SVG", () => {
     const { config } = loadSpec(
       {
-        version: 1,
         data: {
           t: {
             columns: {
@@ -615,10 +617,10 @@ describe("facet panels with y scales of their own", () => {
     expect(model.yViewport.y).toEqual([0, 50]);
     model.update({ marks, facet: facet("region"), resolve: { y: "independent" } });
     expect(model.yViewport).toEqual({ y: null, yRight: null });
-    expect(() => model.setYViewport({ y: [0, 50], yRight: null })).toThrow("no one viewport");
+    expect(() => model.setYViewport({ y: [0, 50], yRight: null })).toThrow("no one y range");
   });
 
-  it("refuse y zoom, and need spec version 2", () => {
+  it("refuse y zoom", () => {
     expect(() =>
       build({
         marks,
@@ -627,21 +629,16 @@ describe("facet panels with y scales of their own", () => {
         interaction: { zoom: "xy" },
       }),
     ).toThrow("cannot zoom along y");
-    const spec = (version: number | undefined) => () =>
+    expect(() =>
       loadSpec(
         {
-          ...(version !== undefined && { version: version as 1 }),
           data: { t: { columns: { x: [1, 2], y: [1, 2] } } },
           marks: [{ type: "line", x: "x", y: "y" }],
           resolve: { y: "independent" },
         },
         [],
-      );
-    expect(spec(1)).toThrow('spec.resolve: expected a spec with "version": 2 or later');
-    expect(spec(undefined)).toThrow('spec.resolve: expected a spec with "version": 2 or later');
-    expect(spec(2)).not.toThrow();
-    expect(spec(11)).not.toThrow();
-    expect(spec(12)).toThrow("reads versions 1 to 11");
+      ),
+    ).not.toThrow();
   });
 });
 
@@ -666,7 +663,7 @@ describe("facet panels with x scales of their own", () => {
       marks,
       facet: grid,
       resolve: { x: "independent" },
-      x: { label: "Time" },
+      x: { title: "Time" },
     });
     expect(xOf(model)).toEqual([
       [0, 10],
@@ -688,7 +685,7 @@ describe("facet panels with x scales of their own", () => {
   });
 
   it("share an x scale along rows or columns", () => {
-    const rows = build({ marks, facet: grid, resolve: { x: "rows" }, x: { label: "Time" } });
+    const rows = build({ marks, facet: grid, resolve: { x: "rows" }, x: { title: "Time" } });
     expect(xOf(rows.model)).toEqual([
       [0, 10],
       [0, 10],
@@ -734,7 +731,7 @@ describe("facet panels with x scales of their own", () => {
         marks: [point(table(sites), { x: "t", y: "v" })],
         facet: facet({ row: "site", column: "kind" }),
         resolve: { x: "rows", y: "columns" },
-        x: { label: "Seconds" },
+        x: { title: "Seconds" },
       },
       640,
       480,
@@ -753,8 +750,8 @@ describe("facet panels with x scales of their own", () => {
   });
 
   it("keep scenes of shared x unchanged", () => {
-    const plain = build({ marks, facet: grid, x: { label: "Time" } });
-    const shared = build({ marks, facet: grid, x: { label: "Time" }, resolve: { x: "shared" } });
+    const plain = build({ marks, facet: grid, x: { title: "Time" } });
+    const shared = build({ marks, facet: grid, x: { title: "Time" }, resolve: { x: "shared" } });
     expect(renderToSVG({ marks, facet: grid, width: 600, height: 400, idPrefix: "a" })).toBe(
       renderToSVG({
         marks,
@@ -867,8 +864,8 @@ describe("facet panels with x scales of their own", () => {
     expect([...model.panels()[0]!.x.domain]).toEqual([2, 4]);
     expect(model.viewportOf(a)).toEqual([2, 4]);
     expect(model.viewportOf(c)).toBeNull();
-    expect(() => model.setViewport([0, 1])).toThrow("need a panel");
-    expect(() => model.viewport).toThrow("need a panel");
+    expect(() => model.setViewport([0, 1])).toThrow("panel: required when panels");
+    expect(() => model.viewport).toThrow("panel: required when panels");
     expect(() => model.setViewport([0, 1], "nowhere")).toThrow('no panel "nowhere"');
     // Null without a panel fits every scale.
     model.setViewport([1000, 1050], c);
@@ -881,37 +878,20 @@ describe("facet panels with x scales of their own", () => {
     expect(model.viewportOf(a)).toBeNull();
   });
 
-  it("load from specs of version 3 and check the resolution", () => {
-    const spec =
-      (resolve: unknown, version: 2 | 3 = 3) =>
-      () =>
-        loadSpec(
-          {
-            version,
-            data: { t: { columns: { x: [1, 2], y: [1, 2], g: ["a", "b"] } } },
-            marks: [{ type: "line", data: "t", x: "x", y: "y" }],
-            facet: { field: "g" },
-            resolve: resolve as { x: "rows" },
-          },
-          [],
-        );
-    expect(spec({ x: "independent" })).not.toThrow();
-    expect(spec({ x: "each" })).toThrow("spec.resolve.x");
-    // Readers of version 2 would draw shared x scales, so they must refuse it.
-    expect(spec({ x: "independent" }, 2)).toThrow(
-      'spec.resolve.x: expected a spec with "version": 3',
-    );
-    expect(spec({ y: "independent" }, 2)).not.toThrow();
-    expect(() =>
+  it("load from specs and check the resolution", () => {
+    const spec = (resolve: unknown) => () =>
       loadSpec(
         {
-          data: { t: { columns: { x: [1, 2], y: [1, 2] } } },
-          marks: [{ type: "line", x: "x", y: "y" }],
-          resolve: { x: "independent" },
+          data: { t: { columns: { x: [1, 2], y: [1, 2], g: ["a", "b"] } } },
+          marks: [{ type: "line", data: "t", x: "x", y: "y" }],
+          facet: { field: "g" },
+          resolve: resolve as { x: "rows" },
         },
         [],
-      ),
-    ).toThrow('spec.resolve: expected a spec with "version": 2 or later');
+      );
+    expect(spec({ x: "independent" })).not.toThrow();
+    expect(spec({ y: "independent" })).not.toThrow();
+    expect(spec({ x: "each" })).toThrow("spec.resolve.x");
   });
 });
 

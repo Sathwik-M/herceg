@@ -202,8 +202,8 @@ class ChartWidget(anywidget.AnyWidget):
             payload["yRight"] and not self._live.shares_y_right
         ):
             raise ValueError(
-                "charts whose panels have y scales of their own "
-                "(resolve_y, resolve_y_right, panels) have no one viewport of them"
+                "widget.viewport: charts whose panels have y scales of their own "
+                "(resolve_y, resolve_y_right, panels) have no one y viewport; set x only"
             )
         self._set("viewport", payload)
 
@@ -226,8 +226,9 @@ class ChartWidget(anywidget.AnyWidget):
         if isinstance(condition, Expr):
             for field in sorted(_fields_of(condition._json) - self._live.columns(name)):
                 raise ValueError(
-                    f"the chart sends no column {field!r} to the browser, so a condition "
-                    f"cannot test it: name it in hg.SelectionBinding(..., fields=[{field!r}])"
+                    f"widget.row_selection: the chart sends no column {field!r} to the browser "
+                    f"for a condition to test; name it in hg.SelectionBinding(..., "
+                    f"fields=[{field!r}])"
                 )
         with self._lock:
             selection, buffers = encode(value, self._live.length(name))
@@ -241,9 +242,10 @@ class ChartWidget(anywidget.AnyWidget):
     def _only_binding(self) -> RowSelection:
         if len(self._rows) != 1:
             raise ValueError(
-                "this chart binds no row selection, or several: read them with on_row_selection"
+                "widget.row_selection: the chart binds several row selections; "
+                "read them with on_row_selection"
                 if self._rows
-                else "this chart has no row_selection"
+                else "widget.row_selection: the chart has none; give hg.Chart a row_selection"
             )
         return next(iter(self._rows.values()))
 

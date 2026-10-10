@@ -127,7 +127,7 @@ describe("3D charts on the GPU", () => {
       camera: { azimuth: -60, elevation: 60 },
       marks: [
         surface(flat, { x: "x", y: "y", z: "z", colors: ["#0000ff", "#0000ff"], shading: false }),
-        point3d(points, { x: "x", y: "y", z: "z", fill: "#ff0000", r: 6 }),
+        point3d(points, { x: "x", y: "y", z: "z", fill: "#ff0000", radius: 6 }),
       ],
     });
     await chart.loading;
@@ -158,7 +158,7 @@ describe("3D charts on the GPU", () => {
         surface(plane, { x: "x", y: "y", z: "z", colors: ["#0000ff", "#0000ff"], shading: false }),
         line3d(over, { x: "x", y: "y", z: "z", stroke: "#ff0000", strokeWidth: 8 }),
         line3d(under, { x: "x", y: "y", z: "z", stroke: "#00ff00", strokeWidth: 8 }),
-        point3d(dot, { x: "x", y: "y", z: "z", fill: "#ffff00", r: 3 }),
+        point3d(dot, { x: "x", y: "y", z: "z", fill: "#ffff00", radius: 3 }),
       ],
     });
     await chart.loading;
@@ -232,7 +232,7 @@ describe("3D charts on the GPU", () => {
             y: "y",
             z: "z",
             fill: "#ff0000",
-            r: 6,
+            radius: 6,
           });
           const plane = surface(
             field(110, () => height),
@@ -273,7 +273,7 @@ describe("3D charts on the GPU", () => {
           y: "y",
           z: "z",
           fill: "#ff0000",
-          r: 6,
+          radius: 6,
         }),
         surface(
           field(110, () => 0.5),
@@ -348,7 +348,7 @@ describe("3D charts on the GPU", () => {
           y: "y",
           z: "z",
           fill: "#ff0000",
-          r: 6,
+          radius: 6,
         }),
         surface(
           field(110, () => 0.5001),
@@ -389,10 +389,10 @@ describe("3D charts on the GPU", () => {
     const chart = createChart(host, {
       marks: [
         surface(field(520, hills), { x: "x", y: "y", z: "z" }),
-        point3d(table({ x: [0], y: [0], z: [0] }), { x: "x", y: "y", z: "z", r: 5000 }),
+        point3d(table({ x: [0], y: [0], z: [0] }), { x: "x", y: "y", z: "z", radius: 5000 }),
       ],
     });
-    await expect(chart.loading).rejects.toThrow(/drawn only on the GPU/);
+    await expect(chart.loading).rejects.toThrow(/surface: .* grid points draw only on the GPU/);
     chart.destroy();
   });
 

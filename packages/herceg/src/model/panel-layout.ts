@@ -134,7 +134,7 @@ const MIN_PANEL = 20;
 function tooSmall(panels: number, columns: number, room: PanelRoom, remedy: string): RangeError {
   const rows = Math.ceil(panels / columns);
   return new RangeError(
-    `${panels} panels in ${rows} rows of ${columns} do not fit a ${room.width}×${room.height} chart; make it larger or ${remedy}`,
+    `chart size: ${panels} panels in ${rows} rows of ${columns} do not fit a ${room.width}×${room.height} chart; make it larger or ${remedy}`,
   );
 }
 
@@ -532,7 +532,7 @@ const IN_PANELS = new Set(["pie", "treemap", "sunburst", "gauge", "funnel", "rad
 export function checkLayouts(layouts: readonly LayoutMark[]): void {
   for (const { spec } of layouts)
     if (!IN_PANELS.has(spec.type))
-      throw new Error(`Charts of a ${spec.type} mark cannot have facets or panels yet`);
+      throw new Error(`${spec.type}: no facets or panels yet; draw it in a chart of its own`);
 }
 
 /**
@@ -541,10 +541,10 @@ export function checkLayouts(layouts: readonly LayoutMark[]): void {
  */
 export function refuseAxes(type: string, options: LayoutOptions): void {
   const { zoom, brush, sync } = options.interaction ?? {};
-  if (zoom || brush || sync || options.x?.seams)
-    throw new Error(
-      `Charts of a ${type} mark have no x axis to zoom, brush, sync, or mark seams on`,
-    );
+  const option = zoom ? "zoom" : brush ? "brush" : sync ? "sync" : undefined;
+  if (option)
+    throw new Error(`${type} ${option}: no axes to ${option}; drop interaction.${option}`);
+  if (options.x?.seams) throw new Error(`${type} seams: no x axis to mark seams on; drop x.seams`);
 }
 
 /**
@@ -566,10 +566,12 @@ export function checkBands(
     const { brush, sync } = options.interaction ?? {};
     if (sync)
       throw new Error(
-        `Charts whose panels have categories of their own (resolve.${axis}) cannot be synced yet`,
+        `chart interaction.sync: panels with categories of their own (resolve.${axis}) cannot sync yet; drop sync`,
       );
     if (axis === "y" && brush !== undefined && brush !== "x")
-      throw new Error("Charts whose panels have y categories of their own can brush along x only");
+      throw new Error(
+        'chart interaction.brush: panels with y categories of their own brush along x only; use "x"',
+      );
   }
 }
 

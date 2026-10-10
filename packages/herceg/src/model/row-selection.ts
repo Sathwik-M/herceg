@@ -133,22 +133,25 @@ export class RowSelection {
   readonly #bound: readonly Bound[];
 
   constructor(bindings: readonly SelectionBinding[]) {
-    if (bindings.length === 0) throw new Error("rowSelection needs a binding: { store, channel }");
+    if (bindings.length === 0)
+      throw new Error("rowSelection: expected a binding, { store, channel }");
     this.bindings = bindings.map(({ store, channel, events = GESTURES, effect = "highlight" }) => {
       if (typeof store?.get !== "function" || !store.source)
         throw new TypeError(
-          "A row selection's store must be a SelectionStore (selectionStore(table))",
+          "rowSelection store: expected a SelectionStore, from selectionStore(table)",
         );
       if (typeof channel !== "string" || channel === "")
-        throw new TypeError("A row selection's channel must be a name");
+        throw new TypeError(
+          `rowSelection channel: expected a name; received ${JSON.stringify(channel)}`,
+        );
       for (const event of events)
         if (!GESTURES.includes(event))
           throw new TypeError(
-            `A row selection's events are "brush", "lasso", and "click", not ${JSON.stringify(event)}`,
+            `rowSelection events: expected "brush", "lasso", or "click"; received ${JSON.stringify(event)}`,
           );
       if (effect !== "highlight" && effect !== "none")
         throw new TypeError(
-          `A row selection's effect is "highlight" or "none", not ${JSON.stringify(effect)}`,
+          `rowSelection effect: expected "highlight" or "none"; received ${JSON.stringify(effect)}`,
         );
       return Object.freeze({ store, channel, events: Object.freeze([...events]), effect });
     });
@@ -161,9 +164,7 @@ export class RowSelection {
     }));
     const tables = this.#bound.map(({ table }) => table);
     if (tables.some((table, i) => tables.indexOf(table) !== i))
-      throw new Error(
-        "A row selection binds each table once: give it one store and channel per table",
-      );
+      throw new Error("rowSelection: binds each table once; give one store and channel per table");
   }
 
   /**
@@ -177,14 +178,14 @@ export class RowSelection {
     const [layout] = layouts;
     if (layout && (!layout.selects || config.facet || config.panels))
       throw new Error(
-        `Charts of a ${layout.spec.type} mark cannot select rows yet: rowSelection needs marks along x and y axes, or a map, treemap, sunburst, or network of their own`,
+        `${layout.spec.type} rowSelection: cannot select rows yet; it needs marks along x and y axes, or a map, treemap, sunburst, or network in a chart of its own`,
       );
     const brush = config.interaction?.brush;
     const read = layout ? tablesOf(layout) : marks.map((mark) => mark.table);
     for (const bound of this.#bound) {
       if (!read.includes(bound.table))
         throw new Error(
-          `The store bound to channel "${bound.channel}" is of a table no mark of the chart reads`,
+          `rowSelection store: no mark reads its table (channel "${bound.channel}"); bind a table the chart draws`,
         );
       if (brush && bound.events.has(brush === "lasso" ? "lasso" : "brush"))
         for (const mark of marks) if (mark.table === bound.table) refuseBrush(mark, brush);
@@ -236,14 +237,14 @@ function refuseBrush(mark: Mark, brush: BrushSpec) {
   const type = mark.spec.type;
   if (brush === "lasso" && mark.summarizes)
     throw new Error(
-      `Lassos cannot select the rows of ${type} marks yet; leave "lasso" out of the row selection's events`,
+      `${type} brush: lassos cannot select its rows yet; leave "lasso" out of rowSelection events`,
     );
   // A rug's ticks have a place along their own axis only.
   if (type === "rug") {
     const other = mark.tooltip === "x" ? "y" : "x";
     if (brush === other || brush === "xy")
       throw new Error(
-        `A rug mark's rows are brushed along its ${mark.tooltip} axis only: its ticks have no ${other} value`,
+        `rug brush: its ticks have no ${other} value; brush along ${mark.tooltip} only`,
       );
   }
   if (!mark.summarizes) return;
@@ -251,7 +252,7 @@ function refuseBrush(mark: Mark, brush: BrushSpec) {
   const values = mark.tooltip === "y" ? "x" : "y";
   if (brush === values || brush === "xy")
     throw new Error(
-      `A ${type} mark's rows are brushed along its ${values === "y" ? "x" : "y"} axis only: its ${values} axis holds statistics`,
+      `${type} brush: its ${values} axis holds statistics; brush along ${values === "y" ? "x" : "y"} only`,
     );
 }
 

@@ -62,7 +62,7 @@ describe("identities", () => {
       build({
         marks: [line(data, { x: "x", y: "y", id: "a" }), line(data, { x: "x", y: "y", id: "a" })],
       }),
-    ).toThrow(/Duplicate mark id/);
+    ).toThrow('id: "a" names two marks');
   });
 
   it("gives each static render unique element ids", () => {
@@ -142,7 +142,7 @@ describe("layout", () => {
     const { scene } = build({
       marks: [line(data, { x: "t", y: "y" })],
       x: { format: { year: "numeric", month: "long", day: "numeric" } },
-      y: { axis: false },
+      y: { show: false },
     });
     const first = scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks[0]!;
     expect(

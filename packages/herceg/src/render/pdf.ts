@@ -745,11 +745,18 @@ export function renderPdf(
     text(page, ramp.high.text, ramp.high.x, y, { ...label, baseline: "middle" });
   }
 
-  // Size and shape keys: glyphs in the muted color, then their labels.
+  // Size and shape keys: glyphs in the muted color; color keys: in their colors. Then their labels.
   for (const { title, entries } of scene.glyphLegends) {
     text(page, title.text, title.x, title.y, { ...label, fill: theme.text, baseline: "middle" });
     const glyphs = new PathBuilder();
-    for (const { glyph, x, y } of entries) tracePath(glyph, shifted(glyphs, x, y));
+    for (const { glyph, x, y, fill } of entries) {
+      if (fill === undefined) tracePath(glyph, shifted(glyphs, x, y));
+      else {
+        const own = new PathBuilder();
+        tracePath(glyph, shifted(own, x, y));
+        paint(page, own, { fill });
+      }
+    }
     paint(page, glyphs, { fill: theme.muted, fillOpacity: 0.6 });
     for (const { y, label: entry } of entries)
       text(page, entry.text, entry.x, y, { ...label, baseline: "middle" });

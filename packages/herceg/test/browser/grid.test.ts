@@ -356,7 +356,7 @@ describe("grids whose rows change before they redraw", () => {
     t.dropFirst(1);
     // Not redrawn yet: the cell still shows "2", now the first row.
     await userEvent.click(cell);
-    const selection = grid.model.selection.get("grid-rows");
+    const selection = grid.model.selectionStore.get("grid-rows");
     expect(selection?.kind === "rows" && Array.from(selection.rows.positions())).toEqual([0]);
     expect(document.activeElement!.textContent).toBe("2");
   });
@@ -394,8 +394,8 @@ describe("grids whose listeners change the rows", () => {
     const t = table({ x: Float64Array.from({ length: 20 }, (_, i) => i) });
     const data = rowView(t);
     const grid = mount(createGridModel({ data, columns: [{ field: "x" }] }));
-    grid.model.selection.subscribe(() => {
-      const selected = grid.model.selection.get("grid-rows");
+    grid.model.selectionStore.subscribe(() => {
+      const selected = grid.model.selectionStore.get("grid-rows");
       data.restrict(selected?.kind === "rows" ? selected.rows : null);
     });
     await userEvent.click(rowAt(grid, 5)!.querySelector("[role=gridcell]")!);
@@ -589,7 +589,7 @@ describe("grids linked to charts", () => {
       createGridModel({
         data: gridView,
         columns: [{ field: "x" }, { field: "y" }],
-        selection: store,
+        selectionStore: store,
       }),
     );
     const chart = createChart(host(), {

@@ -113,7 +113,7 @@ describe("inspected points", () => {
 
   it("give a heatmap cell's row: the last of the rows in that cell", () => {
     const cells = table({ x: ["a", "b", "a"], y: ["p", "p", "p"], v: [1, 2, 3] });
-    const model = build({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })] });
+    const model = build({ marks: [heatmap(cells, { x: "x", y: "y", color: "v" })] });
     const inspection = model.inspect(model.xScale()!.map(0), model.yScale()!.map(0));
     expect(identities(inspection)).toEqual([
       { mark: 0, markId: undefined, key: '[0,"cells"]', label: "p", row: 2 },
@@ -201,8 +201,8 @@ describe("inspected items", () => {
     const model = build({
       projection: "equirectangular",
       marks: [
-        geoshape(fromGeoJSON(world), { name: "name" }),
-        geopoint(cities, { longitude: "lon", latitude: "lat", name: "city", id: "cities" }),
+        geoshape(fromGeoJSON(world), { labelField: "name" }),
+        geopoint(cities, { longitude: "lon", latitude: "lat", labelField: "city", id: "cities" }),
       ],
     });
     expect(identities(model.inspectItem(JSON.stringify(["cities", 1])))).toEqual([

@@ -128,7 +128,7 @@ function mountHerceg(
   const model = createRemoteGridModel({
     source,
     columns: [{ field: "id", format: { useGrouping: false } }, { field: "v" }, { field: "host" }],
-    settle,
+    settleDelay: settle,
   }) as unknown as RemoteGridModel;
   const grid = createRemoteGrid(element, { model, ariaLabel: "Rows" });
   return {

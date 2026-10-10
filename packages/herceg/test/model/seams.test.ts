@@ -182,11 +182,11 @@ describe("time-axis seam markers", () => {
   it("needs time-axis breaks and finite positive spacing when enabled", () => {
     for (const minSpacing of [0, -1, NaN, Infinity])
       expect(() => build({ x: { breaks: gap(), seams: { minSpacing } } })).toThrow(
-        /finite and positive/,
+        /chart x\.seams\.minSpacing: expected a positive number; received/,
       );
-    expect(() => build({ x: { seams: true } })).toThrow(/seams need x axis breaks/);
+    expect(() => build({ x: { seams: true } })).toThrow(/chart x\.seams: need x\.breaks/);
     expect(() => build({ x: { type: "linear", breaks: gap(), seams: true } })).toThrow(
-      /time x axis/,
+      /chart x\.breaks: need a time x axis/,
     );
     expect(() =>
       build({
@@ -224,14 +224,13 @@ describe("seam placement", () => {
 });
 
 describe("portable specs with seams", () => {
-  const spec = (x: NonNullable<ChartSpec["x"]>, version: ChartSpec["version"] = 5): ChartSpec => ({
-    version,
+  const spec = (x: NonNullable<ChartSpec["x"]>): ChartSpec => ({
     data: { d: { columns: { t: { type: "time", values: [0, 20] }, v: [1, 2] } } },
     marks: [{ type: "line", x: "t", y: "v" }],
     x,
   });
 
-  it("round trips and loads strict version 5", () => {
+  it("round trips and load", () => {
     const original = spec({ domain: [0, 20], breaks: gap().toJSON(), seams: { minSpacing: 40 } });
     original.theme = { grid: "#ff0000" };
     const loaded = loadSpec(JSON.parse(JSON.stringify(original)), undefined, { unknown: "error" });
@@ -239,13 +238,9 @@ describe("portable specs with seams", () => {
     expect(positions(build(loaded.config).scene.panels[0]!)).toHaveLength(2);
   });
 
-  it("rejects old versions only when enabled, invalid spacing, missing breaks, and y seams", () => {
-    for (const version of [undefined, 1, 2, 3, 4] as const)
-      expect(() => validateSpec({ ...spec({ breaks: [], seams: true }), version })).toThrow(
-        /version/,
-      );
-    for (const x of [{}, { seams: false }]) validateSpec(spec(x, 1));
-    expect(() => validateSpec(spec({ breaks: [], seams: true }, 4))).toThrow(/version.*5/);
+  it("rejects invalid spacing, missing breaks, and y seams", () => {
+    for (const x of [{}, { seams: false }]) validateSpec(spec(x));
+    validateSpec(spec({ breaks: [], seams: true }));
     validateSpec(spec({ breaks: [], seams: {} }));
     for (const minSpacing of [0, -1, NaN, Infinity, "40"])
       expect(() => validateSpec(spec({ breaks: [], seams: { minSpacing } } as never))).toThrow(

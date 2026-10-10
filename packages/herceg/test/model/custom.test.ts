@@ -148,7 +148,9 @@ describe("custom marks", () => {
   });
 
   it("check their fields and cannot be loaded from a spec", () => {
-    expect(() => custom(prices, { x: "missing" as never, draw() {} })).toThrow(/Unknown field/);
+    expect(() => custom(prices, { x: "missing" as never, draw() {} })).toThrow(
+      /custom x: no field "missing"/,
+    );
     const spec = { marks: [{ type: "custom" }] } as unknown as ChartSpec;
     expect(() => loadSpec(spec)).toThrow(/marks\[0\]\.type/);
   });
@@ -360,21 +362,21 @@ describe("custom marks with series", () => {
         marks: [line(regions, { x: "t", y: "v" }), custom(regions, { x: "t", draw() {} })],
         facet: facet("region"),
       }),
-    ).toThrow(/custom mark without series cannot be split into panels; give it facet: "repeat"/);
+    ).toThrow(/custom facet: without series, it cannot split into panels; give it facet: "repeat"/);
   });
 
   it("refuse series options they cannot show", () => {
     expect(() => custom(prices, { y: "low", label: "Low", draw() {} })).toThrow(
-      /series, label, and pointText need one x field and y fields/,
+      /custom: series, label, and pointText need one x field, y fields/,
     );
     expect(() =>
       custom(prices, { x: "time", y: "low", series: false, pointText: () => "", draw() {} }),
-    ).toThrow(/and no series: false/);
+    ).toThrow(/y fields, and no series: false/);
     expect(() =>
       custom(load, { x: "time", y: ["cpu", "time"], series: "host", draw() {} }),
-    ).toThrow(/either several y fields or a series field/);
+    ).toThrow(/y: several fields or a series field, not both/);
     expect(() => custom(load, { x: "time", y: "cpu", series: "cpu" as never, draw() {} })).toThrow(
-      /custom series needs category/,
+      /custom series: field "cpu" holds number values; expected category/,
     );
   });
 });

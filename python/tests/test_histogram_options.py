@@ -24,7 +24,6 @@ def test_histogram_edges_and_options_serialize(orientation, edges):
         dodge=True,
     )
     spec, _ = chart.to_spec()
-    assert spec["version"] == 10
     assert spec["marks"] == [
         {
             "type": "histogram",
@@ -42,25 +41,9 @@ def test_histogram_edges_and_options_serialize(orientation, edges):
     assert "<path" in chart.to_svg()
 
 
-@pytest.mark.parametrize(
-    "options",
-    [
-        {"y": "v"},
-        {"x": "v", "bins": [0, 1]},
-        {"x": "v", "normalize": "probability"},
-        {"x": "v", "common_norm": True},
-        {"x": "v", "cumulative": True},
-        {"x": "v", "dodge": True},
-    ],
-)
-def test_histogram_features_need_version_eight(options):
-    assert hg.histogram(DATA, **options).to_spec()[0]["version"] == 10
-
-
-def test_histogram_defaults_and_false_flags_keep_version():
+def test_histogram_defaults_and_false_flags_are_left_out():
     for options in ({}, {"common_norm": False, "cumulative": False, "dodge": False}):
         spec, _ = hg.Chart(DATA).histogram("v", **options).to_spec()
-        assert spec["version"] == 4
         assert spec["marks"] == [{"type": "histogram", "data": "data", "x": "v"}]
 
 
@@ -78,24 +61,27 @@ def test_histogram_edges_are_copied_and_numpy_numbers_become_json_numbers():
 @pytest.mark.parametrize(
     "bins, message",
     [
-        ([], "at least 2"),
-        ([0, 10**400], "finite"),
-        ({"step": 10**400}, "positive"),
-        ({"step": 1, "start": 10**400}, "finite"),
-        (10**400, "at least 1"),
-        ([0], "at least 2"),
-        ([1, 1], "strictly increasing"),
-        ([1, 0], "strictly increasing"),
-        ([0, np.nan], "finite"),
-        ([0, np.inf], "finite"),
-        ([0, "1"], "finite"),
-        ([False, True], "finite"),
-        (list(range(1002)), "at most 1001"),
-        (np.array([[0, 1]]), "1-D"),
-        (np.array(1), "1-D"),
-        (0, "at least 1"),
-        ({"step": 0}, "positive"),
-        ({"step": 1, "start": np.inf}, "finite"),
+        ([], "histogram bins: expected 2 to 1001 edges; received 0"),
+        ([0, 10**400], r"histogram bins\[1\]: expected a finite number"),
+        ({"step": 10**400}, "histogram bins step: expected a positive number"),
+        ({"step": 1, "start": 10**400}, "histogram bins start: expected a finite number"),
+        (10**400, "histogram bins: expected a whole number of at least 1"),
+        ([0], "histogram bins: expected 2 to 1001 edges; received 1"),
+        ([1, 1], r"histogram bins\[1\]: expected an edge above the one before; received 1 after 1"),
+        ([1, 0], r"histogram bins\[1\]: expected an edge above the one before; received 0 after 1"),
+        ([0, np.nan], r"histogram bins\[1\]: expected a finite number"),
+        ([0, np.inf], r"histogram bins\[1\]: expected a finite number"),
+        ([0, "1"], r'histogram bins\[1\]: expected a finite number; received "1"'),
+        ([False, True], r"histogram bins\[0\]: expected a finite number; received False"),
+        (list(range(1002)), "histogram bins: expected 2 to 1001 edges; received 1002"),
+        (np.array([[0, 1]]), "histogram bins: expected a 1-D array of edges"),
+        (np.array(1), "histogram bins: expected a 1-D array of edges"),
+        (0, "histogram bins: expected a whole number of at least 1; received 0"),
+        ({"step": 0}, "histogram bins step: expected a positive number; received 0"),
+        (
+            {"step": 1, "start": np.inf},
+            "histogram bins start: expected a finite number; received inf",
+        ),
     ],
 )
 def test_histogram_refuses_invalid_edges(bins, message):
@@ -106,12 +92,12 @@ def test_histogram_refuses_invalid_edges(bins, message):
 @pytest.mark.parametrize(
     "options, message",
     [
-        ({}, "exactly one field"),
-        ({"x": "v", "y": "v"}, "exactly one field"),
-        ({"y": "v", "axis": "right"}, "horizontal histogram cannot use the right axis"),
-        ({"x": "v", "stack": True, "dodge": True}, "cannot dodge and stack"),
-        ({"x": "v", "normalize": "fraction"}, "normalize"),
-        ({"x": "v", "common_norm": 1}, "boolean"),
+        ({}, "histogram: needs exactly one of x and y"),
+        ({"x": "v", "y": "v"}, "histogram: needs exactly one of x and y"),
+        ({"y": "v", "axis": "right"}, r"histogram axis: a horizontal histogram \(y\) has no right"),
+        ({"x": "v", "stack": True, "dodge": True}, "histogram dodge: dodge or stack, not both"),
+        ({"x": "v", "normalize": "fraction"}, 'histogram normalize: .*; received "fraction"'),
+        ({"x": "v", "common_norm": 1}, "histogram common_norm: expected True or False; received 1"),
     ],
 )
 def test_histogram_refuses_invalid_options(options, message):
@@ -124,21 +110,6 @@ def test_histogram_checks_binned_column_kinds():
         hg.histogram(DATA, y="g")
     with pytest.raises(TypeError, match="histogram x.*category"):
         hg.histogram(DATA, x="g")
-
-
-@pytest.mark.parametrize("histogram_first", [False, True])
-def test_histogram_version_composes_with_boxplot_and_seams(histogram_first):
-    data = {
-        "v": [1, 2],
-        "g": ["a", "b"],
-        "t": np.array(["2026-01-01", "2026-01-02"], dtype="datetime64[ms]"),
-    }
-    chart = hg.Chart(data, x=hg.Axis(breaks=[hg.Break(weekdays=["sat", "sun"])], seams=True))
-    if histogram_first:
-        chart.histogram("v", cumulative=True).boxplot("g", "v", notch=True)
-    else:
-        chart.boxplot("g", "v", notch=True).histogram("v", cumulative=True)
-    assert chart.to_spec()[0]["version"] == 10
 
 
 def test_horizontal_time_histogram_and_static_exports():

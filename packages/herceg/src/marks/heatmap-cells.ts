@@ -122,7 +122,7 @@ export function placeCells(
   step: number | undefined,
   time: boolean,
   breaks?: Breaks,
-  name = "Heatmap",
+  name = "heatmap",
 ): AxisCells {
   let [values, cells] = distinct(column);
   let places = values;
@@ -146,8 +146,8 @@ export function placeCells(
   if (wrong >= 0)
     throw new RangeError(
       step === undefined
-        ? `${name} values near ${values[wrong]} are too close to tell their cells apart`
-        : `${name}Step ${step} is too small for values near ${values[wrong]}`,
+        ? `${name}: values near ${values[wrong]} are too close to tell their cells apart`
+        : `${name}Step: ${step} is too small for values near ${values[wrong]}; give a larger step`,
     );
   return new AxisCells(values, edges[0], edges[1], cells, lattice, breaks);
 }

@@ -64,7 +64,7 @@ export class PieMark implements LayoutMark {
     if (spec.value !== undefined) requireField(table, spec.value, ["number"], "pie value");
     const inner = spec.innerRadius ?? 0;
     if (!(inner >= 0 && inner < 1)) {
-      throw new RangeError(`pie innerRadius must be at least 0 and below 1, not ${inner}`);
+      throw new RangeError(`pie innerRadius: expected at least 0 and below 1; received ${inner}`);
     }
     this.table = table;
     this.measure = spec.value ?? "Count";

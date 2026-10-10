@@ -22,7 +22,6 @@ import {
   type ColumnSpec,
   type Expression,
   loadSpec,
-  SPEC_VERSION,
   type SpecBuffer,
 } from "herceg/spec";
 import {
@@ -489,9 +488,8 @@ class Widget {
       else next[key] = value;
     }
     if (!this.#config) throw new Error("the chart did not load");
-    // Checked as loadSpec checks a whole spec, with the same errors; Python
-    // writes the current version, so options of any version are allowed.
-    const { config } = loadSpec({ version: SPEC_VERSION, ...next, marks: [] } as ChartSpec);
+    // Checked as loadSpec checks a whole spec, with the same errors.
+    const { config } = loadSpec({ ...next, marks: [] } as ChartSpec);
     const update = Object.fromEntries(
       Object.keys(changes).map((key) => [key, (config as Record<string, unknown>)[key]]),
     ) as Partial<ChartOptions>;

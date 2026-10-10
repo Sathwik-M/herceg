@@ -67,21 +67,25 @@ export class RugMark implements Mark<Frozen<RugSpec>> {
     this.table = table;
     const spec = this.spec;
     if ((spec.x !== undefined) === (spec.y !== undefined))
-      throw new TypeError("Rugs need exactly one of x and y");
+      throw new TypeError("rug: needs exactly one of x and y");
     this.tooltip = spec.x !== undefined ? "x" : "y";
     this.#field = (spec.x ?? spec.y)!;
     const sides = this.tooltip === "x" ? ["bottom", "top"] : ["left", "right"];
     if (spec.side !== undefined && !sides.includes(spec.side))
-      throw new TypeError(`Rug side must be ${sides.join(" or ")}`);
+      throw new TypeError(
+        `rug side: expected "${sides.join('" or "')}"; received ${JSON.stringify(spec.side)}`,
+      );
     if (this.tooltip === "y" && spec.axis === "right")
-      throw new TypeError("A y rug cannot use the right axis");
+      throw new TypeError('rug axis: a y rug has no right axis; drop axis: "right"');
     if (spec.length !== undefined && !(Number.isFinite(spec.length) && spec.length > 0))
-      throw new TypeError("Rug length must be finite and positive");
+      throw new TypeError(`rug length: expected a positive number; received ${spec.length}`);
     if (
       spec.strokeWidth !== undefined &&
       !(Number.isFinite(spec.strokeWidth) && spec.strokeWidth >= 0)
     )
-      throw new TypeError("Rug strokeWidth must be finite and nonnegative");
+      throw new TypeError(
+        `rug strokeWidth: expected 0 or more pixels; received ${spec.strokeWidth}`,
+      );
     requireField(table, this.#field, NUMERIC, `rug ${this.tooltip}`);
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "rug series");
     this.#split = new SeriesSplitter(table, this.#field, [this.#field], spec.series, spec.label);

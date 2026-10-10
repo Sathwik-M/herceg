@@ -38,13 +38,12 @@ import type {
 
 const readings = table({ at: time([0]), cpu: [1], stage: ["a"] });
 
-// Explicit animation keys infer number or category fields.
+// Explicit animation keys infer number, time, or category fields.
 point(readings, { x: "at", y: "cpu", animationKey: "cpu" });
 point(readings, { x: "at", y: "cpu", animationKey: "stage" });
+point(readings, { x: "at", y: "cpu", animationKey: "at" });
 // @ts-expect-error the key must be a field of the table
 point(readings, { x: "at", y: "cpu", animationKey: "missing" });
-// @ts-expect-error the typed key API accepts number and category fields
-point(readings, { x: "at", y: "cpu", animationKey: "at" });
 // @ts-expect-error animation keys belong to point marks
 line(readings, { x: "at", y: "cpu", animationKey: "stage" });
 
@@ -63,7 +62,7 @@ funnel(readings, { category: "stage", value: "at" });
 const talks = table({ from: ["a"], to: ["b"], messages: [1] });
 const people = table({ name: ["a"], team: ["x"], followers: [1] });
 graph(talks, { source: "from", target: "to", value: "messages" });
-graph(talks, { source: "from", target: "to", nodes: people, node: "name", group: "team" });
+graph(talks, { source: "from", target: "to", nodes: people, node: "name", color: "team" });
 graph(talks, { source: "from", target: "to", nodes: people, node: "name", size: "followers" });
 // @ts-expect-error numbers are not node names
 graph(talks, { source: "messages", target: "to" });
@@ -72,7 +71,7 @@ graph(talks, { source: "from", target: "to", nodes: people, node: "from" });
 // @ts-expect-error categories do not size nodes
 graph(talks, { source: "from", target: "to", nodes: people, node: "name", size: "team" });
 // @ts-expect-error groups are a field of a nodes table
-graph(talks, { source: "from", target: "to", group: "from" });
+graph(talks, { source: "from", target: "to", color: "from" });
 // @ts-expect-error a nodes table needs the field naming its nodes
 graph(talks, { source: "from", target: "to", nodes: people });
 
@@ -120,7 +119,7 @@ point(regions, { x: "sales", y: "sales", animationKey: "shape" });
 // @ts-expect-error geometry is not a bar position
 bar(regions, { x: "shape", y: "sales" });
 // @ts-expect-error geometry is not a heatmap column
-heatmap(regions, { x: "shape", y: "name", value: "sales" });
+heatmap(regions, { x: "shape", y: "name", color: "sales" });
 // @ts-expect-error geometry is not a candle position
 candlestick(regions, { x: "shape", open: "sales", high: "sales", low: "sales", close: "sales" });
 // @ts-expect-error geometry is not an error bar position
@@ -362,17 +361,17 @@ void invalidViolinSpec;
 // Heatmaps: cells at x and y, placed along number and time axes, a step
 // wide, or banded; or the days of a time field as a calendar.
 const days = table({ day: time([0, 86_400_000]), hour: [0, 1], host: ["a", "b"], n: [1, 2] });
-heatmap(days, { x: "hour", y: "host", value: "n", xStep: 1 });
-heatmap(days, { x: "hour", y: "day", value: "n", xBanded: true, yStep: 3_600_000 });
-heatmap(days, { date: "day", value: "n", calendar: "months" });
-heatmap(days, { date: "day", value: "n", weekStart: "sun" });
+heatmap(days, { x: "hour", y: "host", color: "n", xStep: 1 });
+heatmap(days, { x: "hour", y: "day", color: "n", xBanded: true, yStep: 3_600_000 });
+heatmap(days, { date: "day", color: "n", calendar: "months" });
+heatmap(days, { date: "day", color: "n", weekStart: "sun" });
 // @ts-expect-error a step is for cells along an axis, not bands
-heatmap(days, { x: "hour", y: "host", value: "n", xStep: 1, xBanded: true });
+heatmap(days, { x: "hour", y: "host", color: "n", xStep: 1, xBanded: true });
 // @ts-expect-error a calendar places its date itself
-heatmap(days, { date: "day", x: "hour", value: "n" });
+heatmap(days, { date: "day", x: "hour", color: "n" });
 // @ts-expect-error a calendar's date is a time field
-heatmap(days, { date: "hour", value: "n" });
+heatmap(days, { date: "hour", color: "n" });
 // @ts-expect-error calendars are by weeks or months
-heatmap(days, { date: "day", value: "n", calendar: "years" });
+heatmap(days, { date: "day", color: "n", calendar: "years" });
 // @ts-expect-error a heatmap needs x and y, or a date
-heatmap(days, { x: "hour", value: "n" });
+heatmap(days, { x: "hour", color: "n" });

@@ -125,7 +125,7 @@ describe("brushes as conditions", () => {
 
   it("list the numbers of banded number fields", () => {
     const cells = table({ x: [10, 20, 30, 10], y: ["a", "a", "b", "b"], v: [1, 2, 3, 4] });
-    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v", xBanded: true })] });
+    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", color: "v", xBanded: true })] });
     const selection = brushedRows(model, cells, { x: [0, 1], y: [1, 1], lasso: null }, null);
     expect(expression(selection)).toEqual([
       "and",
@@ -134,7 +134,7 @@ describe("brushes as conditions", () => {
     ]);
     expect(rowsOf(selection, cells)).toEqual([3]);
     // Along a number axis, cells whose values are in the range.
-    const along = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })] });
+    const along = drawn({ marks: [heatmap(cells, { x: "x", y: "y", color: "v" })] });
     const ranged = brushedRows(along, cells, { x: [5, 22], y: [1, 1], lasso: null }, null);
     expect(expression(ranged)).toEqual([
       "and",
@@ -148,7 +148,7 @@ describe("brushes as conditions", () => {
     // Monday the 5th (twice) to Wednesday the 7th, and Monday the 12th.
     const at = (day: number, hour = 0) => Date.UTC(2026, 0, day, hour);
     const days = table({ day: time([at(5), at(5, 6), at(6), at(7), at(12)]), n: [1, 2, 3, 4, 5] });
-    const model = drawn({ marks: [heatmap(days, { date: "day", value: "n" })] });
+    const model = drawn({ marks: [heatmap(days, { date: "day", color: "n" })] });
     // The first week, Monday and Tuesday.
     const week = brushedRows(model, days, { x: [at(5), at(12) - 1], y: [0, 1], lasso: null }, null);
     expect(rowsOf(week, days)).toEqual([0, 1, 2]);
@@ -167,7 +167,7 @@ describe("brushes as conditions", () => {
       0, 1,
     ]);
     const months = drawn({
-      marks: [heatmap(days, { date: "day", value: "n", calendar: "months" })],
+      marks: [heatmap(days, { date: "day", color: "n", calendar: "months" })],
     });
     // Days 5 to 7 of January.
     const span = brushedRows(months, days, { x: [4, 6], y: [0, 0], lasso: null }, null);
@@ -177,7 +177,7 @@ describe("brushes as conditions", () => {
   it("lasso heatmap cells at their centers, which their values need not be", () => {
     // Cells of 0, 1, and 3 span [-0.5, 0.5], [0.5, 2], and [2, 4].
     const cells = table({ x: [0, 1, 3], y: [0, 0, 0], v: [1, 2, 3] });
-    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })] });
+    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", color: "v" })] });
     const around = (x0: number, x1: number) =>
       [
         [x0, -0.5],
@@ -397,7 +397,9 @@ describe("lassos and clicks as rows", () => {
 
   it("select only points drawn, each within its own size", () => {
     const sized = table({ x: [1, 2, 3], y: [1, 1, 1], r: [Number.NaN, 1, 100] });
-    const model = drawn({ marks: [point(sized, { x: "x", y: "y", r: "r", rRange: [2, 20] })] });
+    const model = drawn({
+      marks: [point(sized, { x: "x", y: "y", size: "r", radiusRange: [2, 20] })],
+    });
     const tables = new Set([sized]);
     // Row 0 has no size: it is not drawn, so neither clicked nor lassoed.
     const [x0, y0] = pixel(model, 1, 1);
@@ -477,7 +479,14 @@ describe("lassos and clicks as rows", () => {
     const grouped = drawn({
       marks: [
         bar(onlyM, { x: "day", y: "v", series: "sex", legendGroup: "sex" }),
-        point(tips, { x: "day", y: "v", series: "sex", dodge: true, legendGroup: "sex", r: 1 }),
+        point(tips, {
+          x: "day",
+          y: "v",
+          series: "sex",
+          dodge: true,
+          legendGroup: "sex",
+          radius: 1,
+        }),
       ],
     });
     const [x, y, w] = Array.from(at(grouped, "rect", 0).rects);
@@ -613,7 +622,7 @@ describe("lassos and clicks as rows", () => {
 
   it("select every row of a heatmap's cell", () => {
     const cells = table({ x: ["a", "a", "b"], y: ["p", "p", "p"], v: [1, 2, 3] });
-    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })] });
+    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", color: "v" })] });
     const [panel] = model.panels();
     const found = clickedRows(model, new Set([cells]), panel!.x.map(0), panel!.y.map(0));
     expect(Array.from(found!.rows)).toEqual([0, 1]);
@@ -621,7 +630,7 @@ describe("lassos and clicks as rows", () => {
 
   it("lasso heatmap cells at their centers, and never rows without a value", () => {
     const cells = table({ x: ["a", "b", "b"], y: ["p", "p", "p"], v: [1, Number.NaN, 2] });
-    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", value: "v" })] });
+    const model = drawn({ marks: [heatmap(cells, { x: "x", y: "y", color: "v" })] });
     const all = [
       [-0.5, -0.5],
       [1.5, -0.5],

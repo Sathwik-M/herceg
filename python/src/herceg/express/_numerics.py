@@ -407,14 +407,14 @@ def support(
     deviation: float,
     cut: float,
     clip: tuple[float | None, float | None],
-    gridsize: int,
+    grid_size: int,
 ) -> np.ndarray:
     """Seaborn's grid: ``cut`` kernel deviations past the extreme values, within ``clip``."""
     low = -math.inf if clip[0] is None else clip[0]
     high = math.inf if clip[1] is None else clip[1]
     start = max(float(values.min()) - deviation * cut, low)
     stop = min(float(values.max()) + deviation * cut, high)
-    return np.linspace(start, stop, gridsize)
+    return np.linspace(start, stop, grid_size)
 
 
 def density(
@@ -544,11 +544,11 @@ def normal_cdf(z: np.ndarray) -> np.ndarray:
 def ecdf(
     values: np.ndarray,
     weights: np.ndarray | None,
-    stat: Literal["proportion", "percent", "count"],
+    normalize: Literal["probability", "percent", "count"],
     complementary: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Distinct sorted values and the share (or count) of values at or below
-    each, or above it when ``complementary``."""
+    """Distinct sorted values and the share (or percentage, or count) of
+    values at or below each, or above it when ``complementary``."""
     if len(values) == 0:
         return np.empty(0), np.empty(0)
     order = np.argsort(values, kind="stable")
@@ -558,8 +558,8 @@ def ecdf(
     total = np.cumsum(w)
     ends = np.r_[starts[1:], len(sorted_values)] - 1
     heights = total[ends] if len(ends) else np.empty(0)
-    if stat != "count" and len(heights):
-        heights = heights / heights[-1] * (100 if stat == "percent" else 1)
+    if normalize != "count" and len(heights):
+        heights = heights / heights[-1] * (100 if normalize == "percent" else 1)
     if complementary and len(heights):
         heights = heights[-1] - heights
     return distinct, heights
@@ -588,32 +588,31 @@ def bin_edges(
     return np.histogram_bin_edges(values, bins, binrange, weights)
 
 
-HistStat = Literal["count", "frequency", "probability", "proportion", "percent", "density"]
+Normalize = Literal["count", "probability", "percent", "density"]
 
 
 def histogram(
     values: np.ndarray,
     weights: np.ndarray | None,
     edges: np.ndarray,
-    stat: HistStat,
+    normalize: Normalize,
     cumulative: bool,
 ) -> np.ndarray:
-    """Bar heights over ``edges``, as Seaborn's ``Histogram`` measures them."""
+    """Bar heights over ``edges``, as Seaborn's ``Histogram`` measures them
+    (its ``stat``, under the histogram mark's ``normalize`` names)."""
     counted, _ = np.histogram(values, bins=edges, weights=weights)
     heights = np.asarray(counted, dtype=float)
     widths = np.diff(edges)
     total = heights.sum()
     # Bins that count nothing measure nothing, as the histogram mark draws them.
-    if stat in ("probability", "proportion"):
+    if normalize == "probability":
         heights = heights / total if total else heights
-    elif stat == "percent":
+    elif normalize == "percent":
         heights = heights / total * 100 if total else heights
-    elif stat == "density":
+    elif normalize == "density":
         heights = heights / total / widths if total else heights
-    elif stat == "frequency":
-        heights = heights / widths
     if cumulative:
-        heights = np.cumsum(heights * widths if stat in ("density", "frequency") else heights)
+        heights = np.cumsum(heights * widths if normalize == "density" else heights)
     return heights
 
 
@@ -663,8 +662,8 @@ def linkage(rows: np.ndarray, method: LinkageMethod, metric: Metric) -> np.ndarr
         ("metric", metric, get_args(Metric)),
     ):
         if value not in choices:
-            listed = ", ".join(repr(choice) for choice in choices)
-            raise ValueError(f"clustering {name} must be one of {listed}, not {value!r}")
+            options = ", ".join(repr(choice) for choice in choices)
+            raise ValueError(f"clustermap {name}: expected one of {options}; received {value!r}")
     if method == "ward" and metric != "euclidean":
         raise ValueError("ward linkage needs the euclidean metric")
     try:

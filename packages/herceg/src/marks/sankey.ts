@@ -102,7 +102,9 @@ export class SankeyMark implements LayoutMark {
     if (spec.value !== undefined) requireField(table, spec.value, ["number"], "sankey value");
     const width = spec.nodeWidth ?? NODE_WIDTH;
     if (!(width > 0 && width < Number.POSITIVE_INFINITY)) {
-      throw new RangeError(`sankey nodeWidth must be a positive number of pixels, not ${width}`);
+      throw new RangeError(
+        `sankey nodeWidth: expected a positive number of pixels; received ${width}`,
+      );
     }
     this.table = table;
     this.measure = spec.value ?? "Count";

@@ -632,7 +632,7 @@ describe("a navigator's sliders", () => {
   });
 
   it("let go of a drag when the axis turns around under it", async () => {
-    const chart = await mount({ x: { axis: false, domain: [0, 1000] } });
+    const chart = await mount({ x: { show: false, domain: [0, 1000] } });
     chart.setViewport([200, 400]);
     chart.render();
     const at = (value: number) => stripBox(chart).x + value * perUnit(chart);
@@ -641,7 +641,7 @@ describe("a navigator's sliders", () => {
     pointer(chart, target, "pointerdown", at(300), y);
     pointer(chart, target, "pointermove", at(350), y);
     const held = chart.getViewport().x;
-    chart.update({ x: { axis: false, domain: [1000, 0] } });
+    chart.update({ x: { show: false, domain: [1000, 0] } });
     chart.render();
     pointer(chart, target, "pointermove", at(400), y);
     pointer(chart, target, "pointerup", at(400), y);
@@ -697,7 +697,7 @@ describe("a navigator's sliders", () => {
     for (const input of ["mouse", "key"] as const) {
       const chart = await mount({
         marks: [line(hosts, { x: "t", y: "v" })],
-        x: { axis: false, domain: [0, 3] },
+        x: { show: false, domain: [0, 3] },
         interaction: { zoom: true },
       });
       chart.setViewport([1, 2]);
@@ -727,7 +727,7 @@ describe("a navigator's sliders", () => {
   });
 
   it("keep a press for itself when the plot grows under it as the strip goes", async () => {
-    const chart = await mount({ x: { axis: false }, interaction: { zoom: true } });
+    const chart = await mount({ x: { show: false }, interaction: { zoom: true } });
     chart.setViewport([200, 400]);
     chart.render();
     const at = (value: number) => stripBox(chart).x + value * perUnit(chart);
@@ -745,7 +745,7 @@ describe("a navigator's sliders", () => {
   });
 
   it("let go of a drag when the axis' scale changes type under it", async () => {
-    const chart = await mount({ x: { axis: false, domain: [1, 1000] } });
+    const chart = await mount({ x: { show: false, domain: [1, 1000] } });
     chart.setViewport([200, 400]);
     chart.render();
     const at = (value: number) => stripBox(chart).x + ((value - 1) / 999) * stripBox(chart).width;
@@ -754,7 +754,7 @@ describe("a navigator's sliders", () => {
     pointer(chart, target, "pointerdown", at(300), y);
     pointer(chart, target, "pointermove", at(350), y);
     const held = chart.getViewport().x;
-    chart.update({ x: { axis: false, domain: [1, 1000], type: "log" } });
+    chart.update({ x: { show: false, domain: [1, 1000], type: "log" } });
     chart.render();
     pointer(chart, target, "pointermove", at(400), y);
     pointer(chart, target, "pointerup", at(400), y);

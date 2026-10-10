@@ -13,14 +13,16 @@ from .._chart import Axis, Chart, HelperOptions
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
-    HUE_GROUP,
+    SERIES_GROUP,
     Levels,
     Source,
     Statistics,
     by,
     check_choice,
+    check_grid_size,
     complete,
     dropped_sentence,
+    facets,
     fresh,
     group,
     keyed_table,
@@ -29,44 +31,37 @@ from ._common import (
     readable,
     record,
     rows_table,
+    shown,
     values,
     variables_of,
 )
+from ._numerics import Normalize
 
 if sys.version_info >= (3, 11):
     from typing import Unpack
 else:
     from typing_extensions import Unpack
 
-Stat = Literal["count", "density", "probability", "proportion", "percent"]
 Multiple = Literal["layer", "stack", "dodge"]
 Orient = Literal["v", "h", "x", "y"]
 BandwidthMethod = Literal["scott", "silverman"] | float
 
-#: How the core histogram mark measures each of Seaborn's statistics.
-_NORMALIZE = {
-    "count": "count",
-    "density": "density",
-    "probability": "probability",
-    "proportion": "probability",
-    "percent": "percent",
-}
-_STAT_LABELS = {
+#: Axis titles of what histogram bars measure.
+_MEASURES = {
     "count": "Count",
-    "density": "Density",
     "probability": "Probability",
-    "proportion": "Proportion",
     "percent": "Percent",
+    "density": "Density",
 }
 
 
 class KdeOptions(TypedDict, total=False):
-    """The kernel density options ``histplot(kde=True)`` takes as ``kde_kws``."""
+    """The kernel density options ``histplot(kde=True)`` takes as ``kde_options``."""
 
     bw_method: BandwidthMethod
     bw_adjust: float
     cut: float
-    gridsize: int
+    grid_size: int
     clip: tuple[float | None, float | None]
 
 
@@ -75,46 +70,49 @@ def histplot(
     *,
     x: str | None = None,
     y: str | None = None,
-    hue: str | None = None,
-    hue_order: Sequence[Any] | None = None,
-    stat: Stat = "count",
+    series: str | None = None,
+    series_order: Sequence[Any] | None = None,
+    normalize: Normalize = "count",
     bins: int | str | Sequence[float] = "auto",
     binwidth: float | None = None,
     binrange: tuple[float, float] | None = None,
     discrete: bool = False,
     cumulative: bool = False,
-    common_norm: bool = True,
+    common_norm: bool = False,
     multiple: Multiple = "layer",
     kde: bool = False,
-    kde_kws: KdeOptions | None = None,
-    col: str | None = None,
-    row: str | None = None,
+    kde_options: KdeOptions | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A histogram of ``x`` (or, horizontal, of ``y``), per ``hue`` level.
+    """A histogram of ``x`` (or, horizontal, of ``y``), per ``series``.
 
     Bins are Seaborn's, chosen from all the rows: ``numpy.histogram_bin_edges``
     with ``bins`` (a count, a NumPy rule such as ``"auto"``, or edges),
     steps of ``binwidth``, a bin per integer with ``discrete=True``, within
-    ``binrange``. ``stat`` measures each bin: ``"count"``, ``"density"``,
-    ``"probability"`` (or ``"proportion"``), or ``"percent"``, of each hue
-    level's values, or with ``common_norm`` of all of them. ``cumulative``
-    accumulates the bins; ``multiple`` layers the levels' bars, stacks them,
-    or dodges them side by side. ``kde=True`` adds each level's kernel
-    density (see ``kdeplot``; ``kde_kws`` takes its options, with ``cut``
-    0), scaled to its bars, for layered vertical bars.
+    ``binrange``. ``normalize`` measures each bin as ``Chart.histogram``
+    does: ``"count"``, ``"probability"``, ``"percent"``, or ``"density"`` of
+    each series' values, or with ``common_norm=True`` of all of them in the
+    panel. ``cumulative`` accumulates the bins; ``multiple`` layers the
+    series' bars, stacks them, or dodges them side by side. ``kde=True`` adds
+    each series' kernel density (see ``kdeplot``; ``kde_options`` takes its
+    options, with ``cut`` 0), scaled to its bars, for layered vertical bars.
     """
     axis, name = _one_axis(x, y, "histplot")
-    check_choice(stat, "stat", tuple(_NORMALIZE))
-    check_choice(multiple, "multiple", ("layer", "stack", "dodge"))
+    check_choice(normalize, "histplot normalize", tuple(_MEASURES))
+    check_choice(multiple, "histplot multiple", ("layer", "stack", "dodge"))
     if kde and multiple != "layer":
-        raise ValueError("histplot draws kernel densities over layered bars only: multiple='layer'")
+        raise ValueError(
+            'histplot kde: kernel densities are drawn over layered bars only; pass multiple="layer"'
+        )
     if kde and axis == "y":
         _refuse_along_y("histplot", "kernel densities over horizontal bars", "density")
+    facet_row, facet_column = facets(options, "histplot")
     source = Source(data)
     column = source.column(name, f"histplot {axis}", ("number", "time"))
-    variables = variables_of(source, row, col, hue, hue_order, axes=[name])
+    variables = variables_of(
+        source, "histplot", facet_row, facet_column, series, series_order, axes=[name]
+    )
     rows = complete(len(column), column, levels_of=list(variables.values()))
     dropped = len(column) - len(rows)
     v = values(column)
@@ -127,97 +125,97 @@ def histplot(
     widths = np.diff(edges)
     # Widths compared relative to one another, whatever the data's units.
     unequal = not np.allclose(widths, widths[0], rtol=1e-6, atol=0)
-    if kde and stat != "density" and not cumulative and unequal:
+    if kde and normalize != "density" and not cumulative and unequal:
         # One curve cannot follow counts over bins of different widths.
         raise ValueError(
-            "histplot draws kernel densities over bins of one width, or with stat='density'"
+            "histplot kde: kernel densities cannot follow bars over bins of different "
+            'widths; give bins of one width, or normalize="density"'
         )
     table = rows_table(variables, rows)
     table[name] = number_column(v[rows], column.kind)
-    measured = _STAT_LABELS[stat] + (" (cumulative)" if cumulative else "")
+    measured = _MEASURES[normalize] + (" (cumulative)" if cumulative else "")
     is_x = axis == "x"
-    settings: dict[str, Any] = dict(options)
-    grouped = hue is not None
+    grouped = series is not None
     sentence = (
-        f"Bars measure the {stat} of {name} in {len(edges) - 1} bins from "
-        f"{_number(edges[0])} to {_number(edges[-1])}{by(hue)}"
+        f"Bars measure the {normalize} of {name} in {len(edges) - 1} bins from "
+        f"{_number(edges[0])} to {_number(edges[-1])}{by(series)}"
         + (", cumulative" if cumulative else "")
         + (
             f", {'stacked' if multiple == 'stack' else 'side by side'}"
             if grouped and multiple != "layer"
             else ""
         )
-        + (", normalized over all levels" if grouped and common_norm and stat != "count" else "")
+        + (
+            ", normalized over all series"
+            if grouped and common_norm and normalize != "count"
+            else ""
+        )
         + "."
     )
-    heights = _heights(v, variables, rows, edges, stat, cumulative, common_norm and grouped, hue)
+    heights = _heights(
+        v, variables, rows, edges, normalize, cumulative, common_norm and grouped, series
+    )
     tables: dict[str, Mapping[str, np.ndarray]] = {
         "edges": {"edges": edges},
         "bins": readable(heights),
     }
     kde_table: dict[str, Column] | None = None
     if kde:
-        kws: KdeOptions = kde_kws or {}
-        unknown = set(kws) - {"bw_method", "bw_adjust", "cut", "gridsize", "clip"}
+        density_options: KdeOptions = kde_options or {}
+        unknown = set(density_options) - {"bw_method", "bw_adjust", "cut", "grid_size", "clip"}
         if unknown:
             raise ValueError(
-                "kde_kws takes bw_method, bw_adjust, cut, gridsize, and clip, "
-                f"not {sorted(unknown)}"
+                f"histplot kde_options: unknown {', '.join(sorted(unknown))}; "
+                "kde_options takes bw_method, bw_adjust, cut, grid_size, and clip"
             )
         kde_table, note, kde_name = densities(
             v,
             variables,
             rows,
             name,
-            hue,
-            bw_method=kws.get("bw_method", "scott"),
-            bw_adjust=kws.get("bw_adjust", 1.0),
-            cut=kws.get("cut", 0.0),
-            gridsize=kws.get("gridsize", 200),
-            clip=kws.get("clip", (None, None)),
-            common_norm=common_norm and grouped and stat != "count",
+            series,
+            bw_method=density_options.get("bw_method", "scott"),
+            bw_adjust=density_options.get("bw_adjust", 1.0),
+            cut=density_options.get("cut", 0.0),
+            grid_size=density_options.get("grid_size", 200),
+            clip=density_options.get("clip", (None, None)),
+            common_norm=common_norm and grouped and normalize != "count",
             cumulative=cumulative,
-            scale=lambda members: _hist_norm(v[members], edges, stat, cumulative),
+            scale=lambda members: _hist_norm(v[members], edges, normalize, cumulative),
             value_kind=column.kind,
+            role="histplot kde_options",
             common_grid=True,
         )
         sentence += " Lines show " + note + ", scaled to the bars."
         tables["kde"] = readable(kde_table)
-    sentence += dropped_sentence(dropped, [name, *variables], hue_order is not None)
+    sentence += dropped_sentence(dropped, [name, *variables], series_order is not None)
     x_label, y_label = (name, measured) if is_x else (measured, name)
     chart = make_chart(
-        table,
-        settings,
-        sentence=sentence,
-        col=col,
-        row=row,
-        palette=palette,
-        x_label=x_label,
-        y_label=y_label,
+        table, options, sentence=sentence, palette=palette, x_label=x_label, y_label=y_label
     )
     chart.histogram(
         name if is_x else None,
         y=None if is_x else name,
         bins=[float(edge) for edge in edges],
-        series=hue,
-        normalize=_NORMALIZE[stat],  # type: ignore[arg-type]
+        series=series,
+        normalize=normalize,
         common_norm=common_norm and grouped,
         cumulative=cumulative,
         stack=multiple == "stack",
         dodge=multiple == "dodge" and grouped,
         # Densities over one series' bars show through them, as in Seaborn.
         fill_opacity=0.5 if kde and not grouped else None,
-        label=None if hue else name,
-        legend_group=HUE_GROUP,
+        label=None if series else name,
+        legend_group=SERIES_GROUP,
     )
     if kde_table is not None:
         chart.line(
             name,
             kde_name,
             data=kde_table,
-            series=hue,
-            label=None if hue else name,
-            legend_group=HUE_GROUP,
+            series=series,
+            label=None if series else name,
+            legend_group=SERIES_GROUP,
         )
     return record(chart, Statistics("histplot", sentence, tables, None, dropped))
 
@@ -227,52 +225,51 @@ def kdeplot(
     *,
     x: str | None = None,
     y: str | None = None,
-    hue: str | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series: str | None = None,
+    series_order: Sequence[Any] | None = None,
     bw_method: BandwidthMethod = "scott",
     bw_adjust: float = 1.0,
     cut: float = 3.0,
-    gridsize: int = 200,
+    grid_size: int = 200,
     clip: tuple[float | None, float | None] | None = None,
-    fill: bool = False,
-    common_norm: bool = True,
+    filled: bool = False,
+    common_norm: bool = False,
     cumulative: bool = False,
     colors: str | Sequence[str] | None = None,
-    col: str | None = None,
-    row: str | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """Gaussian kernel density estimates of ``x`` per ``hue`` level; with
-    both ``x`` and ``y``, a bivariate density drawn as a heatmap over a
-    ``gridsize`` by ``gridsize`` grid. (Densities of ``y`` alone, along y,
+    """Gaussian kernel density estimates of ``x`` per ``series``; with both
+    ``x`` and ``y``, a bivariate density drawn as a heatmap over a
+    ``grid_size`` by ``grid_size`` grid. (Densities of ``y`` alone, along y,
     are refused: tooltips would read their lines' y, not their density.)
 
     Densities are SciPy's ``gaussian_kde``'s: the kernel's covariance is the
     sample's times the square of ``bw_method``'s factor (Scott's rule
     n^(-1/5) by default, ``"silverman"``, or a number) times ``bw_adjust``.
-    They are evaluated at ``gridsize`` points from ``cut`` kernel deviations
+    They are evaluated at ``grid_size`` points from ``cut`` kernel deviations
     below the lowest value to as far above the highest, within ``clip``;
-    with ``common_norm``, each level's density is weighted by its share of
-    the rows, so all of them together integrate to 1. ``cumulative``
-    integrates them; ``fill`` fills under them. A level with fewer than two
-    distinct values has no density.
+    with ``common_norm=True``, each series' density is weighted by its share
+    of the panel's rows, so all of them together integrate to 1.
+    ``cumulative`` integrates them; ``filled`` fills under them. A series
+    with fewer than two distinct values has no density.
     """
+    facet_row, facet_column = facets(options, "kdeplot")
     if x is not None and y is not None:
         return _bivariate(
             data,
             x,
             y,
-            hue,
+            series,
             bw_method,
             bw_adjust,
             cut,
-            gridsize,
+            grid_size,
             clip,
             cumulative,
             colors,
-            col,
-            row,
+            facet_row,
+            facet_column,
             options,
         )
     axis, name = _one_axis(x, y, "kdeplot")
@@ -280,55 +277,55 @@ def kdeplot(
         _refuse_along_y("kdeplot", "densities along y", "density")
     source = Source(data)
     column = source.column(name, f"kdeplot {axis}", ("number", "time"))
-    variables = variables_of(source, row, col, hue, hue_order, axes=[name])
+    variables = variables_of(
+        source, "kdeplot", facet_row, facet_column, series, series_order, axes=[name]
+    )
     rows = complete(len(column), column, levels_of=list(variables.values()))
     dropped = len(column) - len(rows)
     v = values(column)
-    grouped = hue is not None
+    grouped = series is not None
     table, note, density = densities(
         v,
         variables,
         rows,
         name,
-        hue,
+        series,
         bw_method=bw_method,
         bw_adjust=bw_adjust,
         cut=cut,
-        gridsize=gridsize,
+        grid_size=grid_size,
         clip=clip or (None, None),
         common_norm=common_norm and grouped,
         cumulative=cumulative,
         scale=None,
         value_kind=column.kind,
+        role="kdeplot",
     )
     measured = "Cumulative probability" if cumulative else "Density"
     sentence = (
         "Lines show "
         + note
-        + by(hue)
+        + by(series)
         + "."
-        + dropped_sentence(dropped, [name, *variables], hue_order is not None)
+        + dropped_sentence(dropped, [name, *variables], series_order is not None)
     )
     chart = make_chart(
-        table,
-        options,
-        sentence=sentence,
-        col=col,
-        row=row,
-        palette=palette,
-        x_label=name,
-        y_label=measured,
+        table, options, sentence=sentence, palette=palette, x_label=name, y_label=measured
     )
-    label = None if hue else name
-    if fill:
+    label = None if series else name
+    if filled:
         chart.area(
-            name, density, series=hue, fill_opacity=0.25, label=label, legend_group=HUE_GROUP
+            name, density, series=series, fill_opacity=0.25, label=label, legend_group=SERIES_GROUP
         )
     else:
-        chart.line(name, density, series=hue, label=label, legend_group=HUE_GROUP)
+        chart.line(name, density, series=series, label=label, legend_group=SERIES_GROUP)
     return record(
         chart, Statistics("kdeplot", sentence, {"density": readable(table)}, None, dropped)
     )
+
+
+#: What ECDF steps measure, as descriptions name it.
+_SHARES = {"probability": "share", "percent": "percentage", "count": "count"}
 
 
 def ecdfplot(
@@ -336,30 +333,32 @@ def ecdfplot(
     *,
     x: str | None = None,
     y: str | None = None,
-    hue: str | None = None,
-    hue_order: Sequence[Any] | None = None,
-    stat: Literal["proportion", "percent", "count"] = "proportion",
+    series: str | None = None,
+    series_order: Sequence[Any] | None = None,
+    normalize: Literal["probability", "percent", "count"] = "probability",
     complementary: bool = False,
-    col: str | None = None,
-    row: str | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """The empirical distribution of ``x`` per ``hue`` level: steps up to
-    the share (``stat``: ``"proportion"``, ``"percent"``, or ``"count"``) of
-    values at or below each value, or above it with ``complementary=True``.
-    (Steps of ``y``, along y, are refused, as for ``kdeplot``.)"""
+    """The empirical distribution of ``x`` per ``series``: steps up to the
+    share of values at or below each value (``normalize``: ``"probability"``
+    from 0 to 1, ``"percent"``, or ``"count"``), or above it with
+    ``complementary=True``. (Steps of ``y``, along y, are refused, as for
+    ``kdeplot``.)"""
     axis, name = _one_axis(x, y, "ecdfplot")
+    check_choice(normalize, "ecdfplot normalize", tuple(_SHARES))
     if axis == "y":
-        _refuse_along_y("ecdfplot", "steps along y", stat)
-    check_choice(stat, "stat", ("proportion", "percent", "count"))
+        _refuse_along_y("ecdfplot", "steps along y", _SHARES[normalize])
+    facet_row, facet_column = facets(options, "ecdfplot")
     source = Source(data)
     column = source.column(name, f"ecdfplot {axis}", ("number", "time"))
-    variables = variables_of(source, row, col, hue, hue_order, axes=[name])
+    variables = variables_of(
+        source, "ecdfplot", facet_row, facet_column, series, series_order, axes=[name]
+    )
     rows = complete(len(column), column, levels_of=list(variables.values()))
     dropped = len(column) - len(rows)
     v = values(column)
-    (share,) = fresh([stat.capitalize()], {name, *variables})
+    (share,) = fresh([normalize.capitalize()], {name, *variables})
     keys: list[np.ndarray] = []
     positions: list[np.ndarray] = []
     heights: list[np.ndarray] = []
@@ -367,7 +366,7 @@ def ecdfplot(
         # A point per distinct value, which tooltips and the keyboard read:
         # no riser from 0 (or the whole) before the first, which would read
         # as an observation.
-        distinct, steps = numerics.ecdf(v[members], None, stat, complementary)
+        distinct, steps = numerics.ecdf(v[members], None, normalize, complementary)
         positions.append(distinct)
         heights.append(steps)
         keys.append(np.tile(np.asarray(key, dtype=np.int64), (len(distinct), 1)))
@@ -388,28 +387,23 @@ def ecdfplot(
     single = [len(p) == 1 for p in positions]
     side = "above" if complementary else "at or below"
     sentence = (
-        f"Steps show the {stat} of {name} values {side} each value{by(hue)}."
+        f"Steps show the {_SHARES[normalize]} of {name} values {side} each value{by(series)}."
         + (" A group of one distinct value shows as a point." if any(single) else "")
-        + dropped_sentence(dropped, [name, *variables], hue_order is not None)
+        + dropped_sentence(dropped, [name, *variables], series_order is not None)
     )
     chart = make_chart(
-        table,
-        options,
-        sentence=sentence,
-        col=col,
-        row=row,
-        palette=palette,
-        x_label=name,
-        y_label=share,
+        table, options, sentence=sentence, palette=palette, x_label=name, y_label=share
     )
     if not any(single):
-        label = None if hue else name
-        chart.line(name, share, series=hue, curve="step-after", label=label, legend_group=HUE_GROUP)
+        label = None if series else name
+        chart.line(
+            name, share, series=series, curve="step-after", label=label, legend_group=SERIES_GROUP
+        )
     else:
-        # Steps and points level by level, so that levels keep their order
+        # Steps and points series by series, so that series keep their order
         # (and colors) in the legend group whichever draw as points.
-        position = list(variables).index(hue) if hue else None
-        for level, label in enumerate(variables[hue].labels if hue else (name,)):
+        position = list(variables).index(series) if series else None
+        for level, label in enumerate(variables[series].labels if series else (name,)):
             ours = [position is None or int(k[0, position]) == level for k in keys]
             stepped = [mine and not one for mine, one in zip(ours, single, strict=True)]
             points = [mine and one for mine, one in zip(ours, single, strict=True)]
@@ -420,10 +414,12 @@ def ecdfplot(
                     data=steps_of(stepped),
                     curve="step-after",
                     label=label,
-                    legend_group=HUE_GROUP,
+                    legend_group=SERIES_GROUP,
                 )
             if any(points):
-                chart.point(name, share, data=steps_of(points), label=label, legend_group=HUE_GROUP)
+                chart.point(
+                    name, share, data=steps_of(points), label=label, legend_group=SERIES_GROUP
+                )
     return record(chart, Statistics("ecdfplot", sentence, {"ecdf": readable(table)}, None, dropped))
 
 
@@ -432,26 +428,27 @@ def rugplot(
     *,
     x: str | None = None,
     y: str | None = None,
-    hue: str | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series: str | None = None,
+    series_order: Sequence[Any] | None = None,
     length: float = 8,
-    col: str | None = None,
-    row: str | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A tick per value of ``x`` along the bottom of the plot (or of ``y``
-    along its left), ``length`` pixels long, per ``hue`` level."""
+    along its left), ``length`` pixels long, per ``series``."""
     axis, name = _one_axis(x, y, "rugplot")
+    facet_row, facet_column = facets(options, "rugplot")
     source = Source(data)
     column = source.column(name, f"rugplot {axis}", ("number", "time"))
-    variables = variables_of(source, row, col, hue, hue_order, axes=[name])
+    variables = variables_of(
+        source, "rugplot", facet_row, facet_column, series, series_order, axes=[name]
+    )
     rows = complete(len(column), column, levels_of=list(variables.values()))
     dropped = len(column) - len(rows)
     table = rows_table(variables, rows)
     table[name] = number_column(values(column)[rows], column.kind)
-    sentence = f"Ticks mark each value of {name}{by(hue)}." + dropped_sentence(
-        dropped, [name, *variables], hue_order is not None
+    sentence = f"Ticks mark each value of {name}{by(series)}." + dropped_sentence(
+        dropped, [name, *variables], series_order is not None
     )
     is_x = axis == "x"
     # A rug alone has nothing on its other axis.
@@ -461,8 +458,6 @@ def rugplot(
         table,
         settings,
         sentence=sentence,
-        col=col,
-        row=row,
         palette=palette,
         x_label=name if is_x else None,
         y_label=None if is_x else name,
@@ -470,10 +465,10 @@ def rugplot(
     chart.rug(
         name if is_x else None,
         y=None if is_x else name,
-        series=hue,
+        series=series,
         length=length,
-        label=None if hue else name,
-        legend_group=HUE_GROUP,
+        label=None if series else name,
+        legend_group=SERIES_GROUP,
     )
     return record(
         chart, Statistics("rugplot", sentence, {"values": readable(table)}, None, dropped)
@@ -508,26 +503,26 @@ def _heights(
     variables: Mapping[str, Levels],
     rows: np.ndarray,
     edges: np.ndarray,
-    stat: str,
+    normalize: Normalize,
     cumulative: bool,
     common_norm: bool,
-    hue: str | None,
+    series: str | None,
 ) -> dict[str, Column]:
     """Each group's bars, as Seaborn measures them (and the chart draws them):
-    per facet panel and hue level, each bin's edges and height."""
+    per facet panel and series, each bin's edges and height."""
     keys: list[np.ndarray] = []
     lefts: list[np.ndarray] = []
     heights: list[np.ndarray] = []
-    panels = [name for name in variables if name != hue]
+    panels = [name for name in variables if name != series]
     grouping = group(list(variables.values()), rows)
-    # A level's share of its panel's rows, for common normalization.
+    # A series' share of its panel's rows, for common normalization.
     totals: dict[tuple[int, ...], int] = {}
     for key, members in grouping:
         panel = key[: len(panels)]
         totals[panel] = totals.get(panel, 0) + len(members)
     for key, members in grouping:
-        height = numerics.histogram(v[members], None, edges, stat, cumulative)  # type: ignore[arg-type]
-        if common_norm and stat != "count":
+        height = numerics.histogram(v[members], None, edges, normalize, cumulative)
+        if common_norm and normalize != "count":
             height = height * len(members) / totals[key[: len(panels)]]
         heights.append(height)
         lefts.append(edges[:-1])
@@ -540,10 +535,12 @@ def _heights(
     return table
 
 
-def _hist_norm(sample: np.ndarray, edges: np.ndarray, stat: str, cumulative: bool) -> float:
-    """What Seaborn scales a level's density by to match its bars: the bars'
+def _hist_norm(
+    sample: np.ndarray, edges: np.ndarray, normalize: Normalize, cumulative: bool
+) -> float:
+    """What Seaborn scales a series' density by to match its bars: the bars'
     area, or for cumulative bars the last bar."""
-    heights = numerics.histogram(sample, None, edges, stat, cumulative)  # type: ignore[arg-type]
+    heights = numerics.histogram(sample, None, edges, normalize, cumulative)
     if cumulative:
         return float(heights.max()) if len(heights) else 0.0
     return float((heights * np.diff(edges)).sum())
@@ -554,35 +551,38 @@ def densities(
     variables: Mapping[str, Levels],
     rows: np.ndarray,
     name: str,
-    hue: str | None,
+    series: str | None,
     *,
     bw_method: BandwidthMethod,
     bw_adjust: float,
     cut: float,
-    gridsize: int,
+    grid_size: int,
     clip: tuple[float | None, float | None],
     common_norm: bool,
     cumulative: bool,
     scale: Any,
     value_kind: str,
+    role: str,
     common_grid: bool = False,
 ) -> tuple[dict[str, Column], str, str]:
     """Each group's density on its own grid (or with ``common_grid`` on its
     panel's, as Seaborn's histograms put theirs), as one table, and how it
     was computed."""
     if not (bw_adjust > 0 and math.isfinite(bw_adjust)):
-        raise ValueError(f"bw_adjust must be a positive number, not {bw_adjust!r}")
+        raise ValueError(
+            f"{role} bw_adjust: expected a positive number; received {shown(bw_adjust)}"
+        )
     if not (cut >= 0 and math.isfinite(cut)):
-        raise ValueError(f"cut must be a number of at least 0, not {cut!r}")
-    if not (isinstance(gridsize, int) and gridsize >= 2):
-        raise ValueError(f"gridsize must be a whole number of at least 2, not {gridsize!r}")
+        raise ValueError(f"{role} cut: expected a number of at least 0; received {shown(cut)}")
+    check_grid_size(grid_size, f"{role} grid_size")
     if isinstance(bw_method, str):
-        check_choice(bw_method, "bw_method", ("scott", "silverman"))
+        check_choice(bw_method, f"{role} bw_method", ("scott", "silverman"))
     elif not (bw_method > 0 and math.isfinite(bw_method)):
         raise ValueError(
-            f"bw_method must be 'scott', 'silverman', or a positive number, not {bw_method!r}"
+            f'{role} bw_method: expected "scott", "silverman", or a positive number; '
+            f"received {shown(bw_method)}"
         )
-    panels = [n for n in variables if n != hue]
+    panels = [n for n in variables if n != series]
     grouping = group(list(variables.values()), rows)
     totals: dict[tuple[int, ...], int] = {}
     members_of: dict[tuple[int, ...], list[np.ndarray]] = {}
@@ -594,7 +594,7 @@ def densities(
         deviation = math.sqrt(
             float(numerics.kernel_covariance(sample, None, bw_method, bw_adjust)[0, 0])
         )
-        return numerics.support(sample, deviation, cut, clip, gridsize)
+        return numerics.support(sample, deviation, cut, clip, grid_size)
 
     shared = {
         panel: grid_of(v[np.concatenate(parts)])
@@ -622,7 +622,7 @@ def densities(
             density = density * len(sample) / totals[key[: len(panels)]]
         if scale is not None:
             density = density * scale(members)
-        keys.append(np.tile(np.asarray(key, dtype=np.int64), (gridsize, 1)))
+        keys.append(np.tile(np.asarray(key, dtype=np.int64), (grid_size, 1)))
         grids.append(grid)
         densities.append(density)
     table = keyed_table(variables, _stack(keys, len(variables)))
@@ -640,13 +640,13 @@ def densities(
         f"{'cumulative ' if cumulative else ''}Gaussian kernel density estimates "
         f"(SciPy's gaussian_kde, {rule}"
         + (f" × {bw_adjust:g}" if bw_adjust != 1 else "")
-        + f", {gridsize} points, cut {cut:g})"
+        + f", {grid_size} points, cut {cut:g})"
     )
     if common_norm:
-        note += ", weighted by each level's share of the rows"
+        note += ", weighted by each series' share of the rows"
     if singular:
-        levels_had = "levels" if singular > 1 else "level"
-        note += f"; {singular} {levels_had} with fewer than two distinct values had none"
+        groups = "groups" if singular > 1 else "group"
+        note += f"; {singular} {groups} with fewer than two distinct values had none"
     return table, note, column
 
 
@@ -654,33 +654,35 @@ def _bivariate(
     data: Any,
     x: str,
     y: str,
-    hue: str | None,
+    series: str | None,
     bw_method: BandwidthMethod,
     bw_adjust: float,
     cut: float,
-    gridsize: int,
+    grid_size: int,
     clip: tuple[float | None, float | None] | None,
     cumulative: bool,
     colors: str | Sequence[str] | None,
-    col: str | None,
-    row: str | None,
+    facet_row: str | None,
+    facet_column: str | None,
     options: HelperOptions,
 ) -> Chart:
     """kdeplot of two columns: a density heatmap per facet panel, on one grid."""
-    if hue is not None:
+    if series is not None:
         raise ValueError(
-            "a bivariate kdeplot draws one density per panel: facet by col or row instead of hue"
+            "kdeplot series: a bivariate kdeplot draws one density per panel; "
+            "facet by facet_row or facet_column instead"
         )
     if cumulative:
-        raise ValueError("a bivariate kdeplot cannot be cumulative")
+        raise ValueError("kdeplot cumulative: a bivariate density cannot be cumulative; drop it")
     if not (bw_adjust > 0):
-        raise ValueError(f"bw_adjust must be a positive number, not {bw_adjust!r}")
-    if not (isinstance(gridsize, int) and gridsize >= 2):
-        raise ValueError(f"gridsize must be a whole number of at least 2, not {gridsize!r}")
+        raise ValueError(
+            f"kdeplot bw_adjust: expected a positive number; received {shown(bw_adjust)}"
+        )
+    check_grid_size(grid_size, "kdeplot grid_size")
     source = Source(data)
     xc = source.column(x, "kdeplot x", ("number",))
     yc = source.column(y, "kdeplot y", ("number",))
-    variables = variables_of(source, row, col, None, axes=[x, y])
+    variables = variables_of(source, "kdeplot", facet_row, facet_column, None, axes=[x, y])
     rows = complete(len(xc), xc, yc, levels_of=list(variables.values()))
     dropped = len(xc) - len(rows)
     xv, yv = values(xc), values(yc)
@@ -689,8 +691,8 @@ def _bivariate(
     whole = np.vstack([xv[rows], yv[rows]])
     spread = numerics.kernel_covariance(whole, None, bw_method, bw_adjust)
     limits = clip or (None, None)
-    xs = numerics.support(whole[0], math.sqrt(spread[0, 0]), cut, limits, gridsize)
-    ys = numerics.support(whole[1], math.sqrt(spread[1, 1]), cut, limits, gridsize)
+    xs = numerics.support(whole[0], math.sqrt(spread[0, 0]), cut, limits, grid_size)
+    ys = numerics.support(whole[1], math.sqrt(spread[1, 1]), cut, limits, grid_size)
     keys: list[np.ndarray] = []
     cells_x: list[np.ndarray] = []
     cells_y: list[np.ndarray] = []
@@ -723,9 +725,9 @@ def _bivariate(
     sentence = (
         f"Cells show the bivariate Gaussian kernel density of {x} and {y} (SciPy's gaussian_kde, "
         f"{rule}{f' × {bw_adjust:g}' if bw_adjust != 1 else ''}) "
-        f"on a {gridsize} by {gridsize} grid." + dropped_sentence(dropped, [x, y, *variables])
+        f"on a {grid_size} by {grid_size} grid." + dropped_sentence(dropped, [x, y, *variables])
     )
-    chart = make_chart(table, options, sentence=sentence, col=col, row=row, x_label=x, y_label=y)
+    chart = make_chart(table, options, sentence=sentence, x_label=x, y_label=y)
     chart.heatmap(x, y, density, colors=colors, label="density")
     return record(
         chart, Statistics("kdeplot", sentence, {"density": readable(table)}, None, dropped)

@@ -231,7 +231,7 @@ describe("pixel mapping", () => {
 
   it("needs the panel in charts of several panels", () => {
     const chart = mount({ marks: [line(regions(), { x: "t", y: "v" })], facet: facet("region") });
-    expect(() => chart.toPixel(0, { axis: "x" })).toThrow(/several panels need a panel/);
+    expect(() => chart.toPixel(0, { axis: "x" })).toThrow("panel: required with several panels");
     expect(() => chart.fromPixel(0, { panel: "c", axis: "x" })).toThrow(/no panel "c"/);
     const [a, b] = chart.getPanels();
     // A shared domain, at each panel's own pixels.

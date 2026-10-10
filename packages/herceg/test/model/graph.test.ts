@@ -53,7 +53,7 @@ const teams = (options: { value?: "messages"; size?: "followers" } = {}) =>
     target: "to",
     nodes: people(),
     node: "name",
-    group: "team",
+    color: "team",
     ...options,
   });
 
@@ -314,7 +314,7 @@ describe("graph", () => {
           target: "to",
           nodes: partial,
           node: "name",
-          group: "team",
+          color: "team",
         }),
       ],
     });
@@ -333,7 +333,7 @@ describe("graph", () => {
   it("follows both tables as they change", () => {
     const edges = table({ from: ["a"], to: ["b"] });
     const nodes = table({ id: ["a", "b"], kind: ["x", "y"] });
-    const mark = graph(edges, { source: "from", target: "to", nodes, node: "id", group: "kind" });
+    const mark = graph(edges, { source: "from", target: "to", nodes, node: "id", color: "kind" });
     expect(tablesOf(mark)).toEqual([edges, nodes]);
     const { model } = build({ marks: [mark] });
     expect(model.layoutSummary()).toMatch(/^Network of 2 nodes and 1 link in 2 groups;/);
@@ -435,9 +435,11 @@ describe("graph", () => {
     expect(() => build({ marks: [network, line(series, { x: "t", y: "v" })] })).toThrow(
       "has its chart to itself",
     );
-    expect(() => build({ marks: [network], interaction: { zoom: true } })).toThrow("do not zoom");
+    expect(() => build({ marks: [network], interaction: { zoom: true } })).toThrow(
+      "graph zoom: no axes to zoom",
+    );
     expect(() => graph(links(), { source: "from", target: "messages" as never })).toThrow(
-      "graph target needs category",
+      'graph target: field "messages" holds number values; expected category',
     );
     expect(() =>
       graph(links(), {
@@ -447,20 +449,19 @@ describe("graph", () => {
         node: "name",
         size: "team" as never,
       }),
-    ).toThrow("graph size needs number");
+    ).toThrow('graph size: field "team" holds category values; expected number');
     // Marks take tables of any schema; specs from other languages reach them unchecked.
     const [edges, nodes] = [links(), people()] as unknown as [Table, Table];
     expect(
-      () => new GraphMark({ type: "graph", source: "from", target: "to", group: "team" }, edges),
+      () => new GraphMark({ type: "graph", source: "from", target: "to", color: "team" }, edges),
     ).toThrow("fields of a nodes table");
     expect(
       () => new GraphMark({ type: "graph", source: "from", target: "to" }, edges, nodes),
-    ).toThrow("graph nodes need `node`");
+    ).toThrow("graph node: required with a nodes table");
   });
 
   it("loads from specs with a nodes table, and renders to SVG", () => {
     const spec: ChartSpec = {
-      version: 2,
       width: 500,
       height: 300,
       title: "Team",
@@ -488,7 +489,7 @@ describe("graph", () => {
           value: "n",
           nodes: "people",
           node: "name",
-          group: "team",
+          color: "team",
         },
       ],
     };
@@ -509,9 +510,13 @@ describe("graph", () => {
       );
     expect(bad({})).toThrow("marks[0].target: required");
     expect(bad({ target: "to", nodes: 3 })).toThrow("marks[0].nodes: expected a string");
-    expect(bad({ target: "to", nodes: "staff", node: "name" })).toThrow('no table named "staff"');
-    expect(bad({ target: "to", nodes: "people" })).toThrow("graph nodes need `node`");
-    expect(bad({ target: "to", group: "team" })).toThrow("fields of a nodes table");
+    expect(bad({ target: "to", nodes: "staff", node: "name" })).toThrow(
+      'marks[0]: data: no table "staff" in spec.data',
+    );
+    expect(bad({ target: "to", nodes: "people" })).toThrow(
+      "graph node: required with a nodes table",
+    );
+    expect(bad({ target: "to", color: "team" })).toThrow("fields of a nodes table");
     expect(bad({ target: "to", labels: "yes" })).toThrow("marks[0].labels: expected true or false");
   });
 });

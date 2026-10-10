@@ -12,6 +12,8 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), dictionary-encoded categories, or geometries (codes into a shared set of shapes). |
+| **Encoding** | A mark option naming a field whose values a visual property follows: `size` (point area, within `radiusRange`), `color` (a number or time field on a continuous scale, or a category field with a palette color per value), `fillOpacity`, and `symbol`. Constant counterparts name what they set: `radius` in pixels, `fill` and `stroke` for paint. |
+| **Text roles** | `label` is constant text (a series' or mark's name, every annotation's text); `labelField` and `textField` name fields with each record's or annotation's text; `title` heads a chart, a panel, or an axis; `labels` turns drawn labels on or off. Python spells every option in snake_case (`radius_range`, `label_field`, `facet_column`), and `herceg.express` takes the same names as the marks (`series`, `series_order`, `facet_row`, `facet_column`, `whiskers`, `normalize`). |
 | **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `rug`, `dendrogram`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
 | **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, a map's region or point, or a 3D chart's point or surface grid point: what its tooltips and the keyboard visit. |
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
@@ -1199,13 +1201,6 @@ row's weekday or month, so brushes select a calendar's rows by their
 cells' centers, as a row set, as they select a stack's; lassos find any
 heatmap's cells at their centers too, which a cell's value need not be.
 
-Specs before version 9 knew only banded heatmaps, so the loader gives every
-heatmap of an older spec `xBanded: true` and `yBanded: true` in its own spec,
-which keeps the placement wherever the mark goes next. Steps, bands turned
-off, and calendars need version 9, so older readers refuse them rather than
-band them. Python writes `xBanded` and `yBanded` explicitly for number and
-time columns, and version 9 where one is `false`.
-
 ## Two y axes
 
 A mark's spec names its y axis (`axis: "right"`; left by default). The model
@@ -1260,8 +1255,8 @@ times are exact. The inverse at a seam is the end of the break, the first
 value shown after it, which is what a pointer on a seam reads.
 
 **Seam markers.** `x.seams: true` or `{ minSpacing?: number }` opts into
-one-CSS-pixel dashed vertical lines behind data inside the plot (spec version
-5). `Calendar.seams` in `scale/breaks.ts` uses the final panel scale and
+one-CSS-pixel dashed vertical lines behind data inside the plot.
+`Calendar.seams` in `scale/breaks.ts` uses the final panel scale and
 `within` to map merged intervals' ends onto pixel centers (which every
 renderer draws as placed), excludes plot edges, and keeps seams
 greedily in chronological order at least `minSpacing` CSS pixels apart (finite and
@@ -1275,7 +1270,7 @@ elements; PDF uses its existing segments case with dash support. Charts
 without breaks bundle no seam planning or drawing code. SVG paths are
 aria-hidden, unfocusable, and pointer-transparent. The chart description explains omitted
 time even when markers are thinned. The navigator keeps its compressed scale
-and ticks but omits seam markers. Omission or `false` needs no new spec version.
+and ticks but omits seam markers.
 
 **Scale.** `BrokenTimeScale` keeps its domain in epoch milliseconds and maps
 linearly over positions: its `mapping()` is the linear coefficients over
@@ -1321,7 +1316,7 @@ refused. Animated view changes interpolate positions.
 ## Range navigator
 
 A chart's `navigator` (`rangeNavigator(options)`, a `Navigator`; in specs,
-`true` or `{ height?, marks? }`, spec version 4) adds a strip under the
+`true` or `{ height?, marks? }`) adds a strip under the
 plot (`model/navigator.ts`). The native option is a prepared object, as
 breaks, facets, and panels are, so the model reaches the strip only through
 it: a line chart without one bundles a few hooks (room under the axis, the
@@ -1429,9 +1424,7 @@ so every renderer and static export draws them the same way. With
 `resolve.y`, panels are grouped (each alone, by row, or by column) and each
 group gets a y plan from the data its panels draw within their x domains,
 the same nice, headroom, and inset rules as a shared axis; a group with
-nothing to show draws no y labels. The spec format's version 2 adds
-`resolve` and version 3 `resolve.x`; older specs still load, and a spec
-using either must say its version, since an older reader would ignore it. Rows
+nothing to show draws no y labels. Rows
 are split after series are resolved: a facet split of a series is the same
 columns read through a list of the rows in each panel (4 bytes per row),
 computed in two passes per series (with a transient 4-byte panel index per
@@ -1521,9 +1514,7 @@ headers go beyond the right labels, and the right title beyond them. Each
 panel's frame, inspector, formatter, and `DrawnPanel.yRightGroup` read its
 own right plan. A y zoom moves both axes through the same pixels, so facets
 refuse it when right marks have scales of their own, and `setViewport`
-checks each side's range against that side's resolution. Older readers
-refuse right marks in faceted charts and subplots, so `resolve.yRight` and
-panels' `yRight` need no new spec version. Fifty panels of two lines over
+checks each side's range against that side's resolution. Fifty panels of two lines over
 100,000 rows take about 1.6 ms a scene with both on the left or a shared
 right axis, and 1.8 ms with right axes of their own. What only a grid of panels needs
 (fitting it to the chart, weighted rows and columns, the room between rows)
@@ -1815,6 +1806,18 @@ or SVG element covers every point of a color; translucent ones are drawn
 one by one so overlaps darken, as plain translucent points are. Symbols are
 polygons of the same area as the circle of the same radius.
 
+Category fields encoding a point's shape (`symbol`) or color (`color`) take
+places in a cycle, of the shapes or of the theme's palette, in order of first
+appearance (`marks/appearance.ts`): a value keeps its place while it stays in
+the table, though compaction renumbers codes, so a streaming chart's points
+do not change shape or color as values come and go, and the places are found
+once per table version, as a code-indexed array the drawing loop reads.
+Points colored by category carry palette indexes as continuous colors do,
+marked categorical so value animation changes them at once rather than
+moving them through other categories' colors; the legend keys the values in
+their colors, and the series a `color` field does not split are listed in a
+neutral color.
+
 ## Layout marks
 
 Most marks place data along x and y scales. Layout marks (pies, treemaps,
@@ -1928,7 +1931,7 @@ node writes typed arrays rather than SVG path strings. Directed networks
 keep a link per ordered pair; a pair with links both ways bows each to its
 right as a quadratic curve (a shapes path, since few links are bowed),
 and each directed link ends at its target's ring with a chevron of two
-segments along its end's tangent. Link labels (`linkLabel`) are a link's
+segments along its end's tangent. Link labels (`linkLabelField`) are a link's
 category when all its rows agree, placed at its middle where they cover no
 node or label, budgeted as node labels. The pointer lookup scans every node,
 then every link (about 0.3 ms at 5,000 nodes and 20,000 links).
@@ -2468,8 +2471,8 @@ placement are iterative, with work and storage linear in merge count.
 Rules, regions, and text share one model (`marks/annotation.ts`): each
 position is a constant (a number; times in epoch milliseconds) or a number or
 time field. With constants only, the mark draws one item and reads no table;
-when any position or its `text` is a field, it draws one item per row of its
-table. `label` is constant text and `text` a category or number field
+when any position or its `textField` is a field, it draws one item per row of its
+table. `label` is constant text and `textField` a category or number field
 (numbers formatted for the chart's locale). The spec loader only binds a
 table to annotations that read one, so a constant rule in a spec with several
 tables needs no `data`.
@@ -3398,9 +3401,13 @@ TypeScript API do not bundle it. `loadSpec(spec, buffers)` first checks the
 spec at runtime, since the type checker cannot see specs from other
 languages: structure, enumerations, booleans, finite numbers, field
 references, and column payloads, with errors that give the property path
-(`marks[2].strokeWidth`) or the table and column at fault. Properties the
-format does not have are allowed, so newer specs still load, but reported:
-logged by default, refused or ignored on request. The validator's checks are
+(`marks[2].strokeWidth`) or the table and column at fault, shaped
+`location: problem; correction` (`marks[2].inner: expected "box",
+"quartiles", or "none"; received "quart"`), as the engine's and the Python
+package's errors are, each in its caller's spelling. Properties the format
+does not have are refused by default, naming the known property one or two
+edits away when there is one; they can be logged or ignored on request
+instead. The validator's checks are
 typed against the spec's types, so a spec property without a check fails to
 compile. It then builds
 tables from `data` and marks from `marks`. Columns are JSON arrays or binary: numbers and times as
@@ -3411,34 +3418,16 @@ int32 buffers of offsets (and of codes, when rows do not hold geometry i in
 row i). Binary columns become typed-array views of the delivered
 bytes, copied only when misaligned, so large data never passes through JSON
 number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec.
-A spec says which format version it is written in when it uses a feature an
-older reader would silently ignore and draw something else for (directed
-networks and link labels need version 11; interaction options, such as
-`drag` or a map's `zoom`, need none, since a reader without them draws the
-same chart or refuses them): version 2
-adds `resolve` and `panels`, version 3 `resolve.x`, panels' own `x`, and
-the x axis' `breaks`, version 4 `navigator`, version 5 enabled x axis
-`seams` (`false` needs none for either), and version 6 raw box plot notches
-and nondefault whiskers, version 7 split violins and nondefault violin
-interiors, version 8 `rowSelection`, which an older reader would ignore
-and draw every row undimmed whatever is selected, and version 9 heatmaps
-whose number and time fields lie along axes rather than in bands, with
-steps, and calendars (see Heatmap cells). Version 9 is the first to change
-what an existing spec means: a heatmap over numbers in an older spec is
-loaded banded, as it was drawn then. Version 10 adds marks' `legendGroup`,
-points' and error bars' `dodge`, points' `jitter`, and histograms' `y`,
-explicit edges, "probability", `commonNorm`, `cumulative`, and `dodge`.
-Precomputed box plots need
-no version gate: earlier readers require both raw axis fields and refuse the
-one-axis statistics form. A spec's bindings name tables, not stores:
-`loadSpec` makes a store per bound table, or takes the stores (and the
-tables, so that specs loaded apart share rows) in its options. The loader
-reads every version up to
-its own and refuses later ones. Maps did not
-change the format's version: a reader that predates them refuses their mark
-types and geometry columns with an error rather than drawing something
-else, and `projection` only applies to those marks (a spec with
-`projection` but no map marks is refused).
+A spec's bindings name tables, not stores: `loadSpec` makes a store per
+bound table, or takes the stores (and the tables, so that specs loaded apart
+share rows) in its options. `projection` only applies to map marks (a spec
+with `projection` but no map marks is refused).
+
+A spec carries its format's `version`: 1, the only one so far
+(`SPEC_VERSION`), also when left out; the loader refuses later versions,
+whose properties may mean what it cannot draw. Herceg is unpublished, so the
+format changes in place: its compatibility promise starts with the first
+published release.
 
 ## Package layout
 

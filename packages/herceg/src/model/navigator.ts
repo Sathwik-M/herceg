@@ -142,14 +142,14 @@ export class Navigator {
     const { height = HEIGHT, marks } = options;
     if (!(typeof height === "number" && Number.isFinite(height) && height >= MIN_HEIGHT))
       throw new RangeError(
-        `A navigator's height must be at least ${MIN_HEIGHT} pixels, not ${String(height)}`,
+        `navigator height: expected at least ${MIN_HEIGHT} pixels; received ${String(height)}`,
       );
     if (marks !== undefined) {
       if (!Array.isArray(marks) || marks.some((id) => typeof id !== "string"))
-        throw new TypeError("A navigator's marks must be a list of mark ids");
+        throw new TypeError("navigator marks: expected a list of mark ids");
       const repeated = marks.find((id, i) => marks.indexOf(id) !== i);
       if (repeated !== undefined)
-        throw new TypeError(`A navigator lists the mark "${repeated}" twice`);
+        throw new TypeError(`navigator marks: "${repeated}" is listed twice`);
     }
     this.height = height;
     this.marks = marks && Object.freeze([...marks]);
@@ -171,21 +171,23 @@ export class Navigator {
    * lacks or the strip cannot draw.
    */
   check(marks: readonly Mark[], options: ChartConfig): void {
-    if (options.marks.some(isLayoutMark))
-      throw new Error("Charts of a layout mark have no x axis for a navigator");
+    const layout = options.marks.find(isLayoutMark);
+    if (layout) throw new Error(`${layout.spec.type}: no x axis for a navigator; drop navigator`);
     for (const mark of marks) {
       const { type } = mark.spec;
       if (mark.channelKind("x") === "category")
-        throw new Error(`A navigator needs a number or time x axis; a ${type} mark has categories`);
+        throw new Error(`navigator: needs a number or time x axis; ${type} x holds categories`);
       if (mark.tooltip === "y")
-        throw new Error(`A navigator moves along x; a ${type} mark placed along y cannot have one`);
+        throw new Error(
+          `navigator: moves along x, and ${type} marks place along y; drop navigator`,
+        );
     }
     for (const id of this.marks ?? []) {
       const mark = marks.find((m) => m.spec.id === id);
-      if (!mark) throw new Error(`The navigator draws the mark "${id}", which the chart lacks`);
+      if (!mark) throw new Error(`navigator marks: no mark "${id}" in the chart`);
       if (!drawable(mark))
         throw new Error(
-          `A navigator draws line, area, point, bar, and candlestick marks, not the ${mark.spec.type} mark "${id}"`,
+          `navigator marks: draws line, area, point, bar, and candlestick marks, not ${mark.spec.type} "${id}"`,
         );
     }
   }

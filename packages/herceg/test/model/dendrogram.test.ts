@@ -53,8 +53,8 @@ describe("dendrogram", () => {
     (side) => {
       const { scene, model } = build({
         marks: [dendrogram(linkage(), { ...options, side })],
-        x: { axis: false },
-        y: { axis: false },
+        x: { show: false },
+        y: { show: false },
       });
       const { plot } = scene.panels[0]!;
       const scale = side === "bottom" || side === "top" ? model.xScale()! : model.yScale()!;
@@ -155,7 +155,7 @@ describe("dendrogram", () => {
         const cells = heatmap(table({ x: [1, 2], y: [1, 1], value: [1, 2] }), {
           x: "x",
           y: "y",
-          value: "value",
+          color: "value",
           xBanded: true,
           yBanded: true,
           ...(panel && { panel }),
@@ -322,7 +322,7 @@ describe("dendrogram", () => {
         heatmap(table({ x: ["other"], y: ["row"], v: [1] }), {
           x: "x",
           y: "y",
-          value: "v",
+          color: "v",
           panel: "heatmap",
         }),
       ],
@@ -339,7 +339,7 @@ describe("dendrogram", () => {
     );
     const { scene } = build({
       marks: [
-        heatmap(source, { x: "x", y: "y", value: "value" }),
+        heatmap(source, { x: "x", y: "y", color: "value" }),
         dendrogram(linkage(), { ...options, facet: "repeat" }),
       ],
       facet: facet("group"),
@@ -376,7 +376,7 @@ describe("dendrogram validation", () => {
     for (const first of [["a", "b", "c"], time([0, 2, 5])])
       expect(() =>
         dendrogram(table({ first, second: [1, 3, 4], height: [1, 2, 4] }), options as never),
-      ).toThrow(/first.*needs number/);
+      ).toThrow(/dendrogram first: field "first" holds (category|time) values; expected number/);
     expect(() => dendrogram(linkage(), { ...options, side: "diagonal" } as never)).toThrow(/side/);
     for (const strokeWidth of [-1, Infinity, NaN])
       expect(() => dendrogram(linkage(), { ...options, strokeWidth })).toThrow(/strokeWidth/);

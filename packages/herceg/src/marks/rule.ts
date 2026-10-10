@@ -28,14 +28,14 @@ export type RuleOptions = RuleStyle & RulePosition<number | Date>;
 /** Rules from a table, one per row; positions may also be constants. */
 export type RuleDataOptions<S extends Schema> = RuleStyle &
   RulePosition<NumericField<S> | number | Date> & {
-    /** Field with each rule's text. */
-    text?: TextField<S>;
+    /** Category or number field with each rule's text. */
+    textField?: TextField<S>;
   };
 
 /** Why a rule spec has no single position, if it has neither or both of x and y. */
 export function ruleFormError(spec: { x?: unknown; y?: unknown }): string | undefined {
   return (spec.x === undefined) === (spec.y === undefined)
-    ? "A rule needs exactly one of x or y"
+    ? "rule: needs exactly one of x and y"
     : undefined;
 }
 
@@ -55,7 +55,13 @@ export class RuleMark implements Mark<Frozen<RuleSpec>> {
     const spec = this.spec;
     const problem = ruleFormError(spec);
     if (problem) throw new Error(problem);
-    this.#data = new AnnotationData(table, { x: spec.x, y: spec.y }, spec.label, spec.text, "rule");
+    this.#data = new AnnotationData(
+      table,
+      { x: spec.x, y: spec.y },
+      spec.label,
+      spec.textField,
+      "rule",
+    );
   }
 
   get table(): Table | undefined {
@@ -139,7 +145,7 @@ export class RuleMark implements Mark<Frozen<RuleSpec>> {
  *
  * ```ts
  * rule({ y: 250, label: "SLO" })
- * rule(deploys, { x: "time", text: "version" })
+ * rule(deploys, { x: "time", textField: "version" })
  * ```
  */
 export function rule(options: RuleOptions): ChartMark<Frozen<RuleSpec>>;
@@ -162,9 +168,22 @@ export function rule<S extends Schema>(
         y: position(options.y),
         dash: options.dash && [...options.dash],
       },
-      ["id", "x", "y", "stroke", "strokeWidth", "dash", "label", "text", "axis", "facet", "panel"],
+      [
+        "id",
+        "x",
+        "y",
+        "stroke",
+        "strokeWidth",
+        "dash",
+        "label",
+        "textField",
+        "axis",
+        "facet",
+        "panel",
+      ],
     ),
   } as unknown as RuleSpec;
-  if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.text)) spec.data = table.name;
+  if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.textField))
+    spec.data = table.name;
   return new RuleMark(spec, table as unknown as Table | undefined);
 }

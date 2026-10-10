@@ -58,11 +58,19 @@ class Shape:
 
 
 def test_feature_collections_send_shapes_as_packed_buffers():
-    chart = hg.Chart(collection(), projection="equal-earth").geoshape(name="name", color="gdp")
+    chart = hg.Chart(collection(), projection="equal-earth").geoshape(
+        label_field="name", color="gdp"
+    )
     spec, buffers = chart.to_spec()
     assert spec["projection"] == {"type": "equal-earth"}
     assert spec["marks"] == [
-        {"type": "geoshape", "geometry": "geometry", "name": "name", "color": "gdp", "data": "data"}
+        {
+            "type": "geoshape",
+            "geometry": "geometry",
+            "labelField": "name",
+            "color": "gdp",
+            "data": "data",
+        }
     ]
     column, arrays = geometry_column(spec, buffers)
     assert column["type"] == "geometry"
@@ -110,24 +118,36 @@ def test_geodataframes_are_read_without_geopandas_and_their_reference_system_is_
     spec, _ = hg.Chart(frame).geoshape(color="pop").to_spec()
     assert spec["marks"][0]["geometry"] == "shape"
     frame.crs = type("CRS", (), {"is_geographic": False, "name": "Web Mercator"})()
-    with pytest.raises(ValueError, match=r"projected coordinate reference system \(Web Mercator\)"):
+    with pytest.raises(
+        ValueError,
+        match=r"data: the shapes are in a projected coordinate reference system \(Web Mercator\)",
+    ):
         hg.Chart(frame).geoshape(color="pop")
 
 
 def test_shapes_that_are_not_polygons_or_degrees_are_refused():
     point = {"type": "Point", "coordinates": [0, 0]}
-    with pytest.raises(TypeError, match="row 1 holds a Point; .* for geopoint"):
+    with pytest.raises(
+        TypeError,
+        match="Column 'shape': row 1: expected a polygon or multipolygon; received a Point",
+    ):
         hg.Chart({"shape": [{"type": "Polygon", "coordinates": [square(0, 0)]}, point]}).geoshape(
             "shape"
         )
     meters = {"type": "Polygon", "coordinates": [square(500_000, 4_000_000, 1000)]}
-    with pytest.raises(ValueError, match="reproject the data to WGS 84"):
+    with pytest.raises(
+        ValueError, match="Column 'shape': coordinate .* reproject the data to WGS 84"
+    ):
         hg.Chart({"shape": [meters]}).geoshape("shape")
-    with pytest.raises(TypeError, match="not \\[longitude, latitude\\]"):
+    with pytest.raises(
+        TypeError, match=r"Column 'shape': row 0: expected positions as \[longitude, latitude\]"
+    ):
         hg.Chart({"shape": [{"type": "Polygon", "coordinates": [[[0, "a"]]]}]}).geoshape("shape")
-    with pytest.raises(TypeError, match="holds number values; expected geometry"):
+    with pytest.raises(
+        TypeError, match="geoshape geometry: column 'v' holds number values; expected geometry"
+    ):
         hg.Chart({"v": [1.0]}).geoshape("v")
-    with pytest.raises(ValueError, match="needs geometry="):
+    with pytest.raises(ValueError, match='geoshape geometry: the data has no "geometry" column'):
         hg.Chart({"v": [1.0]}).geoshape()
 
 
@@ -144,7 +164,9 @@ def test_point_collections_become_longitude_and_latitude_columns():
         ],
     }
     spec, buffers = (
-        hg.Chart(cities).geopoint("longitude", "latitude", r="people", name="city").to_spec()
+        hg.Chart(cities)
+        .geopoint("longitude", "latitude", size="people", label_field="city")
+        .to_spec()
     )
     columns = spec["data"]["data"]["columns"]
     lon = np.frombuffer(buffers[columns["longitude"]["buffer"]], dtype="<f8")
@@ -153,8 +175,8 @@ def test_point_collections_become_longitude_and_latitude_columns():
         "type": "geopoint",
         "longitude": "longitude",
         "latitude": "latitude",
-        "name": "city",
-        "r": "people",
+        "labelField": "city",
+        "size": "people",
         "data": "data",
     }
 
@@ -184,18 +206,20 @@ def test_values_join_shapes_by_location_as_in_plotly():
     joined = by_name_spec["data"][by_name_spec["marks"][0]["data"]]
     v = np.frombuffer(by_name_buffers[joined["columns"]["v"]["buffer"]])
     assert np.isnan(v[0]) and v[1] == 3.0
-    with pytest.raises(ValueError, match="no feature's id matches a value of 'fips'"):
+    with pytest.raises(
+        ValueError, match="geoshape locations: no value of 'fips' matches a feature's id"
+    ):
         hg.choropleth(
             {"fips": [1.0, 2.0], "rate": [1.0, 2.0]}, "rate", geojson=collection(), locations="fips"
         )
-    with pytest.raises(ValueError, match="locations name '01' twice"):
+    with pytest.raises(ValueError, match='geoshape locations: "01" names a feature twice'):
         hg.choropleth(
             {"fips": ["01", "01"], "rate": [1.0, 2.0]},
             "rate",
             geojson=collection(),
             locations="fips",
         )
-    with pytest.raises(ValueError, match="needs locations"):
+    with pytest.raises(ValueError, match="geoshape geojson: needs locations"):
         hg.Chart({"a": [1.0]}).geoshape(geojson=collection())
 
 
@@ -205,22 +229,32 @@ def test_maps_share_a_chart_only_with_maps_and_need_them_for_a_projection():
     spec, _ = chart.to_spec()
     assert [mark["type"] for mark in spec["marks"]] == ["geoshape", "geopoint"]
     with pytest.raises(
-        ValueError, match="geoshape shares its chart only with geoshape and geopoint"
+        ValueError,
+        match="geoshape: shares its chart only with geoshape and geopoint marks; draw the point",
     ):
         hg.Chart(collection()).geoshape().point("gdp", "gdp")
-    with pytest.raises(ValueError, match="a pie has its chart to itself"):
+    with pytest.raises(
+        ValueError, match="pie: has its chart to itself; draw the geoshape in another chart"
+    ):
         hg.Chart(collection()).pie("zone").geoshape()
-    with pytest.raises(ValueError, match="a projection needs geoshape or geopoint marks"):
+    with pytest.raises(
+        ValueError,
+        match="Chart projection: projects geoshape and geopoint marks, and the chart has none",
+    ):
         hg.Chart(places, projection="mercator").point("lon", "lat").to_spec()
-    with pytest.raises(ValueError, match="maps zoom both ways"):
+    with pytest.raises(
+        ValueError, match='Chart zoom: expected True or "xy", as maps zoom both ways; received "x"'
+    ):
         hg.Chart(collection(), zoom="x").geoshape()
-    with pytest.raises(ValueError, match='maps take brush="lasso"'):
+    with pytest.raises(ValueError, match='Chart brush: expected "lasso" for maps; received "xy"'):
         hg.Chart(collection(), brush="xy").geoshape()
-    with pytest.raises(ValueError, match="no x axis to sync"):
+    with pytest.raises(ValueError, match="Chart sync: a geoshape has no x axis"):
         hg.Chart(collection(), sync="a").geoshape()
-    with pytest.raises(ValueError, match="need a numeric color column"):
+    with pytest.raises(ValueError, match="geoshape colors: 'zone' is a category column"):
         hg.Chart(collection()).geoshape(color="zone", colors="viridis")
-    with pytest.raises(ValueError, match="stroke_width must be 0 or more"):
+    with pytest.raises(
+        ValueError, match="geopoint stroke_width: expected 0 or more pixels; received -1"
+    ):
         hg.Chart(places).geopoint("lon", "lat", stroke_width=-1)
 
 
@@ -238,11 +272,16 @@ def test_projections_take_names_parameters_and_boxes():
         "fit": [[170.0, -20.0], [-170.0, 20.0]],
     }
     assert projection(hg.Projection(fit="world"))["fit"] == "world"
-    with pytest.raises(ValueError, match="projection must be one of"):
+    with pytest.raises(
+        ValueError, match='Projection type: expected "equal-earth", .*; received "robinson"'
+    ):
         hg.Chart(collection(), projection="robinson")
-    with pytest.raises(ValueError, match="south below north"):
+    with pytest.raises(
+        ValueError,
+        match="Projection fit: expected longitudes and latitudes in degrees, south below north",
+    ):
         hg.Chart(collection(), projection=hg.Projection(fit=((0, 10), (5, 5))))
-    with pytest.raises(ValueError, match="parallels must be latitudes"):
+    with pytest.raises(ValueError, match="Projection parallels: expected latitudes from -90 to 90"):
         hg.Chart(collection(), projection=hg.Projection("conic-equal-area", parallels=(10, 100)))
 
 
@@ -253,15 +292,17 @@ def test_derived_tables_carry_shapes_but_cannot_read_them():
         "source": "data",
         "transform": [{"filter": [">", ["field", "gdp"], 15]}],
     }
-    with pytest.raises(TypeError, match="holds shapes, which expressions cannot read"):
+    with pytest.raises(
+        TypeError, match="filter: column 'geometry' holds shapes, which expressions cannot read"
+    ):
         hg.derive(collection()).filter(hg.col("geometry") > 1)
-    with pytest.raises(TypeError, match="holds geometry values"):
+    with pytest.raises(TypeError, match="sort: column 'geometry' holds geometry values"):
         hg.derive(collection()).sort("geometry")
 
 
 def test_live_maps_replace_tables_of_shapes_and_refuse_appends():
     live = LiveChart(hg.Chart(collection()).geoshape(color="gdp"))
-    with pytest.raises(ValueError, match="takes replace"):
+    with pytest.raises(ValueError, match="widget.append: a table of shapes is replaced whole"):
         live.append(collection())
     message, buffers = live.replace(collection())
     assert message["columns"]["geometry"]["type"] == "geometry"
@@ -272,8 +313,8 @@ def test_maps_render_to_svg_and_pdf():
     pytest.importorskip("py_mini_racer")
     chart = (
         hg.Chart(collection(), width=400, height=240, projection="equirectangular")
-        .geoshape(name="name", color="gdp")
-        .geopoint("lon", "lat", data={"lon": [2.0], "lat": [2.0]}, r=4)
+        .geoshape(label_field="name", color="gdp")
+        .geopoint("lon", "lat", data={"lon": [2.0], "lat": [2.0]}, radius=4)
     )
     svg = chart.to_svg()
     assert svg.count('fill-rule="evenodd"') == 2
@@ -288,7 +329,7 @@ def test_joins_read_only_the_columns_marks_use_and_refuse_derived_rows():
     columns = spec["data"][spec["marks"][0]["data"]]["columns"]
     assert sorted(columns) == ["geometry", "rate"]
     rows = hg.derive({"fips": ["01"], "rate": [1.0]}).filter(hg.col("rate") > 0)
-    with pytest.raises(ValueError, match="not those of a derived table"):
+    with pytest.raises(ValueError, match="geoshape data: joins the rows of a table to the shapes"):
         hg.choropleth(rows, "rate", geojson=collection(), locations="fips")
 
 
@@ -305,7 +346,7 @@ def test_live_maps_clear_shapes_without_breaking_their_state():
 
 def test_projection_boxes_are_degrees_of_some_width():
     for fit in (((1e20, 0), (1e20 + 1, 10)), ((180, 0), (180, 10))):
-        with pytest.raises(ValueError, match="west apart from east"):
+        with pytest.raises(ValueError, match="Projection fit: .* west apart from east"):
             hg.Chart(collection(), projection=hg.Projection(fit=fit))
 
 
@@ -320,7 +361,7 @@ def test_empty_collections_and_wide_rings():
     spec, _ = hg.choropleth(blank, "v").to_spec()
     assert spec["data"]["data"]["columns"]["geometry"]["type"] == "geometry"
     wide = {"type": "Polygon", "coordinates": [[[-200, 0], [200, 0], [200, 1], [-200, 0]]]}
-    with pytest.raises(ValueError, match="ring 0 spans 400 degrees"):
+    with pytest.raises(ValueError, match="Column 'shape': ring 0: spans 400 degrees of longitude"):
         hg.Chart({"shape": [wide]}).geoshape("shape")
 
 
@@ -354,5 +395,8 @@ def test_live_joined_maps_share_tables_and_take_single_rows():
         .geoshape(data=values, geojson=collection(), locations="fips", id="a")
         .geoshape(data=values, geojson=other, locations="fips", id="b")
     )
-    with pytest.raises(ValueError, match="joined to the features of several geoshape marks"):
+    with pytest.raises(
+        ValueError,
+        match="widget.replace data: the rows are joined to the features of several geoshape marks",
+    ):
         LiveChart(two).replace(values, data=values)

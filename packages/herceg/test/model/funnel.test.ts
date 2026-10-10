@@ -234,6 +234,6 @@ describe("funnel", () => {
     const load = (mark: object) => () => loadSpec(spec(mark) as never, []);
     expect(load({ sort: "size" })).toThrow('marks[0].sort: expected "input" or "value"');
     expect(load({ category: undefined })).toThrow("marks[0].category: required");
-    expect(load({ value: "stage" })).toThrow("Mark 0 (funnel)");
+    expect(load({ value: "stage" })).toThrow("marks[0]: funnel value");
   });
 });

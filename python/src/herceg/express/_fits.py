@@ -12,13 +12,15 @@ import numpy as np
 from .._chart import Chart, HelperOptions
 from . import _numerics as numerics
 from ._common import (
-    HUE_GROUP,
+    SERIES_GROUP,
     Source,
     Statistics,
     by,
+    check_grid_size,
     check_n_boot,
     complete,
     dropped_sentence,
+    facets,
     fresh,
     group,
     keyed_table,
@@ -27,8 +29,10 @@ from ._common import (
     number_column,
     readable,
     record,
+    refuse_facets,
     rows_table,
     seed_of,
+    shown,
     subset,
     values,
     variables_of,
@@ -45,8 +49,8 @@ def regplot(
     *,
     x: str,
     y: str,
-    hue: str | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series: str | None = None,
+    series_order: Sequence[Any] | None = None,
     order: int = 1,
     lowess: bool = False,
     frac: float = 2 / 3,
@@ -57,17 +61,15 @@ def regplot(
     seed: int | None = None,
     scatter: bool = True,
     truncate: bool = True,
-    gridsize: int = 100,
-    col: str | None = None,
-    row: str | None = None,
+    grid_size: int = 100,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Points of ``y`` against ``x`` with a regression line and its
-    confidence band, per ``hue`` level (and facet).
+    confidence band, per ``series`` (and facet panel).
 
     The fit is a least-squares polynomial of ``order`` (1, a straight line,
-    by default) at ``gridsize`` points over each group's ``x`` range (all
+    by default) at ``grid_size`` points over each group's ``x`` range (all
     the data's with ``truncate=False``), with a ``ci`` percent bootstrap
     band: the fit repeated on ``n_boot`` resamples of the rows, drawn with
     ``seed``. ``lowess=True`` fits a locally weighted line instead, as
@@ -75,23 +77,29 @@ def regplot(
     ``scatter=False`` leaves out the points.
     """
     if not (isinstance(order, int) and not isinstance(order, bool) and order >= 1):
-        raise ValueError(f"order must be a whole number of at least 1, not {order!r}")
+        raise ValueError(
+            f"regplot order: expected a whole number of at least 1; received {shown(order)}"
+        )
     if lowess and order != 1:
-        raise ValueError("a lowess fit has no polynomial order: pass order=1 or lowess=False")
-    check_ci(ci)
-    if not (isinstance(gridsize, int) and gridsize >= 2):
-        raise ValueError(f"gridsize must be a whole number of at least 2, not {gridsize!r}")
-    _check_lowess(frac, it, delta)
-    n_boot = check_n_boot(n_boot)
+        raise ValueError(
+            "regplot order: a lowess fit has no polynomial order; drop order or lowess"
+        )
+    check_ci(ci, "regplot")
+    grid_size = check_grid_size(grid_size, "regplot grid_size")
+    _check_lowess(frac, it, delta, "regplot")
+    n_boot = check_n_boot(n_boot, "regplot")
+    facet_row, facet_column = facets(options, "regplot")
     source = Source(data)
     xc = source.column(x, "regplot x", ("number",))
     yc = source.column(y, "regplot y", ("number",))
-    variables = variables_of(source, row, col, hue, hue_order, axes=[x, y])
+    variables = variables_of(
+        source, "regplot", facet_row, facet_column, series, series_order, axes=[x, y]
+    )
     rows = complete(len(xc), xc, yc, levels_of=list(variables.values()))
     dropped = len(xc) - len(rows)
     xv, yv = values(xc), values(yc)
     banded = ci is not None and not lowess
-    used_seed = seed_of(seed) if banded else None
+    used_seed = seed_of(seed, "regplot") if banded else None
     names = [*variables]
     # The fitted values' column: y's name, unless x has it too.
     (fitted,) = fresh([y], {x, *names})
@@ -113,7 +121,7 @@ def regplot(
             coefficients.append(np.full(order + 1, np.nan))
         else:
             start, stop = (float(gx.min()), float(gx.max())) if truncate else span
-            grid = np.linspace(start, stop, gridsize)
+            grid = np.linspace(start, stop, grid_size)
             polynomial = numerics.polynomial_fit(gx, gy, order)
             coefficients.append(polynomial.in_x())
             fit = polynomial(grid)
@@ -133,7 +141,7 @@ def regplot(
         if lowess
         else ("linear" if order == 1 else f"order-{order} polynomial") + " least-squares fits"
     )
-    sentence = f"Points show {y} against {x}{by(hue)}; lines show {method}"
+    sentence = f"Points show {y} against {x}{by(series)}; lines show {method}"
     if banded:
         sentence += (
             f", with {ci:g}% bootstrap confidence bands ({n_boot:,} resamples of the rows, "
@@ -145,27 +153,20 @@ def regplot(
             f" {unfit} group{'s' if unfit > 1 else ''} with too few distinct {x} values had no fit."
         )
     sentence += failures.sentence(x)
-    sentence += dropped_sentence(dropped, [x, y, *names], hue_order is not None)
+    sentence += dropped_sentence(dropped, [x, y, *names], series_order is not None)
     point_table = rows_table(variables, rows)
     point_table[x] = number_column(xv[rows])
     point_table[y] = number_column(yv[rows])
     chart = make_chart(
-        point_table,
-        options,
-        sentence=sentence,
-        col=col,
-        row=row,
-        palette=palette,
-        x_label=x,
-        y_label=y,
+        point_table, options, sentence=sentence, palette=palette, x_label=x, y_label=y
     )
-    label = None if hue else y
+    label = None if series else y
     if scatter:
-        chart.point(x, y, series=hue, label=label, legend_group=HUE_GROUP)
+        chart.point(x, y, series=series, label=label, legend_group=SERIES_GROUP)
     if banded:
-        hue_levels = variables[hue].labels if hue else (y,)
-        position = names.index(hue) if hue else None
-        for i, name in enumerate(hue_levels):
+        series_levels = variables[series].labels if series else (y,)
+        position = names.index(series) if series else None
+        for i, name in enumerate(series_levels):
             at_level = key_rows[:, position] == i if position is not None else None
             rows_at = slice(None) if at_level is None else np.flatnonzero(at_level)
             chart.area(
@@ -175,9 +176,9 @@ def regplot(
                 data=subset(fit_table, rows_at),
                 label=name,
                 fill_opacity=0.2,
-                legend_group=HUE_GROUP,
+                legend_group=SERIES_GROUP,
             )
-    chart.line(x, fitted, data=fit_table, series=hue, label=label, legend_group=HUE_GROUP)
+    chart.line(x, fitted, data=fit_table, series=series, label=label, legend_group=SERIES_GROUP)
     coefficient_table = {
         "group": np.arange(len(coefficients)),
         **{f"x^{power}": np.array([c[power] for c in coefficients]) for power in range(order + 1)},
@@ -192,10 +193,12 @@ def regplot(
     return record(chart, stats)
 
 
-def check_ci(ci: float | None) -> None:
+def check_ci(ci: float | None, function: str) -> None:
     """Refuses a confidence level that is not a percentage."""
     if ci is not None and not (0 < ci <= 100):
-        raise ValueError(f"ci must be a percentage above 0 and at most 100, not {ci!r}")
+        raise ValueError(
+            f"{function} ci: expected a percentage above 0 and at most 100; received {shown(ci)}"
+        )
 
 
 @dataclass
@@ -269,8 +272,11 @@ def residplot(
     missed.
     """
     if not (isinstance(order, int) and not isinstance(order, bool) and order >= 1):
-        raise ValueError(f"order must be a whole number of at least 1, not {order!r}")
-    _check_lowess(frac, it, delta)
+        raise ValueError(
+            f"residplot order: expected a whole number of at least 1; received {shown(order)}"
+        )
+    _check_lowess(frac, it, delta, "residplot")
+    refuse_facets(options, "residplot", "residplot fits all the rows at once")
     source = Source(data)
     xc = source.column(x, "residplot x", ("number",))
     yc = source.column(y, "residplot y", ("number",))
@@ -301,10 +307,14 @@ def residplot(
     return record(chart, Statistics("residplot", sentence, tables, None, dropped))
 
 
-def _check_lowess(frac: float, it: int, delta: float) -> None:
+def _check_lowess(frac: float, it: int, delta: float, function: str) -> None:
     if not (0 < frac <= 1):
-        raise ValueError(f"frac must be above 0 and at most 1, not {frac!r}")
+        raise ValueError(
+            f"{function} frac: expected a number above 0 and at most 1; received {shown(frac)}"
+        )
     if not (isinstance(it, int) and not isinstance(it, bool) and it >= 0):
-        raise ValueError(f"it must be a whole number of at least 0, not {it!r}")
+        raise ValueError(
+            f"{function} it: expected a whole number of at least 0; received {shown(it)}"
+        )
     if not (delta >= 0):
-        raise ValueError(f"delta must be at least 0, not {delta!r}")
+        raise ValueError(f"{function} delta: expected at least 0; received {shown(delta)}")

@@ -84,10 +84,10 @@ describe("error bars", () => {
   it("refuse fields of another form rather than dropping them", () => {
     const t = table({ x: [0], a: [1], b: [2] });
     expect(() => errorBar(t, { x: "x", y1: "a", y2: "b", x1: "a" } as never)).toThrow(
-      /from x, y1, y2 cannot also take x1/,
+      /errorbar x1: not with x, y1, y2; drop it/,
     );
     expect(() => errorBar(t, { x: "x", y: "a", yError: "b", y1: "a" } as never)).toThrow(
-      /cannot also take y1/,
+      /errorbar y1: not with x, y, yError; drop it/,
     );
   });
 

@@ -241,22 +241,25 @@ def test_normal_cdf_is_accurate_to_about_1e7():
 # Distributions -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("stat", ["proportion", "percent", "count"])
+@pytest.mark.parametrize(
+    ("normalize", "stat"),
+    [("probability", "proportion"), ("percent", "percent"), ("count", "count")],
+)
 @pytest.mark.parametrize("complementary", [False, True])
-def test_ecdf_matches_seaborn(stat, complementary):
+def test_ecdf_matches_seaborn(normalize, stat, complementary):
     stats = _seaborn_statistics()
     sample = np.round(RNG.normal(0, 1, 120), 1)
     heights, edges = stats.ECDF(stat=stat, complementary=complementary)(sample)
-    distinct, ours = numerics.ecdf(sample, None, stat, complementary)
+    distinct, ours = numerics.ecdf(sample, None, normalize, complementary)
     # Seaborn's has a step per value from -inf; ours one per distinct value.
     last = {value: height for value, height in zip(edges[1:], heights[1:], strict=True)}
     assert np.array_equal(distinct, np.unique(sample))
     assert np.allclose(ours, [last[v] for v in distinct], rtol=1e-12)
 
 
-@pytest.mark.parametrize("stat", ["count", "density", "probability", "percent", "frequency"])
+@pytest.mark.parametrize("normalize", ["count", "density", "probability", "percent"])
 @pytest.mark.parametrize("cumulative", [False, True])
-def test_histograms_match_seaborn(stat, cumulative):
+def test_histograms_match_seaborn(normalize, cumulative):
     stats = _seaborn_statistics()
     sample = RNG.gamma(3.0, 2.0, 500)
     for bins, binwidth, binrange, discrete in (
@@ -267,7 +270,7 @@ def test_histograms_match_seaborn(stat, cumulative):
     ):
         values = np.round(sample) if discrete else sample
         hist = stats.Histogram(
-            stat=stat,
+            stat=normalize,
             bins=bins,
             binwidth=binwidth,
             binrange=binrange,
@@ -277,7 +280,7 @@ def test_histograms_match_seaborn(stat, cumulative):
         expected, expected_edges = hist(values)
         edges = numerics.bin_edges(values, None, bins, binwidth, binrange, discrete)
         assert np.allclose(edges, expected_edges, rtol=1e-12)
-        heights = numerics.histogram(values, None, edges, stat, cumulative)
+        heights = numerics.histogram(values, None, edges, normalize, cumulative)
         assert np.allclose(heights, expected, rtol=1e-12)
 
 
@@ -287,7 +290,7 @@ def test_densities_of_bins_that_count_nothing_are_zero():
         np.array([-2.0, -1.0, 4.0, 5.0]), None, np.array([0.0, 1, 3]), "density", False
     )
     assert heights.tolist() == [0.0, 0.0]
-    assert numerics.ecdf(np.array([]), None, "proportion", False)[0].size == 0
+    assert numerics.ecdf(np.array([]), None, "probability", False)[0].size == 0
 
 
 def test_discrete_bins_center_on_integers():

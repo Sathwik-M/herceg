@@ -61,8 +61,8 @@ describe("a navigator's strip", () => {
   it("takes room under the x axis, below its title, across the plot's width", () => {
     const data = waves(200);
     const marks = [line(data, { x: "t", y: "a" })];
-    const without = build({ marks, x: { label: "Time" } });
-    const { model, scene } = build({ marks, x: { label: "Time" }, navigator: rangeNavigator() });
+    const without = build({ marks, x: { title: "Time" } });
+    const { model, scene } = build({ marks, x: { title: "Time" }, navigator: rangeNavigator() });
     const [plot] = model.panels();
     const before = without.model.panels()[0]!.plot;
     // 40 pixels of strip, 10 above it and 2 under it.
@@ -94,7 +94,7 @@ describe("a navigator's strip", () => {
     // A short chart's strip is shorter, and never covers the plot or its labels.
     for (const height of [160, 180, 200]) {
       const { model, scene } = build(
-        { marks, title: "Short", x: { label: "Time" }, navigator: rangeNavigator() },
+        { marks, title: "Short", x: { title: "Time" }, navigator: rangeNavigator() },
         600,
         height,
       );
@@ -109,7 +109,7 @@ describe("a navigator's strip", () => {
     }
     // Too short for both, the chart has no strip.
     const tiny = build(
-      { marks, title: "Tiny", x: { label: "Time" }, navigator: rangeNavigator() },
+      { marks, title: "Tiny", x: { title: "Time" }, navigator: rangeNavigator() },
       600,
       140,
     );
@@ -194,7 +194,7 @@ describe("a navigator's strip", () => {
       marks: [line(data, { x: "t", y: "a" })],
       // No x labels to pass the plot's end, and fixed y labels: the margins,
       // and so the strip, stay where they are as the view changes.
-      x: { axis: false },
+      x: { show: false },
       y: { domain: [0, 40] },
       navigator: rangeNavigator(),
     });
@@ -239,7 +239,7 @@ describe("a navigator's strip", () => {
       marks: [line(data, { x: "t", y: "a" })],
       // No x labels to pass the plot's end, and fixed y labels: the margins,
       // and so the strip, stay where they are as the view changes.
-      x: { axis: false },
+      x: { show: false },
       y: { domain: [0, 40] },
       navigator: rangeNavigator(),
     });
@@ -330,15 +330,15 @@ describe("a navigator's strip", () => {
     const data = table({ t: [] as number[], v: [] as number[] });
     const { scene } = build({
       marks: [line(data, { x: "t", y: "v" })],
-      x: { axis: false, domain: [0, 1] },
-      y: { axis: false },
+      x: { show: false, domain: [0, 1] },
+      y: { show: false },
       navigator: rangeNavigator({ marks: [] }),
     });
     expect(stripOf(scene).grid.x.length).toBeGreaterThan(0);
     const unset = build({
       marks: [line(data, { x: "t", y: "v" })],
-      x: { axis: false },
-      y: { axis: false },
+      x: { show: false },
+      y: { show: false },
       navigator: rangeNavigator({ marks: [] }),
     });
     expect(stripOf(unset.scene).grid.x).toEqual([]);
@@ -477,23 +477,23 @@ describe("navigators refuse", () => {
         facet: facet("host"),
         navigator: rangeNavigator(),
       }),
-    ).toThrow("Charts with facets cannot have a navigator yet");
+    ).toThrow("navigator: charts with facets have none yet; drop navigator or facet");
     expect(() =>
       build({
         marks: [line(hosts, { x: "t", y: "v", panel: "p" })],
         panels: panels([{ id: "p" }]),
         navigator: rangeNavigator(),
       }),
-    ).toThrow("Charts with panels cannot have a navigator yet");
+    ).toThrow("navigator: charts with panels have none yet; drop navigator or panels");
     expect(() =>
       build({ marks: [pie(hosts, { category: "host", value: "v" })], navigator: rangeNavigator() }),
-    ).toThrow("no x axis for a navigator");
+    ).toThrow("pie: no x axis for a navigator; drop navigator");
     expect(() =>
       build({ marks: [bar(hosts, { x: "host", y: "v" })], navigator: rangeNavigator() }),
-    ).toThrow("A navigator needs a number or time x axis; a bar mark has categories");
+    ).toThrow("navigator: needs a number or time x axis; bar x holds categories");
     expect(() =>
       build({ marks: [bar(hosts, { x: "v", y: "host" })], navigator: rangeNavigator() }),
-    ).toThrow("a bar mark placed along y cannot have one");
+    ).toThrow("navigator: moves along x, and bar marks place along y; drop navigator");
     expect(fail({})).not.toThrow();
   });
 
@@ -504,19 +504,25 @@ describe("navigators refuse", () => {
         marks: [line(data, { x: "t", y: "a" })],
         navigator: rangeNavigator({ marks: ["x"] }),
       }),
-    ).toThrow('The navigator draws the mark "x", which the chart lacks');
+    ).toThrow('navigator marks: no mark "x" in the chart');
     expect(() =>
       build({
         marks: [errorBar(ranges, { x: "t", y1: "lo", y2: "hi", id: "e" })],
         navigator: rangeNavigator({ marks: ["e"] }),
       }),
-    ).toThrow('not the errorbar mark "e"');
+    ).toThrow(
+      'navigator marks: draws line, area, point, bar, and candlestick marks, not errorbar "e"',
+    );
   });
 
   it("heights below 16 pixels and marks listed twice", () => {
-    expect(() => rangeNavigator({ height: 8 })).toThrow("at least 16 pixels");
-    expect(() => rangeNavigator({ height: Number.NaN })).toThrow("at least 16 pixels");
-    expect(() => rangeNavigator({ marks: ["a", "a"] })).toThrow('lists the mark "a" twice');
+    expect(() => rangeNavigator({ height: 8 })).toThrow(
+      "navigator height: expected at least 16 pixels; received 8",
+    );
+    expect(() => rangeNavigator({ height: Number.NaN })).toThrow("received NaN");
+    expect(() => rangeNavigator({ marks: ["a", "a"] })).toThrow(
+      'navigator marks: "a" is listed twice',
+    );
   });
 
   it("also when an update adds what they cannot draw", () => {
@@ -527,7 +533,7 @@ describe("navigators refuse", () => {
     });
     expect(() =>
       model.update({ marks: [bar(hosts, { x: "host", y: "v" })], navigator: rangeNavigator() }),
-    ).toThrow("a bar mark has categories");
+    ).toThrow("bar x holds categories");
   });
 });
 
@@ -535,39 +541,29 @@ describe("navigator specs", () => {
   const data = { d: { columns: { t: [0, 1, 2], v: [1, 3, 2] } } };
   const marks: ChartSpec["marks"] = [{ type: "line", x: "t", y: "v", id: "v" }];
 
-  it("need version 4, unless they turn it off", () => {
-    expect(() => loadSpec({ version: 3, data, marks, navigator: true })).toThrow(
-      'spec.navigator: expected a spec with "version": 4',
-    );
+  it("may be turned off", () => {
     expect(() => loadSpec({ data, marks, navigator: false })).not.toThrow();
     expect(loadSpec({ data, marks, navigator: false }).config.navigator).toBeUndefined();
   });
 
   it("load as a Navigator, with their options", () => {
-    const { config } = loadSpec({
-      version: 4,
-      data,
-      marks,
-      navigator: { height: 50, marks: ["v"] },
-    });
+    const { config } = loadSpec({ data, marks, navigator: { height: 50, marks: ["v"] } });
     expect(config.navigator).toBeInstanceOf(Navigator);
     expect(config.navigator!.toJSON()).toEqual({ height: 50, marks: ["v"] });
-    expect(
-      loadSpec({ version: 4, data, marks, navigator: true }).config.navigator!.toJSON(),
-    ).toEqual({});
+    expect(loadSpec({ data, marks, navigator: true }).config.navigator!.toJSON()).toEqual({});
     const model = new ChartModel(config);
     model.setSize(400, 300, 1);
     expect(stripOf(model.scene(estimateText)).plot.height).toBe(50);
   });
 
   it("are checked", () => {
-    expect(() => validateSpec({ version: 4, marks, navigator: { height: 10 } })).toThrow(
-      "spec.navigator.height: expected a height of at least 16 pixels, got 10",
+    expect(() => validateSpec({ marks, navigator: { height: 10 } })).toThrow(
+      "spec.navigator.height: expected a height of at least 16 pixels; received 10",
     );
-    expect(() => validateSpec({ version: 4, marks, navigator: { marks: ["v", "v"] } })).toThrow(
-      'spec.navigator.marks[1]: expected a mark id not listed before, got "v"',
+    expect(() => validateSpec({ marks, navigator: { marks: ["v", "v"] } })).toThrow(
+      'spec.navigator.marks[1]: expected a mark id not listed before; received "v"',
     );
-    expect(() => validateSpec({ version: 4, marks, navigator: "yes" })).toThrow(
+    expect(() => validateSpec({ marks, navigator: "yes" })).toThrow(
       "spec.navigator: expected an object",
     );
   });

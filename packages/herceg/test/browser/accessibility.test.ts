@@ -114,7 +114,7 @@ const cases: [string, ChartOptions][] = [
   ["points by series", { marks: [point(metrics, { x: "a", y: "b", series: "host" })] }],
   [
     "a heatmap with a color legend",
-    { marks: [heatmap(metrics, { x: "t", y: "host", value: "a" })] },
+    { marks: [heatmap(metrics, { x: "t", y: "host", color: "a" })] },
   ],
   ["box plots", { marks: [boxplot(metrics, { x: "host", y: "a" })] }],
   ["small multiples", { marks: [line(metrics, { x: "t", y: "a" })], facet: facet("host") }],
@@ -297,7 +297,7 @@ describe("the accessibility tree", () => {
     for (const options of [
       { title: "Signal", marks: [line(dense, { x: "t", y: "v" })] },
       { title: "Revenue", marks: [pie(sales, { category: "region", value: "revenue" })] },
-      { marks: [heatmap(metrics, { x: "t", y: "host", value: "a" })] },
+      { marks: [heatmap(metrics, { x: "t", y: "host", color: "a" })] },
     ] satisfies ChartOptions[]) {
       const chart = mount(options);
       await chart.loading;
@@ -372,7 +372,7 @@ describe("the keyboard", () => {
       v: [1, 2, 3, 4],
     });
     const chart = mount({
-      marks: [heatmap(grid, { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(grid, { x: "x", y: "y", color: "v" })],
       locale: "en-US",
     });
     await chart.loading;
@@ -396,7 +396,7 @@ describe("the keyboard", () => {
       v: [1, 2, 3, 9],
     });
     const chart = mount({
-      marks: [heatmap(sparse, { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(sparse, { x: "x", y: "y", color: "v" })],
       locale: "en-US",
     });
     await chart.loading;
@@ -480,7 +480,7 @@ describe("text alternatives of legends", () => {
     const cells = table({ x: ["a", "b"], y: ["row", "row"], v: [2, 9] });
     const chart = mount({
       marks: [
-        heatmap(cells, { x: "x", y: "y", value: "v", colorDomain: [-100, 100], colorMidpoint: 0 }),
+        heatmap(cells, { x: "x", y: "y", color: "v", colorDomain: [-100, 100], colorMidpoint: 0 }),
       ],
       locale: "en-US",
     });

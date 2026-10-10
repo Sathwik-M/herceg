@@ -217,7 +217,7 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
       ["y", this.#y],
     ] as const) {
       if (fields.length > 0 && !table)
-        throw new Error(`A custom mark with ${axis} fields needs a table`);
+        throw new Error(`custom ${axis}: fields need a table; pass one`);
       for (const field of fields) requireField(table!, field, NUMERIC, `custom ${axis}`);
     }
     // A point of a series is a row's (x, y). Other fields, such as both
@@ -233,7 +233,7 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
       if (options.label !== undefined) spec.label = options.label;
     } else if (field !== undefined || options.label !== undefined || options.pointText) {
       throw new Error(
-        "A custom mark's series, label, and pointText need one x field and y fields, and no series: false",
+        "custom: series, label, and pointText need one x field, y fields, and no series: false",
       );
     }
     this.spec = frozen(spec);

@@ -12,7 +12,7 @@ from .._chart import Axis, Chart, HelperOptions, Panel
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
-    HUE_GROUP,
+    SERIES_GROUP,
     Source,
     Statistics,
     by,
@@ -26,8 +26,10 @@ from ._common import (
     number_column,
     readable,
     record,
+    refuse_facets,
     rows_table,
     seed_of,
+    shown,
     values,
     variables_of,
 )
@@ -48,8 +50,8 @@ def pairplot(
     data: Any,
     *,
     vars: Sequence[str] | None = None,
-    hue: str | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series: str | None = None,
+    series_order: Sequence[Any] | None = None,
     palette: Sequence[str] | None = None,
     diag_kind: Literal["auto", "hist", "kde"] | None = "auto",
     corner: bool = False,
@@ -58,7 +60,8 @@ def pairplot(
     """A grid of subplots: each pair of ``vars`` (by default every number
     column) as a scatter plot, and each variable's distribution on the
     diagonal: a histogram (Seaborn's bins), or with ``diag_kind="kde"`` (the
-    default with ``hue``) kernel densities, or nothing with ``None``.
+    default with ``series``) kernel densities, each series' integrating to 1
+    as in ``kdeplot``, or nothing with ``None``.
 
     The columns of the grid share their x scale; the scatter plots of a row
     share a y range, and the diagonal's histograms and densities have y
@@ -68,7 +71,11 @@ def pairplot(
     otherwise.
     """
     if diag_kind not in ("auto", "hist", "kde", None):
-        raise ValueError(f"diag_kind must be 'auto', 'hist', 'kde', or None, not {diag_kind!r}")
+        raise ValueError(
+            'pairplot diag_kind: expected "auto", "hist", "kde", or None; '
+            f"received {shown(diag_kind)}"
+        )
+    refuse_facets(options, "pairplot", "pairplot lays out panels of its own")
     source = Source(data)
     names = (
         list(vars)
@@ -76,19 +83,21 @@ def pairplot(
         else [
             name
             for name in source.names
-            if name != hue and source.column(name, "pairplot").kind == "number"
+            if name != series and source.column(name, "pairplot").kind == "number"
         ]
     )
     if len(names) < 1 or len(set(names)) != len(names):
-        raise ValueError(f"pairplot needs distinct number columns to pair, not {names!r}")
+        raise ValueError(
+            f"pairplot vars: expected distinct number columns to pair; received {names!r}"
+        )
     columns = {name: source.column(name, "pairplot vars", ("number",)) for name in names}
-    variables = variables_of(source, None, None, hue, hue_order, axes=names)
+    variables = variables_of(source, "pairplot", None, None, series, series_order, axes=names)
     kept = complete(len(next(iter(columns.values()))), levels_of=list(variables.values()))
     table: dict[str, Column] = rows_table(variables, kept)
     for name, column in columns.items():
         table[name] = number_column(values(column)[kept])
     k = len(names)
-    diagonal = ("kde" if hue else "hist") if diag_kind == "auto" else diag_kind
+    diagonal = ("kde" if series else "hist") if diag_kind == "auto" else diag_kind
     panels: list[Panel] = []
     marks: list[tuple[str, int, int]] = []
     for i, ylab in enumerate(names):
@@ -100,19 +109,19 @@ def pairplot(
             if corner and j > i:
                 # Left empty; panels of a column share their x settings.
                 panels.append(
-                    Panel(id, x=Axis(label=xlab, show=False), y=Axis(show=False, grid=False))
+                    Panel(id, x=Axis(title=xlab, show=False), y=Axis(show=False, grid=False))
                 )
                 continue
             if i == j:
                 # A distribution has a count or density scale of its own: no y axis.
-                panels.append(Panel(id, title=xlab, x=Axis(label=xlab), y=Axis(show=False)))
+                panels.append(Panel(id, title=xlab, x=Axis(title=xlab), y=Axis(show=False)))
                 if diagonal is not None:
                     marks.append(("diagonal", i, j))
                 continue
             # The first scatter plot of each row names its variable.
             first = j == (1 if i == 0 else 0)
-            y_axis = Axis(label=ylab if first else None, domain=y_range, nice=True)
-            panels.append(Panel(id, x=Axis(label=xlab), y=y_axis))
+            y_axis = Axis(title=ylab if first else None, domain=y_range, nice=True)
+            panels.append(Panel(id, x=Axis(title=xlab), y=y_axis))
             marks.append(("scatter", i, j))
     settings: dict[str, Any] = dict(options)
     settings.setdefault("width", _PAIR_PANEL * k + 80)
@@ -121,29 +130,35 @@ def pairplot(
     settings.setdefault("resolve_y", "independent")
     settings["panels"] = panels
     settings["panel_columns"] = k
-    shown = {"hist": "histograms", "kde": "kernel densities", None: "nothing"}[diagonal]
+    drawn = {"hist": "histograms", "kde": "kernel densities", None: "nothing"}[diagonal]
     sentence = (
-        f"Scatter plots pair {', '.join(names)}{by(hue)}; the diagonal shows each variable's "
-        f"{shown}."
+        f"Scatter plots pair {', '.join(names)}{by(series)}; the diagonal shows each variable's "
+        f"{drawn}."
         + dropped_sentence(
-            len(source.column(names[0], "pairplot")) - len(kept), [hue] if hue else []
+            len(source.column(names[0], "pairplot")) - len(kept), [series] if series else []
         )
     )
     chart = make_chart(table, settings, sentence=sentence, palette=palette)
     tables: dict[str, Mapping[str, np.ndarray]] = {}
-    # Without hue, every plot's rows are one series: one color, no legend.
-    label = None if hue else "rows"
-    # Scatter plots first: they hold every hue level, so the legend group
-    # orders and colors levels by them, whichever a diagonal's densities lack.
+    # Without series, every plot's rows are one series: one color, no legend.
+    label = None if series else "rows"
+    # Scatter plots first: they hold every series, so the legend group orders
+    # and colors series by them, whichever a diagonal's densities lack.
     for kind, i, j in sorted(marks, key=lambda mark: mark[0] != "scatter"):
         id = f"{i},{j}"
         if kind == "scatter":
             chart.point(
-                names[j], names[i], series=hue, r=2, panel=id, label=label, legend_group=HUE_GROUP
+                names[j],
+                names[i],
+                series=series,
+                radius=2,
+                panel=id,
+                label=label,
+                legend_group=SERIES_GROUP,
             )
             continue
         name = names[i]
-        # The source's values and rows, which the hue's codes index.
+        # The source's values and rows, which the series' codes index.
         v = values(columns[name])
         rows = kept[np.isfinite(v[kept])]
         if diagonal == "hist":
@@ -156,10 +171,10 @@ def pairplot(
             chart.histogram(
                 name,
                 bins=[float(edge) for edge in edges],
-                series=hue,
+                series=series,
                 panel=id,
                 label=label,
-                legend_group=HUE_GROUP,
+                legend_group=SERIES_GROUP,
             )
         else:
             density, _, density_column = densities(
@@ -167,26 +182,27 @@ def pairplot(
                 variables,
                 rows,
                 name,
-                hue,
+                series,
                 bw_method="scott",
                 bw_adjust=1.0,
                 cut=3.0,
-                gridsize=200,
+                grid_size=200,
                 clip=(None, None),
-                common_norm=hue is not None,
+                common_norm=False,
                 cumulative=False,
                 scale=None,
                 value_kind="number",
+                role="pairplot",
             )
             tables[f"{name} density"] = readable(density)
             chart.line(
                 name,
                 density_column,
                 data=density,
-                series=hue,
+                series=series,
                 panel=id,
                 label=label,
-                legend_group=HUE_GROUP,
+                legend_group=SERIES_GROUP,
             )
     return record(
         chart,
@@ -201,8 +217,8 @@ def jointplot(
     *,
     x: str,
     y: str,
-    hue: str | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series: str | None = None,
+    series_order: Sequence[Any] | None = None,
     palette: Sequence[str] | None = None,
     kind: Literal["scatter", "reg"] = "scatter",
     bins: int | str = "auto",
@@ -221,15 +237,16 @@ def jointplot(
     same rows.
     """
     if kind not in ("scatter", "reg"):
-        raise ValueError(f"kind must be 'scatter' or 'reg', not {kind!r}")
+        raise ValueError(f'jointplot kind: expected "scatter" or "reg"; received {shown(kind)}')
     if not (ratio > 0):
-        raise ValueError(f"ratio must be a positive number, not {ratio!r}")
-    check_ci(ci)
-    n_boot = check_n_boot(n_boot)
+        raise ValueError(f"jointplot ratio: expected a positive number; received {shown(ratio)}")
+    check_ci(ci, "jointplot")
+    n_boot = check_n_boot(n_boot, "jointplot")
+    refuse_facets(options, "jointplot", "jointplot lays out panels of its own")
     source = Source(data)
     xc = source.column(x, "jointplot x", ("number",))
     yc = source.column(y, "jointplot y", ("number",))
-    variables = variables_of(source, None, None, hue, hue_order, axes=[x, y])
+    variables = variables_of(source, "jointplot", None, None, series, series_order, axes=[x, y])
     rows = complete(len(xc), xc, yc, levels_of=list(variables.values()))
     dropped = len(xc) - len(rows)
     xv, yv = values(xc)[rows], values(yc)[rows]
@@ -245,9 +262,9 @@ def jointplot(
     settings.setdefault("height", _JOINT_SIZE)
     settings.update(
         panels=[
-            Panel("x", x=Axis(label=x), y=hidden),
+            Panel("x", x=Axis(title=x), y=hidden),
             Panel("corner", x=hidden, y=hidden),
-            Panel("joint", x=Axis(label=x), y=Axis(label=y)),
+            Panel("joint", x=Axis(title=x), y=Axis(title=y)),
             Panel("y", x=hidden, y=hidden),
         ],
         panel_columns=2,
@@ -257,7 +274,7 @@ def jointplot(
         resolve_y="rows",
     )
     fits = kind == "reg" and len(np.unique(xv)) > 1
-    used_seed = seed_of(seed) if fits and ci is not None else None
+    used_seed = seed_of(seed, "jointplot") if fits and ci is not None else None
     failures = BandFailures()
     fit_table: dict[str, Column] | None = None
     low_name, high_name = fresh(["low", "high"], {x, y})
@@ -270,7 +287,7 @@ def jointplot(
             fit_table[low_name] = number_column(low)
             fit_table[high_name] = number_column(high)
     sentence = (
-        f"A scatter plot of {y} against {x}{by(hue)}, with histograms of {x} above it "
+        f"A scatter plot of {y} against {x}{by(series)}, with histograms of {x} above it "
         f"and of {y} beside it"
     )
     if fit_table is not None:
@@ -283,10 +300,10 @@ def jointplot(
     if kind == "reg" and fit_table is None:
         sentence += f" Too few distinct {x} values for a linear fit."
     sentence += failures.sentence(x)
-    sentence += dropped_sentence(dropped, [x, y, *variables], hue_order is not None)
+    sentence += dropped_sentence(dropped, [x, y, *variables], series_order is not None)
     chart = make_chart(table, settings, sentence=sentence, palette=palette)
-    label = None if hue else y
-    chart.point(x, y, series=hue, panel="joint", label=label, legend_group=HUE_GROUP)
+    label = None if series else y
+    chart.point(x, y, series=series, panel="joint", label=label, legend_group=SERIES_GROUP)
     tables: dict[str, Mapping[str, np.ndarray]] = {
         "x edges": {"edges": x_edges},
         "y edges": {"edges": y_edges},
@@ -308,18 +325,18 @@ def jointplot(
     chart.histogram(
         x,
         bins=[float(e) for e in x_edges],
-        series=hue,
+        series=series,
         panel="x",
         label=label,
-        legend_group=HUE_GROUP,
+        legend_group=SERIES_GROUP,
     )
     chart.histogram(
         y=y,
         bins=[float(e) for e in y_edges],
-        series=hue,
+        series=series,
         panel="y",
         label=label,
-        legend_group=HUE_GROUP,
+        legend_group=SERIES_GROUP,
     )
     return record(chart, Statistics("jointplot", sentence, tables, used_seed, dropped))
 
@@ -362,13 +379,22 @@ def clustermap(
     order. ``colors`` and ``center`` are the heatmap's color ramp and
     midpoint.
     """
+    refuse_facets(options, "clustermap", "clustermap lays out panels of its own")
     if z_score is not None and standard_scale is not None:
-        raise ValueError("z_score and standard_scale exclude each other: give one")
+        raise ValueError(
+            "clustermap z_score: z_score and standard_scale exclude each other; give one"
+        )
     for name, axis in (("z_score", z_score), ("standard_scale", standard_scale)):
         if axis not in (None, 0, 1):
-            raise ValueError(f"{name} must be 0 (rows), 1 (columns), or None, not {axis!r}")
+            raise ValueError(
+                f"clustermap {name}: expected 0 (rows), 1 (columns), or None; "
+                f"received {shown(axis)}"
+            )
     if not (0 < dendrogram_ratio < 1):
-        raise ValueError(f"dendrogram_ratio must be between 0 and 1, not {dendrogram_ratio!r}")
+        raise ValueError(
+            "clustermap dendrogram_ratio: expected a number between 0 and 1; "
+            f"received {shown(dendrogram_ratio)}"
+        )
     rows, names, matrix = _matrix(data, index, columns)
     if matrix.shape[0] < 1 or matrix.shape[1] < 1:
         raise ValueError("clustermap needs at least one row and one column")
@@ -490,9 +516,15 @@ def _matrix(
     """A clustermap's row labels, column labels, and values, rows by columns."""
     if isinstance(data, np.ndarray):
         if data.ndim != 2:
-            raise ValueError(f"a clustermap's array must be two-dimensional, not {data.ndim}-D")
+            raise ValueError(
+                f"clustermap data: expected a two-dimensional array; received {data.ndim}-D"
+            )
         if index is not None or columns is not None:
-            raise ValueError("index and columns name columns of a table, not of an array")
+            option = "index" if index is not None else "columns"
+            raise ValueError(
+                f"clustermap {option}: names columns of a table, but data is an array; "
+                f"drop {option}, or pass a table"
+            )
         values_ = np.asarray(data, dtype=float)
         rows = [str(i) for i in range(values_.shape[0])]
         return rows, [str(j) for j in range(values_.shape[1])], values_

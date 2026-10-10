@@ -42,8 +42,8 @@ function chart(data: Table, kind: Kind, width: number) {
   // No axes: labels would size the margins, which a streaming chart keeps.
   const model = new ChartModel({
     marks: [kind === "line" ? line(data, options) : area(data, options)],
-    x: { axis: false },
-    y: { axis: false },
+    x: { show: false },
+    y: { show: false },
     locale: "en-US",
   });
   model.setSize(width, 300, 1);
@@ -92,8 +92,8 @@ function reference(data: Table, kind: Kind, width: number, viewport: [number, nu
   });
   const model = new ChartModel({
     marks,
-    x: { axis: false },
-    y: { axis: false },
+    x: { show: false },
+    y: { show: false },
     locale: "en-US",
   });
   model.setSize(width, 300, 1);

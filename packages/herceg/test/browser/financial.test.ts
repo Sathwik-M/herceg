@@ -409,7 +409,7 @@ describe("crosshair labels", () => {
     const chart = createChart(host, {
       locale: "en-US",
       tooltip: { axisLabels: true },
-      x: { axis: false },
+      x: { show: false },
       marks: [bar(data, { x: "sales", y: "region" })],
     });
     await chart.loading;
@@ -443,7 +443,7 @@ describe("crosshair labels", () => {
     right.destroy();
     const sub = createChart(host, {
       tooltip: { axisLabels: true },
-      panels: panels([{ id: "a" }, { id: "b", y: { axis: false } }]),
+      panels: panels([{ id: "a" }, { id: "b", y: { show: false } }]),
       marks: [
         line(data, { x: "t", y: "v", panel: "a" }),
         line(data, { x: "t", y: "v", panel: "b" }),
@@ -463,7 +463,7 @@ describe("crosshair labels", () => {
     const numbers = table({ n: [100, 200], v: [1, 2] });
     const chart = createChart(host, {
       tooltip: { axisLabels: true },
-      panels: panels([{ id: "a", x: { axis: false } }, { id: "b" }]),
+      panels: panels([{ id: "a", x: { show: false } }, { id: "b" }]),
       resolve: { x: "independent" },
       marks: [
         line(times, { x: "t", y: "v", panel: "a" }),

@@ -561,7 +561,7 @@ export class MountedChart implements Chart {
   #items() {
     if (this.#panelsChanged) this.#flush();
     const items = this.#model.items;
-    if (!items) throw new Error("The chart has no items");
+    if (!items) throw new Error("chart: no items to drill or move");
     return items;
   }
 
@@ -621,7 +621,7 @@ export class MountedChart implements Chart {
     const panels = this.#model.panels();
     const all = this.#model.allPanels();
     if (panel === undefined) {
-      if (all.length > 1) throw new Error("Charts of several panels need a panel");
+      if (all.length > 1) throw new Error("panel: required with several panels");
       return panels[0];
     }
     // Throws for a panel the last frame did not have.
@@ -2091,7 +2091,7 @@ function inspectionKey(inspection: Inspection | undefined): string {
  * ```ts
  * const chart = createChart(element, {
  *   marks: [line(metrics, { x: "time", y: "latency", series: "service" })],
- *   y: { label: "Latency (ms)" },
+ *   y: { title: "Latency (ms)" },
  * });
  * ```
  */

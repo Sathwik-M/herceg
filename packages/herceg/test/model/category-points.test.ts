@@ -135,9 +135,9 @@ describe("points on category axes", () => {
       units: [1, 1000, 2, 3],
       size: [1, 1, 1, Number.NaN],
     });
-    const strip = build({ marks: [point(data, { x: "product", y: "units", r: "size" })] });
+    const strip = build({ marks: [point(data, { x: "product", y: "units", size: "size" })] });
     expect(describeChart(strip.model)).toContain("units: 2 points, from 1 to 2, last 2.");
-    const across = build({ marks: [point(data, { x: "units", y: "product", r: "size" })] });
+    const across = build({ marks: [point(data, { x: "units", y: "product", size: "size" })] });
     expect(describeChart(across.model)).toContain(
       "product: 2 points in 2 categories, x from 1 to 2.",
     );
@@ -170,7 +170,7 @@ describe("points on category axes", () => {
     const data = sales();
     const view = rowView(data, { filter: col("units").gt(2) });
     const { model, scene } = build({
-      marks: [point(view, { x: "product", y: "units", r: "price", color: "price" })],
+      marks: [point(view, { x: "product", y: "units", size: "price", color: "price" })],
     });
     const [g] = scene.panels[0]!.marks as PointGeometry[];
     expect(pointsOf(model, scene).map(([category]) => category)).toEqual([
@@ -202,12 +202,13 @@ describe("points on category axes", () => {
     expect(svg).toContain(">a</text>");
   });
 
-  it("keep size, opacity, and color fields numeric", () => {
+  it("keep size and opacity fields numeric, and color points by categories too", () => {
     const data = sales();
-    for (const option of ["r", "fillOpacity", "color"] as const)
+    for (const option of ["size", "fillOpacity"] as const)
       expect(() => point(data, { x: "product", y: "units", [option]: "region" })).toThrow(
-        /is category/,
+        /holds category values/,
       );
+    expect(() => point(data, { x: "product", y: "units", color: "region" })).not.toThrow();
   });
 });
 
@@ -353,7 +354,7 @@ describe("points on categories of panels' own", () => {
 
   it("refuse synced charts, as for bars", () => {
     expect(() => build({ ...config(), interaction: { sync: "board" } })).toThrow(
-      "cannot be synced yet",
+      "chart interaction.sync: panels with categories of their own (resolve.x) cannot sync yet",
     );
   });
 });

@@ -10,6 +10,7 @@ GeoPandas GeoSeries and GeoDataFrames) without importing either library.
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -59,8 +60,8 @@ def check_crs(source: Any) -> None:
     if getattr(crs, "is_geographic", True) is False:
         name = getattr(crs, "name", None) or str(crs)
         raise ValueError(
-            f"the shapes are in a projected coordinate reference system ({name}); "
-            "maps read longitude and latitude in degrees: reproject first, as with "
+            f"data: the shapes are in a projected coordinate reference system ({name}), and "
+            "maps read longitude and latitude in degrees; reproject first, as with "
             "gdf.to_crs(4326)"
         )
 
@@ -80,16 +81,16 @@ def pack(values: Sequence[Any]) -> tuple[np.ndarray, Shapes]:
         if shape is None or kind not in SHAPES:
             what = kind or type(value).__name__
             hint = (
-                " (points go in longitude and latitude columns, for geopoint)"
+                "; points go in longitude and latitude columns, for geopoint"
                 if kind == "Point"
                 else ""
             )
             raise TypeError(
-                f"row {row} holds a {what}; geometry columns hold polygons and multipolygons{hint}"
+                f"row {row}: expected a polygon or multipolygon; received a {what}{hint}"
             )
         parts: Any = [shape.get("coordinates")] if kind == "Polygon" else shape.get("coordinates")
         if not isinstance(parts, Sequence) or isinstance(parts, str):
-            raise TypeError(f"row {row} holds a {kind} without coordinates")
+            raise TypeError(f"row {row}: the {kind} has no coordinates")
         for polygon in parts:
             for ring in polygon:
                 for position in ring:
@@ -117,7 +118,7 @@ def _position(position: Any, row: int) -> tuple[float, float]:
         lon, lat = float(position[0]), float(position[1])
     except (TypeError, ValueError, IndexError):
         raise TypeError(
-            f"row {row} has a position that is not [longitude, latitude]: {position!r}"
+            f"row {row}: expected positions as [longitude, latitude]; received {position!r}"
         ) from None
     return lon, lat
 
@@ -141,7 +142,7 @@ def _check(shapes: Shapes) -> None:
     if (spans > 360).any():
         ring = int(np.flatnonzero(shapes.ring_offsets[1:] > starts)[np.argmax(spans > 360)])
         raise ValueError(
-            f"ring {ring} spans {spans.max():g} degrees of longitude; a ring spans at most 360"
+            f"ring {ring}: spans {spans.max():g} degrees of longitude; a ring spans at most 360"
         )
 
 
@@ -159,7 +160,9 @@ def feature_columns(collection: Mapping[str, Any]) -> dict[str, list[Any]]:
     as a column of its own, as herceg's ``fromGeoJSON`` reads them."""
     features = collection.get("features")
     if not isinstance(features, Sequence):
-        raise TypeError("a FeatureCollection needs a list of features")
+        raise TypeError(
+            f"FeatureCollection features: expected a list; received {type(features).__name__}"
+        )
     kinds = {
         (feature.get("geometry") or {}).get("type")
         for feature in features
@@ -174,8 +177,8 @@ def feature_columns(collection: Mapping[str, Any]) -> dict[str, list[Any]]:
         columns["geometry"] = GeometryList(f.get("geometry") for f in features)
     else:
         raise TypeError(
-            f"the features are {', '.join(sorted(map(str, kinds)))}; maps read collections "
-            "of polygons and multipolygons, or of points"
+            "FeatureCollection features: expected polygons and multipolygons, or points; "
+            f"received {', '.join(sorted(map(str, kinds)))}"
         )
     if any(f.get("id") is not None for f in features):
         columns["id"] = [None if f.get("id") is None else str(f.get("id")) for f in features]
@@ -188,8 +191,8 @@ def feature_columns(collection: Mapping[str, Any]) -> dict[str, list[Any]]:
             continue  # Nested properties have no column kind.
         if name in columns:
             raise ValueError(
-                f"a property is named {name!r}, like the column made of the features' "
-                "shapes, points, or ids; rename it"
+                f"FeatureCollection properties: {name!r} also names the column of the "
+                "features' shapes, points, or ids; rename the property"
             )
         if any(isinstance(v, str) for v in values) and any(
             isinstance(v, (int, float)) and not isinstance(v, bool) for v in values
@@ -205,7 +208,9 @@ def feature_key(feature: Mapping[str, Any], key: str) -> Any:
         return feature.get("id")
     if key.startswith("properties."):
         return (feature.get("properties") or {}).get(key[len("properties.") :])
-    raise ValueError(f'feature_id_key must be "id" or "properties.<name>", not {key!r}')
+    raise ValueError(
+        f'geoshape feature_id_key: expected "id" or "properties.<name>"; received {json.dumps(key)}'
+    )
 
 
 def key_text(value: Any) -> str | None:

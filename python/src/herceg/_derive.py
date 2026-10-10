@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from ._data import Table
+from ._data import Table, listed, shown
 
 #: Kinds of columns whose values steps can compare and group: all but shapes.
 _VALUES = ("number", "time", "category")
@@ -42,9 +42,12 @@ def _literal(value: Any) -> Any:
     if isinstance(value, numbers.Real) and not isinstance(value, bool):
         number = float(value)
         if not np.isfinite(number):
-            raise ValueError(f"expression numbers must be finite, not {value!r}")
+            raise ValueError(f"expression: expected finite numbers; received {value!r}")
         return int(number) if number.is_integer() and abs(number) < 2**53 else number
-    raise TypeError(f"cannot use {type(value).__name__} in an expression")
+    raise TypeError(
+        "expression: expected numbers, text, True, False, None, datetimes, or expressions; "
+        f"received {type(value).__name__}"
+    )
 
 
 class Expr:
@@ -73,7 +76,9 @@ class Expr:
         return Expr([op, _literal(other), self._json])
 
     def __bool__(self) -> bool:
-        raise TypeError("an expression is not true or false in Python; combine with & and |")
+        raise TypeError(
+            "expression: is not true or false in Python; combine conditions with &, |, and ~"
+        )
 
     __hash__ = None  # type: ignore[assignment]
 
@@ -179,7 +184,7 @@ class Expr:
 def col(name: str) -> Expr:
     """A column of the table an expression is evaluated against."""
     if not isinstance(name, str):
-        raise TypeError(f"column names are strings, not {name!r}")
+        raise TypeError(f"col: expected a column name; received {shown(name)}")
     return Expr(["field", name])
 
 
@@ -242,11 +247,14 @@ def _type(json: Any, kinds: _Kinds) -> str:
     def typed(arg: Any, expected: str) -> None:
         found = _type(arg, kinds)
         if found != expected and not (found == "missing" and expected == "number"):
-            raise TypeError(f"{op!r} needs {expected} operands, not {found}")
+            raise TypeError(f"expected {expected} operands for {shown(op)}; received {found}")
 
     def arity(count: int) -> None:
         if len(args) != count:
-            raise TypeError(f"{op!r} takes {count} operand{'s' * (count != 1)}, not {len(args)}")
+            raise TypeError(
+                f"expected {count} operand{'s' * (count != 1)} for {shown(op)}; "
+                f"received {len(args)}"
+            )
 
     if op == "field":
         name = args[0]
@@ -260,9 +268,11 @@ def _type(json: Any, kinds: _Kinds) -> str:
         a, b = (_type(arg, kinds) for arg in args)
         if "missing" in (a, b):
             if op not in ("==", "!="):
-                raise TypeError(f"{op!r} cannot compare with None")
+                raise TypeError(
+                    f"{shown(op)} cannot compare with None; test missing values with is_missing()"
+                )
         elif a != b:
-            raise TypeError(f"{op!r} compares {a} with {b}; both sides need one type")
+            raise TypeError(f"{shown(op)} compares {a} with {b}; give both sides one type")
         return "boolean"
     if op in ("and", "or", "not"):
         if op == "not":
@@ -280,13 +290,15 @@ def _type(json: Any, kinds: _Kinds) -> str:
         return "number"
     if op == "in":
         if len(args) < 2:
-            raise TypeError("'in' needs a value and at least one candidate")
+            raise TypeError('"in" needs a value and at least one candidate; give is_in() one')
         value = _type(args[0], kinds)
         for candidate in args[1:]:
             if isinstance(candidate, list) or (
                 candidate is not None and _type(candidate, kinds) != value
             ):
-                raise TypeError(f"'in' candidates must be {value} literals")
+                raise TypeError(
+                    f'expected {value} literals as "in" candidates; received {shown(candidate)}'
+                )
         return "boolean"
     if op == "missing":
         arity(1)
@@ -297,10 +309,10 @@ def _type(json: Any, kinds: _Kinds) -> str:
         typed(args[0], "boolean")
         then, otherwise = (_type(arg, kinds) for arg in args[1:])
         if "missing" not in (then, otherwise) and then != otherwise:
-            raise TypeError(f"'if' branches give {then} and {otherwise}; they need one type")
+            raise TypeError(f'"if" branches give {then} and {otherwise}; give both one type')
         kind = then if then != "missing" else otherwise
         return "number" if kind == "missing" else kind
-    raise TypeError(f"unknown expression operator {op!r}")
+    raise TypeError(f"unknown expression operator {shown(op)}")
 
 
 def _fields_of(json: Any) -> set[str]:
@@ -370,7 +382,9 @@ class Derived:
         self._require(sorted(_fields_of(json)), "filter")
         kind = _checked(json, self._kinds, "filter")
         if kind != "boolean":
-            raise TypeError(f"filter needs a true or false condition, not a {kind} expression")
+            raise TypeError(
+                f"filter: expected a true or false condition; received a {kind} expression"
+            )
         return self._then({"filter": json}, self._kinds)
 
     def calculate(self, name: str, value: Any) -> Derived:
@@ -394,13 +408,15 @@ class Derived:
         ``step`` wide from ``start``, or about ``count`` round bins (default 10)."""
         self._require(column, "bin", ("number", "time"))
         if step is not None and not (_real(step) and step > 0):
-            raise ValueError(f"bin step must be a positive number, not {step!r}")
+            raise ValueError(f"bin step: expected a positive number; received {shown(step)}")
         if count is not None and not (
             isinstance(count, int) and not isinstance(count, bool) and count >= 1
         ):
-            raise ValueError(f"bin count must be a whole number of at least 1, not {count!r}")
+            raise ValueError(
+                f"bin count: expected a whole number of at least 1; received {shown(count)}"
+            )
         if start is not None and not _real(start):
-            raise ValueError(f"bin start must be a finite number, not {start!r}")
+            raise ValueError(f"bin start: expected a finite number; received {shown(start)}")
         # NumPy numbers as JSON numbers.
         step, start = _literal(step), _literal(start)
         spec = {"bin": column, "as": name, "step": step, "count": count, "start": start}
@@ -410,26 +426,29 @@ class Derived:
     def aggregate(self, by: str | Sequence[str] | None = None, **operations: Any) -> Derived:
         """One row per group of ``by`` columns, with each named operation, as in
         pandas' named aggregation: ``n="count"`` or ``mean=("temp", "mean")``."""
-        groupby = [by] if isinstance(by, str) else list(by or [])
-        self._require(groupby, "aggregate by", _VALUES)
+        keys = [by] if isinstance(by, str) else list(by or [])
+        self._require(keys, "aggregate by", _VALUES)
         if not operations:
-            raise ValueError("aggregate needs at least one operation, such as n='count'")
+            raise ValueError('aggregate: needs at least one operation, such as n="count"')
         specs = []
-        kinds = {name: self._kinds[name] for name in groupby}
+        kinds = {name: self._kinds[name] for name in keys}
         for name, operation in operations.items():
             column, op = (None, operation) if isinstance(operation, str) else tuple(operation)
             if op not in AGGREGATES:
                 raise ValueError(
-                    f"aggregate {name}: unknown operation {op!r}; use one of {AGGREGATES}"
+                    f"aggregate {name}: unknown operation {shown(op)}; "
+                    f"name one of {listed(AGGREGATES)}"
                 )
             if column is None and op != "count":
-                raise ValueError(f"aggregate {name}: {op!r} needs a column, as ('column', {op!r})")
+                raise ValueError(
+                    f'aggregate {name}: {shown(op)} needs a column; give ("column", {shown(op)})'
+                )
             if column is not None:
                 self._require(column, f"aggregate {name}", ("number", "time"))
             specs.append({"op": op, **({"field": column} if column else {}), "as": name})
             keeps = column is not None and op in _KEEPS_KIND and self._kinds[column] == "time"
             kinds[name] = "time" if keeps else "number"
-        step = {"aggregate": specs, **({"groupby": groupby} if groupby else {})}
+        step = {"aggregate": specs, **({"by": keys} if keys else {})}
         return self._then(step, _Kinds(list(kinds), kinds))
 
     def rolling(
@@ -438,22 +457,26 @@ class Derived:
         """Adds each named operation over the trailing ``size`` rows, within each
         group of ``by`` columns: ``avg=("temp", "mean")``."""
         if not (isinstance(size, int) and not isinstance(size, bool) and size >= 1):
-            raise ValueError(f"rolling size must be a whole number of at least 1, not {size!r}")
-        groupby = [by] if isinstance(by, str) else list(by or [])
-        self._require(groupby, "rolling by", _VALUES)
+            raise ValueError(
+                f"rolling size: expected a whole number of at least 1; received {shown(size)}"
+            )
+        keys = [by] if isinstance(by, str) else list(by or [])
+        self._require(keys, "rolling by", _VALUES)
         if not operations:
-            raise ValueError("rolling needs at least one operation, such as avg=('temp', 'mean')")
+            raise ValueError('rolling: needs at least one operation, such as avg=("temp", "mean")')
         specs = []
         kinds: dict[str, str] = {}
         for name, operation in operations.items():
             column, op = tuple(operation)
             if op not in ROLLING:
-                raise ValueError(f"rolling {name}: unknown operation {op!r}; use one of {ROLLING}")
+                raise ValueError(
+                    f"rolling {name}: unknown operation {shown(op)}; name one of {listed(ROLLING)}"
+                )
             self._require(column, f"rolling {name}", ("number", "time"))
             specs.append({"op": op, "field": column, "as": name})
             keeps = op in _KEEPS_KIND and self._kinds[column] == "time"
             kinds[name] = "time" if keeps else "number"
-        step = {"rolling": specs, "size": size, **({"groupby": groupby} if groupby else {})}
+        step = {"rolling": specs, "size": size, **({"by": keys} if keys else {})}
         return self._then(step, self._kinds.adding(kinds))
 
     def sort(self, column: str, *, descending: bool = False) -> Derived:
@@ -484,7 +507,7 @@ def _reads(step: dict[str, Any]) -> set[str]:
     for key in ("bin", "sort"):
         if key in step:
             reads.add(step[key])
-    reads |= set(step.get("groupby", []))
+    reads |= set(step.get("by", []))
     for operation in step.get("aggregate", []) + step.get("rolling", []):
         if "field" in operation:
             reads.add(operation["field"])
@@ -498,7 +521,7 @@ def _writes(step: dict[str, Any]) -> set[str]:
     if "bin" in step:
         return {step.get("as", step["bin"])}
     if "aggregate" in step:
-        return {*step.get("groupby", []), *(operation["as"] for operation in step["aggregate"])}
+        return {*step.get("by", []), *(operation["as"] for operation in step["aggregate"])}
     return {operation["as"] for operation in step.get("rolling", [])}
 
 

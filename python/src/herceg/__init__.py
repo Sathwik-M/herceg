@@ -9,7 +9,7 @@ Build a chart from a dataframe in one call::
 or compose several marks on one chart::
 
     chart = (
-        hg.Chart(df, title="Latency", y=hg.Axis(label="ms"))
+        hg.Chart(df, title="Latency", y=hg.Axis(title="ms"))
         .line(x="time", y=["p50", "p99"])
         .rule(y=250, label="SLO")
     )

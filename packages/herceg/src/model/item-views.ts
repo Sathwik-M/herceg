@@ -60,30 +60,29 @@ export class ItemViews {
     // Layers of a map share its chart; they are drawn as one mark.
     const drawn = layout.join ? [layout.join(layouts, config)] : [...layouts];
     if (drawn.length > 1 || marks.length > 0)
-      throw new Error(`A ${type} mark has its chart to itself; draw other marks in another chart`);
+      throw new Error(`${type}: has its chart to itself; draw other marks in another chart`);
     // Each mark takes what its controls do (see `LayoutMark.interactions`).
     const takes: readonly string[] = drawn[0]!.interactions ?? [];
     const { zoom, brush, drag, sync } = config.interaction ?? {};
-    const charts = `Charts of a ${type} mark`;
     const plane = takes.includes("plane");
     if (zoom && !(zoom === true ? plane || takes.includes("zoom") : plane && zoom === "xy"))
       throw new Error(
         plane
-          ? `${charts} zoom both ways: give interaction.zoom true or "xy", not "${zoom}"`
+          ? `${type} zoom: expected interaction.zoom true or "xy"; received ${JSON.stringify(zoom)}`
           : takes.includes("zoom")
-            ? `${charts} zoom with interaction.zoom true, not "${zoom}"`
-            : `${charts} do not zoom: interaction.zoom moves axes, maps, 3D charts, treemaps, and sunbursts`,
+            ? `${type} zoom: expected interaction.zoom true; received ${JSON.stringify(zoom)}`
+            : `${type} zoom: no axes to zoom; drop interaction.zoom`,
       );
     if (brush && !(brush === "lasso" && takes.includes("lasso")))
       throw new Error(
         takes.includes("lasso")
-          ? `${charts} take a "lasso" brush, not "${brush}"`
-          : `${charts} do not brush: interaction.brush selects along axes, and lassos maps`,
+          ? `${type} brush: expected interaction.brush "lasso"; received ${JSON.stringify(brush)}`
+          : `${type} brush: no axes to brush; drop interaction.brush`,
       );
     if (drag && !takes.includes("drag"))
-      throw new Error(`${charts} have nothing to drag: interaction.drag moves a network's nodes`);
-    if (sync || config.x?.seams)
-      throw new Error(`${charts} have no x axis to sync or mark seams on`);
+      throw new Error(`${type} drag: no nodes to drag; drop interaction.drag`);
+    if (sync) throw new Error(`${type} sync: no axes to sync; drop interaction.sync`);
+    if (config.x?.seams) throw new Error(`${type} seams: no x axis to mark seams on; drop x.seams`);
     return drawn;
   }
 
@@ -227,10 +226,10 @@ export class ItemViews {
    */
   setDrillRoot(node: string | readonly string[] | null): DrillRoot | undefined {
     const drill = this.#named ? undefined : this.#views[0]?.result.drill;
-    if (!drill) throw new Error("Only charts of one treemap or sunburst drill");
+    if (!drill) throw new Error("setDrillRoot: only charts of one treemap or sunburst drill");
     const key = node === null ? null : drill.find(node);
     if (key === undefined)
-      throw new RangeError(`The tree has no node ${JSON.stringify(node)} to drill into`);
+      throw new RangeError(`setDrillRoot: no node ${JSON.stringify(node)} in the tree`);
     // Against the root set, though a frame may not have drawn it yet.
     if (key === this.#root.key) return undefined;
     this.#root = { key, path: key === null ? [] : drill.pathTo(key) };
@@ -252,19 +251,22 @@ export class ItemViews {
     layout?: object,
   ): { key: string; position: { x: number; y: number } | null } | undefined {
     const moves = this.#views[0]?.result.moves;
-    if (!moves || this.#named) throw new Error("Only networks have items to move");
+    if (!moves || this.#named) throw new Error("setItemPosition: only networks have items to move");
     this.#dragged = undefined;
     // A node moved before its group was hidden can go back all the same.
     if (position === null && this.#moved?.at.delete(key)) return { key, position: null };
     if (layout && (layout !== moves.layout || !moves.current() || !moves.movable(key)))
       return undefined;
-    if (!moves.movable(key)) throw new RangeError(`The network draws no node ${key}`);
+    if (!moves.movable(key))
+      throw new RangeError(`setItemPosition: no node ${JSON.stringify(key)} in the network`);
     if (this.#moved?.layout !== moves.layout) this.#moved = { layout: moves.layout, at: new Map() };
     const { at } = this.#moved;
     if (position === null) return undefined;
     const { x, y } = position;
     if (!(Number.isFinite(x) && Number.isFinite(y)))
-      throw new RangeError(`A node's position is finite x and y, not ${JSON.stringify(position)}`);
+      throw new RangeError(
+        `setItemPosition position: expected finite x and y; received x ${x}, y ${y}`,
+      );
     const [px, py] = at.get(key) ?? [];
     if (px === x && py === y) return undefined;
     at.set(key, [x, y]);

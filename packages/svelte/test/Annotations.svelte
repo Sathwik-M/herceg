@@ -14,6 +14,6 @@
 <Chart>
   <Region x1={0.5} x2={1.5} />
   <Line {data} x="t" y="a" />
-  <Rule data={events} x="at" text="name" />
+  <Rule data={events} x="at" textField="name" />
   <Text x={3} y={4} label="peak" />
 </Chart>

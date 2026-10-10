@@ -83,7 +83,7 @@ describe("directed networks", () => {
 describe("link labels", () => {
   it("write links' names where there is room, and none where rows name a link differently", () => {
     const { model, scene } = build({
-      marks: [graph(follows(), { source: "from", target: "to", linkLabel: "kind" })],
+      marks: [graph(follows(), { source: "from", target: "to", linkLabelField: "kind" })],
     });
     const names = marksOf<TextGeometry>(scene, "text", "graph-link-labels").flatMap(
       ({ labels }) => labels,
@@ -96,18 +96,14 @@ describe("link labels", () => {
     expect(model.layoutSummary()).toContain("1 link whose rows name it differently has no label.");
   });
 
-  it("need spec version 11, as directed links do", () => {
-    const spec = (mark: Record<string, unknown>, version?: number) => ({
-      ...(version && { version }),
+  it("load from specs", () => {
+    const spec = (mark: Record<string, unknown>) => ({
       data: { l: { columns: { from: ["a"], to: ["b"], kind: ["x"] } } },
       marks: [{ type: "graph", data: "l", source: "from", target: "to", ...mark }],
     });
-    expect(() => validateSpec(spec({ directed: true }))).toThrow(
-      /marks\[0\]\.directed.*"version": 11/,
-    );
-    expect(() => validateSpec(spec({ linkLabel: "kind" }, 10))).toThrow(/"version": 11/);
-    expect(checkSpec(spec({ directed: true, linkLabel: "kind" }, 11) as never)).toEqual([]);
+    expect(checkSpec(spec({ directed: true, linkLabelField: "kind" }) as never)).toEqual([]);
     expect(checkSpec(spec({ directed: false }) as never)).toEqual([]);
+    expect(() => validateSpec(spec({ directed: "yes" }))).toThrow(/marks\[0\]\.directed/);
   });
 });
 
@@ -141,8 +137,15 @@ describe("moved nodes", () => {
     });
     model.scene(estimateText);
     expect(at(model, "a")).toEqual(before[0]);
-    expect(() => model.items!.setItemPosition('[0,"z"]', { x, y })).toThrow("draws no node");
-    expect(() => model.items!.setItemPosition('[0,"a","b"]', { x, y })).toThrow("draws no node");
+    expect(() => model.items!.setItemPosition('[0,"z"]', { x, y })).toThrow(
+      "setItemPosition: no node",
+    );
+    expect(() => model.items!.setItemPosition('[0,"a","b"]', { x, y })).toThrow(
+      "setItemPosition: no node",
+    );
+    expect(() => model.items!.setItemPosition('[0,"a"]', { x: Number.NaN, y })).toThrow(
+      `setItemPosition position: expected finite x and y; received x NaN, y ${y}`,
+    );
   });
 
   it("follow a resize in layout units, and go when the network changes", () => {
@@ -332,7 +335,7 @@ describe("node colors", () => {
           target: "to",
           nodes,
           node: "name",
-          group: "team",
+          color: "team",
           labels: false,
         }),
       ],
@@ -425,7 +428,7 @@ describe("moves across charts, groups, and changes", () => {
         target: "to",
         nodes,
         node: "name",
-        group: "team",
+        color: "team",
         ...(id && { id }),
       }),
     ];

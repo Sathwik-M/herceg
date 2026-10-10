@@ -117,7 +117,7 @@ def test_point_keys_travel_through_live_replacements_and_appends():
     content, buffers = browser.last
     assert columns(content, buffers)["host"] == ["c"]
     assert snapshot(widget)[1]["host"] == ["b", "a", "c"]
-    with pytest.raises(KeyError, match="host"):
+    with pytest.raises(KeyError, match="widget.replace rows: no column 'host'"):
         widget.replace({"t": [T0], "v": [1.0]})
 
 
@@ -178,15 +178,25 @@ def test_append_takes_one_row_as_a_mapping_of_values():
 
 def test_appended_rows_are_checked_against_the_table():
     widget, browser = live()
-    with pytest.raises(KeyError, match="no column 'host'; the chart reads 'host', 't', 'v'"):
+    with pytest.raises(
+        KeyError, match="widget.append rows: no column 'host'; the chart reads 'host', 't', 'v'"
+    ):
         widget.append({"t": [T0], "v": [1.0]})
-    with pytest.raises(TypeError, match="column 't' holds time values; the rows hold number"):
+    with pytest.raises(
+        TypeError, match="widget.append rows: column 't' holds number values; expected time values"
+    ):
         widget.append({"t": [1.0], "v": [1.0], "host": ["a"]})
-    with pytest.raises(ValueError, match="differ in length"):
+    with pytest.raises(ValueError, match="widget.append rows: expected columns of one length"):
         widget.append({"t": [T0], "v": [1.0, 2.0], "host": ["a"]})
-    with pytest.raises(ValueError, match="max_rows must be"):
+    with pytest.raises(
+        ValueError,
+        match="widget.append max_rows: expected a whole number of at least 1; received 0",
+    ):
         widget.append({"t": [T0], "v": [1.0], "host": ["a"]}, max_rows=0)
-    with pytest.raises(ValueError, match="data= must be the object"):
+    with pytest.raises(
+        ValueError,
+        match="widget.append data: expected the object passed to the chart or to one of its marks",
+    ):
         widget.append({"t": [T0], "v": [1.0], "host": ["a"]}, data={"t": []})
     # Missing values fit any kind; empty batches send nothing.
     widget.append({"t": [None], "v": [None], "host": [None]})
@@ -220,7 +230,7 @@ def test_append_and_replace_reach_tables_of_other_marks():
     widget = (
         hg.Chart({"x": [0.0, 1.0], "y": [1.0, 2.0]})
         .line(x="x", y="y")
-        .rule(x="at", text="name", data=events)
+        .rule(x="at", text_field="name", data=events)
         .widget()
     )
     browser = Browser(widget)
@@ -236,7 +246,7 @@ def test_append_and_replace_reach_tables_of_other_marks():
 
 def test_update_sends_the_changed_options_only():
     widget, browser = live(title="A", zoom=True)
-    widget.update(title="B", theme="dark", y=hg.Axis(label="ms"), brush="x")
+    widget.update(title="B", theme="dark", y=hg.Axis(title="ms"), brush="x")
     content, _ = browser.last
     assert content == {
         "type": "options",
@@ -244,7 +254,7 @@ def test_update_sends_the_changed_options_only():
             "interaction": {"zoom": True, "brush": "x"},
             "theme": "dark",
             "title": "B",
-            "y": {"label": "ms"},
+            "y": {"title": "ms"},
         },
         "revision": 1,
     }
@@ -255,12 +265,17 @@ def test_update_sends_the_changed_options_only():
     widget.update(theme="dark")
     assert len(browser.messages) == count
     assert snapshot(widget)[0]["spec"]["theme"] == "dark"
-    with pytest.raises(TypeError, match="unknown chart option 'facet'.*cannot change"):
+    with pytest.raises(
+        TypeError,
+        match="widget.update: unknown chart option 'facet'; data and facets cannot change",
+    ):
         widget.update(facet="host")
     # Replaced data moves bars and slices once a live chart animates values.
     widget.update(animation=hg.Animation(values=True))
     assert browser.last[0]["options"] == {"animation": {"duration": 250, "values": True}}
-    with pytest.raises(ValueError, match="animation duration must be"):
+    with pytest.raises(
+        ValueError, match="Animation duration: expected milliseconds of at least 0; received inf"
+    ):
         widget.update(animation=hg.Animation(duration=float("inf")))
 
 
@@ -284,11 +299,17 @@ def test_none_resets_every_option_without_sending_nested_nones():
 
 def test_live_charts_share_x():
     chart = hg.Chart(data(), facet="host", resolve_x="independent").line(x="t", y="v")
-    with pytest.raises(ValueError, match="resolve_x must be 'shared'"):
+    with pytest.raises(
+        ValueError,
+        match='Chart resolve_x: expected "shared" in a live chart',
+    ):
         chart.widget()
     widget, browser = live(zoom=True)
     count = len(browser.messages)
-    with pytest.raises(ValueError, match="resolve_x must be 'shared'"):
+    with pytest.raises(
+        ValueError,
+        match='Chart resolve_x: expected "shared" in a live chart',
+    ):
         widget.update(resolve_x="rows")
     # The refused change changed nothing.
     widget.update(resolve_x="shared")
@@ -486,7 +507,9 @@ def test_charts_without_one_y_scale_refuse_a_y_viewport():
         .widget()
     )
     widget.viewport = (T0, T0 + dt.timedelta(seconds=30))
-    with pytest.raises(ValueError, match="no one viewport"):
+    with pytest.raises(
+        ValueError, match="widget.viewport: charts whose panels have y scales of their own"
+    ):
         widget.viewport = hg.Viewport(y=(0, 1))
 
 
@@ -499,7 +522,9 @@ def test_right_y_scales_of_their_own_refuse_only_a_right_y_viewport():
     # The left zoom stays; the right one goes, as in the browser.
     assert widget.viewport == hg.Viewport(y=(0, 10))
     assert browser.last[0]["viewport"]["yRight"] is None
-    with pytest.raises(ValueError, match="no one viewport"):
+    with pytest.raises(
+        ValueError, match="widget.viewport: charts whose panels have y scales of their own"
+    ):
         widget.viewport = hg.Viewport(y_right=(0, 1))
 
 
@@ -508,13 +533,19 @@ def test_live_updates_refuse_a_y_zoom_over_right_y_scales_of_their_own():
     widget = chart.line(x="t", y="v", axis="right").widget()
     browser = Browser(widget)
     sent = len(browser.sent)
-    with pytest.raises(ValueError, match="right y scales of their own"):
+    with pytest.raises(
+        ValueError,
+        match=r"Chart zoom: .* right y scales of their own \(resolve_y_right\) zoom along x only",
+    ):
         widget.update(resolve_y_right="independent")
     # Nothing changed or went to the browser; zooming along x only is fine.
     assert widget._live._settings["resolve_y_right"] is None
     assert len(browser.sent) == sent
     widget.update(zoom="x", resolve_y_right="independent")
-    with pytest.raises(ValueError, match="y scales of their own cannot zoom along y"):
+    with pytest.raises(
+        ValueError,
+        match=r"Chart zoom: .* y scales of their own \(resolve_y\) zoom along x",
+    ):
         widget.update(zoom="xy", resolve_y="independent")
     # Rules at an x on the right place no values there.
     ruled = hg.Chart(data(), zoom="xy", facet="host").line(x="t", y="v")
@@ -653,11 +684,16 @@ def test_viewports_and_selections_encode_for_the_browser():
     }
     # A selection of nothing is none.
     assert encode_selection(hg.Selection()) is None
-    with pytest.raises(ValueError, match="pair"):
+    with pytest.raises(
+        ValueError, match="Viewport x: expected a \\(start, end\\) pair or None; received 5"
+    ):
         encode_viewport(5)
-    with pytest.raises(ValueError, match="two category labels"):
+    with pytest.raises(
+        ValueError,
+        match=r"Selection x: a range of categories needs two category labels; received \('a', 1\)",
+    ):
         encode_selection(("a", 1))
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(ValueError, match="Viewport x: expected finite values; received nan"):
         encode_viewport((0, float("nan")))
-    with pytest.raises(ValueError, match="at least 3 points"):
+    with pytest.raises(ValueError, match="Selection lasso: expected at least 3 points; received 2"):
         encode_selection(hg.Selection(lasso=[(0, 0), (1, 1)]))

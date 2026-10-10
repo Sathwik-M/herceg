@@ -281,14 +281,14 @@ describe("<Chart>", () => {
   });
 
   it("follows in-place changes of state it reads", async () => {
-    const axis = { label: "Before" };
+    const axis = { title: "Before" };
     const props = lines({ fields: ["a"], options: { x: axis } });
     props.fields!.push("b");
     flushSync();
     await frame();
     expect(order(props.chart)).toEqual(["line:a", "line:b"]);
     expect(host.textContent).toContain("Before");
-    (props.options!.x as typeof axis).label = "After";
+    (props.options!.x as typeof axis).title = "After";
     flushSync();
     await frame();
     expect(host.textContent).toContain("After");
@@ -408,9 +408,9 @@ describe("<Chart>", () => {
   });
 
   it("does not update the chart when a change leaves its props equal", () => {
-    const props = lines({ options: { y: { label: "ms" } } });
+    const props = lines({ options: { y: { title: "ms" } } });
     const updates = spyUpdates(props.chart);
-    props.options = { y: { label: "ms" } };
+    props.options = { y: { title: "ms" } };
     flushSync();
     expect(updates).toHaveLength(0);
   });
@@ -491,9 +491,9 @@ describe("<Chart>", () => {
   });
 
   it("treats options written in another key order as unchanged", () => {
-    const props = lines({ options: { x: { label: "X", grid: true } } });
+    const props = lines({ options: { x: { title: "X", grid: true } } });
     const updates = spyUpdates(props.chart);
-    props.options = { x: { grid: true, label: "X" } };
+    props.options = { x: { grid: true, title: "X" } };
     flushSync();
     expect(updates).toHaveLength(0);
   });
@@ -533,7 +533,7 @@ describe("<Chart>", () => {
     render(Faulty, props);
     props.field = "missing";
     flushSync();
-    expect(String(errors[0])).toMatch(/Unknown field "missing"/);
+    expect(String(errors[0])).toMatch(/no field "missing"/);
   });
 
   it("recovers once invalid marks are fixed", async () => {
@@ -541,7 +541,7 @@ describe("<Chart>", () => {
     render(Faulty, props);
     const before = paths()[0]!.getAttribute("d");
     props.field = "missing";
-    expect(() => flushSync()).toThrow(/Unknown field "missing"/);
+    expect(() => flushSync()).toThrow(/no field "missing"/);
     props.field = "b";
     flushSync();
     await frame();

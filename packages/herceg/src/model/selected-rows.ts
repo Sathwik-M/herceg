@@ -316,7 +316,7 @@ function brushCondition(
           if (!range) continue;
           const place = reading[axis];
           if (!place)
-            throw new Error(`A ${mark.spec.type} mark's rows cannot be brushed along ${axis} yet`);
+            throw new Error(`${mark.spec.type} brush: rows cannot be brushed along ${axis} yet`);
           const scale = axis === "x" ? d.x : d.y;
           const ranged = axis === "y" ? onAxis(range, d.panel.y, scale) : range;
           const bands = () =>

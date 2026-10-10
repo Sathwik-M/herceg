@@ -62,14 +62,14 @@ function strip(
 ): ChartConfig {
   const data = table({ x: Float64Array.from(x), y: new Float64Array(x.length), v });
   return {
-    x: { axis: false },
-    y: { axis: false },
+    x: { show: false },
+    y: { show: false },
     ...config,
     marks: [
       heatmap(data, {
         x: "x",
         y: "y",
-        value: "v",
+        color: "v",
         colors: GRAY,
         colorDomain: [0, 100],
         ...(options as object),
@@ -142,7 +142,7 @@ describe("heatmap cells along number and time axes", () => {
     });
     const { model } = build({
       interaction: { zoom: "x" },
-      marks: [heatmap(data, { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(data, { x: "x", y: "y", color: "v" })],
     });
     model.setViewport([0.25, 0.35]);
     model.scene(estimateText);
@@ -154,8 +154,8 @@ describe("heatmap cells along number and time axes", () => {
     const at = Date.UTC(2026, 0, 1);
     const data = table({ t: time([at]), y: [0], v: [1] });
     expect(() =>
-      build({ marks: [heatmap(data, { x: "t", y: "y", value: "v", xStep: 0.0001 })] }),
-    ).toThrow(`Heatmap xStep 0.0001 is too small for values near ${at}`);
+      build({ marks: [heatmap(data, { x: "t", y: "y", color: "v", xStep: 0.0001 })] }),
+    ).toThrow(`heatmap xStep: 0.0001 is too small for values near ${at}`);
   });
 
   it("refuse values too close for doubles to give each a cell around it", () => {
@@ -166,7 +166,7 @@ describe("heatmap cells along number and time axes", () => {
         undefined,
         false,
       ),
-    ).toThrow(`Heatmap values near ${big} are too close to tell their cells apart`);
+    ).toThrow(`heatmap: values near ${big} are too close to tell their cells apart`);
   });
 
   it("keep cells of values near the largest doubles finite", () => {
@@ -218,7 +218,7 @@ describe("heatmap cells along number and time axes", () => {
     const data = table({ day: time(midnights), row: [0, 0, 0, 0], v: [1, 2, 3, 4] });
     const { model, scene } = build({
       timeZone: "America/New_York",
-      marks: [heatmap(data, { x: "day", y: "row", value: "v" })],
+      marks: [heatmap(data, { x: "day", y: "row", color: "v" })],
     });
     expect(model.xScale()!.type).toBe("time");
     const raster = scene.panels[0]!.marks[0] as RasterGeometry;
@@ -315,7 +315,7 @@ describe("heatmap cells along number and time axes", () => {
     const data = table({ x, y, v });
     const start = performance.now();
     const { scene } = build({
-      marks: [heatmap(data, { x: "x", y: "y", value: "v", colors: GRAY, colorDomain: [0, 100] })],
+      marks: [heatmap(data, { x: "x", y: "y", color: "v", colors: GRAY, colorDomain: [0, 100] })],
     });
     expect(performance.now() - start).toBeLessThan(1000);
     const raster = scene.panels[0]!.marks[0] as RasterGeometry;
@@ -355,7 +355,7 @@ describe("heatmap cells along number and time axes", () => {
       row: [0, 0, 0, 0],
       v: [10, 20, 300, 40],
     });
-    const mark = heatmap(data, { x: "day", y: "row", value: "v" });
+    const mark = heatmap(data, { x: "day", y: "row", color: "v" });
     const all = build({ marks: [mark] }).model;
     const before = describeChart(all);
     expect(before).toContain("4 cells in 4 columns");
@@ -369,7 +369,7 @@ describe("heatmap cells along number and time axes", () => {
 
   it("refuse log axes", () => {
     expect(() => build(strip([1, 2, 3], [1, 2, 3], {}, { x: { type: "log" } }))).toThrow(
-      "Heatmap cells cannot be placed on a log x axis yet",
+      "heatmap: cells cannot go on a log x axis yet",
     );
   });
 
@@ -382,7 +382,7 @@ describe("heatmap cells along number and time axes", () => {
     const { model, scene } = build({
       x: { breaks: timeBreaks([{ weekdays: ["sat", "sun"] }]) },
       marks: [
-        heatmap(data, { x: "day", y: "row", value: "v", colors: GRAY, colorDomain: [0, 100] }),
+        heatmap(data, { x: "day", y: "row", color: "v", colors: GRAY, colorDomain: [0, 100] }),
       ],
     });
     const raster = scene.panels[0]!.marks[0] as RasterGeometry;
@@ -418,13 +418,13 @@ describe("heatmaps zoomed and panned", () => {
   };
 
   it("end automatic domains at the cells' edges", () => {
-    const { model } = build({ marks: [heatmap(grid(10), { x: "x", y: "y", value: "v" })] });
+    const { model } = build({ marks: [heatmap(grid(10), { x: "x", y: "y", color: "v" })] });
     expect(model.xScale()!.domain).toEqual([-0.5, 9.5]);
     expect(model.yScale()!.domain).toEqual([-0.5, 9.5]);
     // Asked for, round ends still come.
     const nice = build({
       y: { nice: true },
-      marks: [heatmap(grid(10), { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(grid(10), { x: "x", y: "y", color: "v" })],
     });
     expect(nice.model.yScale()!.domain).not.toEqual([-0.5, 9.5]);
   });
@@ -432,7 +432,7 @@ describe("heatmaps zoomed and panned", () => {
   it("repaint when the view moves, and only then", () => {
     const { model } = build({
       interaction: { zoom: "xy" },
-      marks: [heatmap(grid(40), { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(grid(40), { x: "x", y: "y", color: "v" })],
     });
     const write = vi.spyOn(SequentialScale.prototype, "write");
     rasterOf(model);
@@ -453,7 +453,7 @@ describe("heatmaps zoomed and panned", () => {
   it("clip cells at the plot's edges", () => {
     const { model, scene } = build({
       interaction: { zoom: "x" },
-      marks: [heatmap(grid(4), { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(grid(4), { x: "x", y: "y", color: "v" })],
     });
     const plot = scene.panels[0]!.plot;
     model.setViewport([0, 2]);
@@ -471,7 +471,7 @@ describe("heatmaps zoomed and panned", () => {
   it("draw only the plot's pixels deep in a zoom", () => {
     const { model } = build({
       interaction: { zoom: "x" },
-      marks: [heatmap(grid(4), { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(grid(4), { x: "x", y: "y", color: "v" })],
     });
     model.setViewport([1.4, 1.41]);
     const zoomed = model.scene(estimateText).panels[0]!;
@@ -490,7 +490,7 @@ describe("heatmaps zoomed and panned", () => {
     const data = table({ x, y, v: y });
     const { model } = build({
       interaction: { zoom: "x" },
-      marks: [heatmap(data, { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(data, { x: "x", y: "y", color: "v" })],
     });
     expect(model.yScale()!.domain).toEqual([-0.5, 9.5]);
     model.setViewport([8.6, 10]);
@@ -501,7 +501,7 @@ describe("heatmaps zoomed and panned", () => {
   it("pans with the viewport, cells keeping their edges", () => {
     const { model } = build({
       interaction: { zoom: "x" },
-      marks: [heatmap(grid(10), { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(grid(10), { x: "x", y: "y", color: "v" })],
     });
     // Cell c spans [c - 0.5, c + 0.5) wherever the view is.
     for (const [view, edge] of [
@@ -531,7 +531,7 @@ describe("heatmap tooltips, keyboard, and summaries on number axes", () => {
   });
 
   it("name cells by their values", () => {
-    const { model } = build({ marks: [heatmap(hours, { x: "hour", y: "day", value: "load" })] });
+    const { model } = build({ marks: [heatmap(hours, { x: "hour", y: "day", color: "load" })] });
     const inspection = model.inspect(model.xScale()!.map(3), model.yScale()!.map(1))!;
     expect(inspection.label).toBe("3");
     expect(inspection.points[0]).toMatchObject({ label: "1", value: 6, row: 5 });
@@ -545,7 +545,7 @@ describe("heatmap tooltips, keyboard, and summaries on number axes", () => {
     for (const reversed of [false, true]) {
       const { model } = build({
         ...(reversed && { x: { domain: [4, -1] } }),
-        marks: [heatmap(hours, { x: "hour", y: "day", value: "load" })],
+        marks: [heatmap(hours, { x: "hour", y: "day", color: "load" })],
       });
       const series = model.panelSeries("")[0]!;
       const value = (position: number | undefined) =>
@@ -578,7 +578,7 @@ describe("heatmap keyboard steps on sparse grids", () => {
     for (const reversed of [false, true]) {
       const { model } = build({
         ...(reversed && { x: { domain: [200, -50] } }),
-        marks: [heatmap(data, { x: "x", y: "y", value: "v", xStep: 1, yStep: 1 })],
+        marks: [heatmap(data, { x: "x", y: "y", color: "v", xStep: 1, yStep: 1 })],
       });
       const series = model.panelSeries("")[0]!;
       // The last row of each cell is the one drawn there.
@@ -636,7 +636,7 @@ describe("heatmaps on number axes in panels", () => {
 
   it("give facet panels' x scales the cells their rows hold", () => {
     const { model, scene } = build({
-      marks: [heatmap(load, { x: "hour", y: "host", value: "cpu" })],
+      marks: [heatmap(load, { x: "hour", y: "host", color: "cpu" })],
       facet: facet("region"),
       resolve: { x: "independent" },
     });
@@ -656,7 +656,7 @@ describe("heatmaps on number axes in panels", () => {
 
   it("share cells across panels sharing x, each drawing only its rows", () => {
     const { model } = build({
-      marks: [heatmap(load, { x: "hour", y: "host", value: "cpu" })],
+      marks: [heatmap(load, { x: "hour", y: "host", color: "cpu" })],
       facet: facet("region"),
     });
     for (const panel of model.panels()) expect(panel.x.domain).toEqual([-0.5, 3.5]);
@@ -668,20 +668,19 @@ describe("heatmaps on number axes in panels", () => {
     const { model, scene } = build({
       panels: panels([{ id: "cells" }, { id: "line", x: { type: "linear" } }]),
       resolve: { x: "independent" },
-      marks: [heatmap(load, { x: "hour", y: "host", value: "cpu", panel: "cells" })],
+      marks: [heatmap(load, { x: "hour", y: "host", color: "cpu", panel: "cells" })],
     });
     expect(scene.panels[0]!.marks[0]!.kind).toBe("raster");
     expect(model.panels()[0]!.x.domain).toEqual([-0.5, 3.5]);
   });
 });
 
-describe("heatmap specs across versions", () => {
+describe("heatmap specs", () => {
   const data = { t: { columns: { x: [0, 1, 3], y: [0, 0, 0], v: [1, 2, 3] } } };
-  const spec = (mark: object, version?: number): ChartSpec =>
+  const spec = (mark: object): ChartSpec =>
     ({
-      ...(version !== undefined && { version }),
       data,
-      marks: [{ type: "heatmap", x: "x", y: "y", value: "v", ...mark }],
+      marks: [{ type: "heatmap", x: "x", y: "y", color: "v", ...mark }],
     }) as ChartSpec;
   const axisTypes = (s: ChartSpec) => {
     const { config } = loadSpec(s);
@@ -689,46 +688,30 @@ describe("heatmap specs across versions", () => {
     return [model.xScale()!.type, model.yScale()!.type];
   };
 
-  it("band number and time fields in specs before version 9", () => {
-    for (const version of [undefined, 1, 8])
-      expect(axisTypes(spec({}, version))).toEqual(["band", "band"]);
-    // The loaded mark says so, so it keeps its bands wherever it goes next.
-    expect(loadSpec(spec({}, 8)).config.marks[0]!.spec).toMatchObject({
-      xBanded: true,
-      yBanded: true,
-    });
+  it("place number and time fields on number and time axes, or in bands", () => {
+    expect(axisTypes(spec({}))).toEqual(["linear", "linear"]);
+    expect(axisTypes(spec({ xBanded: true }))).toEqual(["band", "linear"]);
+    expect(axisTypes(spec({ xStep: 1 }))).toEqual(["linear", "linear"]);
   });
 
-  it("place them on number and time axes from version 9", () => {
-    expect(axisTypes(spec({}, 9))).toEqual(["linear", "linear"]);
-    expect(axisTypes(spec({ xBanded: true }, 9))).toEqual(["band", "linear"]);
-    expect(axisTypes(spec({ xStep: 1 }, 9))).toEqual(["linear", "linear"]);
-  });
-
-  it("need version 9 for steps and for bands turned off", () => {
-    expect(() => validateSpec(spec({ xStep: 1 }, 8))).toThrow(
-      /marks\[0\]\.xStep: expected a spec with "version": 9 or later/,
-    );
-    expect(() => validateSpec(spec({ yBanded: false }))).toThrow(/"version": 9 or later/);
-    expect(() => validateSpec(spec({ xBanded: true }, 8))).not.toThrow();
-    expect(() => validateSpec(spec({ xStep: 0 }, 9))).toThrow(/xStep/);
-    expect(() => validateSpec(spec({ xStep: 1, xBanded: true }, 9))).toThrow(
-      /no xStep with xBanded/,
-    );
+  it("check steps and bands", () => {
+    expect(() => validateSpec(spec({ xBanded: true, yBanded: false }))).not.toThrow();
+    expect(() => validateSpec(spec({ xStep: 0 }))).toThrow(/xStep/);
+    expect(() => validateSpec(spec({ xStep: 1, xBanded: true }))).toThrow(/no xStep with xBanded/);
   });
 
   it("refuse steps on categories and with bands", () => {
     const cells = table({ c: ["a", "b"], n: [1, 2], v: [1, 2] });
-    expect(() => heatmap(cells, { x: "c", y: "n", value: "v", xStep: 1 })).toThrow(
-      /xStep sizes cells along a number or time x axis; "c" holds categories/,
+    expect(() => heatmap(cells, { x: "c", y: "n", color: "v", xStep: 1 })).toThrow(
+      /heatmap xStep: sizes cells along a number or time x axis; "c" holds categories, so drop xStep/,
     );
     expect(() =>
-      heatmap(cells, { x: "n", y: "n", value: "v", yStep: 1, yBanded: true as false }),
-    ).toThrow(/not with yBanded/);
-    expect(() => heatmap(cells, { x: "n", y: "n", value: "v", xStep: -1 })).toThrow(
-      /xStep must be a positive number/,
+      heatmap(cells, { x: "n", y: "n", color: "v", yStep: 1, yBanded: true as false }),
+    ).toThrow(/heatmap yStep: .*; drop it or yBanded/);
+    expect(() => heatmap(cells, { x: "n", y: "n", color: "v", xStep: -1 })).toThrow(
+      /heatmap xStep: expected a positive number; received -1/,
     );
     // Categories are banded, asked or not.
-    expect(() => heatmap(cells, { x: "c", y: "n", value: "v", xBanded: true })).not.toThrow();
+    expect(() => heatmap(cells, { x: "c", y: "n", color: "v", xBanded: true })).not.toThrow();
   });
 });

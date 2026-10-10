@@ -43,13 +43,18 @@ const rampDrawing: LegendDrawing<ColorLegend> = {
   },
 };
 
-/** A size or shape key's SVG: its title, then glyphs in the muted color with their labels. */
+/**
+ * A size, shape, or color key's SVG: its title, then glyphs in their colors
+ * (sizes and shapes in the muted color, translucent) with their labels.
+ */
 const glyphDrawing: LegendDrawing<GlyphLegend> = {
   svg({ title, entries }: GlyphLegend, theme: Theme): string {
     let out = label(title.x, title.y, title.text, theme.text);
     out += `<g fill="${escapeXml(theme.muted)}" fill-opacity="0.6">`;
-    for (const { glyph, x, y } of entries)
-      out += `<path transform="translate(${n(x)} ${n(y)})" d="${glyph}"/>`;
+    for (const { glyph, x, y, fill } of entries) {
+      const own = fill === undefined ? "" : ` fill="${escapeXml(fill)}" fill-opacity="1"`;
+      out += `<path transform="translate(${n(x)} ${n(y)})" d="${glyph}"${own}/>`;
+    }
     out += "</g>";
     for (const { y, label: text } of entries) out += label(text.x, y, text.text, theme.muted);
     return out;
@@ -101,11 +106,11 @@ export function rampLegend(ramp: ColorRamp): LegendPart {
   };
 }
 
-/** The legend of sizes or shapes: a row of its own with the title, then each glyph and its label. */
+/** The legend of sizes, shapes, or colors: a row of its own with the title, then each glyph and its label. */
 export function keyLegend(key: GlyphKey): LegendPart {
   const { title, channel, entries } = key;
   return {
-    key: `key|${title}|${channel}|${entries.map((e) => `${e.label} ${e.glyph}`).join("|")}`,
+    key: `key|${title}|${channel}|${entries.map((e) => `${e.label} ${e.glyph} ${e.color}`).join("|")}`,
     breaks: true,
     items({ measure, font, lineHeight }: LegendText, out: LegendLayout): LegendFlowItem[] {
       const legend: GlyphLegend = {
@@ -126,14 +131,20 @@ export function keyLegend(key: GlyphKey): LegendPart {
           },
         },
       ];
-      for (const { label: text, glyph, r } of entries) {
+      for (const { label: text, glyph, r, color } of entries) {
         const size = Math.max(LEGEND_SWATCH, r * 2);
         items.push({
           width: size + 6 + measure(text, font),
           height: Math.max(lineHeight, size + 2),
           gap: KEY_GAP,
           place: (x, y) =>
-            legend.entries.push({ glyph, x: x + size / 2, y, label: { text, x: x + size + 6 } }),
+            legend.entries.push({
+              glyph,
+              x: x + size / 2,
+              y,
+              ...(color !== undefined && { fill: color }),
+              label: { text, x: x + size + 6 },
+            }),
         });
       }
       return items;
@@ -142,7 +153,8 @@ export function keyLegend(key: GlyphKey): LegendPart {
       const values = entries.map(({ label: text, shape }) =>
         shape ? `${shape} for ${text}` : text,
       );
-      return `${channel === "size" ? "Size" : "Shape"} shows ${title}: ${values.join(", ")}.`;
+      const shows = channel === "size" ? "Size" : channel === "shape" ? "Shape" : "Color";
+      return `${shows} shows ${title}: ${values.join(", ")}.`;
     },
   };
 }

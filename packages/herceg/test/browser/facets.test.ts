@@ -306,9 +306,9 @@ describe("facet panels with y scales of their own", () => {
   it("refuse a y viewport, which no one scale could show", () => {
     const data = table({ x: [0, 1, 0, 1], y: [1, 2, 100, 200], f: ["A", "A", "B", "B"] });
     const chart = grouped(line(data, { x: "x", y: "y" }));
-    expect(() => chart.setViewport({ y: [500, 600] })).toThrow("no one viewport");
+    expect(() => chart.setViewport({ y: [500, 600] })).toThrow("no one y range");
     // A change refused in part changes nothing.
-    expect(() => chart.setViewport({ x: [0, 0.5], y: [500, 600] })).toThrow("no one viewport");
+    expect(() => chart.setViewport({ x: [0, 0.5], y: [500, 600] })).toThrow("no one y range");
     expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: null });
     chart.setViewport({ y: null });
     chart.destroy();
@@ -451,7 +451,7 @@ describe("facet panels with x scales of their own", () => {
 
   it("set views by panel, refusing ranges without one", () => {
     const chart = independent();
-    expect(() => chart.setViewport([1, 2])).toThrow("need a panel");
+    expect(() => chart.setViewport([1, 2])).toThrow("panel: required when panels");
     expect(() => chart.setViewport([1, 2], { panel: "c" })).toThrow('no panel "c"');
     chart.setViewport([101, 102], { panel: "b" });
     expect(views(chart)).toEqual([null, [101, 102]]);
@@ -464,7 +464,7 @@ describe("facet panels with x scales of their own", () => {
       { x: [101, 102], y: [0, 50], yRight: null, panels: ["b"] },
     ]);
     expect(chart.getViewport({ panel: "b" })).toEqual({ x: [101, 102], y: [0, 50], yRight: null });
-    expect(() => chart.getViewport()).toThrow("need a panel");
+    expect(() => chart.getViewport()).toThrow("panel: required when panels");
     // A listener changing the view again while the first scale's event is
     // reported: its change reports both scales, and the outer report does
     // not report the second scale again.
@@ -547,7 +547,7 @@ describe("facet panels with x scales of their own", () => {
     );
     expect(bands.map((r) => bandBox(r).x)).toEqual([expect.closeTo(b!.x.map(102), 1)]);
     // Without a panel, a selection could be in either scale.
-    expect(() => chart.select([1, 2])).toThrow("need a panel");
+    expect(() => chart.select([1, 2])).toThrow("panel: required when panels");
     chart.select([1, 2], { panel: "a" });
     expect(chart.selectionPanels).toEqual(["a"]);
     // A selection whose panels go goes too.
@@ -853,7 +853,7 @@ describe("facet panels with heatmaps and points on categories of their own", () 
       heatmap(data, {
         x: "hour",
         y: "host",
-        value: "cpu",
+        color: "cpu",
         colors: ["#000000", "#ffffff"],
         colorDomain: [0, 10],
       }),
@@ -906,7 +906,7 @@ describe("facet panels with heatmaps and points on categories of their own", () 
   it("paint each panel's points at its own categories on a canvas", () => {
     const chart = createChart(host, {
       locale: "en-US",
-      marks: [point(load(), { x: "hour", y: "cpu", r: 4 })],
+      marks: [point(load(), { x: "hour", y: "cpu", radius: 4 })],
       facet: facet("region"),
       resolve: { x: "independent" },
       renderer: "canvas",
@@ -1125,7 +1125,7 @@ describe("right axes in panels", () => {
     const [a, b] = chart.getPanels();
     expect(a!.yRight!.canSetViewport).toBe(false);
     expect(a!.yRight!.group).not.toBe(b!.yRight!.group);
-    expect(() => chart.setViewport({ yRight: [0, 10] })).toThrow("no one viewport");
+    expect(() => chart.setViewport({ yRight: [0, 10] })).toThrow("no one y range");
     chart.setViewport({ y: [0, 20] });
     expect(chart.getViewport()).toEqual({ x: null, y: [0, 20], yRight: null });
     // The same value sits at another height in each panel.
@@ -1147,7 +1147,7 @@ describe("right axes in panels", () => {
     const events = table({ at: [1, 2], note: ["deploy", "outage"], region: ["a", "b"] });
     const chart = createChart(host, {
       locale: "en-US",
-      marks: [line(traffic, { x: "t", y: "ms" }), rule(events, { x: "at", text: "note" })],
+      marks: [line(traffic, { x: "t", y: "ms" }), rule(events, { x: "at", textField: "note" })],
       facet: facet("region"),
     });
     const live = chart.root.querySelector("[aria-live]")!;

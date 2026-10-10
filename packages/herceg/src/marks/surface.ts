@@ -179,9 +179,11 @@ export class SurfaceMark implements Layer3D {
     requireField(table, spec.z, ["number"], "surface z");
     if (spec.color !== undefined) requireField(table, spec.color, ["number"], "surface color");
     if (Array.isArray(spec.colors)) checkRamp(spec.colors, "surface colors");
-    checkColorScale(spec.colorDomain, spec.colorMidpoint, "Surface");
+    checkColorScale(spec.colorDomain, spec.colorMidpoint, "surface");
     if (spec.fillOpacity !== undefined && !(spec.fillOpacity >= 0 && spec.fillOpacity <= 1))
-      throw new RangeError(`surface fillOpacity must be from 0 to 1, not ${spec.fillOpacity}`);
+      throw new RangeError(
+        `surface fillOpacity: expected a number from 0 to 1; received ${spec.fillOpacity}`,
+      );
     this.table = table;
     this.measure = spec.label ?? "Surface";
     // A table that cannot make a grid is a mistake now, not at the first draw.
@@ -204,7 +206,7 @@ export class SurfaceMark implements Layer3D {
     const ny = y.values.length;
     if (nx * ny > MAX_GRID_POINTS)
       throw new RangeError(
-        `A surface holds at most ${MAX_GRID_POINTS.toLocaleString("en-US")} grid points; ${nx.toLocaleString("en-US")} distinct values of ${spec.x} by ${ny.toLocaleString("en-US")} of ${spec.y} make ${(nx * ny).toLocaleString("en-US")}. Bin or aggregate the rows first`,
+        `surface x, y: expected at most ${MAX_GRID_POINTS.toLocaleString("en-US")} grid points; ${nx.toLocaleString("en-US")} values of "${spec.x}" by ${ny.toLocaleString("en-US")} of "${spec.y}" make ${(nx * ny).toLocaleString("en-US")}; bin or aggregate the rows first`,
       );
     const z = table.numbers(spec.z as never);
     const row = new Int32Array(nx * ny).fill(-1);
@@ -726,7 +728,7 @@ export class SurfaceMark implements Layer3D {
       // drawn until a fresh one is.
       if (frame.lost) return { itemOfFace: () => undefined };
       throw new RangeError(
-        `A surface of ${(grid.nx * grid.ny).toLocaleString("en-US")} grid points is drawn only on the GPU: in the browser with WebGL2, opaque, without a wireframe, and with marks beside it the GPU draws (opaque, points no larger than it draws). SVG, PDF, and PNG exports, and charts drawn otherwise, draw at most ${MAX_CPU_GRID_POINTS.toLocaleString("en-US")}. Bin or aggregate the rows first`,
+        `surface: ${(grid.nx * grid.ny).toLocaleString("en-US")} grid points draw only on the GPU, in the browser with WebGL2, opaque, without a wireframe, and with marks beside it the GPU draws (opaque, points no larger than it draws); SVG, PDF, and PNG exports, and charts drawn otherwise, draw at most ${MAX_CPU_GRID_POINTS.toLocaleString("en-US")}; bin or aggregate the rows first`,
       );
     }
     const { u, v, w } = this.#reading(frame);

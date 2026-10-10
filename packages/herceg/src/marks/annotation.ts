@@ -56,12 +56,12 @@ export class AnnotationData {
       this.table = undefined;
       return;
     }
-    if (!table) throw new Error(`A ${role} with fields needs a table`);
+    if (!table) throw new Error(`${role}: fields need a table; pass one`);
     for (const [channel, position] of Object.entries(positions)) {
       if (typeof position === "string")
         requireField(table, position, NUMERIC, `${role} ${channel}`);
     }
-    if (text !== undefined) requireField(table, text, ["category", "number"], `${role} text`);
+    if (text !== undefined) requireField(table, text, ["category", "number"], `${role} textField`);
     this.table = table;
   }
 

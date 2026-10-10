@@ -91,12 +91,12 @@ export function joinLayers(
   const other = marks.find((mark) => !isGeoLayer(mark));
   if (other)
     throw new Error(
-      `A ${marks[0]!.spec.type} mark shares its chart only with geoshape and geopoint marks, not a ${other.spec.type}`,
+      `${marks[0]!.spec.type}: a map holds only geoshape and geopoint marks; draw "${other.spec.type}" marks in a chart of their own`,
     );
   const ids = new Set<string>();
   for (const { spec } of marks) {
     if (spec.id === undefined) continue;
-    if (ids.has(spec.id)) throw new Error(`Duplicate mark id "${spec.id}"`);
+    if (ids.has(spec.id)) throw new Error(`id: "${spec.id}" names two marks`);
     ids.add(spec.id);
   }
   return new GeoMap(marks as GeoLayer[], projectionSpec(projection));

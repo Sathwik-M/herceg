@@ -103,7 +103,7 @@ def test_records_and_mappings():
 
 
 def test_unsupported_input_is_explained():
-    with pytest.raises(TypeError, match="pandas, Polars, or PyArrow"):
+    with pytest.raises(TypeError, match="data: expected a pandas, Polars, or PyArrow table"):
         to_columns(42)
     with pytest.raises(ValueError, match="one-dimensional"):
         convert(np.zeros((2, 2)))

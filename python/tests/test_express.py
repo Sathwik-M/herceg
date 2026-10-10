@@ -32,19 +32,19 @@ def table(chart, index=0):
 
 
 def test_barplot_draws_bars_and_dodged_error_bars_of_one_legend_group():
-    chart = hx.barplot(TIPS, x="day", y="tip", hue="sex", seed=3)
+    chart = hx.barplot(TIPS, x="day", y="tip", series="sex", seed=3)
     bars, errors = marks(chart)
     assert bars == {
         "type": "bar",
         "x": "day",
         "y": "tip",
         "series": "sex",
-        "legendGroup": "hue",
+        "legendGroup": "series",
         "data": "data",
     }
-    assert errors["dodge"] is True and errors["legendGroup"] == "hue"
+    assert errors["dodge"] is True and errors["legendGroup"] == "series"
     spec, _ = chart.to_spec()
-    assert spec["x"]["label"] == "day" and spec["y"]["label"] == "tip"
+    assert spec["x"]["title"] == "day" and spec["y"]["title"] == "tip"
     assert "95% bootstrap confidence intervals (1,000 resamples, seed 3" in spec["description"]
     stats = hx.statistics(chart)
     assert stats.function == "barplot" and stats.seed == 3 and stats.dropped == 0
@@ -60,7 +60,7 @@ def test_barplot_estimates_match_seaborn_group_by_group():
     frame = pd.DataFrame(TIPS)
     for estimator, errorbar in (("mean", ("ci", 95)), ("median", ("pi", 50)), ("mean", ("se", 2))):
         chart = hx.barplot(
-            frame, x="day", y="tip", hue="sex", estimator=estimator, errorbar=errorbar, seed=11
+            frame, x="day", y="tip", series="sex", estimator=estimator, errorbar=errorbar, seed=11
         )
         estimates = hx.statistics(chart).tables["estimates"]
         aggregate = statistics.EstimateAggregator(estimator, errorbar, n_boot=1000, seed=11)
@@ -88,8 +88,8 @@ def test_category_order_and_horizontal_bars():
     assert stats.seed is None
 
 
-def test_numbers_as_hue_are_categories_in_ascending_order():
-    chart = hx.pointplot(TIPS, x="day", y="tip", hue="size", dodge=True, errorbar=("sd", 1))
+def test_number_series_are_categories_in_ascending_order():
+    chart = hx.pointplot(TIPS, x="day", y="tip", series="size", dodge=True, errorbar=("sd", 1))
     errors, points = marks(chart)
     assert points["dodge"] is True and errors["dodge"] is True
     assert table(chart)["size"]["dictionary"] == ["1", "2", "3", "4"]
@@ -120,22 +120,24 @@ def test_seeds_are_drawn_and_recorded_when_not_given():
     )
 
 
-def test_lineplot_aggregates_x_values_with_a_band_per_hue_level():
+def test_lineplot_aggregates_x_values_with_a_band_per_series():
     t = np.repeat(np.arange(10.0), 6)
     data = {"t": t, "g": np.tile(["a", "b"], 30), "v": np.sin(t) + RNG.normal(0, 0.1, 60)}
-    chart = hx.lineplot(data, x="t", y="v", hue="g", seed=1)
+    chart = hx.lineplot(data, x="t", y="v", series="g", seed=1)
     band_a, band_b, line = marks(chart)
     assert [band_a["label"], band_b["label"]] == ["a", "b"]
-    assert band_a["type"] == "area" and band_a["legendGroup"] == line["legendGroup"] == "hue"
+    assert band_a["type"] == "area" and band_a["legendGroup"] == line["legendGroup"] == "series"
     assert line["series"] == "g"
     estimates = hx.statistics(chart).tables["estimates"]
     assert len(estimates["t"]) == 20 and estimates["n"].tolist() == [3.0] * 20
-    raw = hx.lineplot(data, x="t", y="v", hue="g", estimator=None, errorbar=None)
+    raw = hx.lineplot(data, x="t", y="v", series="g", estimator=None, errorbar=None)
     assert [mark["type"] for mark in marks(raw)] == ["line"]
-    with pytest.raises(ValueError, match="errorbar=None"):
+    with pytest.raises(ValueError, match="lineplot errorbar: intervals require an estimator; "):
         hx.lineplot(data, x="t", y="v", estimator=None)
-    bars = hx.lineplot(data, x="t", y="v", err_style="bars", errorbar=("se", 1))
+    bars = hx.lineplot(data, x="t", y="v", error_style="bars", errorbar=("se", 1))
     assert [mark["type"] for mark in marks(bars)] == ["errorbar", "line"]
+    with pytest.raises(ValueError, match='lineplot error_style: expected "band" or "bars"'):
+        hx.lineplot(data, x="t", y="v", error_style="ci")  # type: ignore[arg-type]
 
 
 def test_lineplot_keeps_time_x():
@@ -148,10 +150,10 @@ def test_lineplot_keeps_time_x():
 # Fits ------------------------------------------------------------------------------
 
 
-def test_regplot_fits_a_line_with_a_bootstrap_band_per_hue():
+def test_regplot_fits_a_line_with_a_bootstrap_band_per_series():
     x = RNG.uniform(0, 10, 80)
     data = {"x": x, "y": 2 * x + RNG.normal(0, 1, 80), "g": np.repeat(["a", "b"], 40)}
-    chart = hx.regplot(data, x="x", y="y", hue="g", seed=5)
+    chart = hx.regplot(data, x="x", y="y", series="g", seed=5)
     kinds = [mark["type"] for mark in marks(chart)]
     assert kinds == ["point", "area", "area", "line"]
     stats = hx.statistics(chart)
@@ -172,8 +174,9 @@ def test_regplot_lowess_and_polynomials():
     assert [mark["type"] for mark in marks(lowess)] == ["point", "line"]
     assert hx.statistics(lowess).seed is None
     assert "lowess" in hx.statistics(lowess).description
-    curved = hx.regplot(data, x="x", y="y", order=3, ci=None, scatter=False)
+    curved = hx.regplot(data, x="x", y="y", order=3, ci=None, scatter=False, grid_size=20)
     assert [mark["type"] for mark in marks(curved)] == ["line"]
+    assert len(hx.statistics(curved).tables["fit"]["x"]) == 20
     with pytest.raises(ValueError, match="no polynomial order"):
         hx.regplot(data, x="x", y="y", lowess=True, order=2)
     one = hx.regplot({"x": [1.0, 1.0], "y": [2.0, 3.0]}, x="x", y="y")
@@ -224,8 +227,8 @@ def test_dataframes_of_every_kind(library):
         frame = module.table(TIPS)
     else:
         frame = module.DataFrame(TIPS)
-    chart = hx.barplot(frame, x="day", y="tip", hue="sex", seed=2)
-    reference = hx.barplot(TIPS, x="day", y="tip", hue="sex", seed=2)
+    chart = hx.barplot(frame, x="day", y="tip", series="sex", seed=2)
+    reference = hx.barplot(TIPS, x="day", y="tip", series="sex", seed=2)
     ours, theirs = (
         hx.statistics(chart).tables["estimates"],
         hx.statistics(reference).tables["estimates"],
@@ -247,7 +250,7 @@ def test_facets_palette_and_options_pass_through():
         TIPS,
         x="day",
         y="tip",
-        col="sex",
+        facet_column="sex",
         palette=["#111111", "#222222"],
         title="Tips",
         width=500,
@@ -258,8 +261,8 @@ def test_facets_palette_and_options_pass_through():
     assert spec["facet"] == {"column": "sex"}
     assert spec["theme"] == {"palette": ["#111111", "#222222"], "extends": "dark"}
     assert spec["title"] == "Tips" and spec["width"] == 500
-    with pytest.raises(ValueError, match="cannot be given with facet"):
-        hx.barplot(TIPS, x="day", y="tip", col="sex", facet="day")
+    with pytest.raises(ValueError, match="barplot facet: express computes statistics per panel"):
+        hx.barplot(TIPS, x="day", y="tip", facet_column="sex", facet="day")
     described = hx.barplot(TIPS, x="day", y="tip", description="Tips by day.", errorbar=None)
     assert described.to_spec()[0]["description"].startswith("Tips by day. Bars show")
 
@@ -269,15 +272,17 @@ def test_mistakes_are_refused_with_the_column_or_option_named():
         hx.barplot(TIPS, x="day", y="tips")
     with pytest.raises(TypeError, match="holds category values; expected number"):
         hx.barplot(TIPS, x="day", y="sex")
-    with pytest.raises(ValueError, match="errorbar method"):
+    with pytest.raises(ValueError, match="barplot errorbar: expected the method"):
         hx.barplot(TIPS, x="day", y="tip", errorbar=("iqr", 50))
-    with pytest.raises(ValueError, match="level must be from above 0 to 100"):
+    with pytest.raises(
+        ValueError, match="barplot errorbar: expected a ci level from above 0 to 100"
+    ):
         hx.barplot(TIPS, x="day", y="tip", errorbar=("ci", 120))
-    with pytest.raises(ValueError, match="seed must be a whole number"):
+    with pytest.raises(ValueError, match="seed: expected a whole number"):
         hx.barplot(TIPS, x="day", y="tip", seed=-1)
-    with pytest.raises(ValueError, match="hue must differ"):
-        hx.barplot(TIPS, x="day", y="tip", hue="day")
-    with pytest.raises(ValueError, match="estimator must be one of"):
+    with pytest.raises(ValueError, match="barplot series: column 'day' is the category axis"):
+        hx.barplot(TIPS, x="day", y="tip", series="day")
+    with pytest.raises(ValueError, match='barplot estimator: expected "mean" or "median"'):
         hx.barplot(TIPS, x="day", y="tip", estimator="sum")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="not made by a herceg.express function"):
         hx.statistics(hg.Chart(TIPS).bar(x="day", y="tip"))
@@ -331,21 +336,28 @@ def _matches(grid, values, curves):
 def test_histplot_bins_and_measures_follow_seaborn():
     statistics = pytest.importorskip("seaborn._statistics")
     flipper = PENGUINS["flipper"]
-    for stat, common_norm in (("count", True), ("density", True), ("probability", False)):
+    for normalize, common_norm in (
+        ("count", True),
+        ("density", True),
+        ("probability", False),
+        ("percent", False),
+    ):
         chart = hx.histplot(
-            PENGUINS, x="flipper", hue="species", stat=stat, common_norm=common_norm
+            PENGUINS, x="flipper", series="species", normalize=normalize, common_norm=common_norm
         )
         (mark,) = marks(chart)
         expected_edges = np.histogram_bin_edges(flipper, "auto")
         assert np.allclose(mark["bins"], expected_edges, rtol=1e-12)
-        assert mark["normalize"] == {"probability": "probability"}.get(stat, stat)
+        assert mark["normalize"] == normalize
         assert mark.get("commonNorm") is (True if common_norm else None)
+        spec, _ = chart.to_spec()
+        assert spec["y"]["title"] == normalize.capitalize()
         bins = hx.statistics(chart).tables["bins"]
         for level in ("Adelie", "Gentoo", "Chinstrap"):
             members = flipper[PENGUINS["species"] == level]
-            hist = statistics.Histogram(stat=stat, bins=expected_edges)
+            hist = statistics.Histogram(stat=normalize, bins=expected_edges)
             heights, _ = hist(members)
-            if common_norm and stat != "count":
+            if common_norm and normalize != "count":
                 heights = heights * len(members) / len(flipper)
             assert np.allclose(bins["height"][bins["species"] == level], heights, rtol=1e-12)
     assert "<svg" in chart.to_svg()
@@ -357,43 +369,66 @@ def test_histplot_kde_overlays_match_seaborns_lines():
     import seaborn as sns
 
     frame = pd.DataFrame(PENGUINS)
-    for stat, cumulative in (("count", False), ("density", False), ("percent", True)):
+    for normalize, cumulative, common_norm in (
+        ("count", False, False),
+        ("density", False, True),
+        ("density", False, False),
+        ("percent", True, True),
+    ):
         chart = hx.histplot(
-            frame, x="flipper", hue="species", stat=stat, cumulative=cumulative, kde=True
+            frame,
+            x="flipper",
+            series="species",
+            normalize=normalize,
+            cumulative=cumulative,
+            common_norm=common_norm,
+            kde=True,
         )
         kde = hx.statistics(chart).tables["kde"]
         ax = sns.histplot(
-            frame, x="flipper", hue="species", stat=stat, cumulative=cumulative, kde=True
+            frame,
+            x="flipper",
+            hue="species",
+            stat=normalize,
+            cumulative=cumulative,
+            common_norm=common_norm,
+            kde=True,
         )
         curves = _lines_by_x(ax)
         for level in ("Adelie", "Gentoo", "Chinstrap"):
             rows = kde["species"] == level
-            assert _matches(kde["flipper"][rows], kde["density"][rows], curves), (stat, level)
+            assert _matches(kde["flipper"][rows], kde["density"][rows], curves), (normalize, level)
         plt.close("all")
 
 
 def test_histplot_layouts_orientation_and_refusals():
-    stacked = hx.histplot(PENGUINS, x="flipper", hue="species", multiple="stack")
+    stacked = hx.histplot(PENGUINS, x="flipper", series="species", multiple="stack")
     assert marks(stacked)[0]["stack"] is True
-    dodged = hx.histplot(PENGUINS, y="flipper", hue="species", multiple="dodge", binwidth=5)
+    dodged = hx.histplot(PENGUINS, y="flipper", series="species", multiple="dodge", binwidth=5)
     (mark,) = marks(dodged)
     assert mark["y"] == "flipper" and mark["dodge"] is True
     assert np.allclose(np.diff(mark["bins"]), 5)
     spec, _ = dodged.to_spec()
-    assert spec["x"]["label"] == "Count" and spec["y"]["label"] == "flipper"
-    assert spec["version"] == 10
+    assert spec["x"]["title"] == "Count" and spec["y"]["title"] == "flipper"
     discrete = hx.histplot({"n": [1, 2, 2, 5]}, x="n", discrete=True)
     assert marks(discrete)[0]["bins"] == [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
     with pytest.raises(ValueError, match="exactly one of x and y"):
         hx.histplot(PENGUINS, x="flipper", y="mass")
     with pytest.raises(ValueError, match="layered bars only"):
-        hx.histplot(PENGUINS, x="flipper", hue="species", multiple="stack", kde=True)
+        hx.histplot(PENGUINS, x="flipper", series="species", multiple="stack", kde=True)
     with pytest.raises(ValueError, match="cannot draw kernel densities over horizontal bars"):
         hx.histplot(PENGUINS, y="flipper", kde=True)
-    with pytest.raises(ValueError, match="stat must be one of"):
-        hx.histplot(PENGUINS, x="flipper", stat="frequency")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="kde_kws takes"):
-        hx.histplot(PENGUINS, x="flipper", kde=True, kde_kws={"bandwidth": 1})  # type: ignore[typeddict-unknown-key]
+    for refused in ("frequency", "proportion", "stat"):
+        with pytest.raises(
+            ValueError,
+            match=f'histplot normalize: expected "count", "probability", "percent", or "density"; '
+            f'received "{refused}"',
+        ):
+            hx.histplot(PENGUINS, x="flipper", normalize=refused)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="histplot kde_options: unknown bandwidth"):
+        hx.histplot(PENGUINS, x="flipper", kde=True, kde_options={"bandwidth": 1})  # type: ignore[typeddict-unknown-key]
+    sparse = hx.histplot(PENGUINS, x="flipper", kde=True, kde_options={"grid_size": 30})
+    assert len(hx.statistics(sparse).tables["kde"]["flipper"]) == 30
 
 
 def test_kdeplot_matches_seaborns_curves():
@@ -403,20 +438,21 @@ def test_kdeplot_matches_seaborns_curves():
 
     frame = pd.DataFrame(PENGUINS)
     for kwargs in (
-        {},
-        {"bw_method": "silverman", "bw_adjust": 0.5, "cut": 1},
-        {"common_norm": False, "cumulative": True, "gridsize": 50},
+        {"common_norm": True},
+        {"bw_method": "silverman", "bw_adjust": 0.5, "cut": 1, "common_norm": False},
+        {"common_norm": False, "cumulative": True},
     ):
-        chart = hx.kdeplot(frame, x="flipper", hue="species", **kwargs)
+        chart = hx.kdeplot(frame, x="flipper", series="species", grid_size=50, **kwargs)
         density = hx.statistics(chart).tables["density"]
-        ax = sns.kdeplot(frame, x="flipper", hue="species", **kwargs)
+        ax = sns.kdeplot(frame, x="flipper", hue="species", gridsize=50, **kwargs)
         curves = _lines_by_x(ax)
         for level in ("Adelie", "Gentoo", "Chinstrap"):
             rows = density["species"] == level
             assert _matches(density["flipper"][rows], density["density"][rows], curves), level
         plt.close("all")
-    filled = hx.kdeplot(frame, x="flipper", fill=True)
+    filled = hx.kdeplot(frame, x="flipper", filled=True)
     assert [mark["type"] for mark in marks(filled)] == ["area"]
+    assert [mark["type"] for mark in marks(hx.kdeplot(frame, x="flipper"))] == ["line"]
     # Lines along y would be read by x: refused rather than misread.
     with pytest.raises(ValueError, match="kdeplot cannot draw densities along y yet"):
         hx.kdeplot(frame, y="flipper")
@@ -424,18 +460,18 @@ def test_kdeplot_matches_seaborns_curves():
 
 def test_bivariate_kde_is_a_density_heatmap_per_panel():
     stats = pytest.importorskip("scipy.stats")
-    chart = hx.kdeplot(PENGUINS, x="flipper", y="mass", gridsize=30)
+    chart = hx.kdeplot(PENGUINS, x="flipper", y="mass", grid_size=30)
     (heatmap,) = marks(chart)
-    assert heatmap["type"] == "heatmap" and heatmap["value"] == "density"
+    assert heatmap["type"] == "heatmap" and heatmap["color"] == "density"
     density = hx.statistics(chart).tables["density"]
     kde = stats.gaussian_kde(np.vstack([PENGUINS["flipper"], PENGUINS["mass"]]))
     expected = kde(np.vstack([density["flipper"], density["mass"]]))
     expected[expected < expected.max() * 1e-9] = 0
     assert np.allclose(density["density"], expected, rtol=1e-9, atol=1e-15)
-    faceted = hx.kdeplot(PENGUINS, x="flipper", y="mass", col="sex", gridsize=20)
+    faceted = hx.kdeplot(PENGUINS, x="flipper", y="mass", facet_column="sex", grid_size=20)
     assert faceted.to_spec()[0]["facet"] == {"column": "sex"}
-    with pytest.raises(ValueError, match="facet by col or row instead of hue"):
-        hx.kdeplot(PENGUINS, x="flipper", y="mass", hue="species")
+    with pytest.raises(ValueError, match="facet by facet_row or facet_column instead"):
+        hx.kdeplot(PENGUINS, x="flipper", y="mass", series="species")
 
 
 def test_ecdfplot_steps_match_seaborn():
@@ -444,12 +480,13 @@ def test_ecdfplot_steps_match_seaborn():
     import seaborn as sns
 
     frame = pd.DataFrame(PENGUINS)
-    for stat, complementary in (("proportion", False), ("count", True), ("percent", False)):
+    for normalize, complementary in (("probability", False), ("count", True), ("percent", False)):
         chart = hx.ecdfplot(
-            frame, x="flipper", hue="species", stat=stat, complementary=complementary
+            frame, x="flipper", series="species", normalize=normalize, complementary=complementary
         )
         steps = hx.statistics(chart).tables["ecdf"]
-        share = stat.capitalize()
+        share = normalize.capitalize()
+        stat = {"probability": "proportion"}.get(normalize, normalize)
         ax = sns.ecdfplot(frame, x="flipper", hue="species", stat=stat, complementary=complementary)
         for curve in _lines_by_x(ax):
             finite = curve[np.isfinite(curve[:, 0])]
@@ -476,13 +513,13 @@ def test_ecdfplot_steps_match_seaborn():
     ):
         ecdf = hx.statistics(hx.ecdfplot({"v": sample}, x="v", complementary=complementary))
         assert list(ecdf.tables["ecdf"]["v"]) == sample
-        assert ecdf.tables["ecdf"]["Proportion"][0] == pytest.approx(first)
+        assert ecdf.tables["ecdf"]["Probability"][0] == pytest.approx(first)
     # A level of one distinct value has no step: it shows as a point, the others as steps.
     mixed = hx.ecdfplot(
         {"v": [5.0, 5.0, 1.0, 2.0], "g": ["a", "a", "b", "b"]},
         x="v",
-        hue="g",
-        hue_order=["a", "b"],
+        series="g",
+        series_order=["a", "b"],
         palette=["#ff0000", "#0000ff"],
     )
     dot, line = marks(mixed)
@@ -494,19 +531,20 @@ def test_ecdfplot_steps_match_seaborn():
     assert '#ff0000"/><text' in svg.split(">a</text>")[0][-120:]
     assert "<circle" in mixed.to_svg() or "<path" in mixed.to_svg()
     assert "shows as a point" in hx.statistics(mixed).description
+    with pytest.raises(ValueError, match='ecdfplot normalize: expected "probability"'):
+        hx.ecdfplot(PENGUINS, x="flipper", normalize="proportion")  # type: ignore[arg-type]
 
 
 def test_strip_box_and_violin_plots():
-    strip = hx.stripplot(PENGUINS, x="species", y="flipper", hue="sex", dodge=True, seed=4)
+    strip = hx.stripplot(PENGUINS, x="species", y="flipper", series="sex", dodge=True, seed=4)
     (points,) = marks(strip)
-    assert points["dodge"] is True and points["jitter"] == {"width": 0.25, "seed": 4}
+    assert points["dodge"] is True and points["jitter"] == {"width": 0.5, "seed": 4}
+    assert points["legendGroup"] == "series"
     assert hx.statistics(strip).seed == 4
+    assert "50% of each series' slot in the category" in hx.statistics(strip).description
     plain = hx.stripplot(PENGUINS, x="flipper", y="species", jitter=False)
     assert "jitter" not in marks(plain)[0] and hx.statistics(plain).seed is None
-    assert marks(hx.stripplot(PENGUINS, x="species", y="flipper", jitter=0.3, seed=1))[0]["jitter"][
-        "width"
-    ] == pytest.approx(0.75)
-    box = hx.boxplot(PENGUINS, x="species", y="flipper", hue="sex", whis=2, notch=True)
+    box = hx.boxplot(PENGUINS, x="species", y="flipper", series="sex", whiskers=2, notch=True)
     (mark,) = marks(box)
     assert mark["whiskers"] == 2.0 and mark["notch"] is True and mark["series"] == "sex"
     boxes = hx.statistics(box).tables["boxes"]
@@ -520,35 +558,41 @@ def test_strip_box_and_violin_plots():
     )
     inside = adelie[(adelie >= q1 - 2 * (q3 - q1)) & (adelie <= q3 + 2 * (q3 - q1))]
     assert boxes["low"][row][0] == inside[0] and boxes["high"][row][0] == inside[-1]
-    summary = hx.boxplot(PENGUINS, x="species", y="flipper", showfliers=False)
+    summary = hx.boxplot(PENGUINS, x="species", y="flipper", outliers=False)
     (mark,) = marks(summary)
     assert mark["median"] == "median" and mark["count"] == "n" and "y" not in mark
-    ranged = hx.boxplot(PENGUINS, x="species", y="flipper", whis=math.inf)
-    assert marks(ranged)[0]["whiskers"] == "range"
     violin = hx.violinplot(PENGUINS, x="flipper", y="species", bandwidth=2)
     (mark,) = marks(violin)
     assert mark["type"] == "violin" and mark["x"] == "flipper" and mark["bandwidth"] == 2
     assert "split" not in mark and "inner" not in mark
-    halves = hx.violinplot(PENGUINS, x="species", y="flipper", hue="sex", split=True, inner="quart")
+    halves = hx.violinplot(
+        PENGUINS, x="species", y="flipper", series="sex", split=True, inner="quartiles"
+    )
     (mark,) = marks(halves)
     assert mark["split"] is True and mark["inner"] == "quartiles"
-    assert halves.to_spec()[0]["version"] == 10
-    assert "each level of the hue on one side" in hx.statistics(halves).description
+    assert "each level of sex on one side" in hx.statistics(halves).description
     assert (
-        marks(hx.violinplot(PENGUINS, x="species", y="flipper", inner=None))[0]["inner"] == "none"
+        marks(hx.violinplot(PENGUINS, x="species", y="flipper", inner="none"))[0]["inner"] == "none"
     )
-    with pytest.raises(ValueError, match="needs a hue of at most two levels"):
-        hx.violinplot(PENGUINS, x="sex", y="flipper", hue="species", split=True)
-    with pytest.raises(ValueError, match="needs a hue"):
+    with pytest.raises(ValueError, match="needs a series of at most two levels; 'species' has 3"):
+        hx.violinplot(PENGUINS, x="sex", y="flipper", series="species", split=True)
+    two = hx.violinplot(
+        PENGUINS,
+        x="sex",
+        y="flipper",
+        series="species",
+        series_order=["Adelie", "Gentoo"],
+        split=True,
+    )
+    assert table(two)["species"]["dictionary"] == ["Adelie", "Gentoo"]
+    with pytest.raises(ValueError, match="violinplot split: needs a series"):
         hx.violinplot(PENGUINS, x="species", y="flipper", split=True)
-    with pytest.raises(ValueError, match="inner must be"):
-        hx.violinplot(PENGUINS, x="species", y="flipper", inner="stick")  # type: ignore[arg-type]
-    for chart in (strip, box, summary, violin, halves):
+    for chart in (strip, box, summary, violin, halves, two):
         assert "<svg" in chart.to_svg()
 
 
 def test_express_charts_render_and_update_wherever_charts_do():
-    chart = hx.stripplot(PENGUINS, x="species", y="flipper", hue="sex", seed=1, title="Strips")
+    chart = hx.stripplot(PENGUINS, x="species", y="flipper", series="sex", seed=1, title="Strips")
     assert "<svg" in chart.to_svg() and "Strips" in chart.to_html()
     assert chart.to_png().startswith(b"\x89PNG") and chart.to_pdf().startswith(b"%PDF")
     pytest.importorskip("anywidget")
@@ -556,7 +600,7 @@ def test_express_charts_render_and_update_wherever_charts_do():
     # Rows the chart draws stream in as in any chart; jitter keeps earlier points in place.
     widget.append({"species": ["Adelie"], "flipper": [200.0], "sex": ["f"]})
     widget.update(title="More strips")
-    with pytest.raises(ValueError, match="resolve_x must be 'shared'"):
+    with pytest.raises(ValueError, match='Chart resolve_x: expected "shared" in a live chart'):
         hx.pairplot(PENGUINS, vars=["flipper", "mass"]).widget()
     streamlit = pytest.importorskip("herceg.streamlit")
     spec, buffers = hx.histplot(PENGUINS, x="flipper", kde=True).to_spec()
@@ -569,7 +613,7 @@ def test_express_charts_render_and_update_wherever_charts_do():
 def test_pairplot_pairs_every_number_column_in_subplots():
     data = {key: PENGUINS[key] for key in ("species", "flipper", "mass")}
     data["bill"] = PENGUINS["mass"] / 100 + RNG.normal(0, 3, PENGUINS_N)
-    chart = hx.pairplot(data, hue="species")
+    chart = hx.pairplot(data, series="species")
     spec, _ = chart.to_spec()
     assert [panel["id"] for panel in spec["panels"]] == [
         f"{i},{j}" for i in range(3) for j in range(3)
@@ -579,11 +623,11 @@ def test_pairplot_pairs_every_number_column_in_subplots():
     kinds = {mark["panel"]: mark["type"] for mark in spec["marks"]}
     assert kinds == {
         f"{i},{j}": "line" if i == j else "point" for i in range(3) for j in range(3)
-    }  # densities on the diagonal with hue
+    }  # densities on the diagonal with series
     # The scatter plots of a row show one y range.
     first, second = spec["panels"][1]["y"]["domain"], spec["panels"][2]["y"]["domain"]
     assert first == second == [float(data["flipper"].min()), float(data["flipper"].max())]
-    assert all(mark.get("legendGroup") == "hue" for mark in spec["marks"])
+    assert all(mark.get("legendGroup") == "series" for mark in spec["marks"])
     corner = hx.pairplot(data, vars=["flipper", "mass"], corner=True, diag_kind="hist")
     spec, _ = corner.to_spec()
     assert sorted((mark["panel"], mark["type"]) for mark in spec["marks"]) == [
@@ -607,31 +651,31 @@ def test_one_column_on_both_axes():
     for chart in (fit, line):
         assert "<svg" in chart.to_svg()
     # A plotted column cannot also group the rows.
-    for grouping in ({"col": "v"}, {"hue": "v"}, {"row": "v"}):
-        with pytest.raises(ValueError, match="is also plotted on an axis"):
-            hx.histplot(data, x="v", **grouping)
+    for role in ("facet_column", "series", "facet_row"):
+        with pytest.raises(ValueError, match=f"histplot {role}: column 'v' is also plotted"):
+            hx.histplot(data, x="v", **{role: "v"})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="is also plotted on an axis"):
-        hx.regplot({"v": [1.0, 2.0], "w": [1.0, 2.0]}, x="v", y="w", hue="w")
+        hx.regplot({"v": [1.0, 2.0], "w": [1.0, 2.0]}, x="v", y="w", series="w")
     # Categories and values cannot share a column either.
     for function in (hx.barplot, hx.pointplot, hx.stripplot, hx.boxplot, hx.violinplot):
         with pytest.raises(ValueError, match="x and y name the same column 'v'"):
             function(data, x="v", y="v")
 
 
-def test_pairplot_diagonal_densities_follow_their_rows_hue():
-    # The first row has no hue: densities must still pair each value with its own level.
+def test_pairplot_diagonal_densities_follow_their_rows_series():
+    # The first row has no series: densities must still pair each value with its own level.
     data = {"v": [100.0, 0, 1, 2, 10, 11, 12], "h": [None, "a", "a", "a", "b", "b", "b"]}
-    pair = hx.statistics(hx.pairplot(data, vars=["v"], hue="h", diag_kind="kde"))
-    alone = hx.statistics(hx.kdeplot({"v": data["v"][1:], "h": data["h"][1:]}, x="v", hue="h"))
+    pair = hx.statistics(hx.pairplot(data, vars=["v"], series="h", diag_kind="kde"))
+    alone = hx.statistics(hx.kdeplot({"v": data["v"][1:], "h": data["h"][1:]}, x="v", series="h"))
     ours, theirs = pair.tables["v density"], alone.tables["density"]
     assert list(ours["h"]) == list(theirs["h"])
     assert np.allclose(ours["v"], theirs["v"]) and np.allclose(ours["density"], theirs["density"])
 
 
-def test_pairplot_keeps_hue_colors_when_a_diagonal_density_lacks_a_level():
+def test_pairplot_keeps_series_colors_when_a_diagonal_density_lacks_a_level():
     data = {"u": [5.0, 5.0, 5.0, 1, 2, 3], "v": [1.0, 2, 3, 4, 5, 6], "h": ["a"] * 3 + ["b"] * 3}
     svg = hx.pairplot(
-        data, hue="h", hue_order=["a", "b"], palette=["#ff0000", "#0000ff"], diag_kind="kde"
+        data, series="h", series_order=["a", "b"], palette=["#ff0000", "#0000ff"], diag_kind="kde"
     ).to_svg()
     assert svg.index(">a</text>") < svg.index(">b</text>")
     assert "#ff0000" in svg.split(">a</text>")[0][-160:]
@@ -640,7 +684,7 @@ def test_pairplot_keeps_hue_colors_when_a_diagonal_density_lacks_a_level():
 def test_jointplot_shares_the_scatter_plots_scales_with_its_margins():
     data = {"x": PENGUINS["flipper"].copy(), "y": PENGUINS["mass"].copy(), "g": PENGUINS["sex"]}
     data["y"][:5] = np.nan
-    chart = hx.jointplot(data, x="x", y="y", hue="g")
+    chart = hx.jointplot(data, x="x", y="y", series="g")
     spec, _ = chart.to_spec()
     assert [panel["id"] for panel in spec["panels"]] == ["x", "corner", "joint", "y"]
     assert spec["grid"] == {"columns": 2, "rowHeights": [1, 5], "columnWidths": [5, 1]}
@@ -675,10 +719,10 @@ def test_jointplot_shares_the_scatter_plots_scales_with_its_margins():
 
 
 def test_rugplot_marks_each_value_at_the_plot_edge():
-    chart = hx.rugplot(PENGUINS, x="flipper", hue="species", length=10)
+    chart = hx.rugplot(PENGUINS, x="flipper", series="species", length=10)
     (rug,) = marks(chart)
     assert rug["type"] == "rug" and rug["x"] == "flipper" and rug["length"] == 10
-    assert rug["series"] == "species" and rug["legendGroup"] == "hue"
+    assert rug["series"] == "species" and rug["legendGroup"] == "series"
     sideways = hx.rugplot(PENGUINS, y="mass")
     assert marks(sideways)[0]["y"] == "mass"
     assert "<svg" in chart.to_svg()
@@ -686,12 +730,14 @@ def test_rugplot_marks_each_value_at_the_plot_edge():
 
 def test_clustermap_takes_only_options_both_clusterings_support():
     values = {"a": [1.0, 2.0, 4.0], "b": [2.0, 1.0, 3.0]}
-    with pytest.raises(ValueError, match="clustering method must be one of"):
+    with pytest.raises(ValueError, match="clustermap method: expected one of"):
         hx.clustermap(values, method="centroid")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="clustering metric must be one of"):
+    with pytest.raises(ValueError, match="clustermap metric: expected one of"):
         hx.clustermap(values, metric="chebyshev")  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="ward linkage needs the euclidean metric"):
         hx.clustermap(values, method="ward", metric="cityblock")
+    with pytest.raises(ValueError, match="clustermap columns: names columns of a table, but"):
+        hx.clustermap(np.ones((3, 2)), columns=["a"])
 
 
 def test_clustermap_orders_rows_and_columns_by_their_clustering():
@@ -760,17 +806,19 @@ def test_regressions_of_timestamps_and_tiny_samples():
 
 def test_statistic_names_stay_apart_from_the_datas():
     data = {"low": ["a", "a", "a", "b", "b", "b"], "n": [1.0, 2.0, 4.0, 3.0, 5.0, 6.0]}
-    chart = hx.boxplot(data, x="low", y="n", showfliers=False)
+    chart = hx.boxplot(data, x="low", y="n", outliers=False)
     (mark,) = marks(chart)
     assert mark["x"] == "low" and mark["low"] == "low_" and mark["count"] == "n_"
     assert "<svg" in chart.to_svg()
     kde = hx.kdeplot(
-        {"v": [1.0, 2.0, 2.5, 4.0], "density": ["a", "a", "b", "b"]}, x="v", hue="density"
+        {"v": [1.0, 2.0, 2.5, 4.0], "density": ["a", "a", "b", "b"]}, x="v", series="density"
     )
     (line,) = marks(kde)
     assert line["series"] == "density" and line["y"] == "density_"
-    # Histogram statistics beside a hue named as one of their columns.
-    hist = hx.histplot({"v": [1.0, 2.0, 3.0], "left": ["a", "b", "b"]}, x="v", hue="left", bins=2)
+    # Histogram statistics beside a series named as one of their columns.
+    hist = hx.histplot(
+        {"v": [1.0, 2.0, 3.0], "left": ["a", "b", "b"]}, x="v", series="left", bins=2
+    )
     bins = hx.statistics(hist).tables["bins"]
     assert list(bins["left"]) == ["a", "a", "b", "b"] and list(bins["height"]) == [1, 0, 0, 2]
     assert list(bins["left_"]) == [1.0, 2.0, 1.0, 2.0]
@@ -789,16 +837,17 @@ def test_statistic_names_stay_apart_from_the_datas():
     assert sorted(close.tables["row order"]["id"]) == ["1.000001", "1.000002", "1.000003"]
 
 
-@pytest.mark.parametrize("whis", [0, 0.25, 1.5, math.inf])
-def test_box_statistics_keep_their_order_for_any_whiskers(whis):
+@pytest.mark.parametrize("whiskers", [0, 0.25, 1.5, "tukey", "range"])
+def test_box_statistics_keep_their_order_for_any_whiskers(whiskers):
     for sample in ([0.0, 1.0], [0.0, 1.0, 2.0], [0.0, 0.0, 0.0, 9.0]):
         data = {"g": ["a"] * len(sample), "v": sample}
-        boxes = hx.statistics(hx.boxplot(data, x="g", y="v", whis=whis)).tables["boxes"]
+        boxes = hx.statistics(hx.boxplot(data, x="g", y="v", whiskers=whiskers)).tables["boxes"]
         low, q1, median, q3, high = (boxes[k][0] for k in ("low", "q1", "median", "q3", "high"))
-        if whis != 1.5:
+        if whiskers not in (1.5, "tukey"):
             assert low <= q1 <= median <= q3 <= high
         assert boxes["n"][0] == len(sample)
-        assert "<svg" in hx.boxplot(data, x="g", y="v", whis=whis, showfliers=False).to_svg()
+        chart = hx.boxplot(data, x="g", y="v", whiskers=whiskers, outliers=False)
+        assert "<svg" in chart.to_svg()
 
 
 def test_empty_and_missing_distributions_draw_empty_charts():
@@ -806,7 +855,7 @@ def test_empty_and_missing_distributions_draw_empty_charts():
         data = {"v": values, "g": ["a"] * len(values)}
         for chart in (
             hx.ecdfplot(data, x="v"),
-            hx.ecdfplot(data, x="v", hue="g"),
+            hx.ecdfplot(data, x="v", series="g"),
             hx.kdeplot(data, x="v"),
             hx.histplot(data, x="v"),
             hx.rugplot(data, x="v"),
@@ -822,4 +871,140 @@ def test_kde_overlays_need_bins_of_one_width_to_follow_counts():
     with pytest.raises(ValueError, match="bins of one width"):
         hx.histplot(tiny, x="v", bins=[0, 1e-10, 1e-8], kde=True)
     hx.histplot(tiny, x="v", bins=[0, 5e-9, 1e-8], kde=True)
-    hx.histplot(PENGUINS, x="flipper", bins=[170, 190, 195, 240], kde=True, stat="density")
+    hx.histplot(PENGUINS, x="flipper", bins=[170, 190, 195, 240], kde=True, normalize="density")
+
+
+# Options in herceg's terms -----------------------------------------------------------
+
+
+def test_series_and_series_order_split_and_choose_levels():
+    chart = hx.barplot(TIPS, x="day", y="tip", series="sex", series_order=["male"], seed=0)
+    bars, _ = marks(chart)
+    assert bars["series"] == "sex" and table(chart)["sex"]["dictionary"] == ["male"]
+    stats = hx.statistics(chart)
+    assert set(stats.tables["estimates"]["sex"]) == {"male"}
+    assert stats.dropped == int(np.sum(TIPS["sex"] == "female"))
+    assert ", by sex" in stats.description
+    with pytest.raises(ValueError, match="barplot series: column 'sex' already facets"):
+        hx.barplot(TIPS, x="day", y="tip", series="sex", facet_row="sex")
+
+
+def test_facet_row_and_facet_column_compute_statistics_per_panel():
+    chart = hx.barplot(TIPS, x="size", y="tip", facet_row="sex", facet_column="day", errorbar=None)
+    spec, _ = chart.to_spec()
+    assert spec["facet"] == {"row": "sex", "column": "day"}
+    estimates = hx.statistics(chart).tables["estimates"]
+    for sex, day, size, mean in zip(
+        estimates["sex"], estimates["day"], estimates["size"], estimates["tip"], strict=True
+    ):
+        rows = (TIPS["sex"] == sex) & (TIPS["day"] == day) & (TIPS["size"] == float(size))
+        assert mean == pytest.approx(TIPS["tip"][rows].mean())
+    histogram = hx.histplot(PENGUINS, x="flipper", facet_row="sex", normalize="probability")
+    bins = hx.statistics(histogram).tables["bins"]
+    for sex in ("f", "m"):
+        assert bins["height"][bins["sex"] == sex].sum() == pytest.approx(1)
+    # Wrapped facets and subplots would split tables the statistics did not group.
+    with pytest.raises(ValueError, match="barplot facet: express computes statistics per panel"):
+        hx.barplot(TIPS, x="day", y="tip", facet="sex")
+    with pytest.raises(ValueError, match="stripplot panels: express computes statistics"):
+        hx.stripplot(PENGUINS, x="species", y="flipper", panels=["a"])
+    with pytest.raises(ValueError, match="pairplot facet_row: pairplot lays out panels of its own"):
+        hx.pairplot(PENGUINS, facet_row="sex")
+    with pytest.raises(ValueError, match="jointplot facet_column: jointplot lays out panels"):
+        hx.jointplot(PENGUINS, x="flipper", y="mass", facet_column="sex")
+    with pytest.raises(ValueError, match="residplot facet_row: residplot fits all the rows"):
+        hx.residplot(PENGUINS, x="flipper", y="mass", facet_row="sex")
+
+
+def test_whiskers_take_the_box_plot_marks_values():
+    default = hx.boxplot(PENGUINS, x="species", y="flipper")
+    assert "whiskers" not in marks(default)[0]
+    assert "within 1.5 IQR of the box, and points beyond them" in hx.statistics(default).description
+    ranged = hx.boxplot(PENGUINS, x="species", y="flipper", whiskers="range")
+    assert marks(ranged)[0]["whiskers"] == "range"
+    assert "within the whole range." in hx.statistics(ranged).description
+    boxes = hx.statistics(ranged).tables["boxes"]
+    adelie = PENGUINS["flipper"][PENGUINS["species"] == "Adelie"]
+    first = list(boxes["species"]).index("Adelie")
+    assert (boxes["low"][first], boxes["high"][first]) == (adelie.min(), adelie.max())
+    assert boxes["outliers"][first] == 0
+    double = hx.boxplot(PENGUINS, x="species", y="flipper", whiskers=2)
+    assert marks(double)[0]["whiskers"] == 2.0
+    assert "within 2 IQR of the box" in hx.statistics(double).description
+    hidden = hx.boxplot(PENGUINS, x="species", y="flipper", outliers=False)
+    assert marks(hidden)[0]["type"] == "boxplot" and "y" not in marks(hidden)[0]
+    assert "points beyond them" not in hx.statistics(hidden).description
+    for refused, shown in ((math.inf, "inf"), (-1, "-1"), (True, "True"), ("iqr", '"iqr"')):
+        with pytest.raises(
+            ValueError,
+            match=r'boxplot whiskers: expected "tukey", "range", or a finite nonnegative IQR '
+            rf"multiple; received {shown}",
+        ):
+            hx.boxplot(PENGUINS, x="species", y="flipper", whiskers=refused)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("inner", ["quart", "quartile", None, "stick"])
+def test_violin_inner_takes_exactly_box_quartiles_or_none(inner):
+    shown = "None" if inner is None else f'"{inner}"'
+    with pytest.raises(
+        ValueError,
+        match=f'violinplot inner: expected "box", "quartiles", or "none"; received {shown}',
+    ):
+        hx.violinplot(PENGUINS, x="species", y="flipper", inner=inner)  # type: ignore[arg-type]
+
+
+def test_jitter_is_the_point_marks_fraction_of_the_band():
+    def jitter_of(chart):
+        return marks(chart)[0].get("jitter")
+
+    assert jitter_of(hx.stripplot(PENGUINS, x="species", y="flipper", seed=2)) == {
+        "width": 0.5,
+        "seed": 2,
+    }
+    narrow = hx.stripplot(PENGUINS, x="species", y="flipper", jitter=0.3, seed=1)
+    assert jitter_of(narrow) == {"width": 0.3, "seed": 1}
+    assert "jittered across 30% of each category" in hx.statistics(narrow).description
+    drawn = hx.stripplot(PENGUINS, x="species", y="flipper", jitter=0.3)
+    assert jitter_of(drawn)["seed"] == hx.statistics(drawn).seed
+    given = hx.stripplot(PENGUINS, x="species", y="flipper", jitter=hg.Jitter(width=0.2, seed=9))
+    assert jitter_of(given) == {"width": 0.2, "seed": 9} and hx.statistics(given).seed == 9
+    still = hx.stripplot(PENGUINS, x="species", y="flipper", jitter=0, seed=3)
+    assert jitter_of(still) is None and hx.statistics(still).seed is None
+    with pytest.raises(ValueError, match="stripplot seed: the Jitter given as jitter has its own"):
+        hx.stripplot(PENGUINS, x="species", y="flipper", jitter=hg.Jitter(0.2, 9), seed=1)
+    for refused in (1.5, -0.1, math.nan, "wide", None, hg.Jitter(width=2)):
+        with pytest.raises(ValueError, match="stripplot jitter: expected True, False, a width"):
+            hx.stripplot(PENGUINS, x="species", y="flipper", jitter=refused)  # type: ignore[arg-type]
+
+
+def test_common_norm_is_off_unless_asked_as_in_the_histogram_mark():
+    each = hx.histplot(PENGUINS, x="flipper", series="species", normalize="probability")
+    assert "commonNorm" not in marks(each)[0]
+    bins = hx.statistics(each).tables["bins"]
+    for level in ("Adelie", "Gentoo", "Chinstrap"):
+        assert bins["height"][bins["species"] == level].sum() == pytest.approx(1)
+    common = hx.histplot(
+        PENGUINS, x="flipper", series="species", normalize="probability", common_norm=True
+    )
+    assert marks(common)[0]["commonNorm"] is True
+    bins = hx.statistics(common).tables["bins"]
+    assert bins["height"].sum() == pytest.approx(1)
+    assert "normalized over all series" in hx.statistics(common).description
+
+    def areas(chart, name):
+        """Each species' density integrated by trapezoids (NumPy 1.24 has no trapezoid)."""
+        density = hx.statistics(chart).tables[name]
+        out = []
+        for level in ("Adelie", "Gentoo", "Chinstrap"):
+            rows = density["species"] == level
+            x, y = density["flipper"][rows], density["density"][rows]
+            out.append(float(np.sum(np.diff(x) * (y[1:] + y[:-1]) / 2)))
+        return out
+
+    alone = hx.kdeplot(PENGUINS, x="flipper", series="species")
+    assert np.allclose(areas(alone, "density"), 1, atol=1e-3)
+    weighted = hx.kdeplot(PENGUINS, x="flipper", series="species", common_norm=True)
+    assert sum(areas(weighted, "density")) == pytest.approx(1, abs=1e-3)
+    assert "weighted by each series' share" in hx.statistics(weighted).description
+    pair = hx.pairplot(PENGUINS, vars=["flipper", "mass"], series="species", diag_kind="kde")
+    assert np.allclose(areas(pair, "flipper density"), 1, atol=1e-3)

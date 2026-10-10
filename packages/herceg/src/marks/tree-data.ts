@@ -50,9 +50,9 @@ export function treeFormError(
   role: string,
 ): string | undefined {
   if (fields.path !== undefined && (fields.node !== undefined || fields.parent !== undefined))
-    return `${role} takes a path, or node and parent fields, not both`;
+    return `${role}: a path, or node and parent fields, not both; drop one`;
   if (fields.path === undefined && (fields.node === undefined || fields.parent === undefined))
-    return `${role} needs a path of category fields, or node and parent fields`;
+    return `${role}: needs a path of category fields, or node and parent fields`;
   return undefined;
 }
 
@@ -151,7 +151,7 @@ export class TreeData {
     const problem = treeFormError(fields, role);
     if (problem) throw new Error(problem);
     if (fields.path) {
-      if (fields.path.length === 0) throw new Error(`${role} path needs at least one field`);
+      if (fields.path.length === 0) throw new Error(`${role} path: expected at least one field`);
       for (const field of fields.path) requireField(table, field, CATEGORY, `${role} path`);
       this.encoding = { path: fields.path };
     } else {

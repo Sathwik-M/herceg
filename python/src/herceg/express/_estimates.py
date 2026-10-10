@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import numpy as np
@@ -12,7 +12,7 @@ import numpy as np
 from .._chart import Chart, HelperOptions
 from . import _numerics as numerics
 from ._common import (
-    HUE_GROUP,
+    SERIES_GROUP,
     ErrorBar,
     Source,
     Statistics,
@@ -25,6 +25,7 @@ from ._common import (
     describe_interval,
     dropped_sentence,
     error_method,
+    facets,
     fresh,
     group,
     keyed_table,
@@ -55,16 +56,14 @@ def barplot(
     *,
     x: str,
     y: str,
-    hue: str | None = None,
+    series: str | None = None,
     order: Sequence[Any] | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
     estimator: Estimator = "mean",
     errorbar: ErrorBar = ("ci", 95),
     n_boot: int = 1000,
     seed: int | None = None,
-    col: str | None = None,
-    row: str | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -72,35 +71,41 @@ def barplot(
     column per category, with error bars over each.
 
     One of ``x`` and ``y`` names categories, the other the values; a
-    category ``y`` (or ``orient="h"``) lays the bars along y. ``hue`` splits
-    each category's bars by another column, side by side. ``errorbar`` is
+    category ``y`` (or ``orient="h"``) lays the bars along y. ``series``
+    splits each category's bars by another column, side by side. ``errorbar`` is
     ``("ci", level)``, a bootstrap confidence interval of ``n_boot``
     resamples with ``seed`` (drawn and recorded when not given),
     ``("pi", width)``, the central percentile interval of the values,
     ``("se", k)`` or ``("sd", k)``, k standard errors or deviations about
     the estimate, or ``None``. Groups of one value have no interval. Rows
     missing a value or a category are left out. ``order`` and
-    ``hue_order`` choose and order levels; ``col`` and ``row`` facet;
-    other keyword arguments are chart options.
+    ``series_order`` choose and order levels; other keyword arguments are
+    chart options, among them ``facet_row`` and ``facet_column``, whose
+    panels each compute their own estimates.
     """
     check_axes_differ(x, y, "barplot")
     est = _CategoryEstimates(
-        data, x, y, hue, order, hue_order, orient, estimator, errorbar, n_boot, seed, col, row
+        "barplot",
+        data,
+        x,
+        y,
+        series,
+        order,
+        series_order,
+        orient,
+        estimator,
+        errorbar,
+        n_boot,
+        seed,
+        options,
     )
     chart = make_chart(
-        est.table,
-        options,
-        sentence=est.sentence("Bars"),
-        col=col,
-        row=row,
-        palette=palette,
-        x_label=x,
-        y_label=y,
+        est.table, options, sentence=est.sentence("Bars"), palette=palette, x_label=x, y_label=y
     )
-    label = None if hue else est.value
+    label = None if series else est.value
     xy = (est.value, est.category) if est.horizontal else (est.category, est.value)
-    chart.bar(*xy, series=hue, label=label, legend_group=HUE_GROUP)
-    est.error_bars(chart, dodge=hue is not None, stroke=neutral(options.get("theme")))
+    chart.bar(*xy, series=series, label=label, legend_group=SERIES_GROUP)
+    est.error_bars(chart, dodge=series is not None, stroke=neutral(options.get("theme")))
     return record(chart, est.statistics("barplot"))
 
 
@@ -109,44 +114,47 @@ def pointplot(
     *,
     x: str,
     y: str,
-    hue: str | None = None,
+    series: str | None = None,
     order: Sequence[Any] | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
     estimator: Estimator = "mean",
     errorbar: ErrorBar = ("ci", 95),
     n_boot: int = 1000,
     seed: int | None = None,
     dodge: bool = False,
-    col: str | None = None,
-    row: str | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Points at an estimate of a number column per category, with error
-    bars, as ``barplot`` computes them; ``dodge=True`` places the ``hue``
-    levels side by side within each category. Unlike Seaborn's, the points
+    bars, as ``barplot`` computes them; ``dodge=True`` places each
+    ``series`` side by side within each category. Unlike Seaborn's, the points
     are not joined by lines (lines cannot be drawn along category axes yet).
     """
     check_axes_differ(x, y, "pointplot")
     est = _CategoryEstimates(
-        data, x, y, hue, order, hue_order, orient, estimator, errorbar, n_boot, seed, col, row
+        "pointplot",
+        data,
+        x,
+        y,
+        series,
+        order,
+        series_order,
+        orient,
+        estimator,
+        errorbar,
+        n_boot,
+        seed,
+        options,
     )
     chart = make_chart(
-        est.table,
-        options,
-        sentence=est.sentence("Points"),
-        col=col,
-        row=row,
-        palette=palette,
-        x_label=x,
-        y_label=y,
+        est.table, options, sentence=est.sentence("Points"), palette=palette, x_label=x, y_label=y
     )
-    spread = dodge and hue is not None
-    label = None if hue else est.value
+    spread = dodge and series is not None
+    label = None if series else est.value
     est.error_bars(chart, dodge=spread)
     xy = (est.value, est.category) if est.horizontal else (est.category, est.value)
-    chart.point(*xy, series=hue, dodge=spread, r=4, label=label, legend_group=HUE_GROUP)
+    chart.point(*xy, series=series, dodge=spread, radius=4, label=label, legend_group=SERIES_GROUP)
     return record(chart, est.statistics("pointplot"))
 
 
@@ -155,62 +163,57 @@ def lineplot(
     *,
     x: str,
     y: str,
-    hue: str | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series: str | None = None,
+    series_order: Sequence[Any] | None = None,
     estimator: Estimator | None = "mean",
     errorbar: ErrorBar = ("ci", 95),
     n_boot: int = 1000,
     seed: int | None = None,
-    err_style: Literal["band", "bars"] = "band",
+    error_style: Literal["band", "bars"] = "band",
     sort: bool = True,
-    col: str | None = None,
-    row: str | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Lines through an estimate of ``y`` at each distinct ``x`` (a number or
-    time column), with an interval as a band (``err_style="band"``) or error
-    bars, per ``hue`` level. ``estimator=None`` draws the rows themselves
+    time column), with an interval as a band (``error_style="band"``) or
+    error bars, per ``series``. ``estimator=None`` draws the rows themselves
     (with ``errorbar=None``), in ``x`` order unless ``sort=False``.
     Intervals are computed as in ``barplot``.
     """
-    check_choice(err_style, "err_style", ("band", "bars"))
-    check_choice(estimator, "estimator", ("mean", "median", None))
+    check_choice(error_style, "lineplot error_style", ("band", "bars"))
+    check_choice(estimator, "lineplot estimator", ("mean", "median", None))
+    facet_row, facet_column = facets(options, "lineplot")
     source = Source(data)
     xc = source.column(x, "lineplot x", ("number", "time"))
     yc = source.column(y, "lineplot y", ("number",))
-    variables = variables_of(source, row, col, hue, hue_order, axes=[x, y])
+    variables = variables_of(
+        source, "lineplot", facet_row, facet_column, series, series_order, axes=[x, y]
+    )
     rows = complete(len(xc), xc, yc, levels_of=list(variables.values()))
     dropped = len(xc) - len(rows)
     xv, yv = values(xc), values(yc)
     names = [*variables]
     if estimator is None:
         if errorbar is not None:
-            raise ValueError("lineplot without an estimator draws rows: pass errorbar=None")
+            raise ValueError(
+                "lineplot errorbar: intervals require an estimator; "
+                "pass errorbar=None or choose an estimator"
+            )
         rows = rows[np.argsort(xv[rows], kind="stable")] if sort else rows
         table = rows_table(variables, rows)
         table[x] = number_column(xv[rows], xc.kind)
         table[y] = number_column(yv[rows])
-        sentence = f"Lines join the rows' {y} in {x} order{by(hue)}." + dropped_sentence(
-            dropped, [x, y, *names], hue_order is not None
+        sentence = f"Lines join the rows' {y} in {x} order{by(series)}." + dropped_sentence(
+            dropped, [x, y, *names], series_order is not None
         )
-        chart = make_chart(
-            table,
-            options,
-            sentence=sentence,
-            col=col,
-            row=row,
-            palette=palette,
-            x_label=x,
-            y_label=y,
-        )
-        chart.line(x, y, series=hue, label=None if hue else y, legend_group=HUE_GROUP)
+        chart = make_chart(table, options, sentence=sentence, palette=palette, x_label=x, y_label=y)
+        chart.line(x, y, series=series, label=None if series else y, legend_group=SERIES_GROUP)
         stats = Statistics("lineplot", sentence, {"rows": readable(table)}, None, dropped)
         return record(chart, stats)
-    interval = error_method(errorbar)
-    n_boot = check_n_boot(n_boot)
-    used_seed = seed_of(seed) if interval and interval[0] == "ci" else None
-    # One group per facet panel, hue level, and distinct x, in that order.
+    interval = error_method(errorbar, "lineplot")
+    n_boot = check_n_boot(n_boot, "lineplot")
+    used_seed = seed_of(seed, "lineplot") if interval and interval[0] == "ci" else None
+    # One group per facet panel, series, and distinct x, in that order.
     x_levels = levels(xc)
     grouping = group([*variables.values(), x_levels], rows)
     # The estimates' column: y's name, unless x has it too.
@@ -235,33 +238,37 @@ def lineplot(
         table[high] = number_column(out[high])
     table[count] = number_column(out[count])
     sentence = (
-        f"Lines show the {estimator} of {y} at each {x}{by(hue)}"
+        f"Lines show the {estimator} of {y} at each {x}{by(series)}"
         + (
-            f"; {'bands' if err_style == 'band' else 'error bars'} show "
+            f"; {'bands' if error_style == 'band' else 'error bars'} show "
             + describe_interval(interval[0], interval[1], n_boot, used_seed)
             if interval
             else ""
         )
         + "."
-        + dropped_sentence(dropped, [x, y, *names], hue_order is not None)
+        + dropped_sentence(dropped, [x, y, *names], series_order is not None)
     )
-    chart = make_chart(
-        table, options, sentence=sentence, col=col, row=row, palette=palette, x_label=x, y_label=y
-    )
-    label = None if hue else y
-    if interval and err_style == "band":
-        # Bands between two fields take no series: one per hue level, named
+    chart = make_chart(table, options, sentence=sentence, palette=palette, x_label=x, y_label=y)
+    label = None if series else y
+    if interval and error_style == "band":
+        # Bands between two fields take no series: one per series level, named
         # like its line so that the legend group shares color and visibility.
-        hue_levels = variables[hue].labels if hue else (y,)
-        for i, name in enumerate(hue_levels):
-            position = names.index(hue) if hue else 0
-            part = table if hue is None else subset(table, _at_level(keys, position, i))
+        series_levels = variables[series].labels if series else (y,)
+        for i, name in enumerate(series_levels):
+            position = names.index(series) if series else 0
+            part = table if series is None else subset(table, _at_level(keys, position, i))
             chart.area(
-                x, y1=low, y2=high, data=part, label=name, fill_opacity=0.2, legend_group=HUE_GROUP
+                x,
+                y1=low,
+                y2=high,
+                data=part,
+                label=name,
+                fill_opacity=0.2,
+                legend_group=SERIES_GROUP,
             )
-    if interval and err_style == "bars":
-        chart.error_bar(x=x, y1=low, y2=high, series=hue, label=label, legend_group=HUE_GROUP)
-    chart.line(x, estimated, series=hue, label=label, legend_group=HUE_GROUP)
+    if interval and error_style == "bars":
+        chart.error_bar(x=x, y1=low, y2=high, series=series, label=label, legend_group=SERIES_GROUP)
+    chart.line(x, estimated, series=series, label=label, legend_group=SERIES_GROUP)
     stats = Statistics("lineplot", sentence, {"estimates": readable(table)}, used_seed, dropped)
     return record(chart, stats)
 
@@ -270,30 +277,31 @@ def lineplot(
 
 
 class _CategoryEstimates:
-    """barplot's and pointplot's table: per facet panel, hue level, and
+    """barplot's and pointplot's table: per facet panel, series, and
     category, the estimate of the values, its interval, and the count."""
 
     def __init__(
         self,
+        function: str,
         data: Any,
         x: str,
         y: str,
-        hue: str | None,
+        series: str | None,
         order: Sequence[Any] | None,
-        hue_order: Sequence[Any] | None,
+        series_order: Sequence[Any] | None,
         orient: Orient | None,
         estimator: Estimator,
         errorbar: ErrorBar,
         n_boot: int,
         seed: int | None,
-        col: str | None,
-        row: str | None,
+        options: Mapping[str, Any],
     ) -> None:
-        check_choice(estimator, "estimator", ("mean", "median"))
-        check_choice(orient, "orient", ("v", "h", "x", "y", None))
+        check_choice(estimator, f"{function} estimator", ("mean", "median"))
+        check_choice(orient, f"{function} orient", ("v", "h", "x", "y", None))
+        facet_row, facet_column = facets(options, function)
         source = Source(data)
-        xc = source.column(x, "x")
-        yc = source.column(y, "y")
+        xc = source.column(x, f"{function} x")
+        yc = source.column(y, f"{function} y")
         horizontal = orient in ("h", "y") or (
             orient is None and yc.kind == "category" and xc.kind != "category"
         )
@@ -301,20 +309,27 @@ class _CategoryEstimates:
         vc = yc if not horizontal else xc
         if vc.kind != "number":
             axis = "x" if horizontal else "y"
-            raise TypeError(f"{axis}: column {value!r} holds {vc.kind} values; expected number")
-        if hue is not None and hue == category:
-            raise ValueError(f"hue must differ from the category column {category!r}")
+            raise TypeError(
+                f"{function} {axis}: column {value!r} holds {vc.kind} values; expected number"
+            )
+        if series is not None and series == category:
+            raise ValueError(
+                f"{function} series: column {series!r} is the category axis; "
+                "split by another column"
+            )
         self.horizontal = horizontal
         self.category, self.value = category, value
-        self.hue = hue
+        self.series = series
         self.estimator = estimator
-        variables = variables_of(source, row, col, hue, hue_order, axes=[category, value])
-        cats = levels(source.column(category, "x" if not horizontal else "y"), order)
+        variables = variables_of(
+            source, function, facet_row, facet_column, series, series_order, axes=[category, value]
+        )
+        cats = levels(source.column(category, f"{function} {'y' if horizontal else 'x'}"), order)
         rows = complete(len(vc), vc, levels_of=[*variables.values(), cats])
         self.dropped = len(vc) - len(rows)
-        self.interval = error_method(errorbar)
-        self.n_boot = check_n_boot(n_boot)
-        self.seed = seed_of(seed) if self.interval and self.interval[0] == "ci" else None
+        self.interval = error_method(errorbar, function)
+        self.n_boot = check_n_boot(n_boot, function)
+        self.seed = seed_of(seed, function) if self.interval and self.interval[0] == "ci" else None
         names = [*variables]
         self.low, self.high, count = fresh(["low", "high", "n"], {category, value, *names})
         grouping = group([*variables.values(), cats], rows)
@@ -337,18 +352,18 @@ class _CategoryEstimates:
         table[count] = number_column(counts)
         self.table = table
         self._roles = [x, y, *names]
-        self._ordered = order is not None or hue_order is not None
+        self._ordered = order is not None or series_order is not None
 
     def error_bars(self, chart: Chart, *, dodge: bool, stroke: str | None = None) -> None:
         """Adds the intervals, if any, on the categories."""
         if not self.interval:
             return
         style: dict[str, Any] = {
-            "series": self.hue,
+            "series": self.series,
             "dodge": dodge,
             "stroke": stroke,
-            "label": None if self.hue else self.value,
-            "legend_group": HUE_GROUP,
+            "label": None if self.series else self.value,
+            "legend_group": SERIES_GROUP,
         }
         if self.horizontal:
             chart.error_bar(y=self.category, x1=self.low, x2=self.high, **style)
@@ -358,7 +373,7 @@ class _CategoryEstimates:
     def sentence(self, shapes: str) -> str:
         interval = self.interval
         text = f"{shapes} show the {self.estimator} of {self.value} for each {self.category}"
-        text += by(self.hue)
+        text += by(self.series)
         if interval:
             text += "; error bars show " + describe_interval(
                 interval[0], interval[1], self.n_boot, self.seed

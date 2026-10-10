@@ -88,7 +88,7 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
         : undefined,
     );
     if (this.horizontal && spec.axis === "right")
-      throw new TypeError("horizontal box plots cannot use the right axis");
+      throw new TypeError('boxplot axis: horizontal boxes have no right axis; drop axis: "right"');
     if (precomputed) {
       for (const name of STATS) {
         const field = spec[name];
@@ -164,10 +164,12 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
         !(low[i]! <= q1[i]! && q1[i]! <= median[i]! && median[i]! <= q3[i]! && q3[i]! <= high[i]!)
       )
         throw new TypeError(
-          `boxplot statistics at row ${first[i]} must satisfy low <= q1 <= median <= q3 <= high`,
+          `boxplot at row ${first[i]}: expected low <= q1 <= median <= q3 <= high; received ${[low[i], q1[i], median[i], q3[i], high[i]].join(", ")}`,
         );
       if (spec.count !== undefined && !(Number.isSafeInteger(count[i]!) && count[i]! > 0))
-        throw new TypeError(`boxplot count at row ${first[i]} must be a positive safe integer`);
+        throw new TypeError(
+          `boxplot count at row ${first[i]}: expected a whole number from 1 to ${Number.MAX_SAFE_INTEGER}; received ${count[i]}`,
+        );
     }
     return this.buildSummary(
       Uint32Array.from(first),

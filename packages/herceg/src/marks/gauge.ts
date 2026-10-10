@@ -74,16 +74,18 @@ export class GaugeMark implements LayoutMark {
     const min = spec.min ?? 0;
     const max = spec.max ?? 100;
     if (!(Number.isFinite(min) && Number.isFinite(max) && min < max))
-      throw new RangeError(`gauge min must be below max, and both finite, not ${min} and ${max}`);
+      throw new RangeError(
+        `gauge min, max: expected finite numbers, min below max; received ${min}, ${max}`,
+      );
     let previous = min;
     for (const { to } of spec.bands ?? []) {
       if (!(to > min && to <= max))
         throw new RangeError(
-          `gauge bands must end above min (${min}) and at most at max (${max}), not at ${to}`,
+          `gauge bands: expected ends above min ${min} and at most max ${max}; received ${to}`,
         );
       if (!(to > previous))
         throw new RangeError(
-          `gauge bands must end in ascending order, not ${to} after ${previous}`,
+          `gauge bands: expected ascending ends; received ${to} after ${previous}`,
         );
       previous = to;
     }

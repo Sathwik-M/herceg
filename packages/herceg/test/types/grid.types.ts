@@ -93,7 +93,7 @@ focusFirst(grid);
     model: createGridModel({
       data: gridRows,
       columns: [{ field: "at" }, { field: "latency" }],
-      selection: store,
+      selectionStore: store,
     }),
     ariaLabel: "Requests",
   });

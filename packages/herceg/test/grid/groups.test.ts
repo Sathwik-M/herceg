@@ -148,7 +148,7 @@ describe("grouped grids", () => {
     const { t, model } = grouped();
     model.select(0);
     const rows = () => {
-      const selection = model.selection.get("grid-rows");
+      const selection = model.selectionStore.get("grid-rows");
       return selection?.kind === "rows" ? Array.from(selection.rows.positions()) : [];
     };
     expect(rows()).toEqual([0, 2, 5, 8]);
@@ -190,7 +190,7 @@ describe("grouped grids", () => {
       data: view,
       groups: groupRows(view, { by: ["host"] }),
       columns: [{ field: "id" }],
-      selection: store,
+      selectionStore: store,
     });
     store.set("grid-rows", selectWhere(col("ms").gt(20)));
     expect([0, 1, 2, 3].map((i) => model.selectionState(i))).toEqual([
@@ -215,7 +215,7 @@ describe("grouped grids", () => {
     model.setExpanded(["web"], true);
     expect(model.selectionState(0)).toBe("none");
     let filter = true;
-    model.selection.subscribe(() => {
+    model.selectionStore.subscribe(() => {
       if (!filter) return;
       filter = false;
       view.setQuery({ filter: col("id").ne(0) });
@@ -234,7 +234,7 @@ describe("grouped grids", () => {
       data: view,
       groups: groupRows(view, { by: ["host"] }),
       columns: [{ field: "id" }],
-      selection: store,
+      selectionStore: store,
     });
     // db's rows are 3 and 7.
     const rows = new RowSet(t).add(3);
@@ -489,7 +489,7 @@ describe("nested grouped grids", () => {
   it("select a group's rows at every level, and say how much of each group is selected", () => {
     const { model } = nested();
     const selected = () => {
-      const selection = model.selection.get("grid-rows");
+      const selection = model.selectionStore.get("grid-rows");
       return selection?.kind === "rows" ? Array.from(selection.rows.positions()) : [];
     };
     model.select(0);
@@ -512,7 +512,7 @@ describe("nested grouped grids", () => {
       "all",
     ]);
     // Counted again from the store, the counts agree.
-    model.selection.set("grid-rows", model.selection.get("grid-rows"));
+    model.selectionStore.set("grid-rows", model.selectionStore.get("grid-rows"));
     expect([0, 1, 2, 5].map((i) => model.selectionState(i))).toEqual([
       "some",
       "all",

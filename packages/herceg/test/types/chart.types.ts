@@ -12,7 +12,7 @@ const chart = createChart(element, { marks: [line(data, { x: "x", y: "y" })] });
 
 // Undefined resets an option to its default; values replace it.
 chart.update({ title: undefined, theme: "dark" });
-chart.update({ title: maybeTitle, y: { label: "ms" } });
+chart.update({ title: maybeTitle, y: { title: "ms" } });
 chart.update({ x: { seams: true }, theme: { grid: "#123456" } });
 chart.update({ x: { seams: { minSpacing: 40 } } });
 // @ts-expect-error seam spacing is a number of CSS pixels

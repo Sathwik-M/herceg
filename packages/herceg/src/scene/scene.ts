@@ -282,8 +282,11 @@ export interface PointGeometry extends Geometry {
   count: number;
   /** Per point, for points encoding fields: radius in pixels. */
   radii?: Float32Array | undefined;
-  /** Per point: an index into `palette`, the colors of a continuous scale. */
-  colors?: { index: Uint8ClampedArray; palette: readonly string[] } | undefined;
+  /**
+   * Per point: an index into `palette`, the colors of a continuous scale, or
+   * with `categorical`, the colors of a category field's values.
+   */
+  colors?: { index: Uint8ClampedArray; palette: readonly string[]; categorical?: true } | undefined;
   /** Per point: fill opacity. */
   opacities?: Float32Array | undefined;
   /** Per point: an index into SYMBOLS. */
@@ -691,15 +694,21 @@ export interface LegendDrawing<L> {
 }
 
 /**
- * Legend of point sizes or shapes: a title, then glyphs in the theme's muted
- * color, each followed by its label. Glyphs are SVG path data centered on
- * (0, 0), drawn at (x, y); other positions are left edges, and `y` is the
- * middle of an item's row.
+ * Legend of point sizes, shapes, or category colors: a title, then glyphs in
+ * their `fill` (or the theme's muted color), each followed by its label.
+ * Glyphs are SVG path data centered on (0, 0), drawn at (x, y); other
+ * positions are left edges, and `y` is the middle of an item's row.
  */
 export interface GlyphLegend {
   draw: LegendDrawing<GlyphLegend>;
   title: { text: string; x: number; y: number };
-  entries: { glyph: string; x: number; y: number; label: { text: string; x: number } }[];
+  entries: {
+    glyph: string;
+    x: number;
+    y: number;
+    fill?: string;
+    label: { text: string; x: number };
+  }[];
 }
 
 /**

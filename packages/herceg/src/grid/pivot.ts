@@ -47,7 +47,7 @@ export interface PivotGridModelOptions<
   /** Intl options for the pivot field's values over their columns, when they are numbers or times. */
   valueFormat?: NumberFormat | TimeFormat;
   /** Where the selected rows go; a store of the grid's own when left out. */
-  selection?: SelectionStore<S>;
+  selectionStore?: SelectionStore<S>;
   /** The store's channel for the selected rows; "grid-rows" by default. */
   channel?: string;
   /** In CSS pixels; 28 by default. */
@@ -84,7 +84,7 @@ export type PivotGridModel<S extends Schema = Schema> = Omit<
 > & {
   /** The view the pivot pivots. */
   readonly data: RowView<S>;
-  readonly selection: SelectionStore<S>;
+  readonly selectionStore: SelectionStore<S>;
 };
 
 /**
