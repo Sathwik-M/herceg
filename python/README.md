@@ -708,8 +708,8 @@ inside the Figure; PDF/UA conformance is not claimed.
 ## Live notebook charts
 
 `chart.widget()` returns a chart that Python keeps updating after it is
-displayed, and that reports zooming, brushing, hovering, and clicks back to
-Python. It runs on [anywidget](https://anywidget.dev), so it works in
+displayed, and that reports zooming, brushing, hovering, clicks, drills, and
+node moves back to Python. It runs on [anywidget](https://anywidget.dev), so it works in
 JupyterLab, Jupyter Notebook 7, VS Code, and Colab; install the `notebook`
 extra (`pip install 'herceg[notebook]'`).
 
@@ -749,6 +749,50 @@ live.on_click(lambda inspection: print(df.iloc[inspection.points[0].row]))
 live.on_click(callback, remove=True)     # stop calling it
 live.on_camera(lambda camera: print(camera.azimuth, camera.elevation))  # a 3D chart turned
 ```
+
+Trees and networks report their state with the same property and callback
+pattern. `drill_root` is an `hg.DrillRoot`: a tuple of item keys from the top
+level through the current root, or `None` for the whole tree. Assign a path
+reported by `on_drill` to restore it; assigning `None` (or `()`) resets it.
+The keys are the same opaque keys reported by inspections, rather than labels.
+Drilling is available for a chart of one treemap or sunburst without facets
+or panels; `zoom=True` enables mouse and keyboard drilling.
+
+```python
+tree = hg.treemap(sales, path=["region", "country"], value="revenue", zoom=True).widget()
+tree.on_drill(lambda root: print(root))
+tree                                  # display it, then drill into a region
+saved_root = tree.drill_root           # for example, ('[0,"Europe"]',)
+tree.drill_root = None                 # show the whole tree
+tree.drill_root = saved_root           # restore that branch
+```
+
+`item_positions` is an `hg.ItemPositions`: a dictionary from node item keys
+to `(x, y)` pairs in the network's layout units, rather than pixels. It holds
+only manually moved nodes. Assigning replaces the whole mapping: omitting a
+key puts that node back in its computed position, and `{}` resets every node.
+The getter and callbacks return copies; edit a copy and assign it to apply it.
+Network data changes clear the overrides, while title, theme, and resize keep
+them. A display that hides a node keeps its override and applies it when
+the node is shown again. Moves and multi-node resets are combined per frame. Item keys and drill targets are checked by the browser; an unknown key
+shows an error above the chart and reconciles the state to what was applied.
+
+```python
+network = hg.graph(links, "source", "target", drag=True).widget()
+network.on_item_move(lambda positions: print(positions))
+network                               # display it, then drag a node
+positions = network.item_positions
+if positions:
+    node = next(iter(positions))
+    positions[node] = (10.0, 20.0)
+    network.item_positions = positions
+network.item_positions = {}           # reset every moved node
+```
+
+Drill and move callbacks also run for Python assignments and resets. Both
+states reach every output and survive redisplay or browser reload, even when
+no callback listens. Restoring a tree whose data removed a branch uses its
+nearest surviving ancestor. Map viewports retain both x and y ranges.
 
 An `hg.Viewport` holds the visible `x` range and the ranges of the left and
 right y axes, `y` and `y_right`, each None when that axis is not zoomed. An
@@ -848,7 +892,8 @@ if state.click:
 ```
 
 `on_select` (brushing, in charts with `brush=`), `on_click` (clicking
-data), and `on_row_selection` (selecting rows, in charts with one
+data), `on_drill` (tree navigation), `on_item_move` (network nodes moved or
+reset), and `on_row_selection` (selecting rows, in charts with one
 `row_selection` binding; `state.row_selection` is an `hg.RowSelection`, of
 this run's data only; runs that change how the chart looks but not its
 data keep clicked and lassoed rows, and a brush's rows while the brush can
@@ -861,6 +906,25 @@ caused, and None otherwise. Inside `st.form`, a selection reaches the script
 when the form is submitted, and `on_click` cannot react, since Streamlit
 sends no clicks from forms. Give a chart a `key` to keep its selection when
 its data changes, and to show several charts with the same content.
+
+`state.drill_root` and `state.item_positions` use the same tuple of item
+keys and dictionary of layout-coordinate pairs as notebook widgets. They
+are persistent state, including inside forms, and reach Python when their
+reaction is enabled. Reaction functions take no arguments, like the other
+Streamlit callbacks. A compatible redraw keeps the drill root (or its nearest
+surviving ancestor) and keeps positions when only styles change; changes to
+network data or layout fields clear positions. Results from an obsolete
+network layout are discarded in Python.
+
+```python
+tree = hg.treemap(sales, path=["region", "country"], value="revenue", zoom=True)
+state = hst.chart(tree, key="sales-tree", on_drill="rerun")
+st.write("Current branch:", state.drill_root)
+
+network = hg.graph(links, "source", "target", drag=True)
+state = hst.chart(network, key="network", on_item_move="rerun")
+st.write("Moved nodes:", state.item_positions)
+```
 
 The chart is a Streamlit custom component (components v2): it renders in the
 app's page, in a shadow root rather than an iframe, and its spec and column
@@ -901,7 +965,7 @@ npm run test:python    # build, then run pytest in a uv environment
   later can draw it, and `append` copies the table's columns on each call
   (about 0.35 ms for 100 rows into a million-row, three-column window on an
   Apple M6).
-- Each widget sends the engine (about 146 KiB, 53 KiB gzipped) to the browser
+- Each widget sends the engine (about 646 KiB, 240 KiB gzipped) to the browser
   once. Live charts were tested in JupyterLab 4; Notebook 7, VS Code, and
   Colab support anywidget but have not been tested here.
 - A point's `row` is its position in the data the browser drew when it
@@ -917,6 +981,6 @@ npm run test:python    # build, then run pytest in a uv environment
   report clicks, but `on_select` is refused.
 - In Streamlit, a chart that changes between script runs is sent whole: its
   data and, since the component's code travels inline with it, the engine
-  (about 143 KiB, 52 KiB gzipped). Streamlit sends unchanged charts as a
+  (about 641 KiB, 238 KiB gzipped). Streamlit sends unchanged charts as a
   reference to what the browser already has. Hover and zoom are not
   reported to the script, since each report would rerun it.

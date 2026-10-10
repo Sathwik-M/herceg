@@ -3,13 +3,13 @@
 A :class:`ChartWidget` draws a chart with herceg through anywidget (Jupyter
 Notebook, JupyterLab, VS Code, and Colab), takes data and option updates from
 Python without re-sending the chart, and reports zooming, brushing, hovering,
-and clicks back to Python. Needs the ``notebook`` extra.
+clicks, drills, and node moves back to Python. Needs the ``notebook`` extra.
 """
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
 try:
@@ -27,14 +27,20 @@ from . import _render
 from ._chart import Camera, ChartUpdate, Unpack
 from ._derive import Expr, _fields_of
 from ._events import (
+    DrillRoot,
     Inspection,
+    ItemPositions,
     Range,
     Selection,
     Viewport,
     checked,
+    decode_drill_root,
     decode_inspection,
+    decode_item_positions,
     decode_selection,
     decode_viewport,
+    encode_drill_root,
+    encode_item_positions,
     encode_selection,
     encode_viewport,
     same_values,
@@ -45,11 +51,26 @@ from ._rows import RowSelection, decode, encode
 if TYPE_CHECKING:
     from ._chart import Chart
 
-__all__ = ["ChartWidget", "Inspection", "RowSelection", "Selection", "Viewport"]
+__all__ = [
+    "ChartWidget",
+    "DrillRoot",
+    "Inspection",
+    "ItemPositions",
+    "RowSelection",
+    "Selection",
+    "Viewport",
+]
 
-Event = Literal["select", "viewport", "hover", "click", "camera", "rowSelection"]
+Event = Literal[
+    "select", "viewport", "hover", "click", "camera", "rowSelection", "drill", "itemMove"
+]
 #: The key of each event's state in messages and the snapshot.
-_STATE_KEYS = {"select": "selection", "viewport": "viewport"}
+_STATE_KEYS = {
+    "select": "selection",
+    "viewport": "viewport",
+    "drill": "drill_root",
+    "itemMove": "item_positions",
+}
 
 
 class ChartWidget(anywidget.AnyWidget):
@@ -84,18 +105,22 @@ class ChartWidget(anywidget.AnyWidget):
         # Counts the changes sent to browsers, so a browser that missed one
         # (it was not open yet, say) asks for the whole chart again.
         self._revision = 0
-        # The selection and the viewport, as last set here or in a browser.
-        self._states: dict[str, dict[str, Any] | None] = {"select": None, "viewport": None}
+        # Interaction state, as last set here or in a browser.
+        self._states: dict[str, dict[str, Any] | None] = {
+            "select": None,
+            "viewport": None,
+            "drill": None,
+            "itemMove": {},
+        }
         # Who changed each (a browser's origin, None for Python) and at which
         # revision. A browser's report based on an earlier revision than
         # someone else's change was made without seeing it, and is dropped.
         self._state_changes: dict[str, tuple[str | None, int]] = {
-            "select": (None, 0),
-            "viewport": (None, 0),
+            event: (None, 0) for event in _STATE_KEYS
         }
         self._callbacks = {
             event: ipywidgets.CallbackDispatcher()
-            for event in ("select", "viewport", "hover", "click", "camera", "rowSelection")
+            for event in (*_STATE_KEYS, "hover", "click", "camera", "rowSelection")
         }
         # What each bound channel holds, by table name and channel, in Python's
         # terms: rows by position in the data as it is now.
@@ -128,16 +153,32 @@ class ChartWidget(anywidget.AnyWidget):
         """
         with self._lock:
             before = dict(self._live.dropped)
-            self._push(self._live.append(rows, data, max_rows))
+            message = self._live.append(rows, data, max_rows)
+            self._push(message)
+            moved = self._invalidate_positions(message)
             self._follow_rows(before)
+        if moved:
+            self._callbacks["itemMove"](self.item_positions)
 
     def replace(self, rows: Any, *, data: Any = None) -> None:
         """Replaces all rows of the chart's data (or of ``data``, as in :meth:`append`)."""
         with self._lock:
             before = dict(self._live.dropped)
             generations = dict(self._live.generation)
-            self._push(self._live.replace(rows, data))
+            message = self._live.replace(rows, data)
+            self._push(message)
+            moved = self._invalidate_positions(message)
             self._follow_rows(before, generations)
+        if moved:
+            self._callbacks["itemMove"](self.item_positions)
+
+    def _invalidate_positions(self, message: Message | None) -> bool:
+        if message is None or not self._live.can_move_items:
+            return False
+        changed = self._change("itemMove", {}, None)
+        # Even an empty mapping must reject moves made before this data change.
+        self._state_changes["itemMove"] = (None, self._revision)
+        return changed
 
     def _follow_rows(
         self, dropped: dict[str, int], generations: dict[str, int] | None = None
@@ -208,6 +249,37 @@ class ChartWidget(anywidget.AnyWidget):
         self._set("viewport", payload)
 
     @property
+    def drill_root(self) -> DrillRoot | None:
+        """Item keys from the top level through the current root, or None for
+        the whole tree. Assign a reported path to drill; None resets it."""
+        return decode_drill_root(self._states["drill"])
+
+    @drill_root.setter
+    def drill_root(self, value: DrillRoot | None) -> None:
+        if not self._live.can_drill:
+            raise ValueError(
+                "widget.drill_root: only a chart of one treemap or sunburst drills; "
+                "use a tree without facets or panels"
+            )
+        self._set("drill", encode_drill_root(value))
+
+    @property
+    def item_positions(self) -> ItemPositions:
+        """Manual network-node positions by item key, as (x, y) in layout
+        units. Assignment replaces all overrides; {} resets them. Data
+        changes reset them too. The returned mapping is a copy."""
+        return decode_item_positions(self._states["itemMove"])
+
+    @item_positions.setter
+    def item_positions(self, value: Mapping[str, tuple[float, float]]) -> None:
+        if not self._live.can_move_items:
+            raise ValueError(
+                "widget.item_positions: only a chart of one network has nodes to move; "
+                "use a graph without facets or panels"
+            )
+        self._set("itemMove", encode_item_positions(value))
+
+    @property
     def row_selection(self) -> RowSelection | None:
         """What the channel of the chart's row selection holds (see
         ``hg.SelectionBinding``): rows by position in the data as it is now, or
@@ -267,6 +339,14 @@ class ChartWidget(anywidget.AnyWidget):
         """Calls ``callback(viewport)`` when the chart zooms, pans, or resets."""
         self._listen("viewport", callback, remove)
 
+    def on_drill(self, callback: Callable[[DrillRoot | None], Any], remove: bool = False) -> None:
+        """Calls callback(root) when drilling changes, including Python assignments."""
+        self._listen("drill", callback, remove)
+
+    def on_item_move(self, callback: Callable[[ItemPositions], Any], remove: bool = False) -> None:
+        """Calls callback(positions) with all overrides after a move or reset."""
+        self._listen("itemMove", callback, remove)
+
     def on_hover(self, callback: Callable[[Inspection | None], Any], remove: bool = False) -> None:
         """Calls ``callback(inspection)`` when the data under the pointer changes;
         None when the pointer leaves the data."""
@@ -300,6 +380,8 @@ class ChartWidget(anywidget.AnyWidget):
                 "buffers": buffers,
                 "selection": self._states["select"],
                 "viewport": self._states["viewport"],
+                "drill_root": self._states["drill"],
+                "item_positions": self._states["itemMove"],
                 # Python numbers a table's rows from its first since it was last
                 # replaced: how many have dropped since, and how many replaces.
                 "rows": {
@@ -330,11 +412,14 @@ class ChartWidget(anywidget.AnyWidget):
             self._callbacks[event](_decoded(event, payload))
 
     def _change(self, event: str, payload: dict[str, Any] | None, origin: str | None) -> bool:
-        """Records a selection or viewport and sends it to every browser, unless its
+        """Records interaction state and sends it to every browser, unless its
         values are unchanged. Called with the lock held; the browser it came from
         (`origin`) ignores it."""
         stored = self._states[event]
-        if same_values(payload, stored):
+        same = payload == stored if event in ("drill", "itemMove") else same_values(payload, stored)
+        if same:
+            if event in ("drill", "itemMove"):
+                return False
             # The same values: only what is said of them may be news (which
             # axes hold times, the categories a lasso is over), and a lasso's
             # categories stay known when assigned again from Python.
@@ -364,7 +449,7 @@ class ChartWidget(anywidget.AnyWidget):
         elif kind == "resync":
             # A browser that missed an update.
             self.send_state("_chart")
-        elif kind in ("select", "viewport"):
+        elif kind in _STATE_KEYS:
             try:
                 payload = checked(kind, content.get(_STATE_KEYS[kind]))
             except ValueError:
@@ -436,6 +521,12 @@ def _held(
     return RowSelection(current.channel, current.data, rows=rows)
 
 
-def _decoded(event: str, payload: dict[str, Any] | None) -> Selection | Viewport | None:
-    """A selection or viewport as Python reads it."""
+def _decoded(
+    event: str, payload: dict[str, Any] | None
+) -> Selection | Viewport | DrillRoot | ItemPositions | None:
+    """Interaction state as Python reads it."""
+    if event == "drill":
+        return decode_drill_root(payload)
+    if event == "itemMove":
+        return decode_item_positions(payload)
     return decode_selection(payload) if event == "select" else decode_viewport(payload)

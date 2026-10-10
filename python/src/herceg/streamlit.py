@@ -2,8 +2,8 @@
 
 The chart is a Streamlit custom component (components v2, Streamlit 1.51 or
 newer; the ``streamlit`` extra). It travels to the browser as one binary
-payload, the spec followed by the column buffers, and the selection and the
-clicked data come back to the script.
+payload, the spec followed by the column buffers, and interaction state
+comes back to the script.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import hashlib
 import json
 import struct
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -28,7 +28,17 @@ except ImportError as error:  # pragma: no cover - depends on the environment
 from . import _render
 from ._data import shown
 from ._derive import Expr
-from ._events import Inspection, Selection, checked, decode_inspection, decode_selection
+from ._events import (
+    DrillRoot,
+    Inspection,
+    ItemPositions,
+    Selection,
+    checked,
+    decode_drill_root,
+    decode_inspection,
+    decode_item_positions,
+    decode_selection,
+)
 from ._live import check_live_rows
 from ._rows import RowSelection
 
@@ -55,6 +65,10 @@ class ChartState:
     #: ``hg.SelectionBinding``): rows by position in the data, or a brush's
     #: condition; None until the user selects, and once the data changes.
     row_selection: RowSelection | None = None
+    #: Item keys from the top level through the root, or None for the whole tree.
+    drill_root: DrillRoot | None = None
+    #: Manual network-node positions in layout units; cleared when its data changes.
+    item_positions: ItemPositions = field(default_factory=dict)
 
 
 def chart(
@@ -64,6 +78,8 @@ def chart(
     on_select: Reaction = "ignore",
     on_click: Reaction = "ignore",
     on_row_selection: Reaction = "ignore",
+    on_drill: Reaction = "ignore",
+    on_item_move: Reaction = "ignore",
 ) -> ChartState:
     """Shows ``chart`` in the app and returns what the user did with it.
 
@@ -72,15 +88,29 @@ def chart(
     browser; ``"rerun"`` reruns the script, whose call then returns them; a
     function is called first, then the script reruns. ``on_row_selection``
     is what selecting rows does, in a chart with ``row_selection=`` (one
-    binding). Inside ``st.form``, a selection reaches the script when the
+    binding). ``on_drill`` and ``on_item_move`` react to tree navigation and
+    moved network nodes; ``drill_root`` and ``item_positions`` in the result
+    hold their state. Inside ``st.form``, a selection reaches the script when the
     form is submitted, and clicks cannot react. Charts whose panels have x scales of their own
     (``resolve_x``) cannot report selections. Give the chart a ``key`` to
     keep its selection when its data changes, and to show several charts
     with the same content. Charts without a ``theme`` follow the app's light
     or dark theme.
     """
-    reactions = {"select": on_select, "click": on_click, "rowSelection": on_row_selection}
-    options = {"select": "on_select", "click": "on_click", "rowSelection": "on_row_selection"}
+    reactions = {
+        "select": on_select,
+        "click": on_click,
+        "rowSelection": on_row_selection,
+        "drill": on_drill,
+        "itemMove": on_item_move,
+    }
+    options = {
+        "select": "on_select",
+        "click": "on_click",
+        "rowSelection": "on_row_selection",
+        "drill": "on_drill",
+        "itemMove": "on_item_move",
+    }
     for name, reaction in reactions.items():
         if not (callable(reaction) or reaction in ("ignore", "rerun")):
             raise ValueError(
@@ -119,18 +149,41 @@ def chart(
         if reaction != "ignore"
     }
     digest = epoch.hexdigest()[:16]
+    item_epoch = _item_epoch(spec, digest)
     payload = _payload(spec, buffers, events, digest)
     result = _component()(key=key, data=payload, **callbacks)
-    return _state(result, chart, digest)
+    return _state(result, chart, digest, item_epoch)
 
 
 #: The component's value for each event: the selection and the row selection
 #: are state, kept across runs; a click is a trigger, reported to one run.
-_VALUES = {"select": "selection", "click": "click", "rowSelection": "rows"}
+_VALUES = {
+    "select": "selection",
+    "click": "click",
+    "rowSelection": "rows",
+    "drill": "drill_root",
+    "itemMove": "item_positions",
+}
+
+
+def _item_epoch(spec: dict[str, Any], epoch: str) -> str | None:
+    """Moves belong to one network's data and layout fields, independent of styles."""
+    marks = spec.get("marks", [])
+    if len(marks) != 1 or marks[0]["type"] != "graph" or "facet" in spec or "panels" in spec:
+        return None
+    mark = marks[0]
+    fields = [
+        mark.get(name) for name in ("id", "data", "nodes", "source", "target", "value", "node")
+    ]
+    fields.append(mark.get("directed", False))
+    return hashlib.sha256(json.dumps([epoch, fields], sort_keys=True).encode()).hexdigest()[:16]
 
 
 def _payload(
-    spec: dict[str, Any], buffers: list[bytes], events: list[str], epoch: str = ""
+    spec: dict[str, Any],
+    buffers: list[bytes],
+    events: list[str],
+    epoch: str = "",
 ) -> bytes:
     """The chart as one binary message: a little-endian uint32 header length,
     the JSON header (spec, buffer offsets, events), then the buffers. Buffers
@@ -141,8 +194,15 @@ def _payload(
     for buffer in buffers:
         offsets.append([end, len(buffer)])
         end = _aligned(end + len(buffer))
+    item_epoch = _item_epoch(spec, epoch)
     header = json.dumps(
-        {"spec": spec, "buffers": offsets, "events": events, "epoch": epoch},
+        {
+            "spec": spec,
+            "buffers": offsets,
+            "events": events,
+            "epoch": epoch,
+            **({"itemEpoch": item_epoch} if item_epoch is not None else {}),
+        },
         separators=(",", ":"),
         allow_nan=False,
     ).encode()
@@ -155,16 +215,38 @@ def _payload(
     return bytes(out)
 
 
-def _state(result: Mapping[str, Any], chart: Chart | None = None, epoch: str = "") -> ChartState:
+def _state(
+    result: Mapping[str, Any],
+    chart: Chart | None = None,
+    epoch: str = "",
+    item_epoch: str | None = None,
+) -> ChartState:
     """The component's result as Python values; a selection of another shape is none."""
     try:
         selection = decode_selection(checked("select", result.get("selection")))
     except ValueError:
         selection = None
+    try:
+        root = decode_drill_root(checked("drill", result.get("drill_root")))
+    except ValueError:
+        root = None
+    positions = result.get("item_positions")
+    moved: ItemPositions = {}
+    if (
+        isinstance(positions, dict)
+        and item_epoch is not None
+        and positions.get("epoch") == item_epoch
+    ):
+        try:
+            moved = decode_item_positions(checked("itemMove", positions.get("positions")))
+        except ValueError:
+            pass
     return ChartState(
         selection=selection,
         click=decode_inspection(result.get("click")),
         row_selection=_rows(result.get("rows"), chart, epoch),
+        drill_root=root,
+        item_positions=moved,
     )
 
 

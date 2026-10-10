@@ -85,7 +85,9 @@ annotations over a table drawing each row in its own panel, and categories
 per panel for every mark on a category axis), points on category axes,
 subplots (with weighted rows and columns), pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey
 diagrams in each facet panel or in a subplot of their own, live notebook charts (a widget that streams updates from Python
-and reports interaction back), a Streamlit component, row views and selection stores shared by charts and
+and reports interaction, tree drill roots, and network node positions back),
+a Streamlit component with the same drill and move results, row views and
+selection stores shared by charts and
 grids (charts' brushes, lassos, and clicks select rows there and highlight what others select), maps that pan, zoom, and lasso their rows,
 treemaps and sunbursts that drill into nodes with breadcrumbs, networks
 with directed links, link labels, and nodes moved by dragging and keys

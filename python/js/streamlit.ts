@@ -21,7 +21,17 @@ import {
   type Viewport,
 } from "herceg";
 import { type ChartSpec, loadSpec } from "herceg/spec";
-import { inspectionPayload, selectionPayload } from "./events.ts";
+import {
+  type DrillPayload,
+  drillPayload,
+  type ItemPositionsPayload,
+  inspectionPayload,
+  positionsValue,
+  recordPosition,
+  selectionPayload,
+  showDrillRoot,
+  showItemPositions,
+} from "./events.ts";
 
 /** What Streamlit passes the component, as far as it is used here. */
 export interface Component {
@@ -31,7 +41,7 @@ export interface Component {
   setTriggerValue(name: string, value: unknown): void;
 }
 
-type Event = "select" | "click" | "rowSelection";
+type Event = "select" | "click" | "rowSelection" | "drill" | "itemMove";
 
 /** The payload's JSON header. */
 export interface Header {
@@ -45,6 +55,7 @@ export interface Header {
    * rows selected in it from rows of data it has replaced since.
    */
   epoch?: string;
+  itemEpoch?: string;
 }
 
 interface Instance {
@@ -66,6 +77,11 @@ interface Instance {
   brushed: WeakSet<object>;
   /** What the script was last sent of each channel, with its epoch, as JSON, by table and channel. */
   reported: Map<string, string>;
+  positions: ItemPositionsPayload;
+  itemEpoch: string | undefined;
+  sentDrill: string;
+  sentPositions: string;
+  itemFrame: number | undefined;
 }
 
 const DEFAULT_HEIGHT = 320;
@@ -85,6 +101,7 @@ export default function herceg(component: Component): () => void {
   // Streamlit runs the cleanup it got last, when the component leaves the page.
   const current = instance;
   return () => {
+    if (current.itemFrame !== undefined) cancelAnimationFrame(current.itemFrame);
     current.chart.destroy();
     current.element.remove();
     if (instances.get(parentElement) === current) instances.delete(parentElement);
@@ -107,10 +124,14 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   const followsApp = header.spec.theme === undefined;
   const theme = followsApp ? appTheme(element) : undefined;
   const kept = previous && keptView(previous.chart);
+  if (previous?.itemFrame !== undefined) cancelAnimationFrame(previous.itemFrame);
   previous?.chart.destroy();
   const chart = createChart(element, theme ? { ...config, theme } : config);
   const unbrushed = bindings.map(({ store, channel }) => store.get(channel));
   if (kept) restore(chart, kept);
+  const positions: ItemPositionsPayload = {};
+  if (header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch)
+    showItemPositions(chart, previous!.positions, positions, true);
   // What the brush wrote as it was restored, before the chart had listeners.
   const brushed = new WeakSet<object>();
   bindings.forEach(({ store, channel }, i) => {
@@ -130,6 +151,11 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     stores,
     brushed,
     reported: previous?.reported ?? new Map(),
+    positions,
+    itemEpoch: header.itemEpoch,
+    sentDrill: previous?.sentDrill ?? "null",
+    sentPositions: previous?.sentPositions ?? JSON.stringify([header.itemEpoch, "[]"]),
+    itemFrame: undefined,
   };
   // The script hears if the brush could not be kept, or now covers other categories.
   reportSelection(instance);
@@ -140,6 +166,16 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   chart.on("click", ({ inspection }) => {
     if (!inspection || !instance.events.includes("click")) return;
     instance.component.setTriggerValue("click", inspectionPayload(chart, inspection));
+  });
+  reportDrill(instance);
+  reportPositions(instance);
+  chart.on("drill", () => reportDrill(instance));
+  chart.on("itemMove", ({ key, position }) => {
+    recordPosition(instance.positions, key, position);
+    instance.itemFrame ??= requestAnimationFrame(() => {
+      instance.itemFrame = undefined;
+      reportPositions(instance);
+    });
   });
   // What the chart's row selection holds, rows by position in this payload's data.
   const reportRows = ({ table, channel, selection }: RowSelectionChange) => {
@@ -207,6 +243,7 @@ interface Kept {
   panels: (PanelInfo & { view: Viewport })[];
   selection: Chart["selection"];
   selectionPanels: Chart["selectionPanels"];
+  drill: DrillPayload | null;
 }
 
 function keptView(chart: Chart): Kept {
@@ -218,6 +255,7 @@ function keptView(chart: Chart): Kept {
       .map((panel) => ({ ...panel, view: chart.getViewport({ panel: panel.key }) })),
     selection: chart.selection,
     selectionPanels: chart.selectionPanels,
+    drill: drillPayload(chart.drillRoot),
   };
 }
 
@@ -226,6 +264,7 @@ function keptView(chart: Chart): Kept {
  * values are still shown. The changes are drawn together, on the next frame.
  */
 function restore(chart: Chart, kept: Kept) {
+  showDrillRoot(chart, kept.drill, true);
   const panels = chart.getPanels().filter((panel) => panel.x);
   const [first] = kept.panels;
   // A panel's x range carries to the panel of the same key; one every panel
@@ -307,6 +346,26 @@ function reportSelection(instance: Instance) {
   if (sent === instance.sent) return;
   instance.sent = sent;
   instance.component.setStateValue("selection", payload);
+}
+
+function reportDrill(instance: Instance) {
+  if (!instance.events.includes("drill")) return;
+  const payload = drillPayload(instance.chart.drillRoot);
+  const sent = JSON.stringify(payload);
+  if (sent === instance.sentDrill) return;
+  instance.sentDrill = sent;
+  instance.component.setStateValue("drill_root", payload);
+}
+
+function reportPositions(instance: Instance) {
+  if (!instance.events.includes("itemMove")) return;
+  const sent = JSON.stringify([instance.itemEpoch, positionsValue(instance.positions)]);
+  if (sent === instance.sentPositions) return;
+  instance.sentPositions = sent;
+  instance.component.setStateValue("item_positions", {
+    epoch: instance.itemEpoch,
+    positions: { ...instance.positions },
+  });
 }
 
 /** Keeps a chart without a theme of its own in the app's theme, which may have changed. */

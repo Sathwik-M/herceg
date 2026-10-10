@@ -2,9 +2,11 @@
 // what Python sends is applied to the chart, and interaction reaches Python.
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { MountedChart } from "../../../packages/herceg/src/dom/chart.ts";
 import type { SelectionPayload, ViewportPayload } from "../events.ts";
 import widgetModule, { type Model, type Snapshot, type Update } from "../widget.ts";
 import { controlTime, pointPath } from "./animation.ts";
+import { itemChart, key } from "./items.ts";
 
 type Handler = (...args: never[]) => void;
 
@@ -84,6 +86,8 @@ function snapshot(options: Record<string, unknown> = {}): Snapshot {
     ],
     selection: null,
     viewport: null,
+    drill_root: null,
+    item_positions: {},
   };
 }
 
@@ -327,6 +331,8 @@ describe("notebook widget", () => {
         ],
         selection: null,
         viewport: null,
+        drill_root: null,
+        item_positions: {},
       } satisfies Snapshot,
       _listening: [],
     });
@@ -379,6 +385,8 @@ describe("notebook widget", () => {
         buffers: buffers(1),
         selection: null,
         viewport: null,
+        drill_root: null,
+        item_positions: {},
       } satisfies Snapshot,
       _listening: [],
     });
@@ -1024,5 +1032,301 @@ describe("notebook widget", () => {
     await frame();
     const [message] = model.messages("camera") as { camera: { azimuth: number } }[];
     expect(message!.camera.azimuth).toBeCloseTo(-60 - 20 * 0.4);
+  });
+});
+
+describe("widget item interaction", () => {
+  function items(type: "treemap" | "sunburst" | "graph", states: Partial<Snapshot> = {}) {
+    const fixture = itemChart(type);
+    return { ...snapshot(), ...fixture, ...states } satisfies Snapshot;
+  }
+
+  it.each(["treemap", "sunburst"] as const)(
+    "restores %s keys, synchronizes outputs, and reports resets without listeners",
+    async (type) => {
+      const root = { path: ['[0,"East"]'] };
+      const model = new MockModel({ _chart: items(type, { drill_root: root }), _listening: [] });
+      const [first, second] = mount(model, 2);
+      await vi.dynamicImportSettled();
+      await frame();
+      expect(first!.querySelector("nav")!.textContent).toContain("East");
+      expect(model.messages("drill")).toHaveLength(0);
+      key(first!, "0");
+      await frame();
+      expect(model.messages("drill")).toHaveLength(1);
+      expect(model.messages("drill")[0]!.drill_root).toBeNull();
+      expect(second!.querySelector("nav")!.textContent).not.toContain("East");
+      model.receive({ type: "drill", drill_root: root, revision: 1 });
+      await frame();
+      expect(second!.querySelector("nav")!.textContent).toContain("East");
+      expect(model.messages("drill")).toHaveLength(1);
+      // Resync remounts and restores the root from the snapshot.
+      model.set("_chart", items(type, { revision: 2, drill_root: root }));
+      await frame();
+      expect(first!.querySelector("nav")!.textContent).toContain("East");
+      expect(model.messages("drill")).toHaveLength(1);
+      model.set(
+        "_chart",
+        items(type, { revision: 3, drill_root: { path: ['[0,"East"]', '[0,"East","Gone"]'] } }),
+      );
+      await frame();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(model.messages("drill").at(-1)!.drill_root).toEqual(root);
+    },
+  );
+
+  it("reports a browser drill and rejects an invalid explicit key visibly", async () => {
+    const model = new MockModel({ _chart: items("treemap"), _listening: [] });
+    const [host] = mount(model);
+    await vi.dynamicImportSettled();
+    key(host!, "ArrowRight");
+    key(host!, "Enter");
+    expect(model.messages("drill")[0]!.drill_root).toEqual({ path: ['[0,"East"]'] });
+    model.receive({ type: "drill", revision: 1, drill_root: { path: ["unknown"] } });
+    expect(host!.querySelector('[role="alert"]')!.textContent).toContain("widget.drill_root");
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("drill").at(-1)!.drill_root).toEqual({ path: ['[0,"East"]'] });
+  });
+
+  it("restores, replaces, resets, and synchronizes whole position maps without echoes", async () => {
+    const model = new MockModel({
+      _chart: items("graph", { item_positions: { '[0,"East"]': [3, 4] } }),
+      _listening: [],
+    });
+    const [first, second] = mount(model, 2);
+    await vi.dynamicImportSettled();
+    await frame();
+    const geometry = (host: ParentNode) =>
+      host.querySelector('[data-kind="point"]')!.getAttribute("d");
+    const [automatic] = mount(new MockModel({ _chart: items("graph"), _listening: [] }));
+    expect(geometry(first!)).not.toBe(geometry(automatic!));
+    expect(geometry(first!)).toBe(geometry(second!));
+    expect(model.messages("itemMove")).toHaveLength(0);
+    model.receive({ type: "itemMove", revision: 1, item_positions: { '[0,"A"]': [20, 30] } });
+    await frame();
+    expect(geometry(first!)).toBe(geometry(second!));
+    expect(model.messages("itemMove")).toHaveLength(0);
+    key(first!, "ArrowRight");
+    key(first!, "ArrowRight", true);
+    await frame();
+    const report = model.messages("itemMove")[0]!;
+    const moved = report.item_positions as Record<string, [number, number]>;
+    expect(Object.keys(moved)).toHaveLength(2);
+    expect(moved['[0,"A"]']).toEqual([20, 30]);
+    await frame();
+    expect(geometry(first!)).toBe(geometry(second!));
+    model.receive({
+      type: "itemMove",
+      revision: 2,
+      item_positions: moved,
+      origin: report.origin as string,
+    });
+    expect(model.messages("itemMove")).toHaveLength(1);
+    model.receive({ type: "itemMove", revision: 3, item_positions: {} });
+    await frame();
+    expect(geometry(first!)).toBe(geometry(automatic!));
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove")).toHaveLength(1);
+    model.set("_chart", items("graph", { revision: 4, item_positions: moved }));
+    await vi.dynamicImportSettled();
+    key(first!, "0");
+    await frame();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove").at(-1)!.item_positions).toEqual({});
+  });
+
+  it("cancels pending moves when Python resets positions or replaces data", async () => {
+    const model = new MockModel({ _chart: items("graph"), _listening: [] });
+    const [host] = mount(model);
+    await vi.dynamicImportSettled();
+    key(host!, "ArrowRight");
+    key(host!, "ArrowRight", true);
+    await frame();
+    key(host!, "ArrowRight", true);
+    await frame();
+    expect(model.messages("itemMove")).toHaveLength(1);
+    model.receive({ type: "itemMove", revision: 1, item_positions: {} });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove")).toHaveLength(1);
+    key(host!, "ArrowRight", true);
+    await frame();
+    key(host!, "ArrowRight", true);
+    await frame();
+    expect(model.messages("itemMove")).toHaveLength(2);
+    model.receive(
+      {
+        type: "replace",
+        revision: 2,
+        table: "data",
+        columns: {
+          region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+          city: { type: "category", codes: 1, dictionary: ["A", "B", "C"] },
+          value: number(2),
+        },
+      },
+      itemChart("graph").buffers,
+    );
+    await frame();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove")).toHaveLength(2);
+  });
+
+  it("reconciles positions whose nodes are absent from a restored snapshot", () => {
+    const model = new MockModel({
+      _chart: items("graph", { item_positions: { missing: [1, 2] } }),
+      _listening: [],
+    });
+    mount(model);
+    expect(model.messages("itemMove")[0]!.item_positions).toEqual({});
+  });
+
+  it("retains only successfully applied positions after an invalid key", async () => {
+    const model = new MockModel({ _chart: items("graph"), _listening: [] });
+    const [host] = mount(model);
+    model.receive({
+      type: "itemMove",
+      revision: 1,
+      item_positions: { '[0,"East"]': [1, 2], unknown: [3, 4] },
+    });
+    expect(host!.querySelector('[role="alert"]')!.textContent).toContain("widget.item_positions");
+    expect(model.messages("itemMove").at(-1)!.item_positions).toEqual({ '[0,"East"]': [1, 2] });
+    await frame();
+  });
+
+  it("reports moves when a peer hides the node, then applies them when it is shown", async () => {
+    const fixture = itemChart("graph");
+    const chart: Snapshot = {
+      ...snapshot(),
+      ...fixture,
+      spec: {
+        ...fixture.spec,
+        data: {
+          ...fixture.spec.data,
+          nodes: {
+            columns: {
+              name: { type: "category", codes: 3, dictionary: ["East", "West", "A", "B", "C"] },
+              group: { type: "category", codes: 4, dictionary: ["North", "South"] },
+            },
+          },
+        },
+        marks: [
+          {
+            type: "graph",
+            data: "data",
+            source: "region",
+            target: "city",
+            nodes: "nodes",
+            node: "name",
+            color: "group",
+          },
+        ],
+      },
+      buffers: [
+        ...fixture.buffers,
+        new Int32Array([0, 1, 2, 3, 4]),
+        new Int32Array([0, 1, 0, 0, 1]),
+      ],
+    };
+    const model = new MockModel({ _chart: chart, _listening: [] });
+    const [first, second] = mount(model, 2);
+    await vi.dynamicImportSettled();
+    const toggle = second!.querySelector<HTMLButtonElement>(
+      '[aria-label="Legend"] button[title="Hide North"]',
+    )!;
+    toggle.click();
+    await frame();
+    key(first!, "ArrowRight");
+    key(first!, "ArrowRight", true);
+    await frame();
+    expect(model.messages("itemMove")).toHaveLength(1);
+    const positions = model.messages("itemMove")[0]!.item_positions as Record<
+      string,
+      [number, number]
+    >;
+    expect(positions['[0,"East"]']).toBeDefined();
+    // Python can change the same known override while another output hides it.
+    model.receive({ type: "itemMove", revision: 1, item_positions: { '[0,"East"]': [10, 20] } });
+    toggle.click();
+    await frame();
+    const geometry = (host: ParentNode) =>
+      host.querySelector('[data-kind="point"]')!.getAttribute("d");
+    expect(geometry(first!)).toBe(geometry(second!));
+    expect(second!.querySelector('[role="alert"]')).toBeNull();
+    expect(model.messages("itemMove")).toHaveLength(1);
+  });
+
+  it("coalesces a many-node reset and applies only changed positions to peers", async () => {
+    const count = 50;
+    const names = Array.from({ length: count }, (_, i) => `n${i}`);
+    const fixture = itemChart("graph");
+    const chart: Snapshot = {
+      ...snapshot(),
+      ...fixture,
+      spec: {
+        ...fixture.spec,
+        data: {
+          data: {
+            columns: {
+              region: { type: "category", codes: 0, dictionary: names },
+              city: { type: "category", codes: 1, dictionary: names },
+            },
+          },
+        },
+      },
+      buffers: [
+        Int32Array.from(names, (_, i) => i),
+        Int32Array.from(names, (_, i) => (i + 1) % count),
+      ],
+      item_positions: Object.fromEntries(
+        names.map((name, i) => [JSON.stringify([0, name]), [i, i]]),
+      ),
+    };
+    const setter = vi.spyOn(MountedChart.prototype, "setItemPosition");
+    onTestFinished(() => setter.mockRestore());
+    const model = new MockModel({ _chart: chart, _listening: [] });
+    const [first] = mount(model, 2);
+    await vi.dynamicImportSettled();
+    setter.mockClear();
+    key(first!, "0");
+    await frame();
+    expect(setter.mock.calls.length).toBeLessThanOrEqual(count);
+    expect(model.messages("itemMove")).toHaveLength(1);
+    expect(model.messages("itemMove")[0]!.item_positions).toEqual({});
+  });
+
+  it("keeps both map ranges through Python assignments and redisplay", async () => {
+    const base = snapshot();
+    const map: Snapshot = {
+      ...base,
+      spec: {
+        ...base.spec,
+        projection: "equirectangular",
+        interaction: { zoom: true },
+        data: { data: { columns: { lon: number(0), lat: number(1) } } },
+        marks: [{ type: "geopoint", data: "data", longitude: "lon", latitude: "lat" }],
+      },
+      viewport: { x: [-0.1, 0.1], y: [0.02, 0.08], yRight: null },
+    };
+    const model = new MockModel({ _chart: map, _listening: [] });
+    const [host] = mount(model);
+    await vi.dynamicImportSettled();
+    key(host!, "+");
+    const zoomed = model.messages("viewport")[0]!.viewport as ViewportPayload;
+    expect((Number(zoomed.y![0]) + Number(zoomed.y![1])) / 2).toBeCloseTo(0.05);
+    model.set("_chart", { ...map, revision: 1 });
+    await vi.dynamicImportSettled();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    key(host!, "+");
+    const restored = model.messages("viewport").at(-1)!.viewport as ViewportPayload;
+    expect(restored.y).toEqual(zoomed.y);
+    model.receive({
+      type: "viewport",
+      revision: 2,
+      viewport: { x: [-0.1, 0.1], y: [0.2, 0.4], yRight: null },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    key(host!, "+");
+    const assigned = model.messages("viewport").at(-1)!.viewport as ViewportPayload;
+    expect((Number(assigned.y![0]) + Number(assigned.y![1])) / 2).toBeCloseTo(0.3);
   });
 });
