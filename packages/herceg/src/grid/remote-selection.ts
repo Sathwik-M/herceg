@@ -5,20 +5,13 @@
 // so a server can run them as a query's filter (`selectionCondition`).
 
 import { compileExpression, Expr, type Expression } from "../data/expression.ts";
+import type { GroupKey } from "../data/groups.ts";
 import { checkJson, type GridSchema, type RowKey, schemaFields } from "./query.ts";
+import { keyOf } from "./remote-list.ts";
+import type { Block, RemoteSelection } from "./remote-types.ts";
+import { groupCondition } from "./source.ts";
 
-/**
- * Records chosen by key, or every row meeting `where` (as the source holds
- * them, now and later) or keyed in `include`, but none keyed in `except`.
- */
-export type RemoteSelection =
-  | { readonly kind: "keys"; readonly keys: readonly RowKey[] }
-  | {
-      readonly kind: "matching";
-      readonly where: Expression;
-      readonly include: readonly RowKey[];
-      readonly except: readonly RowKey[];
-    };
+export type { RemoteSelection } from "./remote-types.ts";
 
 /**
  * Selections of one remote source's rows by channel, as `SelectionStore`
@@ -142,20 +135,74 @@ export function selectionCondition(selection: RemoteSelection, key: string | nul
   return except.length > 0 ? ["and", added, ["not", among(except)]] : added;
 }
 
-/** Whether a selection holds a row, given its key and whether it meets the selection's condition. */
-export function selectionHas(
-  selection: RemoteSelection,
-  sets: { keys: ReadonlySet<RowKey>; include: ReadonlySet<RowKey>; except: ReadonlySet<RowKey> },
-  key: RowKey | null,
-  meets: () => boolean,
-): boolean {
-  if (selection.kind === "keys") return key !== null && sets.keys.has(key);
-  if (key !== null && sets.except.has(key)) return false;
-  return (key !== null && sets.include.has(key)) || meets();
-}
-
 function frozenCopy(expression: Expression): Expression {
   return (
     Array.isArray(expression) ? Object.freeze(expression.map(frozenCopy)) : expression
   ) as Expression;
+}
+
+type Sets = { keys: Set<RowKey>; include: Set<RowKey>; except: Set<RowKey> };
+
+export function selectionSets(
+  cache: WeakMap<RemoteSelection, Sets>,
+  selection: RemoteSelection,
+): Sets {
+  let sets = cache.get(selection);
+  if (!sets) {
+    sets =
+      selection.kind === "keys"
+        ? { keys: new Set(selection.keys), include: new Set(), except: new Set() }
+        : {
+            keys: new Set(),
+            include: new Set(selection.include),
+            except: new Set(selection.except),
+          };
+    cache.set(selection, sets);
+  }
+  return sets;
+}
+
+export function rowSelected(
+  selection: RemoteSelection,
+  cache: WeakMap<RemoteSelection, Sets>,
+  schema: GridSchema,
+  block: Block,
+  row: number,
+): boolean {
+  const sets = selectionSets(cache, selection);
+  const key = keyOf(block, row, schema.key);
+  if (selection.kind === "keys") return key !== null && sets.keys.has(key);
+  if (key !== null && sets.except.has(key)) return false;
+  return (key !== null && sets.include.has(key)) || selectionMeets(selection, block, row);
+}
+
+/** Whether a loaded record meets a selection's condition (never for a selection of keys). */
+export function selectionMeets(selection: RemoteSelection, block: Block, row: number): boolean {
+  if (selection.kind !== "matching") return false;
+  if (block.test?.selection !== selection) {
+    let at: (row: number) => boolean;
+    try {
+      const test = compileExpression(selection.where, block.fields!);
+      at = (r) => test.at(r) === true;
+    } catch {
+      // A condition over fields the grid does not read selects none of its rows.
+      at = () => false;
+    }
+    block.test = { selection, at };
+  }
+  return block.test.at(row);
+}
+
+/** The query's filter, constrained to a group when one is supplied. */
+export function matchingSelection(
+  filter: Expression | undefined,
+  by: readonly string[],
+  path: GroupKey | null,
+): RemoteSelection {
+  const tests: Expression[] = [];
+  if (filter !== undefined) tests.push(filter);
+  if (path) tests.push(groupCondition(by, path));
+  const where: Expression =
+    tests.length === 0 ? true : tests.length === 1 ? tests[0]! : ["and", ...tests];
+  return { kind: "matching", where, include: [], except: [] };
 }
