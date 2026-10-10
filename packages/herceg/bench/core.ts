@@ -17,11 +17,13 @@ import { geoshape } from "../src/marks/geoshape.ts";
 import { graph } from "../src/marks/graph.ts";
 import { line } from "../src/marks/line.ts";
 import { pie } from "../src/marks/pie.ts";
+import { point } from "../src/marks/point.ts";
 import { PositionStack } from "../src/marks/position-stack.ts";
 import { region } from "../src/marks/region.ts";
 import { rule } from "../src/marks/rule.ts";
 import { SplitRows } from "../src/marks/split.ts";
 import { RowStack } from "../src/marks/stack.ts";
+import { packSwarm } from "../src/marks/swarm.ts";
 import { text } from "../src/marks/text.ts";
 import { treemap } from "../src/marks/treemap.ts";
 import { UnionStack } from "../src/marks/union-stack.ts";
@@ -539,3 +541,48 @@ measure("graph: drag a node of 5,000 nodes and 20,000 links", () => {
   network.items!.drag('[0,"n0"]', moves.toLayout('[0,"n0"]', hubX + step, hubY + step / 2));
   network.scene(estimateText);
 });
+
+// Swarm layout: normally distributed values in one band 80 pixels wide over
+// a 300-pixel plot, points of radius 2.5, laid out from scratch; and a
+// chart's scene of a swarm over four bands, as zooming lays it out again.
+const normal = () => {
+  const u = Math.max(random(), 1e-12);
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * random());
+};
+for (const n of [1000, 10_000, 100_000]) {
+  const pixels = Float64Array.from({ length: n }, () => 150 + 40 * normal()).sort();
+  const radii = new Float64Array(n).fill(2.5);
+  const offsets = new Float64Array(n);
+  measure(
+    `swarm: pack ${n.toLocaleString("en-US")} points in one band`,
+    () => {
+      packSwarm(pixels, radii, 0, n, 80, offsets);
+    },
+    { warmup: 3, samples: n >= 100_000 ? 5 : 20 },
+  );
+}
+for (const n of [1000, 10_000, 100_000]) {
+  const days = ["thu", "fri", "sat", "sun"];
+  const swarmed = new ChartModel({
+    marks: [
+      point(
+        table({
+          day: Array.from({ length: n }, (_, i) => days[i % 4]!),
+          v: Float64Array.from({ length: n }, normal),
+        }),
+        { x: "day", y: "v", swarm: true },
+      ),
+    ],
+  });
+  swarmed.setSize(800, 400, 1);
+  let zoom = 0;
+  measure(
+    `swarm: scene of ${n.toLocaleString("en-US")} points in 4 bands, zoomed`,
+    () => {
+      const spread = 3 + (zoom++ % 2);
+      swarmed.setYViewport({ y: [-spread, spread], yRight: null });
+      swarmed.scene(estimateText);
+    },
+    { warmup: 2, samples: n >= 100_000 ? 5 : 15 },
+  );
+}

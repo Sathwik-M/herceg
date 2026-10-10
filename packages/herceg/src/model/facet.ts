@@ -357,15 +357,24 @@ interface Appearance {
   codes: number[];
 }
 
-/** A series' rows split by panel, as of a table version, its rows and x, and the panel list. */
+/** A panel's rows of a series, and whether its x (and y, for series that track it) ascend. */
+interface PanelRows {
+  rows: Uint32Array;
+  sorted: boolean;
+  ySorted: boolean | undefined;
+}
+
+/** A series' rows split by panel, as of a table version, its rows, x, and y, and the panel list. */
 interface Split {
   table: Table;
   version: number;
   rows: Uint32Array | undefined;
   /** The x column, which decides whether each panel's rows are sorted. */
   x: Series["x"];
+  /** The y column of series tracking whether y ascends (`ySorted`: lines and areas along y). */
+  y: Series["y"] | undefined;
   panels: readonly PanelValues[];
-  byPanel: { rows: Uint32Array; sorted: boolean }[];
+  byPanel: PanelRows[];
 }
 
 /** A field's codes per row, and each code's panel offset (-1 for none). */
@@ -570,11 +579,13 @@ export class Splitter {
 
   /** One series per panel holding the rows of `s` with that panel's values. */
   #split(s: Series, table: Table): Series[] {
+    const y = s.ySorted === undefined ? undefined : s.y;
     const current = (split: Split | undefined): split is Split =>
       split?.table === table &&
       split.version === table.version &&
       split.rows === s.rows &&
       split.x === s.x &&
+      split.y === y &&
       split.panels === this.#panels;
     let split = this.#bySeries.get(s.key);
     if (!current(split)) {
@@ -584,17 +595,19 @@ export class Splitter {
         version: table.version,
         rows: s.rows,
         x: s.x,
+        y,
         panels: this.#panels,
-        byPanel: this.#bucket(table, s.rows, s.length, s.x, s.sorted),
+        byPanel: this.#bucket(table, s.rows, s.length, s.x, s.sorted, y, s.ySorted),
       };
       this.#bySeries.set(s.key, split);
     }
     // A panel's rows are a subset, which no longer streams as its group does.
-    return split.byPanel.map(({ rows, sorted }) => ({
+    return split.byPanel.map(({ rows, sorted, ySorted }) => ({
       ...s,
       rows,
       length: rows.length,
       sorted,
+      ...(ySorted !== undefined && { ySorted }),
       stream: undefined,
     }));
   }
@@ -619,7 +632,8 @@ export class Splitter {
   /**
    * The first `length` of `rows` (every row without them) by panel, in
    * order, and whether each panel's `x` is ascending (known for subsets of
-   * a `sorted` x).
+   * a `sorted` x), and with `y`, whether its `y` is (known for subsets of a
+   * `ySorted` y).
    */
   #bucket(
     table: Table,
@@ -627,7 +641,9 @@ export class Splitter {
     length: number,
     x?: NumericArray,
     sorted = false,
-  ): { rows: Uint32Array; sorted: boolean }[] {
+    y?: NumericArray,
+    ySorted = false,
+  ): PanelRows[] {
     const rowOf = (k: number) => (rows ? rows[k]! : k);
     // Per field, each code's value's place among the field's values times
     // the field's stride: the last field varies fastest, as panels are listed.
@@ -672,8 +688,10 @@ export class Splitter {
     const byPanel = Array.from(sizes, (size) => ({
       rows: new Uint32Array(size),
       sorted: true,
+      ySorted: true,
       filled: 0,
       last: Number.NEGATIVE_INFINITY,
+      lastY: Number.NEGATIVE_INFINITY,
     }));
     for (let k = 0; k < length; k++) {
       const at = panelAt[k]!;
@@ -681,13 +699,23 @@ export class Splitter {
       const panel = byPanel[at]!;
       const row = rowOf(k);
       panel.rows[panel.filled++] = row;
-      if (!x) continue;
       // A subset of an unsorted series may still be sorted (rows grouped by
-      // panel); as in isSortedSubset, a missing x leaves it unsorted.
-      const value = x[row]!;
-      if (!(value >= panel.last)) panel.sorted = false;
-      panel.last = value;
+      // panel); as in isSortedSubset, a missing value leaves it unsorted.
+      if (x) {
+        const value = x[row]!;
+        if (!(value >= panel.last)) panel.sorted = false;
+        panel.last = value;
+      }
+      if (y) {
+        const value = y[row]!;
+        if (!(value >= panel.lastY)) panel.ySorted = false;
+        panel.lastY = value;
+      }
     }
-    return byPanel.map((panel) => ({ rows: panel.rows, sorted: sorted || (!!x && panel.sorted) }));
+    return byPanel.map((panel) => ({
+      rows: panel.rows,
+      sorted: sorted || (!!x && panel.sorted),
+      ySorted: y ? ySorted || panel.ySorted : undefined,
+    }));
   }
 }

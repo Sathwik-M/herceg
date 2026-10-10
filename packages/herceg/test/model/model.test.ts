@@ -299,11 +299,15 @@ describe("data edge cases", () => {
       /line y: no field "missing"; the table has/,
     );
     // The correction names the input that makes the kind expected.
-    expect(() => line(t, { x: "x", y: "name" as never })).toThrow(
+    expect(() => line(t, { x: "name", y: "name" as never })).toThrow(
       'line y: field "name" holds category values; expected number or time; give numbers, not strings',
     );
     expect(() => line(t, { x: "x", y: "x", series: "x" as never })).toThrow(
       'line series: field "x" holds number values; expected category; give its values as strings',
+    );
+    // A category y lays the line along y, unless orient says x.
+    expect(() => line(t, { x: "x", y: "name" as never, orient: "x" })).toThrow(
+      'line orient: "x" makes y the values, and "name" holds categories; give orient: "y", or a number field as y',
     );
   });
 });

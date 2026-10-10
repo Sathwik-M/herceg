@@ -1,44 +1,57 @@
-import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { lineDrawing } from "../draw/line.ts";
 import type { Breaks } from "../lod/m4.ts";
+import type { Polyline } from "../lod/polyline.ts";
 import type { LineGeometry } from "../scene/scene.ts";
 import type { Curve, Frozen, LineSpec } from "../spec/spec.ts";
+import { BandShares, STILL } from "./dodge.ts";
 import {
+  type Bands,
   buildSeries,
   CATEGORY,
   type ChartMark,
+  categoryBands,
+  categoryIndices,
   type Frame,
   frozen,
   type MARK,
   type Mark,
   type MarkKey,
-  NUMERIC,
   type Palette,
   requireField,
   SeriesSplitter,
   valueKind,
 } from "./mark.ts";
+import {
+  bandOrder,
+  positionsExtent,
+  type Roles,
+  rolesOf,
+  traceFrame,
+  traceSeries,
+  untranspose,
+} from "./orient.ts";
 import { type Series, xExtent, yExtent } from "./series.ts";
 import { IndexUse, tracePath, unionExtent } from "./trace.ts";
 
-export interface LineOptions<S extends Schema> {
-  /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
-  axis?: "left" | "right";
+interface LineStyle<S extends Schema> {
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
-  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  /** With the chart's `panel`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
-  x: NumericField<S>;
-  /** One field, or several fields drawn as separate lines sharing x. */
-  y: NumericField<S> | readonly NumericField<S>[];
   /** Category field: one line per value. */
   series?: CategoryField<S>;
+  /**
+   * On a category position axis, with `series`: each series' line through
+   * its share of the bands, as grouped bars and dodged points stand.
+   */
+  dodge?: boolean;
   /** Constant color for every line of the mark. */
   stroke?: string;
   strokeWidth?: number;
   dash?: readonly number[];
   curve?: Curve;
-  /** Name of a single line in legends and tooltips. Defaults to the y field. */
+  /** Name of a single line in legends and tooltips. Defaults to the value field. */
   label?: string;
   /**
    * Marks naming the same group share series by name: series of the same
@@ -48,35 +61,114 @@ export interface LineOptions<S extends Schema> {
   id?: string;
 }
 
+/**
+ * Lines along x (positions on x, values on y), or along y with
+ * `orient: "y"` or a category y (positions on y, values on x), as bars lie
+ * along a category y. Category positions place points at their bands'
+ * centers, in band order.
+ */
+export type LineOptions<S extends Schema> = LineStyle<S> &
+  (
+    | {
+        orient?: "x";
+        /** Positions: a number or time field, or a category field. */
+        x: PositionField<S>;
+        /** One field, or several fields drawn as separate lines sharing x. */
+        y: NumericField<S> | readonly NumericField<S>[];
+        /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
+        axis?: "left" | "right";
+      }
+    | {
+        /** Positions along y, values along x: depth profiles, densities of y. */
+        orient: "y";
+        y: PositionField<S>;
+        /** One field, or several fields drawn as separate lines sharing y. */
+        x: NumericField<S> | readonly NumericField<S>[];
+        /** Lines along y use the left axis, as horizontal bars do. */
+        axis?: "left";
+      }
+    | {
+        orient?: "y";
+        /** A category y lays the line along y. */
+        y: CategoryField<S>;
+        x: NumericField<S> | readonly NumericField<S>[];
+        axis?: "left";
+      }
+  );
+
 export class LineMark implements Mark<Frozen<LineSpec>> {
   declare readonly [MARK]: true;
   readonly spec: Frozen<LineSpec>;
   readonly table: Table<Schema>;
-  readonly tooltip = "x";
+  readonly tooltip: "x" | "y";
+  readonly #roles: Roles;
   readonly #split: SeriesSplitter;
   readonly #indexes = new IndexUse();
+  /** With `dodge`, each series' slot in the bands, as last drawn. */
+  readonly #shares: BandShares | undefined;
 
   constructor(input: LineSpec, table: Table<Schema>) {
     this.spec = frozen(input);
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
-    const ys = typeof spec.y === "string" ? [spec.y] : spec.y;
-    requireField(table, spec.x, NUMERIC, "line x");
-    for (const y of ys) requireField(table, y, NUMERIC, "line y");
+    const roles = rolesOf(table, "line", spec.x, spec.y, spec.orient, spec.series);
+    this.#roles = roles;
+    this.tooltip = roles.orient;
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "line series");
-    this.#split = new SeriesSplitter(table, spec.x, ys, spec.series, spec.label);
+    if (spec.dodge) {
+      if (!roles.banded)
+        throw new Error(
+          `line dodge: places series side by side in the bands of a category ${roles.orient}; give a category field as ${roles.orient}, or drop dodge`,
+        );
+      if (spec.series === undefined)
+        throw new Error("line dodge: places series side by side; give a series field");
+      this.#shares = new BandShares();
+    }
+    // Lines over categories run in band order, which their series sort by.
+    const position = roles.banded ? undefined : roles.position;
+    this.#split = new SeriesSplitter(table, position, roles.values, spec.series, spec.label);
   }
 
   channelKind(axis: "x" | "y") {
-    const { spec, table } = this;
-    if (axis === "x") return table.kind(spec.x);
-    return valueKind(table, typeof spec.y === "string" ? [spec.y] : spec.y);
+    const { orient, position, values } = this.#roles;
+    return axis === orient ? this.table.kind(position) : valueKind(this.table, values);
   }
 
-  series(key: MarkKey, palette: Palette) {
-    const x = this.table.numbers(this.spec.x as never);
-    return buildSeries(this.table, this.#split.sources(), x, key, palette, this.spec.stroke);
+  bands(axis: "x" | "y") {
+    const { orient, position, banded } = this.#roles;
+    return banded && axis === orient ? categoryBands(this.table, position) : undefined;
+  }
+
+  series(key: MarkKey, palette: Palette, _hidden?: ReadonlySet<string>, bands: Bands = {}) {
+    const { table } = this;
+    const { orient, position, banded } = this.#roles;
+    // A category position is each row's band index on the chart's axis.
+    const positions = banded
+      ? categoryIndices(table, position, bands[orient]?.keys ?? [])
+      : table.numbers(position as never);
+    const series = buildSeries(
+      table,
+      this.#split.sources(),
+      positions,
+      key,
+      palette,
+      this.spec.stroke,
+    );
+    for (const s of series) {
+      if (banded) {
+        s.rows = bandOrder(positions, s.rows, s.length);
+        s.length = s.rows?.length ?? table.length;
+        // Reordered rows no longer stream as their group does.
+        s.stream = undefined;
+        s.sorted = true;
+      }
+      // Series hold the chart's x and y; lines along y are sorted, if at all, in y.
+      if (orient === "y") {
+        [s.x, s.y, s.ySorted, s.sorted] = [s.y, s.x, s.sorted, false];
+      }
+    }
+    return series;
   }
 
   xExtent(series: readonly Series[], log: boolean) {
@@ -84,6 +176,7 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
+    if (this.#roles.orient === "y") return unionExtent(series.map((s) => positionsExtent(s, log)));
     // Curves at the view's edges are measured where they are drawn.
     const curved = this.spec.curve === "monotone";
     return unionExtent(
@@ -96,6 +189,9 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
   geometry(series: readonly Series[], frame: Frame): LineGeometry[] {
     const out: LineGeometry[] = [];
     this.#indexes.drew(frame.owner, frame.scene, this.table);
+    // Parts of series (a highlight's selected rows) stand in their wholes' slots.
+    if (!series.every((s) => s.whole))
+      this.#shares?.split(series, frame, this.spec.legendGroup, true);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       out.push({
@@ -105,22 +201,50 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
         stroke: s.color,
         strokeWidth: this.spec.strokeWidth ?? frame.theme.lineWidth,
         dash: this.spec.dash,
-        path: tracePath(
-          s,
-          s.y,
-          frame,
-          "line",
-          this.spec.curve,
-          this.#indexes.index(
-            this.table,
-            s,
-            frame.owner,
-            frame.x.type !== "log" && frame.y.type !== "log",
-          ),
-        ),
+        path: this.#trace(s, frame),
       });
     }
     return out;
+  }
+
+  /**
+   * A series' polyline: traced along its positions' axis, as lines along x
+   * are, on a frame with x and y swapped for lines along y.
+   */
+  #trace(s: Series, frame: Frame): Polyline {
+    const { orient, banded } = this.#roles;
+    const shift = this.#shares ? this.#shift(s, frame) : 0;
+    const view = traceFrame(frame, orient, shift);
+    // Rows over categories are in band order.
+    const sorted = banded || (orient === "x" ? s.sorted : (s.ySorted ?? false));
+    const traced = traceSeries(s, frame, orient, sorted);
+    const linear = view.x.type !== "log" && view.y.type !== "log";
+    const index = this.#indexes.index(this.table, traced, frame.owner, linear);
+    const path = tracePath(traced, traced.y, view, "line", this.spec.curve, index);
+    if (orient === "y") {
+      untranspose(path);
+      // Value transitions move lines along y only.
+      path.whole = false;
+    }
+    return path;
+  }
+
+  /** How far a dodged series stands from its bands' centers, in pixels. */
+  #shift(s: Series, frame: Frame): number {
+    const scale = this.#roles.orient === "x" ? frame.x : frame.y;
+    return this.#shares!.of(s, scale.bandwidth ?? 0).center;
+  }
+
+  /** Where a dodged series' points are drawn, from their bands' centers. */
+  displace(s: Series, _row: number, frame: Frame): readonly [number, number] {
+    if (!this.#shares) return STILL;
+    const shift = this.#shift(s, frame);
+    return this.#roles.orient === "x" ? [shift, 0] : [0, shift];
+  }
+
+  /** Dodged series stand within their bands: at most half a band off along x. */
+  maxDisplacement(_s: Series, frame: Frame): number {
+    return this.#shares && this.#roles.orient === "x" ? Math.abs(frame.x.bandwidth ?? 0) / 2 : 0;
   }
 }
 
@@ -130,18 +254,24 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
  * ```ts
  * line(metrics, { x: "time", y: ["p50", "p99"] })
  * line(metrics, { x: "time", y: "latency", series: "service" })
+ * line(sales, { x: "month", y: "revenue" }) // a category x, at its bands' centers
+ * line(casts, { x: "temperature", y: "depth", orient: "y" })
  * ```
  */
 export function line<S extends Schema>(
   table: Table<S>,
   options: LineOptions<S>,
 ): ChartMark<Frozen<LineSpec>> {
+  const field = (value: string | readonly string[]) =>
+    typeof value === "string" ? value : [...value];
   const spec: LineSpec = {
     type: "line",
-    x: options.x,
-    y: typeof options.y === "string" ? options.y : [...options.y],
+    x: field(options.x),
+    y: field(options.y),
     ...definedFields(options, [
+      "orient",
       "series",
+      "dodge",
       "stroke",
       "strokeWidth",
       "curve",

@@ -644,13 +644,34 @@ interface SeriesBase extends MarkBase {
  */
 export type Curve = "linear" | "step" | "step-before" | "step-after" | "monotone";
 
-/** Lines through (x, y). Several y fields or a series field give several lines. */
+/**
+ * Which axis a line or area runs along: the axis of its positions, which it
+ * is traced and read along ("x" or "y"). By default y when `y` is a
+ * category field and `x` holds values, as bars lie along a category y;
+ * otherwise x.
+ */
+export type Orient = "x" | "y";
+
+/**
+ * Lines through (x, y), along x, or along y with `orient: "y"` (or a
+ * category y). Several value fields (y, or x along y) or a series field
+ * give several lines. A category position places points at its bands'
+ * centers, in band order.
+ */
 export interface LineSpec extends SeriesBase {
   type: "line";
-  x: Field;
+  /** Positions along x, or with `orient: "y"` the values: one field or several. */
+  x: Field | readonly Field[];
+  /** Values along x (one field or several), or with `orient: "y"` the positions. */
   y: Field | readonly Field[];
+  orient?: Orient;
   /** Category field that splits rows into one line per value. */
   series?: Field;
+  /**
+   * On a category position axis, with `series`: the series side by side in
+   * each band, as grouped bars are, instead of at its center.
+   */
+  dodge?: boolean;
   /** Constant color; otherwise colors come from the palette per series. */
   stroke?: string;
   strokeWidth?: number;
@@ -663,7 +684,9 @@ export interface LineSpec extends SeriesBase {
 
 interface AreaStyle extends SeriesBase {
   type: "area";
-  x: Field;
+  orient?: Orient;
+  /** On a category position axis, with `series` and no stack: the series side by side in each band. */
+  dodge?: boolean;
   fill?: string;
   fillOpacity?: number;
   /** Outline the top edge. Default true for unstacked single areas, and with `stroke`. */
@@ -685,14 +708,18 @@ interface AreaStyle extends SeriesBase {
 export type StackGaps = "zero" | "interpolate";
 
 /**
- * Filled areas. With `y`, each series is filled down to zero (or stacked on
- * the previous series with `stack`: several y fields row by row, or the
- * series of a `series` field on the x positions any of them has). With
- * `y1` and `y2`, the band between two fields is filled.
+ * Filled areas, along x or (with `orient: "y"`, or a category y) along y.
+ * Each series' values are filled to zero (or stacked on the previous series
+ * with `stack`: several value fields row by row, or the series of a
+ * `series` field on the positions any of them has). With `y1` and `y2`
+ * (along y, `x1` and `x2`), the band between two fields is filled.
  */
 export type AreaSpec = AreaStyle &
   (
     | {
+        /** Positions along x, or with `orient: "y"` the values (one field or several). */
+        x: Field | readonly Field[];
+        /** Values filled to zero (one field or several), or with `orient: "y"` the positions. */
         y: Field | readonly Field[];
         series?: Field;
         stack?: boolean;
@@ -700,8 +727,35 @@ export type AreaSpec = AreaStyle &
         stackGaps?: StackGaps;
         y1?: never;
         y2?: never;
+        x1?: never;
+        x2?: never;
       }
-    | { y1: Field; y2: Field; y?: never; series?: never; stack?: never; stackGaps?: never }
+    | {
+        x: Field;
+        /** Lower edge of a band along x. */
+        y1: Field;
+        /** Upper edge of a band along x. */
+        y2: Field;
+        y?: never;
+        x1?: never;
+        x2?: never;
+        series?: never;
+        stack?: never;
+        stackGaps?: never;
+      }
+    | {
+        y: Field;
+        /** Left edge of a band along y. */
+        x1: Field;
+        /** Right edge of a band along y. */
+        x2: Field;
+        x?: never;
+        y1?: never;
+        y2?: never;
+        series?: never;
+        stack?: never;
+        stackGaps?: never;
+      }
   );
 
 /**
@@ -1331,10 +1385,16 @@ export type HistogramSpec = SeriesBase & {
   /** Category field: one histogram per value, overlaid, stacked, or dodged. */
   series?: Field;
   /**
-   * What bars measure: "count" (default), "probability" or "percent" of the
-   * series' counted values, or "density".
+   * A number field each row counts as, in place of 1; rows whose weight is
+   * missing or negative are not counted.
    */
-  normalize?: "count" | "probability" | "percent" | "density";
+  weight?: Field;
+  /**
+   * What bars measure: "count" (default), "frequency" (the count per unit
+   * of the binned axis), "probability" or "percent" of the series' counted
+   * values, or "density".
+   */
+  normalize?: "count" | "frequency" | "probability" | "percent" | "density";
   /**
    * Weights normalized series by their share of the finite values of every
    * series (in the panel, with facets), hidden ones included.
@@ -1342,12 +1402,17 @@ export type HistogramSpec = SeriesBase & {
   commonNorm?: boolean;
   /** Each bar measures its bin and the bins before it. */
   cumulative?: boolean;
+  /**
+   * How bins are drawn: "bars" (default), "step", an area whose top steps
+   * across each bin, or "poly", an area through the bins' centers.
+   */
+  element?: "bars" | "step" | "poly";
   fill?: string;
   fillOpacity?: number;
   label?: string;
 } & ({ x: Field; y?: never; axis?: "left" | "right" } | { y: Field; x?: never; axis?: "left" }) &
-  // Stacked, or with `dodge` side by side within each bin.
-  ({ stack?: boolean; dodge?: false } | { stack?: false; dodge?: boolean });
+  // Stacked (with "fill", as shares of each bin), or with `dodge` side by side within each bin.
+  ({ stack?: boolean | "fill"; dodge?: false } | { stack?: false; dodge?: boolean });
 
 /** Points at (x, y): scatter plots. */
 /** Points: `PointStyleSpec` with a radius of 2.5 pixels, or sizes from 2 to 12 pixels, by default. */
@@ -1395,6 +1460,12 @@ interface PointStyleSpec extends SeriesBase {
    * hash of each row's identity and `seed` (0 by default).
    */
   jitter?: { width: number; seed?: number };
+  /**
+   * With a category `x` or `y`, points packed across their band (or their
+   * dodged share of it) without overlap, in order of their values, as a
+   * beeswarm; points that do not fit stand at its edges.
+   */
+  swarm?: boolean;
   label?: string;
 }
 

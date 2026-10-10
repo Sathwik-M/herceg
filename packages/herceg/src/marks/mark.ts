@@ -740,26 +740,35 @@ interface Ordinal extends BandList {
 
 const ordinals = new WeakMap<Table, Map<string, { version: number; ordinal: Ordinal }>>();
 
+/** An ordinal of a table, cached under `key` per table version. */
+function cachedOrdinal(table: Table, key: string, compute: () => Ordinal): Ordinal {
+  let byField = ordinals.get(table);
+  if (!byField) {
+    byField = new Map();
+    ordinals.set(table, byField);
+  }
+  const cached = byField.get(key);
+  if (cached && cached.version === table.version) return cached.ordinal;
+  const result = compute();
+  byField.set(key, { version: table.version, ordinal: result });
+  return result;
+}
+
 /**
  * Bands for a field: category fields give their categories that occur in the
  * live rows (in dictionary order); number and time fields give their distinct
  * values in ascending order, labeled for display. Cached per table version.
  */
 function ordinal(table: Table, field: string, context: BandContext): Ordinal {
-  let byField = ordinals.get(table);
-  if (!byField) {
-    byField = new Map();
-    ordinals.set(table, byField);
-  }
-  const key = `${field}|${context.zone}|${context.locale}`;
-  const cached = byField.get(key);
-  if (cached && cached.version === table.version) return cached.ordinal;
-  const result =
-    table.kind(field) === "category"
-      ? categoryOrdinal(table, field)
-      : valueOrdinal(table, field, context);
-  byField.set(key, { version: table.version, ordinal: result });
-  return result;
+  if (table.kind(field) === "category") return categoryBandsOf(table, field);
+  return cachedOrdinal(table, `${field}|${context.zone}|${context.locale}`, () =>
+    valueOrdinal(table, field, context),
+  );
+}
+
+/** A category field's bands, which no zone or locale labels. */
+function categoryBandsOf(table: Table, field: string): Ordinal {
+  return cachedOrdinal(table, field, () => categoryOrdinal(table, field));
 }
 
 function categoryOrdinal(table: Table, field: string): Ordinal {
@@ -831,6 +840,14 @@ export function fieldBands(table: Table, field: string, context: BandContext): B
   return ordinal(table, field, context);
 }
 
+/**
+ * The bands a category field contributes to an axis, for marks that band
+ * categories only (lines and areas), which need no labels of numbers or times.
+ */
+export function categoryBands(table: Table, field: string): BandList {
+  return categoryBandsOf(table, field);
+}
+
 // Keyed weakly by the axis' key list (one per chart while its bands are
 // unchanged), so charts sharing a table do not evict each other's mappings.
 const indexCache = new WeakMap<
@@ -850,6 +867,21 @@ export function bandIndices(
   keys: readonly string[],
   context: BandContext,
 ): Int32Array {
+  return indicesOf(table, field, keys, () => ordinal(table, field, context));
+}
+
+/** `bandIndices` of a category field (see `categoryBands`). */
+export function categoryIndices(table: Table, field: string, keys: readonly string[]): Int32Array {
+  return indicesOf(table, field, keys, () => categoryBandsOf(table, field));
+}
+
+/** Each row's band index on an axis of `keys`, from the field's own bands (`own`). */
+function indicesOf(
+  table: Table,
+  field: string,
+  keys: readonly string[],
+  ownBands: () => Ordinal,
+): Int32Array {
   let byTable = indexCache.get(keys);
   if (!byTable) {
     byTable = new WeakMap();
@@ -862,7 +894,7 @@ export function bandIndices(
   }
   const cached = byField.get(field);
   if (cached && cached.version === table.version) return cached.indices;
-  const own = ordinal(table, field, context);
+  const own = ownBands();
   const position = new Map(keys.map((key, index) => [key, index]));
   const remap = Int32Array.from(own.keys, (key) => position.get(key) ?? -1);
   // When the field's bands lead the axis in their own order, as with one

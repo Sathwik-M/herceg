@@ -131,3 +131,38 @@ def test_horizontal_histograms_with_facets_and_subplots():
     subplots = hg.Chart(DATA, panels=["p", "q"]).histogram(y="v", bins=[0, 0.2, 0.5], panel="*")
     assert subplots.to_spec()[0]["marks"][0]["panel"] == "*"
     assert "<path" in subplots.to_svg()
+
+
+def test_histogram_weights_steps_fills_and_frequency_serialize_and_draw():
+    data = {"v": [0.1, 0.2, 0.3, 0.4], "w": [1.0, 2.0, 0.5, 4.0], "g": ["a", "b", "a", "b"]}
+    chart = hg.histogram(
+        data,
+        "v",
+        series="g",
+        weight="w",
+        normalize="frequency",
+        stack="fill",
+        element="step",
+        bins=[0, 0.25, 0.5],
+    )
+    (mark,) = chart.to_spec()[0]["marks"]
+    assert mark["weight"] == "w" and mark["normalize"] == "frequency"
+    assert mark["stack"] == "fill" and mark["element"] == "step"
+    assert "<path" in chart.to_svg()
+    assert hg.Chart(data).histogram("v", stack=True).to_spec()[0]["marks"][0]["stack"] is True
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"stack": "yes"}, 'histogram stack: expected True, False, or "fill"; received "yes"'),
+        ({"stack": "fill", "dodge": True}, "histogram dodge: dodge or stack, not both"),
+        ({"element": "line"}, 'histogram element: expected "bars", "step", or "poly"'),
+        ({"dodge": True, "element": "step"}, "histogram dodge: places bars side by side"),
+        ({"weight": "g"}, "histogram weight: column 'g' holds category values; expected number"),
+        ({"normalize": "share"}, 'or "density"; received "share"'),
+    ],
+)
+def test_histogram_new_option_errors(options, message):
+    with pytest.raises((ValueError, TypeError), match=message):
+        hg.Chart(DATA).histogram("v", series="g", **options)

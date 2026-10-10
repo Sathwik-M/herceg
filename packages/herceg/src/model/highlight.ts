@@ -25,6 +25,7 @@ import type { Table } from "../data/table.ts";
 import { lineDrawing } from "../draw/line.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { unmappable } from "../lod/m4.ts";
+import { STILL } from "../marks/dodge.ts";
 import { DIM, type Frame, type Mark, type MarkKey } from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
 import {
@@ -202,14 +203,16 @@ export class Highlighter {
     }
     const drawn = mark.geometry(series, frame, key);
     const byKey = new Map(series.map((s) => [s.key, s]));
+    // Lines and areas run along x, or along y (`orient`), which their runs follow.
+    const along = mark.tooltip === "y" ? "y" : "x";
     // Stacked areas draw their zeros at a log axis' low end.
     const low =
       type === "area" &&
       (mark.spec as { stack?: boolean }).stack === true &&
-      frame.y.type === "log";
+      frame[along === "x" ? "y" : "x"].type === "log";
     const found = new Map<Series, Runs>();
     const runs = (s: Series) =>
-      found.get(s) ?? found.set(s, runsOf(s, selected, frame, low)).get(s)!;
+      found.get(s) ?? found.set(s, runsOf(s, selected, frame, low, along)).get(s)!;
     const spansFor = new Map<Geometry, number[] | undefined>();
     // Series spans cannot say: their selected rows' values draw over them instead.
     const others: Series[] = [];
@@ -222,14 +225,16 @@ export class Highlighter {
           : (g as AreaGeometry).stroke
             ? (g as AreaGeometry).strokeWidth
             : 0;
-      const spans = s && spansOf(s, runs(s), frame, stroke / 2);
+      // Dodged series are drawn off their bands' centers.
+      const shift = s && shiftOf(mark, s, frame)[along === "x" ? 0 : 1];
+      const spans = s && spansOf(s, runs(s), frame, stroke / 2, shift!, along);
       spansFor.set(g, spans);
       if (!spans && s && !frame.hidden.has(s.key) && !others.includes(s)) others.push(s);
     }
     const lit = new Map<string, Geometry[]>();
     if (others.length > 0)
       for (const g of mark.geometry(
-        others.map((s) => masked(s, selected)),
+        others.map((s) => masked(s, selected, along === "y")),
         own(ON),
         key,
       ))
@@ -241,8 +246,8 @@ export class Highlighter {
       if (spans) {
         // Each pixel is painted once: dimmed outside the selected runs, as drawn inside them.
         for (const dimmed of dimLayer(g))
-          out.push(clipped(dimmed, complement(spans, frame), frame));
-        if (spans.length > 0) out.push(clipped(g, spans, frame));
+          out.push(clipped(dimmed, complement(spans, frame, along), frame, along));
+        if (spans.length > 0) out.push(clipped(g, spans, frame, along));
         continue;
       }
       // Dimmed, then its selected rows' values over it, part by part.
@@ -252,9 +257,14 @@ export class Highlighter {
         if (values[i]) out.push(values[i]!);
       }
     }
-    if (type === "line") out.push(...dots(series, runs, frame));
+    if (type === "line") out.push(...dots(series, runs, frame, (s) => shiftOf(mark, s, frame)));
     return out;
   }
+}
+
+/** How far a mark draws a line's or area's series from its values' place (dodged series). */
+function shiftOf(mark: Mark, s: Series, frame: Frame): readonly [number, number] {
+  return mark.displace?.(s, 0, frame) ?? STILL;
 }
 
 /** A series' positions split by whether their rows are selected. */
@@ -399,19 +409,17 @@ function partStream(
 
 /**
  * A line's or area's series with the unselected rows' values (and a
- * stack's or band's bases) missing, so the mark breaks its runs there.
+ * stack's or band's bases) missing, so the mark breaks its runs there:
+ * values along y, or for marks along y, along x.
  */
-function masked(s: Series, selected: Uint8Array): Series {
-  return {
-    ...s,
-    key: s.key + ON,
-    y: mask(s.y, selected),
-    y0: s.y0 && mask(s.y0, selected),
-    // Indexes and streams follow the columns, not these values; edges draw a whole layer.
-    field: undefined,
-    stream: undefined,
-    edges: undefined,
-  };
+function masked(s: Series, selected: Uint8Array, alongY: boolean): Series {
+  // Indexes and streams follow the columns, not these values; edges draw a
+  // whole layer. A part keeps its whole, whose slot it stands in (dodge).
+  const part = { key: s.key + ON, field: undefined, stream: undefined, edges: undefined };
+  const whole = s.whole ?? s;
+  if (alongY)
+    return { ...s, ...part, x: mask(s.x, selected), x0: s.x0 && mask(s.x0, selected), whole };
+  return { ...s, ...part, y: mask(s.y, selected), y0: s.y0 && mask(s.y0, selected), whole };
 }
 
 function mask(values: Series["y"], selected: Uint8Array): Float64Array {
@@ -455,30 +463,42 @@ interface Runs {
  * its span. Only runs' ends and their neighbors are placed, so this costs
  * per run, beyond a scan of the membership.
  */
-function runsOf(s: Series, selected: Uint8Array, frame: Frame, low: boolean): Runs {
-  const { rows, y0, edges } = s;
-  const xOf = (k: number) => placeAt(s, "x", rowOf(s, k));
+function runsOf(
+  s: Series,
+  selected: Uint8Array,
+  frame: Frame,
+  low: boolean,
+  along: "x" | "y",
+): Runs {
+  const { rows, edges } = s;
+  const across = along === "x" ? "y" : "x";
+  const bases = along === "x" ? s.y0 : s.x0;
+  const sorted = along === "x" ? s.sorted : (s.ySorted ?? false);
+  const positionOf = (k: number) => placeAt(s, along, rowOf(s, k));
   let order: Uint32Array | undefined;
-  if (!s.sorted && edges) {
+  if (!sorted && edges) {
     const placed: number[] = [];
-    for (let k = 0; k < s.length; k++) if (Number.isFinite(xOf(k))) placed.push(k);
-    order = Uint32Array.from(placed).sort((a, b) => xOf(a) - xOf(b));
+    for (let k = 0; k < s.length; k++) if (Number.isFinite(positionOf(k))) placed.push(k);
+    order = Uint32Array.from(placed).sort((a, b) => positionOf(a) - positionOf(b));
   }
   const count = order ? order.length : s.length;
   const at = (i: number) => (order === undefined ? i : order[i]!);
-  const [xMap, yMap] = [frame.x.mapping(), frame.y.mapping()];
-  const { breaks } = frame.x;
-  const onX = frame.x.type === "band" ? (v: number) => v >= 0 : (v: number) => !unmappable(xMap, v);
-  const onY =
-    frame.y.type === "band"
+  const [alongMap, acrossMap] = [frame[along].mapping(), frame[across].mapping()];
+  // Only time x axes have breaks, which hide positions, or the values of marks along y.
+  const breaks = frame.x.breaks;
+  const onAlong =
+    frame[along].type === "band" ? (v: number) => v >= 0 : (v: number) => !unmappable(alongMap, v);
+  const onAcross =
+    frame[across].type === "band"
       ? (v: number) => v >= 0
-      : (v: number) => (low && v === 0) || !unmappable(yMap, v);
+      : (v: number) => (low && v === 0) || !unmappable(acrossMap, v);
   const drawn = (i: number) => {
     const row = rowOf(s, at(i));
-    const x = placeAt(s, "x", row);
-    if (!onX(x) || breaks?.hides(x)) return false;
+    const position = placeAt(s, along, row);
+    if (!onAlong(position) || breaks?.hides(placeAt(s, "x", row))) return false;
     return (
-      edges !== undefined || (onY(placeAt(s, "y", row)) && (y0 === undefined || onY(y0[row]!)))
+      edges !== undefined ||
+      (onAcross(placeAt(s, across, row)) && (bases === undefined || onAcross(bases[row]!)))
     );
   };
   const shown = (i: number, step: 1 | -1) => {
@@ -521,21 +541,34 @@ function runsOf(s: Series, selected: Uint8Array, frame: Frame, low: boolean): Ru
 }
 
 /**
- * The pixel spans along x of a series' runs of selected rows, in x order,
- * as pairs: from a run's first row to its last, ascending and merged where
- * they touch, at least a pixel wide. Where a run ends a path, its span
+ * The pixel spans along the axis a series runs along (`along`: x, or y for
+ * lines and areas along y) of its runs of selected rows, in order of
+ * position, as pairs: from a run's first row to its last, ascending and
+ * merged where they touch, at least a pixel wide, moved `shift` pixels
+ * where a dodged series is drawn. Where a run ends a path, its span
  * reaches `cap` pixels further, over the line's round cap. A layer of a
- * stack drawn through its edges (a series field's) fills x positions other
+ * stack drawn through its edges (a series field's) fills positions other
  * layers have too: its runs reach the stack's ends past its own first and
  * last rows. Undefined where spans cannot say what is selected: a line
- * whose x does not ascend, or rows at one x drawn as a vertical run, all
- * selected or some at a run's end.
+ * whose positions do not ascend, or rows at one position drawn as a run
+ * across, all selected or some at a run's end.
  */
-function spansOf(s: Series, found: Runs, frame: Frame, cap: number): number[] | undefined {
+function spansOf(
+  s: Series,
+  found: Runs,
+  frame: Frame,
+  cap: number,
+  shift: number,
+  along: "x" | "y",
+): number[] | undefined {
   const edges = s.edges;
-  if (!s.sorted && !edges) return undefined;
+  const sorted = along === "x" ? s.sorted : (s.ySorted ?? false);
+  if (!sorted && !edges) return undefined;
   const { at, drawn, shown, count: n } = found;
-  const xAt = (i: number) => placeAt(s, "x", rowOf(s, at(i)));
+  const xAt = (i: number) => placeAt(s, along, rowOf(s, at(i)));
+  // Edges hold positions as the series does: bands read through a panel's places.
+  const places = s.places?.[along];
+  const placed = (value: number) => (places && value >= 0 ? places.at(value) : value);
   // Pixel pairs, in x order, which is pixel order or (reversed axes) its reverse.
   const runs: number[] = [];
   for (let r = 0; r < found.runs.length; r += 2) {
@@ -545,13 +578,13 @@ function spansOf(s: Series, found: Runs, frame: Frame, cap: number): number[] | 
     for (let j = start - 1; j >= 0 && xAt(j) === from; j--) if (drawn(j)) return undefined;
     for (let j = end + 1; j < n && xAt(j) === to; j++) if (drawn(j)) return undefined;
     if (edges && edges.x.length > 0) {
-      if (start === 0) from = Math.min(from, edges.x[0]!);
-      if (end === n - 1) to = Math.max(to, edges.x[edges.x.length - 1]!);
+      if (start === 0) from = Math.min(from, placed(edges.x[0]!));
+      if (end === n - 1) to = Math.max(to, placed(edges.x[edges.x.length - 1]!));
     }
     // A row alone is a dot.
     if (start === end && from === to) continue;
     if (from === to) return undefined;
-    let [a, b] = [frame.x.map(from), frame.x.map(to)];
+    let [a, b] = [frame[along].map(from) + shift, frame[along].map(to) + shift];
     // Ends of paths: rows with no row drawn before or after them, past rows breaks hide.
     const [before, after] = [shown(start - 1, -1), shown(end + 1, 1)];
     const sign = a <= b ? 1 : -1;
@@ -572,38 +605,56 @@ function spansOf(s: Series, found: Runs, frame: Frame, cap: number): number[] | 
   return spans;
 }
 
-/** The plot's x outside `spans` (ascending pairs), as pairs. */
-function complement(spans: readonly number[], frame: Frame): number[] {
+/** The plot's x (or y, `along`) outside `spans` (ascending pairs), as pairs. */
+function complement(spans: readonly number[], frame: Frame, along: "x" | "y"): number[] {
   const { plot } = frame;
+  const [start, size] = along === "x" ? [plot.x, plot.width] : [plot.y, plot.height];
   const out: number[] = [];
-  let from = plot.x - 1;
+  let from = start - 1;
   for (let i = 0; i < spans.length; i += 2) {
     if (spans[i]! > from) out.push(from, spans[i]!);
     from = Math.max(from, spans[i + 1]!);
   }
-  const end = plot.x + plot.width + 1;
+  const end = start + size + 1;
   if (end > from) out.push(from, end);
   return out;
 }
 
-/** A geometry drawn only over x spans (pairs of pixels), across the plot's height. */
-function clipped(geometry: Geometry, spans: readonly number[], frame: Frame): Geometry {
+/**
+ * A geometry drawn only over spans (pairs of pixels) along x, across the
+ * plot's height, or with `along` "y" along y, across its width.
+ */
+function clipped(
+  geometry: Geometry,
+  spans: readonly number[],
+  frame: Frame,
+  along: "x" | "y",
+): Geometry {
   const { plot } = frame;
   const draw = geometry.draw as Drawing<Geometry> & { canvas: DataCanvas };
   const id = `herceg-runs-${++clips}`;
+  // Each span's rectangle: x, y, width, height.
+  const rect = (i: number) =>
+    along === "x"
+      ? [spans[i]!, plot.y, spans[i + 1]! - spans[i]!, plot.height]
+      : [plot.x, spans[i]!, plot.width, spans[i + 1]! - spans[i]!];
   const drawing: Drawing<Geometry> = {
     size: draw.size,
     svg(g, context) {
       let rects = "";
-      for (let i = 0; i < spans.length; i += 2)
-        rects += `<rect x="${spans[i]}" y="${plot.y}" width="${spans[i + 1]! - spans[i]!}" height="${plot.height}"/>`;
+      for (let i = 0; i < spans.length; i += 2) {
+        const [x, y, width, height] = rect(i);
+        rects += `<rect x="${x}" y="${y}" width="${width}" height="${height}"/>`;
+      }
       return `<clipPath id="${id}">${rects}</clipPath><g clip-path="url(#${id})">${draw.svg(g, context)}</g>`;
     },
     canvas(context, g, options) {
       context.save();
       context.beginPath();
-      for (let i = 0; i < spans.length; i += 2)
-        context.rect(spans[i]!, plot.y, spans[i + 1]! - spans[i]!, plot.height);
+      for (let i = 0; i < spans.length; i += 2) {
+        const [x, y, width, height] = rect(i);
+        context.rect(x!, y!, width!, height!);
+      }
       context.clip();
       draw.canvas(context, g, options);
       context.restore();
@@ -614,17 +665,23 @@ function clipped(geometry: Geometry, spans: readonly number[], frame: Frame): Ge
 
 type DataCanvas = Extract<Drawing<Geometry>, { canvas: unknown }>["canvas"];
 
-/** Dots at runs of one row drawn, which no span shows. */
-function dots(series: readonly Series[], runs: (s: Series) => Runs, frame: Frame): PointGeometry[] {
+/** Dots at runs of one row drawn, which no span shows, where `shift` says each series is drawn. */
+function dots(
+  series: readonly Series[],
+  runs: (s: Series) => Runs,
+  frame: Frame,
+  shift: (s: Series) => readonly [number, number],
+): PointGeometry[] {
   const out: PointGeometry[] = [];
   for (const s of series) {
     if (frame.hidden.has(s.key)) continue;
     const coords: number[] = [];
     const found = runs(s);
+    const [dx, dy] = shift(s);
     for (let r = 0; r < found.runs.length; r += 2) {
       if (found.runs[r] !== found.runs[r + 1]) continue;
       const row = rowOf(s, found.at(found.runs[r]!));
-      coords.push(frame.x.map(placeAt(s, "x", row)), frame.y.map(placeAt(s, "y", row)));
+      coords.push(frame.x.map(placeAt(s, "x", row)) + dx, frame.y.map(placeAt(s, "y", row)) + dy);
     }
     if (coords.length === 0) continue;
     out.push({

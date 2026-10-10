@@ -103,7 +103,10 @@ def test_fields_are_checked_with_readable_errors():
         match="line y: column 'host' holds category values; expected number or time; "
         "give numbers, not strings",
     ):
-        hg.Chart(DATA).line(x="t", y="host")
+        hg.Chart(DATA).line(x="host", y="host")
+    # A category y lays a line along y, unless orient says x.
+    with pytest.raises(ValueError, match='line orient: "x" makes y the values'):
+        hg.Chart(DATA).line(x="t", y="host", orient="x")
     with pytest.raises(
         TypeError,
         match="line series: column 'p50' holds number values; expected category; "
@@ -1977,3 +1980,100 @@ def test_split_violin_exports_and_facets(horizontal, inner):
     assert ">first</text>" in svg
     assert ">second</text>" in svg
     assert chart.to_pdf().startswith(b"%PDF-")
+
+
+MONTHLY = {
+    "month": ["Jan", "Feb", "Mar", "Jan", "Feb", "Mar"],
+    "sales": [1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
+    "region": ["N", "N", "N", "S", "S", "S"],
+}
+PROFILE = {
+    "depth": [0.0, 10.0, 20.0],
+    "temperature": [20.0, 15.0, 8.0],
+    "salinity": [35.0, 35.2, 35.4],
+}
+
+
+def test_lines_and_areas_over_categories_and_along_y_serialize_and_draw():
+    over = (
+        hg.Chart(MONTHLY)
+        .bar("month", "sales", series="region")
+        .line("month", "sales", series="region", dodge=True)
+    )
+    marks = over.to_spec()[0]["marks"]
+    assert marks[1] == {
+        "type": "line",
+        "data": "data",
+        "x": "month",
+        "y": "sales",
+        "series": "region",
+        "dodge": True,
+    }
+    assert "<path" in over.to_svg()
+    along = hg.line(PROFILE, ["temperature", "salinity"], "depth", orient="y")
+    assert along.to_spec()[0]["marks"][0]["x"] == ["temperature", "salinity"]
+    assert along.to_spec()[0]["marks"][0]["orient"] == "y"
+    assert "<path" in along.to_svg()
+    band = hg.Chart(PROFILE).area(y="depth", x1="temperature", x2="salinity")
+    assert band.to_spec()[0]["marks"][0] == {
+        "type": "area",
+        "data": "data",
+        "y": "depth",
+        "x1": "temperature",
+        "x2": "salinity",
+    }
+    filled = hg.area(PROFILE, "temperature", "depth", orient="y")
+    assert "<path" in filled.to_svg() and "<path" in band.to_svg()
+    # A category y lays a line along y without orient.
+    assert hg.line(MONTHLY, "sales", "month").to_spec()[0]["marks"][0].get("orient") is None
+
+
+@pytest.mark.parametrize(
+    ("make", "message"),
+    [
+        (
+            lambda c: c.line("month", "sales", dodge=True),
+            "line dodge: places series side by side; give series",
+        ),
+        (
+            lambda c: c.line("sales", "sales", series="region", dodge=True),
+            "line dodge: places series side by side in the bands of a category x",
+        ),
+        (lambda c: c.line(["sales", "sales"], "sales"), 'give orient="y", or one x column'),
+        (lambda c: c.line("sales", "month", orient="z"), 'line orient: expected "x" or "y"'),
+        (lambda c: c.area(y="month", x1="sales"), "area x2: a band needs both x1 and x2"),
+        (
+            lambda c: c.area("sales", "month", x1="sales", x2="sales"),
+            "area x: x, or x1 and x2, not both",
+        ),
+        (
+            lambda c: c.area(y="month", x1="sales", x2="sales", orient="x"),
+            "area orient: a band between x1 and x2 runs along y",
+        ),
+        (
+            lambda c: c.area("month", "sales", series="region", stack=True, dodge=True),
+            "area dodge: a stack's layers stand on each other",
+        ),
+        (
+            lambda c: c.line("sales", "month", axis="right"),
+            'line axis: lines along y use the left axis, as horizontal bars do; drop axis="right"',
+        ),
+        (
+            lambda c: c.area(y="month", x1="sales", x2="sales", axis="right"),
+            "area axis: areas along y use the left axis",
+        ),
+    ],
+)
+def test_line_and_area_orientation_errors(make, message):
+    with pytest.raises((ValueError, TypeError), match=message):
+        make(hg.Chart(MONTHLY))
+
+
+def test_points_swarm_and_refuse_jitter_with_it():
+    chart = hg.scatter(MONTHLY, "month", "sales", swarm=True)
+    assert chart.to_spec()[0]["marks"][0]["swarm"] is True
+    assert "<circle" in chart.to_svg() or "<path" in chart.to_svg()
+    with pytest.raises(ValueError, match="point swarm: places points itself; drop jitter or swarm"):
+        hg.Chart(MONTHLY).point("month", "sales", swarm=True, jitter=0.5)
+    with pytest.raises(ValueError, match="point swarm: needs exactly one category column"):
+        hg.Chart(MONTHLY).point("sales", "sales", swarm=True)

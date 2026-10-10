@@ -511,9 +511,11 @@ const MARKS: MarkChecks = {
     required: ["x", "y"],
     checks: {
       ...placement,
-      x: field,
+      x: fields,
       y: fields,
+      orient: oneOf("x", "y"),
       series: field,
+      dodge: boolean,
       stroke: string,
       strokeWidth: width,
       dash: numbers,
@@ -523,14 +525,18 @@ const MARKS: MarkChecks = {
     },
   },
   area: {
-    required: ["x"],
+    required: [],
     checks: {
       ...placement,
-      x: field,
+      x: fields,
       y: fields,
       y1: field,
       y2: field,
+      x1: field,
+      x2: field,
+      orient: oneOf("x", "y"),
       series: field,
+      dodge: boolean,
       stack: boolean,
       stackGaps: oneOf("zero", "interpolate"),
       fill: string,
@@ -659,6 +665,7 @@ const MARKS: MarkChecks = {
           seed: integer,
         });
       },
+      swarm: boolean,
     },
   },
   histogram: {
@@ -677,11 +684,15 @@ const MARKS: MarkChecks = {
         });
       },
       series: field,
-      normalize: oneOf("count", "probability", "percent", "density"),
-      stack: boolean,
+      weight: field,
+      normalize: oneOf("count", "frequency", "probability", "percent", "density"),
+      stack: (v, path) => {
+        if (typeof v !== "boolean" && v !== "fill") fail(path, 'true, false, or "fill"', v);
+      },
       commonNorm: boolean,
       cumulative: boolean,
       dodge: boolean,
+      element: oneOf("bars", "step", "poly"),
       fill: string,
       fillOpacity: fraction,
       label: string,

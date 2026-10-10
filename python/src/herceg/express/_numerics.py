@@ -588,7 +588,7 @@ def bin_edges(
     return np.histogram_bin_edges(values, bins, binrange, weights)
 
 
-Normalize = Literal["count", "probability", "percent", "density"]
+Normalize = Literal["count", "frequency", "probability", "percent", "density"]
 
 
 def histogram(
@@ -611,8 +611,11 @@ def histogram(
         heights = heights / total * 100 if total else heights
     elif normalize == "density":
         heights = heights / total / widths if total else heights
+    elif normalize == "frequency":
+        heights = heights / widths
     if cumulative:
-        heights = np.cumsum(heights * widths if normalize == "density" else heights)
+        per_width = normalize in ("density", "frequency")
+        heights = np.cumsum(heights * widths if per_width else heights)
     return heights
 
 

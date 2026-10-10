@@ -19,6 +19,7 @@ One name per concept, used the same way in code and docs.
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
 | **Camera** | Where a 3D chart is seen from: an azimuth about the vertical axis, an elevation above the floor, a zoom, and orthographic or perspective projection (`camera`, a chart option for the first view; then chart state the pointer and keyboard change). |
 | **Series** | One drawn line, area, bar set, or point set within a mark: one y field, or one category of a `series` field. Legend entries and tooltip rows are series. |
+| **Orient** | The axis a line or area runs along (`orient`, "x" or "y"): the axis of its positions, which it is traced, reduced, and read along; its values are on the other. Bars lie along y when their positions are a category y, histograms when they bin `y`. |
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
@@ -1097,8 +1098,15 @@ scanning.
 
 Histograms keep their bins, not their values: whenever the table changes,
 one pass finds the extremes and another counts each series' values (by
-division for evenly spaced edges, binary search for calendar ones), and at
-most a thousand bars are drawn, whatever the data size. Series split by a
+division for evenly spaced edges, binary search for calendar ones; each
+value counting as its row's `weight`, when there is one), and at
+most a thousand bars are drawn, whatever the data size. Measures follow
+from the counts: frequencies divide by bin widths, shares by the series'
+total, and `stack: "fill"` divides each bin's stacked measures by the bin's
+total over the series shown. `element: "step"` and `"poly"` draw each series
+as one area (its top stepping across the bins, or through their centers,
+down to the series below), built from the bins' pixels rather than through
+level of detail, since there are so few. Series split by a
 category field also keep their row indexes (4 bytes per row), as long-format
 series do. Streaming recounts every value on each change. Split by facets, a
 histogram counts each panel's rows in one pass, by each row's series code
@@ -1123,14 +1131,35 @@ once per table version (4 bytes per row) and reused while the band list is
 unchanged. Heatmaps band number and time fields only when asked to
 (`xBanded`, `yBanded`), one band per distinct value; otherwise their cells
 lie along number and time axes (see Heatmap cells). Band labels are thinned to every k-th band when neighbors would
-overlap. A categorical axis cannot be shared with marks that need a numeric
-axis (lines, areas); the chart rejects that combination.
+overlap. A categorical axis cannot be shared with marks placing numbers
+along it; the chart rejects that combination.
 
-Points and error bars can spread their series across each band (`dodge`,
-with the arithmetic of grouped bars: the band split among the visible
-series in order) and points across their share of it (`jitter`, a hash of
-the row's identity, `rowOffset + row`, and a seed, so placement survives
-redraws and drops). The offset is in pixels, applied where the mark places
+Lines and areas over a category axis place each row at its band's center,
+as bars do, and draw a series' rows in band order: rows already ascending
+through the bands keep their own order, and others are sorted by band
+(rows of one band in theirs) into a permutation of 4 bytes per row, kept
+while the band indices and the series' rows are the same (the band list,
+and so the indices, change only with the data or the axis' categories).
+Rows without a category leave the series, so the series is sorted along
+its positions and binary search, level of detail, and min/max indexes
+serve it as they serve lines over numbers; band indices map to pixels
+linearly. Areas stacked by a series field stack on the union of band
+positions, from each layer's rows with a band in table order (the union
+stack's streaming needs them ascending), and are read in band order after.
+In panels with categories of their own, positions are mapped through the
+panel's places (which keep the chart's order) into a buffer for tracing.
+Lines and areas take only categories as bands (`categoryBands`,
+`categoryIndices`), so their code carries none of the labels of banded
+numbers and times.
+
+Points, error bars, lines, and areas can spread their series across each
+band (`dodge`, with the arithmetic of grouped bars: the band split among
+the visible series in order) and points across their share of it
+(`jitter`, a hash of the row's identity, `rowOffset + row`, and a seed, so
+placement survives redraws and drops). A dodged line or area is traced on
+a frame whose position scale is moved by its slot's offset, so level of
+detail buckets the pixels it draws, and highlighted runs are clipped where
+it is drawn. The offset is in pixels, applied where the mark places
 a row; series keep their band indices, so inspection along the axis still
 reports every series of the band. The mark records each series' slot (its
 place and the number of places, not pixels, since a repeated mark draws in
@@ -1140,11 +1169,69 @@ along x for the nearest-point search's pruning) read the same slots, so the
 pointer, tooltips, and the keyboard find points where they are drawn.
 Marks of a legend group take their slots from the group's roster, its
 visible names across the chart (`Frame.groups`), rather than from their own
-series: grouped bars, box plots, violins, dodged histograms, points, and
-error bars of one group then stand alike even when one lacks a name.
+series: grouped bars, box plots, violins, dodged histograms, points, error
+bars, lines, and areas of one group then stand alike even when one lacks a
+name.
+
+Points can instead pack across their band, or their slot, as a beeswarm
+(`swarm`, marks/swarm.ts). The rows of a mark's series are kept in order of
+band, then value (rebuilt only when their positions, rows, or values
+change), and each panel's scene lays them out again, since the layout is in
+pixels: each band's (and with `dodge`, each slot's) points in view (not
+those a time axis' break hides), ascending
+by value, each at the free offset nearest the center given the points
+placed before it. The placed points within reach along the value axis (a
+window that slides with the values) each block an open span of offsets;
+both ends of the spans are sorted natively and swept, and the run of spans
+covering the center gives the two nearest free places, the nearer one
+taken (ties alternate sides, so swarms grow evenly). A point with no free
+place inside the band stands at its nearer edge and does not join the
+window, which therefore holds no more points than fit in the band beside
+it, and a window past 512 points sends a point to the edge too: a band of
+n points takes O(n k log k) for k at most 512, and in practice the k that
+fit. Offsets are kept per panel (by its plot) with the inputs that made
+them (scales, slots, visibility), so inspection, picking, and highlighted
+parts read the layout geometry made: by row where the panel draws every
+row, otherwise in the order of the panel's rows (found by binary search),
+so facets hold as many offsets as rows between them. 10,000 points in one band lay out in
+about 2.2 ms and 100,000 in about 21 ms; a scene of 10,000 points over four
+bands in about 7 ms (Node, Apple M6, mostly overflowing swarms of normal
+values). `herceg.express`'s `swarmplot` runs a port of the same layout in
+Python to warn, as Seaborn does, when a category's points do not fit,
+cross-checked against a fixture of this one's output.
 Grouped bars, box plots, and violins record and report their slots the
 same way, so tooltips and the keyboard stand on the bar or shape a series
 draws rather than on its band's center.
+
+## Lines and areas along y
+
+A line or area with `orient: "y"` (or a category y with values on x) holds
+the chart's x and y in its series, as every reader of series expects: x its
+values (`values` is x), y its positions. `sorted` still means x ascends, so
+it is false, and `ySorted` says whether y does (worked out again for each
+facet panel's rows, as `sorted` is). The mark traces it with the
+code that traces along x, on a view of its series with positions as x and a
+frame with the scales and plot transposed, then swaps each traced
+polyline's coordinates (and curve controls) back: level of detail reduces
+it by pixel rows, monotone curves are monotone in y, and "step-after" holds
+a value up to the next position, as an ECDF of y needs. On a time x axis
+with breaks, the rows whose values a break hides are left out of the
+traced copy, and the line joins across them, as lines along x join across
+hidden positions; stacks and bands keep them, at the break's seam, so
+neighboring layers still share their edges. An area along y
+closes at x = 0 (or its stack's base, or a band's `x1`) through a lower
+edge of its own, since the scene's baseline is horizontal. Layers of a
+stack by a series field hold their edges in the series as layers along x
+do, `edges.x` their positions along the orient (y here), so highlights and
+the inspector, which pair a stack's layers by occurrence at a position,
+read them along y. Its `tooltip` is "y": the chart defaults to
+"nearest-y", which scans each series (horizontal bars and histograms are
+few, and so far no index serves y), and the keyboard steps through each
+series' rows in order. Such marks use the left y axis, as horizontal bars
+do, and span their positions along y whatever x shows, as marks along x
+span their positions whatever y shows; zooming along y does not rescale
+x. They show new values at once instead of animating them, since value
+transitions move points along y.
 
 ## Heatmap cells
 
@@ -3797,7 +3884,9 @@ mouse input, through Playwright's mouse.
   less), lines and curves between them can be visibly displaced.
 - Mark types: line, area, bar, point, heatmap, error bar, candlestick, histogram, the rule, region,
   and text annotations, and custom marks. Horizontal bars need a category y;
-  bars along a number or time y are not supported. Error bars stand at the
+  bars along a number or time y are not supported. Lines and areas along y
+  are read by scanning their series (no index along y), take no right
+  axis, and do not rescale x when y zooms. Error bars stand at the
   center of their position, not beside grouped bars; horizontal ones at y
   positions a log axis cannot place still count toward the x domain.
 - Custom marks are JavaScript only, cannot bind category fields other than

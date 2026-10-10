@@ -1,11 +1,12 @@
 import type { NumericArray } from "../data/column.ts";
-import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
+import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { areaDrawing } from "../draw/area.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { RangeIndex } from "../lod/minmax-index.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { AreaGeometry } from "../scene/scene.ts";
 import type { AreaSpec, Curve, Frozen, StackGaps } from "../spec/spec.ts";
+import { BandShares, STILL } from "./dodge.ts";
 import { definedFields } from "./line.ts";
 import {
   type BandContext,
@@ -13,6 +14,8 @@ import {
   buildSeries,
   CATEGORY,
   type ChartMark,
+  categoryBands,
+  categoryIndices,
   type Frame,
   frozen,
   type MARK,
@@ -26,14 +29,18 @@ import {
   valueKind,
 } from "./mark.ts";
 import {
-  type LayerEdges,
-  lowerPosition,
-  rowOf,
-  type Series,
-  xAt,
-  xExtent,
-  yExtent,
-} from "./series.ts";
+  bandOrder,
+  copiesPoints,
+  POSITION,
+  positionsExtent,
+  type Roles,
+  rolesOf,
+  traceFrame,
+  traceSeries,
+  untranspose,
+  withBands,
+} from "./orient.ts";
+import { type LayerEdges, lowerPosition, rowOf, type Series, xExtent, yExtent } from "./series.ts";
 import { RowStack } from "./stack.ts";
 import {
   curveLayers,
@@ -47,12 +54,15 @@ import {
 import { type StackLayer, UnionStack } from "./union-stack.ts";
 
 interface AreaCommon {
-  /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
-  axis?: "left" | "right";
   /** With the chart's `facet`, draw all rows in every panel instead of splitting them. */
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
+  /**
+   * On a category position axis, with `series` and no stack: each series'
+   * area through its share of the bands, as grouped bars stand.
+   */
+  dodge?: boolean;
   /** Constant fill color for every area of the mark. */
   fill?: string;
   fillOpacity?: number;
@@ -72,62 +82,137 @@ interface AreaCommon {
   id?: string;
 }
 
+/** Areas of values filled to zero or stacked: their series and stacking. */
+interface Filled<S extends Schema> {
+  /**
+   * Category field: one area per value. Stacked, the areas stack in the
+   * order of the legend on every position any of them has.
+   */
+  series?: CategoryField<S>;
+  stack?: boolean;
+  /**
+   * Stacked with a series field: what a series counts as at a position
+   * where it has no row, "zero" (the default) or "interpolate" (the
+   * straight line between its rows on either side).
+   */
+  stackGaps?: StackGaps;
+  y1?: never;
+  y2?: never;
+  x1?: never;
+  x2?: never;
+}
+
+/** A band between two fields: no series or stack. */
+interface Banded {
+  series?: never;
+  stack?: never;
+  stackGaps?: never;
+}
+
+/**
+ * Areas along x (positions on x, values on y), or along y with
+ * `orient: "y"`, a category y, or a band between `x1` and `x2`. Category
+ * positions place points at their bands' centers, in band order.
+ */
 export type AreaOptions<S extends Schema> = AreaCommon &
   (
-    | {
-        x: NumericField<S>;
+    | (Filled<S> & {
+        orient?: "x";
+        /** Positions: a number or time field, or a category field. */
+        x: PositionField<S>;
         /** Filled down to zero, or stacked with `stack: true`. */
         y: NumericField<S> | readonly NumericField<S>[];
-        /**
-         * Category field: one area per value. Stacked, the areas stack in
-         * the order of the legend on every x any of them has.
-         */
-        series?: CategoryField<S>;
-        stack?: boolean;
-        /**
-         * Stacked with a series field: what a series counts as at an x
-         * where it has no row, "zero" (the default) or "interpolate" (the
-         * straight line between its rows on either side).
-         */
-        stackGaps?: StackGaps;
-        y1?: never;
-        y2?: never;
-      }
-    | {
-        x: NumericField<S>;
+        /** The y axis the values are on: "left" (default) or "right", the chart's `yRight`. */
+        axis?: "left" | "right";
+      })
+    | (Banded & {
+        orient?: "x";
+        x: PositionField<S>;
+        axis?: "left" | "right";
         /** Lower edge of a band. */
         y1: NumericField<S>;
         /** Upper edge of a band. */
         y2: NumericField<S>;
         y?: never;
-        series?: never;
-        stack?: never;
-        stackGaps?: never;
-      }
+        x1?: never;
+        x2?: never;
+      })
+    | (Filled<S> & {
+        /** Positions along y, values along x, filled to zero along x. */
+        orient: "y";
+        y: PositionField<S>;
+        x: NumericField<S> | readonly NumericField<S>[];
+        /** Areas along y use the left axis, as horizontal bars do. */
+        axis?: "left";
+      })
+    | (Filled<S> & {
+        orient?: "y";
+        /** A category y lays the area along y. */
+        y: CategoryField<S>;
+        x: NumericField<S> | readonly NumericField<S>[];
+        axis?: "left";
+      })
+    | (Banded & {
+        orient?: "y";
+        y: PositionField<S>;
+        axis?: "left";
+        /** Left edge of a band along y. */
+        x1: NumericField<S>;
+        /** Right edge of a band along y. */
+        x2: NumericField<S>;
+        x?: never;
+        y1?: never;
+        y2?: never;
+      })
   );
 
 /**
- * Why an area spec has neither or both of its forms (`y`, or `y1` and
- * `y2`), or `stackGaps` without the stack of a series field it is for, if
- * it does.
+ * Why an area spec has none or more than one of its forms (`x` and `y`;
+ * `x`, `y1`, and `y2`; or `y`, `x1`, and `x2`), or options its form does
+ * not take (`stackGaps` without a stack of a series field, `dodge` without
+ * series, or stacked), if it does.
  */
 export function areaFormError(spec: {
+  x?: unknown;
   y?: unknown;
   y1?: unknown;
   y2?: unknown;
+  x1?: unknown;
+  x2?: unknown;
+  orient?: unknown;
   series?: unknown;
   stack?: unknown;
   stackGaps?: unknown;
+  dodge?: unknown;
 }): string | undefined {
-  if (spec.y1 === undefined && spec.y2 === undefined) {
-    if (spec.y === undefined) return "area: needs y, or y1 and y2";
-    if (spec.stackGaps !== undefined && !(spec.stack && spec.series !== undefined))
-      return "area stackGaps: for stacks by a series field; give stack and series, or drop it";
+  const along = spec.y1 !== undefined || spec.y2 !== undefined;
+  const across = spec.x1 !== undefined || spec.x2 !== undefined;
+  if (along && across) return "area: a band along x (y1, y2) or along y (x1, x2), not both";
+  if (along || across) {
+    const [low, high, other, orient] = along ? ["y1", "y2", "y", "x"] : ["x1", "x2", "x", "y"];
+    const edges = spec as Record<string, unknown>;
+    if (edges[low] === undefined || edges[high] === undefined)
+      return `area: a band needs both ${low} and ${high}`;
+    if (edges[orient] === undefined)
+      return `area ${orient}: a band between ${low} and ${high} runs along ${orient}; give ${orient === "x" ? "an" : "a"} ${orient} field`;
+    if (typeof edges[orient] !== "string")
+      return `area ${orient}: a band runs along one ${orient} field; give one field`;
+    if (edges[other] !== undefined || spec.series !== undefined || spec.stack || spec.stackGaps)
+      return `area: ${other} (with series or stack) or ${low} and ${high}, not both; drop one`;
+    if (spec.orient !== undefined && spec.orient !== orient)
+      return `area orient: a band between ${low} and ${high} runs along ${orient}; drop orient`;
+    if (spec.dodge)
+      return "area dodge: places the series of a series field side by side; a band has none";
     return undefined;
   }
-  if (spec.y1 === undefined || spec.y2 === undefined) return "area: a band needs both y1 and y2";
-  if (spec.y !== undefined || spec.series !== undefined || spec.stack || spec.stackGaps)
-    return "area: y (with series or stack) or y1 and y2, not both; drop one";
+  if (spec.x === undefined || spec.y === undefined)
+    return "area: needs x and y, or a band: y1 and y2 along x, or x1 and x2 along y";
+  if (spec.stackGaps !== undefined && !(spec.stack && spec.series !== undefined))
+    return "area stackGaps: for stacks by a series field; give stack and series, or drop it";
+  if (spec.dodge && spec.series === undefined)
+    return "area dodge: places series side by side; give a series field";
+  if (spec.dodge && spec.stack)
+    return "area dodge: a stack's layers stand on each other; drop dodge or stack";
   return undefined;
 }
 
@@ -135,11 +220,14 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
   declare readonly [MARK]: true;
   readonly spec: Frozen<AreaSpec>;
   readonly table: Table<Schema>;
+  readonly tooltip: "x" | "y";
+  readonly #roles: Roles;
+  /** Undefined for a band between two fields. */
   readonly #split: SeriesSplitter | undefined;
   readonly #stack = new RowStack("sum", { indexed: true });
   /** Indexes of each stacked layer's edges, by series key, for long stacks of fields. */
   #stackIndexes = new Map<string, { top: RangeIndex; bottom: RangeIndex | undefined }>();
-  /** Series of a series field stack on the x positions of all of them. */
+  /** Series of a series field stack on the positions of all of them. */
   readonly #union: UnionStack | undefined;
   /**
    * Each chart's stacks of its panels' layers, by the rows of its first
@@ -158,14 +246,15 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
     }
   >();
   readonly #indexes = new IndexUse();
-  readonly zero: "y" | undefined;
+  /** With `dodge`, each series' slot in the bands, as last drawn. */
+  readonly #shares: BandShares | undefined;
+  readonly zero: "x" | "y" | undefined;
 
   constructor(input: AreaSpec, table: Table<Schema>) {
     this.spec = frozen(input);
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
-    requireField(table, spec.x, NUMERIC, "area x");
     if (
       spec.strokeWidth !== undefined &&
       !(spec.strokeWidth >= 0 && Number.isFinite(spec.strokeWidth))
@@ -175,111 +264,223 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       );
     const problem = areaFormError(spec);
     if (problem) throw new Error(problem);
-    const band = spec.y === undefined;
-    if (band) {
-      requireField(table, spec.y1, NUMERIC, "area y1");
-      requireField(table, spec.y2, NUMERIC, "area y2");
+    const edges =
+      spec.y1 !== undefined
+        ? (["y1", "y2"] as const)
+        : spec.x1 !== undefined
+          ? (["x1", "x2"] as const)
+          : undefined;
+    if (edges) {
+      // A band's edges are values across the axis it runs along.
+      const orient = edges[0] === "y1" ? "x" : "y";
+      const position = (orient === "x" ? spec.x : spec.y) as string;
+      requireField(table, position, POSITION, `area ${orient}`);
+      for (const edge of edges) requireField(table, spec[edge]!, NUMERIC, `area ${edge}`);
+      this.#roles = {
+        orient,
+        position,
+        values: [spec[edges[0]]!, spec[edges[1]]!],
+        banded: table.kind(position) === "category",
+      };
     } else {
-      const ys = typeof spec.y === "string" ? [spec.y] : spec.y;
-      for (const y of ys) requireField(table, y, NUMERIC, "area y");
+      const roles = rolesOf(table, "area", spec.x!, spec.y!, spec.orient, spec.series);
+      this.#roles = roles;
       if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "area series");
       const gaps = spec.stackGaps;
       if (gaps !== undefined && gaps !== "zero" && gaps !== "interpolate")
         throw new RangeError(
           `area stackGaps: expected "zero" or "interpolate"; received ${JSON.stringify(gaps)}`,
         );
-      this.#split = new SeriesSplitter(table, spec.x, ys, spec.series, spec.label);
+      // Areas over categories run in band order, which their series sort by.
+      const position = roles.banded ? undefined : roles.position;
+      this.#split = new SeriesSplitter(table, position, roles.values, spec.series, spec.label);
       if (spec.stack && spec.series !== undefined) this.#union = new UnionStack();
     }
-    this.zero = band ? undefined : "y";
+    const { orient, banded } = this.#roles;
+    if (spec.dodge) {
+      if (!banded)
+        throw new Error(
+          `area dodge: places series side by side in the bands of a category ${orient}; give a category field as ${orient}, or drop dodge`,
+        );
+      this.#shares = new BandShares();
+    }
+    this.tooltip = orient;
+    this.zero = edges ? undefined : orient === "x" ? "y" : "x";
   }
 
-  readonly tooltip = "x";
-
   channelKind(axis: "x" | "y") {
-    const { spec, table } = this;
-    if (axis === "x") return table.kind(spec.x);
-    const ys = typeof spec.y === "string" ? [spec.y] : (spec.y ?? [spec.y1!, spec.y2!]);
-    return valueKind(table, ys);
+    const { orient, position, values } = this.#roles;
+    return axis === orient ? this.table.kind(position) : valueKind(this.table, values);
+  }
+
+  bands(axis: "x" | "y") {
+    const { orient, position, banded } = this.#roles;
+    return banded && axis === orient ? categoryBands(this.table, position) : undefined;
   }
 
   series(
     key: MarkKey,
     palette: Palette,
     hidden: ReadonlySet<string>,
-    _bands?: Bands,
+    bands: Bands = {},
     _context?: BandContext,
     split = false,
   ) {
     const { spec, table } = this;
+    const { orient, position, values, banded } = this.#roles;
+    // A category position is each row's band index on the chart's axis.
+    const positions = banded
+      ? categoryIndices(table, position, bands[orient]?.keys ?? [])
+      : table.numbers(position as never);
+    let series: Series[];
     if (!this.#split) {
-      const y2 = table.numbers(spec.y2 as never);
+      const [low, high] = values as [string, string];
+      const top = table.numbers(high as never);
       const id = seriesKey(key, "band");
-      const label = spec.label ?? `${spec.y1}–${spec.y2}`;
+      const label = spec.label ?? `${low}–${high}`;
       const color = palette(id, label, spec.fill);
-      const series: Series = {
-        key: id,
-        label,
-        color: spec.fill ?? color,
-        x: table.numbers(spec.x as never),
-        y: y2,
-        y0: table.numbers(spec.y1 as never),
-        values: y2,
-        range: true,
-        rows: undefined,
-        length: table.length,
-        sorted: table.isSorted(spec.x as never),
-      };
-      return [series];
+      series = [
+        {
+          key: id,
+          label,
+          color: spec.fill ?? color,
+          x: positions,
+          y: top,
+          y0: table.numbers(low as never),
+          values: top,
+          range: true,
+          rows: undefined,
+          length: table.length,
+          sorted: !banded && table.isSorted(position as never),
+        },
+      ];
+    } else {
+      series = buildSeries(table, this.#split.sources(), positions, key, palette, spec.fill);
     }
-    const x = table.numbers(spec.x as never);
-    const series = buildSeries(table, this.#split.sources(), x, key, palette, spec.fill);
+    for (const s of series) {
+      // Rows without a category are not drawn; stacks take the others in their order.
+      if (banded) {
+        s.rows = withBands(positions, s.rows, s.length);
+        s.length = s.rows?.length ?? table.length;
+        s.stream = undefined;
+      }
+      // Series hold the chart's x and y; areas along y are sorted, if at all, in y.
+      if (orient === "y")
+        [s.x, s.y, s.x0, s.y0, s.ySorted, s.sorted] = [s.y, s.x, s.y0, undefined, s.sorted, false];
+    }
+    if (this.#split) this.#stackSeries(series, positions, hidden, split);
+    // Areas over categories run through their rows in band order.
+    if (banded) {
+      for (const s of series) {
+        s.rows = bandOrder(positions, s.rows, s.length);
+        s.length = s.rows?.length ?? table.length;
+        if (orient === "x") s.sorted = true;
+        else s.ySorted = true;
+      }
+    }
+    return series;
+  }
+
+  /** Stacks the series of a series field, or of several fields row by row, as `stack` says. */
+  #stackSeries(
+    series: Series[],
+    positions: NumericArray,
+    hidden: ReadonlySet<string>,
+    split: boolean,
+  ): void {
     if (this.#union) {
       // Rows facets split into panels stack within their panel
       // (stackPanels), and an empty table has nothing to stack: the stack
       // of the whole table lets go of its buffers.
       if (split || series.length === 0) {
         this.#union.clear();
-        return series;
+        return;
       }
       const stack = this.#union.update(
-        table,
-        x,
+        this.table,
+        positions,
         series[0]!.values,
         layersOf(series, hidden),
-        spec.stackGaps ?? "zero",
+        this.spec.stackGaps ?? "zero",
       );
-      placeLayers(series, stack.tops, stack.bases, stack.edges);
-    } else if (spec.stack) {
+      this.#place(series, stack.tops, stack.bases, stack.edges);
+    } else if (this.spec.stack) {
       // Hidden layers drop out of the stack, so the layers above settle down.
       const shown = series.map((s) => !hidden.has(s.key));
       const layers = this.#stack.update(
-        table,
+        this.table,
         series.map((s, i) => (shown[i] ? s.values : undefined)),
         shown.map(Number).join(""),
       );
       this.#stackIndexes.clear();
       series.forEach((s, i) => {
-        s.y = layers.tops[i]!;
-        s.y0 = layers.bases[i];
+        this.#stand(s, layers.tops[i]!, layers.bases[i]);
         const indexes = layers.indexes?.[i];
         if (indexes) this.#stackIndexes.set(s.key, indexes);
       });
     }
-    return series;
+  }
+
+  /**
+   * Gives a series its stacked tops and bases, on the axis of its values;
+   * along y, its x no longer ascends as its values may have (facets work
+   * `sorted` out from them).
+   */
+  #stand(s: Series, tops: NumericArray, bases: NumericArray | undefined): void {
+    if (this.#roles.orient === "x") [s.y, s.y0] = [tops, bases];
+    else [s.x, s.x0, s.sorted] = [tops, bases, false];
+  }
+
+  /**
+   * Gives a series field's stacked layers their rows' tops and bases, and
+   * their edges; the bottom shown layer stands on zero.
+   */
+  #place(
+    series: readonly Series[],
+    tops: Float64Array,
+    bases: Float64Array,
+    edges: readonly (LayerEdges | undefined)[],
+  ): void {
+    let first = true;
+    series.forEach((s, i) => {
+      s.edges = edges[i];
+      this.#stand(s, tops, first && s.edges ? undefined : bases);
+      if (s.edges) first = false;
+    });
   }
 
   xExtent(series: readonly Series[], log: boolean) {
-    return unionExtent(series.map((s) => xExtent(s, log)));
+    if (this.#roles.orient === "x") return unionExtent(series.map((s) => xExtent(s, log)));
+    // Areas along y fill across x from their bases (zero, a stack's, or a
+    // band's low edge); a stack's layers reach as far as their edges.
+    return unionExtent(
+      series.flatMap((s) => {
+        const ends = s.edges ? [s.edges.top, s.edges.bottom] : [s.x, s.x0];
+        return ends.map((values) => values && valuesExtent(values, s.edges ? undefined : s, log));
+      }),
+    );
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
+    // Along y, positions span what they span, whatever x shows.
+    if (this.#roles.orient === "y")
+      return unionExtent(
+        series.map((s) =>
+          s.edges ? valuesExtent(s.edges.x, undefined, log) : positionsExtent(s, log),
+        ),
+      );
     const curved = this.spec.curve === "monotone";
     return unionExtent(
       series.flatMap((source) => {
         // A layer of a series field's stack extends as far as its edges, which it is drawn through.
         const s = drawnSeries(source);
-        const stacked = source.edges ? source.edges.indexes : this.#stackIndexes.get(s.key);
+        // A row stack's indexes are by row: of series reading every row in
+        // order, not rows reordered by band.
+        const stacked = source.edges
+          ? source.edges.indexes
+          : s.rows === undefined
+            ? this.#stackIndexes.get(s.key)
+            : undefined;
         const top = stacked?.top ?? this.#indexes.index(this.table, s);
         return [
           yExtent(s, x0, x1, s.y, log, top, curved, breaks),
@@ -308,7 +509,9 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       stacks.rows.length === rows.length &&
       stacks.rows.every((r, i) => r === rows[i]);
     if (!stacks || !kept) {
-      const x = table.numbers(spec.x as never);
+      // Positions as the series hold them: band indices on a category axis.
+      const first = panels.find((series) => series.length > 0)?.[0];
+      const x = first ? first[this.#roles.orient] : table.numbers(this.#roles.position as never);
       const y = table.numbers(this.#split!.yFields[0] as never);
       const tops = new Float64Array(table.length).fill(Number.NaN);
       const bases = new Float64Array(table.length).fill(Number.NaN);
@@ -320,31 +523,35 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       if (key) this.#panelStacks.set(key, stacks);
     }
     for (const [p, series] of panels.entries())
-      placeLayers(series, stacks.tops, stacks.bases, stacks.edges[p]!);
+      this.#place(series, stacks.tops, stacks.bases, stacks.edges[p]!);
   }
 
   /**
-   * Layers of a series field's stack pair their rows at one x by
+   * Layers of a series field's stack pair their rows at one position by
    * occurrence, in row order: beside the anchor's n-th row there, a layer
    * is read at its own n-th. One with fewer rows there holds its last, but
    * has no row of that occurrence to report, as where it has none at all.
    */
   alongside(s: Series, anchor: Series, position: number): number | undefined {
     if (!s.edges || s.edges.x !== anchor.edges?.x) return undefined;
-    const at = anchor.x[rowOf(anchor, position)]!;
+    const along = this.#roles.orient;
+    const sorted = (t: Series) => (along === "x" ? t.sorted : (t.ySorted ?? false));
+    const at = anchor[along][rowOf(anchor, position)]!;
+    const atOf = (t: Series, k: number) => t[along][rowOf(t, k)]!;
     let nth = 0;
-    if (anchor.sorted) nth = position - lowerPosition(anchor, at);
-    else for (let k = 0; k < position; k++) if (xAt(anchor, k) === at) nth++;
-    if (s.sorted) {
-      const k = lowerPosition(s, at) + nth;
-      return k < s.length && xAt(s, k) === at ? k : -1;
+    if (sorted(anchor)) nth = position - lowerPosition(anchor, at, along);
+    else for (let k = 0; k < position; k++) if (atOf(anchor, k) === at) nth++;
+    if (sorted(s)) {
+      const k = lowerPosition(s, at, along) + nth;
+      return k < s.length && atOf(s, k) === at ? k : -1;
     }
-    for (let k = 0; k < s.length; k++) if (xAt(s, k) === at && nth-- === 0) return k;
+    for (let k = 0; k < s.length; k++) if (atOf(s, k) === at && nth-- === 0) return k;
     return -1;
   }
 
   geometry(series: readonly Series[], frame: Frame): AreaGeometry[] {
     const { spec } = this;
+    const { orient } = this.#roles;
     const stacked = spec.stack === true;
     const band = this.#split === undefined;
     const fillOpacity = spec.fillOpacity ?? (stacked ? 0.85 : band ? 0.2 : 0.25);
@@ -353,53 +560,63 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       strokeWidth > 0 &&
       (spec.line ??
         (spec.stroke !== undefined || spec.strokeWidth !== undefined || (!stacked && !band)));
-    const log = frame.y.type === "log";
+    // Areas are traced along their positions, as areas along x: on a frame
+    // with x and y swapped for areas along y.
+    const view = traceFrame(frame, orient, 0);
+    const log = view.y.type === "log";
     // On a log axis, stacks stand on its low end, where their zeros are drawn (`atLow`).
-    const low = Math.min(frame.y.domain[0], frame.y.domain[1]);
-    const zero = log ? (stacked ? frame.y.map(low) : Number.NaN) : frame.y.map(0);
-    const bottom = frame.plot.y + frame.plot.height;
+    const low = Math.min(view.y.domain[0], view.y.domain[1]);
+    const zero = log ? (stacked ? view.y.map(low) : Number.NaN) : view.y.map(0);
+    // Without a zero, areas close at the plot's edge: its bottom, or the low end of x.
+    const edge = orient === "x" ? view.plot.y + view.plot.height : view.y.map(low);
     const baseline = Number.isFinite(zero)
-      ? Math.min(Math.max(zero, frame.plot.y), bottom)
-      : bottom;
+      ? Math.min(Math.max(zero, view.plot.y), view.plot.y + view.plot.height)
+      : edge;
     const out: AreaGeometry[] = [];
     const style = { baseline, fillOpacity, outline, strokeWidth };
     this.#indexes.drew(frame.owner, frame.scene, this.table);
+    // Parts of series (a highlight's selected rows) stand in their wholes' slots.
+    if (!series.every((s) => s.whole)) this.#shares?.split(series, frame, spec.legendGroup, true);
     const visible = series.filter((s) => !frame.hidden.has(s.key));
-    // Layers of a series field's stack are drawn through their edges.
-    const drawn = visible.map(drawnSeries);
+    // Layers of a series field's stack are drawn through their edges. Layers
+    // keep values a break hides along y, at its seam, so their edges stay shared.
+    const layered = band || stacked;
+    const drawn = visible.map((s) => this.#traced(s, frame, !layered));
     // Bands and stacks curve all their boundaries together, so layers share
     // edges and never overlap. When they cannot (log y, or too dense), every
     // layer is straight, so shared edges still match.
-    const layered = band || stacked;
     const rows =
       spec.curve === "monotone" && layered && drawn[0] && !log
-        ? curveRows(drawn[0], frame)
+        ? curveRows(drawn[0], view)
         : undefined;
     if (rows) {
       const layers = drawn.map((s) => ({ series: s, top: s.y, bottom: s.y0 }));
-      const edges = traceCurvedLayers(layers, frame, rows, stacked);
+      const edges = traceCurvedLayers(layers, view, rows, stacked);
       // Charts that animate changed values curve the layers between two scenes alike.
       const curve = frame.keyed ? curveLayers : undefined;
-      return drawn.map((s, i) => ({ ...this.#area(s, edges[i]!, style), curve }));
+      return drawn.map((s, i) => ({ ...this.#area(s, edges[i]!, style, frame), curve }));
     }
     const curve = spec.curve === "monotone" && layered ? "linear" : spec.curve;
-    const linear = frame.x.type !== "log" && !log;
+    const linear = view.x.type !== "log" && !log;
     for (const [i, s] of drawn.entries()) {
+      // A dodged series stands at its share of the bands.
+      const at = this.#shares ? traceFrame(frame, orient, this.#shift(visible[i]!, frame)) : view;
       // Areas filled to zero read their field's index, and long stacks their
-      // own; bands scan.
-      const edges = visible[i]!.edges;
-      const indexes = edges ? edges.indexes : this.#stackIndexes.get(s.key);
+      // own; bands scan, as do a panel's copies of its points, renumbered.
+      const { edges } = visible[i]!;
+      const copied = copiesPoints(visible[i]!, frame, orient, !layered);
+      const indexes = copied ? undefined : edges ? edges.indexes : this.#stackIndexes.get(s.key);
       const both = indexes?.bottom && { top: indexes.top, bottom: indexes.bottom };
       // On a log axis, a stack's edges at zero run along the plot's bottom.
-      const top = stacked && log ? atLow(s.y, low, frame, s.key, "log-top") : s.y;
-      const lower = s.y0 && stacked && log ? atLow(s.y0, low, frame, s.key, "log-bottom") : s.y0;
+      const top = stacked && log ? atLow(s.y, low, at, s.key, "log-top") : s.y;
+      const lower = s.y0 && stacked && log ? atLow(s.y0, low, at, s.key, "log-bottom") : s.y0;
       const traced = lower
-        ? traceBand(s, top, lower, frame, curve, both)
+        ? traceBand(s, top, lower, at, curve, both)
         : {
             upper: tracePath(
               s,
               top,
-              frame,
+              at,
               "upper",
               curve,
               indexes && linear
@@ -408,25 +625,83 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
             ),
             lower: null,
           };
-      out.push(this.#area(s, traced, style));
+      out.push(this.#area(s, traced, style, frame));
     }
     return out;
   }
 
+  /**
+   * A series as traced on `traceFrame`'s frame, positions as x: its rows,
+   * or for a layer of a series field's stack, its edges; along y, without
+   * the rows a break hides when `hides` says.
+   */
+  #traced(s: Series, frame: Frame, hides: boolean): Series {
+    const { orient, banded } = this.#roles;
+    if (s.edges) return traceSeries(edgeSeries(s, s.edges, orient), frame, orient, true, hides);
+    // Rows over categories are in band order.
+    const sorted = banded || (orient === "x" ? s.sorted : (s.ySorted ?? false));
+    return traceSeries(s, frame, orient, sorted, hides);
+  }
+
+  /** How far a dodged series stands from its bands' centers, in pixels. */
+  #shift(s: Series, frame: Frame): number {
+    const scale = this.#roles.orient === "x" ? frame.x : frame.y;
+    return this.#shares!.of(s, scale.bandwidth ?? 0).center;
+  }
+
+  /** Where a dodged series' points are drawn, from their bands' centers. */
+  displace(s: Series, _row: number, frame: Frame): readonly [number, number] {
+    if (!this.#shares) return STILL;
+    const shift = this.#shift(s, frame);
+    return this.#roles.orient === "x" ? [shift, 0] : [0, shift];
+  }
+
+  /** Dodged series stand within their bands: at most half a band off along x. */
+  maxDisplacement(_s: Series, frame: Frame): number {
+    return this.#shares && this.#roles.orient === "x" ? Math.abs(frame.x.bandwidth ?? 0) / 2 : 0;
+  }
+
+  /**
+   * An area's geometry from its traced edges, in the chart's coordinates:
+   * an area along y, traced with x and y swapped, swaps back, and closes
+   * along its baseline (across x) through a lower edge of its own.
+   */
   #area(
     s: Series,
     edges: { upper: Polyline; lower: Polyline | null },
     style: { baseline: number; fillOpacity: number; outline: boolean; strokeWidth: number },
+    frame: Frame,
   ): AreaGeometry {
     const { baseline, fillOpacity, outline, strokeWidth } = style;
+    let { upper, lower } = edges;
+    if (this.#roles.orient === "y") {
+      if (!lower) {
+        lower = frame.polyline(s.key, "baseline");
+        lower.reset();
+        for (let run = 0; run < upper.starts.length; run++) {
+          const start = upper.starts[run]!;
+          const end = upper.runEnd(run);
+          lower.break();
+          lower.push(upper.coords[start * 2]!, baseline);
+          lower.push(upper.coords[(end - 1) * 2]!, baseline);
+        }
+        untranspose(lower);
+      } else {
+        untranspose(lower);
+        lower.whole = false;
+      }
+      untranspose(upper);
+      // Value transitions move areas along y only.
+      upper.whole = false;
+    }
     return {
       kind: "area",
       draw: areaDrawing,
       key: s.key,
       fill: s.color,
       fillOpacity,
-      upper: edges.upper,
-      lower: edges.lower,
+      upper,
+      lower,
       baseline,
       stroke: outline ? (this.spec.stroke ?? s.color) : null,
       strokeWidth,
@@ -439,23 +714,14 @@ function layersOf(series: readonly Series[], hidden: ReadonlySet<string>): Stack
   return series.map((s) => ({ name: s.key, rows: s.rows!, shown: !hidden.has(s.key) }));
 }
 
-/**
- * Gives a series field's stacked layers their rows' tops and bases, and
- * their edges; the bottom shown layer stands on zero.
- */
-function placeLayers(
-  series: readonly Series[],
-  tops: Float64Array,
-  bases: Float64Array,
-  edges: readonly (LayerEdges | undefined)[],
-): void {
-  let first = true;
-  series.forEach((s, i) => {
-    s.edges = edges[i];
-    s.y = tops;
-    s.y0 = first && s.edges ? undefined : bases;
-    if (s.edges) first = false;
-  });
+/** [min, max] of values a scale can place (`log`: positive ones), at a series' rows or all of them. */
+function valuesExtent(
+  values: NumericArray,
+  s: Series | undefined,
+  log: boolean,
+): [number, number] | undefined {
+  const view = { x: values, rows: s?.rows, length: s?.length ?? values.length, sorted: false };
+  return xExtent(view as Series, log);
 }
 
 /**
@@ -463,20 +729,31 @@ function placeLayers(
  * its edges, as a whole sorted series of their own; else the series.
  */
 function drawnSeries(s: Series): Series {
-  const { edges } = s;
-  if (!edges) return s;
+  return s.edges ? edgeSeries(s, s.edges, "x") : s;
+}
+
+/**
+ * A layer of a series field's stack as a series of its edges (positions
+ * ascending, on the axis the area runs along), in the chart's coordinates,
+ * placed through the layer's band places.
+ */
+function edgeSeries(s: Series, edges: LayerEdges, orient: "x" | "y"): Series {
+  const along = orient === "x";
   return {
     key: s.key,
     label: s.label,
     color: s.color,
-    x: edges.x,
-    y: edges.top,
-    y0: edges.bottom,
+    x: along ? edges.x : edges.top,
+    y: along ? edges.top : edges.x,
+    y0: along ? edges.bottom : undefined,
+    x0: along ? undefined : edges.bottom,
     values: edges.top,
     range: false,
     rows: undefined,
     length: edges.x.length,
-    sorted: true,
+    sorted: along,
+    ySorted: !along,
+    places: s.places,
   };
 }
 
@@ -507,21 +784,25 @@ function atLow(
  * area(usage, { x: "time", y: ["user", "system"], stack: true })
  * area(requests, { x: "minute", y: "count", series: "status", stack: true })
  * area(latency, { x: "time", y1: "p25", y2: "p75" })
+ * area(profile, { x: "density", y: "depth", orient: "y" })
  * ```
  */
 export function area<S extends Schema>(
   table: Table<S>,
   options: AreaOptions<S>,
 ): ChartMark<Frozen<AreaSpec>> {
-  const { y } = options;
+  const { x, y } = options;
   // Every option is kept, so the mark refuses forms mixed by casts or JavaScript.
   const spec = {
     type: "area",
     ...definedFields(options, [
-      "x",
+      "orient",
       "y1",
       "y2",
+      "x1",
+      "x2",
       "series",
+      "dodge",
       "stack",
       "stackGaps",
       "fill",
@@ -537,6 +818,7 @@ export function area<S extends Schema>(
       "facet",
       "panel",
     ]),
+    ...(x !== undefined && { x: typeof x === "string" ? x : [...x] }),
     ...(y !== undefined && { y: typeof y === "string" ? y : [...y] }),
   } as unknown as AreaSpec;
   if (table.name !== undefined) spec.data = table.name;

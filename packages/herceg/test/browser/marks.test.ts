@@ -336,6 +336,63 @@ describe("new marks in the browser", () => {
     chart.destroy();
   });
 
+  it("reads a line over the bars' months at each band, and steps through them by key", async () => {
+    const sales = table({ month: ["Jan", "Feb", "Mar"], units: [3, 5, 4], goal: [4, 4, 4.5] });
+    const chart = createChart(host, {
+      marks: [bar(sales, { x: "month", y: "units" }), line(sales, { x: "month", y: "goal" })],
+    });
+    const x = modelOf(chart).xScale()!;
+    hover(chart.root, x.map(1) + 5, 100);
+    await frame();
+    expect(tooltipOf(chart.root).textContent).toBe("Febunits5goal4");
+    chart.root.focus();
+    chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await frame();
+    expect(chart.root.querySelector("[aria-live]")!.textContent).toContain("Feb");
+    chart.destroy();
+  });
+
+  it("follows the pointer along y over a line along y", async () => {
+    const casts = table({ depth: [0, 10, 20, 30], temperature: [20, 16, 11, 9] });
+    const chart = createChart(host, {
+      marks: [line(casts, { x: "temperature", y: "depth", orient: "y" })],
+    });
+    const y = modelOf(chart).yScale()!;
+    hover(chart.root, 300, y.map(20) + 2);
+    await frame();
+    expect(tooltipOf(chart.root).textContent).toBe("20temperature11");
+    chart.destroy();
+  });
+
+  it("lays a swarm out again when the chart resizes", async () => {
+    const values = table({
+      g: Array.from({ length: 80 }, () => "a"),
+      v: Float64Array.from({ length: 80 }, (_, i) => Math.floor(i / 4)),
+    });
+    const chart = createChart(host, { marks: [point(values, { x: "g", y: "v", swarm: true })] });
+    // The points a click finds stand where the swarm placed them.
+    const spread = () => {
+      const model = modelOf(chart);
+      const xs = model
+        .series()
+        .flatMap((s) =>
+          Array.from(
+            { length: s.length },
+            (_, k) => model.inspectPosition(s.key, k)!.points[0]!.px,
+          ),
+        );
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    const tall = spread();
+    host.style.height = "120px";
+    await frame();
+    await frame();
+    expect(modelOf(chart).height).toBe(120);
+    expect(spread()).toBeGreaterThan(tall);
+    chart.destroy();
+  });
+
   it("keeps horizontal bar charts out of shared x cursors", async () => {
     const other = document.createElement("div");
     other.style.cssText = "width:600px;height:300px";

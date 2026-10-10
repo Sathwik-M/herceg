@@ -253,6 +253,28 @@ point(tips, { x: "day", y: "tip", jitter: { width: 0.4 } });
 point(tips, { x: "day", y: "tip", jitter: { seed: 2 } });
 // @ts-expect-error jitter is an object, not a width
 point(tips, { x: "day", y: "tip", jitter: 0.4 });
+// Swarms pack points in their bands, in place of jitter.
+point(tips, { x: "day", y: "tip", series: "sex", dodge: true, swarm: true });
+// @ts-expect-error a swarm is on or off
+point(tips, { x: "day", y: "tip", swarm: 0.5 });
+
+// Lines and areas over categories (dodged like bars) and along y.
+line(tips, { x: "day", y: "tip", series: "sex", dodge: true, legendGroup: "sex" });
+line(tips, { x: "tip", y: "day" });
+line(tips, { x: ["low", "high"], y: "tip", orient: "y" });
+area(tips, { x: "tip", y: "low", orient: "y" });
+area(tips, { y: "tip", x1: "low", x2: "high" });
+area(tips, { x: "day", y: "tip", series: "sex", stack: true });
+// @ts-expect-error several value fields along x need a line along y
+line(tips, { x: ["low", "high"], y: "tip" });
+// @ts-expect-error along x, y holds numbers
+line(tips, { x: "tip", y: "day", orient: "x" });
+// @ts-expect-error along y, x holds numbers
+line(tips, { x: "day", y: "tip", orient: "y" });
+// @ts-expect-error a band along y has no y values
+area(tips, { y: "tip", x1: "low", x2: "high", x: "low" });
+// @ts-expect-error lines along y use the left axis
+line(tips, { x: "tip", y: "low", orient: "y", axis: "right" });
 // @ts-expect-error a legend group is a name
 line(tips, { x: "tip", y: "tip", legendGroup: 1 });
 // @ts-expect-error annotations have no series to group
@@ -277,6 +299,21 @@ histogram(readings, { y: "stage" });
 histogram(readings, { y: "cpu", axis: "right" });
 // @ts-expect-error dodge and stack exclude each other
 histogram(readings, { x: "at", stack: true, dodge: true });
+// Weights, filled stacks, steps, and frequencies.
+histogram(usage, {
+  x: "cpu",
+  series: "host",
+  weight: "cpu",
+  stack: "fill",
+  element: "step",
+  normalize: "frequency",
+});
+// @ts-expect-error weights are number fields
+histogram(usage, { x: "cpu", weight: "host" });
+// @ts-expect-error a filled stack is not dodged
+histogram(usage, { x: "cpu", series: "host", stack: "fill", dodge: true });
+// @ts-expect-error bins are drawn as bars, steps, or polygons
+histogram(usage, { x: "cpu", element: "line" });
 
 export const horizontalHistogramSpec: HistogramSpec = { type: "histogram", y: "v", dodge: true };
 // @ts-expect-error the spec also requires exactly one binned field

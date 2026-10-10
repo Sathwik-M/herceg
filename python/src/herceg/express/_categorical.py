@@ -1,10 +1,11 @@
-"""Distributions per category: stripplot, boxplot, and violinplot."""
+"""Distributions per category: stripplot, swarmplot, boxplot, and violinplot."""
 
 from __future__ import annotations
 
 import math
 import numbers
 import sys
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -12,6 +13,7 @@ import numpy as np
 
 from .._chart import Chart, HelperOptions, Jitter
 from .._data import Column
+from . import _swarm
 from ._common import (
     SERIES_GROUP,
     Source,
@@ -32,6 +34,7 @@ from ._common import (
     record,
     rows_table,
     seed_of,
+    sharing_fields,
     shown,
     values,
     variables_of,
@@ -100,6 +103,183 @@ def stripplot(
             "stripplot", sentence, {"values": readable(layout.table)}, used_seed, layout.dropped
         ),
     )
+
+
+def swarmplot(
+    data: Any,
+    *,
+    x: str,
+    y: str,
+    series: str | None = None,
+    order: Sequence[Any] | None = None,
+    series_order: Sequence[Any] | None = None,
+    orient: Orient | None = None,
+    dodge: bool = False,
+    radius: float = 2.5,
+    warn_thresh: float = 0.05,
+    palette: Sequence[str] | None = None,
+    **options: Unpack[HelperOptions],
+) -> Chart:
+    """A point per value in each category, packed across the category
+    without overlap in order of value, as ``Chart.point(swarm=True)`` packs
+    them (a beeswarm); with ``dodge``, each series in its share of the
+    category. Points that do not fit stand at the category's edges. The
+    browser lays the swarms out at the size it draws them; Python lays them
+    out at the chart's ``width`` and ``height`` (or 640 by 320 pixels) and,
+    as Seaborn does, warns when more than ``warn_thresh`` of a category's
+    points (0.05) cannot be placed. ``radius`` is the points' radius in
+    pixels.
+    """
+    if not (isinstance(radius, numbers.Real) and math.isfinite(radius) and radius > 0):
+        raise ValueError(
+            f"swarmplot radius: expected a positive number of pixels; received {shown(radius)}"
+        )
+    if isinstance(warn_thresh, bool) or not (
+        isinstance(warn_thresh, numbers.Real) and 0 <= warn_thresh <= 1
+    ):
+        raise ValueError(
+            f"swarmplot warn_thresh: expected a share from 0 to 1; received {shown(warn_thresh)}"
+        )
+    layout = _Categories(data, x, y, series, order, series_order, orient, options, "swarmplot")
+    spread = dodge and series is not None
+    sentence = (
+        f"Points show each {layout.value} for each {layout.category}{by(series)}, "
+        + ("each series side by side, " if spread else "")
+        + "packed without overlap in order of value"
+        + "."
+        + dropped_sentence(layout.dropped, layout.roles, layout.ordered)
+    )
+    chart = make_chart(
+        layout.table, options, sentence=sentence, palette=palette, x_label=x, y_label=y
+    )
+    chart.point(
+        *layout.xy,
+        series=series,
+        dodge=spread,
+        swarm=True,
+        radius=float(radius),
+        label=None if series else layout.value,
+        legend_group=SERIES_GROUP,
+    )
+    _warn_unplaced(layout, options, series, spread, float(radius), float(warn_thresh))
+    return record(
+        chart,
+        Statistics("swarmplot", sentence, {"values": readable(layout.table)}, None, layout.dropped),
+    )
+
+
+def _warn_unplaced(
+    layout: _Categories,
+    options: Mapping[str, Any],
+    series: str | None,
+    dodge: bool,
+    radius: float,
+    threshold: float,
+) -> None:
+    """Warns, as Seaborn does, of each swarm more than ``threshold`` of whose
+    points cannot be placed, laid out as the core would at the chart's size,
+    on the value axis its options make (``type``, ``domain``, ``nice``,
+    ``ticks``, ``zero``), in bands as many as its panel's band axis holds,
+    and with panels sharing axes as ``resolve_x`` and ``resolve_y`` say."""
+    facet_row, facet_column = options.get("facet_row"), options.get("facet_column")
+    panels = [name for name in (facet_row, facet_column) if name is not None]
+    sizes = {name: len(np.unique(layout.variables[name].codes[layout.rows])) for name in panels}
+    rows = sizes.get(facet_row, 1) if facet_row else 1
+    columns = sizes.get(facet_column, 1) if facet_column else 1
+    axis = options.get("x_axis" if layout.horizontal else "y_axis")
+
+    def setting(name: str) -> Any:
+        return axis.get(name) if isinstance(axis, Mapping) else getattr(axis, name, None)
+
+    log = setting("type") == "log"
+    # Log axes draw only positive values.
+    drawn = layout.rows[layout.values[layout.rows] > 0] if log else layout.rows
+    values = layout.values[drawn]
+    if len(values) == 0:
+        return
+    low, high = float(values.min()), float(values.max())
+    label = max((len(f"{v:.3g}") for v in (low, high)), default=1)
+    width, height = _swarm.plot_size(
+        float(options.get("width") or 640),
+        float(options.get("height") or 320),
+        legend=series is not None,
+        title=bool(options.get("title")),
+        rows=rows,
+        columns=columns,
+        label_width=7 * label,
+    )
+    along, across = (height, width) if layout.horizontal else (width, height)
+    names = [*panels, *([series] if dodge and series else [])]
+    variables = [layout.variables[name] for name in names] + [layout.categories]
+    keys: list[tuple[int, ...]] = []
+    groups: list[np.ndarray] = []
+    for key, members in group(variables, drawn):
+        keys.append(key)
+        groups.append(np.log10(layout.values[members]) if log else layout.values[members])
+
+    def sharing(resolve: str | None) -> list[int]:
+        """Where in a swarm's key the panel fields an axis is shared by are."""
+        return [panels.index(name) for name in sharing_fields(resolve, facet_row, facet_column)]
+
+    # Panels sharing a value axis share its domain.
+    value_shared = sharing(options.get("resolve_x" if layout.horizontal else "resolve_y"))
+    extents: dict[tuple[int, ...], tuple[float, float]] = {}
+    for key, part in zip(keys, groups, strict=True):
+        scope = tuple(key[i] for i in value_shared)
+        lo, hi = extents.get(scope, (math.inf, -math.inf))
+        extents[scope] = (min(lo, float(part.min())), max(hi, float(part.max())))
+    # A band axis holds the categories of the rows of the panels sharing it,
+    # drawn or not (log axes leave out values, not their categories).
+    band_fields = sharing_fields(
+        options.get("resolve_y" if layout.horizontal else "resolve_x"), facet_row, facet_column
+    )
+    band_shared = [panels.index(name) for name in band_fields]
+    held: dict[tuple[int, ...], set[int]] = {}
+    roster = [*(layout.variables[name] for name in band_fields), layout.categories]
+    for key, _ in group(roster, layout.rows):
+        held.setdefault(tuple(key[:-1]), set()).add(key[-1])
+    bands = [len(held[tuple(key[i] for i in band_shared)]) for key in keys]
+    domains = {
+        scope: _swarm.value_domain(
+            10**lo if log else lo,
+            10**hi if log else hi,
+            across=across,
+            radius=radius,
+            log=log,
+            fixed=setting("domain"),
+            rounded=setting("nice") is not False,
+            ticks=setting("ticks"),
+            zero=setting("zero") is True,
+        )
+        for scope, (lo, hi) in extents.items()
+    }
+    shares = _swarm.unplaced(
+        groups,
+        [domains[tuple(key[i] for i in value_shared)] for key in keys],
+        bands,
+        # Dodged series share each band: those of the chart's rows, drawn or not.
+        slots=len(np.unique(layout.variables[series].codes[layout.rows]))
+        if dodge and series
+        else 1,
+        radius=radius,
+        along=along,
+        across=across,
+    )
+    size = f"{float(options.get('width') or 640):g} by {float(options.get('height') or 320):g}"
+    for key, share in zip(keys, shares, strict=True):
+        if share <= threshold:
+            continue
+        where = ", ".join(f"{name} {variables[i].labels[key[i]]!r}" for i, name in enumerate(names))
+        place = f"{layout.category} {layout.categories.labels[key[-1]]!r}" + (
+            f" ({where})" if where else ""
+        )
+        warnings.warn(
+            f"swarmplot: {share:.1%} of the points of {place} cannot be placed at "
+            f"{size} pixels; you may want to decrease the size of the markers (radius) "
+            "or use stripplot",
+            UserWarning,
+            stacklevel=3,
+        )
 
 
 def _jitter(jitter: bool | float | Jitter, seed: int | None) -> Jitter | None:

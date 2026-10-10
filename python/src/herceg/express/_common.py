@@ -214,6 +214,22 @@ def facets(options: Mapping[str, Any], function: str) -> tuple[str | None, str |
     return options.get("facet_row"), options.get("facet_column")
 
 
+def sharing_fields(
+    resolve: str | None, facet_row: str | None, facet_column: str | None
+) -> list[str]:
+    """The facet fields whose values the panels sharing an axis have in
+    common, as its ``resolve_x`` or ``resolve_y`` says: none for a shared
+    axis (every panel shares it), both for panels' own, or a row's or a
+    column's field."""
+    if resolve == "independent":
+        return [name for name in (facet_row, facet_column) if name is not None]
+    if resolve == "rows" and facet_row is not None:
+        return [facet_row]
+    if resolve == "columns" and facet_column is not None:
+        return [facet_column]
+    return []
+
+
 def refuse_facets(options: Mapping[str, Any], function: str, reason: str) -> None:
     """Refuses facets and panels in a function whose chart cannot take
     them, for `reason`."""

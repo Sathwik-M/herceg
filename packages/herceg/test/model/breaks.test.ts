@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
+import type { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
@@ -17,6 +18,7 @@ import { timeBreaks } from "../../src/scale/breaks.ts";
 import type {
   AreaGeometry,
   LineGeometry,
+  PointGeometry,
   RectGeometry,
   SegmentGeometry,
 } from "../../src/scene/scene.ts";
@@ -99,6 +101,48 @@ describe("charts with time axis breaks", () => {
     expect(path.count).toBe(10);
     expect(path.starts).toEqual([0]);
     expect(lines.model.yScale()!.domain[1]).toBeLessThan(200);
+  });
+
+  it("leave out of lines along y and of swarms the times a break hides", () => {
+    // Friday, Saturday, and Monday at depths 0, 1, and 2: the line joins Friday to Monday.
+    const days = [utc(2025, 10, 10, 12), utc(2025, 10, 11, 12), utc(2025, 10, 13, 12)];
+    const casts = table({ t: time(days), depth: [0, 1, 2] });
+    const along = build({
+      marks: [line(casts, { x: "t", y: "depth", orient: "y" })],
+      x: { breaks: weekend() },
+    });
+    expect((along.scene.panels[0]!.marks[0] as LineGeometry).path.count).toBe(2);
+    // A hundred Saturday points a break hides (placed at its seam, just
+    // before Monday's point) crowd no swarm: Friday's and Monday's stay centered.
+    const crowd = Array.from({ length: 100 }, () => days[1]!);
+    const monday = utc(2025, 10, 13, 0, 10);
+    const swarm = table({
+      t: time([days[0]!, monday, ...crowd]),
+      g: Array.from({ length: 102 }, () => "a"),
+    });
+    const swarmed = build({
+      marks: [point(swarm, { x: "t", y: "g", swarm: true })],
+      x: { breaks: weekend(), domain: [utc(2025, 10, 10), utc(2025, 10, 14)] },
+    });
+    const drawn = swarmed.scene.panels[0]!.marks[0] as PointGeometry;
+    const center = swarmed.model.yScale()!.map(0);
+    expect(drawn.count).toBe(2);
+    expect([drawn.coords[1], drawn.coords[3]]).toEqual([center, center]);
+  });
+
+  it("keep the values a break hides in stacks along y, so layers share their edges", () => {
+    // a's top at depth 1 is inside the break, and so is b's base there.
+    const data = table({ depth: [0, 1, 2], a: time([2, 4, 8]), b: time([4, 4, 4]) });
+    for (const curve of ["linear", "monotone"] as const) {
+      const { scene } = build({
+        marks: [area(data, { x: ["a", "b"], y: "depth", stack: true, orient: "y", curve })],
+        x: { breaks: timeBreaks([{ from: 3, to: 5 }]), domain: [0, 20] },
+      });
+      const [lower, upper] = scene.panels[0]!.marks as AreaGeometry[];
+      const edge = (path: Polyline) => Array.from(path.coords.subarray(0, path.count * 2));
+      expect(lower!.upper.count).toBe(3);
+      expect(edge(upper!.lower!)).toEqual(edge(lower!.upper));
+    }
   });
 
   it("fit y to a segment across a break as drawn, straight in time shown", () => {

@@ -27,7 +27,7 @@ import {
   cursorRows,
   type Brushed as Selection,
 } from "../../src/model/selected-rows.ts";
-import type { PointGeometry, RectGeometry } from "../../src/scene/scene.ts";
+import type { AreaGeometry, PointGeometry, RectGeometry } from "../../src/scene/scene.ts";
 
 /** Tables as charts read them, whatever their fields. */
 const table = (columns: Record<string, ColumnInput>, options?: { maxRows?: number }): Table =>
@@ -63,6 +63,27 @@ function pixel(model: ChartModel, x: number, y: number): [number, number] {
 }
 
 describe("brushes as conditions", () => {
+  it("read lines and areas along y by their positions on y and values on x", () => {
+    const casts = table({
+      depth: [0, 10, 20],
+      temperature: [20, 18, 12],
+      salinity: [35, 36, 37],
+      lo: [19, 17, 11],
+      hi: [21, 19, 13],
+      zone: ["top", "mid", "deep"],
+    });
+    const lines = drawn({
+      marks: [line(casts, { x: ["temperature", "salinity"], y: "depth", orient: "y" })],
+    });
+    expect(rowsOf(brushedRows(lines, casts, yRange([5, 15]), null), casts)).toEqual([1]);
+    expect(rowsOf(brushedRows(lines, casts, xRange([11, 13]), null), casts)).toEqual([2]);
+    const band = drawn({ marks: [area(casts, { x1: "lo", x2: "hi", y: "depth" })] });
+    expect(rowsOf(brushedRows(band, casts, xRange([16.5, 17.5]), null), casts)).toEqual([1]);
+    // On a category y, the brushed bands' categories.
+    const zones = drawn({ marks: [line(casts, { x: "temperature", y: "zone" })] });
+    expect(rowsOf(brushedRows(zones, casts, yRange([1, 1]), null), casts)).toEqual([1]);
+  });
+
   const readings = table({
     t: time([0, 1000, 2000, 3000, 4000]),
     x: [1, 2, 3, 4, 5],
@@ -445,6 +466,42 @@ describe("lassos and clicks as rows", () => {
     expect(Array.from(last!.rows)).toEqual([4, 5, 6]);
   });
 
+  it("select the rows of the bin under a histogram polygon, where it is drawn", () => {
+    // Bins [0, 1) and [1, 2] count 10 and 1; the polygon runs between their centers.
+    const values = table({ v: [...Array.from({ length: 10 }, () => 0.5), 1.5] });
+    const model = drawn({
+      marks: [histogram(values, { x: "v", bins: [0, 1, 2], element: "poly" })],
+    });
+    const [panel] = model.panels();
+    const at = (x: number, y: number) =>
+      clickedRows(model, new Set([values]), panel!.x.map(x), panel!.y.map(y));
+    // Left of the first center is outside the polygon; under it past the
+    // shared edge, the second bin's row.
+    expect(at(0.25, 5)).toBeUndefined();
+    expect(Array.from(at(1.1, 4)!.rows)).toEqual([10]);
+    expect(Array.from(at(0.75, 4)!.rows)).toHaveLength(10);
+    // Steps on a reversed log axis stand where bars do: on the plot's bottom.
+    const tens = table({ v: Array.from({ length: 10 }, () => 0.5) });
+    const steps = drawn({
+      marks: [histogram(tens, { x: "v", bins: [0, 1], element: "step" })],
+      y: { type: "log", domain: [100, 1] },
+    });
+    const [sp] = steps.panels();
+    const step = (y: number) => clickedRows(steps, new Set([tens]), sp!.x.map(0.5), sp!.y.map(y));
+    expect(Array.from(step(50)!.rows)).toHaveLength(10);
+    expect(step(5)).toBeUndefined();
+    const [outline] = steps.scene(estimateText).panels[0]!.marks as AreaGeometry[];
+    expect(outline!.lower!.coords[1]).toBeCloseTo(sp!.y.map(100), 3);
+    // Polygons on a log binned axis are read where drawn, through bins' centers.
+    const logged = drawn({
+      marks: [histogram(values, { x: "v", bins: [0, 1, 2], element: "poly" })],
+      x: { type: "log", domain: [0.1, 2] },
+    });
+    const [lp] = logged.panels();
+    const [series] = logged.panelSeries(lp!.key);
+    expect(logged.inspectPosition(series!.key, 0)!.points[0]!.value).toBe(10);
+  });
+
   it("select a histogram series' rows in its bin, and a facet panel's own rows", () => {
     const values = table({ v: [1, 1, 1, 1], g: ["a", "b", "a", "b"], f: ["x", "x", "y", "y"] });
     const model = drawn({
@@ -688,6 +745,22 @@ describe("lassos and clicks as rows", () => {
     expect(Array.from(zero!.rows)).toEqual([1]);
     const lassoed = brushedRows(zeros, parts, { x: [0.5, 1.5], y: [0.1, 0.2], lasso: null }, null);
     expect(rowsOf(lassoed, parts)).toEqual([1]);
+    // Along y, a stack's zeros are drawn at its log x axis' low end, and so selected.
+    const along = drawn({
+      marks: [area(parts, { x: "a", y: "x", stack: true, orient: "y" })],
+      x: { type: "log", domain: [0.1, 10] },
+    });
+    const [ap] = along.panels();
+    const across = clickedRows(along, new Set([parts]), ap!.x.map(0.1), ap!.y.map(1));
+    expect(Array.from(across!.rows)).toEqual([1]);
+    const brushed = brushedRows(along, parts, { x: [0.1, 0.2], y: [0.5, 1.5], lasso: null }, null);
+    expect(rowsOf(brushed, parts)).toEqual([1]);
+    const [as] = along.panelSeries("");
+    expect(
+      Array.from(
+        cursorRows(along, new Set([parts]), { panel: "", key: as!.key, position: 1 })!.rows,
+      ),
+    ).toEqual([1]);
     const based = stacks(["b", "a"]);
     const [, upper] = based.panelSeries("");
     const onTop = (position: number) =>
