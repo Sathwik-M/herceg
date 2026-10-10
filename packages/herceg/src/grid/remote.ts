@@ -18,7 +18,7 @@
 // Answers to an earlier revision, to a request since replaced, or for a list
 // since collapsed are dropped; requests nothing needs any more are aborted.
 
-import { compileExpression, type Expression, type Fields } from "../data/expression.ts";
+import type { Fields } from "../data/expression.ts";
 import { type GroupKey, groupId } from "../data/groups.ts";
 import type { SortKey } from "../data/order.ts";
 import type { PositionField, Schema } from "../data/table.ts";
@@ -30,7 +30,6 @@ import {
   type GridDisplay,
   type GridFocus,
   type GridRef,
-  type GridSettings,
   nextOrder,
   type SelectionState,
   type SelectMode,
@@ -38,7 +37,6 @@ import {
 import { describeColumns, type GridColumn, type PlacedColumn, valueFormatter } from "./columns.ts";
 import {
   expressionFields,
-  type GridAggregate,
   type GridQuery,
   type GridQueryOf,
   type GridSchema,
@@ -47,202 +45,65 @@ import {
   validateGridQuery,
 } from "./query.ts";
 import {
-  type RemoteSelection,
+  aggregateKind,
+  at,
+  attach,
+  count,
+  detach,
+  findGroup,
+  groupFields,
+  groupValue,
+  indexOf,
+  isPrefix,
+  keyOf,
+  recount,
+  refOf,
+  start,
+} from "./remote-list.ts";
+import type {
+  GridQueryInput,
+  RemoteGridMessage,
+  RemoteGridModelOptions,
+  RemoteGridRow,
+  RemoteGridStatus,
+} from "./remote-model-types.ts";
+import { bytesOf, later, ownColumns } from "./remote-requests.ts";
+import {
+  matchingSelection,
   type RemoteSelectionStore,
   remoteSelectionStore,
-  selectionHas,
+  rowSelected,
+  selectionMeets,
+  selectionSets,
 } from "./remote-selection.ts";
+import type { Block, List, RemoteRef, RemoteSelection, Revision, Scope } from "./remote-types.ts";
 import {
   checkWindow,
   decodeGroupPath,
   encodeGroupPath,
   type GridSource,
   GridSourceError,
-  groupCondition,
   type LocateRequest,
   type LocateResult,
   type RowsRequest,
   type RowsWindow,
-  valueAt,
   windowFields,
 } from "./source.ts";
 
-/** A query as `setQuery` takes it: its version and source may be left out. */
-export type GridQueryInput<S extends Schema = Schema> = Omit<GridQueryOf<S>, "version" | "source"> &
-  Partial<Pick<GridQuery, "version" | "source">>;
+export type {
+  GridQueryInput,
+  RemoteGridMessage,
+  RemoteGridModelOptions,
+  RemoteGridRow,
+  RemoteGridStatus,
+} from "./remote-model-types.ts";
 
-export interface RemoteGridModelOptions<S extends Schema = Schema> extends GridSettings {
-  /** Where the rows are; the application owns it. */
-  source: GridSource<S>;
-  /** The query; every row in the source's order by default. */
-  query?: GridQueryInput<S>;
-  columns: readonly GridColumn<S>[];
-  /** Where the selection goes; a store of the grid's own when left out. */
-  selection?: RemoteSelectionStore;
-  /** The store's channel for the selection; "grid-rows" by default. */
-  channel?: string;
-  /** Rows a block holds: what one request asks for. 128 by default. */
-  blockSize?: number;
-  /** Blocks kept besides those the view wants; 16 by default. */
-  cachedBlocks?: number;
-  /** Bytes of blocks kept besides those in view; 8 MiB by default. */
-  cacheBytes?: number;
-  /** Requests in flight at once; 2 by default. */
-  maxRequests?: number;
-  /** Groups expanded at once; 256 by default. */
-  maxExpanded?: number;
-  /**
-   * Milliseconds a jump (a scrollbar dragged far) waits for the scrolling to
-   * settle before asking for rows, and never more than three times as long
-   * while it goes on; 50 by default, 0 to ask at once.
-   */
-  settle?: number;
-}
-
-/**
- * What a row of a remote grid shows: a record (with its key, when the source
- * names a key field), a group's header, or a placeholder for one still
- * loading or that failed to load.
- */
-export type RemoteGridRow =
-  | {
-      readonly kind: "row";
-      readonly ref: GridRef;
-      readonly version: number;
-      /** The record's key, or null when the source names no key field. */
-      readonly key: RowKey | null;
-      readonly level: number;
-      /** Its place among its group's rows (or the grid's), and how many there are (-1: unknown). */
-      readonly setIndex: number;
-      readonly setSize: number;
-    }
-  | {
-      readonly kind: "group";
-      readonly ref: GridRef;
-      readonly version: number;
-      /** Its key path: its value of each grouping field down to its level's. */
-      readonly key: GroupKey;
-      readonly id: string;
-      /** Rows the group holds, in its groups below too. */
-      readonly rows: number;
-      readonly expanded: boolean;
-      readonly level: number;
-      readonly setIndex: number;
-      readonly setSize: number;
-    }
-  | {
-      readonly kind: "placeholder";
-      readonly ref: GridRef;
-      readonly version: number;
-      readonly state: "loading" | "failed";
-      readonly level: number;
-      readonly setIndex: number;
-      readonly setSize: number;
-      readonly indent: number;
-    };
-
-/** What a remote grid is doing. */
-export interface RemoteGridStatus {
-  /** Requests in flight. */
-  readonly loading: number;
-  /** Whether the grid waits for the first answer to its query. */
-  readonly starting: boolean;
-  /** Blocks that failed, shown as failed rows until `retry`. */
-  readonly failed: number;
-  /** The last failure, until `retry` or a new query. */
-  readonly error: Error | null;
-  /** Rows of the query (groups of its first level), or null while the source has not said. */
-  readonly total: number | null;
-  /** Blocks held, and their bytes. */
-  readonly blocks: number;
-  readonly bytes: number;
-}
-
-/** What the model said about a command it refused, counted so a renderer announces each once. */
-export interface RemoteGridMessage {
-  readonly text: string;
-  readonly count: number;
-}
-
-/** One query's answer, as the model has read it. */
-interface Revision {
-  readonly number: number;
-  readonly query: GridQuery;
-  snapshot: string | null;
-  /** The first request is in flight: the others wait for the snapshot it starts. */
-  starting: boolean;
-  /** The source no longer has the snapshot: only a refresh reads more. */
-  expired: boolean;
-  readonly lists: Map<string, List>;
-  root: List;
-}
-
-/** A parent's rows or groups, as far as they are known. */
-interface List {
-  readonly revision: Revision;
-  readonly parent: GroupKey;
-  readonly id: string;
-  readonly depth: number;
-  /** Whether it holds rows (not groups). */
-  readonly leaf: boolean;
-  /** The group whose rows or groups these are: its list and place there. */
-  readonly holder: { readonly list: List; readonly ordinal: number } | null;
-  attached: boolean;
-  total: number | null;
-  /** How far it has been read while its total is not known. */
-  frontier: number;
-  /** Rows shown before anything is known: as many as the last query's. */
-  provisional: number;
-  readonly blocks: Map<number, Block>;
-  /** Lists of its expanded groups, by their place. */
-  children: List[];
-  /** Each child's group row index within the list, and the rows the children up to it show. */
-  heads: Float64Array;
-  prefix: Float64Array;
-  /** Rows the list shows, its children's too. */
-  span: number;
-}
-
-/**
- * A block of a list: `blockSize` rows from `index × blockSize`, which one
- * request asks for and the source answers with a window of rows.
- */
-interface Block {
-  readonly list: List;
-  readonly index: number;
-  state: "loading" | "loaded" | "failed" | "aborted";
-  controller: AbortController | null;
-  data: RowsWindow | null;
-  fields: Fields | null;
-  /** Each record's place in the block, by key. */
-  keys: Map<RowKey, number> | null;
-  error: Error | null;
-  version: number;
-  used: number;
-  bytes: number;
-  /** The condition of the selection, compiled for the block. */
-  test: { selection: RemoteSelection; at: (row: number) => boolean } | null;
-}
-
-type RemoteRef = GridRef & { readonly list: List; readonly ordinal: number };
-
-/** A selection the model made of a group (or of every row), followed to show its groups selected. */
-interface Scope {
-  readonly selection: RemoteSelection;
-  /** The group's key path; null for every row. */
-  readonly path: GroupKey | null;
-  /** The query's filter and grouping fields then, as JSON: the scope holds while they do. */
-  readonly filter: string;
-  readonly by: string;
-}
-
+/** A jump farther than this many blocks waits for scrolling to settle. */
+const JUMP = 2;
+/** Rows the DOM grid mounts past the view on each side. */
+const MOUNTED = 10;
 const LOADING = "Loading…";
 const FAILED = "Couldn't load rows";
-/** A jump farther than this many blocks from the last rows wanted waits for scrolling to settle. */
-const JUMP = 2;
-/** Rows the DOM grid mounts past the view on each side (its overscan). */
-const MOUNTED = 10;
-
 /**
  * The state of one grid over a remote source. Reads are synchronous over
  * what is loaded; rows not loaded are placeholders, and the model asks for
@@ -254,24 +115,23 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
   readonly selection: RemoteSelectionStore;
   readonly channel: string;
   readonly blockSize: number;
-  readonly #limits: {
-    blocks: number;
-    bytes: number;
-    requests: number;
-    expanded: number;
-    settle: number;
-  };
+  readonly #cachedBlocks: number;
+  readonly #cacheBytes: number;
+  readonly #maxRequests: number;
+  readonly #maxExpanded: number;
+  readonly #settle: number;
   #revision: Revision;
   #revisions = 0;
+  readonly #abortBlock = this.#abort.bind(this);
   /** Ids of groups expanded, kept across queries grouped alike. */
   readonly #expanded = new Set<string>();
   /** Fields each row block holds, and the revision they are of: within one they only grow. */
   #fields: string[] = [];
   #fieldsOf = -1;
-  /** Counts changes of what the rows show; the display is of `#seen`. */
+  /** Counts changes of what the rows show, compared with the last display. */
   #arrangement = 0;
-  #seen = { arrangement: -1, revision: -1 };
-  #display: GridDisplay | undefined;
+  #seenArrangement = -1;
+  #seenRevision = -1;
   #versions = 0;
   #ticks = 0;
   #loading = 0;
@@ -280,7 +140,10 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
   #planned = false;
   #disposed = false;
   /** The rows last wanted, for telling a jump from scrolling, and their blocks, which the cache keeps. */
-  #wanted = { first: 0, last: 0, focus: -2, down: true };
+  #wantedFirst = 0;
+  #wantedLast = 0;
+  #wantedFocus = -2;
+  #wantedDown = true;
   #working = new Set<string>();
   /** A jump waiting for scrolling to settle: when it began, its timer, and the first row in view. */
   #deferred: { since: number; timer: ReturnType<typeof setTimeout> | null; first: number } | null =
@@ -296,20 +159,16 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
   /** The scope the selection being published is to have, taken when the store says it changed. */
   #pending: (Omit<Scope, "selection"> & { readonly version: number }) | null = null;
   /** Groups' selected and loaded records, counted per selection and state of the blocks. */
-  #counted: {
-    selection: RemoteSelection;
-    arrangement: number;
-    counts: Map<string, { selected: number; seen: number }>;
-  } | null = null;
+  #countedSelection: RemoteSelection | null = null;
+  #countedArrangement = -1;
+  #counts: Map<string, { selected: number; seen: number }> | null = null;
   #sets = new WeakMap<
     RemoteSelection,
     { keys: Set<RowKey>; include: Set<RowKey>; except: Set<RowKey> }
   >();
-  #texts: {
-    layout: readonly PlacedColumn[];
-    query: GridQuery;
-    write: ((block: Block, row: number, path: GroupKey) => string)[];
-  } | null = null;
+  #textLayout: readonly PlacedColumn[] | null = null;
+  #textQuery: GridQuery | null = null;
+  #textWriters: ((block: Block, row: number, path: GroupKey) => string)[] | null = null;
   readonly #stop: () => void;
 
   constructor(options: RemoteGridModelOptions<S>) {
@@ -329,17 +188,20 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       return n;
     };
     this.blockSize = positive(options.blockSize, 128, "blockSize");
-    this.#limits = {
-      blocks: positive(options.cachedBlocks, 16, "cachedBlocks"),
-      bytes: positive(options.cacheBytes, 8 * 2 ** 20, "cacheBytes"),
-      requests: positive(options.maxRequests, 2, "maxRequests"),
-      expanded: positive(options.maxExpanded, 256, "maxExpanded"),
-      settle: options.settle ?? 50,
-    };
-    const settle = this.#limits.settle;
+    this.#cachedBlocks = positive(options.cachedBlocks, 16, "cachedBlocks");
+    this.#cacheBytes = positive(options.cacheBytes, 8 * 2 ** 20, "cacheBytes");
+    this.#maxRequests = positive(options.maxRequests, 2, "maxRequests");
+    this.#maxExpanded = positive(options.maxExpanded, 256, "maxExpanded");
+    this.#settle = options.settle ?? 50;
+    const settle = this.#settle;
     if (!(Number.isFinite(settle) && settle >= 0))
       throw new RangeError(`A remote grid's settle must be 0 or more milliseconds, not ${settle}`);
-    this.#revision = this.#start(this.#validate(options.query ?? {}), 0);
+    this.#revision = start(
+      ++this.#revisions,
+      this.#validate(options.query ?? {}),
+      0,
+      this.blockSize,
+    );
     this.setColumns(options.columns);
     // Rows wanted are asked for once whatever changed has settled. Bound, not
     // an arrow: an arrow's `this` would be shared with the store's listener
@@ -477,7 +339,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
         kind: "row",
         ref,
         version: block.version,
-        key: this.#keyOf(block, row),
+        key: keyOf(block, row, this.schema.key),
         level,
         setIndex: ordinal,
         setSize,
@@ -511,7 +373,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       if (!list.leaf) continue;
       for (const block of list.blocks.values()) {
         const at = block.keys?.get(key);
-        if (at !== undefined) return this.#indexOf(list, block.index * this.blockSize + at);
+        if (at !== undefined) return indexOf(list, block.index * this.blockSize + at);
       }
     }
     return -1;
@@ -588,20 +450,21 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     const revision = this.#revision;
     if (expanded) {
       // Groups expanded before they load count too: each will ask for its rows.
-      if (this.#expanded.size >= this.#limits.expanded) {
-        this.#say(`At most ${this.#limits.expanded} groups can be expanded at once`);
+      if (this.#expanded.size >= this.#maxExpanded) {
+        this.#say(`At most ${this.#maxExpanded} groups can be expanded at once`);
         return;
       }
       this.#expanded.add(id);
       const parent = revision.lists.get(groupId(key.slice(0, -1)));
       if (parent && !parent.leaf) {
-        const found = this.#findGroup(parent, id);
-        if (found) this.#attach(parent, found.ordinal, key, found.children);
+        const found = findGroup(parent, id, this.blockSize);
+        if (found)
+          attach(parent, found.ordinal, key, found.children, this.blockSize, this.#abortBlock);
       }
     } else {
       this.#expanded.delete(id);
       const list = revision.lists.get(id);
-      if (list) this.#detach(list);
+      if (list) detach(list, this.blockSize, this.#abortBlock);
     }
     this.#changed();
   }
@@ -609,7 +472,8 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
   /** Collapses every group. */
   collapseAll(): void {
     this.#expanded.clear();
-    for (const child of [...this.#revision.root.children]) this.#detach(child);
+    for (const child of [...this.#revision.root.children])
+      detach(child, this.blockSize, this.#abortBlock);
     this.#changed();
   }
 
@@ -649,7 +513,8 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     const block = list.blocks.get(Math.floor(ordinal / this.blockSize));
     if (block?.state !== "loaded") return "none";
     const row = ordinal - block.index * this.blockSize;
-    if (list.leaf) return this.#selected(selection, block, row) ? "all" : "none";
+    if (list.leaf)
+      return rowSelected(selection, this.#sets, this.schema, block, row) ? "all" : "none";
     const path = [...list.parent, groupValue(block, list.depth, row, this.#by())];
     const rows = (block.data as RowsWindow & { kind: "groups" }).rowCounts[row]!;
     return this.#groupState(selection, path, rows);
@@ -697,7 +562,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       this.#selectMatching(path);
       return;
     }
-    const key = this.#keyOf(block, row);
+    const key = keyOf(block, row, this.schema.key);
     if (key === null) {
       this.#say(`Rows of "${this.schema.source}" have no key and cannot be selected one by one`);
       return;
@@ -706,13 +571,13 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       this.rangeAnchor = ref;
       if (mode === "only" || !current) this.#publish({ kind: "keys", keys: [key] });
       else if (current.kind === "keys") {
-        const has = this.#setsOf(current).keys.has(key);
+        const has = selectionSets(this.#sets, current).keys.has(key);
         const keys = has ? current.keys.filter((other) => other !== key) : [...current.keys, key];
         this.#publish({ kind: "keys", keys });
       } else {
         // A row the condition selects is taken out; one it does not, added (or taken out of `include`).
-        const selected = this.#selected(current, block, row);
-        const meets = this.#meets(current, block, row);
+        const selected = rowSelected(current, this.#sets, this.schema, block, row);
+        const meets = selectionMeets(current, block, row);
         const include = current.include.filter((other) => other !== key);
         const except = current.except.filter((other) => other !== key);
         if (selected && meets) except.push(key);
@@ -737,7 +602,8 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     const keys: RowKey[] = [];
     for (let at = start; at <= end; at++) {
       const w = list.blocks.get(Math.floor(at / this.blockSize));
-      const k = w?.state === "loaded" ? this.#keyOf(w, at - w.index * this.blockSize) : null;
+      const k =
+        w?.state === "loaded" ? keyOf(w, at - w.index * this.blockSize, this.schema.key) : null;
       if (k === null) {
         this.#say("A range selects only rows loaded; scroll through it first");
         return;
@@ -746,7 +612,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     }
     if (mode === "range" || !current) this.#publish({ kind: "keys", keys });
     else if (current.kind === "keys") {
-      const known = this.#setsOf(current).keys;
+      const known = selectionSets(this.#sets, current).keys;
       this.#publish({
         kind: "keys",
         keys: [...current.keys, ...keys.filter((k) => !known.has(k))],
@@ -789,13 +655,16 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
 
   protected catchUp(previous: GridDisplay | undefined): GridDisplay {
     const revision = this.#revision;
-    const seen = this.#seen;
-    if (previous && seen.arrangement === this.#arrangement && seen.revision === revision.number)
+    if (
+      previous &&
+      this.#seenArrangement === this.#arrangement &&
+      this.#seenRevision === revision.number
+    )
       return previous;
-    const keep = seen.revision === revision.number;
-    this.#seen = { arrangement: this.#arrangement, revision: revision.number };
-    this.#display = { length: revision.root.span, keep };
-    return this.#display;
+    const keep = this.#seenRevision === revision.number;
+    this.#seenArrangement = this.#arrangement;
+    this.#seenRevision = revision.number;
+    return { length: revision.root.span, keep };
   }
 
   protected refAt(rowIndex: number): GridRef {
@@ -810,7 +679,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       if (!collapsed || !list.holder) return -1;
       ({ list, ordinal } = list.holder);
     }
-    return ordinal < count(list, this.blockSize) ? this.#indexOf(list, ordinal) : -1;
+    return ordinal < count(list, this.blockSize) ? indexOf(list, ordinal) : -1;
   }
 
   protected override moveInTree(focus: GridFocus, left: boolean): boolean {
@@ -822,193 +691,17 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     }
     const { holder } = this.#at(focus.rowIndex).list;
     if (!left || !holder?.list.attached) return false;
-    this.focusCell(this.#indexOf(holder.list, holder.ordinal), focus.column);
+    this.focusCell(indexOf(holder.list, holder.ordinal), focus.column);
     return true;
   }
 
-  // The answer's tree
-
-  /** A new revision of the query, showing `provisional` rows until the source says. */
-  #start(query: GridQuery, provisional: number): Revision {
-    const revision: Revision = {
-      number: ++this.#revisions,
-      query,
-      snapshot: null,
-      starting: false,
-      expired: false,
-      lists: new Map(),
-      root: undefined as unknown as List,
-    };
-    revision.root = this.#list(revision, [], null, null, provisional);
-    return revision;
-  }
-
-  #list(
-    revision: Revision,
-    parent: GroupKey,
-    holder: List["holder"],
-    total: number | null,
-    provisional = 0,
-  ): List {
-    const depth = parent.length;
-    const list: List = {
-      revision,
-      // A copy: a key path the caller changes later must not move the list.
-      parent: Object.freeze([...parent]),
-      id: groupId(parent),
-      depth,
-      leaf: depth === (revision.query.group?.by.length ?? 0),
-      holder,
-      attached: true,
-      total,
-      frontier: 0,
-      provisional,
-      blocks: new Map(),
-      children: [],
-      heads: new Float64Array(0),
-      prefix: new Float64Array(0),
-      span: 0,
-    };
-    list.span = count(list, this.blockSize);
-    revision.lists.set(list.id, list);
-    return list;
-  }
-
-  /** Shows the list of an expanded group at `ordinal` of `list`. */
-  #attach(list: List, ordinal: number, key: GroupKey, total: number | null): List {
-    // A group shown at another place (a source whose places moved) leaves it.
-    const elsewhere = list.revision.lists.get(groupId(key));
-    if (
-      elsewhere?.holder &&
-      (elsewhere.holder.list !== list || elsewhere.holder.ordinal !== ordinal)
-    )
-      this.#detach(elsewhere);
-    let existing = list.children.find(({ holder }) => holder!.ordinal === ordinal);
-    // Another group's list at that place is of where it was.
-    if (existing && existing.id !== groupId(key)) {
-      this.#detach(existing);
-      existing = undefined;
-    }
-    if (existing) {
-      if (existing.total === null && total !== null) {
-        existing.total = total;
-        this.#recount(existing);
-      }
-      return existing;
-    }
-    const child = this.#list(list.revision, key, { list, ordinal }, total);
-    const children = [...list.children, child].sort(
-      (a, b) => a.holder!.ordinal - b.holder!.ordinal,
-    );
-    list.children = children;
-    this.#recount(list);
-    return child;
-  }
-
-  /** Stops showing a list and those below it, aborting their requests. */
-  #detach(list: List) {
-    this.#drop(list);
-    const holder = list.holder;
-    if (holder?.list.attached) {
-      holder.list.children = holder.list.children.filter((child) => child !== list);
-      this.#recount(holder.list);
-    }
-  }
-
-  /** Forgets a list and those below it. */
-  #drop(list: List) {
-    for (const child of list.children) this.#drop(child);
-    for (const block of [...list.blocks.values()]) this.#abort(block);
-    list.blocks.clear();
-    list.attached = false;
-    list.revision.lists.delete(list.id);
-  }
-
-  /** Counts the rows a list shows again, and those of the lists above it. */
-  #recount(list: List) {
-    for (let at: List | undefined = list; at; at = at.holder?.list) {
-      const n = count(at, this.blockSize);
-      // Groups past the end (a total smaller than thought) are not shown.
-      const gone = at.children.filter(({ holder }) => holder!.ordinal >= n);
-      for (const child of gone) this.#drop(child);
-      if (gone.length > 0) at.children = at.children.filter((child) => child.attached);
-      const heads = new Float64Array(at.children.length);
-      const prefix = new Float64Array(at.children.length);
-      let shown = 0;
-      at.children.forEach((child, i) => {
-        heads[i] = child.holder!.ordinal + shown;
-        shown += child.span;
-        prefix[i] = shown;
-      });
-      at.heads = heads;
-      at.prefix = prefix;
-      at.span = n + shown;
-      if (!at.attached) break;
-    }
-  }
-
-  /** The list and place of the row at `rowIndex`. */
-  #at(rowIndex: number): { list: List; ordinal: number } {
+  #at(rowIndex: number) {
     const length = this.current().length;
-    if (!(Number.isInteger(rowIndex) && rowIndex >= 0 && rowIndex < length))
-      throw new RangeError(`Row ${rowIndex} is not among the grid's ${length} rows`);
-    let list = this.#revision.root;
-    let x = rowIndex;
-    for (;;) {
-      const { heads, prefix, children } = list;
-      // The last child whose group row is before x.
-      let [lo, hi] = [0, heads.length];
-      while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (heads[mid]! < x) lo = mid + 1;
-        else hi = mid;
-      }
-      const i = lo - 1;
-      if (i >= 0 && x <= heads[i]! + children[i]!.span) {
-        x -= heads[i]! + 1;
-        list = children[i]!;
-        continue;
-      }
-      return { list, ordinal: x - (i >= 0 ? prefix[i]! : 0) };
-    }
+    return at(this.#revision.root, rowIndex, length);
   }
 
-  /** The row index of place `ordinal` of an attached list. */
-  #indexOf(list: List, ordinal: number): number {
-    let index = 0;
-    for (let at: List | null = list, place = ordinal; at; ) {
-      const { children, prefix } = at;
-      // Children whose groups come before the place.
-      let [lo, hi] = [0, children.length];
-      while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (children[mid]!.holder!.ordinal < place) lo = mid + 1;
-        else hi = mid;
-      }
-      index += place + (lo > 0 ? prefix[lo - 1]! : 0);
-      const holder: List["holder"] = at.holder;
-      if (!holder) break;
-      index += 1;
-      at = holder.list;
-      place = holder.ordinal;
-    }
-    return index;
-  }
-
-  /** A loaded group of a list by id: its place and how many children it has. */
-  #findGroup(list: List, id: string): { ordinal: number; children: number } | null {
-    const by = this.#by();
-    for (const block of list.blocks.values()) {
-      if (block.state !== "loaded") continue;
-      const data = block.data as RowsWindow & { kind: "groups" };
-      for (let row = 0; row < data.length; row++)
-        if (groupId([...list.parent, groupValue(block, list.depth, row, by)]) === id)
-          return {
-            ordinal: block.index * this.blockSize + row,
-            children: data.childCounts[row]!,
-          };
-    }
-    return null;
+  #by(): readonly string[] {
+    return groupFields(this.#revision);
   }
 
   // Requests
@@ -1035,12 +728,12 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     // A new query is asked for at once, not after a jump that was settling.
     if (this.#deferred?.timer) clearTimeout(this.#deferred.timer);
     this.#deferred = null;
-    this.#wanted = { ...this.#wanted, first: -1 };
+    this.#wantedFirst = -1;
     const regrouped = JSON.stringify(old.query.group?.by) !== JSON.stringify(query.group?.by);
     if (regrouped) this.#expanded.clear();
     // As many rows as the last query showed, until the source says; none of another grouping's.
     const shown = regrouped ? 0 : (old.root.total ?? count(old.root, this.blockSize));
-    const revision = this.#start(query, shown);
+    const revision = start(++this.#revisions, query, shown, this.blockSize);
     this.#revision = revision;
     this.#restore =
       restore && this.source.locate
@@ -1048,7 +741,9 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
         : null;
     this.rangeAnchor = null;
     this.#error = null;
-    this.#texts = null;
+    this.#textLayout = null;
+    this.#textQuery = null;
+    this.#textWriters = null;
     this.#readFields();
     this.#arrangement++;
     // The old query's requests are aborted and its snapshot released once the
@@ -1064,8 +759,8 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
 
   /** Aborts a revision's requests and releases its snapshot. */
   #end(revision: Revision) {
-    for (const list of [...revision.lists.values()])
-      for (const block of [...list.blocks.values()]) this.#abort(block);
+    for (const list of revision.lists.values())
+      for (const block of list.blocks.values()) this.#abort(block);
     const { snapshot } = revision;
     if (snapshot !== null) later(() => this.source.release?.(snapshot));
   }
@@ -1109,7 +804,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     // Blocks read before lack the new fields.
     for (const list of this.#revision.lists.values()) {
       if (!list.leaf) continue;
-      for (const block of [...list.blocks.values()]) {
+      for (const block of list.blocks.values()) {
         this.#abort(block);
         list.blocks.delete(block.index);
       }
@@ -1162,24 +857,28 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     if (focus >= 0) add(wanted, focus, focus + 1);
     // A block ahead, in the direction of scrolling (rows behind were just
     // shown), which holds until the rows in view move; after a jump, below.
-    const previous = this.#wanted;
+    const previousFirst = this.#wantedFirst;
+    const previousFocus = this.#wantedFocus;
     // A new query has no rows wanted before to have jumped from.
     const far =
-      previous.first >= 0 &&
-      (first >= previous.last + JUMP * size || last <= previous.first - JUMP * size);
-    let down = previous.down;
+      previousFirst >= 0 &&
+      (first >= this.#wantedLast + JUMP * size || last <= previousFirst - JUMP * size);
+    let down = this.#wantedDown;
     if (far) down = true;
-    else if (first !== previous.first) down = first > previous.first;
+    else if (first !== previousFirst) down = first > previousFirst;
     if (down) add(wanted, last, last + size);
     else add(wanted, first - size, first);
     // Requests a little past those wanted go on, so scrolling back and forth reuses them.
     const kept = new Map(wanted);
     add(kept, first - 2 * size, last + 2 * size);
     for (const list of revision.lists.values())
-      for (const block of [...list.blocks.values()])
+      for (const block of list.blocks.values())
         if (block.state === "loading" && !kept.has(`${list.id}\u0000${block.index}`))
           this.#abort(block);
-    this.#wanted = { first, last, focus, down };
+    this.#wantedFirst = first;
+    this.#wantedLast = last;
+    this.#wantedFocus = focus;
+    this.#wantedDown = down;
     // The cache keeps those, and the blocks of rows the DOM grid mounts
     // around the view (ten more on each side).
     const working = new Map(wanted);
@@ -1190,10 +889,10 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     // but groups count the records loaded: listeners hear of it, last.
     const evicted = this.#evict();
     try {
-      if (this.#defer(far, first, focus !== previous.focus)) return;
+      if (this.#defer(far, first, focus !== previousFocus)) return;
       if (revision.expired || revision.starting) return;
       for (const { list, index } of wanted.values()) {
-        if (this.#loading >= this.#limits.requests) break;
+        if (this.#loading >= this.#maxRequests) break;
         if (list.blocks.has(index)) continue;
         // Past a known end there is nothing to ask for.
         if (list.total !== null && index * size >= list.total) continue;
@@ -1213,7 +912,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
    * times that from the jump, and never past a move of the focus.
    */
   #defer(far: boolean, first: number, focused: boolean): boolean {
-    const { settle } = this.#limits;
+    const settle = this.#settle;
     const deferred = this.#deferred;
     const now = Date.now();
     // Each wait ends by the deadline, three times `settle` from the jump.
@@ -1261,7 +960,6 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       data: null,
       fields: null,
       keys: null,
-      error: null,
       version: 0,
       used: ++this.#ticks,
       bytes: 0,
@@ -1349,7 +1047,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     if (data.length === 0) {
       // Past the end: the list is shorter than shown.
       list.blocks.delete(block.index);
-      this.#recount(list);
+      recount(list, this.blockSize, this.#abortBlock);
       this.#changed();
       return;
     }
@@ -1366,10 +1064,10 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       for (let row = 0; row < held.data.length; row++) {
         const key = [...list.parent, groupValue(block, list.depth, row, by)];
         if (this.#expanded.has(groupId(key)))
-          this.#attach(list, data.offset + row, key, counts[row]!);
+          attach(list, data.offset + row, key, counts[row]!, this.blockSize, this.#abortBlock);
       }
     }
-    this.#recount(list);
+    recount(list, this.blockSize, this.#abortBlock);
     this.#evict();
     this.#changed();
   }
@@ -1388,7 +1086,6 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
             "unavailable",
             error instanceof Error ? error.message : `The source failed: ${String(error)}`,
           );
-    block.error = failure;
     this.#error = failure;
     if (failure.code === "snapshot-expired") revision.expired = true;
     if (revision.snapshot === null) revision.starting = false;
@@ -1485,14 +1182,14 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       const block = shown?.blocks.get(Math.floor(address!.offset / this.blockSize));
       if (
         block?.state === "loaded" &&
-        this.#keyOf(block, address!.offset - block.index * this.blockSize) !== record
+        keyOf(block, address!.offset - block.index * this.blockSize, this.schema.key) !== record
       )
         return;
     }
     // Lists whose lengths the source has not said yet show at least as far as the record.
     const reach = (at: List, ordinal: number) => {
       at.provisional = Math.max(at.provisional, ordinal + 1);
-      this.#recount(at);
+      recount(at, this.blockSize, this.#abortBlock);
     };
     let list = revision.root;
     let target: { list: List; ordinal: number } | null = null;
@@ -1503,13 +1200,13 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
         target = { list, ordinal: offset };
         break;
       }
-      list = this.#attach(list, offset, path.slice(0, depth + 1), null);
+      list = attach(list, offset, path.slice(0, depth + 1), null, this.blockSize, this.#abortBlock);
     }
     target ??= { list, ordinal: address!.offset };
     reach(target.list, target.ordinal);
     // Listeners hear of it once, with the focus in place.
     this.#arrangement++;
-    const index = this.#indexOf(target.list, target.ordinal);
+    const index = indexOf(target.list, target.ordinal);
     if (index < this.rowCount && this.columnIndex(column) >= 0)
       super.focusCell(index, column, { reveal: false });
     else this.notify();
@@ -1523,8 +1220,8 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
    */
   /** Whether it dropped any. */
   #evict(): boolean {
-    const limits = this.#limits;
-    const { first, last } = this.#wanted;
+    const first = this.#wantedFirst;
+    const last = this.#wantedLast;
     const working = this.#working;
     const size = this.blockSize;
     // The cache's limits are of the blocks besides those the view wants.
@@ -1534,17 +1231,18 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     for (const list of this.#revision.lists.values())
       for (const block of list.blocks.values()) {
         if (block.state === "loading" || working.has(`${list.id}\u0000${block.index}`)) continue;
-        const start = this.#indexOf(list, block.index * size);
+        const start = indexOf(list, block.index * size);
         const distance = start >= last ? start - last : Math.max(0, first - start - size);
         kept.push({ block, distance });
         bytes += block.bytes;
       }
-    if (kept.length <= limits.blocks && bytes <= limits.bytes) return false;
+    if (kept.length <= this.#cachedBlocks && bytes <= this.#cacheBytes) return false;
     kept.sort((a, b) => b.distance - a.distance || a.block.used - b.block.used);
-    this.#counted = null;
+    this.#countedSelection = null;
+    this.#counts = null;
     let held = kept.length;
     for (const { block } of kept) {
-      if (held <= limits.blocks && bytes <= limits.bytes) break;
+      if (held <= this.#cachedBlocks && bytes <= this.#cacheBytes) break;
       block.list.blocks.delete(block.index);
       held--;
       bytes -= block.bytes;
@@ -1564,10 +1262,6 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
 
   // Reading blocks
 
-  #by(): readonly string[] {
-    return this.#revision.query.group?.by ?? [];
-  }
-
   /** Fields a list's blocks hold, and their kinds. */
   #kinds(list: List): Record<string, string> {
     const fields = this.schema.fields as Record<string, string>;
@@ -1583,19 +1277,12 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     return kinds;
   }
 
-  #keyOf(block: Block, row: number): RowKey | null {
-    const key = this.schema.key;
-    if (key === null) return null;
-    return valueAt(block.data!, key, row);
-  }
-
-  /** What each column says on a group's header: as a local grid's groups do (grid/grouped.ts). */
+  /** What each column says on a group's header, as a local grid's groups do. */
   #groupTexts(
     layout: readonly PlacedColumn[],
   ): ((block: Block, row: number, parent: GroupKey) => string)[] {
     const query = this.#revision.query;
-    const cached = this.#texts;
-    if (cached?.layout === layout && cached.query === query) return cached.write;
+    if (this.#textLayout === layout && this.#textQuery === query) return this.#textWriters!;
     const settings = this.settings;
     const group = query.group!;
     const by = group.by;
@@ -1637,7 +1324,9 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
         return (block, row) => format((block.data!.columns[aggregate.as] as Float64Array)[row]!);
       },
     );
-    this.#texts = { layout, query, write };
+    this.#textLayout = layout;
+    this.#textQuery = query;
+    this.#textWriters = write;
     return write;
   }
 
@@ -1649,52 +1338,14 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
    */
   #selectionChanged() {
     // Counts and conditions compiled for the selection replaced would keep it.
-    this.#counted = null;
+    this.#countedSelection = null;
+    this.#counts = null;
     for (const list of this.#revision.lists.values())
       for (const block of list.blocks.values()) block.test = null;
     this.#scope = this.#scopeNow();
     // Rows show a condition as selected only with the fields it reads.
     this.#readFields();
     this.notify();
-  }
-
-  #setsOf(selection: RemoteSelection) {
-    let sets = this.#sets.get(selection);
-    if (!sets) {
-      sets =
-        selection.kind === "keys"
-          ? { keys: new Set(selection.keys), include: new Set(), except: new Set() }
-          : {
-              keys: new Set(),
-              include: new Set(selection.include),
-              except: new Set(selection.except),
-            };
-      this.#sets.set(selection, sets);
-    }
-    return sets;
-  }
-
-  #selected(selection: RemoteSelection, block: Block, row: number): boolean {
-    return selectionHas(selection, this.#setsOf(selection), this.#keyOf(block, row), () =>
-      this.#meets(selection, block, row),
-    );
-  }
-
-  /** Whether a loaded record meets a selection's condition (never for a selection of keys). */
-  #meets(selection: RemoteSelection, block: Block, row: number): boolean {
-    if (selection.kind !== "matching") return false;
-    if (block.test?.selection !== selection) {
-      let at: (row: number) => boolean;
-      try {
-        const test = compileExpression(selection.where, block.fields!);
-        at = (r) => test.at(r) === true;
-      } catch {
-        // A condition over fields the grid does not read selects none of its rows.
-        at = () => false;
-      }
-      block.test = { selection, at };
-    }
-    return block.test.at(row);
   }
 
   /**
@@ -1715,29 +1366,31 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       const within = scope.path;
       if (within === null || isPrefix(within, path)) return selected < seen ? "some" : "all";
       // A group within this one was selected: all of it only if it is all there is.
-      if (isPrefix(path, within))
-        return this.#only(path, within) && selected >= seen ? "all" : "some";
+      if (isPrefix(path, within)) {
+        for (let depth = path.length; depth < within.length; depth++)
+          if (this.#revision.lists.get(groupId(within.slice(0, depth)))?.total !== 1) return "some";
+        return selected >= seen ? "all" : "some";
+      }
     }
     if (selected === 0) return "none";
     return selected >= rows && seen >= rows ? "all" : "some";
   }
 
-  /** Whether each group from `path` down to `within` holds only the next: `within` is all of `path`. */
-  #only(path: GroupKey, within: GroupKey): boolean {
-    for (let depth = path.length; depth < within.length; depth++)
-      if (this.#revision.lists.get(groupId(within.slice(0, depth)))?.total !== 1) return false;
-    return true;
+  #selectMatching(path: GroupKey | null) {
+    const filter = this.#revision.query.filter;
+    this.#publish(matchingSelection(filter, path ? this.#by() : [], path), path);
   }
 
-  /** How many records loaded within a group are selected, and how many are loaded. */
+  /** Selected and loaded record counts within a group. */
   #loadedUnder(selection: RemoteSelection, path: GroupKey): { selected: number; seen: number } {
-    let counted = this.#counted;
-    if (counted?.selection !== selection || counted.arrangement !== this.#arrangement) {
-      counted = { selection, arrangement: this.#arrangement, counts: new Map() };
-      this.#counted = counted;
+    if (this.#countedSelection !== selection || this.#countedArrangement !== this.#arrangement) {
+      this.#countedSelection = selection;
+      this.#countedArrangement = this.#arrangement;
+      this.#counts = new Map();
     }
+    const counts = this.#counts!;
     const id = groupId(path);
-    let count = counted.counts.get(id);
+    let count = counts.get(id);
     if (!count) {
       count = { selected: 0, seen: 0 };
       for (const list of this.#revision.lists.values()) {
@@ -1746,23 +1399,13 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
           if (block.state !== "loaded") continue;
           for (let row = 0; row < block.data!.length; row++) {
             count.seen++;
-            if (this.#selected(selection, block, row)) count.selected++;
+            if (rowSelected(selection, this.#sets, this.schema, block, row)) count.selected++;
           }
         }
       }
-      counted.counts.set(id, count);
+      counts.set(id, count);
     }
     return count;
-  }
-
-  #selectMatching(path: GroupKey | null) {
-    const filter = this.#revision.query.filter;
-    const tests: Expression[] = [];
-    if (filter !== undefined) tests.push(filter);
-    if (path) tests.push(groupCondition(this.#by(), path));
-    const where: Expression =
-      tests.length === 0 ? true : tests.length === 1 ? tests[0]! : ["and", ...tests];
-    this.#publish({ kind: "matching", where, include: [], except: [] }, path);
   }
 
   /**
@@ -1809,96 +1452,11 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
   }
 }
 
-/**
- * Runs a call into the source once the model's command is over: the
- * source's code (its abort listeners, `release`, `locate`, `rows`) may run
- * any command of the model, which must not find one half done.
- */
-function later(hook: () => void) {
-  queueMicrotask(hook);
-}
-
 /** A remote grid model; see `RemoteGridModel`. */
 export function createRemoteGridModel<S extends Schema>(
   options: RemoteGridModelOptions<S>,
 ): RemoteGridModel<S> {
   return new RemoteGridModel(options);
-}
-
-/** Rows a list shows itself: its total, or as far as it is read and a block more. */
-function count(list: List, size = 0): number {
-  if (list.total !== null) return list.total;
-  return Math.max(list.provisional, list.frontier + size);
-}
-
-function refOf(list: List, ordinal: number): RemoteRef {
-  return { scope: list.revision, id: `${list.id}${ordinal}`, list, ordinal };
-}
-
-/** The value of a group's own grouping field: a label, a number, or null for missing. */
-function groupValue(
-  block: Block,
-  depth: number,
-  row: number,
-  by: readonly string[],
-): string | number | null {
-  return valueAt(block.data!, by[depth]!, row);
-}
-
-function aggregateKind(aggregate: GridAggregate, fields: Record<string, string>): string {
-  const { op, field } = aggregate;
-  return op !== "count" && op !== "sum" && field !== undefined && fields[field] === "time"
-    ? "time"
-    : "number";
-}
-
-function isPrefix(prefix: GroupKey, path: GroupKey): boolean {
-  return prefix.length <= path.length && groupId(path.slice(0, prefix.length)) === groupId(prefix);
-}
-
-/**
- * A window holding only the fields expected, each in arrays of its own: a
- * column viewing a much larger buffer (a source handing out views of its
- * arrays) would keep that buffer alive, and fields not asked for are not kept.
- */
-function ownColumns(data: RowsWindow, kinds: Readonly<Record<string, string>>): RowsWindow {
-  const own = <A extends Float64Array | Int32Array>(array: A): A =>
-    array.buffer.byteLength > 65536 && array.buffer.byteLength > 4 * array.byteLength
-      ? (array.slice() as A)
-      : array;
-  const columns: Record<string, RowsWindow["columns"][string]> = Object.create(null);
-  for (const field of Object.keys(kinds)) {
-    const column = data.columns[field]!;
-    columns[field] =
-      column instanceof Float64Array ? own(column) : { ...column, codes: own(column.codes) };
-  }
-  if (data.kind === "groups")
-    return {
-      ...data,
-      columns,
-      rowCounts: own(data.rowCounts),
-      childCounts: own(data.childCounts),
-    };
-  return { ...data, columns };
-}
-
-/** Bytes a block keeps: its buffers, and its dictionaries' labels at two bytes a character. */
-function bytesOf(data: RowsWindow): number {
-  const buffers = new Set<ArrayBufferLike>();
-  let bytes = 0;
-  for (const column of Object.values(data.columns)) {
-    if (column instanceof Float64Array) buffers.add(column.buffer);
-    else {
-      buffers.add(column.codes.buffer);
-      for (const label of column.dictionary) bytes += 2 * label.length + 16;
-    }
-  }
-  if (data.kind === "groups") {
-    buffers.add(data.rowCounts.buffer);
-    buffers.add(data.childCounts.buffer);
-  }
-  for (const buffer of buffers) bytes += buffer.byteLength;
-  return bytes;
 }
 
 const followers = new FinalizationRegistry<() => void>((stop) => stop());
