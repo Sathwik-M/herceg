@@ -58,6 +58,11 @@ export type NumberField<S extends Schema> = string extends keyof S
   ? string
   : { [K in keyof S & string]: S[K] extends "number" ? K : never }[keyof S & string];
 
+/** A field of times. */
+export type TimeField<S extends Schema> = string extends keyof S
+  ? string
+  : { [K in keyof S & string]: S[K] extends "time" ? K : never }[keyof S & string];
+
 /** Category fields, with the same fallback for runtime field names. */
 export type CategoryField<S extends Schema> = string extends keyof S
   ? string

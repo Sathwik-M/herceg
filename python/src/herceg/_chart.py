@@ -2272,21 +2272,45 @@ class Chart:
 
     def heatmap(
         self,
-        x: str,
-        y: str,
-        value: str,
+        x: str | None = None,
+        y: str | None = None,
+        value: str | None = None,
         *,
+        date: str | None = None,
+        calendar: Literal["weeks", "months"] | None = None,
+        week_start: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None,
         data: Any = None,
         colors: str | Sequence[str] | None = None,
         color_domain: tuple[float, float] | None = None,
         color_midpoint: float | None = None,
         reduce: Literal["mean", "max", "min"] | None = None,
+        x_step: float | None = None,
+        y_step: float | None = None,
+        x_banded: bool = False,
+        y_banded: bool = False,
         label: str | None = None,
         repeat: bool = False,
         panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
-        """A grid of cells colored by ``value``; one column or row per distinct x or y.
+        """A grid of cells colored by ``value``: cells at ``x`` and ``y``, or the
+        days of a time column ``date`` laid out as a calendar.
+
+        Category columns give one column (or row) per category. Number and
+        time columns place a cell at each distinct value along a number or
+        time axis, which zooms and pans: each cell reaches halfway to the
+        values beside it, or with ``x_step`` / ``y_step`` (milliseconds for
+        times) is that wide around its value, never past halfway to a
+        closer neighbor, so values further apart leave gaps. ``x_banded`` /
+        ``y_banded`` give one column (or row) per distinct number or time
+        instead, as categories have.
+
+        A calendar lays the days out in the chart's ``time_zone``: with
+        ``calendar="weeks"`` (the default), a column per week along a time
+        axis and a row per day of the week, from ``week_start`` (``"mon"``
+        by default) down; with ``calendar="months"``, a row per month, from
+        the first day's month to the last's, and a column per day of the
+        month. Days without rows are empty; rows sharing a day share a cell.
 
         ``colors`` is a scheme name such as ``"viridis"`` or a list of hex
         colors, low to high; with ``color_midpoint``, the theme's diverging
@@ -2297,24 +2321,80 @@ class Chart:
         """
         if reduce not in (None, "mean", "max", "min"):
             raise ValueError(f"heatmap reduce must be 'mean', 'max', or 'min', not {reduce!r}")
+        if value is None:
+            raise ValueError("a heatmap needs a value column")
         table = self._mark_table(data)
+        self._require(table, value, _NUMERIC, "heatmap value")
+        shared = {
+            "type": "heatmap",
+            "value": value,
+            "colors": _colors(colors, "heatmap colors"),
+            "colorDomain": _range(color_domain, "heatmap color_domain"),
+            "colorMidpoint": _midpoint(color_midpoint, color_domain, "heatmap"),
+            "reduce": reduce,
+            "label": label,
+            "facet": "repeat" if repeat else None,
+            "panel": panel,
+            "id": id,
+        }
+        if date is not None:
+            grid = {"x": x, "y": y, "x_step": x_step, "y_step": y_step}
+            given = [name for name, option in grid.items() if option is not None]
+            given += [name for name, on in (("x_banded", x_banded), ("y_banded", y_banded)) if on]
+            if given:
+                raise ValueError(
+                    f"a calendar heatmap places its date itself; it takes no {given[0]}"
+                )
+            if calendar not in (None, "weeks", "months"):
+                raise ValueError(f"heatmap calendar must be 'weeks' or 'months', not {calendar!r}")
+            if week_start is not None and week_start not in _WEEKDAYS:
+                raise ValueError(
+                    f"heatmap week_start must be one of {', '.join(_WEEKDAYS)}, not {week_start!r}"
+                )
+            if calendar == "months" and week_start is not None:
+                raise ValueError("week_start is for calendars of weeks")
+            self._require(table, date, ("time",), "heatmap date")
+            return self._add(
+                {**shared, "date": date, "calendar": calendar, "weekStart": week_start}, table
+            )
+        if x is None or y is None:
+            raise ValueError("a heatmap needs x and y, or a date to lay out as a calendar")
+        if calendar is not None or week_start is not None:
+            raise ValueError("calendar and week_start are for heatmaps of a date")
         self._require(table, x, ("number", "time", "category"), "heatmap x")
         self._require(table, y, ("number", "time", "category"), "heatmap y")
-        self._require(table, value, _NUMERIC, "heatmap value")
+
+        def placement(
+            axis: str, field: str, step: float | None, bands: bool
+        ) -> tuple[float | None, bool | None]:
+            """The spec's step, and its banded option: explicit for number and time
+            columns, which specs before version 9 band, so older readers refuse
+            cells along an axis."""
+            if not isinstance(bands, bool):
+                raise ValueError(f"heatmap {axis}_banded must be True or False, not {bands!r}")
+            category = self._kind(table, field) == "category"
+            if step is not None:
+                if not (_finite(step) and step > 0):
+                    raise ValueError(f"heatmap {axis}_step must be a positive number, not {step!r}")
+                if category or bands:
+                    raise ValueError(
+                        f"heatmap {axis}_step sizes cells along a number or time {axis} axis; "
+                        + (f"{field!r} holds categories" if category else f"not with {axis}_banded")
+                    )
+                step = float(step)
+            return step, (True if bands else None) if category else bands
+
+        x_step, x_bands = placement("x", x, x_step, x_banded)
+        y_step, y_bands = placement("y", y, y_step, y_banded)
         return self._add(
             {
-                "type": "heatmap",
+                **shared,
                 "x": x,
                 "y": y,
-                "value": value,
-                "colors": _colors(colors, "heatmap colors"),
-                "colorDomain": _range(color_domain, "heatmap color_domain"),
-                "colorMidpoint": _midpoint(color_midpoint, color_domain, "heatmap"),
-                "reduce": reduce,
-                "label": label,
-                "facet": "repeat" if repeat else None,
-                "panel": panel,
-                "id": id,
+                "xStep": x_step,
+                "yStep": y_step,
+                "xBanded": x_bands,
+                "yBanded": y_bands,
             },
             table,
         )
@@ -2892,8 +2972,12 @@ class Chart:
             default = "independent" if axis == "y" and self._panels else "shared"
             resolution = self._settings[f"resolve_{axis}"] or default
             field = spec.get(axis)
-            banded = kind == "heatmap" or (
-                isinstance(field, str) and self._kind(table, field) == "category"
+            # Calendars band days of the week, and in months days of the month too.
+            calendar = kind == "heatmap" and spec.get("date") is not None
+            banded = (
+                (kind == "heatmap" and spec.get(f"{axis}Banded") is True)
+                or (calendar and (axis == "y" or spec.get("calendar") == "months"))
+                or (isinstance(field, str) and self._kind(table, field) == "category")
             )
             if resolution == "shared" or not banded:
                 continue
@@ -3049,6 +3133,16 @@ def assemble_spec(
         version = 7
     if "rowSelection" in options:
         version = 8
+    # Heatmaps say when a number or time column is not banded, which older readers would band.
+    if any(
+        mark["type"] == "heatmap"
+        and (
+            any(mark.get(name) is not None for name in ("xStep", "yStep", "date"))
+            or any(mark.get(name) is False for name in ("xBanded", "yBanded"))
+        )
+        for mark in marks
+    ):
+        version = 9
     spec: dict[str, Any] = {"version": version, **options}
     for key, value in layout.items():
         spec[key] = (
@@ -3122,7 +3216,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
     for key in (
         *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "text"),
-        *("category", "fields"),
+        *("category", "fields", "date"),
         *("path", "node", "parent", "source", "target"),
         *("open", "high", "low", "close"),
         *("q1", "median", "q3", "count"),
@@ -3800,14 +3894,21 @@ def surface(
 
 def heatmap(
     data: Any,
-    x: str,
-    y: str,
-    value: str,
+    x: str | None = None,
+    y: str | None = None,
+    value: str | None = None,
     *,
+    date: str | None = None,
+    calendar: Literal["weeks", "months"] | None = None,
+    week_start: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None,
     colors: str | Sequence[str] | None = None,
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
     reduce: Literal["mean", "max", "min"] | None = None,
+    x_step: float | None = None,
+    y_step: float | None = None,
+    x_banded: bool = False,
+    y_banded: bool = False,
     label: str | None = None,
     repeat: bool = False,
     panel: str | None = None,
@@ -3819,10 +3920,17 @@ def heatmap(
         x,
         y,
         value,
+        date=date,
+        calendar=calendar,
+        week_start=week_start,
         colors=colors,
         color_domain=color_domain,
         color_midpoint=color_midpoint,
         reduce=reduce,
+        x_step=x_step,
+        y_step=y_step,
+        x_banded=x_banded,
+        y_banded=y_banded,
         label=label,
         repeat=repeat,
         panel=panel,

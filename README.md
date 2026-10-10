@@ -47,7 +47,9 @@ Done: columnar data model, scales, SVG and Canvas rendering, line, area
 (stacked from several fields or from long data split by a series field,
 zero or interpolated where a series has no row), bar
 (vertical and horizontal, with value labels), point (with size, color,
-opacity, and shape encoded by fields), heatmap, error bar, candlestick (and
+opacity, and shape encoded by fields), heatmap (cells along number and time
+axes that zoom and pan, or in bands, and calendars by week or by month),
+error bar, candlestick (and
 OHLC bars), histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge,
 funnel, radar, Sankey, network (graph), and map marks (choropleth regions and
 points on Equal Earth, Natural Earth, Mercator, equirectangular, and conic
@@ -109,6 +111,8 @@ Next, in order:
    generator for them, remote grids from Python, and editing.
 6. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
+6. Heatmaps on log axes, calendar month labels aligned to week columns, and
+   2D binning (density heatmaps from raw points).
 
 ## Development
 

@@ -664,6 +664,96 @@ def test_heatmaps_take_a_reduction_for_large_grids():
         hg.Chart(values).heatmap("c", "r", "v", reduce="sum")
 
 
+def test_heatmaps_place_numbers_and_times_along_axes():
+    values = {
+        "hour": np.array([0.0, 1.0, 3.0]),
+        "day": np.array(["2026-01-01", "2026-01-02", "2026-01-03"], dtype="datetime64[ms]"),
+        "host": ["a", "b", "a"],
+        "v": np.array([1.0, 2.0, 3.0]),
+    }
+    # Number and time columns say they are not banded, so older readers refuse them.
+    spec, _ = hg.heatmap(values, "hour", "day", "v").to_spec()
+    assert spec["version"] == 9
+    assert (spec["marks"][0]["xBanded"], spec["marks"][0]["yBanded"]) == (False, False)
+    spec, _ = hg.heatmap(values, "hour", "host", "v", x_step=1).to_spec()
+    assert spec["version"] == 9
+    assert spec["marks"][0]["xStep"] == 1
+    assert "yBanded" not in spec["marks"][0]
+    # Banded and category columns draw as before, for any reader.
+    spec, _ = hg.heatmap(values, "hour", "host", "v", x_banded=True).to_spec()
+    assert spec["version"] == 4
+    assert spec["marks"][0]["xBanded"] is True
+    assert hg.heatmap(values, "host", "host", "v").to_spec()[0]["version"] == 4
+    svg = hg.heatmap(values, "hour", "day", "v", width=300, height=200).to_svg()
+    assert svg.count("<image ") == 1
+    with pytest.raises(ValueError, match="number or time x axis; 'host' holds categories"):
+        hg.heatmap(values, "host", "day", "v", x_step=1)
+    with pytest.raises(ValueError, match="not with y_banded"):
+        hg.heatmap(values, "hour", "day", "v", y_step=1, y_banded=True)
+    with pytest.raises(ValueError, match="x_step must be a positive number"):
+        hg.heatmap(values, "hour", "day", "v", x_step=0)
+    with pytest.raises(ValueError, match="x_step must be a positive number, not True"):
+        hg.heatmap(values, "hour", "day", "v", x_step=True)
+    with pytest.raises(ValueError, match="x_banded must be True or False, not 1"):
+        hg.heatmap(values, "hour", "day", "v", x_banded=1)  # type: ignore[arg-type]
+    # NumPy scalars are numbers; specs hold plain floats.
+    spec, _ = hg.heatmap(values, "hour", "day", "v", x_step=np.float32(2)).to_spec()
+    assert spec["marks"][0]["xStep"] == 2.0 and type(spec["marks"][0]["xStep"]) is float
+
+
+def test_heatmaps_along_number_axes_have_no_categories_to_resolve():
+    load = {
+        "region": ["N", "S", "N", "S"],
+        "hour": np.array([0.0, 1.0, 2.0, 3.0]),
+        "host": ["p", "q", "q", "p"],
+        "cpu": np.array([1.0, 2.0, 3.0, 4.0]),
+    }
+    # x scales of their own sync as any number axis does; banded hours are categories.
+    hg.Chart(load, facet="region", resolve_x="independent", sync="board").heatmap(
+        x="hour", y="host", value="cpu"
+    ).to_spec()
+    with pytest.raises(ValueError, match="categories of their own"):
+        hg.Chart(load, facet="region", resolve_x="independent", sync="board").heatmap(
+            x="hour", y="host", value="cpu", x_banded=True
+        )
+
+
+def test_calendar_heatmaps_lay_out_days():
+    # Monday, February 26, 2024, past the leap day to Saturday, March 9.
+    day = np.arange("2024-02-26", "2024-03-10", dtype="datetime64[D]")
+    days = {"day": day.astype("datetime64[ms]"), "commits": np.arange(13.0)}
+    spec, _ = hg.heatmap(days, date="day", value="commits", week_start="sun").to_spec()
+    assert spec["version"] == 9
+    assert spec["marks"][0] == {
+        "type": "heatmap",
+        "value": "commits",
+        "date": "day",
+        "weekStart": "sun",
+        "data": "data",
+    }
+    svg = hg.heatmap(days, date="day", value="commits", width=400, height=200).to_svg()
+    assert svg.count("<image ") == 1
+    assert all(f">{label}</text>" in svg for label in ("Mon", "Sun"))
+    months = hg.heatmap(days, date="day", value="commits", calendar="months", width=500).to_svg()
+    assert ">Feb 2024</text>" in months and ">Mar 2024</text>" in months
+    with pytest.raises(ValueError, match="takes no x"):
+        hg.heatmap(days, "day", date="day", value="commits")
+    with pytest.raises(ValueError, match="needs x and y, or a date"):
+        hg.heatmap(days, "day", value="commits")
+    with pytest.raises(ValueError, match="week_start is for calendars of weeks"):
+        hg.heatmap(days, date="day", value="commits", calendar="months", week_start="sun")
+    with pytest.raises(TypeError, match="heatmap date: column 'commits' holds number values"):
+        hg.heatmap(days, date="commits", value="commits")
+    # Weekdays are categories, so panels with weekdays of their own cannot sync.
+    with pytest.raises(ValueError, match="categories of their own"):
+        hg.Chart(
+            {**days, "team": ["a", "b"] * 6 + ["a"]},
+            facet="team",
+            resolve_y="independent",
+            sync="board",
+        ).heatmap(date="day", value="commits")
+
+
 def test_scatter_helper_takes_every_encoding():
     values = {"x": np.array([1.0, 2.0]), "y": np.array([3.0, 4.0]), "s": np.array([1.0, 5.0])}
     chart = hg.scatter(

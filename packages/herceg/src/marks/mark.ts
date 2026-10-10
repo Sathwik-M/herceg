@@ -222,6 +222,12 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    */
   readonly inset?: { readonly x: number; readonly y: number };
   /**
+   * Automatic y domains end at the mark's data rather than at round values
+   * unless the axis says `nice` (heatmap cells, which would otherwise leave
+   * empty rows at the ends).
+   */
+  readonly tight?: boolean;
+  /**
    * How tooltips find this mark's data. "x", "y", and "point" choose the
    * chart's default mode (along x, along y, or nearest point) when the chart
    * does not set one; "cell" marks always report the cell under the pointer,

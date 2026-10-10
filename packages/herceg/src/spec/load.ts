@@ -49,6 +49,7 @@ import type {
   ColumnSpec,
   ColumnsSpec,
   DataSpec,
+  HeatmapGridSpec,
   MarkSpec,
   RowSelectionSpec,
 } from "./spec.ts";
@@ -139,7 +140,8 @@ export function loadSpec(
     console.warn(`herceg: ignoring spec properties it does not know: ${unknown.join(", ")}`);
   }
   const tables = loadTables(spec.data ?? {}, buffers, byName(options.tables));
-  const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));
+  const version = spec.version ?? 1;
+  const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables, version));
   const {
     data: _data,
     marks: _marks,
@@ -428,7 +430,12 @@ function swapped(Typed: (typeof TYPED)[BinaryType], bytes: Uint8Array): NumericA
   return new Typed(copy.buffer, 0, copy.length / size);
 }
 
-function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Mark | LayoutMark {
+function loadMark(
+  spec: MarkSpec,
+  index: number,
+  tables: Map<string, Table>,
+  version: number,
+): Mark | LayoutMark {
   try {
     // Annotations read a table only when a position or their text is a field.
     switch (spec.type) {
@@ -453,7 +460,12 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
       case "point":
         return new PointMark(withScheme(spec), source);
       case "heatmap":
-        return new HeatmapMark(withScheme(spec), source);
+        // Before version 9, heatmaps banded number and time fields too; the
+        // mark's spec says so, so it keeps its bands wherever it goes next.
+        return new HeatmapMark(
+          withScheme(version < 9 && spec.date === undefined ? banded(spec) : spec),
+          source,
+        );
       case "errorbar":
         return new ErrorBarMark(spec, source);
       case "candlestick":
@@ -502,6 +514,11 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
   } catch (error) {
     throw new Error(`Mark ${index} (${String(spec?.type)}): ${(error as Error).message}`);
   }
+}
+
+/** A heatmap's spec as specs before version 9 meant it: number and time fields banded. */
+function banded(spec: HeatmapGridSpec): HeatmapGridSpec {
+  return { ...spec, xBanded: true, yBanded: true };
 }
 
 /** A mark's spec with a named color scheme replaced by the scheme's colors. */

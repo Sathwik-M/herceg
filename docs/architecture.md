@@ -1116,10 +1116,73 @@ hold only some of them; see Small multiples). Bands are identified by raw value
 (a category, or a number's full-precision key), so values whose formatted
 labels coincide stay separate. Each row's band index is computed
 once per table version (4 bytes per row) and reused while the band list is
-unchanged. Heatmaps also band number and time fields, one band per distinct
-value. Band labels are thinned to every k-th band when neighbors would
+unchanged. Heatmaps band number and time fields only when asked to
+(`xBanded`, `yBanded`), one band per distinct value; otherwise their cells
+lie along number and time axes (see Heatmap cells). Band labels are thinned to every k-th band when neighbors would
 overlap. A categorical axis cannot be shared with marks that need a numeric
 axis (lines, areas); the chart rejects that combination.
+
+## Heatmap cells
+
+A heatmap's axis over a number or time field (unless banded) holds cells
+(`marks/heatmap-cells.ts`): one per distinct finite value, found once per
+table version through a Map, as band axes find theirs, and ordered. Without
+a step, a boundary lies halfway between neighboring values, computed once
+and shared by the two cells so no value falls between them, and the ends
+reach as far out as in; with `xStep` / `yStep`, a cell reaches half a step
+from its value, or to the halfway point where a neighbor is closer, leaving
+gaps where values are further apart. A lone value without a step spans the
+room `usableDomain` gives it, so a streaming chart's first row draws; a step
+too small to tell a cell's edges apart at its values is refused, and edges
+are clamped to the finite doubles. Edges depend on the data (and on the x
+axis' breaks, below), never on the domain, so cells keep their edges as the
+view moves. Values within a millionth of a cell of a lattice (evenly spaced,
+or one step apart with whole steps between) are slots of that lattice, which
+the image draws per slot (see Points and rasters); empty slots take no
+memory. Series hold the rows' values in `x` and `y`, so inspection,
+formatting, overlays, brushes, and events read data values; the mark keeps
+each row's cell (4 bytes per row and axis) for the cell index, painting, and
+the keyboard.
+
+Extents are the edges of the first and last cells the rows hold (a facet
+panel's own, cached by its rows). The y extent of what an x range shows
+covers the y cells of the columns the range overlaps, read from each x
+cell's lowest and highest y cell (two Int32 per x cell, built once per rows),
+so automatic y domains follow x as they do for points without scanning rows
+each frame. Heatmaps are `tight` marks: automatic y domains with one on the
+axis end at its cells' edges rather than at round values, unless the axis
+asks for `nice`. Log axes are refused for now. On a time x axis with breaks,
+values inside breaks have no cell, and the others are placed in the time
+shown (`Breaks.collapse`), so the cells either side of a break meet at its
+seam, and cells evenly spaced in time shown stay a lattice. A mark keeps its
+placements for the few break contexts it is drawn in (charts sharing it may
+leave out different time), and summaries read the cells each series was
+drawn on.
+
+Calendars (a `date` field; `marks/heatmap-calendar.ts`) place a time field's
+days in the chart's zone, converting each distinct instant to its
+wall-clock day once (`toWall`). By weeks, x cells run from each week's start
+to the next week's (`fromWall` of wall-clock midnights, so a week across a
+clock change is an hour short or long, and the weeks are a lattice only when
+each is seven days long, as in UTC), and y has seven weekday bands in order
+from `weekStart`; by months, y has a band for every month from the first
+day's to the last's and x one per day of the month. Calendar bands carry keys
+of their own (`weekday:mon`, `month:24288`, `day:1`), and are remapped like
+any band list when other marks share the axis; labels name Gregorian days
+and months, whatever calendar the locale prefers. By weeks, series place each
+row at the instant its day starts, so a day's rows share a place, and the
+weeks each series is drawn on are found by those days: a mark charts in
+several zones share keeps a placement per zone and locale. No field holds a
+row's weekday or month, so brushes select a calendar's rows by their
+cells' centers, as a row set, as they select a stack's; lassos find any
+heatmap's cells at their centers too, which a cell's value need not be.
+
+Specs before version 9 knew only banded heatmaps, so the loader gives every
+heatmap of an older spec `xBanded: true` and `yBanded: true` in its own spec,
+which keeps the placement wherever the mark goes next. Steps, bands turned
+off, and calendars need version 9, so older readers refuse them rather than
+band them. Python writes `xBanded` and `yBanded` explicitly for number and
+time columns, and version 9 where one is `false`.
 
 ## Two y axes
 
@@ -1617,47 +1680,87 @@ by a category field share one pair of table-sized top and base arrays, since
 each row belongs to one series.
 
 Heatmaps are rasterized into an RGBA image (colors from a lookup table) that
-renderers stretch over the plot. Canvas draws it with `drawImage`; SVG embeds
-it as a PNG. In the browser the canvas encodes the PNG; `renderToSVG` uses a
-small bundled encoder, which only server-side bundles include. While the grid
-fits the plot's device pixels, each cell is one pixel; when several rows fall
-in one cell, the last row with a value wins, and missing values leave a cell
-transparent. A grid with more columns or rows than the plot has device pixels
-(the frame's `rasterRatio`: the device pixel ratio on screen, 2 for static
-SVG and PDF, which are zoomed and printed) gets an image of the plot's size
-instead, rounded down so each image pixel covers at least a device pixel
-(nearest-neighbor drawing of a larger image would skip pixels, and with them
-a block's only hot cell). The image is reduced along each axis separately:
-cell `c` of `n` lands in pixel `floor(c * pixels / n)`, the pixel its leading
-edge falls in, and one pass over the rows accumulates each pixel's sum and
-count of finite values (or its greatest or least value, with `reduce: "max"`
-or `"min"`). Sums are Float64; a block whose sum overflows (values near the
-largest doubles) is summed again in a second pass with every value divided by
-2^64, and its mean multiplied back. Each pixel's four bytes hold its count
-until it is colored. The sums are a frame buffer kept while the image is
-repainted (8 bytes per pixel besides the 4 of the image).
-Rows that repeat a cell each count toward a mean. The painted image is kept
-and reused until the table, the band order, a facet panel's rows or its
-categories' places, the image size, the theme, or the mark painting into
-the buffer changes, so redraws for other reasons (a
-legend toggle, a brush) do not repaint it.
+renderers stretch over the cells in view, clipped to the plot. Canvas draws it
+with `drawImage`; SVG embeds it as a PNG. In the browser the canvas encodes
+the PNG; `renderToSVG` uses a small bundled encoder, which only server-side
+bundles include. Where the image is and which pixel each cell lands in is
+decided per frame along each axis (`marks/heatmap-raster.ts`), in buffers the
+chart keeps between frames, a value per band or cell (never per lattice slot
+or table row):
+
+- **Lattices.** Bands, and cells one width apart (see Heatmap cells), are
+  slots of a lattice. With lattices on both axes, the image covers the slots
+  in view, reaching past the plot's edges for slots in view only in part,
+  and has a pixel per slot while they fit the plot's device pixels (the
+  frame's `rasterRatio`: the device pixel ratio on screen, 2 for static SVG
+  and PDF, which are zoomed and printed). Each cell is one pixel; when
+  several rows fall in one cell, the last row with a value wins, and missing
+  values leave a cell transparent. With more slots than device pixels, the
+  image has as many pixels as fit, rounded down so each covers at least a
+  device pixel (nearest-neighbor drawing of a larger image would skip
+  pixels, and with them a block's only hot cell), and is reduced along each
+  axis separately: slot `s` of `n` lands in pixel `floor(s * pixels / n)`,
+  the pixel its leading edge falls in, and one pass over the rows
+  accumulates each pixel's sum and count of finite values (or its greatest
+  or least value, with `reduce: "max"` or `"min"`). Sums are Float64; a
+  block whose sum overflows (values near the largest doubles) is summed
+  again in a second pass with every value divided by 2^64, and its mean
+  multiplied back. Each pixel's four bytes hold its count until it is
+  colored. The sums are a frame buffer kept while the image is repainted (8
+  bytes per pixel besides the 4 of the image). Rows that repeat a cell each
+  count toward a mean.
+- **Spans.** When either axis is not a lattice (unevenly spaced values), or
+  a lattice's slots in view would reach more than two plot lengths past the
+  plot (deep in a zoom), both axes become spans: the image covers the plot
+  where cells are in view, at its device resolution along axes that are not
+  lattices (and per slot, or blocks of slots, along those that are), and
+  each cell is its projected edges in image pixels, snapped to a pixel
+  boundary within a millionth of a pixel so float error gives no pixel a
+  sliver of a cell. Painting goes cell by cell through the cell index
+  (below, which tooltips use too, built here first): each cell sums its
+  rows (or takes their greatest or least) and adds that to every pixel it
+  covers, weighted by the area it covers there, into a Float64 sum per
+  pixel, with its rows' covered area in the pixel's four bytes (as a
+  Float32) until it is colored. So a cell is painted once however many rows
+  repeat it, and the result does not depend on the rows' order. Each pixel
+  also keeps the last row of the first cell reaching it, NaN once a second
+  cell does: a pixel within one cell shows that cell's last row with a
+  value, as tooltips report, and one holding parts of several shows the
+  area-weighted mean of all their rows (or with `reduce`, the greatest or
+  least row of any cell in it). Overflowing sums are summed again scaled,
+  as for blocks. The image, sums, and last values take 20 bytes per pixel,
+  of the plot's device pixels at most.
+
+The painted image and where it is are kept and reused until the table, a
+row's band or cell (the band order, the breaks), a facet panel's rows or its
+categories' places, the scales' domains and ranges, the plot, the raster
+ratio, the theme, or the mark painting into the buffer changes, so redraws
+for other reasons (a legend toggle, a brush) neither place nor paint a cell.
+Each zoom or pan paints again, in one pass over the rows.
 
 Tooltips report the cell under the pointer even when its pixel shows a block:
-the band scale maps the pointer to a band index, and a cell index finds the
-row. The index (`lod/cell-index.ts`) is the series' positions with a value
+the band scale maps the pointer to a band index, or along a number or time
+axis the scale's inverse finds the cell whose span holds the value there (by
+binary search over the cells' edges, so a gap holds none), and a cell index
+finds the row. The index (`lod/cell-index.ts`) is the series' positions with a value
 (the table's rows, or a facet panel's), sorted by cell row and column with
 two counting sorts (positions already in cell order, as dense grids usually
 are, are taken as they are, and when they are every position, the series
 itself is the index), so it keeps at most 4 bytes per row whatever the
 number of cells, and a lookup is a binary search. Building it over a whole
-table takes up to 8 more bytes per row and a counter per band; over a facet
+table takes up to 8 more bytes per row and a counter per band or cell; over a facet
 panel's rows, it first gathers their cells and values (16 bytes per
 position), so up to 24 per position; and a grid of several times more bands
 than positions (a panel's few rows among many categories) is sorted by
-comparison instead, without counters. It is built on the first lookup
-after the table, the band order, or a facet panel's rows change, and is
+comparison instead, without counters. It is built on the first lookup or
+spans paint after the table, the band order, or a facet panel's rows change, and is
 kept by the rows it indexes, so a faceted heatmap's panels take one index
-each, their rows' share of one table's. Ramps
+each, their rows' share of one table's. The keyboard steps through it too:
+a step along a row is the next entry in the index's order, and a step along
+a column looks the next rows up one at a time (32 at most), both by binary
+search; entering the grid takes its first or last entry. Jumps (Home, End,
+Page Up and Page Down), steps past a row's or column's end, and steps down
+a column whose next cell is more than 32 rows away scan the cells. Ramps
 are `#rgb` or `#rrggbb` colors, checked when the mark or theme is created, so
 the raster and the legend read them the same way.
 
@@ -2965,8 +3068,12 @@ adds `resolve` and `panels`, version 3 `resolve.x`, panels' own `x`, and
 the x axis' `breaks`, version 4 `navigator`, version 5 enabled x axis
 `seams` (`false` needs none for either), and version 6 raw box plot notches
 and nondefault whiskers, version 7 split violins and nondefault violin
-interiors, and version 8 `rowSelection`, which an older reader would ignore
-and draw every row undimmed whatever is selected. Precomputed box plots need
+interiors, version 8 `rowSelection`, which an older reader would ignore
+and draw every row undimmed whatever is selected, and version 9 heatmaps
+whose number and time fields lie along axes rather than in bands, with
+steps, and calendars (see Heatmap cells). Version 9 is the first to change
+what an existing spec means: a heatmap over numbers in an older spec is
+loaded banded, as it was drawn then. Precomputed box plots need
 no version gate: earlier readers require both raw axis fields and refuse the
 one-axis statistics form. A spec's bindings name tables, not stores:
 `loadSpec` makes a store per bound table, or takes the stores (and the

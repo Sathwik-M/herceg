@@ -124,7 +124,7 @@ describe("bar", () => {
     expect(() =>
       build({
         marks: [
-          heatmap(mixed, { x: "name", y: "x", value: "v" }),
+          heatmap(mixed, { x: "name", y: "x", value: "v", yBanded: true }),
           bar(mixed, { x: "name", y: "v" }),
         ],
       }),
@@ -746,9 +746,11 @@ describe("heatmap", () => {
     expect(raster.height).toBeCloseTo(scene.panels[0]!.plot.height, 0);
   });
 
-  it("rasterizes rows of numbers bottom to top, like a numeric axis", () => {
+  it("rasterizes banded rows of numbers bottom to top, like a numeric axis", () => {
     const grid = table({ x: ["a", "a"], y: [1, 2], v: [Number.NaN, 5] });
-    const { scene } = build({ marks: [heatmap(grid, { x: "x", y: "y", value: "v" })] });
+    const { scene } = build({
+      marks: [heatmap(grid, { x: "x", y: "y", value: "v", yBanded: true })],
+    });
     const raster = scene.panels[0]!.marks[0] as RasterGeometry;
     const ticks = scene.panels[0]!.axes.find((a) => a.orient === "left")!.ticks;
     expect(ticks.map((t) => t.label)).toEqual(["1", "2"]);
@@ -758,9 +760,11 @@ describe("heatmap", () => {
     expect(raster.pixels[7]).toBe(0);
   });
 
-  it("uses distinct numbers as ordered columns", () => {
+  it("bands distinct numbers as ordered columns on request", () => {
     const grid = table({ x: [3, 1, 2, 1], y: [0, 0, 0, 1], v: [1, 2, 3, 4] });
-    const { scene } = build({ marks: [heatmap(grid, { x: "x", y: "y", value: "v" })] });
+    const { scene } = build({
+      marks: [heatmap(grid, { x: "x", y: "y", value: "v", xBanded: true })],
+    });
     expect(
       scene.panels[0]!.axes.find((a) => a.orient === "bottom")!.ticks.map((t) => t.label),
     ).toEqual(["1", "2", "3"]);

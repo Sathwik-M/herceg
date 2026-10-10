@@ -28,9 +28,9 @@ const chart = createChart(document.querySelector("#latency")!, {
 Field names are checked against the table at compile time: `y` only accepts
 numeric or time fields, `series` only accepts category fields. A continuous
 axis is a time axis when any field a mark places on it holds times, whether
-the mark is a line, area, point, error bar, or candlestick; bar lengths and
-histogram counts stay numbers, and heatmaps give every value of a position
-its own band. Set `type: "linear"` on the axis to read times as plain numbers.
+the mark is a line, area, point, error bar, candlestick, or heatmap; bar
+lengths and histogram counts stay numbers. Set `type: "linear"` on the axis
+to read times as plain numbers.
 
 ## Data
 
@@ -555,8 +555,12 @@ errorBar(stats, { x: "group", y1: "low", y2: "high" }); // y, x1, x2 for horizon
 errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
 const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
-heatmap(load, { x: "hour", y: "host", value: "cpu" });
+heatmap(load, { x: "hour", y: "host", value: "cpu" }); // cells along a time axis, a row per host
+heatmap(load, { x: "hour", y: "host", value: "cpu", xStep: 3_600_000 }); // an hour wide; gaps where hours are missing
+heatmap(load, { x: "hour", y: "host", value: "cpu", xBanded: true }); // a column per distinct hour
 heatmap(spectrum, { x: "time", y: "frequency", value: "power", reduce: "max" }); // grids larger than the plot
+heatmap(commits, { date: "day", value: "count" }); // a calendar: weeks along time, a row per weekday
+heatmap(commits, { date: "day", value: "count", calendar: "months" }); // a row per month, a column per day
 
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close", variant: "ohlc" });
@@ -579,23 +583,66 @@ with an ellipsis. Points on a category axis sit at the centers of its bands
 there are; on a category y axis, a point's tooltip shows its category and
 its reported `value` is the category's band index. Horizontal bars default
 to "nearest-y" tooltips, which report every series in the band under the
-pointer. Heatmaps also accept number and time fields, with one column or row
-per distinct value, and show a color legend instead of series entries.
+pointer. Heatmaps show a color legend instead of series entries.
 
-A heatmap draws one pixel per cell while its grid fits the plot's device
+Heatmaps over number and time fields place their cells along number and
+time axes, which zoom, pan, and brush as other marks' do, and other marks
+share them. Each distinct value is a cell reaching halfway to the values
+beside it; the first and last reach as far past their values as toward
+their neighbor, and a lone value spans what the axis would show for it
+alone (a tenth of the value either way, one either way of zero, an hour
+either way of a time). Edges come from the data, never from the view, so
+zooming never moves them. With `xStep` / `yStep` (milliseconds for times),
+each cell is that wide around its value, but never past halfway to a closer
+neighbor, so missing values leave gaps. Gaps and the space past the cells
+show nothing and report no tooltip. Across a clock change, local midnights
+are 23 or 25 hours apart; the default placement puts the boundary halfway in
+elapsed time, where a step of a day would leave an hour's gap. `xBanded` / `yBanded` give one column (or row) per
+distinct value instead, in ascending order, as category fields always have;
+banded axes do not zoom. Automatic y domains end at a heatmap's cell edges
+rather than at round values (`y: { nice: true }` rounds them). Heatmap
+cells refuse log axes for now. On a time axis with breaks, rows inside
+breaks are not drawn, and the cells either side of a break meet at its seam
+as if the break took no time.
+
+A heatmap of a `date` (a time field) lays out its days as a calendar in the
+chart's time zone. `calendar: "weeks"` (the default) puts a column per
+week, from the start of the week to the next week's start, along a time x
+axis, which zooms and labels months or years as any time axis does, and a
+row per day of the week, from `weekStart` (`"mon"` by default) down.
+`calendar: "months"` puts a row per month, every month from the first
+day's to the last's, and a column per day of the month, 1 to 31. Days
+without rows, and dates a month lacks, are empty; rows sharing a day share
+its cell. Calendars take no `x`, `y`, steps, or bands, and refuse time
+breaks; weeks brush and zoom by time, a week column at a time.
+
+A heatmap draws one pixel per cell while its cells are evenly spaced (bands,
+or values one step apart, with or without gaps) and fit the plot's device
 pixels. A grid with more columns (or rows) than that, such as 4,000 x 4,000
 cells on a plot 1,500 device pixels wide, is drawn at the plot's resolution
 instead: each pixel shows the block of cells whose left (or top) edges fall
 in it, colored by the mean of their values, or with `reduce: "max"` or
 `"min"`, by the greatest or least, which keeps single hot cells visible.
-Missing and NaN values are left out of a block, a block without values is
-transparent, and rows that repeat a cell each count, where a cell drawn at
-full resolution shows its last row. Tooltips still report the single cell
-under the pointer, or nothing when that cell has no value. Static SVG and
-PDF output, which are zoomed and printed, reduce only past two pixels per
-CSS pixel. Drawing costs one pass over the table's rows, and memory follows
-the rows and the plot's pixels, not the number of cells, so there is no cell
-limit.
+Unevenly spaced cells are drawn at the plot's resolution too, each pixel
+colored by the cells it holds parts of: within one cell, by that cell's
+last row with a value, as tooltips report; across several, by the mean of
+their rows weighted by the area of each cell in the pixel, or the greatest
+or least of them with `reduce`. Missing and NaN values are left out, pixels
+without values are transparent, and rows that repeat a cell each count in a
+pixel of several cells, where a cell drawn in pixels of its own shows its
+last row. Tooltips still report the single cell under the pointer, or
+nothing when that cell has no value. Static SVG and PDF output, which are
+zoomed and printed, reduce only past two pixels per CSS pixel. Drawing costs
+one pass over the table's rows (each zoom or pan draws again), and memory
+follows the rows and the plot's pixels, not the number of cells, so there is
+no cell limit.
+
+Portable specs need `version: 9` for heatmap steps, `xBanded: false` or
+`yBanded: false`, and calendars. Heatmaps in specs of earlier versions band
+number and time fields, as they did then. Migrating TypeScript code:
+heatmaps over number and time fields used to band them, one column or row
+per distinct value, and did not zoom; pass `xBanded: true` and `yBanded:
+true` to keep that placement.
 
 Points encode fields as well as positions. `r` names a number field to size
 points by area, from zero (or the least value, when values are negative) at
@@ -764,8 +811,7 @@ Marks are drawn in array order; rules and text always draw above other marks.
 
 Charts share their behaviors unevenly so far: the marks along x and y axes
 take part in everything, the others in less. ✓ supported, ◐ partly (see
-the notes), — not yet (refused with an error, or for heatmaps' zoom, without
-effect), · not applicable.
+the notes), — not yet (refused with an error), · not applicable.
 
 | Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Tooltip and keyboard | Value animation |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -773,7 +819,7 @@ effect), · not applicable.
 | point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | — |
 | errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
-| heatmap | ✓ | ✓ | ✓ | · | — | ✓ | ✓ | ◐ | — | · | ✓ | — |
+| heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | — | · | ✓ | — |
 | rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | ◐ |
 | custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | — |
 | pie | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | ✓ |
@@ -788,7 +834,9 @@ effect), · not applicable.
   (`rowSelection`, see [Selected rows](#selected-rows)): brushes, lassos, and
   clicks write rows to its channel, and the chart highlights what the channel
   holds. Histograms are brushed along their bins and box plots and violins
-  along their categories, heatmaps' cells are clicked, brushed, or lassoed,
+  along their categories, heatmaps' cells are clicked, brushed (along a
+  number or time axis, the cells whose values the brush covers; in a
+  calendar, those whose centers it covers), or lassoed (at their centers),
   and lassos select none of the summaries' rows yet; these marks, error bars,
   and candlesticks draw every row undimmed. Charts of layout marks, maps, and 3D marks refuse
   a binding. Brushes and synced selections themselves are ranges and
@@ -802,8 +850,8 @@ effect), · not applicable.
   In facets and subplots, every panel drawing marks on it has one.
 - Points over a row view and custom marks without series repeat in every
   facet panel instead of splitting.
-- Heatmaps band both axes, number and time fields too, so they neither zoom
-  nor pan.
+- Heatmaps zoom and pan their number and time axes; banded axes (category
+  fields, or `xBanded` / `yBanded`) do not zoom, as for other marks.
 - Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams
   draw each facet panel's rows in it, or fill a subplot of their own beside
   panels with axes (see [Layout marks in panels](#layout-marks-in-panels)).
@@ -2083,7 +2131,8 @@ their own; past the last stop of a panel, Up and Down move on to the next
 panel. In heatmaps the arrow keys move cell by cell across rows and columns
 as they are drawn, skipping empty cells, or to the nearest cell of the next
 row or column when none is in line (Home and End go to a row's ends, Page
-Up and Page Down to a column's). The description also says what color
+Up and Page Down to a column's); like the points of other marks, cells out
+of a zoomed view are reached too, without panning to them. The description also says what color
 scales and size and shape keys show. Pies, trees, and other layout
 marks step through their items; in facet panels and subplots, Left and
 Right read a panel's items and Up and Down move between panels. Arriving in
@@ -2161,9 +2210,11 @@ using `resolve`, `panels`, or `grid` must say 2 or later, those using
 `resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later,
 those with a `navigator` 4 or later, those with enabled x axis `seams` 5,
 raw box plots with notches or nondefault whiskers 6, split violins or
-nondefault violin interiors 7, and those with `rowSelection` 8
-(`SPEC_VERSION`, the version this herceg writes), so that older readers
-refuse what they would draw differently. Loading checks a spec and names the property at
+nondefault violin interiors 7, those with `rowSelection` 8, and heatmap
+steps, `xBanded` or `yBanded` false, and calendars 9 (`SPEC_VERSION`, the
+version this herceg writes), so that older readers refuse what they would
+draw differently. Heatmaps in specs before version 9 band number and time
+fields, as those versions did. Loading checks a spec and names the property at
 fault in errors. Properties herceg does not know, misspelled or from a newer
 version, are logged with `console.warn` and otherwise ignored;
 `loadSpec(spec, buffers, { unknown: "error" })` refuses them instead, and
