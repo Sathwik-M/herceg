@@ -165,7 +165,7 @@ function sizeTable(): string {
       "Gzip KiB",
       "Brotli KiB",
       "Required CSS, gzip KiB",
-      "Loaded on demand, gzip KiB",
+      "Optional chunks, gzip KiB",
     ],
     size.results.map((r) => [
       r.entry,

@@ -216,7 +216,8 @@ Bundle sizes count what a page loads before the chart renders: the entry
 chunk and the chunks it imports statically, each compressed on its own as
 browsers fetch them. Chunks reached only through dynamic imports (Herceg's
 WebGL painter, animation, crosshair labels) are reported separately as
-loaded on demand.
+optional chunks: the total of every chunk the entry could load for some
+chart, not what the entry's own chart downloads.
 
 The `herceg-react-line` size entry leaves React and React DOM out of the
 bundle, since an application using the adapter already ships them;
