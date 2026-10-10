@@ -101,13 +101,14 @@ function ringAttributes(mark: PointGeometry): Record<string, string> {
     stroke: mark.ring.color,
     "stroke-width": String(mark.ring.width),
     "stroke-linejoin": "round",
+    ...(mark.ring.opacity !== undefined && { "stroke-opacity": String(mark.ring.opacity) }),
   };
 }
 
 /** Strokes a point's ring on a canvas, after its fill. */
 function strokeRing(context: CanvasRenderingContext2D, mark: PointGeometry): void {
   if (!mark.ring) return;
-  context.globalAlpha = 1;
+  context.globalAlpha = mark.ring.opacity ?? 1;
   context.strokeStyle = mark.ring.color;
   context.lineWidth = mark.ring.width;
   context.lineJoin = "round";
@@ -246,7 +247,7 @@ export const pointDrawing: Drawing<PointGeometry> = {
     const elements = pointElements(mark);
     return elements
       ? markupOf(elements)
-      : `<g fill="${escapeXml(mark.fill)}" fill-opacity="${mark.fillOpacity}"${mark.ring ? ` stroke="${escapeXml(mark.ring.color)}" stroke-width="${mark.ring.width}"` : ""}>${pointCircles(mark)}</g>`;
+      : `<g fill="${escapeXml(mark.fill)}" fill-opacity="${mark.fillOpacity}"${mark.ring ? ` stroke="${escapeXml(mark.ring.color)}" stroke-width="${mark.ring.width}"${mark.ring.opacity === undefined ? "" : ` stroke-opacity="${mark.ring.opacity}"`}` : ""}>${pointCircles(mark)}</g>`;
   },
   canvas(context, mark, { plot, pixelRatio, clouds }) {
     if (!mark.cloud) return paintPoints(context, mark);

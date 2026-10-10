@@ -561,6 +561,30 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     return best;
   }
 
+  /**
+   * Whether a row is one of a group's values: of its category and series
+   * value, with a value the statistics count. (A precomputed box plot's box
+   * is its one row: see `BoxPlotMark`.)
+   */
+  summarized(series: Series, position: number): (row: number) => boolean {
+    const summary = this.summaryOf(series);
+    const row = rowOf(series, position);
+    const label = (field: string) => {
+      const { codes, dictionary } = summary.table.categories(field as never);
+      return dictionary[codes[row]!]!;
+    };
+    const source = this.table;
+    const categories = source.categories(this.category as never);
+    const category = categories.dictionary.indexOf(label("category"));
+    const field = this.spec.series;
+    const groups = field === undefined ? undefined : source.categories(field as never);
+    const group = groups?.dictionary.indexOf(label("group"));
+    return (at) =>
+      categories.codes[at] === category &&
+      (!groups || groups.codes[at] === group) &&
+      this.acceptsRow(at);
+  }
+
   /** Inspection skips categories without values. */
   shows(series: Series, row: number): boolean {
     return Number.isFinite(this.summaryOf(series).stats.median[row]!);

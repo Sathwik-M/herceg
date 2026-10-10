@@ -3,8 +3,10 @@
 import { describe, expect, it } from "vitest";
 import { time } from "../../src/data/column.ts";
 import { fromGeoJSON } from "../../src/data/geojson.ts";
+import { RowSet } from "../../src/data/row-set.ts";
 import { rowView } from "../../src/data/row-view.ts";
-import { table } from "../../src/data/table.ts";
+import { selectionStore, selectRows } from "../../src/data/selection.ts";
+import { type Table, table } from "../../src/data/table.ts";
 import { plan, sidesOf, snapshot } from "../../src/dom/value-transition.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { Polyline } from "../../src/lod/polyline.ts";
@@ -22,6 +24,7 @@ import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { histogram } from "../../src/marks/histogram.ts";
+import { tablesOf } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
 import { line3d } from "../../src/marks/line3d.ts";
 import type { ChartMark } from "../../src/marks/mark.ts";
@@ -42,6 +45,8 @@ import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
+import { rowSelection } from "../../src/model/row-selection.ts";
+import { brushedRows } from "../../src/model/selected-rows.ts";
 import type { Geometry, Panel, RectGeometry, TextGeometry } from "../../src/scene/scene.ts";
 
 function build(config: ChartConfig) {
@@ -825,6 +830,73 @@ describe("capabilities: synced selection", () => {
         interaction: { sync: "capability-contract" },
       }),
     ).toThrow("categories of their own");
+  });
+});
+
+describe("capabilities: row selection", () => {
+  // Which marks' rows gestures select (model/selected-rows.ts), and which
+  // marks draw a channel's rows highlighted (model/highlight.ts).
+  const selects = new Set(
+    ["line", "area", "bar", "point", "errorbar", "candlestick", "heatmap"].concat([
+      "histogram",
+      "boxplot",
+      "violin",
+    ]),
+  );
+  const highlights = new Set(["line", "area", "bar", "point"]);
+
+  /** A chart of a case bound to a store of `samples`, as a mounted chart binds it. */
+  function bound(c: MarkCase) {
+    const store = selectionStore(samples);
+    const marks = c.repeats ? [line(samples, { x: "x", y: "y" }), c.make()] : [c.make()];
+    const selection = rowSelection({ store, channel: "c" });
+    const { model } = build({ marks, rowSelection: selection });
+    const chart = { selection: null, select() {}, render() {}, root: new EventTarget() as never };
+    const live = { textContent: null };
+    selection.mount(
+      undefined,
+      model,
+      chart,
+      { emit() {} },
+      () => {},
+      () => null,
+      live,
+    );
+    return { model, store };
+  }
+
+  /** The SVG of the case's own geometry. */
+  function drawn(model: ChartModel, c: MarkCase): string[] {
+    const scene = model.scene(estimateText);
+    const context = { theme: scene.theme, encodeRaster: undefined };
+    return scene.panels[0]!.marks.filter((m) => !c.repeats || m.kind === c.kind).map((m) =>
+      m.draw.svg(m, context),
+    );
+  }
+
+  it.each(cartesian)("$name takes part as documented", (c) => {
+    const { model, store } = bound(c);
+    const brush = { x: [0, 2] as const, y: null, lasso: null };
+    // Annotations and custom marks select no rows; the others do.
+    const rows = brushedRows(model, samples as unknown as Table, brush, null);
+    expect(rows !== undefined).toBe(selects.has(c.name) || c.repeats === true);
+    const plain = drawn(model, c);
+    store.set("c", selectRows(new RowSet(samples).add(0)));
+    const lit = drawn(model, c);
+    expect(lit.join("") !== plain.join("")).toBe(highlights.has(c.name));
+  });
+
+  it.each(layouts)("$name refuses a row selection", (c) => {
+    const store = selectionStore(tablesOf(c.make())[0]!);
+    expect(() =>
+      build({ marks: [c.make()], rowSelection: rowSelection({ store, channel: "c" }) }),
+    ).toThrow("cannot select rows yet");
+  });
+
+  it.each(paneled)("$name in a panel of its own refuses a row selection of a line's rows", (c) => {
+    const store = selectionStore(samples);
+    const rows = rowSelection({ store, channel: "c" });
+    expect(() => build(besideLine(c, { rowSelection: rows }))).toThrow("cannot select rows yet");
   });
 });
 

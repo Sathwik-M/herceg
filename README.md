@@ -82,7 +82,7 @@ per panel for every mark on a category axis), points on category axes,
 subplots (with weighted rows and columns), pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey
 diagrams in each facet panel or in a subplot of their own, live notebook charts (a widget that streams updates from Python
 and reports interaction back), a Streamlit component, row views and selection stores shared by charts and
-grids, row groups whose aggregates charts and grids share, and an
+grids (charts' brushes, lassos, and clicks select rows there and highlight what others select), row groups whose aggregates charts and grids share, and an
 analytical grid (`herceg/grid`: virtualized rows and columns over the same
 tables, sorting, row selection, nested groups with aggregates as a tree grid,
 bounded pivots, columns resized, moved, pinned, and hidden by dragging, keys,
@@ -99,11 +99,15 @@ Next, in order:
    in charts with panels.
 2. Animation of stacked and labeled bars, of categories that come and go,
    and of panels.
-3. More financial tools (drawing tools); 3D meshes, parametric surfaces, and translucent
+3. Linked selections beyond points, bars, lines, and areas: highlighting
+   bins, groups, cells, and spans whose rows are partly selected, lassos
+   over summaries, layout marks and maps, and channels shared by separate
+   notebook widgets.
+4. More financial tools (drawing tools); 3D meshes, parametric surfaces, and translucent
    and wireframed surfaces on the GPU.
-4. Grid: pivots over remote sources, bins in grid queries, a SQL
+5. Grid: pivots over remote sources, bins in grid queries, a SQL
    generator for them, remote grids from Python, and editing.
-5. Screen-reader verification, benchmarks in Firefox and on other machines
+6. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 
 ## Development

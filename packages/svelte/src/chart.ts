@@ -26,8 +26,10 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   onselect?: ChartListener<"select"> | undefined;
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
   onhover?: ChartListener<"hover"> | undefined;
-  /** The plot was clicked, with the data under the pointer. */
+  /** The plot was clicked, with the data under the pointer (and with `rowSelection`, the rows it selected). */
   onclick?: ChartListener<"click"> | undefined;
+  /** A channel `rowSelection` binds changed, by any chart or grid: what it holds now. */
+  onrowselection?: ChartListener<"rowSelection"> | undefined;
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   oncamera?: ChartListener<"camera"> | undefined;
   /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */

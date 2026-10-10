@@ -459,6 +459,45 @@ A widget displayed in several cells is one chart: updates and brushing reach
 every output. A browser that opens the notebook later, or reloads it, draws
 the current data.
 
+### Selected rows
+
+`row_selection=hg.SelectionBinding("focus")` binds a chart to a channel of a
+selection of its data's rows: its brushes, lassos, and clicks select rows
+there (Shift adds, Ctrl or Cmd adds or removes, a click off the data
+clears; Space selects the point under the keyboard cursor), and the chart
+dims the rows the channel does not hold. A brush selects the rows whose
+values are in its ranges, as a condition rows streamed in later meet too; a
+click on a histogram bin selects the rows it counts, on a box plot the
+group's. `events=["click"]` chooses the gestures that select (`[]` for a
+chart that only shows what others select), `effect="none"` selects without
+dimming, `data=` names the table (by default the chart's data), and
+`fields=["kind"]` sends columns the marks do not read, for conditions set
+from Python to test (a widget refuses a condition on a column it does not
+send); a list binds several tables, one binding each.
+
+```python
+live = (
+    hg.Chart(trips, brush="xy", row_selection=hg.SelectionBinding("focus"))
+    .point(x="distance", y="fare")
+    .widget()
+)
+live.on_row_selection(lambda picked: print(picked.rows, picked.condition))
+live.row_selection                       # an hg.RowSelection
+live.row_selection = [3, 8]              # select rows by position (or a boolean mask)
+live.row_selection = hg.col("fare") > 20 # or a condition; None clears
+```
+
+An `hg.RowSelection` holds the `channel`, the `data` it selects rows of, and
+either `rows`, the selected rows' positions in the data as the chart holds
+it now (`trips.iloc[picked.rows]`, after rows `append` with `max_rows`
+dropped), or a brush's `condition`, an `hg.Expr`; both are None when
+nothing is selected. The browser numbers rows as Python does, so rows
+selected before an `append` or a drop still name the same records, and rows
+selected before a `replace` are gone. Setting `live.selection` draws a brush
+without selecting rows; set `row_selection` for that. Every output of a widget shows one
+row selection. Static output (HTML, a cell's value) highlights in the
+browser and reports nothing.
+
 ## Streamlit
 
 `herceg.streamlit.chart(chart)` shows a chart in a
@@ -479,8 +518,12 @@ if state.click:
     st.write(state.click.label, state.click.points)
 ```
 
-`on_select` (brushing, in charts with `brush=`) and `on_click` (clicking
-data) take `"ignore"`, the default, which keeps them in the browser;
+`on_select` (brushing, in charts with `brush=`), `on_click` (clicking
+data), and `on_row_selection` (selecting rows, in charts with one
+`row_selection` binding; `state.row_selection` is an `hg.RowSelection`, of
+this run's data only; runs that change how the chart looks but not its
+data keep clicked and lassoed rows, and a brush's rows while the brush can
+be kept) take `"ignore"`, the default, which keeps them in the browser;
 `"rerun"`, which reruns the script so that its `chart(...)` call returns
 them; or a function, called before the rerun as Streamlit widget callbacks
 are. `state.selection` is an `hg.Selection`, as live notebook charts report
@@ -518,8 +561,13 @@ npm run test:python    # build, then run pytest in a uv environment
   nbviewer, notebooks saved without widget state) they show nothing; display
   the chart itself for a static copy.
 - `sync` does not link separate widgets, since each loads its own copy of
-  the engine. Link them from Python instead:
-  `a.on_viewport(lambda view: setattr(b, "viewport", dataclasses.replace(b.viewport, x=view.x)))`.
+  the engine, and nor does a row selection's channel. Link them from Python
+  instead:
+  `a.on_viewport(lambda view: setattr(b, "viewport", dataclasses.replace(b.viewport, x=view.x)))`,
+  `a.on_row_selection(lambda picked: setattr(b, "row_selection", picked))`
+  (for charts of the same data; `b`'s binding names in `fields=` the
+  columns `a`'s brushes test that `b` does not draw). Row selections of a derived table's rows
+  stay in the browser: live charts refuse to bind one.
 - Python keeps the live chart's current data, so a browser that connects
   later can draw it, and `append` copies the table's columns on each call
   (about 0.35 ms for 100 rows into a million-row, three-column window on an

@@ -60,8 +60,8 @@ describe("loadSpec", () => {
   it("round trips point animation keys in every supported spec version", () => {
     const data = table({ x: [1, 2], y: [3, 4], id: ["a", "b"] }, { name: "data" });
     const mark = point(data, { x: "x", y: "y", animationKey: "id" });
-    expect(SPEC_VERSION).toBe(7);
-    for (const version of [undefined, 1, 2, 3, 4, 5, 6, 7] as const) {
+    expect(SPEC_VERSION).toBe(8);
+    for (const version of [undefined, 1, 2, 3, 4, 5, 6, 7, 8] as const) {
       const spec: ChartSpec = {
         ...(version === undefined ? {} : { version }),
         data: { data: { columns: { x: [1, 2], y: [3, 4], id: ["a", "b"] } } },
@@ -345,7 +345,7 @@ describe("loadSpec", () => {
       /marks\[0\]: An area needs y, or y1 and y2/,
     );
     expect(() => validateSpec({ marks: [{ type: "rule" }] })).toThrow(/exactly one of x or y/);
-    expect(SPEC_VERSION).toBe(7);
+    expect(SPEC_VERSION).toBe(8);
     // An omitted version is 1, which has no panels.
     expect(() => loadSpec({ marks: [], panels: [{ id: "a" }] })).toThrow(/"version": 2/);
   });
@@ -445,7 +445,7 @@ describe("loadSpec", () => {
         marks: [{ type: "line", x: "x", y: "y" }],
       }),
     ).toThrow(/set `data` to one of "a", "b"/);
-    expect(() => loadSpec({ version: 8 as 1, marks: [] })).toThrow(/Unsupported spec version 8/);
+    expect(() => loadSpec({ version: 9 as 1, marks: [] })).toThrow(/Unsupported spec version 9/);
     expect(() => table({ c: encodedCategory(new Int32Array([2]), ["a"]) })).toThrow(
       /Column "c": Category code 2 at row 0 is outside the dictionary/,
     );

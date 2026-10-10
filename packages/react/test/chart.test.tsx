@@ -5,8 +5,12 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  RowSet,
   rangeNavigator,
+  rowSelection,
   rowView,
+  selectionStore,
+  selectRows,
   table,
   time,
   timeBreaks,
@@ -452,6 +456,46 @@ describe("<Chart>", () => {
     act(() => root.render(<App name="two" />));
     act(() => (chart as unknown as HercegChart).select([1, 2]));
     expect(seen).toEqual(["two:1-2"]);
+  });
+
+  it("binds a row selection, kept across re-renders while its store and channel are", () => {
+    const store = selectionStore(metrics);
+    const other = selectionStore(metrics);
+    const seen: unknown[] = [];
+    const ref: { current: HercegChart | null } = { current: null };
+    function App({ tick, bound }: { tick: number; bound: typeof store }) {
+      return (
+        <Chart
+          ref={ref}
+          title={`tick ${tick % 1}`}
+          rowSelection={rowSelection({ store: bound, channel: "focus" })}
+          onRowSelection={({ selection }) => seen.push(selection)}
+        >
+          <Line data={metrics} x="t" y="a" />
+        </Chart>
+      );
+    }
+    act(() => root.render(<App tick={1} bound={store} />));
+    const chart = ref.current!;
+    let updates = 0;
+    const update = chart.update.bind(chart);
+    chart.update = (options) => {
+      updates++;
+      update(options);
+    };
+    // A new binding of the same store and channel is the same binding.
+    act(() => root.render(<App tick={2} bound={store} />));
+    expect(updates).toBe(0);
+    const rows = selectRows(new RowSet(metrics).add(1));
+    act(() => store.set("focus", rows));
+    expect(seen).toEqual([rows]);
+    // Another store rebinds the chart.
+    act(() => root.render(<App tick={3} bound={other} />));
+    expect(updates).toBe(1);
+    act(() => store.set("focus", null));
+    expect(seen).toEqual([rows]);
+    act(() => other.set("focus", rows));
+    expect(seen).toEqual([rows, rows]);
   });
 
   it("tells onRender of the first frame, with the ref set", () => {

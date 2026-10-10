@@ -696,6 +696,11 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     );
   }
 
+  /** How far a row's point reaches from its center, in pixels; NaN when it is not drawn. */
+  reach(row: number): number {
+    return this.#reach(row, this.#radiusScale());
+  }
+
   /** Whether a row is drawn: rows missing a value they encode, or sized to nothing, are not. */
   shows(_s: Series, row: number): boolean {
     return this.#reach(row, this.#radiusScale()) > 0;

@@ -6,10 +6,21 @@
 // the widget's tables and marks, so each update is decoded once and every
 // view redraws from the same data.
 
-import { type Chart, type ChartOptions, createChart, type Table } from "herceg";
+import {
+  type Chart,
+  type ChartOptions,
+  createChart,
+  type DataSelection,
+  RowSet,
+  type SelectionStore,
+  selectRows,
+  selectWhere,
+  type Table,
+} from "herceg";
 import {
   type ChartSpec,
   type ColumnSpec,
+  type Expression,
   loadSpec,
   SPEC_VERSION,
   type SpecBuffer,
@@ -37,6 +48,22 @@ export interface Model {
 type ViewEvent = "select" | "viewport";
 type ViewState = SelectionPayload | ViewportPayload | null;
 
+/**
+ * A channel's selection between Python and the browser: a condition, or
+ * rows, whose positions (Python to the browser) or identities (back) travel
+ * as a buffer.
+ */
+export type RowsPayload =
+  | { kind: "predicate"; expression: Expression }
+  | { kind: "rows"; rows?: number; generation?: number };
+
+/** What a bound channel holds, as a snapshot restores it. */
+export interface HeldRows {
+  table: string;
+  channel: string;
+  selection: RowsPayload | null;
+}
+
 /** The whole chart as Python sends it when a browser connects. */
 export interface Snapshot {
   /** Counts the changes Python sent; every update carries the next number. */
@@ -45,6 +72,14 @@ export interface Snapshot {
   buffers: SpecBuffer[];
   selection: SelectionPayload | null;
   viewport: ViewportPayload | null;
+  /**
+   * Per table a row selection binds, how Python numbers its rows: the rows
+   * dropped from its front since it was last replaced, and how many times
+   * it was. Rows reported to Python are numbered so.
+   */
+  rows?: Record<string, [number, number]>;
+  /** What the bound channels hold, rows indexing `buffers`. */
+  rowSelections?: HeldRows[];
 }
 
 type Columns = Record<string, ColumnSpec>;
@@ -59,6 +94,7 @@ export type Update = { revision: number } & (
   | { type: "options"; options: Record<string, unknown> }
   | { type: "select"; selection: SelectionPayload | null; origin?: string }
   | { type: "viewport"; viewport: ViewportPayload | null; origin?: string }
+  | { type: "rows"; table: string; channel: string; selection: RowsPayload | null; origin?: string }
 );
 
 interface View {
@@ -92,10 +128,21 @@ class Widget {
   #error: unknown;
   /** The selection and viewport Python and the browser last agreed on, to drop echoes. */
   #states: Record<ViewEvent, ViewState> = { select: null, viewport: null };
+  /** The stores the views' row selections bind, by table name, which the views share. */
+  #stores = new Map<string, SelectionStore>();
+  /** Python's numbering of each bound table's rows, as of the snapshot (see `Snapshot.rows`). */
+  #numbering: Record<string, [number, number]> = {};
+  #unsubscribe: (() => void)[] = [];
+  /** Applying a row selection from Python, which goes back to no one. */
+  #applying = false;
 
   constructor(model: Model) {
     this.#model = model;
-    this.#outbox = new Throttle((content) => model.send(content));
+    // Rows travel as buffers beside the message.
+    this.#outbox = new Throttle((content) => {
+      const { buffers, ...rest } = content as { buffers?: ArrayBuffer[] };
+      model.send(rest, undefined, buffers);
+    });
     this.#load(model.get("_chart") as Snapshot);
     model.on("change:_chart", () => {
       const snapshot = model.get("_chart") as Snapshot;
@@ -128,15 +175,18 @@ class Widget {
 
   dispose(): void {
     this.#outbox.dispose();
+    for (const stop of this.#unsubscribe) stop();
   }
 
   #load(snapshot: Snapshot) {
     this.#revision = snapshot.revision;
     this.#resyncing = false;
-    // Views waiting to be reported predate the snapshot's.
+    // Views and rows waiting to be reported predate the snapshot's.
     this.#outbox.cancel("select");
     this.#outbox.cancel("viewport");
+    this.#outbox.cancelAll("rows:");
     this.#states = { select: snapshot.selection, viewport: snapshot.viewport };
+    // Option updates never change the row selection: it binds the tables loaded here.
     const {
       data: _data,
       marks: _marks,
@@ -144,18 +194,94 @@ class Widget {
       facet: _facet,
       panels: _panels,
       grid: _grid,
+      rowSelection: _rowSelection,
       ...options
     } = snapshot.spec;
     this.#options = options;
+    for (const stop of this.#unsubscribe) stop();
+    this.#unsubscribe = [];
     try {
       const loaded = loadSpec(snapshot.spec, snapshot.buffers);
       this.#tables = loaded.tables;
       this.#config = loaded.config;
+      this.#stores = loaded.stores;
       this.#error = undefined;
     } catch (error) {
       this.#tables = new Map();
       this.#config = undefined;
+      this.#stores = new Map();
       this.#error = error;
+    }
+    this.#numbering = snapshot.rows ?? {};
+    for (const { table, channel, selection } of snapshot.rowSelections ?? []) {
+      const rows = selection?.kind === "rows" ? snapshot.buffers[selection.rows!] : undefined;
+      this.#setRows(table, channel, selection, rows && view(rows));
+    }
+    // Changes of the channels by any view go to Python, as Python numbers rows.
+    for (const [name, store] of this.#stores) {
+      const channels = (this.#config?.rowSelection?.bindings ?? [])
+        .filter((binding) => binding.store === store)
+        .map(({ channel }) => channel);
+      const seen = new Map(channels.map((channel) => [channel, store.get(channel)]));
+      this.#unsubscribe.push(
+        store.subscribe(() => {
+          for (const channel of channels) {
+            const now = store.get(channel);
+            if (now === seen.get(channel)) continue;
+            seen.set(channel, now);
+            if (!this.#applying) this.#reportRows(name, channel, now);
+          }
+        }),
+      );
+    }
+  }
+
+  /** Reports a channel's selection to Python: rows by identity, as Python numbers them. */
+  #reportRows(name: string, channel: string, selection: DataSelection | null) {
+    const table = this.#tables.get(name)!;
+    const [dropped, generation] = this.#numbering[name] ?? [0, 0];
+    // The revision tells Python which of its changes this one was made after.
+    const content = {
+      type: "rowSelection",
+      table: name,
+      channel,
+      origin: this.#origin,
+      revision: this.#revision,
+    };
+    if (selection?.kind !== "rows") {
+      const payload = selection && { kind: "predicate", expression: selection.expression };
+      this.#outbox.post(`rows:${name}:${channel}`, { ...content, selection: payload });
+      return;
+    }
+    const positions = selection.rows.positions();
+    // Python numbers rows from the snapshot's first, until a reset numbers them afresh.
+    const base = (table.generation === 0 ? dropped : 0) + table.rowOffset;
+    const identities = Float64Array.from(positions, (position) => position + base);
+    this.#outbox.post(`rows:${name}:${channel}`, {
+      ...content,
+      selection: { kind: "rows", generation: generation + table.generation },
+      buffers: [identities.buffer],
+    });
+  }
+
+  /** Sets a channel from Python: a condition, rows by position (`rows`), or nothing. */
+  #setRows(
+    name: string,
+    channel: string,
+    selection: RowsPayload | null,
+    rows: Uint32Array | undefined,
+  ) {
+    const store = this.#stores.get(name);
+    const table = this.#tables.get(name);
+    if (!store || !table) return;
+    let held: DataSelection | null = null;
+    if (selection?.kind === "predicate") held = selectWhere(selection.expression);
+    else if (selection?.kind === "rows") held = selectRows(new RowSet(table).addAll(rows ?? []));
+    this.#applying = true;
+    try {
+      store.set(channel, held);
+    } finally {
+      this.#applying = false;
     }
   }
 
@@ -233,13 +359,14 @@ class Widget {
   /**
    * Shows a selection or viewport in a chart. Category labels are found in
    * the bands of the current data, so the chart first draws any data
-   * changes it has not drawn yet.
+   * changes it has not drawn yet. A selection shown here writes no rows:
+   * the view brushed wrote them to the stores every view shares.
    */
   #show(chart: Chart, event: ViewEvent, payload: ViewState) {
     if (event === "select") {
       const selection = payload as SelectionPayload | null;
       if (namesCategories(selection) || selection?.lasso) chart.render();
-      chart.select(chartSelection(chart, selection));
+      chart.select(chartSelection(chart, selection), { rows: false });
       if (selection?.lasso && !selection.categories) this.#learnCategories(chart, selection);
       return;
     }
@@ -307,6 +434,17 @@ class Widget {
       case "options":
         this.#updateOptions(message.options);
         return;
+      case "rows":
+        // A browser's own selection, back from Python: it holds it already.
+        if (message.origin === this.#origin) return;
+        this.#outbox.cancel(`rows:${message.table}:${message.channel}`);
+        this.#setRows(
+          message.table,
+          message.channel,
+          message.selection,
+          buffers[0] && view(buffers[0]),
+        );
+        return;
       case "select":
       case "viewport": {
         // This browser's own view, back from Python: it is already drawn,
@@ -316,6 +454,8 @@ class Widget {
         this.#outbox.cancel(message.type);
         const payload = message.type === "select" ? message.selection : message.viewport;
         this.#states[message.type] = payload;
+        // Rows travel apart ("rows"): the browser whose view was brushed wrote
+        // them, and Python sets them with `row_selection`.
         for (const view of this.#views)
           if (view.chart) this.#show(view.chart, message.type, payload);
         return;
@@ -365,6 +505,15 @@ class Widget {
       view.chart?.render();
     }
   }
+}
+
+/** Rows' positions from Python: little-endian uint32, copied where unaligned. */
+function view(buffer: SpecBuffer): Uint32Array {
+  const bytes = ArrayBuffer.isView(buffer)
+    ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+    : new Uint8Array(buffer);
+  const aligned = bytes.byteOffset % 4 === 0 ? bytes : bytes.slice();
+  return new Uint32Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 4);
 }
 
 /** Columns of an update, read like a spec's table: checked, and viewed without copying. */
@@ -447,6 +596,12 @@ class Throttle {
   /** Drops a message of this kind still waiting to be sent. */
   cancel(kind: string) {
     this.#pending.delete(kind);
+  }
+
+  /** Drops the messages of every kind starting with `prefix` still waiting to be sent. */
+  cancelAll(prefix: string) {
+    for (const kind of [...this.#pending.keys()])
+      if (kind.startsWith(prefix)) this.#pending.delete(kind);
   }
 
   dispose() {

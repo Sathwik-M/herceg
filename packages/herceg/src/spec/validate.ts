@@ -29,6 +29,7 @@ import {
   type PanelSpec,
   type ProjectionSpec,
   type ResolveSpec,
+  type RowSelectionSpec,
   SPEC_VERSION,
   type ThemeSpec,
   type TimeColumnSpec,
@@ -1170,6 +1171,28 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           values: boolean,
         } satisfies ChecksOf<AnimationSpec>);
       },
+      rowSelection: (v, path) => {
+        const bindings = Array.isArray(v) ? v : [v];
+        if (bindings.length === 0) fail(path, "a binding or a list of them", v);
+        bindings.forEach((binding, i) => {
+          const at = Array.isArray(v) ? `${path}[${i}]` : path;
+          object(binding, at);
+          const b = binding as Record<string, unknown>;
+          properties(b, at, {
+            data: string,
+            channel: (c, where) => {
+              if (typeof c !== "string" || c === "") fail(where, "a channel's name", c);
+            },
+            events: (e, where) => {
+              strings(e, where);
+              const gesture = oneOf("brush", "lasso", "click");
+              for (const [k, event] of (e as string[]).entries()) gesture(event, `${where}[${k}]`);
+            },
+            effect: oneOf("highlight", "none"),
+          } satisfies ChecksOf<RowSelectionSpec>);
+          required(b, at, ["channel"]);
+        });
+      },
       renderer: oneOf("auto", "svg", "canvas"),
       theme,
       locale: string,
@@ -1238,6 +1261,13 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
         item.notch === true ? item.notch : item.whiskers,
       );
   }
+  // An older reader would draw every row undimmed whatever is selected.
+  if (chart.rowSelection !== undefined && declared < 8)
+    fail(
+      "spec.rowSelection",
+      'a spec with "version": 8 or later, so that older readers refuse it',
+      chart.rowSelection,
+    );
   // A projection places maps' marks; a chart of other marks has nothing to project.
   if (
     chart.projection !== undefined &&

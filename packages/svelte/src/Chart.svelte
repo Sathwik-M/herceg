@@ -27,6 +27,7 @@
     onselect,
     onhover,
     onclick,
+    onrowselection,
     oncamera,
     onvisibility,
     onrender,
@@ -101,6 +102,7 @@
   listen("select", () => onselect);
   listen("hover", () => onhover);
   listen("click", () => onclick);
+  listen("rowSelection", () => onrowselection);
   listen("camera", () => oncamera);
   listen("visibility", () => onvisibility);
   listen("render", () => onrender);

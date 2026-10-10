@@ -13,6 +13,7 @@ function payload(
   buffers: ArrayBufferView[],
   events: Header["events"],
   offset = 3,
+  epoch?: string,
 ): Uint8Array {
   const offsets: [number, number][] = [];
   let end = 0;
@@ -20,7 +21,9 @@ function payload(
     offsets.push([end, buffer.byteLength]);
     end = Math.ceil((end + buffer.byteLength) / 8) * 8;
   }
-  const header = new TextEncoder().encode(JSON.stringify({ spec, buffers: offsets, events }));
+  const header = new TextEncoder().encode(
+    JSON.stringify({ spec, buffers: offsets, events, ...(epoch && { epoch }) }),
+  );
   const start = Math.ceil((4 + header.length) / 8) * 8;
   const out = new Uint8Array(offset + start + end).subarray(offset);
   new DataView(out.buffer, out.byteOffset).setUint32(0, header.length, true);
@@ -258,6 +261,256 @@ describe("Streamlit component", () => {
     expect(band(parent)!.getAttribute("visibility")).toBe("visible");
     // Restoring the brush does not rerun the script.
     expect(next.state).toEqual([]);
+  });
+
+  it("reports a row selection of each payload's data, also one a kept brush wrote again", async () => {
+    const parent = host();
+    const bound = (title: string, epoch: string) =>
+      payload(
+        {
+          version: 8,
+          title,
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          interaction: { brush: "x" },
+          rowSelection: { channel: "focus" },
+          data: {
+            data: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                y: { type: "number", dtype: "float64", buffer: 1 },
+              },
+            },
+          },
+          marks: [{ type: "line", x: "x", y: "y", data: "data" }],
+        },
+        [new Float64Array([0, 1, 2]), new Float64Array([1, 3, 2])],
+        ["rowSelection"],
+        3,
+        epoch,
+      );
+    const first = run(parent, bound("Before", "e1"));
+    await brush(parent, 0.3, 0.7);
+    await frame();
+    const [name, value] = first.state.at(-1)!;
+    expect(name).toBe("rows");
+    expect(value).toMatchObject({ table: "data", channel: "focus", epoch: "e1" });
+    expect((value as { selection: { kind: string } }).selection.kind).toBe("predicate");
+    // New data: the kept brush selects its rows of it, which the script hears of.
+    const next = run(parent, bound("After", "e2"));
+    await frame();
+    expect(next.state.at(-1)).toMatchObject(["rows", { epoch: "e2", channel: "focus" }]);
+  });
+
+  it("keeps rows selected in the same data on a run that changes only how the chart looks", async () => {
+    const parent = host();
+    const bound = (title: string) =>
+      payload(
+        {
+          version: 8,
+          title,
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          rowSelection: { channel: "focus" },
+          data: {
+            data: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                y: { type: "number", dtype: "float64", buffer: 1 },
+              },
+            },
+          },
+          marks: [{ type: "line", x: "x", y: "y", data: "data" }],
+        },
+        [new Float64Array([0, 1, 2]), new Float64Array([1, 3, 2])],
+        ["rowSelection"],
+        3,
+        "e1",
+      );
+    const first = run(parent, bound("Before"));
+    const root = figure(parent) as HTMLElement;
+    root.focus();
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    await frame();
+    const [, held] = first.state.at(-1)!;
+    expect((held as { selection: { kind: string } }).selection.kind).toBe("rows");
+    // A new title, the same data: the row stays selected, and the script has nothing new to hear.
+    const next = run(parent, bound("Retitled"));
+    await frame();
+    expect(parent.querySelector('svg [opacity="0.25"]')).not.toBeNull();
+    expect(next.state.filter(([name]) => name === "rows")).toEqual([]);
+  });
+
+  it("clears a brush's rows when a run that keeps the data cannot keep the brush", async () => {
+    const parent = host();
+    const bound = (x: Header["spec"]["x"]) =>
+      payload(
+        {
+          version: 8,
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          interaction: { brush: "x" },
+          rowSelection: { channel: "focus" },
+          ...(x && { x }),
+          data: {
+            data: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                y: { type: "number", dtype: "float64", buffer: 1 },
+              },
+            },
+          },
+          marks: [{ type: "line", x: "x", y: "y", data: "data" }],
+        },
+        [new Float64Array([1, 2, 3]), new Float64Array([1, 3, 2])],
+        ["rowSelection"],
+        3,
+        "e1",
+      );
+    const first = run(parent, bound(undefined));
+    await brush(parent, 0.3, 0.7);
+    await frame();
+    const [, brushed] = first.state.at(-1)!;
+    expect((brushed as { selection: { kind: string } }).selection.kind).toBe("predicate");
+    // A log x axis: the brush's range cannot carry over, and nor do its rows.
+    const next = run(parent, bound({ type: "log" }));
+    await frame();
+    expect(next.state.at(-1)).toMatchObject(["rows", { channel: "focus", selection: null }]);
+    expect(parent.querySelector('svg [opacity="0.25"]')).toBeNull();
+  });
+
+  it("clears rows a brush along a stack's values wrote when it cannot be kept", async () => {
+    const parent = host();
+    const bound = (y: Header["spec"]["y"]) =>
+      payload(
+        {
+          version: 8,
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          interaction: { brush: "y" },
+          rowSelection: { channel: "focus" },
+          ...(y && { y }),
+          data: {
+            data: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                a: { type: "number", dtype: "float64", buffer: 1 },
+                b: { type: "number", dtype: "float64", buffer: 2 },
+              },
+            },
+          },
+          marks: [{ type: "area", x: "x", y: ["a", "b"], stack: true, data: "data" }],
+        },
+        [new Float64Array([0, 1, 2]), new Float64Array([1, 2, 3]), new Float64Array([2, 1, 2])],
+        ["rowSelection"],
+        3,
+        "e1",
+      );
+    const first = run(parent, bound(undefined));
+    await vi.dynamicImportSettled();
+    press(parent, "pointerdown", 0.5, 0.3);
+    press(parent, "pointermove", 0.5, 0.5);
+    press(parent, "pointermove", 0.5, 0.7);
+    press(parent, "pointerup", 0.5, 0.7);
+    await frame();
+    // Stacks brushed along their values select rows by where they are drawn.
+    const [, brushed] = first.state.at(-1)!;
+    expect((brushed as { selection: { kind: string } }).selection.kind).toBe("rows");
+    const next = run(parent, bound({ type: "log" }));
+    await frame();
+    expect(next.state.at(-1)).toMatchObject(["rows", { channel: "focus", selection: null }]);
+  });
+
+  it("reports rows selected while the script did not listen once it listens again", async () => {
+    const parent = host();
+    const bound = (events: Header["events"]) =>
+      payload(
+        {
+          version: 8,
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          rowSelection: { channel: "focus" },
+          data: {
+            data: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                y: { type: "number", dtype: "float64", buffer: 1 },
+              },
+            },
+          },
+          marks: [{ type: "line", x: "x", y: "y", data: "data" }],
+        },
+        [new Float64Array([0, 1, 2]), new Float64Array([1, 3, 2])],
+        events,
+        3,
+        "e1",
+      );
+    const key = (name: string) =>
+      (figure(parent) as HTMLElement).dispatchEvent(
+        new KeyboardEvent("keydown", { key: name, bubbles: true }),
+      );
+    const first = run(parent, bound(["rowSelection"]));
+    (figure(parent) as HTMLElement).focus();
+    key("ArrowRight");
+    key(" ");
+    await frame();
+    const rowsOf = (state: [string, unknown][]) =>
+      (state.at(-1)![1] as { selection: { rows: number[] } }).selection.rows;
+    const reported = rowsOf(first.state);
+    // The script stops listening; another row is selected meanwhile.
+    const quiet = run(parent, bound([]));
+    (figure(parent) as HTMLElement).focus();
+    key("ArrowRight");
+    key("ArrowRight");
+    key(" ");
+    await frame();
+    expect(quiet.state).toEqual([]);
+    const again = run(parent, bound(["rowSelection"]));
+    await frame();
+    expect(rowsOf(again.state)).not.toEqual(reported);
+  });
+
+  it("reports a kept brush's rows of data replaced while the script did not listen", async () => {
+    const parent = host();
+    const bound = (events: Header["events"], epoch: string, y: number[]) =>
+      payload(
+        {
+          version: 8,
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          interaction: { brush: "x" },
+          rowSelection: { channel: "focus" },
+          data: {
+            data: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                y: { type: "number", dtype: "float64", buffer: 1 },
+              },
+            },
+          },
+          marks: [{ type: "line", x: "x", y: "y", data: "data" }],
+        },
+        [new Float64Array([0, 1, 2]), new Float64Array(y)],
+        events,
+        3,
+        epoch,
+      );
+    run(parent, bound(["rowSelection"], "e1", [1, 3, 2]));
+    await brush(parent, 0.3, 0.7);
+    await frame();
+    // New data while the script does not listen; then it listens again, the data as it is.
+    run(parent, bound([], "e2", [2, 1, 3]));
+    await frame();
+    const again = run(parent, bound(["rowSelection"], "e2", [2, 1, 3]));
+    await frame();
+    expect(again.state.at(-1)).toMatchObject(["rows", { epoch: "e2", channel: "focus" }]);
   });
 
   it("redraws new bytes in place, keeping a rectangle and the y zoom", async () => {

@@ -40,8 +40,10 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   onSelect?: ChartListener<"select">;
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
   onHover?: ChartListener<"hover">;
-  /** The plot was clicked, with the data under the pointer. */
+  /** The plot was clicked, with the data under the pointer (and with `rowSelection`, the rows it selected). */
   onClick?: ChartListener<"click">;
+  /** A channel `rowSelection` binds changed, by any chart or grid: what it holds now. */
+  onRowSelection?: ChartListener<"rowSelection">;
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   onCameraChange?: ChartListener<"camera">;
   /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
@@ -177,6 +179,7 @@ export function Chart({
   onSelect,
   onHover,
   onClick,
+  onRowSelection,
   onCameraChange,
   onVisibilityChange,
   onRender,
@@ -210,6 +213,7 @@ export function Chart({
   useChartEvent(chart, "select", onSelect);
   useChartEvent(chart, "hover", onHover);
   useChartEvent(chart, "click", onClick);
+  useChartEvent(chart, "rowSelection", onRowSelection);
   useChartEvent(chart, "camera", onCameraChange);
   useChartEvent(chart, "visibility", onVisibilityChange);
   const render = useChartEvent(chart, "render", onRender);

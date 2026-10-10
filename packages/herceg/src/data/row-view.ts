@@ -148,6 +148,11 @@ export class RowView<S extends Schema = Schema> {
     this.#invalidate();
   }
 
+  /** The row set the view is restricted to, or null. */
+  get restriction(): RowSet<S> | null {
+    return this.#restriction;
+  }
+
   /**
    * Shows only the rows of `rows` (of the same table), or every row again
    * with null. The set is read when the view rebuilds: call `restrict` again

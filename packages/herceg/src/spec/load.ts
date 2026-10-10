@@ -5,6 +5,7 @@
 import { type ColumnInput, encodedCategory, type NumericArray, time } from "../data/column.ts";
 import { deriveTable } from "../data/derive.ts";
 import { geometry } from "../data/geometry.ts";
+import { type SelectionStore, selectionStore } from "../data/selection.ts";
 import { type Table, table } from "../data/table.ts";
 import { readsTable } from "../marks/annotation.ts";
 import { AreaMark } from "../marks/area.ts";
@@ -19,10 +20,10 @@ import { GeoShapeMark } from "../marks/geoshape.ts";
 import { GraphMark } from "../marks/graph.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
 import { HistogramMark } from "../marks/histogram.ts";
-import type { LayoutMark } from "../marks/layout-mark.ts";
+import { type LayoutMark, tablesOf } from "../marks/layout-mark.ts";
 import { LineMark } from "../marks/line.ts";
 import { Line3DMark } from "../marks/line3d.ts";
-import type { Mark } from "../marks/mark.ts";
+import type { ChartMark, Mark } from "../marks/mark.ts";
 import { PieMark } from "../marks/pie.ts";
 import { PointMark } from "../marks/point.ts";
 import { Point3DMark } from "../marks/point3d.ts";
@@ -39,9 +40,18 @@ import { Facet } from "../model/facet.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { rangeNavigator } from "../model/navigator.ts";
 import { Panels } from "../model/panels.ts";
+import { type RowSelection, rowSelection } from "../model/row-selection.ts";
 import { timeBreaks } from "../scale/breaks.ts";
 import { scheme } from "../scale/schemes.ts";
-import type { BinaryType, ChartSpec, ColumnSpec, ColumnsSpec, DataSpec, MarkSpec } from "./spec.ts";
+import type {
+  BinaryType,
+  ChartSpec,
+  ColumnSpec,
+  ColumnsSpec,
+  DataSpec,
+  MarkSpec,
+  RowSelectionSpec,
+} from "./spec.ts";
 import { checkSpec } from "./validate.ts";
 
 /** Bytes of a binary column: an ArrayBuffer, or a view such as a Uint8Array or DataView. */
@@ -52,6 +62,8 @@ export interface LoadedSpec {
   config: ChartConfig & { width?: number; height?: number };
   /** The spec's tables by name; changing them updates charts built from the spec. */
   tables: Map<string, Table>;
+  /** The selection stores `rowSelection` binds, by table name: those given in `stores`, or new ones. */
+  stores: Map<string, SelectionStore>;
   /** Paths of the properties this herceg does not know, such as `marks[0].strokeWidht`. */
   unknown: string[];
 }
@@ -64,7 +76,31 @@ export interface LoadOptions {
    * the chart.
    */
   unknown?: "warn" | "error" | "ignore";
+  /**
+   * Tables to use instead of making them from the spec's `data`, by name
+   * (a map, such as another loaded spec's `tables`, or an object): charts
+   * loaded from several specs share rows (and so selections) only through
+   * tables they share. The spec's own columns for them are not read.
+   */
+  tables?: ByName<AnyTable>;
+  /**
+   * The selection stores `rowSelection` binds, by table name; a store of a
+   * table's own is made for each one left out. Each must be of that table.
+   */
+  stores?: ByName<AnyStore>;
 }
+
+/** Values by name: a map, or an object of them. */
+type ByName<T> = ReadonlyMap<string, T> | Readonly<Record<string, T>>;
+
+/**
+ * Tables and stores of any schema, which the loader reads by field name:
+ * a table's schema types its fields only where it is used by name.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: the erasure point of tables of several schemas.
+type AnyTable = Table<any>;
+// biome-ignore lint/suspicious/noExplicitAny: as for tables.
+type AnyStore = SelectionStore<any>;
 
 const TYPED: Record<
   BinaryType,
@@ -102,7 +138,7 @@ export function loadSpec(
   if (unknown.length > 0 && (options.unknown ?? "warn") === "warn") {
     console.warn(`herceg: ignoring spec properties it does not know: ${unknown.join(", ")}`);
   }
-  const tables = loadTables(spec.data ?? {}, buffers);
+  const tables = loadTables(spec.data ?? {}, buffers, byName(options.tables));
   const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));
   const {
     data: _data,
@@ -113,8 +149,12 @@ export function loadSpec(
     grid,
     x,
     navigator: strip,
+    rowSelection: bindings,
     ...chart
   } = spec;
+  const stores = new Map<string, SelectionStore>();
+  const rows =
+    bindings && loadRowSelection(bindings, tables, marks, byName(options.stores), stores);
   const facet = split && new Facet(split);
   const subplots = panels && new Panels(panels, grid);
   const navigator = strip ? rangeNavigator(strip === true ? {} : strip) : undefined;
@@ -129,22 +169,77 @@ export function loadSpec(
       ...(facet && { facet }),
       ...(subplots && { panels: subplots }),
       ...(navigator && { navigator }),
+      ...(rows && { rowSelection: rows }),
     },
     tables,
+    stores,
     unknown,
   };
 }
 
-/** Every table of the spec; derived tables after the tables they derive from. */
+function byName<T>(values: ByName<T> | undefined): ReadonlyMap<string, T> | undefined {
+  if (values === undefined || values instanceof Map) return values as ReadonlyMap<string, T>;
+  return new Map(Object.entries(values));
+}
+
+/**
+ * A spec's row selection, its bindings' tables resolved by name (or, left
+ * out, the one table the marks read) and their stores taken from `given`
+ * or made, into `stores`.
+ */
+function loadRowSelection(
+  spec: RowSelectionSpec | readonly RowSelectionSpec[],
+  tables: ReadonlyMap<string, Table>,
+  marks: readonly ChartMark[],
+  given: ReadonlyMap<string, SelectionStore> | undefined,
+  stores: Map<string, SelectionStore>,
+): RowSelection {
+  const read = [...new Set(marks.flatMap((mark) => tablesOf(mark)))];
+  const bindings = (Array.isArray(spec) ? spec : [spec]) as readonly RowSelectionSpec[];
+  return rowSelection(
+    ...bindings.map(({ data, channel, events, effect }, i) => {
+      const path = Array.isArray(spec) ? `spec.rowSelection[${i}]` : "spec.rowSelection";
+      let name = data;
+      if (name === undefined) {
+        if (read.length !== 1)
+          throw new Error(`${path}.data: required where the marks read several tables`);
+        name = [...tables].find(([, table]) => table === read[0])?.[0];
+      }
+      const table = name === undefined ? undefined : tables.get(name);
+      if (!table)
+        throw new Error(`${path}.data: a table of the spec's data, not ${JSON.stringify(name)}`);
+      let store = given?.get(name!) ?? stores.get(name!);
+      if (store && store.source !== table)
+        throw new Error(`The store given for table "${name}" is of another table`);
+      store ??= selectionStore(table);
+      stores.set(name!, store);
+      return {
+        store,
+        channel,
+        ...(events && { events }),
+        ...(effect && { effect }),
+      };
+    }),
+  );
+}
+
+/**
+ * Every table of the spec; derived tables after the tables they derive
+ * from. Tables in `given` are used rather than made from their columns.
+ */
 function loadTables(
   data: Record<string, DataSpec>,
   buffers: readonly SpecBuffer[],
+  given?: ReadonlyMap<string, Table>,
 ): Map<string, Table> {
   const tables = new Map<string, Table>();
   const loading = new Set<string>();
   const load = (name: string): Table => {
-    const done = tables.get(name);
-    if (done) return done;
+    const done = tables.get(name) ?? given?.get(name);
+    if (done) {
+      tables.set(name, done);
+      return done;
+    }
     const entry = data[name];
     if (!entry) throw new Error(`Unknown table "${name}"`);
     if (!("source" in entry)) {

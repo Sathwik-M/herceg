@@ -19,6 +19,8 @@ export class RowSet<S extends Schema = Schema> {
   #words: Uint32Array;
   /** Set bits, including those of rows dropped since and not trimmed yet. */
   #count = 0;
+  /** Counts the changes of membership: adding, deleting, and clearing rows. */
+  #version = 0;
 
   constructor(source: Table<S>) {
     this.source = source;
@@ -44,6 +46,14 @@ export class RowSet<S extends Schema = Schema> {
     return this.#words.byteLength;
   }
 
+  /**
+   * Increments when rows are added, deleted, or cleared (not when rows the
+   * table drops leave), so readers of a set that changes in place notice.
+   */
+  get version(): number {
+    return this.#version;
+  }
+
   /** Whether the row at `position` (an index into the table's current rows) is a member. */
   has(position: number): boolean {
     if (!this.current || !(position >= 0 && position < this.source.length)) return false;
@@ -62,6 +72,7 @@ export class RowSet<S extends Schema = Schema> {
     this.#positions(start, end);
     this.#trim();
     if (end <= start) return this;
+    this.#version++;
     const first = this.source.rowOffset + start - this.#base;
     this.#reserve(first + (end - start));
     for (let bit = first; bit < first + (end - start); bit++) {
@@ -86,6 +97,7 @@ export class RowSet<S extends Schema = Schema> {
       if (position > last) last = position;
     }
     if (last < 0) return this;
+    this.#version++;
     const shift = this.source.rowOffset - this.#base;
     this.#reserve(shift + last + 1);
     const words = this.#words;
@@ -110,14 +122,14 @@ export class RowSet<S extends Schema = Schema> {
     if (word < this.#words.length && (this.#words[word]! & mask) !== 0) {
       this.#words[word]! &= ~mask;
       this.#count--;
+      this.#version++;
     }
     return this;
   }
 
   clear(): this {
-    this.#words = new Uint32Array(0);
-    this.#base = this.source.rowOffset - (this.source.rowOffset % 32);
-    this.#count = 0;
+    this.#version++;
+    this.#empty();
     return this;
   }
 
@@ -137,6 +149,12 @@ export class RowSet<S extends Schema = Schema> {
       }
     }
     return out;
+  }
+
+  #empty() {
+    this.#words = new Uint32Array(0);
+    this.#base = this.source.rowOffset - (this.source.rowOffset % 32);
+    this.#count = 0;
   }
 
   #check() {
@@ -166,7 +184,7 @@ export class RowSet<S extends Schema = Schema> {
     if (dropped <= 0) return;
     const words = Math.floor(dropped / 32);
     if (words >= this.#words.length) {
-      this.clear();
+      this.#empty();
       return;
     }
     if (words > 0) {

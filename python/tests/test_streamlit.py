@@ -39,12 +39,13 @@ def chart():
 
 def test_the_payload_is_the_spec_then_aligned_buffers():
     spec, buffers = chart().to_spec()
-    data = hst._payload(spec, buffers, ["select"])
+    data = hst._payload(spec, buffers, ["select"], "a1b2")
     header, decoded, start = read(data)
     assert header == {
         "spec": spec,
         "buffers": header["buffers"],
         "events": ["select"],
+        "epoch": "a1b2",
     }
     assert decoded == buffers
     # Every buffer starts at a multiple of 8 bytes, so typed arrays view it in place.

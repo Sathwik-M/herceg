@@ -122,6 +122,13 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
     );
   }
 
+  /** A precomputed box is the row of its statistics; a raw one, its group's rows. */
+  override summarized(series: Series, position: number): (row: number) => boolean {
+    if (this.spec.median === undefined) return super.summarized(series, position);
+    const row = this.summaryOf(series).first[rowOf(series, position)]!;
+    return (at) => at === row;
+  }
+
   protected override summarizeRows(rows?: Uint32Array): Summary<readonly number[]> {
     const spec = this.spec;
     if (spec.median === undefined) return super.summarizeRows(rows);

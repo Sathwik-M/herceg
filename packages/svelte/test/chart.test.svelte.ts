@@ -6,7 +6,11 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  RowSet,
   rangeNavigator,
+  rowSelection,
+  selectionStore,
+  selectRows,
   table,
   time,
   timeBreaks,
@@ -371,6 +375,22 @@ describe("<Chart>", () => {
     props.options = { y: { label: "ms" } };
     flushSync();
     expect(updates).toHaveLength(0);
+  });
+
+  it("binds a row selection, kept while its store and channel are", () => {
+    const store = selectionStore(metrics);
+    const seen: unknown[] = [];
+    const onrowselection = ({ selection }: { selection: unknown }) => seen.push(selection);
+    const props = lines({
+      options: { rowSelection: rowSelection({ store, channel: "focus" }), onrowselection },
+    });
+    const updates = spyUpdates(props.chart);
+    props.options = { rowSelection: rowSelection({ store, channel: "focus" }), onrowselection };
+    flushSync();
+    expect(updates).toHaveLength(0);
+    const rows = selectRows(new RowSet(metrics).add(2));
+    store.set("focus", rows);
+    expect(seen).toEqual([rows]);
   });
 
   it("draws a panel per facet value and keeps equal facets without updating", () => {
