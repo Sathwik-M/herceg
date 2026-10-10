@@ -2209,8 +2209,8 @@ class Chart:
         diagrams, graphs) have no axes to zoom: they have their chart to
         themselves, or a facet panel each, or a panel of their own (see ``_add``).
         Networks have no facets or panels yet. A treemap or sunburst of a chart
-        of its own drills with ``zoom=True``, a network's nodes move with
-        ``drag=True``, and either selects rows."""
+        of its own drills with ``zoom=True``; a network pans and zooms its
+        layout plane, lassos nodes, moves them with ``drag=True``, and selects rows."""
         panelled = bool(self._facets or self._panels)
         if panelled and kind not in _PANEL_LAYOUT_MARKS:
             raise ValueError(f"{kind}: has no facets or panels yet; draw it in a chart of its own")
@@ -2230,8 +2230,27 @@ class Chart:
                 f"Chart zoom: a {kind} drills with zoom=True, not along an axis; "
                 f"received {shown(settings.get('zoom'))}"
             )
+        if kind == "graph":
+            if settings.get("zoom") not in (True, False, None, "xy"):
+                raise ValueError(
+                    "Chart zoom: a graph pans and zooms both ways, "
+                    f"received {shown(settings.get('zoom'))}; "
+                    "use zoom=True or zoom='xy'"
+                )
+            if settings.get("brush") not in (None, "lasso"):
+                raise ValueError(
+                    "Chart brush: a graph takes only a lasso, "
+                    f"received {shown(settings.get('brush'))}; "
+                    "use brush='lasso'"
+                )
         # A chart with panels may zoom those with axes; `to_spec` checks it has some.
-        used = self._x_option(("brush", "sync") if drills else ("zoom", "brush", "sync"))
+        used = self._x_option(
+            ("sync",)
+            if kind == "graph"
+            else ("brush", "sync")
+            if drills
+            else ("zoom", "brush", "sync")
+        )
         if not self._panels and used is not None:
             raise ValueError(
                 f"Chart {used}: a {kind} has no x axis to act on; drop {_dropped(used)}"
@@ -3250,7 +3269,10 @@ class Chart:
     def _bound_index(self, binding: SelectionBinding) -> int:
         """The table a binding selects rows of: its ``data``, or else the chart's
         data, or the one table the marks read."""
-        read = sorted({table for _, table in self._marks if table is not None})
+        read = sorted(
+            {table for _, table in self._marks if table is not None}
+            | set(self._node_tables.values())
+        )
         if binding.data is None:
             if self._default is not None and self._default in read:
                 return self._default

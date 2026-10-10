@@ -73,23 +73,31 @@ with WebGL2 and depth-tested, up to 1,048,576 grid points a surface; static
 SVG, PNG, and PDF draw on the CPU, back to front, at most 250,000, and show
 the starting camera.
 
-Maps, trees, and networks take the options axes do. `zoom=True` pans and
-zooms a map (the wheel, dragging, Shift with the arrow keys, plus and minus,
-0 to show it all, and a toolbar), whose `viewport` is in its projection's
-plane, and `brush="lasso"` lassos its regions and points; `zoom=True` on a
-treemap or sunburst drills into the node clicked (Enter on the node read,
-Backspace and the breadcrumbs above it to go back); `drag=True` lets a
-network's nodes be dragged, staying where they are dropped (Shift with the
-arrow keys moves the node read). `row_selection` selects a region's or
-point's row, a tree node's rows, or a network node's or link's rows by
-click (lassos on maps). `.graph(..., directed=True)` draws links from
-source to target with arrowheads, and `link_label_field="kind"` writes a
-category along the links with room.
+Maps, trees, and networks take the shared interaction options. `zoom=True`
+or `zoom="xy"` pans and zooms maps and networks with the wheel, dragging,
+Shift+arrows, plus/minus, double-click or 0 to reset, and a toolbar. A map's
+`viewport` uses its projection's plane; a network's uses layout coordinates,
+with y increasing downwards. Nodes keep their pixel radii while zooming.
+`brush="lasso"` selects map regions and points or network node centers.
+For networks, bind `row_selection` to the nodes table: all rows naming a
+lassoed node are selected; inferred nodes without node rows select none.
+Unselected nodes and links dim; links stay bright when both endpoints are
+selected. Lasso writes no link rows. With lasso and zoom, plain drag lassos
+and Shift-drag pans; the Lasso toolbar toggle switches plain drags back.
+
+`zoom=True` drills into treemaps and sunbursts (click or Enter, Backspace and
+breadcrumbs to go back). `drag=True` moves network nodes without running
+the layout again, also while zoomed. Shift+arrows moves the node read when
+zoom is off; Alt+Shift+arrows does so when zoom is on, leaving Shift+arrows
+and 0 for the view. The toolbar restores moved nodes. Widgets keep
+`item_positions` in layout coordinates, including positions outside the
+current view. `.graph(..., directed=True)` draws arrows from source to
+target, and `link_label_field="kind"` writes names along links with room.
 
 ```python
 hg.Chart(countries, zoom=True, brush="lasso", row_selection=hg.SelectionBinding("picked")).geoshape(color="gdp")
 hg.Chart(sales, zoom=True).treemap(path=["region", "country"], value="revenue")
-hg.Chart(talks, drag=True).graph("from", "to", directed=True, link_label_field="kind")
+hg.Chart(talks, zoom=True, drag=True).graph("from", "to", directed=True, link_label_field="kind")
 ```
 
 Violins accept `split=True` and `inner="box" | "quartiles" | "none"` in both
@@ -902,7 +910,7 @@ if state.click:
 ```
 
 `on_select` (brushing, in charts with `brush=`), `on_click` (clicking
-data), `on_drill` (tree navigation), `on_item_move` (network nodes moved or
+data), `on_viewport` (pan and zoom), `on_drill` (tree navigation), `on_item_move` (network nodes moved or
 reset), and `on_row_selection` (selecting rows, in charts with one
 `row_selection` binding; `state.row_selection` is an `hg.RowSelection`, of
 this run's data only; runs that change how the chart looks but not its
@@ -916,6 +924,16 @@ caused, and None otherwise. Inside `st.form`, a selection reaches the script
 when the form is submitted, and `on_click` cannot react, since Streamlit
 sends no clicks from forms. Give a chart a `key` to keep its selection when
 its data changes, and to show several charts with the same content.
+
+`state.viewport` is an `hg.Viewport`, in projected plane units for maps and
+layout units for networks. Compatible redraws preserve both ranges and
+lassos after restoring node positions; changed network data or layout
+fields clear the network view and positions. Use `on_viewport="rerun"` to
+report view changes to Python, or leave it ignored to navigate in the browser.
+
+Maps preserve their viewport and lasso only while the resolved projection
+parameters match. A data update that changes a conic projection's inferred
+central meridian or parallels clears both, in Streamlit and notebook widgets.
 
 `state.drill_root` and `state.item_positions` use the same tuple of item
 keys and dictionary of layout-coordinate pairs as notebook widgets. They

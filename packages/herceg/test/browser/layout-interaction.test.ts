@@ -129,6 +129,43 @@ describe("maps", () => {
       ...options,
     });
 
+  it("keeps a map's first-touch pan and scale while ignoring a second touch", async () => {
+    const chart = await map();
+    const views = heard(chart, "viewport");
+    const at = origin(chart);
+    const first = { id: 1, x: at.x + 100, y: at.y + 100 };
+    const second = { id: 2, x: at.x + 200, y: at.y + 100 };
+    const zoom = plane(chart).zoom;
+    let active = false;
+    const touch = async (
+      type: "touchStart" | "touchMove" | "touchEnd",
+      points: (typeof first)[],
+    ) => {
+      await cdp().send("Input.dispatchTouchEvent", { type, touchPoints: points });
+      active = type !== "touchEnd";
+    };
+    try {
+      await touch("touchStart", [first]);
+      await touch("touchStart", [first, second]);
+      second.x += 20;
+      await touch("touchMove", [first, second]);
+      await frame();
+      expect(views).toEqual([]);
+      first.x += 15;
+      await touch("touchMove", [first, second]);
+      await frame();
+      expect(views.length).toBeGreaterThan(0);
+      const panned = chart.getViewport();
+      second.x += 20;
+      await touch("touchMove", [first, second]);
+      await frame();
+      expect(chart.getViewport()).toEqual(panned);
+      expect(plane(chart).zoom).toBeCloseTo(zoom, 9);
+    } finally {
+      if (active) await touch("touchEnd", []);
+    }
+  });
+
   it("zoom with the wheel at the pointer, pan when dragged, and reset on double-click", async () => {
     const chart = await map();
     const views = heard(chart, "viewport");
@@ -812,6 +849,163 @@ describe("networks", () => {
     return [px, py] as [number, number];
   };
 
+  it.each(["svg", "canvas"] as const)(
+    "pan and zoom networks on %s with the map gestures and a layout viewport",
+    async (renderer) => {
+      const chart = await network({ renderer, interaction: { zoom: true } });
+      const views = heard(chart, "viewport");
+      const before = plane(chart);
+      const [px, py] = where(chart, "a");
+      await mouse(chart, "mouseWheel", px, py, { deltaY: -300 });
+      await frame();
+      expect(plane(chart).zoom).toBeGreaterThan(1.5);
+      expect(Math.abs(where(chart, "a")[0] - px)).toBeLessThan(1);
+      expect(Math.abs(where(chart, "a")[1] - py)).toBeLessThan(1);
+      const zoomed = chart.getViewport();
+      expect(span(zoomed.x)!).toBeLessThan(span(before.x.domain)!);
+      expect(span(zoomed.y)!).toBeLessThan(span(before.y.domain)!);
+      await drag(chart, [px, py], [px + 30, py + 20]);
+      await frame();
+      const panned = chart.getViewport();
+      expect(panned.x![0]).toBeLessThan(zoomed.x![0]);
+      // Layout y increases downwards, so dragging down shifts the view towards smaller y.
+      expect(panned.y![0]).toBeLessThan(zoomed.y![0]);
+      await mouse(chart, "mousePressed", px, py, { clickCount: 2 });
+      await mouse(chart, "mouseReleased", px, py, { clickCount: 2 });
+      await frame();
+      expect(views.at(-1)).toEqual({ x: null, y: null, yRight: null });
+      expect(plane(chart).zoom).toBe(1);
+      const [x, y] = where(chart, "a");
+      expect(chart.inspect(x, y)?.points[0]?.label).toBe("a");
+      expect(chart.toSVG()).toContain("a5 5");
+    },
+  );
+
+  it("separates navigation keys, node keys, and toolbar resets", async () => {
+    const chart = await network({ interaction: { zoom: true, drag: true } });
+    const moves = heard(chart, "itemMove");
+    const live = chart.root.querySelector("[aria-live]")!;
+    chart.root.focus();
+    press(chart, "ArrowRight");
+    press(chart, "+");
+    expect(live.textContent).toBe("Zoom 1.3 times the whole network.");
+    const first = chart.getViewport();
+    press(chart, "ArrowDown", true);
+    expect(chart.getViewport().y![0]).toBeGreaterThan(first.y![0]);
+    expect(moves).toEqual([]);
+    await frame();
+    const [x, y] = where(chart, "a");
+    chart.root.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        shiftKey: true,
+        altKey: true,
+        bubbles: true,
+      }),
+    );
+    await frame();
+    expect(where(chart, "a")[0]).toBeCloseTo(x + 10, 0);
+    expect(where(chart, "a")[1]).toBeCloseTo(y, 0);
+    expect(moves).toHaveLength(1);
+    press(chart, "0");
+    await frame();
+    expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: null });
+    expect(modelOf(chart).items!.movedItems.size).toBe(1);
+    await userEvent.click(
+      chart.root.querySelector<HTMLElement>("[aria-label='Put moved nodes back']")!,
+    );
+    await frame();
+    expect(modelOf(chart).items!.movedItems.size).toBe(0);
+    await userEvent.click(chart.root.querySelector<HTMLElement>("[aria-label='Zoom in']")!);
+    await frame();
+    expect(plane(chart).zoom).toBeCloseTo(1.25);
+    const beforePan = chart.getViewport().y![0];
+    await userEvent.click(chart.root.querySelector<HTMLElement>("[aria-label='Pan up']")!);
+    await frame();
+    expect(chart.getViewport().y![0]).toBeLessThan(beforePan);
+    await userEvent.click(
+      chart.root.querySelector<HTMLElement>("[aria-label='Show the whole network']")!,
+    );
+    await frame();
+    expect(plane(chart).zoom).toBe(1);
+  });
+
+  it("drags nodes while zoomed and cancels a drag whose view changes", async () => {
+    const chart = await network({ interaction: { zoom: true, drag: true } });
+    const [ax, ay] = where(chart, "a");
+    await mouse(chart, "mouseWheel", ax, ay, { deltaY: -200 });
+    await frame();
+    const views = heard(chart, "viewport");
+    const moves = heard(chart, "itemMove");
+    const view = chart.getViewport();
+    const b = where(chart, "b");
+    await drag(chart, [ax, ay], [ax + 20, ay + 15]);
+    await frame();
+    expect(views).toEqual([]);
+    expect(moves).toHaveLength(1);
+    expect(where(chart, "a")[0]).toBeCloseTo(ax + 20, 0);
+    expect(where(chart, "b")).toEqual(b);
+    const moved = moves[0]!.position!;
+    chart.setItemPosition('[0,"a"]', moved);
+    chart.render();
+    expect(where(chart, "a")[1]).toBeCloseTo(ay + 15, 0);
+    await drag(chart, where(chart, "a"), [ax + 30, ay + 15], true);
+    await frame();
+    expect(moves).toHaveLength(1);
+    expect(chart.getViewport()).not.toEqual(view);
+    const [x, y] = where(chart, "a");
+    await mouse(chart, "mousePressed", x, y);
+    await mouse(chart, "mouseMoved", x + 10, y + 10, { held: true });
+    chart.setViewport(null);
+    await mouse(chart, "mouseReleased", x + 10, y + 10);
+    await frame();
+    expect(moves).toHaveLength(1);
+  });
+
+  it.each(["svg", "canvas"] as const)(
+    "lassos node rows on %s, dims their links, and arbitrates dragging",
+    async (renderer) => {
+      const nodes = table({ name: ["a", "b", "c", "d", "a"] });
+      const store = selectionStore(nodes);
+      const chart = await mount({
+        renderer,
+        marks: [graph(ring(), { source: "from", target: "to", nodes, node: "name" })],
+        interaction: { zoom: true, drag: true, brush: "lasso" },
+        rowSelection: rowSelection({ store, channel: "picked" }),
+      });
+      const moved = heard(chart, "itemMove");
+      const [x, y] = where(chart, "a");
+      await mouse(chart, "mouseWheel", x, y, { deltaY: -200 });
+      await frame();
+      const start: [number, number] = [x - 12, y - 12];
+      await mouse(chart, "mousePressed", ...start);
+      for (const point of [[x + 12, y - 12], [x + 12, y + 12], [x - 12, y + 12], start] as [
+        number,
+        number,
+      ][])
+        await mouse(chart, "mouseMoved", ...point, { held: true });
+      await mouse(chart, "mouseReleased", ...start);
+      await frame();
+      const held = store.get("picked");
+      expect(held?.kind === "rows" && [...held.rows.positions()]).toEqual([0, 4]);
+      expect(chart.selection?.lasso).toHaveLength(5);
+      expect(moved).toEqual([]);
+      expect(chart.toSVG()).toContain('stroke-opacity="0.1125"');
+      const selected = chart.selection;
+      await drag(chart, [x, y], [x + 10, y], true);
+      await frame();
+      expect(chart.selection).toEqual(selected);
+      expect(moved).toEqual([]);
+      await userEvent.click(chart.root.querySelector<HTMLElement>("[aria-label='Lasso']")!);
+      const at = where(chart, "a");
+      await drag(chart, at, [at[0] + 15, at[1] + 10]);
+      await frame();
+      expect(moved).toHaveLength(1);
+      press(chart, "Escape");
+      expect(chart.selection).toBeNull();
+    },
+  );
+
   it("move a node dragged, which stays where it is dropped, its links following", async () => {
     const chart = await network();
     const moves = heard(chart, "itemMove");
@@ -925,6 +1119,89 @@ describe("networks", () => {
     expect(moves).toHaveLength(1);
     expect(where(chart, "a")[0]).toBeCloseTo(ax + 30, 0);
   });
+
+  it.each(["node", "pan"] as const)(
+    "gives the first touch ownership from an unmoved %s press",
+    async (owner) => {
+      const chart = await network({ interaction: { zoom: true, drag: true } });
+      const moves = heard(chart, "itemMove");
+      const views = heard(chart, "viewport");
+      const at = origin(chart);
+      const [ax, ay] = where(chart, "a");
+      const node = { id: owner === "node" ? 1 : 2, x: at.x + ax, y: at.y + ay };
+      const background = { id: owner === "pan" ? 1 : 2, x: at.x + 30, y: at.y + 30 };
+      const first = owner === "node" ? node : background;
+      const second = owner === "node" ? background : node;
+      let active = false;
+      const touch = async (
+        type: "touchStart" | "touchMove" | "touchEnd",
+        points: (typeof node)[],
+      ) => {
+        await cdp().send("Input.dispatchTouchEvent", { type, touchPoints: points });
+        active = type !== "touchEnd";
+      };
+      try {
+        await touch("touchStart", [first]);
+        // Ownership begins before the first touch has crossed the drag threshold.
+        await touch("touchStart", [first, second]);
+        second.x += 20;
+        await touch("touchMove", [first, second]);
+        await frame();
+        expect(views).toEqual([]);
+        expect(where(chart, "a")).toEqual([ax, ay]);
+        first.x += 15;
+        first.y += 10;
+        await touch("touchMove", [first, second]);
+        await frame();
+        second.x += 10;
+        await touch("touchMove", [first, second]);
+        await frame();
+        if (owner === "node") expect(views).toEqual([]);
+        else expect(views.length).toBeGreaterThan(0);
+        await touch("touchEnd", []);
+        await frame();
+        if (owner === "node") {
+          expect(moves.map(({ key }) => key)).toEqual(['[0,"a"]']);
+          expect(where(chart, "a")[0]).toBeCloseTo(ax + 15, 0);
+          expect(where(chart, "a")[1]).toBeCloseTo(ay + 10, 0);
+        } else expect(moves).toEqual([]);
+        // The owner releases on completion, allowing the other gesture next.
+        const [nx, ny] = where(chart, "a");
+        await drag(
+          chart,
+          owner === "node" ? [30, 30] : [nx, ny],
+          owner === "node" ? [40, 40] : [nx + 10, ny + 10],
+        );
+        await frame();
+        expect(moves).toHaveLength(1);
+        expect(views.length).toBeGreaterThan(0);
+      } finally {
+        if (active) await touch("touchEnd", []);
+      }
+    },
+  );
+
+  it.each(["node", "pan"] as const)(
+    "releases a cancelled %s touch so the other controller can drag",
+    async (owner) => {
+      const chart = await network({ interaction: { zoom: true, drag: true } });
+      const at = origin(chart);
+      const start = owner === "node" ? where(chart, "a") : [30, 30];
+      await cdp().send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: [{ id: 1, x: at.x + start[0]!, y: at.y + start[1]! }],
+      });
+      await cdp().send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+      const moves = heard(chart, "itemMove");
+      const views = heard(chart, "viewport");
+      const next: [number, number] = owner === "node" ? [30, 30] : where(chart, "a");
+      await drag(chart, next, [next[0] + 15, next[1] + 10]);
+      await frame();
+      expect(moves).toHaveLength(owner === "node" ? 0 : 1);
+      if (owner === "node") expect(views.length).toBeGreaterThan(0);
+      else expect(views).toEqual([]);
+    },
+  );
 
   it("add up key moves before a frame, and put back moves the data took without failing", async () => {
     const links = ring();

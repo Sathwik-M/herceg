@@ -22,7 +22,7 @@ One name per concept, used the same way in code and docs.
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
-| **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. A map's are ranges of its projection's plane. |
+| **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. A map's are ranges of its projection's plane; a network's are ranges of its force layout, with y increasing downwards. |
 | **Drill root** | The node a treemap or sunburst is drilled into, whose subtree it lays out (`drillRoot`, chart state that clicks, keys, and `setDrillRoot` change); null for the whole tree. |
 | **Controls** | What a chart of a 3D, map, tree, or network mark loads to turn, pan and zoom, drill, or move nodes by pointer, keyboard, and toolbar (`dom/controls.ts`). |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
@@ -1991,8 +1991,19 @@ right as a quadratic curve (a shapes path, since few links are bowed),
 and each directed link ends at its target's ring with a chevron of two
 segments along its end's tangent. Link labels (`linkLabelField`) are a link's
 category when all its rows agree, placed at its middle where they cover no
-node or label, budgeted as node labels. The pointer lookup scans every node,
-then every link (about 0.3 ms at 5,000 nodes and 20,000 links).
+node or label, budgeted as node labels. Pointer candidates come from packed
+32-pixel spatial grids (`layout/hit-grid.ts`), built lazily for nodes and
+links separately: node hits do not build the link index. Nodes insert their
+radius plus pointer reach; links insert only columns reached within each
+crossed row, expanded by half their width and pointer reach. Reciprocal
+curves use the same eight chords as distance testing. Segments are clipped
+before indexing, so links with offscreen endpoints remain pickable without
+index work following their full zoomed extent. Grids narrow candidates;
+exact distances and drawing ranks still decide: containing nodes by
+selection, smaller radius, then later order; nearby nodes by edge gap,
+then later order; nodes before links; links by edge gap, then their drawing
+layer. Candidate grids are retained across draws of unchanged positions,
+including selection changes, and replaced on moves, navigation, or resize.
 
 Nodes the chart's user moves (`setItemPosition`, or a drag's position each
 frame, which is drawn without being a move until it is dropped) are kept
@@ -2005,9 +2016,40 @@ again. What identifies the layout is kept per links and nodes table, their
 versions, and the fields and options the layout reads, so a mark made again
 over the same tables (an adapter's re-render with other styles) keeps the
 chart's moves; a drag whose node the layout lost ends without a move. A
-frame dragging a node of 5,000 nodes and 20,000 links takes about 4 ms of
-the main thread in Chrome (p95 about 5.5 ms, p99 under 8 ms; 4.5 to 4.7 ms
-for the scene in Node), the frames keeping 60 Hz.
+frame dragging a node of 5,000 nodes and 20,000 links took about 4 ms of
+the main thread in the earlier Chrome measurement (p95 about 5.5 ms, p99
+under 8 ms), the frames keeping 60 Hz. With navigation and picking state,
+interleaved Node runs of the same scene now take about 5.6 ms rather than
+5.0 ms. The extra redraw cost is accepted for these interactions; browser
+frame costs for the new controller have not been measured.
+
+Networks expose `LayoutResult.plane` just as maps do (`layout/graph-view.ts`).
+Separated base pixels are inverted through their original fit into layout
+units, then projected through the view; the fit's modest x/y stretch is
+retained, while navigation magnifies both axes by the same factor. Radii,
+rings, link widths and arrows remain in pixels. Moved nodes project from
+their stored layout coordinates without clamping; a drag clamps the pointer
+before inversion. Node selection also dims links unless both endpoints
+are selected, intersected with link-row highlighting where present.
+Lassos test visible node centers and return all nodes-table rows naming
+those nodes, including duplicates; they leave link-table selections alone.
+
+The network controller composes shared plane navigation with node dragging
+and one toolbar. Lasso mode claims plain drags; Shift-drag pans. Otherwise,
+a node press drags that node and a background press pans. With zoom on,
+Shift+arrows and 0 navigate, Alt+Shift+arrows moves a focused node, and the
+restore-nodes button remains separate. A viewport change cancels a node
+drag. Controls load only through layout marks, so line charts carry none
+of this code. Python widgets preserve graph x/y ranges; Streamlit keeps
+plane views separately from axis panels, restoring viewport and positions
+before replaying a lasso, and scopes network state to its layout epoch.
+Streamlit's `on_viewport` reports an `hg.Viewport` like widgets do.
+Node dragging and plane navigation share pointer ownership from the initial
+press until completion or cancellation, so another touch cannot start the
+other gesture, even before the first pointer moves. Maps ignore second touches.
+Both Python front ends compare resolved map projection parameters before
+keeping ranges and lassos; a data change that changes inferred conic parameters
+clears the viewport and lasso together.
 
 ### Layout marks in panels
 
@@ -3656,9 +3698,9 @@ document when `OffscreenCanvas` is unavailable.
   its `TimeBreaks` lives (24 bytes per interval).
 - Row selections cover marks along axes and maps, treemaps, sunbursts, and
   networks with charts of their own: other layout marks, layout marks in
-  panels, and 3D marks refuse a binding, networks take no lasso, and custom
-  marks and annotations neither write nor dim. A map's lasso selects a region
-  by its anchor, not by overlap.
+  panels, and 3D marks refuse a binding, and custom marks and annotations
+  neither write nor dim. A map's lasso selects a region by its anchor, not
+  by overlap; a network's lasso selects node centers and requires a nodes table.
   Histograms, box plots, violins, error bars, candlesticks, and heatmaps
   write rows but draw every row undimmed (a bin with some rows selected is
   not shown as such), and lassos and brushes along a summary's statistics

@@ -1,5 +1,5 @@
 // What a chart of a layout mark loads to be navigated by pointer and
-// keyboard: turning a 3D chart (orbit.ts), panning and zooming a map
+// keyboard: turning a 3D chart (orbit.ts), panning and zooming a plane
 // (map-controls.ts), drilling into a treemap or sunburst (drill.ts), and
 // moving a network's nodes (node-drag.ts). The mark names the module
 // (`LayoutMark.controls`), so other charts never download it. Controls
@@ -16,7 +16,7 @@ import type { Chart } from "./handle.ts";
 /** What a chart lends its controls. */
 export interface ControlsHost {
   readonly chart: Chart;
-  /** What the chart drew last: its items, and for maps the plane's scales. */
+  /** What the chart drew last: its items, and for maps and networks the plane's scales. */
   readonly model: ChartModel;
   /** The pointer overlay, above the marks, where controls draw outlines (a lasso). */
   readonly overlay: SVGGElement;
@@ -31,6 +31,21 @@ export interface ControlsHost {
 }
 
 export type { Controls };
+
+/** One press owns a layout gesture, including the time before it starts moving. */
+export class PointerOwnership {
+  #pointer: number | null = null;
+
+  acquire(pointer: number): boolean {
+    if (this.#pointer !== null) return false;
+    this.#pointer = pointer;
+    return true;
+  }
+
+  release(pointer: number): void {
+    if (this.#pointer === pointer) this.#pointer = null;
+  }
+}
 
 /** A controls module, as `LayoutMark.controls` loads it. */
 export interface ControlsModule {

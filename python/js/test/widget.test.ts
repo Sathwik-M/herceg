@@ -7,6 +7,7 @@ import type { SelectionPayload, ViewportPayload } from "../events.ts";
 import widgetModule, { type Model, type Snapshot, type Update } from "../widget.ts";
 import { controlTime, pointPath } from "./animation.ts";
 import { itemChart, key } from "./items.ts";
+import { focusMap, mapSpec } from "./maps.ts";
 
 type Handler = (...args: never[]) => void;
 
@@ -156,6 +157,79 @@ function press(host: HTMLElement, type: string, fraction: number) {
 }
 
 describe("notebook widget", () => {
+  it.each(["append", "replace", "snapshot"] as const)(
+    "clears incompatible map ranges and lasso after a Python %s, across displays",
+    async (type) => {
+      const listener = vi.spyOn(MountedChart.prototype, "on");
+      const initial: Snapshot = {
+        ...snapshot(),
+        spec: mapSpec(),
+        buffers: [new Float64Array([-100, -90]), new Float64Array([30, 40])],
+      };
+      const model = new MockModel({ _chart: initial, _listening: [] });
+      mount(model, 2);
+      const first = listener.mock.instances[0] as MountedChart;
+      const kept = focusMap(first);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const buffers = [new Float64Array([-100, -90, 0]), new Float64Array([30, 40, 70])];
+      if (type === "snapshot")
+        model.set("_chart", {
+          ...initial,
+          revision: 1,
+          buffers,
+          viewport: kept.viewport,
+          selection: kept.selection,
+        });
+      else
+        model.receive(
+          { type, revision: 1, table: "data", columns: { lon: number(0), lat: number(1) } },
+          type === "append" ? [new Float64Array([0]), new Float64Array([70])] : buffers,
+        );
+      const charts =
+        type === "snapshot"
+          ? listener.mock.instances.slice(-2)
+          : listener.mock.instances.slice(0, 2);
+      for (const chart of charts as MountedChart[]) {
+        chart.render();
+        expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: null });
+        expect(chart.selection).toBeNull();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(model.messages("viewport").at(-1)).toMatchObject({ viewport: null, revision: 1 });
+      expect(model.messages("select").at(-1)).toMatchObject({ selection: null, revision: 1 });
+    },
+  );
+
+  it.each(["inferred", "explicit"] as const)(
+    "keeps map ranges and lasso when %s parameters stay equal",
+    (kind) => {
+      const listener = vi.spyOn(MountedChart.prototype, "on");
+      const initial: Snapshot = {
+        ...snapshot(),
+        spec: mapSpec(
+          kind === "inferred"
+            ? "conic-equal-area"
+            : { type: "conic-equal-area", centralMeridian: -95, parallels: [30, 40] },
+        ),
+        buffers: [new Float64Array([-100, -90]), new Float64Array([30, 40])],
+      };
+      const model = new MockModel({ _chart: initial, _listening: [] });
+      mount(model, 2);
+      const kept = focusMap(listener.mock.instances[0] as MountedChart);
+      model.receive(
+        { type: "append", revision: 1, table: "data", columns: { lon: number(0), lat: number(1) } },
+        kind === "inferred"
+          ? [new Float64Array([-95]), new Float64Array([35])]
+          : [new Float64Array([0]), new Float64Array([70])],
+      );
+      for (const chart of listener.mock.instances.slice(0, 2) as MountedChart[]) {
+        chart.render();
+        expect(chart.getViewport()).toEqual(kept.viewport);
+        expect(chart.selection).toEqual(kept.selection);
+      }
+    },
+  );
+
   it("renders the snapshot and asks Python whether it is current", () => {
     const model = new MockModel({ _chart: snapshot(), _listening: [] });
     const [host] = mount(model);
@@ -1294,39 +1368,57 @@ describe("widget item interaction", () => {
     expect(model.messages("itemMove")[0]!.item_positions).toEqual({});
   });
 
-  it("keeps both map ranges through Python assignments and redisplay", async () => {
-    const base = snapshot();
-    const map: Snapshot = {
-      ...base,
-      spec: {
-        ...base.spec,
-        projection: "equirectangular",
-        interaction: { zoom: true },
-        data: { data: { columns: { lon: number(0), lat: number(1) } } },
-        marks: [{ type: "geopoint", data: "data", longitude: "lon", latitude: "lat" }],
-      },
-      viewport: { x: [-0.1, 0.1], y: [0.02, 0.08], yRight: null },
-    };
-    const model = new MockModel({ _chart: map, _listening: [] });
-    const [host] = mount(model);
-    await vi.dynamicImportSettled();
-    key(host!, "+");
-    const zoomed = model.messages("viewport")[0]!.viewport as ViewportPayload;
-    expect((Number(zoomed.y![0]) + Number(zoomed.y![1])) / 2).toBeCloseTo(0.05);
-    model.set("_chart", { ...map, revision: 1 });
-    await vi.dynamicImportSettled();
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    key(host!, "+");
-    const restored = model.messages("viewport").at(-1)!.viewport as ViewportPayload;
-    expect(restored.y).toEqual(zoomed.y);
-    model.receive({
-      type: "viewport",
-      revision: 2,
-      viewport: { x: [-0.1, 0.1], y: [0.2, 0.4], yRight: null },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    key(host!, "+");
-    const assigned = model.messages("viewport").at(-1)!.viewport as ViewportPayload;
-    expect((Number(assigned.y![0]) + Number(assigned.y![1])) / 2).toBeCloseTo(0.3);
-  });
+  it.each(["map", "graph"] as const)(
+    "keeps both %s ranges through Python assignments and redisplay",
+    async (kind) => {
+      const base = snapshot();
+      let map: Snapshot = {
+        ...base,
+        spec: {
+          ...base.spec,
+          projection: "equirectangular",
+          interaction: { zoom: true },
+          data: { data: { columns: { lon: number(0), lat: number(1) } } },
+          marks: [{ type: "geopoint", data: "data", longitude: "lon", latitude: "lat" }],
+        },
+        viewport: { x: [-0.1, 0.1], y: [0.02, 0.08], yRight: null },
+      };
+      const center = kind === "map" ? 0.05 : 50;
+      if (kind === "graph") {
+        const fixture = itemChart("graph");
+        map = {
+          ...base,
+          ...fixture,
+          spec: { ...fixture.spec, interaction: { zoom: true, drag: true } },
+          viewport: { x: [-80, 80], y: [20, 80], yRight: null },
+        };
+      }
+      const model = new MockModel({ _chart: map, _listening: [] });
+      const [host] = mount(model);
+      await vi.dynamicImportSettled();
+      key(host!, "+");
+      const zoomed = model.messages("viewport")[0]!.viewport as ViewportPayload;
+      expect((Number(zoomed.y![0]) + Number(zoomed.y![1])) / 2).toBeCloseTo(center);
+      model.set("_chart", { ...map, revision: 1 });
+      await vi.dynamicImportSettled();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      key(host!, "+");
+      const restored = model.messages("viewport").at(-1)!.viewport as ViewportPayload;
+      expect(restored.y).toEqual(zoomed.y);
+      model.receive({
+        type: "viewport",
+        revision: 2,
+        viewport:
+          kind === "map"
+            ? { x: [-0.1, 0.1], y: [0.2, 0.4], yRight: null }
+            : { x: [-80, 80], y: [100, 200], yRight: null },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      key(host!, "+");
+      const assigned = model.messages("viewport").at(-1)!.viewport as ViewportPayload;
+      expect((Number(assigned.y![0]) + Number(assigned.y![1])) / 2).toBeCloseTo(
+        kind === "map" ? 0.3 : 150,
+      );
+    },
+  );
 });

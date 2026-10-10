@@ -20,13 +20,13 @@ import type { MovedNodes, NodeMoves } from "./graph.ts";
 import type { ChartMark, Mark } from "./mark.ts";
 import type { Drill } from "./tree-data.ts";
 
-/** The part of a map's plane to show: x and y ranges in its units, each null for the fitted map's. */
+/** The part of a map's or network's plane to show: x and y ranges in its units, each null for the fitted layout's. */
 export interface Viewport {
   x: readonly [number, number] | null;
   y: readonly [number, number] | null;
 }
 
-/** A view of a map's plane: its x and y ranges across the room, and the zoom (its scale over the fitted map's). */
+/** A view of a map's or network's plane: its x and y ranges across the room, and the zoom (its scale over the fitted layout's). */
 export interface PlaneView {
   x: readonly [number, number];
   y: readonly [number, number];
@@ -58,8 +58,8 @@ export interface LayoutFrame {
   /** The chart animates changed values: pies describe their slices (PieSlices). */
   keyed?: boolean;
   /**
-   * The part of a map's plane to show, x and y ranges in its units (see
-   * `Chart.setViewport`); the fitted map where both are null or absent.
+   * The part of a map's or network's plane to show, x and y ranges in its units (see
+   * `Chart.setViewport`); the fitted layout where both are null or absent.
    */
   viewport?: Viewport | undefined;
   /**
@@ -132,8 +132,8 @@ export interface LayoutResult {
    */
   lassoed?(polygon: readonly (readonly [number, number])[], table: Table): number[] | undefined;
   /**
-   * A map's plane as drawn: scales from its units to pixels across the
-   * room, the zoom (the scale drawn over the fitted map's), and what a
+   * A map's or network's plane as drawn: scales from its units to pixels across the
+   * room, the zoom (the scale drawn over the fitted layout's), and what a
    * viewport would show (`LayoutFrame.viewport`), drawn or not.
    */
   plane?:
@@ -184,7 +184,7 @@ export interface LayoutMark extends ChartMark {
   /**
    * What `interaction` may turn on in a chart of the mark alone, which
    * refuses the rest: "zoom" for `zoom: true`, "plane" for that or "xy"
-   * (a map's plane), "lasso" for a lasso brush, and "drag" for `drag`.
+   * (a map's or network's plane), "lasso" for a lasso brush, and "drag" for `drag`.
    */
   readonly interactions?: readonly ("zoom" | "plane" | "lasso" | "drag")[];
   /**

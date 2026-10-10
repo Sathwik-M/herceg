@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MountedChart } from "../../../packages/herceg/src/dom/chart.ts";
 import herceg, { type Component, type Header } from "../streamlit.ts";
 import { itemChart, key } from "./items.ts";
+import { focusMap, mapSpec } from "./maps.ts";
 
 /**
  * A payload as Python builds it, placed `offset` bytes into a larger buffer
@@ -859,10 +860,10 @@ describe("Streamlit item interaction", () => {
       const same = run(parent, items(type, "First", ["drill"]));
       expect(same.state).toEqual([]);
       const styled = run(parent, items(type, "Styled", ["drill"]));
+      await vi.dynamicImportSettled();
       await frame();
       expect(parent.querySelector("nav")!.textContent).toContain("East");
       expect(styled.state).toEqual([]);
-      await vi.dynamicImportSettled();
       key(parent, "0");
       expect(styled.state).toEqual([["drill_root", null]]);
       styled.cleanup();
@@ -938,3 +939,201 @@ it("coalesces network resets into one final Streamlit state value", async () => 
     listener.mockRestore();
   }
 });
+
+it("reports and restores a network's plane, lasso and moved positions across compatible runs", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const fixture = itemChart("graph");
+    const spec = {
+      ...fixture.spec,
+      interaction: { zoom: true, drag: true, brush: "lasso" as const },
+    };
+    const first = run(
+      parent,
+      payload(spec, fixture.buffers, ["viewport", "itemMove", "select"], 3, "data", "layout"),
+    );
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setViewport({ x: [-80, 80], y: [20, 80] });
+    chart.setItemPosition('[0,"East"]', { x: 0, y: 50 });
+    chart.render();
+    chart.select({
+      x: null,
+      y: null,
+      lasso: [
+        [-2, 48],
+        [2, 48],
+        [2, 52],
+        [-2, 52],
+      ],
+    });
+    await frame();
+    expect(first.state.some(([name]) => name === "viewport")).toBe(true);
+    const view = chart.getViewport();
+    const selection = chart.selection;
+    const next = run(
+      parent,
+      payload(
+        { ...spec, title: "Styled" },
+        fixture.buffers,
+        ["viewport", "itemMove", "select"],
+        3,
+        "data",
+        "layout",
+      ),
+    );
+    const restored = listener.mock.instances.at(-1) as MountedChart;
+    expect(restored.getViewport()).toEqual(view);
+    expect(restored.selection).toEqual(selection);
+    expect(restored.toSVG()).toContain("a5 5");
+    const reset = run(
+      parent,
+      payload(
+        { ...spec, title: "New data" },
+        fixture.buffers,
+        ["viewport"],
+        3,
+        "new-data",
+        "new-layout",
+      ),
+    );
+    const changed = listener.mock.instances.at(-1) as MountedChart;
+    expect(changed.getViewport()).toEqual({ x: null, y: null, yRight: null });
+    expect(changed.selection).toBeNull();
+    expect(reset.state).toEqual([
+      ["viewport", { x: null, y: null, yRight: null, time: [], epoch: "new-layout" }],
+    ]);
+    next.cleanup();
+    reset.cleanup();
+  } finally {
+    listener.mockRestore();
+  }
+});
+
+it("keeps map plane ranges and lassos through Streamlit redraws", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const spec: Header["spec"] = {
+      width: 400,
+      height: 300,
+      renderer: "svg",
+      projection: "equirectangular",
+      interaction: { zoom: true, brush: "lasso" },
+      data: {
+        data: {
+          columns: {
+            lon: { type: "number", dtype: "float64", buffer: 0 },
+            lat: { type: "number", dtype: "float64", buffer: 1 },
+          },
+        },
+      },
+      marks: [{ type: "geopoint", data: "data", longitude: "lon", latitude: "lat" }],
+    };
+    const buffers = [new Float64Array([0, 10]), new Float64Array([0, 10])];
+    run(parent, payload(spec, buffers, ["viewport"]));
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setViewport({ x: [-0.1, 0.1], y: [0.02, 0.08] });
+    chart.select({
+      x: null,
+      y: null,
+      lasso: [
+        [0, 0],
+        [0.02, 0],
+        [0.02, 0.02],
+        [0, 0.02],
+      ],
+    });
+    const next = run(parent, payload({ ...spec, title: "Styled" }, buffers, ["viewport"]));
+    const restored = listener.mock.instances.at(-1) as MountedChart;
+    expect(restored.getViewport()).toEqual(chart.getViewport());
+    expect(restored.selection).toEqual(chart.selection);
+    next.cleanup();
+  } finally {
+    listener.mockRestore();
+  }
+});
+
+it.each([
+  {
+    name: "changed inferred parameters",
+    projection: "conic-equal-area" as const,
+    lon: 0,
+    lat: 70,
+    keeps: false,
+  },
+  {
+    name: "stable inferred parameters",
+    projection: "conic-equal-area" as const,
+    lon: -95,
+    lat: 35,
+    keeps: true,
+  },
+  {
+    name: "explicit parameters",
+    projection: {
+      type: "conic-equal-area" as const,
+      centralMeridian: -95,
+      parallels: [30, 40] as const,
+    },
+    lon: 0,
+    lat: 70,
+    keeps: true,
+  },
+  {
+    name: "fit-derived parameters",
+    projection: {
+      type: "conic-equal-area" as const,
+      fit: [
+        [-110, 20],
+        [-80, 50],
+      ] as const,
+    },
+    lon: 0,
+    lat: 70,
+    keeps: true,
+  },
+])(
+  "restores a map only with matching resolved projection: $name",
+  ({ projection, lon, lat, keeps }) => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    try {
+      const parent = host();
+      const spec = mapSpec(projection);
+      run(
+        parent,
+        payload(
+          spec,
+          [new Float64Array([-100, -90]), new Float64Array([30, 40])],
+          ["select", "viewport", "rowSelection"],
+          3,
+          "old",
+        ),
+      );
+      const chart = listener.mock.instances[0] as MountedChart;
+      const kept = focusMap(chart);
+      const next = run(
+        parent,
+        payload(
+          spec,
+          [new Float64Array([-100, -90, lon]), new Float64Array([30, 40, lat])],
+          ["select", "viewport", "rowSelection"],
+          3,
+          "new",
+        ),
+      );
+      const restored = listener.mock.instances.at(-1) as MountedChart;
+      expect(restored.getViewport()).toEqual(
+        keeps ? kept.viewport : { x: null, y: null, yRight: null },
+      );
+      expect(restored.selection).toEqual(keeps ? kept.selection : null);
+      const rows = next.state.filter(([name]) => name === "rows").at(-1)?.[1];
+      expect(rows).toMatchObject({ selection: keeps ? { kind: "rows", rows: [0] } : null });
+      next.cleanup();
+    } finally {
+      listener.mockRestore();
+    }
+  },
+);

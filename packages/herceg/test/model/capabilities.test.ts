@@ -238,7 +238,7 @@ const spatial = table({
 // These marks lay out their own geometry: in a chart of their own, or (those
 // with `panels`) in each facet panel or in one subplot. In a chart of their
 // own, `interaction.zoom` turns 3D cameras, pans and zooms maps' planes, and
-// drills into trees; maps take lassos, networks `interaction.drag`, and maps,
+// drills into trees; maps and networks take lassos, networks `interaction.drag`, and maps,
 // trees, and networks row selections.
 const layouts: MarkCase[] = [
   {
@@ -290,6 +290,7 @@ const layouts: MarkCase[] = [
     kind: "point",
     selects: true,
     drags: true,
+    navigates: "plane",
   },
   {
     name: "geoshape",
@@ -721,11 +722,11 @@ describe("capabilities: zoom and pan", () => {
   });
 
   it.each(layouts.filter((c) => c.navigates === "plane"))(
-    "$name pans and zooms its map's plane, both ways only",
+    "$name pans and zooms its plane, both ways only",
     (c) => {
       for (const zoom of [true, "xy"] as const) {
         const { model } = build({ marks: [c.make()], interaction: { zoom } });
-        expect(model.controls?.kind).toBe("map");
+        expect(model.controls?.kind).toBe(c.drags ? "drag" : "map");
         const { x, y } = model.items!.result()!.plane!;
         const key = model.stepItem(undefined, 1)!;
         const before = model.inspectItem(key)!.points[0]!;
@@ -821,7 +822,7 @@ describe("capabilities: brushes", () => {
     }
   });
 
-  it.each(layouts)("$name refuses brushes but maps' lassos", (c) => {
+  it.each(layouts)("$name refuses brushes but plane lassos", (c) => {
     expect(() => build({ marks: [c.make()], interaction: { brush: "x" } })).toThrow(
       c.navigates === "plane"
         ? `${c.name} brush: expected interaction.brush "lasso"; received "x"`

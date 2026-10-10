@@ -1022,7 +1022,7 @@ the notes), — not yet (refused with an error), · not applicable.
 | treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ◐ | ◐ | ✓ | ✓ | — |
 | radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | — |
 | gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | — |
-| graph | — | — | — | · | — | — | — | ✓ | ✓ | ◐ | ✓ | — |
+| graph | — | — | — | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — |
 | geoshape, geopoint | — | — | — | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | — |
 | point3d, line3d | — | — | — | · | turning | — | — | — | — | ✓ | ✓ | — |
 | surface | — | — | — | · | turning | — | — | — | — | · | ✓ | — |
@@ -1039,13 +1039,13 @@ the notes), — not yet (refused with an error), · not applicable.
   network with a chart of its own takes a binding too: clicks select a
   region's or point's row, a tree node's rows (its own and those under
   it), a network node's rows of its nodes table, or a link's of its links
-  table, and lassos a map's regions and points; trees in facet panels, the
+  table, and lassos a map's regions and points or a network's node centers; trees in facet panels, the
   other layout marks, and 3D charts refuse one. Brushes and synced
   selections themselves are ranges and outlines in data values (a map's
   lasso, in its plane).
 - Zoom, pan, and brushes work on number and time axes; subplots zoom and
   brush along x only, and facets with y scales of their own, on either
-  side, do not zoom along y. Maps zoom and pan their plane both ways
+  side, do not zoom along y. Maps and networks zoom and pan their plane both ways
   (`interaction.zoom` true or "xy") and take a "lasso" brush; treemaps and
   sunbursts drill into nodes with `interaction.zoom: true` (see
   [Drilling into trees](#drilling-into-trees)), in a chart of their own;
@@ -1340,12 +1340,31 @@ links, but a dense network's millions would take seconds. A network that
 grows past the limits while drawn, or a spec loaded with more, draws nothing
 and its description says why, until its tables shrink again. Like a pie, a network has its chart to itself.
 
+A network pans and zooms with `interaction.zoom: true` (or `"xy"`), using
+map gestures: wheel at the pointer, drag to pan, double-click or `0` to
+reset, Shift+arrows to pan, plus/minus to zoom, and a toolbar. The
+`viewport` event and `setViewport({ x, y })` use the force layout's
+coordinates, with y increasing downwards. Node radii, rings, link widths,
+and arrowheads keep their pixel sizes. Resizing refits the base layout;
+navigation keeps its separated positions and does not run the simulation.
+Exports show the current view. Pointer lookup uses packed spatial grids
+for nodes and link routes, retaining the drawn order and nearest-edge rules.
+
+`interaction.brush: "lasso"` selects nodes at their visible centers through
+`rowSelection` bound to the nodes table. Every row naming a selected node
+is selected; nodes inferred only from links have no node row. Unselected
+nodes dim, and a link remains bright only when both endpoints are selected
+(and its rows are selected when the links table also has a selection).
+A lasso writes no link rows. With zoom and lasso together, plain drag
+lassos; Shift-drag pans, and the toolbar's Lasso toggle switches plain
+drags back to panning or node dragging. Escape clears the lasso.
+
 #### Moving nodes
 
 ```ts
 const chart = createChart(element, {
   marks: [graph(messages, { source: "from", target: "to", directed: true, linkLabelField: "kind" })],
-  interaction: { drag: true },
+  interaction: { drag: true, zoom: true },
 });
 chart.on("itemMove", ({ key, position }) => save(key, position));
 chart.setItemPosition('[0,"Ana"]', { x: 40, y: -12 }); // layout units
@@ -1355,15 +1374,21 @@ chart.setItemPosition('[0,"Ana"]', null); // back where the layout puts it
 With `interaction.drag: true`, dragging a node moves it, its links
 following, and it stays where it is dropped: nothing else moves, and the
 layout does not run again. Shift with the arrow keys moves the node the
-keyboard reads 10 px, 0 and a toolbar button put every moved node back,
+keyboard reads 10 px when zoom is off, and 0 or a toolbar button puts every moved node back.
+With zoom enabled, Alt+Shift+arrows moves the node, Shift+arrows pans,
+and 0 resets the view; the toolbar restores moved nodes,
 and each move is announced; touches on the chart drag nodes rather than
-scroll the page. A move is kept in the network's layout units
+scroll the page. The first pointer press owns the gesture until it ends or
+is cancelled, so a second touch cannot pan during a node drag or start
+dragging a node during a pan. A move is kept in the network's layout units
 (links settle about 30 units long), so it follows a resize as the rest of
-the network does; `setItemPosition` moves a node so too, and an `itemMove`
+the network does, including while zoomed; `setItemPosition` moves a node so too, and an `itemMove`
 event reports every move once it is dropped (`position` null for a node put
 back). Moves last while the network's tables are unchanged (a mark made
 again over them with other styles keeps them): a change lays the network
-out again, and a drag the change takes its node from ends without a move. A row selection of the nodes table selects a node's
+out again, and a drag whose data or viewport changes ends without a move.
+Dragging stops at the view edge; `setItemPosition` keeps the given layout
+position even outside the view, so panning can bring it back. A row selection of the nodes table selects a node's
 rows when it is clicked, and one of the links table a link's rows; a node
 only links name stands for no row, and a click on it changes nothing.
 
@@ -2157,7 +2182,7 @@ is internal, and charts take only marks the mark functions make.
 | `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot (under every panel, with facets or subplots) over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
-| `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom); maps pan and zoom both ways (`true` or `"xy"`), and treemaps and sunbursts drill into nodes (`true`). `drag: true` moves a network's nodes. `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom), unless it selects rows for `rowSelection`. `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. Maps take a `"lasso"` brush and no other. |
+| `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom); maps and networks pan and zoom both ways (`true` or `"xy"`), and treemaps and sunbursts drill into nodes (`true`). `drag: true` moves a network's nodes. `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom), unless it selects rows for `rowSelection`. `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. Maps and networks take a `"lasso"` brush and no other. |
 | `rowSelection` | `rowSelection({ store, channel, events?, effect? }, ...)`: channels of selection stores, one per table, that brushes, lassos, and clicks write rows to and the chart highlights (see Selected rows). |
 | `animation` | `true` or `{ duration?, values? }`: the axes move gradually to views asked for, and with `values: true`, bars, pie slices, points, small lines and areas, and the axes with them, to changed values (see Animation). Off by default. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
@@ -2508,7 +2533,7 @@ description lists after each panel's name. Legend entries are toggle buttons, an
 range navigator's window and edges are sliders (see Range navigator). What
 a drag does, the keys do too, and a toolbar of named buttons (focusable,
 shown while the pointer or focus is in the chart): Shift with the arrow keys
-turns a 3D chart, pans a map, or moves a network's node, plus and minus
+turns a 3D chart, pans a map or network, or moves a network's node, plus and minus
 zoom, and 0 resets; Enter and Backspace drill into a tree and out, whose
 path is a navigation landmark of buttons. The chart's description names
 these keys, and each change is announced.

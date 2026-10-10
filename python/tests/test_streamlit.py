@@ -266,3 +266,25 @@ def test_drill_and_move_state_reach_the_script_in_forms():
         "root": ['[0,"East"]'],
         "positions": {'[0,"a"]': [3.0, 4.0]},
     }
+
+
+def test_viewport_state_and_reaction(monkeypatch):
+    calls = []
+
+    def component(**kwargs):
+        calls.append(kwargs)
+        header, _, _ = read(kwargs["data"])
+        return {"viewport": {"x": [-80, 80], "y": [20, 80], "epoch": header["itemEpoch"]}}
+
+    monkeypatch.setattr(hst, "_component", lambda: component)
+    graph = hg.graph({"source": ["a"], "target": ["b"]}, "source", "target", zoom=True)
+    state = hst.chart(graph, on_viewport="rerun")
+    assert state.viewport == hg.Viewport(x=(-80.0, 80.0), y=(20.0, 80.0))
+    assert read(calls[0]["data"])[0]["events"] == ["viewport"]
+    assert callable(calls[0]["on_viewport_change"])
+    assert (
+        hst._state({"viewport": {"x": [1, 2], "epoch": "old"}}, item_epoch="new").viewport is None
+    )
+    assert hst._state({"viewport": {"x": [1]}}).viewport is None
+    with pytest.raises(ValueError, match="streamlit.chart on_viewport: expected"):
+        hst.chart(graph, on_viewport="always")

@@ -61,6 +61,18 @@ mounted), for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibili
 </Chart>
 ```
 
+`<Graph>` uses the same `interaction` prop as maps: `zoom: true` (or
+`"xy"`) pans and zooms with wheel, drag, double-click, Shift+arrows,
+plus/minus/0, and a toolbar. `onviewport` reports x and y ranges in layout
+coordinates (y increases downwards); node radii stay fixed in pixels.
+`brush: "lasso"` selects visible node centers through a `rowSelection`
+bound to the nodes table, including duplicate node rows, and dims unselected
+nodes and their links. In lasso mode, Shift-drag pans; its toolbar toggle
+returns plain drags to navigation or node dragging. With `drag: true`,
+nodes move while zoomed and `setItemPosition` still uses layout units.
+When zoom is on, Alt+Shift+arrows moves the node read; Shift+arrows and 0
+navigate the view. The toolbar restores moved nodes.
+
 ## Live data
 
 Each mark component renders one empty `<template>` element, which keeps the

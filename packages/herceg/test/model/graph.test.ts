@@ -435,8 +435,8 @@ describe("graph", () => {
     expect(() => build({ marks: [network, line(series, { x: "t", y: "v" })] })).toThrow(
       "has its chart to itself",
     );
-    expect(() => build({ marks: [network], interaction: { zoom: true } })).toThrow(
-      "graph zoom: no axes to zoom",
+    expect(() => build({ marks: [network], interaction: { zoom: "x" } })).toThrow(
+      'graph zoom: expected interaction.zoom true or "xy"',
     );
     expect(() => graph(links(), { source: "from", target: "messages" as never })).toThrow(
       'graph target: field "messages" holds number values; expected category',
