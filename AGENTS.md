@@ -22,6 +22,7 @@ engineering decisions.
 | `python/` | The `herceg` Python package: a Pythonic chart builder that emits the portable spec, data conversion, HTML, notebook, SVG, PNG, and PDF output, live notebook widgets, and a Streamlit component. |
 | `benchmarks/` | Benchmark harness, competitor adapters, scenarios, and committed results in `benchmarks/results/`. |
 | `docs/` | Permanent documentation: architecture, vocabulary, comparison, benchmark methodology. |
+| `scripts/` | Contributor and CI checks, including tests of packed npm packages and Python distributions. |
 | `tmp/` | Gitignored scratch space. Never commit anything from here. |
 
 The suggested package split (`@herceg/core`, `@herceg/svg`, `@herceg/canvas`,
@@ -43,6 +44,7 @@ npm run format           # apply biome formatting and safe fixes
 npm run typecheck        # type check all TypeScript, including compile-time tests
 npm test                 # unit tests (vitest, Node)
 npm run test:browser     # browser tests: herceg, the adapters, and python/js (local Chrome)
+npm run test:package     # test installed npm tarballs (run build first)
 npm run bench:core       # engine microbenchmarks (Node)
 npm run bench:size       # bundle size benchmark
 npm run bench            # browser benchmark suite (Chrome); see benchmarks/README.md
@@ -53,6 +55,7 @@ npm run bench:report     # regenerate result tables in docs/comparison.md
 npm run bench:express    # herceg.express timings in Python (-- --out results/express.json)
 npm run build:python     # bundle herceg's JavaScript into the Python package
 npm run test:python      # build:python, then pytest (uv environment in python/)
+npm run test:python-package # build, inspect, install, and smoke-test the Python wheel
 npm run lint:python      # ruff check, format check, and mypy type check of the Python package
 ```
 

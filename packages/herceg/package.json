@@ -8,43 +8,53 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./spec": {
       "types": "./dist/from-spec.d.ts",
-      "import": "./dist/from-spec.js"
+      "import": "./dist/from-spec.js",
+      "default": "./dist/from-spec.js"
     },
     "./pdf": {
       "types": "./dist/pdf.d.ts",
-      "import": "./dist/pdf.js"
+      "import": "./dist/pdf.js",
+      "default": "./dist/pdf.js"
     },
     "./grid": {
       "types": "./dist/grid.d.ts",
-      "import": "./dist/grid.js"
+      "import": "./dist/grid.js",
+      "default": "./dist/grid.js"
     },
     "./grid/model": {
       "types": "./dist/grid/model.d.ts",
-      "import": "./dist/grid/model.js"
+      "import": "./dist/grid/model.js",
+      "default": "./dist/grid/model.js"
     },
     "./grid/pivot": {
       "types": "./dist/grid-pivot.d.ts",
-      "import": "./dist/grid-pivot.js"
+      "import": "./dist/grid-pivot.js",
+      "default": "./dist/grid-pivot.js"
     },
     "./grid/remote": {
       "types": "./dist/grid-remote.d.ts",
-      "import": "./dist/grid-remote.js"
+      "import": "./dist/grid-remote.js",
+      "default": "./dist/grid-remote.js"
     },
     "./grid/memory": {
       "types": "./dist/grid-memory.d.ts",
-      "import": "./dist/grid-memory.js"
+      "import": "./dist/grid-memory.js",
+      "default": "./dist/grid-memory.js"
     },
     "./grid/conformance": {
       "types": "./dist/grid-conformance.d.ts",
-      "import": "./dist/grid-conformance.js"
+      "import": "./dist/grid-conformance.js",
+      "default": "./dist/grid-conformance.js"
     },
     "./pivot": {
       "types": "./dist/pivot.d.ts",
-      "import": "./dist/pivot.js"
+      "import": "./dist/pivot.js",
+      "default": "./dist/pivot.js"
     }
   },
   "files": [
@@ -59,5 +69,13 @@
   },
   "devDependencies": {
     "axe-core": "^4.14.0"
-  }
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "keywords": [
+    "charts",
+    "visualization",
+    "typescript"
+  ]
 }

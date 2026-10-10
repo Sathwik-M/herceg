@@ -32,5 +32,14 @@
     "svelte": "5.57.2",
     "svelte-check": "4.7.6",
     "typescript": "6.0.3"
-  }
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "keywords": [
+    "charts",
+    "visualization",
+    "typescript",
+    "svelte"
+  ]
 }

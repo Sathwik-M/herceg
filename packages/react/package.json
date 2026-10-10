@@ -8,11 +8,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./grid": {
       "types": "./dist/grid.d.ts",
-      "import": "./dist/grid.js"
+      "import": "./dist/grid.js",
+      "default": "./dist/grid.js"
     }
   },
   "files": [
@@ -35,5 +37,14 @@
     "@types/react-dom": "19.3.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
-  }
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "keywords": [
+    "charts",
+    "visualization",
+    "typescript",
+    "react"
+  ]
 }

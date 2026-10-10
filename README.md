@@ -132,16 +132,37 @@ benchmarks, and [uv](https://docs.astral.sh/uv/) for the Python package.
 
 ```sh
 npm install
+npm run build
 npm run lint
 npm run typecheck
 npm test
 npm run test:browser
+npm run test:package
 npm run test:python
+npm run test:python-package
 npm run bench:size
 npm run bench
 ```
 
 See [AGENTS.md](AGENTS.md) for every command.
+
+`test:package` tests the built npm tarballs in a fresh consumer: packaged
+files, exports, licenses matching the root LICENSE byte for byte, Node imports,
+static SVG, and every entrypoint's declarations in NodeNext and bundler resolution
+with `skipLibCheck: false`. Fixed public API fixtures catch missing or redirected
+subpaths. Browser bundles for the engine and all three adapters require every
+filesystem input to stay inside the consumer. It uses workspace peer versions
+and build tools, with inherited npm workspace selectors cleared for packing and
+installation. Vue template checking runs when `vue-tsc` and
+its dependencies are available in npm's offline cache; otherwise it prints a
+skip note. Run `build` first.
+
+`test:python-package` builds the JavaScript bundles, sdist, and wheel, checks
+the wheel's JavaScript files, then installs it and renders HTML in a fresh
+virtual environment. It preserves uv cache and interpreter settings while removing
+registry and source overrides, and tries uv offline first with a PyPI-only fallback.
+Python must already be installed. Both checks remove their temporary projects;
+pass `-- --keep-on-failure` to keep a failed project for inspection.
 
 ## License
 
