@@ -2,7 +2,86 @@
 // plain JSON in which the axes holding times are named, so Python can return
 // datetimes, and category positions are their labels rather than band indices.
 
-import type { Axis, AxisInfo, Chart, Inspection, Selection, Viewport } from "herceg";
+import type { Axis, AxisInfo, Chart, DrillRoot, Inspection, Selection, Viewport } from "herceg";
+
+export interface DrillPayload {
+  path: string[];
+}
+
+export type ItemPositionsPayload = Record<string, [number, number]>;
+
+export function drillPayload(root: DrillRoot | undefined): DrillPayload | null {
+  return root?.key == null ? null : { path: root.path.map(({ key }) => key) };
+}
+
+/** Restoring an old path falls back to its nearest surviving ancestor. */
+export function showDrillRoot(chart: Chart, payload: DrillPayload | null, restore = false) {
+  if (!chart.drillRoot && !payload) return;
+  const path = payload?.path ?? [];
+  if (!restore) {
+    chart.setDrillRoot(path.at(-1) ?? null);
+    return;
+  }
+  if (!chart.drillRoot) return;
+  for (const key of [...path].reverse()) {
+    try {
+      chart.setDrillRoot(key);
+      return;
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+    }
+  }
+  chart.setDrillRoot(null);
+}
+
+/** Records one engine delta in the accumulated manual positions. */
+export function recordPosition(
+  held: ItemPositionsPayload,
+  key: string,
+  position: { x: number; y: number } | null,
+): void {
+  if (position)
+    Object.defineProperty(held, key, {
+      value: [position.x, position.y],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  else delete held[key];
+}
+
+/** Replaces overrides, recording only setters that succeeded, including on error. */
+export function showItemPositions(
+  chart: Chart,
+  next: ItemPositionsPayload,
+  held: ItemPositionsPayload,
+  restore = false,
+) {
+  for (const key of Object.keys(held)) {
+    if (Object.hasOwn(next, key)) continue;
+    chart.setItemPosition(key, null);
+    delete held[key];
+  }
+  for (const [key, [x, y]] of Object.entries(next)) {
+    const before = held[key];
+    if (before?.[0] === x && before[1] === y) continue;
+    try {
+      chart.setItemPosition(key, { x, y });
+      Object.defineProperty(held, key, {
+        value: [x, y],
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    } catch (error) {
+      if (!restore || !(error instanceof RangeError)) throw error;
+    }
+  }
+}
+
+export function positionsValue(positions: ItemPositionsPayload): string {
+  return JSON.stringify(Object.entries(positions).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
 
 type Ends = [number, number] | [string, string];
 type Range = readonly [number, number];

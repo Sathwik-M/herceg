@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as _dt
 import math
 import numbers
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -21,6 +22,11 @@ Value = float | _dt.datetime | str
 
 #: A range on an axis: its two ends, ascending (category labels in axis order).
 Range = tuple[Value, Value]
+
+#: Item keys from the top level through a tree's current drill root.
+DrillRoot = tuple[str, ...]
+#: Manual network node positions, in layout units rather than pixels.
+ItemPositions = dict[str, tuple[float, float]]
 
 _EPOCH = _dt.datetime(1970, 1, 1)
 
@@ -109,6 +115,53 @@ def decode_viewport(payload: Any) -> Viewport:
     )
 
 
+def decode_drill_root(payload: dict[str, Any] | None) -> DrillRoot | None:
+    return tuple(payload["path"]) if payload else None
+
+
+def encode_drill_root(value: DrillRoot | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, tuple) or not all(isinstance(key, str) for key in value):
+        raise ValueError(
+            "widget.drill_root: expected a tuple of item keys or None; "
+            "use the path reported by on_drill"
+        )
+    return {"path": list(value)} if value else None
+
+
+def decode_item_positions(payload: dict[str, Any] | None) -> ItemPositions:
+    return {key: (float(x), float(y)) for key, (x, y) in (payload or {}).items()}
+
+
+def encode_item_positions(value: Mapping[str, tuple[float, float]]) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "widget.item_positions: expected item keys mapped to (x, y) pairs; use {} to reset"
+        )
+    out: dict[str, Any] = {}
+    for key, pair in value.items():
+        if not isinstance(key, str):
+            raise ValueError(
+                "widget.item_positions: item keys must be strings; use inspection keys"
+            )
+        valid = (
+            isinstance(pair, (tuple, list))
+            and len(pair) == 2
+            and all(isinstance(v, numbers.Real) and not isinstance(v, bool) for v in pair)
+        )
+        try:
+            coordinates = [float(v) for v in pair] if valid else []
+        except OverflowError:
+            coordinates = []
+        if not coordinates or not all(math.isfinite(v) for v in coordinates):
+            raise ValueError(
+                "widget.item_positions: expected two finite coordinates per key; use (x, y) pairs"
+            )
+        out[key] = coordinates
+    return out
+
+
 def encode_viewport(value: Any) -> dict[str, Any]:
     """A viewport set from Python, as the browser takes it: a ``Viewport``, an x
     range, or None for no zoom."""
@@ -168,13 +221,21 @@ _AXES = {"select": ("x", "y"), "viewport": ("x", "y", "yRight")}
 
 
 def checked(event: str, payload: Any) -> dict[str, Any] | None:
-    """A selection (``event == "select"``) or viewport from the browser, checked
-    and normalized before it is kept: None for none, or for a selection of
-    nothing. Raises ValueError for a payload of another shape."""
+    """Interaction state from the browser, checked and normalized before it
+    is kept. Raises ValueError for a payload of another shape."""
+    if payload is None and event == "itemMove":
+        raise ValueError("expected item keys mapped to coordinate pairs")
     if payload is None:
         return None
     if not isinstance(payload, dict):
         raise ValueError(f"expected an object, not {payload!r}")
+    if event == "drill":
+        path = payload.get("path")
+        if not isinstance(path, list) or not all(isinstance(key, str) for key in path):
+            raise ValueError("expected a path of item keys")
+        return {"path": list(path)} if path else None
+    if event == "itemMove":
+        return encode_item_positions(payload)
     axes = _AXES[event]
     out: dict[str, Any] = {axis: _checked_range(payload.get(axis)) for axis in axes}
     time = payload.get("time", [])

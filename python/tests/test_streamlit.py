@@ -182,3 +182,87 @@ def test_the_example_app_runs():
     at = AppTest.from_file(str(EXAMPLE), default_timeout=60).run()
     assert not at.exception
     assert any(element.type == "bidi_component" for element in at.main)
+
+
+def test_drills_and_moves_have_typed_values_and_independent_defaults():
+    result = {
+        "drill_root": {"path": ['[0,"East"]', '[0,"East","City"]']},
+        "item_positions": {"epoch": "layout", "positions": {'[0,"a"]': [1, 2]}},
+    }
+    state = hst._state(result, item_epoch="layout")
+    assert state.drill_root == ('[0,"East"]', '[0,"East","City"]')
+    assert state.item_positions == {'[0,"a"]': (1.0, 2.0)}
+    assert hst._state(result, item_epoch="other").item_positions == {}
+    assert hst._state({"drill_root": {"path": [2]}}).drill_root is None
+    result["item_positions"]["positions"] = {"a": [True, 2]}
+    assert hst._state(result, item_epoch="layout").item_positions == {}
+    first = hst.ChartState()
+    first.item_positions["a"] = (0, 0)
+    assert hst.ChartState().item_positions == {}
+
+
+def test_new_reactions_use_one_payload_and_state_callbacks(monkeypatch):
+    calls = []
+
+    def component(**kwargs):
+        calls.append(kwargs)
+        header, _, _ = read(kwargs["data"])
+        return {
+            "drill_root": {"path": ['[0,"a"]']},
+            "item_positions": {"epoch": header["itemEpoch"], "positions": {'[0,"a"]': [1, 2]}},
+        }
+
+    monkeypatch.setattr(hst, "_component", lambda: component)
+    graph = hg.graph({"source": ["a"], "target": ["b"]}, "source", "target", drag=True)
+
+    def callback():
+        pass
+
+    state = hst.chart(graph, key="g", on_drill="rerun", on_item_move=callback)
+    assert state.item_positions == {'[0,"a"]': (1.0, 2.0)}
+    assert len(calls) == 1
+    assert read(calls[0]["data"])[0]["events"] == ["drill", "itemMove"]
+    assert calls[0]["on_item_positions_change"] is callback
+    assert callable(calls[0]["on_drill_root_change"])
+    spec, _ = graph.to_spec()
+    epoch = hst._item_epoch(spec, "data")
+    assert hst._item_epoch({**spec, "title": "Styled"}, "data") == epoch
+    assert hst._item_epoch(spec, "new-data") != epoch
+    changed = {**spec, "marks": [{**spec["marks"][0], "directed": True}]}
+    assert hst._item_epoch(changed, "data") != epoch
+    for name in ("on_drill", "on_item_move"):
+        with pytest.raises(ValueError, match=f"streamlit.chart {name}: expected"):
+            hst.chart(graph, **{name: "always"})
+
+
+def item_form_app():
+    import streamlit as st
+
+    import herceg as hg
+    import herceg.streamlit as hst
+
+    with st.form("items"):
+        tree = hg.treemap({"region": ["East", "West"]}, path=["region"], zoom=True)
+        root = hst.chart(tree, key="tree", on_drill="rerun")
+        graph = hg.graph({"source": ["a"], "target": ["b"]}, "source", "target", drag=True)
+        moves = hst.chart(graph, key="graph", on_item_move="rerun")
+        st.form_submit_button()
+    st.json({"root": root.drill_root, "positions": moves.item_positions})
+
+
+def test_drill_and_move_state_reach_the_script_in_forms():
+    at = AppTest.from_function(item_form_app, default_timeout=60).run()
+    assert not at.exception
+    components = [element.proto for element in at.get("bidi_component")]
+    assert len(components) == 2
+    graph_header = read(components[1].bytes)[0]
+    at.session_state["tree"] = {"drill_root": {"path": ['[0,"East"]']}}
+    at.session_state["graph"] = {
+        "item_positions": {"epoch": graph_header["itemEpoch"], "positions": {'[0,"a"]': [3, 4]}}
+    }
+    at.run()
+    assert not at.exception
+    assert json.loads(at.json[0].proto.body) == {
+        "root": ['[0,"East"]'],
+        "positions": {'[0,"a"]': [3.0, 4.0]},
+    }

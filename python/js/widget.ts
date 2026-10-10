@@ -27,10 +27,17 @@ import {
 import {
   chartSelection,
   chartViewport,
+  type DrillPayload,
+  drillPayload,
+  type ItemPositionsPayload,
   inspectionPayload,
   namesCategories,
+  positionsValue,
+  recordPosition,
   type SelectionPayload,
   selectionPayload,
+  showDrillRoot,
+  showItemPositions,
   type ViewportPayload,
   viewportPayload,
 } from "./events.ts";
@@ -43,9 +50,21 @@ export interface Model {
   on(event: string, callback: (...args: never[]) => void): void;
 }
 
-/** The events whose state Python keeps: the selection and the viewport. */
-type ViewEvent = "select" | "viewport";
-type ViewState = SelectionPayload | ViewportPayload | null;
+/** Interaction state shared by Python and every display. */
+interface ViewStates {
+  select: SelectionPayload | null;
+  viewport: ViewportPayload | null;
+  drill: DrillPayload | null;
+  itemMove: ItemPositionsPayload;
+}
+type ViewEvent = keyof ViewStates;
+type ViewState = ViewStates[ViewEvent];
+const stateKeys = {
+  select: "selection",
+  viewport: "viewport",
+  drill: "drill_root",
+  itemMove: "item_positions",
+} as const;
 
 /**
  * A channel's selection between Python and the browser: a condition, or
@@ -71,6 +90,8 @@ export interface Snapshot {
   buffers: SpecBuffer[];
   selection: SelectionPayload | null;
   viewport: ViewportPayload | null;
+  drill_root: DrillPayload | null;
+  item_positions: ItemPositionsPayload;
   /**
    * Per table a row selection binds, how Python numbers its rows: the rows
    * dropped from its front since it was last replaced, and how many times
@@ -93,6 +114,8 @@ export type Update = { revision: number } & (
   | { type: "options"; options: Record<string, unknown> }
   | { type: "select"; selection: SelectionPayload | null; origin?: string }
   | { type: "viewport"; viewport: ViewportPayload | null; origin?: string }
+  | { type: "drill"; drill_root: DrillPayload | null; origin?: string }
+  | { type: "itemMove"; item_positions: ItemPositionsPayload; origin?: string }
   | { type: "rows"; table: string; channel: string; selection: RowsPayload | null; origin?: string }
 );
 
@@ -100,6 +123,7 @@ interface View {
   host: HTMLElement;
   element: HTMLDivElement;
   chart: Chart | undefined;
+  positions: ItemPositionsPayload;
   /** The last error shown above the chart. */
   error: HTMLElement | undefined;
 }
@@ -125,8 +149,8 @@ class Widget {
   /** The spec's chart options, which option updates change. */
   #options: Record<string, unknown> = {};
   #error: unknown;
-  /** The selection and viewport Python and the browser last agreed on, to drop echoes. */
-  #states: Record<ViewEvent, ViewState> = { select: null, viewport: null };
+  /** Interaction state Python and the browser last agreed on, to drop echoes. */
+  #states: ViewStates = { select: null, viewport: null, drill: null, itemMove: {} };
   /** The stores the views' row selections bind, by table name, which the views share. */
   #stores = new Map<string, SelectionStore>();
   /** Python's numbering of each bound table's rows, as of the snapshot (see `Snapshot.rows`). */
@@ -134,6 +158,9 @@ class Widget {
   #unsubscribe: (() => void)[] = [];
   /** Applying a row selection from Python, which goes back to no one. */
   #applying = false;
+  #itemsFrame: number | undefined;
+  #pendingPositions: ItemPositionsPayload | undefined;
+  #itemSource: View | undefined;
 
   constructor(model: Model) {
     this.#model = model;
@@ -160,7 +187,7 @@ class Widget {
 
   render(host: HTMLElement): () => void {
     const element = host.ownerDocument.createElement("div");
-    const view: View = { host, element, chart: undefined, error: undefined };
+    const view: View = { host, element, chart: undefined, positions: {}, error: undefined };
     host.append(element);
     this.#views.add(view);
     this.#mount(view);
@@ -173,6 +200,7 @@ class Widget {
   }
 
   dispose(): void {
+    this.#cancelItems();
     this.#outbox.dispose();
     for (const stop of this.#unsubscribe) stop();
   }
@@ -183,8 +211,15 @@ class Widget {
     // Views and rows waiting to be reported predate the snapshot's.
     this.#outbox.cancel("select");
     this.#outbox.cancel("viewport");
+    this.#outbox.cancel("drill");
+    this.#cancelItems();
     this.#outbox.cancelAll("rows:");
-    this.#states = { select: snapshot.selection, viewport: snapshot.viewport };
+    this.#states = {
+      select: snapshot.selection,
+      viewport: snapshot.viewport,
+      drill: snapshot.drill_root,
+      itemMove: snapshot.item_positions,
+    };
     // Option updates never change the row selection: it binds the tables loaded here.
     const {
       data: _data,
@@ -302,15 +337,39 @@ class Widget {
       return;
     }
     view.chart = chart;
+    view.positions = {};
     // Restored before listening, so restoring does not echo back to Python.
-    this.#show(chart, "viewport", this.#states.viewport);
-    this.#show(chart, "select", this.#states.select);
+    this.#show(view, "viewport", this.#states.viewport);
+    this.#show(view, "select", this.#states.select);
+    this.#show(view, "drill", this.#states.drill, true);
+    this.#show(view, "itemMove", this.#states.itemMove, true);
     chart.on("select", (selection) =>
       this.#report("select", view, selectionPayload(chart, selection)),
     );
     chart.on("viewport", (viewport) =>
       this.#report("viewport", view, viewportPayload(chart, viewport)),
     );
+    chart.on("drill", (root) => {
+      if (!this.#applying) this.#report("drill", view, drillPayload(root));
+    });
+    chart.on("itemMove", ({ key, position }) => {
+      if (this.#applying) return;
+      recordPosition(view.positions, key, position);
+      this.#pendingPositions ??= { ...this.#states.itemMove };
+      recordPosition(this.#pendingPositions, key, position);
+      this.#itemSource = view;
+      this.#itemsFrame ??= requestAnimationFrame(() => {
+        this.#itemsFrame = undefined;
+        const positions = this.#pendingPositions!;
+        const source = this.#itemSource!;
+        this.#pendingPositions = undefined;
+        this.#itemSource = undefined;
+        this.#report("itemMove", source, positions);
+      });
+    });
+    chart.on("visibility", () => this.#show(view, "itemMove", this.#states.itemMove, true));
+    this.#report("drill", view, drillPayload(chart.drillRoot));
+    if (!chart.getHiddenKeys().length) this.#report("itemMove", view, { ...view.positions });
     // A selection whose categories are gone, or moved under its lasso, goes,
     // and Python hears so.
     if (this.#states.select && !chart.selection) this.#report("select", view, null);
@@ -341,27 +400,52 @@ class Widget {
     return ((this.#model.get("_listening") as string[] | undefined) ?? []).includes(event);
   }
 
-  /** A view's selection or viewport changed: the other views follow, and Python hears of it. */
-  #report(event: ViewEvent, source: View, payload: ViewState) {
-    const same = valuesOf(payload) === valuesOf(this.#states[event]);
+  #cancelItems() {
+    if (this.#itemsFrame !== undefined) cancelAnimationFrame(this.#itemsFrame);
+    this.#itemsFrame = undefined;
+    this.#pendingPositions = undefined;
+    this.#itemSource = undefined;
+    this.#outbox.cancel("itemMove");
+  }
+
+  /** A view's interaction state changed: the other views follow, and Python hears of it. */
+  #report<K extends ViewEvent>(event: K, source: View, payload: ViewStates[K]) {
+    const same = valuesOf(event, payload) === valuesOf(event, this.#states[event]);
     // The same values, perhaps saying better which axes hold times.
     if (payload || !same) this.#states[event] = payload;
     if (same) return;
-    for (const view of this.#views)
-      if (view !== source && view.chart) this.#show(view.chart, event, payload);
+    for (const view of this.#views) {
+      if (!view.chart || (view === source && event !== "itemMove")) continue;
+      try {
+        this.#show(view, event, payload, event === "itemMove");
+      } catch (error) {
+        showError(view, error);
+      }
+    }
     // The revision tells Python which of its changes this one was made after.
-    const value = event === "select" ? { selection: payload } : { viewport: payload };
+    const value = { [stateKeys[event]]: payload };
     const report = { type: event, ...value, origin: this.#origin, revision: this.#revision };
     this.#outbox.post(event, report);
   }
 
   /**
-   * Shows a selection or viewport in a chart. Category labels are found in
+   * Shows interaction state in a chart. Category labels are found in
    * the bands of the current data, so the chart first draws any data
    * changes it has not drawn yet. A selection shown here writes no rows:
    * the view brushed wrote them to the stores every view shares.
    */
-  #show(chart: Chart, event: ViewEvent, payload: ViewState) {
+  #show(view: View, event: ViewEvent, payload: ViewState, restore = false) {
+    const chart = view.chart!;
+    if (event === "drill" || event === "itemMove") {
+      this.#applying = true;
+      try {
+        if (event === "drill") showDrillRoot(chart, payload as DrillPayload | null, restore);
+        else showItemPositions(chart, payload as ItemPositionsPayload, view.positions, restore);
+      } finally {
+        this.#applying = false;
+      }
+      return;
+    }
     if (event === "select") {
       const selection = payload as SelectionPayload | null;
       if (namesCategories(selection) || selection?.lasso) chart.render();
@@ -372,13 +456,17 @@ class Widget {
     const viewport = payload as ViewportPayload | null;
     const labels = [viewport?.x, viewport?.y].some((ends) => typeof ends?.[0] === "string");
     if (labels) chart.render();
-    const view = chartViewport(chart, viewport);
+    const restored = chartViewport(chart, viewport);
     // Charts whose panels have y scales of their own have no y viewport.
     const [first] = chart.getPanels();
     chart.setViewport({
-      x: view.x,
-      y: first?.y?.canSetViewport ? view.y : null,
-      yRight: first?.yRight?.canSetViewport ? view.yRight : null,
+      x: restored.x,
+      y:
+        this.#config?.marks.some((mark) => ["geoshape", "geopoint"].includes(mark.spec.type)) ||
+        first?.y?.canSetViewport
+          ? restored.y
+          : null,
+      yRight: first?.yRight?.canSetViewport ? restored.yRight : null,
     });
   }
 
@@ -421,12 +509,18 @@ class Widget {
         table.append(appendBatch(table, decode(message.columns, buffers)));
         const excess = message.maxRows === undefined ? 0 : table.length - message.maxRows;
         if (excess > 0) table.dropFirst(excess);
+        this.#cancelItems();
+        this.#states.itemMove = {};
+        for (const view of this.#views) view.positions = {};
         this.#keepCategorySelection();
         return;
       }
       case "replace": {
         const table = this.#table(message.table);
         table.reset(resetColumns(table, decode(message.columns, buffers)));
+        this.#cancelItems();
+        this.#states.itemMove = {};
+        for (const view of this.#views) view.positions = {};
         this.#keepCategorySelection();
         return;
       }
@@ -444,19 +538,67 @@ class Widget {
           buffers[0] && view(buffers[0]),
         );
         return;
+      case "itemMove": {
+        if (message.origin === this.#origin) return;
+        this.#cancelItems();
+        const known = this.#states.itemMove;
+        const next = message.item_positions;
+        this.#states.itemMove = next;
+        const applied = new Set<string>();
+        for (const view of this.#views) {
+          if (!view.chart) continue;
+          // Another display may have hidden a node. Keep its desired override
+          // and apply it when that display shows the node again.
+          this.#show(view, "itemMove", next, true);
+          for (const key of Object.keys(view.positions)) applied.add(key);
+        }
+        const unknown = Object.keys(next).filter(
+          (key) => !applied.has(key) && !Object.hasOwn(known, key),
+        );
+        const source = [...this.#views].find((view) => view.chart);
+        if (unknown.length && source) {
+          const invalid = new Set(unknown);
+          const kept = Object.fromEntries(
+            Object.entries(next).filter(([key]) => !invalid.has(key)),
+          );
+          this.#report("itemMove", source, kept);
+          throw new Error(
+            `widget.item_positions: no displayed node for ${JSON.stringify(unknown[0])}; use a reported item key`,
+          );
+        }
+        return;
+      }
       case "select":
-      case "viewport": {
+      case "viewport":
+      case "drill": {
         // This browser's own view, back from Python: it is already drawn,
         // and newer ones may be on their way.
         if (message.origin === this.#origin) return;
         // A view from Python or another browser replaces any not yet reported.
         this.#outbox.cancel(message.type);
-        const payload = message.type === "select" ? message.selection : message.viewport;
-        this.#states[message.type] = payload;
+        const payload =
+          message.type === "select"
+            ? message.selection
+            : message.type === "viewport"
+              ? message.viewport
+              : message.drill_root;
+        Object.assign(this.#states, { [message.type]: payload });
         // Rows travel apart ("rows"): the browser whose view was brushed wrote
         // them, and Python sets them with `row_selection`.
-        for (const view of this.#views)
-          if (view.chart) this.#show(view.chart, message.type, payload);
+        for (const view of this.#views) {
+          if (!view.chart) continue;
+          try {
+            this.#show(view, message.type, payload);
+          } catch (error) {
+            if (message.type !== "drill") throw error;
+            this.#report("drill", view, drillPayload(view.chart.drillRoot));
+            throw new Error(
+              `widget.drill_root: ${error instanceof Error ? error.message : String(error)}; use a reported item key`,
+            );
+          }
+          if (message.type === "drill")
+            this.#report("drill", view, drillPayload(view.chart.drillRoot));
+        }
         return;
       }
     }
@@ -471,7 +613,7 @@ class Widget {
   #keepCategorySelection() {
     const selection = this.#states.select as SelectionPayload | null;
     if (!namesCategories(selection)) return;
-    for (const { chart } of this.#views) if (chart) this.#show(chart, "select", selection);
+    for (const view of this.#views) if (view.chart) this.#show(view, "select", selection);
   }
 
   #table(name: string): Table {
@@ -547,10 +689,13 @@ function appendBatch(table: Table, rows: Table): Parameters<Table["append"]>[0] 
  * A selection's or viewport's values, whichever axes hold times: equal for
  * an echo of the same state. A viewport of no zoom is no viewport.
  */
-function valuesOf(state: ViewState): string {
-  const { x = null, y = null } = state ?? {};
-  const yRight = state && "yRight" in state ? state.yRight : null;
-  const lasso = state && "lasso" in state ? state.lasso : null;
+function valuesOf(event: ViewEvent, state: ViewState): string {
+  if (event === "drill") return JSON.stringify(state);
+  if (event === "itemMove") return positionsValue(state as ItemPositionsPayload);
+  const ranges = state as SelectionPayload | ViewportPayload | null;
+  const { x = null, y = null } = ranges ?? {};
+  const yRight = ranges && "yRight" in ranges ? ranges.yRight : null;
+  const lasso = ranges && "lasso" in ranges ? ranges.lasso : null;
   return JSON.stringify([x, y, yRight, lasso]);
 }
 

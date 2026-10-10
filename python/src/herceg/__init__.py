@@ -62,7 +62,7 @@ from ._chart import (
     violin,
 )
 from ._derive import Derived, Expr, col, derive, when
-from ._events import InspectedPoint, Inspection, Selection, Viewport
+from ._events import DrillRoot, InspectedPoint, Inspection, ItemPositions, Selection, Viewport
 from ._rows import RowSelection, SelectionBinding
 
 __all__ = [
@@ -86,9 +86,11 @@ __all__ = [
     "Tooltip",
     "Viewport",
     "Derived",
+    "DrillRoot",
     "Expr",
     "InspectedPoint",
     "Inspection",
+    "ItemPositions",
     "area",
     "bar",
     "boxplot",

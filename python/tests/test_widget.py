@@ -697,3 +697,136 @@ def test_viewports_and_selections_encode_for_the_browser():
         encode_viewport((0, float("nan")))
     with pytest.raises(ValueError, match="Selection lasso: expected at least 3 points; received 2"):
         encode_selection(hg.Selection(lasso=[(0, 0), (1, 1)]))
+
+
+@pytest.mark.parametrize("kind", ["treemap", "sunburst"])
+def test_drill_state_callbacks_resets_and_redisplay(kind):
+    widget = getattr(hg.Chart({"region": ["East", "West"]}, zoom=True), kind)(
+        path=["region"]
+    ).widget()
+    browser = Browser(widget)
+    roots = []
+    widget.on_drill(roots.append)
+    root = ('[0,"East"]',)
+    widget.drill_root = root
+    assert roots == [root] and widget.drill_root == root
+    assert browser.last[0] == {"type": "drill", "drill_root": {"path": list(root)}, "revision": 1}
+    browser.reply({"type": "drill", "drill_root": {"path": list(root)}, "revision": 1})
+    assert roots == [root]
+    assert widget.get_state()["_chart"]["drill_root"] == {"path": list(root)}
+    widget.drill_root = ()
+    assert roots[-1] is None and widget.drill_root is None
+    # Reports made before a Python assignment lose to that assignment.
+    browser.reply(
+        {"type": "drill", "drill_root": {"path": list(root)}, "origin": "old", "revision": 1}
+    )
+    assert widget.drill_root is None
+    widget.on_drill(roots.append, remove=True)
+    browser.reply({"type": "drill", "drill_root": {"path": list(root)}, "revision": 2})
+    assert len(roots) == 2 and widget.drill_root == root
+    browser.reply({"type": "drill", "drill_root": {"path": [42]}, "revision": 3})
+    assert widget.drill_root == root
+    with pytest.raises(ValueError, match="widget.drill_root: expected"):
+        widget.drill_root = "East"
+
+
+def network():
+    return hg.graph(
+        {"source": ["a", "b"], "target": ["b", "c"]}, "source", "target", drag=True
+    ).widget()
+
+
+def test_item_positions_replace_reset_copy_and_report_without_listeners():
+    widget = network()
+    browser = Browser(widget)
+    moves = []
+    widget.on_item_move(moves.append)
+    positions = {'[0,"a"]': (np.float64(1), np.int64(2)), '[0,"b"]': (3, 4)}
+    widget.item_positions = positions
+    assert widget.item_positions == positions and moves == [positions]
+    assert browser.last[0]["item_positions"] == {key: list(at) for key, at in positions.items()}
+    # Reordering keys and browser echoes do not call Python twice.
+    widget.item_positions = dict(reversed(list(positions.items())))
+    assert len(moves) == 1
+    returned = widget.item_positions
+    returned.clear()
+    moves[0].clear()
+    assert widget.item_positions == positions
+    widget.item_positions = {'[0,"a"]': (5, 6)}
+    assert widget.get_state()["_chart"]["item_positions"] == {'[0,"a"]': [5.0, 6.0]}
+    widget.item_positions = {}
+    assert moves[-1] == {} and widget.item_positions == {}
+    widget.on_item_move(moves.append, remove=True)
+    browser.reply({"type": "itemMove", "item_positions": {'[0,"b"]': [8, 9]}, "revision": 3})
+    assert widget.item_positions == {'[0,"b"]': (8.0, 9.0)}
+    assert len(moves) == 3
+    browser.reply({"type": "itemMove", "item_positions": {'[0,"b"]': [True, 0]}, "revision": 4})
+    assert widget.item_positions == {'[0,"b"]': (8.0, 9.0)}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {1: (0, 1)},
+        {"a": "12"},
+        {"a": (1,)},
+        {"a": (True, 2)},
+        {"a": (float("nan"), 2)},
+        {"a": (float("inf"), 2)},
+    ],
+)
+def test_invalid_positions_do_not_change_state(value):
+    widget = network()
+    with pytest.raises(ValueError, match="widget.item_positions:"):
+        widget.item_positions = value
+    assert widget.item_positions == {}
+
+
+def test_network_data_changes_clear_moves_and_fence_delayed_reports_without_a_display():
+    widget = network()
+    browser = Browser(widget)
+    widget.append({"source": [], "target": []})
+    assert not browser.messages
+    widget.replace({"source": ["b"], "target": ["c"]})
+    browser.reply(
+        {"type": "itemMove", "item_positions": {'[0,"a"]': [1, 2]}, "origin": "old", "revision": 0}
+    )
+    assert widget.item_positions == {}
+    widget.item_positions = {'[0,"b"]': (3, 4)}
+    moves = []
+    widget.on_item_move(moves.append)
+    widget.update(title="Still moved")
+    assert widget.item_positions == {'[0,"b"]': (3, 4)}
+    widget.append({"source": ["c"], "target": ["d"]})
+    assert widget.item_positions == {} and moves == [{}]
+    assert widget.get_state()["_chart"]["item_positions"] == {}
+
+
+def test_item_state_setters_refuse_charts_without_the_controls():
+    widget, _ = live()
+    with pytest.raises(ValueError, match="widget.drill_root: only"):
+        widget.drill_root = None
+    with pytest.raises(ValueError, match="widget.item_positions: only"):
+        widget.item_positions = {}
+
+
+@pytest.mark.parametrize("value", [{"a": (10**1000, 0)}, {"a": (np.bool_(True), 0)}])
+def test_non_finite_or_boolean_numeric_scalars_are_rejected(value):
+    widget = network()
+    with pytest.raises(ValueError, match="widget.item_positions: expected two finite"):
+        widget.item_positions = value
+
+
+def test_delayed_moves_from_another_browser_lose_to_a_python_assignment():
+    widget = network()
+    browser = Browser(widget)
+    widget.item_positions = {'[0,"a"]': (1, 2)}
+    browser.reply(
+        {"type": "itemMove", "item_positions": {'[0,"b"]': [3, 4]}, "origin": "old", "revision": 0}
+    )
+    assert widget.item_positions == {'[0,"a"]': (1.0, 2.0)}
+    browser.reply(
+        {"type": "itemMove", "item_positions": {'[0,"b"]': [3, 4]}, "origin": "new", "revision": 1}
+    )
+    assert widget.item_positions == {'[0,"b"]': (3.0, 4.0)}

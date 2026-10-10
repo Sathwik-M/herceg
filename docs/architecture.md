@@ -3523,6 +3523,17 @@ it. A range brushed or zoomed in one browser goes through Python to the
 others, marked with its origin; a range report made before a newer change
 from elsewhere is dropped. Views of one widget share its tables and marks
 in the browser, so an update is decoded once however many outputs show it.
+Drill roots and manual network positions use the same revision and origin
+protocol as viewports. Python exposes `drill_root` as a tuple of ancestor
+item keys (None for the whole tree), and `item_positions` as a mapping of
+item keys to layout-coordinate pairs. Their callbacks receive the resulting
+state. Snapshots restore them before listening to engine events; position
+assignments suppress intermediate setter events. Move deltas are accumulated
+and combined once a frame before whole-state comparison and reporting; peers
+apply only changed coordinates and defer hidden nodes until they are shown.
+Network data changes clear
+positions in Python even without an open output and advance the stale-report
+fence. Map viewport restoration keeps x and y without requiring axis metadata.
 Replacements reset those tables in place, so points with `animationKey`
 animate across replacements, as they do in JavaScript apps.
 The Streamlit component (`herceg.streamlit.chart`, components v2) has no
@@ -3535,7 +3546,13 @@ and changed bytes remount the chart in the same container, restoring the
 zoom along x and y and the whole selection where their values remain (on
 category axes, by their labels). Data changes therefore remount too, so keyed
 points show at once in Streamlit. The script receives the selection whole;
-it does not hear of zooming. Charts without a theme read the app's from the
+it does not hear of zooming. `on_drill` and `on_item_move` enable persistent
+`drill_root` and `item_positions` results, using the same Python values as
+widgets. Roots survive redraws through their nearest surviving ancestor;
+positions survive style-only redraws and are tagged with the network data
+and layout identity so Python discards stale results. These values travel in
+the existing component state, with one binary chart payload per run.
+Charts without a theme read the app's from the
 CSS variables Streamlit gives components, since Python may not know it.
 
 A test (`test/architecture.test.ts`) keeps the core directories (`data`,

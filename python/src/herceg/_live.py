@@ -62,6 +62,17 @@ class LiveChart:
         self.generation = {name: 0 for name in self._tables}
 
     @property
+    def can_drill(self) -> bool:
+        return self._one_item_mark({"treemap", "sunburst"})
+
+    @property
+    def can_move_items(self) -> bool:
+        return self._one_item_mark({"graph"})
+
+    def _one_item_mark(self, kinds: set[str]) -> bool:
+        return not self._layout and len(self._marks) == 1 and self._marks[0]["type"] in kinds
+
+    @property
     def shares_y(self) -> bool:
         """Whether every panel shares one y scale, so the chart has one y viewport."""
         return self._settings["resolve_y"] in (None, "shared") and "panels" not in self._layout

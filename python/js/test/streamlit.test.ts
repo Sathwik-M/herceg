@@ -2,7 +2,9 @@
 // once per script run, with the payload herceg.streamlit.payload builds.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MountedChart } from "../../../packages/herceg/src/dom/chart.ts";
 import herceg, { type Component, type Header } from "../streamlit.ts";
+import { itemChart, key } from "./items.ts";
 
 /**
  * A payload as Python builds it, placed `offset` bytes into a larger buffer
@@ -14,6 +16,7 @@ function payload(
   events: Header["events"],
   offset = 3,
   epoch?: string,
+  itemEpoch?: string,
 ): Uint8Array {
   const offsets: [number, number][] = [];
   let end = 0;
@@ -22,7 +25,13 @@ function payload(
     end = Math.ceil((end + buffer.byteLength) / 8) * 8;
   }
   const header = new TextEncoder().encode(
-    JSON.stringify({ spec, buffers: offsets, events, ...(epoch && { epoch }) }),
+    JSON.stringify({
+      spec,
+      buffers: offsets,
+      events,
+      ...(epoch && { epoch }),
+      ...(itemEpoch && { itemEpoch }),
+    }),
   );
   const start = Math.ceil((4 + header.length) / 8) * 8;
   const out = new Uint8Array(offset + start + end).subarray(offset);
@@ -818,4 +827,114 @@ describe("Streamlit component with panels' own x scales", () => {
     expect(triggers).toHaveLength(1);
     expect(triggers[0]![1]).toMatchObject({ panel: "series", time: true });
   });
+});
+
+describe("Streamlit item interaction", () => {
+  function items(
+    type: "treemap" | "sunburst" | "graph",
+    title: string,
+    events: Header["events"],
+    epoch = "layout",
+  ) {
+    const fixture = itemChart(type, title);
+    return payload(
+      fixture.spec,
+      fixture.buffers,
+      events,
+      3,
+      "data",
+      type === "graph" ? epoch : undefined,
+    );
+  }
+
+  it.each(["treemap", "sunburst"] as const)(
+    "returns %s drilling and carries it across reruns without repeated reports",
+    async (type) => {
+      const parent = host();
+      const first = run(parent, items(type, "First", ["drill"]));
+      await vi.dynamicImportSettled();
+      key(parent, "ArrowRight");
+      key(parent, "Enter");
+      expect(first.state).toEqual([["drill_root", { path: ['[0,"East"]'] }]]);
+      const same = run(parent, items(type, "First", ["drill"]));
+      expect(same.state).toEqual([]);
+      const styled = run(parent, items(type, "Styled", ["drill"]));
+      await frame();
+      expect(parent.querySelector("nav")!.textContent).toContain("East");
+      expect(styled.state).toEqual([]);
+      await vi.dynamicImportSettled();
+      key(parent, "0");
+      expect(styled.state).toEqual([["drill_root", null]]);
+      styled.cleanup();
+    },
+  );
+
+  it("accumulates moves, preserves style-only reruns, and clears changed data", async () => {
+    const parent = host();
+    const first = run(parent, items("graph", "First", ["itemMove"]));
+    await vi.dynamicImportSettled();
+    key(parent, "ArrowRight");
+    key(parent, "ArrowRight", true);
+    await frame();
+    expect(first.state).toHaveLength(1);
+    const [name, value] = first.state[0]!;
+    expect(name).toBe("item_positions");
+    const moved = value as { epoch: string; positions: Record<string, [number, number]> };
+    expect(moved.epoch).toBe("layout");
+    expect(Object.keys(moved.positions)).toEqual(['[0,"East"]']);
+    await frame();
+    const geometry = () => parent.querySelector('[data-kind="point"]')!.getAttribute("d");
+    const before = geometry();
+    const styled = run(parent, items("graph", "Styled", ["itemMove"]));
+    await frame();
+    expect(geometry()).toBe(before);
+    expect(styled.state).toEqual([]);
+    const changed = run(parent, items("graph", "Styled", ["itemMove"], "new-layout"));
+    expect(changed.state).toEqual([["item_positions", { epoch: "new-layout", positions: {} }]]);
+    const again = run(parent, items("graph", "Styled", ["itemMove"], "new-layout"));
+    expect(again.state).toEqual([]);
+    again.cleanup();
+  });
+
+  it("reports current state when reactions become enabled after ignored interaction", async () => {
+    const parent = host();
+    const ignored = run(parent, items("graph", "First", []));
+    await vi.dynamicImportSettled();
+    key(parent, "ArrowRight");
+    key(parent, "ArrowRight", true);
+    expect(ignored.state).toEqual([]);
+    const listening = run(parent, items("graph", "First", ["itemMove"]));
+    expect(listening.state).toHaveLength(1);
+    await vi.dynamicImportSettled();
+    key(parent, "0");
+    await frame();
+    expect((listening.state.at(-1)![1] as { positions: object }).positions).toEqual({});
+    listening.cleanup();
+  });
+});
+
+it("coalesces network resets into one final Streamlit state value", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const fixture = itemChart("graph");
+    const runState = run(
+      parent,
+      payload(fixture.spec, fixture.buffers, ["itemMove"], 3, "data", "layout"),
+    );
+    const chart = listener.mock.instances[0] as MountedChart;
+    await vi.dynamicImportSettled();
+    for (const [i, name] of ["East", "West", "A", "B", "C"].entries()) {
+      chart.setItemPosition(JSON.stringify([0, name]), { x: i, y: i });
+    }
+    await frame();
+    expect(runState.state).toHaveLength(1);
+    runState.state.length = 0;
+    key(parent, "0");
+    await frame();
+    expect(runState.state).toEqual([["item_positions", { epoch: "layout", positions: {} }]]);
+    runState.cleanup();
+  } finally {
+    listener.mockRestore();
+  }
 });

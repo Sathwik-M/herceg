@@ -37,6 +37,14 @@ def live(widget: ChartWidget, state: ChartState) -> None:
     widget.viewport.x[0]  # type: ignore[index]
     widget.on_select(lambda selection: selection and selection.lasso)
     widget.on_viewport(lambda viewport: viewport.y_right)
+    widget.drill_root = ('[0,"East"]',)
+    widget.drill_root = None
+    widget.item_positions = {'[0,"a"]': (1.0, 2.0)}
+    widget.on_drill(lambda root: root and root[-1])
+    widget.on_item_move(lambda positions: positions.get('[0,"a"]'))
+    root: hg.DrillRoot | None = state.drill_root
+    positions: hg.ItemPositions = state.item_positions
+    print(root, positions)
     widget.on_click(lambda inspection: [point.row for point in inspection.points])
     if state.selection is not None:
         print(state.selection.y)
