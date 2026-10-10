@@ -57,6 +57,11 @@ export interface CandlestickOptions<S extends Schema> {
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name share a color, one legend entry, and visibility.
+   */
+  legendGroup?: string;
   id?: string;
 }
 
@@ -469,7 +474,17 @@ export function candlestick<S extends Schema>(
     high: options.high,
     low: options.low,
     close: options.close,
-    ...definedFields(options, ["variant", "rise", "fall", "label", "axis", "facet", "panel", "id"]),
+    ...definedFields(options, [
+      "variant",
+      "rise",
+      "fall",
+      "label",
+      "legendGroup",
+      "axis",
+      "facet",
+      "panel",
+      "id",
+    ]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

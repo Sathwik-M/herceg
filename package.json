@@ -20,6 +20,7 @@
     "bench:report": "npm run report -w herceg-benchmarks",
     "bench:grid": "npm run grid -w herceg-benchmarks --",
     "bench:grid-remote": "npm run grid-remote -w herceg-benchmarks --",
+    "bench:express": "cd python && uv run --extra dev python ../benchmarks/python/express.py",
     "build:python": "node python/js/build.mjs",
     "test:python": "npm run build:python && cd python && uv run --extra dev pytest",
     "lint:python": "cd python && uv run --extra dev ruff check src tests examples && uv run --extra dev ruff format --check src tests examples && uv run --extra dev mypy"

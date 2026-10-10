@@ -465,6 +465,7 @@ function paintGeometry(
       return;
     }
     case "segments": {
+      if (mark.strokeWidth === 0) return;
       const c = mark.coords;
       for (let i = 0; i < mark.count; i++) {
         path.moveTo(c[i * 4]!, c[i * 4 + 1]!);

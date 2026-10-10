@@ -3,10 +3,13 @@ import type { CategoryField, NumericField, Schema, Table } from "../data/table.t
 import { rectDrawing } from "../draw/rect.ts";
 import { formatNumber } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
+import type { PositionScale } from "../scale/scale.ts";
 import { niceDomain, tickStep } from "../scale/ticks.ts";
 import { chooseInterval, niceTimeDomain, timeTicks } from "../scale/time.ts";
 import type { RectGeometry } from "../scene/scene.ts";
 import type { Frozen, HistogramSpec } from "../spec/spec.ts";
+import { BandShares, STILL } from "./dodge.ts";
+import { histogramFormError, MAX_BINS, requireHistogramEdges } from "./histogram-input.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -27,38 +30,41 @@ import {
 } from "./mark.ts";
 import type { Series } from "./series.ts";
 
-export interface HistogramOptions<S extends Schema> {
-  /** The number or time field whose values are counted. */
-  x: NumericField<S>;
-  /**
-   * About how many bins, or a bin width (and where bins start). Edges are
-   * round values; by default the count follows the data size.
-   */
-  bins?: number | { step: number; start?: number };
-  /** Category field: one histogram per value, overlaid or stacked. */
+interface HistogramStyle<S extends Schema> {
+  /** Approximate bin count, fixed width/start, or exact finite increasing edges (2–1001). */
+  bins?: number | { step: number; start?: number } | readonly number[];
+  /** Category field: one histogram per value. */
   series?: CategoryField<S>;
-  /** What bars measure: "count" (default), "percent" of the series' values, or "density". */
-  normalize?: "count" | "percent" | "density";
-  /** Stack the series' bars instead of overlaying them. */
-  stack?: boolean;
+  /** Counts (default), probability, percent, or probability density per unit of the binned axis. */
+  normalize?: "count" | "probability" | "percent" | "density";
+  /** Weight normalized series by their share of finite values, including values outside bins. */
+  commonNorm?: boolean;
+  /** Accumulate bins per series; cumulative density integrates bin widths. */
+  cumulative?: boolean;
   fill?: string;
   /** Default 1, or 0.5 for several overlaid series. */
   fillOpacity?: number;
   label?: string;
-  /** The y axis the bars are on: "left" (default) or "right", the chart's `yRight`. */
-  axis?: "left" | "right";
-  /**
-   * With the chart's `facet`, draw all rows in every panel instead of
-   * counting each panel's rows in bins of its x scale.
-   */
+  /** Draw all rows in every facet panel instead of counting that panel's rows. */
   facet?: "repeat";
-  /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
+  /** The subplot to draw in, or "*" for every panel. */
   panel?: string;
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name share a color, one legend entry, and visibility.
+   */
+  legendGroup?: string;
   id?: string;
 }
 
-/** Most bins a histogram draws; finer steps are widened. */
-const MAX_BINS = 1000;
+/** Exactly one number or time field: x for vertical bars, y for horizontal bars. */
+export type HistogramOptions<S extends Schema> = HistogramStyle<S> &
+  (
+    | { x: NumericField<S>; y?: never; axis?: "left" | "right" }
+    | { y: NumericField<S>; x?: never; axis?: "left" }
+  ) &
+  ({ stack?: boolean; dodge?: false } | { stack?: false; dodge?: boolean });
+
 /** Pixels left between neighboring bars when bins are wide enough. */
 const GAP = 1;
 
@@ -67,6 +73,7 @@ interface Counted {
   counts: Float64Array;
   total: number;
   size: number;
+  finite: number;
 }
 
 /** The edges a series was counted in, and what it counted. */
@@ -82,38 +89,42 @@ interface Binned {
   counted: Counted[];
 }
 
-/** A facet split's counts: each x group's bins and each panel's counts, as of what they were made from. */
+/** A facet split's counts: each binned axis group's bins and each panel's counts, as of what they were made from. */
 interface PanelCounts {
   version: number;
   zone: TimeZone;
-  /** The panels' rows, and the x group of each. */
+  /** The panels' rows, and the binned axis group of each. */
   rows: readonly Uint32Array[];
   groups: string;
-  /** Per x group. */
+  /** Per binned axis group. */
   bins: { edges: Float64Array; centers: Float64Array }[];
   /** Per panel, by series code (0 without a series field), for codes with rows there. */
   counted: Map<number, Counted>[];
 }
 
 const NO_BINS = new Float64Array(0);
-
 /**
- * Bars counting how many values fall in each bin of x. Bins are shared by
+ * Bars counting how many values fall in each bin of x or y. Bins are shared by
  * every series and computed from all of the field's values: round edges
  * (multiples of 1, 2, or 5 times a power of ten, or calendar intervals for
  * times), each bin holding values from its left edge up to its right one,
  * the last also its right edge. Series reads the bars, with bin centers as
- * x, so tooltips report a bin's range and its count. Split by facets, each
+ * positions, so tooltips report a bin's range and its count. Split by facets, each
  * panel counts its own rows, in bins chosen from the rows of the panels
- * sharing its x scale.
+ * sharing its binned axis scale.
  */
 export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   declare readonly [MARK]: true;
   readonly spec: Frozen<HistogramSpec>;
   readonly table: Table<Schema>;
-  readonly tooltip = "x";
+  readonly tooltip: "x" | "y";
   readonly summarizes = true;
-  readonly zero = "y";
+  readonly zero: "x" | "y";
+  readonly #horizontal: boolean;
+  readonly #field: string;
+  readonly #explicit: Float64Array | undefined;
+  /** With `dodge`, each series' share of the bins. */
+  readonly #shares: BandShares | undefined;
   readonly #split: SeriesSplitter;
   /** One chart's bins per time zone (calendar bins depend on it), as of a table version. */
   readonly #binned = new Map<TimeZone, Binned & { table: Table; version: number }>();
@@ -134,20 +145,35 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
-    requireField(table, spec.x, NUMERIC, "histogram x");
+    const problem = histogramFormError(spec);
+    if (problem) throw new TypeError(problem);
+    this.#horizontal = spec.y !== undefined;
+    this.#field = (spec.y ?? spec.x)!;
+    this.tooltip = this.#horizontal ? "y" : "x";
+    this.zero = this.#horizontal ? "x" : "y";
+    requireField(table, this.#field, NUMERIC, `histogram ${this.tooltip}`);
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "histogram series");
     const { bins } = spec;
     if (typeof bins === "number" && !(Number.isInteger(bins) && bins >= 1))
       throw new RangeError(`Histogram bins must be a whole number of at least 1, not ${bins}`);
-    if (typeof bins === "object" && !(bins.step > 0 && Number.isFinite(bins.step)))
-      throw new RangeError(`Histogram bin step must be a positive number, not ${bins.step}`);
-    if (typeof bins === "object" && bins.start !== undefined && !Number.isFinite(bins.start))
-      throw new RangeError(`Histogram bin start must be a finite number, not ${bins.start}`);
-    this.#split = new SeriesSplitter(table, undefined, [spec.x], spec.series, spec.label);
+    if (Array.isArray(bins)) {
+      requireHistogramEdges(bins);
+      this.#explicit = Float64Array.from(bins);
+    }
+    const fixed =
+      typeof bins === "object" && !Array.isArray(bins)
+        ? (bins as { step: number; start?: number })
+        : undefined;
+    if (fixed && !(fixed.step > 0 && Number.isFinite(fixed.step)))
+      throw new RangeError(`Histogram bin step must be a positive number, not ${fixed.step}`);
+    if (fixed && fixed.start !== undefined && !Number.isFinite(fixed.start))
+      throw new RangeError(`Histogram bin start must be a finite number, not ${fixed.start}`);
+    this.#split = new SeriesSplitter(table, undefined, [this.#field], spec.series, spec.label);
+    if (spec.dodge) this.#shares = new BandShares();
   }
 
   channelKind(axis: "x" | "y") {
-    return axis === "x" ? this.table.kind(this.spec.x) : "number";
+    return axis === this.tooltip ? this.table.kind(this.#field) : "number";
   }
 
   series(
@@ -162,14 +188,14 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     const sources = split ? this.#present().sources : this.#split.sources();
     const roster = sources.map((source) => {
       const id = seriesKey(key, source.id);
-      return { key: id, label: source.label, color: this.spec.fill ?? palette(id) };
+      return { key: id, label: source.label, color: this.spec.fill ?? palette(id, source.label) };
     });
     if (split) return roster.map(({ key, label, color }) => withoutBins(key, label, color));
     const { edges, centers, counted } = this.#binsIn(context.zone);
     return this.#bars(roster, edges, centers, counted, hidden);
   }
 
-  /** Each panel's bars: its rows counted in the bins of its x scale's panels. */
+  /** Each panel's bars: its rows counted in the bins of its binned axis' panels. */
   summarizePanels(
     roster: readonly Series[],
     rows: readonly Uint32Array[],
@@ -177,18 +203,20 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     hidden: ReadonlySet<string>,
     _bands: unknown,
     context: BandContext,
+    yGroupOf: readonly number[] = xGroupOf,
   ): Series[][] {
-    const { bins, counted } = this.#panelCounts(rows, xGroupOf, context.zone);
+    const groupOf = this.#horizontal ? yGroupOf : xGroupOf;
+    const { bins, counted } = this.#panelCounts(rows, groupOf, context.zone);
     const { codes } = this.#present();
     return rows.map((_, p) => {
-      const { edges, centers } = bins[xGroupOf[p]!]!;
+      const { edges, centers } = bins[groupOf[p]!]!;
       const found = codes.map((code) => counted[p]!.get(code));
       return this.#bars(roster, edges, centers, found, hidden);
     });
   }
 
   /**
-   * The roster's bars over `edges` (bin `centers` as x): each series'
+   * The roster's bars over `edges` (bin `centers` along the binned axis): each series'
    * counts (`counted`, in order), measured as `normalize` says over its
    * own, and stacked on the visible series before it. A series without
    * rows here has no bars.
@@ -202,27 +230,41 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   ): Series[] {
     const bins = centers.length;
     const normalize = this.spec.normalize ?? "count";
+    const all = counted.reduce((sum, s) => sum + (s?.finite ?? 0), 0);
     // Stacked series sit on the visible ones before them.
     const base = this.spec.stack ? new Float64Array(bins) : undefined;
     return roster.map((entry, i) => {
       const found = counted[i];
       if (!found) {
         const empty = withoutBins(entry.key, entry.label, entry.color);
-        this.#bins.set(empty.values, { edges, counts: NO_BINS, total: 0, size: 0 });
+        this.#bins.set(empty.values, { edges, counts: NO_BINS, total: 0, size: 0, finite: 0 });
         return empty;
       }
       const { counts, total } = found;
       const values = new Float64Array(bins);
+      const share =
+        this.spec.commonNorm && normalize !== "count" ? (all === 0 ? 0 : found.finite / all) : 1;
+      let accumulated = 0;
       for (let b = 0; b < bins; b++) {
         const count = counts[b]!;
-        values[b] =
-          normalize === "count"
-            ? count
+        const value = normalize === "count" ? count : total === 0 ? 0 : count / total;
+        accumulated += count;
+        const measured = this.spec.cumulative
+          ? normalize === "count"
+            ? accumulated
             : total === 0
               ? 0
-              : normalize === "percent"
-                ? (count / total) * 100
-                : count / total / (edges[b + 1]! - edges[b]!);
+              : accumulated / total
+          : value;
+        let height = normalize === "percent" ? measured * 100 : measured;
+        if (normalize === "density" && !this.spec.cumulative) {
+          const width = edges[b + 1]! - edges[b]!;
+          height =
+            this.#explicit && !Number.isFinite(width)
+              ? measured / (edges[b + 1]! / 2 - edges[b]! / 2) / 2
+              : measured / width;
+        }
+        values[b] = height * share;
       }
       let y = values;
       let y0: Float64Array | undefined;
@@ -237,43 +279,66 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
         key: entry.key,
         label: entry.label,
         color: entry.color,
-        x: centers,
-        y,
-        y0,
+        x: this.#horizontal ? y : centers,
+        y: this.#horizontal ? centers : y,
+        x0: this.#horizontal ? y0 : undefined,
+        y0: this.#horizontal ? undefined : y0,
         values,
         field: undefined,
         range: false,
         rows: undefined,
         length: bins,
-        sorted: true,
+        sorted: !this.#horizontal,
       };
     });
   }
 
-  xExtent(series: readonly Series[]) {
+  xExtent(series: readonly Series[], log: boolean) {
+    return this.#horizontal
+      ? this.#measureExtent(series, -Infinity, Infinity, log)
+      : this.#edgeExtent(series, log && this.#explicit !== undefined);
+  }
+
+  #edgeExtent(series: readonly Series[], log: boolean) {
     let lo = Infinity;
     let hi = -Infinity;
-    // Series of panels with x scales of their own may have other bins.
+    // Series of panels with binned axis scales of their own may have other bins.
     for (const s of series) {
       if (s.length === 0) continue;
       const { edges } = this.#binsOf(s);
-      lo = Math.min(lo, edges[0]!);
-      hi = Math.max(hi, edges[edges.length - 1]!);
+      if (!log) {
+        lo = Math.min(lo, edges[0]!);
+        hi = Math.max(hi, edges[edges.length - 1]!);
+      } else {
+        for (const edge of edges) {
+          if (!(edge > 0)) continue;
+          lo = Math.min(lo, edge);
+          hi = Math.max(hi, edge);
+        }
+      }
     }
     return lo <= hi ? ([lo, hi] as const) : undefined;
   }
 
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
+    return this.#horizontal
+      ? this.#edgeExtent(series, log)
+      : this.#measureExtent(series, x0, x1, log);
+  }
+
+  #measureExtent(series: readonly Series[], x0: number, x1: number, log: boolean) {
     const lo = Math.min(x0, x1);
     const hi = Math.max(x0, x1);
     let min = Infinity;
     let max = -Infinity;
     for (const s of series) {
       const { edges } = this.#binsOf(s);
+      const ends = this.#horizontal ? s.x : s.y;
+      const bases = this.#horizontal ? s.x0 : s.y0;
       for (let i = 0; i < s.length; i++) {
         // Bins reaching into the view.
         if (!(edges[i + 1]! >= lo && edges[i]! <= hi)) continue;
-        for (const value of [s.y[i]!, s.y0 ? s.y0[i]! : 0]) {
+        for (const value of [ends[i]!, bases ? bases[i]! : 0]) {
           if (!Number.isFinite(value) || (log && !(value > 0))) continue;
           if (value < min) min = value;
           if (value > max) max = value;
@@ -284,35 +349,20 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   }
 
   geometry(series: readonly Series[], frame: Frame): RectGeometry[] {
-    const { x, y } = frame;
+    // Dodged series keep their room in panels where they have no rows, as grouped bars do.
     const visible = series.filter((s) => !frame.hidden.has(s.key));
     // Overlaid series show through each other.
-    const overlaid = visible.length > 1 && !this.spec.stack;
+    const overlaid = visible.length > 1 && !this.spec.stack && !this.spec.dodge;
     const opacity = this.spec.fillOpacity ?? (overlaid ? 0.5 : 1);
-    // A bar of a log axis starts from its low end.
-    const zero = y.type === "log" ? y.range[0] : y.map(0);
     const out: RectGeometry[] = [];
+    // Dodged series split each bin, a legend group's marks by the group's series.
+    this.#shares?.split(series, frame, this.spec.legendGroup, true);
     for (const s of visible) {
-      const { edges } = this.#binsOf(s);
       const rects = frame.floats(s.key, "rect", s.length * 4);
       let count = 0;
       for (let i = 0; i < s.length; i++) {
-        const top = s.y[i]!;
-        if (!(top > (s.y0 ? s.y0[i]! : 0))) continue;
-        const a = x.map(edges[i]!);
-        const b = x.map(edges[i + 1]!);
-        const tip = y.map(top);
-        const root = s.y0 ? y.map(s.y0[i]!) : zero;
-        if (!(Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(tip))) continue;
-        const left = Math.min(a, b);
-        const width = Math.abs(b - a);
-        // A pixel apart when bins are wide enough to spare it.
-        const gap = width > 4 * GAP ? GAP : 0;
-        const at = count++ * 4;
-        rects[at] = left + gap / 2;
-        rects[at + 1] = Math.min(tip, Number.isFinite(root) ? root : zero);
-        rects[at + 2] = width - gap;
-        rects[at + 3] = Math.abs((Number.isFinite(root) ? root : zero) - tip);
+        const rect = this.binRect(s, i, frame);
+        if (rect) rects.set(rect, count++ * 4);
       }
       out.push({
         kind: "rect",
@@ -327,21 +377,86 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     return out;
   }
 
-  /** The edges of the bins a series counts: bin b spans edges b to b + 1. */
-  edgesOf(series: Series): Float64Array {
-    return this.#binsOf(series).edges;
+  /**
+   * The rectangle (x, y, width, height) a bin's bar is drawn in, as last
+   * drawn, or undefined when it is not drawn (empty, or on a log axis that
+   * cannot place it). Selections read it.
+   */
+  binRect(
+    s: Series,
+    bin: number,
+    frame: Pick<Frame, "x" | "y">,
+  ): readonly [number, number, number, number] | undefined {
+    const horizontal = this.#horizontal;
+    const along = horizontal ? frame.y : frame.x;
+    const across = horizontal ? frame.x : frame.y;
+    const top = (horizontal ? s.x : s.y)[bin]!;
+    const bases = horizontal ? s.x0 : s.y0;
+    if (!(top > (bases ? bases[bin]! : 0))) return undefined;
+    const { edges } = this.#binsOf(s);
+    const a = along.map(edges[bin]!);
+    const b = along.map(edges[bin + 1]!);
+    const tip = across.map(top);
+    if (!(Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(tip))) return undefined;
+    // A bar of a log axis starts from its low end.
+    const zero =
+      across.type === "log"
+        ? horizontal
+          ? across.map(Math.min(...across.domain))
+          : across.range[0]
+        : across.map(0);
+    const root = bases ? across.map(bases[bin]!) : zero;
+    const base = Number.isFinite(root) ? root : zero;
+    const { start, share } = this.#bar(s, a, b);
+    return horizontal
+      ? [Math.min(tip, base), start, Math.abs(base - tip), share]
+      : [start, Math.min(tip, base), share, Math.abs(base - tip)];
+  }
+
+  /** Where a bin's bar is drawn across a bin from pixel `a` to `b`: a pixel's gap, and with `dodge` the series' share. */
+  #bar(s: Series, a: number, b: number): { start: number; share: number } {
+    const width = Math.abs(b - a);
+    // A pixel apart when bins are wide enough to spare it.
+    const gap = width > 4 * GAP ? GAP : 0;
+    const start = Math.min(a, b) + gap / 2;
+    if (!this.#shares) return { start, share: width - gap };
+    const { center, width: share } = this.#shares.of(s, width - gap);
+    return { start: start + (width - gap) / 2 + center - share / 2, share };
+  }
+
+  /** Where a dodged bin's bar is drawn, off its bin's center, for inspection. */
+  displace(s: Series, row: number, frame: Frame): readonly [number, number] {
+    if (!this.#shares) return STILL;
+    const along = this.#horizontal ? frame.y : frame.x;
+    const { edges } = this.#binsOf(s);
+    const { start, share } = this.#bar(s, along.map(edges[row]!), along.map(edges[row + 1]!));
+    const shift = start + share / 2 - along.map(this.#horizontal ? s.y[row]! : s.x[row]!);
+    return this.#horizontal ? [0, shift] : [shift, 0];
+  }
+
+  /** Dodged bars stand anywhere in their bins; a histogram's few bins are all read. */
+  maxDisplacement(): number {
+    return this.#shares && !this.#horizontal ? Infinity : 0;
+  }
+
+  /** A bin crossing zero on a logarithmic binned axis has no mapped edge or bar. */
+  shows(series: Series, row: number, y: PositionScale, x: PositionScale): boolean {
+    const along = this.#horizontal ? y : x;
+    if (along.type !== "log") return true;
+    const { edges } = this.#binsOf(series);
+    return Number.isFinite(along.map(edges[row]!)) && Number.isFinite(along.map(edges[row + 1]!));
   }
 
   /**
    * Whether a row is counted in bin `position` of a series: its value from
-   * the bin's left edge up to its right one (the last bin's included), and
-   * its series field the series'.
+   * the bin's left edge (a cumulative bin's first edge) up to its right one
+   * (the last bin's included), and its series field the series'.
    */
   summarized(series: Series, position: number): (row: number) => boolean {
     const { edges } = this.#binsOf(series);
-    const [lo, hi] = [edges[position]!, edges[position + 1]!];
+    const [lo, hi] = [edges[this.spec.cumulative ? 0 : position]!, edges[position + 1]!];
     const last = position === edges.length - 2;
-    const values = this.table.numbers(this.spec.x as never);
+    const values = this.table.numbers(this.#field as never);
     const field = this.spec.series;
     const codes = field === undefined ? undefined : this.table.categories(field as never);
     const code = codes?.dictionary.indexOf(String((JSON.parse(series.key) as unknown[])[1]));
@@ -356,15 +471,19 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   /** A bin's range and what its bar measures. */
   pointText(series: Series, row: number, format: AxisFormat): string {
     const { edges } = this.#binsOf(series);
-    return `${format.x(edges[row]!)} – ${format.x(edges[row + 1]!)}: ${format.y(series.values[row]!)}`;
+    const along = this.#horizontal ? format.y : format.x;
+    const across = this.#horizontal ? format.x : format.y;
+    const start = this.spec.cumulative ? 0 : row;
+    return `${along(edges[start]!)} – ${along(edges[row + 1]!)}: ${this.spec.cumulative ? "cumulative " : ""}${across(series.values[row]!)}`;
   }
 
   /**
    * How many values a series counted, in how many bins over what range (in
-   * every panel: the bins of each x scale), and its fullest bin.
+   * every panel: the bins of each binned axis scale), and its fullest bin.
    */
   summarize(parts: readonly Series[], name: string, { format, locale }: SummaryContext): string {
     const f = (value: number) => formatNumber(value, locale);
+    const along = this.#horizontal ? format.y : format.x;
     let [total, outside, lo, hi] = [0, 0, Infinity, -Infinity];
     const grids = new Set<Float64Array>();
     // The fullest bar of any panel: counts, whatever the bars measure.
@@ -382,24 +501,38 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
         if (!fullest || counts[bin]! > fullest.count) fullest = { edges, bin, count: counts[bin]! };
     }
     const left = outside > 0 ? `; ${f(outside)} missing or outside the bins` : "";
-    if (total === 0 || !fullest) return `${name}: no values in bins${left}`;
+    if (total === 0 || !fullest)
+      return `${name}: no values in bins${this.spec.cumulative ? "; bars are cumulative" : ""}${left}`;
     const [grid] = grids;
     const count = grid!.length - 1;
     const where =
       grids.size === 1
         ? `${count} ${count === 1 ? "bin" : "bins"}`
-        : `the bins of ${grids.size} x scales`;
+        : `the bins of ${grids.size} ${this.tooltip} scales`;
     const { edges, bin } = fullest;
     return (
       `${name}: ${f(total)} ${total === 1 ? "value" : "values"} in ${where} from ` +
-      `${format.x(lo)} to ${format.x(hi)}; ` +
-      `the fullest, ${format.x(edges[bin]!)} – ${format.x(edges[bin + 1]!)}, holds ${f(fullest.count)}${left}`
+      `${along(lo)} to ${along(hi)}; ` +
+      (this.spec.cumulative
+        ? grids.size > 1
+          ? "bars are cumulative within each panel; "
+          : `bars are cumulative from ${along(lo)}; `
+        : "") +
+      `the fullest, ${along(edges[bin]!)} – ${along(edges[bin + 1]!)}, holds ${f(fullest.count)}${left}`
     );
   }
 
   /** The bins a series of this mark was counted in. */
   #binsOf(series: Series): Bins {
-    return this.#bins.get(series.values) ?? { edges: NO_BINS, counts: NO_BINS, total: 0, size: 0 };
+    return (
+      this.#bins.get(series.values) ?? {
+        edges: NO_BINS,
+        counts: NO_BINS,
+        total: 0,
+        size: 0,
+        finite: 0,
+      }
+    );
   }
 
   /**
@@ -415,7 +548,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     let present: { sources: { id: string; label: string }[]; codes: number[] };
     if (field === undefined) {
       present = {
-        sources: [{ id: this.spec.x, label: this.spec.label ?? this.spec.x }],
+        sources: [{ id: this.#field, label: this.spec.label ?? this.#field }],
         codes: [0],
       };
     } else {
@@ -437,7 +570,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     const { table } = this;
     const cached = this.#binned.get(zone);
     if (cached?.table === table && cached.version === table.version) return cached;
-    const values = table.numbers(this.spec.x as never);
+    const values = table.numbers(this.#field as never);
     const edges = this.#edges(finiteRange(values, undefined, RANGE), zone);
     const binned = { edges, centers: centersOf(edges), counted: this.#countSources(edges) };
     this.#binned.set(zone, { ...binned, table, version: table.version });
@@ -445,14 +578,14 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   }
 
   /**
-   * A facet split's bins and counts: each x group's bins from the values of
+   * A facet split's bins and counts: each binned axis group's bins from the values of
    * its panels' rows, and each panel's rows counted in its group's bins.
-   * Kept while the table, the panels' rows, their x groups, and the zone are
+   * Kept while the table, the panels' rows, their scale groups, and the zone are
    * the same, so redrawing and hiding series count nothing again.
    */
-  #panelCounts(rows: readonly Uint32Array[], xGroupOf: readonly number[], zone: TimeZone) {
+  #panelCounts(rows: readonly Uint32Array[], groupOf: readonly number[], zone: TimeZone) {
     const { table } = this;
-    const groups = xGroupOf.join();
+    const groups = groupOf.join();
     const key = rows[0]!;
     const cached = this.#panels.get(key);
     if (
@@ -463,10 +596,10 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
       cached.rows.every((r, p) => r === rows[p])
     )
       return cached;
-    const values = table.numbers(this.spec.x as never);
+    const values = table.numbers(this.#field as never);
     const ranges: { min: number; max: number; finite: number }[] = [];
     rows.forEach((panel, p) => {
-      const g = xGroupOf[p]!;
+      const g = groupOf[p]!;
       ranges[g] = finiteRange(
         values,
         panel,
@@ -489,7 +622,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
       rows,
       groups,
       bins,
-      counted: rows.map((panel, p) => this.#countRows(bins[xGroupOf[p]!]!.edges, panel, slots)),
+      counted: rows.map((panel, p) => this.#countRows(bins[groupOf[p]!]!.edges, panel, slots)),
     };
     this.#panels.set(key, counts);
     return counts;
@@ -497,25 +630,27 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
 
   /** What each series source counted in the bins of `edges`, over its rows. */
   #countSources(edges: Float64Array): Counted[] {
-    const values = this.table.numbers(this.spec.x as never);
+    const values = this.table.numbers(this.#field as never);
     const bins = Math.max(0, edges.length - 1);
     const step = bins > 0 ? (edges[bins]! - edges[0]!) / bins : 0;
-    const even = evenlySpaced(edges, step);
+    const even = !this.#explicit && evenlySpaced(edges, step);
     // A loop, not a callback: values a callback reads from outside it cost
     // the counting loop about a tenth more time.
     const counted: Counted[] = [];
     for (const { rows } of this.#split.sources()) {
       const counts = new Float64Array(bins);
       let total = 0;
+      let finite = 0;
       const length = rows?.length ?? values.length;
       for (let k = 0; k < length; k++) {
         const value = values[rows ? rows[k]! : k]!;
+        if (Number.isFinite(value)) finite++;
         const at = even ? evenBinOf(edges, step, value) : binOf(edges, value);
         if (at < 0) continue;
         counts[at]!++;
         total++;
       }
-      counted.push({ counts, total, size: length });
+      counted.push({ counts, total, size: length, finite });
     }
     return counted;
   }
@@ -526,15 +661,15 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
    * `slots` holds -1 for every code, as it does again after.
    */
   #countRows(edges: Float64Array, rows: Uint32Array, slots: Int32Array): Map<number, Counted> {
-    const values = this.table.numbers(this.spec.x as never);
+    const values = this.table.numbers(this.#field as never);
     const field = this.spec.series;
     const categories = field === undefined ? undefined : this.table.categories(field as never);
     const codes = categories?.codes;
     const bins = Math.max(0, edges.length - 1);
     const step = bins > 0 ? (edges[bins]! - edges[0]!) / bins : 0;
-    const even = evenlySpaced(edges, step);
-    // Per code found, in one buffer: its size, its total, then its counts.
-    const width = bins + 2;
+    const even = !this.#explicit && evenlySpaced(edges, step);
+    // Per code found, in one buffer: row size, in-bin total, finite count, then bin counts.
+    const width = bins + 3;
     const found: number[] = [];
     let buffer = new Float64Array(4 * width);
     for (let k = 0; k < rows.length; k++) {
@@ -555,17 +690,21 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
       const base = slot * width;
       buffer[base]!++;
       const value = values[row]!;
+      if (Number.isFinite(value)) buffer[base + 2]!++;
       const at = even ? evenBinOf(edges, step, value) : binOf(edges, value);
       if (at < 0) continue;
       buffer[base + 1]!++;
-      buffer[base + 2 + at]!++;
+      buffer[base + 3 + at]!++;
     }
     for (const code of found) slots[code] = -1;
     return new Map(
       found.map((code, slot) => {
         const base = slot * width;
-        const counts = buffer.subarray(base + 2, base + width);
-        return [code, { counts, total: buffer[base + 1]!, size: buffer[base]! }];
+        const counts = buffer.subarray(base + 3, base + width);
+        return [
+          code,
+          { counts, total: buffer[base + 1]!, size: buffer[base]!, finite: buffer[base + 2]! },
+        ];
       }),
     );
   }
@@ -577,14 +716,20 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
    * for no values.
    */
   #edges({ min, max, finite }: { min: number; max: number; finite: number }, zone: TimeZone) {
+    if (this.#explicit) return this.#explicit;
     if (finite === 0) return NO_BINS;
     const { bins } = this.spec;
-    const time = this.table.kind(this.spec.x as never) === "time";
-    if (typeof bins === "object") return Float64Array.from(fixedEdges(min, max, bins));
+    const time = this.table.kind(this.#field as never) === "time";
+    if (typeof bins === "object" && !Array.isArray(bins))
+      return Float64Array.from(fixedEdges(min, max, bins as { step: number; start?: number }));
     // One value, or values all alike: one bin around them.
     if (min === max) return Float64Array.from(around(min, time ? 1_800_000 : 0.5));
     // Sturges' rule unless a count is given; coarser when round edges overflow the limit.
-    const target = Math.min(MAX_BINS, bins ?? Math.min(50, Math.ceil(Math.log2(finite)) + 1));
+    const target = Math.min(
+      MAX_BINS,
+      (typeof bins === "number" ? bins : undefined) ??
+        Math.min(50, Math.ceil(Math.log2(finite)) + 1),
+    );
     for (let count = target; count >= 1; count = Math.floor(count / 2)) {
       const edges = time ? calendarEdges(min, max, count, zone) : roundEdges(min, max, count);
       if (valid(edges, min, max)) return Float64Array.from(edges);
@@ -825,24 +970,28 @@ export function histogram<S extends Schema>(
   table: Table<S>,
   options: HistogramOptions<S>,
 ): ChartMark<Frozen<HistogramSpec>> {
-  const spec: HistogramSpec = {
+  const spec = {
     type: "histogram",
-    x: options.x,
     ...definedFields(options, [
+      "x",
+      "y",
+      "bins",
       "series",
       "normalize",
       "stack",
+      "commonNorm",
+      "cumulative",
+      "dodge",
       "fill",
       "fillOpacity",
       "label",
+      "legendGroup",
       "axis",
       "facet",
       "panel",
       "id",
     ]),
-  };
-  if (options.bins !== undefined)
-    spec.bins = typeof options.bins === "number" ? options.bins : { ...options.bins };
+  } as unknown as HistogramSpec;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new HistogramMark(spec, table as unknown as Table);

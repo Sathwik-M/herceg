@@ -156,6 +156,9 @@ export class Facet implements PanelLayout {
       const { type } = mark.spec;
       if (!mark.table || mark.spec.facet === "repeat") continue;
       const repeat = `give it facet: "repeat" to draw it whole in every panel`;
+      // A tree's merges have no facet values to split by.
+      if (type === "dendrogram")
+        throw new Error(`A dendrogram mark over a table cannot be split into panels; ${repeat}`);
       this.#splitting(type, mark.table, `; ${repeat}`);
       // Custom marks split the rows of the series they show. Those without
       // series (which need one x field and y fields) have no rows to split:
@@ -431,8 +434,13 @@ export class Splitter {
     });
     for (const key of this.#bySeries.keys()) if (!used.has(key)) this.#bySeries.delete(key);
     // Marks that summarize rows read each panel's rows of their table, and
-    // choose bins over the panels sharing an x scale.
+    // choose bins over the panels sharing their binned axis scale.
     const xGroupOf = groupsOf(chart.config.resolve?.x ?? "shared", keys.length, columns);
+    const yGroupOf = groupsOf(
+      chart.config.resolve?.y ?? this.#facet.yDefault,
+      keys.length,
+      columns,
+    );
     const summaries = base.map(({ mark, series }) =>
       splits(mark) && mark.summarizePanels
         ? mark.summarizePanels(
@@ -442,6 +450,7 @@ export class Splitter {
             chart.hidden,
             bands,
             context,
+            yGroupOf,
           )
         : undefined,
     );
@@ -477,7 +486,7 @@ export class Splitter {
       const rows = this.#tableRows(layout.table!);
       split.items = keys.map((_, p) => ({ mark: layout, index: at, rows: rows[p] }));
     }
-    this.#bands.place(split, columns, bands, chart.config.resolve, this.#facet.yDefault);
+    this.#bands.place(split, columns, bands, chart.config.resolve, this.#facet.yDefault, context);
     return split;
   }
 

@@ -97,21 +97,14 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
     return super.summarizeRows(rows);
   }
 
-  /** Half-slot centers for picking; geometry starts each density at the category center. */
-  protected override placements(series: readonly Series[], frame: Frame): Map<Series, Placement> {
-    if (!this.spec.split) return super.placements(series, frame);
+  /** Split halves stand on either side of the category's center; others in their slots. */
+  protected override placement(s: Series, frame: Frame): Placement {
+    if (!this.spec.split) return super.placement(s, frame);
     this.#checkSplit();
-    const ids = this.rosterIds();
     const share = Math.abs((this.horizontal ? frame.y : frame.x).bandwidth ?? 0) / 2;
-    return new Map(
-      series
-        .filter((s) => !frame.hidden.has(s.key))
-        .map((s) => {
-          // Picking receives only visible, nonempty series, so its index cannot assign a side.
-          const side = (ids.indexOf(s.label) === 0 ? -1 : 1) * (this.horizontal ? -1 : 1);
-          return [s, { offset: (side * share * VIOLIN) / 2, share }];
-        }),
-    );
+    // The first series' half is on the left (vertical) or the top (horizontal).
+    const side = (this.rosterIds().indexOf(s.label) === 0 ? -1 : 1) * (this.horizontal ? -1 : 1);
+    return { offset: (side * share * VIOLIN) / 2, share };
   }
 
   protected describeGroup(sorted: Float64Array, stats: BoxStats): Shape {
@@ -151,14 +144,6 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
 
   override shows(series: Series, row: number): boolean {
     return super.shows(series, row) && this.#draws(this.summaryOf(series).groups[row]!);
-  }
-
-  pointAnchor(series: Series, row: number, frame: Frame): readonly [number, number] | undefined {
-    if (!this.spec.split) return undefined;
-    const { offset } = this.placements([series], frame).get(series)!;
-    const px = frame.x.map(placeAt(series, "x", row));
-    const py = frame.y.map(placeAt(series, "y", row));
-    return this.horizontal ? [px, py + offset] : [px + offset, py];
   }
 
   /**
@@ -452,6 +437,7 @@ export function violin<S extends Schema>(
       "fill",
       "fillOpacity",
       "label",
+      "legendGroup",
       "axis",
       "facet",
       "panel",

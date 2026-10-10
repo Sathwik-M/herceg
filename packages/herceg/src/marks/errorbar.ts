@@ -2,8 +2,10 @@ import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import type { Breaks } from "../lod/m4.ts";
+import type { PositionScale } from "../scale/scale.ts";
 import type { Rect, SegmentGeometry } from "../scene/scene.ts";
 import type { ErrorBarSpec, Frozen } from "../spec/spec.ts";
+import { BandShares } from "./dodge.ts";
 import { definedFields } from "./line.ts";
 import {
   type BandContext,
@@ -38,11 +40,21 @@ interface ErrorBarStyle<S extends Schema> {
   panel?: string;
   /** Category field: one series of error bars per value. */
   series?: CategoryField<S>;
+  /**
+   * With `series` and category positions: place the series side by side in
+   * each band, as grouped bars are, so each interval stands on its bar.
+   */
+  dodge?: boolean;
   stroke?: string;
   strokeWidth?: number;
   /** Width of the caps at each end in pixels; 0 for none. Default 8. */
   cap?: number;
   label?: string;
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name share a color, one legend entry, and visibility.
+   */
+  legendGroup?: string;
   id?: string;
 }
 
@@ -157,6 +169,8 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
   readonly #split: SeriesSplitter;
   /** Ends computed from a center and an error, per table version. */
   readonly #computed = new TableCache<{ low: Float64Array; high: Float64Array }>();
+  /** With `dodge`, each series' share of the bands. */
+  readonly #shares: BandShares | undefined;
 
   constructor(input: ErrorBarSpec, table: Table<Schema>) {
     this.spec = frozen(input);
@@ -186,6 +200,15 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
     }
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "error bar series");
     this.#categorical = table.kind(position) === "category";
+    if (spec.dodge) {
+      if (!this.#categorical)
+        throw new Error(
+          `Error bar dodge needs category positions: ${position} is not a category field`,
+        );
+      if (spec.series === undefined)
+        throw new Error("Error bar dodge places series side by side: give a series field");
+      this.#shares = new BandShares();
+    }
     this.tooltip = horizontal ? "y" : "x";
     // Caps reach half their width past each position, along the position axis.
     const half = (spec.cap ?? CAP) / 2;
@@ -264,8 +287,10 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
     const across = horizontal ? frame.x : frame.y;
     const half = (this.spec.cap ?? CAP) / 2;
     const out: SegmentGeometry[] = [];
+    this.#shares?.split(series, frame, this.spec.legendGroup, true);
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
+      const shift = this.#shift(s, along);
       const [start, end] = horizontal
         ? [0, s.length]
         : visibleRange(s, along.domain[0], along.domain[1]);
@@ -291,7 +316,7 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
         if (this.#categorical && at < 0) continue;
         // Intervals at times an axis break leaves out are not drawn.
         if (along.breaks?.hides(at)) continue;
-        const p = along.map(at);
+        const p = along.map(at) + shift;
         const lo = across.map(lows[row]!);
         const hi = across.map(highs[row]!);
         if (!(Number.isFinite(p) && Number.isFinite(lo) && Number.isFinite(hi))) continue;
@@ -330,13 +355,14 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
     let best: Hit | undefined;
     for (const s of series) {
       const { positions, lows, highs } = columns(s, horizontal);
+      const shift = this.#shift(s, along);
       const places = s.places?.[horizontal ? "y" : "x"];
       /** Considers position k; returns how far along the position axis it stands. */
       const consider = (k: number): number => {
         const row = rowOf(s, k);
         const band = positions[row]!;
         const at = places && band >= 0 ? places.at(band) : band;
-        const p = along.map(at);
+        const p = along.map(at) + shift;
         if (!Number.isFinite(p)) return 0;
         const offset = Math.abs(p - pointer);
         if (this.#categorical && at < 0) return offset;
@@ -369,6 +395,17 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
       for (let k = after; k < s.length && !farther(consider(k)); k++);
     }
     return best;
+  }
+
+  /** Where a row is drawn, from where its values place it: dodged within its band. */
+  displace(s: Series, _row: number, frame: Frame): readonly [number, number] {
+    const shift = this.#shift(s, this.#horizontal ? frame.y : frame.x);
+    return this.#horizontal ? [0, shift] : [shift, 0];
+  }
+
+  /** How far a series stands from its bands' centers along the position axis, in pixels. */
+  #shift(s: Series, along: PositionScale): number {
+    return this.#shares ? this.#shares.of(s, along.bandwidth ?? 0).center : 0;
   }
 
   /**
@@ -489,10 +526,12 @@ export function errorBar<S extends Schema>(
       "xError",
       "yError",
       "series",
+      "dodge",
       "stroke",
       "strokeWidth",
       "cap",
       "label",
+      "legendGroup",
       "id",
       "axis",
       "facet",

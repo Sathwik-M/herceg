@@ -7,8 +7,10 @@
 
 import { areaFormError } from "../marks/area.ts";
 import { boxPlotFormError } from "../marks/boxplot-input.ts";
+import { checkLeaves, checkLinkage } from "../marks/dendrogram-data.ts";
 import { errorBarForm } from "../marks/errorbar.ts";
 import { heatmapFormError } from "../marks/heatmap.ts";
+import { histogramFormError, requireHistogramEdges } from "../marks/histogram-input.ts";
 import { regionFormError } from "../marks/region.ts";
 import { ruleFormError } from "../marks/rule.ts";
 import { treeFormError } from "../marks/tree-data.ts";
@@ -74,6 +76,12 @@ const string: Check = (v, path) => {
 };
 const field: Check = (v, path) => {
   if (typeof v !== "string") fail(path, "a field name", v);
+};
+const integer: Check = (v, path) => {
+  if (!Number.isInteger(v)) fail(path, "a whole number", v);
+};
+const group: Check = (v, path) => {
+  if (typeof v !== "string" || v === "") fail(path, "a legend group's name", v);
 };
 const fields: Check = (v, path) => {
   if (Array.isArray(v)) {
@@ -439,6 +447,7 @@ const MARKS: MarkChecks = {
       dash: numbers,
       curve,
       label: string,
+      legendGroup: group,
     },
   },
   area: {
@@ -457,6 +466,26 @@ const MARKS: MarkChecks = {
       stroke: string,
       strokeWidth: width,
       curve,
+      label: string,
+      legendGroup: group,
+    },
+  },
+  dendrogram: {
+    required: ["first", "second", "height", "leaves"],
+    checks: {
+      first: field,
+      second: field,
+      height: field,
+      leaves: (v, path) => {
+        try {
+          checkLeaves(v as string[]);
+        } catch (error) {
+          throw new TypeError(`${path}: ${(error as Error).message}`);
+        }
+      },
+      side: oneOf("bottom", "top", "left", "right"),
+      stroke: string,
+      strokeWidth: width,
       label: string,
     },
   },
@@ -510,6 +539,7 @@ const MARKS: MarkChecks = {
       fillOpacity: fraction,
       label: string,
       labels: (v, path) => (typeof v === "boolean" ? undefined : format("linear")(v, path)),
+      legendGroup: group,
     },
   },
   point: {
@@ -532,24 +562,37 @@ const MARKS: MarkChecks = {
       symbol: string,
       sampling: oneOf("none", "pixel"),
       label: string,
+      legendGroup: group,
+      dodge: boolean,
+      jitter: (v, path) => {
+        object(v, path);
+        properties(v as Record<string, unknown>, path, { width: fraction, seed: integer });
+        required(v as Record<string, unknown>, path, ["width"]);
+      },
     },
   },
   histogram: {
-    required: ["x"],
+    required: [],
     checks: {
       x: field,
+      y: field,
       bins: (v, path) => {
         if (typeof v === "number") return count(v, path);
+        if (Array.isArray(v)) return requireHistogramEdges(v, path);
         object(v, path);
         required(v as Record<string, unknown>, path, ["step"]);
         properties(v as Record<string, unknown>, path, { step: positive, start: finite });
       },
       series: field,
-      normalize: oneOf("count", "percent", "density"),
+      normalize: oneOf("count", "probability", "percent", "density"),
       stack: boolean,
+      commonNorm: boolean,
+      cumulative: boolean,
+      dodge: boolean,
       fill: string,
       fillOpacity: fraction,
       label: string,
+      legendGroup: group,
     },
   },
   treemap: { required: [], checks: hierarchyChecks() },
@@ -663,6 +706,7 @@ const MARKS: MarkChecks = {
       fill: string,
       fillOpacity: fraction,
       label: string,
+      legendGroup: group,
     },
   },
   violin: {
@@ -677,6 +721,7 @@ const MARKS: MarkChecks = {
       fill: string,
       fillOpacity: fraction,
       label: string,
+      legendGroup: group,
     },
   },
   candlestick: {
@@ -691,6 +736,21 @@ const MARKS: MarkChecks = {
       rise: string,
       fall: string,
       label: string,
+      legendGroup: group,
+    },
+  },
+  rug: {
+    required: [],
+    checks: {
+      x: field,
+      y: field,
+      series: field,
+      length: positive,
+      side: oneOf("bottom", "top", "left", "right"),
+      stroke: string,
+      strokeWidth: width,
+      label: string,
+      legendGroup: group,
     },
   },
   errorbar: {
@@ -709,6 +769,8 @@ const MARKS: MarkChecks = {
       strokeWidth: width,
       cap: width,
       label: string,
+      legendGroup: group,
+      dodge: boolean,
     },
   },
   geoshape: {
@@ -957,8 +1019,18 @@ const FORMS: Partial<
   area: areaFormError,
   heatmap: heatmapFormError,
   boxplot: boxPlotFormError,
+  histogram: histogramFormError,
   rule: ruleFormError,
   region: regionFormError,
+  rug: (spec) => {
+    if ((spec.x !== undefined) === (spec.y !== undefined))
+      return "Rugs need exactly one of x and y";
+    const sides = spec.x !== undefined ? ["bottom", "top"] : ["left", "right"];
+    if (spec.side !== undefined && !sides.includes(spec.side as string))
+      return `side must be ${sides.join(" or ")} for a ${spec.x !== undefined ? "x" : "y"} rug`;
+    if (spec.y !== undefined && spec.axis === "right") return "A y rug cannot use the right axis";
+    return undefined;
+  },
   errorbar: (spec) => {
     const form = errorBarForm(spec);
     return typeof form === "string" ? form : undefined;
@@ -994,6 +1066,8 @@ const mark: Check = (v, path) => {
     },
     ["type"],
   );
+  if (spec.type === "dendrogram" && spec.axis !== undefined)
+    fail(`${path}.axis`, "absent: dendrogram heights are plot-relative", spec.axis);
   const problem = FORMS[spec.type as MarkSpec["type"]]?.(spec);
   if (problem) throw new TypeError(`${path}: ${problem}`);
 };
@@ -1016,10 +1090,61 @@ export function checkSpec(spec: unknown): string[] {
   unknownPaths = found;
   try {
     checkChart(spec);
+    checkDendrogramData(spec);
   } finally {
     unknownPaths = outer;
   }
   return found;
+}
+
+/** Check inline linkage rows here; the loader checks binary and derived data. */
+function checkDendrogramData(spec: ChartSpec): void {
+  spec.marks.forEach((mark, i) => {
+    if (mark.type !== "dendrogram") return;
+    const path = `marks[${i}]`;
+    if (spec.facet && mark.facet !== "repeat")
+      throw new TypeError(
+        `${path}: a dendrogram over a table needs facet: "repeat" to draw it whole in every panel`,
+      );
+    const names = Object.keys(spec.data ?? {});
+    const name = mark.data ?? (names.length === 1 ? names[0] : undefined);
+    const data =
+      name !== undefined && Object.hasOwn(spec.data ?? {}, name) ? spec.data![name] : undefined;
+    if (!data) throw new TypeError(`${path}.data: dendrogram needs a table in spec.data`);
+    if ("source" in data) return;
+    const fields = [mark.first, mark.second, mark.height] as const;
+    const columns = fields.map((field, channel) => {
+      const column = Object.hasOwn(data.columns, field) ? data.columns[field] : undefined;
+      if (column === undefined)
+        throw new TypeError(
+          `${path}.${["first", "second", "height"][channel]}: unknown field "${field}"`,
+        );
+      if (Array.isArray(column)) {
+        const bad = column.findIndex((value) => value !== null && typeof value !== "number");
+        if (bad >= 0)
+          throw new TypeError(`${path}: dendrogram row ${bad}, field "${field}" must hold numbers`);
+        return column as readonly (number | null)[];
+      }
+      if ((column as { type: string }).type !== "number")
+        throw new TypeError(`${path}: dendrogram field "${field}" must hold numbers`);
+      return undefined;
+    });
+    const rows = columns.find((column) => column !== undefined)?.length;
+    if (rows === undefined) return;
+    for (const [channel, column] of columns.entries())
+      if (column && column.length !== rows)
+        throw new TypeError(
+          `${path}: dendrogram row ${Math.min(rows, column.length)}, field "${fields[channel]}" has a different row count`,
+        );
+    try {
+      checkLinkage(rows, mark.leaves, fields, (channel, row) => {
+        const column = columns[channel];
+        return column ? (column[row] ?? NaN) : undefined;
+      });
+    } catch (error) {
+      throw new TypeError(`${path}: ${(error as Error).message}`);
+    }
+  });
 }
 
 function checkChart(spec: unknown): asserts spec is ChartSpec {
@@ -1290,6 +1415,28 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
       'a spec with "version": 8 or later, so that older readers refuse it',
       chart.rowSelection,
     );
+  // An older reader would give a legend group's series colors and legend
+  // entries of their own, draw points and error bars at their bands'
+  // centers, and histograms in bins and measures of its own.
+  for (const [i, item] of (chart.marks as Record<string, unknown>[]).entries()) {
+    if (declared >= 10) break;
+    const histogram = item.type === "histogram";
+    const options: [string, unknown][] = [
+      ...["legendGroup", "dodge", "jitter"].map((name): [string, unknown] => [name, item[name]]),
+      ["y", histogram ? item.y : undefined],
+      ["bins", histogram && Array.isArray(item.bins) ? item.bins : undefined],
+      ["normalize", histogram && item.normalize === "probability" ? item.normalize : undefined],
+      ["commonNorm", histogram ? item.commonNorm : undefined],
+      ["cumulative", histogram ? item.cumulative : undefined],
+    ];
+    for (const [name, value] of options)
+      if (value !== undefined && value !== false)
+        fail(
+          `marks[${i}].${name}`,
+          'a spec with "version": 10 or later, so that older readers refuse it',
+          value,
+        );
+  }
   // A projection places maps' marks; a chart of other marks has nothing to project.
   if (
     chart.projection !== undefined &&

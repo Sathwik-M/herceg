@@ -8,6 +8,7 @@ import { boxplot } from "../../src/marks/boxplot.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
+import { histogram } from "../../src/marks/histogram.ts";
 import { type LineMark, line } from "../../src/marks/line.ts";
 import type { MARK, Mark } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
@@ -18,7 +19,7 @@ import { text } from "../../src/marks/text.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
-import type { RasterGeometry } from "../../src/scene/scene.ts";
+import type { RasterGeometry, RectGeometry } from "../../src/scene/scene.ts";
 import { modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
@@ -934,6 +935,54 @@ describe("notched box plots", () => {
   );
 });
 
+it.each(["svg", "canvas"] as const)(
+  "renders horizontal and dodged histograms in %s with bin inspection",
+  async (renderer) => {
+    const data = table({ v: [1, 1, 3, 3], g: ["a", "b", "a", "b"] });
+    for (const horizontal of [false, true]) {
+      const mark = histogram(data, {
+        ...(horizontal ? { y: "v" } : { x: "v" }),
+        bins: [0, 2, 4],
+        series: "g",
+        dodge: true,
+        fill: "#ff0000",
+      });
+      const chart = createChart(host, { renderer, marks: [mark] });
+      const model = modelOf(chart);
+      const scene = model.scene(estimateText);
+      const rectangles = scene.panels[0]!.marks.filter((m): m is RectGeometry => m.kind === "rect");
+      expect(rectangles).toHaveLength(2);
+      expect(rectangles.every((r) => r.count === 2 && r.fillOpacity === 1)).toBe(true);
+      expect(chart.toSVG()).toMatch(/fill="#ff0000"/);
+      if (renderer === "svg")
+        expect(chart.root.querySelectorAll('[data-kind="rect"]')).toHaveLength(2);
+      else {
+        const ctx = chart.root.querySelector("canvas")!.getContext("2d")!;
+        const ratio = ctx.canvas.width / ctx.canvas.clientWidth;
+        for (const rect of rectangles) {
+          const [x, y, w, h] = rect.rects;
+          const pixel = ctx.getImageData(
+            Math.round((x! + w! / 2) * ratio),
+            Math.round((y! + h! / 2) * ratio),
+            1,
+            1,
+          ).data;
+          expect([...pixel]).toEqual([255, 0, 0, 255]);
+        }
+      }
+      hover(
+        chart.root,
+        model.xScale()!.map(horizontal ? 0.5 : 1),
+        model.yScale()!.map(horizontal ? 1 : 0.5),
+      );
+      await frame();
+      expect(tooltipOf(chart.root).textContent).toContain("0 – 2: 1");
+      expect(model.keyboardStops("")).toHaveLength(1);
+      expect(model.inspectPosition(model.series()[0]!.key, 0)!.points).toHaveLength(2);
+      chart.destroy();
+    }
+  },
+);
 describe("split violins", () => {
   it.each([false, true])(
     "paints each half in its color and supports every interior (horizontal %s)",

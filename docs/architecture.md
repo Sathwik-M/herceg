@@ -12,7 +12,7 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), dictionary-encoded categories, or geometries (codes into a shared set of shapes). |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `rug`, `dendrogram`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
 | **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, a map's region or point, or a 3D chart's point or surface grid point: what its tooltips and the keyboard visit. |
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
 | **Camera** | Where a 3D chart is seen from: an azimuth about the vertical axis, an elevation above the floor, a zoom, and orthographic or perspective projection (`camera`, a chart option for the first view; then chart state the pointer and keyboard change). |
@@ -25,7 +25,7 @@ One name per concept, used the same way in code and docs.
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one, and with a navigator, the strip is a panel of the scene too, though not one the chart inspects or zooms. |
 | **Navigator** | A strip under the plot drawing a chart's marks over its whole x axis, with a window over the x range in view (the viewport) that the pointer and keyboard move and resize (`navigator`, a chart option made by `rangeNavigator`). |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (error bars, candle wicks), points, a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, network nodes and links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (rugs, error bars, candle wicks, dendrogram links), points, a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, network nodes and links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`), and the handle applications hold to it (`Chart`). |
 | **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
@@ -1122,6 +1122,26 @@ lie along number and time axes (see Heatmap cells). Band labels are thinned to e
 overlap. A categorical axis cannot be shared with marks that need a numeric
 axis (lines, areas); the chart rejects that combination.
 
+Points and error bars can spread their series across each band (`dodge`,
+with the arithmetic of grouped bars: the band split among the visible
+series in order) and points across their share of it (`jitter`, a hash of
+the row's identity, `rowOffset + row`, and a seed, so placement survives
+redraws and drops). The offset is in pixels, applied where the mark places
+a row; series keep their band indices, so inspection along the axis still
+reports every series of the band. The mark records each series' slot (its
+place and the number of places, not pixels, since a repeated mark draws in
+panels of different sizes) as it draws (`BandShares`), and picking and
+inspection (`displace`, with `maxDisplacement` bounding how far that moves a row
+along x for the nearest-point search's pruning) read the same slots, so the
+pointer, tooltips, and the keyboard find points where they are drawn.
+Marks of a legend group take their slots from the group's roster, its
+visible names across the chart (`Frame.groups`), rather than from their own
+series: grouped bars, box plots, violins, dodged histograms, points, and
+error bars of one group then stand alike even when one lacks a name.
+Grouped bars, box plots, and violins record and report their slots the
+same way, so tooltips and the keyboard stand on the bar or shape a series
+draws rather than on its band's center.
+
 ## Heatmap cells
 
 A heatmap's axis over a number or time field (unless banded) holds cells
@@ -1597,9 +1617,12 @@ rather than one panel's. Every mark that bands an axis (bars, heatmaps,
 points, box plots, violins, error bars, and candlesticks, whose merged
 pixel columns compare candles by chart band, which places keep in order)
 reads its positions through the places (`Mark.bands` says so); box plots and
-violins hold the categories of their groups with values. Synced charts and
-brushes along a y axis of such categories are refused, and category axes
-still do not zoom.
+violins hold the categories of their groups with values. Whole-table marks
+without series implement `resolveBands` to keep each panel's resolved band
+keys and contribute their `bands` to category membership; dendrograms use
+`c:<label>` keys and place their leaves on each panel's band scale. Synced
+charts and brushes along a y axis of such categories are refused, and
+category axes still do not zoom.
 
 ## Points and rasters
 
@@ -2335,6 +2358,21 @@ surface takes under half a millisecond of JavaScript a frame and keeps 60
 frames a second when turned every frame; mounting it takes about a quarter
 second (half of it the grid, the rest the batch's arrays and the upload).
 
+## Dendrograms
+
+A dendrogram reads a SciPy-layout linkage table: number fields `first`,
+`second`, and `height`, with `leaves` labels indexed by leaf id. Its module
+validates the tree and caches its first-child-before-second-child band order
+until the table changes. It has no series, extents, legend, or inspection;
+`describe` supplies leaf and merge counts and the height range. Facets must
+repeat it whole. `side` contributes categories on x (bottom/top) or y
+(left/right), leaving the height direction untyped so it can coexist with
+a heatmap's band axes. Heights normalize by the largest merge height in
+plot pixels, independent of continuous axis scales; missing leaves suppress
+ancestral links. Geometry uses three packed segments per merge, drawn by
+the existing SVG, Canvas, static SVG, and PDF paths. Linkage traversal and
+placement are iterative, with work and storage linear in merge count.
+
 ## Annotations
 
 Rules, regions, and text share one model (`marks/annotation.ts`): each
@@ -2795,6 +2833,18 @@ assigned to keys the first time they appear and kept for the chart's
 lifetime, so a series keeps its color when others appear, disappear, or are
 hidden.
 
+Marks naming a `legendGroup` share series by name across marks (a bar and
+its error bars, a line and its band). Each series keeps its own key, which
+geometry buffers, caches, inspection, and the keyboard use, so two marks
+never write into each other's buffers; the group adds a second identity, a
+legend key of the group and the series' name (a JSON object, which names no
+mark), which takes the palette slot, the one legend entry, and the
+visibility. The model maps each grouped series' key to its legend key as
+series resolve (`HiddenKeys`), so a series counts as hidden when its key or
+its group's entry is: everything that reads visibility by series key sees
+the group's state without knowing about groups. A series new to a hidden
+group is resolved again once, since marks stack only visible series.
+
 ## Themes
 
 A theme is a set of tokens (`theme.ts`) resolved once per configuration into
@@ -3195,7 +3245,10 @@ and draw every row undimmed whatever is selected, and version 9 heatmaps
 whose number and time fields lie along axes rather than in bands, with
 steps, and calendars (see Heatmap cells). Version 9 is the first to change
 what an existing spec means: a heatmap over numbers in an older spec is
-loaded banded, as it was drawn then. Precomputed box plots need
+loaded banded, as it was drawn then. Version 10 adds marks' `legendGroup`,
+points' and error bars' `dodge`, points' `jitter`, and histograms' `y`,
+explicit edges, "probability", `commonNorm`, `cumulative`, and `dodge`.
+Precomputed box plots need
 no version gate: earlier readers require both raw axis fields and refuse the
 one-axis statistics form. A spec's bindings name tables, not stores:
 `loadSpec` makes a store per bound table, or takes the stores (and the

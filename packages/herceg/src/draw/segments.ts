@@ -31,6 +31,7 @@ export const segmentDrawing: Drawing<SegmentGeometry> = {
   elements: segmentElements,
   svg: (mark) => markupOf(segmentElements(mark)),
   canvas(context, mark) {
+    if (mark.strokeWidth === 0) return;
     const c = mark.coords;
     context.save();
     context.lineCap = "butt";

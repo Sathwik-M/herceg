@@ -1,7 +1,21 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
 import { table, time } from "herceg";
 import { useEffect, useMemo } from "react";
-import { BoxPlot, Chart, Custom, Line, Point, Region, Rule, Text, Violin } from "../src/index.ts";
+import {
+  BoxPlot,
+  Chart,
+  Custom,
+  Dendrogram,
+  ErrorBar,
+  Histogram,
+  Line,
+  Point,
+  Region,
+  Rug,
+  Rule,
+  Text,
+  Violin,
+} from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -133,6 +147,89 @@ export function Boxes() {
     </Chart>
   );
 }
+
+const tips = table({ day: ["thu"], sex: ["f"], tip: [1], low: [0], high: [2] });
+export function Tips() {
+  return (
+    <Chart>
+      <Point data={tips} x="day" y="tip" series="sex" dodge jitter={{ width: 0.4 }} />
+      <ErrorBar data={tips} x="day" y1="low" y2="high" series="sex" dodge legendGroup="sex" />
+      {/* @ts-expect-error jitter takes a width */}
+      <Point data={tips} x="day" y="tip" jitter={{ seed: 2 }} />
+    </Chart>
+  );
+}
+
+export function HistogramOptions() {
+  return (
+    <>
+      <Histogram
+        data={metrics}
+        y="p50"
+        bins={[0, 1, 2]}
+        normalize="probability"
+        commonNorm
+        cumulative
+        dodge
+      />
+      <Histogram data={metrics} x="time" axis="right" stack cumulative />
+      {/* @ts-expect-error exactly one binned axis */}
+      <Histogram data={metrics} x="time" y="p50" />
+      {/* @ts-expect-error binned axis required */}
+      <Histogram data={metrics} bins={10} />
+      {/* @ts-expect-error binned fields are numeric or time */}
+      <Histogram data={metrics} y="service" />
+      {/* @ts-expect-error horizontal histograms cannot use the right axis */}
+      <Histogram data={metrics} y="p50" axis="right" />
+      {/* @ts-expect-error dodge and stack exclude each other */}
+      <Histogram data={metrics} x="time" dodge stack />
+    </>
+  );
+}
+const linkage = table({ first: [0], second: [1], height: [2], label: ["a"], timestamp: time([0]) });
+export function Trees() {
+  return (
+    <Chart>
+      <Dendrogram
+        data={linkage}
+        first="first"
+        second="second"
+        height="height"
+        leaves={["a", "b"]}
+        side="right"
+      />
+    </Chart>
+  );
+}
+const treeProps = {
+  data: linkage,
+  first: "first",
+  second: "second",
+  height: "height",
+  leaves: ["a", "b"],
+} as const;
+// @ts-expect-error fields must exist
+Dendrogram({ ...treeProps, first: "missing" });
+// @ts-expect-error child ids are number fields
+Dendrogram({ ...treeProps, first: "label" });
+// @ts-expect-error heights cannot be time fields
+Dendrogram({ ...treeProps, height: "timestamp" });
+// @ts-expect-error leaves are string category labels
+Dendrogram({ ...treeProps, leaves: [1, 2] });
+// @ts-expect-error data is required
+Dendrogram({ first: "first", second: "second", height: "height", leaves: [] });
+Rug({ data: metrics, x: "time", side: "top", series: "service" });
+Rug({ data: metrics, y: "p50", side: "right" });
+// @ts-expect-error exactly one observed axis
+Rug({ data: metrics, x: "time", y: "p50" });
+// @ts-expect-error an observed axis is required
+Rug({ data: metrics });
+// @ts-expect-error rugs observe numeric or time fields
+Rug({ data: metrics, x: "service" });
+// @ts-expect-error x ticks stand at bottom or top
+Rug({ data: metrics, x: "time", side: "left" });
+// @ts-expect-error y rugs cannot use the right value axis
+Rug({ data: metrics, y: "p50", axis: "right" });
 
 export function ViolinOptions() {
   return (

@@ -4,7 +4,7 @@ Charts for pandas, Polars, PyArrow, and NumPy data, rendered by the
 [herceg](../README.md) engine: the same charts, tooltips, zooming, and
 large-data handling as the TypeScript library.
 
-> Early development. Line, area, bar, scatter, heatmap, error bar,
+> Early development. Line, area, bar, scatter, heatmap, dendrogram, error bar,
 > candlestick, histogram, pie, box plot, violin, treemap, sunburst, gauge, funnel, radar, Sankey, network (graph), and map (choropleth and point) marks, rule, region, and text annotations; small multiples;
 > HTML, notebook, SVG, PNG, and PDF output; live notebook charts; Streamlit apps.
 
@@ -161,7 +161,7 @@ it show only the categories their rows hold); histograms, box plots, and
 violins summarize each panel's rows (histograms in bins chosen from the rows
 of the panels sharing an x scale); annotations over a table draw each row in
 its own row's panel; marks with `repeat=True` draw all their rows in every
-panel; pies, treemaps, sunbursts, gauges, funnels,
+panel, which dendrograms need; pies, treemaps, sunbursts, gauges, funnels,
 radars, and Sankey diagrams draw each facet panel's rows in it, as a
 faceted chart's only mark, or fill a panel of their own with `panel=` (no
 `"*"`, and no other mark there), whose neighbors keep their axes; `panels` (ids or
@@ -287,6 +287,64 @@ areas, and `fill` gives every box plot or violin one color.
 Column names are checked when the mark is added, with the available columns
 in the error message.
 
+Marks naming the same `legend_group` share series by name: series of the
+same name (a `series` value, or a single mark's `label`) take one color, one
+legend entry, and one visibility, so a bar and its error bars hide together.
+Side-by-side marks of a group (grouped bars, box plots, violins, dodged
+histograms, points, and error bars) take the group's slots, so an error bar
+stands on its bar even when one mark lacks some of the group's series.
+On a category axis, `dodge=True` places a point or error bar mark's series
+side by side in each category, as grouped bars are, and `jitter` (a width
+from 0 to 1 of the category's band, or `hg.Jitter(width, seed=...)`) spreads
+points across it by a hash of each row, so they keep their places as the
+chart redraws and streams:
+
+```python
+(
+    hg.Chart(stats)
+    .bar(x="day", y="mean", series="sex", legend_group="sex")
+    .error_bar(x="day", y1="low", y2="high", series="sex", dodge=True, legend_group="sex")
+)
+hg.scatter(tips, x="day", y="tip", series="sex", dodge=True, jitter=0.5)
+```
+
+These write spec version 10.
+
+Histograms take exactly one number or time column, `x` (vertical) or `y`
+(horizontal), in both `hg.histogram` and `Chart.histogram`:
+
+```python
+hg.histogram(requests, y="latency", bins=[0, 10, 25, 100])
+hg.Chart(requests).histogram("latency", series="region", normalize="probability",
+                            common_norm=True, cumulative=True, dodge=True)
+```
+
+`bins` is an approximate integer count, a `{"step": width, "start": edge}`
+dict, or a numeric sequence / 1-D NumPy array of exact edges. Edges must be
+finite and strictly increasing, with 2 to 1,001 entries; invalid input raises
+`ValueError`. Edges round-trip through JSON at full floating-point precision,
+without rounding, extending, or coarsening. Time edges use epoch milliseconds.
+Bins include their left edge and exclude their right edge, except that the last
+bin includes both. Non-finite and outside values are left out; explicit edges
+are shared by all series and panels.
+
+`normalize` is `"count"` by default, `"probability"` (bin count / series count
+in bins), `"percent"` (probability × 100), or `"density"` (probability / bin
+width). `common_norm=True` also weights each normalized series by its share
+of finite observations, before dropping values outside bins. Hidden series
+stay in that denominator; count normalization is unchanged. With facets,
+bins follow panels sharing the binned axis (`resolve_x` or `resolve_y`), and
+normalization is local to each panel. Subplots draw whole marks.
+
+`cumulative=True` accumulates counts, probabilities, or percents through each
+bin; density integrates bin widths to give probability mass. The final bar
+is 1 (or the series' share with common normalization), or 0 for no counted
+values. Accumulation happens before stacking. `dodge=True` places the visible
+series side by side with opaque fills by default, giving hidden series' slots
+to the others. Dodge excludes `stack=True`; horizontal histograms exclude
+`axis="right"`. The new options write spec version 10; omitted/false flags keep
+the earlier version. A chart's version is the maximum required by its features.
+
 Box plots accept raw category/value columns or precomputed statistic columns:
 
 ```python
@@ -317,6 +375,167 @@ reading, legends, summaries, and facets work with both input forms; absent
 precomputed counts are omitted from tooltips. Raw notches and nondefault
 whiskers emit spec version 6 so older readers refuse them. Older readers
 already refuse precomputed boxes because they lack a raw value-axis field.
+
+### Dendrograms
+
+`Chart.dendrogram(first, second, height, *, leaves, side=None, data=None,
+stroke=None, stroke_width=None, label=None, repeat=False, panel=None,
+id=None)` adds a clustering linkage tree. The three fields name number
+columns in SciPy's linkage layout: row k merges its two child ids into
+cluster n+k, with leaves 0 through n−1. Ids must be whole numbers naming a
+leaf or an earlier merge; each cluster is merged once. Heights are finite
+and nonnegative. `leaves[i]` is leaf i's string category label, with exactly
+rows+1 distinct labels; an empty linkage with one leaf is valid.
+
+```python
+linkage = {"first": [0, 2, 5], "second": [1, 3, 4], "height": [1, 2, 4]}
+chart = hg.Chart(linkage, y=hg.Axis(show=False)).dendrogram(
+    "first", "second", "height",
+    leaves=["a", "b", "c", "d"], side="bottom", label="Column clustering",
+)
+```
+
+The tree contributes leaf categories in first-child-before-second-child
+order (c, d, a, b here) and places leaves at band centers. `side` names
+the leaves' plot edge: bottom (default) or top along x, left or right along
+y. Merge heights scale linearly within the panel to its opposite edge,
+independent of axis zoom. Hide that direction's axis with `hg.Axis(show=False)`.
+Ties and decreasing heights are allowed; all-zero heights stay at the
+leaves' edge. A leaf missing from the axis omits links above it. The default
+stroke is muted theme text, with width 1 CSS pixel; `label` names a summary
+of leaf and merge counts and height range, with no legend or inspection.
+With facets, `repeat=True` is required.
+
+Compose a clustered heatmap with panels corner, top, left, matrix,
+`panel_columns=2`, `panel_row_heights=[1, 4]`,
+`panel_column_widths=[1, 4]`, `resolve_x="columns"`, and `resolve_y="rows"`.
+Put the heatmap in matrix with categories reordered by the dendrograms,
+the column tree in top with `side="bottom"`, and the row tree in left
+with `side="right"`; hide corner's axes, top's y axis, and left's x axis.
+The bands align across panels in SVG, Canvas, and static SVG/PNG/PDF.
+`hx.clustermap` builds this layout from a table (see Statistical charts).
+
+### Rugs
+
+`Chart.rug(x=None, *, y=None, series=None, data=None, length=None,
+side=None, stroke=None, stroke_width=None, label=None, axis=None,
+repeat=False, panel=None, id=None)` adds one tick per observation of exactly
+one number or time column. It composes with other marks:
+
+```python
+hg.Chart(requests).rug("latency", series="service")
+hg.Chart(requests).rug(y="latency", side="right", length=12, label="Requests")
+```
+
+Ticks reach 8 CSS pixels into the plot by default, from bottom/top for `x`
+or left/right for `y`, and stay at that edge through zoom and pan.
+`length` must be finite and positive; `stroke_width` defaults to 1 pixel.
+`stroke` overrides series colors. Rugs widen only their observed axis,
+omit missing and infinite values (and nonpositive values on a log axis),
+and preserve coincident observations. Tooltips and keyboard reading report
+real rows and format the observed value using its axis; summaries give
+counts and ranges. Facets split rows, `repeat=True` repeats them, and
+`panel` places rugs in subplots. A y rug refuses `axis="right"`;
+`side="right"` places its ticks at the right edge. There is no one-call
+`hg.rug` helper.
+
+## Statistical charts
+
+`herceg.express` makes Seaborn's statistical charts in one call. It
+computes their statistics with NumPy and returns an ordinary `hg.Chart` of
+herceg's marks, so they display, save as HTML, SVG, PNG, and PDF, and run in
+notebooks and Streamlit like any other chart:
+
+```python
+import herceg.express as hx
+
+hx.barplot(tips, x="day", y="total_bill", hue="sex", seed=1)
+hx.lineplot(fmri, x="timepoint", y="signal", hue="event", errorbar=("se", 1))
+hx.regplot(tips, x="total_bill", y="tip", order=2)
+hx.histplot(penguins, x="flipper_length_mm", hue="species", kde=True)
+hx.pairplot(penguins, hue="species")
+hx.clustermap(flights_wide, z_score=1)
+```
+
+| Function | Computes (NumPy) | Draws |
+| --- | --- | --- |
+| `barplot`, `pointplot` | an `estimator` ("mean" or "median") per category, and an interval | bars or points, with error bars dodged by `hue` |
+| `lineplot` | the estimate and interval at each distinct x | lines, with bands (`err_style="band"`) or error bars |
+| `regplot` | least-squares polynomial fits (`order`), or `lowess`, with bootstrap bands | points, fit lines, bands |
+| `residplot` | residuals from a polynomial fit, optionally a lowess line through them | points around a rule at 0 |
+| `histplot` | Seaborn's bin edges; heights, and KDE overlays scaled to them | the histogram mark (counts in the browser), lines |
+| `kdeplot` | Gaussian kernel densities (SciPy's `gaussian_kde`), 1D or 2D | lines or filled areas; a density heatmap for x and y |
+| `ecdfplot` | the empirical distribution | step lines |
+| `rugplot`, `stripplot` | (none) | rug ticks; points jittered by row and seed |
+| `boxplot`, `violinplot` | quartiles and whiskers (also in `statistics`) | the box plot and violin marks |
+| `pairplot`, `jointplot` | bins, densities, fits | subplots: scatter plots with histograms or densities |
+| `clustermap` | hierarchical clustering of rows and columns | a reordered heatmap with dendrograms in side panels |
+
+Arguments follow Seaborn's names and are keyword-only after the data: `x`,
+`y`, `hue` (a category column, or numbers read as categories, splitting the
+marks' series in one legend group, so a hue level's bars and error bars, or
+line and band, share a legend entry and hide together), `order` and `hue_order`
+(which levels, in which order; rows of other levels are left out), `col`
+and `row` (facets), `palette` (a list of colors), and the chart options of
+the one-call helpers (`title`, `width`, `height`, `theme`, `x_axis`, ...).
+Axes are labeled with the columns' names unless `x_axis` or `y_axis` say
+otherwise. Rows missing a value the chart uses are left out, and the chart's
+description says how many.
+
+Intervals take Seaborn's `errorbar`: `("ci", 95)` resamples each group
+`n_boot` times (1,000) with `numpy.random.default_rng(seed)` and takes the
+percentile interval of the estimates, `("pi", 50)` the central percentiles
+of the values, `("se", 1)` and `("sd", 1)` multiples of the standard error
+and deviation (`ddof=1`) about the estimate, and `None` none. Each group's
+resampling starts from the seed, drawing its indices as Seaborn's
+`bootstrap` does, so a seed gives Seaborn's intervals exactly. Without a
+`seed`, one is drawn and recorded. Groups of one value have no interval.
+
+The chart's description (its accessible text) ends with what was computed:
+the estimator and method, the resamples and seed, the bandwidth rule, and
+the rows left out. `hx.statistics(chart)` returns the same, with the
+computed tables as NumPy arrays (estimates and intervals, bin heights,
+densities, fit coefficients, box statistics, linkages and leaf orders):
+
+```python
+chart = hx.barplot(tips, x="day", y="tip", seed=3)
+stats = hx.statistics(chart)
+stats.seed, stats.tables["estimates"]["low"]
+```
+
+SciPy is optional (`pip install 'herceg[stats]'`): `clustermap` uses its
+hierarchical clustering when it is installed, and the same agglomeration in
+NumPy otherwise. Results were checked against Seaborn, SciPy, and
+statsmodels (`tests/test_express_numerics.py`, `tests/test_express.py`).
+Lowess fits take time proportional to the rows times the rows each local
+fit uses (`frac`): about 3 s for 10,000 rows with statsmodels' default
+`delta=0`, about 30 ms with `delta` 1% of the x range, which interpolates
+between fits as statsmodels does.
+
+Express charts are snapshots of what was computed: `widget.update(...)`
+changes their options, while `append` and `replace` change the tables the
+marks draw (a histogram recounts its bins, a box plot its quartiles), not
+the estimates, fits, or densities Python computed. To recompute, call the
+function again (Streamlit reruns do); a fixed seed keeps intervals from
+changing on every run. Live widgets refuse pair, joint, and cluster maps,
+whose panels have x scales of their own.
+
+Differences from Seaborn: `pointplot` draws no lines between its points
+(lines cannot run along a category axis yet); `violinplot` uses herceg's
+violin mark, each violin as wide as the others at its densest, with
+Silverman's rule (R's, 0.9 min(sd, IQR/1.34) n^-1/5) per violin or one
+`bandwidth` for all, not SciPy's Scott factor, and takes `split=True` (a
+hue of at most two levels, as halves) and `inner="box"`, `"quart"`, or
+None, but not `"stick"` or `"point"`; `histplot` has no
+`multiple="fill"`, `element="step"`, `stat="frequency"`, or weights, and
+draws densities over vertical bars only; `kdeplot` draws bivariate
+densities as a heatmap without contours; `kdeplot` and `ecdfplot` refuse
+`y` alone (a line along y would be read by its x in tooltips and keyboard
+reading, reporting the observation rather than the density or share);
+`jointplot` takes `kind="scatter"` or
+`"reg"`; `pairplot` gives the diagonal's histograms and densities y scales of
+their own and its scatter plots matching y ranges per row, rather than one
+shared y axis per row.
 
 ## Data
 

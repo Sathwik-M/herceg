@@ -40,6 +40,11 @@ export interface LineOptions<S extends Schema> {
   curve?: Curve;
   /** Name of a single line in legends and tooltips. Defaults to the y field. */
   label?: string;
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name share a color, one legend entry, and visibility.
+   */
+  legendGroup?: string;
   id?: string;
 }
 
@@ -141,6 +146,7 @@ export function line<S extends Schema>(
       "strokeWidth",
       "curve",
       "label",
+      "legendGroup",
       "id",
       "axis",
       "facet",

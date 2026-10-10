@@ -12,6 +12,7 @@ import { AreaMark } from "../marks/area.ts";
 import { BarMark } from "../marks/bar.ts";
 import { BoxPlotMark } from "../marks/boxplot.ts";
 import { CandlestickMark } from "../marks/candlestick.ts";
+import { DendrogramMark } from "../marks/dendrogram.ts";
 import { ErrorBarMark } from "../marks/errorbar.ts";
 import { FunnelMark } from "../marks/funnel.ts";
 import { GaugeMark } from "../marks/gauge.ts";
@@ -29,6 +30,7 @@ import { PointMark } from "../marks/point.ts";
 import { Point3DMark } from "../marks/point3d.ts";
 import { RadarMark } from "../marks/radar.ts";
 import { RegionMark } from "../marks/region.ts";
+import { RugMark } from "../marks/rug.ts";
 import { RuleMark } from "../marks/rule.ts";
 import { SankeyMark } from "../marks/sankey.ts";
 import { SunburstMark } from "../marks/sunburst.ts";
@@ -459,6 +461,8 @@ function loadMark(
         return new BarMark(spec, source);
       case "point":
         return new PointMark(withScheme(spec), source);
+      case "dendrogram":
+        return new DendrogramMark(spec, source);
       case "heatmap":
         // Before version 9, heatmaps banded number and time fields too; the
         // mark's spec says so, so it keeps its bands wherever it goes next.
@@ -466,6 +470,8 @@ function loadMark(
           withScheme(version < 9 && spec.date === undefined ? banded(spec) : spec),
           source,
         );
+      case "rug":
+        return new RugMark(spec, source);
       case "errorbar":
         return new ErrorBarMark(spec, source);
       case "candlestick":

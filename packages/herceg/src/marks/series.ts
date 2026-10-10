@@ -50,6 +50,12 @@ export interface Series {
    * indices, which `placeAt` reads through this.
    */
   places?: { readonly x?: BandPlaces; readonly y?: BandPlaces } | undefined;
+  /**
+   * For some of a series' rows drawn apart (a highlight's selected and
+   * dimmed rows), the series they are part of, which keeps what the mark
+   * placed them by (see marks/dodge.ts).
+   */
+  whole?: Series | undefined;
 }
 
 /**

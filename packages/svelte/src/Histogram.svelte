@@ -1,4 +1,4 @@
-<!-- Counts of a field's values in round bins: `x`, and optionally `bins` and `series`. -->
+<!-- Counts of exactly one number or time field, `x` or `y`, with shared bins. -->
 <script lang="ts" generics="S extends Schema">
   import { type HistogramOptions, histogram, type Schema } from "herceg";
   import { markAnchor, plain, type WithData } from "./marks.js";

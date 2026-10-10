@@ -14,9 +14,11 @@ import {
   type Bands,
   type ChartMark,
   type Frame,
+  legendKey,
   type Mark,
   type MarkKey,
   numericBands,
+  type Palette,
   type RowParts,
   usesY,
 } from "../marks/mark.ts";
@@ -60,7 +62,7 @@ import {
 } from "./axis.ts";
 import type { Facet } from "./facet.ts";
 import type { ItemPanel, ItemViews } from "./item-views.ts";
-import { EDGE, type LegendEntry, type LegendPart, layoutLegends } from "./legend.ts";
+import { EDGE, HiddenKeys, type LegendEntry, type LegendPart, layoutLegends } from "./legend.ts";
 import type { Navigator } from "./navigator.ts";
 import type { PanelAxis, PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
 import type { Panels } from "./panels.ts";
@@ -226,8 +228,8 @@ export class ChartModel {
   pixelRatio = 1;
   /** Pixels per CSS pixel of the images marks draw (heatmaps); see `setSize`. */
   rasterRatio = 1;
-  /** Keys of series hidden through the legend. */
-  readonly hidden = new Set<string>();
+  /** Keys of series hidden through the legend, with the legend groups of series (see HiddenKeys). */
+  readonly hidden = new HiddenKeys();
   /**
    * Draws marks with the rows of a selection highlighted: set by a chart
    * bound to selection stores (see row-selection.ts).
@@ -263,8 +265,6 @@ export class ChartModel {
   #entries: readonly LegendEntry[] = [];
   /** Whether the last scene had facets or subplots, whose inspections name their panel. */
   #namesPanels = false;
-  /** The hidden keys the last scene drew with. */
-  #drawnHidden: ReadonlySet<string> = new Set();
   /** Every mark's series in the last scene: those of all panels. */
   #drawn: MarkSeries[] = [];
   /** Every mark's series before facets split them, for legends and summaries. */
@@ -317,6 +317,8 @@ export class ChartModel {
       this.#camera = configured;
     this.#configured = configured;
     this.#config = config;
+    // Series join their legend groups again as they are resolved.
+    this.hidden.groups.clear();
     // Sides whose panels have scales of their own let go of their y viewport.
     const { y, yRight } = this.#yViewport;
     const kept = {
@@ -533,17 +535,29 @@ export class ChartModel {
 
   #resolveSeries(bands: Bands, context: BandContext): MarkSeries[] {
     const layout = this.#panels;
-    return this.#marks.map((mark, index) => ({
-      mark,
-      series: mark.series(
-        mark.spec.id ?? this.#positions[index]!,
-        this.#palette,
-        this.hidden,
-        bands,
-        context,
-        layout?.splits(mark),
-      ),
-    }));
+    const { hidden } = this;
+    return this.#marks.map((mark, index) => {
+      const group = mark.spec.legendGroup;
+      // A legend group's series take their colors by name.
+      const palette: Palette =
+        group === undefined
+          ? this.#palette
+          : (key, label) => this.#palette(legendKey(group, label ?? key));
+      const key = mark.spec.id ?? this.#positions[index]!;
+      const resolve = () => mark.series(key, palette, hidden, bands, context, layout?.splits(mark));
+      let series = resolve();
+      if (group === undefined) return { mark, series };
+      // Series new to their group take its visibility; marks stack only
+      // visible series, so they resolve again if that hides or shows one.
+      let changed = false;
+      for (const s of series) {
+        const before = hidden.has(s.key);
+        hidden.groups.set(s.key, legendKey(group, s.label));
+        changed ||= hidden.has(s.key) !== before;
+      }
+      if (changed) series = resolve();
+      return { mark, series };
+    });
   }
 
   /**
@@ -874,7 +888,9 @@ export class ChartModel {
       for (const part of mark.legends?.(series, theme, format) ?? [])
         if (!parts.has(part.key)) parts.set(part.key, part);
     }
-    // Entries in the order of the chart's marks: series, and layout marks' items.
+    // Entries in the order of the chart's marks: series, and layout marks'
+    // items; a legend group's series of one name share the first one's entry.
+    const listed = new Set<string>();
     let along = 0;
     const entries = config.marks.flatMap((chartMark, index) => {
       if (isLayoutMark(chartMark))
@@ -882,8 +898,10 @@ export class ChartModel {
       const { mark, series } = base[along++]!;
       return series.flatMap((s) => {
         const entry = mark.legendEntry ? mark.legendEntry(s, theme) : { color: s.color };
-        if (!entry) return [];
-        const item: LegendEntry = { key: s.key, label: s.label, color: entry.color };
+        const key = this.hidden.groups.get(s.key) ?? s.key;
+        if (!entry || listed.has(key)) return [];
+        listed.add(key);
+        const item: LegendEntry = { key, label: s.label, color: entry.color };
         if (entry.glyph) item.glyph = entry.glyph;
         if (entry.stroke) item.stroke = entry.stroke;
         return [item];
@@ -1098,8 +1116,15 @@ export class ChartModel {
       );
       const room = labeled.includes(true) ? Math.ceil(widest) + GAP + 2 : 0;
       const title = labeled.some((l, i) => l && panelAxis(i, axis)?.label) ? lineHeight + GAP : 0;
-      // Between columns, with the room kept between the plots.
-      const between = side?.own && room ? room + (right ? 0 : 8) + (config.panels ? title : 0) : 0;
+      // Between columns, with the room kept between the plots, when a panel
+      // away from the side's edge column labels its own (a joint plot's
+      // margins hide theirs).
+      const inner = labeled.some(
+        (l, i) =>
+          l && (right ? i % columns < columns - 1 && i !== panelCount - 1 : i % columns > 0),
+      );
+      const between =
+        side?.own && room && inner ? room + (right ? 0 : 8) + (config.panels ? title : 0) : 0;
       return { labeled, labelsOf, room, title, between, first: labeled.indexOf(true) };
     };
     // Panels that all draw layout marks, or marks on the right only, label no left axis.
@@ -1402,8 +1427,8 @@ export class ChartModel {
     const keyed = keyedBy(config);
     // A copy for the frames and inspectors this scene keeps: what they find
     // before the next scene is what was drawn, whatever has been hidden since.
-    const hidden: ReadonlySet<string> = new Set(this.hidden);
-    this.#drawnHidden = hidden;
+    const hidden: ReadonlySet<string> = new HiddenKeys(this.hidden, new Map(this.hidden.groups));
+    const legendGroups = rosters(base, hidden);
     const views: PanelView[] = [];
     const headers: SceneText[] = [];
     const all: (ItemPanel & { items: boolean })[] = [];
@@ -1487,6 +1512,7 @@ export class ChartModel {
         theme,
         locale,
         hidden,
+        groups: legendGroups,
         owner: this,
         scene,
         clouds,
@@ -1723,9 +1749,8 @@ export class ChartModel {
     const view = this.#views.find(({ key }) => key === panel);
     if (!view) return [];
     const shared: { axis: "x" | "y"; series: Series }[] = [];
-    return view.inspector.marks.flatMap(({ mark, series }) =>
+    return view.inspector.marks.flatMap(({ mark, visible: series }) =>
       series.filter((s) => {
-        if (this.#drawnHidden.has(s.key) || s.length === 0) return false;
         const axis = mark.tooltip;
         if (axis !== "x" && axis !== "y") return true;
         if (shared.some((p) => p.axis === axis && samePositions(p.series, s, axis))) return false;
@@ -2005,6 +2030,9 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
       throw new Error(
         `A ${mark.spec.type} mark over a row view cannot be split by facets yet; give it facet: "repeat"`,
       );
+    const group = mark.spec.legendGroup;
+    if (group !== undefined && !(typeof group === "string" && group !== ""))
+      throw new TypeError(`A ${mark.spec.type} mark's legendGroup must be a name, not ${group}`);
   }
   if (config.facet && config.panels) throw new Error("A chart has facets or panels, not both");
   const duration = typeof config.animation === "object" ? config.animation.duration : undefined;
@@ -2025,6 +2053,26 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
   }
   config.rowSelection?.check(config, marks, layouts);
   return [marks, layouts, positions];
+}
+
+/**
+ * Each legend group's visible series names, in the order of the marks and
+ * their series, which the group's marks dodge by; undefined without groups.
+ */
+function rosters(
+  base: readonly MarkSeries[],
+  hidden: ReadonlySet<string>,
+): Map<string, string[]> | undefined {
+  let out: Map<string, string[]> | undefined;
+  for (const { mark, series } of base) {
+    const group = mark.spec.legendGroup;
+    if (group === undefined) continue;
+    out ??= new Map();
+    const names = out.get(group) ?? [];
+    out.set(group, names);
+    for (const s of series) if (!hidden.has(s.key) && !names.includes(s.label)) names.push(s.label);
+  }
+  return out;
 }
 
 /** A mark's part of a panel's scene, as it draws it. */

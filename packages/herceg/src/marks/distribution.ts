@@ -13,6 +13,7 @@ import {
 } from "../data/table.ts";
 import type { Geometry } from "../scene/scene.ts";
 import type { BoxPlotSpec, Frozen, ViolinSpec } from "../spec/spec.ts";
+import { BandShares } from "./dodge.ts";
 import {
   type AxisFormat,
   type BandContext,
@@ -63,6 +64,11 @@ export type DistributionOptions<S extends Schema> = (
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name share a color, one legend entry, and visibility.
+   */
+  legendGroup?: string;
   id?: string;
 };
 
@@ -142,6 +148,8 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   readonly #positions = new WeakMap<Summary<G>, WeakMap<Int32Array, Int32Array>>();
   /** The series one chart's summary has, in its order, as of a table version. */
   #roster: { version: number; ids: string[] } | undefined;
+  /** Each drawn series' slot in its bands, as geometry last placed it. */
+  readonly #shares = new BandShares();
 
   constructor(input: T, table: Table, axes?: { x: string; y: string }) {
     this.spec = frozen(input);
@@ -392,7 +400,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
         return this.#series(
           id,
           series,
-          this.spec.fill ?? palette(id),
+          this.spec.fill ?? palette(id, series),
           NO_ROWS,
           NO_ROWS,
           NO_ROWS,
@@ -500,17 +508,30 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   }
 
   /**
-   * Where each visible series' shapes go in their slots: side by side when
-   * several series share a category, as grouped bars are.
+   * Where each visible series' shapes go in their slots, as geometry draws
+   * them: side by side when several series share a category, as grouped
+   * bars are, and in a legend group at the group's places for their names.
+   * The slots are kept for picking and inspection, which see only some of
+   * the series (the visible ones with groups).
    */
   protected placements(series: readonly Series[], frame: Frame): Map<Series, Placement> {
+    this.#shares.split(series, frame, this.spec.legendGroup, true);
+    const out = new Map<Series, Placement>();
+    for (const s of series) if (!frame.hidden.has(s.key)) out.set(s, this.placement(s, frame));
+    return out;
+  }
+
+  /** Where a series' shapes go in their slots, as geometry last placed them. */
+  protected placement(s: Series, frame: Frame): Placement {
     const along = this.horizontal ? frame.y : frame.x;
-    const visible = series.filter((s) => !frame.hidden.has(s.key));
-    const slot = Math.abs(along.bandwidth ?? 0);
-    const share = slot / Math.max(1, visible.length);
-    return new Map(
-      visible.map((s, i) => [s, { offset: -slot / 2 + share * i + share / 2, share }] as const),
-    );
+    const { center, width } = this.#shares.of(s, along.bandwidth ?? 0);
+    return { offset: center, share: width };
+  }
+
+  /** Where a group's shape is drawn, off its category's center, for inspection. */
+  displace(s: Series, _row: number, frame: Frame): readonly [number, number] {
+    const { offset } = this.placement(s, frame);
+    return this.horizontal ? [0, offset] : [offset, 0];
   }
 
   /**
@@ -523,8 +544,9 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     const across = horizontal ? frame.x : frame.y;
     const [pa, pc] = horizontal ? [py, px] : [px, py];
     let best: Hit | undefined;
-    for (const [s, { offset, share }] of this.placements(series, frame)) {
-      if (s.length === 0) continue;
+    for (const s of series) {
+      if (s.length === 0 || frame.hidden.has(s.key)) continue;
+      const { offset, share } = this.placement(s, frame);
       const { median } = this.summaryOf(s).stats;
       for (let k = 0; k < s.length; k++) {
         const row = rowOf(s, k);

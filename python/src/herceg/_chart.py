@@ -409,6 +409,28 @@ class Navigator:
 
 
 @dataclass
+class Jitter:
+    """How points in the bands of a category axis spread (``Chart.point``'s
+    ``jitter``): across ``width``, a fraction from 0 to 1 of their band (or,
+    with ``dodge``, of their series' share of it), by a hash of each row and
+    ``seed``, so the same rows land in the same places on every draw, also
+    as a live chart streams. ``jitter=0.4`` is ``Jitter(width=0.4)``."""
+
+    width: float = 0.5
+    seed: int = 0
+
+    def _spec(self) -> dict[str, Any]:
+        if isinstance(self.width, bool) or not (_finite(self.width) and 0 <= self.width <= 1):
+            raise ValueError(f"jitter width must be from 0 to 1, not {self.width!r}")
+        if isinstance(self.seed, bool) or not isinstance(self.seed, numbers.Integral):
+            raise ValueError(f"jitter seed must be a whole number, not {self.seed!r}")
+        spec: dict[str, Any] = {"width": float(self.width)}
+        if self.seed:
+            spec["seed"] = int(self.seed)
+        return spec
+
+
+@dataclass
 class Camera:
     """Where a 3D chart is seen from at first (the chart's ``camera``).
 
@@ -732,6 +754,7 @@ class Chart:
         dash: Sequence[float] | None = None,
         curve: Curve | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -754,6 +777,7 @@ class Chart:
                 "dash": list(dash) if dash is not None else None,
                 "curve": curve,
                 "label": label,
+                "legendGroup": _legend_group(legend_group),
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
@@ -780,6 +804,7 @@ class Chart:
         stroke_width: float | None = None,
         curve: Curve | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -837,6 +862,7 @@ class Chart:
                 "strokeWidth": stroke_width,
                 "curve": curve,
                 "label": label,
+                "legendGroup": _legend_group(legend_group),
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
@@ -856,6 +882,7 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         labels: bool | dict[str, Any] = False,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
@@ -895,7 +922,69 @@ class Chart:
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "label": label,
+                "legendGroup": _legend_group(legend_group),
                 "labels": None if labels is False else labels,
+                "axis": axis,
+                "facet": "repeat" if repeat else None,
+                "panel": panel,
+                "id": id,
+            },
+            table,
+        )
+
+    def rug(
+        self,
+        x: str | None = None,
+        *,
+        y: str | None = None,
+        series: str | None = None,
+        data: Any = None,
+        length: float | None = None,
+        side: Literal["bottom", "top", "left", "right"] | None = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
+        label: str | None = None,
+        legend_group: str | None = None,
+        axis: Literal["left", "right"] | None = None,
+        repeat: bool = False,
+        panel: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """One tick per observation of exactly one number or time column.
+
+        Ticks reach ``length`` CSS pixels into the plot (default 8), from
+        bottom/top for ``x`` or left/right for ``y``. Their edges stay fixed
+        during zoom and pan. Missing and nonfinite values are omitted.
+        """
+        if (x is not None) == (y is not None):
+            raise ValueError("rug needs exactly one of x and y")
+        sides = ("bottom", "top") if x is not None else ("left", "right")
+        if side is not None and side not in sides:
+            raise ValueError(f"rug side must be {' or '.join(sides)}, not {side!r}")
+        if y is not None and axis == "right":
+            raise ValueError("a y rug cannot use the right axis")
+        if length is not None and not (_finite(length) and length > 0):
+            raise ValueError(f"rug length must be finite and positive, not {length!r}")
+        if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
+            raise ValueError(
+                f"rug stroke_width must be finite and nonnegative, not {stroke_width!r}"
+            )
+        table = self._mark_table(data)
+        self._require(table, x, _NUMERIC, "rug x")
+        self._require(table, y, _NUMERIC, "rug y")
+        self._require(table, series, ("category",), "rug series")
+        return self._add(
+            {
+                "type": "rug",
+                "x": x,
+                "y": y,
+                "series": series,
+                "length": float(length) if length is not None else None,
+                "side": side,
+                "stroke": stroke,
+                "strokeWidth": float(stroke_width) if stroke_width is not None else None,
+                "label": label,
+                "legendGroup": _legend_group(legend_group),
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
@@ -916,11 +1005,13 @@ class Chart:
         x_error: str | None = None,
         y_error: str | None = None,
         series: str | None = None,
+        dodge: bool = False,
         data: Any = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
         cap: float | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -930,7 +1021,10 @@ class Chart:
         ``y``, from ``x1`` to ``x2`` or ``x`` ± ``x_error``.
 
         ``cap`` is the width of the end caps in pixels (0 for none). Add points or bars
-        to show the center.
+        to show the center. ``dodge=True`` places the series of a ``series``
+        column side by side in each category, as grouped bars are, so each
+        interval stands on its bar. Marks with the same ``legend_group`` share
+        series by name: one color, legend entry, and visibility each.
         """
         vertical = y_error is not None or (y1 is not None and y2 is not None)
         horizontal = x_error is not None or (x1 is not None and x2 is not None)
@@ -971,6 +1065,14 @@ class Chart:
         if extra is not None:
             raise ValueError(f"error_bar from {', '.join(used)} cannot also take {extra}")
         self._require(table, series, ("category",), "error_bar series")
+        if dodge:
+            if series is None:
+                raise ValueError("error_bar dodge places series side by side: give a series column")
+            if self._kind(table, position) != "category":
+                raise ValueError(
+                    f"error_bar dodge needs a category {along}: "
+                    f"{position!r} is not a category column"
+                )
         return self._add(
             {
                 "type": "errorbar",
@@ -983,10 +1085,12 @@ class Chart:
                 "xError": x_error,
                 "yError": y_error,
                 "series": series,
+                "dodge": dodge or None,
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "cap": cap,
                 "label": label,
+                "legendGroup": _legend_group(legend_group),
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
@@ -1015,7 +1119,10 @@ class Chart:
         color_midpoint: float | None = None,
         symbol: str | None = None,
         sampling: Literal["none", "pixel"] | None = None,
+        dodge: bool = False,
+        jitter: float | Jitter | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -1037,6 +1144,13 @@ class Chart:
         a device pixel once, which is faster for dense scatters.
         ``animation_key`` names a numeric, datetime, or category column matching
         points across live replacements when ``Animation(values=True)`` is set.
+
+        With a category ``x`` or ``y``, ``dodge=True`` places the series of a
+        ``series`` column side by side in each category, as grouped bars are,
+        and ``jitter`` (a width from 0 to 1 of the band, or ``hg.Jitter``)
+        spreads points across their band, by row and seed. Marks with the same
+        ``legend_group`` share series by name: one color, legend entry, and
+        visibility each.
         """
         table = self._mark_table(data)
         self._require(table, x, (*_NUMERIC, "category"), "point x")
@@ -1067,6 +1181,21 @@ class Chart:
                     f"point symbol: {symbol!r} is neither a column nor one of {', '.join(SYMBOLS)}"
                 )
             self._require(table, symbol, ("category",), "point symbol")
+        spread = (
+            Jitter(width=jitter)
+            if isinstance(jitter, numbers.Real) and not isinstance(jitter, bool)
+            else jitter
+        )
+        if spread is not None and not isinstance(spread, Jitter):
+            raise ValueError(
+                f"point jitter must be a width from 0 to 1 or a Jitter, not {jitter!r}"
+            )
+        if dodge or spread is not None:
+            option = "dodge" if dodge else "jitter"
+            if (self._kind(table, x) == "category") == (self._kind(table, y) == "category"):
+                raise ValueError(f"point {option} needs one category column, x or y")
+            if dodge and series is None:
+                raise ValueError("point dodge places series side by side: give a series column")
         return self._add(
             {
                 "type": "point",
@@ -1086,7 +1215,10 @@ class Chart:
                 "colorMidpoint": _midpoint(color_midpoint, color_domain, "point"),
                 "symbol": symbol,
                 "sampling": sampling,
+                "dodge": dodge or None,
+                "jitter": spread._spec() if spread is not None else None,
                 "label": label,
+                "legendGroup": _legend_group(legend_group),
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
@@ -1097,41 +1229,77 @@ class Chart:
 
     def histogram(
         self,
-        x: str,
+        x: str | None = None,
         *,
-        bins: int | dict[str, float] | None = None,
+        y: str | None = None,
+        bins: int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any] | None = None,
         series: str | None = None,
-        normalize: Literal["count", "percent", "density"] | None = None,
+        normalize: Literal["count", "probability", "percent", "density"] | None = None,
+        common_norm: bool = False,
+        cumulative: bool = False,
+        dodge: bool = False,
         stack: bool = False,
         data: Any = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
-        """Counts of ``x``'s values in round bins.
+        """Counts of exactly one number or time field: x (vertical) or y (horizontal).
 
-        ``bins`` is about how many bins, or ``{"step": width, "start": edge}``;
-        by default the count follows the data size. ``normalize`` measures
-        ``"percent"`` of each series' values or ``"density"`` instead of counts.
+        Bins are an approximate count, a step/start dict, or exact increasing
+        edges. Probability, percent, and density normalize each series;
+        common_norm weights its share of finite values in the panel (including
+        hidden series and values outside bins). Cumulative density integrates
+        widths. Dodge places visible series side by side and excludes stack.
         """
+        if (x is None) == (y is None):
+            raise ValueError("A histogram needs exactly one field: x or y")
+        if y is not None and axis == "right":
+            raise ValueError("A horizontal histogram cannot use the right axis")
+        if dodge and stack:
+            raise ValueError("A histogram cannot dodge and stack")
+        if normalize not in (None, "count", "probability", "percent", "density"):
+            raise ValueError(
+                'Histogram normalize must be "count", "probability", "percent", or "density"'
+            )
+        for name, flag in (
+            ("commonNorm", common_norm),
+            ("cumulative", cumulative),
+            ("dodge", dodge),
+            ("stack", stack),
+        ):
+            if not isinstance(flag, bool):
+                raise ValueError(f"Histogram {name} must be a boolean")
+        bins = _histogram_bins(bins)
         table = self._mark_table(data)
-        self._require(table, x, _NUMERIC, "histogram x")
+        self._require(
+            table,
+            y if y is not None else x,
+            _NUMERIC,
+            "histogram y" if y is not None else "histogram x",
+        )
         self._require(table, series, ("category",), "histogram series")
         return self._add(
             {
                 "type": "histogram",
                 "x": x,
-                "bins": dict(bins) if isinstance(bins, dict) else bins,
+                "y": y,
+                "bins": bins,
                 "series": series,
                 "normalize": normalize,
+                "commonNorm": common_norm or None,
+                "cumulative": cumulative or None,
+                "dodge": dodge or None,
                 "stack": stack or None,
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "label": label,
+                "legendGroup": _legend_group(legend_group),
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
@@ -1153,6 +1321,7 @@ class Chart:
         rise: str | None = None,
         fall: str | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -1183,6 +1352,7 @@ class Chart:
                 "rise": rise,
                 "fall": fall,
                 "label": label,
+                "legendGroup": _legend_group(legend_group),
                 "axis": axis,
                 "facet": "repeat" if repeat else None,
                 "panel": panel,
@@ -1342,6 +1512,7 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -1409,6 +1580,7 @@ class Chart:
                 "count": count,
                 "whiskers": whiskers,
                 "notch": notch,
+                "legendGroup": _legend_group(legend_group),
             },
             x,
             y,
@@ -1435,6 +1607,7 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
+        legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
         repeat: bool = False,
         panel: str | None = None,
@@ -1476,6 +1649,7 @@ class Chart:
                 "fill": fill,
                 "split": split,
                 "inner": inner,
+                "legendGroup": _legend_group(legend_group),
             },
             x,
             y,
@@ -2399,6 +2573,91 @@ class Chart:
             table,
         )
 
+    def dendrogram(
+        self,
+        first: str,
+        second: str,
+        height: str,
+        *,
+        leaves: Sequence[str],
+        side: Literal["bottom", "top", "left", "right"] | None = None,
+        data: Any = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
+        label: str | None = None,
+        repeat: bool = False,
+        panel: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """A SciPy-layout linkage tree with leaves on category bands.
+
+        ``leaves[i]`` labels leaf id i. ``side`` is the plot edge at height
+        zero (bottom by default); heights scale within the panel's pixels.
+        With facets, pass ``repeat=True`` to draw the whole tree in each.
+        """
+        if side not in (None, "bottom", "top", "left", "right"):
+            raise ValueError(f"dendrogram side must be bottom, top, left, or right, got {side!r}")
+        if stroke_width is not None and (not np.isfinite(stroke_width) or stroke_width < 0):
+            raise ValueError("dendrogram stroke_width must be finite and nonnegative")
+        table = self._mark_table(data)
+        fields = (first, second, height)
+        for field in fields:
+            self._require(table, field, ("number",), "dendrogram")
+        if isinstance(leaves, (str, bytes)):
+            raise TypeError("dendrogram leaves must be a list of category labels")
+        labels = list(leaves)
+        seen: set[str] = set()
+        for i, leaf in enumerate(labels):
+            if not isinstance(leaf, str):
+                raise TypeError(f"dendrogram leaves[{i}] must be a category label (string)")
+            if leaf in seen:
+                raise ValueError(f"dendrogram leaves[{i}] repeats label {leaf!r}")
+            seen.add(leaf)
+        columns = [self._tables[table][1].column(field).values for field in fields]
+        rows = len(columns[0])
+        n = rows + 1
+        if len(labels) != n:
+            raise ValueError(
+                f"dendrogram leaves needs {n} labels for {rows} merge rows, got {len(labels)}"
+            )
+        used = bytearray(n + rows)
+        for row in range(rows):
+            for channel, column in enumerate(columns):
+                value = float(column[row])
+                at = f'dendrogram row {row}, field "{fields[channel]}"'
+                if channel == 2:
+                    if not np.isfinite(value) or value < 0:
+                        raise ValueError(
+                            f"{at}: height must be finite and nonnegative, got {value}"
+                        )
+                else:
+                    if not np.isfinite(value) or not value.is_integer() or not 0 <= value < n + row:
+                        raise ValueError(
+                            f"{at}: cluster id must be a whole number naming a leaf "
+                            f"or an earlier merge, got {value}"
+                        )
+                    cluster = int(value)
+                    if used[cluster]:
+                        raise ValueError(f"{at}: cluster {cluster} is merged more than once")
+                    used[cluster] = 1
+        return self._add(
+            {
+                "type": "dendrogram",
+                "first": first,
+                "second": second,
+                "height": height,
+                "leaves": labels,
+                "side": side,
+                "stroke": stroke,
+                "strokeWidth": stroke_width,
+                "label": label,
+                "facet": "repeat" if repeat else None,
+                "panel": panel,
+                "id": id,
+            },
+            table,
+        )
+
     def rule(
         self,
         *,
@@ -2677,13 +2936,25 @@ class Chart:
                     f"lassos cannot select the rows of {kind} marks yet; leave 'lasso' out "
                     "of the row selection's events"
                 )
+            if kind == "rug":
+                # A rug's ticks have a place along their own axis only.
+                observed = "x" if mark.get("x") is not None else "y"
+                other = "y" if observed == "x" else "x"
+                if brush in (other, "xy"):
+                    raise ValueError(
+                        f"a rug mark's rows are brushed along its {observed} axis only: "
+                        f"its ticks have no {other} value"
+                    )
+                continue
             if kind not in ("histogram", "boxplot", "violin"):
                 continue
-            # A summary's value axis holds statistics; box plots may lie along y.
-            categories = "x"
+            # A summary's value axis holds statistics: a histogram's counts,
+            # across its binned axis, and box plots' values, which may lie along x.
             y = mark.get("y")
-            if kind != "histogram" and y is not None and self._kind(table, y) == "category":
-                categories = "y"
+            if kind == "histogram":
+                categories = "y" if mark.get("x") is None else "x"
+            else:
+                categories = "y" if y is not None and self._kind(table, y) == "category" else "x"
             values = "y" if categories == "x" else "x"
             if brush in (values, "xy"):
                 raise ValueError(
@@ -2930,6 +3201,11 @@ class Chart:
         elif spec.get("panel") is not None:
             raise ValueError("panel= needs a chart with panels")
         if self._facets and table is not None and spec.get("facet") is None:
+            if spec["type"] == "dendrogram":
+                raise ValueError(
+                    "dendrogram marks over a table need repeat=True "
+                    "to draw them whole in every panel"
+                )
             for field in self._facets:
                 self._require(table, field, ("category",), "facet")
         self._check_categories(spec, table)
@@ -2994,8 +3270,10 @@ class Chart:
             field = spec.get(axis)
             # Calendars band days of the week, and in months days of the month too.
             calendar = kind == "heatmap" and spec.get("date") is not None
+            leaf_axis = "y" if spec.get("side") in ("left", "right") else "x"
             banded = (
-                (kind == "heatmap" and spec.get(f"{axis}Banded") is True)
+                (kind == "dendrogram" and axis == leaf_axis)
+                or (kind == "heatmap" and spec.get(f"{axis}Banded") is True)
                 or (calendar and (axis == "y" or spec.get("calendar") == "months"))
                 or (isinstance(field, str) and self._kind(table, field) == "category")
             )
@@ -3136,34 +3414,7 @@ def assemble_spec(
     """A spec and its buffers from chart options, columns by table name, mark
     specs, and derived tables by name."""
     buffers: list[bytes] = []
-    seams = (options.get("x") or {}).get("seams")
-    version = 5 if seams is not None and seams is not False else 4
-    if any(
-        mark["type"] == "boxplot"
-        and mark.get("median") is None
-        and (mark.get("notch") is True or mark.get("whiskers") not in (None, "tukey", 1.5))
-        for mark in marks
-    ):
-        version = 6
-    if any(
-        mark["type"] == "violin"
-        and (mark.get("split") is True or mark.get("inner") not in (None, "box"))
-        for mark in marks
-    ):
-        version = 7
-    if "rowSelection" in options:
-        version = 8
-    # Heatmaps say when a number or time column is not banded, which older readers would band.
-    if any(
-        mark["type"] == "heatmap"
-        and (
-            any(mark.get(name) is not None for name in ("xStep", "yStep", "date"))
-            or any(mark.get(name) is False for name in ("xBanded", "yBanded"))
-        )
-        for mark in marks
-    ):
-        version = 9
-    spec: dict[str, Any] = {"version": version, **options}
+    spec: dict[str, Any] = {"version": spec_version(options, marks), **options}
     for key, value in layout.items():
         spec[key] = (
             {k: v for k, v in value.items() if v is not None} if isinstance(value, dict) else value
@@ -3175,6 +3426,47 @@ def assemble_spec(
         spec["data"].update(derived or {})
     spec["marks"] = marks
     return spec, buffers
+
+
+def spec_version(options: dict[str, Any], marks: list[dict[str, Any]]) -> int:
+    """The spec version a chart needs: the latest any of its features does, so
+    that readers that would draw one of them differently refuse the chart."""
+    seams = (options.get("x") or {}).get("seams")
+    needs = [5 if seams is not None and seams is not False else 4]
+    if "rowSelection" in options:
+        needs.append(8)
+    # Heatmaps say when a number or time column is not banded, which older readers would band.
+    if any(
+        mark["type"] == "heatmap"
+        and (
+            any(mark.get(name) is not None for name in ("xStep", "yStep", "date"))
+            or any(mark.get(name) is False for name in ("xBanded", "yBanded"))
+        )
+        for mark in marks
+    ):
+        needs.append(9)
+    for mark in marks:
+        if (
+            mark["type"] == "boxplot"
+            and mark.get("median") is None
+            and (mark.get("notch") is True or mark.get("whiskers") not in (None, "tukey", 1.5))
+        ):
+            needs.append(6)
+        if mark["type"] == "violin" and (
+            mark.get("split") is True or mark.get("inner") not in (None, "box")
+        ):
+            needs.append(7)
+        if any(mark.get(name) not in (None, False) for name in ("legendGroup", "dodge", "jitter")):
+            needs.append(10)
+        if mark["type"] == "histogram" and (
+            mark.get("y") is not None
+            or isinstance(mark.get("bins"), list)
+            or mark.get("normalize") == "probability"
+            or mark.get("commonNorm") is True
+            or mark.get("cumulative") is True
+        ):
+            needs.append(10)
+    return max(needs)
 
 
 def columns_spec(columns: dict[str, Column], buffers: list[bytes]) -> dict[str, Any]:
@@ -3239,6 +3531,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
         *("category", "fields", "date"),
         *("path", "node", "parent", "source", "target"),
         *("open", "high", "low", "close"),
+        *("first", "second", "height"),
         *("q1", "median", "q3", "count"),
         *("r", "fillOpacity", "color", "symbol", "animationKey"),
         *("geometry", "name", "longitude", "latitude", "z"),
@@ -3559,6 +3852,13 @@ def _panel_weights(
     return values
 
 
+def _legend_group(group: str | None) -> str | None:
+    """A mark's legend group: a name, which marks sharing it share series by."""
+    if group is not None and not (isinstance(group, str) and group):
+        raise ValueError(f"legend_group must be a name, not {group!r}")
+    return group
+
+
 def _finite(value: Any) -> bool:
     """A real, finite number; booleans are not numbers here."""
     return isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value)
@@ -3641,6 +3941,7 @@ def line(
     dash: Sequence[float] | None = None,
     curve: Curve | None = None,
     label: str | None = None,
+    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     repeat: bool = False,
     panel: str | None = None,
@@ -3657,6 +3958,7 @@ def line(
         dash=dash,
         curve=curve,
         label=label,
+        legend_group=legend_group,
         axis=axis,
         repeat=repeat,
         panel=panel,
@@ -3681,6 +3983,7 @@ def area(
     stroke_width: float | None = None,
     curve: Curve | None = None,
     label: str | None = None,
+    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     repeat: bool = False,
     panel: str | None = None,
@@ -3708,6 +4011,7 @@ def area(
         stroke_width=stroke_width,
         curve=curve,
         label=label,
+        legend_group=legend_group,
         axis=axis,
         repeat=repeat,
         panel=panel,
@@ -3725,6 +4029,7 @@ def bar(
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
+    legend_group: str | None = None,
     labels: bool | dict[str, Any] = False,
     axis: Literal["left", "right"] | None = None,
     repeat: bool = False,
@@ -3741,6 +4046,7 @@ def bar(
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,
+        legend_group=legend_group,
         labels=labels,
         axis=axis,
         repeat=repeat,
@@ -3768,7 +4074,10 @@ def scatter(
     color_midpoint: float | None = None,
     symbol: str | None = None,
     sampling: Literal["none", "pixel"] | None = None,
+    dodge: bool = False,
+    jitter: float | Jitter | None = None,
     label: str | None = None,
+    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     repeat: bool = False,
     panel: str | None = None,
@@ -3793,7 +4102,10 @@ def scatter(
         color_midpoint=color_midpoint,
         symbol=symbol,
         sampling=sampling,
+        dodge=dodge,
+        jitter=jitter,
         label=label,
+        legend_group=legend_group,
         axis=axis,
         repeat=repeat,
         panel=panel,
@@ -3958,33 +4270,91 @@ def heatmap(
     )
 
 
+def _histogram_finite(value: Any) -> bool:
+    if not isinstance(value, numbers.Real) or isinstance(value, (bool, np.bool_)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError):
+        return False
+
+
+def _histogram_bins(
+    bins: int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any] | None,
+) -> int | dict[str, float] | list[float] | None:
+    if bins is None:
+        return None
+    if isinstance(bins, dict):
+        step = bins.get("step")
+        if step is None or not _histogram_finite(step) or step <= 0:
+            raise ValueError(f"Histogram bin step must be a positive number, not {step}")
+        start = bins.get("start")
+        if start is not None and not _histogram_finite(start):
+            raise ValueError(f"Histogram bin start must be a finite number, not {start}")
+        return {"step": float(step), **({"start": float(start)} if start is not None else {})}
+    if isinstance(bins, numbers.Real) and not isinstance(bins, (bool, np.bool_)):
+        if not _histogram_finite(bins):
+            raise ValueError(f"Histogram bins must be a whole number of at least 1, not {bins}")
+        value = float(bins)
+        if value < 1 or not value.is_integer():
+            raise ValueError(f"Histogram bins must be a whole number of at least 1, not {bins}")
+        return int(value)
+    if isinstance(bins, np.ndarray) and bins.ndim != 1:
+        raise ValueError("Histogram bin edges must be a 1-D array")
+    if not isinstance(bins, (Sequence, np.ndarray)) or isinstance(bins, (str, bytes)):
+        raise ValueError(
+            "Histogram bins must be a whole number, a step/start dict, or a sequence of edges"
+        )
+    if len(bins) < 2 or len(bins) > 1001:
+        raise ValueError("Histogram bin edges must contain at least 2 and at most 1001 edges")
+    edges: list[float] = []
+    for i, edge in enumerate(bins):
+        if not _histogram_finite(edge):
+            raise ValueError(f"Histogram bin edges[{i}] must be a finite number")
+        value = float(edge)
+        if edges and not value > edges[-1]:
+            raise ValueError(f"Histogram bin edges must be strictly increasing (edge {i})")
+        edges.append(value)
+    return edges
+
+
 def histogram(
     data: Any,
-    x: str,
+    x: str | None = None,
     *,
-    bins: int | dict[str, float] | None = None,
+    y: str | None = None,
+    bins: int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any] | None = None,
     series: str | None = None,
-    normalize: Literal["count", "percent", "density"] | None = None,
+    normalize: Literal["count", "probability", "percent", "density"] | None = None,
+    common_norm: bool = False,
+    cumulative: bool = False,
+    dodge: bool = False,
     stack: bool = False,
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
+    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     repeat: bool = False,
     panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A histogram of ``x``'s values."""
+    """A histogram of exactly one of ``x`` or ``y``, with optional exact bin edges."""
     return _chart_of(data, options).histogram(
         x,
+        y=y,
         bins=bins,
         series=series,
         normalize=normalize,
+        common_norm=common_norm,
+        cumulative=cumulative,
+        dodge=dodge,
         stack=stack,
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,
+        legend_group=legend_group,
         axis=axis,
         repeat=repeat,
         panel=panel,
@@ -4081,6 +4451,7 @@ def boxplot(
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
+    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     repeat: bool = False,
     panel: str | None = None,
@@ -4103,6 +4474,7 @@ def boxplot(
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,
+        legend_group=legend_group,
         axis=axis,
         repeat=repeat,
         panel=panel,
@@ -4122,6 +4494,7 @@ def violin(
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
+    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     repeat: bool = False,
     panel: str | None = None,
@@ -4139,6 +4512,7 @@ def violin(
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,
+        legend_group=legend_group,
         axis=axis,
         repeat=repeat,
         panel=panel,
@@ -4377,6 +4751,7 @@ def candlestick(
     rise: str | None = None,
     fall: str | None = None,
     label: str | None = None,
+    legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
     repeat: bool = False,
     panel: str | None = None,
@@ -4395,6 +4770,7 @@ def candlestick(
         rise=rise,
         fall=fall,
         label=label,
+        legend_group=legend_group,
         axis=axis,
         repeat=repeat,
         panel=panel,

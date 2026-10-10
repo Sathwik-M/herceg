@@ -5,7 +5,7 @@
 // state do not depend on the panel they draw in.
 
 import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
-import type { Bands, Mark } from "../marks/mark.ts";
+import type { BandContext, Bands, Mark } from "../marks/mark.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
 import type { AxisSpec, GridSpec, PanelSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
@@ -246,7 +246,9 @@ export class Panels implements PanelLayout {
   /** A chart's splitter, which keeps its panels' categories (see PanelBands). */
   splitter(): PanelSplitter {
     const placed = new PanelBands();
-    return { split: (base, chart, bands) => this.#split(base, chart, bands, placed) };
+    return {
+      split: (base, chart, bands, context) => this.#split(base, chart, bands, context, placed),
+    };
   }
 
   /** Every mark in the panels it names, with all of its series there; layout marks alone. */
@@ -254,6 +256,7 @@ export class Panels implements PanelLayout {
     base: readonly MarkSeries[],
     chart: PanelChart,
     bands: Bands,
+    context: BandContext,
     placed: PanelBands,
   ): PanelSplit {
     const columns = Math.min(this.columns, this.list.length);
@@ -279,7 +282,7 @@ export class Panels implements PanelLayout {
       return mark && { mark, index, rows: undefined };
     });
     if (items.some(Boolean)) split.items = items;
-    placed.place(split, columns, bands, chart.config.resolve, this.yDefault);
+    placed.place(split, columns, bands, chart.config.resolve, this.yDefault, context);
     return split;
   }
 

@@ -69,6 +69,16 @@ def test_bindings_refuse_what_cannot_select_rows():
     counted = hg.Chart(trips(), brush="xy", row_selection=binding).histogram(x="km")
     with pytest.raises(ValueError, match="brushed along its x axis only"):
         counted.to_spec()
+    # A rug's ticks have a place along their own axis only.
+    for brush in ("y", "xy"):
+        ticks = hg.Chart(trips(), brush=brush, row_selection=binding).point(x="km", y="fare")
+        with pytest.raises(ValueError, match="rug mark's rows are brushed along its x axis only"):
+            ticks.rug("km").to_spec()
+    hg.Chart(trips(), brush="x", row_selection=binding).rug("km").to_spec()
+    # A horizontal histogram bins y, which brushes select along; its x holds counts.
+    hg.Chart(trips(), brush="y", row_selection=binding).histogram(y="km").to_spec()
+    with pytest.raises(ValueError, match="brushed along its y axis only"):
+        hg.Chart(trips(), brush="x", row_selection=binding).histogram(y="km").to_spec()
     boxes = hg.Chart(trips(), brush="lasso", row_selection=binding).boxplot(x="kind", y="fare")
     with pytest.raises(ValueError, match="lassos cannot select the rows of boxplot"):
         boxes.to_spec()

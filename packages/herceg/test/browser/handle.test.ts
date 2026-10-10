@@ -5,6 +5,7 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, createChart } from "../../src/dom/chart.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { errorBar } from "../../src/marks/errorbar.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point3d } from "../../src/marks/point3d.ts";
@@ -322,6 +323,52 @@ describe("visibility", () => {
     chart.setVisibility([a!, b!], false);
     chart.setHiddenKeys([]);
     expect(events).toEqual([[a], [], [a, b], []]);
+  });
+
+  it("hides a legend group's marks together, by its entry, across updates", () => {
+    const stats = table({
+      day: ["thu", "thu", "fri", "fri"],
+      sex: ["f", "m", "f", "m"],
+      mean: [2, 3, 4, 5],
+      low: [1, 2, 3, 4],
+      high: [3, 4, 5, 6],
+    });
+    const marks = [
+      bar(stats, { x: "day", y: "mean", series: "sex", legendGroup: "sex" }),
+      errorBar(stats, {
+        x: "day",
+        y1: "low",
+        y2: "high",
+        series: "sex",
+        dodge: true,
+        legendGroup: "sex",
+      }),
+    ];
+    const chart = mount({ renderer: "svg", marks });
+    expect(chart.getLegend().map(({ label }) => label)).toEqual(["f", "m"]);
+    const buttons = chart.root.querySelectorAll("button");
+    expect(buttons).toHaveLength(2);
+    buttons[0]!.click();
+    chart.render();
+    const { plot } = chart.getPanels()[0]!;
+    const at = [chart.toPixel(0, { axis: "x" })!, plot.y + 10] as const;
+    // Only the other sex's bar and interval are left.
+    expect(chart.inspect(...at)!.points.map(({ label }) => label)).toEqual(["m", "m"]);
+    const [f] = chart.getHiddenKeys();
+    // A member's own key acts on its group's entry.
+    chart.setVisibility(f!, true);
+    chart.setVisibility(JSON.stringify([1, "f"]), false);
+    expect(chart.getHiddenKeys()).toEqual([f]);
+    chart.render();
+    expect(chart.inspect(...at)!.points.map(({ label }) => label)).toEqual(["m", "m"]);
+    // And shows it again, by the same member key.
+    chart.setVisibility(JSON.stringify([1, "f"]), true);
+    expect(chart.getHiddenKeys()).toEqual([]);
+    chart.setVisibility(JSON.stringify([1, "f"]), false);
+    chart.update({ marks: [...marks] });
+    expect(chart.getHiddenKeys()).toEqual([f]);
+    chart.update({ marks: [bar(stats, { x: "day", y: "mean", series: "sex" })] });
+    expect(chart.getHiddenKeys()).toEqual([]);
   });
 
   it("changes through the legend's buttons as through the methods", () => {

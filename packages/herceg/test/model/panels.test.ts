@@ -645,4 +645,18 @@ describe("panels with x scales of their own", () => {
       loadSpec({ version: 2, marks: [], panels: [{ id: "a", x: { label: "s" } }] }, []),
     ).toThrow('spec.panels[0].x: expected a spec with "version": 3');
   });
+
+  it("leaves no label room between columns whose later panels hide their y axes", () => {
+    // A joint plot: margins beside and above the main plot show no y labels.
+    const rows = table({ x: [1, 200000], y: [1, 200000] });
+    const gap = (hidden: boolean) => {
+      const { scene } = build({
+        marks: [point(rows, { x: "x", y: "y", panel: "*" })],
+        panels: panels([{ id: "main" }, { id: "side", y: { axis: !hidden } }], { columns: 2 }),
+      });
+      const [main, side] = scene.panels;
+      return side!.plot.x - (main!.plot.x + main!.plot.width);
+    };
+    expect(gap(true)).toBeLessThan(gap(false) - 20);
+  });
 });

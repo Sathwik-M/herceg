@@ -237,6 +237,14 @@ function refuseBrush(mark: Mark, brush: BrushSpec) {
     throw new Error(
       `Lassos cannot select the rows of ${type} marks yet; leave "lasso" out of the row selection's events`,
     );
+  // A rug's ticks have a place along their own axis only.
+  if (type === "rug") {
+    const other = mark.tooltip === "x" ? "y" : "x";
+    if (brush === other || brush === "xy")
+      throw new Error(
+        `A rug mark's rows are brushed along its ${mark.tooltip} axis only: its ticks have no ${other} value`,
+      );
+  }
   if (!mark.summarizes) return;
   // A summary's values axis holds statistics: a histogram's counts, a box plot's quartiles.
   const values = mark.tooltip === "y" ? "x" : "y";

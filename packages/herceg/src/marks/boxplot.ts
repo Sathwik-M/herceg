@@ -36,7 +36,7 @@ type StatisticsOptions<S extends Schema> = {
 
 type BoxPlotStyleOptions<S extends Schema> = Pick<
   DistributionOptions<S>,
-  "series" | "fill" | "fillOpacity" | "label" | "facet" | "panel" | "id"
+  "series" | "fill" | "fillOpacity" | "label" | "legendGroup" | "facet" | "panel" | "id"
 >;
 
 type BoxPlotRawOptions<S extends Schema> = DistributionOptions<S> &
@@ -423,6 +423,7 @@ export function boxplot<S extends Schema>(
       "fill",
       "fillOpacity",
       "label",
+      "legendGroup",
       "axis",
       "facet",
       "panel",

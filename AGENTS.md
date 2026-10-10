@@ -50,6 +50,7 @@ npm run bench:react      # herceg vs herceg through @herceg/react
 npm run bench:grid       # grid suite: herceg/grid vs TanStack Table, AG Grid, Glide (Chrome)
 npm run bench:grid-remote # remote grids: herceg/grid/remote vs AG Grid's infinite row model (Chrome)
 npm run bench:report     # regenerate result tables in docs/comparison.md
+npm run bench:express    # herceg.express timings in Python (-- --out results/express.json)
 npm run build:python     # bundle herceg's JavaScript into the Python package
 npm run test:python      # build:python, then pytest (uv environment in python/)
 npm run lint:python      # ruff check, format check, and mypy type check of the Python package

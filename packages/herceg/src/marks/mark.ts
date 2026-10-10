@@ -49,15 +49,33 @@ export function keyOwner(key: string): MarkKey | undefined {
 }
 
 /**
+ * The key of a legend group's entry for series named `label`: series of
+ * marks sharing a `legendGroup` that have the same name share a color, one
+ * legend entry, and visibility under this key. A JSON object without a
+ * `mark`, so it names no mark and no series key can equal it.
+ */
+export function legendKey(group: string, label: string): string {
+  return JSON.stringify({ legendGroup: group, label });
+}
+
+/** The legend group a legend entry's key (see `legendKey`) names; undefined for other keys. */
+export function legendGroupOf(key: string): string | undefined {
+  if (!key.startsWith('{"legendGroup":')) return undefined;
+  return (JSON.parse(key) as { legendGroup: string }).legendGroup;
+}
+
+/**
  * Color for a series key. A chart assigns each key a palette slot the first
  * time it appears and keeps it, so colors follow series, not their order.
+ * Marks pass the series' `label` too, by which marks sharing a legend group
+ * share colors.
  */
-export type Palette = (seriesKey: string) => string;
+export type Palette = (seriesKey: string, label?: string) => string;
 
 /** The band axes' bands, in index order. */
 export interface Bands {
-  x?: BandList;
-  y?: BandList;
+  x?: BandList | undefined;
+  y?: BandList | undefined;
 }
 
 /** Settings marks need to label categories made from numbers and times. */
@@ -79,6 +97,11 @@ export interface Frame {
   /** Locale for numbers the mark formats as text; undefined uses the runtime's. */
   locale: string | undefined;
   hidden: ReadonlySet<string>;
+  /**
+   * Each legend group's visible series names, in the order of the chart's
+   * marks: marks of a group place their series side by side by these (dodge).
+   */
+  groups?: ReadonlyMap<string, readonly string[]> | undefined;
   /** The chart drawing this frame, for caches that count each chart's redraws. */
   owner: object;
   /** The owner's count of scenes drawn; the panels of one scene share it. */
@@ -173,6 +196,8 @@ export interface MarkIdentity {
   readonly facet?: "repeat" | undefined;
   /** In a chart with panels, the panel the mark draws in, or "*" for every one. */
   readonly panel?: string | undefined;
+  /** Series of marks in the same legend group share colors, legend entries, and visibility by name. */
+  readonly legendGroup?: string | undefined;
 }
 
 /**
@@ -213,6 +238,12 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * panel holds only some of the bands.
    */
   bands?(axis: "x" | "y", context: BandContext): BandList | undefined;
+  /**
+   * Marks that place whole-table bands without series: retain each panel's
+   * resolved lists for geometry. These marks contribute their declared bands
+   * to panel categories even without series rows.
+   */
+  resolveBands?(bands: Bands): void;
   /** Gap between bands, as a fraction of each band's step. */
   readonly bandPadding?: number;
   /**
@@ -267,7 +298,7 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * with `split`: each panel's series, one per series of `roster` (those
    * `series` returned, whose keys, labels, and colors they keep), from the
    * table rows in each panel (`rows[p]`, ascending). `xGroupOf[p]` is the
-   * group of panels sharing panel p's x scale.
+   * group of panels sharing panel p's x scale; `yGroupOf[p]` is its y group.
    */
   summarizePanels?(
     roster: readonly Series[],
@@ -276,6 +307,7 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
     hidden: ReadonlySet<string>,
     bands: Bands,
     context: BandContext,
+    yGroupOf: readonly number[],
   ): Series[][];
   /** The axis whose domain includes zero, for marks drawn from a zero baseline. */
   readonly zero?: "x" | "y" | undefined;
@@ -309,8 +341,26 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * when given (a facet panel's).
    */
   geometry(series: readonly Series[], frame: Frame, key: MarkKey, rows?: RowParts): Geometry[];
+  /**
+   * Pixel anchor for a row whose drawing uses only one data axis. Undefined
+   * means the row cannot be drawn; the other coordinate comes from the plot.
+   */
+  place?(series: Series, row: number, frame: Frame): readonly [number, number] | undefined;
   /** Nearest point to a pixel, for marks with a faster lookup than the chart's generic search. */
   pick?(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined;
+  /**
+   * How many pixels along x and y a row is drawn from where its values
+   * place it, for marks spreading rows across their bands (grouped bars,
+   * `dodge`, `jitter`, side-by-side boxes and violins, split violins'
+   * halves), as last drawn: inspections report points where they are.
+   */
+  displace?(series: Series, row: number, frame: Frame): readonly [number, number];
+  /**
+   * The most pixels `displace` moves a row of `series` along x, which the
+   * nearest-point search allows for before it stops at rows too far along
+   * x; Infinity has it read every row.
+   */
+  maxDisplacement?(series: Series, frame: Frame): number;
   /**
    * How far a row's glyph reaches from its place, in pixels, for marks
    * whose glyphs differ in size (points sized by a field); NaN when the row
@@ -337,7 +387,11 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * of the x axis and of the series' y axis.
    */
   pointText?(series: Series, row: number, format: AxisFormat): string;
-  /** The inspected point's pixels when its drawing is offset from its axis values. */
+  /**
+   * The inspected point's pixels for marks that draw a row away from its
+   * values altogether (a heatmap cell, at its center); marks that move rows
+   * from their values' place (dodge, jitter) say by how much (`displace`).
+   */
   pointAnchor?(series: Series, row: number, frame: Frame): readonly [number, number] | undefined;
   /** The color a row is drawn in, for marks coloring rows by a field rather than by series. */
   pointColor?(series: Series, row: number, theme: Theme): string;
@@ -349,10 +403,13 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    */
   span?(series: Series, row: number): readonly [number, number];
   /**
-   * Whether the mark draws a row, for marks reading more fields than their
-   * series holds (candlesticks); inspection skips rows it does not draw.
+   * Whether the mark draws a row on these scales, for marks reading more
+   * fields than their series holds (candlesticks, histogram bins' edges);
+   * inspection skips rows it does not draw.
    */
-  shows?(series: Series, row: number, y: PositionScale): boolean;
+  shows?(series: Series, row: number, y: PositionScale, x: PositionScale): boolean;
+  /** Series of drawable observations for tooltips and keyboard reading in this frame. */
+  readSeries?(series: readonly Series[], frame: Frame): Series[];
   /**
    * For marks the keyboard reads cell by cell (heatmaps): the position of
    * the cell `columns` to the right and `rows` up from the one at
@@ -590,7 +647,7 @@ export function buildSeries(
     return {
       key: id,
       label: source.label,
-      color: stroke ?? palette(id),
+      color: stroke ?? palette(id, source.label),
       x,
       y,
       y0: undefined,
