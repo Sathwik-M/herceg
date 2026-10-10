@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-10T06:11:11.622Z",
+ "date": "2026-10-10T06:13:37.877Z",
  "commit": {
-  "sha": "4c70097c",
+  "sha": "fce9d7d",
   "dirty": false
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
@@ -66,7 +66,7 @@
   {
    "entry": "herceg-area",
    "package": "herceg",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 298974,
    "minified": 133681,
    "gzip": 49936,
@@ -81,7 +81,7 @@
   {
    "entry": "herceg-bar",
    "package": "herceg",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 295240,
    "minified": 131291,
    "gzip": 49509,
@@ -96,7 +96,7 @@
   {
    "entry": "herceg-grid-pivot",
    "package": "herceg",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 302392,
    "minified": 133933,
    "gzip": 45488,
@@ -108,7 +108,7 @@
   {
    "entry": "herceg-grid-remote",
    "package": "herceg",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 180946,
    "minified": 89551,
    "gzip": 30973,
@@ -120,7 +120,7 @@
   {
    "entry": "herceg-grid",
    "package": "herceg",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 192936,
    "minified": 89861,
    "gzip": 31232,
@@ -132,7 +132,7 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 256327,
    "minified": 115922,
    "gzip": 43417,
@@ -147,7 +147,7 @@
   {
    "entry": "herceg-pivot",
    "package": "herceg",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 148362,
    "minified": 61081,
    "gzip": 20329,
@@ -159,7 +159,7 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 261290,
    "minified": 118605,
    "gzip": 44585,
@@ -174,7 +174,7 @@
   {
    "entry": "herceg-scatter",
    "package": "herceg",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 294054,
    "minified": 133768,
    "gzip": 50415,
@@ -189,7 +189,7 @@
   {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 263710,
    "minified": 120077,
    "gzip": 45157,
@@ -204,7 +204,7 @@
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (4c70097c)",
+   "version": "0.0.0 (fce9d7d)",
    "raw": 264028,
    "minified": 119668,
    "gzip": 44987,
