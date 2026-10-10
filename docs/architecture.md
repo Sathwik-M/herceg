@@ -31,7 +31,9 @@ One name per concept, used the same way in code and docs.
 | **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
 | **Row groups** | A row view's rows grouped by the values of some fields, level by level (`RowGroups`, made by `groupRows`): each group's key path (its value of each field down to its level), its parent and children, the positions of its rows, and per level a table with one row of aggregates per group. |
 | **Row pivot** | A row view's rows as a crosstab (`RowPivot`, made by `pivotRows`): a row per value of one field and a column per value of another and aggregate, over row groups by the two fields, with an index from each row and value to their combination's aggregates. A combination none of the rows holds is absent. |
-| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, or its row groups as header rows each followed by its groups below (or its rows) when expanded, or a row pivot's rows (`createPivotGrid`), drawn from a grid model (`GridModel`), which holds its columns, scroll position, expansion, focus, and selection without a DOM. |
+| **Grid** | A mounted grid in the browser (`createGrid`) showing a row view's rows, or its row groups as header rows each followed by its groups below (or its rows) when expanded, or a row pivot's rows (`createPivotGrid`), or a grid source's rows (`createRemoteGrid`), drawn from a grid model (`GridModel`, `RemoteGridModel`), which holds its columns, scroll position, expansion, focus, and selection without a DOM. |
+| **Grid query** | What a remote grid asks of a grid source, as portable JSON (`GridQuery`): a filter expression, sort keys, and optionally groups with aggregates; never layout or interaction. |
+| **Grid source** | Rows that live elsewhere (a server, a worker) behind `GridSource`: it answers a grid query in windows of typed columns, from a snapshot the query's first answer starts. |
 | **Grid column** | A column a grid shows, with its id, title, width, alignment, and format: a field (`GridColumn`), or a column a row pivot generates for a value and an aggregate (or a total), named by an id of those. Not a table's column (its storage). |
 
 ## Pipeline
@@ -577,7 +579,8 @@ other work on the machine).
 ## Grids
 
 A grid (`herceg/grid`) shows a row view's rows. Its state lives in a
-DOM-free model (`grid/model.ts`, also the entry point `herceg/grid/model`),
+DOM-free model (`grid/model.ts`, also the entry point `herceg/grid/model`;
+what it shares with the remote grid's model, below, is in `grid/base.ts`),
 in three parts kept apart: the query is the view's (filter and sort, which
 the model changes through `view.setQuery`, keeping the filter); the
 presentation is the column list (order, widths, pins, hidden columns,
@@ -696,9 +699,9 @@ there). Generated
 cells read the crosstab as it is when drawn. Sort keys name the crosstab's
 fields (those of columns gone are dropped with them) and order the rows (absent and missing values last either way,
 counts filled with zeros as zeros), leaving the view's order alone. The DOM
-grid writes a group row's cells again when the model's `groupsRevision`
-moves, which for a pivot is its groups' revision, so values that change
-under rows in view are written again. `createPivotGrid` gives the DOM grid
+grid writes a group row's cells again when the row's `version` moves, which
+for a pivot's row is its groups' revision, so values that change under rows
+in view are written again. `createPivotGrid` gives the DOM grid
 a header row of the pivot's values over their aggregates' headers while
 any shown column has one (`HeaderRows`): each value spans a run of
 adjacent shown columns under it held at the same edge, so values parted by
@@ -835,6 +838,133 @@ carries (so grids in shadow roots are styled); forced-colors mode uses
 system colors. `destroy()` unschedules the grid, puts back what a drag
 under way changed, closes a column's menu, and removes its listeners,
 observers, and elements.
+
+### Remote grids
+
+A remote grid (`herceg/grid/remote`) shows rows a grid source holds
+elsewhere. Its model (`grid/remote.ts`, `RemoteGridModel`) and the local one
+are subclasses of one base (`grid/base.ts`, `BaseGridModel`) that holds what
+does not depend on where rows are: the column list and its placement,
+viewport and scroll offsets with the row kept at the top, the focused cell
+and the range anchor (by ref), and listeners. Each model provides its rows
+through a few synchronous methods (catching up, a row's ref, finding a ref
+again, a row's text, and the selection and expansion commands); nothing
+asynchronous reaches the base or the DOM grid. A row's `ref` (a scope and an
+id) names it while it is shown, and the DOM grid keeps elements by it and
+writes a row's text again when its `version` changes, whichever model it
+draws. Loading and failure states reach the DOM grid through a small hook
+(`GridExtras`, also how a pivot's header row does) from
+`dom/grid-remote.ts`, so `herceg/grid` holds no remote code; the shared base,
+the hooks, and making listener-interrupted commands safe (a batched
+`moveFocus`, clicks and announcements that find their row again) cost it
+about 400 bytes gzip.
+
+The query (`grid/query.ts`) is plain JSON with a version, checked against
+the source's schema with unknown properties refused. It reuses `Expression`,
+the groups' aggregate operations, field kinds, and the sort order of
+`data/order.ts`, with ties going by the source's key so that pages of one
+snapshot fit together; a query's grouping has the same level-by-level
+semantics as `groupRows` (aggregates over each group's rows, never its
+groups' values) and the group sort of a local grid, with ties by a group's
+own value. It is kept apart from the chart spec's `GridSpec`, which lays out
+panels. Times are epoch milliseconds; queries have no bins, since a fixed
+step cannot be a local calendar day.
+
+The source protocol (`grid/source.ts`) is a request for `limit` rows (or a
+level's groups) from `offset` under a parent's key path (`[]` at the top),
+naming the fields wanted, the query's revision, the schema version, and the
+snapshot, null for the query's first request (each starting a snapshot of
+its own, released once when the grid stops reading it, even unread). Answers are windows of typed
+columns with the parent's total, or null until the last window; group
+windows add each group's row and child counts; a window past the end has no
+rows and the parent's total. The model checks every answer against its
+request (address, lengths, kinds, codes within the window's dictionary, a
+total on a short window, a total that never changes within a snapshot,
+group counts of at least one, keys that are strings or safe integers, no
+key or group twice) and keeps only the fields it asked for, and takes an
+answer only if its revision is current, the block is the one asked for, and
+its list is still shown; anything else is dropped (a snapshot a dropped
+first answer started is released), and requests no longer needed are
+aborted (abort is advice: a late answer is dropped anyway). Key paths cross JSON with
+infinities spelled out (`encodeGroupPath`), since a group's key may be one.
+
+The model holds the answer as a tree of sibling lists: the query's rows, or
+the first level's groups, and under each expanded group the list of its
+groups or rows. A list has its total (or how far it has been read and a
+block more, while the source has not said), the blocks loaded of it (128
+rows, aligned), and the lists of its expanded groups by their place, with
+each child's row index and prefix sums of the rows the children show. A row
+index finds its list and place by a binary search per level, and a list's
+place finds its row index by climbing; an unloaded run of groups is one
+range, with nothing per row or group kept. Expansion is a set of group ids
+(key paths, kept across queries grouped by the same fields): a group whose
+block arrives expanded gets its list, with the child count its window gave.
+Refs are a list and a place, so the focus, the row kept at the top, and a
+range's anchor follow rows through expansion and blocks loading above them,
+and resolve to a collapsed group's header.
+
+Requests are planned once whatever changed has settled (a microtask): the
+blocks in view first, then the focused row's, then a block ahead in the
+direction of scrolling (rows behind were just shown; below, after a jump),
+two at a time.
+Requests beyond two
+blocks from the view are aborted at once, so scrolling back and forth over
+a boundary reuses them. A jump (rows in view more than two blocks from those
+last wanted, the focus unmoved) waits 50 ms for the scrolling to settle,
+and asks at least every 150 ms while it goes on, so a dragged scrollbar
+does not ask for every block it passes; focus moves (the keyboard) never
+wait. The first request of a revision goes alone: the snapshot its answer
+names is asked for by the rest. The cache keeps the blocks the view wants
+(and those of the rows the DOM grid mounts around it) and 16 more (and
+8 MiB), dropping those farthest from the view first, least recently used
+among equals, failed blocks too. It never drops a block the grid has
+mounted, but groups count the records loaded, so a planning pass that drops
+any notifies once, at its end. Every notification is the last step of its
+command (`moveFocus` batches its steps), and the model calls into the
+source (`rows`, `locate`, `release`, and aborting a request's signal) only
+in a microtask after the command, so neither listeners nor the source's
+code ever find a command half done, and either may run any command. Windows that view a much larger buffer are
+copied when they arrive, so a source handing out views of its arrays cannot
+make the cache hold them.
+
+A new query (or `refresh`) is a new revision: its requests start a new
+snapshot, the old one is released, the scroll offset stays (the root list
+shows as many rows as the last until the first answer, or none when the
+grouping fields changed), and the focus goes to its column's header; with a
+source that locates records, it goes back to its record's new place once
+located (with the ancestors' places, attaching the lists of expanded ones,
+and only to places the lists have), unless the user moved it meanwhile; a
+locate under way is aborted by the next query. Selections
+live in a `RemoteSelectionStore` (`grid/remote-selection.ts`), never as
+positions: keys, or a condition with keys added and taken out, which a
+server can run as a filter (`selectionCondition`). Selecting all matching
+captures the query's filter; a group's header selects the rows matching the
+group's key path (`groupCondition`), and the model remembers that scope (with
+the filter and grouping fields it was made under, set before the store tells
+listeners, and following the selection only through the model's own
+toggles) to show the group selected. Otherwise a group's state is counted
+from the records loaded within it now (cached per selection and change of
+the blocks), so it follows the current snapshot and selections made
+elsewhere, and claims "all" only when every record is loaded and selected. Rows read the fields a selection's
+condition needs, so a condition over a field no column shows still shows;
+within a query the fields read only grow, so selections coming and going
+read no rows again. Shift ranges
+need every row between loaded and within one list, and are refused with a
+message the DOM grid announces otherwise.
+
+The DOM grid's remote hook marks placeholders `aria-busy` (and the grid
+while its query's first rows load), writes `aria-rowcount="-1"` while a
+list's total is unknown, shows a notice under the rows (the scroller made shorter, so it covers
+none) with a retry button when blocks fail (none for a query the source
+refuses, which trying again cannot change), gives the focus back to the grid
+after retrying, and announces each new failure and each refusal once. Rows
+an expired snapshot will not load show as failed, not loading. The reference
+source (`grid/memory.ts`, `herceg/grid/memory`) runs a query with the local
+grid's row views and groups, a snapshot being a view (and its groups) of the
+table, expired when the table changes; it copies windows out with
+dictionaries of their own labels. The conformance fixtures
+(`grid/conformance.ts`, `herceg/grid/conformance`) are worked out by hand
+from these semantics and checked against it.
 
 ## Level of detail
 

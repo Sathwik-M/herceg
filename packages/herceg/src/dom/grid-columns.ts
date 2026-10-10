@@ -6,18 +6,18 @@
 // says what it did through the grid's live region.
 
 import type { Schema } from "../data/table.ts";
+import type { BaseGridModel } from "../grid/base.ts";
 import {
   type GridColumn,
   type GridColumnLayout,
-  type GridModel,
   MIN_COLUMN_WIDTH,
   type PinSide,
-} from "../grid/model.ts";
+} from "../grid/columns.ts";
 import { ColumnMenu, type MenuGroup, type MenuItem } from "./grid-menu.ts";
 
 /** What the controls need of their grid. */
 export interface ColumnHost<S extends Schema> {
-  readonly model: GridModel<S>;
+  readonly model: BaseGridModel<S>;
   readonly root: HTMLElement;
   /** The grid's scroll container, where its pointer events arrive. */
   readonly scroller: HTMLElement;

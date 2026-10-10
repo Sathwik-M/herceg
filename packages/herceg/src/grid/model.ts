@@ -1,10 +1,10 @@
-// A grid's state without a DOM, imported as `herceg/grid/model`: the columns
-// it shows (their order, widths, pins, and which are hidden), the rows of a
-// row view (or the view's groups, level by level, each followed by its
+// A grid's state without a DOM, imported as `herceg/grid/model`: the rows
+// of a row view (or the view's groups, level by level, each followed by its
 // groups below or its rows when expanded, or a pivot's rows, from
-// grid/pivot.ts), where it is scrolled, which cell has the focus, and which
-// rows are selected. A renderer (dom/grid.ts) draws it and turns keys, clicks, and
-// drags into its commands; applications call the same commands.
+// grid/pivot.ts), which rows are selected, and what every grid model has
+// (grid/base.ts): its columns, where it is scrolled, and which cell has the
+// focus. A renderer (dom/grid.ts) draws it and turns keys, clicks, and drags
+// into its commands; applications call the same commands.
 // One model serves one grid: grids showing the same rows share the view, the
 // groups, and the selection store, each with a model of its own.
 
@@ -20,20 +20,23 @@ import {
   selectRows,
 } from "../data/selection.ts";
 import type { PositionField, Schema, Table } from "../data/table.ts";
-import type { TimeZone } from "../format/zone.ts";
+import {
+  BaseGridModel,
+  type Column,
+  cycled,
+  type GridDisplay,
+  type GridFocus,
+  type GridRef,
+  type GridSettings,
+  nextOrder,
+  type SelectionState,
+  type SelectMode,
+} from "./base.ts";
 import {
   type ColumnContent,
   describeColumns,
   type GridColumn,
-  type GridColumnLayout,
-  MIN_COLUMN_WIDTH,
-  MIN_SCROLLING_WIDTH,
-  type PinSide,
   type PlacedColumn,
-  pinnedWidth,
-  pinsHold,
-  placeColumns,
-  widthOf,
 } from "./columns.ts";
 import {
   countGroup,
@@ -51,6 +54,17 @@ import {
 } from "./grouped.ts";
 
 export {
+  BaseGridModel,
+  type FocusMove,
+  type GridFocus,
+  type GridRange,
+  type GridRef,
+  type GridSettings,
+  type SelectionState,
+  type SelectMode,
+  type ShownRow,
+} from "./base.ts";
+export {
   type GridColumn,
   type GridColumnLayout,
   MIN_COLUMN_WIDTH,
@@ -58,7 +72,7 @@ export {
   type PinSide,
 } from "./columns.ts";
 
-export interface GridModelOptions<S extends Schema = Schema> {
+export interface GridModelOptions<S extends Schema = Schema> extends GridSettings {
   /** The rows to show, in order. The application owns the view; the grid sorts through it. */
   data: RowView<S>;
   columns: readonly GridColumn<S>[];
@@ -72,34 +86,6 @@ export interface GridModelOptions<S extends Schema = Schema> {
   selection?: SelectionStore<S>;
   /** The store's channel for the selected rows; "grid-rows" by default. */
   channel?: string;
-  /** In CSS pixels; 28 by default. */
-  rowHeight?: number;
-  /** BCP 47 locale for numbers and times; the runtime's by default. */
-  locale?: string;
-  /** Zone times are shown in: "UTC", an IANA zone, or "local" (the default). */
-  timeZone?: TimeZone;
-  /** Text of missing values; empty by default. */
-  missing?: string;
-}
-
-/** A cell: its row's index in the view (-1 for the header row) and its column. */
-export interface GridFocus {
-  readonly rowIndex: number;
-  /** Index among the shown columns. */
-  readonly columnIndex: number;
-  /** The column's id. */
-  readonly column: string;
-}
-
-/**
- * Rows `[rowStart, rowEnd)` and shown columns `[columnStart, columnEnd)`
- * among those that scroll; columns held at the edges are always in view.
- */
-export interface GridRange {
-  readonly rowStart: number;
-  readonly rowEnd: number;
-  readonly columnStart: number;
-  readonly columnEnd: number;
 }
 
 /**
@@ -109,6 +95,10 @@ export interface GridRange {
 export type GridRow =
   | {
       readonly kind: "row";
+      /** Follows the row: its table's generation and identity. */
+      readonly ref: GridRef;
+      /** The table's `modifiedVersion`: what the row shows changes with it. */
+      readonly version: number;
       /** Its position in the table. */
       readonly position: number;
       /** `rowOffset + position`: the row's own while rows come and go, until the table resets. */
@@ -123,6 +113,10 @@ export type GridRow =
     }
   | {
       readonly kind: "group";
+      /** Follows the group: its groups and its id. */
+      readonly ref: GridRef;
+      /** The groups' revision: what the header shows changes with it. */
+      readonly version: number;
       /** The group: a row of its level's table, `groups.tableOf(groups.by[level - 1])`. */
       readonly group: number;
       /** Its key path: its value of each grouping field down to its level's. */
@@ -139,50 +133,13 @@ export type GridRow =
       readonly setSize: number;
     };
 
-/** How much of a row is selected: a group's rows can be partly. */
-export type SelectionState = "all" | "some" | "none";
-
-/** Where `moveFocus` goes: a cell over, a page over, a row's ends, or the grid's first or last cell. */
-export type FocusMove =
-  | "up"
-  | "down"
-  | "left"
-  | "right"
-  | "pageUp"
-  | "pageDown"
-  | "rowStart"
-  | "rowEnd"
-  | "first"
-  | "last";
-
-/**
- * How `select` changes the selection: to only the row (a click), the row
- * toggled (Ctrl or Cmd and click), the rows from the anchor to it (Shift
- * and click), or those added (both). A group's header stands for its rows.
- */
-export type SelectMode = "only" | "toggle" | "range" | "addRange";
-
-/**
- * A row followed by identity (`rowOffset + position` in its table's
- * generation), or a group by its key among the groups it came from.
- */
-type Ref =
-  | { readonly identity: number; readonly generation: number }
-  | { readonly id: string; readonly key: GroupKey; readonly groups: RowGroups };
-
-interface Focus {
-  /** The focused body row; null for the header row. */
-  row: Ref | null;
-  /** Where the row was, for when it leaves. */
-  rowIndex: number;
-  column: string;
-  columnIndex: number;
-}
+/** A table row by its table's generation and identity, or a group by its key among its groups. */
+type RowRef = { readonly scope: number; readonly id: number };
+type GroupRef = { readonly scope: RowGroups; readonly id: string; readonly key: GroupKey };
 
 /** What the grid shows, as of one state of its view, table, and groups. */
-interface Display {
+interface Display extends GridDisplay {
   readonly snapshot: RowSnapshot;
-  readonly length: number;
   readonly grouped: Projection | null;
 }
 
@@ -198,11 +155,6 @@ interface Entry {
   readonly header: number;
   readonly offset: number;
 }
-
-const ROW_HEIGHT = 28;
-
-/** A column as the model keeps it: with its id. */
-type Column<S extends Schema = Schema> = GridColumn<S> & { readonly id: string };
 
 /**
  * A pivot as a grid shows it (grid/pivot.ts, which keeps pivots out of
@@ -231,21 +183,11 @@ export interface GridPivot {
  * with its view, its groups, its table, and its selection store; listeners
  * are told synchronously when any of them, or the model's own state, changes.
  */
-export class GridModel<S extends Schema = Schema> {
+export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
   readonly data: RowView<S>;
   readonly selection: SelectionStore<S>;
   readonly channel: string;
-  readonly rowHeight: number;
   readonly #table: Table;
-  readonly #settings: { locale: string | undefined; timeZone: TimeZone; missing: string };
-  /** The columns, shown or hidden, in order: the one record of their layout. */
-  #columns: readonly Column<S>[] = [];
-  /** What each column shows, by id, made when the columns are set. */
-  #contents = new Map<string, ColumnContent>();
-  #layout: readonly PlacedColumn[] = [];
-  #width = 0;
-  /** How many shown columns are held at each edge, and how wide they are. */
-  #pins = { left: 0, right: 0, leftWidth: 0, rightWidth: 0 };
 
   #groups: RowGroups | null = null;
   readonly #pivot: GridPivot | null;
@@ -266,8 +208,7 @@ export class GridModel<S extends Schema = Schema> {
   } | null = null;
   #counts: SelectedCounts | null = null;
 
-  /** What the grid shows as of the view's revision, its table's version, and the groups' revision in `#seen`. */
-  #display: Display | undefined;
+  /** The view's revision, its table's version, and the groups' revision the display is of. */
   #seen = {
     revision: -1,
     version: -1,
@@ -278,27 +219,17 @@ export class GridModel<S extends Schema = Schema> {
     arrangement: -1,
   };
 
-  #viewWidth = 0;
-  #viewHeight = 0;
-  #top = 0;
-  #left = 0;
-  /** The row at the top and how far it is scrolled past, kept in place as rows come and go. */
-  #anchor: { ref: Ref; offset: number } | null = null;
-
-  #focus: Focus | null = null;
-  /** Where Shift ranges start. */
-  #selectionAnchor: Ref | null = null;
   /** The row set the model last put in the channel, with the store's revision then. */
   #published: { rows: RowSet<S>; revision: number } | null = null;
   #condition: { expression: Expression; version: number; test: (row: number) => boolean } | null =
     null;
   #count: { selection: unknown; version: number; count: number } | null = null;
 
-  readonly #listeners = new Set<() => void>();
   readonly #stop: () => void;
 
   /** `pivot`, from `createPivotGridModel`, shows a pivot's rows. */
   constructor(options: GridModelOptions<S>, pivot?: GridPivot) {
+    super(options);
     const { data, selection } = options;
     this.data = data;
     this.#table = data.source as unknown as Table;
@@ -306,14 +237,6 @@ export class GridModel<S extends Schema = Schema> {
       throw new Error("A grid's selection store must be of its view's table");
     this.selection = selection ?? selectionStore(data.source);
     this.channel = options.channel ?? "grid-rows";
-    this.rowHeight = options.rowHeight ?? ROW_HEIGHT;
-    if (!(Number.isFinite(this.rowHeight) && this.rowHeight > 0))
-      throw new RangeError(`A grid's rowHeight must be positive, not ${this.rowHeight}`);
-    this.#settings = {
-      locale: options.locale,
-      timeZone: options.timeZone ?? "local",
-      missing: options.missing ?? "",
-    };
     this.#pivot = pivot ?? null;
     this.#groups = pivot
       ? pivot.groups
@@ -337,28 +260,6 @@ export class GridModel<S extends Schema = Schema> {
   // Columns
 
   /**
-   * Every column, shown or hidden, in order, with its id: their layout as
-   * resizing, moving, pinning, and hiding left it, which `setColumns` takes
-   * back.
-   */
-  get columns(): readonly GridColumn<S>[] {
-    this.#generated();
-    return this.#columns;
-  }
-
-  /** The shown columns, placed side by side: pinned left, the others, pinned right. */
-  get columnLayout(): readonly GridColumnLayout[] {
-    this.#generated();
-    return this.#layout;
-  }
-
-  /** Width of the shown columns together, in CSS pixels. */
-  get width(): number {
-    this.#generated();
-    return this.#width;
-  }
-
-  /**
    * Replaces the columns: their order, widths, pins, formats, aggregates, and
    * which are hidden. A pivot grid's columns are generated: it takes their
    * layout, by id, kept for columns not generated now until they are.
@@ -366,93 +267,20 @@ export class GridModel<S extends Schema = Schema> {
   setColumns(columns: readonly GridColumn<S>[]): void {
     const pivot = this.#pivot;
     if (pivot) {
-      const generated = pivot.columns(this.#columns, columns);
+      const generated = pivot.columns(
+        this.columnList as readonly Column[],
+        columns as readonly GridColumn[],
+      );
       this.#pivotRevision = pivot.revision;
-      this.#contents = generated.contents;
-      this.#takeColumns(generated.columns as Column<S>[]);
+      this.takeColumns(generated.columns as Column<S>[], generated.contents);
       return;
     }
-    const contents = describeColumns(this.#table, columns as readonly GridColumn[], this.#settings);
+    const contents = describeColumns(this.#table, columns as readonly GridColumn[], this.settings);
     this.#checkGroups(this.#groups, columns);
-    this.#contents = contents;
-    this.#takeColumns(
+    this.takeColumns(
       columns.map((column) => ({ ...column, id: column.id ?? column.field })) as Column<S>[],
+      contents,
     );
-  }
-
-  /**
-   * Sets a column's width, in CSS pixels, no narrower than
-   * `MIN_COLUMN_WIDTH`. A pinned column held at its edge widens only as far
-   * as the pinned columns leave the others `MIN_SCROLLING_WIDTH`.
-   */
-  resizeColumn(id: string, width: number): void {
-    const column = this.#column(id);
-    if (!Number.isFinite(width)) throw new RangeError(`Column "${id}" cannot be ${width} wide`);
-    const next = Math.max(MIN_COLUMN_WIDTH, Math.min(width, this.#widest(column)));
-    if (next === widthOf(column)) return;
-    this.#replace(column, { ...column, width: next });
-  }
-
-  /**
-   * Moves a column before the column `before` in the columns' order, or last
-   * with null. Pinned columns show at their edge in that order, so a move
-   * among them, or among the others, is a move on the screen.
-   */
-  moveColumn(id: string, before: string | null): void {
-    const column = this.#column(id);
-    if (before !== null) this.#column(before);
-    if (before === id) return;
-    const rest = this.#columns.filter((other) => other !== column);
-    const at = before === null ? rest.length : rest.findIndex((other) => other.id === before);
-    if (this.#columns[at] === column) return;
-    rest.splice(at, 0, column);
-    this.#takeColumns(rest);
-  }
-
-  /**
-   * Pins a column to the grid's left or right edge, or unpins it with null,
-   * back to its place among the others. A column the grid has no room to
-   * hold at an edge is refused (see `canPin`); `setColumns` takes pins as
-   * given, to restore a layout, and pinned columns the grid becomes too
-   * narrow for scroll with the others until it widens.
-   */
-  pinColumn(id: string, side: PinSide | null): void {
-    if (side !== null && side !== "left" && side !== "right")
-      throw new TypeError(`Columns pin to "left" or "right", not "${side}"`);
-    const column = this.#column(id);
-    if ((column.pin ?? null) === side) return;
-    if (side !== null && !this.canPin(id))
-      throw new RangeError(
-        `Pinning "${id}" would leave the other columns less than ${MIN_SCROLLING_WIDTH} pixels`,
-      );
-    const { pin: _, ...rest } = column;
-    this.#replace(column, (side === null ? rest : { ...rest, pin: side }) as Column<S>);
-  }
-
-  /**
-   * Whether `pinColumn` can pin the column: whether, pinned, it would leave
-   * the other columns at least `MIN_SCROLLING_WIDTH` of the grid as wide as
-   * it is now. Always for a column pinned already (to move it to the other
-   * side), a hidden one, or before the grid is measured.
-   */
-  canPin(id: string): boolean {
-    const column = this.#column(id);
-    if (column.pin !== undefined || column.hidden) return true;
-    return pinsHold(pinnedWidth(this.#columns) + widthOf(column), this.#viewWidth);
-  }
-
-  /** Shows or hides a column. The focus on a column hidden goes to the nearest shown one. */
-  setColumnVisible(id: string, visible: boolean): void {
-    const column = this.#column(id);
-    if (!column.hidden === visible) return;
-    const { hidden: _, ...rest } = column;
-    this.#replace(column, (visible ? rest : { ...rest, hidden: true }) as Column<S>);
-  }
-
-  /** Index of the shown column `id`, or -1. */
-  columnIndex(id: string): number {
-    this.#generated();
-    return this.#layout.findIndex((column) => column.id === id);
   }
 
   // Groups
@@ -462,9 +290,8 @@ export class GridModel<S extends Schema = Schema> {
     return (this.#pivot ? null : this.#groups) as RowGroups<S> | null;
   }
 
-  /** Increments whenever the groups' (or the pivot's) aggregates, rows, or order may have changed: what group rows say. */
-  get groupsRevision(): number {
-    return this.#groups?.revision ?? -1;
+  get grouped(): boolean {
+    return this.groups !== null;
   }
 
   /**
@@ -475,8 +302,8 @@ export class GridModel<S extends Schema = Schema> {
   setGroups(groups: RowGroups<S> | null): void {
     if (this.#pivot) throw new Error("A pivot grid shows its pivot's rows");
     if (groups === this.#groups) return;
-    this.#checkGroups(groups, this.#columns);
-    if (this.#display) this.#current();
+    this.#checkGroups(groups, this.columnList);
+    this.current();
     this.#groups = groups as RowGroups | null;
     this.#toggled.clear();
     this.#expandedByDefault = false;
@@ -484,11 +311,11 @@ export class GridModel<S extends Schema = Schema> {
     // Nothing may keep the groups replaced, which follow their view while kept.
     this.#counts = null;
     this.#groupTexts = null;
-    if (this.#selectionAnchor && "id" in this.#selectionAnchor) this.#selectionAnchor = null;
+    if (this.rangeAnchor && "key" in this.rangeAnchor) this.rangeAnchor = null;
     this.#structure++;
     this.#arrangement++;
-    this.#current();
-    this.#notify();
+    this.current();
+    this.notify();
   }
 
   /** The order of the groups: keys over the groups' tables (grouping fields and aggregates). */
@@ -503,10 +330,10 @@ export class GridModel<S extends Schema = Schema> {
    * and a grouping field the groups of its own level.
    */
   setGroupSort(keys: readonly SortKey[]): void {
-    this.#current();
+    this.current();
     this.#sortGroups(keys);
-    this.#current();
-    this.#notify();
+    this.current();
+    this.notify();
   }
 
   /** Whether the group with this key path (of any level) shows its groups below, or its rows. */
@@ -545,33 +372,27 @@ export class GridModel<S extends Schema = Schema> {
   /** Where the header of the group with this key path shows, or -1 (a group above it is collapsed). */
   rowIndexOfGroup(key: GroupKey): number {
     const groups = this.#groups;
-    this.#current();
+    this.current();
     if (!groups) return -1;
-    return this.#find({ id: groupId(key), key, groups }, false);
+    return this.find({ scope: groups, id: groupId(key), key } as GroupRef, false);
   }
 
   // Rows
 
-  get rowCount(): number {
-    return this.#current().length;
-  }
-
-  /** Height of every row together, in CSS pixels. */
-  get contentHeight(): number {
-    return this.rowCount * this.rowHeight;
-  }
-
   /** What the row at `rowIndex` shows: a row of the table, or a group's header. */
   row(rowIndex: number): GridRow {
-    const display = this.#current();
+    const display = this.current() as Display;
     const entry = this.#entry(rowIndex);
-    const { snapshot, grouped } = display;
+    const ref = this.refAt(rowIndex);
+    const { grouped } = display;
     if (entry.position >= 0) {
       const { position, group } = entry;
       return {
         kind: "row",
+        ref,
+        version: this.#table.modifiedVersion,
         position,
-        identity: snapshot.rowOffset + position,
+        identity: ref.id as number,
         group,
         level: grouped ? grouped.groups.by.length + 1 : 1,
         setIndex: grouped ? entry.offset - 1 : rowIndex,
@@ -582,9 +403,11 @@ export class GridModel<S extends Schema = Schema> {
     const { group, depth, header } = entry;
     return {
       kind: "group",
+      ref,
+      version: groups.revision,
       group,
-      key: groups.keyOf(group, depth),
-      id: groups.idOf(group, depth),
+      key: (ref as GroupRef).key,
+      id: ref.id as string,
       rows: groups.size(group, depth),
       expanded: open[depth]![group] === 1,
       level: depth + 1,
@@ -605,20 +428,20 @@ export class GridModel<S extends Schema = Schema> {
    * are appended and dropped, until the table resets.
    */
   identityAt(rowIndex: number): number {
-    return this.rowAt(rowIndex) + this.#current().snapshot.rowOffset;
+    return this.rowAt(rowIndex) + (this.current() as Display).snapshot.rowOffset;
   }
 
   /** Where the row of this identity shows now, or -1 when the grid leaves it out (or its group is collapsed). */
   rowIndexOf(identity: number): number {
-    const { generation } = this.#current().snapshot;
-    return this.#find({ identity, generation }, false);
+    const { generation } = (this.current() as Display).snapshot;
+    return this.find({ scope: generation, id: identity }, false);
   }
 
   /** The text of a cell: row `rowIndex` of the view, shown column `columnIndex`. */
   textAt(rowIndex: number, columnIndex: number): string {
     // Catching up first: a pivot's columns follow its rows.
     const { group, depth, position } = this.#entry(rowIndex);
-    const column = this.#layout[columnIndex];
+    const column = this.columnLayout[columnIndex] as PlacedColumn | undefined;
     if (!column) throw new RangeError(`Column ${columnIndex} is not shown`);
     if (position >= 0) return column.content.text(this.#table, position);
     if (this.#pivot) return column.content.text(this.#pivot.rows, group);
@@ -630,7 +453,7 @@ export class GridModel<S extends Schema = Schema> {
   get sort(): readonly SortKey<PositionField<S>>[] {
     // A pivot grid's keys are of its crosstab's fields, as they are now.
     if (this.#pivot) {
-      this.#generated();
+      this.generated();
       return this.#groupSort as readonly SortKey<PositionField<S>>[];
     }
     return this.data.query.sort ?? [];
@@ -654,212 +477,21 @@ export class GridModel<S extends Schema = Schema> {
    * aggregate, or the level of the grouping field the column shows by key.
    */
   cycleSort(column: string, { additive = false }: { additive?: boolean } = {}): void {
-    const definition = this.#column(column);
+    const definition = this.column(column);
     const field = definition.field as PositionField<S>;
     const keys = this.sort;
-    const at = keys.findIndex((key) => key.field === field);
-    const current = at < 0 ? undefined : (keys[at]!.order ?? "ascending");
-    const order =
-      current === undefined ? "ascending" : current === "ascending" ? "descending" : undefined;
+    const order = nextOrder(keys, field);
     const groups = this.#groups;
     if (groups && !this.#pivot) {
       const by = groups.by as readonly string[];
       const key = definition.aggregate ?? (by.includes(field) ? field : undefined);
-      this.#current();
+      this.current();
       this.#sortGroups(cycled(this.#groupSort, key, order, additive));
     }
     this.setSort(cycled(keys, field, order, additive));
   }
 
-  // Viewport
-
-  /** Sets the size of the area rows show in (below the header), in CSS pixels. */
-  setViewport(width: number, height: number): void {
-    if (width === this.#viewWidth && height === this.#viewHeight) return;
-    const pinned = pinnedWidth(this.#columns);
-    const held = pinsHold(pinned, this.#viewWidth);
-    this.#viewWidth = Math.max(0, width);
-    this.#viewHeight = Math.max(0, height);
-    // Pinned columns are let go, or held again, as the grid narrows or widens.
-    if (pinsHold(pinned, this.#viewWidth) !== held) this.#placeColumns();
-    this.#current();
-    this.#scroll(this.#top, this.#left, true);
-    this.#notify();
-  }
-
-  get viewportWidth(): number {
-    return this.#viewWidth;
-  }
-
-  get viewportHeight(): number {
-    return this.#viewHeight;
-  }
-
-  /** How far the rows are scrolled, in CSS pixels; rows keep their place as the view changes. */
-  get top(): number {
-    this.#current();
-    return this.#top;
-  }
-
-  get left(): number {
-    return this.#left;
-  }
-
-  /** Scrolls to these offsets, kept within the rows and columns. */
-  scrollTo({ top, left }: { top?: number; left?: number }): void {
-    // Offsets left out are the current ones once rows have caught up (and been anchored).
-    this.#current();
-    this.#scroll(top ?? this.#top, left ?? this.#left);
-  }
-
-  /** Scrolls as little as needed to show a whole cell (or row, without a column). */
-  reveal(rowIndex: number, column?: string): void {
-    this.#current();
-    const [top, left] = this.#revealed(
-      rowIndex,
-      column === undefined ? -1 : this.columnIndex(column),
-    );
-    this.#scroll(top, left);
-  }
-
-  /** The rows and columns in view, with `overscan` more rows and columns on each side. */
-  visibleRange(overscan: { rows?: number; columns?: number } = {}): GridRange {
-    const { rows = 10, columns = 2 } = overscan;
-    const count = this.rowCount;
-    const height = this.rowHeight;
-    const top = this.#top;
-    const clamp = (value: number, max: number) => Math.max(0, Math.min(max, value));
-    const layout = this.#layout;
-    // Columns between those held at the edges scroll, behind them.
-    const pins = this.#pins;
-    const [start, end] = [pins.left, layout.length - pins.right];
-    // The first scrolling column whose `edge` is past `x`, by binary search.
-    const first = (x: number, edge: (column: GridColumnLayout) => number) => {
-      let [lo, hi] = [start, end];
-      while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (edge(layout[mid]!) <= x) lo = mid + 1;
-        else hi = mid;
-      }
-      return lo;
-    };
-    const left = this.#left + pins.leftWidth;
-    const right = this.#left + this.#viewWidth - pins.rightWidth;
-    const within = (index: number) => Math.max(start, Math.min(end, index));
-    const columnStart = within(first(left, ({ x, width }) => x + width) - columns);
-    return {
-      rowStart: clamp(Math.floor(top / height) - rows, count),
-      rowEnd: clamp(Math.ceil((top + this.#viewHeight) / height) + rows, count),
-      columnStart,
-      // Columns starting before the right edge show.
-      columnEnd: Math.max(columnStart, within(first(right - 1e-6, ({ x }) => x) + columns)),
-    };
-  }
-
-  // Focus
-
-  /**
-   * The focused cell, which keeps to its row as rows are sorted, appended,
-   * and dropped. When the row leaves, the focus goes to the row taking its
-   * place, or to the header row when none is left; when its group
-   * collapses, to the group's header; when its column is hidden, to the
-   * nearest shown column. At first it is the header's first cell; null
-   * while no column is shown.
-   */
-  get focus(): GridFocus | null {
-    this.#current();
-    const layout = this.#layout;
-    if (layout.length === 0) return null;
-    const focus = this.#focus;
-    if (!focus) return { rowIndex: -1, columnIndex: 0, column: layout[0]!.id };
-    return { rowIndex: focus.rowIndex, columnIndex: focus.columnIndex, column: focus.column };
-  }
-
-  /** Focuses a cell (row -1 for the header row), scrolling it into view unless `reveal` is false. */
-  focusCell(rowIndex: number, column: string, { reveal = true }: { reveal?: boolean } = {}): void {
-    const count = this.rowCount;
-    if (!(Number.isInteger(rowIndex) && rowIndex >= -1 && rowIndex < count))
-      throw new RangeError(`Row ${rowIndex} is not among the grid's ${count} rows`);
-    const columnIndex = this.columnIndex(column);
-    if (columnIndex < 0) throw new Error(`No shown grid column "${column}"`);
-    this.#focus = {
-      row: rowIndex < 0 ? null : this.#refAt(rowIndex),
-      rowIndex,
-      column,
-      columnIndex,
-    };
-    if (reveal) {
-      const [top, left] = this.#revealed(rowIndex, columnIndex);
-      this.#scroll(top, left, true);
-    }
-    this.#notify();
-  }
-
-  /**
-   * Moves the focus as the keyboard does and scrolls it into view. Moving
-   * between rows with `extend` (Shift) selects the rows from the anchor to
-   * the new focus. In grouped grids, on a row's first cell, right expands a
-   * collapsed group, left collapses an expanded one, and left from a
-   * collapsed group or a group's row goes to the group holding it.
-   */
-  moveFocus(move: FocusMove, { extend = false }: { extend?: boolean } = {}): void {
-    const focus = this.focus;
-    if (!focus) return;
-    if (focus.rowIndex >= 0 && focus.columnIndex === 0 && (move === "left" || move === "right")) {
-      const { grouped } = this.#current();
-      if (grouped && !this.#pivot) {
-        const { group, depth, position, header } = this.#entry(focus.rowIndex);
-        const expanded = position < 0 && grouped.open[depth]![group] === 1;
-        if (position < 0 && expanded === (move === "left")) {
-          this.setExpanded(grouped.groups.keyOf(group, depth), !expanded);
-          return;
-        }
-        // A collapsed group's parent, or a row's group, is shown above it.
-        const holder =
-          position >= 0
-            ? header
-            : depth > 0
-              ? grouped.rank[depth - 1]![grouped.groups.parentOf(group, depth)]!
-              : -1;
-        if (move === "left" && holder >= 0) {
-          this.focusCell(grouped.starts[holder]!, focus.column);
-          return;
-        }
-      }
-    }
-    const rows = this.rowCount;
-    const columns = this.#layout.length;
-    const page = Math.max(1, Math.floor(this.#viewHeight / this.rowHeight));
-    let { rowIndex: row, columnIndex: column } = focus;
-    if (move === "up") row = Math.max(-1, row - 1);
-    else if (move === "down") row = Math.min(rows - 1, row + 1);
-    else if (move === "left") column = Math.max(0, column - 1);
-    else if (move === "right") column = Math.min(columns - 1, column + 1);
-    else if (move === "pageUp") row = row < 0 ? -1 : Math.max(0, row - page);
-    else if (move === "pageDown") row = Math.min(rows - 1, row + page);
-    else if (move === "rowStart") column = 0;
-    else if (move === "rowEnd") column = columns - 1;
-    else if (move === "first") [row, column] = [-1, 0];
-    else [row, column] = [rows - 1, columns - 1];
-    // The first Shift move starts its range at the row it leaves.
-    const from =
-      extend && focus.rowIndex >= 0 && this.#anchorIndex() === null ? focus.rowIndex : -1;
-    if (from >= 0) this.#selectionAnchor = this.#refAt(from);
-    this.focusCell(row, this.#layout[column]!.id);
-    // The header row is always in view; going to the grid's first cell goes to the top of its rows too.
-    if (move === "first") this.#scroll(0, 0);
-    if (extend && row >= 0 && this.#anchorIndex() !== null) this.select(row, "range");
-  }
-
   // Selection
-
-  /**
-   * Whether the row at `rowIndex` is selected: in the channel's row set, or
-   * meeting its condition. A group's header is when all its rows are.
-   */
-  isSelected(rowIndex: number): boolean {
-    return this.selectionState(rowIndex) === "all";
-  }
 
   /** How much of a row is selected; a group's header is partly when some of its rows are. */
   selectionState(rowIndex: number): SelectionState {
@@ -867,6 +499,10 @@ export class GridModel<S extends Schema = Schema> {
     if (position >= 0) return this.#selected(position) ? "all" : "none";
     const selected = this.#groupCounts().counts[depth]![group]!;
     return selected === 0 ? "none" : selected >= this.#groups!.size(group, depth) ? "all" : "some";
+  }
+
+  get selectionRevision(): number {
+    return this.selection.revision;
   }
 
   /**
@@ -919,14 +555,14 @@ export class GridModel<S extends Schema = Schema> {
           countGroup(counts, groups!, depth, group, !removed);
         };
       }
-      this.#selectionAnchor = this.#refAt(rowIndex);
+      this.rangeAnchor = this.refAt(rowIndex);
       this.#publish(rows, adjust);
       return;
     }
-    let from = this.#anchorIndex();
+    let from = this.rangeAnchorIndex();
     if (from === null) {
       from = rowIndex;
-      this.#selectionAnchor = this.#refAt(rowIndex);
+      this.rangeAnchor = this.refAt(rowIndex);
     }
     const rows = mode === "range" ? new RowSet(this.data.source) : this.#writable();
     const [start, end] = from <= rowIndex ? [from, rowIndex + 1] : [rowIndex, from + 1];
@@ -936,7 +572,7 @@ export class GridModel<S extends Schema = Schema> {
 
   /** Selects every row the view shows, those scrolled away or in collapsed groups too, as they are now. */
   selectAll(): void {
-    const { snapshot } = this.#current();
+    const { snapshot } = this.current() as Display;
     if (this.#pivot?.stopped) return;
     const rows = new RowSet(this.data.source);
     addRows(rows, snapshot, 0, snapshot.length);
@@ -950,33 +586,146 @@ export class GridModel<S extends Schema = Schema> {
 
   /** Clears the channel and the range anchor; whether there was anything to clear. */
   clearSelection(): boolean {
-    const had = this.selection.get(this.channel) !== null || this.#selectionAnchor !== null;
-    this.#selectionAnchor = null;
+    const had = this.selection.get(this.channel) !== null || this.rangeAnchor !== null;
+    this.rangeAnchor = null;
     if (this.selection.get(this.channel) !== null) this.selection.set(this.channel, null);
     return had;
   }
 
-  // Subscriptions
-
-  /** Calls `listener` whenever what the grid shows may have changed; returns a function that stops it. */
-  subscribe(listener: () => void): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
-  }
-
   /** Stops following the view and the store. They, the groups, and the table stay the application's. */
-  dispose(): void {
+  override dispose(): void {
     this.#stop();
     followers.unregister(this);
-    this.#listeners.clear();
+    super.dispose();
     this.#condition = null;
     this.#count = null;
     this.#counts = null;
     this.#groupTexts = null;
   }
 
-  #notify() {
-    for (const listener of [...this.#listeners]) listener();
+  // For the shared model (base.ts)
+
+  /**
+   * Catches up with the view, its table, and the groups: the top row keeps
+   * its place when the table changed or groups were expanded or collapsed,
+   * unless the query, the groups, or their order changed too or the table
+   * was reset.
+   */
+  protected catchUp(previous: GridDisplay | undefined): Display {
+    const view = this.data;
+    const groups = this.#groups;
+    const pivot = this.#pivot;
+    if (pivot && pivot.revision !== this.#pivotRevision) this.#generate(pivot);
+    // The groups' revision catches them up; the table's version too, since a
+    // listener of the table that runs before the view's reads before the
+    // view has been told.
+    const revision = groups ? groups.revision : -1;
+    const seen = this.#seen;
+    if (
+      previous &&
+      view.revision === seen.revision &&
+      view.source.version === seen.version &&
+      revision === seen.groups &&
+      this.#arrangement === seen.arrangement
+    )
+      return previous as Display;
+    const snapshot = view.read();
+    const reset = snapshot.generation !== seen.generation;
+    const requery = view.queryRevision !== seen.query || this.#structure !== seen.structure;
+    const grouped = groups
+      ? project(
+          groups,
+          this.#groupSort,
+          (id) => this.#isOpen(id),
+          pivot ? [pivot.fields] : undefined,
+        )
+      : null;
+    this.#seen = {
+      revision: view.revision,
+      version: view.source.version,
+      query: view.queryRevision,
+      generation: snapshot.generation,
+      groups: revision,
+      structure: this.#structure,
+      arrangement: this.#arrangement,
+    };
+    return {
+      snapshot,
+      length: grouped ? grouped.starts[grouped.count]! : snapshot.length,
+      grouped,
+      keep: !reset && !requery,
+    };
+  }
+
+  /** What follows the row at `rowIndex`: its identity, or its group's key path. */
+  protected refAt(rowIndex: number): GridRef {
+    const { snapshot, grouped } = this.current() as Display;
+    const { group, depth, position } = this.#entry(rowIndex);
+    if (position >= 0) return { scope: snapshot.generation, id: snapshot.rowOffset + position };
+    const groups = grouped!.groups;
+    return {
+      scope: groups,
+      id: groups.idOf(group, depth),
+      key: groups.keyOf(group, depth),
+    } as GroupRef;
+  }
+
+  /**
+   * Where a row or group is now, or -1 when it left (or the table was reset
+   * since). A row or group hidden by a collapsed group above is at that
+   * group's header with `collapsed`, and nowhere without.
+   */
+  protected find(ref: GridRef, collapsed: boolean): number {
+    const { snapshot, grouped } = this.current() as Display;
+    if ("key" in ref) {
+      const { key, scope } = ref as GroupRef;
+      if (!grouped || scope !== grouped.groups) return -1;
+      const group = grouped.groups.indexOf(key);
+      if (group < 0) return -1;
+      const depth = key.length - 1;
+      const shown = shownAs(grouped, depth, group);
+      if (shown.depth < depth && !collapsed) return -1;
+      return grouped.starts[grouped.rank[shown.depth]![shown.group]!]!;
+    }
+    const { scope, id } = ref as RowRef;
+    if (scope !== snapshot.generation) return -1;
+    const position = id - snapshot.rowOffset;
+    if (!grouped) return this.data.indexOf(position);
+    const { groups, starts, rank, open } = grouped;
+    const group = groups.groupOf(position);
+    if (group < 0) return -1;
+    const last = groups.by.length - 1;
+    const shown = shownAs(grouped, last, group);
+    const header = starts[rank[shown.depth]![shown.group]!]!;
+    if (shown.depth < last || !open[last]![group]) return collapsed ? header : -1;
+    const index = groups.memberIndex(position);
+    return index < 0 ? -1 : header + 1 + index;
+  }
+
+  protected override moveInTree(focus: GridFocus, left: boolean): boolean {
+    const { grouped } = this.current() as Display;
+    if (!grouped || this.#pivot) return false;
+    const { group, depth, position, header } = this.#entry(focus.rowIndex);
+    const expanded = position < 0 && grouped.open[depth]![group] === 1;
+    if (position < 0 && expanded === left) {
+      this.setExpanded(grouped.groups.keyOf(group, depth), !expanded);
+      return true;
+    }
+    // A collapsed group's parent, or a row's group, is shown above it.
+    const holder =
+      position >= 0
+        ? header
+        : depth > 0
+          ? grouped.rank[depth - 1]![grouped.groups.parentOf(group, depth)]!
+          : -1;
+    if (!left || holder < 0) return false;
+    this.focusCell(grouped.starts[holder]!, focus.column);
+    return true;
+  }
+
+  /** A pivot's columns follow its values: they catch up with the rows. */
+  protected override generated() {
+    if (this.#pivot) this.current();
   }
 
   /** The view, its table, or the store changed. */
@@ -984,53 +733,7 @@ export class GridModel<S extends Schema = Schema> {
     // Compiled conditions hold the table's arrays as they were.
     this.#condition = null;
     this.#count = null;
-    this.#notify();
-  }
-
-  /** The column `id`, shown or hidden. */
-  #column(id: string): Column<S> {
-    this.#generated();
-    const column = this.#columns.find((other) => other.id === id);
-    if (!column) throw new Error(`No grid column "${id}"`);
-    return column;
-  }
-
-  #replace(column: Column<S>, next: Column<S>) {
-    this.#takeColumns(this.#columns.map((other) => (other === column ? next : other)));
-  }
-
-  /** Takes these as the columns, placed anew; what they show stays. */
-  #takeColumns(columns: readonly Column<S>[]) {
-    // The focus moves to the columns as they are now: catch up with the rows first.
-    if (this.#display) this.#current();
-    this.#columns = Object.freeze(columns.map((column) => Object.freeze(column) as Column<S>));
-    this.#placeColumns();
-    this.#left = this.#clampLeft(this.#left);
-    this.#resolveFocus();
-    this.#notify();
-  }
-
-  /** Places the shown columns, holding pinned ones at the edges if the viewport leaves room. */
-  #placeColumns() {
-    const layout = placeColumns(this.#columns, this.#contents, this.#viewWidth);
-    this.#layout = Object.freeze(layout);
-    const last = layout.at(-1);
-    this.#width = last ? last.x + last.width : 0;
-    const pins = { left: 0, right: 0, leftWidth: 0, rightWidth: 0 };
-    while (pins.left < layout.length && layout[pins.left]!.pinned === "left")
-      pins.leftWidth += layout[pins.left++]!.width;
-    while (pins.right < layout.length && layout.at(-1 - pins.right)!.pinned === "right")
-      pins.rightWidth += layout.at(-1 - pins.right++)!.width;
-    this.#pins = pins;
-  }
-
-  /** The widest a column can be: pinned columns held at the edges leave the others room. */
-  #widest(column: Column<S>): number {
-    const pinned = pinnedWidth(this.#columns);
-    const room = this.#viewWidth;
-    if (column.pin === undefined || column.hidden || room <= 0 || !pinsHold(pinned, room))
-      return Number.POSITIVE_INFINITY;
-    return room - MIN_SCROLLING_WIDTH - (pinned - widthOf(column));
+    this.notify();
   }
 
   /** Throws unless the groups are of the view and have the aggregates the columns show. */
@@ -1047,74 +750,8 @@ export class GridModel<S extends Schema = Schema> {
     return groups as unknown as RowGroups;
   }
 
-  /**
-   * What the grid shows, catching up with changes since the last read: the
-   * top row keeps its place when the table changed or groups were expanded
-   * or collapsed, unless the query, the groups, or their order changed too
-   * or the table was reset, and the focus finds its row again. Never
-   * notifies: readers inside listeners must not cause more notifications.
-   */
-  #current(): Display {
-    const view = this.data;
-    const groups = this.#groups;
-    const pivot = this.#pivot;
-    if (pivot && pivot.revision !== this.#pivotRevision) this.#generate(pivot);
-    // The groups' revision catches them up; the table's version too, since a
-    // listener of the table that runs before the view's reads before the
-    // view has been told.
-    const revision = groups ? groups.revision : -1;
-    const seen = this.#seen;
-    if (
-      this.#display &&
-      view.revision === seen.revision &&
-      view.source.version === seen.version &&
-      revision === seen.groups &&
-      this.#arrangement === seen.arrangement
-    )
-      return this.#display;
-    const snapshot = view.read();
-    const reset = snapshot.generation !== seen.generation;
-    const requery = view.queryRevision !== seen.query || this.#structure !== seen.structure;
-    const grouped = groups
-      ? project(
-          groups,
-          this.#groupSort,
-          (id) => this.#isOpen(id),
-          pivot ? [pivot.fields] : undefined,
-        )
-      : null;
-    this.#display = {
-      snapshot,
-      length: grouped ? grouped.starts[grouped.count]! : snapshot.length,
-      grouped,
-    };
-    this.#seen = {
-      revision: view.revision,
-      version: view.source.version,
-      query: view.queryRevision,
-      generation: snapshot.generation,
-      groups: revision,
-      structure: this.#structure,
-      arrangement: this.#arrangement,
-    };
-    const anchor = this.#anchor;
-    if (anchor && !reset && !requery) {
-      const index = this.#find(anchor.ref, true);
-      if (index >= 0) this.#top = index * this.rowHeight + anchor.offset;
-    }
-    this.#top = this.#clampTop(this.#top);
-    this.#resolveFocus();
-    this.#remember();
-    return this.#display;
-  }
-
   #isOpen(id: string): boolean {
     return !this.#pivot && this.#expandedByDefault !== this.#toggled.has(id);
-  }
-
-  /** A pivot's columns follow its values: they catch up with the rows. */
-  #generated() {
-    if (this.#pivot) this.#current();
   }
 
   /**
@@ -1123,22 +760,12 @@ export class GridModel<S extends Schema = Schema> {
    * view stays where it was, and sort keys of columns gone go too.
    */
   #generate(pivot: GridPivot) {
-    const left = this.#left;
-    const anchor = this.#layout.find(
-      ({ x, width, pinned }) => pinned === null && x + width > left + this.#pins.leftWidth,
-    );
-    const generated = pivot.columns(this.#columns, null);
+    const generated = pivot.columns(this.columnList as readonly Column[], null);
     this.#pivotRevision = pivot.revision;
-    this.#contents = generated.contents;
     // Rows sort by the columns there are; the others' keys go.
     const keys = this.#groupSort.filter(({ field }) => pivot.fields.has(field));
     if (keys.length < this.#groupSort.length) this.#groupSort = Object.freeze(keys);
-    this.#columns = Object.freeze(
-      generated.columns.map((column) => Object.freeze(column)),
-    ) as readonly Column<S>[];
-    this.#placeColumns();
-    const moved = anchor && this.#layout.find(({ id }) => id === anchor.id);
-    this.#left = this.#clampLeft(moved ? moved.x - anchor.x + left : left);
+    this.regenerate(generated.columns as Column<S>[], generated.contents);
   }
 
   /** Forgets the expansion of groups gone once they outnumber those left, so streams of keys do not pile up. */
@@ -1158,10 +785,10 @@ export class GridModel<S extends Schema = Schema> {
 
   /** Expansion changed: rows move, the focus leaves rows hidden, and listeners hear of it. */
   #rearrange() {
-    this.#current();
+    this.current();
     this.#arrangement++;
-    this.#current();
-    this.#notify();
+    this.current();
+    this.notify();
   }
 
   #sortGroups(keys: readonly SortKey[]) {
@@ -1175,7 +802,7 @@ export class GridModel<S extends Schema = Schema> {
 
   /** The row at `rowIndex`: its group and position, and the header it follows. */
   #entry(rowIndex: number): Entry {
-    const { snapshot, grouped, length } = this.#current();
+    const { snapshot, grouped, length } = this.current() as Display;
     if (!(Number.isInteger(rowIndex) && rowIndex >= 0 && rowIndex < length))
       throw new RangeError(`Row ${rowIndex} is not among the grid's ${length} rows`);
     if (!grouped) {
@@ -1189,119 +816,6 @@ export class GridModel<S extends Schema = Schema> {
     return { depth: grouped.depths[header]!, group, position, header, offset };
   }
 
-  #scroll(top: number, left: number, quiet = false) {
-    const [nextTop, nextLeft] = [this.#clampTop(top), this.#clampLeft(left)];
-    const moved = nextTop !== this.#top || nextLeft !== this.#left;
-    this.#top = nextTop;
-    this.#left = nextLeft;
-    this.#remember();
-    if (moved && !quiet) this.#notify();
-  }
-
-  #clampTop(top: number): number {
-    const max = this.#display!.length * this.rowHeight - this.#viewHeight;
-    return Math.max(0, Math.min(max, top));
-  }
-
-  #clampLeft(left: number): number {
-    return Math.max(0, Math.min(this.#width - this.#viewWidth, left));
-  }
-
-  /** The offsets showing a whole cell, scrolled as little as possible. */
-  #revealed(rowIndex: number, columnIndex: number): [number, number] {
-    let [top, left] = [this.#top, this.#left];
-    if (rowIndex >= 0) {
-      const y = rowIndex * this.rowHeight;
-      if (y < top) top = y;
-      else if (y + this.rowHeight > top + this.#viewHeight)
-        top = y + this.rowHeight - this.#viewHeight;
-    }
-    // Columns held at the edges are always in view; the others scroll between them.
-    const column = this.#layout[columnIndex];
-    if (column && column.pinned === null) {
-      const { leftWidth, rightWidth } = this.#pins;
-      if (column.x - leftWidth < left) left = column.x - leftWidth;
-      else if (column.x + column.width > left + this.#viewWidth - rightWidth)
-        left = column.x + column.width - this.#viewWidth + rightWidth;
-    }
-    return [top, left];
-  }
-
-  /** Remembers the row at the top, to keep it there. */
-  #remember() {
-    const { length } = this.#display!;
-    if (length === 0) {
-      this.#anchor = null;
-      return;
-    }
-    const index = Math.min(length - 1, Math.floor(this.#top / this.rowHeight));
-    this.#anchor = { ref: this.#refAt(index), offset: this.#top - index * this.rowHeight };
-  }
-
-  /** What follows the row at `rowIndex`: its identity, or its group's key path. */
-  #refAt(rowIndex: number): Ref {
-    const { snapshot, grouped } = this.#display!;
-    const { group, depth, position } = this.#entry(rowIndex);
-    if (position >= 0)
-      return { identity: snapshot.rowOffset + position, generation: snapshot.generation };
-    const groups = grouped!.groups;
-    return { id: groups.idOf(group, depth), key: groups.keyOf(group, depth), groups };
-  }
-
-  /**
-   * Where a row or group is now, or -1 when it left (or the table was reset
-   * since). A row or group hidden by a collapsed group above is at that
-   * group's header with `collapsed`, and nowhere without.
-   */
-  #find(ref: Ref, collapsed: boolean): number {
-    const { snapshot, grouped } = this.#display!;
-    if ("id" in ref) {
-      if (!grouped || ref.groups !== grouped.groups) return -1;
-      const group = grouped.groups.indexOf(ref.key);
-      if (group < 0) return -1;
-      const depth = ref.key.length - 1;
-      const shown = shownAs(grouped, depth, group);
-      if (shown.depth < depth && !collapsed) return -1;
-      return grouped.starts[grouped.rank[shown.depth]![shown.group]!]!;
-    }
-    if (ref.generation !== snapshot.generation) return -1;
-    const position = ref.identity - snapshot.rowOffset;
-    if (!grouped) return this.data.indexOf(position);
-    const { groups, starts, rank, open } = grouped;
-    const group = groups.groupOf(position);
-    if (group < 0) return -1;
-    const last = groups.by.length - 1;
-    const shown = shownAs(grouped, last, group);
-    const header = starts[rank[shown.depth]![shown.group]!]!;
-    if (shown.depth < last || !open[last]![group]) return collapsed ? header : -1;
-    const index = groups.memberIndex(position);
-    return index < 0 ? -1 : header + 1 + index;
-  }
-
-  #anchorIndex(): number | null {
-    const anchor = this.#selectionAnchor;
-    const index = anchor ? this.#find(anchor, true) : -1;
-    return index < 0 ? null : index;
-  }
-
-  #resolveFocus() {
-    const focus = this.#focus;
-    if (!focus || !this.#display) return;
-    const layout = this.#layout;
-    if (layout.length > 0) {
-      let index = layout.findIndex(({ id }) => id === focus.column);
-      if (index < 0) index = Math.min(focus.columnIndex, layout.length - 1);
-      focus.columnIndex = index;
-      focus.column = layout[index]!.id;
-    }
-    if (!focus.row) return;
-    const length = this.#display.length;
-    let index = this.#find(focus.row, true);
-    if (index < 0 && length > 0) index = Math.min(focus.rowIndex, length - 1);
-    focus.rowIndex = index;
-    focus.row = index < 0 ? null : this.#refAt(index);
-  }
-
   /** Whether the table's row at `position` is selected. */
   #selected(position: number): boolean {
     const selection = this.selection.get(this.channel);
@@ -1313,10 +827,10 @@ export class GridModel<S extends Schema = Schema> {
   /** What each column shows on a group's header row. */
   #textsOfGroups(): ((group: number, depth: number) => string)[] {
     const groups = this.#groups!;
-    const layout = this.#layout;
+    const layout = this.columnLayout as readonly PlacedColumn[];
     const cached = this.#groupTexts;
     if (cached?.layout === layout && cached.groups === groups) return cached.texts;
-    const texts = headerTexts(groups, layout, this.#settings, this.#table);
+    const texts = headerTexts(groups, layout, this.settings, this.#table);
     this.#groupTexts = { layout, groups, texts };
     return texts;
   }
@@ -1324,7 +838,7 @@ export class GridModel<S extends Schema = Schema> {
   /** Selected rows per group, counted once per change of the selection or of the groups' rows. */
   #groupCounts(): SelectedCounts {
     const groups = this.#groups!;
-    this.#current();
+    this.current();
     const selection = this.selection.get(this.channel) as DataSelection | null;
     const revision = this.selection.revision;
     const view = this.data as unknown as RowView;
@@ -1346,7 +860,7 @@ export class GridModel<S extends Schema = Schema> {
    * every row of its group, those of its groups below too.
    */
   #addRows(rows: RowSet<S>, start: number, end: number) {
-    const { snapshot, grouped } = this.#current();
+    const { snapshot, grouped } = this.current() as Display;
     if (!grouped) {
       addRows(rows, snapshot, start, end);
       return;
@@ -1443,24 +957,6 @@ export class GridModel<S extends Schema = Schema> {
 /** A grid model; see `GridModel`. */
 export function createGridModel<S extends Schema>(options: GridModelOptions<S>): GridModel<S> {
   return new GridModel(options);
-}
-
-/** Sort keys after a header click on `field`: going to `order`, or off without one. */
-function cycled<F extends string>(
-  keys: readonly SortKey<F>[],
-  field: F | undefined,
-  order: "ascending" | "descending" | undefined,
-  additive: boolean,
-): SortKey<F>[] {
-  if (!additive) return order && field !== undefined ? [{ field, order }] : [];
-  const next = [...keys];
-  if (field === undefined) return next;
-  const at = next.findIndex((key) => key.field === field);
-  if (at < 0) {
-    if (order) next.push({ field, order });
-  } else if (order) next[at] = { field, order };
-  else next.splice(at, 1);
-  return next;
 }
 
 /** Adds the rows at view indices `[start, end)`. */

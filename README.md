@@ -83,8 +83,13 @@ and reports interaction back), a Streamlit component, row views and selection st
 grids, row groups whose aggregates charts and grids share, and an
 analytical grid (`herceg/grid`: virtualized rows and columns over the same
 tables, sorting, row selection, nested groups with aggregates as a tree grid,
-columns resized, moved, pinned, and hidden by dragging, keys, or a column
-menu, keyboard and ARIA navigation, and a React component).
+bounded pivots, columns resized, moved, pinned, and hidden by dragging, keys,
+or a column menu, keyboard and ARIA navigation, and a React component), with
+a remote mode (`herceg/grid/remote`) over rows that live elsewhere: a
+portable grid query of filters, sorts, and groups that the source runs,
+windows of typed columns loaded as they come into view from one snapshot,
+focus and selection by key or condition, and conformance fixtures for
+servers.
 
 Next, in order:
 
@@ -95,8 +100,8 @@ Next, in order:
 3. More financial tools (drawing tools, range navigators
    in charts with panels); 3D meshes, parametric surfaces, and translucent
    and wireframed surfaces on the GPU.
-4. Grid: pivots, and a server-backed mode whose filters, sorts, and
-   aggregates run where the data lives.
+4. Grid: pivots over remote sources, bins in grid queries, a SQL
+   generator for them, remote grids from Python, and editing.
 5. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 

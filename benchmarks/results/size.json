@@ -1,9 +1,9 @@
 {
  "schema": 1,
- "date": "2026-10-09T23:11:19.372Z",
+ "date": "2026-10-10T06:05:28.816Z",
  "commit": {
-  "sha": "c28634b",
-  "dirty": false
+  "sha": "1be4640",
+  "dirty": true
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
  "environment": {
@@ -19,7 +19,7 @@
    "entry": "chartjs-auto",
    "package": "chart.js",
    "version": "4.5.1",
-   "raw": 555997,
+   "raw": 556729,
    "minified": 252729,
    "gzip": 81773,
    "brotli": 70974,
@@ -31,7 +31,7 @@
    "entry": "chartjs-line",
    "package": "chart.js",
    "version": "4.5.1",
-   "raw": 442394,
+   "raw": 443120,
    "minified": 201092,
    "gzip": 65269,
    "brotli": 57317,
@@ -43,7 +43,7 @@
    "entry": "echarts-full",
    "package": "echarts",
    "version": "6.1.0",
-   "raw": 2872169,
+   "raw": 2875661,
    "minified": 1134462,
    "gzip": 379440,
    "brotli": 309575,
@@ -55,7 +55,7 @@
    "entry": "echarts-line",
    "package": "echarts",
    "version": "6.1.0",
-   "raw": 1261982,
+   "raw": 1263362,
    "minified": 502515,
    "gzip": 170848,
    "brotli": 146089,
@@ -66,53 +66,65 @@
   {
    "entry": "herceg-area",
    "package": "herceg",
-   "version": "0.0.0 (c28634b)",
-   "raw": 298949,
-   "minified": 133660,
-   "gzip": 49937,
-   "brotli": 44467,
+   "version": "0.0.0 (1be4640)",
+   "raw": 298974,
+   "minified": 133681,
+   "gzip": 49936,
+   "brotli": 44448,
    "chunks": 3,
    "css": null,
    "lazy": {
     "minified": 61352,
-    "gzip": 26114
+    "gzip": 26113
    }
   },
   {
    "entry": "herceg-bar",
    "package": "herceg",
-   "version": "0.0.0 (c28634b)",
-   "raw": 295215,
-   "minified": 131270,
-   "gzip": 49506,
-   "brotli": 44112,
+   "version": "0.0.0 (1be4640)",
+   "raw": 295240,
+   "minified": 131291,
+   "gzip": 49509,
+   "brotli": 44061,
    "chunks": 3,
    "css": null,
    "lazy": {
     "minified": 61352,
-    "gzip": 26114
+    "gzip": 26113
    }
   },
   {
    "entry": "herceg-grid-pivot",
    "package": "herceg",
-   "version": "0.0.0 (c28634b)",
-   "raw": 300246,
-   "minified": 132946,
-   "gzip": 45331,
-   "brotli": 40508,
+   "version": "0.0.0 (1be4640)",
+   "raw": 302392,
+   "minified": 133933,
+   "gzip": 45488,
+   "brotli": 40674,
    "chunks": 2,
+   "css": null,
+   "lazy": null
+  },
+  {
+   "entry": "herceg-grid-remote",
+   "package": "herceg",
+   "version": "0.0.0 (1be4640)",
+   "raw": 180946,
+   "minified": 89551,
+   "gzip": 30973,
+   "brotli": 27895,
+   "chunks": 1,
    "css": null,
    "lazy": null
   },
   {
    "entry": "herceg-grid",
    "package": "herceg",
-   "version": "0.0.0 (c28634b)",
-   "raw": 190795,
-   "minified": 88883,
-   "gzip": 30824,
-   "brotli": 27813,
+   "version": "0.0.0 (1be4640)",
+   "raw": 192936,
+   "minified": 89861,
+   "gzip": 31232,
+   "brotli": 28070,
    "chunks": 2,
    "css": null,
    "lazy": null
@@ -120,22 +132,22 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (c28634b)",
-   "raw": 256302,
-   "minified": 115901,
-   "gzip": 43414,
-   "brotli": 38905,
+   "version": "0.0.0 (1be4640)",
+   "raw": 256327,
+   "minified": 115922,
+   "gzip": 43417,
+   "brotli": 38940,
    "chunks": 3,
    "css": null,
    "lazy": {
     "minified": 61352,
-    "gzip": 26114
+    "gzip": 26113
    }
   },
   {
    "entry": "herceg-pivot",
    "package": "herceg",
-   "version": "0.0.0 (c28634b)",
+   "version": "0.0.0 (1be4640)",
    "raw": 148362,
    "minified": 61081,
    "gzip": 20329,
@@ -147,68 +159,68 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (c28634b)",
-   "raw": 261265,
-   "minified": 118584,
-   "gzip": 44582,
-   "brotli": 39973,
+   "version": "0.0.0 (1be4640)",
+   "raw": 261290,
+   "minified": 118605,
+   "gzip": 44585,
+   "brotli": 39904,
    "chunks": 3,
    "css": null,
    "lazy": {
     "minified": 61352,
-    "gzip": 26114
+    "gzip": 26113
    }
   },
   {
    "entry": "herceg-scatter",
    "package": "herceg",
-   "version": "0.0.0 (c28634b)",
-   "raw": 294029,
-   "minified": 133747,
-   "gzip": 50412,
-   "brotli": 44782,
+   "version": "0.0.0 (1be4640)",
+   "raw": 294054,
+   "minified": 133768,
+   "gzip": 50415,
+   "brotli": 44889,
    "chunks": 3,
    "css": null,
    "lazy": {
     "minified": 61352,
-    "gzip": 26114
+    "gzip": 26113
    }
   },
   {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (c28634b)",
-   "raw": 263685,
-   "minified": 120056,
-   "gzip": 45155,
-   "brotli": 40474,
+   "version": "0.0.0 (1be4640)",
+   "raw": 263710,
+   "minified": 120077,
+   "gzip": 45157,
+   "brotli": 40461,
    "chunks": 3,
    "css": null,
    "lazy": {
     "minified": 61352,
-    "gzip": 26114
+    "gzip": 26113
    }
   },
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (c28634b)",
-   "raw": 264003,
-   "minified": 119647,
-   "gzip": 44983,
-   "brotli": 40325,
+   "version": "0.0.0 (1be4640)",
+   "raw": 264028,
+   "minified": 119668,
+   "gzip": 44987,
+   "brotli": 40335,
    "chunks": 3,
    "css": null,
    "lazy": {
     "minified": 61352,
-    "gzip": 26114
+    "gzip": 26113
    }
   },
   {
    "entry": "plotly-basic",
    "package": "plotly.js-basic-dist-min",
    "version": "4.1.2",
-   "raw": 1800233,
+   "raw": 1800245,
    "minified": 1212674,
    "gzip": 400788,
    "brotli": 333024,
@@ -220,7 +232,7 @@
    "entry": "plotly-full",
    "package": "plotly.js-dist-min",
    "version": "4.1.2",
-   "raw": 7063586,
+   "raw": 7063598,
    "minified": 4812436,
    "gzip": 1467113,
    "brotli": 1110545,
@@ -232,7 +244,7 @@
    "entry": "tanstack-line",
    "package": "@tanstack/charts",
    "version": "1.0.0",
-   "raw": 294699,
+   "raw": 295805,
    "minified": 128551,
    "gzip": 45458,
    "brotli": 40317,
@@ -244,7 +256,7 @@
    "entry": "uplot",
    "package": "uplot",
    "version": "1.6.32",
-   "raw": 137728,
+   "raw": 137734,
    "minified": 52097,
    "gzip": 23072,
    "brotli": 20931,

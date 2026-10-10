@@ -7,7 +7,8 @@
     "react": "node --experimental-strip-types src/runner/run.ts --lib herceg,herceg-react --out results/react.json",
     "size": "node --experimental-strip-types src/size/size.ts",
     "report": "node --experimental-strip-types src/report.ts",
-    "grid": "node --experimental-strip-types src/grid/run.ts"
+    "grid": "node --experimental-strip-types src/grid/run.ts",
+    "grid-remote": "node --experimental-strip-types src/grid/remote/run.ts"
   },
   "devDependencies": {
     "@types/d3-interpolate": "3.0.4",

@@ -60,6 +60,9 @@ describe("grouped grids", () => {
     expect(shown(model)).toEqual(["web (4)", "api (3)", "db (2)", "(missing) (1)"]);
     expect(model.row(1)).toEqual({
       kind: "group",
+      // Followed by key among these groups; written again as they change.
+      ref: { scope: model.groups, id: '["api"]', key: ["api"] },
+      version: model.groups!.revision,
       group: 1,
       key: ["api"],
       id: '["api"]',
@@ -93,6 +96,9 @@ describe("grouped grids", () => {
     ]);
     expect(model.row(2)).toEqual({
       kind: "row",
+      // Followed by identity in the table's generation; written again as it changes.
+      ref: { scope: 0, id: 8 },
+      version: model.data.source.modifiedVersion,
       position: 8,
       identity: 8,
       group: 0,
@@ -414,6 +420,8 @@ describe("nested grouped grids", () => {
     ]);
     expect(model.row(0)).toEqual({
       kind: "group",
+      ref: { scope: model.groups, id: '["eu"]', key: ["eu"] },
+      version: model.groups!.revision,
       group: 0,
       key: ["eu"],
       id: '["eu"]',

@@ -24,6 +24,7 @@ const ENTRY_PACKAGES: Record<string, string> = {
   "herceg-grid": "herceg",
   "herceg-pivot": "herceg",
   "herceg-grid-pivot": "herceg",
+  "herceg-grid-remote": "herceg",
   "herceg-bar": "herceg",
   "herceg-area": "herceg",
   "herceg-scatter": "herceg",

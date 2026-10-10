@@ -206,7 +206,7 @@ class PivotLayout implements GridPivot {
         ...content,
         // A row whose key is missing is a row of its own.
         text: (table, row) =>
-          table.value(field, row) === null ? missing : content.text(table, row),
+          (table as Table).value(field, row) === null ? missing : content.text(table, row),
       },
     };
     this.fields = {

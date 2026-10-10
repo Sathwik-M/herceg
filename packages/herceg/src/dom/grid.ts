@@ -9,17 +9,17 @@
 // columns did. Headers resize and move their columns by dragging, or by keys
 // and a column menu.
 
-import type { GroupKey, RowGroups } from "../data/groups.ts";
 import type { Schema } from "../data/table.ts";
-import type { ColumnContent, PlacedColumn } from "../grid/columns.ts";
 import type {
-  GridColumnLayout,
+  BaseGridModel,
   GridFocus,
-  GridModel,
   GridRange,
-  GridRow,
+  GridRef,
   SelectionState,
-} from "../grid/model.ts";
+  ShownRow,
+} from "../grid/base.ts";
+import type { ColumnContent, GridColumnLayout, PlacedColumn } from "../grid/columns.ts";
+import type { GridModel } from "../grid/model.ts";
 import type { ThemeName, ThemeSpec } from "../spec/spec.ts";
 import { resolveTheme, themeReadsPage } from "../theme.ts";
 import { ColumnControls } from "./grid-columns.ts";
@@ -27,9 +27,9 @@ import { GRID_CSS, themeProperties } from "./grid-style.ts";
 import { readPage, watchPage } from "./page-theme.ts";
 import { observeVisibility, type Scheduled, schedule, unschedule } from "./scheduler.ts";
 
-export interface GridOptions<S extends Schema = Schema> {
+export interface GridOptions<S extends Schema = Schema, M extends BaseGridModel<S> = GridModel<S>> {
   /** What the grid shows; the application owns it, and destroying the grid leaves it be. */
-  model: GridModel<S>;
+  model: M;
   /** Names the grid for assistive technology. */
   ariaLabel: string;
   /** "light" by default. */
@@ -114,23 +114,37 @@ interface Cell {
   placed: GridColumnLayout | null;
 }
 
-/** A mounted body row, following the row whose identity it shows, or the group whose header it is. */
+/** A mounted body row, following the row (or group's header) whose ref it shows. */
 interface Row {
   readonly element: HTMLDivElement;
   cells: Cell[];
   index: number;
-  identity: number;
-  generation: number;
-  /** The group it is the header of, among which groups; null for a table row. */
-  group: { id: string; key: GroupKey; groups: RowGroups } | null;
+  ref: GridRef | null;
   /**
-   * The table's `modifiedVersion`, the groups' revision, and the columns its
-   * text was written for: a group's header writes its first cell otherwise.
+   * The row's version and the columns its text was written for: a group's
+   * header writes its first cell otherwise.
    */
-  written: { modified: number; groups: number; layout: readonly GridColumnLayout[] } | null;
+  written: { version: number; layout: readonly GridColumnLayout[] } | null;
   y: number;
   width: number;
   selected: SelectionState | null;
+}
+
+/**
+ * What grids of other kinds add to the DOM grid: a pivot's header rows
+ * (dom/grid-pivot.ts), a remote grid's loading and failed rows
+ * (dom/grid-remote.ts).
+ */
+export interface GridExtras {
+  readonly headers?: HeaderRows;
+  /** The keyboard instructions, in place of the plain grid's. */
+  instructions?(grouped: boolean): string;
+  /** The rows there are for assistive technology, null when unknown; the model's row count by default. */
+  rowCount?(): number | null;
+  /** Marks a mounted row as it is drawn. */
+  row?(element: HTMLElement, row: ShownRow): void;
+  /** Called after each frame drawn, with the grid's scroller (in its root) and its live region. */
+  drawn?(scroller: HTMLElement, say: (text: string) => void): void;
 }
 
 let nextId = 0;
@@ -140,8 +154,10 @@ let nextId = 0;
  * `createGrid`; it fills its container, which should have a height (else
  * the grid is 320 pixels tall).
  */
-export class Grid<S extends Schema = Schema> implements Scheduled {
-  readonly model: GridModel<S>;
+export class Grid<S extends Schema = Schema, M extends BaseGridModel<S> = GridModel<S>>
+  implements Scheduled
+{
+  readonly model: M;
   /** The element the grid adds to its container. */
   readonly root: HTMLDivElement;
   readonly #container: HTMLElement;
@@ -153,8 +169,8 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   /** What the headers do to their columns: drags, keys, and the column menu. */
   readonly #controls: ColumnControls<S>;
   readonly #cells = new WeakMap<Element, Cell>();
-  #options: GridOptions<S>;
-  readonly #headers: HeaderRows | undefined;
+  #options: GridOptions<S, M>;
+  readonly #extras: GridExtras;
   /** Header rows: the columns' own and those `#headers` draws. */
   #levels = 1;
   #headerHeight = HEADER_HEIGHT;
@@ -183,13 +199,13 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   readonly #stops: (() => void)[] = [];
   #unwatchPage: (() => void) | undefined;
 
-  /** `headers` draws header rows over the columns' own (`createPivotGrid` gives them). */
-  constructor(container: HTMLElement, options: GridOptions<S>, headers?: HeaderRows) {
+  /** `extras` are what pivot and remote grids add (`createPivotGrid` and `createRemoteGrid` give them). */
+  constructor(container: HTMLElement, options: GridOptions<S, M>, extras: GridExtras = {}) {
     const document = container.ownerDocument;
     this.#container = container;
     this.model = options.model;
     this.#options = options;
-    this.#headers = headers;
+    this.#extras = extras;
     this.root = element(document, "herceg-grid");
     const style = document.createElement("style");
     style.textContent = GRID_CSS;
@@ -275,7 +291,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   update(options: GridUpdate): void {
     const next: Record<string, unknown> = { ...this.#options, ...options };
     for (const [key, value] of Object.entries(options)) if (value === undefined) delete next[key];
-    this.#options = next as unknown as GridOptions<S>;
+    this.#options = next as unknown as GridOptions<S, M>;
     this.#applyOptions();
     if (this.#box) this.#measured(this.#box.width, this.#box.height);
     this.#invalidate();
@@ -370,7 +386,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       const count = model.rowCount;
       // The model's layout is of placed columns, which say what they show.
       const layout = model.columnLayout as readonly PlacedColumn[];
-      const levels = 1 + (this.#headers?.rows(layout) ?? 0);
+      const levels = 1 + (this.#extras.headers?.rows(layout) ?? 0);
       if (levels !== this.#levels) {
         this.#levels = levels;
         // Rows' indexes count the header rows: every mounted row writes its own again.
@@ -390,6 +406,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       this.#drawRows(shown, keep, shift, layout);
       this.#describe(count, layout.length);
       this.#placeFocus(focus, holding);
+      this.#extras.drawn?.(this.#scroller, (text) => this.#say(text));
     } finally {
       this.#rendering = false;
       this.#focusRequested = false;
@@ -404,9 +421,12 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   #describe(rows: number, columns: number) {
     const scroller = this.#scroller;
     const grid = columns > 0;
-    const grouped = this.model.groups !== null;
+    const grouped = this.model.grouped;
     setAttribute(scroller, "role", grid ? (grouped ? "treegrid" : "grid") : "group");
-    const instructions = grouped ? INSTRUCTIONS + GROUP_INSTRUCTIONS : INSTRUCTIONS;
+    const extras = this.#extras;
+    const instructions =
+      extras.instructions?.(grouped) ??
+      (grouped ? INSTRUCTIONS + GROUP_INSTRUCTIONS : INSTRUCTIONS);
     if (this.#description.textContent !== instructions)
       this.#description.textContent = instructions;
     // Rows and row groups belong in a grid. Their elements stay laid out, so
@@ -421,8 +441,9 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     }
     if (grid) setAttribute(this.#headerRow, "aria-rowindex", String(this.#levels));
     else this.#headerRow.removeAttribute("aria-rowindex");
+    const known = extras.rowCount ? extras.rowCount() : rows;
     for (const [name, value] of [
-      ["aria-rowcount", String(rows + this.#levels)],
+      ["aria-rowcount", String(known === null ? -1 : known + this.#levels)],
       ["aria-colcount", String(columns)],
       ["aria-multiselectable", "true"],
       ["aria-readonly", "true"],
@@ -490,7 +511,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     const columns = columnsOf(shown, keep?.rowIndex === -1 ? keep : null, layout);
     const cells = this.#mountCells(this.#headerRow, null, this.#headerCells, columns, layout);
     this.#headerCells = cells;
-    this.#headers?.draw(
+    this.#extras.headers?.draw(
       this.#headerRow.parentElement!,
       columns,
       cells,
@@ -539,36 +560,31 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       if (outside >= rowEnd) indices.push(outside);
     }
 
-    // Rows keep their elements by identity, and groups' headers by key, so a
-    // row that moves (a rolling window dropping rows above it, a sort, a
-    // group expanding above it) keeps its text.
-    const generation = model.data.source.generation;
-    const groups = model.groups as RowGroups | null;
+    // Rows keep their elements by ref (rows by identity, groups' headers by
+    // key), so a row that moves (a rolling window dropping rows above it, a
+    // sort, a group expanding above it) keeps its text.
     const previous = new Map<number | string, Row>();
-    for (const row of this.#rows) {
-      // Headers of other groups (the grid's groups replaced) may share ids.
-      if (row.group) {
-        if (row.group.groups === groups) previous.set(row.group.id, row);
-      } else if (row.generation === generation) previous.set(row.identity, row);
-    }
+    for (const row of this.#rows) if (row.ref) previous.set(row.ref.id, row);
     const entries = indices.map((index) => model.row(index));
-    const found = entries.map((entry) => {
-      const key = entry.kind === "group" ? entry.id : entry.identity;
-      const row = previous.get(key);
-      previous.delete(key);
+    const found = entries.map(({ ref }) => {
+      const row = previous.get(ref.id);
+      // Rows of another scope (from before a reset, or of groups replaced) may share ids.
+      if (row?.ref?.scope !== ref.scope) return undefined;
+      previous.delete(ref.id);
       return row;
     });
     // Rows no longer shown, those from before a reset among them.
     const kept = new Set(found);
     const free = this.#rows.filter((row) => !kept.has(row));
     const rows = found.map((row, k) => {
-      if (row) return row;
       const entry = entries[k]!;
+      // The same row may come with a new ref (its group collapsed and expanded again).
+      if (row) {
+        row.ref = entry.ref;
+        return row;
+      }
       const reused = free.pop() ?? this.#newRow();
-      reused.identity = entry.kind === "group" ? -1 : entry.identity;
-      reused.generation = entry.kind === "group" ? -1 : generation;
-      reused.group =
-        entry.kind === "group" ? { id: entry.id, key: entry.key, groups: groups! } : null;
+      reused.ref = entry.ref;
       reused.written = null;
       // Group headers and table rows mark selection differently.
       reused.selected = null;
@@ -582,9 +598,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     );
     this.#rows = rows;
 
-    const modified = model.data.source.modifiedVersion;
-    const revision = model.groupsRevision;
-    const grouped = groups !== null;
+    const grouped = model.grouped;
     const height = model.rowHeight;
     for (let k = 0; k < rows.length; k++) {
       const row = rows[k]!;
@@ -604,6 +618,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
         row.element.style.width = `${row.width}px`;
       }
       this.#placeInTree(row.element, entry, grouped);
+      this.#extras.row?.(row.element, entry);
       const selected = model.selectionState(index);
       if (row.selected !== selected) {
         row.selected = selected;
@@ -617,9 +632,8 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       // goes with the columns' places.
       const written = row.written;
       const stale =
-        written?.modified !== modified ||
-        (entry.kind === "group" && (written.groups !== revision || written.layout !== layout));
-      row.written = { modified, groups: revision, layout };
+        written?.version !== entry.version || (entry.kind !== "row" && written.layout !== layout);
+      row.written = { version: entry.version, layout };
       const columns = columnsOf(shown, keep?.rowIndex === index ? keep : null, layout);
       row.cells = this.#mountCells(row.element, row, row.cells, columns, layout);
       for (const cell of row.cells) {
@@ -640,14 +654,16 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
    * siblings, and expansion, and how far its first cell is indented (a
    * table row's as far as its group's header).
    */
-  #placeInTree(element: HTMLDivElement, entry: GridRow, grouped: boolean) {
+  #placeInTree(element: HTMLDivElement, entry: ShownRow, grouped: boolean) {
     if (!grouped) {
       for (const name of ["aria-level", "aria-posinset", "aria-setsize", "aria-expanded"])
         element.removeAttribute(name);
       element.style.removeProperty("--hg-indent");
       return;
     }
-    const indent = String(entry.level - (entry.kind === "group" ? 1 : 2));
+    const indent = String(
+      entry.kind === "placeholder" ? entry.indent : entry.level - (entry.kind === "group" ? 1 : 2),
+    );
     if (element.style.getPropertyValue("--hg-indent") !== indent)
       element.style.setProperty("--hg-indent", indent);
     setAttribute(element, "aria-level", String(entry.level));
@@ -701,9 +717,7 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       element,
       cells: [],
       index: -1,
-      identity: -1,
-      generation: -1,
-      group: null,
+      ref: null,
       written: null,
       y: Number.NaN,
       width: -1,
@@ -885,20 +899,20 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
       // Shift extends the selection with moves between rows.
       const across =
         target === "left" || target === "right" || target === "rowStart" || target === "rowEnd";
-      const before = model.selection.revision;
-      const group = this.#groupAt(focus.rowIndex);
+      const before = model.selectionRevision;
+      const expansion = this.#expansion(focus.rowIndex);
       model.moveFocus(target, { extend: event.shiftKey && !across });
-      if (model.selection.revision !== before) this.#announceSelection();
+      if (model.selectionRevision !== before) this.#announceSelection();
       // Left and Right expand and collapse groups on their first cell.
-      if (group && model.isExpanded(group.key) !== group.expanded)
-        this.#announceExpansion(focus.rowIndex);
+      expansion(true);
     } else if ((key === " " || key === "Enter") && focus.rowIndex < 0) {
       model.cycleSort(focus.column, { additive: event.shiftKey });
       this.#announceSort();
     } else if (key === "Enter" && this.#groupAt(focus.rowIndex)) {
       const { key: groupKey, expanded } = this.#groupAt(focus.rowIndex)!;
+      const expansion = this.#expansion(focus.rowIndex);
       model.setExpanded(groupKey, !expanded);
-      this.#announceExpansion(focus.rowIndex);
+      expansion(false);
     } else if (key === " ") {
       model.select(focus.rowIndex, "toggle");
       this.#announceSelection();
@@ -927,19 +941,24 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     // A press that moved selected text.
     if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > CLICK_SLOP) return;
     const clicked = event.target as Element;
-    const target = this.#cellOf(clicked.closest("[role=gridcell],[role=columnheader]"));
+    const cell = clicked.closest("[role=gridcell],[role=columnheader]");
+    let target = this.#cellOf(cell);
+    if (!target) return;
+    const model = this.model;
+    // Focus first: listeners of the sort or the selection may change the
+    // rows, so the cell is found again after (or the click goes nowhere).
+    model.focusCell(target.rowIndex, target.column);
+    target = this.#cellOf(cell);
     if (!target) return;
     const { rowIndex, column } = target;
-    const model = this.model;
-    // Focus first: listeners of the sort or the selection may change the rows.
-    model.focusCell(rowIndex, column);
     const group = this.#groupAt(rowIndex);
     if (rowIndex < 0) {
       model.cycleSort(column, { additive: event.shiftKey });
       this.#announceSort();
     } else if (group && clicked.closest(".hg-toggle")) {
+      const expansion = this.#expansion(rowIndex);
       model.setExpanded(group.key, !group.expanded);
-      this.#announceExpansion(rowIndex);
+      expansion(false);
     } else if (clicked.closest(".hg-check")) {
       model.select(rowIndex, "toggle");
       this.#announceSelection();
@@ -986,26 +1005,31 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
     if (!cell || !column || column.field !== cell.placed?.field) return null;
     const { row } = cell;
     if (!row) return { rowIndex: -1, column: cell.id };
-    let rowIndex: number;
-    if (row.group) {
-      if (row.group.groups !== (this.model.groups as RowGroups | null)) return null;
-      rowIndex = this.model.rowIndexOfGroup(row.group.key);
-    } else if (row.generation !== this.model.data.source.generation) return null;
-    else rowIndex = this.model.rowIndexOf(row.identity);
+    const rowIndex = row.ref ? this.model.indexOf(row.ref) : -1;
     return rowIndex < 0 ? null : { rowIndex, column: cell.id };
   }
 
   /** The group whose header is at `rowIndex`, as it is now; null for other rows. */
-  #groupAt(rowIndex: number): (GridRow & { kind: "group" }) | null {
-    if (rowIndex < 0 || !this.model.groups) return null;
+  #groupAt(rowIndex: number): (ShownRow & { kind: "group" }) | null {
+    if (rowIndex < 0 || !this.model.grouped) return null;
     const row = this.model.row(rowIndex);
     return row.kind === "group" ? row : null;
   }
 
-  #announceExpansion(rowIndex: number) {
+  /**
+   * What says, after a command, whether the group at `rowIndex` (named as it
+   * is now: listeners of the command may move it) expanded or collapsed;
+   * with `changed`, only if it did.
+   */
+  #expansion(rowIndex: number): (changed: boolean) => void {
     const group = this.#groupAt(rowIndex);
-    if (group)
-      this.#say(`${this.model.textAt(rowIndex, 0)} ${group.expanded ? "expanded" : "collapsed"}`);
+    if (!group) return () => {};
+    const name = this.model.textAt(rowIndex, 0);
+    return (changed) => {
+      const expanded = this.model.isExpanded(group.key);
+      if (!changed || expanded !== group.expanded)
+        this.#say(`${name} ${expanded ? "expanded" : "collapsed"}`);
+    };
   }
 
   #announceSort() {
@@ -1023,7 +1047,13 @@ export class Grid<S extends Schema = Schema> implements Scheduled {
   #announceSelection() {
     const count = this.model.selectedCount;
     this.#say(
-      count === 0 ? "No rows selected" : count === 1 ? "1 row selected" : `${count} rows selected`,
+      count === null
+        ? "Matching rows selected"
+        : count === 0
+          ? "No rows selected"
+          : count === 1
+            ? "1 row selected"
+            : `${count} rows selected`,
     );
   }
 

@@ -2153,9 +2153,163 @@ available: column groups (headers over several columns) other than a
 pivot's values, sizing columns to their content, moving columns by touch
 (the menu moves them), custom cell content, editing, and copying.
 
+### Remote grids
+
+`herceg/grid/remote` shows rows that live elsewhere: in a database behind an
+API, or in a table served from a worker. The page holds only the rows in
+view and a few around them, and the filter, sorts, and groups run where the
+data is. The grid draws, scrolls, focuses, and lays out columns as a local
+grid does, from the same model code.
+
+```ts
+import { createRemoteGrid, createRemoteGridModel } from "herceg/grid/remote";
+
+const model = createRemoteGridModel({
+  source, // where the rows are: see below
+  query: {
+    filter: ["==", ["field", "status"], "error"],
+    sort: [{ field: "time", order: "descending" }],
+  },
+  columns: [
+    { field: "time", format: { timeStyle: "medium" } },
+    { field: "service" },
+    { field: "latency", format: { maximumFractionDigits: 1 } },
+  ],
+});
+createRemoteGrid(element, { model, ariaLabel: "Failed requests" });
+```
+
+The query is plain JSON (`GridQuery`) that a server can run: a version (1),
+the source's name, a filter (a portable expression, as `col(...)` builds),
+sort keys, and optionally groups with aggregates. It holds nothing of the
+grid's layout (widths, order, pins) or of what the user does (expansion,
+focus, selection, the rows asked for), which stay in the model.
+`validateGridQuery(query, schema)` checks one against a source's fields
+and refuses unknown properties, so a server never ignores what it does not
+understand. Its meaning is the local grid's: rows sort with missing values
+last in both directions, labels by UTF-16 code units, and ties by the
+source's key; aggregates (`count`, `sum`, `mean`, `min`, `max`) read finite
+values; a filter that is missing (NaN) keeps no row. Times are epoch
+milliseconds whatever zone the grid shows them in; a query cannot bin them,
+so a local day is a field of the data (see the conformance fixtures).
+`model.setQuery(query)` shows another query, and clicking a header sorts
+through it, one request for the rows and groups together.
+
+A source (`GridSource`) has the fields of its rows (`schema`: their kinds,
+and the key field, unique and unchanging, if there is one) and answers
+`rows(request, signal)`: `limit` rows (or groups) from `offset` under a
+parent group's key path, as typed columns (numbers and times in
+`Float64Array`s, NaN missing; categories as codes into the window's own
+dictionary), with how many there are, or `null` until the last window. The
+first request of a query has `snapshot: null`; the answer names a snapshot
+(a new one for every such request) the later requests ask for, so rows do
+not shift between windows while data changes, and the grid calls `release`
+once for each snapshot it stops reading; a source that cannot keep one
+rejects with a `GridSourceError` coded `"snapshot-expired"`. Requests carry the query's revision, and the
+grid drops answers to revisions, windows, or groups it no longer shows, and
+aborts their requests through `signal`. A source that can also `locate` a
+record by key in a snapshot lets the focus follow its row to a new query.
+A source over HTTP:
+
+```ts
+import { type GridSource, GridSourceError, type WindowColumn } from "herceg/grid/remote";
+
+// The server sends columns as JSON arrays, null for missing values.
+type Values = readonly (number | string | null)[];
+const numbers = (values: Values) => Float64Array.from(values, (v) => (v === null ? Number.NaN : +v));
+function labels(values: Values): WindowColumn {
+  const dictionary = [...new Set(values.filter((v) => v !== null).map(String))];
+  return { codes: Int32Array.from(values, (v) => (v === null ? -1 : dictionary.indexOf(String(v)))), dictionary };
+}
+
+const source: GridSource = {
+  schema: {
+    source: "requests",
+    version: "3",
+    fields: { id: "number", time: "time", service: "category", latency: "number" },
+    key: "id",
+  },
+  async rows(request, signal) {
+    const response = await fetch("/api/rows", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+      signal,
+    });
+    const body = await response.json();
+    if (!response.ok) throw new GridSourceError(body.code ?? "unavailable", body.message);
+    const kinds = this.schema.fields as Record<string, string>;
+    const columns = Object.fromEntries(
+      Object.entries(body.columns as Record<string, Values>).map(([field, values]) => [
+        field,
+        kinds[field] === "category" ? labels(values) : numbers(values),
+      ]),
+    );
+    if (body.kind === "rows") return { ...body, columns };
+    return { ...body, columns, rowCounts: numbers(body.rowCounts), childCounts: numbers(body.childCounts) };
+  },
+};
+```
+
+(Binary formats such as Arrow avoid the JSON arrays.) `herceg/grid/memory` has a source over a
+Herceg table, `memorySource(table, { key: "id", latency: 20 })`, that answers
+as a server would (it runs queries with the local grid's row views and
+groups): for tests, for trying a remote grid, and for serving a table from a
+worker. `herceg/grid/conformance` holds fixtures a server must answer alike
+(missing values and NaN, string order, times and zones, group and leaf
+sorts, pagination within a snapshot) as JSON, and `checkGridSource(driver)`
+runs them against a server where a test installs the fixtures' rows.
+
+Rows not loaded yet are placeholders ("Loading…", marked `aria-busy`, and
+the grid itself while its query's first rows load); those that failed say
+so, the live region announces the failure, and a notice under the rows
+offers to try again (`model.retry()`; after an expired snapshot, it refreshes:
+`model.refresh()` reads the query again), or says the source refused the
+query when trying again cannot help. The model asks for the rows in
+view in blocks of 128 (`blockSize`), and a block ahead of them in the
+direction of scrolling, two
+requests at a time (`maxRequests`); it keeps 16 blocks (`cachedBlocks`, and
+at most `cacheBytes`, 8 MiB) besides those of the rows in view or mounted around them, dropping those
+farthest from the view, and aborts requests more than two blocks away. A
+scrollbar dragged far waits 50 ms for the scrolling to settle before asking
+(`settle`), and asks at least every 150 ms while it goes on. Until the source
+says how many rows there are, the grid shows as many as it has read and a
+block more, and grows as it scrolls. `model.status` says what is loading,
+what failed, and how many blocks and bytes it holds.
+
+The focus keeps to its row within a query. A new query puts it on its
+column's header, and back on its record (by key) once the source locates it
+there. Selections are keys or conditions, never positions, and live in a
+`RemoteSelectionStore` (`remoteSelectionStore(schema)`, the `selection`
+option): clicking selects records by key, Shift ranges select the rows
+between when all are loaded (and refuse, saying so, otherwise), Ctrl+A
+selects every row matching the query's filter as a condition, toggling rows
+takes them out or adds them by key, and selecting a group's header selects
+the rows matching the group in place of the selection (`{ kind: "matching",
+where, include, except }`; toggling it again clears it).
+`selectionCondition(selection, key)` turns a selection into a filter a
+server can run, and `model.selectedCount` is null for a condition, which
+only the source can count. Selections stay through new queries.
+
+Grouped queries show groups as a local grid does, each group's rows or groups
+below asked for when it is expanded (`setExpanded(key, true)`, kept for
+groups not loaded yet, and across sorts while the grouping fields stay); a
+header reads its group's row count and aggregates from the source, a
+column's `aggregate` naming one of the query's (`as`). Up to 256
+groups expand at once (`maxExpanded`, counting those expanded before they
+load); there is no `expandAll`. A group's checkbox says what the grid
+knows: checked when the group (or one holding it, or every row) was
+selected as a group, mixed when a group within it was or when some of its
+records loaded are selected (or taken out of it), and checked too when all
+of its records are loaded and selected; records not loaded are not guessed
+at.
+Not yet available remotely: pivots, editing, and bins in queries.
+
 ## Migrating from earlier versions
 
-Herceg is not yet at 1.0. Grid columns are at least 32 pixels wide
+Herceg is not yet at 1.0. A grid model's `groupsRevision` is gone: each
+row says when what it shows changed (`model.row(i).version`) and names
+itself (`ref`, which `model.indexOf(ref)` finds again). Grid columns are at least 32 pixels wide
 (`MIN_COLUMN_WIDTH`): `setColumns` and `createGridModel` refuse narrower
 widths, which they took before.
 

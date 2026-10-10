@@ -12,6 +12,7 @@ npm run bench:size -- --out results/size.json # bundle sizes
 npm run bench -- --browser webkit --headless --out results/browser-webkit.json   # the suite in WebKit
 npm run bench:react                  # herceg vs herceg through @herceg/react -> results/react.json
 npm run bench:grid                   # grid suite (see "Grids") -> tmp/benchmarks/grid-<time>.json
+npm run bench:grid-remote            # remote grids (see "Remote grids") -> tmp/benchmarks/grid-remote-<time>.json
 npm run bench:report                 # regenerate the tables in docs/comparison.md
 ```
 
@@ -29,7 +30,7 @@ machine otherwise idle while it runs.
 | `src/adapters/` | One adapter per library. Each documents the configuration it uses. |
 | `src/runner/` | Node runner: builds pages, serves them, drives Chrome, records results. |
 | `src/size/` | Bundle size benchmark and its entry points. JavaScript and required CSS are reported separately. |
-| `src/grid/` | The grid suite: fixture, reference, scenarios, harness, runner, report, and one adapter per grid in `src/grid/adapters/`. |
+| `src/grid/` | The grid suite: fixture, reference, scenarios, harness, runner, report, and one adapter per grid in `src/grid/adapters/`; the remote grid benchmark in `src/grid/remote/`. |
 | `src/report.ts` | Writes Markdown tables into `docs/comparison.md`. |
 | `results/` | Committed results with environment details. |
 
@@ -377,3 +378,61 @@ Each adapter documents its configuration at the top of its file.
   keyboard and screen reader behavior, and grid bundle sizes. Committed
   results use one data seed (`--seed` changes it) and device pixel ratio 1
   (`--dpr 2`).
+
+## Remote grids
+
+`npm run bench:grid-remote` compares Herceg's remote grid
+(`herceg/grid/remote`) with AG Grid Community's infinite row model, the
+remote row model of the grids compared here that Community includes (its
+server-side row model is Enterprise; TanStack Table and Glide Data Grid
+leave remote data to the application). Both read one synthetic source in
+the page: ten million rows computed from their place when asked (an id,
+which each grid shows unformatted, a number, and a category), nothing
+stored, so the page's memory is the grid's own. Each answer waits a fixed
+latency on a timer, 0, 20, or 100 ms (`--latency`), the same timer at 0.
+The source counts the requests it starts, those aborted, and those
+answered.
+
+Both grids have blocks of 128 rows, two requests in flight, and 16 blocks
+cached (Herceg: 16 besides the blocks its view wants). Each waits 50 ms for
+scrolling to settle, and every scenario also runs with 0 (`--settle 50,0`):
+Herceg's `settle` delays only jumps (rows in view more than two blocks from
+those last wanted), while AG Grid's `blockLoadDebounceMillis` delays every
+block it loads, so its scroll traces at 50 ms show more rows not loaded than
+at 0. AG Grid's datasource cannot abort a request (its `getRows` has no
+signal), so it answers every one; Herceg's are aborted when not needed.
+Herceg prefetches a block ahead in the direction of scrolling; AG Grid asks
+for the blocks of the rows it renders (with `rowBuffer` 10). Each grid is
+moved through its own API for showing a row at the top (`model.scrollTo`,
+`api.ensureIndexVisible`), not through scroll events.
+
+- **Jumps** (frame rate limit off): five warmups, then 40 jumps to seeded
+  random rows over the whole range, each after a pause (garbage collected,
+  a frame, 50 ms), as between the grid suite's samples: right after a frame
+  that changed nothing, Chrome makes the next one only at the display's
+  refresh, which would add up to a refresh interval to a grid that shows its
+  rows in its second frame. A jump starts when the harness asks the
+  grid to put a row at the top (`model.scrollTo`, `api.ensureIndexVisible`)
+  and ends with the first frame, read just before it paints as in the grid
+  suite, in which that row is within a row of the viewport's top and every
+  row covering the viewport from there down is mounted, 28 px below the one
+  before, showing its id. It
+  records the requests the jump started.
+- **Traces** (vsync on, after the same pause): from a random row, the top row moves on every
+  frame at 100 rows a second (about 2,800 px/s) or 1,000 (about 28,000
+  px/s) for two seconds, three trials each in fresh pages, from the same
+  seeded rows for both grids: requests started
+  and aborted per second of scrolling, and the share of frames in which
+  some row in view was not loaded yet.
+- **Memory** (after forced garbage collection, V8 and Blink heaps and
+  ArrayBuffer backing stores): a grid mounted and destroyed once, then
+  mounted again and jumped to 50 places (what it retains over the first),
+  destroyed (what remains), and four more rounds, each leaving what it
+  leaves beyond the one before (single rounds differ by a few hundred KiB
+  either way, so the median is what a round leaks). Herceg also reports the
+  bytes its cached blocks hold.
+
+These are a client's costs: the synthetic source answers any offset at
+once, as an indexed or materialized result does. A database paging by
+offset can take much longer to reach row nine million, which no grid
+setting changes.
