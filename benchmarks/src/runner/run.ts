@@ -17,6 +17,7 @@ import {
   type Page,
   webkit,
 } from "playwright";
+import { createFirefoxAppData } from "../../../scripts/browser/firefox.ts";
 import type { Bench, Metric, PageResult } from "../page/harness.ts";
 import { SCENARIOS, type Scenario } from "../scenarios.ts";
 import { buildPage, ROOT, serve } from "./build.ts";
@@ -158,7 +159,11 @@ async function main() {
     let browser: Browser;
     if (browserName === "firefox") {
       const firefoxUserPrefs = realtime ? {} : FIREFOX_LATENCY_PREFS;
-      browser = await firefox.launch({ headless, firefoxUserPrefs });
+      browser = await firefox.launch({
+        headless,
+        firefoxUserPrefs,
+        env: createFirefoxAppData().env,
+      });
     } else if (browserName === "webkit") {
       browser = await webkit.launch({ headless });
     } else {

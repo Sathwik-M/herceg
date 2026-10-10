@@ -10,6 +10,7 @@ npm run bench -- --lib echarts,uplot --filter line- --sample-scale 0.5
 npm run bench -- --out results/browser.json   # refresh the committed results
 npm run bench:size -- --out results/size.json # bundle sizes
 npm run bench -- --browser webkit --headless --out results/browser-webkit.json   # the suite in WebKit
+npm run bench -- --browser firefox   # the suite in Firefox -> tmp/benchmarks/bench-<time>.json
 npm run bench:react                  # herceg vs herceg through @herceg/react -> results/react.json
 npm run bench:grid                   # grid suite (see "Grids") -> tmp/benchmarks/grid-<time>.json
 npm run bench:grid-remote            # remote grids (see "Remote grids") -> tmp/benchmarks/grid-remote-<time>.json
@@ -29,7 +30,7 @@ machine otherwise idle while it runs.
 | `src/scenarios.ts` | Scenario catalog: chart type, size, operation, sample counts. |
 | `src/page/` | In-page harness and the adapter contract. |
 | `src/adapters/` | One adapter per library. Each documents the configuration it uses. |
-| `src/runner/` | Node runner: builds pages, serves them, drives Chrome, records results. |
+| `src/runner/` | Node runner: builds pages, serves them, drives Chrome, Firefox, or WebKit, records results. |
 | `src/size/` | Bundle size benchmark and its entry points. JavaScript and required CSS are reported separately. |
 | `src/grid/` | The grid suite: fixture, reference, scenarios, harness, runner, report, and one adapter per grid in `src/grid/adapters/`; the remote grid benchmark in `src/grid/remote/`. |
 | `src/report.ts` | Writes Markdown tables into `docs/comparison.md`. |
@@ -62,8 +63,10 @@ px, device pixel ratio 2, cross-origin isolated pages (COOP/COEP) so
 
 `--browser webkit` runs the suite in Playwright's WebKit build (the engine of
 Safari, not Safari itself; `npx playwright install webkit`), and `--browser
-firefox` in its Firefox build with `layout.frame_rate` 0 so frames come as
-soon as work allows. WebKit has no such setting: frames follow the display,
+firefox` in its Firefox build (`npx playwright install firefox`) with
+`layout.frame_rate` 0 so frames come as soon as work allows; paced ingestion
+and orbit scenarios use a separate Firefox process with the default frame
+rate. WebKit has no such setting: frames follow the display,
 so every WebKit timing includes waiting for the next frame from wherever the
 operation started (pointer moves from when the event arrives), and
 differences under a frame are noise. WebKit runs headless: on macOS,
@@ -71,11 +74,27 @@ Playwright's headed WebKit windows that are not frontmost get throttled
 frames (hundreds of milliseconds apart, for every library). Results record the Playwright version,
 the browser build, and the idle frame cadence. Memory scenarios need Chrome's
 DevTools protocol and are skipped in other browsers, as are long-animation-
-frame counts in browsers that do not report them. Playwright's Firefox build
-does not start on macOS 27 ("Could not find profile folder") unless
-`MOZ_APP_DATA` names a folder it may write, as the browser tests' launch
-does (`scripts/browser/browsers.ts`) and the harness's does not yet, so no
-Firefox results are committed.
+frame counts in browsers that do not report them. Both the harness and browser
+tests use `scripts/browser/firefox.ts` to set `MOZ_APP_DATA` and
+`MOZ_LOCAL_APP_DATA` to a temporary writable folder for Firefox. This allows
+Playwright's Firefox build to start on macOS 27, which refuses to create
+`~/Library/Application Support/Firefox`. The folders are removed on process exit.
+
+Firefox has no `performance.memory` and cannot use the harness's Chrome CDP
+heap measurement. The JSON records this in `method.memory` and omits memory
+scenarios from `scenarios` and `results`. It also lacks long-animation-frame
+entries: ingestion results omit `metrics.longFrames`, rather than reporting
+zero. Frame intervals, dropped frames, append times, and achieved ingestion
+rates are still measured.
+
+For a Firefox smoke check, use `npm run bench -- --browser firefox
+--sample-scale 0`: one measured sample per scenario, no warmups. These trial
+timings are unsuitable for comparisons. To record results, leave the machine
+otherwise idle, use the catalog's full sample and warmup counts (omit
+`--sample-scale`), and run `npm run bench -- --browser firefox --out
+results/browser-firefox.json`. Check `complete`, every row's `supported` and
+`reason`, and the recorded environment before publishing. No Firefox timings
+are committed yet; the startup verification ran while the machine was busy.
 
 ### Timing
 

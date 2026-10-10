@@ -4,22 +4,15 @@
 // webkit`). `HERCEG_BROWSERS=chromium` (or a list, `firefox,webkit`) runs
 // only those.
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { playwright } from "@vitest/browser-playwright";
 import type { BrowserInstanceOption } from "vitest/node";
+import { createFirefoxAppData } from "./firefox.ts";
 
-// Firefox keeps its list of profiles in the user's application data even when
-// given a profile, and macOS 27 refuses to create its folder there
-// (`~/Library/Application Support/Firefox`: "Operation not permitted"), so
-// it would not start. A folder of each run's own also keeps runs apart and
-// out of the user's Firefox; it holds the DevTools server's socket too.
-const firefoxData = mkdtempSync(join(tmpdir(), "herceg-firefox-"));
-process.on("exit", () => rmSync(firefoxData, { recursive: true, force: true }));
+const firefoxData = createFirefoxAppData();
 
 /** Where Firefox's remote debugging protocol listens, for what Juggler does not offer. */
-export const firefoxDevTools = join(firefoxData, "devtools.sock");
+export const firefoxDevTools = join(firefoxData.directory, "devtools.sock");
 
 const engines: BrowserInstanceOption[] = [
   { browser: "chromium", provider: playwright({ launchOptions: { channel: "chrome" } }) },
@@ -30,7 +23,7 @@ const engines: BrowserInstanceOption[] = [
     fileParallelism: false,
     provider: playwright({
       launchOptions: {
-        env: { ...process.env, MOZ_APP_DATA: firefoxData, MOZ_LOCAL_APP_DATA: firefoxData },
+        env: firefoxData.env,
         args: ["-start-debugger-server", firefoxDevTools],
         firefoxUserPrefs: {
           "devtools.debugger.remote-enabled": true,
