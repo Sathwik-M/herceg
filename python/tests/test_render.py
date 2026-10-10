@@ -255,7 +255,7 @@ def test_unicode_pdf_segmentation_with_and_without_intl():
 def test_unicode_pdf_rejects_malformed_fonts_and_non_pdf_font_options(tmp_path):
     with pytest.raises(Exception, match="Malformed PDF font"):
         chart().to_pdf(fonts={"Fixture": b"bad"}, fallback=["Fixture"])
-    with pytest.raises(ValueError, match="PDF export options"):
+    with pytest.raises(ValueError, match="save fonts: an option of PDF export"):
         chart().save(str(tmp_path / "chart.svg"), fonts=unicode_fonts())
 
 
@@ -267,7 +267,7 @@ def test_pdf_counts_weighted_faces_before_reading_or_encoding(monkeypatch):
     monkeypatch.setattr(_render.base64, "b64encode", unexpected)
     monkeypatch.setattr(_render, "_engine", unexpected)
     fonts = {f"Font {i}": {"normal": "missing.ttf", "bold": "missing.ttf"} for i in range(33)}
-    with pytest.raises(ValueError, match="at most 64 font faces"):
+    with pytest.raises(ValueError, match="to_pdf fonts: a PDF embeds at most 64 font faces"):
         chart().to_pdf(fonts=fonts)
 
 
@@ -278,7 +278,9 @@ def test_pdf_checks_all_byte_lengths_before_reading_or_encoding(monkeypatch):
     monkeypatch.setattr(Path, "open", unexpected)
     monkeypatch.setattr(_render.base64, "b64encode", unexpected)
     monkeypatch.setattr(_render, "_engine", unexpected)
-    with pytest.raises(ValueError, match="32 MiB"):
+    with pytest.raises(
+        ValueError, match='to_pdf fonts: the "Large" normal face exceeds the 32 MiB limit'
+    ):
         chart().to_pdf(fonts={"Path": "missing.ttf", "Large": bytes(32 * 1024 * 1024 + 1)})
 
 
@@ -298,7 +300,9 @@ def test_pdf_bounds_path_reads_before_encoding(monkeypatch):
     monkeypatch.setattr(Path, "open", lambda self, mode: FontFile())
     monkeypatch.setattr(_render.base64, "b64encode", unexpected)
     monkeypatch.setattr(_render, "_engine", unexpected)
-    with pytest.raises(ValueError, match="32 MiB"):
+    with pytest.raises(
+        ValueError, match='to_pdf fonts: the "Large" normal face exceeds the 32 MiB limit'
+    ):
         chart().to_pdf(fonts={"Large": "large.ttf"})
     assert reads == [limit + 1]
 
@@ -336,7 +340,9 @@ def test_png_export(tmp_path):
     path = tmp_path / "chart.png"
     chart().save(str(path))
     assert path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-    with pytest.raises(ValueError, match="Unknown file type"):
+    with pytest.raises(
+        ValueError, match='save path: expected a ".html", ".svg", ".png", or ".pdf" file'
+    ):
         chart().save(str(tmp_path / "chart.gif"))
 
 

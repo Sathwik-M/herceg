@@ -124,7 +124,7 @@ export class RadarMark implements LayoutMark {
     const long = spec.category !== undefined || spec.value !== undefined;
     if (long === (spec.fields !== undefined) || (long && !(spec.category && spec.value)))
       throw new Error(
-        "radar needs category and value fields (a spoke per category) or a list of fields (a spoke per field), not both",
+        "radar: needs category and value (a spoke per category) or fields (a spoke per field), not both",
       );
     if (long) {
       requireField(table, spec.category!, CATEGORY, "radar category");
@@ -134,20 +134,22 @@ export class RadarMark implements LayoutMark {
       for (const field of fields) requireField(table, field, ["number"], "radar fields");
       const repeated = fields.find((field, i) => fields.indexOf(field) !== i);
       if (repeated !== undefined)
-        throw new Error(`radar fields must be distinct; "${repeated}" repeats`);
+        throw new Error(`radar fields: "${repeated}" repeats; list each field once`);
       checkSpokes(fields.length, "fields");
     }
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "radar series");
     const [lo, hi] = spec.domain ?? [0, 1];
     if (!(Number.isFinite(lo) && Number.isFinite(hi) && lo < hi))
-      throw new RangeError(`radar domain must be two finite numbers, ascending, not ${lo}, ${hi}`);
+      throw new RangeError(
+        `radar domain: expected two finite numbers, ascending; received [${lo}, ${hi}]`,
+      );
     const opacity = spec.fillOpacity ?? 0.15;
     if (!(opacity >= 0 && opacity <= 1))
-      throw new RangeError(`radar fillOpacity must be from 0 to 1, not ${opacity}`);
+      throw new RangeError(`radar fillOpacity: expected a number from 0 to 1; received ${opacity}`);
     this.table = table;
     this.measure = spec.label ?? spec.value ?? "Value";
     // The spokes of a long table are its data: with rows, too few or too many is a mistake now.
-    if (long && table.length > 0) checkSpokes(this.#values().spokes.length, spec.category!);
+    if (long && table.length > 0) checkSpokes(this.#values().spokes.length, "category");
   }
 
   /** The series and spoke categories the table's rows hold, found when it changes. */
@@ -597,10 +599,9 @@ export class RadarMark implements LayoutMark {
 }
 
 /** Refuses a radar of too few spokes to make a polygon, or too many to read. */
-function checkSpokes(spokes: number, what: string): void {
-  if (spokes < 3) throw new Error(`radar needs at least 3 spokes; ${what} has ${spokes}`);
-  if (spokes > MAX_SPOKES)
-    throw new Error(`radar draws at most ${MAX_SPOKES} spokes; ${what} has ${spokes}`);
+function checkSpokes(spokes: number, option: string): void {
+  if (spokes < 3 || spokes > MAX_SPOKES)
+    throw new Error(`radar ${option}: expected 3 to ${MAX_SPOKES} spokes; received ${spokes}`);
 }
 
 /** "1 spoke", "5 spokes". */

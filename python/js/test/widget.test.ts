@@ -267,7 +267,7 @@ describe("notebook widget", () => {
 
   it("draws a navigator, and adds and removes one with options", async () => {
     const model = new MockModel({
-      _chart: snapshot({ version: 4, navigator: true }),
+      _chart: snapshot({ navigator: true }),
       _listening: [],
     });
     const [host] = mount(model);
@@ -282,8 +282,8 @@ describe("notebook widget", () => {
     expect(sliders()).toHaveLength(3);
   });
 
-  it("changes options of charts whose specs need a later version", () => {
-    const resolved = snapshot({ version: 3, resolve: { x: "shared", y: "shared" } });
+  it("changes options of charts that resolve their scales", () => {
+    const resolved = snapshot({ resolve: { x: "shared", y: "shared" } });
     const model = new MockModel({ _chart: resolved, _listening: [] });
     const [host] = mount(model);
     model.receive({ type: "options", revision: 1, options: { title: "After" } });
@@ -509,7 +509,7 @@ describe("notebook widget", () => {
     const model = new MockModel({
       _chart: {
         ...base,
-        spec: { ...base.spec, version: 8, rowSelection: { channel: "focus" } },
+        spec: { ...base.spec, rowSelection: { channel: "focus" } },
         // Five rows dropped and two replaces before this snapshot.
         rows: { data: [5, 2] },
         rowSelections: [{ table: "data", channel: "focus", selection: null }],
@@ -580,7 +580,7 @@ describe("notebook widget", () => {
     const model = new MockModel({
       _chart: {
         ...base,
-        spec: { ...base.spec, version: 8, rowSelection: { channel: "focus" } },
+        spec: { ...base.spec, rowSelection: { channel: "focus" } },
         rows: { data: [0, 0] },
         rowSelections: [{ table: "data", channel: "focus", selection: null }],
       } satisfies Snapshot,

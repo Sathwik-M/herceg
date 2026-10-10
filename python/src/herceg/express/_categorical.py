@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
+import numbers
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
 import numpy as np
@@ -12,7 +13,7 @@ import numpy as np
 from .._chart import Chart, HelperOptions, Jitter
 from .._data import Column
 from ._common import (
-    HUE_GROUP,
+    SERIES_GROUP,
     Source,
     Statistics,
     by,
@@ -21,6 +22,7 @@ from ._common import (
     check_choice,
     complete,
     dropped_sentence,
+    facets,
     fresh,
     group,
     levels,
@@ -30,6 +32,7 @@ from ._common import (
     record,
     rows_table,
     seed_of,
+    shown,
     values,
     variables_of,
 )
@@ -40,6 +43,7 @@ else:
     from typing_extensions import Unpack
 
 Orient = Literal["v", "h", "x", "y"]
+Whiskers = Literal["tukey", "range"] | float
 
 
 def stripplot(
@@ -47,60 +51,49 @@ def stripplot(
     *,
     x: str,
     y: str,
-    hue: str | None = None,
+    series: str | None = None,
     order: Sequence[Any] | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
-    jitter: bool | float = True,
+    jitter: bool | float | Jitter = True,
     dodge: bool = False,
     seed: int | None = None,
-    size: float | None = None,
-    col: str | None = None,
-    row: str | None = None,
+    radius: float | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A point per value in each category, spread across the category by
-    ``jitter``: as Seaborn's, half the spread in categories' spacing
-    (``True`` is 0.1), and with ``dodge`` within each ``hue`` level's share.
-    Points keep their places as the chart redraws: each is moved by a hash
-    of its row and ``seed`` (drawn and recorded when not given), not by a
-    random draw. ``size`` is the points' radius in pixels.
+    ``jitter``, as ``Chart.point`` spreads them: the fraction (0 to 1) of
+    the category's band the points spread across, or with ``dodge`` of
+    their series' slot in it. ``True`` is 0.5, a number that width, and
+    ``False`` or 0 no spread; an ``hg.Jitter`` is taken as it is, seed and
+    all. Points keep their places as the chart redraws: each is moved by a
+    hash of its row and the seed (``seed``, drawn and recorded when not
+    given), not by a random draw. ``radius`` is the points' radius in pixels.
     """
-    layout = _Categories(data, x, y, hue, order, hue_order, orient, col, row, "stripplot")
-    spread = 0.1 if jitter is True else float(jitter or 0)
-    if not (spread >= 0 and math.isfinite(spread)):
-        raise ValueError(f"jitter must be True, False, or a number of at least 0, not {jitter!r}")
-    # Seaborn's half-width is in categories' spacing; bands are 0.8 of it.
-    width = min(1.0, 2 * spread / 0.8)
-    used_seed = seed_of(seed) if width > 0 else None
-    sentence = f"Points show each {layout.value} for each {layout.category}{by(hue)}"
-    if width > 0:
+    spread = _jitter(jitter, seed)
+    layout = _Categories(data, x, y, series, order, series_order, orient, options, "stripplot")
+    sentence = f"Points show each {layout.value} for each {layout.category}{by(series)}"
+    if spread is not None:
         sentence += (
-            f", jittered across {width:.0%} of each "
-            + ("level's share of the category" if dodge and hue else "category")
-            + f" by a hash of their rows (seed {used_seed})"
+            f", jittered across {spread.width:.0%} of each "
+            + ("series' slot in the category" if dodge and series else "category")
+            + f" by a hash of their rows (seed {spread.seed})"
         )
     sentence += "." + dropped_sentence(layout.dropped, layout.roles, layout.ordered)
     chart = make_chart(
-        layout.table,
-        options,
-        sentence=sentence,
-        col=col,
-        row=row,
-        palette=palette,
-        x_label=x,
-        y_label=y,
+        layout.table, options, sentence=sentence, palette=palette, x_label=x, y_label=y
     )
     chart.point(
         *layout.xy,
-        series=hue,
-        dodge=dodge and hue is not None,
-        jitter=Jitter(width=width, seed=used_seed or 0) if width > 0 else None,
-        r=size,
-        label=None if hue else layout.value,
-        legend_group=HUE_GROUP,
+        series=series,
+        dodge=dodge and series is not None,
+        jitter=spread,
+        radius=radius,
+        label=None if series else layout.value,
+        legend_group=SERIES_GROUP,
     )
+    used_seed = spread.seed if spread is not None else None
     return record(
         chart,
         Statistics(
@@ -109,75 +102,85 @@ def stripplot(
     )
 
 
+def _jitter(jitter: bool | float | Jitter, seed: int | None) -> Jitter | None:
+    """``stripplot``'s ``jitter`` as the point mark's, None for no spread: a
+    width takes ``seed`` (or one drawn now), a ``Jitter`` its own."""
+    if isinstance(jitter, Jitter):
+        if seed is not None:
+            raise ValueError(
+                "stripplot seed: the Jitter given as jitter has its own seed; "
+                "give the seed in one place"
+            )
+        width: Any = jitter.width
+    else:
+        width = 0.5 if jitter is True else 0 if jitter is False else jitter
+    if isinstance(width, bool) or not (
+        isinstance(width, numbers.Real) and math.isfinite(width) and 0 <= float(width) <= 1
+    ):
+        raise ValueError(
+            "stripplot jitter: expected True, False, a width from 0 to 1, or an hg.Jitter; "
+            f"received {shown(jitter)}"
+        )
+    if width == 0:
+        return None
+    if isinstance(jitter, Jitter):
+        return jitter
+    return Jitter(width=float(width), seed=seed_of(seed, "stripplot"))
+
+
 def boxplot(
     data: Any,
     *,
     x: str,
     y: str,
-    hue: str | None = None,
+    series: str | None = None,
     order: Sequence[Any] | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
-    whis: float = 1.5,
+    whiskers: Whiskers = "tukey",
     notch: bool = False,
-    showfliers: bool = True,
-    col: str | None = None,
-    row: str | None = None,
+    outliers: bool = True,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """Box plots of a number column per category (and ``hue`` level, side by
+    """Box plots of a number column per category (and ``series``, side by
     side): boxes from the lower to the upper quartile (NumPy's linear
-    quantiles) with the median, whiskers to the most extreme values within
-    ``whis`` interquartile ranges of the box (``math.inf`` for the whole
-    range), and the values beyond them as points unless
-    ``showfliers=False``. ``notch`` draws 1.57 IQR / sqrt(n) notches."""
-    layout = _Categories(data, x, y, hue, order, hue_order, orient, col, row, "boxplot")
-    if isinstance(whis, bool) or not (whis >= 0):
-        raise ValueError(f"whis must be a number of at least 0, not {whis!r}")
-    whiskers: Any = "range" if math.isinf(whis) else float(whis)
-    boxes, names = _box_statistics(layout, whis, precomputed=not showfliers)
-    within = "the whole range" if math.isinf(whis) else f"{whis:g} IQR of the box"
+    quantiles) with the median, and whiskers to the most extreme values
+    within 1.5 interquartile ranges of the box (``whiskers="tukey"``), within
+    another multiple of it (``whiskers=2``), or over the whole range
+    (``"range"``), as the box plot mark draws them. Values beyond the
+    whiskers are points unless ``outliers=False``. ``notch`` draws
+    1.57 IQR / sqrt(n) notches."""
+    reach = _whisker_reach(whiskers)
+    if not isinstance(outliers, bool):
+        raise TypeError(f"boxplot outliers: expected True or False; received {shown(outliers)}")
+    layout = _Categories(data, x, y, series, order, series_order, orient, options, "boxplot")
+    boxes, names = _box_statistics(layout, reach, precomputed=not outliers)
+    within = "the whole range" if math.isinf(reach) else f"{reach:g} IQR of the box"
     sentence = (
         f"Boxes show the quartiles and median of {layout.value} for each "
-        f"{layout.category}{by(hue)}; "
+        f"{layout.category}{by(series)}; "
         f"whiskers reach the most extreme values within {within}"
-        + (", and points beyond them" if showfliers and not math.isinf(whis) else "")
+        + (", and points beyond them" if outliers and not math.isinf(reach) else "")
         + (", with notches of 1.57 IQR / sqrt(n)" if notch else "")
         + "."
         + dropped_sentence(layout.dropped, layout.roles, layout.ordered)
     )
-    label = None if hue else layout.value
-    if showfliers:
+    label = None if series else layout.value
+    if outliers:
         chart = make_chart(
-            layout.table,
-            options,
-            sentence=sentence,
-            col=col,
-            row=row,
-            palette=palette,
-            x_label=x,
-            y_label=y,
+            layout.table, options, sentence=sentence, palette=palette, x_label=x, y_label=y
         )
         chart.boxplot(
             *layout.xy,
-            series=hue,
-            whiskers=whiskers,
+            series=series,
+            whiskers=None if whiskers == "tukey" else whiskers,
             notch=notch or None,
             label=label,
-            legend_group=HUE_GROUP,
+            legend_group=SERIES_GROUP,
         )
     else:
-        chart = make_chart(
-            boxes,
-            options,
-            sentence=sentence,
-            col=col,
-            row=row,
-            palette=palette,
-            x_label=x,
-            y_label=y,
-        )
+        chart = make_chart(boxes, options, sentence=sentence, palette=palette, x_label=x, y_label=y)
         chart.boxplot(
             None if layout.horizontal else layout.category,
             layout.category if layout.horizontal else None,
@@ -188,13 +191,31 @@ def boxplot(
             high=names["high"],
             count=names["n"],
             notch=notch or None,
-            series=hue,
+            series=series,
             label=label,
-            legend_group=HUE_GROUP,
+            legend_group=SERIES_GROUP,
         )
     return record(
         chart, Statistics("boxplot", sentence, {"boxes": readable(boxes)}, None, layout.dropped)
     )
+
+
+def _whisker_reach(whiskers: Whiskers) -> float:
+    """The IQR multiple whiskers reach: 1.5 for "tukey", infinity for "range"."""
+    if whiskers == "tukey":
+        return 1.5
+    if whiskers == "range":
+        return math.inf
+    if (
+        isinstance(whiskers, bool)
+        or not isinstance(whiskers, numbers.Real)
+        or not (math.isfinite(whiskers) and whiskers >= 0)
+    ):
+        raise ValueError(
+            'boxplot whiskers: expected "tukey", "range", or a finite nonnegative IQR multiple; '
+            f"received {shown(whiskers)}"
+        )
+    return float(whiskers)
 
 
 def violinplot(
@@ -202,73 +223,65 @@ def violinplot(
     *,
     x: str,
     y: str,
-    hue: str | None = None,
+    series: str | None = None,
     order: Sequence[Any] | None = None,
-    hue_order: Sequence[Any] | None = None,
+    series_order: Sequence[Any] | None = None,
     orient: Orient | None = None,
     bandwidth: float | None = None,
     split: bool = False,
-    inner: Literal["box", "quart", "quartile", "quartiles"] | None = "box",
-    col: str | None = None,
-    row: str | None = None,
+    inner: Literal["box", "quartiles", "none"] = "box",
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """Violins of a number column per category (and ``hue`` level, side by
+    """Violins of a number column per category (and ``series``, side by
     side): each the Gaussian kernel density of its values, mirrored, as
     herceg's violin mark draws them (each violin as wide at its densest;
     ``bandwidth`` in data units for all of them, or by default each its own
     by Silverman's rule of thumb, R's). ``inner`` draws a box of the
-    quartiles inside, dashed quartile lines and the median ("quart"), or
-    nothing (None); ``split=True`` draws a ``hue`` of two levels as the two
-    halves of one violin."""
+    quartiles inside (``"box"``), dashed quartile lines and the median
+    (``"quartiles"``), or nothing (``"none"``); ``split=True`` draws a
+    ``series`` of two levels as the two halves of one violin."""
     if not isinstance(split, bool):
-        raise TypeError(f"split must be True or False, not {split!r}")
-    if inner is not None and not (inner == "box" or str(inner).startswith("quart")):
-        raise ValueError(
-            "inner must be 'box', 'quart', or None (herceg draws no sticks or points "
-            f"inside violins), not {inner!r}"
-        )
-    layout = _Categories(data, x, y, hue, order, hue_order, orient, col, row, "violinplot")
+        raise TypeError(f"violinplot split: expected True or False; received {shown(split)}")
+    check_choice(inner, "violinplot inner", ("box", "quartiles", "none"))
+    layout = _Categories(data, x, y, series, order, series_order, orient, options, "violinplot")
     if split:
-        hues = layout.variables[hue].codes[layout.rows] if hue is not None else None
-        if hues is None or len(np.unique(hues)) > 2:
-            raise ValueError("violinplot split=True needs a hue of at most two levels")
-    drawn: Literal["box", "quartiles", "none"] = (
-        "box" if inner == "box" else "none" if inner is None else "quartiles"
-    )
+        if series is None:
+            raise ValueError(
+                "violinplot split: needs a series of at most two levels to draw as the halves; "
+                "give series"
+            )
+        count = len(np.unique(layout.variables[series].codes[layout.rows]))
+        if count > 2:
+            raise ValueError(
+                f"violinplot split: needs a series of at most two levels; {series!r} has "
+                f"{count}, so pass split=False or a series_order of two"
+            )
     rule = f"bandwidth {bandwidth:g}" if bandwidth is not None else "Silverman's rule of thumb"
     inside = {
         "box": ", with a box of the quartiles inside",
         "quartiles": ", with dashed quartile lines and the median inside",
         "none": "",
-    }[drawn]
+    }[inner]
     sentence = (
         f"Violins show the kernel density ({rule}) of {layout.value} for each "
-        f"{layout.category}{by(hue)}"
-        + (", each level of the hue on one side" if split else "")
+        f"{layout.category}{by(series)}"
+        + (f", each level of {series} on one side" if split else "")
         + inside
         + "."
         + dropped_sentence(layout.dropped, layout.roles, layout.ordered)
     )
     chart = make_chart(
-        layout.table,
-        options,
-        sentence=sentence,
-        col=col,
-        row=row,
-        palette=palette,
-        x_label=x,
-        y_label=y,
+        layout.table, options, sentence=sentence, palette=palette, x_label=x, y_label=y
     )
     chart.violin(
         *layout.xy,
-        series=hue,
+        series=series,
         bandwidth=bandwidth,
         split=split or None,
-        inner=None if drawn == "box" else drawn,
-        label=None if hue else layout.value,
-        legend_group=HUE_GROUP,
+        inner=None if inner == "box" else inner,
+        label=None if series else layout.value,
+        legend_group=SERIES_GROUP,
     )
     boxes, _ = _box_statistics(layout, 1.5)
     return record(
@@ -290,16 +303,16 @@ class _Categories:
         data: Any,
         x: str,
         y: str,
-        hue: str | None,
+        series: str | None,
         order: Sequence[Any] | None,
-        hue_order: Sequence[Any] | None,
+        series_order: Sequence[Any] | None,
         orient: Orient | None,
-        col: str | None,
-        row: str | None,
+        options: Mapping[str, Any],
         function: str,
     ) -> None:
-        check_choice(orient, "orient", ("v", "h", "x", "y", None))
+        check_choice(orient, f"{function} orient", ("v", "h", "x", "y", None))
         check_axes_differ(x, y, function)
+        facet_row, facet_column = facets(options, function)
         source = Source(data)
         xc, yc = source.column(x, f"{function} x"), source.column(y, f"{function} y")
         horizontal = orient in ("h", "y") or (
@@ -314,9 +327,14 @@ class _Categories:
                 f"{function} {axis}: column {self.value!r} holds {value_column.kind} values; "
                 "expected number"
             )
-        if hue is not None and hue == self.category:
-            raise ValueError(f"hue must differ from the category column {self.category!r}")
-        variables = variables_of(source, row, col, hue, hue_order, axes=[x, y])
+        if series is not None and series == self.category:
+            raise ValueError(
+                f"{function} series: column {series!r} is the category axis; "
+                "split by another column"
+            )
+        variables = variables_of(
+            source, function, facet_row, facet_column, series, series_order, axes=[x, y]
+        )
         categories = levels(source.column(self.category, function), order)
         rows = complete(
             len(value_column), value_column, levels_of=[*variables.values(), categories]
@@ -326,14 +344,13 @@ class _Categories:
         self.rows = rows
         self.variables = variables
         self.categories = categories
-        self.hue = hue
         table = rows_table(variables, rows)
         table[self.category] = category_column(categories.codes[rows], categories.labels)
         table[self.value] = number_column(self.values[rows])
         self.table = table
         self.xy = (self.value, self.category) if horizontal else (self.category, self.value)
         self.roles = [x, y, *variables]
-        self.ordered = order is not None or hue_order is not None
+        self.ordered = order is not None or series_order is not None
 
 
 #: What each box's statistics are called, before names the data takes.
@@ -341,11 +358,11 @@ _STATISTICS = ("low", "q1", "median", "q3", "high", "n", "outliers")
 
 
 def _box_statistics(
-    layout: _Categories, whis: float, precomputed: bool = False
+    layout: _Categories, multiple: float, precomputed: bool = False
 ) -> tuple[dict[str, Column], dict[str, str]]:
     """Each box's statistics, as the box plot mark computes them from raw
     values (data/quantile.ts `boxStats`): linear quartiles, and whiskers at
-    the most extreme values within ``whis`` IQR of the box (with other than
+    the most extreme values within ``multiple`` IQR of the box (with other than
     the default 1.5, or for boxes drawn from these statistics, never inside
     the quartiles). Also the statistics' column names, kept apart from the
     data's."""
@@ -357,13 +374,13 @@ def _box_statistics(
     for key, members in group(variables, layout.rows):
         sample = np.sort(layout.values[members])
         q1, median, q3 = (float(q) for q in np.percentile(sample, [25, 50, 75]))
-        if math.isinf(whis):
+        if math.isinf(multiple):
             first, last = 0, len(sample) - 1
         else:
-            reach = 0.0 if whis == 0 else whis * (q3 - q1)
+            reach = 0.0 if multiple == 0 else multiple * (q3 - q1)
             first = int(np.searchsorted(sample, q1 - reach, side="left"))
             last = int(np.searchsorted(sample, q3 + reach, side="right")) - 1
-        if (whis == 1.5 and not precomputed) or math.isinf(whis):
+        if (multiple == 1.5 and not precomputed) or math.isinf(multiple):
             low, high = float(sample[first]), float(sample[last])
         else:
             low = min(q1, float(sample[first])) if first < len(sample) else q1

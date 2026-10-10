@@ -21,6 +21,7 @@ import type { Frozen, Point3DSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { View } from "../three/camera.ts";
 import { ScreenGrid } from "../three/hit.ts";
+import { Appearance, categoryColors, categoryTones, colorKey } from "./appearance.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -57,12 +58,16 @@ export interface Point3DOptions<S extends Schema> {
   /** Category field: one colored set of points per value, with a legend. */
   series?: CategoryField<S>;
   /** Category field naming each point, for tooltips and keyboard reading. */
-  name?: CategoryField<S>;
+  labelField?: CategoryField<S>;
   /** Radius in pixels; default 3.5. */
-  r?: number;
-  /** A number field colored on a continuous scale, with a color legend. */
-  color?: NumberField<S>;
-  /** Colors for `color`, low to high; the theme's ramp by default. */
+  radius?: number;
+  /**
+   * A number field colored on a continuous scale, with a color legend; or a
+   * category field whose values take the theme's palette in order of
+   * appearance, with a key of them (the `series` field keeps its series' colors).
+   */
+  color?: NumberField<S> | CategoryField<S>;
+  /** Colors for a number `color`, low to high; the theme's ramp by default. */
   colors?: readonly string[];
   colorDomain?: readonly [number, number];
   colorMidpoint?: number;
@@ -75,6 +80,8 @@ export interface Point3DOptions<S extends Schema> {
 }
 
 const RADIUS = 3.5;
+/** Radius of the circles in the legend and the color key. */
+const LEGEND_RADIUS = 4.5;
 /** Pointer reach past a point's edge, in pixels, as on the CPU (three/faces.ts). */
 const REACH = 3;
 
@@ -118,6 +125,10 @@ export class Point3DMark implements Layer3D {
   #held: { version: number; groups: readonly Group[] } | undefined;
   /** Each row's color index for GPU painters, for the table version, shown series, and colors in `key`. */
   #cloudStyle: { key: string; style: Uint8Array } | undefined;
+  /** A number `color`, colored on a continuous scale. */
+  readonly #toneField: string | undefined;
+  /** A category `color` other than the series field, its values in order of appearance. */
+  readonly #colorField: Appearance | undefined;
 
   constructor(input: Point3DSpec, table: Table) {
     this.spec = frozen(input);
@@ -126,14 +137,31 @@ export class Point3DMark implements Layer3D {
     for (const axis of ["x", "y", "z"] as const)
       requireField(table, spec[axis], ["number", "time"], `point3d ${axis}`);
     if (spec.series !== undefined) requireField(table, spec.series, ["category"], "point3d series");
-    if (spec.name !== undefined) requireField(table, spec.name, ["category"], "point3d name");
-    if (spec.color !== undefined) requireField(table, spec.color, ["number"], "point3d color");
+    if (spec.labelField !== undefined)
+      requireField(table, spec.labelField, ["category"], "point3d labelField");
+    if (spec.color !== undefined) {
+      requireField(table, spec.color, ["number", "category"], "point3d color");
+      if (table.kind(spec.color) === "number") this.#toneField = spec.color;
+      else if (
+        spec.colors !== undefined ||
+        spec.colorDomain !== undefined ||
+        spec.colorMidpoint !== undefined
+      )
+        throw new Error(
+          `point3d colors: "${spec.color}" is a category field, colored by the theme's palette; drop colors, colorDomain, and colorMidpoint`,
+        );
+      else if (spec.color !== spec.series) this.#colorField = new Appearance(spec.color);
+    }
     if (Array.isArray(spec.colors)) checkRamp(spec.colors, "point3d colors");
-    checkColorScale(spec.colorDomain, spec.colorMidpoint, "Point3d");
-    if (spec.r !== undefined && !(spec.r > 0 && Number.isFinite(spec.r)))
-      throw new RangeError(`point3d r must be a positive radius in pixels, not ${spec.r}`);
+    checkColorScale(spec.colorDomain, spec.colorMidpoint, "point3d");
+    if (spec.radius !== undefined && !(spec.radius > 0 && Number.isFinite(spec.radius)))
+      throw new RangeError(
+        `point3d radius: expected a positive number of pixels; received ${spec.radius}`,
+      );
     if (spec.fillOpacity !== undefined && !(spec.fillOpacity >= 0 && spec.fillOpacity <= 1))
-      throw new RangeError(`point3d fillOpacity must be from 0 to 1, not ${spec.fillOpacity}`);
+      throw new RangeError(
+        `point3d fillOpacity: expected a number from 0 to 1; received ${spec.fillOpacity}`,
+      );
     this.table = table;
     this.#fields = [spec.x, spec.y, spec.z];
     this.measure = spec.label ?? "Points";
@@ -159,8 +187,8 @@ export class Point3DMark implements Layer3D {
 
   #scale(theme: Theme): SequentialScale | undefined {
     const { spec } = this;
-    if (spec.color === undefined) return undefined;
-    const domain = spec.colorDomain ?? this.table.extent(spec.color as never);
+    if (this.#toneField === undefined) return undefined;
+    const domain = spec.colorDomain ?? this.table.extent(this.#toneField as never);
     if (!domain) return undefined;
     const fallback = spec.colorMidpoint === undefined ? theme.sequential : theme.diverging;
     return new SequentialScale(domain, rampOf(spec.colors, fallback), spec.colorMidpoint);
@@ -185,19 +213,29 @@ export class Point3DMark implements Layer3D {
   }
 
   legend(id: string | number, color: (key: string) => string, theme: Theme): LegendEntry[] {
-    const glyph = symbolPath("circle", 0, 0, 4.5);
+    const glyph = symbolPath("circle", 0, 0, LEGEND_RADIUS);
+    const muted = this.#toneField !== undefined || this.#colorField !== undefined;
     return this.#groups().map(({ label, category }) => {
       const key = groupKey(id, category);
-      const fill = this.spec.color !== undefined ? theme.muted : (this.spec.fill ?? color(key));
+      const fill = muted ? theme.muted : (this.spec.fill ?? color(key));
       return { key, label, color: fill, glyph };
     });
   }
 
   scales(theme: Theme): [ColorRamp[], GlyphKey[]] {
+    if (this.#colorField) return [[], [colorKey(this.#colorField, this.table, theme)]];
     const scale = this.#scale(theme);
     if (!scale) return [[], []];
     const { domain, midpoint } = scale;
     return [[{ stops: scale.legendStops(), domain, midpoint, title: this.spec.color! }], []];
+  }
+
+  /** A category `color`'s codes, and each code's index into the theme's palette (-1 for none). */
+  #categories(theme: Theme): { codes: Int32Array; tones: Int32Array } | undefined {
+    const colors = this.#colorField;
+    if (!colors) return undefined;
+    const { codes } = this.table.categories(colors.field as never);
+    return { codes, tones: categoryTones(colors, this.table, theme) };
   }
 
   /**
@@ -210,13 +248,18 @@ export class Point3DMark implements Layer3D {
     if ((spec.fillOpacity ?? 1) < 1) return undefined;
     const { theme, hidden, id } = frame;
     const scale = this.#scale(theme);
+    const categories = this.#categories(theme);
     const groups = this.#groups();
     const fills = groups.map((group) => spec.fill ?? frame.color(groupKey(id, group.category)));
     const shown = groups.map((group) => !hidden.has(groupKey(id, group.category)));
-    const palette = spec.color === undefined ? fills : (scale?.colors() ?? []);
+    const palette = categories
+      ? categoryColors(theme)
+      : this.#toneField === undefined
+        ? fills
+        : (scale?.colors() ?? []);
     if (palette.length > 255 || !palette.every(isOpaqueColor)) return undefined;
     // Rows' colors are indices, which the colors themselves do not change.
-    const key = `${table.version}|${shown.join()}`;
+    const key = `${table.version}|${shown.join()}|${palette.length}`;
     let style = this.#cloudStyle?.key === key ? this.#cloudStyle.style : undefined;
     if (!style) {
       style = new Uint8Array(table.length).fill(255);
@@ -227,12 +270,16 @@ export class Point3DMark implements Layer3D {
       groups.forEach((group, g) => {
         groupOf[Math.max(0, group.code)] = g;
       });
-      const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+      const tones =
+        this.#toneField === undefined ? undefined : table.numbers(this.#toneField as never);
       for (let row = 0; row < table.length; row++) {
         const code = codes ? codes[row]! : 0;
         const g = code >= 0 ? groupOf[code]! : -1;
         if (g < 0 || !shown[g]) continue;
-        if (!tones) style[row] = g;
+        if (categories) {
+          const tone = categories.tones[categories.codes[row]!] ?? -1;
+          if (tone >= 0) style[row] = tone;
+        } else if (!tones) style[row] = g;
         else if (scale) {
           const tone = scale.index(tones[row]!);
           if (tone >= 0) style[row] = tone;
@@ -249,7 +296,7 @@ export class Point3DMark implements Layer3D {
       version: table.version,
       style,
       palette,
-      radius: spec.r ?? RADIUS,
+      radius: spec.radius ?? RADIUS,
     };
   }
 
@@ -276,7 +323,11 @@ export class Point3DMark implements Layer3D {
       if (shown[g]) showsCode[Math.max(0, group.code)] = 1;
     });
     // Points colored by a field need a value to color by.
-    const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+    const tones =
+      this.#toneField === undefined ? undefined : table.numbers(this.#toneField as never);
+    const colorCodes = this.#colorField
+      ? table.categories(this.#colorField.field as never).codes
+      : undefined;
     const rows = held && held.rows.length >= n ? held.rows : new Uint32Array(Math.ceil(n * 1.25));
     const [ax, ay, az] = axes;
     let count = 0;
@@ -284,6 +335,7 @@ export class Point3DMark implements Layer3D {
       const code = codes ? codes[row]! : 0;
       if (code < 0 || !showsCode[code]) continue;
       if (tones && !Number.isFinite(tones[row]!)) continue;
+      if (colorCodes && colorCodes[row]! < 0) continue;
       // Points outside the box (or without a place on it) are not drawn.
       if (!inBox(ax.place(xs![row]!), ay.place(ys![row]!), az.place(zs![row]!))) continue;
       rows[count++] = row;
@@ -325,7 +377,7 @@ export class Point3DMark implements Layer3D {
       screen = screens.set(frame, { view, reading, x, y, depth, grid });
     }
     const { x, y, depth } = screen;
-    const reach = (this.spec.r ?? RADIUS) + REACH;
+    const reach = (this.spec.radius ?? RADIUS) + REACH;
     let best = -1;
     screen.grid.near(px, py, reach, (i) => {
       const dx = x[i]! - px;
@@ -342,12 +394,18 @@ export class Point3DMark implements Layer3D {
     const { axes, view, id, theme } = frame;
     const { rows, count } = this.#reading(frame);
     const [xs, ys, zs] = this.#fields.map((field) => table.numbers(field as never));
-    const names = spec.name === undefined ? undefined : table.categories(spec.name as never);
+    const names =
+      spec.labelField === undefined ? undefined : table.categories(spec.labelField as never);
     const series = spec.series === undefined ? undefined : table.categories(spec.series as never);
-    const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+    const tones =
+      this.#toneField === undefined ? undefined : table.numbers(this.#toneField as never);
     const scale = this.#scale(theme);
+    const colorValues = this.#colorField
+      ? table.categories(this.#colorField.field as never)
+      : undefined;
+    const categories = this.#categories(theme);
     const offset = table.rowOffset;
-    const radius = spec.r ?? RADIUS;
+    const radius = spec.radius ?? RADIUS;
     const out = new Float64Array(2);
     const category = (column: typeof names, row: number) => {
       const code = column ? column.codes[row]! : -1;
@@ -367,9 +425,14 @@ export class Point3DMark implements Layer3D {
         parts.push(`${spec.color} ${formatNumber(tones[row]!, frame.locale)}`);
         data[spec.color!] = tones[row]!;
       }
+      const tag = category(colorValues, row);
+      if (tag !== undefined) {
+        parts.push(`${spec.color} ${tag}`);
+        data[spec.color!] = tag;
+      }
       const name = category(names, row);
       const group = category(series, row);
-      if (name !== undefined) data[spec.name!] = name;
+      if (name !== undefined) data[spec.labelField!] = name;
       if (group !== undefined) data[spec.series!] = group;
       view.project(
         axes[0].place(values[0]!),
@@ -385,7 +448,9 @@ export class Point3DMark implements Layer3D {
         color:
           tones && scale
             ? scale.color(tones[row]!)
-            : (spec.fill ?? frame.color(groupKey(id, group))),
+            : categories
+              ? categoryColors(theme)[categories.tones[categories.codes[row]!]!]!
+              : (spec.fill ?? frame.color(groupKey(id, group))),
         value: values[2]!,
         text: parts.join(", "),
         px,
@@ -409,7 +474,8 @@ export class Point3DMark implements Layer3D {
           ? new Set(Array.from(rows.subarray(0, count), (row) => series.codes[row])).size
           : 1;
         const what = `${count} ${count === 1 ? "point" : "points"}${series ? ` in ${groups} series` : ""}`;
-        return `${what} at ${this.#fields.join(", ")}${tones ? `, colored by ${spec.color}` : ""}.`;
+        const colored = tones || colorValues ? `, colored by ${spec.color}` : "";
+        return `${what} at ${this.#fields.join(", ")}${colored}.`;
       },
     };
   }
@@ -419,12 +485,14 @@ export class Point3DMark implements Layer3D {
     const { spec, table } = this;
     const { rows, count } = this.#reading(frame);
     const [xs, ys, zs] = this.#fields.map((field) => table.numbers(field as never));
-    const radius = spec.r ?? RADIUS;
+    const radius = spec.radius ?? RADIUS;
     const opacity = spec.fillOpacity ?? 1;
-    // Each series' style, or with `color` each ramp entry's.
+    // Each series' style, or with `color` each ramp entry's or palette color's.
     const scale = this.#scale(theme);
-    const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
-    const ramp = scale && tones ? scale.colors() : undefined;
+    const tones =
+      this.#toneField === undefined ? undefined : table.numbers(this.#toneField as never);
+    const categories = this.#categories(theme);
+    const ramp = categories ? categoryColors(theme) : scale && tones ? scale.colors() : undefined;
     const rampStyles = ramp && new Int32Array(ramp.length).fill(-1);
     const series = spec.series === undefined ? undefined : table.categories(spec.series as never);
     const codes = series?.codes;
@@ -441,7 +509,9 @@ export class Point3DMark implements Layer3D {
       const row = rows[i]!;
       let style: number;
       if (ramp) {
-        const tone = scale!.index(tones![row]!);
+        const tone = categories
+          ? categories.tones[categories.codes[row]!]!
+          : scale!.index(tones![row]!);
         style = rampStyles![tone]!;
         if (style < 0) {
           style = faces.styleOf(ramp[tone]!, opacity, radius);
@@ -492,8 +562,8 @@ export function point3d<S extends Schema>(
     z: options.z,
     ...definedFields(options, [
       "series",
-      "name",
-      "r",
+      "labelField",
+      "radius",
       "color",
       "colorMidpoint",
       "fill",

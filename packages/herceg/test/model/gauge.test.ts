@@ -192,19 +192,25 @@ describe("gauge", () => {
 
   it("refuses bad domains and bands, and shares its chart with nothing", () => {
     const cpu = table({ cpu: [1], host: ["a"] });
-    expect(() => gauge(cpu, { value: "cpu", min: 5, max: 5 })).toThrow("min must be below max");
-    expect(() => gauge(cpu, { value: "cpu", max: Number.NaN })).toThrow("min must be below max");
-    expect(() => gauge(cpu, { value: "cpu", bands: [{ to: 120 }] })).toThrow("at most at max");
-    expect(() => gauge(cpu, { value: "cpu", bands: [{ to: 0 }] })).toThrow("above min");
+    expect(() => gauge(cpu, { value: "cpu", min: 5, max: 5 })).toThrow(
+      "gauge min, max: expected finite numbers, min below max; received 5, 5",
+    );
+    expect(() => gauge(cpu, { value: "cpu", max: Number.NaN })).toThrow("received 0, NaN");
+    expect(() => gauge(cpu, { value: "cpu", bands: [{ to: 120 }] })).toThrow(
+      "gauge bands: expected ends above min 0 and at most max 100; received 120",
+    );
+    expect(() => gauge(cpu, { value: "cpu", bands: [{ to: 0 }] })).toThrow("received 0");
     expect(() => gauge(cpu, { value: "cpu", bands: [{ to: 50 }, { to: 40 }] })).toThrow(
-      "ascending order, not 40 after 50",
+      "gauge bands: expected ascending ends; received 40 after 50",
     );
     expect(() => gauge(cpu, { value: "host" as never })).toThrow();
     const dial = gauge(cpu, { value: "cpu" });
     expect(() => build({ marks: [dial, line(cpu, { x: "cpu", y: "cpu" })] })).toThrow(
-      "A gauge mark has its chart to itself",
+      "gauge: has its chart to itself; draw other marks in another chart",
     );
-    expect(() => build({ marks: [dial], interaction: { brush: "x" } })).toThrow("do not brush");
+    expect(() => build({ marks: [dial], interaction: { brush: "x" } })).toThrow(
+      "gauge brush: no axes to brush",
+    );
   });
 
   it("loads from specs and renders to SVG and PDF", () => {
@@ -227,11 +233,11 @@ describe("gauge", () => {
     expect(renderToPDF({ ...config, width: 300, height: 200 }).length).toBeGreaterThan(500);
     const load = (mark: object) => () => loadSpec(spec(mark) as never, []);
     expect(load({ bands: [{ to: 50 }, { to: 20 }] })).toThrow(
-      "marks[0].bands[1].to: expected an end above the previous band's (50), got 20",
+      "marks[0].bands[1].to: expected an end above the previous band's (50); received 20",
     );
     expect(load({ bands: [{ color: "red" }] })).toThrow("marks[0].bands[0].to: required");
     expect(load({ format: { style: "nonsense" } })).toThrow("marks[0].format");
-    expect(load({ min: 100 })).toThrow("Mark 0 (gauge): gauge min must be below max");
+    expect(load({ min: 100 })).toThrow("marks[0]: gauge min, max: expected finite numbers");
     expect(load({ value: undefined })).toThrow("marks[0].value: required");
   });
 });

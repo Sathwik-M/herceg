@@ -34,7 +34,7 @@ const load = () =>
 
 /** Black to white over 0 to 10: a cell's gray level is its value. */
 const gray = { colors: ["#000000", "#ffffff"], colorDomain: [0, 10] as const };
-const fields = { x: "hour", y: "host", value: "cpu" } as const;
+const fields = { x: "hour", y: "host", color: "cpu" } as const;
 
 const categories = (model: ChartModel, axis: "x" | "y") =>
   model.panels().map((panel) => panel[axis].categories);
@@ -197,7 +197,7 @@ describe("heatmaps split by facets", () => {
       cpu: [1, 2, 100],
     });
     const { model, scene } = build({
-      marks: [heatmap(data, { x: "hour", y: "host", value: "cpu" })],
+      marks: [heatmap(data, { x: "hour", y: "host", color: "cpu" })],
       facet: facet("region"),
       resolve: { x: "independent" },
     });
@@ -311,7 +311,6 @@ describe("heatmaps split by facets", () => {
 
   it("load from specs and render statically", () => {
     const spec = {
-      version: 3 as const,
       data: {
         load: {
           columns: {
@@ -322,7 +321,7 @@ describe("heatmaps split by facets", () => {
           },
         },
       },
-      marks: [{ type: "heatmap" as const, data: "load", x: "hour", y: "host", value: "cpu" }],
+      marks: [{ type: "heatmap" as const, data: "load", x: "hour", y: "host", color: "cpu" }],
       facet: { field: "region" },
       resolve: { x: "independent" as const, y: "independent" as const },
       width: 600,

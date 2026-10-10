@@ -1199,7 +1199,7 @@ describe("networks", () => {
   const people = () =>
     table({ name: ["Ana", "Bo", "Cy", "Dee"], team: ["Data", "Data", "Data", "Sales"] });
   const network = (links = talks(), nodes = people()) =>
-    graph(links, { source: "from", target: "to", value: "n", nodes, node: "name", group: "team" });
+    graph(links, { source: "from", target: "to", value: "n", nodes, node: "name", color: "team" });
   const move = (chart: Chart, px: number, py: number, type = "pointermove") => {
     const rect = chart.root.getBoundingClientRect();
     chart.root.dispatchEvent(
@@ -1311,8 +1311,8 @@ describe("maps", () => {
     });
   const places = () => table({ city: ["Port"], lon: [15], lat: [5], people: [40] });
   const map = (shapes = regions()) => [
-    geoshape(shapes, { name: "name", color: "party" }),
-    geopoint(places(), { longitude: "lon", latitude: "lat", r: "people", name: "city" }),
+    geoshape(shapes, { labelField: "name", color: "party" }),
+    geopoint(places(), { longitude: "lon", latitude: "lat", size: "people", labelField: "city" }),
   ];
   const move = (chart: Chart, px: number, py: number, type = "pointermove") => {
     const rect = chart.root.getBoundingClientRect();

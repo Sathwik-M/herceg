@@ -60,7 +60,7 @@ export const EVERY_PANEL = "*";
  *     rule({ x: deployedAt, panel: "*" }),
  *   ],
  *   panels: panels([
- *     { id: "latency", title: "Latency", y: { label: "ms" } },
+ *     { id: "latency", title: "Latency", y: { title: "ms" } },
  *     { id: "traffic", title: "Requests" },
  *   ]),
  * });
@@ -94,40 +94,42 @@ export class Panels implements PanelLayout {
   }
 
   constructor(list: readonly PanelSpec[], grid: GridSpec = {}) {
-    if (list.length === 0) throw new RangeError("A chart's panels need at least one panel");
+    if (list.length === 0) throw new RangeError("panels: expected at least one panel");
     const ids = new Set<string>();
-    for (const { id } of list) {
+    for (const [i, { id }] of list.entries()) {
       if (typeof id !== "string" || id === "" || id === EVERY_PANEL)
         throw new TypeError(
-          `A panel's id must be a name other than "" and "*", not ${JSON.stringify(id)}`,
+          `panels[${i}].id: expected a name other than "" and "*"; received ${JSON.stringify(id)}`,
         );
-      if (ids.has(id)) throw new TypeError(`Two panels have the id "${id}"`);
+      if (ids.has(id)) throw new TypeError(`panels[${i}].id: "${id}" names two panels`);
       ids.add(id);
     }
     const { columns = 1, rowHeights, columnWidths } = grid;
     if (!(Number.isInteger(columns) && columns >= 1))
-      throw new RangeError(`A grid's columns must be a whole number of at least 1, not ${columns}`);
+      throw new RangeError(
+        `grid columns: expected a whole number of at least 1; received ${columns}`,
+      );
     // A grid has no more columns than panels.
     const used = Math.min(columns, list.length);
     const rows = Math.ceil(list.length / used);
     if (rowHeights !== undefined) {
       if (rowHeights.length !== rows)
         throw new RangeError(
-          `A grid of ${rows} rows needs ${rows} row heights, not ${rowHeights.length}`,
+          `grid rowHeights: expected ${rows}, one per row; received ${rowHeights.length}`,
         );
       if (!positive(rowHeights))
         throw new RangeError(
-          `A grid's row heights must be positive numbers, not ${rowHeights.join(", ")}`,
+          `grid rowHeights: expected positive numbers; received ${rowHeights.join(", ")}`,
         );
     }
     if (columnWidths !== undefined) {
       if (columnWidths.length !== used)
         throw new RangeError(
-          `A grid of ${used} columns needs ${used} column widths, not ${columnWidths.length}`,
+          `grid columnWidths: expected ${used}, one per column; received ${columnWidths.length}`,
         );
       if (!positive(columnWidths))
         throw new RangeError(
-          `A grid's column widths must be positive numbers, not ${columnWidths.join(", ")}`,
+          `grid columnWidths: expected positive numbers; received ${columnWidths.join(", ")}`,
         );
     }
     this.list = list;
@@ -143,10 +145,13 @@ export class Panels implements PanelLayout {
    * navigator.
    */
   check(marks: readonly Mark[], options: LayoutOptions, layouts: readonly LayoutMark[] = []): void {
-    if (options.navigator) throw new Error("Charts with panels cannot have a navigator yet");
+    if (options.navigator)
+      throw new Error("navigator: charts with panels have none yet; drop navigator or panels");
     const ids = new Set(this.list.map(({ id }) => id));
     const unknown = (type: string, panel: string) =>
-      new Error(`A ${type} mark names the panel "${panel}", which the chart does not have`);
+      new Error(
+        `${type} panel: no panel "${panel}"; name one of ${[...ids].map((id) => `"${id}"`).join(", ")}`,
+      );
     checkLayouts(layouts);
     // The panels layout marks have to themselves.
     const held = new Map<string, string>();
@@ -154,37 +159,35 @@ export class Panels implements PanelLayout {
       const { type, panel } = spec;
       if (panel === undefined || panel === EVERY_PANEL)
         throw new Error(
-          `A ${type} mark in a chart with panels needs the id of the panel it draws in`,
+          `${type} panel: expected the id of the panel it draws in; received ${JSON.stringify(panel) ?? "none"}`,
         );
       if (!ids.has(panel)) throw unknown(type, panel);
       const other = held.get(panel);
       if (other)
         throw new Error(
-          `Panel "${panel}" has two layout marks, a ${other} and a ${type}; give each a panel of its own`,
+          `${type} panel: a ${other} mark has panel "${panel}" too; give each a panel of its own`,
         );
       held.set(panel, type);
     }
     if (held.size === this.list.length) refuseAxes(layouts[0]!.spec.type, options);
-    for (const { id, x, y, yRight } of this.list)
+    for (const [i, { id, x, y, yRight }] of this.list.entries())
       if (held.has(id) && (x || y || yRight))
         throw new Error(
-          `Panel "${id}" draws a ${held.get(id)} mark, which has no axes: it takes no x, y, or yRight settings`,
+          `panels[${i}]: the ${held.get(id)} mark it draws has no axes; drop its x, y, and yRight`,
         );
     const [first] = held;
     for (const mark of marks) {
       const { type, panel } = mark.spec;
       if (panel === undefined)
-        throw new Error(
-          `A ${type} mark in a chart with panels needs a panel: the id of one, or "*" for every panel`,
-        );
+        throw new Error(`${type} panel: missing; give the id of a panel, or "*" for every panel`);
       if (panel !== EVERY_PANEL && !ids.has(panel)) throw unknown(type, panel);
       if (panel === EVERY_PANEL && first)
         throw new Error(
-          `A ${type} mark with panel "*" would draw in panel "${first[0]}", which a ${first[1]} mark has to itself; give it the id of a panel with axes`,
+          `${type} panel: "*" would draw in panel "${first[0]}", which a ${first[1]} mark has to itself; give the id of a panel with axes`,
         );
       if (held.has(panel))
         throw new Error(
-          `A ${type} mark names the panel "${panel}", which a ${held.get(panel)} mark has to itself`,
+          `${type} panel: a ${held.get(panel)} mark has panel "${panel}" to itself; name another`,
         );
     }
     const { zoom, brush } = options.interaction ?? {};
@@ -194,7 +197,7 @@ export class Panels implements PanelLayout {
       brush === "xy" ||
       brush === "lasso"
     )
-      throw new Error("Charts with panels can zoom and brush along x only");
+      throw new Error('chart interaction: charts with panels zoom and brush along x only; use "x"');
     const { resolve } = options;
     this.#agree("x", marks, resolve?.x ?? "shared", options.x, held);
     this.#agree("y", marks, resolve?.y ?? "independent", options.y, held);
@@ -244,12 +247,12 @@ export class Panels implements PanelLayout {
       const drawn = inPanel.filter((mark) => onAxis(mark, axis));
       const type = spec?.type ?? (x ? undefined : typeOf(drawn, "y"));
       const { domain, zero, nice, ticks, format } = spec ?? {};
-      const policy = JSON.stringify([type, domain, zero, nice, ticks, format, x && spec?.label]);
+      const policy = JSON.stringify([type, domain, zero, nice, ticks, format, x && spec?.title]);
       const seen = first.get(groupOf(i));
       if (seen === undefined) first.set(groupOf(i), policy);
       else if (seen !== policy)
         throw new Error(
-          `Panel "${id}" shares ${x ? "an x" : axis === "y" ? "a y" : "a right y"} scale with others but differs in its type, domain, zero, nice, ticks, ${x ? "format, or label" : "or format"}`,
+          `panels[${i}].${axis}: shares ${x ? "an x" : axis === "y" ? "a y" : "a right y"} scale with others but differs in type, domain, zero, nice, ticks, ${x ? "format, or title" : "or format"}; match them`,
         );
     });
   }

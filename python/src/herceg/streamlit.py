@@ -26,6 +26,7 @@ except ImportError as error:  # pragma: no cover - depends on the environment
     ) from error
 
 from . import _render
+from ._data import shown
 from ._derive import Expr
 from ._events import Inspection, Selection, checked, decode_inspection, decode_selection
 from ._live import check_live_rows
@@ -79,24 +80,29 @@ def chart(
     or dark theme.
     """
     reactions = {"select": on_select, "click": on_click, "rowSelection": on_row_selection}
+    options = {"select": "on_select", "click": "on_click", "rowSelection": "on_row_selection"}
     for name, reaction in reactions.items():
         if not (callable(reaction) or reaction in ("ignore", "rerun")):
             raise ValueError(
-                f"on_{name} must be 'ignore', 'rerun', or a function, not {reaction!r}"
+                f'streamlit.chart {options[name]}: expected "ignore", "rerun", or a function; '
+                f"received {shown(reaction)}"
             )
     if on_select != "ignore" and chart._settings["resolve_x"] not in (None, "shared"):
         raise ValueError(
-            "on_select reports one selection, so it needs a chart whose panels share x "
-            "(resolve_x='shared')"
+            "streamlit.chart on_select: reports one selection, so the chart's panels must "
+            'share x; give the chart resolve_x="shared"'
         )
     if on_row_selection != "ignore":
         if len(chart._row_selection) != 1:
-            raise ValueError("on_row_selection reports a row selection: give the chart one binding")
+            raise ValueError(
+                "streamlit.chart on_row_selection: reports one row selection, and the chart "
+                f"binds {len(chart._row_selection)}; give the chart one binding"
+            )
         check_live_rows(chart)
     if on_click != "ignore" and _in_form():
         raise ValueError(
-            "on_click cannot react inside st.form: Streamlit does not send clicks from "
-            "forms. Use on_select, which reaches the script when the form is submitted."
+            "streamlit.chart on_click: cannot react inside st.form, as Streamlit sends no "
+            "clicks from forms; use on_select, which reaches the script when the form is submitted"
         )
     spec, buffers = chart.to_spec()
     events = [name for name, reaction in reactions.items() if reaction != "ignore"]

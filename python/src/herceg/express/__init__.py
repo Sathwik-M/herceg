@@ -1,17 +1,22 @@
-"""herceg.express: statistical charts in one call, as Seaborn makes them.
+"""herceg.express: Seaborn's statistical charts in one call.
 
 ::
 
     import herceg.express as hx
 
-    hx.barplot(tips, x="day", y="total_bill", hue="sex", seed=1)
-    hx.histplot(penguins, x="flipper_length_mm", hue="species", kde=True)
-    hx.pairplot(penguins, hue="species")
+    hx.barplot(tips, x="day", y="total_bill", series="sex", seed=1)
+    hx.histplot(penguins, x="flipper_length_mm", series="species", kde=True)
+    hx.pairplot(penguins, series="species")
 
 Each function computes its statistics with NumPy (bootstrap intervals,
 regression fits, kernel densities, clustering) and returns an ordinary
 ``herceg.Chart`` of herceg's marks, which displays, saves, and updates
-like any other. ``hx.statistics(chart)`` returns what was computed.
+like any other. Functions take herceg's names for what they share with
+its charts: ``series`` and ``series_order`` split the marks, the chart
+options ``facet_row`` and ``facet_column`` facet them (with statistics
+computed per panel), and options such as ``normalize``, ``whiskers``, and
+``jitter`` mean what they mean in ``herceg.Chart``'s marks.
+``hx.statistics(chart)`` returns what was computed.
 """
 
 from ._arrangements import clustermap, jointplot, pairplot

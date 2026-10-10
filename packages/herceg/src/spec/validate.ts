@@ -1,9 +1,10 @@
 // Runtime checks of chart specs written outside TypeScript (the Python
 // package, stored JSON), where the type checker cannot help: structure,
 // enumerations, booleans, finite numbers, and field references. Errors name
-// the offending property by its path, such as `marks[2].strokeWidth`.
-// Unknown properties are allowed, so newer specs still load, and reported,
-// so misspelled ones do not go unnoticed.
+// the offending property by its path and say what was expected, as in
+// `marks[2].inner: expected "box", "quartiles", or "none"; received "quart"`.
+// Properties the format does not have are refused by default, naming the
+// property meant where one is close, so misspellings do not go unnoticed.
 
 import { areaFormError } from "../marks/area.ts";
 import { boxPlotFormError } from "../marks/boxplot-input.ts";
@@ -51,11 +52,23 @@ type AllKeys<T> = T extends unknown ? keyof T : never;
  */
 type ChecksOf<T> = Record<AllKeys<T>, Check>;
 
-/** Paths of the properties no check knows, collected while `checkSpec` runs. */
-let unknownPaths: string[] | undefined;
+/** A property no check knows, with the properties its object may have. */
+export interface UnknownProperty {
+  path: string;
+  known: readonly string[];
+}
+
+/** The properties no check knows, collected while `checkSpec` runs. */
+let unknownPaths: UnknownProperty[] | undefined;
 
 function fail(path: string, expected: string, value: unknown): never {
-  throw new TypeError(`${path}: expected ${expected}, got ${describe(value)}`);
+  throw new TypeError(`${path}: expected ${expected}; received ${describe(value)}`);
+}
+
+/** Choices in prose: "a", "a or b", or "a, b, or c". */
+export function either(choices: readonly string[]): string {
+  if (choices.length < 3) return choices.join(" or ");
+  return `${choices.slice(0, -1).join(", ")}, or ${choices.at(-1)}`;
 }
 
 function describe(value: unknown): string {
@@ -145,8 +158,7 @@ const object: Check = (v, path) => {
 
 function oneOf(...values: readonly string[]): Check {
   return (v, path) => {
-    if (!values.includes(v as string))
-      fail(path, values.map((x) => JSON.stringify(x)).join(" or "), v);
+    if (!values.includes(v as string)) fail(path, either(values.map((x) => JSON.stringify(x))), v);
   };
 }
 
@@ -161,17 +173,56 @@ function properties(
   others: readonly string[] = [],
 ) {
   for (const key of Object.keys(value)) {
-    if (!Object.hasOwn(checks, key) && !others.includes(key)) unknownPaths?.push(`${path}.${key}`);
+    if (!Object.hasOwn(checks, key) && !others.includes(key))
+      unknownPaths?.push({ path: `${path}.${key}`, known: [...Object.keys(checks), ...others] });
   }
   for (const [key, check] of Object.entries(checks)) {
     if (value[key] !== undefined) check(value[key], `${path}.${key}`);
   }
 }
 
-function required(value: Record<string, unknown>, path: string, keys: readonly string[]) {
+/** A property of `value` outside `known` that looks like a misspelling of `key`. */
+function misspelling(
+  value: Record<string, unknown>,
+  key: string,
+  known: readonly string[],
+): string | undefined {
+  return Object.keys(value).find((name) => !known.includes(name) && closest(name, [key]) === key);
+}
+
+/** The error for a missing `key`, naming its misspelling when there is one. */
+function missing(path: string, key: string, typo: string | undefined): TypeError {
+  return new TypeError(
+    typo === undefined
+      ? `${path}.${key}: required`
+      : `${path}.${key}: required; rename "${typo}", which is not a property, to "${key}"`,
+  );
+}
+
+/**
+ * Refuses a value missing any of `keys`. With the properties it may have
+ * (`known`), a missing key's misspelling among the others is named.
+ */
+function required(
+  value: Record<string, unknown>,
+  path: string,
+  keys: readonly string[],
+  known?: readonly string[],
+) {
   for (const key of keys) {
-    if (value[key] === undefined) throw new TypeError(`${path}.${key}: required`);
+    if (value[key] === undefined) throw missing(path, key, known && misspelling(value, key, known));
   }
+}
+
+/** Refuses an object missing any of `keys`, then checks its properties. */
+function checkProperties(
+  value: Record<string, unknown>,
+  path: string,
+  keys: readonly string[],
+  checks: Record<string, Check>,
+) {
+  required(value, path, keys, Object.keys(checks));
+  properties(value, path, checks);
 }
 
 const curve = oneOf("linear", "step", "step-before", "step-after", "monotone");
@@ -210,8 +261,11 @@ function operations(ops: readonly string[], needsField: boolean): Check {
       const at = `${path}[${i}]`;
       object(item, at);
       const operation = item as Record<string, unknown>;
-      required(operation, at, needsField ? ["op", "field", "as"] : ["op", "as"]);
-      properties(operation, at, { op: oneOf(...ops), field, as: field });
+      checkProperties(operation, at, needsField ? ["op", "field", "as"] : ["op", "as"], {
+        op: oneOf(...ops),
+        field,
+        as: field,
+      });
     }
   };
 }
@@ -226,11 +280,11 @@ const TRANSFORMS: Record<string, { required: string[]; checks: Record<string, Ch
   },
   aggregate: {
     required: [],
-    checks: { aggregate: operations(AGGREGATE_OPS, false), groupby: fields },
+    checks: { aggregate: operations(AGGREGATE_OPS, false), by: fields },
   },
   rolling: {
     required: ["size"],
-    checks: { rolling: operations(ROLLING_OPS, true), size: count, groupby: fields },
+    checks: { rolling: operations(ROLLING_OPS, true), size: count, by: fields },
   },
   sort: { required: [], checks: { sort: field, order: oneOf("ascending", "descending") } },
 };
@@ -245,7 +299,7 @@ const transforms: Check = (v, path) => {
     const kind = Object.keys(TRANSFORMS).find((name) => step[name] !== undefined);
     if (!kind) fail(at, `a transform (${Object.keys(TRANSFORMS).join(", ")})`, item);
     const { required: keys, checks } = TRANSFORMS[kind]!;
-    required(step, at, keys);
+    required(step, at, keys, Object.keys(checks));
     // A step naming two transforms is ambiguous; other keys are unknown.
     const other = Object.keys(step).find((key) => key !== kind && Object.hasOwn(TRANSFORMS, key));
     if (other) throw new TypeError(`${at}.${other}: a step is one transform, here ${kind}`);
@@ -280,7 +334,8 @@ function format(type: unknown): Check {
       ...(type !== "linear" && type !== "log" ? TIME_OPTIONS : []),
       ...(type !== "time" ? NUMBER_OPTIONS : []),
     ];
-    for (const key of keys) if (!known.includes(key)) unknownPaths?.push(`${path}.${key}`);
+    for (const key of keys)
+      if (!known.includes(key)) unknownPaths?.push({ path: `${path}.${key}`, known });
   };
 }
 
@@ -340,11 +395,11 @@ function axisChecks(spec: Record<string, unknown>): ChecksOf<AxisSpec> {
     },
     nice: boolean,
     zero: boolean,
-    label: string,
+    title: string,
     grid: boolean,
     ticks: positive,
     format: format(spec.type),
-    axis: boolean,
+    show: boolean,
   };
 }
 
@@ -365,7 +420,14 @@ const xAxis: Check = (v, path) => {
   properties(spec, path, {
     ...axisChecks(spec),
     // Whether any x scale is a time scale shows only once panels are planned.
-    breaks: checkBreaks,
+    breaks: (v, at) => {
+      checkBreaks(v, at);
+      // Each break is of one kind, whose keys are the only ones it takes.
+      for (const [i, rule] of (v as Record<string, unknown>[]).entries()) {
+        const kind = ["weekdays", "hours", "dates"].find((key) => rule[key] !== undefined);
+        properties(rule, `${at}[${i}]`, {}, kind ? [kind] : ["from", "to"]);
+      }
+    },
     seams: (v, at) => {
       if (typeof v !== "boolean") {
         object(v, at);
@@ -408,8 +470,12 @@ const theme: Check = (v, path) => {
 };
 
 /** A tree's fields: a path of category fields, or node and parent fields. */
-function hierarchyChecks(): Record<"path" | "node" | "parent" | "value" | "labels", Check> {
+function hierarchyChecks(): Record<
+  "path" | "node" | "parent" | "value" | "labels" | "panel",
+  Check
+> {
   return {
+    panel: string,
     path: (v, path) => {
       if (!Array.isArray(v) || v.length === 0) fail(path, "a list of at least one field", v);
       for (const [i, item] of (v as unknown[]).entries()) field(item, `${path}[${i}]`);
@@ -422,7 +488,12 @@ function hierarchyChecks(): Record<"path" | "node" | "parent" | "value" | "label
 }
 
 /** Properties `mark` checks for every mark. */
-type CommonKey = "type" | "data" | "id" | "axis" | "facet" | "panel";
+type CommonKey = "type" | "data" | "id";
+
+/** Placement properties of the marks whose specs have them. */
+const side = oneOf("left", "right");
+const repeat = oneOf("repeat");
+const placement = { axis: side, facet: repeat, panel: string };
 
 /**
  * The properties each mark takes, typed against its spec so that adding a
@@ -439,6 +510,7 @@ const MARKS: MarkChecks = {
   line: {
     required: ["x", "y"],
     checks: {
+      ...placement,
       x: field,
       y: fields,
       series: field,
@@ -453,6 +525,7 @@ const MARKS: MarkChecks = {
   area: {
     required: ["x"],
     checks: {
+      ...placement,
       x: field,
       y: fields,
       y1: field,
@@ -473,6 +546,8 @@ const MARKS: MarkChecks = {
   dendrogram: {
     required: ["first", "second", "height", "leaves"],
     checks: {
+      facet: repeat,
+      panel: string,
       first: field,
       second: field,
       height: field,
@@ -480,7 +555,10 @@ const MARKS: MarkChecks = {
         try {
           checkLeaves(v as string[]);
         } catch (error) {
-          throw new TypeError(`${path}: ${(error as Error).message}`);
+          // The message names the leaves itself.
+          throw new TypeError(
+            `${path.slice(0, path.lastIndexOf("."))}: ${(error as Error).message}`,
+          );
         }
       },
       side: oneOf("bottom", "top", "left", "right"),
@@ -492,18 +570,20 @@ const MARKS: MarkChecks = {
   rule: {
     required: [],
     checks: {
+      ...placement,
       x: position,
       y: position,
       stroke: string,
       strokeWidth: width,
       dash: numbers,
       label: string,
-      text: field,
+      textField: field,
     },
   },
   region: {
     required: [],
     checks: {
+      ...placement,
       x1: position,
       x2: position,
       y1: position,
@@ -511,16 +591,17 @@ const MARKS: MarkChecks = {
       fill: string,
       fillOpacity: fraction,
       label: string,
-      text: field,
+      textField: field,
     },
   },
   text: {
     required: ["x", "y"],
     checks: {
+      ...placement,
       x: position,
       y: position,
       label: string,
-      text: field,
+      textField: field,
       fill: string,
       anchor: oneOf("start", "middle", "end"),
       overlap: oneOf("show", "hide", "move"),
@@ -531,6 +612,7 @@ const MARKS: MarkChecks = {
   bar: {
     required: ["x", "y"],
     checks: {
+      ...placement,
       x: fields,
       y: fields,
       series: field,
@@ -545,12 +627,14 @@ const MARKS: MarkChecks = {
   point: {
     required: ["x", "y"],
     checks: {
+      ...placement,
       x: field,
       y: field,
       series: field,
       animationKey: field,
-      r: (v, path) => (typeof v === "string" ? field(v, path) : positive(v, path)),
-      rRange: range,
+      radius: positive,
+      size: field,
+      radiusRange: range,
       fill: string,
       fillOpacity: (v, path) => (typeof v === "string" ? field(v, path) : fraction(v, path)),
       stroke: string,
@@ -559,29 +643,38 @@ const MARKS: MarkChecks = {
       colors: ramp,
       colorDomain: range,
       colorMidpoint: finite,
-      symbol: string,
+      symbol: (v, path) => {
+        if (typeof v === "string") return;
+        if (!isRecord(v)) fail(path, 'a shape\'s name or { field: "..." }', v);
+        checkProperties(v, path, ["field"], { field });
+      },
       sampling: oneOf("none", "pixel"),
       label: string,
       legendGroup: group,
       dodge: boolean,
       jitter: (v, path) => {
         object(v, path);
-        properties(v as Record<string, unknown>, path, { width: fraction, seed: integer });
-        required(v as Record<string, unknown>, path, ["width"]);
+        checkProperties(v as Record<string, unknown>, path, ["width"], {
+          width: fraction,
+          seed: integer,
+        });
       },
     },
   },
   histogram: {
     required: [],
     checks: {
+      ...placement,
       x: field,
       y: field,
       bins: (v, path) => {
         if (typeof v === "number") return count(v, path);
         if (Array.isArray(v)) return requireHistogramEdges(v, path);
         object(v, path);
-        required(v as Record<string, unknown>, path, ["step"]);
-        properties(v as Record<string, unknown>, path, { step: positive, start: finite });
+        checkProperties(v as Record<string, unknown>, path, ["step"], {
+          step: positive,
+          start: finite,
+        });
       },
       series: field,
       normalize: oneOf("count", "probability", "percent", "density"),
@@ -600,6 +693,7 @@ const MARKS: MarkChecks = {
   sankey: {
     required: ["source", "target"],
     checks: {
+      panel: string,
       source: field,
       target: field,
       value: field,
@@ -615,10 +709,10 @@ const MARKS: MarkChecks = {
       target: field,
       value: field,
       directed: boolean,
-      linkLabel: field,
+      linkLabelField: field,
       nodes: string,
       node: field,
-      group: field,
+      color: field,
       size: field,
       labels: boolean,
     },
@@ -626,6 +720,7 @@ const MARKS: MarkChecks = {
   pie: {
     required: ["category"],
     checks: {
+      panel: string,
       category: field,
       value: field,
       innerRadius: (v, path) => {
@@ -639,6 +734,7 @@ const MARKS: MarkChecks = {
   gauge: {
     required: ["value"],
     checks: {
+      panel: string,
       value: field,
       min: finite,
       max: finite,
@@ -650,8 +746,7 @@ const MARKS: MarkChecks = {
           const at = `${path}[${i}]`;
           object(item, at);
           const band = item as Record<string, unknown>;
-          required(band, at, ["to"]);
-          properties(band, at, { to: finite, color: string });
+          checkProperties(band, at, ["to"], { to: finite, color: string });
           const to = band.to as number;
           if (!(to > previous))
             fail(`${at}.to`, `an end above the previous band's (${previous})`, to);
@@ -665,6 +760,7 @@ const MARKS: MarkChecks = {
   funnel: {
     required: ["category"],
     checks: {
+      panel: string,
       category: field,
       value: field,
       sort: oneOf("input", "value"),
@@ -674,6 +770,7 @@ const MARKS: MarkChecks = {
   radar: {
     required: [],
     checks: {
+      panel: string,
       category: field,
       value: field,
       fields: (v, path) => {
@@ -690,6 +787,7 @@ const MARKS: MarkChecks = {
   boxplot: {
     required: [],
     checks: {
+      ...placement,
       x: field,
       y: field,
       low: field,
@@ -714,6 +812,7 @@ const MARKS: MarkChecks = {
   violin: {
     required: ["x", "y"],
     checks: {
+      ...placement,
       x: field,
       y: field,
       series: field,
@@ -729,6 +828,7 @@ const MARKS: MarkChecks = {
   candlestick: {
     required: ["x", "open", "high", "low", "close"],
     checks: {
+      ...placement,
       x: field,
       open: field,
       high: field,
@@ -744,6 +844,7 @@ const MARKS: MarkChecks = {
   rug: {
     required: [],
     checks: {
+      ...placement,
       x: field,
       y: field,
       series: field,
@@ -758,6 +859,7 @@ const MARKS: MarkChecks = {
   errorbar: {
     required: [],
     checks: {
+      ...placement,
       x: field,
       y: field,
       x1: field,
@@ -779,7 +881,7 @@ const MARKS: MarkChecks = {
     required: [],
     checks: {
       geometry: field,
-      name: field,
+      labelField: field,
       color: field,
       colors: ramp,
       colorDomain: range,
@@ -796,10 +898,11 @@ const MARKS: MarkChecks = {
     checks: {
       longitude: field,
       latitude: field,
-      name: field,
+      labelField: field,
       series: field,
-      r: (v, path) => (typeof v === "string" ? field(v, path) : positive(v, path)),
-      rRange: range,
+      radius: positive,
+      size: field,
+      radiusRange: range,
       color: field,
       colors: ramp,
       colorDomain: range,
@@ -812,14 +915,15 @@ const MARKS: MarkChecks = {
     },
   },
   heatmap: {
-    required: ["value"],
+    required: ["color"],
     checks: {
+      ...placement,
       x: field,
       y: field,
       date: field,
       calendar: oneOf("weeks", "months"),
       weekStart: oneOf("sun", "mon", "tue", "wed", "thu", "fri", "sat"),
-      value: field,
+      color: field,
       xStep: positive,
       yStep: positive,
       xBanded: boolean,
@@ -838,8 +942,8 @@ const MARKS: MarkChecks = {
       y: field,
       z: field,
       series: field,
-      name: field,
-      r: positive,
+      labelField: field,
+      radius: positive,
       color: field,
       colors: ramp,
       colorDomain: range,
@@ -924,8 +1028,7 @@ const projection: Check = (v, path) => {
   if (typeof v === "string") return oneOf(...PROJECTIONS)(v, path);
   object(v, path);
   const spec = v as Record<string, unknown>;
-  required(spec, path, ["type"]);
-  properties(spec, path, {
+  checkProperties(spec, path, ["type"], {
     type: oneOf(...PROJECTIONS),
     centralMeridian: finite,
     parallels: (p, at) => {
@@ -992,6 +1095,9 @@ const COLUMNS = {
     } satisfies ChecksOf<GeometryColumnSpec>,
   },
 };
+const COLUMN_KEYS = [
+  ...new Set(Object.values(COLUMNS).flatMap((form) => Object.keys(form.checks))),
+];
 
 /**
  * A column's form and the types of its properties. Inline values are
@@ -1009,10 +1115,20 @@ const column: Check = (v, path) => {
         : spec.type === "number" || spec.type === "time"
           ? COLUMNS.binary
           : undefined;
-  if (!form) fail(`${path}.type`, '"number", "time", "category", or "geometry"', spec.type);
-  required(spec, path, form.required);
-  properties(spec, path, form.checks);
+  if (!form) {
+    const typo = spec.type === undefined ? misspelling(spec, "type", COLUMN_KEYS) : undefined;
+    if (typo !== undefined) throw missing(path, "type", typo);
+    fail(`${path}.type`, '"number", "time", "category", or "geometry"', spec.type);
+  }
+  checkProperties(spec, path, form.required, form.checks);
 };
+
+/** Why a point's size is in no single form: a constant radius and a size field both. */
+function sizeFormError(spec: Record<string, unknown>, type: string): string | undefined {
+  return spec.radius !== undefined && spec.size !== undefined
+    ? `${type} radius: a constant radius or a size field, not both; drop one`
+    : undefined;
+}
 
 /** Marks whose properties come in forms that exclude each other: why a spec has no single one. */
 const FORMS: Partial<
@@ -1026,17 +1142,20 @@ const FORMS: Partial<
   region: regionFormError,
   rug: (spec) => {
     if ((spec.x !== undefined) === (spec.y !== undefined))
-      return "Rugs need exactly one of x and y";
+      return "rug: needs exactly one of x and y";
     const sides = spec.x !== undefined ? ["bottom", "top"] : ["left", "right"];
     if (spec.side !== undefined && !sides.includes(spec.side as string))
-      return `side must be ${sides.join(" or ")} for a ${spec.x !== undefined ? "x" : "y"} rug`;
-    if (spec.y !== undefined && spec.axis === "right") return "A y rug cannot use the right axis";
+      return `rug side: expected "${sides.join('" or "')}"; received ${JSON.stringify(spec.side)}`;
+    if (spec.y !== undefined && spec.axis === "right")
+      return 'rug axis: a y rug has no right axis; drop axis: "right"';
     return undefined;
   },
   errorbar: (spec) => {
     const form = errorBarForm(spec);
     return typeof form === "string" ? form : undefined;
   },
+  point: (spec) => sizeFormError(spec, "point"),
+  geopoint: (spec) => sizeFormError(spec, "geopoint"),
   treemap: (spec) => treeFormError(spec, "treemap"),
   sunburst: (spec) => treeFormError(spec, "sunburst"),
 };
@@ -1054,40 +1173,38 @@ const mark: Check = (v, path) => {
         .join(" or "),
       spec.type,
     );
-  required(spec, path, kind.required);
-  properties(
-    spec,
-    path,
-    {
-      ...kind.checks,
-      data: field,
-      id: string,
-      axis: oneOf("left", "right"),
-      facet: oneOf("repeat"),
-      panel: string,
-    },
-    ["type"],
-  );
+  const checks = { ...kind.checks, data: field, id: string };
+  required(spec, path, kind.required, [...Object.keys(checks), "type"]);
+  properties(spec, path, checks, ["type"]);
   if (spec.type === "dendrogram" && spec.axis !== undefined)
-    fail(`${path}.axis`, "absent: dendrogram heights are plot-relative", spec.axis);
+    throw new TypeError(
+      `${path}.axis: a dendrogram's heights are plot-relative, on no y axis; drop axis`,
+    );
   const problem = FORMS[spec.type as MarkSpec["type"]]?.(spec);
   if (problem) throw new TypeError(`${path}: ${problem}`);
 };
 
 /**
- * Throws a TypeError naming the first property of `spec` that is not valid.
- * Properties it does not know are allowed (see `checkSpec`).
+ * Throws a TypeError naming the first property of `spec` that is not valid,
+ * or that the spec format does not have (`checkSpec` returns those instead).
  */
 export function validateSpec(spec: unknown): asserts spec is ChartSpec {
-  checkSpec(spec);
+  const unknown = findUnknown(spec);
+  if (unknown.length > 0) throw new TypeError(unknownError(unknown));
 }
 
 /**
- * Checks `spec` like `validateSpec`, and returns the paths of the
- * properties it does not know, such as `marks[0].strokeWidht`.
+ * Checks `spec` like `validateSpec`, but returns the paths of the
+ * properties it does not know, such as `marks[0].strokeWidht`, rather than
+ * refusing them.
  */
 export function checkSpec(spec: unknown): string[] {
-  const found: string[] = [];
+  return findUnknown(spec).map(({ path }) => path);
+}
+
+/** Checks `spec`, throwing for what is not valid, and returns the properties it does not know. */
+export function findUnknown(spec: unknown): UnknownProperty[] {
+  const found: UnknownProperty[] = [];
   const outer = unknownPaths;
   unknownPaths = found;
   try {
@@ -1099,6 +1216,58 @@ export function checkSpec(spec: unknown): string[] {
   return found;
 }
 
+/** An unknown property's path and, when a known one is close, the name it likely meant. */
+export function describeUnknown({ path, known }: UnknownProperty): string {
+  const name = path.slice(path.lastIndexOf(".") + 1);
+  const meant = closest(name, known);
+  return meant === undefined ? path : `${path} (did you mean "${meant}"?)`;
+}
+
+/** Why a spec with unknown properties is refused, and what to do instead. */
+export function unknownError(unknown: readonly UnknownProperty[]): string {
+  const [first, ...rest] = unknown;
+  const name = first!.path.slice(first!.path.lastIndexOf(".") + 1);
+  const meant = closest(name, first!.known);
+  const fix =
+    meant !== undefined
+      ? `did you mean "${meant}"?`
+      : 'remove it, or load with { unknown: "warn" } or "ignore"';
+  const more = rest.length > 0 ? ` (also unknown: ${rest.map(describeUnknown).join(", ")})` : "";
+  return `${first!.path}: not a property of herceg's spec format; ${fix}${more}`;
+}
+
+/** The known name a misspelling most likely means: one or two edits away, or the same but for case. */
+function closest(name: string, known: readonly string[]): string | undefined {
+  let best: string | undefined;
+  let distance = name.length < 4 ? 1 : 2;
+  for (const candidate of known) {
+    if (candidate.toLowerCase() === name.toLowerCase()) return candidate;
+    const d = edits(name, candidate, distance);
+    if (d <= distance && (best === undefined || d < distance)) {
+      best = candidate;
+      distance = d;
+    }
+  }
+  return best;
+}
+
+/** Levenshtein distance between `a` and `b`, or more than `limit` once it surely is. */
+function edits(a: string, b: string, limit: number): number {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++)
+      next[j] = Math.min(
+        row[j]! + 1,
+        next[j - 1]! + 1,
+        row[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    row = next;
+  }
+  return row[b.length]!;
+}
+
 /** Check inline linkage rows here; the loader checks binary and derived data. */
 function checkDendrogramData(spec: ChartSpec): void {
   spec.marks.forEach((mark, i) => {
@@ -1106,29 +1275,32 @@ function checkDendrogramData(spec: ChartSpec): void {
     const path = `marks[${i}]`;
     if (spec.facet && mark.facet !== "repeat")
       throw new TypeError(
-        `${path}: a dendrogram over a table needs facet: "repeat" to draw it whole in every panel`,
+        `${path}.facet: missing; a dendrogram is drawn whole in every facet panel, so give it facet: "repeat"`,
       );
     const names = Object.keys(spec.data ?? {});
     const name = mark.data ?? (names.length === 1 ? names[0] : undefined);
     const data =
       name !== undefined && Object.hasOwn(spec.data ?? {}, name) ? spec.data![name] : undefined;
-    if (!data) throw new TypeError(`${path}.data: dendrogram needs a table in spec.data`);
+    if (!data)
+      throw new TypeError(`${path}.data: no table for the dendrogram; name one of spec.data`);
     if ("source" in data) return;
     const fields = [mark.first, mark.second, mark.height] as const;
     const columns = fields.map((field, channel) => {
       const column = Object.hasOwn(data.columns, field) ? data.columns[field] : undefined;
       if (column === undefined)
         throw new TypeError(
-          `${path}.${["first", "second", "height"][channel]}: unknown field "${field}"`,
+          `${path}.${["first", "second", "height"][channel]}: no field "${field}" in the dendrogram's table`,
         );
       if (Array.isArray(column)) {
         const bad = column.findIndex((value) => value !== null && typeof value !== "number");
         if (bad >= 0)
-          throw new TypeError(`${path}: dendrogram row ${bad}, field "${field}" must hold numbers`);
+          throw new TypeError(
+            `${path}: dendrogram row ${bad}, field "${field}": expected a number; received ${describe(column[bad])}`,
+          );
         return column as readonly (number | null)[];
       }
       if ((column as { type: string }).type !== "number")
-        throw new TypeError(`${path}: dendrogram field "${field}" must hold numbers`);
+        throw new TypeError(`${path}: dendrogram field "${field}": expected a number column`);
       return undefined;
     });
     const rows = columns.find((column) => column !== undefined)?.length;
@@ -1136,7 +1308,7 @@ function checkDendrogramData(spec: ChartSpec): void {
     for (const [channel, column] of columns.entries())
       if (column && column.length !== rows)
         throw new TypeError(
-          `${path}: dendrogram row ${Math.min(rows, column.length)}, field "${fields[channel]}" has a different row count`,
+          `${path}: dendrogram row ${Math.min(rows, column.length)}, field "${fields[channel]}": the fields have different row counts; give each one row per merge`,
         );
     try {
       checkLinkage(rows, mark.leaves, fields, (channel, row) => {
@@ -1152,20 +1324,10 @@ function checkDendrogramData(spec: ChartSpec): void {
 function checkChart(spec: unknown): asserts spec is ChartSpec {
   object(spec, "spec");
   const chart = spec as Record<string, unknown>;
+  // Later versions may mean what this herceg cannot draw, so they are refused.
   const version = chart.version;
-  if (
-    version !== undefined &&
-    !(
-      typeof version === "number" &&
-      Number.isInteger(version) &&
-      version >= 1 &&
-      version <= SPEC_VERSION
-    )
-  ) {
-    throw new TypeError(
-      `Unsupported spec version ${describe(version)}; this herceg reads versions 1 to ${SPEC_VERSION}`,
-    );
-  }
+  if (version !== undefined && version !== SPEC_VERSION)
+    fail("spec.version", `${SPEC_VERSION}, the version this herceg reads`, version);
   if (!Array.isArray(chart.marks)) fail("spec.marks", "an array of marks", chart.marks);
   for (const [i, item] of chart.marks.entries()) mark(item, `marks[${i}]`);
   properties(
@@ -1183,12 +1345,12 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           object(table, at);
           const entry = table as Record<string, unknown>;
           if (entry.source !== undefined) {
-            required(entry, at, ["transform"]);
-            properties(entry, at, {
+            checkProperties(entry, at, ["transform"], {
               source: string,
               transform: transforms,
             } satisfies ChecksOf<DerivedSpec>);
           } else {
+            required(entry, at, ["columns"], ["columns"]);
             object(entry.columns, `${at}.columns`);
             properties(entry, at, {}, ["columns"]);
             for (const [name, values] of Object.entries(entry.columns as object))
@@ -1206,8 +1368,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           const at = `${path}[${i}]`;
           object(item, at);
           const panel = item as Record<string, unknown>;
-          required(panel, at, ["id"]);
-          properties(panel, at, {
+          checkProperties(panel, at, ["id"], {
             id: string,
             title: string,
             x: axis,
@@ -1315,7 +1476,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           const at = Array.isArray(v) ? `${path}[${i}]` : path;
           object(binding, at);
           const b = binding as Record<string, unknown>;
-          properties(b, at, {
+          checkProperties(b, at, ["channel"], {
             data: string,
             channel: (c, where) => {
               if (typeof c !== "string" || c === "") fail(where, "a channel's name", c);
@@ -1327,7 +1488,6 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
             },
             effect: oneOf("highlight", "none"),
           } satisfies ChecksOf<RowSelectionSpec>);
-          required(b, at, ["channel"]);
         });
       },
       renderer: oneOf("auto", "svg", "canvas"),
@@ -1341,113 +1501,13 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
     } satisfies ChecksOf<Omit<ChartSpec, "marks" | "version">>,
     ["marks", "version"],
   );
-  // An older reader would draw shared axes or overlay panels, or the time
-  // breaks leave out; a spec asking otherwise says so.
-  const declared = (version as number | undefined) ?? 1;
-  for (const name of ["resolve", "panels", "grid"])
-    if (chart[name] !== undefined && declared < 2)
-      fail(
-        `spec.${name}`,
-        'a spec with "version": 2 or later, so that older readers refuse it',
-        chart[name],
-      );
-  const ownX = [
-    ["spec.resolve.x", (chart.resolve as { x?: unknown } | undefined)?.x],
-    ["spec.x.breaks", (chart.x as { breaks?: unknown } | undefined)?.breaks],
-    ...((chart.panels as { x?: unknown }[] | undefined) ?? []).map(
-      ({ x }, i) => [`spec.panels[${i}].x`, x] as const,
-    ),
-  ] as const;
-  for (const [path, value] of ownX)
-    if (value !== undefined && declared < 3)
-      fail(path, 'a spec with "version": 3 or later, so that older readers refuse it', value);
-  // An older reader would draw the chart without its strip, and the plot taller.
-  const navigator = chart.navigator;
-  if (navigator !== undefined && navigator !== false && declared < 4)
-    fail(
-      "spec.navigator",
-      'a spec with "version": 4 or later, so that older readers refuse it',
-      navigator,
-    );
-  const seams = (chart.x as XAxisSpec | undefined)?.seams;
-  if (seams !== undefined && seams !== false && declared < 5)
-    fail("spec.x.seams", 'a spec with "version": 5, so that older readers refuse it', seams);
   for (const [i, item] of (chart.marks as Record<string, unknown>[]).entries()) {
-    if (item.type === "violin") {
-      if (item.split === true && item.series === undefined)
-        fail(`marks[${i}].split`, "a series field for split violins", item.split);
-      if (
-        (item.split === true || (item.inner !== undefined && item.inner !== "box")) &&
-        declared < 7
-      )
-        fail(
-          `marks[${i}].${item.split === true ? "split" : "inner"}`,
-          'a spec with "version": 7 or later, so that older readers refuse it',
-          item.split === true ? item.split : item.inner,
-        );
-    }
-    if (item.type === "heatmap") {
-      // Older readers band heatmaps' number and time fields, and have no steps or calendars.
-      for (const name of ["xStep", "yStep", "xBanded", "yBanded", "date"])
-        if (item[name] !== undefined && item[name] !== true && declared < 9)
-          fail(
-            `marks[${i}].${name}`,
-            'a spec with "version": 9 or later, so that older readers refuse it',
-            item[name],
-          );
+    if (item.type === "violin" && item.split === true && item.series === undefined)
+      fail(`marks[${i}].split`, "a series field for split violins", item.split);
+    if (item.type === "heatmap")
       for (const axis of ["x", "y"])
         if (item[`${axis}Step`] !== undefined && item[`${axis}Banded`] === true)
           fail(`marks[${i}].${axis}Step`, `no ${axis}Step with ${axis}Banded`, item[`${axis}Step`]);
-    }
-    // An older reader would draw a directed network without arrowheads, and links without names.
-    if (item.type === "graph")
-      for (const name of ["directed", "linkLabel"] as const)
-        if (item[name] !== undefined && item[name] !== false && declared < 11)
-          fail(
-            `marks[${i}].${name}`,
-            'a spec with "version": 11 or later, so that older readers refuse it',
-            item[name],
-          );
-    if (item.type !== "boxplot" || item.median !== undefined) continue;
-    if (
-      (item.notch === true ||
-        (item.whiskers !== undefined && item.whiskers !== "tukey" && item.whiskers !== 1.5)) &&
-      declared < 6
-    )
-      fail(
-        `marks[${i}].${item.notch === true ? "notch" : "whiskers"}`,
-        'a spec with "version": 6 or later, so that older readers refuse it',
-        item.notch === true ? item.notch : item.whiskers,
-      );
-  }
-  // An older reader would draw every row undimmed whatever is selected.
-  if (chart.rowSelection !== undefined && declared < 8)
-    fail(
-      "spec.rowSelection",
-      'a spec with "version": 8 or later, so that older readers refuse it',
-      chart.rowSelection,
-    );
-  // An older reader would give a legend group's series colors and legend
-  // entries of their own, draw points and error bars at their bands'
-  // centers, and histograms in bins and measures of its own.
-  for (const [i, item] of (chart.marks as Record<string, unknown>[]).entries()) {
-    if (declared >= 10) break;
-    const histogram = item.type === "histogram";
-    const options: [string, unknown][] = [
-      ...["legendGroup", "dodge", "jitter"].map((name): [string, unknown] => [name, item[name]]),
-      ["y", histogram ? item.y : undefined],
-      ["bins", histogram && Array.isArray(item.bins) ? item.bins : undefined],
-      ["normalize", histogram && item.normalize === "probability" ? item.normalize : undefined],
-      ["commonNorm", histogram ? item.commonNorm : undefined],
-      ["cumulative", histogram ? item.cumulative : undefined],
-    ];
-    for (const [name, value] of options)
-      if (value !== undefined && value !== false)
-        fail(
-          `marks[${i}].${name}`,
-          'a spec with "version": 10 or later, so that older readers refuse it',
-          value,
-        );
   }
   // Dragging moves a network's nodes; a chart of other marks has none.
   const interaction = chart.interaction as { drag?: unknown } | undefined;

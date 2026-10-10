@@ -22,7 +22,7 @@ from ._chart import (
     spec_options,
     table_name,
 )
-from ._data import Column, Table
+from ._data import Column, Table, shown
 from ._rows import bound_tables
 
 if TYPE_CHECKING:
@@ -92,11 +92,16 @@ class LiveChart:
         if max_rows is not None and not (
             isinstance(max_rows, int) and not isinstance(max_rows, bool) and max_rows >= 1
         ):
-            raise ValueError(f"max_rows must be a whole number of at least 1, not {max_rows!r}")
-        name = self._table_name(data)
+            raise ValueError(
+                "widget.append max_rows: expected a whole number of at least 1; "
+                f"received {shown(max_rows)}"
+            )
+        name = self._table_name(data, "widget.append")
         if any(column.kind == "geometry" for column in self._tables[name].values()):
-            raise ValueError("a table of shapes takes replace(), not append()")
-        batch = self._batch(name, rows)
+            raise ValueError(
+                "widget.append: a table of shapes is replaced whole; call widget.replace()"
+            )
+        batch = self._batch(name, rows, "widget.append")
         count = _length(batch)
         if count == 0:
             return None
@@ -125,15 +130,15 @@ class LiveChart:
         joins = [] if data is None or self._sources_read(data) else self._joins_of(data)
         if len(joins) > 1:
             raise ValueError(
-                "these rows are joined to the features of several geoshape marks; "
-                "make a chart per map, or join the rows with GeoPandas first (merge)"
+                "widget.replace data: the rows are joined to the features of several geoshape "
+                "marks; make a chart per map, or join the rows with GeoPandas first (merge)"
             )
         if joins:
             _, name, join = joins[0]
-            batch = self._batch(name, rows, join.rejoin(Table(_one_row(rows))))
+            batch = self._batch(name, rows, "widget.replace", join.rejoin(Table(_one_row(rows))))
         else:
-            name = self._table_name(data)
-            batch = self._batch(name, rows)
+            name = self._table_name(data, "widget.replace")
+            batch = self._batch(name, rows, "widget.replace")
         buffers: list[bytes] = []
         # The message is made first, so rows it cannot carry change nothing.
         columns = columns_spec(batch, buffers)
@@ -149,8 +154,14 @@ class LiveChart:
         unknown = sorted(set(changes) - set(OPTIONS))
         if unknown:
             fixed = {"data", "facet", "facet_columns"} & set(unknown)
-            hint = " (data and facets cannot change; make a new chart)" if fixed else ""
-            raise TypeError(f"unknown chart option {', '.join(map(repr, unknown))}{hint}")
+            hint = (
+                "data and facets cannot change, so make a new chart"
+                if fixed
+                else f"the options are {', '.join(OPTIONS)}"
+            )
+            raise TypeError(
+                f"widget.update: unknown chart option {', '.join(map(repr, unknown))}; {hint}"
+            )
         settings = {**self._settings, **changes}
         _check_live(settings)
         # Checked before anything changes, as the chart checks it when made.
@@ -159,7 +170,10 @@ class LiveChart:
         options = spec_options(settings)
         # Checked before anything changes, as the chart checks it when made.
         if options.get("navigator") and self._layout:
-            raise ValueError("charts with facets or panels cannot have a navigator yet")
+            raise ValueError(
+                "widget.update navigator: charts with facets or panels have no navigator yet; "
+                "drop navigator"
+            )
         changed = {
             key: options.get(key)
             for key in sorted(set(options) | set(self._options))
@@ -168,22 +182,27 @@ class LiveChart:
         self._settings, self._options = settings, options
         return ({"type": "options", "options": changed}, []) if changed else None
 
-    def _table_name(self, data: Any) -> str:
+    def _table_name(self, data: Any, method: str) -> str:
+        """The table `data` names, for `method` (as messages name it)."""
         if data is None:
             if self._default is None:
-                raise ValueError("the chart has no data of its own; pass data= to choose a table")
+                raise ValueError(
+                    f"{method} data: the chart has no data of its own; pass data= to choose a table"
+                )
             name = self._default
         else:
             found = next((name for source, name in self._sources if source is data), None)
             if found is None:
                 raise ValueError(
-                    "data= must be the object passed to the chart or to one of its marks"
+                    f"{method} data: expected the object passed to the chart or to one of its marks"
                 )
             name = found
         if name in self._derived:
-            raise ValueError("a derived table follows its source: append to the source's data")
+            raise ValueError(
+                f"{method} data: a derived table follows its source; pass the source's data"
+            )
         if name not in self._tables:
-            raise ValueError("no mark of the chart reads columns of that data")
+            raise ValueError(f"{method} data: no mark of the chart reads its columns")
         return name
 
     def _source_of(self, name: str) -> Any:
@@ -198,24 +217,25 @@ class LiveChart:
         """Whether a mark reads the columns of `data` itself."""
         return any(source is data and name in self._tables for source, name in self._sources)
 
-    def _batch(self, name: str, rows: Any, table: Any = None) -> dict[str, Column]:
+    def _batch(self, name: str, rows: Any, method: str, table: Any = None) -> dict[str, Column]:
         """The table's columns from `rows` (or `table`, rows already read), converted
-        to the kinds the table holds."""
+        to the kinds the table holds, for `method` (as messages name it)."""
         current = self._tables[name]
         if table is None:
             table = Table(_one_row(rows))
         missing = [field for field in current if field not in table.names]
         if missing:
             raise KeyError(
-                f"the rows have no column {', '.join(map(repr, missing))}; "
+                f"{method} rows: no column {', '.join(map(repr, missing))}; "
                 f"the chart reads {', '.join(map(repr, current))}"
             )
         batch = {
-            field: _as_kind(table.column(field), column, field) for field, column in current.items()
+            field: _as_kind(table.column(field), column, field, method)
+            for field, column in current.items()
         }
         lengths = {field: len(column) for field, column in batch.items()}
         if len(set(lengths.values())) > 1:
-            raise ValueError(f"columns differ in length: {lengths}")
+            raise ValueError(f"{method} rows: expected columns of one length; received {lengths}")
         return batch
 
 
@@ -226,8 +246,8 @@ def check_live_rows(chart: Chart) -> None:
     for spec in bound_tables(chart._spec_options().get("rowSelection")):
         if spec["data"] in derived:
             raise ValueError(
-                "live charts report rows of data Python holds: bind the data a derived "
-                "table derives from, not the derived table"
+                "SelectionBinding data: live charts report rows of data Python holds, and a "
+                "derived table's rows are computed in the browser; bind the table it derives from"
             )
 
 
@@ -236,9 +256,9 @@ def _check_live(settings: dict[str, Any]) -> None:
     panels share x."""
     if settings["resolve_x"] not in (None, "shared"):
         raise ValueError(
-            "live charts carry one x range for zoom and selection, so their panels "
-            "share x: resolve_x must be 'shared' (show charts whose panels have x "
-            "scales of their own with chart.show() or to_html())"
+            'Chart resolve_x: expected "shared" in a live chart, which carries one x range '
+            f'for zoom and selection; received "{settings["resolve_x"]}". Show charts whose '
+            "panels have x scales of their own with chart.show() or to_html()"
         )
 
 
@@ -253,7 +273,7 @@ def _length(columns: dict[str, Column]) -> int:
     return len(next(iter(columns.values())))
 
 
-def _as_kind(column: Column, current: Column, field: str) -> Column:
+def _as_kind(column: Column, current: Column, field: str, method: str) -> Column:
     """`column` as the kind of `current`; numbers keep the table's precision."""
     if column.kind != current.kind:
         # A column of missing values converts as numbers but fits any kind.
@@ -265,7 +285,8 @@ def _as_kind(column: Column, current: Column, field: str) -> Column:
                 return Column("geometry", codes, shapes=shapes)
             return Column(current.kind, column.values.astype("<f8"))
         raise TypeError(
-            f"column {field!r} holds {current.kind} values; the rows hold {column.kind} values"
+            f"{method} rows: column {field!r} holds {column.kind} values; "
+            f"expected {current.kind} values, as the chart's column holds"
         )
     if column.kind in ("category", "geometry"):
         return column

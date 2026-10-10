@@ -10,7 +10,7 @@ Svelte 5 components for [herceg](../herceg/README.md) charts.
   const metrics = table({ time: time(timestamps), p50, p99 });
 </script>
 
-<Chart title="Request latency" y={{ label: "ms" }} interaction={{ zoom: true }}>
+<Chart title="Request latency" y={{ title: "ms" }} interaction={{ zoom: true }}>
   <Line data={metrics} x="time" y={["p50", "p99"]} />
   <Rule y={250} label="SLO" />
 </Chart>
@@ -30,7 +30,7 @@ checks field names against that table's columns; `<Graph>` takes its links as
 chart with each other, projected by its `projection` prop, and `<Point3D>`,
 `<Line3D>`, and `<Surface>` a 3D chart seen from its `camera` prop. Annotations (`<Rule>`,
 `<Region>`, `<Text>`) take `data` only when they draw one item per row:
-`<Rule data={deploys} x="time" text="version" />`. Marks built with herceg's
+`<Rule data={deploys} x="time" textField="version" />`. Marks built with herceg's
 functions can also be passed as a `marks` prop.
 
 The chart fills its container's width and is 320 px tall unless `width`,

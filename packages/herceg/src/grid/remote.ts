@@ -112,7 +112,7 @@ const FAILED = "Couldn't load rows";
 export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S> {
   readonly source: GridSource<S>;
   readonly schema: GridSchema<S>;
-  readonly selection: RemoteSelectionStore;
+  readonly selectionStore: RemoteSelectionStore;
   readonly channel: string;
   readonly blockSize: number;
   readonly #cachedBlocks: number;
@@ -176,10 +176,12 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     const { source } = options;
     this.source = source;
     this.schema = source.schema;
-    const selection = options.selection ?? remoteSelectionStore(this.schema);
+    const selection = options.selectionStore ?? remoteSelectionStore(this.schema);
     if (selection.schema.source !== this.schema.source)
-      throw new Error("A grid's selection store must be of its source");
-    this.selection = selection;
+      throw new Error(
+        "remote grid selectionStore: the store is of another source; give a store of the grid's source",
+      );
+    this.selectionStore = selection;
     this.channel = options.channel ?? "grid-rows";
     const positive = (value: number | undefined, fallback: number, what: string) => {
       const n = value ?? fallback;
@@ -192,10 +194,12 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     this.#cacheBytes = positive(options.cacheBytes, 8 * 2 ** 20, "cacheBytes");
     this.#maxRequests = positive(options.maxRequests, 2, "maxRequests");
     this.#maxExpanded = positive(options.maxExpanded, 256, "maxExpanded");
-    this.#settle = options.settle ?? 50;
+    this.#settle = options.settleDelay ?? 50;
     const settle = this.#settle;
     if (!(Number.isFinite(settle) && settle >= 0))
-      throw new RangeError(`A remote grid's settle must be 0 or more milliseconds, not ${settle}`);
+      throw new RangeError(
+        `remote grid settleDelay: expected 0 or more milliseconds; received ${settle}`,
+      );
     this.#revision = start(
       ++this.#revisions,
       this.#validate(options.query ?? {}),
@@ -488,7 +492,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
   // Selection
 
   get selectionRevision(): number {
-    return this.selection.revision;
+    return this.selectionStore.revision;
   }
 
   /**
@@ -496,7 +500,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
    * the source can count.
    */
   get selectedCount(): number | null {
-    const selection = this.selection.get(this.channel);
+    const selection = this.selectionStore.get(this.channel);
     if (!selection) return 0;
     return selection.kind === "keys" ? selection.keys.length : null;
   }
@@ -507,7 +511,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
    * (see `#groupState`). Placeholders are not.
    */
   selectionState(rowIndex: number): SelectionState {
-    const selection = this.selection.get(this.channel);
+    const selection = this.selectionStore.get(this.channel);
     if (!selection) return "none";
     const { list, ordinal } = this.#at(rowIndex);
     const block = list.blocks.get(Math.floor(ordinal / this.blockSize));
@@ -534,7 +538,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
       this.#say("Rows still loading cannot be selected");
       return;
     }
-    const store = this.selection;
+    const store = this.selectionStore;
     const current = store.get(this.channel);
     const row = ordinal - block.index * this.blockSize;
     const ref = refOf(list, ordinal);
@@ -633,9 +637,9 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
   }
 
   clearSelection(): boolean {
-    const had = this.selection.get(this.channel) !== null || this.rangeAnchor !== null;
+    const had = this.selectionStore.get(this.channel) !== null || this.rangeAnchor !== null;
     this.rangeAnchor = null;
-    if (this.selection.get(this.channel) !== null) this.selection.set(this.channel, null);
+    if (this.selectionStore.get(this.channel) !== null) this.selectionStore.set(this.channel, null);
     return had;
   }
 
@@ -787,7 +791,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
     if (this.schema.key !== null) fields.add(this.schema.key);
     for (const field of query.group?.by ?? []) fields.add(field);
     for (const field of expressionFields(query.filter)) fields.add(field);
-    const selection = this.selection.get(this.channel);
+    const selection = this.selectionStore.get(this.channel);
     if (selection?.kind === "matching")
       for (const field of expressionFields(selection.where))
         if (Object.hasOwn(this.schema.fields, field)) fields.add(field);
@@ -827,7 +831,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
    * then a block ahead, in the direction of scrolling.
    * Requests for blocks more than two blocks from the view are aborted.
    * After a jump (a scrollbar dragged far), requests wait for the scrolling
-   * to settle for `settle` ms, but never longer than three times that while it
+   * to settle for `settleDelay` ms, but never longer than three times that while it
    * goes on; moves of the focus (the keyboard) do not wait.
    */
   #plan() {
@@ -1415,9 +1419,9 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
    * the one installed, while its selection is the channel's.
    */
   #scopeNow(): Scope | null {
-    const current = this.selection.get(this.channel);
+    const current = this.selectionStore.get(this.channel);
     const pending = this.#pending;
-    const version = this.selection.version(this.channel);
+    const version = this.selectionStore.version(this.channel);
     if (pending && pending.version === version && current?.kind === "matching") {
       const { version: _, ...scope } = pending;
       return { ...scope, selection: current };
@@ -1431,7 +1435,7 @@ export class RemoteGridModel<S extends Schema = Schema> extends BaseGridModel<S>
    * a group. Rows toggled in or out of it keep it a group's.
    */
   #publish(selection: RemoteSelection, path?: GroupKey | null) {
-    const store = this.selection;
+    const store = this.selectionStore;
     const scope = this.#scopeNow();
     // The scope is of this publication alone: the channel's next version.
     const version = store.version(this.channel) + 1;

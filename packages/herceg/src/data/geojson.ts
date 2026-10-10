@@ -45,7 +45,7 @@ export interface GeoJsonOptions extends TableOptions {
  *
  * ```ts
  * const countries = fromGeoJSON(await (await fetch("countries.geojson")).json());
- * geoshape(countries, { name: "name", color: "pop_est" });
+ * geoshape(countries, { labelField: "name", color: "pop_est" });
  * ```
  */
 export function fromGeoJSON(collection: FeatureCollection, options: GeoJsonOptions = {}): Table {

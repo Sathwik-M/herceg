@@ -396,11 +396,13 @@ describe("box plot options", () => {
     data.append({ g: ["c"], lo: [10], p25: [11], p50: [12], p75: [13], hi: [14], n: [20] });
     model.scene(estimateText);
     expect(model.panelSeries("")[0]!.length).toBe(2);
-    for (const n of [0, -1, 0.5, Infinity, Number.NaN]) {
+    for (const n of [0, -1, 0.5, 2 ** 53, Infinity, Number.NaN]) {
       const bad = table({ group: ["a"], lo: [0], p25: [1], p50: [2], p75: [3], hi: [4], n: [n] });
       expect(() =>
         build({ marks: [boxplot(bad, { x: "group", ...fields, count: "n", notch: true })] }),
-      ).toThrow(/count at row 0.*positive/);
+      ).toThrow(
+        `boxplot count at row 0: expected a whole number from 1 to 9007199254740991; received ${n}`,
+      );
     }
     expect(() =>
       build({
@@ -468,42 +470,43 @@ describe("box plot options", () => {
   );
 });
 
-describe("box plot validation and compatibility", () => {
+describe("box plot validation", () => {
   const stats = { type: "boxplot", x: "group", ...fields } as const;
   it.each([
-    [{ ...stats, y: "values" }, /both raw x\/y.*precomputed.*low/],
-    [{ ...stats, whiskers: "tukey" }, /whiskers.*low and high/],
-    [{ ...stats, notch: true }, /notch needs count/],
-    [{ type: "boxplot", x: "group", q1: "p25" }, /needs low, median, q3, high/],
-    [{ type: "boxplot", x: "group" }, /raw box plot needs x and y/],
-    [{ ...stats, x: undefined }, /exactly one category field/],
-    [{ type: "boxplot", x: "group", y: "values", whiskers: -1 }, /nonnegative/],
-    [{ type: "boxplot", x: "group", y: "values", whiskers: Infinity }, /nonnegative/],
+    [{ ...stats, y: "values" }, /boxplot: raw x and y, or precomputed low.*not both/],
+    [{ ...stats, whiskers: "tukey" }, /boxplot whiskers: low and high/],
+    [{ ...stats, notch: true }, /boxplot notch: precomputed statistics need count/],
+    [{ type: "boxplot", x: "group", q1: "p25" }, /need low, median, q3, high/],
+    [{ type: "boxplot", x: "group" }, /boxplot: needs x and y, or precomputed statistics/],
+    [{ ...stats, x: undefined }, /need one category field, x or y/],
+    [{ type: "boxplot", x: "group", y: "values", whiskers: -1 }, /whiskers: .*received -1/],
+    [
+      { type: "boxplot", x: "group", y: "values", whiskers: Infinity },
+      /whiskers: expected "tukey", "range", or a finite nonnegative IQR multiple; received Infinity$/,
+    ],
+    [{ type: "boxplot", x: "group", y: "values", whiskers: Number.NaN }, /received NaN$/],
   ])("refuses invalid form %j in specs and direct calls", (spec, error) => {
-    expect(() => validateSpec({ version: 6, marks: [spec] })).toThrow(error);
+    expect(() => validateSpec({ marks: [spec] })).toThrow(error);
     const { type: _type, ...options } = spec;
     expect(() => boxplot(statistics(), options as never)).toThrow(error);
   });
 
-  it("gates raw semantic changes while older readers already refuse precomputed input", () => {
-    for (const version of [undefined, 1, 2, 3, 4, 5]) {
-      for (const options of [
-        { notch: true },
-        { whiskers: "range" },
-        { whiskers: 0 },
-        { whiskers: 2 },
-      ])
-        expect(() =>
-          validateSpec({ version, marks: [{ type: "boxplot", x: "group", y: "v", ...options }] }),
-        ).toThrow(/version.*6/);
-      for (const options of [{}, { notch: false }, { whiskers: "tukey" }, { whiskers: 1.5 }])
-        expect(() =>
-          validateSpec({ version, marks: [{ type: "boxplot", x: "group", y: "v", ...options }] }),
-        ).not.toThrow();
-      expect(checkSpec({ version, marks: [{ ...stats, count: "n", notch: true }] })).toEqual([]);
-    }
+  it("load raw notches and whisker rules, and precomputed input", () => {
+    for (const options of [
+      {},
+      { notch: true },
+      { notch: false },
+      { whiskers: "range" },
+      { whiskers: "tukey" },
+      { whiskers: 0 },
+      { whiskers: 1.5 },
+      { whiskers: 2 },
+    ])
+      expect(() =>
+        validateSpec({ marks: [{ type: "boxplot", x: "group", y: "v", ...options }] }),
+      ).not.toThrow();
+    expect(checkSpec({ marks: [{ ...stats, count: "n", notch: true }] })).toEqual([]);
     const loaded = loadSpec({
-      version: 6,
       data: {
         data: {
           columns: { group: ["a"], lo: [0], p25: [25], p50: [50], p75: [75], hi: [100], n: [100] },

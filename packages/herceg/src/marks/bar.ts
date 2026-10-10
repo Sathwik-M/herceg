@@ -172,9 +172,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       lengths = xs;
     } else {
       if (xs.length !== 1) {
-        throw new Error(
-          "Bars with several x fields are horizontal and need one category field as y",
-        );
+        throw new Error("bar x: several fields make bars horizontal; give one category field as y");
       }
       requireField(table, xs[0]!, [...NUMERIC, ...CATEGORY], "bar x");
       for (const y of ys) requireField(table, y, NUMERIC, "bar y");

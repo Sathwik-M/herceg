@@ -34,18 +34,18 @@ Line({ data: metrics, x: "time", y: "service" });
 // A category field places points in its bands; sizes stay numeric.
 Point({ data: metrics, x: "service", y: "p50" });
 // @ts-expect-error point sizes are number fields
-Point({ data: metrics, x: "service", y: "p50", r: "service" });
+Point({ data: metrics, x: "service", y: "p50", size: "service" });
 
 // The template checker passes `:data` as a call expression, from which
 // TypeScript cannot tell union members apart; `unwrap` stands in for it.
 const unwrap = <T>(value: T) => value;
 
 Rule({ y: 250, label: "SLO" });
-Rule({ data: unwrap(deploys), x: "at", text: "version" });
+Rule({ data: unwrap(deploys), x: "at", textField: "version" });
 // @ts-expect-error rule positions from data are number or time fields
 Rule({ data: unwrap(deploys), x: "version" });
 // @ts-expect-error with data, text is a field of it, also next to constant positions
-Rule({ data: unwrap(deploys), x: 5, text: "missing" });
+Rule({ data: unwrap(deploys), x: 5, textField: "missing" });
 Text({ x: Date.now(), y: 100, label: "now", anchor: "end" });
 // @ts-expect-error constant text needs a label
 Text({ x: 1, y: 2 });
@@ -65,7 +65,7 @@ Custom({ data: 5, draw: () => {} });
 type ChartProps = InstanceType<typeof Chart>["$props"];
 export const options: ChartProps = {
   title: "Request latency",
-  y: { label: "ms" },
+  y: { title: "ms" },
   interaction: { zoom: true },
   legend: true,
   onSelect: ({ x }) => x?.[0].toFixed(),

@@ -13,7 +13,6 @@ function spec(
   extra: Partial<ChartSpec> = {},
 ): ChartSpec {
   return {
-    version: 8,
     data: { trips: { columns: { km: [1, 2, 3], fare: [4, 8, 12], kind: ["a", "b", "a"] } } },
     marks: [{ type: "point", x: "km", y: "fare" }],
     interaction: { brush: "x" },
@@ -63,7 +62,7 @@ describe("row selections in specs", () => {
       ],
     };
     expect(() => loadSpec(spec({ channel: "c" }, two))).toThrow(
-      "spec.rowSelection.data: required where the marks read several tables",
+      "spec.rowSelection.data: missing; the marks read several tables, so name one",
     );
     const loaded = loadSpec(
       spec(
@@ -76,21 +75,21 @@ describe("row selections in specs", () => {
     );
     expect([...loaded.stores.keys()]).toEqual(["a", "b"]);
     expect(() => loadSpec(spec({ data: "z", channel: "c" }))).toThrow(
-      'spec.rowSelection.data: a table of the spec\'s data, not "z"',
+      'spec.rowSelection.data: no table "z" in spec.data; name one of "trips"',
     );
   });
 
-  it("refuse stores of other tables, malformed bindings, and versions before 6", () => {
+  it("refuse stores of other tables and malformed bindings", () => {
     expect(() =>
       loadSpec(spec({ channel: "c" }), [], {
         stores: new Map([["trips", selectionStore(new Table({ x: [1] }))]]),
       }),
-    ).toThrow('The store given for table "trips" is of another table');
+    ).toThrow('stores.trips: the store given is of another table; give a store of table "trips"');
     expect(() => validateSpec(spec({ channel: "" }))).toThrow(
       "spec.rowSelection.channel: expected a channel's name",
     );
     expect(() => validateSpec(spec({ channel: "c", events: ["drag" as "click"] }))).toThrow(
-      'spec.rowSelection.events[0]: expected "brush" or "lasso" or "click"',
+      'spec.rowSelection.events[0]: expected "brush", "lasso", or "click"; received "drag"',
     );
     expect(() => validateSpec(spec({ channel: "c", effect: "filter" as "none" }))).toThrow(
       "spec.rowSelection.effect",
@@ -99,16 +98,13 @@ describe("row selections in specs", () => {
       "spec.rowSelection.channel: required",
     );
     expect(() => validateSpec(spec([]))).toThrow("expected a binding or a list of them");
-    expect(() => validateSpec({ ...spec({ channel: "c" }), version: 7 })).toThrow(
-      'spec.rowSelection: expected a spec with "version": 8',
-    );
     const pie = {
       ...spec({ channel: "c" }),
       marks: [{ type: "pie", category: "kind" }],
       interaction: {},
     };
     expect(() => new ChartModel(loadSpec(pie as ChartSpec).config)).toThrow(
-      "Charts of a pie mark cannot select rows yet",
+      "pie rowSelection: cannot select rows yet",
     );
   });
 });

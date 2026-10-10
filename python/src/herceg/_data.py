@@ -23,6 +23,7 @@ collide once converted to text.
 from __future__ import annotations
 
 import datetime as _dt
+import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -133,9 +134,22 @@ def _accessor(data: Any) -> tuple[Callable[[Any], Any], list[Any], list[Any]]:
         keys = list(dict.fromkeys(key for record in data for key in record))
         return (lambda key: [record.get(key) for record in data]), keys, keys
     raise TypeError(
-        "Chart data must be a pandas, Polars, or PyArrow table, a GeoJSON FeatureCollection, "
-        f"a mapping of column names to arrays, or a list of records; got {type(data).__name__}"
+        "data: expected a pandas, Polars, or PyArrow table, a GeoJSON FeatureCollection, "
+        f"a mapping of column names to arrays, or a list of records; received {type(data).__name__}"
     )
+
+
+def shown(value: Any) -> str:
+    """A value as error messages quote it: text in double quotes, Python's repr otherwise."""
+    return json.dumps(value) if isinstance(value, str) else repr(value)
+
+
+def listed(choices: Sequence[Any]) -> str:
+    """Choices as error messages list them: "a", "b", or "c"."""
+    items = [shown(choice) for choice in choices]
+    if len(items) <= 2:
+        return " or ".join(items)
+    return f"{', '.join(items[:-1])}, or {items[-1]}"
 
 
 def _distinct_labels(values: Sequence[Any], what: str) -> list[str]:
@@ -200,7 +214,7 @@ def _checked(column: Column) -> Column:
 
 def _from_numpy(array: np.ndarray) -> Column:
     if array.ndim != 1:
-        raise ValueError(f"columns must be one-dimensional; got shape {array.shape}")
+        raise ValueError(f"expected one-dimensional values; received shape {array.shape}")
     kind = array.dtype.kind
     if kind == "f":
         return _floats(array)
@@ -214,7 +228,7 @@ def _from_numpy(array: np.ndarray) -> Column:
         raise TypeError("durations (timedelta) are not supported; convert them to numbers")
     if kind in "UO":
         return _from_sequence(array.tolist())
-    raise TypeError(f"unsupported dtype {array.dtype}")
+    raise TypeError(f"expected numbers, times, or text; received dtype {array.dtype}")
 
 
 def _floats(array: np.ndarray) -> Column:
@@ -272,14 +286,19 @@ def _kind_of(value: Any) -> str:
         return "time"
     if isinstance(value, (bool, int, float, np.number, np.bool_)):
         return "number"
-    raise TypeError(f"unsupported value {value!r} of type {type(value).__name__}")
+    raise TypeError(
+        "expected numbers, times, text, or shapes; "
+        f"received {value!r} of type {type(value).__name__}"
+    )
 
 
 def _from_sequence(values: list[Any]) -> Column:
     present = [value for value in values if not _is_missing(value)]
     kinds = {_kind_of(value) for value in present}
     if len(kinds) > 1:
-        raise TypeError(f"the column mixes {' and '.join(sorted(kinds))} values")
+        raise TypeError(
+            f"the column mixes {' and '.join(sorted(kinds))} values; give it values of one kind"
+        )
     kind = kinds.pop() if kinds else "number"
     if kind == "text":
         return _categories(values)
@@ -334,7 +353,7 @@ def _time_ms(value: Any) -> float:
         )
     if isinstance(value, _dt.date):
         return (value - _dt.date(1970, 1, 1)).days * 86_400_000.0
-    raise TypeError(f"expected a datetime or date; got {value!r}")
+    raise TypeError(f"expected a datetime or date; received {shown(value)}")
 
 
 def _dictionary(codes: np.ndarray, labels: Sequence[Any]) -> Column:
@@ -426,7 +445,7 @@ def _from_polars(series: Any) -> Column:
         return Column(
             "number", series.cast(pl.Float64).fill_null(float("nan")).to_numpy().astype("<f8")
         )
-    raise TypeError(f"unsupported Polars column type {dtype}")
+    raise TypeError(f"expected numbers, times, or text; received the Polars type {dtype}")
 
 
 # PyArrow ----------------------------------------------------------------------
@@ -473,4 +492,4 @@ def _from_arrow(array: Any) -> Column:
     if pa.types.is_boolean(kind):
         values = pc.fill_null(array.cast(pa.float64()), float("nan"))
         return Column("number", values.to_numpy(zero_copy_only=False).astype("<f8"))
-    raise TypeError(f"unsupported Arrow column type {kind}")
+    raise TypeError(f"expected numbers, times, or text; received the Arrow type {kind}")

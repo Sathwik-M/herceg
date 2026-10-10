@@ -72,13 +72,17 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
   constructor(spec: ViolinSpec, table: Table) {
     const { bandwidth, split, inner } = spec;
     if (bandwidth !== undefined && !(bandwidth > 0 && Number.isFinite(bandwidth)))
-      throw new RangeError(`Violin bandwidth must be a positive number, not ${bandwidth}`);
+      throw new RangeError(`violin bandwidth: expected a positive number; received ${bandwidth}`);
     if (split !== undefined && typeof split !== "boolean")
-      throw new TypeError("Violin split must be a boolean");
+      throw new TypeError(
+        `violin split: expected true or false; received ${JSON.stringify(split)}`,
+      );
     if (inner !== undefined && !["box", "quartiles", "none"].includes(inner))
-      throw new TypeError('Violin inner must be "box", "quartiles", or "none"');
+      throw new TypeError(
+        `violin inner: expected "box", "quartiles", or "none"; received ${JSON.stringify(inner)}`,
+      );
     if (split && spec.series === undefined)
-      throw new TypeError("Violin split needs a series field");
+      throw new TypeError("violin split: needs a series field; give one");
     super(spec, table);
     this.#checkSplit();
   }
@@ -88,7 +92,7 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
     const count = this.rosterIds().length;
     if (count > 2)
       throw new RangeError(
-        `Violin split series field "${this.spec.series}" has ${count} values; at most two are allowed`,
+        `violin split: expected at most two series; series field "${this.spec.series}" has ${count} values`,
       );
   }
 

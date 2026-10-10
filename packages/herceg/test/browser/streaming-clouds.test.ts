@@ -99,8 +99,8 @@ describe("streaming point clouds", () => {
       x: { domain: [0, 2], grid: false },
       y: { domain: [0, 2], grid: false },
       marks: [
-        point(data, { x: "a", y: "b\0c", fill: "#ff0000", r: 4 }),
-        point(data, { x: "a\0b", y: "c", fill: "#0000ff", r: 4 }),
+        point(data, { x: "a", y: "b\0c", fill: "#ff0000", radius: 4 }),
+        point(data, { x: "a\0b", y: "c", fill: "#0000ff", radius: 4 }),
       ],
     });
     try {

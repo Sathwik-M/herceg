@@ -48,7 +48,7 @@ describe("rule", () => {
     const { scene, model } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        rule(deploys, { x: "time", text: "version" }),
+        rule(deploys, { x: "time", textField: "version" }),
       ],
     });
     // The x domain stretches to include every event.
@@ -64,7 +64,7 @@ describe("rule", () => {
     const { scene } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        rule(limits, { y: "y", text: "label" }),
+        rule(limits, { y: "y", textField: "label" }),
         rule({ x: new Date(start + hour), label: "start" }),
       ],
     });
@@ -79,7 +79,7 @@ describe("rule", () => {
     model.setViewport([start, start + hour]);
     expect(of(model.scene(estimateText), "rule")).toHaveLength(0);
     expect(of(scene, "rule").length).toBe(2);
-    expect(() => rule({ x: "at" } as never)).toThrow(/needs a table/);
+    expect(() => rule({ x: "at" } as never)).toThrow("rule: fields need a table; pass one");
   });
 });
 
@@ -114,7 +114,7 @@ describe("region", () => {
     const { model } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        region(incidents, { x1: "from", x2: "to", text: "title" }),
+        region(incidents, { x1: "from", x2: "to", textField: "title" }),
       ],
       x: { domain: [start, start + 23 * hour] },
     });
@@ -190,7 +190,7 @@ describe("region", () => {
     expect((of(scene, "rule")[0] as RuleGeometry).x1).toBeCloseTo(x.map(2), 3);
     // Rules on heatmap bands, as before annotations read tables.
     const cells = table({ c: ["a", "b"], r: ["x", "y"], v: [1, 2] });
-    const grid = build({ marks: [heatmap(cells, { x: "c", y: "r", value: "v" }), rule({ y: 0 })] });
+    const grid = build({ marks: [heatmap(cells, { x: "c", y: "r", color: "v" }), rule({ y: 0 })] });
     expect(of(grid.scene, "rule")).toHaveLength(1);
   });
 
@@ -224,8 +224,8 @@ describe("text", () => {
     const { scene } = build({
       marks: [
         line(metrics, { x: "time", y: "value" }),
-        text(peaks, { x: "at", y: "v", text: "name" }),
-        text(peaks, { x: "at", y: "v", text: "v" }),
+        text(peaks, { x: "at", y: "v", textField: "name" }),
+        text(peaks, { x: "at", y: "v", textField: "v" }),
       ],
     });
     const [names, values] = of(scene, "text") as TextGeometry[];
@@ -257,7 +257,7 @@ describe("text", () => {
       const { scene, model } = build({
         marks: [
           line(metrics, { x: "time", y: "value" }),
-          text(crowd, { x: "at", y: "v", text: "name", dy: -10, ...(overlap && { overlap }) }),
+          text(crowd, { x: "at", y: "v", textField: "name", dy: -10, ...(overlap && { overlap }) }),
         ],
       });
       return { label: (of(scene, "text") as TextGeometry[])[0]!, y: model.yScale()! };
@@ -276,7 +276,7 @@ describe("text", () => {
     // its point; the second has no room left, nor a clear line farther out.
     const corner = table({ at: [10, 10], v: [5, 5], name: ["one", "two"] });
     const { scene, model } = build({
-      marks: [text(corner, { x: "at", y: "v", text: "name", dy: -10, overlap: "move" })],
+      marks: [text(corner, { x: "at", y: "v", textField: "name", dy: -10, overlap: "move" })],
       x: { domain: [0, 10] },
       y: { domain: [0, 5] },
     });
@@ -297,7 +297,9 @@ describe("text", () => {
     const cluster = table({ at: xs, v: ys, name: names });
     for (const anchor of ["middle", "start", "end"] as const) {
       const { scene, model } = build({
-        marks: [text(cluster, { x: "at", y: "v", text: "name", anchor, dy: -12, overlap: "move" })],
+        marks: [
+          text(cluster, { x: "at", y: "v", textField: "name", anchor, dy: -12, overlap: "move" }),
+        ],
         x: { domain: [0, 10] },
         y: { domain: [0, 10] },
       });
@@ -362,7 +364,7 @@ describe("text", () => {
     // Labels in reach of their point need no line.
     const near = table({ at: [5, 5], v: [5, 5], name: ["a", "b"] });
     const close = build({
-      marks: [text(near, { x: "at", y: "v", text: "name", dy: -12, overlap: "move" })],
+      marks: [text(near, { x: "at", y: "v", textField: "name", dy: -12, overlap: "move" })],
       x: { domain: [0, 10] },
       y: { domain: [0, 10] },
     });
@@ -373,7 +375,7 @@ describe("text", () => {
       height: 300,
       x: { domain: [0, 10] },
       y: { domain: [0, 10] },
-      marks: [text(cluster, { x: "at", y: "v", text: "name", dy: -12, overlap: "move" })],
+      marks: [text(cluster, { x: "at", y: "v", textField: "name", dy: -12, overlap: "move" })],
     });
     expect(svg).toContain(`fill="none" stroke="${LIGHT.muted}" stroke-width="1"`);
   });
@@ -384,7 +386,7 @@ describe("text", () => {
     const v = [5.108, 5.261, 4.93, 5.012, 5.199, 4.721, 4.732, 5.018];
     const points = table({ at, v, name: at.map((_, i) => `p${i}`) });
     const { scene } = build({
-      marks: [text(points, { x: "at", y: "v", text: "name", dy: -12, overlap: "move" })],
+      marks: [text(points, { x: "at", y: "v", textField: "name", dy: -12, overlap: "move" })],
       x: { domain: [0, 10] },
       y: { domain: [0, 10] },
     });
@@ -404,7 +406,9 @@ describe("text", () => {
     // Labels ending at points by the plot's right edge cannot stay there.
     const edge = table({ at: [10, 2], v: [2.5, 2.5], name: ["right edge", ""] });
     const { scene, model } = build({
-      marks: [text(edge, { x: "at", y: "v", text: "name", anchor: "end", dx: 8, overlap: "move" })],
+      marks: [
+        text(edge, { x: "at", y: "v", textField: "name", anchor: "end", dx: 8, overlap: "move" }),
+      ],
       x: { domain: [0, 10] },
       y: { domain: [0, 5] },
     });
@@ -417,7 +421,7 @@ describe("text", () => {
     // An empty label before a visible one at the same point takes no room.
     const pair = table({ at: [5, 5], v: [2, 2], name: ["", "shown"] });
     const hidden = build({
-      marks: [text(pair, { x: "at", y: "v", text: "name", overlap: "hide" })],
+      marks: [text(pair, { x: "at", y: "v", textField: "name", overlap: "hide" })],
     });
     expect((of(hidden.scene, "text") as TextGeometry[])[0]!.labels).toEqual(["shown"]);
   });
@@ -426,7 +430,7 @@ describe("text", () => {
     // Twenty i's are wider in Times than the Helvetica estimate allows for.
     const pair = table({ at: [3, 6], v: [5, 5], name: ["i".repeat(20), "i".repeat(20)] });
     const model = new ChartModel({
-      marks: [text(pair, { x: "at", y: "v", text: "name", overlap: "hide" })],
+      marks: [text(pair, { x: "at", y: "v", textField: "name", overlap: "hide" })],
       x: { domain: [0, 9] },
       y: { domain: [0, 10] },
       theme: { font: "Georgia, serif" },
@@ -453,12 +457,14 @@ describe("text", () => {
   });
 
   it("needs exactly one of label or text", () => {
-    expect(() => text({ x: 1, y: 1 } as never)).toThrow(/exactly one of label or text/);
+    expect(() => text({ x: 1, y: 1 } as never)).toThrow(
+      /text: needs exactly one of label and textField/,
+    );
     expect(() =>
-      text(metrics, { x: "time", y: "value", label: "a", text: "value" } as never),
-    ).toThrow(/exactly one of label or text/);
-    expect(() => text(metrics, { x: "time", y: "value", text: "time" as never })).toThrow(
-      /time; text text needs category or number/,
+      text(metrics, { x: "time", y: "value", label: "a", textField: "value" } as never),
+    ).toThrow(/text: needs exactly one of label and textField/);
+    expect(() => text(metrics, { x: "time", y: "value", textField: "time" as never })).toThrow(
+      /text textField: field "time" holds time values; expected category or number/,
     );
   });
 });
@@ -471,7 +477,7 @@ describe("annotations in the text alternative", () => {
         region({ x1: start + 5 * hour, x2: start + 6 * hour, label: "Incident" }),
         line(metrics, { x: "time", y: "value", label: "p99" }),
         rule({ y: 140, label: "SLO" }),
-        rule(deploys, { x: "at", text: "version" }),
+        rule(deploys, { x: "at", textField: "version" }),
         text({ x: start + 23 * hour, y: 123, label: "123 ms" }),
       ],
     });

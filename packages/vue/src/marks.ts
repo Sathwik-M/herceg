@@ -278,7 +278,7 @@ export const Sankey = /* @__PURE__ */ markComponent(
 export const Graph = /* @__PURE__ */ markComponent(
   "Graph",
   ({ data, ...options }: WithData<GraphOptions<Schema, Schema>, Schema>) => graph(data, options),
-  ["labels"],
+  ["labels", "directed"],
 ) as unknown as <S extends Schema, N extends Schema = Schema>(
   props: WithData<GraphOptions<S, N>, S>,
 ) => null;
@@ -320,6 +320,7 @@ export const Line3D = /* @__PURE__ */ markComponent(
 export const Surface = /* @__PURE__ */ markComponent(
   "Surface",
   ({ data, ...options }: WithData<SurfaceOptions<Schema>, Schema>) => surface(data, options),
+  ["shading", "wireframe"],
 ) as unknown as <S extends Schema>(props: WithData<SurfaceOptions<S>, S>) => null;
 
 /** Open-high-low-close candles: `x`, `open`, `high`, `low`, `close`. */

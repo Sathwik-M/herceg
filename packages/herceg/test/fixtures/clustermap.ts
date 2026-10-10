@@ -17,7 +17,7 @@ export function clustermap(): ChartConfig {
   const rowTree = table({ first: [0, 2], second: [1, 3], height: [1, 3] });
   return {
     marks: [
-      heatmap(matrix, { x: "column", y: "row", value: "value", panel: "matrix" }),
+      heatmap(matrix, { x: "column", y: "row", color: "value", panel: "matrix" }),
       dendrogram(columnTree, {
         first: "first",
         second: "second",
@@ -39,9 +39,9 @@ export function clustermap(): ChartConfig {
     ],
     panels: panels(
       [
-        { id: "corner", x: { axis: false }, y: { axis: false } },
-        { id: "top", y: { axis: false } },
-        { id: "left", x: { axis: false } },
+        { id: "corner", x: { show: false }, y: { show: false } },
+        { id: "top", y: { show: false } },
+        { id: "left", x: { show: false } },
         { id: "matrix" },
       ],
       { columns: 2, rowHeights: [1, 4], columnWidths: [1, 4] },

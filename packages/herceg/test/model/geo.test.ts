@@ -75,7 +75,7 @@ describe("geoshape", () => {
     const world = fromGeoJSON(countries());
     const { model, scene } = build({
       projection: "equirectangular",
-      marks: [geoshape(world, { name: "name", color: "gdp" })],
+      marks: [geoshape(world, { labelField: "name", color: "gdp" })],
     });
     const shapes = polygons(scene);
     expect(shapes.shapes).toHaveLength(4);
@@ -100,7 +100,7 @@ describe("geoshape", () => {
     const world = fromGeoJSON(countries());
     const { model, scene } = build({
       projection: "equirectangular",
-      marks: [geoshape(world, { name: "name", color: "gdp" })],
+      marks: [geoshape(world, { labelField: "name", color: "gdp" })],
     });
     const box: [number, number, number, number] = [0, 0, 40, 10];
     const at = (lon: number, lat: number) => {
@@ -157,7 +157,7 @@ describe("geoshape", () => {
       place: ["Ada again", "nowhere", "Bel"],
       shape: geometry(set, Int32Array.from([0, -1, 1])),
     });
-    const { model, scene } = build({ marks: [geoshape(visits, { name: "place" })] });
+    const { model, scene } = build({ marks: [geoshape(visits, { labelField: "place" })] });
     expect(polygons(scene).shapes).toHaveLength(2);
     expect(items(model).map((item) => item.points[0]!.label)).toEqual(["Ada again", "Bel"]);
     expect(model.layoutSummary()).toBe("Map of 2 regions.");
@@ -165,16 +165,20 @@ describe("geoshape", () => {
 
   it("refuses fields and options it cannot use", () => {
     const world = fromGeoJSON(countries());
-    expect(() => geoshape(table({ a: [1] }))).toThrow(/needs a table with a geometry field/);
+    expect(() => geoshape(table({ a: [1] }))).toThrow(
+      /geoshape geometry: the table has no geometry field/,
+    );
     const two = table({
       a: geometry(world.geometries("geometry").set),
       b: geometry(world.geometries("geometry").set),
     });
-    expect(() => geoshape(two)).toThrow(/needs `geometry`: the table has "a", "b"/);
+    expect(() => geoshape(two)).toThrow(/geoshape geometry: missing; name one of "a", "b"/);
     expect((geoshape(two, { geometry: "b" }) as GeoShapeMark).field).toBe("b");
-    expect(() => geoshape(world, { name: "gdp" as never })).toThrow(/needs category/);
+    expect(() => geoshape(world, { labelField: "gdp" as never })).toThrow(
+      /geoshape labelField: field "gdp" holds number values; expected category/,
+    );
     expect(() => geoshape(world, { color: "region", colors: ["#000000", "#ffffff"] })).toThrow(
-      /for a number color field/,
+      /geoshape colors: .* need a number color field/,
     );
     expect(() => geoshape(world, { strokeWidth: -1 })).toThrow(/strokeWidth/);
   });
@@ -193,7 +197,14 @@ describe("geopoint", () => {
   it("sizes points by area, draws the largest first, and ranks them in the legend", () => {
     const { scene } = build({
       projection: "equirectangular",
-      marks: [geopoint(cities(), { longitude: "lon", latitude: "lat", r: "people", name: "city" })],
+      marks: [
+        geopoint(cities(), {
+          longitude: "lon",
+          latitude: "lat",
+          size: "people",
+          labelField: "city",
+        }),
+      ],
     });
     const [layer] = points(scene);
     expect(layer!.count).toBe(4);
@@ -207,7 +218,14 @@ describe("geopoint", () => {
   it("finds the last-drawn point whose disc holds the pointer", () => {
     const { model, scene } = build({
       projection: "equirectangular",
-      marks: [geopoint(cities(), { longitude: "lon", latitude: "lat", r: "people", name: "city" })],
+      marks: [
+        geopoint(cities(), {
+          longitude: "lon",
+          latitude: "lat",
+          size: "people",
+          labelField: "city",
+        }),
+      ],
     });
     const [layer] = points(scene);
     const place = (row: number) => {
@@ -254,7 +272,7 @@ describe("geopoint", () => {
         geopoint(places, {
           longitude: "lon",
           latitude: "lat",
-          r: "n",
+          size: "n",
           series: "kind",
           fillOpacity: 1,
         }),
@@ -297,11 +315,44 @@ describe("geopoint", () => {
     expect(scene.legend.map((entry) => entry.color)).toEqual([LIGHT.muted, LIGHT.muted]);
   });
 
+  it("color by a category, with a color key, and read the category", () => {
+    const { scene, model } = build({
+      marks: [geopoint(cities(), { longitude: "lon", latitude: "lat", color: "kind" })],
+    });
+    const [g] = points(scene);
+    expect(g!.colors!.categorical).toBe(true);
+    const colors = Array.from(g!.colors!.index.subarray(0, g!.count), (i) => g!.colors!.palette[i]);
+    expect(new Set(colors)).toEqual(new Set([LIGHT.palette[0], LIGHT.palette[1]]));
+    expect(scene.glyphLegends[0]!.entries.map((e) => [e.label.text, e.fill])).toEqual([
+      ["capital", LIGHT.palette[0]],
+      ["town", LIGHT.palette[1]],
+    ]);
+    const read = items(model).map(({ points: [point] }) => [
+      point!.label,
+      point!.color,
+      point!.text,
+    ]);
+    expect(read).toContainEqual(["Point 1", LIGHT.palette[0], "kind capital"]);
+    expect(() =>
+      geopoint(cities(), { longitude: "lon", latitude: "lat", color: "kind", colorMidpoint: 0 }),
+    ).toThrow(/geopoint colors: "kind" is a category field/);
+  });
+
+  it("keep series colors when the series field is the color field", () => {
+    const { scene } = build({
+      marks: [
+        geopoint(cities(), { longitude: "lon", latitude: "lat", series: "kind", color: "kind" }),
+      ],
+    });
+    expect(scene.glyphLegends).toEqual([]);
+    expect(scene.legend.map((entry) => entry.color)).toEqual(LIGHT.palette.slice(0, 2));
+  });
+
   it("keep their rings inside the plot", () => {
     const places = table({ lon: [0, 10], lat: [0, 0] });
     const { scene } = build({
       projection: "equirectangular",
-      marks: [geopoint(places, { longitude: "lon", latitude: "lat", r: 4, strokeWidth: 20 })],
+      marks: [geopoint(places, { longitude: "lon", latitude: "lat", radius: 4, strokeWidth: 20 })],
     });
     const [layer] = points(scene);
     const plot = scene.panels[0]!.plot;
@@ -328,8 +379,8 @@ describe("maps", () => {
     const { model, scene } = build({
       projection: "equirectangular",
       marks: [
-        geoshape(world, { name: "name", color: "gdp" }),
-        geopoint(places, { longitude: "lon", latitude: "lat", r: "size", name: "name" }),
+        geoshape(world, { labelField: "name", color: "gdp" }),
+        geopoint(places, { longitude: "lon", latitude: "lat", size: "size", labelField: "name" }),
       ],
     });
     expect(scene.panels[0]!.marks.map((m) => m.kind)).toEqual(["polygons", "point"]);
@@ -396,14 +447,14 @@ describe("maps", () => {
       /chart to itself/,
     );
     expect(() => build({ marks: [geoshape(world), pie(data, { category: "c" })] })).toThrow(
-      /shares its chart only with geoshape and geopoint marks, not a pie/,
+      /geoshape: a map holds only geoshape and geopoint marks; draw "pie" marks/,
     );
     expect(() => build({ marks: [pie(data, { category: "c" }), geoshape(world)] })).toThrow(
-      /pie mark has its chart to itself/,
+      /pie: has its chart to itself/,
     );
     expect(() =>
       build({ marks: [geoshape(world, { id: "a" }), geoshape(world, { id: "a" })] }),
-    ).toThrow(/Duplicate mark id "a"/);
+    ).toThrow('id: "a" names two marks');
     // Maps zoom both ways, and sync nothing.
     expect(() => build({ marks: [geoshape(world)], interaction: { zoom: "y" } })).toThrow(/zoom/);
     expect(() => build({ marks: [geoshape(world)], interaction: { sync: "a" } })).toThrow(/sync/);
@@ -415,7 +466,7 @@ describe("maps", () => {
       width: 400,
       height: 200,
       title: "Map",
-      marks: [geoshape(world, { name: "name", color: "gdp" })],
+      marks: [geoshape(world, { labelField: "name", color: "gdp" })],
     });
     expect(svg.match(/fill-rule="evenodd"/g)).toHaveLength(4);
   });

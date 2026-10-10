@@ -166,7 +166,7 @@ describe("drilled treemaps", () => {
     const { model } = build({ marks: [tree()] });
     expect(model.items!.drillRoot()).toEqual({ key: null, path: [] });
     expect(() => model.items!.setDrillRoot(["Mars"])).toThrow(
-      'The tree has no node ["Mars"] to drill into',
+      'setDrillRoot: no node ["Mars"] in the tree',
     );
     model.items!.setDrillRoot(["Asia", "Japan"]);
     model.scene(estimateText);

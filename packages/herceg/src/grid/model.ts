@@ -83,7 +83,7 @@ export interface GridModelOptions<S extends Schema = Schema> extends GridSetting
    */
   groups?: RowGroups<S> | null;
   /** Where the selected rows go; a store of the grid's own when left out. */
-  selection?: SelectionStore<S>;
+  selectionStore?: SelectionStore<S>;
   /** The store's channel for the selected rows; "grid-rows" by default. */
   channel?: string;
 }
@@ -185,7 +185,7 @@ export interface GridPivot {
  */
 export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
   readonly data: RowView<S>;
-  readonly selection: SelectionStore<S>;
+  readonly selectionStore: SelectionStore<S>;
   readonly channel: string;
   readonly #table: Table;
 
@@ -230,12 +230,14 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
   /** `pivot`, from `createPivotGridModel`, shows a pivot's rows. */
   constructor(options: GridModelOptions<S>, pivot?: GridPivot) {
     super(options);
-    const { data, selection } = options;
+    const { data, selectionStore: store } = options;
     this.data = data;
     this.#table = data.source as unknown as Table;
-    if (selection && selection.source !== data.source)
-      throw new Error("A grid's selection store must be of its view's table");
-    this.selection = selection ?? selectionStore(data.source);
+    if (store && store.source !== data.source)
+      throw new Error(
+        "grid selectionStore: the store is of another table; give a store of the view's table",
+      );
+    this.selectionStore = store ?? selectionStore(data.source);
     this.channel = options.channel ?? "grid-rows";
     this.#pivot = pivot ?? null;
     this.#groups = pivot
@@ -249,7 +251,7 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
       if (model) model.#changed();
       else stop();
     };
-    const stops = [data.subscribe(changed), this.selection.subscribe(changed)];
+    const stops = [data.subscribe(changed), this.selectionStore.subscribe(changed)];
     const stop = () => {
       for (const unsubscribe of stops) unsubscribe();
     };
@@ -502,7 +504,7 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
   }
 
   get selectionRevision(): number {
-    return this.selection.revision;
+    return this.selectionStore.revision;
   }
 
   /**
@@ -510,7 +512,7 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
    * counted over the whole table, so ask after selecting, not every frame.
    */
   get selectedCount(): number {
-    const selection = this.selection.get(this.channel);
+    const selection = this.selectionStore.get(this.channel);
     if (!selection) return 0;
     if (selection.kind === "rows") return selection.rows.size;
     const version = this.#table.version;
@@ -586,9 +588,9 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
 
   /** Clears the channel and the range anchor; whether there was anything to clear. */
   clearSelection(): boolean {
-    const had = this.selection.get(this.channel) !== null || this.rangeAnchor !== null;
+    const had = this.selectionStore.get(this.channel) !== null || this.rangeAnchor !== null;
     this.rangeAnchor = null;
-    if (this.selection.get(this.channel) !== null) this.selection.set(this.channel, null);
+    if (this.selectionStore.get(this.channel) !== null) this.selectionStore.set(this.channel, null);
     return had;
   }
 
@@ -818,7 +820,7 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
 
   /** Whether the table's row at `position` is selected. */
   #selected(position: number): boolean {
-    const selection = this.selection.get(this.channel);
+    const selection = this.selectionStore.get(this.channel);
     if (!selection) return false;
     if (selection.kind === "rows") return selection.rows.has(position);
     return this.#test(selection.expression)(position);
@@ -839,8 +841,8 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
   #groupCounts(): SelectedCounts {
     const groups = this.#groups!;
     this.current();
-    const selection = this.selection.get(this.channel) as DataSelection | null;
-    const revision = this.selection.revision;
+    const selection = this.selectionStore.get(this.channel) as DataSelection | null;
+    const revision = this.selectionStore.revision;
     const view = this.data as unknown as RowView;
     const cached = this.#counts;
     if (cached && countsHold(cached, groups, revision, selection, view)) {
@@ -905,14 +907,14 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
    * they are now: toggling a row of it keeps the others selected).
    */
   #writable(): RowSet<S> {
-    const current = this.selection.get(this.channel);
+    const current = this.selectionStore.get(this.channel);
     const published = this.#published;
     if (
       published &&
       current?.kind === "rows" &&
       current.rows === published.rows &&
       published.rows.current &&
-      this.selection.revision === published.revision
+      this.selectionStore.revision === published.revision
     )
       return published.rows;
     const rows = new RowSet(this.data.source);
@@ -932,7 +934,7 @@ export class GridModel<S extends Schema = Schema> extends BaseGridModel<S> {
    * when they were current, so a click counts nothing again.
    */
   #publish(rows: RowSet<S>, adjust: ((counts: readonly Float64Array[]) => void) | null) {
-    const store = this.selection;
+    const store = this.selectionStore;
     const groups = this.#groups;
     const before = this.#counts;
     const view = this.data as unknown as RowView;

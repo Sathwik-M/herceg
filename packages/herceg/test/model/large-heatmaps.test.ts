@@ -86,13 +86,13 @@ function reduced(
   options: Pick<HeatmapOptions<Schema>, "reduce"> = {},
 ) {
   const config: ChartConfig = {
-    x: { axis: false },
-    y: { axis: false },
+    x: { show: false },
+    y: { show: false },
     marks: [
       heatmap(data, {
         x: "x",
         y: "y",
-        value: "v",
+        color: "v",
         colors: GRAY,
         colorDomain: [0, 100],
         ...options,
@@ -169,8 +169,8 @@ describe("reduced heatmaps", () => {
     const min = reduced(data, 3, 2, { reduce: "min" }).raster;
     expect(pixel(max, 1, 1)).toEqual(gray(Math.max(...values([3, 4], [3, 4]))));
     expect(pixel(min, 2, 0)).toEqual(gray(Math.min(...values([5, 6], [0, 1, 2]))));
-    expect(() => heatmap(data, { x: "x", y: "y", value: "v", reduce: "median" as "mean" })).toThrow(
-      /reduce must be/,
+    expect(() => heatmap(data, { x: "x", y: "y", color: "v", reduce: "median" as "mean" })).toThrow(
+      /heatmap reduce: expected "mean", "max", or "min"; received "median"/,
     );
   });
 
@@ -187,7 +187,7 @@ describe("reduced heatmaps", () => {
 
   it("keeps one pixel per cell for grids within the plot's pixels", () => {
     const data = grid(40, 30, (c, r) => c + r);
-    const config: ChartConfig = { marks: [heatmap(data, { x: "x", y: "y", value: "v" })] };
+    const config: ChartConfig = { marks: [heatmap(data, { x: "x", y: "y", color: "v" })] };
     // 40 columns on a plot of a few hundred device pixels, at any ratio.
     for (const ratio of [1, 2]) {
       const raster = build(config, 600, 300, ratio).scene.panels[0]!.marks[0] as RasterGeometry;
@@ -197,7 +197,7 @@ describe("reduced heatmaps", () => {
 
   it("repaints only when the data, size, or theme change", () => {
     const data = grid(300, 200, (c, r) => c * r);
-    const { model } = build({ marks: [heatmap(data, { x: "x", y: "y", value: "v" })] }, 300, 200);
+    const { model } = build({ marks: [heatmap(data, { x: "x", y: "y", color: "v" })] }, 300, 200);
     const write = vi.spyOn(SequentialScale.prototype, "write");
     const before = rasterOf(model);
     write.mockClear();
@@ -215,7 +215,7 @@ describe("reduced heatmaps", () => {
 
   it("repaints a buffer another heatmap painted in its place", () => {
     const data = grid(300, 200, (c, r) => (c + r) % 100);
-    const options = { x: "x", y: "y", value: "v", colorDomain: [0, 100] } as const;
+    const options = { x: "x", y: "y", color: "v", colorDomain: [0, 100] } as const;
     const gray = heatmap(data, { ...options, colors: GRAY });
     const red = heatmap(data, { ...options, colors: ["#000000", "#ff0000"] });
     const config = (mark: typeof gray): ChartConfig => ({ legend: false, marks: [mark] });
@@ -235,10 +235,10 @@ describe("reduced heatmaps", () => {
     const data = grid(6, 1, (c) => values[c]);
     const expectMean = (domain: [number, number], column: number, value: number) => {
       const model = new ChartModel({
-        x: { axis: false },
-        y: { axis: false },
+        x: { show: false },
+        y: { show: false },
         legend: false,
-        marks: [heatmap(data, { x: "x", y: "y", value: "v", colors: GRAY, colorDomain: domain })],
+        marks: [heatmap(data, { x: "x", y: "y", color: "v", colors: GRAY, colorDomain: domain })],
       });
       model.setSize(600, 300, 1, 2.5 / model.scene(estimateText).panels[0]!.plot.width);
       const raster = rasterOf(model);
@@ -253,13 +253,13 @@ describe("reduced heatmaps", () => {
 
   it("keeps one pixel per cell when the grid fits a fractional pixel ratio exactly", () => {
     const config = (columns: number): ChartConfig => ({
-      x: { axis: false },
-      y: { axis: false },
+      x: { show: false },
+      y: { show: false },
       legend: false,
       marks: [
         heatmap(
           grid(columns, 1, (c) => (c % 2 === 0 ? 100 : 0)),
-          { x: "x", y: "y", value: "v", colors: GRAY, colorDomain: [0, 100] },
+          { x: "x", y: "y", color: "v", colors: GRAY, colorDomain: [0, 100] },
         ),
       ],
     });
@@ -282,7 +282,7 @@ describe("reduced heatmaps", () => {
     const data = table({ x, y: new Uint8Array(count), v: new Uint8Array(count).fill(1) });
     const model = new ChartModel({
       legend: false,
-      marks: [heatmap(data, { x: "x", y: "y", value: "v", colors: GRAY, colorDomain: [0, 2] })],
+      marks: [heatmap(data, { x: "x", y: "y", color: "v", colors: GRAY, colorDomain: [0, 2] })],
     });
     model.setSize(600, 300, 1, 1 / 1000);
     const raster = rasterOf(model);
@@ -322,7 +322,7 @@ describe("reduced heatmaps", () => {
     );
     const v = Float64Array.from({ length: count }, (_, i) => i);
     const data = table({ c, r, v });
-    const mark = heatmap(data, { x: "c", y: "r", value: "v" });
+    const mark = heatmap(data, { x: "c", y: "r", color: "v" });
     const start = performance.now();
     const { model, scene } = build({ marks: [mark] }, 800, 400, 2);
     const raster = scene.panels[0]!.marks[0] as RasterGeometry;
@@ -349,7 +349,7 @@ describe("reduced heatmaps", () => {
       width: 400,
       height: 200,
       locale: "en-US",
-      marks: [heatmap(data, { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(data, { x: "x", y: "y", color: "v" })],
     };
     const svg = renderToSVG(options);
     const href = /<image [^>]*href="data:image\/png;base64,([^"]+)"/.exec(svg)![1]!;
@@ -372,13 +372,13 @@ describe("reduced heatmaps", () => {
     const data = { t: { columns: { x: [0, 1, 2, 3], y: [0, 0, 0, 0], v: [1, 9, 2, 8] } } };
     const { config } = loadSpec({
       data,
-      marks: [{ type: "heatmap", x: "x", y: "y", value: "v", reduce: "max" }],
+      marks: [{ type: "heatmap", x: "x", y: "y", color: "v", reduce: "max" }],
     });
     expect(config.marks[0]!.spec).toMatchObject({ reduce: "max" });
     expect(() =>
       loadSpec({
         data,
-        marks: [{ type: "heatmap", x: "x", y: "y", value: "v", reduce: "sum" as "max" }],
+        marks: [{ type: "heatmap", x: "x", y: "y", color: "v", reduce: "sum" as "max" }],
       }),
     ).toThrow(/reduce/);
   });
@@ -400,7 +400,7 @@ describe("band axes with many categories", () => {
     };
     const model = new ChartModel({
       locale: "en-US",
-      marks: [heatmap(data, { x: "host", y: "day", value: "v" })],
+      marks: [heatmap(data, { x: "host", y: "day", color: "v" })],
     });
     model.setSize(800, 400, 2);
     const start = performance.now();
@@ -428,7 +428,7 @@ describe("band axes with many categories", () => {
       v: hosts.map((_, i) => i),
     });
     const { scene } = build(
-      { marks: [heatmap(data, { x: "day", y: "host", value: "v" })] },
+      { marks: [heatmap(data, { x: "day", y: "host", color: "v" })] },
       600,
       400,
     );

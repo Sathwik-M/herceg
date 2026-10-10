@@ -95,7 +95,10 @@ def test_the_result_decodes_to_python_values():
 
 
 def test_reactions_are_checked():
-    with pytest.raises(ValueError, match="on_select must be 'ignore', 'rerun', or a function"):
+    with pytest.raises(
+        ValueError,
+        match='streamlit.chart on_select: expected "ignore", .*; received "always"',
+    ):
         hst.chart(chart(), on_select="always")
 
 
@@ -104,7 +107,10 @@ def test_charts_with_x_scales_of_their_own_show_but_cannot_report_selections():
     split = hg.Chart(data, facet="g", resolve_x="independent", brush="x").line(x="x", y="y")
     assert hst.chart(split) == hst.ChartState()
     assert hst.chart(split, on_click="rerun") == hst.ChartState()
-    with pytest.raises(ValueError, match="on_select reports one selection"):
+    with pytest.raises(
+        ValueError,
+        match="streamlit.chart on_select: reports one selection, so the chart's panels",
+    ):
         hst.chart(split, on_select="rerun")
 
 
@@ -167,7 +173,7 @@ def test_clicks_cannot_react_inside_forms():
     # Streamlit drops clicks (trigger values) sent from inside a form.
     at = AppTest.from_function(form_app, default_timeout=60).run()
     [error] = at.exception
-    assert "on_click cannot react inside st.form" in error.message
+    assert "streamlit.chart on_click: cannot react inside st.form" in error.message
     # A selection in a form is fine: it arrives when the form is submitted.
     assert len(at.get("bidi_component")) == 1
 

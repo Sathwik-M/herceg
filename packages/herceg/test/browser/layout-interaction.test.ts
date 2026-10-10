@@ -117,7 +117,7 @@ const span = (range: readonly [number, number] | null) => range && range[1] - ra
 describe("maps", () => {
   const map = (options: Partial<ChartOptions> = {}) =>
     mount({
-      marks: [geoshape(fromGeoJSON(countries()), { name: "name" })],
+      marks: [geoshape(fromGeoJSON(countries()), { labelField: "name" })],
       projection: "equirectangular",
       interaction: { zoom: true },
       ...options,
@@ -302,7 +302,7 @@ describe("maps", () => {
               },
             ],
           }),
-          { name: "name" },
+          { labelField: "name" },
         ),
       ],
       projection: "equirectangular",
@@ -370,7 +370,7 @@ describe("maps", () => {
     const regions = fromGeoJSON(countries());
     const store = selectionStore(regions);
     const chart = await mount({
-      marks: [geoshape(regions, { name: "name" })],
+      marks: [geoshape(regions, { labelField: "name" })],
       projection: "equirectangular",
       interaction: { zoom: true, brush: "lasso" },
       rowSelection: rowSelection({ store, channel: "picked" }),
@@ -445,8 +445,8 @@ describe("maps", () => {
     const store = selectionStore(regions);
     const chart = await mount({
       marks: [
-        geoshape(regions, { name: "name" }),
-        geopoint(cities, { longitude: "lon", latitude: "lat", r: 8 }),
+        geoshape(regions, { labelField: "name" }),
+        geopoint(cities, { longitude: "lon", latitude: "lat", radius: 8 }),
       ],
       projection: "equirectangular",
       interaction: { brush: "lasso" },

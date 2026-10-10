@@ -12,6 +12,6 @@
 </script>
 
 <Chart projection="mercator" locale="en-US">
-  <GeoShape data={regions} name="name" color="gdp" />
+  <GeoShape data={regions} labelField="name" color="gdp" />
   <GeoPoint data={places} longitude="lon" latitude="lat" />
 </Chart>

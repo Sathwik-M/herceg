@@ -46,8 +46,8 @@ export type RegionOptions = RegionStyle & RegionRange<number | Date>;
 /** Regions from a table, one per row; positions may also be constants. */
 export type RegionDataOptions<S extends Schema> = RegionStyle &
   RegionRange<NumericField<S> | number | Date> & {
-    /** Field with each region's text. */
-    text?: TextField<S>;
+    /** Category or number field with each region's text. */
+    textField?: TextField<S>;
   };
 
 const PADDING = 4;
@@ -65,11 +65,11 @@ export function regionFormError(spec: {
   y2?: unknown;
 }): string | undefined {
   if ((spec.x1 === undefined) !== (spec.x2 === undefined))
-    return "A region needs both x1 and x2, or neither";
+    return "region: needs both x1 and x2, or neither";
   if ((spec.y1 === undefined) !== (spec.y2 === undefined))
-    return "A region needs both y1 and y2, or neither";
+    return "region: needs both y1 and y2, or neither";
   if (spec.x1 === undefined && spec.y1 === undefined)
-    return "A region needs x1 and x2, y1 and y2, or both";
+    return "region: needs x1 and x2, y1 and y2, or both";
   return undefined;
 }
 
@@ -89,7 +89,7 @@ export class RegionMark implements Mark<Frozen<RegionSpec>> {
       table,
       { x1: spec.x1, x2: spec.x2, y1: spec.y1, y2: spec.y2 },
       spec.label,
-      spec.text,
+      spec.textField,
       "region",
     );
   }
@@ -267,7 +267,7 @@ function place(scale: PositionScale, value: number): number | undefined {
  *
  * ```ts
  * region({ x1: start, x2: end, label: "Maintenance" })
- * region(incidents, { x1: "start", x2: "end", text: "title" })
+ * region(incidents, { x1: "start", x2: "end", textField: "title" })
  * region({ y1: 200, y2: 300, fill: "#2a9d8f" })
  * ```
  */
@@ -301,14 +301,17 @@ export function region<S extends Schema>(
         "fill",
         "fillOpacity",
         "label",
-        "text",
+        "textField",
         "axis",
         "facet",
         "panel",
       ],
     ),
   } as RegionSpec;
-  if (table?.name !== undefined && readsTable([spec.x1, spec.x2, spec.y1, spec.y2], spec.text)) {
+  if (
+    table?.name !== undefined &&
+    readsTable([spec.x1, spec.x2, spec.y1, spec.y2], spec.textField)
+  ) {
     spec.data = table.name;
   }
   return new RegionMark(spec, table as unknown as Table | undefined);

@@ -400,20 +400,22 @@ describe("violin options", () => {
 
   it("rejects missing series, invalid options, and more than two observed values, including after updates", () => {
     expect(() => violin(data(), { x: "g", y: "v", split: true })).toThrow(
-      /split needs a series field/,
+      /violin split: needs a series field/,
     );
     expect(() => violin(data(), { x: "g", y: "v", split: "true" as never })).toThrow(
-      /split must be a boolean/,
+      /violin split: expected true or false; received "true"/,
     );
     expect(() => violin(data(), { x: "g", y: "v", inner: "points" as never })).toThrow(
-      /inner must be/,
+      /violin inner: expected "box", "quartiles", or "none"; received "points"/,
     );
     const live = table({ g: ["a", "a"], s: ["first", "second"], v: [1, 2] }, { maxRows: 10 });
     const { model } = build({
       marks: [violin(live, { x: "g", y: "v", series: "s", split: true })],
     });
     live.appendRow({ g: "b", s: "third", v: 3 });
-    expect(() => model.scene(estimateText)).toThrow(/series field "s" has 3 values/);
+    expect(() => model.scene(estimateText)).toThrow(
+      /violin split: expected at most two series; series field "s" has 3 values/,
+    );
     expect(() => violin(live, { x: "g", y: "v", series: "s", split: true })).toThrow(
       /"s" has 3 values/,
     );
@@ -688,8 +690,7 @@ describe("violin options", () => {
 });
 
 describe("violin spec options", () => {
-  const spec = (options: Partial<ViolinSpec> = {}, version?: ChartSpec["version"]): ChartSpec => ({
-    ...(version === undefined ? {} : { version }),
+  const spec = (options: Partial<ViolinSpec> = {}): ChartSpec => ({
     data: {
       t: {
         columns: {
@@ -701,27 +702,19 @@ describe("violin spec options", () => {
     },
     marks: [{ type: "violin", x: "g", y: "v", ...options }],
   });
-  it("gates only options that change rendering and loads version 7", () => {
-    for (const version of [undefined, 1, 2, 3, 4, 5, 6] as const) {
-      expect(() => validateSpec(spec({ split: false, inner: "box" }, version))).not.toThrow();
-      for (const options of [
-        { split: true, series: "s" },
-        { inner: "quartiles" },
-        { inner: "none" },
-      ] as const)
-        expect(() => validateSpec(spec(options, version))).toThrow(/"version": 7 or later/);
-    }
+  it("load splits and interiors", () => {
+    expect(() => validateSpec(spec({ split: false, inner: "box" }))).not.toThrow();
     for (const inner of ["box", "quartiles", "none"] as const) {
-      const { config } = loadSpec(spec({ split: true, series: "s", inner }, 7));
+      const { config } = loadSpec(spec({ split: true, series: "s", inner }));
       expect(config.marks[0]!.spec).toMatchObject({ split: true, inner });
       expect(() => build(config)).not.toThrow();
     }
   });
   it("validates shape and data-dependent errors", () => {
-    expect(() => validateSpec(spec({ split: true }, 7))).toThrow(/series field/);
-    expect(() => validateSpec(spec({ split: 1 as never }, 7))).toThrow(/split/);
-    expect(() => validateSpec(spec({ inner: "points" as never }, 7))).toThrow(/inner/);
-    const many = spec({ split: true, series: "s" }, 7);
+    expect(() => validateSpec(spec({ split: true }))).toThrow(/series field/);
+    expect(() => validateSpec(spec({ split: 1 as never }))).toThrow(/split/);
+    expect(() => validateSpec(spec({ inner: "points" as never }))).toThrow(/inner/);
+    const many = spec({ split: true, series: "s" });
     many.data!.t = { columns: { g: ["a", "a", "a"], s: ["one", "two", "three"], v: [1, 2, 3] } };
     expect(() => loadSpec(many)).toThrow(/"s" has 3 values/);
   });

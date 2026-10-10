@@ -108,17 +108,17 @@ describe("geometry columns", () => {
       derive(source)
         .bin("shape" as never, { step: 1 })
         .table(),
-    ).toThrow(/is a geometry/);
+    ).toThrow(/field "shape" holds geometry values/);
     expect(() =>
       derive(source)
         .sort("shape" as never)
         .table(),
-    ).toThrow(/is a geometry/);
+    ).toThrow(/field "shape" holds geometry values/);
     expect(() =>
       derive(source)
         .filter(col("shape" as never).gt(0))
         .table(),
-    ).toThrow(/is a geometry/);
+    ).toThrow(/field "shape" holds geometry values/);
   });
 });
 

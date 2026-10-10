@@ -22,7 +22,6 @@ def test_a_binding_is_written_to_the_spec_with_its_table_named():
         .point(x="km", y="fare")
         .to_spec()
     )
-    assert spec["version"] == 8
     assert spec["rowSelection"] == {"channel": "focus", "data": "data"}
     other = trips()
     spec, _ = (
@@ -41,46 +40,67 @@ def test_a_binding_is_written_to_the_spec_with_its_table_named():
         {"channel": "focus", "data": "data", "events": ["click"], "effect": "none"},
         {"channel": "near", "data": "data2"},
     ]
-    # Charts without one keep their version.
-    assert hg.Chart(trips()).point(x="km", y="fare").to_spec()[0]["version"] == 4
 
 
 def test_bindings_refuse_what_cannot_select_rows():
-    with pytest.raises(ValueError, match="channel must be a name"):
+    with pytest.raises(ValueError, match='SelectionBinding channel: expected a name; received ""'):
         SelectionBinding("")
-    with pytest.raises(ValueError, match="events are 'brush', 'lasso', and 'click'"):
+    with pytest.raises(
+        ValueError,
+        match='SelectionBinding events: expected "brush", "lasso", or "click"; received "drag"',
+    ):
         SelectionBinding("c", events=["drag"])  # type: ignore[list-item]
-    with pytest.raises(TypeError, match="list of gestures"):
+    with pytest.raises(TypeError, match="SelectionBinding events: expected a list of gestures"):
         SelectionBinding("c", events="click")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="effect is 'highlight' or 'none'"):
+    with pytest.raises(
+        ValueError,
+        match='SelectionBinding effect: expected "highlight" or "none"; received "filter"',
+    ):
         SelectionBinding("c", effect="filter")  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match="hg.SelectionBinding"):
+    with pytest.raises(
+        TypeError, match="Chart row_selection: expected hg.SelectionBinding values; received str"
+    ):
         hg.Chart(trips(), row_selection="focus")  # type: ignore[arg-type]
     binding = SelectionBinding("c")
-    with pytest.raises(ValueError, match="cannot select rows yet"):
+    with pytest.raises(ValueError, match="Chart row_selection: a pie cannot select rows here yet"):
         hg.Chart(trips(), row_selection=binding).pie(category="kind")
     two = hg.Chart(row_selection=binding).point(x="km", y="fare", data=trips())
     two.line(x="km", y="fare", data=trips())
-    with pytest.raises(ValueError, match="needs data="):
+    with pytest.raises(ValueError, match="SelectionBinding data: the chart has no data of its own"):
         two.to_spec()
     lost = hg.Chart(trips(), row_selection=SelectionBinding("c", data=trips()))
-    with pytest.raises(ValueError, match="given to one of the chart's marks"):
+    with pytest.raises(
+        ValueError,
+        match="SelectionBinding data: expected an object given to one of the chart's marks",
+    ):
         lost.point(x="km", y="fare").to_spec()
     counted = hg.Chart(trips(), brush="xy", row_selection=binding).histogram(x="km")
-    with pytest.raises(ValueError, match="brushed along its x axis only"):
+    with pytest.raises(
+        ValueError,
+        match="Chart brush: a histogram's y axis holds statistics, so its rows are brushed along x",
+    ):
         counted.to_spec()
     # A rug's ticks have a place along their own axis only.
     for brush in ("y", "xy"):
         ticks = hg.Chart(trips(), brush=brush, row_selection=binding).point(x="km", y="fare")
-        with pytest.raises(ValueError, match="rug mark's rows are brushed along its x axis only"):
+        with pytest.raises(
+            ValueError,
+            match="Chart brush: a rug's ticks have no y value, so its rows are brushed along x",
+        ):
             ticks.rug("km").to_spec()
     hg.Chart(trips(), brush="x", row_selection=binding).rug("km").to_spec()
     # A horizontal histogram bins y, which brushes select along; its x holds counts.
     hg.Chart(trips(), brush="y", row_selection=binding).histogram(y="km").to_spec()
-    with pytest.raises(ValueError, match="brushed along its y axis only"):
+    with pytest.raises(
+        ValueError,
+        match="Chart brush: a histogram's x axis holds statistics, so its rows are brushed along y",
+    ):
         hg.Chart(trips(), brush="x", row_selection=binding).histogram(y="km").to_spec()
     boxes = hg.Chart(trips(), brush="lasso", row_selection=binding).boxplot(x="kind", y="fare")
-    with pytest.raises(ValueError, match="lassos cannot select the rows of boxplot"):
+    with pytest.raises(
+        ValueError,
+        match="SelectionBinding events: lassos cannot select the rows of boxplot marks yet",
+    ):
         boxes.to_spec()
     stats = pd.DataFrame(
         {"g": ["a", "b"], "lo": [0, 1], "q1": [1, 2], "mid": [2, 3], "q3": [3, 4], "hi": [4, 5]}
@@ -92,7 +112,10 @@ def test_bindings_refuse_what_cannot_select_rows():
     sideways = hg.Chart(stats, brush="x", row_selection=binding).boxplot(
         y="g", low="lo", q1="q1", median="mid", q3="q3", high="hi"
     )
-    with pytest.raises(ValueError, match="brushed along its y axis only"):
+    with pytest.raises(
+        ValueError,
+        match="Chart brush: a boxplot's x axis holds statistics, so its rows are brushed along y",
+    ):
         sideways.to_spec()
     # Without the gesture among its events, nothing is refused.
     quiet = SelectionBinding("c", events=["click"])
@@ -220,16 +243,25 @@ def test_python_selects_rows_conditions_and_nothing():
     assert np.frombuffer(state["buffers"][-1], dtype="<u4").tolist() == [2]
     widget.row_selection = None
     assert not widget.row_selection.selected
-    with pytest.raises(ValueError, match="positions in the data's 4 rows"):
+    with pytest.raises(
+        ValueError,
+        match="widget.row_selection: expected positions among the data's 4 rows; received 9",
+    ):
         widget.row_selection = [9]
-    with pytest.raises(ValueError, match="one value per row"):
+    with pytest.raises(
+        ValueError,
+        match=r"widget.row_selection: expected a mask of 4 values, .*; received shape \(2,\)",
+    ):
         widget.row_selection = [True, False]
 
 
 def test_conditions_set_from_python_test_columns_the_browser_has():
     # This chart draws km and fare; another widget's brush may test kind.
     widget, browser = live()
-    with pytest.raises(ValueError, match=r"no column 'kind'.*fields=\['kind'\]"):
+    with pytest.raises(
+        ValueError,
+        match=r"widget.row_selection: the chart sends no column 'kind'.*fields=\['kind'\]",
+    ):
         widget.row_selection = hg.col("kind") == "a"
     assert not widget.row_selection.selected
     carried = hg.Chart(
@@ -240,20 +272,22 @@ def test_conditions_set_from_python_test_columns_the_browser_has():
     sending = carried.widget()
     sending.row_selection = hg.col("kind") == "a"
     assert sending.row_selection.condition is not None
-    with pytest.raises(ValueError, match="'cost' is not one"):
+    with pytest.raises(ValueError, match="SelectionBinding fields: no column 'cost'"):
         hg.Chart(trips(), row_selection=SelectionBinding("c", fields=["cost"])).point(
             x="km", y="fare"
         ).to_spec()
-    with pytest.raises(TypeError, match="list of column names"):
+    with pytest.raises(TypeError, match="SelectionBinding fields: expected a list of column names"):
         SelectionBinding("c", fields="kind")
 
 
 def test_widgets_without_one_binding_have_no_one_row_selection():
     plain = hg.Chart(trips()).point(x="km", y="fare").widget()
     assert plain.row_selection is None
-    with pytest.raises(ValueError, match="has no row_selection"):
+    with pytest.raises(ValueError, match="widget.row_selection: the chart has none"):
         plain.row_selection = [0]
-    with pytest.raises(ValueError, match="bind the data a derived table derives from"):
+    with pytest.raises(
+        ValueError, match="SelectionBinding data: live charts report rows of data Python holds"
+    ):
         derived = hg.derive(trips()).filter(hg.col("km") > 1)
         hg.Chart(derived, row_selection=SelectionBinding("c")).point(x="km", y="fare").widget()
 
@@ -284,7 +318,10 @@ def test_streamlit_reads_rows_of_its_own_run_only():
     moved = hg.Chart(trips(), row_selection=SelectionBinding("focus", data=other))
     moved.point(x="km", y="fare").line(x="km", y="fare", data=other)
     assert hst._state({"rows": payload}, moved, "e1").row_selection is None
-    with pytest.raises(ValueError, match="give the chart one binding"):
+    with pytest.raises(
+        ValueError,
+        match="streamlit.chart on_row_selection: reports one row selection, and the chart binds 0",
+    ):
         hst.chart(hg.Chart(trips()).point(x="km", y="fare"), on_row_selection="rerun")
 
 

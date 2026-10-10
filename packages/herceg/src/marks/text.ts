@@ -75,12 +75,12 @@ export interface TextOptions extends TextStyle {
 
 /**
  * Labels from a table, one per row; positions may also be constants. The
- * text is a field (`text`) or the same for every row (`label`).
+ * text is a field (`textField`) or the same for every row (`label`).
  */
 export type TextDataOptions<S extends Schema> = TextStyle & {
   x: NumericField<S> | number | Date;
   y: NumericField<S> | number | Date;
-} & ({ text: TextField<S>; label?: never } | { label: string; text?: never });
+} & ({ textField: TextField<S>; label?: never } | { label: string; textField?: never });
 
 /**
  * Text labels at data positions. They are drawn as SVG above the data and
@@ -97,10 +97,16 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     this.spec = frozen(input);
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
-    if (spec.x === undefined || spec.y === undefined) throw new Error("Text needs x and y");
-    if ((spec.label === undefined) === (spec.text === undefined))
-      throw new Error("Text needs exactly one of label or text");
-    this.#data = new AnnotationData(table, { x: spec.x, y: spec.y }, spec.label, spec.text, "text");
+    if (spec.x === undefined || spec.y === undefined) throw new Error("text: needs x and y");
+    if ((spec.label === undefined) === (spec.textField === undefined))
+      throw new Error("text: needs exactly one of label and textField");
+    this.#data = new AnnotationData(
+      table,
+      { x: spec.x, y: spec.y },
+      spec.label,
+      spec.textField,
+      "text",
+    );
   }
 
   get table(): Table | undefined {
@@ -326,7 +332,7 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
  *
  * ```ts
  * text({ x: launch, y: 120, label: "Launch", anchor: "start", dx: 6 })
- * text(peaks, { x: "time", y: "value", text: "value", dy: -10 })
+ * text(peaks, { x: "time", y: "value", textField: "value", dy: -10 })
  * ```
  */
 export function text(options: TextOptions): ChartMark<Frozen<TextSpec>>;
@@ -347,7 +353,7 @@ export function text<S extends Schema>(
     ...definedFields(options, [
       "id",
       "label",
-      "text",
+      "textField",
       "fill",
       "anchor",
       "dx",
@@ -358,7 +364,7 @@ export function text<S extends Schema>(
       "panel",
     ]),
   };
-  if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.text)) {
+  if (table?.name !== undefined && readsTable([spec.x, spec.y], spec.textField)) {
     spec.data = table.name;
   }
   return new TextMark(spec, table as unknown as Table | undefined);

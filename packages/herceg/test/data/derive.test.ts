@@ -179,19 +179,21 @@ describe("expressions", () => {
 
   it("names what is wrong", () => {
     const t = readings as unknown as Table;
-    expect(() => compileExpression(["field", "wind"], t)).toThrow(/Unknown field "wind".*"site"/);
+    expect(() => compileExpression(["field", "wind"], t)).toThrow(
+      /expression: no field "wind".*"site"/,
+    );
     expect(() => compileExpression([">", ["field", "site"], 3], t)).toThrow(
-      /compares string with number/,
+      /">": compares string with number; give both sides one type/,
     );
     expect(() => compileExpression(["and", ["field", "temp"]], t)).toThrow(
-      /needs boolean operands/,
+      /"and": expected boolean operands; received number/,
     );
-    expect(() => compileExpression(["sqrt"], t)).toThrow(/takes 1 operand/);
+    expect(() => compileExpression(["sqrt"], t)).toThrow(/"sqrt": expected 1 operand; received 0/);
     expect(() => compileExpression(when(true, "a", 1).toJSON(), t)).toThrow(
-      /branches give string and number/,
+      /"if": branches give string and number/,
     );
     expect(() => compileExpression(["frobnicate", 1] as never, t)).toThrow(
-      /Unknown expression operator/,
+      /expression: no operator "frobnicate"/,
     );
   });
 });
@@ -251,7 +253,7 @@ describe("transforms", () => {
     });
     const result = derive(t)
       .aggregate({
-        groupby: ["g"],
+        by: ["g"],
         ops: {
           n: count(),
           values: count("v"),
@@ -310,13 +312,13 @@ describe("transforms", () => {
     const pairs = table({ a: ["x", "x", "y"], b: [1, 2, 1], v: [1, 1, 1] });
     expect(
       derive(pairs)
-        .aggregate({ groupby: ["a", "b"], ops: { n: count() } })
+        .aggregate({ by: ["a", "b"], ops: { n: count() } })
         .table().length,
     ).toBe(3);
     expect(quantile([1, 2, 3, 4], 0.5)).toBe(2.5);
     // An operation named as a grouping field replaces it.
     const counted = derive(t)
-      .aggregate({ groupby: ["g"], ops: { g: count() } })
+      .aggregate({ by: ["g"], ops: { g: count() } })
       .table();
     expect(values(counted, "g")).toEqual([3, 3]);
   });
@@ -329,7 +331,7 @@ describe("transforms", () => {
     const rolled = derive(t)
       .rolling({
         size: 2,
-        groupby: ["g"],
+        by: ["g"],
         ops: {
           avg: { op: "mean", field: "v" },
           lo: { op: "min", field: "v" },
@@ -361,7 +363,7 @@ describe("transforms", () => {
   it("names the step that fails", () => {
     expect(() =>
       derive(readings).filter(col("temp").gt(0)).calculate("x", col("wind")).table(),
-    ).toThrow(/Transform 1 \(calculate\): Unknown field "wind"/);
+    ).toThrow(/transform\[1\] \(calculate\): expression: no field "wind"/);
     expect(() => deriveTable(readings as unknown as Table, [{ filter: ["+", 1, 2] }])).toThrow(
       /true or false expression/,
     );
@@ -416,12 +418,14 @@ describe("edge cases", () => {
     const t = table({ v: [1, 2, 3] });
     const binned = (options: { step?: number; count?: number; start?: number }) => () =>
       derive(t).bin("v", options).table();
-    expect(binned({ count: 0 })).toThrow(/Bin count must be a whole number of at least 1, not 0/);
-    expect(binned({ count: 2.5 })).toThrow(/Bin count/);
-    expect(binned({ step: 0 })).toThrow(/Bin step must be a positive number, not 0/);
-    expect(binned({ step: Number.POSITIVE_INFINITY })).toThrow(/Bin step/);
-    expect(binned({ start: Number.NaN })).toThrow(/Bin start must be a finite number, not NaN/);
-    expect(binned({ start: Number.POSITIVE_INFINITY })).toThrow(/Bin start/);
+    expect(binned({ count: 0 })).toThrow(
+      /\(bin\): count: expected a whole number of at least 1; received 0/,
+    );
+    expect(binned({ count: 2.5 })).toThrow(/count: .*received 2\.5/);
+    expect(binned({ step: 0 })).toThrow(/step: expected a positive number; received 0/);
+    expect(binned({ step: Number.POSITIVE_INFINITY })).toThrow(/step: .*received Infinity/);
+    expect(binned({ start: Number.NaN })).toThrow(/start: expected a finite number; received NaN/);
+    expect(binned({ start: Number.POSITIVE_INFINITY })).toThrow(/start: .*received Infinity/);
   });
 
   it("bins exact integers and constant data", () => {
@@ -520,7 +524,7 @@ describe("edge cases", () => {
     expect(values(labels, "cool")).toEqual(["cool", null, "cool", null, "cool", "cool"]);
     expect(() =>
       compileExpression(["constructor", 1, 2] as never, readings as unknown as Table),
-    ).toThrow(/Unknown expression operator "constructor"/);
+    ).toThrow(/expression: no operator "constructor"/);
   });
 });
 
@@ -543,7 +547,7 @@ describe("following the source", () => {
   it("recomputes aggregates, and everything after replacements", () => {
     const source = table({ g: ["a", "b"], v: [1, 2] });
     const totals = derive(source)
-      .aggregate({ groupby: ["g"], ops: { total: sum("v") } })
+      .aggregate({ by: ["g"], ops: { total: sum("v") } })
       .table();
     source.append({ g: ["a"], v: [10] });
     expect(values(totals, "total")).toEqual([11, 2]);
@@ -574,7 +578,7 @@ describe("derived tables in specs", () => {
 
   it("loads them after their sources and charts them", () => {
     const { config, tables } = loadSpec(
-      spec([{ aggregate: [{ op: "sum", field: "v", as: "total" }], groupby: ["g"] }]),
+      spec([{ aggregate: [{ op: "sum", field: "v", as: "total" }], by: ["g"] }]),
     );
     expect(values(tables.get("totals")!, "total")).toEqual([4, 2]);
     const model = new ChartModel({ locale: "en-US", ...config });
@@ -587,12 +591,12 @@ describe("derived tables in specs", () => {
   });
 
   it("rejects unknown sources, cycles, and malformed steps", () => {
-    expect(() => loadSpec(spec([], "nope"))).toThrow(/derives from unknown table "nope"/);
+    expect(() => loadSpec(spec([], "nope"))).toThrow(/spec\.data\.totals\.source: no table "nope"/);
     const cycle: ChartSpec = {
       data: { a: { source: "b", transform: [] }, b: { source: "a", transform: [] } } as never,
       marks: [],
     };
-    expect(() => loadSpec(cycle)).toThrow(/derives from itself/);
+    expect(() => loadSpec(cycle)).toThrow(/spec\.data\.a\.source: the table derives from itself/);
     expect(() => loadSpec(spec([{ explode: true }]))).toThrow(/a transform \(filter/);
     // Unknown step options are reported like any others; two transforms in a step are refused.
     const filter = [">", ["field", "v"], 1];
@@ -616,7 +620,7 @@ describe("derived tables in specs", () => {
 export function typeChecks() {
   derive(readings)
     .calculate("f", col("temp").mul(2))
-    .aggregate({ groupby: ["site"], ops: { avg: mean("f") } })
+    .aggregate({ by: ["site"], ops: { avg: mean("f") } })
     .table()
     .numbers("avg");
   // @ts-expect-error "wind" is not a field of readings.
@@ -631,7 +635,7 @@ export function typeChecks() {
     .table()
     .categories("label");
   const counted = derive(readings)
-    .aggregate({ groupby: ["site"], ops: { site: count() } })
+    .aggregate({ by: ["site"], ops: { site: count() } })
     .table();
   counted.numbers("site");
   // @ts-expect-error "site" holds counts, which replaced the grouping field.

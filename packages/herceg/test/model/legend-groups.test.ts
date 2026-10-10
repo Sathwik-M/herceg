@@ -169,8 +169,7 @@ describe("legend groups", () => {
 });
 
 describe("legend groups in specs", () => {
-  const spec = (version: number) => ({
-    version,
+  const spec = () => ({
     data: {
       summary: {
         columns: { day: ["thu", "fri"], mean: [2, 4], low: [1, 3], high: [3, 5] },
@@ -182,17 +181,15 @@ describe("legend groups in specs", () => {
     ],
   });
 
-  it("need version 10", () => {
-    expect(() => validateSpec(spec(6))).toThrow(/marks\[0\]\.legendGroup.*"version": 10 or later/);
-    expect(() => validateSpec(spec(9))).toThrow(/"version": 10 or later/);
-    expect(() => validateSpec(spec(10))).not.toThrow();
-    const { config, unknown } = loadSpec(spec(10) as never);
+  it("load", () => {
+    expect(() => validateSpec(spec())).not.toThrow();
+    const { config, unknown } = loadSpec(spec() as never);
     expect(unknown).toEqual([]);
     expect(config.marks.map((mark) => mark.spec.legendGroup)).toEqual(["g", "g"]);
   });
 
   it("must be names, and only on marks with series", () => {
-    const empty = spec(10);
+    const empty = spec();
     empty.marks[0]!.legendGroup = "";
     expect(() => validateSpec(empty)).toThrow(/marks\[0\]\.legendGroup.*legend group's name/);
   });

@@ -40,7 +40,7 @@ rowSelection({ store: focus, channel: "focus", effect: "filter" });
 rowSelection({ store: focus });
 
 // The loader takes tables and stores of any schema, by name, or another spec's.
-loadSpec({ version: 8, marks: [] }, [], { tables: { trips, stops }, stores: { trips: focus } });
-const loaded = loadSpec({ version: 8, marks: [] });
-loadSpec({ version: 8, marks: [] }, [], { tables: loaded.tables, stores: loaded.stores });
-loadSpec({ version: 8, marks: [] }, [], { stores: new Map([["trips", focus]]) });
+loadSpec({ marks: [] }, [], { tables: { trips, stops }, stores: { trips: focus } });
+const loaded = loadSpec({ marks: [] });
+loadSpec({ marks: [] }, [], { tables: loaded.tables, stores: loaded.stores });
+loadSpec({ marks: [] }, [], { stores: new Map([["trips", focus]]) });

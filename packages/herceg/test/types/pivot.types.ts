@@ -51,7 +51,7 @@ pivotRows(rowView(requests), {
 const model = createPivotGridModel({
   data: pivot,
   aggregates: { avg: { title: "Latency", format: { maximumFractionDigits: 1 } }, n: { width: 80 } },
-  selection: selectionStore(requests),
+  selectionStore: selectionStore(requests),
 });
 expectTypeOf(model).toEqualTypeOf<PivotGridModel<Requests>>();
 createPivotGridModel({

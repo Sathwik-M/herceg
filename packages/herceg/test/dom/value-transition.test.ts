@@ -573,7 +573,7 @@ describe("points changing values", () => {
   it("change the sizes and colors they encode", () => {
     const { data, model } = scatter(
       { x: [1, 2, 3], y: [10, 20, 30], r: [1, 2, 4], c: [0, 5, 10] },
-      { r: "r", color: "c" },
+      { size: "r", color: "c" },
     );
     const before = pointsOf(model.scene(estimateText))[0]!;
     const [r0, i0] = [before.radii![0]!, before.colors!.index[0]!];
@@ -586,6 +586,20 @@ describe("points changing values", () => {
     expect(middle.radii![0]).toBeCloseTo(r0 + (after.radii![0]! - r0) * HALF, 4);
     expect(middle.colors!.index[0]).toBe(Math.round(i0 + (after.colors!.index[0]! - i0) * HALF));
     expect(middle.colors!.palette).toEqual(after.colors!.palette);
+  });
+
+  it("move points colored by category, but not across a change of category", () => {
+    const data = table({ x: [1, 2, 3], y: [10, 20, 30], kind: ["a", "b", "a"] });
+    const model = chart({
+      marks: [point(data, { x: "x", y: "y", color: "kind" })],
+      x: { domain: [0, 4] },
+      y: { domain: [0, 100] },
+    });
+    const { tween } = change(model, () => data.set("y", 0, 50));
+    const middle = pointsOf(frameAt(tween!, 100))[0]!;
+    expect(middle.colors!.categorical).toBe(true);
+    expect(Array.from(middle.colors!.index.subarray(0, 3))).toEqual([0, 1, 0]);
+    expect(change(model, () => data.set("kind", 0, "b")).tween).toBeUndefined();
   });
 
   it("do not match points across a reset, or move sampled points", () => {

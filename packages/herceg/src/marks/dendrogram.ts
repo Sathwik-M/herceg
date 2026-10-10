@@ -61,17 +61,19 @@ export class DendrogramMark implements Mark<Frozen<DendrogramSpec>> {
     this.spec = frozen(input);
     this.table = table;
     const { spec } = this;
-    for (const field of [spec.first, spec.second, spec.height])
-      requireField(table, field, ["number"], "dendrogram");
+    for (const channel of ["first", "second", "height"] as const)
+      requireField(table, spec[channel], ["number"], `dendrogram ${channel}`);
     if (spec.side !== undefined && !["bottom", "top", "left", "right"].includes(spec.side))
       throw new TypeError(
-        `Dendrogram side must be bottom, top, left, or right, got ${JSON.stringify(spec.side)}`,
+        `dendrogram side: expected "bottom", "top", "left", or "right"; received ${JSON.stringify(spec.side)}`,
       );
     if (
       spec.strokeWidth !== undefined &&
       !(Number.isFinite(spec.strokeWidth) && spec.strokeWidth >= 0)
     )
-      throw new RangeError("Dendrogram strokeWidth must be finite and nonnegative");
+      throw new RangeError(
+        `dendrogram strokeWidth: expected 0 or more pixels; received ${spec.strokeWidth}`,
+      );
     this.#linkage();
   }
 
@@ -152,7 +154,7 @@ export class DendrogramMark implements Mark<Frozen<DendrogramSpec>> {
     if (table.length === 0 || spec.strokeWidth === 0) return [];
     const horizontal = this.#leafAxis() === "x";
     const scale = horizontal ? frame.x : frame.y;
-    if (scale.type !== "band") throw new Error("Dendrogram leaves need a category axis");
+    if (scale.type !== "band") throw new Error("dendrogram leaves: expected a category axis");
     const keys =
       this.#bandKeys.get(scale.categories!) ?? scale.categories!.map((label) => `c:${label}`);
     const positions = new Map(keys.map((key, i) => [key, scale.map(i)]));

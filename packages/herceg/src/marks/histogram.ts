@@ -155,7 +155,9 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "histogram series");
     const { bins } = spec;
     if (typeof bins === "number" && !(Number.isInteger(bins) && bins >= 1))
-      throw new RangeError(`Histogram bins must be a whole number of at least 1, not ${bins}`);
+      throw new RangeError(
+        `histogram bins: expected a whole number of at least 1; received ${bins}`,
+      );
     if (Array.isArray(bins)) {
       requireHistogramEdges(bins);
       this.#explicit = Float64Array.from(bins);
@@ -165,9 +167,13 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
         ? (bins as { step: number; start?: number })
         : undefined;
     if (fixed && !(fixed.step > 0 && Number.isFinite(fixed.step)))
-      throw new RangeError(`Histogram bin step must be a positive number, not ${fixed.step}`);
+      throw new RangeError(
+        `histogram bins.step: expected a positive number; received ${fixed.step}`,
+      );
     if (fixed && fixed.start !== undefined && !Number.isFinite(fixed.start))
-      throw new RangeError(`Histogram bin start must be a finite number, not ${fixed.start}`);
+      throw new RangeError(
+        `histogram bins.start: expected a finite number; received ${fixed.start}`,
+      );
     this.#split = new SeriesSplitter(table, undefined, [this.#field], spec.series, spec.label);
     if (spec.dodge) this.#shares = new BandShares();
   }

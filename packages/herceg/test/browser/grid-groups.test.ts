@@ -129,7 +129,7 @@ describe("grouped grids", () => {
     expect(rowAt(grid, 1)!.getAttribute("aria-expanded")).toBe("true");
     expect(said(grid)).toBe("api (250) expanded");
     // Clicking the toggle expands without selecting.
-    expect(model.selection.get("grid-rows")).toBeNull();
+    expect(model.selectionStore.get("grid-rows")).toBeNull();
     const member = rowAt(grid, 2)!;
     expect(texts(member).slice(0, 2)).toEqual(["api", "1"]);
     expect(
@@ -262,7 +262,7 @@ describe("grouped grids", () => {
       const groups = groupRows(view, { by: ["g"], ops: { n: count() } });
       const model = createGridModel({ data: view, groups, columns: [{ field: "g" }] });
       model.selectionState(0);
-      model.selection.subscribe(() => model.setGroups(null));
+      model.selectionStore.subscribe(() => model.setGroups(null));
       model.select(0);
       return { model, ref: new WeakRef(groups) };
     })();

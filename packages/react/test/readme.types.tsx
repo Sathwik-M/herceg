@@ -26,7 +26,7 @@ const metrics = table({ time: time(timestamps), p50, p99, service: ["api", "db"]
 
 export function Latency() {
   return (
-    <Chart title="Request latency" y={{ label: "ms" }} interaction={{ zoom: true }}>
+    <Chart title="Request latency" y={{ title: "ms" }} interaction={{ zoom: true }}>
       <Line data={metrics} x="time" y={["p50", "p99"]} />
       <Rule y={250} label="SLO" />
     </Chart>
@@ -64,7 +64,7 @@ export function Strip() {
       {/* A category field places points in its bands. */}
       <Point data={metrics} x="service" y="p50" />
       {/* @ts-expect-error point sizes are number fields */}
-      <Point data={metrics} x="service" y="p50" r="service" />
+      <Point data={metrics} x="service" y="p50" size="service" />
     </Chart>
   );
 }
@@ -76,9 +76,9 @@ export function Annotated() {
     <Chart>
       <Region x1={new Date(0)} x2={new Date()} label="window" />
       <Line data={metrics} x="time" y="p50" />
-      <Rule data={deploys} x="at" text="version" />
+      <Rule data={deploys} x="at" textField="version" />
       <Text x={Date.now()} y={100} label="now" anchor="end" />
-      <Text data={deploys} x="at" y={120} text="version" />
+      <Text data={deploys} x="at" y={120} textField="version" />
       {/* @ts-expect-error rule positions from data are number or time fields */}
       <Rule data={deploys} x="version" />
       {/* @ts-expect-error constant text needs a label */}

@@ -26,7 +26,7 @@ describe("renderToSVG", () => {
       timeZone: "UTC",
       locale: "en-US",
       marks: [line(metrics, { x: "t", y: ["api", "db"] }), rule({ y: 150, label: "SLO" })],
-      y: { label: "ms" },
+      y: { title: "ms" },
       idPrefix: "latency",
     });
     expect(svg).toMatchSnapshot();
@@ -107,7 +107,7 @@ describe("renderToSVG for bars and heatmaps", () => {
       height: 200,
       locale: "en-US",
       idPrefix: "cells",
-      marks: [heatmap(cells, { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(cells, { x: "x", y: "y", color: "v" })],
     });
     expect(svg).toContain("<image");
     expect(svg).toContain("data:image/png;base64,iVBOR");

@@ -30,8 +30,10 @@ describe("cameras", () => {
   });
 
   it("refuse settings out of range", () => {
-    expect(() => checkCamera({ elevation: 91 })).toThrow(/elevation must be from -90 to 90/);
-    expect(() => checkCamera({ zoom: 0 })).toThrow(/zoom must be from 0.5 to 10/);
+    expect(() => checkCamera({ elevation: 91 })).toThrow(
+      "camera.elevation: expected -90 to 90 degrees; received 91",
+    );
+    expect(() => checkCamera({ zoom: 0 })).toThrow("camera.zoom: expected 0.5 to 10; received 0");
     expect(() => checkCamera({ azimuth: Number.NaN })).toThrow(/azimuth/);
     expect(() => checkCamera({ azimuth: 400, elevation: -90, zoom: 10 })).not.toThrow();
   });

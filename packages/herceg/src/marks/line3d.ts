@@ -136,7 +136,7 @@ export class Line3DMark implements Layer3D {
       !(spec.strokeWidth > 0 && Number.isFinite(spec.strokeWidth))
     )
       throw new RangeError(
-        `line3d strokeWidth must be a positive width in pixels, not ${spec.strokeWidth}`,
+        `line3d strokeWidth: expected a positive number of pixels; received ${spec.strokeWidth}`,
       );
     this.table = table;
     this.#fields = [spec.x, spec.y, spec.z];

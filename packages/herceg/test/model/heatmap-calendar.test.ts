@@ -43,7 +43,7 @@ describe("calendar heatmaps by week", () => {
 
   it("put each week in a column along time and each weekday in a row, Monday first", () => {
     const { model, scene } = build({
-      marks: [heatmap(days(january, 14, [6]), { date: "day", value: "n" })],
+      marks: [heatmap(days(january, 14, [6]), { date: "day", color: "n" })],
     });
     expect(model.xScale()!.type).toBe("time");
     // Whole weeks from Monday, December 29, to Sunday, January 18.
@@ -69,7 +69,7 @@ describe("calendar heatmaps by week", () => {
 
   it("start weeks on the day asked for", () => {
     const { model } = build({
-      marks: [heatmap(days(january, 14), { date: "day", value: "n", weekStart: "sun" })],
+      marks: [heatmap(days(january, 14), { date: "day", color: "n", weekStart: "sun" })],
     });
     expect(categories(model)).toEqual(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
     expect(model.xScale()!.domain).toEqual([Date.UTC(2025, 11, 28), Date.UTC(2026, 0, 18)]);
@@ -99,7 +99,7 @@ describe("calendar heatmaps by week", () => {
     const data = table({ day: time(midnights), n: midnights.map((_, i) => i) });
     const { model } = build({
       timeZone: "America/New_York",
-      marks: [heatmap(data, { date: "day", value: "n" })],
+      marks: [heatmap(data, { date: "day", color: "n" })],
     });
     const x = model.xScale()!;
     const y = model.yScale()!;
@@ -133,7 +133,7 @@ describe("calendar heatmaps by week", () => {
       day: time([Date.UTC(2026, 0, 5, 2), Date.UTC(2026, 0, 6, 2)]),
       n: [1, 2],
     });
-    const mark = heatmap(data, { date: "day", value: "n" });
+    const mark = heatmap(data, { date: "day", color: "n" });
     const utc = build({ marks: [mark] }).model;
     const before = describeChart(utc);
     build({ timeZone: "America/New_York", marks: [mark] });
@@ -149,7 +149,7 @@ describe("calendar heatmaps by week", () => {
       day: time([leap, leap + 3 * HOUR, leap + 6 * HOUR]),
       n: [1, 2, Number.NaN],
     });
-    const { model } = build({ marks: [heatmap(data, { date: "day", value: "n" })] });
+    const { model } = build({ marks: [heatmap(data, { date: "day", color: "n" })] });
     // February 29, 2024 was a Thursday.
     const x = model.xScale()!;
     expect(valueAt(model, x.map(leap + 12 * HOUR), model.yScale()!.map(3))).toBe(2);
@@ -158,7 +158,7 @@ describe("calendar heatmaps by week", () => {
   it("zoom along the weeks, and step week by week and day by day", () => {
     const { model } = build({
       interaction: { zoom: "x" },
-      marks: [heatmap(days(january, 14), { date: "day", value: "n" })],
+      marks: [heatmap(days(january, 14), { date: "day", color: "n" })],
     });
     model.setViewport([Date.UTC(2026, 0, 5), Date.UTC(2026, 0, 12)]);
     model.scene(estimateText);
@@ -179,9 +179,9 @@ describe("calendar heatmaps by week", () => {
     expect(() =>
       build({
         x: { breaks: timeBreaks([{ weekdays: ["sat", "sun"] }]) },
-        marks: [heatmap(days(january, 14), { date: "day", value: "n" })],
+        marks: [heatmap(days(january, 14), { date: "day", color: "n" })],
       }),
-    ).toThrow("Calendar heatmaps cannot leave out time breaks");
+    ).toThrow("heatmap date: calendars cannot leave out time breaks");
   });
 });
 
@@ -192,7 +192,7 @@ describe("calendar heatmaps by month", () => {
     const data = days(first, 33, [11]);
     data.append({ day: [Date.UTC(2024, 5, 1)], n: [99] });
     const { model, scene } = build({
-      marks: [heatmap(data, { date: "day", value: "n", calendar: "months" })],
+      marks: [heatmap(data, { date: "day", color: "n", calendar: "months" })],
     });
     expect(model.xScale()!.categories).toEqual(Array.from({ length: 31 }, (_, d) => String(d + 1)));
     // Every month from the first day's to the last's, in order down the plot.
@@ -260,7 +260,7 @@ describe("calendar heatmaps by month", () => {
     const data = table({ day: time([Date.UTC(2026, 2, 1, 3)]), n: [5] });
     const { model } = build({
       timeZone: "America/New_York",
-      marks: [heatmap(data, { date: "day", value: "n", calendar: "months" })],
+      marks: [heatmap(data, { date: "day", color: "n", calendar: "months" })],
     });
     expect(categories(model)).toEqual(["Feb 2026"]);
     expect(valueAt(model, model.xScale()!.map(27), model.yScale()!.map(0))).toBe(5);
@@ -271,35 +271,32 @@ describe("calendar heatmap specs", () => {
   const data = {
     t: { columns: { day: { type: "time", values: ["2026-01-01", "2026-01-02"] }, n: [1, 2] } },
   };
-  const spec = (mark: object, version = 9): ChartSpec =>
-    ({ version, data, marks: [{ type: "heatmap", value: "n", ...mark }] }) as unknown as ChartSpec;
+  const spec = (mark: object): ChartSpec =>
+    ({ data, marks: [{ type: "heatmap", color: "n", ...mark }] }) as unknown as ChartSpec;
 
-  it("load from specs of version 9", () => {
+  it("load from specs", () => {
     const { config } = loadSpec(spec({ date: "day", calendar: "months", weekStart: undefined }));
     const { model } = build(config);
     expect(model.yScale()!.categories).toEqual(["Jan 2026"]);
-    expect(() => validateSpec(spec({ date: "day" }, 8))).toThrow(
-      /marks\[0\]\.date: expected a spec with "version": 9 or later/,
-    );
   });
 
   it("take a date or x and y, not both", () => {
     expect(() => validateSpec(spec({ date: "day", x: "day" }))).toThrow(
-      "A calendar heatmap places its date itself; it takes no x",
+      "heatmap x: a calendar places its date itself; drop x",
     );
     expect(() => validateSpec(spec({ x: "day" }))).toThrow(
-      "A heatmap needs x and y, or a date to lay out as a calendar",
+      "heatmap: needs x and y, or a date to lay out as a calendar",
     );
     expect(() => validateSpec(spec({ x: "day", y: "n", calendar: "weeks" }))).toThrow(
-      "calendar and weekStart are for heatmaps of a date",
+      "heatmap: calendar and weekStart are for heatmaps of a date",
     );
     expect(() => validateSpec(spec({ date: "day", calendar: "months", weekStart: "sun" }))).toThrow(
-      "weekStart is for calendars of weeks",
+      "heatmap weekStart: for calendars of weeks",
     );
     expect(() => validateSpec(spec({ date: "day", calendar: "years" }))).toThrow(/calendar/);
     const numbers = table({ day: [1, 2], n: [1, 2] });
-    expect(() => heatmap(numbers, { date: "day" as never, value: "n" })).toThrow(
-      /heatmap date needs time/,
+    expect(() => heatmap(numbers, { date: "day" as never, color: "n" })).toThrow(
+      /heatmap date: field "day" holds number values; expected time/,
     );
   });
 });

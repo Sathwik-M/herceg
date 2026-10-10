@@ -10,9 +10,9 @@ hg.line(data, "t", "v", title="Latency", zoom="x", theme="dark")
 hg.scatter(data, "t", "v", tooltip=hg.Tooltip(mode="nearest"), animation=None)
 hg.bar(data, "t", "v", animation=hg.Animation(duration=400, values=True))
 hg.bar(data, "t", "v", animation="slow")  # type: ignore[arg-type]
-helper: hg.HelperOptions = {"title": "Saved", "y_axis": hg.Axis(label="ms")}
+helper: hg.HelperOptions = {"title": "Saved", "y_axis": hg.Axis(title="ms")}
 hg.bar(data, "t", "v", **helper)
-chart: hg.ChartOptions = {"title": "Saved", "y": hg.Axis(label="ms"), "facet_columns": 2}
+chart: hg.ChartOptions = {"title": "Saved", "y": hg.Axis(title="ms"), "facet_columns": 2}
 hg.Chart(data, **chart)
 hg.bar(data, "t", "v", **chart)  # type: ignore[misc, arg-type]
 hg.line(data, "t", "v", titel="typo")  # type: ignore[call-arg]
@@ -22,7 +22,7 @@ hg.area(data, "t", y1="v", y2="v", fill_opacity=0.3)
 hg.line(data, "t", "v", stroke_width="2")  # type: ignore[arg-type]
 update: hg.ChartUpdate = {"title": None, "theme": "light"}
 not_live: hg.ChartUpdate = {"facet": "host"}  # type: ignore[typeddict-unknown-key]
-hg.scatter_3d(data, "t", "v", "v", camera=hg.Camera(azimuth=30), z_axis=hg.Axis(label="z"))
+hg.scatter_3d(data, "t", "v", "v", camera=hg.Camera(azimuth=30), z_axis=hg.Axis(title="z"))
 hg.surface(z=[[1.0, 2.0], [3.0, 4.0]], box_aspect=(2, 2, 1), rotate=False)
 hg.scatter_3d(data, "t", "v", z=hg.Axis())  # type: ignore[arg-type]
 

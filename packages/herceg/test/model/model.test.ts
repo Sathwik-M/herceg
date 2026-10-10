@@ -295,8 +295,12 @@ describe("data edge cases", () => {
 
   it("rejects unknown and mistyped fields", () => {
     const t = table({ x: [1], name: ["a"] });
-    expect(() => line(t, { x: "x", y: "missing" as never })).toThrow(/Unknown field "missing"/);
-    expect(() => line(t, { x: "x", y: "name" as never })).toThrow(/is category/);
+    expect(() => line(t, { x: "x", y: "missing" as never })).toThrow(
+      /line y: no field "missing"; the table has/,
+    );
+    expect(() => line(t, { x: "x", y: "name" as never })).toThrow(
+      /line y: field "name" holds category values; expected number or time/,
+    );
   });
 });
 

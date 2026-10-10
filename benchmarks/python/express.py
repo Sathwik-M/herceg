@@ -64,13 +64,18 @@ def workloads():
     x = rng.uniform(0, 10, 10_000)
     y = np.sin(x) + rng.normal(0, 0.3, 10_000)
     delta = 0.01 * float(x.max() - x.min())
-    pair_chart = hx.pairplot(pairs, hue="group")
+    pair_chart = hx.pairplot(pairs, series="group")
 
     def numpy_linkage(rows):
         return numerics._linkage_numpy(rows, "average", "euclidean")
 
-    yield "pairplot 10,000 x 5, hue", "chart", 10, lambda: hx.pairplot(pairs, hue="group").to_spec()
-    yield "pairplot 10,000 x 5, hue", "svg", 5, lambda: pair_chart.to_svg()
+    yield (
+        "pairplot 10,000 x 5, series",
+        "chart",
+        10,
+        lambda: hx.pairplot(pairs, series="group").to_spec(),
+    )
+    yield "pairplot 10,000 x 5, series", "svg", 5, lambda: pair_chart.to_svg()
     yield (
         "clustermap 500 x 50 (SciPy linkage)",
         "chart",

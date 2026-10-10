@@ -21,7 +21,7 @@ const metrics = table({
 const chart = createChart(document.querySelector("#latency")!, {
   title: "Request latency",
   marks: [line(metrics, { x: "time", y: ["p50", "p99"] }), rule({ y: 250, label: "SLO" })],
-  y: { label: "ms" },
+  y: { title: "ms" },
 });
 ```
 
@@ -80,7 +80,7 @@ const hourly = derive(readings)
   .filter(col("temp").gt(-40).and(col("site").ne("test")))
   .calculate("f", col("temp").mul(1.8).add(32))
   .bin("time", { step: 3_600_000, as: "hour" })
-  .aggregate({ groupby: ["hour", "site"], ops: { mean: mean("f"), n: count() } })
+  .aggregate({ by: ["hour", "site"], ops: { mean: mean("f"), n: count() } })
   .table();
 line(hourly, { x: "hour", y: "mean", series: "site" });
 
@@ -106,7 +106,7 @@ statistics). Aggregates are `count`, `sum`, `mean`, `median`, `min`, `max`,
 `q1`, `q3`, `stdev`, `variance` (sample statistics), `distinct`, `first`,
 and `last`, over finite values (`count()` counts rows, `count(field)` the
 field's finite values); quantiles interpolate as NumPy and pandas do.
-Rolling windows are trailing windows of rows (within `groupby` groups),
+Rolling windows are trailing windows of rows (within `by` groups),
 with `count`, `sum`, `mean`, `min`, `max`, and `stdev`. Bins hold their
 start: `step` wide from `start` (by default at multiples of the step), or
 about `count` round bins (default 10; 1 wide when all values are equal);
@@ -187,7 +187,7 @@ createChart(timeline, {
   rowSelection: rowSelection({ store: focus, channel: "focus", events: [] }), // highlights only
 });
 createGrid(list, {
-  model: createGridModel({ data: rowView(trips), columns, selection: focus, channel: "focus" }),
+  model: createGridModel({ data: rowView(trips), columns, selectionStore: focus, channel: "focus" }),
 });
 ```
 
@@ -515,19 +515,19 @@ stacks of fields too.
 
 Annotations take constant positions (numbers, or `Date`s on time axes), or
 draw one item per row of a table when a position is a field. `label` is
-constant text; `text` names a category or number field with each item's text.
+constant text; `textField` names a category or number field with each item's text.
 
 ```ts
 rule({ y: 250, label: "SLO" }); // horizontal reference line
-rule(deploys, { x: "time", text: "version" }); // a vertical rule per deploy
+rule(deploys, { x: "time", textField: "version" }); // a vertical rule per deploy
 
 region({ x1: start, x2: end, label: "Maintenance" }); // shaded x range
-region(incidents, { x1: "start", x2: "end", text: "title" });
+region(incidents, { x1: "start", x2: "end", textField: "title" });
 region({ y1: 200, y2: 300 }); // shaded y range; with x1/x2 too, a rectangle
 
 text({ x: launch, y: 120, label: "Launch", anchor: "start", dx: 6 });
-text(peaks, { x: "time", y: "value", text: "value", dy: -10 });
-text(cities, { x: "gdp", y: "growth", text: "name", dy: -10, overlap: "move" });
+text(peaks, { x: "time", y: "value", textField: "value", dy: -10 });
+text(cities, { x: "gdp", y: "growth", textField: "name", dy: -10, overlap: "move" });
 ```
 
 Annotation positions count toward the axis domains, so thresholds and events
@@ -563,8 +563,8 @@ bar(sales, { x: "q1", y: "region" }); // a category y gives horizontal bars
 bar(requests, { x: "time", y: "latency" }); // number or time x: bars centered on values
 bar(sales, { x: "region", y: "q1", labels: true }); // values at bar ends; Intl options format them
 
-point(cars, { x: "weight", y: "mpg", series: "origin", r: 3 });
-point(countries, { x: "gdp", y: "life", r: "population", series: "continent" }); // bubbles
+point(cars, { x: "weight", y: "mpg", series: "origin", radius: 3 });
+point(countries, { x: "gdp", y: "life", size: "population", series: "continent" }); // bubbles
 point(stations, { x: "lon", y: "lat", color: "temperature", colors: viridis });
 point(cars, { x: "weight", y: "mpg", symbol: "origin" }); // a shape per origin
 point(requests, { x: "region", y: "latency" }); // a category x places points in its bands
@@ -573,12 +573,12 @@ errorBar(stats, { x: "group", y1: "low", y2: "high" }); // y, x1, x2 for horizon
 errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
 const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
-heatmap(load, { x: "hour", y: "host", value: "cpu" }); // cells along a time axis, a row per host
-heatmap(load, { x: "hour", y: "host", value: "cpu", xStep: 3_600_000 }); // an hour wide; gaps where hours are missing
-heatmap(load, { x: "hour", y: "host", value: "cpu", xBanded: true }); // a column per distinct hour
-heatmap(spectrum, { x: "time", y: "frequency", value: "power", reduce: "max" }); // grids larger than the plot
-heatmap(commits, { date: "day", value: "count" }); // a calendar: weeks along time, a row per weekday
-heatmap(commits, { date: "day", value: "count", calendar: "months" }); // a row per month, a column per day
+heatmap(load, { x: "hour", y: "host", color: "cpu" }); // cells along a time axis, a row per host
+heatmap(load, { x: "hour", y: "host", color: "cpu", xStep: 3_600_000 }); // an hour wide; gaps where hours are missing
+heatmap(load, { x: "hour", y: "host", color: "cpu", xBanded: true }); // a column per distinct hour
+heatmap(spectrum, { x: "time", y: "frequency", color: "power", reduce: "max" }); // grids larger than the plot
+heatmap(commits, { date: "day", color: "count" }); // a calendar: weeks along time, a row per weekday
+heatmap(commits, { date: "day", color: "count", calendar: "months" }); // a row per month, a column per day
 
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close", variant: "ohlc" });
@@ -634,8 +634,7 @@ some of the group's series. Tooltips, the keyboard, and summaries still
 read each mark's own series. A group's entry has a key of its own, which
 `getLegend`, `setVisibility`, and `visibility` events use (a member series'
 own key acts on its group's entry); it stays hidden across updates while a
-mark names the group. Marks without a group are as before. `legendGroup`, `dodge`, and
-`jitter` need spec version 10.
+mark names the group.
 
 Heatmaps over number and time fields place their cells along number and
 time axes, which zoom, pan, and brush as other marks' do, and other marks
@@ -689,26 +688,26 @@ one pass over the table's rows (each zoom or pan draws again), and memory
 follows the rows and the plot's pixels, not the number of cells, so there is
 no cell limit.
 
-Portable specs need `version: 9` for heatmap steps, `xBanded: false` or
-`yBanded: false`, and calendars. Heatmaps in specs of earlier versions band
-number and time fields, as they did then. Migrating TypeScript code:
-heatmaps over number and time fields used to band them, one column or row
-per distinct value, and did not zoom; pass `xBanded: true` and `yBanded:
-true` to keep that placement.
-
-Points encode fields as well as positions. `r` names a number field to size
-points by area, from zero (or the least value, when values are negative) at
-`rRange[0]` pixels to the largest at `rRange[1]` (default [2, 12]), with a key
-of round values below the legend. `fillOpacity` names a field mapped from
-0.15 to opaque. `color` names a number field colored on a continuous scale,
-with a color legend; series then appear in the legend in a neutral color.
-Marks with the same color scale, or the same key of sizes or shapes, share
-one legend.
+Points encode fields as well as positions. `radius` is every point's radius
+in pixels (2.5 by default); `size` instead names a number field sizing points
+by area, from zero (or the least value, when values are negative) at
+`radiusRange[0]` pixels to the largest at `radiusRange[1]` (default [2, 12]),
+with a key of round values below the legend. A mark takes `radius` or `size`,
+not both. `fillOpacity` names a field mapped from
+0.15 to opaque. `color` names a number or time field colored on a continuous
+scale, with a color legend, or a category field whose values take the
+theme's palette in order of appearance (cycling through at most its first
+255 colors), keeping their colors while they stay in the table, with a key of
+colors below the legend; series then appear in
+the legend in a neutral color (a `color` naming the `series` field keeps the
+series' colors). Marks with the same color scale, or the same key of sizes,
+shapes, or colors, share one legend.
 `symbol` is one shape (`"circle"`, `"square"`, `"triangle"`, `"diamond"`,
 `"cross"`, `"star"`, `"wye"`, `"triangle-down"`) or a category field whose
 values take the shapes in that order, with a key unless the field also splits
-series; a field named like a shape is refused rather than guessed at, so
-rename it to encode it. Every shape covers the area of a circle of the same radius. Points
+series: `{ field: "origin" }`, or the field's name. A name that is both a
+shape and a field is refused rather than guessed at; `{ field }` encodes the
+field, and specs always name fields that way. Every shape covers the area of a circle of the same radius. Points
 missing a value they encode are not drawn, and tooltips name the encoded
 values. Encoded points are drawn on the CPU (Canvas or SVG), not by the WebGL
 painter; opaque ones are drawn one color at a time, high values last.
@@ -800,8 +799,7 @@ without a facet value widen no bins. Normalization and common normalization
 are local to each panel, and a series absent from a panel has no bars there
 but keeps its dodge slot, so a series stands in the same place in every
 panel. Subplots draw their marks whole, with their own bins. Bins are
-chosen again only when data changes, never on zoom. All new non-default
-histogram options require portable spec version 10.
+chosen again only when data changes, never on zoom.
 
 Box plots accept raw values or precomputed statistics. Raw boxes summarize a
 number or time field per category of the other axis: quartiles use linear
@@ -890,8 +888,6 @@ horizontally, in SVG, Canvas, static SVG, and PDF. Constant values retain
 their density fallback line with every `inner` setting. If the density cannot
 be computed, `"box"` still draws its statistics, `"quartiles"` spans the
 available width at each statistic, and `"none"` draws no shape.
-Portable specs need `version: 7` for `split: true` or non-default `inner`;
-omitted options, `split: false`, and `inner: "box"` keep earlier behavior.
 
 Marks are drawn in array order; rules and text always draw above other marks.
 
@@ -931,7 +927,7 @@ all ancestors, while surviving branches stay in place.
 Heights run linearly from the leaves' edge to the opposite plot edge at
 the largest height, independently of axis domains and zoom. When every
 height is zero, links stay at the leaves' edge. Hide the height-direction
-axis (`axis: false`), since its ticks do not describe these plot-relative
+axis (`show: false`), since its ticks do not describe these plot-relative
 heights. `stroke` defaults to the theme's muted text and `strokeWidth` to
 1 CSS pixel. `label` names the accessible summary, which reports leaves,
 merges, and the merge-height range. Dendrograms have no series, legend
@@ -945,7 +941,7 @@ the matrix's categories must be in the dendrograms' traversal orders:
 ```ts
 createChart(element, {
   marks: [
-    heatmap(matrix, { x: "column", y: "row", value: "value", panel: "matrix" }),
+    heatmap(matrix, { x: "column", y: "row", color: "value", panel: "matrix" }),
     dendrogram(columnLinkage, {
       first: "first", second: "second", height: "height", leaves: columnLabels,
       side: "bottom", panel: "top",
@@ -956,9 +952,9 @@ createChart(element, {
     }),
   ],
   panels: panels([
-    { id: "corner", x: { axis: false }, y: { axis: false } },
-    { id: "top", y: { axis: false } },
-    { id: "left", x: { axis: false } },
+    { id: "corner", x: { show: false }, y: { show: false } },
+    { id: "top", y: { show: false } },
+    { id: "left", x: { show: false } },
     { id: "matrix" },
   ], { columns: 2, rowHeights: [1, 4], columnWidths: [1, 4] }),
   resolve: { x: "columns", y: "rows" },
@@ -1003,9 +999,7 @@ toggles as other data marks do. A y rug uses only the left value axis
 (`side: "right"` still selects the right plot edge). SVG, Canvas, static
 SVG, and PDF draw one packed segment geometry per series, including large
 rugs. React and Vue export `Rug`; Svelte exports `Rug.svelte` as `Rug`.
-The portable spec uses `{ type: "rug", x: "latency" }` or `y`. It uses the
-current spec version: older readers reject unknown mark types at
-`marks[i].type` rather than silently leaving their observations out.
+The portable spec uses `{ type: "rug", x: "latency" }` or `y`.
 
 ### What each mark supports
 
@@ -1290,7 +1284,7 @@ graph(messages, {
   value: "count", // link widths
   nodes: people, // a second table, with a row per node
   node: "name",
-  group: "team", // colors and the legend
+  color: "team", // colors and the legend
   size: "followers", // node areas
 });
 ```
@@ -1305,7 +1299,7 @@ one link and rows the other way another, drawn with an arrowhead at the
 target's edge, a pair's two links bowed apart. Rows with a missing name, or
 with a missing, zero, negative, or infinite value, are left out, and so are
 links from a node to itself (the chart's description says how many).
-`linkLabel` names a category field written at the middle of the heaviest
+`linkLabelField` names a category field written at the middle of the heaviest
 links where it covers no node or other label (as many as node labels); a
 link whose rows name it differently has none, and the description says how
 many.
@@ -1324,12 +1318,12 @@ the simulation, and overlapping nodes are then pushed apart.
 Nodes are circles of 5 px radius, or sized by area with `size` (3 to 14 px;
 missing or infinite sizes draw smallest),
 smaller in rooms crowded with nodes, each ringed in the
-background color so overlaps read. With `group`, nodes take their group's
-color, links within a group take it too (others are gray), and the legend
-toggles groups: hiding one leaves its nodes and their links out without
-moving the rest. A later row of the nodes table for the same node replaces an
-earlier one's group and size; nodes only links name have no group and are
-gray. Names stand beside the most connected nodes (the largest, with `size`):
+background color so overlaps read. With `color`, a category field, nodes
+take their category's color, links within a category take it too (others are
+gray), and the legend toggles categories: hiding one leaves its nodes and
+their links out without moving the rest. A later row of the nodes table for
+the same node replaces an earlier one's color and size; nodes only links
+name have no category and are gray. Names stand beside the most connected nodes (the largest, with `size`):
 all of up to 50 nodes, fewer in larger networks, and none where a name would
 cover another node or name (`labels: false` turns them off).
 
@@ -1350,7 +1344,7 @@ and its description says why, until its tables shrink again. Like a pie, a netwo
 
 ```ts
 const chart = createChart(element, {
-  marks: [graph(messages, { source: "from", target: "to", directed: true, linkLabel: "kind" })],
+  marks: [graph(messages, { source: "from", target: "to", directed: true, linkLabelField: "kind" })],
   interaction: { drag: true },
 });
 chart.on("itemMove", ({ key, position }) => save(key, position));
@@ -1384,8 +1378,8 @@ const cities = table({ city: [...], lon: [...], lat: [...], population: [...] })
 createChart(element, {
   projection: "equal-earth",
   marks: [
-    geoshape(countries, { name: "name", color: "gdp" }), // a choropleth
-    geopoint(cities, { longitude: "lon", latitude: "lat", r: "population", name: "city" }),
+    geoshape(countries, { labelField: "name", color: "gdp" }), // a choropleth
+    geopoint(cities, { longitude: "lon", latitude: "lat", size: "population", labelField: "city" }),
   ],
 });
 ```
@@ -1413,12 +1407,14 @@ without a value, and regions of a map without `color`, are filled with
 `fill` (the theme's grid color by default); borders are drawn in the chart's
 background color (`stroke`, `strokeWidth`, 0.75 px by default). `geometry`
 names the field when the table has several. `geopoint` places points at the
-`longitude` and `latitude` number fields, sized by area with an `r` field
-(`rRange`, 2 to 16 px by default; a size key joins the legend), colored by a
-`series` category or a `color` number field, at 0.8 opacity, each ringed in
+`longitude` and `latitude` number fields, of one `radius` (4 px by default)
+or sized by area with a `size` field (`radiusRange`, 2 to 16 px by default; a
+size key joins the legend), colored by a
+`series` category or by `color` (a number field on a continuous scale, or a
+category field as for `point`), at 0.8 opacity, each ringed in
 the background color (`stroke`, `strokeWidth`), and largest first, across
 series, so smaller points stay on top. Points missing a value they encode
-are left out. `name` (a category field) names regions and points in
+are left out. `labelField` (a category field) labels regions and points in
 tooltips and keyboard reading.
 
 The chart's `projection` is a name or `{ type, centralMeridian?,
@@ -1464,7 +1460,7 @@ previous one are left out of a region's outline.
 
 ```ts
 const chart = createChart(element, {
-  marks: [geoshape(countries, { name: "name", color: "gdp" })],
+  marks: [geoshape(countries, { labelField: "name", color: "gdp" })],
   interaction: { zoom: true, brush: "lasso" },
   rowSelection: rowSelection({ store: selectionStore(countries), channel: "picked" }),
 });
@@ -1510,7 +1506,7 @@ import { createChart, line3d, point3d, surface, table } from "herceg";
 
 createChart(element, {
   camera: { azimuth: -60, elevation: 25 },
-  z: { label: "Yield" },
+  z: { title: "Yield" },
   marks: [
     surface(fit, { x: "nitrogen", y: "rain", z: "yield" }), // a fitted surface
     point3d(trials, { x: "nitrogen", y: "rain", z: "yield", series: "field" }), // observations
@@ -1522,8 +1518,9 @@ createChart(element, {
 `point3d` draws points at the number or time fields `x`, `y`, and `z` (z is
 vertical): one color and legend entry per category of `series`, or colored
 by a number field `color` (`colors`, `colorDomain`, and `colorMidpoint` as
-for heatmaps), with a color legend; `r` is the radius (3.5 px), `fill` and
-`fillOpacity` the color without them, and `name` names points in tooltips.
+for heatmaps), with a color legend, or by a category field `color` as `point`
+marks are; `radius` is the radius (3.5 px), `fill` and
+`fillOpacity` the color without them, and `labelField` labels points in tooltips.
 `line3d` draws lines through the number or time fields `x`, `y`, and `z`:
 each category of `series` is one path (one color and legend entry; without
 `series`, all rows form one path), through its rows in table order, so a
@@ -1632,8 +1629,8 @@ createChart(element, {
     line(traffic, { x: "time", y: "requests", axis: "right" }),
     rule({ y: 5000, label: "capacity", axis: "right" }),
   ],
-  y: { label: "ms" },
-  yRight: { label: "requests/s" },
+  y: { title: "ms" },
+  yRight: { title: "requests/s" },
 });
 ```
 
@@ -1656,7 +1653,7 @@ createChart(element, {
   ],
   facet: facet("region"),
   resolve: { yRight: "independent" }, // each region's requests on a scale of its own
-  yRight: { label: "requests/s" },
+  yRight: { title: "requests/s" },
 });
 ```
 
@@ -1673,9 +1670,7 @@ the pixels it zooms, so it needs every panel to share both scales: facets
 whose right scales are their own cannot zoom along y, and `setViewport` takes
 a `yRight` range only when the right scale is shared (subplots take no y
 ranges). Brushes report y ranges in the left axis' values. `getPanels()`
-gives each panel's right axis with its `group`. Specs need no new version:
-readers from before refuse marks on the right axis in charts with facets or
-panels.
+gives each panel's right axis with its `group`.
 
 ### Financial charts
 
@@ -1706,7 +1701,7 @@ Breaks follow the chart's `timeZone`, wall-clock time included: a span of
 clocks change a night lasts an hour more or less, a span in a repeated hour
 is left out both times, and a skipped one takes no time. Starts are
 included, ends are not; a candle stamped 16:00 is inside a break from 16:00.
-In a spec, `breaks` is the same list (spec version 3); `timeBreaks` brings
+In a spec, `breaks` is the same list; `timeBreaks` brings
 the code that resolves them, so charts without breaks do not bundle it.
 
 Set `x.seams: true` to mark collapsed boundaries with dashed vertical lines,
@@ -1716,7 +1711,7 @@ it must be finite and positive and defaults to 40. Seams are kept greedily
 in chronological order, excluding plot edges, so markers become selective
 when zoomed out. They follow each panel's shown domain; the navigator strip
 draws none. Omission or `false` disables them. Enabled seams require time-axis
-breaks and spec version 5. Seams use the theme's resolved `grid` color and
+breaks. Seams use the theme's resolved `grid` color and
 a `[3, 3]` dash, independently of `gridDash`.
 
 The axis then measures the time it shows. Lines and areas join the points
@@ -1741,7 +1736,7 @@ text inside a break are drawn at its seam.
 it marks on the axis it follows, and the pointer's position on the other
 axes (both y axes when there are two), across a dashed line through the
 plot. The keyboard and synced cursors label only the value they mark.
-Labels go only on axes the chart draws: none for `axis: false`, and no y
+Labels go only on axes the chart draws: none for `show: false`, and no y
 label in facet columns that share the first column's y axis. The labels' code loads the first time a
 chart asks for them.
 
@@ -1802,7 +1797,7 @@ window ends up is announced politely. Static SVG, PDF, and PNG show the
 strip and the window, without the sliders. The strip's model code comes with
 `rangeNavigator` (about 3.8 KiB gzip); the sliders load the first time a
 chart has a navigator (about 2.9 KiB gzip). In a spec, `navigator` is
-`true` or `{ height?, marks? }` (spec version 4).
+`true` or `{ height?, marks? }`.
 
 ### Small multiples
 
@@ -1818,7 +1813,7 @@ createChart(element, {
     line(sales, { x: "week", y: "units" }), // one line per panel: that region's rows
     line(targets, { x: "week", y: "target", facet: "repeat" }), // whole, in every panel
     rule({ y: 100, label: "goal" }), // constants repeat
-    rule(launches, { x: "week", text: "product" }), // each launch in its region's panel
+    rule(launches, { x: "week", textField: "product" }), // each launch in its region's panel
   ],
   facet: facet("region", { columns: 3 }), // in a spec: { field: "region", columns: 3 }
 });
@@ -1836,7 +1831,7 @@ createChart(element, {
   marks: [line(trials, { x: "week", y: "response" })],
   facet: facet("site", { columns: 3 }),
   resolve: { x: "independent" },
-  x: { label: "Week" },
+  x: { title: "Week" },
   interaction: { zoom: true },
 });
 
@@ -1849,7 +1844,7 @@ createChart(element, {
 
 // A heatmap per region, each over the hours and hosts its own rows hold.
 createChart(element, {
-  marks: [heatmap(load, { x: "hour", y: "host", value: "cpu" })],
+  marks: [heatmap(load, { x: "hour", y: "host", color: "cpu" })],
   facet: facet("region"),
   resolve: { x: "independent", y: "independent" },
 });
@@ -1874,9 +1869,7 @@ under the lowest panel of each column, or under every panel when a column's
 panels have different x scales, with the x title once under each scale's
 lowest labels; y labels go
 beside the first panel of each row, or beside every panel when a row's
-panels differ. Specs with `resolve` need `"version": 2`, and with
-`resolve.x` `"version": 3`, so that readers from before them refuse them
-rather than draw shared axes. Charts whose panels have
+panels differ. Charts whose panels have
 y scales of their own cannot zoom along y or take y ranges in
 `setViewport` yet. Pointer, brush, and zoom work in any panel and act on
 its x scale; the arrow keys step through a panel and Up and Down move
@@ -1948,7 +1941,7 @@ createChart(element, {
   ],
   panels: panels(
     [
-      { id: "latency", title: "Latency", y: { label: "ms" } },
+      { id: "latency", title: "Latency", y: { title: "ms" } },
       { id: "traffic", title: "Requests", y: { type: "log" } },
     ],
     { columns: 1, rowHeights: [2, 1] }, // in a spec: "grid": { "columns": 1, "rowHeights": [2, 1] }
@@ -1975,7 +1968,7 @@ linear; a panel's y title is centered beside it. `resolve: { x:
 own in the same way, each from its panels' marks (a time axis when they
 place times) and its first panel's `x` settings, with labels and a title
 under its panels as in Small multiples; panels sharing an x scale must agree
-on its settings, title included, and a panel's `x: { axis }` shows or leaves
+on its settings, title included, and a panel's `x: { show }` shows or leaves
 out its own labels. A time series over a time axis can then sit above a distribution
 of its values:
 
@@ -1986,8 +1979,8 @@ createChart(element, {
     bar(buckets, { x: "ms", y: "count", panel: "spread" }),
   ],
   panels: panels([
-    { id: "series", x: { label: "Time" }, y: { label: "ms" } },
-    { id: "spread", x: { label: "Latency (ms)" } },
+    { id: "series", x: { title: "Time" }, y: { title: "ms" } },
+    { id: "spread", x: { title: "Latency (ms)" } },
   ]),
   resolve: { x: "independent" }, // in a spec: "resolve": { "x": "independent" }
 });
@@ -1995,8 +1988,7 @@ createChart(element, {
 
 Marks keep their place in the chart's list as their identity, so colors,
 the legend, and hidden series do not depend on the panel a mark draws in. Inspections report the `panel`
-id. Specs with `panels` need `"version": 2`, and panels with their own `x`
-`"version": 3`. A panel's `yRight` sets its right axis (see [A second y
+id. A panel's `yRight` sets its right axis (see [A second y
 axis](#a-second-y-axis)), and zooming and brushing act on x only.
 
 ### Layout marks in panels
@@ -2047,9 +2039,7 @@ which takes no `x` or `y` settings, and marks with `panel: "*"` are
 refused there, since they would draw in it. Panels with axes keep zooming,
 brushing, and syncing; a chart whose panels all draw layout marks has no x
 axis for those. Values animate only in a chart of one layout mark. Networks,
-maps, and 3D charts have charts to themselves. Readers from before layout
-marks could draw in panels refuse these specs, so they need no new spec
-version.
+maps, and 3D charts have charts to themselves.
 
 ### Custom marks
 
@@ -2628,26 +2618,18 @@ options, `loadSpec(spec, buffers, { tables, stores })`, with tables to use
 instead of making them from the spec's columns, so that charts of several
 specs share rows and selections; `chartFromSpec` takes the same options.
 
-Specs say which format `version` they are; one without is version 1. Specs
-using `resolve`, `panels`, or `grid` must say 2 or later, those using
-`resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later,
-those with a `navigator` 4 or later, those with enabled x axis `seams` 5,
-raw box plots with notches or nondefault whiskers 6, split violins or
-nondefault violin interiors 7, those with `rowSelection` 8, heatmap steps,
-`xBanded` or `yBanded` false, and calendars 9, and marks with a
-`legendGroup`, points and error bars with `dodge`, points with `jitter`, and
-histograms with `y`, explicit edges, `"probability"`, `commonNorm: true`,
-`cumulative: true`, or `dodge: true` 10, and networks with `directed: true`
-or a `linkLabel` 11 (`SPEC_VERSION`, the version this herceg writes), so
-that older readers refuse what they would draw differently. Interaction
-options (a map's or a tree's `zoom`, a map's lasso, `drag`) need none: a
-reader without them draws the same chart, or refuses the option. Heatmaps in specs before version 9 band number and time
-fields, as those versions did. Loading checks a spec and names the property at
-fault in errors. Properties herceg does not know, misspelled or from a newer
-version, are logged with `console.warn` and otherwise ignored;
-`loadSpec(spec, buffers, { unknown: "error" })` refuses them instead, and
-`{ unknown: "ignore" }` loads quietly. `validateSpec(value)` checks a value
-of unknown type, such as parsed JSON, and narrows it to `ChartSpec`:
+Specs say which format `version` they are: 1 (`SPEC_VERSION`), the only one
+so far, also when left out. Loading refuses specs of later versions. Loading
+checks a spec, and errors name the property at fault, what was expected, and
+what was received, as in `marks[2].inner: expected "box", "quartiles", or
+"none"; received "quart"`. Properties the format does not have, such as
+misspellings, are refused, naming the property most likely meant
+(`marks[0].strokeWidht: not a property of herceg's spec format; did you mean
+"strokeWidth"?`); `loadSpec(spec, buffers, { unknown: "warn" })` logs them
+with `console.warn` and loads the rest instead, and `{ unknown: "ignore" }`
+loads the rest quietly. `validateSpec(value)` checks a value of unknown type,
+such as parsed JSON, refusing what loading refuses, and narrows it to
+`ChartSpec`; a loaded spec's `unknown` lists the properties it did not know:
 
 ```ts
 import { createChart } from "herceg";
@@ -2655,7 +2637,7 @@ import { loadSpec, validateSpec } from "herceg/spec";
 
 const spec: unknown = await response.json();
 validateSpec(spec);
-const { config } = loadSpec(spec, [], { unknown: "error" });
+const { config } = loadSpec(spec);
 createChart(element, config);
 ```
 
@@ -2734,7 +2716,7 @@ instead of replacing them. Sorting goes through the view, keeping its filter
 (`model.setSort(keys)` does the same). Clicking a row selects it, Ctrl or
 Cmd toggles it, and Shift selects the rows from the last one clicked, in the
 grid's order. The selection is a row set in the model's selection store,
-under the channel "grid-rows" (the `selection` and `channel` options), where
+under the channel "grid-rows" (the `selectionStore` and `channel` options), where
 an application can read it, for example to restrict a chart's view to the
 selected rows; a condition put in that channel shows as selected rows too.
 
@@ -2810,7 +2792,7 @@ const store = selectionStore(requests);
 const gridRows = rowView(requests);
 const chartRows = rowView(requests);
 const grid = createGrid(gridElement, {
-  model: createGridModel({ data: gridRows, columns, selection: store }),
+  model: createGridModel({ data: gridRows, columns, selectionStore: store }),
   ariaLabel: "Requests",
 });
 const chart = createChart(chartElement, {
@@ -2872,7 +2854,9 @@ group with that key path (`["eu"]`, `["eu", "api"]`), and `expandAll()` and
 it as rows stream, through resets, and while a group above them is
 collapsed (`model.setGroups` shows other groups, or none). `model.row(i)`
 tells a group's header (`kind: "group"`, with its key, level, row count, and
-expansion) from a table row (`kind: "row"`). Clicking a column's header
+expansion) from a table row (`kind: "row"`). Each row also says when what it shows
+last changed (`version`) and names itself (`ref`, which `model.indexOf(ref)`
+finds again). Clicking a column's header
 sorts each group's rows by its field and the groups among their siblings by
 the column's aggregate at every level, or by key on the level of a grouping
 field; `model.setGroupSort` orders groups by any field of the groups'
@@ -3057,7 +3041,7 @@ requests at a time (`maxRequests`); it keeps 16 blocks (`cachedBlocks`, and
 at most `cacheBytes`, 8 MiB) besides those of the rows in view or mounted around them, dropping those
 farthest from the view, and aborts requests more than two blocks away. A
 scrollbar dragged far waits 50 ms for the scrolling to settle before asking
-(`settle`), and asks at least every 150 ms while it goes on. Until the source
+(`settleDelay`), and asks at least every 150 ms while it goes on. Until the source
 says how many rows there are, the grid shows as many as it has read and a
 block more, and grows as it scrolls. `model.status` says what is loading,
 what failed, and how many blocks and bytes it holds.
@@ -3065,7 +3049,7 @@ what failed, and how many blocks and bytes it holds.
 The focus keeps to its row within a query. A new query puts it on its
 column's header, and back on its record (by key) once the source locates it
 there. Selections are keys or conditions, never positions, and live in a
-`RemoteSelectionStore` (`remoteSelectionStore(schema)`, the `selection`
+`RemoteSelectionStore` (`remoteSelectionStore(schema)`, the `selectionStore`
 option): clicking selects records by key, Shift ranges select the rows
 between when all are loaded (and refuse, saying so, otherwise), Ctrl+A
 selects every row matching the query's filter as a condition, toggling rows
@@ -3089,43 +3073,3 @@ records loaded are selected (or taken out of it), and checked too when all
 of its records are loaded and selected; records not loaded are not guessed
 at.
 Not yet available remotely: pivots, editing, and bins in queries.
-
-## Migrating from earlier versions
-
-Herceg is not yet at 1.0. A grid model's `groupsRevision` is gone: each
-row says when what it shows changed (`model.row(i).version`) and names
-itself (`ref`, which `model.indexOf(ref)` finds again). Grid columns are at least 32 pixels wide
-(`MIN_COLUMN_WIDTH`): `setColumns` and `createGridModel` refuse narrower
-widths, which they took before.
-
-Row groups by several fields nest. `groups.table` is unchanged (one row per
-combination of the fields' values), but a grid shows a header per level
-(each naming its own value) instead of one header per combination, and
-`indexOf` of a shorter key finds the group of that level rather than -1.
-`members(g)` returns a new array instead of one borrowed from the groups. A
-group's `GridRow` has its level (1 for the first) and its place among its
-siblings rather than among every group. Groups' sums are compensated, so
-they can differ in the last digits from those of earlier versions (and of
-derived tables).
-
-Its chart handle now keeps the engine to itself:
-
-- `chart.model` is gone. `getPanels()` describes the panels and their axes
-  (`model.panels()`, `xScale()`, `yScale()`, and `yRightScale()`), `toPixel`,
-  `fromPixel`, and `formatValue` map and write values (a scale's `map` and
-  `invert`), and `inspect` finds data (`model.inspect`). Viewports are read
-  with `getViewport({ panel })` (`model.viewport`, `viewportOf`, and
-  `yViewport`) and set with `setViewport`; an axis' `group` and
-  `canSetViewport` say what `model.sharesX` and `sharesY` did. Series are
-  hidden with `setVisibility` and `setHiddenKeys` rather than by changing
-  `model.hidden`, which also redraws and reports the change.
-- `syncCursor`, `syncViewport`, `syncSelection`, `flush`, and `visible` are
-  gone: charts with the same `interaction.sync` reach each other through
-  their group, and frames are drawn by the shared frame loop or `render()`.
-- The mark functions return a `ChartMark`, which shows its `spec`; the
-  classes behind them (`LineMark`, `BarMark`, and the others) and what marks
-  implement (`Mark`, `LayoutMark`, `LayoutFrame`, `LayoutItem`,
-  `LayoutResult`, and `Plot3D`) are no longer exported, and charts take only
-  marks the mark functions make. Marks of your own are `custom` marks, whose
-  `plot` is a read-only `PlotRect`; `tablesOf` and `viewOf` give the tables
-  and row view a mark follows.

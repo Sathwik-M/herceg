@@ -242,7 +242,7 @@ describe("histograms", () => {
     expect(edges([0, 1, 2, 3, ...gaps])).toBe(edges([0, 1, 2, 3]));
     expect(() =>
       histogram(table({ v: [1] }), { x: "v", bins: { step: 1, start: Number.NaN } }),
-    ).toThrow(/start must be a finite number/);
+    ).toThrow(/histogram bins\.start: expected a finite number; received NaN/);
   });
 
   it("describe the values, bins, range, and fullest bin", () => {

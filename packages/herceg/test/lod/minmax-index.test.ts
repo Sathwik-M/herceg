@@ -153,7 +153,7 @@ describe("line indexes", () => {
     // chart, which keeps that room, and not those of the oracle drawn fresh.
     const model = new ChartModel({
       marks: [line(data, { x: "x", y: "y" })],
-      x: { axis: false },
+      x: { show: false },
       y: { type: y },
     });
     model.setSize(600, 300, 1);

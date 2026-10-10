@@ -179,7 +179,7 @@ export function hercegHandle(
       model.clearSelection();
     },
     selectedIds() {
-      const selection = model.selection.get(model.channel);
+      const selection = model.selectionStore.get(model.channel);
       if (selection?.kind !== "rows") return [];
       const offset = source.rowOffset;
       return Array.from(selection.rows.positions(), (position) => offset + position);

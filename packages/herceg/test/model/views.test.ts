@@ -90,7 +90,7 @@ describe("marks over row views", () => {
     const view = rowView(requests, { filter: col("ms").gt(100) });
     expect(() =>
       scene({ marks: [point(view, { x: "size", y: "ms" })], facet: facet("host") }),
-    ).toThrow(/cannot be split by facets yet/);
+    ).toThrow(/point facet: a row view cannot split into facets yet/);
     // Panels come from marks split over whole tables; the view's points repeat in each.
     const repeated = scene({
       marks: [
@@ -111,6 +111,6 @@ describe("marks over row views", () => {
           requests as never,
           rowView(table({ ms: [1], size: [1] })) as never,
         ),
-    ).toThrow(/view must be of its table/);
+    ).toThrow("point: the view must be of the mark's table");
   });
 });

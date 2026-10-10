@@ -47,19 +47,19 @@ export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
    * Category field naming each link, written along the links that have
    * room; a link of rows naming it differently has none.
    */
-  linkLabel?: CategoryField<S>;
+  linkLabelField?: CategoryField<S>;
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
   labels?: boolean;
   id?: string;
 } & (
-  | { nodes?: undefined; node?: undefined; group?: undefined; size?: undefined }
+  | { nodes?: undefined; node?: undefined; color?: undefined; size?: undefined }
   | {
-      /** A table with a row per node, for nodes without links and for groups and sizes. */
+      /** A table with a row per node, for nodes without links and for colors and sizes. */
       nodes: Table<N>;
       /** Category field of `nodes` naming each row's node, as `source` and `target` do. */
       node: CategoryField<N>;
       /** Category field of `nodes`: nodes are colored by it, with a legend. */
-      group?: CategoryField<N>;
+      color?: CategoryField<N>;
       /** Number field of `nodes` sizing nodes by area. */
       size?: NumberField<N>;
     }
@@ -148,7 +148,7 @@ interface Network {
   stride: number;
   /** Per row of the links table: its link, or -1 for rows left out. */
   linkOfRow: Int32Array;
-  /** Per link, with `linkLabel`: its label's code, -1 for none, -2 for rows naming it differently. */
+  /** Per link, with `linkLabelField`: its label's code, -1 for none, -2 for rows naming it differently. */
   label: Int32Array | undefined;
   /** The label field's categories. */
   labels: readonly string[];
@@ -225,16 +225,20 @@ export class GraphMark implements LayoutMark {
     requireField(links, spec.source, CATEGORY, "graph source");
     requireField(links, spec.target, CATEGORY, "graph target");
     if (spec.value !== undefined) requireField(links, spec.value, ["number"], "graph value");
-    if (spec.linkLabel !== undefined)
-      requireField(links, spec.linkLabel, CATEGORY, "graph linkLabel");
+    if (spec.linkLabelField !== undefined)
+      requireField(links, spec.linkLabelField, CATEGORY, "graph linkLabelField");
     if (nodes) {
       if (spec.node === undefined)
-        throw new Error("graph nodes need `node`, the field naming each row's node");
+        throw new Error(
+          "graph node: required with a nodes table; name the field of each row's node",
+        );
       requireField(nodes, spec.node, CATEGORY, "graph node");
-      if (spec.group !== undefined) requireField(nodes, spec.group, CATEGORY, "graph group");
+      if (spec.color !== undefined) requireField(nodes, spec.color, CATEGORY, "graph color");
       if (spec.size !== undefined) requireField(nodes, spec.size, ["number"], "graph size");
-    } else if (spec.node !== undefined || spec.group !== undefined || spec.size !== undefined) {
-      throw new Error("graph node, group, and size are fields of a nodes table, and there is none");
+    } else if (spec.node !== undefined || spec.color !== undefined || spec.size !== undefined) {
+      throw new Error(
+        "graph nodes: node, color, and size are fields of a nodes table; give nodes or drop them",
+      );
     }
     this.table = links;
     this.nodes = nodes;
@@ -284,7 +288,7 @@ export class GraphMark implements LayoutMark {
     let groupNames: readonly string[] = [];
     if (nodes) {
       const ids = nodes.categories(spec.node!);
-      const groups = spec.group === undefined ? undefined : nodes.categories(spec.group);
+      const groups = spec.color === undefined ? undefined : nodes.categories(spec.color);
       const sizes = spec.size === undefined ? undefined : nodes.numbers(spec.size);
       groupNames = groups?.dictionary ?? [];
       for (let row = 0; row < nodes.length; row++) {
@@ -301,7 +305,8 @@ export class GraphMark implements LayoutMark {
     const from = links.categories(spec.source);
     const to = links.categories(spec.target);
     const values = spec.value === undefined ? undefined : links.numbers(spec.value);
-    const named = spec.linkLabel === undefined ? undefined : links.categories(spec.linkLabel);
+    const named =
+      spec.linkLabelField === undefined ? undefined : links.categories(spec.linkLabelField);
     // Each field's codes are looked up by name once.
     const nodeOfCode = (cache: Int32Array, dictionary: readonly string[], code: number) => {
       if (cache[code]! < 0) cache[code] = add(dictionary[code]!);
@@ -640,7 +645,7 @@ export class GraphMark implements LayoutMark {
     const format = (v: number) => formatNumber(v, locale);
     const nodeItem = (node: number): LayoutItem => {
       const details: string[] = [];
-      if (group[node]! >= 0) details.push(`${this.spec.group} ${groups[group[node]!]}`);
+      if (group[node]! >= 0) details.push(`${this.spec.color} ${groups[group[node]!]}`);
       if (network.size && Number.isFinite(network.size[node]))
         details.push(`${this.spec.size} ${format(network.size[node]!)}`);
       let text = plural(degree[node]!, "link", "links");
@@ -1321,10 +1326,10 @@ function plural(count: number, one: string, many: string): string {
 /**
  * A network of nodes joined by links, placed by a force simulation: a row
  * per link between the nodes named in `source` and `target`, and, with
- * `nodes`, a table naming each node in `node`, with its `group` and `size`.
+ * `nodes`, a table naming each node in `node`, with its `color` and `size`.
  *
  * ```ts
- * graph(friendships, { source: "a", target: "b", nodes: people, node: "name", group: "team" })
+ * graph(friendships, { source: "a", target: "b", nodes: people, node: "name", color: "team" })
  * ```
  */
 export function graph<S extends Schema, N extends Schema = Schema>(
@@ -1334,11 +1339,11 @@ export function graph<S extends Schema, N extends Schema = Schema>(
   const spec: GraphSpec = { type: "graph", source: options.source, target: options.target };
   if (options.value !== undefined) spec.value = options.value;
   if (options.directed !== undefined) spec.directed = options.directed;
-  if (options.linkLabel !== undefined) spec.linkLabel = options.linkLabel;
+  if (options.linkLabelField !== undefined) spec.linkLabelField = options.linkLabelField;
   if (options.nodes !== undefined) {
     if (options.nodes.name !== undefined) spec.nodes = options.nodes.name;
     spec.node = options.node;
-    if (options.group !== undefined) spec.group = options.group;
+    if (options.color !== undefined) spec.color = options.color;
     if (options.size !== undefined) spec.size = options.size;
   }
   if (options.labels !== undefined) spec.labels = options.labels;
@@ -1351,6 +1356,6 @@ export function graph<S extends Schema, N extends Schema = Schema>(
   // say why instead, as growth while drawn does, so later changes can bring
   // the picture back.
   const refused = mark.overLimit();
-  if (refused) throw new Error(refused);
+  if (refused) throw new Error(`graph: ${refused}; filter or aggregate the links first`);
   return mark;
 }

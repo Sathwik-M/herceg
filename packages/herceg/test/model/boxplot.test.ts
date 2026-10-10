@@ -129,6 +129,8 @@ describe("boxplot", () => {
 
   it("refuses data without a category axis", () => {
     const numbers = table({ a: [1, 2], b: [3, 4] });
-    expect(() => boxplot(numbers, { x: "a" as never, y: "b" })).toThrow("category field on x or y");
+    expect(() => boxplot(numbers, { x: "a" as never, y: "b" })).toThrow(
+      "boxplot x, y: expected a category field and a number or time field; received number and number",
+    );
   });
 });

@@ -178,21 +178,23 @@ export function joinLayers3D(marks: readonly LayoutMark[], config: ChartConfig):
   const other = marks.find((mark) => !isLayer3D(mark));
   if (other)
     throw new Error(
-      `A ${marks[0]!.spec.type} mark shares its chart only with point3d, line3d, and surface marks, not a ${other.spec.type}`,
+      `${marks[0]!.spec.type}: a 3D chart holds only point3d, line3d, and surface marks; draw "${other.spec.type}" marks in a chart of their own`,
     );
   const ids = new Set<string>();
   for (const { spec } of marks) {
     if (spec.id === undefined) continue;
-    if (ids.has(spec.id)) throw new Error(`Duplicate mark id "${spec.id}"`);
+    if (ids.has(spec.id)) throw new Error(`id: "${spec.id}" names two marks`);
     ids.add(spec.id);
   }
   if (config.camera) checkCamera(config.camera);
   if (config.boxAspect) checkBoxAspect(config.boxAspect);
   const zoom = config.interaction?.zoom;
   if (zoom !== undefined && typeof zoom !== "boolean")
-    throw new Error(`3D charts zoom with interaction.zoom true, not "${zoom}"`);
-  if (config.yRight) throw new Error("3D charts have no right y axis");
-  if (config.x?.breaks) throw new Error("3D charts' x axis leaves out no breaks");
+    throw new Error(
+      `chart interaction.zoom: expected true or false in a 3D chart; received ${JSON.stringify(zoom)}`,
+    );
+  if (config.yRight) throw new Error("chart yRight: 3D charts have no right y axis; drop it");
+  if (config.x?.breaks) throw new Error("chart x.breaks: 3D axes have no breaks; drop them");
   return new Plot3D(marks as Layer3D[], config);
 }
 
@@ -610,18 +612,18 @@ function planAxis3D(
   const kinds = new Set(data.map((d) => d.kind));
   if (kinds.size > 1)
     throw new Error(
-      `The ${name} axis of a 3D chart is one kind of field; its marks give ${[...kinds].join(" and ")} fields`,
+      `chart ${name}: a 3D axis takes one kind of field; its marks give ${[...kinds].join(" and ")} fields`,
     );
   const kind = data[0]?.kind ?? "number";
   const fields = [...new Set(data.map((d) => d.field))];
-  const title = spec?.label ?? fields.join(", ");
-  const shown = spec?.axis ?? true;
+  const title = spec?.title ?? fields.join(", ");
+  const shown = spec?.show ?? true;
   const grid = spec?.grid ?? true;
   if (kind === "category") {
     if (spec?.type !== undefined)
-      throw new Error(`The ${name} axis shows categories; its type cannot be "${spec.type}"`);
+      throw new Error(`chart ${name}.type: the axis shows categories; drop "${spec.type}"`);
     if (spec?.domain !== undefined)
-      throw new Error(`The ${name} axis shows categories; it takes no domain`);
+      throw new Error(`chart ${name}.domain: the axis shows categories; drop domain`);
     const index = new Map<string, number>();
     for (const d of data)
       for (const c of d.categories ?? []) if (!index.has(c)) index.set(c, index.size);
@@ -643,7 +645,7 @@ function planAxis3D(
   }
   const type: AxisType = spec?.type ?? (kind === "time" ? "time" : "linear");
   if (type === "time" && kind === "number" && spec?.type === undefined)
-    throw new Error(`The ${name} axis is a time axis; its fields must be times`);
+    throw new Error(`chart ${name}.type: a time axis needs time fields`);
   const context: AxisContext = {
     type,
     spec,

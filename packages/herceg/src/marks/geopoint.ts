@@ -23,6 +23,7 @@ import { linearTicks } from "../scale/ticks.ts";
 import type { PointGeometry } from "../scene/scene.ts";
 import type { Frozen, GeoPointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
+import { Appearance, categoryColors, categoryTones, colorKey } from "./appearance.ts";
 import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
 import {
   insidePolygon,
@@ -43,22 +44,43 @@ import {
 } from "./mark.ts";
 import { rowsByCode } from "./series.ts";
 
-export interface GeoPointOptions<S extends Schema> {
+/**
+ * A map point's size: a constant `radius`, or a number field `size` sized
+ * by area within `radiusRange` (bubbles); not both.
+ */
+export type GeoPointSize<S extends Schema> =
+  | {
+      /** Radius in pixels; 4 by default. */
+      radius?: number;
+      size?: never;
+      radiusRange?: never;
+    }
+  | {
+      radius?: never;
+      /** A number field sized by area within `radiusRange` (bubbles). */
+      size?: NumberField<S>;
+      /** Radii of the smallest and largest values of `size`. Default [2, 16]. */
+      radiusRange?: readonly [number, number];
+    };
+
+export type GeoPointOptions<S extends Schema> = GeoPointStyle<S> & GeoPointSize<S>;
+
+interface GeoPointStyle<S extends Schema> {
   /** Number field: each point's longitude, in degrees east. */
   longitude: NumberField<S>;
   /** Number field: each point's latitude, in degrees north. */
   latitude: NumberField<S>;
   /** Category field naming each point, for tooltips, keyboard reading, and the summary. */
-  name?: CategoryField<S>;
+  labelField?: CategoryField<S>;
   /** Category field: one colored set of points per value, with a legend. */
   series?: CategoryField<S>;
-  /** Radius in pixels, or a number field sized by area within `rRange` (bubbles). */
-  r?: number | NumberField<S>;
-  /** Radii of the smallest and largest values of an `r` field. Default [2, 16]. */
-  rRange?: readonly [number, number];
-  /** A number field colored on a continuous scale, with a color legend. */
-  color?: NumberField<S>;
-  /** Colors for `color`, low to high; the theme's ramp by default. */
+  /**
+   * A number field colored on a continuous scale, with a color legend; or a
+   * category field whose values take the theme's palette in order of
+   * appearance, with a key of them (the `series` field keeps its series' colors).
+   */
+  color?: NumberField<S> | CategoryField<S>;
+  /** Colors for a number `color`, low to high; the theme's ramp by default. */
   colors?: readonly string[];
   colorDomain?: readonly [number, number];
   colorMidpoint?: number;
@@ -75,7 +97,7 @@ export interface GeoPointOptions<S extends Schema> {
 }
 
 const RADIUS = 4;
-const R_RANGE: readonly [number, number] = [2, 16];
+const RADIUS_RANGE: readonly [number, number] = [2, 16];
 const OPACITY = 0.8;
 const RING = 1;
 /** Pointer reach beyond a point's edge, in pixels. */
@@ -104,8 +126,12 @@ export class GeoPointMark implements GeoLayer {
   readonly table: Table;
   readonly measure: string;
   readonly reach: number;
-  readonly #rField: string | undefined;
-  /** The radius of every point, or with an `r` field the largest. */
+  readonly #sizeField: string | undefined;
+  /** A number `color`, colored on a continuous scale. */
+  readonly #toneField: string | undefined;
+  /** A category `color` other than the series field, its values in order of appearance. */
+  readonly #colorField: Appearance | undefined;
+  /** The radius of every point, or with a `size` field the largest. */
   readonly #largest: number;
   /** Plane positions per row (NaN off the map), for the table version and projection named by `key`. */
   #projected: { key: string; xy: Float64Array; box: Float64Array | undefined } | undefined;
@@ -116,32 +142,52 @@ export class GeoPointMark implements GeoLayer {
     const spec = this.spec;
     requireField(table, spec.longitude, ["number"], "geopoint longitude");
     requireField(table, spec.latitude, ["number"], "geopoint latitude");
-    if (spec.name !== undefined) requireField(table, spec.name, ["category"], "geopoint name");
+    if (spec.labelField !== undefined)
+      requireField(table, spec.labelField, ["category"], "geopoint labelField");
     if (spec.series !== undefined)
       requireField(table, spec.series, ["category"], "geopoint series");
-    if (typeof spec.r === "string") requireField(table, spec.r, ["number"], "geopoint r");
-    else if (spec.r !== undefined && !(spec.r > 0 && Number.isFinite(spec.r)))
-      throw new RangeError(`geopoint r must be a positive radius or a field, not ${spec.r}`);
-    if (spec.color !== undefined) requireField(table, spec.color, ["number"], "geopoint color");
+    if (spec.radius !== undefined && spec.size !== undefined)
+      throw new Error("geopoint radius: a constant radius or a size field, not both; drop one");
+    if (spec.size !== undefined) requireField(table, spec.size, ["number"], "geopoint size");
+    if (spec.radius !== undefined && !(spec.radius > 0 && Number.isFinite(spec.radius)))
+      throw new RangeError(
+        `geopoint radius: expected a positive number of pixels; received ${spec.radius}`,
+      );
+    if (spec.color !== undefined) {
+      requireField(table, spec.color, ["number", "category"], "geopoint color");
+      if (table.kind(spec.color) === "number") this.#toneField = spec.color;
+      else if (
+        spec.colors !== undefined ||
+        spec.colorDomain !== undefined ||
+        spec.colorMidpoint !== undefined
+      )
+        throw new Error(
+          `geopoint colors: "${spec.color}" is a category field, colored by the theme's palette; drop colors, colorDomain, and colorMidpoint`,
+        );
+      else if (spec.color !== spec.series) this.#colorField = new Appearance(spec.color);
+    }
     if (Array.isArray(spec.colors)) checkRamp(spec.colors, "geopoint colors");
-    checkColorScale(spec.colorDomain, spec.colorMidpoint, "Geopoint");
-    const range = spec.rRange ?? R_RANGE;
+    checkColorScale(spec.colorDomain, spec.colorMidpoint, "geopoint");
+    const range = spec.radiusRange ?? RADIUS_RANGE;
     if (!(range[0] >= 0 && range[1] > range[0] && Number.isFinite(range[1])))
-      throw new RangeError(`geopoint rRange must be two finite radii, ascending, not ${range}`);
+      throw new RangeError(
+        `geopoint radiusRange: expected two finite radii, ascending; received [${range}]`,
+      );
     if (spec.fillOpacity !== undefined && !(spec.fillOpacity >= 0 && spec.fillOpacity <= 1))
-      throw new RangeError(`geopoint fillOpacity must be from 0 to 1, not ${spec.fillOpacity}`);
+      throw new RangeError(
+        `geopoint fillOpacity: expected a number from 0 to 1; received ${spec.fillOpacity}`,
+      );
     if (
       spec.strokeWidth !== undefined &&
       !(spec.strokeWidth >= 0 && Number.isFinite(spec.strokeWidth))
     )
       throw new RangeError(
-        `geopoint strokeWidth must be 0 or more pixels, not ${spec.strokeWidth}`,
+        `geopoint strokeWidth: expected 0 or more pixels; received ${spec.strokeWidth}`,
       );
     this.table = table;
-    this.#rField = typeof spec.r === "string" ? spec.r : undefined;
-    this.measure = this.#rField ?? spec.color ?? spec.label ?? "Location";
-    this.#largest =
-      this.#rField !== undefined ? range[1] : ((spec.r as number | undefined) ?? RADIUS);
+    this.#sizeField = spec.size;
+    this.measure = this.#sizeField ?? this.#toneField ?? spec.label ?? "Location";
+    this.#largest = this.#sizeField !== undefined ? range[1] : (spec.radius ?? RADIUS);
     // Rings reach half their width past the points.
     this.reach = this.#largest + (spec.strokeWidth ?? RING) / 2;
   }
@@ -155,17 +201,17 @@ export class GeoPointMark implements GeoLayer {
     return joinLayers([this], undefined).draw(frame);
   }
 
-  /** Each row's radius: by area within `rRange` from zero (or the least value, when some are negative). */
+  /** Each row's radius: by area within `radiusRange` from zero (or the least value, when some are negative). */
   #radius(): (row: number) => number {
-    const field = this.#rField;
+    const field = this.#sizeField;
     if (field === undefined) {
-      const r = (this.spec.r as number | undefined) ?? RADIUS;
+      const r = this.spec.radius ?? RADIUS;
       return () => r;
     }
     const values = this.table.numbers(field as never);
     const extent = this.table.extent(field as never);
     const [lo, hi] = extent ? (extent[0] >= 0 ? [0, extent[1]] : extent) : [0, 0];
-    const [r0, r1] = this.spec.rRange ?? R_RANGE;
+    const [r0, r1] = this.spec.radiusRange ?? RADIUS_RANGE;
     return (row) => {
       const value = values[row]!;
       if (!Number.isFinite(value)) return Number.NaN;
@@ -176,8 +222,8 @@ export class GeoPointMark implements GeoLayer {
 
   #scale(theme: Theme): SequentialScale | undefined {
     const { spec } = this;
-    if (spec.color === undefined) return undefined;
-    const domain = spec.colorDomain ?? this.table.extent(spec.color as never);
+    if (this.#toneField === undefined) return undefined;
+    const domain = spec.colorDomain ?? this.table.extent(this.#toneField as never);
     if (!domain) return undefined;
     const fallback = spec.colorMidpoint === undefined ? theme.sequential : theme.diverging;
     return new SequentialScale(domain, rampOf(spec.colors, fallback), spec.colorMidpoint);
@@ -195,12 +241,13 @@ export class GeoPointMark implements GeoLayer {
     );
   }
 
-  /** Entries per series; with a `color` field, which fills the points, in a neutral color. */
+  /** Entries per series; with a `color` field coloring the points, in a neutral color. */
   legend(id: string | number, color: (key: string) => string, theme: Theme): LegendEntry[] {
     const glyph = symbolPath("circle", 0, 0, LEGEND_RADIUS);
+    const muted = this.#toneField !== undefined || this.#colorField !== undefined;
     return this.#groups().map(({ label, category }) => {
       const key = groupKey(id, category);
-      const fill = this.spec.color !== undefined ? theme.muted : (this.spec.fill ?? color(key));
+      const fill = muted ? theme.muted : (this.spec.fill ?? color(key));
       return { key, label, color: fill, glyph };
     });
   }
@@ -213,13 +260,13 @@ export class GeoPointMark implements GeoLayer {
       const { domain, midpoint } = scale;
       ramps.push({ stops: scale.legendStops(), domain, midpoint, title: this.spec.color! });
     }
-    const field = this.#rField;
+    const field = this.#sizeField;
     const extent = field !== undefined && this.table.extent(field as never);
     if (extent) {
       // Round values nearest a quarter, half, and all of the way from the
       // smallest size's value (zero, or the least) to the largest's.
       const [lo, hi] = extent[0] >= 0 ? [0, extent[1]] : extent;
-      const [r0, r1] = this.spec.rRange ?? R_RANGE;
+      const [r0, r1] = this.spec.radiusRange ?? RADIUS_RANGE;
       const radius = (value: number) =>
         Math.sqrt(
           r0 * r0 + (r1 * r1 - r0 * r0) * Math.min(1, Math.max(0, fraction(value, lo, hi))),
@@ -237,6 +284,7 @@ export class GeoPointMark implements GeoLayer {
         }),
       });
     }
+    if (this.#colorField) keys.push(colorKey(this.#colorField, this.table, theme));
     return [ramps, keys];
   }
 
@@ -283,34 +331,48 @@ export class GeoPointMark implements GeoLayer {
     const { xy } = this.#project(plan);
     const radiusOf = this.#radius();
     const scale = this.#scale(theme);
-    const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+    const tones =
+      this.#toneField === undefined ? undefined : table.numbers(this.#toneField as never);
     const ramp = scale && tones ? scale.colors() : undefined;
+    // A category color's codes, each code's index into the theme's palette.
+    const categories = this.#colorField && {
+      codes: table.categories(this.#colorField.field as never).codes,
+      tones: categoryTones(this.#colorField, table, theme),
+    };
     const opacity = spec.fillOpacity ?? OPACITY;
     const ringWidth = spec.strokeWidth ?? RING;
     // Rings keep points apart from each other and from the regions under them.
     const ring =
       ringWidth > 0 ? { color: spec.stroke ?? surface(theme), width: ringWidth } : undefined;
     // Every point drawn, with its radius and its color's index into `ramp`
-    // (with `color`) or into the series' colors.
+    // (with a number `color`), the theme's palette (a category one), or the
+    // series' colors.
     let rows: number[] = [];
     const radii = new Float64Array(table.length);
     const tone = new Uint8Array(table.length);
-    const fills: string[] = [];
-    // With `color` but no color value at all, no point has one to draw.
-    const drawable = spec.color === undefined || scale !== undefined;
+    const fills: string[] = categories ? [...categoryColors(theme)] : [];
+    // With a number `color` but no color value at all, no point has one to draw.
+    const drawable = this.#toneField === undefined || scale !== undefined;
     for (const group of drawable ? this.#groups() : []) {
       const key = groupKey(id, group.category);
       if (hidden.has(key)) continue;
-      const fill = spec.fill ?? frame.color(key);
-      let fillIndex = fills.indexOf(fill);
-      if (fillIndex < 0) fillIndex = fills.push(fill) - 1;
+      let fillIndex = -1;
+      if (!categories) {
+        const fill = spec.fill ?? frame.color(key);
+        fillIndex = fills.indexOf(fill);
+        if (fillIndex < 0) fillIndex = fills.push(fill) - 1;
+      }
       const all = group.rows ?? Uint32Array.from({ length: table.length }, (_, i) => i);
       for (const row of all) {
         const x = t.x0 + t.k * xy[row * 2]!;
         const y = t.y0 - t.k * xy[row * 2 + 1]!;
         const r = radiusOf(row);
         if (!(r > 0 && Number.isFinite(x) && Number.isFinite(y))) continue;
-        const index = tones ? scale!.index(tones[row]!) : fillIndex;
+        const index = tones
+          ? scale!.index(tones[row]!)
+          : categories
+            ? (categories.tones[categories.codes[row]!] ?? -1)
+            : fillIndex;
         if (index < 0) continue;
         const reach = r + ringWidth / 2;
         if (x < bounds.x - reach || x > bounds.x + bounds.width + reach) continue;
@@ -321,7 +383,7 @@ export class GeoPointMark implements GeoLayer {
       }
     }
     // Largest first across every series, so smaller points stay visible on top.
-    if (this.#rField !== undefined) rows.sort((a, b) => radii[b]! - radii[a]! || a - b);
+    if (this.#sizeField !== undefined) rows.sort((a, b) => radii[b]! - radii[a]! || a - b);
     // With the selection highlighted, the points it leaves out are drawn
     // first, dimmed, below the others, and the pointer finds those on top.
     const selected = frame.selected?.(table);
@@ -334,7 +396,10 @@ export class GeoPointMark implements GeoLayer {
     const pointRadii = new Float32Array(count);
     const palette = ramp ?? fills;
     // Bytes index the colors: a ramp's 255, or the series' (theme palettes are short).
-    if (palette.length > 256) throw new RangeError("geopoint draws at most 256 series colors");
+    if (palette.length > 256)
+      throw new RangeError(
+        `geopoint series: expected at most 256 series; received ${palette.length}`,
+      );
     const colorIndex = new Uint8ClampedArray(count);
     rows.forEach((row, i) => {
       coords[i * 2] = t.x0 + t.k * xy[row * 2]!;
@@ -342,7 +407,7 @@ export class GeoPointMark implements GeoLayer {
       pointRadii[i] = radii[row]!;
       colorIndex[i] = tone[row]!;
     });
-    const sized = this.#rField !== undefined;
+    const sized = this.#sizeField !== undefined;
     const colored = palette.length > 1;
     const fill = palette[0] ?? theme.muted;
     // The points at `at` in drawing order (all of them by default), `dim` of the selection's left out.
@@ -370,7 +435,13 @@ export class GeoPointMark implements GeoLayer {
         coords: pick(coords, 2),
         count: at?.length ?? count,
         radii: sized ? pick(pointRadii, 1) : undefined,
-        colors: colored ? { index: pick(colorIndex, 1), palette } : undefined,
+        colors: colored
+          ? {
+              index: pick(colorIndex, 1),
+              palette,
+              ...(categories && { categorical: true as const }),
+            }
+          : undefined,
       };
     };
     const parts = selected && [[] as number[], [] as number[]];
@@ -400,11 +471,15 @@ export class GeoPointMark implements GeoLayer {
   ): LayoutResult {
     const { spec, table } = this;
     const { id, bounds, locale } = frame;
-    const names = spec.name === undefined ? undefined : table.categories(spec.name as never);
+    const names =
+      spec.labelField === undefined ? undefined : table.categories(spec.labelField as never);
     const lon = table.numbers(spec.longitude as never);
     const lat = table.numbers(spec.latitude as never);
-    const sizes = this.#rField === undefined ? undefined : table.numbers(this.#rField as never);
-    const tones = spec.color === undefined ? undefined : table.numbers(spec.color as never);
+    const sizes =
+      this.#sizeField === undefined ? undefined : table.numbers(this.#sizeField as never);
+    const tones =
+      this.#toneField === undefined ? undefined : table.numbers(this.#toneField as never);
+    const categories = this.#colorField && table.categories(this.#colorField.field as never);
     const format = (value: number) => formatNumber(value, locale);
     const nameOf = (row: number) => {
       const code = names ? names.codes[row]! : -1;
@@ -416,6 +491,8 @@ export class GeoPointMark implements GeoLayer {
       const parts: string[] = [];
       if (sizes) parts.push(format(sizes[row]!));
       if (tones) parts.push(sizes ? `${spec.color} ${format(tones[row]!)}` : format(tones[row]!));
+      if (categories)
+        parts.push(`${spec.color} ${categories.dictionary[categories.codes[row]!] ?? ""}`);
       if (parts.length === 0) parts.push(coordinates(lon[row]!, lat[row]!, locale));
       const [px, py, r] = [
         drawn.coords[point * 2]!,
@@ -494,7 +571,7 @@ export class GeoPointMark implements GeoLayer {
         if (sizes) {
           let largest = drawn.reading[0]!;
           for (const row of drawn.reading) if (sizes[row]! > sizes[largest]!) largest = row;
-          text += ` sized by ${this.#rField}; largest ${nameOf(largest)} (${format(sizes[largest]!)})`;
+          text += ` sized by ${this.#sizeField}; largest ${nameOf(largest)} (${format(sizes[largest]!)})`;
         }
         return `${text}.`;
       },
@@ -593,21 +670,23 @@ function plural(count: number, one: string, many: string): string {
  * `projection` places them.
  *
  * ```ts
- * geopoint(cities, { longitude: "lon", latitude: "lat", r: "population", name: "city" })
+ * geopoint(cities, { longitude: "lon", latitude: "lat", size: "population", labelField: "city" })
  * ```
  */
 export function geopoint<S extends Schema>(
   table: Table<S>,
   options: GeoPointOptions<S>,
 ): ChartMark<Frozen<GeoPointSpec>> {
-  const spec: GeoPointSpec = {
+  // A radius or a size, as the options' types allow; the mark refuses both from others.
+  const spec = {
     type: "geopoint",
     longitude: options.longitude,
     latitude: options.latitude,
     ...definedFields(options, [
-      "name",
+      "labelField",
       "series",
-      "r",
+      "radius",
+      "size",
       "color",
       "colorMidpoint",
       "fill",
@@ -617,8 +696,10 @@ export function geopoint<S extends Schema>(
       "label",
       "id",
     ]),
-  };
-  if (options.rRange) spec.rRange = [options.rRange[0], options.rRange[1]];
+    ...(options.radiusRange && {
+      radiusRange: [options.radiusRange[0], options.radiusRange[1]] as const,
+    }),
+  } as unknown as GeoPointSpec;
   if (options.colors) spec.colors = [...options.colors];
   if (options.colorDomain) spec.colorDomain = [options.colorDomain[0], options.colorDomain[1]];
   if (table.name !== undefined) spec.data = table.name;

@@ -151,10 +151,12 @@ describe("time breaks", () => {
     expect(refuse({ dates: ["2025-02-30"] })).toThrow(
       'breaks[0].dates[0]: expected a date, "YYYY-MM-DD"',
     );
-    expect(refuse({ from: 10, to: 10 })).toThrow("must end after it starts");
+    expect(refuse({ from: 10, to: 10 })).toThrow(
+      "breaks[0].to: expected a time after from, 10; received 10",
+    );
     expect(refuse({ from: 0.5, to: 10 })).toThrow("whole epoch milliseconds");
     expect(refuse({ weekdays: ["sat"], hours: ["16:00", "09:30"] })).toThrow(
-      "not weekdays and hours",
+      "breaks[0]: expected one of weekdays, hours, dates, or from and to; received weekdays and hours",
     );
     expect(refuse("weekends")).toThrow("expected a break");
     // "24:00" ends a span at midnight.

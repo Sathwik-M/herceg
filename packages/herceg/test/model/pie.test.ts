@@ -153,7 +153,9 @@ describe("pie", () => {
     expect(() => build({ marks: [slices, line(series, { x: "t", y: "v" })] })).toThrow(
       "has its chart to itself",
     );
-    expect(() => build({ marks: [slices], interaction: { zoom: true } })).toThrow("do not zoom");
+    expect(() => build({ marks: [slices], interaction: { zoom: true } })).toThrow(
+      "pie zoom: no axes to zoom; drop interaction.zoom",
+    );
     expect(() => pie(sales, { category: "region", innerRadius: 1 })).toThrow("innerRadius");
     expect(() => pie(sales, { category: "revenue" as never })).toThrow();
   });

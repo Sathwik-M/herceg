@@ -143,7 +143,7 @@ measure(
   "derive: aggregate mean by 20 sites, 1M rows",
   () => {
     derive(readings)
-      .aggregate({ groupby: ["site"], ops: { mean: mean("v"), n: count() } })
+      .aggregate({ by: ["site"], ops: { mean: mean("v"), n: count() } })
       .table();
   },
   { warmup: 3, samples: 10 },
@@ -359,7 +359,7 @@ const annotated = () => {
     marks: [
       rule(events, { x: "t" }),
       region(events, { x1: "t", x2: "end" }),
-      text(events, { x: "t", y: "v", text: "note", overlap: "hide" }),
+      text(events, { x: "t", y: "v", textField: "note", overlap: "hide" }),
     ],
     facet: facet("region", { columns: 10 }),
   });

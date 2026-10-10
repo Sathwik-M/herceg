@@ -40,7 +40,7 @@ export interface GeoShapeOptions<S extends Schema> {
   /** The geometry field; the table's only one by default. */
   geometry?: GeometryField<S>;
   /** Category field naming each region, for tooltips, keyboard reading, and the summary. */
-  name?: CategoryField<S>;
+  labelField?: CategoryField<S>;
   /**
    * A number field colored on a continuous scale (a choropleth, with a
    * color legend), or a category field with a palette color per value
@@ -112,26 +112,29 @@ export class GeoShapeMark implements GeoLayer {
     if (field === undefined)
       throw new Error(
         geometries.length === 0
-          ? "geoshape needs a table with a geometry field (see fromGeoJSON and geometry)"
-          : `geoshape needs \`geometry\`: the table has ${geometries.map((f) => `"${f}"`).join(", ")}`,
+          ? "geoshape geometry: the table has no geometry field; make one with fromGeoJSON or geometry"
+          : `geoshape geometry: missing; name one of ${geometries.map((f) => `"${f}"`).join(", ")}`,
       );
     requireField(table, field, ["geometry"], "geoshape geometry");
-    if (spec.name !== undefined) requireField(table, spec.name, ["category"], "geoshape name");
+    if (spec.labelField !== undefined)
+      requireField(table, spec.labelField, ["category"], "geoshape labelField");
     if (spec.color !== undefined)
       requireField(table, spec.color, ["number", "category"], "geoshape color");
     this.#colorKind = spec.color === undefined ? undefined : table.kind(spec.color);
     const numeric = this.#colorKind === "number";
     if (!numeric && (spec.colors || spec.colorDomain || spec.colorMidpoint !== undefined))
       throw new Error(
-        "geoshape colors, colorDomain, and colorMidpoint are for a number color field",
+        "geoshape colors: colors, colorDomain, and colorMidpoint need a number color field; drop them",
       );
     if (Array.isArray(spec.colors)) checkRamp(spec.colors, "geoshape colors");
-    checkColorScale(spec.colorDomain, spec.colorMidpoint, "Geoshape");
+    checkColorScale(spec.colorDomain, spec.colorMidpoint, "geoshape");
     if (spec.fillOpacity !== undefined && !(spec.fillOpacity >= 0 && spec.fillOpacity <= 1))
-      throw new RangeError(`geoshape fillOpacity must be from 0 to 1, not ${spec.fillOpacity}`);
+      throw new RangeError(
+        `geoshape fillOpacity: expected a number from 0 to 1; received ${spec.fillOpacity}`,
+      );
     const width = spec.strokeWidth ?? STROKE_WIDTH;
     if (!(width >= 0 && Number.isFinite(width)))
-      throw new RangeError(`geoshape strokeWidth must be 0 or more pixels, not ${width}`);
+      throw new RangeError(`geoshape strokeWidth: expected 0 or more pixels; received ${width}`);
     this.table = table;
     this.field = field;
     this.measure = spec.color ?? spec.label ?? "Region";
@@ -294,7 +297,8 @@ export class GeoShapeMark implements GeoLayer {
       transform: move,
     };
     const selected = frame.selected?.(table);
-    const names = spec.name === undefined ? undefined : table.categories(spec.name as never);
+    const names =
+      spec.labelField === undefined ? undefined : table.categories(spec.labelField as never);
     const nameOf = (row: number) => {
       const code = names ? names.codes[row]! : -1;
       return code >= 0 ? names!.dictionary[code]! : `${spec.label ?? "Region"} ${row + 1}`;
@@ -474,7 +478,7 @@ function plural(count: number, one: string, many: string): string {
  * field with a palette color per value. The chart's `projection` places them.
  *
  * ```ts
- * geoshape(countries, { name: "name", color: "gdp" })
+ * geoshape(countries, { labelField: "name", color: "gdp" })
  * ```
  */
 export function geoshape<S extends Schema>(
@@ -485,7 +489,7 @@ export function geoshape<S extends Schema>(
     type: "geoshape",
     ...definedFields(options, [
       "geometry",
-      "name",
+      "labelField",
       "color",
       "colorMidpoint",
       "fill",

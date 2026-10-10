@@ -180,7 +180,7 @@ const px = (size: number | undefined) => (size === undefined ? undefined : `${si
  * directly, without re-rendering Vue.
  *
  * ```vue
- * <Chart title="Latency" :y="{ label: 'ms' }">
+ * <Chart title="Latency" :y="{ title: 'ms' }">
  *   <Line :data="metrics" x="time" :y="['p50', 'p99']" />
  *   <Rule :y="250" label="SLO" />
  * </Chart>

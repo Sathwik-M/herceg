@@ -13,10 +13,10 @@ const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
  * syntax both the raster painter and the legend read the same way.
  */
 export function checkRamp(stops: readonly string[], what: string): void {
-  if (stops.length < 2) throw new RangeError(`${what} needs at least two colors`);
+  if (stops.length < 2) throw new RangeError(`${what}: expected at least two colors`);
   const bad = stops.find((stop) => !HEX.test(stop));
   if (bad !== undefined) {
-    throw new TypeError(`${what} must be hex colors such as "#08306b"; got ${JSON.stringify(bad)}`);
+    throw new TypeError(`${what}: expected "#rrggbb" colors; received ${JSON.stringify(bad)}`);
   }
 }
 
@@ -34,13 +34,13 @@ export function checkColorScale(
     !(Number.isFinite(domain[0]) && Number.isFinite(domain[1]) && domain[0] < domain[1])
   )
     throw new RangeError(
-      `${what} colorDomain must be two finite numbers, ascending, not ${domain}`,
+      `${what} colorDomain: expected two finite numbers, ascending; received [${domain}]`,
     );
   if (midpoint === undefined) return;
   if (!Number.isFinite(midpoint))
-    throw new RangeError(`${what} colorMidpoint must be a finite number, not ${midpoint}`);
+    throw new RangeError(`${what} colorMidpoint: expected a finite number; received ${midpoint}`);
   if (domain && !(midpoint >= domain[0] && midpoint <= domain[1]))
-    throw new RangeError(`${what} colorMidpoint ${midpoint} is outside its colorDomain ${domain}`);
+    throw new RangeError(`${what} colorMidpoint: ${midpoint} is outside colorDomain [${domain}]`);
 }
 
 /**
@@ -54,7 +54,7 @@ export function rampOf(
 ): readonly string[] {
   if (typeof colors === "string") {
     throw new TypeError(
-      `The color scheme "${colors}" must be resolved first: load the spec with loadSpec, or pass the scheme's colors (import { ${colors} } from "herceg")`,
+      `colors: scheme "${colors}" is unresolved; load the spec with loadSpec, or pass its colors (import { ${colors} } from "herceg")`,
     );
   }
   return colors ?? fallback;
@@ -160,7 +160,7 @@ export class SequentialScale {
    * lies outside it, so values on each side keep their half of the ramp.
    */
   constructor(domain: readonly [number, number], stops: readonly string[], midpoint?: number) {
-    checkRamp(stops, "A color scale");
+    checkRamp(stops, "color scale");
     this.domain =
       midpoint === undefined || (midpoint >= domain[0] && midpoint <= domain[1])
         ? domain

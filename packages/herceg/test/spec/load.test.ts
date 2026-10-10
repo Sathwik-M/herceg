@@ -57,19 +57,15 @@ describe("loadSpec", () => {
     expect([0, 1, 2].map((row) => metrics.value("zone", row))).toEqual(["eu", "eu", null]);
   });
 
-  it("round trips point animation keys in every supported spec version", () => {
+  it("round trips point animation keys", () => {
     const data = table({ x: [1, 2], y: [3, 4], id: ["a", "b"] }, { name: "data" });
     const mark = point(data, { x: "x", y: "y", animationKey: "id" });
-    expect(SPEC_VERSION).toBe(11);
-    for (const version of [undefined, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] as const) {
-      const spec: ChartSpec = {
-        ...(version === undefined ? {} : { version }),
-        data: { data: { columns: { x: [1, 2], y: [3, 4], id: ["a", "b"] } } },
-        marks: [JSON.parse(JSON.stringify(mark.spec))],
-      };
-      expect(checkSpec(spec)).toEqual([]);
-      expect(loadSpec(spec, [], { unknown: "error" }).config.marks[0]!.spec).toEqual(mark.spec);
-    }
+    const json: ChartSpec = {
+      data: { data: { columns: { x: [1, 2], y: [3, 4], id: ["a", "b"] } } },
+      marks: [JSON.parse(JSON.stringify(mark.spec))],
+    };
+    expect(checkSpec(json)).toEqual([]);
+    expect(loadSpec(json).config.marks[0]!.spec).toEqual(mark.spec);
     const spec = { marks: [{ type: "point", x: "x", y: "y", animationKey: 42 }] };
     expect(() => validateSpec(spec)).toThrow(/animationKey.*field name/);
     expect(
@@ -95,7 +91,7 @@ describe("loadSpec", () => {
           { type: "point", x: "x", y: "y", animationKey: "id" },
           shapes as unknown as Table,
         ),
-    ).toThrow(/geometry.*animationKey/);
+    ).toThrow(/point animationKey: field "id" holds geometry values/);
     const columns = { x: [1], y: [2], id: { type: "time" as const, values: [100] } };
     expect(() =>
       loadSpec({
@@ -145,7 +141,7 @@ describe("loadSpec", () => {
         { type: "line", data: "metrics", x: "time", y: "p99" },
         { type: "rule", y: 2 },
       ],
-      y: { label: "ms" },
+      y: { title: "ms" },
     };
     const metrics = table({ time: time(x), p99: y }, { name: "metrics" });
     const direct = renderToSVG({
@@ -155,7 +151,7 @@ describe("loadSpec", () => {
       locale: "en-US",
       timeZone: "UTC",
       marks: [line(metrics, { x: "time", y: "p99" }), rule({ y: 2 })],
-      y: { label: "ms" },
+      y: { title: "ms" },
       idPrefix: "chart",
     });
     const viaSpec = specToSVG(spec, [x, y]).replace(/herceg-svg-\d+/g, "chart");
@@ -185,13 +181,15 @@ describe("loadSpec", () => {
   it("rejects malformed columns instead of guessing", () => {
     const load = (column: unknown) =>
       loadSpec({ data: { t: { columns: { c: column as never } } }, marks: [] });
-    expect(() => load([1, true])).toThrow(/row 1 holds true/);
-    expect(() => load(["a", 1])).toThrow(/mixes numbers into a column of strings/);
+    expect(() => load([1, true])).toThrow(
+      /spec\.data\.t\.columns\.c: row 1: expected a number, string, or null; received true/,
+    );
+    expect(() => load(["a", 1])).toThrow(/row 1: a number in a column of strings/);
     expect(() => load({ type: "category", codes: [0.5], dictionary: ["a"] })).toThrow(
-      /row 0 holds code 0.5/,
+      /row 0: code 0.5 is outside the dictionary/,
     );
     expect(() => load({ type: "category", codes: [null], dictionary: ["a"] })).toThrow(
-      /row 0 holds code null/,
+      /row 0: code null/,
     );
     expect(() => load({ type: "category", codes: [0], dictionary: [123] })).toThrow(
       /columns\.c\.dictionary\[0\]: expected a string/,
@@ -200,7 +198,7 @@ describe("loadSpec", () => {
       /columns\.c\.values: expected an array/,
     );
     expect(() => load({ type: "text", values: [] })).toThrow(/columns\.c\.type: expected "number"/);
-    expect(() => load({ type: "time", values: ["nope"] })).toThrow(/"nope", not a time/);
+    expect(() => load({ type: "time", values: ["nope"] })).toThrow(/received "nope"/);
     expect(() => load({ type: "number", dtype: "float64", buffer: -1 })).toThrow(/buffer index/);
   });
 
@@ -211,9 +209,9 @@ describe("loadSpec", () => {
       /marks\[0\]\.y: expected a finite number or a field name/,
     );
     expect(check({ marks: [{ type: "text", x: 1, y: 2, anchor: "left", label: "a" }] })).toThrow(
-      /marks\[0\]\.anchor: expected "start" or "middle" or "end"/,
+      /marks\[0\]\.anchor: expected "start", "middle", or "end"; received "left"/,
     );
-    expect(check({ marks: [null] })).toThrow(/marks\[0\]: expected an object, got null/);
+    expect(check({ marks: [null] })).toThrow(/marks\[0\]: expected an object; received null/);
     expect(check({ x: { type: "polar" }, marks: [] })).toThrow(/spec\.x\.type: expected "linear"/);
     expect(
       check({
@@ -240,7 +238,7 @@ describe("loadSpec", () => {
       }),
     ).toThrow(/marks\[0\]\.labels: /);
     expect(check({ interaction: { brush: "z" }, marks: [] })).toThrow(
-      /spec\.interaction\.brush: expected "x" or "y" or "xy" or "lasso"/,
+      /spec\.interaction\.brush: expected "x", "y", "xy", or "lasso"; received "z"/,
     );
     expect(check({ interaction: { zoom: "z" }, marks: [] })).toThrow(/spec\.interaction\.zoom/);
     expect(check({ animation: { values: "yes" }, marks: [] })).toThrow(
@@ -255,23 +253,33 @@ describe("loadSpec", () => {
   it("reports properties it does not know, as asked", () => {
     // Misspellings, as JSON from elsewhere has them.
     const json = {
-      version: 2,
       data: { t: { columns: { x: [0, 1], y: [1, 2] } } },
       marks: [{ type: "line", x: "x", y: "y", strokeWidht: 3 }],
       theme: { fontSize: 12, fontsize: 12 },
-      y: { label: "ms", lable: "ms" },
+      y: { title: "ms", lable: "ms" },
     };
     const spec = json as ChartSpec;
     const paths = ["marks[0].strokeWidht", "spec.y.lable", "spec.theme.fontsize"];
+    // Refused by default, naming the property each likely meant.
+    expect(() => loadSpec(spec)).toThrow(
+      'marks[0].strokeWidht: not a property of herceg\'s spec format; did you mean "strokeWidth"? (also unknown: spec.y.lable, spec.theme.fontsize (did you mean "fontSize"?))',
+    );
+    expect(() => validateSpec(spec)).toThrow(/marks\[0\]\.strokeWidht: not a property/);
+    expect(checkSpec(spec).sort()).toEqual([...paths].sort());
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      expect(loadSpec(spec).unknown.sort()).toEqual([...paths].sort());
+      expect(loadSpec(spec, [], { unknown: "warn" }).unknown.sort()).toEqual([...paths].sort());
       expect(warn).toHaveBeenCalledOnce();
-      expect(warn.mock.calls[0]![0]).toContain("marks[0].strokeWidht");
+      expect(warn.mock.calls[0]![0]).toContain(
+        'marks[0].strokeWidht (did you mean "strokeWidth"?)',
+      );
       warn.mockClear();
       expect(loadSpec(spec, [], { unknown: "ignore" }).unknown).toHaveLength(3);
       expect(warn).not.toHaveBeenCalled();
-      expect(() => loadSpec(spec, [], { unknown: "error" })).toThrow(/not a property/);
+      // Without a close name, the error says how to load the spec anyway.
+      expect(() => loadSpec({ marks: [], colour: "red" } as never)).toThrow(
+        'spec.colour: not a property of herceg\'s spec format; remove it, or load with { unknown: "warn" } or "ignore"',
+      );
       // Known properties only: nothing to report.
       expect(loadSpec({ ...spec, marks: [], theme: "dark", y: {} }).unknown).toEqual([]);
       expect(warn).not.toHaveBeenCalled();
@@ -284,7 +292,6 @@ describe("loadSpec", () => {
     const quiet = { unknown: "ignore" } as const;
     const buffer = new Float64Array([1, 2]).buffer;
     const json = {
-      version: 2,
       data: {
         t: {
           columns: {
@@ -332,22 +339,83 @@ describe("loadSpec", () => {
     ]);
   });
 
-  it("checks specs of unknown shape, and names the version it writes", () => {
-    const parsed: unknown = JSON.parse('{"version": 2, "marks": []}');
+  it("checks specs of unknown shape, and names the version it reads", () => {
+    const parsed: unknown = JSON.parse('{"version": 1, "marks": []}');
     validateSpec(parsed);
     expect(loadSpec(parsed).config.marks).toEqual([]);
     expect(() => validateSpec({ marks: 1 })).toThrow(/spec\.marks/);
     expect(() => validateSpec({ version: "banana", marks: [] })).toThrow(
-      /Unsupported spec version/,
+      /spec\.version: expected 1, the version this herceg reads/,
     );
     // The forms a mark's type allows, as the TypeScript types describe them.
     expect(() => validateSpec({ marks: [{ type: "area", x: "x" }] })).toThrow(
-      /marks\[0\]: An area needs y, or y1 and y2/,
+      /marks\[0\]: area: needs y, or y1 and y2/,
     );
-    expect(() => validateSpec({ marks: [{ type: "rule" }] })).toThrow(/exactly one of x or y/);
-    expect(SPEC_VERSION).toBe(11);
-    // An omitted version is 1, which has no panels.
-    expect(() => loadSpec({ marks: [], panels: [{ id: "a" }] })).toThrow(/"version": 2/);
+    expect(() => validateSpec({ marks: [{ type: "rule" }] })).toThrow(
+      /marks\[0\]: rule: needs exactly one of x and y/,
+    );
+    expect(SPEC_VERSION).toBe(1);
+    // Later versions are refused: their properties may mean what this herceg cannot draw.
+    expect(() => validateSpec({ version: 2, marks: [] })).toThrow(/spec\.version/);
+  });
+
+  it("knows only the keys of each break's kind", () => {
+    const breaks = [
+      { weekdays: ["sat"], weekdasy: ["sun"] },
+      { from: 0, to: 1, form: 2 },
+    ];
+    expect(checkSpec({ x: { breaks }, marks: [] } as never)).toEqual([
+      "spec.x.breaks[0].weekdasy",
+      "spec.x.breaks[1].form",
+    ]);
+    expect(() => validateSpec({ x: { breaks }, marks: [] } as never)).toThrow(
+      'spec.x.breaks[0].weekdasy: not a property of herceg\'s spec format; did you mean "weekdays"?',
+    );
+  });
+
+  it("knows placement options only on the marks that have them", () => {
+    const graph = { type: "graph", source: "a", target: "b" };
+    expect(checkSpec({ marks: [{ ...graph, axis: "right" }] } as never)).toEqual(["marks[0].axis"]);
+    expect(
+      checkSpec({ marks: [{ type: "pie", category: "c", facet: "repeat" }] } as never),
+    ).toEqual(["marks[0].facet"]);
+    expect(
+      checkSpec({
+        marks: [{ type: "line", x: "x", y: "y", axis: "right", facet: "repeat" }],
+      } as never),
+    ).toEqual([]);
+  });
+
+  it("refuses a radius with a size, and names the misspelling of a missing property", () => {
+    for (const type of ["point", "geopoint"])
+      expect(() =>
+        validateSpec({
+          marks: [{ type, x: "x", y: "y", longitude: "x", latitude: "y", radius: 3, size: "v" }],
+        }),
+      ).toThrow(`marks[0]: ${type} radius: a constant radius or a size field, not both; drop one`);
+    expect(() =>
+      validateSpec({ marks: [{ type: "heatmap", x: "x", y: "y", colro: "v" }] }),
+    ).toThrow('marks[0].color: required; rename "colro", which is not a property, to "color"');
+    // Within nested objects too.
+    expect(() =>
+      validateSpec({ marks: [{ type: "point", x: "x", y: "y", symbol: { feild: "kind" } }] }),
+    ).toThrow(
+      'marks[0].symbol.field: required; rename "feild", which is not a property, to "field"',
+    );
+    expect(() =>
+      validateSpec({
+        data: { t: { columns: { v: { type: "number", dtype: "float64", bufer: 0 } } } },
+        marks: [],
+      }),
+    ).toThrow(
+      'data.t.columns.v.buffer: required; rename "bufer", which is not a property, to "buffer"',
+    );
+    expect(() => validateSpec({ data: { t: { colums: { x: [1] } } }, marks: [] } as never)).toThrow(
+      'data.t.columns: required; rename "colums", which is not a property, to "columns"',
+    );
+    expect(() =>
+      validateSpec({ data: { t: { columns: { v: { tyep: "time", values: [0] } } } }, marks: [] }),
+    ).toThrow('data.t.columns.v.type: required; rename "tyep", which is not a property, to "type"');
   });
 
   it("refuses marks mixing forms rather than dropping options", () => {
@@ -359,7 +427,7 @@ describe("loadSpec", () => {
     expect(check({ type: "area", x: "x", y1: "a", y2: "b", stack: true })).toThrow(/not both/);
     expect(check({ type: "area", x: "x", y1: "a", y2: "b", series: "g" })).toThrow(/not both/);
     expect(check({ type: "errorbar", x: "x", y1: "a", y2: "b", x1: "a" })).toThrow(
-      /cannot also take x1/,
+      /errorbar x1: not with x, y1, y2/,
     );
     expect(check({ type: "treemap", path: ["g"], node: "g", parent: "g" })).toThrow(/not both/);
     expect(check({ type: "sunburst", path: ["g"], node: "g", parent: "g" })).toThrow(/not both/);
@@ -391,10 +459,10 @@ describe("loadSpec", () => {
       },
       marks: [
         { type: "line", data: "metrics", x: "t", y: "v" },
-        { type: "rule", data: "deploys", x: "at", text: "version" },
+        { type: "rule", data: "deploys", x: "at", textField: "version" },
         { type: "rule", y: 1.5, label: "limit" },
         { type: "region", x1: start, x2: start + 600_000, label: "warmup" },
-        { type: "text", data: "metrics", x: "t", y: "v", text: "v", dy: -8 },
+        { type: "text", data: "metrics", x: "t", y: "v", textField: "v", dy: -8 },
       ],
     });
     // Constant annotations read no table, even when the spec has several.
@@ -420,7 +488,7 @@ describe("loadSpec", () => {
         data: { a: { columns: { x: [1] } }, b: { columns: { x: [1] } } },
         marks: [{ type: "rule", x: "x" }],
       }),
-    ).toThrow(/Mark 0 \(rule\): set `data`/);
+    ).toThrow(/marks\[0\]: data: missing; the spec has several tables, so name one of "a", "b"/);
   });
 
   it("keeps fields named like object internals", () => {
@@ -435,22 +503,22 @@ describe("loadSpec", () => {
         data: { t: { columns: { v: { type: "number", dtype: "float64", buffer: 2 } } } },
         marks: [],
       }),
-    ).toThrow(/Column "v" of table "t": Buffer 2 is missing/);
+    ).toThrow(/spec\.data\.t\.columns\.v: buffer: buffer 2 is missing; 0 were delivered/);
     expect(() =>
       loadSpec({ data: { t: { columns: { v: [1] } } }, marks: [{ type: "line", x: "v", y: "w" }] }),
-    ).toThrow(/Mark 0 \(line\)/);
+    ).toThrow(/marks\[0\]: line y: no field "w"/);
     expect(() =>
       loadSpec({
         data: { a: { columns: {} }, b: { columns: {} } },
         marks: [{ type: "line", x: "x", y: "y" }],
       }),
-    ).toThrow(/set `data` to one of "a", "b"/);
-    expect(() => loadSpec({ version: 12 as 1, marks: [] })).toThrow(/Unsupported spec version 12/);
+    ).toThrow(/data: missing; the spec has several tables, so name one of "a", "b"/);
+    expect(() => loadSpec({ version: 12 as 1, marks: [] })).toThrow(/spec\.version.* 12$/);
     expect(() => table({ c: encodedCategory(new Int32Array([2]), ["a"]) })).toThrow(
       /Column "c": Category code 2 at row 0 is outside the dictionary/,
     );
     expect(() => loadSpec({ data: { t: { columns: { a: [1, 2], b: [1] } } }, marks: [] })).toThrow(
-      /Table "t": Column "b" has 1 rows, expected 2/,
+      /spec\.data\.t: Column "b" has 1 rows, expected 2/,
     );
   });
 });
@@ -488,9 +556,9 @@ describe("maps in specs", () => {
     const load = (column: object) => () =>
       loadSpec({ data: { regions: { columns: { shape: column as never } } }, marks: [] }, buffers);
     expect(load({ ...geometryColumn, ringOffsets: [0, 4.5, 8] })).toThrow(
-      /Column "shape" of table "regions": ringOffsets\[1\] holds 4.5, not an int32/,
+      /spec\.data\.regions\.columns\.shape: ringOffsets\[1\]: expected an int32; received 4.5/,
     );
-    expect(load({ ...geometryColumn, coordinates: 7 })).toThrow(/Buffer 7 is missing/);
+    expect(load({ ...geometryColumn, coordinates: 7 })).toThrow(/buffer 7 is missing/);
     expect(
       load({ ...geometryColumn, coordinates: [...square(0), 5, 0, 6, 0, 6, 1, 5, 100] }),
     ).toThrow(/WGS 84/);
@@ -507,8 +575,8 @@ describe("maps in specs", () => {
         places: { columns: { lon: [0.5], lat: [0.5] } },
       },
       marks: [
-        { type: "geoshape", data: "regions", name: "name", color: "name" },
-        { type: "geopoint", data: "places", longitude: "lon", latitude: "lat", r: 3 },
+        { type: "geoshape", data: "regions", labelField: "name", color: "name" },
+        { type: "geopoint", data: "places", longitude: "lon", latitude: "lat", radius: 3 },
       ],
     };
     const svg = specToSVG(spec, buffers);
@@ -579,7 +647,7 @@ describe("3D charts in specs", () => {
   };
   const marks: ChartSpec["marks"] = [
     { type: "surface", data: "grid", x: "x", y: "y", z: "z", colors: "viridis", wireframe: true },
-    { type: "point3d", data: "points", x: "x", y: "y", z: "z", series: "kind", r: 4 },
+    { type: "point3d", data: "points", x: "x", y: "y", z: "z", series: "kind", radius: 4 },
   ];
 
   it("draw the same SVG as the TypeScript API, from the spec's camera", () => {
@@ -589,7 +657,7 @@ describe("3D charts in specs", () => {
       data,
       marks,
       camera: { azimuth: 30, elevation: 40 },
-      z: { label: "Height" },
+      z: { title: "Height" },
       boxAspect: [2, 1, 1],
       interaction: { zoom: true, rotate: false },
     };
@@ -602,10 +670,10 @@ describe("3D charts in specs", () => {
       height: 300,
       marks: [
         surface(grid, { x: "x", y: "y", z: "z", colors: viridis, wireframe: true }),
-        point3d(points, { x: "x", y: "y", z: "z", series: "kind", r: 4 }),
+        point3d(points, { x: "x", y: "y", z: "z", series: "kind", radius: 4 }),
       ],
       camera: { azimuth: 30, elevation: 40 },
-      z: { label: "Height" },
+      z: { title: "Height" },
       boxAspect: [2, 1, 1],
       interaction: { zoom: true, rotate: false },
     });
@@ -649,8 +717,6 @@ describe("layout marks in panels in specs", () => {
       },
     },
   };
-  // What older readers refuse (pies there have charts to themselves), so no
-  // version marks these specs.
   const faceted = {
     data,
     facet: { field: "region" },
@@ -667,7 +733,6 @@ describe("layout marks in panels in specs", () => {
     expect(svg.match(/<path d="M[^"]*A[^"]*Z" fill="#/g)).toHaveLength(3);
     expect(new TextDecoder().decode(specToPDF(faceted).subarray(0, 8))).toBe("%PDF-1.4");
     const subplots = {
-      version: 2,
       data,
       panels: [{ id: "trend" }, { id: "share", title: "Share" }],
       grid: { columns: 2 },
@@ -688,8 +753,7 @@ describe("layout marks in panels in specs", () => {
       ...faceted,
       marks: [{ type: "pie", category: "product", facet: "repeat" }],
     } as unknown as ChartSpec;
-    expect(() => specToSVG(repeated)).toThrow(
-      "splits its rows into facet panels; it cannot repeat",
-    );
+    // Pies have no facet option, which a spec refuses as it loads.
+    expect(() => specToSVG(repeated)).toThrow("marks[0].facet: not a property");
   });
 });

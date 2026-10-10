@@ -150,7 +150,7 @@ describe("charts with time axis breaks", () => {
     const numbers = table({ x: [1, 2], y: [1, 2] });
     expect(() =>
       build({ marks: [line(numbers, { x: "x", y: "y" })], x: { breaks: weekend() } }),
-    ).toThrow("Axis breaks need a time x axis, not a linear one");
+    ).toThrow("chart x.breaks: need a time x axis; x is linear");
     const prices = weekdays(5);
     expect(() =>
       build({
@@ -345,7 +345,6 @@ describe("rules of breaks at their limits", () => {
 describe("breaks with more than one x scale, and nearest points", () => {
   it("load breaks for a panel's own time axis among number axes", () => {
     const { config } = loadSpec({
-      version: 3,
       data: {
         prices: {
           columns: { t: { type: "time", values: ["2025-10-10", "2025-10-13"] }, v: [1, 2] },
@@ -396,8 +395,7 @@ describe("breaks with more than one x scale, and nearest points", () => {
 });
 
 describe("specs with time axis breaks", () => {
-  const spec = (version: 2 | 3, x: NonNullable<ChartSpec["x"]>): ChartSpec => ({
-    version,
+  const spec = (x: NonNullable<ChartSpec["x"]>): ChartSpec => ({
     data: {
       p: { columns: { t: { type: "time", values: ["2025-10-10", "2025-10-13"] }, v: [1, 2] } },
     },
@@ -406,8 +404,8 @@ describe("specs with time axis breaks", () => {
     timeZone: "UTC",
   });
 
-  it("load breaks in version 3 and draw them", () => {
-    const { config } = loadSpec(spec(3, { breaks: [{ weekdays: ["sat", "sun"] }] }));
+  it("load breaks and draw them", () => {
+    const { config } = loadSpec(spec({ breaks: [{ weekdays: ["sat", "sun"] }] }));
     expect(JSON.parse(JSON.stringify(config.x))).toEqual({
       breaks: [{ weekdays: ["sat", "sun"] }],
     });
@@ -421,17 +419,14 @@ describe("specs with time axis breaks", () => {
     expect(svg).toContain("<svg");
   });
 
-  it("refuse breaks that older readers would ignore, on y, or that they cannot read", () => {
-    expect(() => loadSpec(spec(2, { breaks: [{ weekdays: ["sat"] }] }))).toThrow(
-      'spec.x.breaks: expected a spec with "version": 3',
-    );
-    expect(() => loadSpec({ ...spec(3, {}), y: { breaks: [] } as never })).toThrow(
+  it("refuse breaks on y, or that they cannot read", () => {
+    expect(() => loadSpec({ ...spec({}), y: { breaks: [] } as never })).toThrow(
       "spec.y.breaks: expected breaks on the chart's x axis only",
     );
     // Breaks on a number axis load, and the chart refuses them.
-    const numbers = loadSpec(spec(3, { type: "linear", breaks: [{ weekdays: ["sat"] }] }));
-    expect(() => build(numbers.config)).toThrow("Axis breaks need a time x axis");
-    expect(() => loadSpec(spec(3, { breaks: [{ hours: ["9:30"] }] as never }))).toThrow(
+    const numbers = loadSpec(spec({ type: "linear", breaks: [{ weekdays: ["sat"] }] }));
+    expect(() => build(numbers.config)).toThrow("chart x.breaks: need a time x axis");
+    expect(() => loadSpec(spec({ breaks: [{ hours: ["9:30"] }] as never }))).toThrow(
       "spec.x.breaks[0].hours",
     );
   });

@@ -38,7 +38,7 @@ type Rule =
 
 function fail(path: string, expected: string, value: unknown): never {
   const shown = typeof value === "string" ? JSON.stringify(value) : String(value);
-  throw new TypeError(`${path}: expected ${expected}, got ${shown}`);
+  throw new TypeError(`${path}: expected ${expected}; received ${shown}`);
 }
 
 /** "HH:MM" as milliseconds after midnight; "24:00" only as an end. */
@@ -74,7 +74,7 @@ function parseRule(spec: unknown, path: string): Rule {
   const kinds = ["weekdays", "hours", "dates", "from"].filter((key) => rule[key] !== undefined);
   if (kinds.length !== 1 && !(kinds.length === 0 && rule.to !== undefined))
     throw new TypeError(
-      `${path}: a break has one of weekdays, hours, dates, or from and to, not ${kinds.length === 0 ? "none" : kinds.join(" and ")}`,
+      `${path}: expected one of weekdays, hours, dates, or from and to; received ${kinds.length === 0 ? "none" : kinds.join(" and ")}`,
     );
   if (rule.weekdays !== undefined) {
     const list = rule.weekdays;
@@ -86,7 +86,7 @@ function parseRule(spec: unknown, path: string): Rule {
       days[index] = true;
     }
     if (days.every(Boolean))
-      throw new RangeError(`${path}.weekdays: every day of the week leaves no time to show`);
+      throw new RangeError(`${path}.weekdays: every day leaves no time to show; drop a day`);
     return { kind: "weekdays", days };
   }
   if (rule.hours !== undefined) {
@@ -112,7 +112,7 @@ function parseRule(spec: unknown, path: string): Rule {
   if (!whole(from)) fail(`${path}.from`, "whole epoch milliseconds", from);
   if (!whole(to)) fail(`${path}.to`, "whole epoch milliseconds", to);
   if (!((to as number) > (from as number)))
-    throw new RangeError(`${path}: a break must end after it starts, not at ${to} from ${from}`);
+    throw new RangeError(`${path}.to: expected a time after from, ${from}; received ${to}`);
   return { kind: "range", from: from as number, to: to as number };
 }
 
@@ -396,7 +396,7 @@ export class Calendar implements Breaks {
     const daily = this.#rules.filter((r) => r.kind === "hours" || r.kind === "weekdays").length;
     if (days * daily > MAX_INTERVALS)
       throw new RangeError(
-        `Axis breaks would need over ${MAX_INTERVALS} intervals to cover ${Math.round(days)} days; the data or the view reaches too far`,
+        `chart x.breaks: over ${MAX_INTERVALS} intervals to cover ${Math.round(days)} days; the data or the view reaches too far`,
       );
     const fresh = Number.isNaN(this.#lo);
     const before = fresh ? [] : resolve(this.#rules, this.zone, lo, this.#lo);
@@ -419,7 +419,9 @@ export class Calendar implements Breaks {
     const count = spans.length / 2;
     // Explicit spans and dates count too.
     if (count > MAX_INTERVALS)
-      throw new RangeError(`Axis breaks resolve to over ${MAX_INTERVALS} intervals`);
+      throw new RangeError(
+        `chart x.breaks: over ${MAX_INTERVALS} intervals; leave out fewer spans`,
+      );
     const from = new Float64Array(count);
     const to = new Float64Array(count);
     const cumulative = new Float64Array(count + 1);
@@ -532,7 +534,9 @@ export class Calendar implements Breaks {
     if (options === false) return undefined;
     const minSpacing = typeof options === "boolean" ? 40 : (options.minSpacing ?? 40);
     if (!(minSpacing > 0) || !Number.isFinite(minSpacing))
-      throw new RangeError("x.seams.minSpacing must be finite and positive");
+      throw new RangeError(
+        `chart x.seams.minSpacing: expected a positive number; received ${minSpacing}`,
+      );
     const lo = Math.min(...scale.domain);
     const hi = Math.max(...scale.domain);
     const left = plot.x;
@@ -647,7 +651,7 @@ export class Calendar implements Breaks {
     if (this.collapse(domain[1]) !== seam) return domain;
     if (configured)
       throw new RangeError(
-        `The x domain [${domain[0]}, ${domain[1]}] lies inside an axis break and shows no time`,
+        `chart x.domain: [${domain[0]}, ${domain[1]}] lies inside an axis break and shows no time; widen it`,
       );
     const widened: [number, number] = [this.expand(seam - HOUR), this.expand(seam + HOUR)];
     return domain[0] > domain[1] ? [widened[1], widened[0]] : widened;

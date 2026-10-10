@@ -40,13 +40,17 @@ const DISTANCE = 5;
 export function checkCamera(spec: CameraSpec, what = "camera"): void {
   const { azimuth, elevation, zoom, perspective } = spec;
   if (azimuth !== undefined && !Number.isFinite(azimuth))
-    throw new RangeError(`${what}.azimuth must be a finite number of degrees, not ${azimuth}`);
+    throw new RangeError(
+      `${what}.azimuth: expected a finite number of degrees; received ${azimuth}`,
+    );
   if (elevation !== undefined && !(elevation >= -90 && elevation <= 90))
-    throw new RangeError(`${what}.elevation must be from -90 to 90 degrees, not ${elevation}`);
+    throw new RangeError(`${what}.elevation: expected -90 to 90 degrees; received ${elevation}`);
   if (zoom !== undefined && !(zoom >= MIN_ZOOM && zoom <= MAX_ZOOM))
-    throw new RangeError(`${what}.zoom must be from ${MIN_ZOOM} to ${MAX_ZOOM}, not ${zoom}`);
+    throw new RangeError(`${what}.zoom: expected ${MIN_ZOOM} to ${MAX_ZOOM}; received ${zoom}`);
   if (perspective !== undefined && typeof perspective !== "boolean")
-    throw new TypeError(`${what}.perspective must be true or false, not ${perspective}`);
+    throw new TypeError(
+      `${what}.perspective: expected true or false; received ${JSON.stringify(perspective)}`,
+    );
 }
 
 /**
@@ -81,7 +85,9 @@ export function sameCamera(a: Camera, b: Camera): boolean {
 /** Checks a box aspect: three positive, finite lengths. */
 export function checkBoxAspect(aspect: readonly number[]): void {
   if (aspect.length !== 3 || !aspect.every((side) => side > 0 && Number.isFinite(side)))
-    throw new RangeError(`boxAspect must be three positive lengths, not ${aspect.join(", ")}`);
+    throw new RangeError(
+      `chart boxAspect: expected three positive lengths; received ${aspect.join(", ")}`,
+    );
 }
 
 /**

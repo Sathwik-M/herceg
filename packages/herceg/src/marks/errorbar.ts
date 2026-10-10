@@ -131,18 +131,17 @@ export function errorBarForm(
   const vertical = spec.yError !== undefined || (spec.y1 !== undefined && spec.y2 !== undefined);
   const horizontal = spec.xError !== undefined || (spec.x1 !== undefined && spec.x2 !== undefined);
   if (vertical === horizontal) {
-    return "Error bars need x with y1 and y2, or with y and yError (vertical); or y with x1 and x2, or with x and xError (horizontal)";
+    return "errorbar: needs x with y1 and y2, or with y and yError (vertical); or y with x1 and x2, or with x and xError (horizontal)";
   }
   const [along, across] = horizontal ? (["y", "x"] as const) : (["x", "y"] as const);
-  if (spec[along] === undefined) return `Error bars need ${along}`;
+  if (spec[along] === undefined) return `errorbar ${along}: required`;
   const symmetric = spec[`${across}Error`] !== undefined;
-  if (symmetric && spec[across] === undefined)
-    return `Error bars with ${across}Error need ${across}`;
+  if (symmetric && spec[across] === undefined) return `errorbar ${across}Error: needs ${across}`;
   const used: string[] = symmetric
     ? [along, across, `${across}Error`]
     : [along, `${across}1`, `${across}2`];
   const extra = ENDS.find((key) => spec[key] !== undefined && !used.includes(key));
-  if (extra) return `Error bars from ${used.join(", ")} cannot also take ${extra}`;
+  if (extra) return `errorbar ${extra}: not with ${used.join(", ")}; drop it`;
   return { horizontal, symmetric };
 }
 
@@ -186,29 +185,29 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
     const [along, across] = horizontal ? (["y", "x"] as const) : (["x", "y"] as const);
     const position = spec[along]!;
     this.#position = position;
-    requireField(table, position, [...NUMERIC, ...CATEGORY], `error bar ${along}`);
+    requireField(table, position, [...NUMERIC, ...CATEGORY], `errorbar ${along}`);
     if (symmetric) {
       const center = spec[across]!;
       const error = spec[`${across}Error`]!;
-      requireField(table, center, NUMERIC, `error bar ${across}`);
-      requireField(table, error, NUMERIC, `error bar ${across}Error`);
+      requireField(table, center, NUMERIC, `errorbar ${across}`);
+      requireField(table, error, NUMERIC, `errorbar ${across}Error`);
       this.#ends = { center, error };
     } else {
       const low = spec[`${across}1`]!;
       const high = spec[`${across}2`]!;
-      requireField(table, low, NUMERIC, `error bar ${across}1`);
-      requireField(table, high, NUMERIC, `error bar ${across}2`);
+      requireField(table, low, NUMERIC, `errorbar ${across}1`);
+      requireField(table, high, NUMERIC, `errorbar ${across}2`);
       this.#ends = { low, high };
     }
-    if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "error bar series");
+    if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "errorbar series");
     this.#categorical = table.kind(position) === "category";
     if (spec.dodge) {
       if (!this.#categorical)
         throw new Error(
-          `Error bar dodge needs category positions: ${position} is not a category field`,
+          `errorbar dodge: needs category positions; "${position}" is not a category field`,
         );
       if (spec.series === undefined)
-        throw new Error("Error bar dodge places series side by side: give a series field");
+        throw new Error("errorbar dodge: places series side by side; give a series field");
       this.#shares = new BandShares();
     }
     this.tooltip = horizontal ? "y" : "x";

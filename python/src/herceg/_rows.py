@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 import numpy as np
 
+from ._data import listed, shown
 from ._derive import Expr
 
 #: What selects rows: range and rectangle brushes, lassos, and clicks.
@@ -49,20 +50,30 @@ class SelectionBinding:
 
     def __post_init__(self) -> None:
         if not isinstance(self.channel, str) or not self.channel:
-            raise ValueError(f"a row selection's channel must be a name, not {self.channel!r}")
+            raise ValueError(
+                f"SelectionBinding channel: expected a name; received {shown(self.channel)}"
+            )
         if isinstance(self.events, str):
-            raise TypeError("events is a list of gestures, such as ['brush', 'click']")
+            raise TypeError(
+                'SelectionBinding events: expected a list of gestures, such as ["brush", "click"]; '
+                f"received {shown(self.events)}"
+            )
         unknown = [event for event in self.events if event not in GESTURES]
         if unknown:
             raise ValueError(
-                f"a row selection's events are 'brush', 'lasso', and 'click', not {unknown[0]!r}"
+                f"SelectionBinding events: expected {listed(GESTURES)}; "
+                f"received {shown(unknown[0])}"
             )
         if self.effect not in ("highlight", "none"):
             raise ValueError(
-                f"a row selection's effect is 'highlight' or 'none', not {self.effect!r}"
+                'SelectionBinding effect: expected "highlight" or "none"; '
+                f"received {shown(self.effect)}"
             )
         if isinstance(self.fields, str) or not all(isinstance(f, str) for f in self.fields):
-            raise TypeError("fields is a list of column names, such as ['fare']")
+            raise TypeError(
+                'SelectionBinding fields: expected a list of column names, such as ["fare"]; '
+                f"received {shown(self.fields)}"
+            )
 
     def _spec(self, table: str | None) -> dict[str, Any]:
         spec: dict[str, Any] = {"channel": self.channel}
@@ -83,10 +94,13 @@ def bindings(value: Any) -> tuple[SelectionBinding, ...]:
     for binding in found:
         if not isinstance(binding, SelectionBinding):
             raise TypeError(
-                f"row_selection takes hg.SelectionBinding values, not {type(binding).__name__}"
+                "Chart row_selection: expected hg.SelectionBinding values; "
+                f"received {type(binding).__name__}"
             )
     if not found:
-        raise ValueError("row_selection needs a binding: hg.SelectionBinding('name')")
+        raise ValueError(
+            'Chart row_selection: needs a binding, as hg.SelectionBinding("name"); received none'
+        )
     return found
 
 
@@ -168,10 +182,20 @@ def encode(value: Any, length: int) -> tuple[dict[str, Any] | None, list[bytes]]
     rows = np.asarray(value)
     if rows.dtype == bool:
         if rows.shape != (length,):
-            raise ValueError(f"a mask of rows has one value per row: {length}, not {rows.shape}")
+            raise ValueError(
+                f"widget.row_selection: expected a mask of {length} values, one per row; "
+                f"received shape {rows.shape}"
+            )
         rows = np.flatnonzero(rows)
     if rows.ndim != 1 or (rows.size and not np.issubdtype(rows.dtype, np.integer)):
-        raise TypeError("rows are positions in the data: whole numbers, or a boolean mask")
+        raise TypeError(
+            "widget.row_selection: expected positions of rows (whole numbers) or a boolean mask; "
+            f"received {rows.dtype} values of shape {rows.shape}"
+        )
     if rows.size and (rows.min() < 0 or rows.max() >= length):
-        raise ValueError(f"rows are positions in the data's {length} rows")
+        outside = int(rows[(rows < 0) | (rows >= length)][0])
+        raise ValueError(
+            f"widget.row_selection: expected positions among the data's {length} rows; "
+            f"received {outside}"
+        )
     return {"kind": "rows"}, [np.unique(rows).astype("<u4").tobytes()]

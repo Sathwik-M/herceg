@@ -44,7 +44,7 @@ describe("point outlines", () => {
   });
 
   it("rings points one pixel wide with only a color", () => {
-    const mark = point(values, { x: "x", y: "a", r: 4, stroke: "#123456" }) as PointMark;
+    const mark = point(values, { x: "x", y: "a", radius: 4, stroke: "#123456" }) as PointMark;
     const [g] = geometry<PointGeometry>(build({ marks: [mark] }), "point");
     expect(g!.ring).toEqual({ color: "#123456", width: 1 });
     // The outline reaches half its width past each point.
@@ -67,7 +67,7 @@ describe("point outlines", () => {
         locale: "en-US",
         timeZone: "UTC",
         x: { domain: [1.05, 4], nice: false },
-        marks: [point(values, { x: "x", y: "a", r: 3, strokeWidth, symbol: "triangle" })],
+        marks: [point(values, { x: "x", y: "a", radius: 3, strokeWidth, symbol: "triangle" })],
       });
       model.setSize(600, 300, 1);
       const scene = model.scene(estimateText);
@@ -117,7 +117,7 @@ describe("point outlines", () => {
   it("refuses negative and non-finite widths", () => {
     for (const strokeWidth of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => point(values, { x: "x", y: "a", strokeWidth })).toThrow(
-        /strokeWidth must be 0 or more pixels/,
+        /point strokeWidth: expected 0 or more pixels; received/,
       );
     }
   });
@@ -162,7 +162,7 @@ describe("area outlines", () => {
 
   it("refuses negative widths", () => {
     expect(() => area(values, { x: "x", y: "a", strokeWidth: -2 })).toThrow(
-      /strokeWidth must be 0 or more pixels/,
+      "area strokeWidth: expected 0 or more pixels; received -2",
     );
   });
 });
@@ -186,7 +186,6 @@ describe("styling in specs", () => {
   it("loads and checks the new properties", () => {
     const columns = { x: [1, 2], y: [3, 4], c: ["a", "b"] };
     const spec = {
-      version: 3,
       data: { d: { columns } },
       marks: [
         { type: "point", data: "d", x: "x", y: "y", stroke: "#fff", strokeWidth: 1.5 },

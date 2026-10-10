@@ -19,7 +19,6 @@ def tree(data=None, **options):
 def test_spec_and_sent_columns():
     chart = tree(side="right", stroke="#ff0000", stroke_width=2, label="Rows", id="rows")
     spec, buffers = chart.to_spec()
-    assert spec["version"] == 4  # New mark types already fail in readers lacking them.
     assert spec["marks"] == [
         {
             "type": "dendrogram",
@@ -65,14 +64,22 @@ def test_static_svg_and_vector_pdf(side):
 @pytest.mark.parametrize(
     "field, values, error",
     [
-        ("first", [-1, 2, 5], 'row 0, field "first".*whole number'),
-        ("second", [1.5, 3, 4], 'row 0, field "second".*whole number'),
-        ("first", [4, 2, 5], 'row 0, field "first".*earlier merge'),
-        ("second", [0, 3, 4], 'row 0, field "second".*more than once'),
-        ("first", [0, 0, 5], 'row 1, field "first".*more than once'),
-        ("height", [1, -1, 4], 'row 1, field "height".*nonnegative'),
-        ("height", [1, np.nan, 4], 'row 1, field "height".*finite'),
-        ("height", [1, np.inf, 4], 'row 1, field "height".*finite'),
+        ("first", [-1, 2, 5], "dendrogram first, row 0: expected a whole number.*received -1"),
+        ("second", [1.5, 3, 4], "dendrogram second, row 0: expected a whole number.*received 1.5"),
+        ("first", [4, 2, 5], "dendrogram first, row 0: .*or an earlier merge; received 4"),
+        ("second", [0, 3, 4], "dendrogram second, row 0: cluster 0 is merged more than once"),
+        ("first", [0, 0, 5], "dendrogram first, row 1: cluster 0 is merged more than once"),
+        ("height", [1, -1, 4], "dendrogram height, row 1: expected a finite height.*received -1"),
+        (
+            "height",
+            [1, np.nan, 4],
+            "dendrogram height, row 1: expected a finite height.*received nan",
+        ),
+        (
+            "height",
+            [1, np.inf, 4],
+            "dendrogram height, row 1: expected a finite height.*received inf",
+        ),
     ],
 )
 def test_invalid_rows(field, values, error):
@@ -81,18 +88,24 @@ def test_invalid_rows(field, values, error):
 
 
 def test_fields_and_leaf_labels():
-    with pytest.raises(KeyError, match="dendrogram.*missing"):
+    with pytest.raises(KeyError, match="dendrogram first: no column 'missing'"):
         hg.Chart(DATA).dendrogram("missing", "second", "height", leaves=LEAVES)
     for first in (["a", "b", "c"], np.array([0, 2, 5], dtype="datetime64[ms]")):
-        with pytest.raises(TypeError, match="first.*expected number"):
+        with pytest.raises(
+            TypeError, match="dendrogram first: column 'first' holds .* values; expected number"
+        ):
             tree({**DATA, "first": first})
     for leaves in (["a"], ["a", "b", "a", "d"], ["a", "b", 3, "d"], "abcd"):
-        with pytest.raises((ValueError, TypeError), match="leaves"):
+        with pytest.raises((ValueError, TypeError), match="dendrogram leaves"):
             hg.Chart(DATA).dendrogram("first", "second", "height", leaves=leaves)
-    with pytest.raises(ValueError, match="side"):
+    with pytest.raises(
+        ValueError, match='dendrogram side: expected "bottom", .*; received "diagonal"'
+    ):
         tree(side="diagonal")
     for stroke_width in (-1, np.inf, np.nan):
-        with pytest.raises(ValueError, match="stroke_width"):
+        with pytest.raises(
+            ValueError, match="dendrogram stroke_width: expected a finite number of at least 0"
+        ):
             tree(stroke_width=stroke_width)
 
 
@@ -110,17 +123,22 @@ def test_empty_single_merge_ties_and_inversions():
 
 
 def test_facets_require_repeat_and_resolve_categories():
-    with pytest.raises(ValueError, match="repeat=True"):
+    with pytest.raises(
+        ValueError,
+        match='dendrogram facet: a tree cannot be split across facet panels; give facet="repeat"',
+    ):
         hg.Chart(DATA, facet="group").dendrogram("first", "second", "height", leaves=LEAVES)
     cells = {"x": ["a", "b"], "y": ["a", "b"], "v": [1, 2], "group": ["N", "S"]}
     chart = hg.Chart(cells, facet="group", resolve_x="independent", resolve_y="independent")
     chart.heatmap("x", "y", "v").dendrogram(
-        "first", "second", "height", leaves=LEAVES, data=DATA, repeat=True
+        "first", "second", "height", leaves=LEAVES, data=DATA, facet="repeat"
     )
     spec, _ = chart.to_spec()
     assert spec["marks"][1]["facet"] == "repeat"
     assert chart.to_svg().startswith("<svg")
-    with pytest.raises(ValueError, match="categories of their own"):
+    with pytest.raises(
+        ValueError, match=r"Chart sync: panels with categories of their own \(resolve_x\)"
+    ):
         hg.Chart(DATA, panels=["tree"], resolve_x="independent", sync="tree").dendrogram(
             "first", "second", "height", leaves=LEAVES, panel="tree"
         )

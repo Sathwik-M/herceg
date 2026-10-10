@@ -123,7 +123,7 @@ describe("3D lines", () => {
 
   it("refuse widths that are not positive", () => {
     expect(() => line3d(flights, { x: "x", y: "y", z: "z", strokeWidth: 0 })).toThrow(
-      /strokeWidth must be a positive width/,
+      /line3d strokeWidth: expected a positive number of pixels; received 0/,
     );
     expect(() => line3d(flights, { x: "x", y: "y", z: "flight" as never })).toThrow(/line3d z/);
   });
@@ -178,7 +178,7 @@ describe("3D lines with surfaces and points", () => {
       z: { domain: [-1, 1] },
       marks: [
         line3d(path, { x: "x", y: "y", z: "z", strokeWidth: 10 }),
-        point3d(dots, { x: "x", y: "y", z: "z", r: 3 }),
+        point3d(dots, { x: "x", y: "y", z: "z", radius: 3 }),
       ],
     });
     // Seen from above: the point over the line shows; the one under it does not.

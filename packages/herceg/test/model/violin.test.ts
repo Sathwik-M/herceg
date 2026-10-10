@@ -180,7 +180,7 @@ describe("violin", () => {
   it("refuses bandwidths that are not positive numbers", () => {
     for (const bandwidth of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])
       expect(() => violin(latency, { x: "region", y: "ms", bandwidth })).toThrow(
-        "Violin bandwidth must be a positive number",
+        "violin bandwidth: expected a positive number; received",
       );
   });
 
@@ -205,7 +205,7 @@ describe("violin", () => {
     ]);
     const numbers = table({ a: [1, 2], b: [3, 4] });
     expect(() => violin(numbers, { x: "a" as never, y: "b" })).toThrow(
-      "violin needs a category field on x or y",
+      "violin x, y: expected a category field and a number or time field",
     );
   });
 

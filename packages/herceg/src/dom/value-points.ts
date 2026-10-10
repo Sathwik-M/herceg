@@ -21,6 +21,8 @@ export interface ShownPoints {
   radii: Float32Array | undefined;
   tones: Uint8ClampedArray | undefined;
   palette: readonly string[] | undefined;
+  /** Tones are a category field's colors, which change at once, not along a ramp. */
+  categorical: boolean;
   opacities: Float32Array | undefined;
   symbols: Uint8ClampedArray | undefined;
 }
@@ -55,6 +57,7 @@ function pointsOf(mark: PointGeometry, own: boolean): ShownPoints | undefined {
     radii: take(mark.radii),
     tones: take(mark.colors?.index),
     palette: mark.colors?.palette,
+    categorical: mark.colors?.categorical === true,
     opacities: take(mark.opacities),
     symbols: take(mark.symbols),
   };
@@ -105,6 +108,7 @@ export function movePoints(
     !sameIdentity(shown, next) ||
     !next.radii !== !shown.radii ||
     !next.tones !== !shown.tones ||
+    next.categorical !== shown.categorical ||
     !next.opacities !== !shown.opacities ||
     !next.symbols !== !shown.symbols ||
     !samePalette(next.palette, shown.palette)
@@ -154,8 +158,9 @@ export function movePoints(
       if (opacities) opacities[j * 2] = next.opacities![j]!;
       continue;
     }
-    // A row whose point changed shape is drawn otherwise: it does not move.
+    // A row whose point changed shape or category color is drawn otherwise: it does not move.
     if (symbols && shown.symbols![i] !== symbols[j]) return undefined;
+    if (next.categorical && shown.tones![i] !== next.tones![j]) return undefined;
     from[j * 2] = shown.coords[i * 2]!;
     from[j * 2 + 1] = shown.coords[i * 2 + 1]!;
     if (radii) radii[j * 2] = radiusOf(shown, i);
@@ -195,7 +200,11 @@ export function movePoints(
   const out: MovingPoints["out"] = {
     coords: new Float32Array(count * 2),
     radii: radii && new Float32Array(count),
-    colors: tones && { index: new Uint8ClampedArray(count), palette: next.palette! },
+    colors: tones && {
+      index: new Uint8ClampedArray(count),
+      palette: next.palette!,
+      ...(next.categorical && { categorical: true as const }),
+    },
     opacities: opacities && new Float32Array(count),
     symbols,
   };

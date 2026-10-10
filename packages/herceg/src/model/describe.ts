@@ -89,7 +89,7 @@ export function describeChart(model: ChartModel): string {
   const name = (s: Series) => {
     if (!sides) return s.label;
     const onRight = right.includes(s);
-    const unit = (onRight ? config.yRight : config.y)?.label;
+    const unit = (onRight ? config.yRight : config.y)?.title;
     return `${s.label} (${onRight ? "right" : "left"} axis${unit ? `, ${unit}` : ""})`;
   };
   for (const s of series.slice(0, MAX_SERIES)) {

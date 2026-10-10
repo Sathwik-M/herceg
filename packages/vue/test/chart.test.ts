@@ -228,7 +228,7 @@ describe("<Chart>", () => {
     const projection = ref<"mercator" | "equirectangular">("mercator");
     mount(
       `<Chart :projection="projection" locale="en-US">
-        <GeoShape :data="regions" name="name" color="gdp" />
+        <GeoShape :data="regions" labelField="name" color="gdp" />
         <GeoPoint :data="places" longitude="lon" latitude="lat" />
       </Chart>`,
       () => ({ regions, places, projection }),
@@ -438,7 +438,7 @@ describe("<Chart>", () => {
       `<Chart>
         <Region :x1="0.5" :x2="1.5" />
         <Line :data="metrics" x="t" y="a" />
-        <Rule :data="events" x="at" text="name" />
+        <Rule :data="events" x="at" textField="name" />
         <Text :x="3" :y="4" label="peak" />
       </Chart>`,
       () => ({ metrics, events }),
@@ -463,6 +463,24 @@ describe("<Chart>", () => {
     expect(area!.spec).toMatchObject({ stack: true, fillOpacity: 0.5 });
     expect(bar!.spec).not.toHaveProperty("stack");
     expect(optionsOf(chart()).legend).toBe(true);
+  });
+
+  it("reads bare directed and wireframe attributes as true", () => {
+    const talks = table({ from: ["a", "b"], to: ["b", "c"] });
+    const network = chartRef();
+    mount(
+      `<Chart ref="view"><Graph :data="talks" source="from" target="to" directed /></Chart>`,
+      () => ({ talks, view: network.view }),
+    );
+    expect(optionsOf(network.chart()).marks[0]!.spec).toMatchObject({ directed: true });
+    app?.unmount();
+    const grid = table({ x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [1, 2, 3, 4] });
+    const plot = chartRef();
+    mount(`<Chart ref="view"><Surface :data="grid" x="x" y="y" z="z" wireframe /></Chart>`, () => ({
+      grid,
+      view: plot.view,
+    }));
+    expect(optionsOf(plot.chart()).marks[0]!.spec).toMatchObject({ wireframe: true });
   });
 
   it("stacks areas by a series field, with the gaps a template names", () => {
@@ -682,7 +700,7 @@ describe("<Chart>", () => {
     // The parent re-renders; the chart gets a new but equal axis object.
     mount(
       `<p>{{ tick }}</p>
-      <Chart ref="view" :y="{ label: 'ms', ticks: tick > 0 ? 5 : 4 }">
+      <Chart ref="view" :y="{ title: 'ms', ticks: tick > 0 ? 5 : 4 }">
         <Line :data="metrics" x="t" y="a" />
       </Chart>`,
       () => ({ metrics, view, tick }),
@@ -877,14 +895,14 @@ describe("<Chart>", () => {
 
   it("treats options written in another key order as unchanged", async () => {
     const { view, chart } = chartRef();
-    const axis = shallowRef({ label: "X", grid: true });
+    const axis = shallowRef({ title: "X", grid: true });
     mount(`<Chart ref="view" :x="axis"><Line :data="metrics" x="t" y="a" /></Chart>`, () => ({
       metrics,
       view,
       axis,
     }));
     const updates = spyUpdates(chart());
-    axis.value = { grid: true, label: "X" };
+    axis.value = { grid: true, title: "X" };
     await nextTick();
     expect(updates).toHaveLength(0);
   });

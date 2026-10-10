@@ -15,7 +15,7 @@ from typing import Any, Literal
 import numpy as np
 
 from .._chart import Axis, Chart, _chart_of
-from .._data import Column, Table
+from .._data import Column, Table, listed, shown
 
 ErrorMethod = Literal["ci", "pi", "se", "sd"]
 ErrorBar = tuple[ErrorMethod, float] | ErrorMethod | None
@@ -23,8 +23,8 @@ ErrorBar = tuple[ErrorMethod, float] | ErrorMethod | None
 #: The level each error method takes when only its name is given, as in Seaborn.
 _LEVELS: dict[str, float] = {"ci": 95, "pi": 95, "se": 1, "sd": 1}
 
-#: Legend groups of the marks one express chart draws per hue level.
-HUE_GROUP = "hue"
+#: Legend groups of the marks one express chart draws per series.
+SERIES_GROUP = "series"
 
 
 @dataclass(frozen=True)
@@ -169,7 +169,7 @@ def level_label(value: float, kind: str) -> str:
 
 @dataclass
 class Grouping:
-    """Rows grouped by the levels of category variables (facets, hue, a
+    """Rows grouped by the levels of category variables (facets, series, a
     category axis), in order of those levels: each group's key (one level
     index per variable) and rows."""
 
@@ -200,30 +200,60 @@ def group(variables: Sequence[Levels], rows: np.ndarray) -> Grouping:
     return Grouping(variables, keys, parts)
 
 
+def facets(options: Mapping[str, Any], function: str) -> tuple[str | None, str | None]:
+    """The ``facet_row`` and ``facet_column`` among an express function's
+    chart options, whose panels it computes its statistics in. ``facet``
+    (wrapped panels) and ``panels`` (subplots) are refused: the computed
+    tables hold no other columns to split, and the marks name no panel."""
+    for name in ("facet", "panels"):
+        if options.get(name):
+            raise ValueError(
+                f"{function} {name}: express computes statistics per panel of facet_row "
+                "and facet_column; facet by those instead"
+            )
+    return options.get("facet_row"), options.get("facet_column")
+
+
+def refuse_facets(options: Mapping[str, Any], function: str, reason: str) -> None:
+    """Refuses facets and panels in a function whose chart cannot take
+    them, for `reason`."""
+    for name in ("facet", "facet_row", "facet_column", "panels"):
+        if options.get(name):
+            raise ValueError(f"{function} {name}: {reason}; draw a chart per subset of the rows")
+
+
 def variables_of(
     source: Source,
-    row: str | None,
-    col: str | None,
-    hue: str | None,
-    hue_order: Sequence[Any] | None = None,
+    function: str,
+    facet_row: str | None,
+    facet_column: str | None,
+    series: str | None,
+    series_order: Sequence[Any] | None = None,
     *,
     axes: Sequence[str | None] = (),
 ) -> dict[str, Levels]:
     """The category variables rows group by, in order: facet row, facet
-    column, then hue, by column name. None of them may be one of the
+    column, then series, by column name. None of them may be one of the
     `axes` a chart plots, whose column the chart's table holds as it is."""
     out: dict[str, Levels] = {}
-    for name, role, given in ((row, "row", None), (col, "col", None), (hue, "hue", hue_order)):
+    for name, role, given in (
+        (facet_row, "facet_row", None),
+        (facet_column, "facet_column", None),
+        (series, "series", series_order),
+    ):
         if name is None:
             continue
         if name in out:
-            raise ValueError(f"{role} {name!r} is already used as a facet or hue")
+            raise ValueError(
+                f"{function} {role}: column {name!r} already facets or splits the chart; "
+                "give facet_row, facet_column, and series different columns"
+            )
         if name in axes:
             raise ValueError(
-                f"{role} {name!r} is also plotted on an axis; to group by it, "
-                "pass a copy of the column under another name"
+                f"{function} {role}: column {name!r} is also plotted on an axis; to group by "
+                "it, pass a copy of the column under another name"
             )
-        out[name] = levels(source.column(name, role), given)
+        out[name] = levels(source.column(name, f"{function} {role}"), given)
     return out
 
 
@@ -304,9 +334,9 @@ def fresh(wanted: Sequence[str], taken: set[str]) -> list[str]:
     return out
 
 
-def by(hue: str | None) -> str:
-    """How a description names the hue variable."""
-    return f", by {hue}" if hue else ""
+def by(series: str | None) -> str:
+    """How a description names the series variable."""
+    return f", by {series}" if series else ""
 
 
 def readable(table: Mapping[str, Column]) -> dict[str, np.ndarray]:
@@ -325,16 +355,18 @@ def readable(table: Mapping[str, Column]) -> dict[str, np.ndarray]:
 # Options --------------------------------------------------------------------------
 
 
-def seed_of(seed: int | None) -> int:
+def seed_of(seed: int | None, function: str) -> int:
     """The seed resampling uses: the one given, or one drawn now and recorded."""
     if seed is None:
         return int(np.random.SeedSequence().entropy % 2**32)  # type: ignore[operator]
     if isinstance(seed, bool) or not isinstance(seed, numbers.Integral) or seed < 0:
-        raise ValueError(f"seed must be a whole number of at least 0, not {seed!r}")
+        raise ValueError(
+            f"{function} seed: expected a whole number of at least 0; received {shown(seed)}"
+        )
     return int(seed)
 
 
-def error_method(errorbar: ErrorBar) -> tuple[ErrorMethod, float] | None:
+def error_method(errorbar: ErrorBar, function: str) -> tuple[ErrorMethod, float] | None:
     """An ``errorbar`` argument as a method and its level."""
     if errorbar is None:
         return None
@@ -345,16 +377,21 @@ def error_method(errorbar: ErrorBar) -> tuple[ErrorMethod, float] | None:
             method, level = errorbar
         except (TypeError, ValueError):
             raise ValueError(
-                'errorbar must be ("ci", 95), ("pi", 50), ("se", 1), ("sd", 1), a method name, '
-                f"or None, not {errorbar!r}"
+                f'{function} errorbar: expected ("ci", 95), ("pi", 50), ("se", 1), ("sd", 1), '
+                f"a method name, or None; received {shown(errorbar)}"
             ) from None
     if method not in _LEVELS:
-        raise ValueError(f"errorbar method must be 'ci', 'pi', 'se', or 'sd', not {method!r}")
+        raise ValueError(
+            f"{function} errorbar: expected the method {listed(list(_LEVELS))}; "
+            f"received {shown(method)}"
+        )
     if isinstance(level, bool) or not isinstance(level, numbers.Real) or not math.isfinite(level):
-        raise ValueError(f"errorbar level must be a finite number, not {level!r}")
+        raise ValueError(f"{function} errorbar: expected a finite level; received {shown(level)}")
     if level <= 0 or (method in ("ci", "pi") and level > 100):
         bound = "from above 0 to 100" if method in ("ci", "pi") else "above 0"
-        raise ValueError(f"a {method} errorbar's level must be {bound}, not {level!r}")
+        raise ValueError(
+            f"{function} errorbar: expected a {method} level {bound}; received {shown(level)}"
+        )
     return method, float(level)
 
 
@@ -387,16 +424,27 @@ def dropped_sentence(dropped: int, roles: Sequence[str], ordered: bool = False) 
     return f" {dropped:,} {rows} missing {listed}{outside} were left out."
 
 
-def check_n_boot(n_boot: int) -> int:
+def check_n_boot(n_boot: int, function: str) -> int:
     if isinstance(n_boot, bool) or not isinstance(n_boot, numbers.Integral) or n_boot < 1:
-        raise ValueError(f"n_boot must be a whole number of at least 1, not {n_boot!r}")
+        raise ValueError(
+            f"{function} n_boot: expected a whole number of at least 1; received {shown(n_boot)}"
+        )
     return int(n_boot)
 
 
+def check_grid_size(grid_size: int, role: str) -> int:
+    """Refuses a density or fit grid of fewer than two points, at ``role``."""
+    if isinstance(grid_size, bool) or not isinstance(grid_size, numbers.Integral) or grid_size < 2:
+        raise ValueError(
+            f"{role}: expected a whole number of at least 2; received {shown(grid_size)}"
+        )
+    return int(grid_size)
+
+
 def check_choice(value: Any, name: str, choices: Sequence[Any]) -> Any:
+    """Refuses a value not among `choices`, at `name` (the function and option)."""
     if value not in choices:
-        listed = ", ".join(repr(c) for c in choices)
-        raise ValueError(f"{name} must be one of {listed}, not {value!r}")
+        raise ValueError(f"{name}: expected {listed(choices)}; received {shown(value)}")
     return value
 
 
@@ -416,27 +464,17 @@ def make_chart(
     options: Mapping[str, Any],
     *,
     sentence: str,
-    col: str | None = None,
-    row: str | None = None,
     palette: Sequence[str] | None = None,
     x_label: str | None = None,
     y_label: str | None = None,
 ) -> Chart:
-    """An express chart: the chart options given, with facets by ``col`` and
-    ``row``, the ``palette`` as the theme's, axes labeled by default, and the
-    description ending with ``sentence``."""
+    """An express chart: the chart options given (facets among them), the
+    ``palette`` as the theme's, axes labeled by default, and the description
+    ending with ``sentence``."""
     settings: dict[str, Any] = dict(options)
-    if col is not None or row is not None:
-        clash = [
-            name for name in ("facet", "facet_row", "facet_col", "panels") if settings.get(name)
-        ]
-        if clash:
-            raise ValueError(f"col and row lay out facets; they cannot be given with {clash[0]}")
-        settings["facet_col"] = col
-        settings["facet_row"] = row
     if palette is not None:
         if isinstance(palette, str) or not all(isinstance(c, str) for c in palette):
-            raise ValueError(f"palette must be a list of colors, not {palette!r}")
+            raise ValueError(f"palette: expected a list of colors; received {shown(palette)}")
         theme = settings.get("theme")
         if isinstance(theme, dict):
             settings["theme"] = {**theme, "palette": list(palette)}
@@ -444,7 +482,7 @@ def make_chart(
             settings["theme"] = {"palette": list(palette), **({"extends": theme} if theme else {})}
     for axis, label in (("x_axis", x_label), ("y_axis", y_label)):
         if label is not None and settings.get(axis) is None:
-            settings[axis] = Axis(label=label)
+            settings[axis] = Axis(title=label)
     given = settings.get("description")
     settings["description"] = f"{given} {sentence}".strip() if given else sentence.strip()
     return _chart_of(data, settings)  # type: ignore[arg-type]

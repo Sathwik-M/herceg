@@ -56,11 +56,11 @@ describe("annotations over a table in facets", () => {
     const { scene } = build({
       marks: [
         line(sales, { x: "t", y: "v" }),
-        rule(notes, { x: "at", text: "note" }),
-        region(notes, { x1: "at", x2: "end", text: "note" }),
-        text(notes, { x: "at", y: "v", text: "note" }),
+        rule(notes, { x: "at", textField: "note" }),
+        region(notes, { x1: "at", x2: "end", textField: "note" }),
+        text(notes, { x: "at", y: "v", textField: "note" }),
         rule({ y: 30, label: "goal" }),
-        rule(notes, { x: "at", text: "note", facet: "repeat", stroke: "red" }),
+        rule(notes, { x: "at", textField: "note", facet: "repeat", stroke: "red" }),
       ],
       facet: facet("region"),
       x: { domain: [0, 4] },
@@ -96,7 +96,7 @@ describe("annotations over a table in facets", () => {
   it("fit each panel's own rows on scales of their own, and every panel's on shared ones", () => {
     const peaks = table({ y: [5, 500], region: ["N", "S"] });
     const config = (y: "shared" | "independent"): ChartConfig => ({
-      marks: [line(sales, { x: "t", y: "v" }), rule(peaks, { y: "y", text: "region" })],
+      marks: [line(sales, { x: "t", y: "v" }), rule(peaks, { y: "y", textField: "region" })],
       facet: facet("region"),
       resolve: { y },
     });
@@ -115,7 +115,7 @@ describe("annotations over a table in facets", () => {
     });
     const marks = table({ y: [50, 7], region: ["N", "S"], product: ["b", "a"] });
     const { model, scene } = build({
-      marks: [line(grid, { x: "t", y: "v" }), rule(marks, { y: "y", text: "product" })],
+      marks: [line(grid, { x: "t", y: "v" }), rule(marks, { y: "y", textField: "product" })],
       facet: facet({ row: "region", column: "product" }),
       resolve: { y: "rows" },
     });
@@ -135,7 +135,10 @@ describe("annotations over a table in facets", () => {
     });
     const limits = table({ y: [1.5, 3.5], region: ["N", "S"] });
     const { model, scene } = build({
-      marks: [bar(units, { x: "product", y: "units" }), rule(limits, { y: "y", text: "region" })],
+      marks: [
+        bar(units, { x: "product", y: "units" }),
+        rule(limits, { y: "y", textField: "region" }),
+      ],
       facet: facet("region"),
       resolve: { x: "independent", y: "independent" },
     });
@@ -159,7 +162,7 @@ describe("annotations over a table in facets", () => {
       const { scene } = build({
         marks: [
           line(sales, { x: "t", y: "v" }),
-          text(crowded, { x: "at", y: "v", text: "note", overlap }),
+          text(crowded, { x: "at", y: "v", textField: "note", overlap }),
         ],
         facet: facet("region"),
         y: { domain: [0, 10] },
@@ -193,7 +196,7 @@ describe("annotations over a table in facets", () => {
     const { scene } = build({
       marks: [
         line(sales, { x: "t", y: "v" }),
-        text(many, { x: "at", y: "v", text: "note", dy: -12, overlap: "move" }),
+        text(many, { x: "at", y: "v", textField: "note", dy: -12, overlap: "move" }),
       ],
       facet: facet("region"),
       y: { domain: [0, 10] },
@@ -224,8 +227,8 @@ describe("annotations over a table in facets", () => {
     const { scene } = build(
       {
         marks: [
-          region(big, { x1: "at", x2: "end", text: "note" }),
-          text(big, { x: "at", y: "v", text: "note", overlap: "hide" }),
+          region(big, { x1: "at", x2: "end", textField: "note" }),
+          text(big, { x: "at", y: "v", textField: "note", overlap: "hide" }),
         ],
         facet: facet("region", { columns: 5 }),
       },
@@ -244,7 +247,7 @@ describe("annotations over a table in facets", () => {
   it("follow their table as it streams, and draw in static SVG", () => {
     const notes = events();
     const { model, scene } = build({
-      marks: [line(sales, { x: "t", y: "v" }), rule(notes, { x: "at", text: "note" })],
+      marks: [line(sales, { x: "t", y: "v" }), rule(notes, { x: "at", textField: "note" })],
       facet: facet("region"),
     });
     expect(rules(scene.panels[1]!)).toEqual(["s1", "s2"]);
@@ -253,7 +256,7 @@ describe("annotations over a table in facets", () => {
     expect(rules(next.panels[0]!)).toEqual(["n1", "n2"]);
     expect(rules(next.panels[1]!)).toEqual(["s1", "s2", "s3"]);
     const svg = renderToSVG({
-      marks: [line(sales, { x: "t", y: "v" }), rule(notes, { x: "at", text: "note" })],
+      marks: [line(sales, { x: "t", y: "v" }), rule(notes, { x: "at", textField: "note" })],
       facet: facet("region"),
       width: 600,
       height: 300,
@@ -264,14 +267,13 @@ describe("annotations over a table in facets", () => {
   it("load from specs over a table without facet: repeat", () => {
     const { config } = loadSpec(
       {
-        version: 2,
         data: {
           sales: { columns: { t: [0, 1, 0, 1], v: [1, 2, 3, 4], region: ["N", "N", "S", "S"] } },
           events: { columns: { at: [0.5, 0.25], note: ["n", "s"], region: ["N", "S"] } },
         },
         marks: [
           { type: "line", data: "sales", x: "t", y: "v" },
-          { type: "rule", data: "events", x: "at", text: "note" },
+          { type: "rule", data: "events", x: "at", textField: "note" },
         ],
         facet: { field: "region" },
       },
@@ -287,7 +289,7 @@ describe("annotations of panels in the text alternative", () => {
     const { model } = build({
       marks: [
         line(sales, { x: "t", y: "v" }),
-        rule(events(), { x: "at", text: "note" }),
+        rule(events(), { x: "at", textField: "note" }),
         rule({ y: 30, label: "goal" }),
       ],
       facet: facet("region"),

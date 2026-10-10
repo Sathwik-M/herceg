@@ -51,11 +51,10 @@ import type {
   ColumnSpec,
   ColumnsSpec,
   DataSpec,
-  HeatmapGridSpec,
   MarkSpec,
   RowSelectionSpec,
 } from "./spec.ts";
-import { checkSpec } from "./validate.ts";
+import { describeUnknown, findUnknown, unknownError } from "./validate.ts";
 
 /** Bytes of a binary column: an ArrayBuffer, or a view such as a Uint8Array or DataView. */
 export type SpecBuffer = ArrayBuffer | ArrayBufferView;
@@ -73,12 +72,12 @@ export interface LoadedSpec {
 
 export interface LoadOptions {
   /**
-   * What to do about properties this herceg does not know, misspelled or
-   * from a newer version: "warn" (the default) logs them, "error" throws,
-   * and "ignore" loads the spec quietly. Unknown properties never change
-   * the chart.
+   * What to do about properties the spec format does not have, such as
+   * misspellings: "error" (the default) throws, naming the property and the
+   * one it likely meant; "warn" logs them and loads the rest; "ignore" loads
+   * the rest quietly. Unknown properties never change the chart.
    */
-  unknown?: "warn" | "error" | "ignore";
+  unknown?: "error" | "warn" | "ignore";
   /**
    * Tables to use instead of making them from the spec's `data`, by name
    * (a map, such as another loaded spec's `tables`, or an object): charts
@@ -134,16 +133,16 @@ export function loadSpec(
   buffers: readonly SpecBuffer[] = [],
   options: LoadOptions = {},
 ): LoadedSpec {
-  const unknown = checkSpec(spec);
-  if (unknown.length > 0 && options.unknown === "error") {
-    throw new TypeError(`${unknown[0]}: not a property of herceg's spec format`);
-  }
-  if (unknown.length > 0 && (options.unknown ?? "warn") === "warn") {
-    console.warn(`herceg: ignoring spec properties it does not know: ${unknown.join(", ")}`);
-  }
+  const found = findUnknown(spec);
+  const handling = options.unknown ?? "error";
+  if (found.length > 0 && handling === "error") throw new TypeError(unknownError(found));
+  if (found.length > 0 && handling === "warn")
+    console.warn(
+      `herceg spec: ignoring properties the format does not have: ${found.map(describeUnknown).join(", ")}`,
+    );
+  const unknown = found.map(({ path }) => path);
   const tables = loadTables(spec.data ?? {}, buffers, byName(options.tables));
-  const version = spec.version ?? 1;
-  const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables, version));
+  const marks = spec.marks.map((mark, index) => loadMark(mark, index, tables));
   const {
     data: _data,
     marks: _marks,
@@ -206,15 +205,19 @@ function loadRowSelection(
       let name = data;
       if (name === undefined) {
         if (read.length !== 1)
-          throw new Error(`${path}.data: required where the marks read several tables`);
+          throw new Error(`${path}.data: missing; the marks read several tables, so name one`);
         name = [...tables].find(([, table]) => table === read[0])?.[0];
       }
       const table = name === undefined ? undefined : tables.get(name);
       if (!table)
-        throw new Error(`${path}.data: a table of the spec's data, not ${JSON.stringify(name)}`);
+        throw new Error(
+          `${path}.data: no table ${JSON.stringify(name)} in spec.data; name one of ${names(tables)}`,
+        );
       let store = given?.get(name!) ?? stores.get(name!);
       if (store && store.source !== table)
-        throw new Error(`The store given for table "${name}" is of another table`);
+        throw new Error(
+          `stores.${name}: the store given is of another table; give a store of table "${name}"`,
+        );
       store ??= selectionStore(table);
       stores.set(name!, store);
       return {
@@ -245,22 +248,27 @@ function loadTables(
       return done;
     }
     const entry = data[name];
-    if (!entry) throw new Error(`Unknown table "${name}"`);
+    if (!entry) throw new Error(`spec.data: no table "${name}"`);
     if (!("source" in entry)) {
       const loaded = loadTable(name, entry, buffers);
       tables.set(name, loaded);
       return loaded;
     }
-    if (loading.has(name)) throw new Error(`Table "${name}" derives from itself`);
+    if (loading.has(name))
+      throw new Error(
+        `spec.data.${name}.source: the table derives from itself; derive it from another`,
+      );
     loading.add(name);
     if (!Object.hasOwn(data, entry.source))
-      throw new Error(`Table "${name}" derives from unknown table "${entry.source}"`);
+      throw new Error(
+        `spec.data.${name}.source: no table "${entry.source}" in spec.data; name one of ${names(data)}`,
+      );
     const source = load(entry.source);
     let derived: Table;
     try {
       derived = deriveTable(source, entry.transform, { name });
     } catch (error) {
-      throw new Error(`Table "${name}": ${(error as Error).message}`);
+      throw within(`spec.data.${name}`, error);
     }
     tables.set(name, derived);
     return derived;
@@ -276,13 +284,13 @@ function loadTable(name: string, data: ColumnsSpec, buffers: readonly SpecBuffer
     try {
       columns[field] = loadColumn(column, buffers);
     } catch (error) {
-      throw new Error(`Column "${field}" of table "${name}": ${(error as Error).message}`);
+      throw within(`spec.data.${name}.columns.${field}`, error);
     }
   }
   try {
     return table(columns, { name });
   } catch (error) {
-    throw new Error(`Table "${name}": ${(error as Error).message}`);
+    throw within(`spec.data.${name}`, error);
   }
 }
 
@@ -292,7 +300,7 @@ const isList = Array.isArray as (value: unknown) => value is readonly unknown[];
 function loadColumn(column: ColumnSpec, buffers: readonly SpecBuffer[]): ColumnInput {
   if (isList(column)) return inlineValues(column);
   if (typeof column !== "object" || column === null) {
-    throw new TypeError("expected an array of values or a column object");
+    throw new TypeError("expected an array of values or a column object; received neither");
   }
   switch (column.type) {
     case "time":
@@ -306,7 +314,7 @@ function loadColumn(column: ColumnSpec, buffers: readonly SpecBuffer[]): ColumnI
         !Array.isArray(column.dictionary) ||
         column.dictionary.some((v) => typeof v !== "string")
       ) {
-        throw new TypeError("a category dictionary must be an array of strings");
+        throw new TypeError("dictionary: expected an array of strings");
       }
       const codes =
         typeof column.codes === "number"
@@ -320,7 +328,8 @@ function loadColumn(column: ColumnSpec, buffers: readonly SpecBuffer[]): ColumnI
         if (typeof value === "number") return binary("int32", value, buffers) as Int32Array;
         const list = numberList(value, name);
         const bad = list.findIndex((v) => !Number.isInteger(v) || Math.abs(v) > 2 ** 31 - 1);
-        if (bad >= 0) throw new TypeError(`${name}[${bad}] holds ${list[bad]}, not an int32`);
+        if (bad >= 0)
+          throw new TypeError(`${name}[${bad}]: expected an int32; received ${list[bad]}`);
         return Int32Array.from(list);
       };
       const coordinates =
@@ -339,7 +348,7 @@ function loadColumn(column: ColumnSpec, buffers: readonly SpecBuffer[]): ColumnI
     }
     default:
       throw new TypeError(
-        `Unknown column type ${JSON.stringify((column as { type: unknown }).type)}`,
+        `type: expected "number", "time", "category", or "geometry"; received ${JSON.stringify((column as { type: unknown }).type)}`,
       );
   }
 }
@@ -352,43 +361,51 @@ function inlineValues(values: readonly unknown[]): ColumnInput {
     const type = typeof value;
     if (type !== "number" && type !== "string") {
       throw new TypeError(
-        `row ${row} holds ${JSON.stringify(value)}; expected a number, string, or null`,
+        `row ${row}: expected a number, string, or null; received ${JSON.stringify(value)}`,
       );
     }
     kind ??= type;
-    if (type !== kind) throw new TypeError(`row ${row} mixes ${type}s into a column of ${kind}s`);
+    if (type !== kind)
+      throw new TypeError(
+        `row ${row}: a ${type} in a column of ${kind}s; give one kind per column`,
+      );
   });
   return values as ColumnInput;
 }
 
 /** A JSON array of finite numbers. */
 function numberList(values: unknown, name: string): number[] {
-  if (!Array.isArray(values)) throw new TypeError(`${name} must be a buffer index or an array`);
+  if (!Array.isArray(values)) throw new TypeError(`${name}: expected a buffer index or an array`);
   values.forEach((value, i) => {
     if (typeof value !== "number" || !Number.isFinite(value))
-      throw new TypeError(`${name}[${i}] holds ${JSON.stringify(value)}, not a finite number`);
+      throw new TypeError(
+        `${name}[${i}]: expected a finite number; received ${JSON.stringify(value)}`,
+      );
   });
   return values;
 }
 
 function timeValues(values: unknown): number[] {
-  if (!Array.isArray(values)) throw new TypeError("time values must be an array");
+  if (!Array.isArray(values)) throw new TypeError("values: expected an array of times");
   return values.map((value, row) => {
     if (value === null) return Number.NaN;
     const time = typeof value === "string" ? Date.parse(value) : value;
     if (typeof time !== "number" || Number.isNaN(time)) {
-      throw new TypeError(`row ${row} holds ${JSON.stringify(value)}, not a time`);
+      throw new TypeError(
+        `row ${row}: expected epoch milliseconds or an ISO 8601 time; received ${JSON.stringify(value)}`,
+      );
     }
     return time;
   });
 }
 
 function inlineCodes(codes: unknown, size: number): Int32Array {
-  if (!Array.isArray(codes))
-    throw new TypeError("category codes must be a buffer index or an array");
+  if (!Array.isArray(codes)) throw new TypeError("codes: expected a buffer index or an array");
   return Int32Array.from(codes, (code, row) => {
     if (!Number.isInteger(code) || code < -1 || code >= size) {
-      throw new RangeError(`row ${row} holds code ${JSON.stringify(code)}, outside the dictionary`);
+      throw new RangeError(
+        `row ${row}: code ${JSON.stringify(code)} is outside the dictionary; codes run from -1 to ${size - 1}`,
+      );
     }
     return code;
   });
@@ -403,20 +420,27 @@ const LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
  */
 function binary(dtype: BinaryType, index: number, buffers: readonly SpecBuffer[]): NumericArray {
   const Typed = Object.hasOwn(TYPED, dtype) ? TYPED[dtype] : undefined;
-  if (!Typed) throw new TypeError(`Unknown binary type ${JSON.stringify(dtype)}`);
+  if (!Typed)
+    throw new TypeError(
+      `dtype: expected ${Object.keys(TYPED)
+        .map((type) => `"${type}"`)
+        .join(", ")}; received ${JSON.stringify(dtype)}`,
+    );
   if (!Number.isInteger(index) || index < 0) {
-    throw new TypeError(`buffer must be a buffer index, got ${JSON.stringify(index)}`);
+    throw new TypeError(`buffer: expected a buffer index; received ${JSON.stringify(index)}`);
   }
   const source = buffers[index];
   if (source === undefined)
-    throw new RangeError(`Buffer ${index} is missing (${buffers.length} delivered)`);
+    throw new RangeError(
+      `buffer: buffer ${index} is missing; ${buffers.length} were delivered with the spec`,
+    );
   const bytes = ArrayBuffer.isView(source)
     ? new Uint8Array(source.buffer as ArrayBuffer, source.byteOffset, source.byteLength)
     : new Uint8Array(source);
   const size = Typed.BYTES_PER_ELEMENT;
   if (bytes.byteLength % size !== 0) {
     throw new RangeError(
-      `Buffer ${index} has ${bytes.byteLength} bytes, not a whole number of ${dtype} values`,
+      `buffer: buffer ${index} has ${bytes.byteLength} bytes, not a whole number of ${dtype} values; check dtype`,
     );
   }
   if (!LITTLE_ENDIAN && size > 1) return swapped(Typed, bytes);
@@ -432,12 +456,7 @@ function swapped(Typed: (typeof TYPED)[BinaryType], bytes: Uint8Array): NumericA
   return new Typed(copy.buffer, 0, copy.length / size);
 }
 
-function loadMark(
-  spec: MarkSpec,
-  index: number,
-  tables: Map<string, Table>,
-  version: number,
-): Mark | LayoutMark {
+function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Mark | LayoutMark {
   try {
     // Annotations read a table only when a position or their text is a field.
     switch (spec.type) {
@@ -464,12 +483,7 @@ function loadMark(
       case "dendrogram":
         return new DendrogramMark(spec, source);
       case "heatmap":
-        // Before version 9, heatmaps banded number and time fields too; the
-        // mark's spec says so, so it keeps its bands wherever it goes next.
-        return new HeatmapMark(
-          withScheme(version < 9 && spec.date === undefined ? banded(spec) : spec),
-          source,
-        );
+        return new HeatmapMark(withScheme(spec), source);
       case "rug":
         return new RugMark(spec, source);
       case "errorbar":
@@ -514,17 +528,26 @@ function loadMark(
         );
       default:
         throw new TypeError(
-          `unknown mark type ${JSON.stringify((spec as { type: unknown }).type)}`,
+          `type: not a mark type; received ${JSON.stringify((spec as { type: unknown }).type)}`,
         );
     }
   } catch (error) {
-    throw new Error(`Mark ${index} (${String(spec?.type)}): ${(error as Error).message}`);
+    throw within(`marks[${index}]`, error);
   }
 }
 
-/** A heatmap's spec as specs before version 9 meant it: number and time fields banded. */
-function banded(spec: HeatmapGridSpec): HeatmapGridSpec {
-  return { ...spec, xBanded: true, yBanded: true };
+/** An error of the same kind (TypeError, RangeError, Error) whose message starts at `location`. */
+function within(location: string, error: unknown): Error {
+  const message = `${location}: ${(error as Error).message}`;
+  if (error instanceof RangeError) return new RangeError(message);
+  if (error instanceof TypeError) return new TypeError(message);
+  return new Error(message);
+}
+
+/** A list of tables' names, as an error suggests them. */
+function names(tables: ReadonlyMap<string, unknown> | Record<string, unknown>): string {
+  const all = tables instanceof Map ? [...tables.keys()] : Object.keys(tables);
+  return all.map((name) => `"${name}"`).join(", ") || "(none)";
 }
 
 /** A mark's spec with a named color scheme replaced by the scheme's colors. */
@@ -533,23 +556,22 @@ function withScheme<T extends { colors?: string | readonly string[] | undefined 
 }
 
 function annotationTable(
-  spec: { data?: string; text?: string },
+  spec: { data?: string; textField?: string },
   positions: readonly (number | string | undefined)[],
   tables: Map<string, Table>,
 ): Table | undefined {
-  return readsTable(positions, spec.text) ? tableFor(spec.data, tables) : undefined;
+  return readsTable(positions, spec.textField) ? tableFor(spec.data, tables) : undefined;
 }
 
 function tableFor(name: string | undefined, tables: Map<string, Table>): Table {
   if (name !== undefined) {
     const found = tables.get(name);
-    if (!found) throw new Error(`no table named "${name}" in data`);
+    if (!found)
+      throw new Error(`data: no table "${name}" in spec.data; name one of ${names(tables)}`);
     return found;
   }
-  if (tables.size !== 1) {
-    throw new Error(
-      `set \`data\` to one of ${[...tables.keys()].map((n) => `"${n}"`).join(", ") || "the spec's tables (none given)"}`,
-    );
-  }
+  if (tables.size === 0) throw new Error("data: the spec has no tables; add one to spec.data");
+  if (tables.size > 1)
+    throw new Error(`data: missing; the spec has several tables, so name one of ${names(tables)}`);
   return tables.values().next().value!;
 }

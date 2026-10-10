@@ -245,7 +245,7 @@ describe("view transitions", () => {
     tick(16);
     expect(x(chart)).not.toEqual([20_000, 40_000]);
     expect(() => chart.update({ animation: { duration: Number.NaN } })).toThrow(
-      "animation.duration must be milliseconds",
+      "chart animation.duration: expected 0 or more ms",
     );
   });
 

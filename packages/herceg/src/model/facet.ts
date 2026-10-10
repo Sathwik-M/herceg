@@ -100,9 +100,11 @@ export class Facet implements PanelLayout {
     if ("field" in spec) {
       const { columns } = spec;
       if (columns !== undefined && !(Number.isInteger(columns) && columns >= 1))
-        throw new RangeError(`Facet columns must be a whole number of at least 1, not ${columns}`);
+        throw new RangeError(
+          `facet columns: expected a whole number of at least 1; received ${columns}`,
+        );
       if ("row" in spec || "column" in spec)
-        throw new TypeError("A facet has a field to wrap, or row and column fields, not both");
+        throw new TypeError("facet: a field to wrap, or row and column fields, not both; drop one");
       this.field = spec.field;
       this.columns = columns;
       return;
@@ -110,12 +112,12 @@ export class Facet implements PanelLayout {
     const { row, column } = spec;
     if ("columns" in spec)
       throw new TypeError(
-        "A grid of facets has a column per value of its column field, not columns",
+        "facet columns: a grid of facets has a column per value of its column field; drop columns",
       );
     if (row === undefined && column === undefined)
-      throw new TypeError("A facet needs a field, or a row or column field");
+      throw new TypeError("facet: needs a field, or a row or column field");
     if (row !== undefined && row === column)
-      throw new TypeError(`A facet's row and column fields must differ, not both "${row}"`);
+      throw new TypeError(`facet column: "${row}" is the row field too; give two fields`);
     this.row = row;
     this.column = column;
   }
@@ -136,7 +138,8 @@ export class Facet implements PanelLayout {
     options: LayoutOptions = {},
     layouts: readonly LayoutMark[] = [],
   ): void {
-    if (options.navigator) throw new Error("Charts with facets cannot have a navigator yet");
+    if (options.navigator)
+      throw new Error("navigator: charts with facets have none yet; drop navigator or facet");
     const [layout] = layouts;
     if (layout) {
       const { type, facet } = layout.spec;
@@ -144,10 +147,10 @@ export class Facet implements PanelLayout {
       refuseAxes(type, options);
       if (layouts.length > 1 || marks.length > 0)
         throw new Error(
-          `A ${type} mark has each facet panel to itself; draw other marks in another chart`,
+          `${type}: has each facet panel to itself; draw other marks in another chart`,
         );
       if (facet !== undefined)
-        throw new Error(`A ${type} mark splits its rows into facet panels; it cannot repeat`);
+        throw new Error(`${type} facet: the mark splits its rows into facet panels; drop facet`);
       this.#splitting(type, layout.table!, "");
     }
     checkBands(marks, options, this.yDefault);
@@ -157,10 +160,12 @@ export class Facet implements PanelLayout {
       const y = options.resolve?.y ?? "shared";
       const right = options.resolve?.yRight ?? y;
       if (y !== "shared")
-        throw new Error("Charts whose panels have y scales of their own cannot zoom along y yet");
+        throw new Error(
+          'chart interaction.zoom: panels with y scales of their own cannot zoom along y yet; share y or zoom along "x"',
+        );
       if (right !== "shared" && marks.some((mark) => mark.spec.axis === "right" && usesY(mark)))
         throw new Error(
-          `Charts whose panels have right y scales of their own (resolve.yRight "${right}") cannot zoom along y yet; share them or zoom along x`,
+          `chart interaction.zoom: panels with right y scales of their own (resolve.yRight "${right}") cannot zoom along y yet; share them or zoom along "x"`,
         );
     }
     for (const mark of marks) {
@@ -169,13 +174,13 @@ export class Facet implements PanelLayout {
       const repeat = `give it facet: "repeat" to draw it whole in every panel`;
       // A tree's merges have no facet values to split by.
       if (type === "dendrogram")
-        throw new Error(`A dendrogram mark over a table cannot be split into panels; ${repeat}`);
+        throw new Error(`dendrogram facet: merges cannot split into panels; ${repeat}`);
       this.#splitting(type, mark.table, `; ${repeat}`);
       // Custom marks split the rows of the series they show. Those without
       // series (which need one x field and y fields) have no rows to split:
       // their `draw` reads the table whole.
       if (type === "custom" && (mark.spec as CustomSpec).y === undefined)
-        throw new Error(`A custom mark without series cannot be split into panels; ${repeat}`);
+        throw new Error(`custom facet: without series, it cannot split into panels; ${repeat}`);
     }
   }
 
@@ -183,12 +188,10 @@ export class Facet implements PanelLayout {
   #splitting(type: string, table: Table, remedy: string): void {
     for (const field of this.fields) {
       if (!table.has(field))
-        throw new Error(
-          `A ${type} mark's table has no field "${field}" to split into panels${remedy}`,
-        );
+        throw new Error(`${type}: no field "${field}" to split into facet panels${remedy}`);
       const kind = table.kind(field);
       if (kind !== "category")
-        throw new TypeError(`Facet field "${field}" is ${kind}; panels need a category field`);
+        throw new TypeError(`facet: field "${field}" holds ${kind} values; expected category`);
     }
   }
 

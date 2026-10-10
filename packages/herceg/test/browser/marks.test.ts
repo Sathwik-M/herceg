@@ -81,7 +81,7 @@ describe("new marks in the browser", () => {
     }
     const grid = table({ c, r, v });
     const chart = createChart(host, {
-      marks: [heatmap(grid, { x: "c", y: "r", value: "v", label: "Index" })],
+      marks: [heatmap(grid, { x: "c", y: "r", color: "v", label: "Index" })],
     });
     expect(chart.root.querySelector("canvas")).not.toBeNull();
     expect(chart.root.querySelector("linearGradient")).not.toBeNull();
@@ -101,7 +101,7 @@ describe("new marks in the browser", () => {
     const r = Float64Array.from({ length: columns * rows }, (_, i) => Math.floor(i / columns));
     const v = Float64Array.from(c, (column) => (column === 1500 ? Number.NaN : column));
     const chart = createChart(host, {
-      marks: [heatmap(table({ c, r, v }), { x: "c", y: "r", value: "v" })],
+      marks: [heatmap(table({ c, r, v }), { x: "c", y: "r", color: "v" })],
     });
     const canvas = chart.root.querySelector("canvas")!;
     const ratio = canvas.width / canvas.clientWidth;
@@ -141,13 +141,13 @@ describe("new marks in the browser", () => {
       const chart = createChart(host, {
         renderer: "canvas",
         legend: false,
-        x: { axis: false },
-        y: { axis: false },
+        x: { show: false },
+        y: { show: false },
         marks: [
           heatmap(data, {
             x: "c",
             y: "r",
-            value: "v",
+            color: "v",
             reduce: "max",
             colors: ["#000000", "#ff0000"],
             colorDomain: [0, 1],
@@ -186,7 +186,7 @@ describe("new marks in the browser", () => {
     const cells = table({ c: ["a", "a"], r: ["low", "high"], v: [3, 42] });
     const chart = createChart(host, {
       tooltip: { mode: "nearest-x" },
-      marks: [heatmap(cells, { x: "c", y: "r", value: "v" })],
+      marks: [heatmap(cells, { x: "c", y: "r", color: "v" })],
     });
     hover(chart.root, chart.toPixel(0, { axis: "x" })!, chart.toPixel(1, { axis: "y" })!);
     await frame();
@@ -205,7 +205,7 @@ describe("new marks in the browser", () => {
     });
     const chart = createChart(host, {
       renderer: "canvas",
-      marks: [point(pts, { x: "x", y: "y", r: "pop", series: "kind", symbol: "kind" })],
+      marks: [point(pts, { x: "x", y: "y", size: "pop", series: "kind", symbol: "kind" })],
     });
     const swatches = [...chart.root.querySelectorAll("button svg path")];
     expect(swatches).toHaveLength(2);
@@ -234,7 +234,7 @@ describe("new marks in the browser", () => {
         y: kinds.map((_, i) => at(i)),
         kind: kinds,
       });
-      const mark = point(pts, { x: "x", y: "y", r: 20, symbol: "kind", fill: "#000000" });
+      const mark = point(pts, { x: "x", y: "y", radius: 20, symbol: "kind", fill: "#000000" });
       const chart = createChart(host, { renderer: "canvas", marks: [mark] });
       // Inside both shapes, above the grid line at y = 0.
       const x = chart.toPixel(0, { axis: "x" })!;
@@ -396,7 +396,7 @@ describe("new marks in the browser", () => {
       marks: [
         line(series, { x: "t", y: "v" }),
         rule({ y: 2, label: "limit" }),
-        text(latest, { x: "t", y: "v", text: "v" }),
+        text(latest, { x: "t", y: "v", textField: "v" }),
       ],
       y: { domain: [0, 5] },
     });
@@ -594,7 +594,7 @@ describe("new marks in the browser", () => {
       // No grid lines under the sampled pixels.
       x: { domain: [0, 3], grid: false },
       y: { domain: [0, 3], grid: false },
-      marks: [point(pts, { x: "x", y: "y", r: 6, ...style })],
+      marks: [point(pts, { x: "x", y: "y", radius: 6, ...style })],
     });
     const canvas = chart.root.querySelector("canvas")!;
     const ratio = canvas.width / canvas.clientWidth;
@@ -657,7 +657,13 @@ describe("point clouds on the GPU", () => {
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
       marks: [
-        point(cloudTable(150_000), { x: "x", y: "y", r: 6, fill: "#000000", fillOpacity: 0.5 }),
+        point(cloudTable(150_000), {
+          x: "x",
+          y: "y",
+          radius: 6,
+          fill: "#000000",
+          fillOpacity: 0.5,
+        }),
       ],
     });
     // The painter loads on demand; until then the cloud is not drawn.
@@ -688,7 +694,7 @@ describe("point clouds on the GPU", () => {
     const chart = createChart(host, {
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
-      marks: [point(rolling, { x: "x", y: "y", r: 6, fill: "#000000", fillOpacity: 0.5 })],
+      marks: [point(rolling, { x: "x", y: "y", radius: 6, fill: "#000000", fillOpacity: 0.5 })],
     });
     await chart.loading;
     const proto = WebGL2RenderingContext.prototype;
@@ -734,7 +740,7 @@ describe("point clouds on the GPU", () => {
     const chart = createChart(host, {
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
-      marks: [point(rolling, { x: "x", y: "y", series: "kind", r: 6, fillOpacity: 0.5 })],
+      marks: [point(rolling, { x: "x", y: "y", series: "kind", radius: 6, fillOpacity: 0.5 })],
     });
     await chart.loading;
     // What keeps grouped rows current as the table streams loads after the first scene.
@@ -781,7 +787,7 @@ describe("point clouds on the GPU", () => {
       x: { domain: [0, 10e100], grid: false },
       y: { domain: [0, 10], grid: false },
       marks: [
-        point(cloudTable(150_000, 1e100), { x: "x", y: "y", r: 4, fill: "color(srgb 1 0 0)" }),
+        point(cloudTable(150_000, 1e100), { x: "x", y: "y", radius: 4, fill: "color(srgb 1 0 0)" }),
       ],
     });
     await chart.loading;
@@ -798,7 +804,7 @@ describe("point clouds on the GPU", () => {
     const zoomed = createChart(host, {
       x: { domain: [4, 6], grid: false },
       y: { domain: [0, 10], grid: false },
-      marks: [point(far, { x: "x", y: "y", r: 4, fill: "#000000" })],
+      marks: [point(far, { x: "x", y: "y", radius: 4, fill: "#000000" })],
     });
     await zoomed.loading;
     expect(paints).toEqual([false]);
@@ -811,7 +817,7 @@ describe("point clouds on the GPU", () => {
     const overflow = createChart(host, {
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
-      marks: [point(huge, { x: "x", y: "y", r: 4, fill: "#000000" })],
+      marks: [point(huge, { x: "x", y: "y", radius: 4, fill: "#000000" })],
     });
     await overflow.loading;
     expect(paints).toEqual([false]);
@@ -824,7 +830,7 @@ describe("point clouds on the GPU", () => {
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
       // Larger than any device's largest point sprite.
-      marks: [point(cloudTable(150_000), { x: "x", y: "y", r: 600, fill: "#000000" })],
+      marks: [point(cloudTable(150_000), { x: "x", y: "y", radius: 600, fill: "#000000" })],
     });
     await chart.loading;
     expect(paints).toEqual([false]);
@@ -1075,7 +1081,7 @@ describe("heatmaps on number axes in the browser", () => {
     const chart = createChart(host, {
       renderer: "canvas",
       interaction: { zoom: "xy", brush: "xy" },
-      marks: [heatmap(cells(), { x: "x", y: "y", value: "v" })],
+      marks: [heatmap(cells(), { x: "x", y: "y", color: "v" })],
     });
     await chart.loading;
     const { plot } = modelOf(chart).panels()[0]!;

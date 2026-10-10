@@ -38,7 +38,7 @@ describe("right y axis", () => {
         line(traffic, { x: "t", y: "latency" }),
         line(traffic, { x: "t", y: "requests", axis: "right" }),
       ],
-      yRight: { label: "req/s" },
+      yRight: { title: "req/s" },
     });
     const left = model.yScale()!;
     const right = model.yRightScale()!;
@@ -147,7 +147,7 @@ describe("right y axis", () => {
     // Types refuse this too; untyped callers and specs get an error.
     const sideways = { x: "v", y: "region", axis: "right" } as never;
     expect(() => build({ marks: [bar(sales, sideways)] })).toThrow(
-      /placed along y cannot use the right axis/,
+      /bar axis: marks along y cannot use the right axis/,
     );
   });
 
@@ -159,7 +159,7 @@ describe("right y axis", () => {
         line(traffic, { x: "t", y: "latency" }),
         line(traffic, { x: "t", y: "requests", axis: "right" }),
       ],
-      yRight: { label: "req/s" },
+      yRight: { title: "req/s" },
     });
     expect(svg).toMatch(/text-anchor="start" dominant-baseline="middle">4,000<\/text>/);
     expect(svg).toMatch(/transform="rotate\(90 /);
@@ -169,9 +169,9 @@ describe("right y axis", () => {
         { type: "line", x: "x", y: "a" },
         { type: "line", x: "x", y: "b", axis: "right" },
       ],
-      yRight: { label: "b" },
+      yRight: { title: "b" },
     };
-    expect(loadSpec(spec).config.yRight).toEqual({ label: "b" });
+    expect(loadSpec(spec).config.yRight).toEqual({ title: "b" });
     const bad = { ...spec, marks: [{ type: "line", x: "x", y: "b", axis: "middle" }] };
     expect(() => loadSpec(bad as never)).toThrow(/marks\[0\]\.axis: expected "left" or "right"/);
   });
@@ -222,7 +222,7 @@ describe("right y axis", () => {
         line(traffic, { x: "t", y: "requests", axis: "right" }),
         rule({ y: 5, axis: "right" }),
       ],
-      y: { label: "ms", format: { style: "currency", currency: "USD" } },
+      y: { title: "ms", format: { style: "currency", currency: "USD" } },
       yRight: { format: { style: "unit", unit: "meter" } },
     });
     const text = describeChart(model);
@@ -284,7 +284,7 @@ describe("right y axis", () => {
 
   it("depend on marks, not on the view or the data in it", () => {
     const notes = table({ t: [1], v: [500], name: ["peak"] });
-    const note = text(notes, { x: "t", y: "v", text: "name", axis: "right" });
+    const note = text(notes, { x: "t", y: "v", textField: "name", axis: "right" });
     const { model } = build({
       marks: [line(traffic, { x: "t", y: "latency" }), note],
       y: { domain: [0, 50], format: { style: "currency", currency: "USD" } },

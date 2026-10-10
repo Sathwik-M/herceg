@@ -376,7 +376,7 @@ const latency: PdfOptions = {
   timeZone: "UTC",
   locale: "en-US",
   marks: [line(metrics, { x: "t", y: ["api", "db"] }), rule({ y: 150, label: "SLO" })],
-  y: { label: "ms" },
+  y: { title: "ms" },
 };
 
 describe("PDF marked-content assertions", () => {
@@ -627,7 +627,7 @@ describe("renderToPDF", () => {
             heatmap(table({ x: [0, 1], y: [0, 0], v: [1, null] }), {
               x: "x",
               y: "y",
-              value: "v",
+              color: "v",
             }),
           ],
           theme: { font: "Fixture" },
@@ -817,7 +817,7 @@ describe("renderToPDF", () => {
         height: 240,
         locale: "en-US",
         marks: [
-          point(pts, { x: "x", y: "y", r: "s", color: "v", colorMidpoint: 0, symbol: "kind" }),
+          point(pts, { x: "x", y: "y", size: "s", color: "v", colorMidpoint: 0, symbol: "kind" }),
         ],
       }),
     );
@@ -937,7 +937,7 @@ describe("renderToPDF", () => {
             value: "n",
             nodes: people,
             node: "name",
-            group: "team",
+            color: "team",
           }),
         ],
       }),
@@ -989,7 +989,7 @@ describe("renderToPDF", () => {
         projection: "equirectangular",
         marks: [
           geoshape(regions, { color: "v" }),
-          geopoint(places, { longitude: "lon", latitude: "lat", r: "n", fillOpacity: 1 }),
+          geopoint(places, { longitude: "lon", latitude: "lat", size: "n", fillOpacity: 1 }),
         ],
       }),
     );
@@ -1030,7 +1030,7 @@ describe("renderToPDF", () => {
           width: 300,
           height: 200,
           locale: "en-US",
-          marks: [heatmap(table({ x, y, v }), { x: "x", y: "y", value: "v" })],
+          marks: [heatmap(table({ x, y, v }), { x: "x", y: "y", color: "v" })],
         }),
       );
     const size = (dictionary: string) =>
@@ -2009,7 +2009,7 @@ describe("PDF readers", () => {
       width: 300,
       height: 200,
       marks: [
-        heatmap(table({ x: [0, 1], y: [0, 0], v: [1, null] }), { x: "x", y: "y", value: "v" }),
+        heatmap(table({ x: [0, 1], y: [0, 0], v: [1, null] }), { x: "x", y: "y", color: "v" }),
       ],
     }),
   );
@@ -2142,7 +2142,6 @@ it("exports horizontal cumulative histograms as PDF rectangles and static SVG", 
   expect(pdf.content).toMatch(/(?:[^\n]+ re\n){2}f/);
   expect(renderToSVG(config)).toMatch(/fill="#ff0000"/);
   const spec = {
-    version: 10,
     width: 600,
     height: 300,
     data: { t: { columns: { v: [1, 2, 3] } } },
@@ -2172,8 +2171,8 @@ it.each(["bottom", "top", "left", "right"] as const)(
           label: "Clustering",
         }),
       ],
-      x: { axis: false, grid: false },
-      y: { axis: false, grid: false },
+      x: { show: false, grid: false },
+      y: { show: false, grid: false },
       locale: "en-US",
     };
     const svg = renderToSVG(options);

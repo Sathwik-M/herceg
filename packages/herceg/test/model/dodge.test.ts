@@ -234,30 +234,21 @@ describe("jitter", () => {
 });
 
 describe("dodge and jitter in specs", () => {
-  const spec = (version: number, mark: Record<string, unknown>) => ({
-    version,
+  const spec = (mark: Record<string, unknown>) => ({
     data: { d: { columns: { day: ["thu"], sex: ["f"], v: [1] } } },
     marks: [{ type: "point", x: "day", y: "v", series: "sex", ...mark }],
   });
 
-  it("need version 10", () => {
-    expect(() => validateSpec(spec(6, { dodge: true }))).toThrow(
-      /marks\[0\]\.dodge.*"version": 10/,
-    );
-    expect(() => validateSpec(spec(7, { jitter: { width: 0.2 } }))).toThrow(
-      /marks\[0\]\.jitter.*"version": 10/,
-    );
-    expect(() => validateSpec(spec(9, { dodge: true }))).toThrow(/"version": 10/);
-    expect(() => validateSpec(spec(6, { dodge: false }))).not.toThrow();
+  it("load", () => {
     expect(() =>
-      validateSpec(spec(10, { dodge: true, jitter: { width: 0.2, seed: 4 } })),
+      validateSpec(spec({ dodge: true, jitter: { width: 0.2, seed: 4 } })),
     ).not.toThrow();
   });
 
   it("check their values", () => {
-    expect(() => validateSpec(spec(10, { jitter: { width: 2 } }))).toThrow(/jitter\.width/);
-    expect(() => validateSpec(spec(10, { jitter: { seed: 1 } }))).toThrow(/jitter.*width/);
-    expect(() => validateSpec(spec(10, { jitter: { width: 0.2, seed: 1.5 } }))).toThrow(
+    expect(() => validateSpec(spec({ jitter: { width: 2 } }))).toThrow(/jitter\.width/);
+    expect(() => validateSpec(spec({ jitter: { seed: 1 } }))).toThrow(/jitter.*width/);
+    expect(() => validateSpec(spec({ jitter: { width: 0.2, seed: 1.5 } }))).toThrow(
       /jitter\.seed.*whole number/,
     );
   });

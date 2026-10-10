@@ -801,7 +801,9 @@ describe("categories resolved per panel", () => {
         resolve: { x: "independent" },
         interaction: { sync: "dashboard" },
       }),
-    ).toThrow("Charts whose panels have categories of their own (resolve.x) cannot be synced yet");
+    ).toThrow(
+      "chart interaction.sync: panels with categories of their own (resolve.x) cannot sync yet",
+    );
     expect(() =>
       build({
         marks: [bar(data, { x: "units", y: "product" })],
@@ -809,7 +811,7 @@ describe("categories resolved per panel", () => {
         resolve: { y: "columns" },
         interaction: { brush: "xy" },
       }),
-    ).toThrow("can brush along x only");
+    ).toThrow("brush along x only");
     // Shared, as before, these are fine; brushing x categories per panel too.
     expect(() =>
       build({
@@ -821,9 +823,8 @@ describe("categories resolved per panel", () => {
     ).not.toThrow();
   });
 
-  it("load from specs, render statically, and keep the spec version rules", () => {
+  it("load from specs and render statically", () => {
     const spec = {
-      version: 3 as const,
       data: {
         sales: {
           columns: {
@@ -844,8 +845,5 @@ describe("categories resolved per panel", () => {
     expect(categories(model)).toEqual([["b", "d"], ["a"], ["c"]]);
     const svg = renderToSVG({ ...config, width: 600, height: 300 });
     for (const label of ["b", "d", "a", "c"]) expect(svg).toContain(`>${label}</text>`);
-    expect(() => loadSpec({ ...spec, version: 2 }, [])).toThrow(
-      'spec.resolve.x: expected a spec with "version": 3',
-    );
   });
 });

@@ -149,7 +149,7 @@ describe("grid queries", () => {
     bad((q) => (q.version = 2), /version 1/);
     bad((q) => (q.source = "other"), /not the source "memory"/);
     bad((q) => (q.filter = ["field", "ms"]), /true or false/);
-    bad((q) => (q.filter = [">", ["field", "nope"], 1]), /Unknown field "nope"/);
+    bad((q) => (q.filter = [">", ["field", "nope"], 1]), /no field "nope"/);
     bad((q) => (q.sort = [{ field: "nope" }]), /Unknown sort field/);
     bad((q) => (q.sort = [{ field: "ms", order: "up" }]), /"ascending" or "descending"/);
     bad((q) => (q.sort = [{ field: "ms", direction: "up" }]), /unknown property "direction"/);
@@ -259,7 +259,7 @@ describe("remote grids", () => {
 
   it("start the snapshot again when its first request was aborted", async () => {
     const { source, pending, answer } = controlled(100_000);
-    const m = model(source, { settle: 0 });
+    const m = model(source, { settleDelay: 0 });
     await settle();
     await answer();
     pending.length = 0;
@@ -288,7 +288,7 @@ describe("remote grids", () => {
 
   it("ask for one block ahead only, keeping the direction until the rows in view move", async () => {
     const { source, pending, answerAll } = controlled(100_000);
-    const m = model(source, { settle: 0 });
+    const m = model(source, { settleDelay: 0 });
     await settle();
     await answerAll();
     m.scrollTo({ top: 50_000 * 28 });
@@ -479,7 +479,7 @@ describe("remote grids", () => {
   it("keep waiting for a jump to settle through changes other than scrolling", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const { source, pending, answer } = controlled(1_000_000);
-    const m = model(source, { settle: 1000 });
+    const m = model(source, { settleDelay: 1000 });
     const step = (ms: number) => vi.advanceTimersByTimeAsync(ms);
     await step(0);
     const answered = answer();
@@ -539,7 +539,7 @@ describe("remote grids", () => {
   it("select records by key, which survive new queries", async () => {
     const { source, answerAll } = controlled();
     const store = remoteSelectionStore(source.schema);
-    const m = model(source, { selection: store });
+    const m = model(source, { selectionStore: store });
     await settle();
     await answerAll();
     m.select(2);
@@ -572,16 +572,19 @@ describe("remote grids", () => {
     m.scrollTo({ top: 5000 * 28 });
     await new Promise((resolve) => setTimeout(resolve, 60));
     await answerAll();
-    const before = m.selection.revision;
+    const before = m.selectionStore.revision;
     m.select(5005, "range");
-    expect(m.selection.revision).toBe(before);
+    expect(m.selectionStore.revision).toBe(before);
     expect(m.message).toMatchObject({ text: expect.stringMatching(/only rows loaded/), count: 1 });
   });
 
   it("select every row matching, with rows taken out and added back", async () => {
     const { source, answerAll } = controlled();
     const store = remoteSelectionStore(source.schema);
-    const m = model(source, { selection: store, query: { filter: ["<", ["field", "ms"], 50] } });
+    const m = model(source, {
+      selectionStore: store,
+      query: { filter: ["<", ["field", "ms"], 50] },
+    });
     await settle();
     await answerAll();
     m.selectAll();
@@ -655,7 +658,7 @@ describe("remote grids", () => {
 describe("remote grids, at the edges", () => {
   it("take an answer past the end, as a new query shorter than the last gives", async () => {
     const { source, pending, answerAll } = controlled(10_000);
-    const m = model(source, { settle: 0 });
+    const m = model(source, { settleDelay: 0 });
     await settle();
     await answerAll();
     m.scrollTo({ top: 5000 * 28 });
@@ -726,7 +729,7 @@ describe("remote grids, at the edges", () => {
 
   it("show rows not loaded of an expired snapshot as failed, not loading", async () => {
     const { source, pending, answer } = controlled(10_000);
-    const m = model(source, { settle: 0 });
+    const m = model(source, { settleDelay: 0 });
     await settle();
     await answer();
     pending.shift()!.reject(new GridSourceError("snapshot-expired", "gone"));
@@ -739,7 +742,7 @@ describe("remote grids, at the edges", () => {
 
   it("release a snapshot whose first answer arrived for no one", async () => {
     const { source, pending, answer, answerAll, released } = controlled(10_000);
-    const m = model(source, { settle: 0 });
+    const m = model(source, { settleDelay: 0 });
     await settle();
     await answerAll();
     m.setSort([{ field: "ms" }]);
@@ -785,7 +788,7 @@ describe("remote grids, at the edges", () => {
   it("count the cache's bytes over the blocks besides those the view wants", async () => {
     const { source, answerAll } = controlled(10_000);
     // A block of 50 rows holds about a kilobyte: room for three besides the view's two.
-    const m = model(source, { settle: 0, cachedBlocks: 100, cacheBytes: 3 * 1100 });
+    const m = model(source, { settleDelay: 0, cachedBlocks: 100, cacheBytes: 3 * 1100 });
     for (const row of [0, 500, 1000, 1500, 2000, 2500, 3000, 3500]) {
       m.scrollTo({ top: row * 28 });
       await settle();
@@ -811,7 +814,7 @@ describe("remote grids, second review", () => {
   it("read no rows again when a selection's fields come and go", async () => {
     const { source, pending, answerAll } = controlled();
     const store = remoteSelectionStore(source.schema);
-    const m = model(source, { selection: store, columns: [{ field: "id" }] as never });
+    const m = model(source, { selectionStore: store, columns: [{ field: "id" }] as never });
     await settle();
     await answerAll();
     store.set("grid-rows", selectMatching(col("ms").gt(50)));
@@ -914,7 +917,7 @@ describe("remote grids, fourth review", () => {
     const m = model(source, {
       query: { group: { by: ["id"], aggregate: [] } } as never,
       cachedBlocks: 1,
-      settle: 0,
+      settleDelay: 0,
     });
     m.setExpanded([3], true);
     m.setExpanded([4], true);
@@ -1004,7 +1007,7 @@ describe("remote grids, Sol's review", () => {
     const source = memorySource(data, { key: "id" });
     const store = remoteSelectionStore(source.schema);
     const m = model(source, {
-      selection: store,
+      selectionStore: store,
       query: { group: { by: ["host"], aggregate: [] } } as never,
     });
     m.setExpanded(["db"], true);
@@ -1159,7 +1162,7 @@ describe("remote grids, Sol's second review", () => {
   it("ask by the deadline however a drag goes on, and at once for a new query", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const { source, pending, answer } = controlled(1_000_000);
-    const m = model(source, { settle: 100 });
+    const m = model(source, { settleDelay: 100 });
     const step = (ms: number) => vi.advanceTimersByTimeAsync(ms);
     await step(0);
     const answered = answer();
@@ -1200,7 +1203,7 @@ describe("remote grids, Sol's third review", () => {
 
   it("keep failed blocks within the cache's limits", async () => {
     const { source, pending, answer } = controlled(1_000_000);
-    const m = model(source, { settle: 0, cachedBlocks: 1 });
+    const m = model(source, { settleDelay: 0, cachedBlocks: 1 });
     await settle();
     await answer();
     for (let i = 1; i <= 20; i++) {
@@ -1241,7 +1244,7 @@ describe("remote grids, Sol's third review", () => {
 describe("remote grids, Sol's fourth review", () => {
   it("drop blocks a smaller view no longer wants", async () => {
     const { source, answerAll } = controlled(1000);
-    const m = model(source, { blockSize: 1, cachedBlocks: 1, settle: 0 });
+    const m = model(source, { blockSize: 1, cachedBlocks: 1, settleDelay: 0 });
     m.setViewport(400, 560);
     await settle();
     await answerAll();
@@ -1278,7 +1281,7 @@ describe("remote grids, Sol's fourth review", () => {
 describe("remote grids, Sol's fifth review", () => {
   it("start a query a listener sets while the cache drops blocks", async () => {
     const { source, pending, answerAll } = controlled(1000);
-    const m = model(source, { blockSize: 1, cachedBlocks: 1, settle: 0 });
+    const m = model(source, { blockSize: 1, cachedBlocks: 1, settleDelay: 0 });
     m.setViewport(400, 560);
     await settle();
     await answerAll();
@@ -1344,7 +1347,7 @@ describe("remote grids, Sol's sixth review", () => {
   it("wait for jumps to settle though the cache drops blocks as they go", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const { source, pending, answer } = controlled(1_000_000);
-    const m = model(source, { settle: 100, cachedBlocks: 1 });
+    const m = model(source, { settleDelay: 100, cachedBlocks: 1 });
     const step = (ms: number) => vi.advanceTimersByTimeAsync(ms);
     await step(0);
     const answered = answer();
@@ -1427,10 +1430,10 @@ describe("remote grids, Sol's seventh review", () => {
     const source = memorySource(data, { key: "id" });
     const store = remoteSelectionStore(source.schema);
     const m = model(source, {
-      selection: store,
+      selectionStore: store,
       blockSize: 1,
       cachedBlocks: 1,
-      settle: 0,
+      settleDelay: 0,
       columns: [{ field: "id" }, { field: "host" }] as never,
       query: { group: { by: ["host"], aggregate: [] } } as never,
     });
@@ -1476,7 +1479,7 @@ describe("remote grids, Sol's eighth review", () => {
       store.set("grid-rows", { kind: "matching", where: false, include: [], except: [] });
     });
     const m = model(source, {
-      selection: store,
+      selectionStore: store,
       query: { group: { by: ["host"], aggregate: [] } } as never,
     });
     await settle();
@@ -1493,7 +1496,7 @@ describe("remote grids, Sol's eighth review", () => {
     let m: ReturnType<typeof model> | undefined;
     store.subscribe(() => seen.push(m!.selectionState(1)));
     m = model(source, {
-      selection: store,
+      selectionStore: store,
       query: { group: { by: ["host"], aggregate: [] } } as never,
     });
     await settle();
@@ -1514,7 +1517,7 @@ describe("remote grids, Sol's ninth review", () => {
       store.set("chart-brush", { kind: "keys", keys: [1] });
     });
     const m = model(source, {
-      selection: store,
+      selectionStore: store,
       query: { group: { by: ["host"], aggregate: [] } } as never,
     });
     await settle();
@@ -1535,10 +1538,10 @@ describe("remote grids, Sol's ninth review", () => {
     const source = memorySource(data, { key: "id" });
     const store = remoteSelectionStore(source.schema);
     const m = model(source, {
-      selection: store,
+      selectionStore: store,
       blockSize: 1,
       cachedBlocks: 1,
-      settle: 0,
+      settleDelay: 0,
       columns: [{ field: "id" }, { field: "host" }] as never,
       query: { group: { by: ["host"], aggregate: [] } } as never,
     });
@@ -1557,7 +1560,7 @@ describe("remote grids, Sol's ninth review", () => {
 describe("remote grids, Sol's tenth review", () => {
   it("keep count of requests whatever a source does as one is aborted", async () => {
     const { source, pending, answer, answerAll } = controlled(100_000);
-    const m = model(source, { maxRequests: 1, settle: 0 });
+    const m = model(source, { maxRequests: 1, settleDelay: 0 });
     await settle();
     await answer();
     // The block ahead is in flight; its abort listener sets a query.
@@ -1610,7 +1613,7 @@ describe("remote grids, Sol's eleventh review", () => {
     const { source, pending, answerAll } = controlled(10_000);
     const m = model(source, {
       maxRequests: 1,
-      settle: 0,
+      settleDelay: 0,
       columns: [{ field: "id" }] as never,
       query: { group: { by: ["host"], aggregate: [] } } as never,
     });
@@ -1662,7 +1665,7 @@ describe("remote selections across queries", () => {
     const { source, pending, answerAll } = controlled();
     const store = remoteSelectionStore(source.schema);
     const m = model(source, {
-      selection: store,
+      selectionStore: store,
       columns: [{ field: "id" }] as never,
       query: { filter: [">", ["field", "ms"], 50] },
     });
@@ -1688,7 +1691,7 @@ describe("remote selections across queries", () => {
     const source = memorySource(data, { key: "id" });
     const store = remoteSelectionStore(source.schema);
     const m = model(source, {
-      selection: store,
+      selectionStore: store,
       query: { group: { by: ["host"], aggregate: [] } } as never,
     });
     await settle();
@@ -1795,7 +1798,7 @@ describe("grouped remote grids", () => {
     const store = remoteSelectionStore(source.schema);
     const m = model(source, {
       query: { ...GROUP, filter: [">", ["field", "ms"], 0] } as never,
-      selection: store,
+      selectionStore: store,
     });
     await settle();
     await answerAll();

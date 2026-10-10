@@ -209,7 +209,7 @@ describe("pivot grids", () => {
   it("select a row's rows of the view into the store, partly once rows join it", () => {
     const { t, view, pivot } = pivoted();
     const store = selectionStore(t);
-    const model = createPivotGridModel({ data: pivot, selection: store });
+    const model = createPivotGridModel({ data: pivot, selectionStore: store });
     model.setViewport(400, 100);
     model.select(0);
     const picked = store.get("grid-rows");
@@ -243,10 +243,10 @@ describe("pivot grids", () => {
     t.append({ region: ["eu", "us"], service: ["cache", "api"], ms: [1, 2] });
     expect(cells(model)).toEqual(before);
     expect(model.selectionState(0)).toBe("all");
-    const revision = model.selection.revision;
+    const revision = model.selectionStore.revision;
     model.select(1);
     model.selectAll();
-    expect(model.selection.revision).toBe(revision);
+    expect(model.selectionStore.revision).toBe(revision);
   });
 
   it("select nothing from a change the pivot refused, even from a listener told of it first", () => {
