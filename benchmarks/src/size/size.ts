@@ -1,5 +1,5 @@
-// Bundle size benchmark: each entry renders an equivalent time-series line
-// chart with a tooltip, bundled for production with tree shaking.
+// Bundle size benchmark: entries mount charts or grids, bundled for
+// production with tree shaking. Line entries render equivalent time series.
 //
 //   npm run size -- [--out results/size.json]
 
@@ -30,6 +30,7 @@ const ENTRY_PACKAGES: Record<string, string> = {
   "herceg-bar": "herceg",
   "herceg-area": "herceg",
   "herceg-scatter": "herceg",
+  "herceg-heatmap": "herceg",
   "herceg-react-line": "@herceg/react",
   "herceg-vue-line": "@herceg/vue",
   "herceg-svelte-line": "@herceg/svelte",

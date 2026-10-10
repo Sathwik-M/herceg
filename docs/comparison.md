@@ -75,8 +75,9 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 
 ## Bundle size
 
-Each entry renders the same time-series line chart with a tooltip and is
-bundled for production with tree shaking (`benchmarks/src/size/entries/`).
+Entries mount charts or grids, bundled for production with tree shaking
+(`benchmarks/src/size/entries/`). The line entries render the same time-series
+chart with a tooltip.
 `herceg-react-line` renders it through `@herceg/react` and leaves React and
 React DOM out, since an application using the adapter already ships them;
 `herceg-vue-line` and `herceg-svelte-line` do the same through `@herceg/vue`
@@ -89,9 +90,11 @@ chart: it mounts a two-column grid (`herceg/grid`) over the same data, with
 its model, row view, and selection store; no other library here has a grid
 to compare it with. `herceg-bar` (bars stacked by a series field),
 `herceg-area` (areas stacked by a series field), and `herceg-scatter`
-(points) track what each mark adds to Herceg's bundle; they have no
-counterparts among the other libraries' entries. `herceg-pivot` pivots the
-same data by a field of four values (`herceg/pivot`, no DOM), and
+(points) track what each mark adds to Herceg's bundle. `herceg-heatmap`
+mounts a heatmap over a number x field and a category y field; it includes
+continuous cell placement and synchronous calendar placement. These mark
+entries have no counterparts among the other libraries' entries. `herceg-pivot`
+pivots the same data by a field of four values (`herceg/pivot`, no DOM), and
 `herceg-grid-pivot` shows that pivot in its grid (`herceg/grid/pivot`), and
 `herceg-grid-remote` shows the same data as a remote grid
 (`herceg/grid/remote`) over a source answering from the page's arrays.

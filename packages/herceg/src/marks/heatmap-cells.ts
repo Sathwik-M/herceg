@@ -3,6 +3,7 @@
 // zooming and panning never move them.
 
 import type { NumericArray } from "../data/column.ts";
+import { lowerBound, upperBound } from "../data/table.ts";
 import type { Breaks } from "../lod/m4.ts";
 import { usableDomain } from "../model/axis.ts";
 
@@ -79,15 +80,7 @@ export class AxisCells {
   find(value: number): number {
     const { lower, upper } = this;
     const at = this.place(value);
-    // The last cell starting at or before the value.
-    let lo = 0;
-    let hi = lower.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (lower[mid]! <= at) lo = mid + 1;
-      else hi = mid;
-    }
-    const i = lo - 1;
+    const i = upperBound(lower, at) - 1;
     if (i < 0) return -1;
     return at < upper[i]! || (i === upper.length - 1 && at === upper[i]) ? i : -1;
   }
@@ -96,21 +89,8 @@ export class AxisCells {
   overlapping(lo: number, hi: number): [number, number] {
     const { lower, upper } = this;
     const [from, to] = [this.place(lo), this.place(hi)];
-    let a = 0;
-    let b = upper.length;
-    while (a < b) {
-      const mid = (a + b) >>> 1;
-      if (upper[mid]! <= from) a = mid + 1;
-      else b = mid;
-    }
-    const first = a;
-    b = lower.length;
-    while (a < b) {
-      const mid = (a + b) >>> 1;
-      if (lower[mid]! < to) a = mid + 1;
-      else b = mid;
-    }
-    return [first, a - 1];
+    const first = upperBound(upper, from);
+    return [first, lowerBound(lower, to, first) - 1];
   }
 
   /** The values at the edges of cells `first` to `last`. */
@@ -243,11 +223,11 @@ function finite(edge: number): number {
 }
 
 /**
- * The column's distinct finite values, ascending, and each row's index
- * among them (-1 for none): numbered as they appear through a Map, then
- * renumbered in order, since grids have far fewer distinct values than rows.
+ * The column's distinct finite values and each row's index among them
+ * (-1 for none). Sort and renumber for continuous cells; calendars keep
+ * encounter order to avoid sorting distinct instants they only map to days.
  */
-function distinct(column: NumericArray): [Float64Array, Int32Array] {
+export function distinct(column: NumericArray, sorted = true): [Float64Array, Int32Array] {
   const ids = new Map<number, number>();
   const own = new Int32Array(column.length);
   for (let i = 0; i < column.length; i++) {
@@ -263,7 +243,9 @@ function distinct(column: NumericArray): [Float64Array, Int32Array] {
     }
     own[i] = id;
   }
-  const values = Float64Array.from(ids.keys()).sort();
+  const values = Float64Array.from(ids.keys());
+  if (!sorted) return [values, own];
+  values.sort();
   const rank = new Int32Array(values.length);
   for (let k = 0; k < values.length; k++) rank[ids.get(values[k]!)!] = k;
   for (let i = 0; i < own.length; i++) if (own[i]! >= 0) own[i] = rank[own[i]!]!;
