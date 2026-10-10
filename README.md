@@ -71,7 +71,9 @@ and small lines and areas, with the axes they move), crosshair
 labels on the axes), a range navigator (a strip under the plot over the
 whole x axis whose window pans and zooms by pointer and keyboard), time
 axes that leave out breaks (nights, weekends, holidays) in any time zone,
-static SVG and PDF export, React, Vue, and Svelte adapters, min/max indexes for zooming and streaming large line
+static SVG and PDF export (Unicode with opt-in `pdfFonts` and supplied
+TrueType fonts), React, Vue, and Svelte adapters, min/max indexes for zooming
+and streaming large line
 series (whole columns or split by a series field), WebGL drawing of large
 point series, chart specs with binary columns, a Python package, a second
 y axis (in facets and subplots too, shared or per panel), small multiples
@@ -107,7 +109,9 @@ Next, in order:
    and wireframed surfaces on the GPU.
 5. Grid: pivots over remote sources, bins in grid queries, a SQL
    generator for them, remote grids from Python, and editing.
-6. Screen-reader verification, benchmarks in Firefox and on other machines
+6. PDF: optional shipped Unicode fonts, tagged output for assistive technology,
+   and later bidirectional ordering/shaping and CFF fonts.
+7. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
 
 ## Development

@@ -59,7 +59,7 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 | Python | First-party `herceg` package: `hg.line(df, x=..., y=...)` one-liners and a chainable `hg.Chart` for pandas, Polars, PyArrow, and NumPy data. Columns travel as binary buffers (no JSON number lists); output to notebooks, self-contained HTML, SVG, PNG, and PDF, and live notebook charts (see Notebooks). `herceg.streamlit.chart` shows charts in Streamlit apps (components v2, one binary payload per run) and returns the whole selection (ranges and lasso), the clicked data, with its rows, and a row selection's rows or condition to the script; hover and zoom are not reported there. | Community `pyecharts`; community `streamlit-echarts` for Streamlit. | None. | None. | First-class Plotly Python and Plotly Express; Streamlit's built-in `st.plotly_chart` returns point, box, and lasso selections. |
 | Notebooks | Static display: an isolated iframe with the engine and the data embedded, so it works offline. Live charts (`chart.widget()`, on anywidget): Python appends rows (with a rolling window), replaces data, and changes options without re-sending the chart, as binary buffers over the widget's connection; brushing (ranges and lassos), zooming (x and both y axes), hovering, and clicks (with the rows under the pointer) come back as properties and callbacks, with datetimes on time axes, and a chart's row selection (`row_selection=`) reports the rows selected, by position in the data after rows streamed in and out, or a brush's condition, and takes rows or a condition from Python. Tested in JupyterLab 4 only; update latency through the kernel not measured. | Community `pyecharts` renders notebook HTML; no first-party widget. | None. | None. | Documented. `fig.show()` in notebooks and `go.FigureWidget` (anywidget-based since Plotly.py 6), which updates traces from Python and calls Python on click, hover, and selection. |
 | Accessibility | Focusable figure with a generated data summary, arrow-key navigation announced through a live region, legend entries as toggle buttons, `title`/`desc` in static SVG. Automated axe-core audits (WCAG 2.1 A/AA and best practices) find nothing to fix in every chart family, both renderers, facets, subplots, all four themes, static SVG, and grids; tests check the accessibility tree screen readers receive (name, description read once, legend states, live announcements), but not yet tried with screen readers themselves. The keyboard reaches every series (Up and Down between them) and walks heatmaps cell by cell. | Documented. `aria` option generates descriptions; decal patterns. | Documented. Required accessible name, keyboard focus navigation. | Canvas only; the application supplies fallback content. | Limited; no keyboard navigation of data. |
-| Export | Standalone SVG in the browser (`toSVG`) and without a DOM (`renderToSVG`, heatmaps embedded as PNG). One-page vector PDF without a DOM or dependencies (`herceg/pdf`, ~11 KiB gzip, bundled only when imported): paths, selectable text in the standard PDF fonts, heatmaps as images; no embedded fonts, so text is limited to Windows-1252 characters, and the PDF is not tagged. Python saves SVG and PDF (same renderers, embedded V8) and PNG (resvg) without a browser. | Documented. PNG/SVG from the browser, server-side SVG strings; no built-in PDF. | Documented. Static SVG, SSR, browser raster export. | PNG via `toBase64Image`; no built-in PDF. | Documented. PNG/SVG/JPEG/WebP; Kaleido for Python, which also writes PDF. |
+| Export | Standalone SVG in the browser (`toSVG`) and without a DOM (`renderToSVG`, heatmaps embedded as PNG). One-page vector PDF without a DOM or dependencies (`herceg/pdf`, 41.13 KiB gzip for plain export and 48.50 KiB with `pdfFonts`, including scene compilation and a line mark, excluding supplied font bytes; embedded-font code excluded from the line-chart bundle): paths, selectable Unicode text with supplied static TrueType fonts, per-document subsets, exact advances, fallback coverage, and copy/search maps; heatmaps as images. Without `pdfFonts`, the standard Windows-1252 path remains and no TrueType parser, resolver, subsetter, or binary font helpers are bundled. Both `renderToPDF` and `specToPDF` take `fonts: pdfFonts(sources, { fallback?, missingGlyph? })`. Text uses a conservative script/block allowlist and one face per grapheme cluster; other scripts, unassigned characters, and format controls fail before replacement. CFF, complex shaping, emoji sequences, shipped fonts, and tagged PDF are not implemented. Python saves SVG and PDF (same renderers, embedded V8) and PNG (resvg) without a browser. | Documented. PNG/SVG from the browser, server-side SVG strings; no built-in PDF. | Documented. Static SVG, SSR, browser raster export. | PNG via `toBase64Image`; no built-in PDF. | Documented. PNG/SVG/JPEG/WebP; Kaleido for Python, which also writes PDF. |
 | Ease of use | One table plus mark functions with typed fields, the same marks in TypeScript, the adapters, specs, and Python. Covers the common chart families (lines, areas, bars, points, heatmaps, distributions, part-to-whole, hierarchies, flows, networks, 3D points, lines, and surfaces) with fewer options than ECharts or Plotly, and no financial indicators yet. | Large declarative option object; many examples. | Typed grammar; scales and D3 modules are explicit imports. | Simple for standard charts; plugins for the rest. | Very quick for common charts, especially Plotly Express. |
 
 ## Environment
@@ -75,7 +75,7 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 
 ## Bundle size
 
-Each entry renders the same time-series line chart with a tooltip and is
+Chart entries render the same time-series line chart with a tooltip and are
 bundled for production with tree shaking (`benchmarks/src/size/entries/`).
 `herceg-react-line` renders it through `@herceg/react` and leaves React and
 React DOM out, since an application using the adapter already ships them;
@@ -96,6 +96,19 @@ same data by a field of four values (`herceg/pivot`, no DOM), and
 `herceg-grid-remote` shows the same data as a remote grid
 (`herceg/grid/remote`) over a source answering from the page's arrays.
 
+`herceg-pdf` exports a line chart as a PDF with standard fonts;
+`herceg-pdf-fonts` exports the same chart with `fonts: pdfFonts(sources)`.
+These export entries include scene compilation and a line mark without
+interactive chart mounting. Font programs are runtime inputs, excluded from
+the measured JavaScript. Both sizes are recorded in `benchmarks/results/size.json`;
+`pdf-fonts-size.json` retains historical export timings from the Unicode PDF
+implementation before the prepared API, rather than duplicating bundle entries.
+
+Size measurement: 2026-10-10, commit ea228d4 (uncommitted changes),
+Darwin 27.0.0, Apple M6, Node v22.23.3,
+esbuild 0.28.2; ESM, ES2022, production minification, gzip
+level 9 and Brotli quality 11.
+
 <!-- results:size -->
 | Entry | Version | Minified KiB | Gzip KiB | Brotli KiB | Required CSS, gzip KiB | Loaded on demand, gzip KiB |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -103,17 +116,19 @@ same data by a field of four values (`herceg/pivot`, no DOM), and
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-area | 0.0.0 (d885b17) | 130.9 | 49.0 | 43.8 | - | 25.5 |
-| herceg-bar | 0.0.0 (d885b17) | 128.8 | 48.7 | 43.5 | - | 25.5 |
-| herceg-grid-pivot | 0.0.0 (d885b17) | 130.9 | 44.5 | 39.8 | - | - |
-| herceg-grid-remote | 0.0.0 (d885b17) | 87.6 | 30.3 | 27.2 | - | - |
-| herceg-grid | 0.0.0 (d885b17) | 87.9 | 30.5 | 27.4 | - | - |
-| herceg-line | 0.0.0 (d885b17) | 113.5 | 42.6 | 38.2 | - | 25.5 |
-| herceg-pivot | 0.0.0 (d885b17) | 59.7 | 19.9 | 18.0 | - | - |
-| herceg-react-line | 0.0.0 (d885b17) | 116.2 | 43.8 | 39.4 | - | 25.5 |
-| herceg-scatter | 0.0.0 (d885b17) | 131.1 | 49.5 | 44.1 | - | 25.5 |
-| herceg-svelte-line | 0.0.0 (d885b17) | 117.6 | 44.3 | 39.8 | - | 25.5 |
-| herceg-vue-line | 0.0.0 (d885b17) | 117.3 | 44.2 | 39.6 | - | 25.5 |
+| herceg-area | 0.0.0 (ea228d4) | 130.9 | 49.0 | 43.8 | - | 25.5 |
+| herceg-bar | 0.0.0 (ea228d4) | 128.8 | 48.7 | 43.4 | - | 25.5 |
+| herceg-grid-pivot | 0.0.0 (ea228d4) | 130.9 | 44.5 | 39.8 | - | - |
+| herceg-grid-remote | 0.0.0 (ea228d4) | 87.6 | 30.3 | 27.2 | - | - |
+| herceg-grid | 0.0.0 (ea228d4) | 87.9 | 30.5 | 27.4 | - | - |
+| herceg-line | 0.0.0 (ea228d4) | 113.5 | 42.6 | 38.2 | - | 25.5 |
+| herceg-pdf-fonts | 0.0.0 (ea228d4) | 124.1 | 48.5 | 43.3 | - | 2.9 |
+| herceg-pdf | 0.0.0 (ea228d4) | 105.4 | 41.1 | 36.7 | - | 2.9 |
+| herceg-pivot | 0.0.0 (ea228d4) | 59.7 | 19.9 | 18.0 | - | - |
+| herceg-react-line | 0.0.0 (ea228d4) | 116.2 | 43.8 | 39.3 | - | 25.5 |
+| herceg-scatter | 0.0.0 (ea228d4) | 131.2 | 49.5 | 44.1 | - | 25.5 |
+| herceg-svelte-line | 0.0.0 (ea228d4) | 117.6 | 44.3 | 39.7 | - | 25.5 |
+| herceg-vue-line | 0.0.0 (ea228d4) | 117.3 | 44.2 | 39.6 | - | 25.5 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |

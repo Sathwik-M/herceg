@@ -2344,10 +2344,132 @@ RGB images with a soft mask for missing cells, each cell wider than a pixel
 repeated to about two image pixels per CSS pixel (at most 4,194,304 pixels),
 because some viewers (macOS Preview) smooth images whatever the file asks
 and would blur cells into each other; the color legend's ramp is an axial
-shading. Text uses the standard 14 fonts, which every viewer has, so
-nothing is embedded: layout and anchoring measure text with those fonts'
-exact metrics (Adobe's AFM widths), so a PDF's margins and label placement
-can differ slightly from the static SVG's, which uses estimates. Streams are Flate-compressed by a small built-in deflate (fixed
+shading. Without export-supplied fonts, text uses six standard PDF faces
+(regular/bold Helvetica, Times, and Courier) with WinAnsi and exact Adobe
+AFM advances. With `fonts: pdfFonts(sources, options)`, `src/pdf.ts` asks
+the prepared `PdfFonts` object for an export-scoped `PdfFontResolver`,
+passes its measurer into `model.scene()`, and passes the same resolver into
+`renderPdf()`. Both layout and drawing resolve family,
+weight, and coverage into glyph runs. Advances from `hmtx` are rounded once
+at six decimal places in 1/1000 em and used identically in layout and `/W`;
+no kerning or shaping is applied. The whole fallback string is anchored before
+individual spans are positioned, including rotated text and halos. Cap heights
+from OS/2 (hhea ascent when unavailable) replace the Helvetica assumption for
+hanging/middle embedded text. Width-only layout cannot account for unusual
+fallback ascents/descents; label truncation still cuts at code-point boundaries.
+
+`render/pdf-truetype.ts` validates static sfnt TrueType `glyf` faces and
+Unicode cmap formats 4/12 with table/glyph bounds and composite-cycle checks.
+`render/pdf-font-subset.ts` rebuilds `glyf`, `loca`, `hmtx`, `cmap`, names,
+checksums, and dependent headers after drawing, including `.notdef` and
+recursive composite components. Measuring unused candidates does not collect
+usage. The prepared object snapshots source descriptors and fallback lists and
+borrows font bytes read-only. It is reusable; each document owns its parsed
+faces, ordered-family cache (bounded at 256 entries), character-to-CID map,
+and subset; there is no global parsed-font
+cache. Fonts are limited to 32 MiB and registries to 64 faces. OS/2 tables
+are checked against their version's minimum length, including legacy 68-byte
+version 0 tables. OS/2 fsType restricted and bitmap-only embedding are rejected;
+no-subsetting faces retain the full original program. Bitmap-only and
+no-subsetting bits are ignored in versions 0–1, where they were unassigned.
+Input table and whole-font checksums are intentionally unchecked: real fonts
+often contain incorrect checksums. Generated subsets have fresh checksums.
+CFF needs a separate CIDFontType0/FontFile3 path
+and is refused, as are collections, WOFF, and uninstantiated variable fonts.
+
+The writer embeds FontFile2 with Type0/CIDFontType2, Identity-H, `/W`, an
+explicit CIDToGIDMap, and ToUnicode maps to original UTF-16BE scalars
+and combining sequences (including surrogate pairs). Font descriptor flags
+classify the embedded repertoire against Adobe's standard Latin set: characters
+outside it set Symbolic and clear Nonsymbolic, while fixed-pitch and italic bits
+are preserved. Whole-font embedding classifies the full Unicode cmap repertoire.
+Identity-H codes are CIDs, not Unicode; aliases
+of one glyph receive separate CIDs. Registered CSS family names (including
+quoted and generic names) and the explicit fallback list determine coverage,
+with an entire extended grapheme cluster kept in one face. Simple accents use
+NFC precomposition: the face must cover the source scalars and the composed
+glyph, while ToUnicode preserves the original sequence. Other combining
+sequences are refused because unpositioned marks can render incorrectly.
+Clusters use `Intl.Segmenter` when available in browsers, Node, or embedded
+V8. MiniRacer 0.14.1 provides it. Without it, conservative grouping appends
+Marks, `Grapheme_Extend` characters (including the Lm halfwidth kana voiced
+and semi-voiced marks U+FF9E/U+FF9F and variation selectors), emoji modifiers,
+and ZWJ plus its following scalar. Ordinary spacing modifier letters remain
+separate. This fallback covers admitted text; it is not a full implementation
+of [Unicode extended grapheme segmentation](https://www.unicode.org/reports/tr29/).
+Unsupported sequences are refused before coverage or replacement in both paths.
+Halfwidth kana clusters use one face and one advancing glyph per scalar, with
+distinct CIDs and extraction scalars. NFC-composed glyphs preserve the entire
+original cluster in ToUnicode. Replacement emits one scalar per uncovered
+cluster and must itself be an admitted standalone scalar.
+
+Text admission uses an allowlist rather than a list of scripts to refuse:
+Latin, Greek, Cyrillic, Armenian, Georgian, Han, Hiragana, and Katakana by
+Unicode `Script`; Hangul only as precomposed syllables U+AC00–U+D7A3.
+Common/Inherited scalars must fall in the following selected ranges and have
+`Script_Extensions` intersecting those scripts or remaining Common/Inherited.
+Primary-script Common/Inherited alone does not authorize a character; for
+example, Arabic shared punctuation and Vedic marks remain unsupported.
+[Unicode Script and Script_Extensions](https://www.unicode.org/reports/tr24/)
+distinguish these shared characters from unrestricted punctuation.
+
+| Common/Inherited purpose | Inclusive ranges |
+| --- | --- |
+| Basic punctuation, digits, Latin-1 symbols | U+0020–007E, U+00A0–00FF |
+| Spacing modifiers and combining accents | U+02B0–02E4, U+02EA–036F, U+1AB0–1AFF, U+1DC0–1DFF |
+| Punctuation, superscripts, currency, mathematical, technical, enclosed, geometric symbols, dingbats | U+2000–27FF, U+2900–2BFF, U+2E00–2E7F |
+| CJK punctuation, shared kana signs, annotation, strokes, enclosed and compatibility symbols | U+3000–3030, U+3036–303F, U+3099–309C, U+30A0–30FF, U+3190–33FF |
+| Modifier tone letters and small form variants | U+A700–A711, U+A717–A71F, U+FE50–FE6F |
+| Fullwidth and halfwidth forms, excluding halfwidth Hangul | U+FF01–FF9F, U+FFE0–FFEE |
+| Tai Xuan Jing symbols and mathematical alphanumerics | U+1D300–1D37F, U+1D400–1D7FF |
+| Mahjong, dominoes, cards, enclosed symbols, pictographs, individual emoji, legacy computing symbols | U+1F000–1FAFF, U+1FB00–1FBFF |
+
+These ranges never override script, category, or cluster checks. All other
+scripts, private-use and unassigned scalars, surrogates, controls (including
+all format controls), line/paragraph separators, default-ignorable characters,
+and emoji modifiers are refused. This includes Egyptian layout controls and
+Sidetic even in runtimes whose Unicode tables predate those assignments, and
+the contour tone letters (U+02E5–02E9, U+A712–A716), which ligate, and the
+vertical kana repeat marks (U+3031–3035), which need vertical layout.
+Admission follows the runtime's Unicode property tables: an older runtime
+refuses characters it considers unassigned, including inside an allowed block.
+New scripts are refused automatically. Marks must NFC-compose to one admitted
+non-Mark scalar; other mark positioning remains unsupported. Hangul Jamo,
+halfwidth Hangul, Braille, vertical presentation forms, and ideographic
+description operators are outside the allowlist.
+Composite glyphs require first-component XY placement, mutually exclusive
+transform flags, and valid attachment indices in the accumulated parent and
+expanded child outlines, including their four phantom points.
+Composite resources are bounded to 64 nesting levels, 4,096 direct components,
+65,536 expanded component instances, 65,535 expanded points/contours per glyph,
+and 262,144 component references per font. Missing coverage is
+an error unless a covered replacement scalar is explicitly supplied. Text
+outside the allowlist is refused with its code point; coverage cannot substitute
+for shaping or ordering. Emoji modifier, flag, tag, and
+ZWJ sequences are refused before fallback or replacement. Joiners and variation
+sequences are refused too.
+
+`PdfOptions` and `specToPDF` accept only `fonts?: PdfFonts`, outside the
+portable spec. `pdfFonts(sources, { fallback?, missingGlyph? })` carries the
+resolver factory and embedded-face writer. `renderToPDF` and `render/pdf.ts`
+import these implementation types only; `pdf-document.ts` calls a face's
+writer through the document's `reserve`/`object`/`stream` interface, without
+importing the subsetter. Unicode matchers are pure regular-expression constants,
+so unused re-exports do not retain font code in bundles. Plain PDF exports
+bundle no parser, resolver, subsetter,
+or binary font helpers; importing and using `pdfFonts` includes them. The
+`herceg-pdf` and `herceg-pdf-fonts` size entries track both paths, excluding
+supplied font programs. Python reads family-to-path/bytes mappings in
+`_render.py`, checks face counts and byte lengths before transport, bounds each
+path read to 32 MiB plus one byte, transports font bytes as base64, and decodes them in
+`python/js/static.ts`, which calls `pdfFonts` with Python's unchanged
+fallback/replacement options; this adds temporary byte/base64 copies.
+Parsing and subsetting add
+no runtime dependency and are bundled only when `pdfFonts` is used, never
+through the core chart entry or a plain `specToPDF` export.
+The PDF's measured layout may differ from static SVG's estimates.
+
+Streams are Flate-compressed by a small built-in deflate (fixed
 Huffman codes with LZ77 matching; zlib's dynamic codes make text streams
 about 30% smaller), since the output must be built
 synchronously wherever the engine runs, including the V8 engine embedded in
@@ -3276,9 +3398,12 @@ document when `OffscreenCanvas` is unavailable.
   Canvas or SVG. Streaming uploads only new points for whole columns and
   for series split by a field on linear or log axes; series of a row view
   and values replaced in place upload again.
-- PDF text is limited to the standard fonts' Windows-1252 characters (others
-  print as "?"); fonts are not embedded, so Greek, Cyrillic, and CJK labels
-  need SVG or PNG export. PDFs are not tagged for assistive technology,
+- PDF Unicode text requires supplied static TrueType fonts and a conservative
+  script/block allowlist. Other scripts, unassigned characters, controls,
+  CFF outlines, joiners, and variation sequences are refused.
+  Without supplied fonts the standard Windows-1252 path replaces uncovered
+  text with "?". Optional shipped fonts and tagged PDF are open work;
+  PDFs are not tagged for assistive technology,
   colors must be hex, `rgb()`, `hsl()`, or names, transparent backgrounds
   show as white paper, and halos of labels are read twice by readers that
   ignore replacement text (macOS Preview).

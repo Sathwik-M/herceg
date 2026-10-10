@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
@@ -30,10 +30,14 @@ import { radar } from "../../src/marks/radar.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { facet } from "../../src/model/facet.ts";
-import { type PdfOptions, renderToPDF } from "../../src/pdf.ts";
+import { type PdfOptions, pdfFonts, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
 import { cellRepeat, renderPdf } from "../../src/render/pdf.ts";
+import { fontChecksum } from "../../src/render/pdf-font-binary.ts";
+import { PdfFontResolver, type PdfFontSource } from "../../src/render/pdf-font-resolver.ts";
+import { subsetTrueType, writeSfnt } from "../../src/render/pdf-font-subset.ts";
 import { encodeText, standardFont, textWidth } from "../../src/render/pdf-fonts.ts";
+import { parseTrueType } from "../../src/render/pdf-truetype.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import type {
@@ -158,6 +162,52 @@ function closing(content: string, at: number): number {
 /** UTF-16BE hex of a text string, as PDF writes metadata. */
 const utf16 = (text: string) =>
   `<FEFF${[...text].map((c) => c.charCodeAt(0).toString(16).padStart(4, "0").toUpperCase()).join("")}>`;
+
+const fontFixture = (name: string) =>
+  new Uint8Array(readFileSync(new URL(`../fixtures/pdf-fonts/${name}.ttf`, import.meta.url)));
+const embeddedFonts: PdfFontSource[] = [
+  { family: "Fixture", data: fontFixture("sans") },
+  { family: "Fixture", weight: "bold", data: fontFixture("sans-bold") },
+  { family: "Symbols", data: fontFixture("symbols") },
+];
+const unicodeText = "é Δ Ω Мир 𝌀";
+
+function fontTableOffset(data: Uint8Array, tag: string): number {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  for (let i = 0; i < view.getUint16(4); i++) {
+    const at = 12 + i * 16;
+    if (String.fromCharCode(...data.subarray(at, at + 4)) === tag) return view.getUint32(at + 8);
+  }
+  throw new Error(`Missing ${tag}`);
+}
+
+function embeddingFlags(flags: number): Uint8Array {
+  const data = fontFixture("sans");
+  new DataView(data.buffer).setUint16(fontTableOffset(data, "OS/2") + 8, flags);
+  return data;
+}
+
+function unicodeScene(text = unicodeText): Scene {
+  return {
+    width: 320,
+    height: 120,
+    pixelRatio: 1,
+    theme: { ...LIGHT, font: "Fixture", background: "white" },
+    title: undefined,
+    headers: [{ text, x: 160, y: 60, anchor: "middle", angle: 0 }],
+    panels: [],
+    legend: [],
+    colorLegends: [],
+    glyphLegends: [],
+    vertices: 0,
+  };
+}
+
+function embeddedPrograms(pdf: ParsedPdf): Uint8Array[] {
+  return [...pdf.objects.values()]
+    .filter((obj) => obj.dictionary.includes("/Length1 "))
+    .map((obj) => obj.stream!);
+}
 
 const start = Date.UTC(2026, 9, 7, 8);
 const metrics = table({
@@ -834,6 +884,731 @@ function installed(tool: string): boolean {
   }
 }
 
+describe("PDF embedded Unicode fonts", () => {
+  const resolver = () => new PdfFontResolver({ fonts: embeddedFonts, fallback: ["Symbols"] });
+
+  it.each([133, 134, 135])("fits the drawn bold facet header within a %s px chart", (width) => {
+    const label = "MMMMMMMM";
+    const pdf = readPdf(
+      renderToPDF({
+        width,
+        height: 180,
+        theme: { font: "Fixture" },
+        fonts: pdfFonts(embeddedFonts),
+        marks: [line(table({ x: [1, 2], y: [1, 2], p: [label, label] }), { x: "x", y: "y" })],
+        facet: facet("p"),
+      }),
+    );
+    // Read the drawn font's /W widths, rather than reusing the layout measurer.
+    const descriptor = [...pdf.objects].find(([, obj]) => obj.dictionary.includes("/StemV 120"))!;
+    const descendant = [...pdf.objects].find(([, obj]) =>
+      obj.dictionary.includes(`/FontDescriptor ${descriptor[0]} 0 R`),
+    )!;
+    const type0 = [...pdf.objects].find(([, obj]) =>
+      obj.dictionary.includes(`/DescendantFonts [${descendant[0]} 0 R]`),
+    )!;
+    const name = new RegExp(`/(F\\d+) ${type0[0]} 0 R`).exec(pdf.page)![1]!;
+    const shown = new RegExp(`BT /${name} ([\\d.]+) Tf [^\\n]*<([\\da-f]+)> Tj ET`).exec(
+      pdf.content,
+    )!;
+    const widths = /\/W \[1 \[([^\]]*)\]/
+      .exec(descendant[1].dictionary)![1]!
+      .split(" ")
+      .map(Number);
+    const cids = shown[2]!.match(/.{4}/g)!.map((cid) => Number.parseInt(cid, 16));
+    const drawnWidth =
+      (cids.reduce((sum, cid) => sum + widths[cid - 1]!, 0) * Number(shown[1])) / 1000;
+    const room = Number(/q [\d.]+ [\d.]+ ([\d.]+) [\d.]+ re W n/.exec(pdf.content)![1]);
+    expect(resolver().measure(label, "12px Fixture")).toBeLessThanOrEqual(room);
+    expect(resolver().measure(label, "600 12px Fixture")).toBeGreaterThan(room);
+    expect(drawnWidth).toBeLessThanOrEqual(room);
+    const cmap = pdf.objects.get(ref(type0[1].dictionary, "ToUnicode"))!.stream!.toString("ascii");
+    expect(cmap).toContain("<2026>");
+  });
+
+  it.each(["ｶﾞ", "ﾊﾟ"])("writes distinct glyphs and extraction scalars for %s", (text) => {
+    const source = parseTrueType(embeddedFonts[0]!.data);
+    const data = subsetTrueType(
+      source,
+      new Map(Array.from(text, (char, i) => [char.codePointAt(0)!, source.glyph(65 + i)])),
+    ).data;
+    const pdf = readPdf(
+      renderToPDF({
+        width: 320,
+        height: 120,
+        marks: [],
+        title: text,
+        theme: { font: "Fixture" },
+        fonts: pdfFonts([{ family: "Fixture", data }]),
+      }),
+    );
+    expect(pdf.content).toContain("<00010002> Tj");
+    const type0 = [...pdf.objects.values()].find((obj) =>
+      obj.dictionary.includes("/Subtype /Type0"),
+    )!;
+    const cmap = pdf.objects.get(ref(type0.dictionary, "ToUnicode"))!.stream!.toString("ascii");
+    const entries = [...cmap.matchAll(/<000[12]> <([\da-f]+)>/g)].map(([, hex]) =>
+      String.fromCharCode(Number.parseInt(hex!, 16)),
+    );
+    expect(entries.join("")).toBe(text);
+    const descendant = [...pdf.objects.values()].find((obj) =>
+      obj.dictionary.includes("/CIDToGIDMap"),
+    )!;
+    const gids = pdf.objects.get(ref(descendant.dictionary, "CIDToGIDMap"))!.stream!;
+    expect(gids.readUInt16BE(2)).not.toBe(gids.readUInt16BE(4));
+  });
+
+  it.each([false, true])("exports gauge CSS fonts with fallback=%s", (fallback) => {
+    const decoy = fontFixture("sans-bold");
+    new DataView(decoy.buffer).setUint16(fontTableOffset(decoy, "head") + 18, 2048);
+    const fonts = pdfFonts([...embeddedFonts, { family: "Decoy", data: decoy }], {
+      fallback: fallback ? ["Decoy"] : [],
+    });
+    const config: PdfOptions = {
+      width: 320,
+      height: 240,
+      locale: "en-US",
+      theme: { font: "Fixture, serif" },
+      fonts,
+      marks: [gauge(table({ cpu: [61.5] }), { value: "cpu", label: "Wié" })],
+    };
+    for (const bytes of [
+      renderToPDF(config),
+      specToPDF(
+        {
+          version: 1,
+          width: 320,
+          height: 240,
+          locale: "en-US",
+          theme: config.theme!,
+          data: { cpu: { columns: { cpu: [61.5] } } },
+          marks: [{ type: "gauge", data: "cpu", value: "cpu", label: "Wié" }],
+        },
+        [],
+        { fonts },
+      ),
+    ]) {
+      const programs = embeddedPrograms(readPdf(bytes)).map(parseTrueType);
+      expect(programs).toHaveLength(2);
+      for (const [code, source] of [
+        [54, "sans-bold"],
+        [87, "sans"],
+      ] as const) {
+        const program = programs.find((font) => font.glyph(code))!;
+        const expected = parseTrueType(fontFixture(source));
+        expect(program.unitsPerEm).toBe(expected.unitsPerEm);
+        expect(program.advances[program.glyph(code)]).toBe(expected.advances[expected.glyph(code)]);
+      }
+    }
+  });
+
+  it.each([false, true])("exports custom text CSS fonts with fallback=%s", (fallback) => {
+    const pdf = readPdf(
+      renderToPDF({
+        width: 200,
+        height: 100,
+        theme: { font: "Fixture, serif" },
+        fonts: pdfFonts([...embeddedFonts, { family: "Decoy", data: fontFixture("sans-bold") }], {
+          fallback: fallback ? ["Decoy"] : [],
+        }),
+        marks: [
+          custom({
+            draw({ text }) {
+              text(50, 20, "Wié");
+            },
+          }),
+        ],
+      }),
+    );
+    const programs = embeddedPrograms(pdf).map(parseTrueType);
+    expect(programs).toHaveLength(1);
+    const expected = parseTrueType(fontFixture("sans"));
+    expect(programs[0]!.advances[programs[0]!.glyph(87)]).toBe(
+      expected.advances[expected.glyph(87)],
+    );
+  });
+
+  it.each([
+    ["Old Uyghur", "𐽰𐽱"],
+    ["Duployan", "𛰀𛰁"],
+  ])("refuses covered and uncovered %s before replacement", (_script, text) => {
+    const font = parseTrueType(fontFixture("sans"));
+    const covered = subsetTrueType(
+      font,
+      new Map([
+        [63, font.glyph(63)],
+        ...Array.from(text, (char): [number, number] => [char.codePointAt(0)!, font.glyph(65)]),
+      ]),
+    ).data;
+    for (const data of [fontFixture("sans"), covered]) {
+      for (const missingGlyph of [undefined, "?"]) {
+        const fonts = new PdfFontResolver({
+          fonts: [{ family: "Fixture", data }],
+          ...(missingGlyph && { missingGlyph }),
+        });
+        expect(() => fonts.resolve(text, "Fixture", false)).toThrow(
+          new RegExp(`U\\+${text.codePointAt(0)!.toString(16).toUpperCase()}.*SVG/PNG`),
+        );
+      }
+    }
+  });
+
+  it.each(["👍🏽", "🇬🇧", "🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}", "👩\u200d💻"])(
+    "refuses emoji sequence %s before coverage, fallback, or replacement",
+    (text) => {
+      const font = parseTrueType(fontFixture("sans"));
+      const codes = Array.from(text, (char) => char.codePointAt(0)!);
+      const face = (family: string, values: number[]): PdfFontSource => ({
+        family,
+        data: subsetTrueType(
+          font,
+          new Map([
+            [63, font.glyph(63)],
+            ...values.map((code): [number, number] => [code, font.glyph(65)]),
+          ]),
+        ).data,
+      });
+      for (const sources of [
+        [embeddedFonts[0]!],
+        [face("Fixture", codes)],
+        [face("Fixture", codes.slice(0, 1)), face("Fallback", codes.slice(1))],
+      ]) {
+        for (const missingGlyph of [undefined, "?"]) {
+          const fonts = new PdfFontResolver({
+            fonts: sources,
+            fallback: sources.length > 1 ? ["Fallback"] : [],
+            ...(missingGlyph && { missingGlyph }),
+          });
+          expect(() => fonts.resolve(text, "Fixture", false)).toThrow(
+            /cannot shape emoji sequences.*SVG\/PNG/,
+          );
+        }
+      }
+    },
+  );
+
+  it.each([
+    ["Aé …", 0, 32],
+    ["Δ", 0, 4],
+    ["Мир", 0, 4],
+    ["é", 0x100, 4],
+  ])("classifies the embedded repertoire for %s, fsType=%s", (text, fsType, classification) => {
+    const data = embeddingFlags(fsType);
+    const post = fontTableOffset(data, "post");
+    const view = new DataView(data.buffer);
+    view.setInt32(post + 4, -12 * 65536);
+    view.setUint32(post + 12, 1);
+    const pdf = readPdf(
+      renderToPDF({
+        width: 320,
+        height: 120,
+        marks: [],
+        title: text,
+        theme: { font: "Fixture" },
+        fonts: pdfFonts([{ family: "Fixture", data }]),
+      }),
+    );
+    const descriptor = [...pdf.objects.values()].find((obj) =>
+      obj.dictionary.includes("/Type /FontDescriptor"),
+    )!.dictionary;
+    expect(Number(/\/Flags (\d+)/.exec(descriptor)![1])).toBe(classification | 1 | 64);
+  });
+
+  it.each([
+    ["ıŁłŒœ⁄ﬁﬂ−", 32],
+    ["Ā", 4],
+    ["𝌀", 4],
+  ])("classifies Adobe Latin extensions and Unicode scalars in %s", (text, flags) => {
+    const font = parseTrueType(fontFixture("sans"));
+    const data = subsetTrueType(
+      font,
+      new Map(Array.from(text, (char) => [char.codePointAt(0)!, font.glyph(65)])),
+    ).data;
+    const pdf = readPdf(
+      renderToPDF({
+        width: 320,
+        height: 120,
+        marks: [],
+        title: text,
+        theme: { font: "Fixture" },
+        fonts: pdfFonts([{ family: "Fixture", data }]),
+      }),
+    );
+    const descriptor = [...pdf.objects.values()].find((obj) =>
+      obj.dictionary.includes("/Type /FontDescriptor"),
+    )!.dictionary;
+    expect(Number(/\/Flags (\d+)/.exec(descriptor)![1])).toBe(flags);
+  });
+
+  it.each([false, true])(
+    "classifies the entire format-12 font when subsetting is forbidden, symbolic=%s",
+    (symbolic) => {
+      const font = parseTrueType(fontFixture("sans"));
+      const repertoire = new Map([
+        [65, font.glyph(65)],
+        [symbolic ? 0x1d300 : 0x0141, font.glyph(66)],
+      ]);
+      const data = subsetTrueType(font, repertoire).data;
+      new DataView(data.buffer).setUint16(fontTableOffset(data, "OS/2") + 8, 0x100);
+      const pdf = readPdf(
+        renderToPDF({
+          width: 320,
+          height: 120,
+          marks: [],
+          title: "A",
+          theme: { font: "Fixture" },
+          fonts: pdfFonts([{ family: "Fixture", data }]),
+        }),
+      );
+      const descriptor = [...pdf.objects.values()].find((obj) =>
+        obj.dictionary.includes("/Type /FontDescriptor"),
+      )!.dictionary;
+      expect(Number(/\/Flags (\d+)/.exec(descriptor)![1])).toBe(symbolic ? 4 : 32);
+    },
+  );
+
+  it("writes Type0 fonts with explicit CID mapping, exact widths, and UTF-16BE extraction", () => {
+    const fonts = resolver();
+    const pdf = readPdf(renderPdf(unicodeScene(), {}, fonts));
+    const dictionaries = [...pdf.objects.values()].map((obj) => obj.dictionary).join("\n");
+    expect(dictionaries).toContain("/Subtype /Type0");
+    expect(dictionaries).toContain("/Subtype /CIDFontType2");
+    expect(dictionaries).toContain("/Encoding /Identity-H");
+    expect(dictionaries).toContain("/FontFile2");
+    expect(dictionaries).toContain("/CIDToGIDMap");
+    expect(dictionaries).not.toContain("/Subtype /Type1");
+    const unicode = [...pdf.objects.values()]
+      .filter((obj) => obj.stream?.includes("begincmap"))
+      .map((obj) => obj.stream!.toString("ascii"))
+      .join("\n");
+    for (const code of ["00e9", "0394", "03a9", "041c", "0438", "0440", "d834df00"])
+      expect(unicode).toContain(`<${code}>`);
+    const runs = fonts.resolve(unicodeText, "Fixture", true).runs;
+    for (const run of runs) {
+      const widths = [...run.face.codes.values()].map((cid) =>
+        run.face.advance(run.face.cidGlyphs.get(cid)!),
+      );
+      expect(dictionaries).toContain(`/W [1 [${widths.join(" ")}]]`);
+    }
+    expect(pdf.content).toMatch(/<([\da-f]{4})+> Tj/);
+    const programs = embeddedPrograms(pdf);
+    expect(programs).toHaveLength(2);
+    for (const program of programs) expect(fontChecksum(program)).toBe(0xb1b0afba);
+  });
+
+  it("uses the same bold and fallback advances for measurement and drawing", () => {
+    const fonts = resolver();
+    const normal = fonts.resolve("Wi𝌀Wi", '"Fixture", sans-serif', false);
+    const bold = fonts.resolve("Wi𝌀Wi", "Fixture", true);
+    expect(normal.runs).toHaveLength(3);
+    expect(normal.runs[1]!.face.source.family).toBe("Symbols");
+    expect(normal.width).not.toBe(bold.width);
+    expect(fonts.measure("Wi𝌀Wi", 'bold 20px "Fixture", sans-serif')).toBe(bold.width * 20);
+    expect(bold.runs[0]!.face.source.weight).toBe("bold");
+    const onlyRegular = new PdfFontResolver({ fonts: [embeddedFonts[0]!] });
+    expect(onlyRegular.measure("Wi", "bold 20px Fixture")).toBe(
+      onlyRegular.measure("Wi", "20px Fixture"),
+    );
+  });
+
+  it("anchors the whole fallback string before rotating and offsetting its spans", () => {
+    const fonts = resolver();
+    const scene = unicodeScene("Wi𝌀Wi");
+    scene.headers[0]!.angle = 90;
+    const pdf = readPdf(renderPdf(scene, {}, fonts));
+    const resolved = fonts.resolve("Wi𝌀Wi", "Fixture", true);
+    const matrices = [...pdf.content.matchAll(/0 1 1 0 ([\d.-]+) ([\d.-]+) Tm/g)];
+    expect(matrices).toHaveLength(3);
+    expect(Number(matrices[0]![1])).toBeCloseTo(
+      160 - (resolved.capHeight * scene.theme.fontSize) / 2,
+      5,
+    );
+    expect(Number(matrices[0]![2])).toBeCloseTo(
+      60 - (resolved.width * scene.theme.fontSize) / 2,
+      5,
+    );
+    expect(Number(matrices[1]![2]) - Number(matrices[0]![2])).toBeCloseTo(
+      resolved.runs[0]!.width * scene.theme.fontSize,
+      5,
+    );
+  });
+
+  it("keeps a combining sequence in a single covering fallback face", () => {
+    const source = parseTrueType(embeddedFonts[0]!.data);
+    const primary = subsetTrueType(source, new Map([[101, source.glyph(101)]])).data;
+    const fonts = new PdfFontResolver({
+      fonts: [{ family: "Primary", data: primary }, embeddedFonts[0]!],
+      fallback: ["Fixture"],
+    });
+    const resolved = fonts.resolve("ée", "Primary", false);
+    expect(resolved.runs).toHaveLength(2);
+    expect(resolved.runs[0]!.glyphs.map((glyph) => glyph.source)).toEqual(["é"]);
+    expect(resolved.runs[0]!.face.source.family).toBe("Fixture");
+    expect(resolved.runs[1]!.face.source.family).toBe("Primary");
+  });
+
+  it("composes simple accents while preserving original Unicode sequences and alias CIDs", () => {
+    const fonts = resolver();
+    const resolved = fonts.resolve("íí", "Fixture", false);
+    expect(resolved.runs[0]!.glyphs.map((glyph) => glyph.glyph)).toEqual([
+      resolved.runs[0]!.face.font.glyph(0x00ed),
+      resolved.runs[0]!.face.font.glyph(0x00ed),
+    ]);
+    expect(fonts.measure("í", "12px Fixture")).toBe(fonts.measure("í", "12px Fixture"));
+    const pdf = readPdf(renderPdf(unicodeScene("íí"), {}, fonts));
+    const unicode = [...pdf.objects.values()]
+      .find((obj) => obj.stream?.includes("begincmap"))!
+      .stream!.toString("ascii");
+    expect(unicode).toContain("<00690301>");
+    expect(unicode).toContain("<00ed>");
+    expect(pdf.content).toContain("<00010002> Tj");
+    const mapping = [...pdf.objects.values()].find((obj) =>
+      obj.dictionary.includes("/CIDToGIDMap"),
+    )!;
+    const gids = pdf.objects.get(ref(mapping.dictionary, "CIDToGIDMap"))!.stream!;
+    expect(gids.readUInt16BE(2)).toBe(gids.readUInt16BE(4));
+    expect(() => fonts.resolve("x́", "Fixture", false)).toThrow(
+      /cannot position combining sequence/,
+    );
+  });
+
+  it("keeps Common and Inherited characters in Latin text and refuses covered Kawi", () => {
+    const fonts = resolver();
+    for (const text of ["A·B", "OʼBrien", "ä"])
+      expect(fonts.measure(text, "12px Fixture")).toBeGreaterThan(0);
+    const source = parseTrueType(embeddedFonts[0]!.data);
+    const codes = [0x11f04, 0x11f34, 0x11f36];
+    const data = subsetTrueType(
+      source,
+      new Map(codes.map((code) => [code, source.glyph(65)])),
+    ).data;
+    const kawi = new PdfFontResolver({ fonts: [{ family: "Kawi", data }] });
+    expect(() => kawi.resolve(String.fromCodePoint(...codes), "Kawi", false)).toThrow(/U\+11F04/);
+  });
+
+  it("resolves quoted CSS family names with commas and surrounding spaces", () => {
+    const fonts = new PdfFontResolver({
+      fonts: [{ family: "Comma, Name", data: embeddedFonts[0]!.data }],
+    });
+    expect(fonts.resolve("Hi", '  "Comma, Name", sans-serif', false).width).toBeGreaterThan(0);
+  });
+
+  it("rounds fractional advances identically in layout and PDF widths", () => {
+    const data = fontFixture("sans");
+    new DataView(data.buffer).setUint16(fontTableOffset(data, "head") + 18, 2048);
+    const fonts = new PdfFontResolver({ fonts: [{ family: "Fixture", data }] });
+    const glyphs = fonts.resolve("Wi", "Fixture", false).runs[0]!.glyphs;
+    expect(fonts.measure("Wi", "12px Fixture")).toBe(
+      ((glyphs[0]!.advance + glyphs[1]!.advance) / 1000) * 12,
+    );
+    const pdf = readPdf(renderPdf(unicodeScene("Wi"), {}, fonts));
+    expect([...pdf.objects.values()].map((obj) => obj.dictionary).join("\n")).toContain(
+      `/W [1 [${glyphs.map((glyph) => glyph.advance).join(" ")}]]`,
+    );
+  });
+
+  it("bounds composite expansion and rejects cycles", () => {
+    const font = parseTrueType(fontFixture("sans"));
+    const tables = new Map([...font.tables].map(([tag, data]) => [tag, new Uint8Array(data)]));
+    const count = font.glyphCount + 25;
+    new DataView(tables.get("head")!.buffer).setInt16(50, 1);
+    new DataView(tables.get("head")!.buffer).setUint32(8, 0);
+    new DataView(tables.get("maxp")!.buffer).setUint16(4, count);
+    new DataView(tables.get("hhea")!.buffer).setUint16(34, count);
+    const originalGlyf = font.tables.get("glyf")!;
+    const glyf = new Uint8Array(originalGlyf.length + 25 * 28);
+    glyf.set(originalGlyf);
+    const loca = new Uint8Array((count + 1) * 4);
+    const hmtx = new Uint8Array(count * 4);
+    const offsets = new DataView(loca.buffer);
+    const metrics = new DataView(hmtx.buffer);
+    for (let i = 0; i < font.glyphCount; i++) {
+      offsets.setUint32(i * 4, font.offsets[i]!);
+      metrics.setUint16(i * 4, font.advances[i]!);
+      metrics.setInt16(i * 4 + 2, font.bearings[i]!);
+    }
+    let previous = font.glyph(65);
+    const view = new DataView(glyf.buffer);
+    for (let i = 0; i < 25; i++) {
+      const at = originalGlyf.length + i * 28;
+      offsets.setUint32((font.glyphCount + i) * 4, at);
+      metrics.setUint16((font.glyphCount + i) * 4, 500);
+      view.setInt16(at, -1);
+      view.setUint16(at + 10, 35); // Two copies of the previous glyph.
+      view.setUint16(at + 12, previous);
+      view.setUint16(at + 18, 3);
+      view.setUint16(at + 20, previous);
+      previous = font.glyphCount + i;
+    }
+    offsets.setUint32(count * 4, glyf.length);
+    tables.set("glyf", glyf);
+    tables.set("loca", loca);
+    tables.set("hmtx", hmtx);
+    expect(() => parseTrueType(writeSfnt(tables))).toThrow(/expansion exceeds/);
+    const cyclic = fontFixture("sans");
+    const [id, refs] = [...parseTrueType(cyclic).components][0]!;
+    new DataView(cyclic.buffer).setUint16(
+      fontTableOffset(cyclic, "glyf") + font.offsets[id]! + refs[0]!.offset,
+      id,
+    );
+    expect(() => parseTrueType(cyclic)).toThrow(/cyclic/);
+  });
+
+  it("validates instructions flagged on an earlier composite component", () => {
+    const data = fontFixture("sans");
+    const font = parseTrueType(data);
+    const [id, refs] = [...font.components].find(([, refs]) => refs.length > 1)!;
+    const start = fontTableOffset(data, "glyf") + font.offsets[id]!;
+    const view = new DataView(data.buffer);
+    const flagsAt = start + refs[0]!.offset - 2;
+    view.setUint16(flagsAt, view.getUint16(flagsAt) | 256);
+    const last = start + refs[refs.length - 1]!.offset - 2;
+    const flags = view.getUint16(last);
+    const instructionAt =
+      last + 4 + (flags & 1 ? 4 : 2) + (flags & 8 ? 2 : flags & 64 ? 4 : flags & 128 ? 8 : 0);
+    view.setUint16(instructionAt, 65535);
+    expect(() => parseTrueType(data)).toThrow(/outside table bounds/);
+  });
+
+  it("subsets only emitted glyphs, including .notdef and recursive composite components", () => {
+    const fonts = resolver();
+    fonts.measure("NeverDrawn", "bold 12px Fixture");
+    const pdf = readPdf(renderPdf(unicodeScene("é"), {}, fonts));
+    const program = embeddedPrograms(pdf)[0]!;
+    const subset = parseTrueType(program);
+    expect(subset.glyph(0x00e9)).toBeGreaterThan(0);
+    expect(subset.glyph(78)).toBe(0);
+    expect(subset.components.size).toBeGreaterThan(0);
+    expect(subset.glyphCount).toBeLessThan(8);
+    expect(program.length).toBeLessThan(embeddedFonts[1]!.data.length / 2);
+    for (const refs of subset.components.values())
+      for (const child of refs) expect(child.glyph).toBeLessThan(subset.glyphCount);
+  });
+
+  it("creates deterministic, independent subsets for each document", () => {
+    const options = {
+      width: 320,
+      height: 120,
+      title: unicodeText,
+      marks: [],
+      theme: { font: "Fixture" },
+      fonts: pdfFonts(embeddedFonts, { fallback: ["Symbols"] }),
+    };
+    const first = renderToPDF(options);
+    renderToPDF({ ...options, title: "Different" });
+    expect(renderToPDF(options)).toEqual(first);
+    const spec = {
+      version: 1 as const,
+      width: 320,
+      height: 120,
+      title: unicodeText,
+      theme: { font: "Fixture" },
+      data: {},
+      marks: [],
+    };
+    expect(specToPDF(spec, [], { fonts: options.fonts })).toEqual(first);
+  });
+
+  it("refuses unprepared font arrays with migration guidance", () => {
+    expect(() =>
+      // @ts-expect-error arrays must be wrapped in pdfFonts
+      renderToPDF({ width: 100, height: 100, marks: [], fonts: embeddedFonts }),
+    ).toThrow(/wrap the font array in pdfFonts/);
+    expect(() =>
+      // @ts-expect-error spec exports also require prepared fonts
+      specToPDF({ version: 1, data: {}, marks: [] }, [], { fonts: [] }),
+    ).toThrow(/wrap the font array in pdfFonts/);
+  });
+
+  it("snapshots font descriptors and fallback options without sharing document usage", () => {
+    const sources = embeddedFonts.map((font) => ({ ...font }));
+    const fallback = ["Symbols"];
+    const fonts = pdfFonts(sources, { fallback });
+    sources[0]!.family = "Changed";
+    sources.length = 0;
+    fallback[0] = "Unknown";
+    const first = fonts.createResolver();
+    const second = fonts.createResolver();
+    renderPdf(unicodeScene(), {}, first);
+    expect(embeddedPrograms(readPdf(renderPdf(unicodeScene("é"), {}, second)))).toHaveLength(1);
+    expect(second.resolve("é", "Fixture", false).runs[0]!.face.codes.size).toBe(0);
+    expect(first.measure("𝌀", "12px Fixture")).toBeGreaterThan(0);
+  });
+
+  it("supports Buffer and Uint8Array views without modifying caller-owned bytes", () => {
+    const data = Buffer.concat([
+      Buffer.alloc(7),
+      Buffer.from(embeddedFonts[0]!.data),
+      Buffer.alloc(9),
+    ]);
+    const before = Buffer.from(data);
+    const face = data.subarray(7, data.length - 9);
+    const fonts = new PdfFontResolver({ fonts: [{ family: "Fixture", data: face }] });
+    const pdf = readPdf(renderPdf(unicodeScene("é"), {}, fonts));
+    const program = embeddedPrograms(pdf)[0]!;
+    expect(fontChecksum(program)).toBe(0xb1b0afba);
+    expect(parseTrueType(program).glyph(0x00e9)).toBeGreaterThan(0);
+    expect(data).toEqual(before);
+  });
+
+  it("draws Unicode halos with the same codes as the fill and empty replacement text", () => {
+    const scene = unicodeScene("");
+    const labels: TextGeometry = {
+      kind: "text",
+      key: "labels",
+      draw: textDrawing,
+      fill: "#000000",
+      anchor: "end",
+      halo: true,
+      coords: Float32Array.of(200, 50),
+      labels: ["é𝌀"],
+      count: 1,
+    };
+    scene.panels = [
+      {
+        key: "",
+        plot: { x: 0, y: 0, width: 320, height: 120 },
+        grid: { x: [], y: [] },
+        axes: [],
+        marks: [labels],
+      },
+    ];
+    const pdf = readPdf(renderPdf(scene, {}, resolver()));
+    expect(pdf.content).toContain("/ActualText ()");
+    const codes = [...pdf.content.matchAll(/(<[\da-f]+>) Tj/g)].map((match) => match[1]);
+    expect(codes).toHaveLength(4);
+    expect(codes.slice(0, 2)).toEqual(codes.slice(2));
+  });
+
+  it("keeps different source characters with the same glyph in separate CIDs", () => {
+    const fonts = resolver();
+    const run = fonts.resolve(" \u00a0", "Fixture", false).runs[0]!;
+    const aliases = run.glyphs.map((glyph) => ({ ...glyph, glyph: run.glyphs[0]!.glyph }));
+    expect(run.face.encode(aliases)).toBe("<00010002>");
+    expect(run.face.codes.size).toBe(2);
+  });
+
+  it("honors no-subsetting and rejects restricted or bitmap-only embedding", () => {
+    for (const flag of [2, 0x0200])
+      expect(
+        () => new PdfFontResolver({ fonts: [{ family: "Fixture", data: embeddingFlags(flag) }] }),
+      ).toThrow(/fsType/);
+    const data = embeddingFlags(0x0100);
+    const fonts = new PdfFontResolver({ fonts: [{ family: "Fixture", data }] });
+    const pdf = readPdf(renderPdf(unicodeScene("é"), {}, fonts));
+    expect(new Uint8Array(embeddedPrograms(pdf)[0]!)).toEqual(data);
+    const dict = [...pdf.objects.values()].find((obj) =>
+      obj.dictionary.includes("/Subtype /Type0"),
+    )!.dictionary;
+    expect(dict).not.toMatch(/\/BaseFont \/[A-Z]{6}\+/);
+  });
+
+  it("reports missing coverage and allows an explicit covered replacement", () => {
+    expect(() => resolver().measure("雪", "12px Fixture")).toThrow(
+      /U\+96EA.*supply a covering font/,
+    );
+    const fonts = new PdfFontResolver({ fonts: embeddedFonts, missingGlyph: "?" });
+    expect(fonts.measure("雪", "12px Fixture")).toBe(fonts.measure("?", "12px Fixture"));
+    expect(() => new PdfFontResolver({ fonts: embeddedFonts, missingGlyph: "ab" })).toThrow(
+      /one covered Unicode scalar/,
+    );
+    expect(() => new PdfFontResolver({ fonts: embeddedFonts, missingGlyph: "\u0301" })).toThrow(
+      /standalone scalar/,
+    );
+    expect(() => pdfFonts([], { missingGlyph: "?" }).createResolver()).toThrow(
+      /require at least one font/,
+    );
+    const replaced = renderToPDF({
+      width: 320,
+      height: 120,
+      marks: [],
+      title: "雪",
+      theme: { font: "Fixture" },
+      fonts: pdfFonts(embeddedFonts, { missingGlyph: "?" }),
+    });
+    expect(readPdf(replaced).content).toContain(" Tj");
+  });
+
+  it.each([
+    ["مرحبا", "Arabic"],
+    ["שלום", "Hebrew"],
+    ["नमस्ते", "Devanagari"],
+    ["ไทย", "Thai"],
+  ])("refuses %s (%s) with an actionable code point", (text) => {
+    const code = `U+${text.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`;
+    expect(() => resolver().measure(text, "12px Fixture")).toThrow(
+      new RegExp(`${code.replace("+", "\\+")}.*SVG/PNG`),
+    );
+    expect(() =>
+      new PdfFontResolver({ fonts: embeddedFonts, missingGlyph: "?" }).measure(
+        text,
+        "12px Fixture",
+      ),
+    ).toThrow(code);
+  });
+
+  it("rejects joiners, variations, unpaired surrogates, unknown families, and invalid registries", () => {
+    for (const text of ["a\u200d", "★\ufe0f", "\ud800"])
+      expect(() => resolver().measure(text, "12px Fixture")).toThrow(
+        /cannot render|invalid Unicode/,
+      );
+    expect(() =>
+      new PdfFontResolver({ fonts: embeddedFonts }).measure("Hi", "12px Unknown"),
+    ).toThrow(/not registered/);
+    expect(() => new PdfFontResolver({ fonts: embeddedFonts, fallback: ["Unknown"] })).toThrow(
+      /not registered/,
+    );
+    expect(() => new PdfFontResolver({ fonts: [embeddedFonts[0]!, embeddedFonts[0]!] })).toThrow(
+      /Duplicate/,
+    );
+  });
+
+  it("bounds-checks malformed tables, metrics, cmaps, loca, and composite glyph references", () => {
+    expect(() => parseTrueType(new Uint8Array(3))).toThrow(/Malformed PDF font/);
+    const cases: Uint8Array[] = [];
+    let data = fontFixture("sans");
+    new DataView(data.buffer).setUint32(20, data.length + 100);
+    cases.push(data);
+    data = fontFixture("sans");
+    new DataView(data.buffer).setUint16(fontTableOffset(data, "head") + 18, 0);
+    cases.push(data);
+    data = fontFixture("sans");
+    new DataView(data.buffer).setUint16(fontTableOffset(data, "hhea") + 34, 65535);
+    cases.push(data);
+    data = fontFixture("sans");
+    new DataView(data.buffer).setUint16(fontTableOffset(data, "loca") + 2, 65535);
+    cases.push(data);
+    data = fontFixture("sans");
+    const parsed = parseTrueType(data);
+    const [id, refs] = [...parsed.components][0]!;
+    new DataView(data.buffer).setUint16(
+      fontTableOffset(data, "glyf") + parsed.offsets[id]! + refs[0]!.offset,
+      65535,
+    );
+    cases.push(data);
+    data = fontFixture("symbols");
+    const cmap = fontTableOffset(data, "cmap");
+    const view = new DataView(data.buffer);
+    const offset = view.getUint32(cmap + 8);
+    view.setUint32(cmap + offset + 4, 0xffffffff);
+    cases.push(data);
+    for (const malformed of cases)
+      expect(() => parseTrueType(malformed)).toThrow(/Malformed PDF font/);
+  });
+
+  it("rejects CFF outlines clearly and accepts sfnt OpenType with glyf", () => {
+    const data = fontFixture("sans");
+    new DataView(data.buffer).setUint32(0, 0x4f54544f);
+    expect(parseTrueType(data).glyph(101)).toBeGreaterThan(0);
+    const glyf = fontTableOffset(data, "glyf");
+    for (let i = 0; i < new DataView(data.buffer).getUint16(4); i++) {
+      const at = 12 + i * 16;
+      if (new DataView(data.buffer).getUint32(at + 8) === glyf) data.set([67, 70, 70, 32], at);
+    }
+    expect(() => parseTrueType(data)).toThrow(/CFF outlines.*TrueType/);
+  });
+});
+
 describe("PDF readers", () => {
   const directory = mkdtempSync(join(tmpdir(), "herceg-pdf-"));
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
@@ -857,16 +1632,25 @@ describe("PDF readers", () => {
       ],
     }),
   );
+  const unicode = join(directory, "unicode.pdf");
+  writeFileSync(
+    unicode,
+    renderPdf(
+      unicodeScene(),
+      {},
+      new PdfFontResolver({ fonts: embeddedFonts, fallback: ["Symbols"] }),
+    ),
+  );
 
   it.skipIf(!installed("qpdf"))("pass qpdf --check", () => {
-    for (const file of [chart, cells]) {
+    for (const file of [chart, cells, unicode]) {
       const output = execFileSync("qpdf", ["--check", file], { encoding: "utf8" });
       expect(output).toContain("No syntax or stream encoding errors");
     }
   });
 
   it.skipIf(!installed("mutool"))("render with MuPDF without warnings", () => {
-    for (const file of [chart, cells]) {
+    for (const file of [chart, cells, unicode]) {
       const result = spawnSync("mutool", ["draw", "-o", join(directory, "page.png"), file], {
         encoding: "utf8",
       });
@@ -878,7 +1662,49 @@ describe("PDF readers", () => {
   it.skipIf(!installed("pdftotext"))("extract the chart's text with Poppler", () => {
     const text = execFileSync("pdftotext", [chart, "-"], { encoding: "utf8" });
     for (const label of ["Latency é", "08:00", "SLO", "ms"]) expect(text).toContain(label);
+    expect(execFileSync("pdftotext", [unicode, "-"], { encoding: "utf8" })).toContain(unicodeText);
   });
+
+  it.skipIf(!installed("mutool"))("renders composite subsets identically to the full font", () => {
+    const full = join(directory, "full.pdf");
+    const subset = join(directory, "subset.pdf");
+    const scene = unicodeScene("é");
+    writeFileSync(
+      full,
+      renderPdf(
+        scene,
+        {},
+        new PdfFontResolver({ fonts: [{ family: "Fixture", data: embeddingFlags(0x0100) }] }),
+      ),
+    );
+    writeFileSync(
+      subset,
+      renderPdf(scene, {}, new PdfFontResolver({ fonts: [embeddedFonts[0]!] })),
+    );
+    const images = [full, subset].map((file, i) => {
+      const output = join(directory, `composite-${i}.png`);
+      execFileSync("mutool", ["draw", "-o", output, file]);
+      return readFileSync(output);
+    });
+    expect(images[0]).toEqual(images[1]);
+  });
+
+  it.skipIf(!installed("mutool"))(
+    "renders decomposed i-acute identically to its precomposed glyph",
+    () => {
+      const images = ["í", "í"].map((text, i) => {
+        const file = join(directory, `accent-${i}.pdf`);
+        const output = join(directory, `accent-${i}.png`);
+        writeFileSync(
+          file,
+          renderPdf(unicodeScene(text), {}, new PdfFontResolver({ fonts: [embeddedFonts[0]!] })),
+        );
+        execFileSync("mutool", ["draw", "-o", output, file]);
+        return readFileSync(output);
+      });
+      expect(images[0]).toEqual(images[1]);
+    },
+  );
 });
 
 it("exports notched precomputed boxes as closed PDF paths with waist medians", () => {

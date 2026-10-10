@@ -2514,13 +2514,33 @@ class Chart:
         """PNG at ``scale`` times the chart size (requires the ``export`` extra)."""
         return _render.png(self.to_svg(), scale=scale)
 
-    def to_pdf(self) -> bytes:
+    def to_pdf(
+        self,
+        *,
+        fonts: _render.PdfFonts | None = None,
+        fallback: Sequence[str] = (),
+        missing_glyph: str | None = None,
+    ) -> bytes:
         """One-page vector PDF sized to the chart (requires the ``export`` extra)."""
-        return _render.pdf(*self.to_spec())
+        return _render.pdf(
+            *self.to_spec(), fonts=fonts, fallback=fallback, missing_glyph=missing_glyph
+        )
 
-    def save(self, path: str, *, scale: float = 2) -> None:
+    def save(
+        self,
+        path: str,
+        *,
+        scale: float = 2,
+        fonts: _render.PdfFonts | None = None,
+        fallback: Sequence[str] = (),
+        missing_glyph: str | None = None,
+    ) -> None:
         """Writes ``.html``, ``.svg``, ``.png``, or ``.pdf``, chosen by the file extension."""
         lower = str(path).lower()
+        if not lower.endswith(".pdf") and (
+            fonts is not None or fallback or missing_glyph is not None
+        ):
+            raise ValueError("fonts, fallback, and missing_glyph are PDF export options")
         if lower.endswith(".html"):
             content: str | bytes = self.to_html()
         elif lower.endswith(".svg"):
@@ -2528,7 +2548,7 @@ class Chart:
         elif lower.endswith(".png"):
             content = self.to_png(scale=scale)
         elif lower.endswith(".pdf"):
-            content = self.to_pdf()
+            content = self.to_pdf(fonts=fonts, fallback=fallback, missing_glyph=missing_glyph)
         else:
             raise ValueError(f"Unknown file type for {path!r}; use .html, .svg, .png, or .pdf")
         if isinstance(content, bytes):

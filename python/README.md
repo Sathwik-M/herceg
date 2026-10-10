@@ -371,10 +371,65 @@ SVG, PNG, and PDF export need the `export` extra (`pip install
 browser's chart except for text measurement, which uses fixed Helvetica
 metrics. PNG is rasterized from that SVG by `resvg`. PDF comes from herceg's
 `renderToPDF` in the same engine, with the SVG's layout: vector marks, axes,
-and legends, heatmaps as images, and selectable text in the standard PDF
-fonts, which cover Windows-1252 (Latin-1 and common punctuation); other
-characters print as "?". Dark themes need a background color in PDFs, whose
-viewers show transparent pages as white.
+and legends, heatmaps as images, and selectable text. Without supplied fonts,
+PDF uses the standard fonts and Windows-1252 encoding (other characters
+print as "?"). For Unicode, fonts are export options, separate from the spec:
+
+```python
+from pathlib import Path
+
+chart = hg.Chart(data, title="Δ latency", theme={"font": "Inter"}).line(x="time", y="latency")
+fonts = {
+    "Inter": {"normal": Path("Inter-Regular.ttf"), "bold": Path("Inter-Bold.ttf")},
+    "Symbols": Path("Symbols.ttf").read_bytes(),
+}
+pdf_bytes = chart.to_pdf(fonts=fonts, fallback=["Symbols"])
+chart.save("chart.pdf", fonts=fonts, fallback=["Symbols"])
+# A family with one face can also be supplied as {"Inter": "Inter-Regular.ttf"}.
+```
+
+Python keeps these font arguments: its JavaScript bridge prepares them with
+`pdfFonts` before export. TypeScript callers use `fonts: pdfFonts(sources,
+{ fallback, missingGlyph })`; plain JavaScript PDF exports omit this helper
+and bundle no TrueType parser or subsetter.
+
+Each font is bytes or a filesystem path (`str` or `PathLike`). Nested family
+mappings accept `"normal"` and `"bold"`; a missing weight uses the available
+face without synthetic bold. Match `theme["font"]` to the registered families.
+CSS family lists are tried first, then `fallback`, with each grapheme cluster
+kept in one face. Simple accents use an NFC precomposed glyph with the
+original sequence preserved for extraction; sequences needing mark positioning
+are refused. The same resolver measures and draws: exact horizontal
+advances, no kerning, Unicode copy/search maps (including supplementary
+characters), and deterministic per-document subsets with composite dependencies.
+OS/2 embedding restrictions are enforced, including whole embedding when
+subsetting is forbidden. Python checks the 64-face and 32 MiB per-font limits
+before transport, checks byte inputs before reading paths, and bounds path reads
+to 32 MiB plus one byte. Bytes then cross the embedded-V8 boundary as base64;
+this transport adds temporary copies. Input font checksums are intentionally
+unchecked because real fonts often have incorrect checksums; generated subsets
+receive fresh checksums.
+
+Missing coverage throws an actionable error; `missing_glyph="?"` explicitly
+replaces an uncovered grapheme cluster with one covered standalone scalar.
+Embedded text admits Latin, Greek, Cyrillic, Armenian, Georgian, Han, hiragana,
+katakana, precomposed Hangul syllables, and selected Common/Inherited symbols,
+punctuation, digits, and composable accents, subject to Script_Extensions checks.
+See [the exact allowlist](../docs/architecture.md). Other scripts, unassigned and
+private-use characters, controls, and default-ignorable characters are refused
+with their code point before coverage or replacement. Static TrueType
+`glyf` outlines are supported; CFF, WOFF, collections, variable fonts, joiners,
+and variation sequences are refused. Emoji modifier, flag, tag, and ZWJ sequences
+are refused before fallback or replacement. These font options apply only to PDF.
+Clusters use `Intl.Segmenter` when available (verified in MiniRacer 0.14.1).
+Without it, conservative grouping joins combining marks, Grapheme_Extend
+characters (including halfwidth kana voiced marks), emoji modifiers, and ZWJ
+continuations; unsupported clusters still fail. Fallback keeps each cluster in
+one face, and replacement emits one scalar for the whole uncovered cluster.
+Unusually tall fallback fonts may need extra margins; layout currently measures
+width only, and code-point cuts in shortened labels may split grapheme clusters.
+Dark themes need a background color in PDFs, whose viewers show transparent
+pages as white. Optional shipped fonts and tagged PDFs are still open work.
 
 ## Live notebook charts
 
