@@ -212,8 +212,12 @@ def test_maps_share_a_chart_only_with_maps_and_need_them_for_a_projection():
         hg.Chart(collection()).pie("zone").geoshape()
     with pytest.raises(ValueError, match="a projection needs geoshape or geopoint marks"):
         hg.Chart(places, projection="mercator").point("lon", "lat").to_spec()
-    with pytest.raises(ValueError, match="no x axis to zoom"):
-        hg.Chart(collection(), zoom=True).geoshape()
+    with pytest.raises(ValueError, match="maps zoom both ways"):
+        hg.Chart(collection(), zoom="x").geoshape()
+    with pytest.raises(ValueError, match='maps take brush="lasso"'):
+        hg.Chart(collection(), brush="xy").geoshape()
+    with pytest.raises(ValueError, match="no x axis to sync"):
+        hg.Chart(collection(), sync="a").geoshape()
     with pytest.raises(ValueError, match="need a numeric color column"):
         hg.Chart(collection()).geoshape(color="zone", colors="viridis")
     with pytest.raises(ValueError, match="stroke_width must be 0 or more"):

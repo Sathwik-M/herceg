@@ -30,6 +30,10 @@
 // - A click selects the row of the point or bar under the pointer, the
 //   rows a histogram bin counts, those of a box plot's or violin's group,
 //   or those of a heatmap's cell. A summary's index is never a row.
+// - In a chart of one layout mark (a map, a tree, a network), items say
+//   which rows they stand for (`LayoutResult.rowsOf`): a region's or a
+//   point's row, a node's subtree's, a link's. Lassos select by the items'
+//   anchors on a map's plane (`LayoutResult.lassoed`); brushes nothing.
 
 import { compileExpression, Expr, type Expression } from "../data/expression.ts";
 import { RowSet } from "../data/row-set.ts";
@@ -38,6 +42,7 @@ import type { Table } from "../data/table.ts";
 import type { BarMark } from "../marks/bar.ts";
 import { STILL } from "../marks/dodge.ts";
 import type { HistogramMark } from "../marks/histogram.ts";
+import type { LayoutResult } from "../marks/layout-mark.ts";
 import type { BandList, Frame, Mark } from "../marks/mark.ts";
 import { type BandPlaces, placeAt, rowOf, type Series } from "../marks/series.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -391,6 +396,15 @@ export function brushedRows(
   selection: Brushed,
   keys: readonly string[] | null,
 ): DataSelection | undefined {
+  const layout = layoutOf(model);
+  if (layout) {
+    // A lasso is drawn on the map's plane, whose scales give its pixels.
+    const plane = layout.plane;
+    if (!selection.lasso || !plane) return undefined;
+    const outline = selection.lasso.map(([x, y]) => [plane.x.map(x), plane.y.map(y)] as const);
+    const rows = layout.lassoed?.(outline, table);
+    return rows && selectRows(new RowSet(table).addAll(rows));
+  }
   const panels = model.panels().filter(({ key }) => !keys || keys.includes(key));
   // Summaries' rows are not where their statistics are drawn: lassos, and
   // brushes along their statistics, select none of them (charts refuse
@@ -560,17 +574,37 @@ export interface PointRows {
   rows: Uint32Array;
 }
 
+/** What the layout mark of a chart of one drew, which says what its items stand for. */
+function layoutOf(model: ChartModel): LayoutResult | undefined {
+  return model.layout ? model.items?.result() : undefined;
+}
+
+/** The rows of one of `tables` that a layout mark's item stands for, or null for none of theirs. */
+function itemRows(layout: LayoutResult, tables: ReadonlySet<Table>, key: string): PointRows | null {
+  for (const table of tables) {
+    const rows = layout.rowsOf?.(key, table);
+    if (rows) return { table, rows: Uint32Array.from(rows) };
+  }
+  return null;
+}
+
 /**
  * The rows of the point drawn under a pixel, among marks over `tables`:
  * the topmost mark's, inside a bar, bin, box, violin, or cell, or within a
- * few pixels of a point or vertex. Undefined over none.
+ * few pixels of a point or vertex. Undefined over none; null over a layout
+ * mark's item that stands for none of their rows.
  */
 export function clickedRows(
   model: ChartModel,
   tables: ReadonlySet<Table>,
   px: number,
   py: number,
-): PointRows | undefined {
+): PointRows | null | undefined {
+  const layout = layoutOf(model);
+  if (layout) {
+    const inspection = model.inspect(px, py);
+    return inspection?.axis === "item" ? itemRows(layout, tables, inspection.key) : undefined;
+  }
   const panel = model.panels().find(({ plot }) => contains(plot, px, py));
   if (!panel) return undefined;
   const drawn = drawnIn(model, [panel]).filter(
@@ -741,6 +775,8 @@ export function cursorRows(
   tables: ReadonlySet<Table>,
   cursor: { panel: string; key: string; position: number },
 ): PointRows | undefined {
+  const layout = layoutOf(model);
+  if (layout) return itemRows(layout, tables, cursor.key) ?? undefined;
   const panel = model.panels().find(({ key }) => key === cursor.panel);
   const drawn = panel && drawnIn(model, [panel]).find((d) => d.series.key === cursor.key);
   if (!drawn?.mark.table || !tables.has(drawn.mark.table) || drawn.hidden) return undefined;

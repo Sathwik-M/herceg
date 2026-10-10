@@ -46,6 +46,10 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   onRowSelection?: ChartListener<"rowSelection">;
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   onCameraChange?: ChartListener<"camera">;
+  /** A treemap or sunburst was drilled into a node or back out: its key (null for the whole tree) and path. */
+  onDrill?: ChartListener<"drill">;
+  /** A network's node was moved (dragged, keys, `setItemPosition`) or put back (null). */
+  onItemMove?: ChartListener<"itemMove">;
   /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
   onVisibilityChange?: ChartListener<"visibility">;
   /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
@@ -181,6 +185,8 @@ export function Chart({
   onClick,
   onRowSelection,
   onCameraChange,
+  onDrill,
+  onItemMove,
   onVisibilityChange,
   onRender,
   ...options
@@ -215,6 +221,8 @@ export function Chart({
   useChartEvent(chart, "click", onClick);
   useChartEvent(chart, "rowSelection", onRowSelection);
   useChartEvent(chart, "camera", onCameraChange);
+  useChartEvent(chart, "drill", onDrill);
+  useChartEvent(chart, "itemMove", onItemMove);
   useChartEvent(chart, "visibility", onVisibilityChange);
   const render = useChartEvent(chart, "render", onRender);
 

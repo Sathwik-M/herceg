@@ -8,14 +8,29 @@ import { labelFor } from "../layout/text.ts";
 import { layoutTreemap } from "../layout/treemap.ts";
 import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
+import type { ChartConfig } from "../model/model.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, TreemapSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import type {
+  LayoutControls,
+  LayoutFrame,
+  LayoutItem,
+  LayoutMark,
+  LayoutResult,
+} from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { type ChartMark, frozen, type MARK } from "./mark.ts";
-import { type Branch, count, TreeData } from "./tree-data.ts";
+import { type ChartMark, DIM, frozen, type MARK } from "./mark.ts";
+import {
+  type Branch,
+  count,
+  drillControls,
+  selectedText,
+  TreeData,
+  type TreeView,
+  where,
+} from "./tree-data.ts";
 
 export type TreemapOptions<S extends Schema> = (
   | {
@@ -52,6 +67,9 @@ export class TreemapMark implements LayoutMark {
   readonly spec: Frozen<TreemapSpec>;
   readonly table: Table;
   readonly measure: string;
+  /** Clicks and Enter drill into nodes with `interaction.zoom`, and charts select their rows. */
+  readonly interactions = ["zoom"] as const;
+  readonly selects = true;
   readonly #data: TreeData;
 
   constructor(input: TreemapSpec, table: Table) {
@@ -67,11 +85,27 @@ export class TreemapMark implements LayoutMark {
     return this.#data.legend(id, color);
   }
 
+  controls(config: ChartConfig): LayoutControls | undefined {
+    return drillControls(config);
+  }
+
   draw(frame: LayoutFrame): LayoutResult {
-    const { bounds, theme, hidden, locale } = frame;
-    // A facet panel draws the part of the tree its rows give a value.
-    const view = this.#data.view(frame.rows);
+    const { theme, hidden, locale } = frame;
+    // A facet panel draws the part of the tree its rows give a value; a
+    // chart drilled into a node, the subtree under it.
+    const root = frame.root?.length ? this.#data.rootOf(frame.id, frame.root) : 0;
+    const view = root > 0 ? this.#data.drilled(root) : this.#data.view(frame.rows);
     const { tree, branch } = view;
+    // Breadcrumbs take a strip above the tree in charts that drill.
+    const path =
+      frame.drillable || root > 0 ? this.#data.breadcrumbs(frame.id, view, frame) : undefined;
+    const bounds = path
+      ? {
+          ...frame.bounds,
+          y: frame.bounds.y + path.height,
+          height: frame.bounds.height - path.height,
+        }
+      : frame.bounds;
     const branches = this.#data.branches(frame.id, view);
     const colorOf = new Map(branches.map(({ node, key }) => [node, frame.color(key)]));
     // Hidden branches take no room.
@@ -84,6 +118,9 @@ export class TreemapMark implements LayoutMark {
     const boxes = new Float64Array(tree.size * 4);
     layoutTreemap(tree, shown, bounds, { inner: GAP, outer: 0, top: header }, boxes);
 
+    // With a selection highlighted, nodes none of whose rows it holds are dimmed.
+    const selected = frame.selected?.(this.table);
+    const counts = selected && this.#data.selectedOf(view, selected);
     // Leaves fill in their branch's color; groups show faintly behind them,
     // with their names in the strip along their top.
     const drawn: number[] = [];
@@ -103,26 +140,34 @@ export class TreemapMark implements LayoutMark {
       }
       lists[isLeaf(node) ? 1 : 0].push(node);
     }
-    const geometry: Geometry[] = [];
+    const geometry: Geometry[] = [...(path?.geometry ?? [])];
     for (const { node: top, key } of branches) {
       if (hidden.has(key)) continue;
       const fill = colorOf.get(top)!;
       for (const leaves of [false, true]) {
-        const nodes = parts.get(top)?.[leaves ? 1 : 0] ?? [];
-        if (nodes.length === 0) continue;
-        const rects = new Float32Array(nodes.length * 4);
-        nodes.forEach((node, i) => {
-          rects.set(boxes.subarray(node * 4, node * 4 + 4), i * 4);
-        });
-        geometry.push({
-          kind: "rect",
-          draw: rectDrawing,
-          key: `treemap-${leaves ? "leaves" : "groups"}-${key}`,
-          fill,
-          fillOpacity: leaves ? 1 : 0.22,
-          rects,
-          count: nodes.length,
-        } as RectGeometry);
+        const all = parts.get(top)?.[leaves ? 1 : 0] ?? [];
+        const lit = counts ? all.filter((node) => counts.hits[node]! > 0) : all;
+        const dimmed = counts ? all.filter((node) => counts.hits[node] === 0) : [];
+        for (const [nodes, dim] of [
+          [dimmed, true],
+          [lit, false],
+        ] as const) {
+          if (nodes.length === 0) continue;
+          const rects = new Float32Array(nodes.length * 4);
+          nodes.forEach((node, i) => {
+            rects.set(boxes.subarray(node * 4, node * 4 + 4), i * 4);
+          });
+          geometry.push({
+            kind: "rect",
+            draw: rectDrawing,
+            // A drilled tree's branches share their legend key: the node tells them apart.
+            key: `treemap-${leaves ? "leaves" : "groups"}-${key}-${top}${dim ? "-dimmed" : ""}`,
+            fill,
+            fillOpacity: (leaves ? 1 : 0.22) * (dim ? DIM : 1),
+            rects,
+            count: nodes.length,
+          } as RectGeometry);
+        }
       }
     }
     if (labeled)
@@ -133,11 +178,11 @@ export class TreemapMark implements LayoutMark {
     const itemOf = (node: number): LayoutItem => {
       const [x, y, w, h] = boxes.subarray(node * 4, node * 4 + 4) as unknown as number[];
       return {
-        key: this.#data.keyOf(frame.id, tree, node),
-        label: pathOf(tree, node).join(" / "),
+        key: this.#data.keyOf(frame.id, view, node),
+        label: [...view.prefix, ...pathOf(tree, node)].join(" / "),
         color: colorOf.get(branch[node]!) ?? theme.muted,
         value: shown[node]!,
-        text: `${formatNumber(shown[node]!, locale)} (${percent(shown[node]! / total)})`,
+        text: `${formatNumber(shown[node]!, locale)} (${percent(shown[node]! / total)}${where(view)})${selectedText(counts, node)}`,
         px: x! + w! / 2,
         py: y! + h! / 2,
         outline: `M${n(x!)} ${n(y!)}h${n(w!)}v${n(h!)}h${n(-w!)}Z`,
@@ -154,7 +199,7 @@ export class TreemapMark implements LayoutMark {
     };
     const navigation = this.#data.navigation(
       frame.id,
-      tree,
+      view,
       shown,
       (node) => boxes[node * 4 + 2]! > 0 && boxes[node * 4 + 3]! > 0,
       itemOf,
@@ -182,7 +227,9 @@ export class TreemapMark implements LayoutMark {
       },
       item: navigation.item,
       indexOf: navigation.indexOf,
-      summary: () => this.#summary(tree, shown, branches, locale, percent),
+      summary: () => this.#summary(view, shown, branches, locale, percent),
+      rowsOf: (key, of) => (of === this.table ? this.#data.rowsOf(frame.id, view, key) : undefined),
+      drill: this.#data.drill(frame.id, root, path?.crumbs ?? []),
     };
   }
 
@@ -233,14 +280,15 @@ export class TreemapMark implements LayoutMark {
   }
 
   #summary(
-    tree: Hierarchy,
+    view: TreeView,
     shown: Float64Array,
     branches: readonly Branch[],
     locale: string | undefined,
     percent: (value: number) => string,
   ): string {
+    const { tree } = view;
     const fields = this.spec.path?.join(" / ") ?? this.spec.node!;
-    const what = this.spec.value ? `${this.spec.value} by ${fields}` : fields;
+    const what = `${this.spec.value ? `${this.spec.value} by ${fields}` : fields}${where(view)}`;
     const total = shown[0]!;
     if (!(total > 0)) return `Treemap of ${what}, with nothing to show.`;
     const leaves = this.#data.leaves(tree, shown);

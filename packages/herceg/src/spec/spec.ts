@@ -18,11 +18,12 @@ export type { Expression, Operator } from "../data/expression.ts";
  * version 5 enabled x axis `seams`, version 6 raw box plot notches and
  * non-default whiskers, version 7 split violins and non-default violin
  * interiors, version 8 `rowSelection`, version 9 heatmaps over number and
- * time fields on number and time axes, and version 10 marks' `legendGroup`,
+ * time fields on number and time axes, version 10 marks' `legendGroup`,
  * points' and error bars' `dodge`, points' `jitter`, and histograms' `y`,
- * bin edges, "probability", `commonNorm`, `cumulative`, and `dodge`.
+ * bin edges, "probability", `commonNorm`, `cumulative`, and `dodge`, and
+ * version 11 directed networks and link labels.
  */
-export const SPEC_VERSION = 10;
+export const SPEC_VERSION = 11;
 
 /** Column name in a table. */
 export type Field = string;
@@ -44,11 +45,11 @@ export interface ChartSpec {
    * `rowSelection` 8, heatmap `xStep`, `yStep`, `date`, or `xBanded` /
    * `yBanded` false 9, and marks' `legendGroup`, points' and error bars'
    * `dodge` and `jitter`, and histograms with `y`, bin edges, "probability",
-   * `commonNorm`, `cumulative`, or `dodge` 10, so that older readers refuse
-   * them rather than draw them differently. Heatmaps in specs before 9 band
-   * number and time fields.
+   * `commonNorm`, `cumulative`, or `dodge` 10, and directed networks or link
+   * labels 11, so that older readers refuse them rather than draw them
+   * differently. Heatmaps in specs before 9 band number and time fields.
    */
-  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -479,14 +480,16 @@ export interface TooltipSpec {
 export interface InteractionSpec {
   /**
    * Wheel zoom and drag pan along x (`true` or "x"), y, or both ("xy");
-   * double-click resets. Category axes do not zoom.
+   * double-click resets. Category axes do not zoom. Maps zoom and pan both
+   * ways (`true` or "xy"), 3D charts magnify their camera, and treemaps and
+   * sunbursts drill into nodes (`true`).
    */
   zoom?: boolean | ZoomSpec;
   /**
    * Drag to select: a range along x or y, a rectangle ("xy"), or a freehand
    * region ("lasso"), reported as a `select` event; a click clears it. With
    * `zoom` on along the brush's axes, a brush zooms to what it covers
-   * instead (Shift-drag pans); lassos only select.
+   * instead (Shift-drag pans); lassos only select. Maps take "lasso".
    */
   brush?: BrushSpec;
   /** Charts with the same sync name share their cursor, x range, and selection. */
@@ -496,6 +499,8 @@ export interface InteractionSpec {
    * false: the wheel magnifies them.
    */
   rotate?: boolean;
+  /** Dragging a network's node moves it, and it stays where it is dropped. */
+  drag?: boolean;
 }
 
 /** What selects rows in a chart bound to a selection store: range and rectangle brushes, lassos, and clicks. */
@@ -1229,6 +1234,16 @@ export interface GraphSpec {
   target: Field;
   /** Number field summed per pair of nodes, setting links' widths; without it, links are alike. */
   value?: Field;
+  /**
+   * Links go from `source` to `target`, with an arrowhead at the target;
+   * a pair's links one way and the other are two. Needs spec version 11.
+   */
+  directed?: boolean;
+  /**
+   * Category field naming each link, written along those with room; a link
+   * of rows naming it differently has none. Needs spec version 11.
+   */
+  linkLabel?: Field;
   /** Name of a table in `ChartSpec.data` with a row per node; needs `node`. */
   nodes?: string;
   /** Category field of `nodes` naming each row's node, as `source` and `target` do. */

@@ -2,6 +2,7 @@
 // framework adapters expose. Engine state stays behind it; panels and axes
 // come out as read-only snapshots of the last frame drawn.
 
+import type { DrillRoot } from "../marks/tree-data.ts";
 import type { DrawnPanel, Inspection, TooltipMode, Viewport } from "../model/model.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { PlotRect } from "../scene/scene.ts";
@@ -131,6 +132,28 @@ export interface Chart {
    * the next frame.
    */
   setCamera(camera: CameraSpec | null): void;
+  /**
+   * The node a treemap or sunburst is drilled into (null for the whole
+   * tree) and the path to it from the top level; undefined for other charts.
+   */
+  readonly drillRoot: DrillRoot | undefined;
+  /**
+   * Drills a treemap or sunburst into a node, named by its item key (as
+   * inspections, the legend, and `drill` events give it) or by its names
+   * from the top level down, or with null back out to the whole tree, as
+   * clicks do with `interaction.zoom`. A `drill` event follows when the root
+   * changed. Throws for a node the tree does not have, and for other charts.
+   */
+  setDrillRoot(node: string | readonly string[] | null): void;
+  /**
+   * Moves a network's node, keyed as its items are, to a place in the
+   * network's layout units (as `itemMove` events report them; links settle
+   * about 30 units long), or with null back to where the layout puts it.
+   * Nodes stay where they are put until the network's data changes. An
+   * `itemMove` event follows when the node moved. Throws for a key of no
+   * node drawn, and for other charts.
+   */
+  setItemPosition(key: string, position: { x: number; y: number } | null): void;
   /** The panels of the last frame, in reading order. */
   getPanels(): readonly PanelInfo[];
   /**

@@ -1,18 +1,35 @@
 import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
 import { n } from "../draw/markup.ts";
+import { pointDrawing } from "../draw/point.ts";
+import { segmentDrawing } from "../draw/segments.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber } from "../format/format.ts";
-import { fitLayout, layoutForce, separate } from "../layout/force.ts";
+import { fitLayout, type LayoutFit, layoutFit, layoutForce, separate } from "../layout/force.ts";
 import { labelFor } from "../layout/text.ts";
 import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
+import type { ChartConfig } from "../model/model.ts";
 import { isLightColor } from "../scale/color.ts";
-import type { Geometry, PathShape, Rect, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
+import type {
+  Geometry,
+  PathShape,
+  PointGeometry,
+  Rect,
+  SegmentGeometry,
+  ShapesGeometry,
+  TextGeometry,
+} from "../scene/scene.ts";
 import type { Frozen, GraphSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
-import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
+import type {
+  LayoutControls,
+  LayoutFrame,
+  LayoutItem,
+  LayoutMark,
+  LayoutResult,
+} from "./layout-mark.ts";
+import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
 export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
   /** Category field naming one end of each row's link. */
@@ -21,6 +38,16 @@ export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
   target: CategoryField<S>;
   /** Number field summed per pair of nodes, setting links' widths; without it, links are alike. */
   value?: NumberField<S>;
+  /**
+   * Links go from `source` to `target`, with an arrowhead at the target: a
+   * pair's links one way and the other are two, bowed apart. Undirected by default.
+   */
+  directed?: boolean;
+  /**
+   * Category field naming each link, written along the links that have
+   * room; a link of rows naming it differently has none.
+   */
+  linkLabel?: CategoryField<S>;
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
   labels?: boolean;
   id?: string;
@@ -79,6 +106,23 @@ const MAX_SCALE = 2.5;
 /** One axis may stretch this much more than the other to use a room of another shape. */
 const MAX_STRETCH = 1.3;
 
+/** How far a pair's two directed links bow apart: a share of their length, at most so many pixels. */
+const BOW = 0.12;
+const MAX_BOW = 28;
+/** Arrowheads' sides, in pixels at the least, and their angle to the link. */
+const ARROW = 6;
+const ARROW_ANGLE = (24 * Math.PI) / 180;
+/** Colors one geometry of points indexes, a byte each. */
+const MAX_COLORS = 256;
+/** Links whose names are written, as nodes': all of 50, fewer in denser networks. */
+const LINK_LABELED = 50;
+
+/** Shift with the arrow keys moves the node read, and 0 puts moved nodes back. */
+const DRAG: LayoutControls = {
+  kind: "drag",
+  hint: "Shift with the arrow keys moves the node read, and 0 puts moved nodes back.",
+};
+
 /** The tables' nodes and links, rebuilt when either changes. */
 interface Network {
   /** The table versions it was built from. */
@@ -92,13 +136,22 @@ interface Network {
   groups: string[];
   /** Per node: its `size` value, NaN where missing or infinite; undefined without `size`. */
   size: Float64Array | undefined;
-  /** Per link: its ends (in the order its first row named them) and its total. */
+  /**
+   * Per link: its ends and its total. Directed links go from source to
+   * target; undirected ones are named in the order their first row named them.
+   */
   source: Int32Array;
   target: Int32Array;
   value: Float64Array;
-  /** The link between two nodes: `linkOf.get(min * stride + max)`. */
+  /** The link of a pair: `linkOf.get(pairKey(s, t))`, either way round unless directed. */
   linkOf: Map<number, number>;
   stride: number;
+  /** Per row of the links table: its link, or -1 for rows left out. */
+  linkOfRow: Int32Array;
+  /** Per link, with `linkLabel`: its label's code, -1 for none, -2 for rows naming it differently. */
+  label: Int32Array | undefined;
+  /** The label field's categories. */
+  labels: readonly string[];
   /** Nodes with links to themselves, which are left out. */
   loops: number;
   /** Links whose total overflows a double, which are left out. */
@@ -116,6 +169,36 @@ interface Placement {
   radii: Float64Array;
   /** 1, or less in rooms crowded with nodes, where nodes and links draw smaller. */
   crowding: number;
+  /** Layout units to the room's pixels, before overlapping nodes were pushed apart. */
+  fit: LayoutFit;
+}
+
+/**
+ * Nodes moved by dragging in one chart, by key: x, y in layout units, and
+ * the layout positions they were moved in (moves in another are dropped).
+ */
+export interface MovedNodes {
+  layout: object;
+  at: ReadonlyMap<string, readonly [number, number]>;
+}
+
+/** What a network's drawing lends the controls that move its nodes (see dom/node-drag.ts). */
+export interface NodeMoves {
+  /** The layout positions moves are in. */
+  layout: object;
+  /** Whether the network's tables are still as they were laid out (no change waits to be drawn). */
+  current(): boolean;
+  /** Whether the item keyed `key` is a node drawn now, which can be moved. */
+  movable(key: string): boolean;
+  /** Whether a key is one of the network's nodes', drawn or not (a hidden group's). */
+  owns(key: string): boolean;
+  /**
+   * Where in layout units the node keyed `key` goes to be drawn at a pixel,
+   * kept inside the room as it is drawn, so a move past the edge stops there.
+   */
+  toLayout(key: string, px: number, py: number): [number, number];
+  /** Where the node keyed `key` is drawn, in pixels, or would be if moved to `at` (layout units). */
+  pixelOf(key: string, at?: readonly [number, number]): [number, number] | undefined;
 }
 
 export class GraphMark implements LayoutMark {
@@ -129,6 +212,9 @@ export class GraphMark implements LayoutMark {
   readonly nodes: Table | undefined;
   readonly otherTables: readonly Table[];
   readonly measure: string;
+  /** Dragging moves nodes with `interaction.drag`, and charts select rows of either table. */
+  readonly interactions = ["drag"] as const;
+  readonly selects = true;
   #network: Network | undefined;
   #placed: Placement | undefined;
 
@@ -139,6 +225,8 @@ export class GraphMark implements LayoutMark {
     requireField(links, spec.source, CATEGORY, "graph source");
     requireField(links, spec.target, CATEGORY, "graph target");
     if (spec.value !== undefined) requireField(links, spec.value, ["number"], "graph value");
+    if (spec.linkLabel !== undefined)
+      requireField(links, spec.linkLabel, CATEGORY, "graph linkLabel");
     if (nodes) {
       if (spec.node === undefined)
         throw new Error("graph nodes need `node`, the field naming each row's node");
@@ -154,16 +242,31 @@ export class GraphMark implements LayoutMark {
     this.measure = spec.value ?? "Links";
   }
 
+  controls(config: ChartConfig): LayoutControls | undefined {
+    return config.interaction?.drag ? DRAG : undefined;
+  }
+
+  /** The key `linkOf` finds the link of nodes `s` and `t` by. */
+  #pair(network: Pick<Network, "stride">, s: number, t: number): number {
+    const { stride } = network;
+    return this.spec.directed ? s * stride + t : Math.min(s, t) * stride + Math.max(s, t);
+  }
+
+  /** The versions of the tables the network is built from. */
+  #versions(): string {
+    return `${this.table.version} ${this.nodes?.version ?? ""}`;
+  }
+
   /**
    * Nodes from the nodes table, a later row replacing an earlier one's
-   * group and size, then names only links use. One link per pair of nodes,
-   * either way round, summing the values (or counting the rows) that are
-   * positive and finite; rows with a missing name or any other value are
-   * left out, and so are names only they mention.
+   * group and size, then names only links use. One link per pair of nodes
+   * (each way, for directed links), summing the values (or counting the
+   * rows) that are positive and finite; rows with a missing name or any
+   * other value are left out, and so are names only they mention.
    */
   #build(): Network {
     const { spec, table: links, nodes } = this;
-    const versions = `${links.version} ${nodes?.version ?? ""}`;
+    const versions = this.#versions();
     if (this.#network?.versions === versions) return this.#network;
     const names: string[] = [];
     const nodeOf = new Map<string, number>();
@@ -198,6 +301,7 @@ export class GraphMark implements LayoutMark {
     const from = links.categories(spec.source);
     const to = links.categories(spec.target);
     const values = spec.value === undefined ? undefined : links.numbers(spec.value);
+    const named = spec.linkLabel === undefined ? undefined : links.categories(spec.linkLabel);
     // Each field's codes are looked up by name once.
     const nodeOfCode = (cache: Int32Array, dictionary: readonly string[], code: number) => {
       if (cache[code]! < 0) cache[code] = add(dictionary[code]!);
@@ -210,6 +314,8 @@ export class GraphMark implements LayoutMark {
     const source: number[] = [];
     const target: number[] = [];
     const sums: number[] = [];
+    const labels: number[] = [];
+    const linkOfRow = new Int32Array(links.length).fill(-1);
     const loops = new Set<number>();
     for (let row = 0; row < links.length; row++) {
       const a = from.codes[row]!;
@@ -223,29 +329,33 @@ export class GraphMark implements LayoutMark {
         loops.add(s);
         continue;
       }
-      const key = Math.min(s, t) * stride + Math.max(s, t);
+      const key = this.#pair({ stride }, s, t);
       let link = linkOf.get(key);
+      const code = named ? named.codes[row]! : -1;
       if (link === undefined) {
         link = sums.length;
         linkOf.set(key, link);
         source.push(s);
         target.push(t);
         sums.push(0);
-      }
+        labels.push(code);
+      } else if (labels[link] !== code) labels[link] = -2;
       sums[link]! += value;
+      linkOfRow[row] = link;
     }
 
     // Totals beyond the largest double are left out, keeping link numbers dense.
     const kept: number[] = [];
+    const renumber = new Int32Array(sums.length).fill(-1);
     for (let link = 0; link < sums.length; link++)
-      if (sums[link]! < Number.POSITIVE_INFINITY) kept.push(link);
+      if (sums[link]! < Number.POSITIVE_INFINITY) renumber[link] = kept.push(link) - 1;
     if (kept.length < sums.length) {
       linkOf.clear();
       kept.forEach((link, i) => {
-        const s = source[link]!;
-        const t = target[link]!;
-        linkOf.set(Math.min(s, t) * stride + Math.max(s, t), i);
+        linkOf.set(this.#pair({ stride }, source[link]!, target[link]!), i);
       });
+      for (let row = 0; row < linkOfRow.length; row++)
+        if (linkOfRow[row]! >= 0) linkOfRow[row] = renumber[linkOfRow[row]!]!;
     }
     const count = names.length;
     const network: Network = {
@@ -260,6 +370,9 @@ export class GraphMark implements LayoutMark {
       value: Float64Array.from(kept, (link) => sums[link]!),
       linkOf,
       stride,
+      linkOfRow,
+      label: named ? Int32Array.from(kept, (link) => labels[link]!) : undefined,
+      labels: named?.dictionary ?? [],
       loops: loops.size,
       overflowed: sums.length - kept.length,
       positions: undefined,
@@ -318,11 +431,13 @@ export class GraphMark implements LayoutMark {
     const radii = this.#radii(network, crowding);
     let largest = 0;
     for (const r of radii) largest = Math.max(largest, r);
-    const at = fitLayout(this.#positions(network), bounds, {
+    const options = {
       inset: Math.max(largest + RING + 1, margin),
       maxScale: MAX_SCALE,
       maxStretch: MAX_STRETCH,
-    });
+    };
+    const positions = this.#positions(network);
+    const at = fitLayout(positions, bounds, options);
     const inside = {
       x: bounds.x + RING,
       y: bounds.y + RING,
@@ -330,7 +445,8 @@ export class GraphMark implements LayoutMark {
       height: Math.max(0, bounds.height - 2 * RING),
     };
     separate(at, radii, inside, RING + 1);
-    this.#placed = { key, at, radii, crowding };
+    const fit = layoutFit(positions, bounds, options);
+    this.#placed = { key, at, radii, crowding, fit };
     return this.#placed;
   }
 
@@ -355,6 +471,7 @@ export class GraphMark implements LayoutMark {
     const { bounds, theme, hidden, locale } = frame;
     const { names, source, target, value, group, groups } = network;
     const count = names.length;
+    const directed = this.spec.directed === true;
 
     // Group colors; nodes without a group are muted, unless no node has one.
     const groupColors = groups.map((name) => frame.color(groupKey(frame.id, name)));
@@ -380,9 +497,32 @@ export class GraphMark implements LayoutMark {
     const labeled = this.spec.labels ?? true;
     // Room for half a line of text above and below, so labels at the edges fit.
     const margin = labeled ? Math.round(theme.fontSize * 1.25) / 2 : 0;
-    const { at, radii, crowding } = this.#place(network, bounds, margin);
+    const placement = this.#place(network, bounds, margin);
+    const { radii, crowding, fit } = placement;
+    // Nodes the chart's user moved are where they were put, in the layout's units.
+    const moved =
+      frame.moved?.layout === this.#layoutIdentity(network) ? frame.moved?.at : undefined;
+    const at = moved && moved.size > 0 ? placement.at.slice() : placement.at;
+    const clampX = (node: number, x: number) =>
+      Math.min(bounds.x + bounds.width - radii[node]!, Math.max(bounds.x + radii[node]!, x));
+    const clampY = (node: number, y: number) =>
+      Math.min(bounds.y + bounds.height - radii[node]!, Math.max(bounds.y + radii[node]!, y));
+    // A node moved to a place in layout units, drawn inside the room.
+    const pixelAt = (node: number, [lx, ly]: readonly [number, number]): [number, number] => [
+      clampX(node, fit.cx + (lx - fit.mx) * fit.sx),
+      clampY(node, fit.cy + (ly - fit.my) * fit.sy),
+    ];
+    for (const [key, place] of moved ?? []) {
+      const node = nodeOfKey(network, frame.id, key);
+      if (node < 0) continue;
+      [at[node * 2], at[node * 2 + 1]] = pixelAt(node, place);
+    }
     const x = (node: number) => at[node * 2]!;
     const y = (node: number) => at[node * 2 + 1]!;
+
+    // With a selection highlighted, what none of its rows' selection holds is dimmed.
+    const litNodes = this.#litNodes(network, frame.selected);
+    const litLinks = this.#litLinks(network, frame.selected);
 
     let heaviest = 0;
     for (const v of value) heaviest = Math.max(heaviest, v);
@@ -398,64 +538,104 @@ export class GraphMark implements LayoutMark {
       const g = group[source[link]!]!;
       return g >= 0 && g === group[target[link]!] ? groupColors[g]! : theme.muted;
     };
-    // Links of about the same width and color share a path.
-    const paths = new Map<string, { width: number; color: string; d: string }>();
+    // A directed link whose pair runs the other way too bows to its own side.
+    const bowed = (link: number) =>
+      directed && network.linkOf.has(this.#pair(network, target[link]!, source[link]!));
+    const route = (link: number) =>
+      routeOf(x(source[link]!), y(source[link]!), x(target[link]!), y(target[link]!), bowed(link));
+    const ringColor = surface(theme);
+    const opacity = LINK_OPACITY[isLightColor(ringColor) === false ? "dark" : "light"];
+    // Links of about the same width, color, and highlight share a geometry.
+    type Part = { width: number; color: string; dim: boolean; coords: number[]; d: string };
+    const parts = new Map<string, Part>();
+    // Each drawn link's part, by its place in `links`, for the order they are drawn in.
+    const partOf: Part[] = [];
     for (const link of links) {
       const width = Math.round(widthOf(link) * 4) / 4;
       const color = linkColor(link);
-      const key = `${width} ${color}`;
-      const path = paths.get(key) ?? { width, color, d: "" };
-      const s = source[link]!;
+      const dim = litLinks !== undefined && !litLinks[link];
+      const key = `${width} ${color} ${dim}`;
+      let part = parts.get(key);
+      if (!part) {
+        part = { width, color, dim, coords: [], d: "" };
+        parts.set(key, part);
+      }
+      partOf.push(part);
+      const r = route(link);
+      // Directed links end at the target's ring, an arrowhead's tip there.
       const t = target[link]!;
-      path.d += `M${n(x(s))} ${n(y(s))}L${n(x(t))} ${n(y(t))}`;
-      paths.set(key, path);
+      const end = directed ? radii[t]! + ringWidth(radii[t]!) + 0.5 : 0;
+      const [ex, ey] = r.pointBack(end);
+      if (r.bow) part.d += `M${n(r.x0)} ${n(r.y0)}Q${n(r.cx)} ${n(r.cy)} ${n(ex)} ${n(ey)}`;
+      else part.coords.push(r.x0, r.y0, ex, ey);
+      if (directed) {
+        const [ux, uy] = r.direction();
+        const side = Math.max(ARROW * Math.max(0.6, crowding), width * 2.5);
+        for (const turn of [ARROW_ANGLE, -ARROW_ANGLE]) {
+          const cos = Math.cos(turn);
+          const sin = Math.sin(turn);
+          part.coords.push(
+            ex,
+            ey,
+            ex - side * (ux * cos - uy * sin),
+            ey - side * (ux * sin + uy * cos),
+          );
+        }
+      }
     }
-    const ring = surface(theme);
-    const opacity = LINK_OPACITY[isLightColor(ring) === false ? "dark" : "light"];
+    // Dimmed links below the others, muted below colored, thin below thick.
+    const ordered = [...parts.values()].sort(
+      (a, b) =>
+        Number(b.dim) - Number(a.dim) ||
+        Number(b.color === theme.muted) - Number(a.color === theme.muted) ||
+        a.width - b.width,
+    );
+    // Links are drawn part by part, each part's straight links before its
+    // bowed ones, and in order within those.
+    const layerOf = new Map(ordered.map((part, i) => [part, i]));
+    const layer = (i: number) => layerOf.get(partOf[i]!)! * 2 + (bowed(links[i]!) ? 1 : 0);
+    const linkAbove = (i: number, j: number) =>
+      layer(i) !== layer(j) ? layer(i) > layer(j) : i > j;
     const font = `${theme.fontSize}px ${theme.font}`;
-    // Muted links below colored ones, thin below thick.
-    const linkShapes: PathShape[] = [...paths.values()]
-      .sort(
-        (a, b) =>
-          Number(b.color === theme.muted) - Number(a.color === theme.muted) || a.width - b.width,
-      )
-      .map(({ width, color, d }) => ({
-        d,
-        fill: "none",
-        stroke: color,
-        strokeWidth: width,
-        opacity,
-        dash: undefined,
-      }));
-    // Larger nodes first, so smaller ones on top of them stay visible.
-    const stacked = [...nodes].sort((a, b) => radii[b]! - radii[a]! || a - b);
-    const nodeShapes: PathShape[] = stacked.map((node) => ({
-      d: circle(x(node), y(node), radii[node]!),
-      fill: colorOf(node),
-      stroke: ring,
-      strokeWidth: ringWidth(radii[node]!),
-      opacity: 1,
-      dash: undefined,
-    }));
-    const geometry: Geometry[] = [
-      {
-        kind: "shapes",
-        draw: shapesDrawing,
-        key: "graph-links",
-        shapes: linkShapes,
-        font,
-        fontSize: theme.fontSize,
-      } as ShapesGeometry,
-      {
-        kind: "shapes",
-        draw: shapesDrawing,
-        key: "graph-nodes",
-        shapes: nodeShapes,
-        font,
-        fontSize: theme.fontSize,
-      } as ShapesGeometry,
-    ];
-    if (labeled) geometry.push(...this.#labels(network, nodes, degree, at, radii, frame));
+    const geometry: Geometry[] = [];
+    ordered.forEach(({ width, color, dim, coords, d }, i) => {
+      const shown = dim ? opacity * DIM : opacity;
+      if (coords.length > 0)
+        geometry.push({
+          kind: "segments",
+          draw: segmentDrawing,
+          key: `graph-links-${i}${dim ? "-dimmed" : ""}`,
+          stroke: color,
+          strokeWidth: width,
+          opacity: shown,
+          coords: Float32Array.from(coords),
+          count: coords.length / 4,
+        } as SegmentGeometry);
+      if (d)
+        geometry.push({
+          kind: "shapes",
+          draw: shapesDrawing,
+          key: `graph-bows-${i}${dim ? "-dimmed" : ""}`,
+          shapes: [
+            {
+              d,
+              fill: "none",
+              stroke: color,
+              strokeWidth: width,
+              opacity: shown,
+              dash: undefined,
+            } as PathShape,
+          ],
+          font,
+          fontSize: theme.fontSize,
+        } as ShapesGeometry);
+    });
+    geometry.push(...this.#nodeGeometry(nodes, at, radii, colorOf, ringColor, litNodes));
+    // Labels' boxes, x0, y0, x1, y1 each, which later labels keep clear of.
+    const placed: number[] = [];
+    if (labeled) geometry.push(...this.#labels(network, nodes, degree, at, radii, frame, placed));
+    if (network.label)
+      geometry.push(...this.#linkLabels(network, links, route, at, radii, nodes, frame, placed));
 
     const format = (v: number) => formatNumber(v, locale);
     const nodeItem = (node: number): LayoutItem => {
@@ -484,15 +664,21 @@ export class GraphMark implements LayoutMark {
       const link = links[i]!;
       const s = source[link]!;
       const t = target[link]!;
+      const r = route(link);
+      const code = network.label?.[link] ?? -1;
+      const named = code >= 0 ? `${network.labels[code]}: ` : "";
+      const [mx, my] = r.middle();
       return {
         key: JSON.stringify([frame.id, names[s], names[t]]),
-        label: `${names[s]} — ${names[t]}`,
+        label: `${names[s]} ${directed ? "→" : "—"} ${names[t]}`,
         color: linkColor(link),
         value: value[link]!,
-        text: format(value[link]!),
-        px: (x(s) + x(t)) / 2,
-        py: (y(s) + y(t)) / 2,
-        outline: band(x(s), y(s), x(t), y(t), widthOf(link) / 2 + 2),
+        text: `${named}${format(value[link]!)}`,
+        px: mx,
+        py: my,
+        outline: r.bow
+          ? `M${n(r.x0)} ${n(r.y0)}Q${n(r.cx)} ${n(r.cy)} ${n(r.x1)} ${n(r.y1)}`
+          : band(r.x0, r.y0, r.x1, r.y1, widthOf(link) / 2 + 2),
       };
     };
     const nodePlace = new Int32Array(count).fill(-1);
@@ -500,28 +686,76 @@ export class GraphMark implements LayoutMark {
       nodePlace[node] = i;
     });
     const linkPlace = new Map(links.map((link, i) => [link, i]));
+    /** The link an item key names, -1 for none drawn. */
+    const linkOfKey = (parts: unknown[]) => {
+      const s = network.nodeOf.get(parts[1] as string) ?? -1;
+      const t = network.nodeOf.get(parts[2] as string) ?? -1;
+      const link = s < 0 || t < 0 ? undefined : network.linkOf.get(this.#pair(network, s, t));
+      return link === undefined ? -1 : link;
+    };
+    const keyParts = (key: string): unknown[] | undefined => {
+      let parts: unknown;
+      try {
+        parts = JSON.parse(key);
+      } catch {
+        return undefined;
+      }
+      return Array.isArray(parts) && parts[0] === frame.id && parts.length <= 3 ? parts : undefined;
+    };
+    // Nodes are drawn as #nodeGeometry stacks them: those the selection
+    // leaves out first, then the largest first, then in order.
+    const drawnAbove = (a: number, b: number) => {
+      const la = litNodes?.[a] ?? 0;
+      const lb = litNodes?.[b] ?? 0;
+      if (la !== lb) return la > lb;
+      return radii[a] !== radii[b] ? radii[a]! < radii[b]! : a > b;
+    };
+    const moves: NodeMoves = {
+      layout: this.#layoutIdentity(network),
+      current: () => this.#versions() === network.versions,
+      owns: (key) => keyParts(key)?.length === 2,
+      movable: (key) => {
+        const parts = keyParts(key);
+        return parts?.length === 2 && nodePlace[network.nodeOf.get(parts[1] as string) ?? -1]! >= 0;
+      },
+      toLayout: (key, px, py) => {
+        const node = nodeOfKey(network, frame.id, key);
+        if (node >= 0) [px, py] = [clampX(node, px), clampY(node, py)];
+        return [fit.mx + (px - fit.cx) / (fit.sx || 1), fit.my + (py - fit.cy) / (fit.sy || 1)];
+      },
+      pixelOf: (key, place) => {
+        const node = nodeOfKey(network, frame.id, key);
+        if (node < 0) return undefined;
+        return place ? pixelAt(node, place) : [x(node), y(node)];
+      },
+    };
     return {
       geometry,
       itemAt(px, py) {
-        // The node whose edge is nearest, within reach.
+        // The node drawn on top of those under the pointer, else the one
+        // whose edge is nearest, within reach.
+        let top = -1;
         let best = -1;
         let bestGap = REACH;
         for (const node of nodes) {
           const gap = Math.hypot(px - x(node), py - y(node)) - radii[node]!;
-          if (gap <= bestGap) {
+          if (gap <= 0) {
+            if (top < 0 || drawnAbove(node, top)) top = node;
+          } else if (gap <= bestGap) {
             best = node;
             bestGap = gap;
           }
         }
+        if (top >= 0) return nodeItem(top);
         if (best >= 0) return nodeItem(best);
-        // Else the link nearest the pointer, within reach of its edge.
+        // Else the link nearest the pointer, within reach of its edge; of
+        // links as near (those whose stroke it is on), the one drawn on top.
         let nearest = -1;
         let nearestGap = 0;
         links.forEach((link, i) => {
-          const s = source[link]!;
-          const t = target[link]!;
-          const gap = distanceToSegment(px, py, x(s), y(s), x(t), y(t)) - widthOf(link) / 2;
-          if (gap <= REACH && (nearest < 0 || gap < nearestGap)) {
+          const gap = Math.max(0, route(link).distance(px, py) - widthOf(link) / 2);
+          if (gap > REACH) return;
+          if (nearest < 0 || gap < nearestGap || (gap === nearestGap && linkAbove(i, nearest))) {
             nearest = i;
             nearestGap = gap;
           }
@@ -533,23 +767,172 @@ export class GraphMark implements LayoutMark {
         index < nodes.length ? nodeItem(nodes[index]!) : linkItem(index - nodes.length),
       indexOf(key) {
         // Keys are the mark's id and a node's name, or a link's two names.
-        let parts: unknown;
-        try {
-          parts = JSON.parse(key);
-        } catch {
-          return -1;
+        const parts = keyParts(key);
+        if (!parts || parts.length < 2) return -1;
+        if (parts.length === 2) {
+          const node = network.nodeOf.get(parts[1] as string);
+          return node === undefined ? -1 : nodePlace[node]!;
         }
-        if (!Array.isArray(parts) || parts[0] !== frame.id || parts.length > 3) return -1;
-        const s = network.nodeOf.get(parts[1]) ?? -1;
-        if (s < 0) return -1;
-        if (parts.length === 2) return nodePlace[s]!;
-        const t = network.nodeOf.get(parts[2]) ?? -1;
-        const link = network.linkOf.get(Math.min(s, t) * network.stride + Math.max(s, t));
-        const place = t < 0 || link === undefined ? undefined : linkPlace.get(link);
+        const place = linkPlace.get(linkOfKey(parts));
         return place === undefined ? -1 : nodes.length + place;
       },
       summary: () => this.#summary(network, nodes, links, degree, locale),
+      // A node stands for its rows of the nodes table, a link for those of the links table.
+      rowsOf: (key, table) => {
+        const parts = keyParts(key);
+        if (!parts) return undefined;
+        if (parts.length === 2) {
+          const node = network.nodeOf.get(parts[1] as string);
+          // A node only links name stands for no row.
+          const rows = node === undefined || table !== this.nodes ? [] : this.#nodeRows(node);
+          return rows.length > 0 ? rows : undefined;
+        }
+        const link = linkOfKey(parts);
+        if (link < 0 || table !== this.table) return undefined;
+        const rows: number[] = [];
+        network.linkOfRow.forEach((of, row) => {
+          if (of === link) rows.push(row);
+        });
+        return rows;
+      },
+      moves,
     };
+  }
+
+  /**
+   * What identifies the layout positions moves are made in, the same for
+   * every mark drawing the same tables (and versions) with the fields and
+   * options the layout reads, so a mark made again with other styles keeps
+   * the chart's moves; moves in another layout are dropped.
+   */
+  #layoutIdentity(network: Network): object {
+    const { spec, table, nodes } = this;
+    const fields = [spec.source, spec.target, spec.value, spec.directed === true, spec.node];
+    const signature = JSON.stringify(fields);
+    let byNodes = layouts.get(table);
+    if (!byNodes) {
+      byNodes = new WeakMap();
+      layouts.set(table, byNodes);
+    }
+    const owner = nodes ?? table;
+    let bySignature = byNodes.get(owner);
+    if (!bySignature) {
+      bySignature = new Map();
+      byNodes.set(owner, bySignature);
+    }
+    // Each layout of the tables has its own, new with every change of their versions.
+    let kept = bySignature.get(signature);
+    if (kept?.versions !== network.versions) {
+      kept = { versions: network.versions, identity: {} };
+      bySignature.set(signature, kept);
+    }
+    return kept.identity;
+  }
+
+  /** The rows of the nodes table naming node `node`. */
+  #nodeRows(node: number): number[] {
+    const nodes = this.nodes!;
+    const { codes, dictionary } = nodes.categories(this.spec.node!);
+    const name = this.#network!.names[node];
+    const rows: number[] = [];
+    for (let row = 0; row < codes.length; row++)
+      if (codes[row]! >= 0 && dictionary[codes[row]!] === name) rows.push(row);
+    return rows;
+  }
+
+  /** Per node, whether any of its rows of the nodes table the highlighted selection holds. */
+  #litNodes(network: Network, selected: LayoutFrame["selected"]): Uint8Array | undefined {
+    const membership = this.nodes && selected?.(this.nodes);
+    if (!membership) return undefined;
+    const lit = new Uint8Array(network.names.length);
+    const { codes, dictionary } = this.nodes!.categories(this.spec.node!);
+    const nodeOfCode = Int32Array.from(dictionary, (name) => network.nodeOf.get(name) ?? -1);
+    for (let row = 0; row < codes.length; row++)
+      if (membership[row] && codes[row]! >= 0 && nodeOfCode[codes[row]!]! >= 0)
+        lit[nodeOfCode[codes[row]!]!] = 1;
+    return lit;
+  }
+
+  /** Per link, whether any of its rows the highlighted selection holds. */
+  #litLinks(network: Network, selected: LayoutFrame["selected"]): Uint8Array | undefined {
+    const membership = selected?.(this.table);
+    if (!membership) return undefined;
+    const lit = new Uint8Array(network.source.length);
+    network.linkOfRow.forEach((link, row) => {
+      if (link >= 0 && membership[row]) lit[link] = 1;
+    });
+    return lit;
+  }
+
+  /**
+   * The nodes as points, largest first so smaller ones on top of them stay
+   * visible, each filled and ringed in the surface color; with `lit`, those
+   * it leaves out dimmed below the others.
+   */
+  #nodeGeometry(
+    nodes: readonly number[],
+    at: Float64Array,
+    radii: Float64Array,
+    colorOf: (node: number) => string,
+    ringColor: string,
+    lit: Uint8Array | undefined,
+  ): PointGeometry[] {
+    const parts = lit
+      ? [nodes.filter((node) => !lit[node]), nodes.filter((node) => lit[node])]
+      : [nodes];
+    let thinnest = RING;
+    for (const node of nodes) thinnest = Math.min(thinnest, ringWidth(radii[node]!));
+    const geometry: PointGeometry[] = [];
+    parts.forEach((part, i) => {
+      const dim = lit !== undefined && i === 0;
+      const stacked = [...part].sort((a, b) => radii[b]! - radii[a]! || a - b);
+      // Points index at most 256 colors: more make runs of nodes, drawn in order.
+      let start = 0;
+      while (start < stacked.length) {
+        const palette: string[] = [];
+        const colorIndex = new Map<string, number>();
+        const indices: number[] = [];
+        let end = start;
+        for (; end < stacked.length; end++) {
+          const color = colorOf(stacked[end]!);
+          let c = colorIndex.get(color);
+          if (c === undefined) {
+            if (palette.length === MAX_COLORS) break;
+            c = palette.push(color) - 1;
+            colorIndex.set(color, c);
+          }
+          indices.push(c);
+        }
+        const run = stacked.slice(start, end);
+        const index = Uint8ClampedArray.from(indices);
+        const coords = new Float32Array(run.length * 2);
+        const sizes = new Float32Array(run.length);
+        let largest = 0;
+        run.forEach((node, k) => {
+          coords[k * 2] = at[node * 2]!;
+          coords[k * 2 + 1] = at[node * 2 + 1]!;
+          sizes[k] = radii[node]!;
+          largest = Math.max(largest, radii[node]!);
+        });
+        geometry.push({
+          kind: "point",
+          draw: pointDrawing,
+          key: `graph-nodes${dim ? "-dimmed" : ""}${start > 0 ? `-${start}` : ""}`,
+          fill: palette[0] ?? ringColor,
+          fillOpacity: dim ? DIM : 1,
+          opaque: false,
+          ring: { color: ringColor, width: thinnest, ...(dim && { opacity: DIM }) },
+          radius: largest,
+          symbol: "circle",
+          coords,
+          count: run.length,
+          radii: sizes,
+          colors: palette.length > 1 ? { index, palette } : undefined,
+        } as PointGeometry);
+        start = end;
+      }
+    });
+    return geometry;
   }
 
   /** Per node, its radius in pixels: `size` by area, or one radius for all. */
@@ -580,6 +963,7 @@ export class GraphMark implements LayoutMark {
     at: Float64Array,
     radii: Float64Array,
     frame: LayoutFrame,
+    placed: number[],
   ): Geometry[] {
     const { bounds, theme, measure } = frame;
     const font = `${theme.fontSize}px ${theme.font}`;
@@ -590,7 +974,6 @@ export class GraphMark implements LayoutMark {
     const candidates = [...nodes]
       .sort((a, b) => (rank[b]! || 0) - (rank[a]! || 0) || a - b)
       .slice(0, budget);
-    const placed: number[] = [];
     // A label may cross links, but not other labels or other nodes, which its halo would hide.
     const free = (node: number, left: number, top: number, right: number, bottom: number) => {
       for (let i = 0; i < placed.length; i += 4) {
@@ -659,6 +1042,87 @@ export class GraphMark implements LayoutMark {
       );
   }
 
+  /**
+   * Names along the heaviest links (the first, without `value`) with
+   * room: at the link's middle, left out where it would cover a label
+   * placed or a node; budgeted as node labels are.
+   */
+  #linkLabels(
+    network: Network,
+    links: readonly number[],
+    route: (link: number) => Route,
+    at: Float64Array,
+    radii: Float64Array,
+    nodes: readonly number[],
+    frame: LayoutFrame,
+    placed: number[],
+  ): Geometry[] {
+    const { theme, measure, bounds } = frame;
+    const label = network.label!;
+    const font = `${theme.fontSize}px ${theme.font}`;
+    const lineHeight = Math.round(theme.fontSize * 1.25);
+    const named = links.filter((link) => label[link]! >= 0);
+    const budget = Math.round(
+      LINK_LABELED * Math.min(1, Math.sqrt(LINK_LABELED / Math.max(1, named.length))),
+    );
+    const candidates = named
+      .sort((a, b) => network.value[b]! - network.value[a]! || a - b)
+      .slice(0, budget);
+    const covers = (left: number, top: number, right: number, bottom: number) => {
+      for (let i = 0; i < placed.length; i += 4)
+        if (
+          left < placed[i + 2]! &&
+          right > placed[i]! &&
+          top < placed[i + 3]! &&
+          bottom > placed[i + 1]!
+        )
+          return true;
+      for (const node of nodes) {
+        const r = radii[node]!;
+        const ox = at[node * 2]!;
+        const oy = at[node * 2 + 1]!;
+        if (left < ox + r && right > ox - r && top < oy + r && bottom > oy - r) return true;
+      }
+      return false;
+    };
+    const coords: number[] = [];
+    const labels: string[] = [];
+    for (const link of candidates) {
+      const r = route(link);
+      const [mx, my] = r.middle();
+      // A link's name is at most as long as the link.
+      const room = Math.min(bounds.width / 4, Math.hypot(r.x1 - r.x0, r.y1 - r.y0) - 8);
+      const text = labelFor(network.labels[label[link]!]!, room, measure, font);
+      if (!text) continue;
+      const width = measure(text, font);
+      const box = [
+        mx - width / 2,
+        my - lineHeight / 2,
+        mx + width / 2,
+        my + lineHeight / 2,
+      ] as const;
+      if (box[0] < bounds.x || box[2] > bounds.x + bounds.width) continue;
+      if (box[1] < bounds.y || box[3] > bounds.y + bounds.height || covers(...box)) continue;
+      placed.push(...box);
+      coords.push(mx, my);
+      labels.push(text);
+    }
+    if (labels.length === 0) return [];
+    return [
+      {
+        kind: "text",
+        draw: textDrawing,
+        key: "graph-link-labels",
+        fill: theme.text,
+        anchor: "middle",
+        halo: true,
+        coords: Float32Array.from(coords),
+        labels,
+        count: labels.length,
+      } as TextGeometry,
+    ];
+  }
+
   #summary(
     network: Network,
     nodes: readonly number[],
@@ -672,6 +1136,9 @@ export class GraphMark implements LayoutMark {
       left += ` ${plural(loops, "link from a node to itself is", "links from nodes to themselves are")} not drawn.`;
     if (overflowed > 0)
       left += ` ${plural(overflowed, "link whose total is too large to represent is", "links whose totals are too large to represent are")} not drawn.`;
+    const differ = network.label?.filter((code) => code === -2).length ?? 0;
+    if (differ > 0)
+      left += ` ${plural(differ, "link whose rows name it differently has", "links whose rows name them differently have")} no label.`;
     if (nodes.length === 0) return `Network with nothing to show.${left}`;
     const shownGroups = new Set<number>();
     let hub = nodes[0]!;
@@ -680,15 +1147,106 @@ export class GraphMark implements LayoutMark {
       if (degree[node]! > degree[hub]!) hub = node;
     }
     const groups = shownGroups.size > 0 ? ` in ${plural(shownGroups.size, "group", "groups")}` : "";
-    let text = `Network of ${plural(nodes.length, "node", "nodes")} and ${plural(links.length, "link", "links")}${groups}; most connected: ${names[hub]} (${plural(degree[hub]!, "link", "links")}).`;
+    const kind = this.spec.directed ? "directed links" : "links";
+    let text = `Network of ${plural(nodes.length, "node", "nodes")} and ${plural(links.length, kind.slice(0, -1), kind)}${groups}; most connected: ${names[hub]} (${plural(degree[hub]!, "link", "links")}).`;
     if (this.spec.value !== undefined && links.length > 0) {
       let strongest = links[0]!;
       for (const link of links)
         if (network.value[link]! > network.value[strongest]!) strongest = link;
-      text += ` Strongest link: ${names[network.source[strongest]!]} — ${names[network.target[strongest]!]}, ${this.spec.value} ${formatNumber(network.value[strongest]!, locale)}.`;
+      const arrow = this.spec.directed ? "→" : "—";
+      text += ` Strongest link: ${names[network.source[strongest]!]} ${arrow} ${names[network.target[strongest]!]}, ${this.spec.value} ${formatNumber(network.value[strongest]!, locale)}.`;
     }
     return text + left;
   }
+}
+
+/**
+ * Layout identities by links table, then nodes table (the links table
+ * without one), then the fields and options the layout reads.
+ */
+const layouts = new WeakMap<
+  Table,
+  WeakMap<Table, Map<string, { versions: string; identity: object }>>
+>();
+
+/** The node a node's item key names, -1 for none. */
+function nodeOfKey(network: Network, id: string | number, key: string): number {
+  let parts: unknown;
+  try {
+    parts = JSON.parse(key);
+  } catch {
+    return -1;
+  }
+  if (!Array.isArray(parts) || parts.length !== 2 || parts[0] !== id) return -1;
+  return network.nodeOf.get(parts[1] as string) ?? -1;
+}
+
+/**
+ * The way a link runs from (x0, y0) to (x1, y1): straight, or bowed to its
+ * right through a quadratic curve's control point (cx, cy).
+ */
+interface Route {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  bow: boolean;
+  cx: number;
+  cy: number;
+  /** The point `back` pixels before the end, along the way. */
+  pointBack(back: number): [number, number];
+  /** The way's direction at its end, a unit vector. */
+  direction(): [number, number];
+  /** Its middle. */
+  middle(): [number, number];
+  /** Pixels from a point to the way. */
+  distance(px: number, py: number): number;
+}
+
+/** The way of a link: bowed when its pair has a link the other way too. */
+function routeOf(x0: number, y0: number, x1: number, y1: number, bow: boolean): Route {
+  const length = Math.hypot(x1 - x0, y1 - y0) || 1;
+  const offset = bow ? Math.min(MAX_BOW, BOW * length) : 0;
+  // The right of the way, as screens turn: links each way bow apart.
+  const cx = (x0 + x1) / 2 - ((y1 - y0) / length) * offset;
+  const cy = (y0 + y1) / 2 + ((x1 - x0) / length) * offset;
+  const at = (t: number): [number, number] => {
+    const u = 1 - t;
+    return [u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1];
+  };
+  const direction = (): [number, number] => {
+    const [dx, dy] = bow ? [x1 - cx, y1 - cy] : [x1 - x0, y1 - y0];
+    const d = Math.hypot(dx, dy) || 1;
+    return [dx / d, dy / d];
+  };
+  return {
+    x0,
+    y0,
+    x1,
+    y1,
+    bow,
+    cx,
+    cy,
+    pointBack(back) {
+      if (back <= 0) return [x1, y1];
+      const [ux, uy] = direction();
+      return [x1 - ux * back, y1 - uy * back];
+    },
+    direction,
+    middle: () => (bow ? at(0.5) : [(x0 + x1) / 2, (y0 + y1) / 2]),
+    distance(px, py) {
+      if (!bow) return distanceToSegment(px, py, x0, y0, x1, y1);
+      // A curve's distance, from eight chords along it.
+      let best = Number.POSITIVE_INFINITY;
+      let [ax, ay] = [x0, y0];
+      for (let k = 1; k <= 8; k++) {
+        const [bx, by] = at(k / 8);
+        best = Math.min(best, distanceToSegment(px, py, ax, ay, bx, by));
+        [ax, ay] = [bx, by];
+      }
+      return best;
+    },
+  };
 }
 
 /** The legend key and color key of a group; `undefined` for nodes of a network without groups. */
@@ -775,6 +1333,8 @@ export function graph<S extends Schema, N extends Schema = Schema>(
 ): ChartMark<Frozen<GraphSpec>> {
   const spec: GraphSpec = { type: "graph", source: options.source, target: options.target };
   if (options.value !== undefined) spec.value = options.value;
+  if (options.directed !== undefined) spec.directed = options.directed;
+  if (options.linkLabel !== undefined) spec.linkLabel = options.linkLabel;
   if (options.nodes !== undefined) {
     if (options.nodes.name !== undefined) spec.nodes = options.nodes.name;
     spec.node = options.node;

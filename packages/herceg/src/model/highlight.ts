@@ -25,7 +25,7 @@ import type { Table } from "../data/table.ts";
 import { lineDrawing } from "../draw/line.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { unmappable } from "../lod/m4.ts";
-import type { Frame, Mark, MarkKey } from "../marks/mark.ts";
+import { DIM, type Frame, type Mark, type MarkKey } from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
 import {
   type AreaGeometry,
@@ -37,8 +37,7 @@ import {
   type RectGeometry,
 } from "../scene/scene.ts";
 
-/** How opaque unselected rows are drawn, as a fraction of their own opacity. */
-export const DIM = 0.25;
+export { DIM };
 
 /** A store channel whose selection a chart highlights, for the marks over its table. */
 export interface HighlightedChannel {
@@ -140,6 +139,18 @@ export class Highlighter {
 
   constructor(channels: readonly HighlightedChannel[]) {
     this.#channels = channels;
+  }
+
+  /**
+   * Which of `table`'s rows its channel's selection holds, 1 each, for
+   * layout marks to draw highlighted; undefined when it holds none (or
+   * rows of a table since reset), or no channel is of the table.
+   */
+  selected(table: Table): Uint8Array | undefined {
+    const channel = this.#channels.find((c) => c.table === table);
+    const selection = channel?.store.get(channel.channel);
+    if (!selection || (selection.kind === "rows" && !selection.rows.current)) return undefined;
+    return membership(table, selection);
   }
 
   /**

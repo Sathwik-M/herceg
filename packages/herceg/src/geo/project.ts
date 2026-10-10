@@ -157,8 +157,11 @@ function middleLongitude(columns: Uint8Array): number {
 /**
  * The plane box (x0, y0, x1, y1) of geometry `g` of `set`, as the map
  * fits it: each ring cut at the map's edges, its edges divided at a degree,
- * and every point projected. Empty (Infinity, -Infinity) when nothing of it
- * is on the map.
+ * and every point projected. Projected edges are curves, which the shapes
+ * drawn follow however far they are zoomed: each ring's box reaches twice
+ * as far past its points as the middle of any of its edges lies from the
+ * edge's chord, so it holds them. Empty (Infinity, -Infinity) when nothing
+ * of it is on the map.
  */
 export function planeBox(set: GeometrySet, g: number, plan: ProjectionPlan): Float64Array {
   const { coordinates, ringOffsets, polygonOffsets, geometryOffsets } = set;
@@ -168,9 +171,28 @@ export function planeBox(set: GeometrySet, g: number, plan: ProjectionPlan): Flo
   // Each ring's box, added to the geometry's when the ring keeps three points.
   let points = 0;
   let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  // The ring's first and last points, in degrees and in the plane, and the
+  // square of the furthest its edges' middles lie from their chords' middles.
+  let lonF = 0;
+  let latF = 0;
+  let xF = 0;
+  let yF = 0;
+  let lonL = 0;
+  let latL = 0;
+  let xL = 0;
+  let yL = 0;
+  let bow2 = 0;
+  const bowTo = (lon: number, lat: number, x: number, y: number) => {
+    raw(((lonL + lon) / 2) * RADIANS, ((latL + lat) / 2) * RADIANS, out);
+    const dx = out[0]! - (xL + x) / 2;
+    const dy = out[1]! - (yL + y) / 2;
+    const off2 = dx * dx + dy * dy;
+    if (off2 > bow2) bow2 = off2;
+  };
   const sink = {
     start() {
       points = 0;
+      bow2 = 0;
       x0 = y0 = Infinity;
       x1 = y1 = -Infinity;
     },
@@ -179,6 +201,16 @@ export function planeBox(set: GeometrySet, g: number, plan: ProjectionPlan): Flo
       const x = out[0]!;
       const y = out[1]!;
       if (!(Number.isFinite(x) && Number.isFinite(y))) return;
+      if (points === 0) {
+        lonF = longitude;
+        latF = latitude;
+        xF = x;
+        yF = y;
+      } else bowTo(longitude, latitude, x, y);
+      lonL = longitude;
+      latL = latitude;
+      xL = x;
+      yL = y;
       points++;
       if (x < x0) x0 = x;
       if (y < y0) y0 = y;
@@ -187,10 +219,13 @@ export function planeBox(set: GeometrySet, g: number, plan: ProjectionPlan): Flo
     },
     end() {
       if (points < 3) return;
-      if (x0 < box[0]!) box[0] = x0;
-      if (y0 < box[1]!) box[1] = y0;
-      if (x1 > box[2]!) box[2] = x1;
-      if (y1 > box[3]!) box[3] = y1;
+      bowTo(lonF, latF, xF, yF);
+      const bow = Math.sqrt(bow2);
+      const reach = Number.isFinite(bow) ? 2 * bow : 0;
+      if (x0 - reach < box[0]!) box[0] = x0 - reach;
+      if (y0 - reach < box[1]!) box[1] = y0 - reach;
+      if (x1 + reach > box[2]!) box[2] = x1 + reach;
+      if (y1 + reach > box[3]!) box[3] = y1 + reach;
     },
   };
   // A geometry's rings are those of its polygons, in order.

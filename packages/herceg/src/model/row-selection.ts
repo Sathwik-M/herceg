@@ -9,7 +9,7 @@ import { compileExpression } from "../data/expression.ts";
 import { RowSet } from "../data/row-set.ts";
 import { type DataSelection, type SelectionStore, selectRows } from "../data/selection.ts";
 import type { Schema, Table } from "../data/table.ts";
-import type { LayoutMark } from "../marks/layout-mark.ts";
+import { type LayoutMark, tablesOf } from "../marks/layout-mark.ts";
 import type { Mark } from "../marks/mark.ts";
 import type { BrushSpec, SelectionGesture } from "../spec/spec.ts";
 import { Highlighter } from "./highlight.ts";
@@ -167,26 +167,27 @@ export class RowSelection {
   }
 
   /**
-   * Refuses charts whose rows cannot be selected yet: layout marks (pies,
-   * maps, 3D charts), stores of tables no mark reads, and brushes along an
+   * Refuses charts whose rows cannot be selected yet: layout marks other
+   * than a map's, a tree's, or a network's alone (pies, 3D charts, layout
+   * marks in panels), stores of tables no mark reads, and brushes along an
    * axis of statistics (a histogram's counts, a box plot's values) or
    * lassos over them.
    */
   check(config: ChartConfig, marks: readonly Mark[], layouts: readonly LayoutMark[]): void {
     const [layout] = layouts;
-    if (layout)
+    if (layout && (!layout.selects || config.facet || config.panels))
       throw new Error(
-        `Charts of a ${layout.spec.type} mark cannot select rows yet: rowSelection needs marks along x and y axes`,
+        `Charts of a ${layout.spec.type} mark cannot select rows yet: rowSelection needs marks along x and y axes, or a map, treemap, sunburst, or network of their own`,
       );
     const brush = config.interaction?.brush;
+    const read = layout ? tablesOf(layout) : marks.map((mark) => mark.table);
     for (const bound of this.#bound) {
-      const own = marks.filter((mark) => mark.table === bound.table);
-      if (own.length === 0)
+      if (!read.includes(bound.table))
         throw new Error(
           `The store bound to channel "${bound.channel}" is of a table no mark of the chart reads`,
         );
       if (brush && bound.events.has(brush === "lasso" ? "lasso" : "brush"))
-        for (const mark of own) refuseBrush(mark, brush);
+        for (const mark of marks) if (mark.table === bound.table) refuseBrush(mark, brush);
     }
   }
 
@@ -284,6 +285,7 @@ export class RowLink {
   readonly #brushed = new Map<Bound, DataSelection>();
   readonly #stops: (() => void)[] = [];
   readonly #highlight: ChartModel["highlight"];
+  readonly #layoutHighlight: ChartModel["layoutHighlight"];
   /** How deep in writes of the chart's own selections, which leave its brush in place. */
   #writing = 0;
   #disposed = false;
@@ -319,6 +321,8 @@ export class RowLink {
       this.#highlight = (mark, series, frame, key, rows) =>
         highlighter.geometry(mark, series, frame, key) ?? mark.geometry(series, frame, key, rows);
       model.highlight = this.#highlight;
+      this.#layoutHighlight = (table) => highlighter.selected(table);
+      model.layoutHighlight = this.#layoutHighlight;
     }
   }
 
@@ -382,14 +386,16 @@ export class RowLink {
    * A click at a pixel: selects the rows of the point under it (Shift
    * adds them, Ctrl or Cmd adds or removes them), or clears what clicks
    * select when it is over none. The changes made, for the `click` event;
-   * undefined when no binding takes clicks.
+   * undefined when no binding takes clicks, and null on an item that stands
+   * for none of the bound tables' rows (a map layer of another table),
+   * where nothing changes, the chart's brush neither.
    */
-  clicked(px: number, py: number, keys: Modifiers): Written | undefined {
+  clicked(px: number, py: number, keys: Modifiers): Written | null | undefined {
     const clickable = this.#bound.filter((b) => b.events.has("click"));
     if (clickable.length === 0) return undefined;
     const tables = new Set(clickable.map((b) => b.table));
-    const rows = this.#pick(clickable, clickedRows(this.#model, tables, px, py), modeOf(keys));
-    return { rows };
+    const found = clickedRows(this.#model, tables, px, py);
+    return found === null ? null : { rows: this.#pick(clickable, found, modeOf(keys)) };
   }
 
   /**
@@ -427,6 +433,8 @@ export class RowLink {
     this.#stops.length = 0;
     if (this.#highlight && this.#model.highlight === this.#highlight)
       this.#model.highlight = undefined;
+    if (this.#layoutHighlight && this.#model.layoutHighlight === this.#layoutHighlight)
+      this.#model.layoutHighlight = undefined;
     // The channels keep what the chart wrote: other views may be showing it.
     this.#brushed.clear();
     return undefined;

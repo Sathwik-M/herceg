@@ -20,12 +20,14 @@ One name per concept, used the same way in code and docs.
 | **Scale** | Maps data values to pixels: linear, log, time, or band. A band scale maps category indices to evenly spaced bands. |
 | **Break** | A span of time a time axis leaves out (nights, weekends, holidays): the axis measures the time it shows, and data inside a break is not drawn. |
 | **Axis** | The visual guide of a position scale. In specs, scale and axis options share one object (`x`, `y`). |
-| **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. |
+| **Viewport** | What a chart shows when zoomed: `{ x, y, yRight }`, the visible x range (one per x scale when panels have x scales of their own) and the left and right y axes' ranges; null for an axis that is not zoomed, which shows its configured domain or its data. A map's are ranges of its projection's plane. |
+| **Drill root** | The node a treemap or sunburst is drilled into, whose subtree it lays out (`drillRoot`, chart state that clicks, keys, and `setDrillRoot` change); null for the whole tree. |
+| **Controls** | What a chart of a 3D, map, tree, or network mark loads to turn, pan and zoom, drill, or move nodes by pointer, keyboard, and toolbar (`dom/controls.ts`). |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one, and with a navigator, the strip is a panel of the scene too, though not one the chart inspects or zooms. |
 | **Navigator** | A strip under the plot drawing a chart's marks over its whole x axis, with a window over the x range in view (the viewport) that the pointer and keyboard move and resize (`navigator`, a chart option made by `rangeNavigator`). |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (rugs, error bars, candle wicks, dendrogram links), points, a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, network nodes and links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (rugs, error bars, candle wicks, dendrogram links, network links and arrowheads), points (network nodes too), a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, a directed network's bowed links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`), and the handle applications hold to it (`Chart`). |
 | **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
@@ -1918,11 +1920,33 @@ springs cost more. Degrees and totals in tooltips and the description are
 counted over the links drawn, so hiding a group changes them. Layout positions are cached per network; each room
 refits them (uniform scale, one axis stretched by at most 30%, at most 2.5 px
 per unit), then pushes overlapping circles apart over a few passes of a
-uniform grid. Nodes are drawn as shapes geometry, one circle path per node,
-largest first, each filled and ringed in the surface color, so overlaps stay
-legible in SVG, Canvas, and PDF without a geometry kind of their own; links
-are one path per width and color. The pointer lookup scans every node, then
-every link.
+uniform grid. Nodes are a point geometry (packed centers, radii, and color
+indexes), largest first, each filled and ringed in the surface color, so
+overlaps stay legible; links are a segments geometry per width and color
+(four floats a link, with an opacity of their own), so a frame that moves a
+node writes typed arrays rather than SVG path strings. Directed networks
+keep a link per ordered pair; a pair with links both ways bows each to its
+right as a quadratic curve (a shapes path, since few links are bowed),
+and each directed link ends at its target's ring with a chevron of two
+segments along its end's tangent. Link labels (`linkLabel`) are a link's
+category when all its rows agree, placed at its middle where they cover no
+node or label, budgeted as node labels. The pointer lookup scans every node,
+then every link (about 0.3 ms at 5,000 nodes and 20,000 links).
+
+Nodes the chart's user moves (`setItemPosition`, or a drag's position each
+frame, which is drawn without being a move until it is dropped) are kept
+per chart by key in the network's layout units, with the layout positions
+they were moved in: the drawing places them through the room's fit
+(`layoutFit`) after the automatic placement and its separation, which
+moved nodes are left out of, so the fit never changes as nodes move, and
+moves are dropped when the network's tables change and the layout runs
+again. What identifies the layout is kept per links and nodes table, their
+versions, and the fields and options the layout reads, so a mark made again
+over the same tables (an adapter's re-render with other styles) keeps the
+chart's moves; a drag whose node the layout lost ends without a move. A
+frame dragging a node of 5,000 nodes and 20,000 links takes about 4 ms of
+the main thread in Chrome (p95 about 5.5 ms, p99 under 8 ms; 4.5 to 4.7 ms
+for the scene in Node), the frames keeping 60 Hz.
 
 ### Layout marks in panels
 
@@ -1966,6 +1990,29 @@ panel's flows and keeps a layout per flows and bounds. Items keep their keys
 color on first request (the legend asks first, over the whole table), and its
 hidden keys apply in every panel. Normalization is each panel's own: shares,
 areas, flows, and a radar's automatic domain fit their panel.
+
+A treemap or sunburst drilled into a node draws the subtree under it as a
+tree of its own (`subtreeOf`, kept per table version and node): its nodes'
+keys go on through the path to the node (`TreeView.prefix`), so they are
+those of the whole tree, and every node takes the color and legend entry of
+the top-level node it is under, so colors, hidden entries, and selections
+stay as they were. The drill root is the chart's (`ItemViews`), as set by
+`setDrillRoot` and then as drawn, with the path to it: a node the data lost
+gives way to its nearest ancestor that remains, found through that path
+(so for node and parent fields too), and the DOM chart reports the change
+with one `drill` event after the frame that drew it. With `interaction.zoom`, the tree
+draws its path above itself, "All" and every node down to the root, as two
+text geometries (steps to go back to, muted, and the current one), even at
+the top so that the first drill does not move the tree. A path wider than
+the room folds the steps between "All" and the parent into one "…", from
+the top down (in rooms too narrow for that, every step but the last, or
+every step), and the steps shown share what is left, each cut to its
+part. The result's `Drill` gives every step's box (folded steps' all over
+the fold, the nearest on top), over which the controls lay native buttons
+with transparent text, so folded steps stay reachable by Tab and screen
+readers, and it resolves nodes named by key or by names from the top. Drilling into a region of a treemap of 10,000 leaves takes about
+1.5 ms a frame in Chrome (0.8 ms for the scene in Node), and back to the
+whole tree about 2.2 ms.
 
 What layout marks drew is kept by an `ItemViews` (`model/item-views.ts`), one
 per chart: each panel's `LayoutResult` with its key, name, plot, and mark, the
@@ -2048,15 +2095,17 @@ projection's latitudes, shows the world. The box does not depend on
 values or hidden categories, so recoloring and the legend never move the
 map. Shapes are projected per geometry set (`geo/shapes.ts`), shared by
 every mark and chart drawing it: a plane box per geometry and projection,
-and pixels per projection and fit (the three most recent fits, so a few
-charts or sizes drawing one set do not evict each other). Points within
+and pixels per projection and fit (the four most recent fits, so a few
+charts, sizes, or zoom levels drawing one set do not evict each other). Points within
 0.35 px of the last one kept are dropped, rings left with fewer than three
 points too, and the holes of a polygon whose exterior is dropped. A resize
 projects again rather than keeping every point in the plane as well as in
 pixels; changes of values, colors, the legend, or the theme reuse the pixels
 and the SVG path data, which is made once per shape. The plane boxes come
-from vertices with edges divided at a degree, so at extreme zooms a curve
-can reach a pixel or two past the box, and the plot's clip.
+from vertices with edges divided at a degree, each ring's widened by twice
+the furthest any of those edges' middles lies from its chord, so they hold
+the projected curves at any zoom; projecting the middles too costs about 1
+to 3 ms more per 200,000 vertices in Node, once per projection.
 
 Regions are a `polygons` geometry: per shape, Float32 pixels and ring
 offsets, filled with the even-odd rule and bordered shape by shape (one SVG
@@ -2080,6 +2129,47 @@ shape, never in a hole.
 measure, project, cut, divide, simplify, and fit the first time (in Node,
 one machine), 11 ms at a new size, 2 ms to draw again after a value
 changes, and about 2 µs to find the region under the pointer.
+
+A map's view is the chart's viewport, ranges of x and y in the plane
+(`LayoutFrame.viewport`, from the model's x viewport and left y viewport):
+the map is drawn at the scale at which the ranges given fit the room,
+centered on them, and along an axis without a range on the fitted map's
+middle; without either it is the fitted map, drawn exactly as before. Rather
+than projecting every shape at every pan step's transform, a zoomed or
+panned map projects shapes at a level (`zoomedTransform`: the next power of
+2^(1/4) at or above the scale shown, its origin on a grid of 2^18 pixels by
+the view, so the pixels near the view stay small and precise in Float32
+however small the map) and draws them moved and scaled down by at most a
+level (`PolygonGeometry.transform`: canvas and PDF transform each point as
+they trace it, SVG gives each path a `matrix` transform and divides its
+border's width by the scale, so borders keep their width and pans rewrite
+only the transform attribute). Projected shapes are cached per set and
+transform key as before (four entries now), and the transform key names the
+grid's origin, not the translation, so a pan reuses every shape until it
+leaves the grid cell and a zoom projects again only past a level; projecting
+at the level above keeps the drawn shapes within the quarter-pixel
+tolerance. Shapes are culled before they are projected, by their cached
+plane boxes plus the border and two pixels. The pointer's index, tooltip
+anchors, and outlines work in the projected shapes' space, through the move;
+an outline keeps only the parts of its edges inside the plot, as the
+drawing is clipped, since the overlay it is drawn in is not. A region
+whose box crosses the plot's edge is drawn and read only if some of it
+shows (an edge crosses the plot, or the plot's middle is inside it, holes
+and other polygons counted), and the keyboard's tooltip of a region shown
+in part is in that part (the widest stretch inside it along a few lines).
+Points are placed per draw from their plane positions, which are kept per
+projection. `LayoutResult.plane` gives the plane's scales across the room,
+the zoom, and the view any viewport shows (as the map fits it), for the
+controls and lassos. Lassos select regions by an anchor per geometry kept
+with its plane box (`planeAnchor`: the keyboard's anchor of the shape
+projected to 1,024 pixels across its own plane box without dropping
+points, so the same at any zoom and as precise for small regions far from
+the plane's origin as for large ones), and points by their center. In Chrome on an Apple
+M6, a frame panning 200 regions of 1,000 vertices takes about 0.6 ms of the
+main thread (median; p99 1 ms) on Canvas or SVG, the frames keeping the
+display's 60 Hz, and a zoom step to a new level about 5 ms on Canvas and
+10 ms in SVG (p95 11 and 21 ms); in Node, the scene of a pan step takes
+about 0.1 ms and of a new level about 4 ms.
 
 ## 3D charts
 
@@ -2944,8 +3034,8 @@ line. The labels live in `dom/axis-labels.ts`, loaded the first time a
 chart asks for them, which imports no code of its own so that loading it
 moves nothing out of a chart's bundle.
 
-Charts emit `viewport`, `select`, `hover`, `click`, `camera`, `visibility`,
-and `render` events. Each reports changes only (hover compares the inspected
+Charts emit `viewport`, `select`, `hover`, `click`, `camera`, `drill`,
+`itemMove`, `visibility`, and `render` events. Each reports changes only (hover compares the inspected
 values; `render` follows frames that draw the data, not those that only move
 the cursor), and a listener that throws is reported without stopping the
 others or the chart. Hover listeners
@@ -2966,6 +3056,47 @@ ranges are not synced.
 panels have x scales of their own, y ranges where panels have y scales of
 their own) before it changes anything.
 
+### Layout controls
+
+Charts of one layout mark are navigated by controls of the mark's family:
+3D charts turn (`dom/orbit.ts`), maps pan and zoom (`dom/map-controls.ts`),
+treemaps and sunbursts drill (`dom/drill.ts`), and networks' nodes move
+(`dom/node-drag.ts`). The mark names the controls its options turn on
+(`LayoutMark.controls(config)`, a kind and the sentence the chart's
+description adds about its keys) and what of `interaction` a chart of it
+alone takes (`LayoutMark.interactions`: `zoom: true`, a map's plane, which
+takes "xy" too, a lasso, `drag`), which `ItemViews.alone` checks, refusing
+the rest with what the option does elsewhere. The DOM chart has one path for
+all of them: it loads `dom/layout-controls.ts` with one dynamic `import()`
+when its mark asks for controls, which loads that family's module and
+mounts it with a host (`dom/controls.ts`: the chart's handle, its model,
+the pointer overlay, announcements, a redraw, the legend, and the keyboard
+cursor's item); controls of another kind, or of a chart destroyed or
+changed while they loaded, are disposed. Controls listen on the chart's
+root themselves, their keys in the capture phase ahead of the chart's (they
+take Shift with the arrows, plus, minus, 0, Enter, and Backspace, and stop
+those they act on), and change the chart through its public methods
+(`setViewport`, `setCamera`, `select`) or, for drills and node moves, the
+same item state the public `setDrillRoot` and `setItemPosition` change,
+reported through the chart's `drill` and `itemMove` events. Each command
+starts from the pending state (the viewport, drill root, or node position
+asked for, drawn or not), so presses faster than frames add up, and node
+moves name the layout they were made in, so one made on a network whose
+data changed and is not yet drawn again is dropped rather than misplaced. A
+drag owns its pointer (captured) and is no click once it moves 3 px, which
+the chart's own press tracking sees too. They share a toolbar
+(`dom/toolbar.ts`) of named buttons, focusable while hidden. Generalizing
+the orbit's loading cost nothing; the line chart grew 147 B gzip (436 B
+minified, `npm run bench:size`) with these controls, for the three chart
+methods (`drillRoot`, `setDrillRoot`, `setItemPosition`, which draw
+pending option changes first), the seam the controls change items through,
+the `drill` event a data change makes, the button test that keeps the
+legend's and the controls' presses from being plot clicks, and keeping the
+brush when a click lands on an item of no bound row. The controls
+are lazy chunks loaded one family at a time, with the shared router and
+toolbar: about 2.5 KB gzip for a 3D chart's, a tree's, or a network's, and
+4.8 KB for a map's, which brings the brush that draws its lasso.
+
 An inspected point carries its identity: the mark's index in the chart's
 marks (each panel's inspector is given the index of every mark it inspects,
 since subplots inspect some marks only and one mark object may be listed
@@ -2984,12 +3115,14 @@ table its marks read (`model/row-selection.ts`). The binding is an object
 made by `rowSelection()`, as facets and navigators are, so the code comes
 only with charts that import it: a line chart that binds no store carries
 the hooks that call it (about 150 B gzip). The model calls the binding's
-`check` as it validates (layout marks, maps, and 3D marks refuse one, in a
-panel of their own too; so do
+`check` as it validates (layout marks other than a map's, a tree's, or a
+network's with a chart of its own refuse one, as do layout marks in panels
+and 3D marks; so do
 stores of tables no mark reads, and brushes or lassos over summaries'
 statistics), and the mounted chart calls `mount`, which gives it a
 `RowLink`: the store subscriptions, what the chart's gestures wrote, and the
-model's `highlight` hook. The chart calls the link where its gestures end: a
+model's `highlight` hook (and `layoutHighlight`, which gives layout marks a
+table's membership). The chart calls the link where its gestures end: a
 selection set by the pointer, the keyboard, or `select()` (not one a synced
 chart sent, which would write another chart's selection again, nor one set
 with `rows: false`, which notebook widgets use to show one view's brush in
@@ -3102,6 +3235,26 @@ and the painter appends to its upload; parts are kept in weak maps by
 selection, then by their cloud's stream key, so a selection's parts go with
 it. Dimmed points' rings dim too. Highlights belong to the mounted chart:
 static exports from options draw every row.
+
+In a chart of one map, tree, or network (`LayoutMark.selects`), what a
+gesture selects is the mark's to say: its drawing (`LayoutResult`) gives
+the rows of a table an item stands for (`rowsOf`: a region's or a point's
+row; a tree node's, by a pass over the rows testing their node against the
+node's subtree, marked once per click; a network node's rows of the nodes
+table, and a link's rows of the links table, by a per-row link index the
+network keeps), and a lasso's rows (`lassoed`, an outline in pixels, from
+the selection's plane coordinates through the map's scales), resolved by
+`selected-rows.ts` for the item under the pointer or the keyboard. An item
+standing for no row of the bound tables (a map layer of another table)
+makes a click change nothing, the chart's brush or lasso included, rather
+than clear them as a click off the data does. Layout marks
+highlight through their frame (`LayoutFrame.selected`, the table's
+membership byte per row), drawing what the selection leaves out dimmed
+below the rest as separate geometries: regions and points, tree nodes none
+of whose rows (counted per node, its own and its subtree's) are selected,
+with "n of m rows selected" in their items' text, and network nodes and
+links. Where items overlap (a map's), the pointer finds the one drawn on
+top, the selected one; the keyboard reads them in row order all the same.
 
 Payloads: `select` and `click` events carry what the gesture wrote, and
 `rowSelection` events every change of a bound channel, from any writer
@@ -3259,7 +3412,10 @@ row i). Binary columns become typed-array views of the delivered
 bytes, copied only when misaligned, so large data never passes through JSON
 number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec.
 A spec says which format version it is written in when it uses a feature an
-older reader would silently ignore and draw something else for: version 2
+older reader would silently ignore and draw something else for (directed
+networks and link labels need version 11; interaction options, such as
+`drag` or a map's `zoom`, need none, since a reader without them draws the
+same chart or refuses them): version 2
 adds `resolve` and `panels`, version 3 `resolve.x`, panels' own `x`, and
 the x axis' `breaks`, version 4 `navigator`, version 5 enabled x axis
 `seams` (`false` needs none for either), and version 6 raw box plot notches
@@ -3418,8 +3574,11 @@ document when `OffscreenCanvas` is unavailable.
   million-point line with ten years of sessions takes about 1.2 ms a scene
   instead of 0.6 ms. A calendar keeps every span it resolved for as long as
   its `TimeBreaks` lives (24 bytes per interval).
-- Row selections cover marks along axes: layout marks, maps, and 3D marks
-  refuse a binding, and custom marks and annotations neither write nor dim.
+- Row selections cover marks along axes and maps, treemaps, sunbursts, and
+  networks with charts of their own: other layout marks, layout marks in
+  panels, and 3D marks refuse a binding, networks take no lasso, and custom
+  marks and annotations neither write nor dim. A map's lasso selects a region
+  by its anchor, not by overlap.
   Histograms, box plots, violins, error bars, candlesticks, and heatmaps
   write rows but draw every row undimmed (a bin with some rows selected is
   not shown as such), and lassos and brushes along a summary's statistics
@@ -3491,12 +3650,21 @@ document when `OffscreenCanvas` is unavailable.
   facets. On a log axis, a box or violin
   whose median is zero or below has no tooltip or keyboard stop, though
   its positive part is drawn.
-- A pie, treemap, sunburst, gauge, funnel, radar, Sankey diagram, network, map, or 3D chart has its chart to itself: no
-  other marks (a map's or 3D chart's layers excepted), facets, zoom (3D charts' camera aside), brushing, or sync. Pie labels go beside the pie
-  only; treemaps and sunbursts have no drill-down, and their pointer lookup
-  scans each level's children. A gauge shows one value, with no needle, ticks,
-  or threshold marker; a funnel colors every stage alike and has no
-  trapezoid (area-proportional) layout.
+- A pie, treemap, sunburst, gauge, funnel, radar, or Sankey diagram has its
+  chart, each facet panel, or a subplot to itself; a network, map, or 3D
+  chart has its chart to itself: no other marks (a map's or 3D chart's
+  layers excepted), facets, or subplots. None of them zooms (3D charts'
+  camera, maps' plane, and trees' drilling in a chart of their own aside),
+  brushes (maps' lassos aside), or syncs. Pie labels go beside the pie only;
+  treemaps and sunbursts drill only in a chart of their own (not in facet
+  panels or subplots), their breadcrumbs fold and cut steps to fit the strip
+  (a folded step is reached through the fold's buttons, by keyboard or
+  screen reader, not seen), and their pointer lookup scans each level's
+  children. Maps zoom between the whole map and 256 times its scale by
+  gestures (`setViewport` sets any view), pan without bounds, and do not
+  sync with other charts. A gauge shows one value, with no needle, ticks, or
+  threshold marker; a funnel colors every stage alike and has no trapezoid
+  (area-proportional) layout.
 - Every spoke of a radar shares one scale: there are no per-spoke domains
   (as ECharts' indicators have), log scales, circular grids, or labels on
   the polygons' values. A radar draws at most 100 spokes, and its pointer
@@ -3504,9 +3672,11 @@ document when `OffscreenCanvas` is unavailable.
 - Networks are laid out once per change of either table, from scratch: a
   streamed row redraws the whole picture rather than settling the new node
   in place, and costs about a second at the 5,000-node limit (links are
-  limited to 20,000). Nodes cannot be
-  dragged or pinned, links have no arrows or labels, there are no circular
-  or hierarchical layouts and no zoom, and hovering a node does not
+  limited to 20,000), which drops nodes moved by hand. Moved nodes stay
+  where they are dropped without the layout settling around them, there
+  is no pan or zoom, nodes are not lassoed, links of a pair whose rows
+  name them differently have no label (no parallel links are drawn), there
+  are no circular or hierarchical layouts, and hovering a node does not
   highlight its neighbors. Labels go to the 50 most connected nodes at most
   (fewer in larger networks) and are left out where they would cover a
   node. The pointer lookup scans every node and link.
@@ -3524,15 +3694,16 @@ document when `OffscreenCanvas` is unavailable.
   Synced selections are data values, so charts with differently ordered
   categories select different categories. The keyboard selects ranges only;
   rectangles and lassos need a pointer.
-- Maps have no zoom or pan, base maps, globes or other spherical rotation
-  (only the central meridian moves), great-circle edges, lines or routes,
-  labels on regions, or custom projections. Shapes that cross the
-  antimeridian must be cut there, as RFC 7946 asks, or they are drawn the
-  long way round; shapes of one feature cut apart show the cut as a border.
-  Geometry columns hold polygons and multipolygons only (points are number
-  fields), take new shapes only by `reset`, and a table holding one cannot be
-  appended to from Python, which replaces it whole. Regions are projected
-  again at every new size, and picking tests a shape's every ring.
+- Maps have no base maps, globes or other spherical rotation (only the
+  central meridian moves; panning moves the plane), great-circle edges,
+  lines or routes, labels on regions, or custom projections. Shapes that
+  cross the antimeridian must be cut there, as RFC 7946 asks, or they are
+  drawn the long way round; shapes of one feature cut apart show the cut as
+  a border. Geometry columns hold polygons and multipolygons only (points
+  are number fields), take new shapes only by `reset`, and a table holding
+  one cannot be appended to from Python, which replaces it whole. Regions
+  are projected again at every new size and zoom level, and picking tests a
+  shape's every ring.
 - 3D charts draw points, lines, and rectilinear height-field surfaces only:
   no text or bars in 3D, meshes (`mesh3d`), parametric surfaces,
   isosurfaces, volumes, cones, or contours, lines colored by a field, and no

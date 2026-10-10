@@ -204,7 +204,7 @@ describe("gauge", () => {
     expect(() => build({ marks: [dial, line(cpu, { x: "cpu", y: "cpu" })] })).toThrow(
       "A gauge mark has its chart to itself",
     );
-    expect(() => build({ marks: [dial], interaction: { brush: "x" } })).toThrow("no x axis");
+    expect(() => build({ marks: [dial], interaction: { brush: "x" } })).toThrow("do not brush");
   });
 
   it("loads from specs and renders to SVG and PDF", () => {

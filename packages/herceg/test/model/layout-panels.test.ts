@@ -339,7 +339,7 @@ describe("other layout marks in facet panels", () => {
     expect(part.tops).toHaveLength(25);
     // A node's key is the same in the part as in the whole tree.
     const whole = data.view();
-    expect(data.keyOf("t", part.tree, 1)).toBe(data.keyOf("t", whole.tree, 1));
+    expect(data.keyOf("t", part, 1)).toBe(data.keyOf("t", whole, 1));
     expect(data.view(rows)).toBe(part);
   });
 

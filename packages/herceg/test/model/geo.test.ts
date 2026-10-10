@@ -404,7 +404,9 @@ describe("maps", () => {
     expect(() =>
       build({ marks: [geoshape(world, { id: "a" }), geoshape(world, { id: "a" })] }),
     ).toThrow(/Duplicate mark id "a"/);
-    expect(() => build({ marks: [geoshape(world)], interaction: { zoom: true } })).toThrow(/zoom/);
+    // Maps zoom both ways, and sync nothing.
+    expect(() => build({ marks: [geoshape(world)], interaction: { zoom: "y" } })).toThrow(/zoom/);
+    expect(() => build({ marks: [geoshape(world)], interaction: { sync: "a" } })).toThrow(/sync/);
   });
 
   it("render as static SVG with even-odd regions", () => {

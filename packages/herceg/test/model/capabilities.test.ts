@@ -84,6 +84,12 @@ type MarkCase = {
   noLegend?: true;
   turns?: true;
   animates?: true;
+  /** Layout marks `interaction.zoom` navigates: a map's plane, or drilling into a tree. */
+  navigates?: "plane" | "drill";
+  /** Layout marks whose charts select their rows, and draw them highlighted. */
+  selects?: true;
+  /** Layout marks whose items `interaction.drag` moves. */
+  drags?: true;
 };
 
 // These cases have axes; annotations of constants repeat in every panel.
@@ -230,8 +236,10 @@ const spatial = table({
 });
 
 // These marks lay out their own geometry: in a chart of their own, or (those
-// with `panels`) in each facet panel or in one subplot. A 3D camera is their
-// only navigation exception.
+// with `panels`) in each facet panel or in one subplot. In a chart of their
+// own, `interaction.zoom` turns 3D cameras, pans and zooms maps' planes, and
+// drills into trees; maps take lassos, networks `interaction.drag`, and maps,
+// trees, and networks row selections.
 const layouts: MarkCase[] = [
   {
     name: "pie",
@@ -245,12 +253,16 @@ const layouts: MarkCase[] = [
     make: (p) => treemap(samples, { path: ["group", "category"], value: "y", ...p }),
     kind: "rect",
     panels: true,
+    navigates: "drill",
+    selects: true,
   },
   {
     name: "sunburst",
     make: (p) => sunburst(samples, { path: ["group", "category"], value: "y", ...p }),
     kind: "arc",
     panels: true,
+    navigates: "drill",
+    selects: true,
   },
   { name: "gauge", make: (p) => gauge(samples, { value: "y", ...p }), kind: "arc", panels: true },
   {
@@ -275,13 +287,23 @@ const layouts: MarkCase[] = [
     name: "graph",
     make: () =>
       graph(links, { source: "source", target: "target", nodes, node: "node", group: "group" }),
-    kind: "shapes",
+    kind: "point",
+    selects: true,
+    drags: true,
   },
-  { name: "geoshape", make: () => geoshape(world, { color: "group" }), kind: "polygons" },
+  {
+    name: "geoshape",
+    make: () => geoshape(world, { color: "group" }),
+    kind: "polygons",
+    navigates: "plane",
+    selects: true,
+  },
   {
     name: "geopoint",
     make: () => geopoint(samples, { longitude: "x", latitude: "y", series: "group" }),
     kind: "point",
+    navigates: "plane",
+    selects: true,
   },
   {
     name: "point3d",
@@ -692,11 +714,53 @@ describe("capabilities: zoom and pan", () => {
     }
   });
 
-  it.each(layouts.filter((c) => !c.turns))("$name refuses Cartesian zoom and pan", (c) => {
+  it.each(layouts.filter((c) => !c.turns && !c.navigates))("$name refuses zoom", (c) => {
     expect(() => build({ marks: [c.make()], interaction: { zoom: true } })).toThrow(
-      "have no x axis to zoom, brush, sync",
+      `Charts of a ${c.name} mark do not zoom`,
     );
   });
+
+  it.each(layouts.filter((c) => c.navigates === "plane"))(
+    "$name pans and zooms its map's plane, both ways only",
+    (c) => {
+      for (const zoom of [true, "xy"] as const) {
+        const { model } = build({ marks: [c.make()], interaction: { zoom } });
+        expect(model.controls?.kind).toBe("map");
+        const { x, y } = model.items!.result()!.plane!;
+        const key = model.stepItem(undefined, 1)!;
+        const before = model.inspectItem(key)!.points[0]!;
+        // Half the plane's ranges, about their middles: everything twice as far from the middle.
+        const half = (d: readonly [number, number]) =>
+          [d[0] + (d[1] - d[0]) / 4, d[1] - (d[1] - d[0]) / 4] as const;
+        model.setViewport(half(x.domain));
+        model.setYViewport({ y: half(y.domain), yRight: null });
+        model.scene(estimateText);
+        expect(model.items!.result()!.plane!.zoom).toBeCloseTo(2, 6);
+        const after = model.inspectItem(key)?.points[0];
+        if (after) expect([after.px, after.py]).not.toEqual([before.px, before.py]);
+      }
+      expect(() => build({ marks: [c.make()], interaction: { zoom: "x" } })).toThrow(
+        "zoom both ways",
+      );
+    },
+  );
+
+  it.each(layouts.filter((c) => c.navigates === "drill"))(
+    "$name drills into a node with zoom, alone, and refuses zoom along an axis",
+    (c) => {
+      const { model } = build({ marks: [c.make()], interaction: { zoom: true } });
+      expect(model.controls?.kind).toBe("drill");
+      expect(model.items!.setDrillRoot(["N"])!.key).toBe('[0,"N"]');
+      model.scene(estimateText);
+      const keys = itemKeys(model);
+      expect(keys.every((key) => key.startsWith('[0,"N"'))).toBe(true);
+      expect(() => build({ marks: [c.make()], interaction: { zoom: "x" } })).toThrow(
+        "zoom with interaction.zoom true",
+      );
+      // In facet panels, nothing drills yet.
+      expect(build({ marks: [c.make()], facet: facet("group") }).model.controls).toBeUndefined();
+    },
+  );
 
   it.each(paneled)("$name panels refuse zoom unless a panel has axes", (c) => {
     const interaction = { zoom: "x" } as const;
@@ -757,10 +821,17 @@ describe("capabilities: brushes", () => {
     }
   });
 
-  it.each(layouts)("$name refuses brushes", (c) => {
+  it.each(layouts)("$name refuses brushes but maps' lassos", (c) => {
     expect(() => build({ marks: [c.make()], interaction: { brush: "x" } })).toThrow(
-      "have no x axis to zoom, brush, sync",
+      c.navigates === "plane" ? 'take a "lasso" brush' : `Charts of a ${c.name} mark do not brush`,
     );
+    if (c.navigates === "plane") build({ marks: [c.make()], interaction: { brush: "lasso" } });
+  });
+
+  it.each(layouts)("$name takes interaction.drag only if it moves items", (c) => {
+    const config = { marks: [c.make()], interaction: { drag: true } };
+    if (c.drags) expect(build(config).model.controls?.kind).toBe("drag");
+    else expect(() => build(config)).toThrow("have nothing to drag");
   });
 
   it.each(paneled)("$name beside a line accepts an x brush for the line's panel", (c) => {
@@ -823,7 +894,7 @@ describe("capabilities: synced selection", () => {
   it.each(layouts)("$name refuses synced selection", (c) => {
     expect(() =>
       build({ marks: [c.make()], interaction: { sync: "capability-contract" } }),
-    ).toThrow("have no x axis to zoom, brush, sync");
+    ).toThrow("have no x axis to sync");
   });
 
   it.each(paneled)("$name beside a line accepts a sync group for the line's panel", (c) => {
@@ -909,12 +980,51 @@ describe("capabilities: row selection", () => {
     expect(lit.join("") !== plain.join("")).toBe(highlights.has(c.name));
   });
 
-  it.each(layouts)("$name refuses a row selection", (c) => {
+  it.each(layouts.filter((c) => !c.selects))("$name refuses a row selection", (c) => {
     const store = selectionStore(tablesOf(c.make())[0]!);
     expect(() =>
       build({ marks: [c.make()], rowSelection: rowSelection({ store, channel: "c" }) }),
     ).toThrow("cannot select rows yet");
   });
+
+  it.each(layouts.filter((c) => c.selects))(
+    "$name selects the rows its items stand for, and highlights them",
+    (c) => {
+      const mark = c.make();
+      const table = tablesOf(mark)[0]!;
+      const store = selectionStore(table);
+      const selection = rowSelection({ store, channel: "c" });
+      const { model } = build({ marks: [mark], rowSelection: selection });
+      const chart = { selection: null, select() {}, render() {}, root: new EventTarget() as never };
+      selection.mount(
+        undefined,
+        model,
+        chart,
+        { emit() {} },
+        () => {},
+        () => null,
+        {
+          textContent: null,
+        },
+      );
+      // Some item stands for rows of the table.
+      const keys = itemKeys(model);
+      const rows = keys
+        .map((key) => model.items!.result()!.rowsOf?.(key, table))
+        .find((found) => found && found.length > 0);
+      expect(rows).toBeDefined();
+      const plain = model.scene(estimateText).panels[0]!.marks.map((m) => m.key);
+      store.set("c", selectRows(new RowSet(table).add(rows![0]!)));
+      const lit = model.scene(estimateText).panels[0]!.marks.map((m) => m.key);
+      expect(lit.some((key) => key.endsWith("-dimmed"))).toBe(true);
+      expect(plain.some((key) => key.endsWith("-dimmed"))).toBe(false);
+      // In facet panels, nothing is selected yet.
+      if (c.panels)
+        expect(() =>
+          build({ marks: [c.make()], facet: facet("group"), rowSelection: selection }),
+        ).toThrow("cannot select rows yet");
+    },
+  );
 
   it.each(paneled)("$name in a panel of its own refuses a row selection of a line's rows", (c) => {
     const store = selectionStore(samples);
@@ -1000,7 +1110,7 @@ describe("capabilities: legend toggle", () => {
     const ungrouped = graph(links, { source: "source", target: "target" });
     const { scene } = build({ marks: [ungrouped], legend: true });
     expect(scene.legend).toEqual([]);
-    expectGeometry(scene.panels[0]!, "shapes");
+    expectGeometry(scene.panels[0]!, "point");
   });
 
   it("custom marks without series have no toggle", () => {

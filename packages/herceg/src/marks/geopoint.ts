@@ -24,11 +24,18 @@ import type { PointGeometry } from "../scene/scene.ts";
 import type { Frozen, GeoPointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import {
+  insidePolygon,
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+} from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import {
   type ChartMark,
   type ColorRamp,
+  DIM,
   frozen,
   type GlyphKey,
   type MARK,
@@ -285,7 +292,7 @@ export class GeoPointMark implements GeoLayer {
       ringWidth > 0 ? { color: spec.stroke ?? surface(theme), width: ringWidth } : undefined;
     // Every point drawn, with its radius and its color's index into `ramp`
     // (with `color`) or into the series' colors.
-    const rows: number[] = [];
+    let rows: number[] = [];
     const radii = new Float64Array(table.length);
     const tone = new Uint8Array(table.length);
     const fills: string[] = [];
@@ -315,6 +322,13 @@ export class GeoPointMark implements GeoLayer {
     }
     // Largest first across every series, so smaller points stay visible on top.
     if (this.#rField !== undefined) rows.sort((a, b) => radii[b]! - radii[a]! || a - b);
+    // With the selection highlighted, the points it leaves out are drawn
+    // first, dimmed, below the others, and the pointer finds those on top.
+    const selected = frame.selected?.(table);
+    if (selected) {
+      const lit = rows.filter((row) => selected[row] === 1);
+      rows = rows.filter((row) => selected[row] !== 1).concat(lit);
+    }
     const count = rows.length;
     const coords = new Float32Array(count * 2);
     const pointRadii = new Float32Array(count);
@@ -331,22 +345,40 @@ export class GeoPointMark implements GeoLayer {
     const sized = this.#rField !== undefined;
     const colored = palette.length > 1;
     const fill = palette[0] ?? theme.muted;
-    const geometry: PointGeometry = {
-      kind: "point",
-      draw: pointDrawing,
-      key: `geopoint-${JSON.stringify(id)}`,
-      fill,
-      fillOpacity: opacity,
-      // Points of several sizes or colors are drawn one by one, in this order, as the pointer finds them.
-      opaque: !sized && !colored && opacity >= 1 && isOpaqueColor(fill),
-      ring,
-      radius: this.#largest,
-      symbol: "circle",
-      coords,
-      count,
-      radii: sized ? pointRadii : undefined,
-      colors: colored ? { index: colorIndex, palette } : undefined,
+    // The points at `at` in drawing order (all of them by default), `dim` of the selection's left out.
+    const points = (at?: readonly number[], dim = false): PointGeometry => {
+      const pick = <T extends Float32Array | Uint8ClampedArray>(all: T, width: number): T => {
+        if (!at) return all;
+        const out = new (all.constructor as new (length: number) => T)(at.length * width);
+        at.forEach((i, j) => {
+          for (let c = 0; c < width; c++) out[j * width + c] = all[i * width + c]!;
+        });
+        return out;
+      };
+      const shown = dim ? opacity * DIM : opacity;
+      return {
+        kind: "point",
+        draw: pointDrawing,
+        key: `geopoint-${JSON.stringify(id)}${dim ? "-dimmed" : ""}`,
+        fill,
+        fillOpacity: shown,
+        // Points of several sizes or colors are drawn one by one, in this order, as the pointer finds them.
+        opaque: !sized && !colored && shown >= 1 && isOpaqueColor(fill),
+        ring: ring && dim ? { ...ring, opacity: DIM } : ring,
+        radius: this.#largest,
+        symbol: "circle",
+        coords: pick(coords, 2),
+        count: at?.length ?? count,
+        radii: sized ? pick(pointRadii, 1) : undefined,
+        colors: colored ? { index: pick(colorIndex, 1), palette } : undefined,
+      };
     };
+    const parts = selected && [[] as number[], [] as number[]];
+    if (parts)
+      rows.forEach((row, i) => {
+        parts[selected[row]!]!.push(i);
+      });
+    const geometry = parts ? [points(parts[0], true), points(parts[1])] : [points()];
     const drawn: Drawn = {
       rows: Uint32Array.from(rows),
       coords,
@@ -356,7 +388,7 @@ export class GeoPointMark implements GeoLayer {
     };
     // Reading order (by row) to drawing order.
     const drawOrder = new Map(rows.map((row, i) => [row, i]));
-    return this.#result([geometry], drawn, drawOrder, frame, ringWidth / 2);
+    return this.#result(geometry, drawn, drawOrder, frame, ringWidth / 2);
   }
 
   #result(
@@ -404,9 +436,24 @@ export class GeoPointMark implements GeoLayer {
       };
     };
     let grid: PointGrid | undefined;
+    /** The row an item key names, if the layer drew it. */
+    const rowOf = (key: string): number | undefined => {
+      let parts: unknown;
+      try {
+        parts = JSON.parse(key);
+      } catch {
+        return undefined;
+      }
+      if (!Array.isArray(parts) || parts.length !== 2 || parts[0] !== id) return undefined;
+      const row = parts[1];
+      return typeof row === "number" && drawOrder.has(row) ? row : undefined;
+    };
     return {
       geometry,
       itemAt(px, py) {
+        // Points at the room's edge reach past it, where they are not drawn.
+        if (!(px >= bounds.x && px <= bounds.x + bounds.width)) return undefined;
+        if (!(py >= bounds.y && py <= bounds.y + bounds.height)) return undefined;
         grid ??= new PointGrid(drawn.coords, drawn.radii, bounds);
         const point = grid.find(px, py, REACH + ring);
         return point < 0 ? undefined : itemOf(point);
@@ -414,15 +461,8 @@ export class GeoPointMark implements GeoLayer {
       count: drawn.reading.length,
       item: (index) => itemOf(drawOrder.get(drawn.reading[index]!)!),
       indexOf(key) {
-        let parts: unknown;
-        try {
-          parts = JSON.parse(key);
-        } catch {
-          return -1;
-        }
-        if (!Array.isArray(parts) || parts.length !== 2 || parts[0] !== id) return -1;
-        const row = parts[1];
-        if (typeof row !== "number" || !drawOrder.has(row)) return -1;
+        const row = rowOf(key);
+        if (row === undefined) return -1;
         // Rows read in ascending order.
         let lo = 0;
         let hi = drawn.reading.length;
@@ -432,6 +472,20 @@ export class GeoPointMark implements GeoLayer {
           else hi = mid;
         }
         return lo;
+      },
+      rowsOf(key, of) {
+        const row = of === table ? rowOf(key) : undefined;
+        return row === undefined ? undefined : [row];
+      },
+      // A point is in a lasso when its center is; points not drawn are not selected.
+      lassoed(polygon, of) {
+        if (of !== table) return undefined;
+        const found: number[] = [];
+        drawn.rows.forEach((row, i) => {
+          if (insidePolygon(polygon, drawn.coords[i * 2]!, drawn.coords[i * 2 + 1]!))
+            found.push(row);
+        });
+        return found;
       },
       summary: () => {
         const count = drawn.reading.length;

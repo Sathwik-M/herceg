@@ -211,6 +211,48 @@ export function pruneHierarchy(
   };
 }
 
+/**
+ * The subtree under `root` as a tree of its own, `root` its node 0 (with
+ * its name), its nodes and their children in `tree`'s order, with their
+ * values; `index` gives each node of `tree` its node there, or -1, and
+ * `nodes` each node there its node of `tree`. The subtree maps no rows.
+ */
+export function subtreeOf(
+  tree: Hierarchy,
+  values: Float64Array,
+  root: number,
+): { tree: Hierarchy; values: Float64Array; index: Int32Array; nodes: Int32Array } {
+  const index = new Int32Array(tree.size).fill(-1);
+  const kept = [root];
+  index[root] = 0;
+  // Parents come before their children in `order`.
+  for (let at = 0; at < tree.size; at++) {
+    const node = tree.order[at]!;
+    if (node === root || node === 0 || index[tree.parent[node]!]! < 0) continue;
+    index[node] = kept.length;
+    kept.push(node);
+  }
+  const parent = Int32Array.from(kept, (node, i) => (i === 0 ? -1 : index[tree.parent[node]!]!));
+  const names = kept.map((node) => tree.names[node]!);
+  return {
+    tree: link(parent, names, new Int32Array(0)),
+    values: Float64Array.from(kept, (node) => values[node]!),
+    index,
+    nodes: Int32Array.from(kept),
+  };
+}
+
+/** Whether each node of `tree` is `root` or under it, 1 or 0. */
+export function underNode(tree: Hierarchy, root: number): Uint8Array {
+  const under = new Uint8Array(tree.size);
+  under[root] = 1;
+  for (let at = 0; at < tree.size; at++) {
+    const node = tree.order[at]!;
+    if (node > 0 && under[tree.parent[node]!]) under[node] = 1;
+  }
+  return under;
+}
+
 /** Names from the outermost ancestor down to `node`, for labels and tooltips. */
 export function pathOf(tree: Hierarchy, node: number): string[] {
   const names: string[] = [];

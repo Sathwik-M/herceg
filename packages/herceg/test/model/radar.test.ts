@@ -371,7 +371,7 @@ describe("radar", () => {
     expect(() => build({ marks: [mark, line(series, { x: "t", y: "v" })] })).toThrow(
       "has its chart to itself",
     );
-    expect(() => build({ marks: [mark], interaction: { brush: "x" } })).toThrow("no x axis");
+    expect(() => build({ marks: [mark], interaction: { brush: "x" } })).toThrow("do not brush");
   });
 
   it("summarizes one polygon by its spokes", () => {

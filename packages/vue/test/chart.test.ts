@@ -45,6 +45,7 @@ import {
   Gauge,
   GeoPoint,
   GeoShape,
+  Graph,
   Histogram,
   Line,
   Line3D,
@@ -56,6 +57,7 @@ import {
   Rule,
   Surface,
   Text,
+  Treemap,
   Violin,
 } from "../src/index.ts";
 
@@ -99,6 +101,8 @@ const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => r
 const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
 const components = {
+  Graph,
+  Treemap,
   Violin,
   Chart,
   BoxPlot,
@@ -398,6 +402,34 @@ describe("<Chart>", () => {
     camera.value = { azimuth: 40 };
     await nextTick();
     expect(chart().camera).toMatchObject({ azimuth: 40, elevation: 25 });
+  });
+
+  it("emits drilling into a tree and moving a network's nodes", () => {
+    const sales = table({ region: ["N", "N", "S"], country: ["a", "b", "c"], v: [1, 2, 3] });
+    const talks = table({ from: ["a", "b"], to: ["b", "c"] });
+    const drills: (string | null)[] = [];
+    const moves: unknown[] = [];
+    const onDrill = ({ key }: { key: string | null }) => drills.push(key);
+    const onMove = ({ position }: { position: unknown }) => moves.push(position);
+    const tree = chartRef();
+    mount(
+      `<Chart ref="view" :interaction="{ zoom: true }" @drill="onDrill">
+        <Treemap :data="sales" :path="['region', 'country']" value="v" />
+      </Chart>`,
+      () => ({ sales, view: tree.view, onDrill }),
+    );
+    tree.chart().setDrillRoot(["N"]);
+    expect(drills).toEqual(['[0,"N"]']);
+    app?.unmount();
+    const network = chartRef();
+    mount(
+      `<Chart ref="view" :interaction="{ drag: true }" @item-move="onMove">
+        <Graph :data="talks" source="from" target="to" />
+      </Chart>`,
+      () => ({ talks, view: network.view, onMove }),
+    );
+    network.chart().setItemPosition('[0,"a"]', { x: 1, y: 2 });
+    expect(moves).toEqual([{ x: 1, y: 2 }]);
   });
 
   it("builds annotations from constants or from their own data", () => {

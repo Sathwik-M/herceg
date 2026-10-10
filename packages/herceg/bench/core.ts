@@ -4,6 +4,7 @@
 
 import { count, derive, mean } from "../src/data/derive.ts";
 import { col } from "../src/data/expression.ts";
+import { fromGeoJSON } from "../src/data/geojson.ts";
 import { type RowQuery, rowView } from "../src/data/row-view.ts";
 import { type Table, table } from "../src/data/table.ts";
 import { fromWall } from "../src/format/zone.ts";
@@ -11,6 +12,8 @@ import { estimateText } from "../src/layout/text.ts";
 import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
+import { geoshape } from "../src/marks/geoshape.ts";
+import { graph } from "../src/marks/graph.ts";
 import { line } from "../src/marks/line.ts";
 import { pie } from "../src/marks/pie.ts";
 import { PositionStack } from "../src/marks/position-stack.ts";
@@ -392,3 +395,112 @@ for (const side of ["left only", "shared", "independent"] as const) {
     model.scene(estimateText),
   );
 }
+
+// Maps, trees, and networks as they are navigated: a map of 200 regions of
+// 1,000 vertices panned (pixels reused, moved) and zoomed a step (projected
+// at a new level), a treemap of 10,000 leaves drilled into and back out, and
+// a network of 5,000 nodes and 20,000 links with a node dragged. Each is the
+// scene the frame draws, not its painting (see benchmarks for that).
+const regions = fromGeoJSON({
+  type: "FeatureCollection",
+  features: Array.from({ length: 200 }, (_, i) => {
+    const [cx, cy] = [-171 + (i % 20) * 18, -54 + Math.floor(i / 20) * 12];
+    const ring = Array.from({ length: 1000 }, (_, k) => {
+      const a = (k / 1000) * 2 * Math.PI;
+      const r = 5 + Math.sin(a * 7 + i);
+      return [cx + r * Math.cos(a), cy + r * Math.sin(a) * 0.8];
+    });
+    ring.push(ring[0]!);
+    return {
+      type: "Feature" as const,
+      properties: { value: i },
+      geometry: { type: "Polygon" as const, coordinates: [ring] },
+    };
+  }),
+});
+const map = new ChartModel({ marks: [geoshape(regions, { color: "value" })] });
+map.setSize(1200, 700, 1);
+map.scene(estimateText);
+const { x: planeX, y: planeY } = map.items!.result()!.plane!;
+/** Shows the plane's middle at `zoom` times the fitted scale, moved `shift` of its width. */
+const showMap = (zoom: number, shift: number) => {
+  const [x0, x1] = planeX.domain;
+  const [y0, y1] = planeY.domain;
+  const [cx, cy] = [(x0 + x1) / 2 + (x1 - x0) * shift, (y0 + y1) / 2];
+  const [w, h] = [(x1 - x0) / zoom / 2, (y1 - y0) / zoom / 2];
+  map.setViewport([cx - w, cx + w]);
+  map.setYViewport({ y: [cy - h, cy + h], yRight: null });
+  return map.scene(estimateText);
+};
+let panned = 0;
+measure("maps: pan 200 regions of 1,000 vertices, zoomed 2x", () => {
+  showMap(2, (panned++ % 10) / 100);
+});
+let level = 0;
+measure(
+  "maps: zoom 200 regions a step to a new projection level",
+  () => {
+    // Six levels, more than the shapes' cache keeps: every step projects again.
+    showMap(1.2 ** (1 + (level++ % 6)), 0);
+  },
+  { warmup: 6, samples: 30 },
+);
+
+const leafRows = 10_000;
+const sales10k = table({
+  region: Array.from({ length: leafRows }, (_, i) => `region ${i % 20}`),
+  country: Array.from({ length: leafRows }, (_, i) => `country ${i % 1000}`),
+  city: Array.from({ length: leafRows }, (_, i) => `city ${i}`),
+  revenue: Float64Array.from({ length: leafRows }, (_, i) => 1 + (i % 13)),
+});
+const tree10k = new ChartModel({
+  marks: [treemap(sales10k, { path: ["region", "country", "city"], value: "revenue" })],
+  interaction: { zoom: true },
+});
+tree10k.setSize(1200, 800, 1);
+tree10k.scene(estimateText);
+let drilled = 0;
+measure("treemap: drill into a region of 10,000 leaves", () => {
+  tree10k.items!.setDrillRoot([`region ${drilled++ % 20}`]);
+  tree10k.scene(estimateText);
+});
+measure("treemap: drill into a region and back out, 10,000 leaves", () => {
+  tree10k.items!.setDrillRoot([`region ${drilled++ % 20}`]);
+  tree10k.scene(estimateText);
+  tree10k.items!.setDrillRoot(null);
+  tree10k.scene(estimateText);
+});
+
+let seed = 7;
+const random = () => {
+  seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+  return seed / 4294967296;
+};
+const linkFrom: string[] = [];
+const linkTo: string[] = [];
+const paired = new Set<string>();
+while (linkFrom.length < 20_000) {
+  const a = Math.floor(random() * 5000);
+  // Mostly near neighbors, some far.
+  const b =
+    random() < 0.8 ? (a + 1 + Math.floor(random() * 20)) % 5000 : Math.floor(random() * 5000);
+  const key = a < b ? `${a} ${b}` : `${b} ${a}`;
+  if (a === b || paired.has(key)) continue;
+  paired.add(key);
+  linkFrom.push(`n${a}`);
+  linkTo.push(`n${b}`);
+}
+const network = new ChartModel({
+  marks: [graph(table({ from: linkFrom, to: linkTo }), { source: "from", target: "to" })],
+  interaction: { drag: true },
+});
+network.setSize(1200, 900, 1);
+network.scene(estimateText);
+const moves = network.items!.result()!.moves!;
+const [hubX, hubY] = moves.pixelOf('[0,"n0"]')!;
+let dragged = 0;
+measure("graph: drag a node of 5,000 nodes and 20,000 links", () => {
+  const step = dragged++ % 40;
+  network.items!.drag('[0,"n0"]', moves.toLayout('[0,"n0"]', hubX + step, hubY + step / 2));
+  network.scene(estimateText);
+});

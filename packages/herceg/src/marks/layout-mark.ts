@@ -11,11 +11,27 @@ import type { MeasureText } from "../layout/text.ts";
 import type { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
+import type { PositionScale } from "../scale/scale.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import type { Camera } from "../three/camera.ts";
+import type { MovedNodes, NodeMoves } from "./graph.ts";
 import type { ChartMark, Mark } from "./mark.ts";
+import type { Drill } from "./tree-data.ts";
+
+/** The part of a map's plane to show: x and y ranges in its units, each null for the fitted map's. */
+export interface Viewport {
+  x: readonly [number, number] | null;
+  y: readonly [number, number] | null;
+}
+
+/** A view of a map's plane: its x and y ranges across the room, and the zoom (its scale over the fitted map's). */
+export interface PlaneView {
+  x: readonly [number, number];
+  y: readonly [number, number];
+  zoom: number;
+}
 
 /** What a layout mark lays out with: its room and the chart's settings. */
 export interface LayoutFrame {
@@ -41,6 +57,27 @@ export interface LayoutFrame {
   clouds?: boolean;
   /** The chart animates changed values: pies describe their slices (PieSlices). */
   keyed?: boolean;
+  /**
+   * The part of a map's plane to show, x and y ranges in its units (see
+   * `Chart.setViewport`); the fitted map where both are null or absent.
+   */
+  viewport?: Viewport | undefined;
+  /**
+   * Which of a table's rows the selection the chart highlights holds, 1
+   * each; undefined for a table none of whose rows are highlighted, which
+   * draws as it is.
+   */
+  selected?: ((table: Table) => Uint8Array | undefined) | undefined;
+  /**
+   * The item key of the node a tree is drilled into (see
+   * `Chart.setDrillRoot`), then its ancestors' nearest first, for a node the
+   * data lost; the whole tree without any.
+   */
+  root?: readonly string[] | undefined;
+  /** The chart drills into trees: they draw the path to their root above them, even at the top. */
+  drillable?: boolean | undefined;
+  /** A network's nodes the chart's user moved (see `Chart.setItemPosition`). */
+  moved?: MovedNodes | undefined;
 }
 
 /** One thing a layout mark drew, as tooltips and the keyboard report it. */
@@ -83,6 +120,33 @@ export interface LayoutResult {
   indexOf(key: string): number;
   /** A sentence or two describing what was drawn, for screen readers. */
   summary(): string;
+  /**
+   * The rows of `table` the item keyed `key` stands for (a region's row, a
+   * node's subtree's rows), for row selection; undefined when it stands for
+   * none of `table`'s rows.
+   */
+  rowsOf?(key: string, table: Table): ArrayLike<number> | undefined;
+  /**
+   * The rows of `table` whose items lie inside `polygon` (pixels), as a
+   * lasso selects them; undefined when the mark draws none of its rows.
+   */
+  lassoed?(polygon: readonly (readonly [number, number])[], table: Table): number[] | undefined;
+  /**
+   * A map's plane as drawn: scales from its units to pixels across the
+   * room, the zoom (the scale drawn over the fitted map's), and what a
+   * viewport would show (`LayoutFrame.viewport`), drawn or not.
+   */
+  plane?:
+    | {
+        x: PositionScale;
+        y: PositionScale;
+        zoom: number;
+        view(viewport: Viewport | undefined): PlaneView;
+      }
+    | undefined;
+  /** A tree's drill root, the path to it, and its breadcrumbs, in charts that drill or are drilled. */
+  drill?: Drill | undefined /** For a network: what moving its nodes needs. */;
+  moves?: NodeMoves | undefined;
 }
 
 /** A mark that lays out its own geometry in a panel; internal, as `Mark` is. */
@@ -112,11 +176,54 @@ export interface LayoutMark extends ChartMark {
    */
   join?(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark;
   /**
+   * Whether a chart of the mark alone selects its rows (`rowSelection`):
+   * what its items stand for (`LayoutResult.rowsOf`), and how it draws
+   * them highlighted (`LayoutFrame.selected`).
+   */
+  readonly selects?: boolean;
+  /**
+   * What `interaction` may turn on in a chart of the mark alone, which
+   * refuses the rest: "zoom" for `zoom: true`, "plane" for that or "xy"
+   * (a map's plane), "lasso" for a lasso brush, and "drag" for `drag`.
+   */
+  readonly interactions?: readonly ("zoom" | "plane" | "lasso" | "drag")[];
+  /**
+   * What a chart of the mark alone loads for its options to be navigated by
+   * pointer and keyboard (see dom/controls.ts); none when they turn nothing on.
+   */
+  controls?(config: ChartConfig): LayoutControls | undefined;
+  /**
    * 3D charts, whose camera the pointer and keyboard turn: the camera `spec`
    * describes, its settings left out taken from `base` (by default the
    * default camera's). Throws for settings out of range.
    */
   camera?(spec: CameraSpec | undefined, base?: Camera): Camera;
+}
+
+/**
+ * The controls a layout mark's chart loads (see `LayoutMark.controls`):
+ * which ones, by the module the browser runtime loads for them
+ * (dom/layout-controls.ts), and what their keys do.
+ */
+export interface LayoutControls {
+  kind: "orbit" | "map" | "drill" | "drag";
+  /** For the chart's description: what keys do beyond reading items. */
+  hint: string;
+}
+
+/** Whether a pixel is inside a polygon of pixels, by the even-odd rule. */
+export function insidePolygon(
+  polygon: readonly (readonly [number, number])[],
+  px: number,
+  py: number,
+): boolean {
+  let odd = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i]!;
+    const [xj, yj] = polygon[j]!;
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) odd = !odd;
+  }
+  return odd;
 }
 
 export function isLayoutMark(mark: object): mark is LayoutMark {

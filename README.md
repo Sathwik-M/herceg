@@ -86,7 +86,11 @@ per panel for every mark on a category axis), points on category axes,
 subplots (with weighted rows and columns), pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey
 diagrams in each facet panel or in a subplot of their own, live notebook charts (a widget that streams updates from Python
 and reports interaction back), a Streamlit component, row views and selection stores shared by charts and
-grids (charts' brushes, lassos, and clicks select rows there and highlight what others select), row groups whose aggregates charts and grids share, and an
+grids (charts' brushes, lassos, and clicks select rows there and highlight what others select), maps that pan, zoom, and lasso their rows,
+treemaps and sunbursts that drill into nodes with breadcrumbs, networks
+with directed links, link labels, and nodes moved by dragging and keys
+(each through the shared zoom, drag, and row selection options, with the
+keyboard and a toolbar), row groups whose aggregates charts and grids share, and an
 analytical grid (`herceg/grid`: virtualized rows and columns over the same
 tables, sorting, row selection, nested groups with aggregates as a tree grid,
 bounded pivots, columns resized, moved, pinned, and hidden by dragging, keys,
@@ -103,10 +107,12 @@ Next, in order:
    in charts with panels.
 2. Animation of stacked and labeled bars, of categories that come and go,
    and of panels.
-3. Linked selections beyond points, bars, lines, and areas: highlighting
-   bins, groups, cells, and spans whose rows are partly selected, lassos
-   over summaries, layout marks and maps, and channels shared by separate
-   notebook widgets.
+3. Linked selections beyond points, bars, lines, areas, maps, trees, and
+   networks: highlighting bins, groups, cells, and spans whose rows are
+   partly selected, lassos over summaries and networks, pies, Sankey
+   diagrams, and trees in panels, drilling in panels, networks that pan and
+   zoom and settle around moved nodes, and channels shared by separate
+   notebook widgets (which report drills and moves).
 4. More financial tools (drawing tools); 3D meshes, parametric surfaces, and translucent
    and wireframed surfaces on the GPU.
 5. Grid: pivots over remote sources, bins in grid queries, a SQL
@@ -115,7 +121,7 @@ Next, in order:
    and later bidirectional ordering/shaping and CFF fonts.
 7. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
-6. Heatmaps on log axes, calendar month labels aligned to week columns, and
+8. Heatmaps on log axes, calendar month labels aligned to week columns, and
    2D binning (density heatmaps from raw points).
 
 ## Development

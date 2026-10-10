@@ -4,25 +4,32 @@
 
 import type { FieldKind } from "../data/column.ts";
 import type { CategoryField, GeometryField, NumberField, Schema, Table } from "../data/table.ts";
-import { polygonPath, polygonsDrawing } from "../draw/polygons.ts";
+import { polygonsDrawing, roomPolygonPath } from "../draw/polygons.ts";
 import { formatNumber } from "../format/format.ts";
 import type { GeoExtent, PixelShape } from "../geo/project.ts";
 import { extendExtent } from "../geo/project.ts";
-import { anchorOf, ShapeIndex } from "../geo/shape-index.ts";
-import { boxOfCodes, pixelShape } from "../geo/shapes.ts";
+import { anchorOf, ShapeIndex, showsIn, visibleAnchor } from "../geo/shape-index.ts";
+import { boxOfCodes, pixelShape, planeAnchor, planeBoxOf } from "../geo/shapes.ts";
 import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
-import type { PolygonGeometry } from "../scene/scene.ts";
+import type { PolygonGeometry, ShapeTransform } from "../scene/scene.ts";
 import type { Frozen, GeoShapeSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type GeoLayer, joinLayers, type MapFrame } from "./geo.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import {
+  insidePolygon,
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+} from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import {
   type ChartMark,
   type ColorRamp,
+  DIM,
   frozen,
   type GlyphKey,
   type MARK,
@@ -67,13 +74,20 @@ const STROKE_WIDTH = 0.75;
 /** Categories a summary lists before saying how many more there are. */
 const LISTED = 8;
 
-/** One draw's regions: the rows drawn, in order, and their shapes and fills. */
+/**
+ * One draw's regions: the rows drawn, in order, and their shapes and fills;
+ * shapes are where `move` puts them, for a map zoomed or panned.
+ */
 interface Drawn {
   rows: number[];
   shapes: PixelShape[];
   colorIndex: Uint32Array;
   colors: string[];
+  move: ShapeTransform | undefined;
 }
+
+/** Pixels of rounding a shape drawn may reach past its plane box, which holds its curved edges. */
+const CURVE_REACH = 2;
 
 export class GeoShapeMark implements GeoLayer {
   declare readonly [MARK]: true;
@@ -186,19 +200,37 @@ export class GeoShapeMark implements GeoLayer {
   }
 
   place(frame: MapFrame): LayoutResult {
-    const { theme, hidden, locale, plan, transform, bounds } = frame;
+    const { theme, hidden, locale, plan, transform, projected, bounds } = frame;
     const id = frame.id;
     const { spec, table } = this;
     const { codes, set } = table.geometries(this.field);
+    // A zoomed map projects at a level of its own, then moves and scales that.
+    const scale = projected ? transform.k / projected.k : 1;
+    const move: ShapeTransform | undefined = projected && {
+      k: scale,
+      x: transform.x0 - scale * projected.x0,
+      y: transform.y0 - scale * projected.y0,
+    };
+    // The room and as far past it as borders show.
+    const reached = {
+      x: bounds.x - this.reach,
+      y: bounds.y - this.reach,
+      width: bounds.width + 2 * this.reach,
+      height: bounds.height + 2 * this.reach,
+    };
+    // Shapes wholly outside the room are left out before projecting them.
+    const margin = this.reach + CURVE_REACH;
+    const [left, top] = [bounds.x - margin, bounds.y - margin];
+    const [right, bottom] = [bounds.x + bounds.width + margin, bounds.y + bounds.height + margin];
     const noData = spec.fill ?? theme.grid;
-    const scale = this.#scale(theme);
+    const ramp = this.#scale(theme);
     const values = this.#colorKind === "number" ? table.numbers(spec.color as never) : undefined;
     const categories =
       this.#colorKind === "category" ? table.categories(spec.color as never) : undefined;
     // Fill colors: the ramp's, or one per category, and the fill for no value.
     const colors: string[] = [noData];
-    const ramp = scale && values ? scale.colors() : undefined;
-    if (ramp) colors.push(...ramp);
+    const tones = ramp && values ? ramp.colors() : undefined;
+    if (tones) colors.push(...tones);
     const categoryColor = categories
       ? Int32Array.from(categories.dictionary, (category) => {
           const key = categoryKey(id, category);
@@ -207,20 +239,38 @@ export class GeoShapeMark implements GeoLayer {
           return colors.length - 1;
         })
       : undefined;
-    const drawn: Drawn = { rows: [], shapes: [], colorIndex: new Uint32Array(0), colors };
+    const drawn: Drawn = { rows: [], shapes: [], colorIndex: new Uint32Array(0), colors, move };
     const fills: number[] = [];
     for (let row = 0; row < codes.length; row++) {
       const g = codes[row]!;
       if (g < 0) continue;
-      const shape = pixelShape(set, g, plan, transform);
+      if (projected) {
+        const [x0, y0, x1, y1] = planeBoxOf(set, g, plan);
+        const { k } = transform;
+        if (!(x0! <= x1!) || transform.x0 + k * x1! < left || transform.x0 + k * x0! > right)
+          continue;
+        if (transform.y0 - k * y0! < top || transform.y0 - k * y1! > bottom) continue;
+      }
+      const shape = pixelShape(set, g, plan, projected ?? transform);
       const { box } = shape;
       // Shapes cut away, or wholly outside the room, are neither drawn nor read.
-      if (shape.rings.length < 2 || box[2]! < bounds.x || box[0]! > bounds.x + bounds.width)
-        continue;
-      if (box[3]! < bounds.y || box[1]! > bounds.y + bounds.height) continue;
+      if (shape.rings.length < 2) continue;
+      if (!projected) {
+        if (box[2]! < bounds.x || box[0]! > bounds.x + bounds.width) continue;
+        if (box[3]! < bounds.y || box[1]! > bounds.y + bounds.height) continue;
+      }
+      // Nor are those whose box reaches into the room but none of which does
+      // (the room inside a hole, or between its polygons).
+      const [k, dx, dy] = move ? [move.k, move.x, move.y] : [1, 0, 0];
+      const within =
+        dx + k * box[0]! >= bounds.x &&
+        dx + k * box[2]! <= bounds.x + bounds.width &&
+        dy + k * box[1]! >= bounds.y &&
+        dy + k * box[3]! <= bounds.y + bounds.height;
+      if (!within && !showsIn(shape, move, reached)) continue;
       let fill = 0;
-      if (ramp) {
-        const index = scale!.index(values![row]!);
+      if (tones) {
+        const index = ramp!.index(values![row]!);
         fill = index < 0 ? 0 : index + 1;
       } else if (categoryColor) {
         const code = categories!.codes[row]!;
@@ -241,7 +291,9 @@ export class GeoShapeMark implements GeoLayer {
       fillOpacity: spec.fillOpacity ?? 1,
       stroke: spec.stroke ?? surface(theme),
       strokeWidth: spec.strokeWidth ?? STROKE_WIDTH,
+      transform: move,
     };
+    const selected = frame.selected?.(table);
     const names = spec.name === undefined ? undefined : table.categories(spec.name as never);
     const nameOf = (row: number) => {
       const code = names ? names.codes[row]! : -1;
@@ -259,7 +311,15 @@ export class GeoShapeMark implements GeoLayer {
         const code = categories.codes[row]!;
         text = code < 0 ? "no data" : categories.dictionary[code]!;
       }
-      const [px, py] = anchorOf(shape);
+      const [ax, ay] = anchorOf(shape);
+      let [px, py] = move ? [move.x + move.k * ax, move.y + move.k * ay] : [ax, ay];
+      // A region shown in part has its tooltip in that part.
+      const inRoom =
+        px >= bounds.x &&
+        px <= bounds.x + bounds.width &&
+        py >= bounds.y &&
+        py <= bounds.y + bounds.height;
+      if (!inRoom) [px, py] = visibleAnchor(shape, move, bounds) ?? [px, py];
       return {
         key: JSON.stringify([id, row]),
         label: nameOf(row),
@@ -268,34 +328,62 @@ export class GeoShapeMark implements GeoLayer {
         text,
         px,
         py,
-        outline: polygonPath(shape),
+        outline: roomPolygonPath(shape, move, bounds),
         measure,
         row,
       };
     };
     let index: ShapeIndex | undefined;
+    let lit: Uint8Array | undefined;
     let place: Map<number, number> | undefined;
+    const positionOf = (key: string) => {
+      let parts: unknown;
+      try {
+        parts = JSON.parse(key);
+      } catch {
+        return -1;
+      }
+      if (!Array.isArray(parts) || parts.length !== 2 || parts[0] !== id) return -1;
+      place ??= new Map(drawn.rows.map((row, position) => [row, position]));
+      return place.get(parts[1]) ?? -1;
+    };
     return {
-      geometry: [geometry],
+      geometry: selected ? highlighted(geometry, drawn.rows, selected) : [geometry],
       itemAt(px, py) {
-        index ??= new ShapeIndex(drawn.shapes, bounds);
-        const found = index.find(px, py);
+        // Zoomed shapes reach past the room, where they are not drawn.
+        if (!(px >= bounds.x && px <= bounds.x + bounds.width)) return undefined;
+        if (!(py >= bounds.y && py <= bounds.y + bounds.height)) return undefined;
+        // Shapes are indexed where they were projected, before any move.
+        const [k, dx, dy] = move ? [move.k, move.x, move.y] : [1, 0, 0];
+        index ??= new ShapeIndex(drawn.shapes, {
+          x: (bounds.x - dx) / k,
+          y: (bounds.y - dy) / k,
+          width: bounds.width / k,
+          height: bounds.height / k,
+        });
+        // The selection highlighted is drawn above what it leaves out, and found first.
+        lit ??= selected && Uint8Array.from(drawn.rows, (row) => selected[row]!);
+        const found = index.find((px - dx) / k, (py - dy) / k, lit);
         return found < 0 ? undefined : item(found);
       },
       count: drawn.rows.length,
       item,
-      indexOf(key) {
-        let parts: unknown;
-        try {
-          parts = JSON.parse(key);
-        } catch {
-          return -1;
-        }
-        if (!Array.isArray(parts) || parts.length !== 2 || parts[0] !== id) return -1;
-        place ??= new Map(drawn.rows.map((row, position) => [row, position]));
-        return place.get(parts[1]) ?? -1;
-      },
+      indexOf: positionOf,
       summary: () => this.#summary(drawn, nameOf, values, categories, format),
+      rowsOf(key, of) {
+        const position = of === table ? positionOf(key) : -1;
+        return position < 0 ? undefined : [drawn.rows[position]!];
+      },
+      // A region is in a lasso when its anchor is: a point inside it, the
+      // same at any zoom. Regions not drawn are not selected.
+      lassoed(polygon, of) {
+        if (of !== table) return undefined;
+        const { x0, y0, k } = transform;
+        return drawn.rows.filter((row) => {
+          const [x, y] = planeAnchor(set, codes[row]!, plan);
+          return insidePolygon(polygon, x0 + k * x, y0 - k * y);
+        });
+      },
     };
   }
 
@@ -347,6 +435,28 @@ export class GeoShapeMark implements GeoLayer {
     }
     return `Map of ${regions}.`;
   }
+}
+
+/**
+ * Regions with the selected rows' drawn as they are, over the others dimmed:
+ * two geometries of the same shapes and colors, each holding its regions.
+ */
+function highlighted(
+  geometry: PolygonGeometry,
+  rows: readonly number[],
+  selected: Uint8Array,
+): PolygonGeometry[] {
+  const part = (lit: boolean): PolygonGeometry => {
+    const at = rows.flatMap((row, i) => (selected[row] === (lit ? 1 : 0) ? [i] : []));
+    return {
+      ...geometry,
+      key: `${geometry.key}${lit ? "" : "-dimmed"}`,
+      shapes: at.map((i) => geometry.shapes[i]!),
+      colorIndex: Uint32Array.from(at, (i) => geometry.colorIndex[i]!),
+      fillOpacity: geometry.fillOpacity * (lit ? 1 : DIM),
+    };
+  };
+  return [part(false), part(true)];
 }
 
 /** The legend and color key of a category of a layer; objects, so no item key (an array) is the same. */

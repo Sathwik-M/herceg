@@ -261,7 +261,7 @@ describe("sankey", () => {
     expect(() => build({ marks: [flows, line(series, { x: "t", y: "v" })] })).toThrow(
       "has its chart to itself",
     );
-    expect(() => build({ marks: [flows], interaction: { brush: "x" } })).toThrow("no x axis");
+    expect(() => build({ marks: [flows], interaction: { brush: "x" } })).toThrow("do not brush");
     expect(() => sankey(energy(), { source: "from", target: "amount" as never })).toThrow(
       "sankey target needs category",
     );

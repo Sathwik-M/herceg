@@ -943,14 +943,14 @@ describe("renderToPDF", () => {
       }),
     );
     // Links stroke at 45% opacity: two muted between teams, one in Data's color.
-    const state = /\/(GS\d+) << \/ca [\d.]+ \/CA 0.45 >>/.exec(pdf.page)!;
+    const state = /\/(GS\d+) << (?:\/ca [\d.]+ )?\/CA 0.45 >>/.exec(pdf.page)!;
     expect(state).not.toBeNull();
     expect(
       pdf.content.match(new RegExp(`q /${state[1]} gs [\\d. ]+ RG [\\d.]+ w`, "g")),
     ).toHaveLength(3);
     // Each node: a circle of four curves, filled in its group's color, then ringed in white.
     const nodes = [
-      ...pdf.content.matchAll(/q ([\d. ]+) rg 1 1 1 RG 1.5 w[^Q]*?h\nf\n[^Q]*?h\nS\nQ/g),
+      ...pdf.content.matchAll(/q ([\d. ]+) rg 1 1 1 RG 1.5 w[^Q]*?\nf\n[^Q]*?\nS\nQ/g),
     ];
     expect(nodes).toHaveLength(3);
     for (const [node] of nodes) expect(node.match(/ c\n/g)).toHaveLength(8);

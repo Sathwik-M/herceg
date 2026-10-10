@@ -82,6 +82,10 @@ const emits = {
   rowSelection: (_: ChartEvents["rowSelection"]) => true,
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   camera: (_: ChartEvents["camera"]) => true,
+  /** A treemap or sunburst was drilled into a node or back out: its key (null for the whole tree) and path. */
+  drill: (_: ChartEvents["drill"]) => true,
+  /** A network's node was moved (dragged, keys, `setItemPosition`) or put back (null). */
+  itemMove: (_: ChartEvents["itemMove"]) => true,
   /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
   visibility: (_: ChartEvents["visibility"]) => true,
   /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */
@@ -233,6 +237,8 @@ export const Chart = defineComponent({
         created.on("click", (event) => emit("click", event));
         created.on("rowSelection", (event) => emit("rowSelection", event));
         created.on("camera", (event) => emit("camera", event));
+        created.on("drill", (event) => emit("drill", event));
+        created.on("itemMove", (event) => emit("itemMove", event));
         created.on("visibility", (event) => emit("visibility", event));
         created.on("render", (event) => emit("render", event));
         chart.value = created;

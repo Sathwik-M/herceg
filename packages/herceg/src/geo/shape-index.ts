@@ -70,13 +70,18 @@ export class ShapeIndex {
     return [clamp(x - this.#x0, this.#columns), clamp(y - this.#y0, this.#rows)];
   }
 
-  /** The last-drawn shape containing (x, y), or -1. */
-  find(x: number, y: number): number {
+  /**
+   * The last-drawn shape containing (x, y), or -1; with `above`, shapes it
+   * marks 1 are drawn above the others (a highlighted selection).
+   */
+  find(x: number, y: number, above?: Uint8Array): number {
     const [c, r] = this.#cell(x, y);
     const cell = r * this.#columns + c;
+    const n = this.#shapes.length;
+    const rank = (s: number) => (above?.[s] === 1 ? n + s : s);
     let found = -1;
     const test = (s: number) => {
-      if (s > found && contains(this.#shapes[s]!, x, y)) found = s;
+      if ((found < 0 || rank(s) > rank(found)) && contains(this.#shapes[s]!, x, y)) found = s;
     };
     for (let k = this.#starts[cell]!; k < this.#starts[cell + 1]!; k++) test(this.#items[k]!);
     for (const s of this.#large) test(s);
@@ -144,4 +149,154 @@ export function anchorOf(shape: PixelShape): [number, number] {
     if (width > widest) [x, widest] = [(crossings[i]! + crossings[i + 1]!) / 2, width];
   }
   return [x, y];
+}
+
+/** Where a shape is drawn: its pixel (px, py) at (x + k px, y + k py), as `PolygonGeometry.transform` says. */
+interface Move {
+  k: number;
+  x: number;
+  y: number;
+}
+
+/** Scan lines across a shape's visible part where its keyboard anchor is looked for. */
+const ANCHOR_LINES = 16;
+
+/**
+ * Whether any of a shape, moved by `move`, shows in `room`: an edge of it
+ * crosses the room, or, with none crossing, the room is inside it (as its
+ * middle is, holes and other polygons counted). Exact, unlike its box.
+ */
+export function showsIn(shape: PixelShape, move: Move | undefined, room: Rect): boolean {
+  const { coords, rings } = shape;
+  const [k, dx, dy] = move ? [move.k, move.x, move.y] : [1, 0, 0];
+  // The room in the shape's own pixels.
+  const left = (room.x - dx) / k;
+  const top = (room.y - dy) / k;
+  const right = left + room.width / k;
+  const bottom = top + room.height / k;
+  for (let r = 0; r + 1 < rings.length; r++) {
+    let j = rings[r + 1]! - 1;
+    for (let i = rings[r]!; i < rings[r + 1]!; j = i++) {
+      const ax = coords[j * 2]!;
+      const ay = coords[j * 2 + 1]!;
+      const bx = coords[i * 2]!;
+      const by = coords[i * 2 + 1]!;
+      if (Math.max(ax, bx) < left || Math.min(ax, bx) > right) continue;
+      if (Math.max(ay, by) < top || Math.min(ay, by) > bottom) continue;
+      if (crossesBox(ax, ay, bx, by, left, top, right, bottom)) return true;
+    }
+  }
+  return contains(shape, (left + right) / 2, (top + bottom) / 2);
+}
+
+/** Whether the segment from (ax, ay) to (bx, by), whose box meets the box given, crosses it. */
+function crossesBox(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+): boolean {
+  if (ax >= left && ax <= right && ay >= top && ay <= bottom) return true;
+  // Else it crosses the box when the box's corners are not all on one side of it.
+  const ex = bx - ax;
+  const ey = by - ay;
+  const a = ex * (top - ay) - ey * (left - ax);
+  const b = ex * (top - ay) - ey * (right - ax);
+  const c = ex * (bottom - ay) - ey * (right - ax);
+  const d = ex * (bottom - ay) - ey * (left - ax);
+  return Math.min(a, b, c, d) <= 0 && Math.max(a, b, c, d) >= 0;
+}
+
+/**
+ * A point inside the part of a shape, moved by `move`, that shows in
+ * `room`, for keyboard reading's tooltip when the whole shape's anchor is
+ * out of sight: the middle of the widest stretch inside it along a few
+ * lines across that part. Undefined when none is found.
+ */
+export function visibleAnchor(
+  shape: PixelShape,
+  move: Move | undefined,
+  room: Rect,
+): [number, number] | undefined {
+  const { coords, rings } = shape;
+  const [k, dx, dy] = move ? [move.k, move.x, move.y] : [1, 0, 0];
+  // Each ring moved and cut to the room (Sutherland–Hodgman), which keeps
+  // what the even-odd fill holds inside it.
+  const cut: number[][] = [];
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let r = 0; r + 1 < rings.length; r++) {
+    let ring: number[] = [];
+    for (let i = rings[r]!; i < rings[r + 1]!; i++)
+      ring.push(dx + k * coords[i * 2]!, dy + k * coords[i * 2 + 1]!);
+    for (const [axis, edge, keep] of [
+      [0, room.x, 1],
+      [0, room.x + room.width, -1],
+      [1, room.y, 1],
+      [1, room.y + room.height, -1],
+    ] as const)
+      ring = cutRing(ring, axis, edge, keep);
+    if (ring.length < 6) continue;
+    cut.push(ring);
+    for (let i = 0; i < ring.length; i += 2) {
+      x0 = Math.min(x0, ring[i]!);
+      x1 = Math.max(x1, ring[i]!);
+      y0 = Math.min(y0, ring[i + 1]!);
+      y1 = Math.max(y1, ring[i + 1]!);
+    }
+  }
+  let best: [number, number] | undefined;
+  let widest = 0;
+  // The widest stretch inside the cut part along the line at height y.
+  const scan = (y: number) => {
+    const crossings: number[] = [];
+    for (const ring of cut) {
+      let j = ring.length - 2;
+      for (let i = 0; i < ring.length; j = i, i += 2) {
+        const yi = ring[i + 1]!;
+        const yj = ring[j + 1]!;
+        if (yi > y === yj > y) continue;
+        crossings.push(ring[j]! + ((y - yj) * (ring[i]! - ring[j]!)) / (yi - yj));
+      }
+    }
+    crossings.sort((a, b) => a - b);
+    for (let i = 0; i + 1 < crossings.length; i += 2) {
+      const width = crossings[i + 1]! - crossings[i]!;
+      if (width > widest) [best, widest] = [[(crossings[i]! + crossings[i + 1]!) / 2, y], width];
+    }
+  };
+  for (let line = 0; line < ANCHOR_LINES; line++)
+    scan(y0 + ((line + 0.5) * (y1 - y0)) / ANCHOR_LINES);
+  if (best) return best;
+  // A part thinner than the lines are apart: between any two heights of
+  // its points in a row, edges neither start nor end, so the line between
+  // them crosses every stretch there is.
+  const heights = [...new Set(cut.flatMap((ring) => ring.filter((_, i) => i % 2 === 1)))].sort(
+    (a, b) => a - b,
+  );
+  for (let i = 0; i + 1 < heights.length; i++) scan((heights[i]! + heights[i + 1]!) / 2);
+  return x0 <= x1 ? best : undefined;
+}
+
+/** A ring (x, y pairs) cut to the side of a line x = edge (axis 0) or y = edge (1) where `keep` times the distance is positive. */
+function cutRing(ring: readonly number[], axis: 0 | 1, edge: number, keep: 1 | -1): number[] {
+  const out: number[] = [];
+  const n = ring.length / 2;
+  for (let i = 0; i < n; i++) {
+    const j = (i + n - 1) % n;
+    const a = (ring[j * 2 + axis]! - edge) * keep;
+    const b = (ring[i * 2 + axis]! - edge) * keep;
+    if (a >= 0 !== b >= 0) {
+      const t = a / (a - b);
+      out.push(
+        ring[j * 2]! + t * (ring[i * 2]! - ring[j * 2]!),
+        ring[j * 2 + 1]! + t * (ring[i * 2 + 1]! - ring[j * 2 + 1]!),
+      );
+    }
+    if (b >= 0) out.push(ring[i * 2]!, ring[i * 2 + 1]!);
+  }
+  return out;
 }

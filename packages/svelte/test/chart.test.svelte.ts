@@ -24,6 +24,7 @@ import Gauges from "./Gauges.svelte";
 import Lines from "./Lines.svelte";
 import Lollipops from "./Lollipops.svelte";
 import Maps from "./Maps.svelte";
+import Nodes from "./Nodes.svelte";
 import Parent from "./Parent.svelte";
 import Pies from "./Pies.svelte";
 import Prices from "./Prices.svelte";
@@ -211,6 +212,30 @@ describe("<Chart>", () => {
     props.azimuth = 40;
     flushSync();
     expect(props.chart!.camera).toMatchObject({ azimuth: 40, elevation: 25 });
+  });
+
+  it("calls ondrill", () => {
+    const drills: (string | null)[] = [];
+    const tree = $state({
+      sales: table({ region: ["N", "N", "S"], country: ["a", "b", "c"], v: [1, 2, 3] }),
+      chart: null as HercegChart | null,
+      ondrill: ({ key }: { key: string | null }) => drills.push(key),
+    });
+    render(Nodes, tree);
+    tree.chart!.setDrillRoot(["N"]);
+    expect(drills).toEqual(['[0,"N"]']);
+  });
+
+  it("calls onitemmove", () => {
+    const moves: unknown[] = [];
+    const network = $state({
+      talks: table({ from: ["a", "b"], to: ["b", "c"] }),
+      chart: null as HercegChart | null,
+      onitemmove: ({ position }: { position: unknown }) => moves.push(position),
+    });
+    render(Nodes, network);
+    network.chart!.setItemPosition('[0,"a"]', { x: 1, y: 2 });
+    expect(moves).toEqual([{ x: 1, y: 2 }]);
   });
 
   it("renders gauges and funnels from their components", () => {
