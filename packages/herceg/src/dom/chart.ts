@@ -44,7 +44,6 @@ import type { Camera } from "../three/camera.ts";
 import type { CrosshairLabels } from "./axis-labels.ts";
 import type { Brush } from "./brush.ts";
 import { ascending, DRAG_THRESHOLD, normalize, type Selection } from "./brushed.ts";
-import type { Controls } from "./controls.ts";
 import { type ChartEvents, type ChartListener, Emitter, type PanelTarget } from "./events.ts";
 import {
   type AxisTarget,
@@ -228,14 +227,6 @@ export class MountedChart implements Chart {
   #tap: { pointer: number; x: number; y: number; moved: boolean } | null = null;
   /** The navigator's sliders, which load when the chart first has a navigator. */
   #navigator: NavigatorControls | undefined;
-  /**
-   * What turns a 3D chart, pans a map, drills into a tree, or moves a
-   * network's nodes, once loaded; null if it failed to load.
-   */
-  #controls: Controls | null | undefined;
-  #controlsLoading: Promise<void> | undefined;
-  /** Which controls the chart has or is loading (see `LayoutControls.kind`). */
-  #controlsKind: string | undefined;
   /** The camera moved since the last `camera` event, which the next frame reports. */
   #cameraMoved = false;
   /** What is selected, in data values; the brush draws it once loaded. */
@@ -525,7 +516,7 @@ export class MountedChart implements Chart {
       this.#animationLoading,
       this.#valuesLoading,
       this.#crosshairLoading,
-      this.#controlsLoading,
+      this.#model.items?.controlsLoading,
       this.#brushLoading,
       this.#navigator?.loading,
     ].filter((loading) => loading !== undefined);
@@ -547,11 +538,11 @@ export class MountedChart implements Chart {
   }
 
   setDrillRoot(node: string | readonly string[] | null): void {
-    this.#itemsChanged("drill", this.#items().setDrillRoot(node));
+    this.#items().setDrillRoot(node);
   }
 
   setItemPosition(key: string, position: { x: number; y: number } | null): void {
-    this.#itemsChanged("itemMove", this.#items().setItemPosition(key, position));
+    this.#items().setItemPosition(key, position);
   }
 
   /**
@@ -562,14 +553,11 @@ export class MountedChart implements Chart {
     if (this.#panelsChanged) this.#flush();
     const items = this.#model.items;
     if (!items) throw new Error("chart: no items to drill or move");
+    items.changed ??= (type, change) => {
+      this.#invalidate(false);
+      this.#events.emit(type, change);
+    };
     return items;
-  }
-
-  /** Draws and reports a change of items' state (a drill, a move), if there was one. */
-  #itemsChanged<K extends "drill" | "itemMove">(type: K, change: ChartEvents[K] | undefined) {
-    if (!change) return;
-    this.#invalidate(false);
-    this.#events.emit(type, change);
   }
 
   getPanels(): readonly PanelInfo[] {
@@ -711,7 +699,7 @@ export class MountedChart implements Chart {
     for (const stop of this.#tables.values()) stop();
     this.#tables.clear();
     this.#clouds?.release(this);
-    this.#controls?.dispose();
+    this.#model.items?.disposeControls();
     this.#navigator?.dispose();
     this.#rows?.dispose();
     // A transition waiting for its first frame leaves the frame's batch;
@@ -757,7 +745,7 @@ export class MountedChart implements Chart {
   #finishFrame(drawn: boolean): void {
     // A tree whose data lost the node it was drilled into shows an ancestor:
     // reported before listeners of the frame (hover) may drill again.
-    if (drawn) this.#itemsChanged("drill", this.#model.items?.reconciled());
+    if (drawn) this.#model.items?.finishFrame();
     this.#drawOverlay();
     // Camera events come once a frame, however many moves a drag made.
     const camera = this.#model.camera;
@@ -1075,7 +1063,7 @@ export class MountedChart implements Chart {
     this.#clouds?.endFrame(this);
     this.#svg.render(scene, { marks: !this.#onCanvas });
     this.#legend.update(scene.legend, scene.theme);
-    this.#controls?.draw(scene);
+    this.#model.items?.drawControls(scene);
     this.#drawTime = performance.now() - started;
     this.#describe();
   }
@@ -1134,44 +1122,20 @@ export class MountedChart implements Chart {
    * another kind go.
    */
   #loadControls(): void {
-    const kind = this.#model.controls?.kind;
-    if (kind === this.#controlsKind) {
-      this.#controls?.update(this.#model.config);
-      return;
-    }
-    this.#controls?.dispose();
-    this.#controls = undefined;
-    this.#controlsKind = kind;
-    if (!kind) {
-      this.#controlsLoading = undefined;
-      return;
-    }
-    const loading = import("./layout-controls.ts")
-      .then(({ mountControls }) =>
+    this.#model.items?.updateControls(this.#model, (kind) =>
+      import("./layout-controls.ts").then(({ mountControls }) =>
         mountControls(kind, {
           chart: this,
           model: this.#model,
           overlay: this.#svg.overlay,
           live: this.#live,
           legend: this.#legend.element,
+          events: this.#events,
           invalidate: () => this.#invalidate(false),
-          itemsChanged: (type, change) => this.#itemsChanged(type, change),
           cursor: () => this.#keyboard?.key,
         }),
-      )
-      .catch(() => null)
-      .then((controls) => {
-        // Controls of a chart destroyed, or asking for others, while they loaded go.
-        if (this.#destroyed || this.#controlsLoading !== loading) {
-          controls?.dispose();
-          return;
-        }
-        this.#controlsLoading = undefined;
-        this.#controls = controls;
-        controls?.update(this.#model.config);
-        if (this.#scene) controls?.draw(this.#scene);
-      });
-    this.#controlsLoading = loading;
+      ),
+    );
   }
 
   /**
@@ -1281,7 +1245,7 @@ export class MountedChart implements Chart {
   #inspection(): Inspection | undefined {
     if (!this.#scene) return undefined;
     // A chart being turned, panned, or dragged shows no tooltip.
-    if (this.#controls?.busy) return undefined;
+    if (this.#model.items?.controls?.busy) return undefined;
     // The model applies the configured tooltip mode.
     if (this.#pointer) return this.#model.inspect(this.#pointer.x, this.#pointer.y);
     const keyboard = this.#keyboard;

@@ -90,14 +90,13 @@ export class Controls implements ChartControls {
   /** Moves the node keyed `key` to a place in layout units, in the layout `moves` drew. */
   #moveTo(key: string, moves: NodeMoves, [x, y]: readonly [number, number]): void {
     const items = this.#host.model.items;
-    this.#host.itemsChanged("itemMove", items?.setItemPosition(key, { x, y }, moves.layout));
+    items?.setItemPosition(key, { x, y }, moves.layout);
   }
 
   #reset(): void {
     const items = this.#host.model.items;
     if (!items) return;
-    for (const key of [...items.movedItems.keys()])
-      this.#host.itemsChanged("itemMove", items.setItemPosition(key, null));
+    for (const key of [...items.movedItems.keys()]) items.setItemPosition(key, null);
     this.#host.announce("Put the moved nodes back.");
   }
 
