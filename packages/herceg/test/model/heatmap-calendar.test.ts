@@ -294,9 +294,12 @@ describe("calendar heatmap specs", () => {
       "heatmap weekStart: for calendars of weeks",
     );
     expect(() => validateSpec(spec({ date: "day", calendar: "years" }))).toThrow(/calendar/);
-    const numbers = table({ day: [1, 2], n: [1, 2] });
+    const numbers = table({ day: [1, 2], n: [1, 2], name: ["a", "b"] });
     expect(() => heatmap(numbers, { date: "day" as never, color: "n" })).toThrow(
-      /heatmap date: field "day" holds number values; expected time/,
+      'heatmap date: field "day" holds number values; expected time; give Dates or time() values',
+    );
+    expect(() => heatmap(numbers, { date: "name" as never, color: "n" })).toThrow(
+      'heatmap date: field "name" holds category values; expected time; give Dates or time() values',
     );
   });
 });

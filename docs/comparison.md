@@ -65,7 +65,7 @@ Chart.js has no built-in heatmap; those cells are marked n/a.
 | Notebooks | Static display: an isolated iframe with the engine and the data embedded, so it works offline. Live charts (`chart.widget()`, on anywidget): Python appends rows (with a rolling window), replaces data, and changes options without re-sending the chart, as binary buffers over the widget's connection; brushing (ranges and lassos), zooming (x and both y axes), hovering, and clicks (with the rows under the pointer) come back as properties and callbacks, with datetimes on time axes, and a chart's row selection (`row_selection=`) reports the rows selected, by position in the data after rows streamed in and out, or a brush's condition, and takes rows or a condition from Python. Live widgets also report tree `drill_root` paths and manual network `item_positions`, with `on_drill` and `on_item_move`, Python assignments and resets, and restoration across displays; network data changes clear moves. Tested in JupyterLab 4 only; update latency through the kernel not measured. | Community `pyecharts` renders notebook HTML; no first-party widget. | None. | None. | Documented. `fig.show()` in notebooks and `go.FigureWidget` (anywidget-based since Plotly.py 6), which updates traces from Python and calls Python on click, hover, and selection. |
 | Accessibility | Focusable figure with a generated data summary, arrow-key navigation announced through a live region, legend entries as toggle buttons, `title`/`desc` in static SVG; tagged PDF with one Figure for the whole chart (including facets), title and generated summary as alternative text, decorative backgrounds/grid lines as artifacts, and document language from the supplied locale. PDF labels remain inside the Figure; no PDF/UA conformance claim or screen-reader PDF testing yet. Automated axe-core audits (WCAG 2.1 A/AA and best practices) find nothing to fix in every chart family, both renderers, facets, subplots, all four themes, static SVG, and grids; tests check the accessibility tree screen readers receive (name, description read once, legend states, live announcements), but not yet tried with screen readers themselves. The keyboard reaches every series (Up and Down between them) and walks heatmaps cell by cell. | Documented. `aria` option generates descriptions; decal patterns. | Documented. Required accessible name, keyboard focus navigation. | Canvas only; the application supplies fallback content. | Limited; no keyboard navigation of data. |
 | Export | Standalone SVG in the browser (`toSVG`) and without a DOM (`renderToSVG`, heatmaps embedded as PNG). One-page tagged vector PDF without a DOM or dependencies (`herceg/pdf`, about 42 KiB gzip including scene compilation and a line mark, bundled only when imported): paths, selectable text, heatmaps as images, and a chart-level Figure alternative. Standard fonts use Windows-1252; optional supplied static TrueType fonts add subsetting and Unicode copy/search maps (about 49.5 KiB gzip excluding font bytes), with conservative script coverage and no complex shaping. Both font paths emit the structure tree, marked content, ParentTree, artifacts, and locale language; no PDF/UA conformance claim. Python saves SVG and PDF (same renderers, embedded V8) and PNG (resvg) without a browser. | Documented. PNG/SVG from the browser, server-side SVG strings; no built-in PDF. | Documented. Static SVG, SSR, browser raster export. | PNG via `toBase64Image`; no built-in PDF. | Documented. PNG/SVG/JPEG/WebP; Kaleido for Python, which also writes PDF. |
-| Ease of use | One table plus mark functions with typed fields, the same marks in TypeScript, the adapters, specs, and Python. Covers the common chart families (lines, areas, bars, points, heatmaps, distributions, part-to-whole, hierarchies, flows, networks, 3D points, lines, and surfaces) with fewer options than ECharts or Plotly, and no financial indicators yet. | Large declarative option object; many examples. | Typed grammar; scales and D3 modules are explicit imports. | Simple for standard charts; plugins for the rest. | Very quick for common charts, especially Plotly Express. |
+| Ease of use | Shortest or tied in 8 of 12 [common tasks](#common-tasks) (several series, annotations, synced charts, streaming, 100k points, themes take one option or mark); field names checked at compile time, and runtime errors that name the field and the fix. Hardest of the five for custom tooltip content (no hook: `tooltip: false` and a `hover` listener; none from Python or specs), no PNG export in the browser, no lines over categories yet, and a dark theme that assumes a dark page. | Every task through options; `connect` syncs charts in one call; misspelled fields and theme names fail silently. | Typed as strictly as Herceg; zoom windows, visible rows, rolling windows, and annotation extents are application code; no drawn titles. | Simple for standard charts; annotations and zoom need plugins, large data five settings; canvas only. | Shortest tooltips (`hovertemplate`) and Python (Plotly Express); synced charts need event plumbing. |
 
 Network picking has a separate one-off measurement (2026-10-10, Node
 22.23.3, Darwin 27, Apple M6; 2048 × 1024, labels off). It uses the actual
@@ -844,6 +844,316 @@ chunk); lowess, written in NumPy, is about 2.5 times slower than
 statsmodels' compiled loop. Seaborn's own pair plots draw 20 Matplotlib
 scatter plots of 10,000 points on the CPU, while herceg sends the columns
 once and draws them in the browser, so the two totals are not compared.
+
+## Common tasks
+
+The same twelve tasks written with each library, as an experienced user of
+it would write them from its documentation, over identical data
+([benchmarks/src/ease](../benchmarks/src/ease), one directory per task and a
+file per library, with React and Python versions where they are natural).
+`benchmarks/src/ease/samples.test.tsx` mounts every TypeScript sample in Chrome
+and checks what it draws (series, axes, annotations, the tooltip under the
+pointer, the synced chart, the rolling window, the exported files), and
+`python/tests/test_ease_samples.py` runs the Python ones, so the samples keep
+working as the libraries change. The same test checks the mistakes the tables
+report that happen at runtime (compile errors are checked by type-checking
+the samples).
+
+Versions: ECharts 6.1.0, TanStack Charts 1.0.0 (with d3-scale 4.0.2 for time
+scales), Chart.js 4.5.1 (with chartjs-adapter-date-fns 3.0.0), Plotly.js 4.1.2
+(`plotly.js-dist-min`), React 19.3.0, and Herceg at this commit. Not installed,
+so not used: chartjs-plugin-annotation and chartjs-plugin-zoom, the community
+React wrappers (echarts-for-react, react-chartjs-2, react-plotly.js),
+pyecharts, and jsPDF. The Chart.js samples of tasks 4 and 5 therefore draw
+annotations and zoom with code of their own, which an experienced user would
+leave to those plugins: their line counts and concepts do not represent
+Chart.js with its plugins. Plotly Python and Kaleido are not in the test environment either: the
+Plotly Express samples follow Plotly's documentation and are skipped by
+pytest, and the message quoted for task 11 is Plotly Express's, not run here.
+
+How to read the tables:
+
+- **Lines** are lines that are not blank, not comments, and not the import of
+  the shared data, after formatting (biome, ruff); `node
+  --experimental-strip-types benchmarks/src/ease/lines.ts` counts them.
+  Imports count. The samples import whole bundles (`echarts`,
+  `chart.js/auto`, `plotly.js-dist-min`); their tree-shaken setups add about
+  ten lines of registration (`echarts.use([...])`, `Chart.register(...)`).
+  Herceg's and TanStack's imports are tree-shaken already.
+- **Concepts** are what a newcomer has to learn for the task, beyond the
+  previous tasks.
+- **Mistake** is one plausible error and what the library does with it, as
+  observed in these samples: a type error, a runtime message, or a silently
+  wrong chart.
+- Every chart shows a tooltip at the nearest x, which is Herceg's default;
+  the others need `tooltip: { trigger: "axis" }` (ECharts), `interaction: {
+  mode: "index", intersect: false }` (Chart.js), `hovermode: "x"` with
+  several series (Plotly), and `focus: "group-x"` with the `tooltip`
+  extension (TanStack). TanStack Charts draws no title (the page's heading
+  and the required `ariaLabel` name a chart).
+
+Line counts favor libraries whose idioms are short to write, not those that
+are easiest to get right; the concepts and mistakes columns matter more.
+
+### 1. A basic line chart
+
+Daily latency over 60 days with a title, a time x axis, and a y axis title.
+[01-line](../benchmarks/src/ease/01-line)
+
+| Library | Lines | Concepts | Mistake: a misspelled field (`"latncy"`) |
+| --- | --- | --- | --- |
+| Herceg | 9; React 10 | `table` of columns, `time()`, a mark function (`line`), `createChart` options (`title`, `y: { title }`) | Compile error; in JavaScript, `line y: no field "latncy"; the table has "time", "p50"`. |
+| ECharts | 13 | `init` and `setOption`, the option object, `dataset` and `encode`, axis `type: "time"`, the tooltip component | `encode: { y: "latncy" }`: no error or warning; the series falls back to the dataset's first value column, so a typo for another column draws the wrong one. |
+| TanStack Charts | 19; React 18 | `defineChart`, marks (`lineY`), scale factories (d3's `scaleUtc`, with `Date` values), `mountChart` and its required `ariaLabel`, focus strategies, the `tooltip` extension | Compile error (fields are inferred from the rows); in JavaScript, no error and no line. |
+| Chart.js | 15 | a `<canvas>`, `type` with `data.labels` and `datasets`, the time scale and its date adapter, `interaction` | The sample's arrays have no field names. With object rows and `parsing: { yAxisKey: "latncy" }`, as in task 2's sample, nothing is parsed or drawn, without a warning. |
+| Plotly | 12 | traces (`type`, `mode`), layout, axis `type: "date"`, `newPlot` (a promise) | It takes arrays, so the mistake is a property read that TypeScript catches. Leaving out `xaxis.type: "date"` shows epoch milliseconds as "1.77T" without a warning. |
+
+Herceg and TanStack Charts check field names against the data's type;
+ECharts and Chart.js take field names as plain strings, which a typo leaves
+silently wrong. Epoch milliseconds
+need saying in every library: `time()` in Herceg (a number column is a
+number axis), `type: "time"` in ECharts and Chart.js, `type: "date"` in
+Plotly, and `Date` objects in TanStack.
+
+### 2. A multi-series chart
+
+Three services' latency from a long table (a row per service and day), one
+line per service with a legend. [02-multi-series](../benchmarks/src/ease/02-multi-series)
+
+| Library | Lines | Concepts | Mistake: the series field holds numbers (HTTP status codes) |
+| --- | --- | --- | --- |
+| Herceg | 9; React 10 | `series` field | Compile error; in JavaScript, `line series: field "status" holds number values; expected category; give its values as strings`. |
+| ECharts | 20 | the `legend` component; a series per group, grouped by hand (or with `dataset` filter transforms) | Works: groups are built in application code. |
+| TanStack Charts | 20 | the `color` channel groups lines; `colorLegend` | Works: two lines and a legend. |
+| Chart.js | 22 | a dataset per group, grouped by hand; `parsing` keys | Works. |
+| Plotly | 20 | a trace per group, grouped by hand; `hovermode` | Works. |
+
+Splitting long data is one option in Herceg and TanStack Charts; the others
+make the application group the rows. Herceg is the strict one about kinds:
+categories come from strings, so numeric codes need `codes.map(String)`.
+Herceg's samples take columns; from the rows, `fromRows(serviceRows)` reads
+them, with `x: { type: "time" }` for the epoch milliseconds (a line and a
+concept more).
+
+### 3. A custom tooltip
+
+The tooltip shows the date as "Wed, Jan 21", the value with "ms", and the
+day's request count, a field that is not plotted. [03-tooltip](../benchmarks/src/ease/03-tooltip)
+
+| Library | Lines | Concepts | Mistake |
+| --- | --- | --- | --- |
+| Herceg | 32; React 54 | `tooltip: false`, the `hover` event and its inspection (`points`, `row`, `px`, `py`), reading a row (`table.numbers(field)[row]`), an element of your own, placed (flipped past the middle to stay inside) and hidden by hand; in React, state and a `ref` for the chart's width | Leaving out `tooltip: false`: both tooltips show, without a warning. |
+| ECharts | 27 | `tooltip.formatter`, its params (an array with `trigger: "axis"`), `EChartsOption` typing and casts of `params.data` | Formatters return HTML: text from data containing `<` is parsed as markup. |
+| TanStack Charts | 29; React 40 | `tooltip: { use, format }` with typed rows; in React, `renderTooltipBody` from `@tanstack/charts/react/tooltip` | Passing `renderTooltipBody` to the `Chart` of `@tanstack/charts/react`: compile error (that component lacks the prop). |
+| Chart.js | 33 | `plugins.tooltip.callbacks` (`title`, `label`), tooltip items (`parsed`, `dataIndex`) | Without `intersect: false`, the tooltip shows only with the pointer on a point. |
+| Plotly | 17 | `hovertemplate` syntax (`%{x\|%a, %b %-d}`, d3-format), `customdata`, `<extra></extra>` | Leaving out `<extra></extra>`: a second box with the trace's name appears beside the tooltip. |
+
+Herceg is the hardest here. It has no hook for tooltip content: the built-in
+tooltip formats values by their axes (`format` takes Intl options), and
+anything else means turning it off and drawing one from the `hover` event,
+which also reports keyboard reading. Turning it off also removes the
+crosshair and the highlighted points, which the samples do not rebuild, so
+equivalent behavior takes more than their lines. Python and specs cannot change tooltip content at all,
+where Plotly Express takes `hover_data`. Plotly's template is the shortest,
+and the other formatters keep the built-in placement.
+
+### 4. An annotation
+
+A threshold rule labeled "SLO" and a labeled band over an incident window.
+[04-annotation](../benchmarks/src/ease/04-annotation)
+
+| Library | Lines | Concepts | Mistake: the band's dates as ISO strings (`"2026-01-21"`) |
+| --- | --- | --- | --- |
+| Herceg | 13; React 12 | `rule` and `region` marks with constant positions; mark order (regions first to shade underneath) | Compile error; in JavaScript, `region x1: "2026-01-21" names a field, and fields need a table; pass the table first, or give a number or Date`. |
+| ECharts | 23 | `markLine` and `markArea` on a series, their data formats (`[{ yAxis }]`, `[[start, end]]`) | Works: ECharts parses date strings on time axes. |
+| TanStack Charts | 44 | `ruleY`, `rect` with explicit y extents (rects span values, not the plot), `text` marks for labels | `TypeError: A temporal scale factory requires Date channel values`. |
+| Chart.js | 40, without its plugin | a plugin of your own with canvas drawing and `scale.getPixelForValue` (chartjs-plugin-annotation, not installed, takes options instead) | `getPixelForValue` takes parsed numbers: the band is not drawn, without a warning. |
+| Plotly | 37 | `layout.shapes`, `xref`/`yref` (`"paper"` spans the plot), shape `label`s | Works: Plotly takes date strings. |
+
+Annotations are marks in Herceg, sharing the chart's scales, and count
+toward the axis domains; TanStack composes them from general marks, ECharts
+attaches them to a series, Plotly lays them out in paper or data coordinates,
+and Chart.js has an annotation plugin. With it (documented, not run here),
+the plugin of the sample becomes options, about half the lines:
+
+```ts
+import annotationPlugin from "chartjs-plugin-annotation";
+Chart.register(annotationPlugin);
+// options.plugins:
+annotation: {
+  annotations: {
+    incident: { type: "box", xMin: incident.start, xMax: incident.end, label: { display: true, content: "Incident" } },
+    slo: { type: "line", yMin: SLO, yMax: SLO, label: { display: true, content: "SLO" } },
+  },
+},
+```
+
+### 5. Two synchronized charts
+
+Latency and request charts whose cursors and zoomed x ranges follow each
+other. [05-sync](../benchmarks/src/ease/05-sync)
+
+| Library | Lines | Concepts | Mistake: zoom turned on in only one chart |
+| --- | --- | --- | --- |
+| Herceg | 17; React 16 | `interaction: { zoom: "x", sync: "name" }` | The other chart still follows the zoom; it just does not zoom by its own wheel. |
+| ECharts | 19 | `echarts.connect`, `dataZoom` (`type: "inside"`) | The chart without `dataZoom` does not follow, without a warning. |
+| TanStack Charts | 46, partly | `createChartCursor` and `cursorHost` (`match: "x"`), `zoomX` with a `controlledSignal`, an application-owned window that rebuilds both definitions, visible rows and `clip` | Not applicable: the application applies the window to both charts. |
+| Chart.js | 42, without its plugin | `onHover`, `setActiveElements` on the other chart and its tooltip, scale `min`/`max`, wheel handling by hand (chartjs-plugin-zoom is not installed) | Not applicable: all of it is application code. |
+| Plotly | 40 | `plotly_relayout` and `plotly_hover` events, `Plotly.relayout` with only the x axis' keys, `Plotly.Fx.hover` (missing from @types/plotly.js), a guard against echoes | Not applicable: as for Chart.js. |
+
+One option in Herceg, one call in ECharts, and event plumbing elsewhere
+(chartjs-plugin-zoom would replace the Chart.js sample's wheel code, not its
+cursor code). The TanStack sample does half the task: in TanStack Charts
+1.0.0, `zoomX`'s surface takes the pointer, so over a zoomable plot the
+tooltip and the shared cursor do not follow it (the samples' test checks only
+the shared zoom there). Plotly charts that can share one figure are simpler
+as subplots with matching x axes.
+
+### 6. Streaming with a rolling window
+
+A reading every 100 ms, keeping the newest 300.
+[06-streaming](../benchmarks/src/ease/06-streaming)
+
+| Library | Lines | Concepts | Mistake: changing the data without telling the chart |
+| --- | --- | --- | --- |
+| Herceg | 11; React 16 | a table's `maxRows`, `appendRow` (tables redraw their charts once a frame) | Tables are changed through their methods, which redraw. Writing into a typed array the table borrowed shows nothing until something else redraws. |
+| ECharts | 20 | trimming by hand, `setOption` with the new data | Pushing to the array without `setOption`: the chart stays as it was. |
+| TanStack Charts | 24; React 29 | trimming by hand, a new definition per change (`host.update`, or state and `useMemo` in React) | Mutating the rows without a new definition: the chart stays as it was. |
+| Chart.js | 25 | trimming by hand, `chart.update()`, `animation: false` | Without `update()`: the chart stays as it was. |
+| Plotly | 14 | `extendTraces` with its `maxPoints` argument | Mutating the trace's arrays: the plot stays as it was until a redraw. |
+
+Herceg's tables and Plotly's `extendTraces` own the window; elsewhere the
+application trims and resubmits data. In React, Herceg's chart never
+re-renders for data, while TanStack's re-renders through React state on each
+reading.
+
+### 7. A line of 100,000 points
+
+[07-large](../benchmarks/src/ease/07-large)
+
+| Library | Lines | Concepts | Mistake: leaving out the large-data settings |
+| --- | --- | --- | --- |
+| Herceg | 8 | none new: typed arrays are used as they are, and level of detail is automatic | Nothing to leave out. |
+| ECharts | 15 | `sampling: "lttb"`, `showSymbol: false` | Without them, every point is drawn, symbols too where they fit, which is slower to render and hover. |
+| TanStack Charts | 20 | `mountCanvasChart`, a row object per point | The SVG host draws it too, as one path; the documented route for dense signals is an envelope the application computes. |
+| Chart.js | 22 | `parsing: false` with points as `{ x, y }`, `normalized`, the `decimation` plugin, `animation: false`, `pointRadius: 0` | With defaults, every point is parsed, animated, and drawn as a dot; decimation silently does nothing while `parsing` is on, as its documentation says. |
+| Plotly | 9 | `scattergl` | Plain `scatter` draws it too, since Plotly simplifies SVG line paths; `scattergl` is the documented choice for large data. |
+
+[Initial render](#initial-render) and [Interaction](#interaction) measure
+these libraries' large lines with the same settings (ECharts there samples
+with `minmax`).
+
+### 8. A custom mark
+
+A lollipop per day: a stem from zero and a dot at the value.
+[08-custom-mark](../benchmarks/src/ease/08-custom-mark)
+
+| Library | Lines | Concepts | Mistake: forgetting that the stems start at zero |
+| --- | --- | --- | --- |
+| Herceg | 23 | `custom` with fields and `draw` (the scales, shape functions, `series` and their `rows`), `y: { zero: true }` | The y axis fits the values only; stems are cut at the plot's bottom, without a warning. |
+| ECharts | 31 | a `custom` series, `renderItem` with `api.coord`, `api.value`, and `api.visual`, graphic elements | Value axes include zero by default. |
+| TanStack Charts | 72 | `createMark`: channels (which set the domains), `render` returning keyed scene nodes and the `ChartPoint`s the pointer, keyboard, and tooltip find, the theme's palette | Without `includeZero`, stems run out of the plot, over the axis and the page below. |
+| Chart.js | 35 | dots as a scatter dataset, a plugin drawing stems from the dataset's elements, `interaction` | Without `beginAtZero`, stems run over the x axis. |
+| Plotly | 22 | no custom marks: a `layout.shapes` line per row beside a marker trace, `rangemode: "tozero"`, `hovermode` | Shapes count toward autorange, so they stay in view. |
+
+Herceg's custom mark gets tooltips, keyboard reading, the legend, and the
+text alternative from its fields; ECharts' custom series takes part in the
+axis tooltip through `encode`; TanStack's answers the pointer only through
+the points its `render` returns, which is most of its sample's length;
+Chart.js and Plotly draw beside a built-in dataset or trace, which carries
+the tooltips.
+
+### 9. A theme
+
+The multi-series chart, dark, with a brand palette, on a light page.
+[09-theme](../benchmarks/src/ease/09-theme)
+
+| Library | Lines | Concepts | Mistake: a misspelled theme name (`"drak"`) |
+| --- | --- | --- | --- |
+| Herceg | 10; React 15 | `theme: { extends, background, palette }`; light and dark themes are transparent, to take the page's background | Compile error; in JavaScript, `theme: no theme "drak"; use "light", "dark", "high-contrast", "high-contrast-dark", "auto"`; in Python, the spec's check refuses it when the chart is displayed or exported. |
+| ECharts | 21 | a built-in theme named at `init`, `color` in the option | Draws in the default theme, without a warning. |
+| TanStack Charts | 27 | `theme` tokens in the definition (or CSS variables and `color`) | No named themes. |
+| Chart.js | 35 | no themes: colors per dataset, scale, and title, and a CSS background for the canvas | No named themes. |
+| Plotly | 25 | `paper_bgcolor`, `plot_bgcolor`, `font`, `gridcolor`, `colorway` | `template: "plotly_dark"` (Plotly Python's) is ignored in plotly.js, without a warning; plotly.js bundles no named templates. |
+
+Herceg's dark theme on a light page draws light text on the page's white
+unless `background` is given (the sample gives one); ECharts' dark theme
+paints its own surface.
+
+### 10. Export
+
+SVG, PNG, and PDF of the basic line chart, in the browser (Python below).
+[10-export](../benchmarks/src/ease/10-export)
+
+| Library | Lines | SVG / PNG / PDF | Mistake: exporting right after creating the chart |
+| --- | --- | --- | --- |
+| Herceg | 29 | `chart.toSVG()` / drawn by hand from the SVG on a canvas / `renderToPDF(options)` from `herceg/pdf`, with the chart's options and an explicit size | No animation by default; exports render the chart's state at once. |
+| ECharts | 24 | a second, SVG-renderer instance (`ssr: true`, `renderToSVGString`) / `getDataURL` / none | With animation on (the default), the PNG caught the line half drawn (a data URL of 17.7k characters instead of 29.4k). |
+| TanStack Charts | 20 | `serializeChartSvg` / `renderChartImage` / none | No animation by default. |
+| Chart.js | 16 | none / `toBase64Image` / none | With animation on (the default), the PNG was nearly empty (7.1k characters instead of 55.1k). |
+| Plotly | 17 | `Plotly.toImage` as a data URL, decoded / `Plotly.toImage` / none in the browser | Both calls are promises; forgetting `await` gives a promise, not an image. |
+
+Herceg is the only one with a PDF, and the only one without a PNG in the
+browser: 13 of its lines draw the SVG on a canvas. `renderToPDF` takes the
+options, not the mounted chart, so it shows neither a zoom nor hidden series.
+Chart.js exports at its canvas' resolution (`devicePixelRatio`); the others
+were asked for twice the chart's size. Python saves all three by file
+extension (`chart.save("latency.png")`, 5 lines), as Plotly Python does
+through Kaleido (`fig.write_image`, 5 lines).
+
+### 11. A Python notebook chart
+
+Task 2's chart from a pandas DataFrame in a notebook cell.
+[11-notebook](../benchmarks/src/ease/11-notebook)
+
+| Library | Lines | Concepts | Mistake: a misspelled column |
+| --- | --- | --- | --- |
+| Herceg | 10 | `hg.line(df, x=, y=, series=, title=, y_axis=hg.Axis(title=))`; the chart displays itself | `KeyError: "line y: no column 'latncy'; the data has 'time', 'service', 'latency'"` when the chart is built. |
+| Plotly Express | 10 | `px.line(df, x=, y=, color=, title=, labels=)`; the figure displays itself | `ValueError: Value of 'y' is not the name of a column in 'data_frame'. Expected one of ['time', 'service', 'latency'] but received: latncy`. |
+
+The two are alike: one call over a DataFrame, named columns, and an error
+that lists the columns. Plotly Express names series `color` and relabels
+axes through `labels`; Herceg names them `series`, as its TypeScript does,
+and takes axes as `x_axis`/`y_axis` in one-call helpers, since `x` and `y`
+name columns. ECharts (through the community pyecharts), TanStack Charts,
+and Chart.js have no Python packages.
+
+### 12. Bars and a line over categories
+
+Monthly revenue bars with a target line over the same months.
+[12-bar-line](../benchmarks/src/ease/12-bar-line)
+
+| Library | Lines | Concepts | Mistake: the line's values in another month order than the bars' |
+| --- | --- | --- | --- |
+| Herceg | 12 | not yet possible: lines need a number or time x; the sample draws the target as points over the bars' categories | Points place categories by value. |
+| ECharts | 17 | a category axis, series of two types | With `xAxis.data` and value arrays, values pair by position: misaligned without a warning. |
+| TanStack Charts | 21 | `barY` and `lineY` over one band scale | Categories match by value. |
+| Chart.js | 20 | a mixed chart (a dataset's own `type`) | `labels` and data pair by position: misaligned without a warning. |
+| Plotly | 11 | a bar trace and a scatter trace on one category axis | Categories match by value. |
+
+### What the tasks show
+
+- Herceg's samples are the shortest, or tied, in 8 of the 12 tasks: several
+  series from long data, annotations, synced charts, streaming, 100,000
+  points, and themes each take one option or mark, and field names are
+  checked at compile time in TypeScript and React, with runtime messages
+  that name the field and the fix.
+- It is harder than every competitor for custom tooltip content (and
+  cannot change it from Python or a spec), has no PNG export in the browser,
+  cannot yet draw lines over categories, and its dark theme assumes a dark
+  page.
+- TanStack Charts is typed as strictly, but leaves zoom windows, visible
+  rows, rolling windows, and annotation extents to the application, and in
+  1.0.0 its zoom control and pointer tooltips exclude each other.
+- ECharts covers every task with options, but misspelled fields and theme
+  names fail silently, and `setOption` checks nothing unless the option is
+  annotated as `EChartsOption`.
+- Chart.js leaves annotations and zoom to plugins (not measured here), and
+  needs the most settings for large data; animated charts export their first
+  frame.
+- Plotly is the most concise for tooltips and, through Plotly Express, in
+  Python, and needs event plumbing for synced charts and `type: "date"` for
+  epoch milliseconds.
 
 ## Findings so far
 

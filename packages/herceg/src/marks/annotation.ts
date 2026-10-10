@@ -56,7 +56,17 @@ export class AnnotationData {
       this.table = undefined;
       return;
     }
-    if (!table) throw new Error(`${role}: fields need a table; pass one`);
+    if (!table) {
+      // A constant given as a string, such as a date, reads as a field name.
+      const [channel, field] = Object.entries(positions).find(([, p]) => typeof p === "string") ?? [
+        "textField",
+        text,
+      ];
+      const constant = channel === "textField" ? "constant text as label" : "a number or Date";
+      throw new Error(
+        `${role} ${channel}: "${field}" names a field, and fields need a table; pass the table first, or give ${constant}`,
+      );
+    }
     for (const [channel, position] of Object.entries(positions)) {
       if (typeof position === "string")
         requireField(table, position, NUMERIC, `${role} ${channel}`);

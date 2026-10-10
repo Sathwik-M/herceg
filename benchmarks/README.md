@@ -33,6 +33,7 @@ machine otherwise idle while it runs.
 | `src/size/` | Bundle size benchmark and its entry points. JavaScript and required CSS are reported separately. |
 | `src/grid/` | The grid suite: fixture, reference, scenarios, harness, runner, report, and one adapter per grid in `src/grid/adapters/`; the remote grid benchmark in `src/grid/remote/`. |
 | `src/report.ts` | Writes Markdown tables into `docs/comparison.md`. |
+| `src/ease/` | The common-task samples of `docs/comparison.md` ("Common tasks"): a directory per task and a file per library, over the data in `data.ts` (and `data.py`). `samples.test.tsx` mounts each in Chrome (`npm run test:browser`; `vitest.config.ts` here), `python/tests/test_ease_samples.py` runs the Python ones, and `lines.ts` counts their lines. |
 | `python/express.py` | Timings of `herceg.express` (Python), with Seaborn's and statsmodels' computations beside them; run in the Python package's uv environment. |
 | `results/` | Committed results with environment details. |
 

@@ -32,10 +32,25 @@ the mark is a line, area, point, error bar, rug, candlestick, or heatmap;
 bar lengths and histogram counts stay numbers. Set `type: "linear"` on the
 axis to read times as plain numbers.
 
+Common tasks (a basic line, several series, a custom tooltip, annotations,
+synced charts, streaming, 100,000 points, a custom mark, a theme, export, a
+Python notebook chart, bars with a target over categories) are written out in
+[benchmarks/src/ease](../../benchmarks/src/ease), one directory per task,
+beside the same task in ECharts, TanStack Charts, Chart.js, and Plotly; a
+browser test keeps every sample drawing, and
+[the comparison](../../docs/comparison.md#common-tasks) sets them side by
+side.
+
 ## Data
 
 `table()` builds columnar data. Typed arrays are used without copying; plain
-arrays, `Date` arrays, and string arrays are converted once.
+arrays, `Date` arrays, and string arrays are converted once. Change a typed
+array's values through the table (`set`, `replace`, below): the table and the
+array share memory, but only the table's methods keep its cached extents and
+level-of-detail indexes current and redraw the charts reading it. Numbers are
+numbers: wrap epoch milliseconds in `time()` (or pass `Date`s) for a time axis,
+and give category fields strings (`codes.map(String)` for status codes or
+years).
 
 ```ts
 const requests = table({
@@ -47,7 +62,9 @@ requests.numbers("latency"); // Float64Array view of the live rows
 requests.categories("service"); // { codes: Int32Array, dictionary: string[] }
 ```
 
-Row objects can be converted with `fromRows(rows)`. Categories that are
+Row objects can be converted with `fromRows(rows)`; their `Date` properties
+become time fields, and numbers stay numbers (set the axis' `type: "time"`
+for epoch milliseconds). Categories that are
 already dictionary-encoded (Arrow dictionaries, pandas categoricals) are used
 without decoding: `encodedCategory(codes, dictionary)` takes `Int32Array`
 codes (-1 for missing) and the dictionary. Shapes for maps are geometry
@@ -2174,7 +2191,7 @@ is internal, and charts take only marks the mark functions make.
 | `marks` | Marks to draw, bottom to top (rules are drawn on top). |
 | `title`, `description` | Accessible name and description; the title is drawn. |
 | `width`, `height` | Fixed size; omitted dimensions follow the container. |
-| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`; on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
+| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `title`, `grid`, `ticks`, `format` (Intl options), `show`; on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `resolve` | `{ x?, y?, yRight? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x, y, or right y scale (`yRight` as `y` unless given; see Small multiples, Subplots, and A second y axis). |

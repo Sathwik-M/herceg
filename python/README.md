@@ -656,7 +656,9 @@ SVG, PNG, and PDF export need the `export` extra (`pip install
 browser's chart except for text measurement, which uses fixed Helvetica
 metrics. PNG is rasterized from that SVG by `resvg`. PDF comes from herceg's
 `renderToPDF` in the same engine, with the SVG's layout: vector marks, axes,
-and legends, heatmaps as images, and selectable text. Without supplied fonts,
+and legends, heatmaps as images, and selectable text. What the renderer
+refuses, such as an option the spec does not accept (`theme="drak"`) or a
+font it cannot embed, raises `ValueError` with herceg's message. Without supplied fonts,
 PDF uses the standard fonts and Windows-1252 encoding (other characters
 print as "?"). For Unicode, fonts are export options, separate from the spec:
 
