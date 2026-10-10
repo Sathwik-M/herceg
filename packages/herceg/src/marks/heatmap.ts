@@ -18,7 +18,7 @@ import type { Frozen, HeatmapSpec, Weekday } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { type Calendar, type CalendarLayout, placeCalendar } from "./heatmap-calendar.ts";
 import { type AxisCells, heldCells, placeCells } from "./heatmap-cells.ts";
-import { type AxisPlacement, paint, rasterAxes } from "./heatmap-raster.ts";
+import { paint, rasterAxes } from "./heatmap-raster.ts";
 import { rampLegend } from "./legend-parts.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -172,22 +172,9 @@ const LOOKUPS = 32;
 const WEEK_STARTS: readonly string[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const REDUCERS: readonly string[] = ["mean", "max", "min"];
 
-/** What a raster's pixels were last painted from; unchanged inputs skip repainting. */
+/** What each raster buffer holds, keyed by the buffer, whichever mark painted it. */
 interface Painted {
-  /** The mark that painted them: charts reuse a series' buffer for the next mark in its place. */
-  mark: HeatmapMark;
-  version: number;
-  /** Each row's band or cell along x and y. */
-  x: NumericArray;
-  y: NumericArray;
-  /** A facet panel's rows, and its categories' places (see `Series.places`). */
-  panelRows: Uint32Array | undefined;
-  xPlaces: BandPlaces | undefined;
-  yPlaces: BandPlaces | undefined;
-  theme: Theme;
-  /** The scales' domains, ranges, and band widths, the plot, and the raster ratio. */
-  frame: readonly (number | undefined)[];
-  /** Where the image is along x and y, in CSS pixels, and how many pixels it has. */
+  inputs: readonly unknown[];
   image: readonly [number, number, number, number, number, number];
 }
 
@@ -383,7 +370,13 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
    * The cells along a number or time axis, for the table's version and,
    * along x, the time axis' breaks, which leave cells out and move them.
    */
-  #axisCells(axis: "x" | "y", breaks: Breaks | undefined, s: Series | undefined): AxisCells {
+  #axisCells(
+    axis: "x" | "y",
+    breaks: Breaks | undefined,
+    s: Series | undefined,
+    log = false,
+  ): AxisCells {
+    if (log) throw new Error(`Heatmap cells cannot be placed on a log ${axis} axis yet`);
     const { spec, table } = this;
     if (this.#layout) {
       if (breaks) throw new Error("Calendar heatmaps cannot leave out time breaks");
@@ -413,35 +406,31 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
    */
   #cellsFor(s: Series, axis: "x" | "y", scale: PositionScale | undefined): AxisCells {
     if (scale || axis === "y") {
-      const cells = this.#axisCells(axis, scale?.breaks, s);
+      const cells = this.#axisCells(axis, scale?.breaks, s, scale?.type === "log");
       if (axis === "x") this.#drawnOn.set(s, cells);
       return cells;
     }
     return this.#drawnOn.get(s) ?? this.#axisCells(axis, undefined, s);
   }
 
-  /**
-   * Each row's cell along an axis drawn by `scale` (see `#cellsFor`): its
-   * chart band on a band axis, else its cell among the axis' cells.
-   */
-  #ordinals(s: Series, axis: "x" | "y", scale: PositionScale | undefined): NumericArray {
-    return this.#banded[axis] ? s[axis] : this.#cellsFor(s, axis, scale).cells;
-  }
-
-  /** The cells along a number or time axis (of `s`); log axes are refused. */
-  #continuous(
-    axis: "x" | "y",
-    log: boolean,
-    breaks: Breaks | undefined,
-    s: Series | undefined,
-  ): AxisCells {
-    if (log) throw new Error(`Heatmap cells cannot be placed on a log ${axis} axis yet`);
-    return this.#axisCells(axis, breaks, s);
+  /** Row ordinals and placement shared by painting, indexing, and interaction. */
+  #resolve(s: Series, axis: "x" | "y", scale?: PositionScale): ResolvedAxis {
+    if (this.#banded[axis]) {
+      const places = s.places?.[axis];
+      return {
+        cells: undefined,
+        ordinals: s[axis],
+        places,
+        count: lastBand(places, scale?.categories?.length ?? 0),
+      };
+    }
+    const cells = this.#cellsFor(s, axis, scale);
+    return { cells, ordinals: cells.cells, places: undefined, count: cells.length };
   }
 
   xExtent(series: readonly Series[], log: boolean, breaks?: Breaks) {
     if (this.#banded.x) return undefined;
-    const cells = this.#continuous("x", log, breaks, series[0]);
+    const cells = this.#axisCells("x", breaks, series[0], log);
     return unionExtent(series.map((s) => this.#heldExtent(cells, "x", s)));
   }
 
@@ -467,7 +456,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
    */
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
     if (this.#banded.y) return undefined;
-    const ys = this.#continuous("y", log, undefined, series[0]);
+    const ys = this.#axisCells("y", undefined, series[0], log);
     if (this.#banded.x) return unionExtent(series.map((s) => this.#heldExtent(ys, "y", s)));
     const xs = this.#axisCells("x", breaks, series[0]);
     const [first, last] = xs.overlapping(Math.min(x0, x1), Math.max(x0, x1));
@@ -514,9 +503,13 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     // read at their places, as the panel draws them.
     const xPlaces = this.#banded.x ? series.places?.x : undefined;
     const yPlaces = this.#banded.y ? series.places?.y : undefined;
-    const index = this.#cellIndex(series, frame.x, frame.y);
-    const xs = this.#ordinals(series, "x", frame.x);
-    const ys = this.#ordinals(series, "y", frame.y);
+    const index = this.#indexOf(
+      series,
+      this.#resolve(series, "x", frame.x),
+      this.#resolve(series, "y", frame.y),
+    );
+    const xs = index.x;
+    const ys = index.y;
     // Which way cells run on screen: rows of categories run down the plot,
     // rows of numbers up it, and reversed domains run back.
     const right = direction(frame.x) < 0 ? -1 : 1;
@@ -589,7 +582,9 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
       return this.#banded[axis] ? (bands[axis]?.labels[at] ?? "") : format[axis](at);
     };
     const [columns, rows] = [count("x"), count("y")];
-    const indexes = parts.map((s) => this.#indexOf(s, undefined, undefined, columns, rows));
+    const indexes = parts.map((s) =>
+      this.#indexOf(s, this.#resolve(s, "x"), this.#resolve(s, "y"), columns, rows),
+    );
     const usedColumns = new Uint8Array(columns);
     const usedRows = new Uint8Array(rows);
     let [cells, columnCount, rowCount] = [0, 0, 0];
@@ -647,48 +642,44 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     return extent ?? undefined;
   }
 
-  /** How the image places `s`'s cells along `axis` of the frame. */
-  #placement(s: Series, axis: "x" | "y", scale: PositionScale): AxisPlacement {
-    if (!this.#banded[axis])
-      return {
-        kind: "cells",
-        scale,
-        cells: this.#continuous(axis, scale.type === "log", scale.breaks, s),
-      };
-    const places = s.places?.[axis];
-    return { kind: "bands", scale, places, count: lastBand(places, scale.categories?.length ?? 0) };
-  }
-
   geometry(series: readonly Series[], frame: Frame): RasterGeometry[] {
     const s = series[0];
     const colors = this.#colorScale(frame.theme);
     if (!s || s.length === 0 || frame.hidden.has(s.key) || !colors) return [];
     const { x, y, plot } = frame;
-    const inputs: Painted = {
-      mark: this,
-      version: this.table.version,
-      x: this.#ordinals(s, "x", x),
-      y: this.#ordinals(s, "y", y),
-      panelRows: s.rows,
-      xPlaces: s.places?.x,
-      yPlaces: s.places?.y,
-      theme: frame.theme,
-      frame: [
-        ...[...x.domain, ...x.range, x.bandwidth, ...y.domain, ...y.range, y.bandwidth],
-        ...[plot.x, plot.y, plot.width, plot.height, frame.rasterRatio],
-      ],
-      image: [0, 0, 0, 0, 0, 0],
-    };
+    const acrossAxis = this.#resolve(s, "x", x);
+    const downAxis = this.#resolve(s, "y", y);
+    const inputs = [
+      this,
+      this.table.version,
+      acrossAxis.ordinals,
+      downAxis.ordinals,
+      s.rows,
+      s.places?.x,
+      s.places?.y,
+      frame.theme,
+      ...x.domain,
+      ...x.range,
+      x.bandwidth,
+      ...y.domain,
+      ...y.range,
+      y.bandwidth,
+      plot.x,
+      plot.y,
+      plot.width,
+      plot.height,
+      frame.rasterRatio,
+    ];
     // An unchanged frame draws the image last painted into the series'
     // buffer again, without placing a cell.
     let pixels = frame.bytes(s.key, "raster", 0);
     const last = painted.get(pixels.buffer);
-    let image = last && samePainting(last, inputs) ? last.image : undefined;
+    let image = last && sameInputs(last.inputs, inputs) ? last.image : undefined;
     if (!image) {
       const buffer = (stage: string, length: number) => frame.doubles(s.key, stage, length);
       const axes = rasterAxes(
-        this.#placement(s, "x", x),
-        this.#placement(s, "y", y),
+        { ...acrossAxis, scale: x },
+        { ...downAxis, scale: y },
         plot,
         frame.rasterRatio,
         buffer,
@@ -698,14 +689,20 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
       const count = across.size * down.size;
       pixels = frame.bytes(s.key, "raster", count * 4);
       const source = {
-        ...{ x: inputs.x, y: inputs.y, values: s.values, rows: s.rows, length: s.length },
-        index: () => this.#cellIndex(s, x, y),
+        ...{
+          x: acrossAxis.ordinals,
+          y: downAxis.ordinals,
+          values: s.values,
+          rows: s.rows,
+          length: s.length,
+        },
+        index: () => this.#indexOf(s, acrossAxis, downAxis),
       };
       paint(source, across, down, colors, this.spec.reduce ?? "mean", pixels, (stage) =>
         buffer(stage, count),
       );
       image = [across.from, across.to, across.size, down.from, down.to, down.size];
-      painted.set(pixels.buffer, { ...inputs, image });
+      painted.set(pixels.buffer, { inputs, image });
     }
     const [x0, x1, columns, y0, y1, rows] = image;
     return [
@@ -752,33 +749,21 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
   pick(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined {
     const s = series[0];
     if (!s || frame.hidden.has(s.key)) return undefined;
-    const c = this.#cellAt(s, "x", frame.x, px);
-    const r = this.#cellAt(s, "y", frame.y, py);
+    const across = this.#resolve(s, "x", frame.x);
+    const down = this.#resolve(s, "y", frame.y);
+    const c = this.#cellAt(across, frame.x, px);
+    const r = this.#cellAt(down, frame.y, py);
     if (c < 0 || r < 0) return undefined;
-    const position = this.#cellIndex(s, frame.x, frame.y).find(c, r);
+    const position = this.#indexOf(s, across, down).find(c, r);
     return position < 0 ? undefined : { series: s, position, distance: 0 };
   }
 
   /** The chart band or cell along `axis` at `pixel`, or -1 for none. */
-  #cellAt(s: Series, axis: "x" | "y", scale: PositionScale, pixel: number): number {
-    if (this.#banded[axis]) {
-      // The band under the pointer, whether or not its cell has a pixel of its own.
-      const place = Math.round(scale.invert(pixel));
-      if (place < 0 || place >= (scale.categories?.length ?? 0)) return -1;
-      // The index holds chart bands, which a panel's own categories place apart.
-      return bandOf(s.places?.[axis], place);
-    }
-    const cells = this.#continuous(axis, scale.type === "log", scale.breaks, s);
-    return cells.find(scale.invert(pixel));
-  }
-
-  /** The index of `s`'s positions by cell, for a frame drawing it on `x` and `y`. */
-  #cellIndex(s: Series, x: PositionScale, y: PositionScale): CellIndex {
-    const count = (axis: "x" | "y", scale: PositionScale) =>
-      this.#banded[axis]
-        ? lastBand(s.places?.[axis], scale.categories?.length ?? 0)
-        : this.#axisCells(axis, scale.breaks, s).length;
-    return this.#indexOf(s, x, y, count("x", x), count("y", y));
+  #cellAt({ cells, places }: ResolvedAxis, scale: PositionScale, pixel: number): number {
+    const at = scale.invert(pixel);
+    if (cells) return cells.find(at);
+    const place = Math.round(at);
+    return place < 0 || place >= (scale.categories?.length ?? 0) ? -1 : bandOf(places, place);
   }
 
   /**
@@ -795,13 +780,13 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
    */
   #indexOf(
     s: Series,
-    xScale: PositionScale | undefined,
-    yScale: PositionScale | undefined,
-    columns: number,
-    rows: number,
+    across: ResolvedAxis,
+    down: ResolvedAxis,
+    columns = across.count,
+    rows = down.count,
   ): CellIndex {
-    const x = this.#ordinals(s, "x", xScale);
-    const y = this.#ordinals(s, "y", yScale);
+    const x = across.ordinals;
+    const y = down.ordinals;
     const key = s.rows ?? x;
     const cached = this.#cells.get(key);
     if (cached?.x === x && cached.y === y && cached.values === s.values && cached.rows === s.rows)
@@ -810,6 +795,13 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     this.#cells.set(key, index);
     return index;
   }
+}
+
+interface ResolvedAxis {
+  cells: AxisCells | undefined;
+  ordinals: NumericArray;
+  places: BandPlaces | undefined;
+  count: number;
 }
 
 /** Where a calendar places rows, as of the table version, zone, and locale it was placed for. */
@@ -844,20 +836,8 @@ interface Columns {
 /** What each raster buffer holds, keyed by the buffer, whichever heatmap painted it. */
 const painted = new WeakMap<ArrayBuffer, Painted>();
 
-function samePainting(a: Painted | undefined, b: Painted): boolean {
-  return (
-    a !== undefined &&
-    a.mark === b.mark &&
-    a.version === b.version &&
-    a.x === b.x &&
-    a.y === b.y &&
-    a.panelRows === b.panelRows &&
-    a.xPlaces === b.xPlaces &&
-    a.yPlaces === b.yPlaces &&
-    a.theme === b.theme &&
-    a.frame.length === b.frame.length &&
-    a.frame.every((v, i) => v === b.frame[i])
-  );
+function sameInputs(a: readonly unknown[], b: readonly unknown[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i]);
 }
 
 /** Which way a scale's values run on screen: positive rightward or downward. */

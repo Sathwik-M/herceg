@@ -4,7 +4,7 @@
 import type { NumericArray } from "../data/column.ts";
 import { fromWall, type TimeZone, toWall } from "../format/zone.ts";
 import type { Weekday } from "../spec/spec.ts";
-import { AxisCells, latticeEdges, latticeOf } from "./heatmap-cells.ts";
+import { AxisCells, distinct, latticeEdges, latticeOf } from "./heatmap-cells.ts";
 import type { BandList } from "./mark.ts";
 
 const DAY = 86_400_000;
@@ -43,24 +43,9 @@ export function placeCalendar(
   zone: TimeZone,
   locale: string | undefined,
 ): Calendar {
-  // Each distinct instant's day, as wall-clock midnight in the zone; rows share their instant's.
-  const ids = new Map<number, number>();
-  const instant = new Int32Array(column.length);
-  const days: number[] = [];
-  for (let i = 0; i < column.length; i++) {
-    const t = column[i]!;
-    if (!Number.isFinite(t)) {
-      instant[i] = -1;
-      continue;
-    }
-    let id = ids.get(t);
-    if (id === undefined) {
-      id = days.length;
-      ids.set(t, id);
-      days.push(Math.floor(toWall(zone, t) / DAY) * DAY);
-    }
-    instant[i] = id;
-  }
+  // Rows sharing an instant share its wall-clock day in the zone.
+  const [values, instant] = distinct(column, false);
+  const days = values.map((t) => Math.floor(toWall(zone, t) / DAY) * DAY);
   const format = (options: Intl.DateTimeFormatOptions, wall: number) =>
     new Intl.DateTimeFormat(locale, { ...options, calendar: "gregory", timeZone: "UTC" }).format(
       wall,
