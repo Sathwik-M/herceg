@@ -9,13 +9,20 @@ import json
 import tempfile
 import uuid
 import webbrowser
+from collections.abc import Mapping, Sequence
 from functools import cache
 from importlib.resources import files
+from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from ._chart import Chart
+
+FontData = bytes | str | PathLike[str]
+FontWeight = Literal["normal", "bold"]
+PdfFonts = Mapping[str, FontData | Mapping[FontWeight, FontData]]
+_PDF_FONT_LIMIT = 32 * 1024 * 1024
 
 
 def asset_path(name: str) -> Path:
@@ -107,9 +114,45 @@ def svg(spec: dict[str, Any], buffers: list[bytes]) -> str:
     return _engine().call("hercegStatic.svg", json.dumps(spec), _encoded(buffers))
 
 
-def pdf(spec: dict[str, Any], buffers: list[bytes]) -> bytes:
+def pdf(
+    spec: dict[str, Any],
+    buffers: list[bytes],
+    *,
+    fonts: PdfFonts | None = None,
+    fallback: Sequence[str] = (),
+    missing_glyph: str | None = None,
+) -> bytes:
     """One-page vector PDF, rendered by herceg's DOM-free PDF renderer in the same V8."""
-    encoded = _engine().call("hercegStatic.pdf", json.dumps(spec), _encoded(buffers))
+    sources = []
+    for family, source in (fonts or {}).items():
+        weights = source if isinstance(source, Mapping) else {"normal": source}
+        for weight, data in weights.items():
+            if weight not in ("normal", "bold"):
+                raise ValueError("PDF font weight must be normal or bold")
+            sources.append((family, weight, data))
+            if len(sources) > 64:
+                raise ValueError("PDF export supports at most 64 font faces")
+    for _, _, data in sources:
+        if isinstance(data, bytes) and len(data) > _PDF_FONT_LIMIT:
+            raise ValueError("PDF font exceeds the 32 MiB limit")
+    faces = []
+    for family, weight, data in sources:
+        if isinstance(data, bytes):
+            raw = data
+        else:
+            with Path(data).open("rb") as font_file:
+                raw = font_file.read(_PDF_FONT_LIMIT + 1)
+            if len(raw) > _PDF_FONT_LIMIT:
+                raise ValueError("PDF font exceeds the 32 MiB limit")
+        faces.append(
+            {"family": family, "weight": weight, "data": base64.b64encode(raw).decode("ascii")}
+        )
+    options: dict[str, Any] = {"fonts": faces, "fallback": list(fallback)}
+    if missing_glyph is not None:
+        options["missingGlyph"] = missing_glyph
+    encoded = _engine().call(
+        "hercegStatic.pdf", json.dumps(spec), _encoded(buffers), json.dumps(options)
+    )
     return base64.b64decode(encoded)
 
 

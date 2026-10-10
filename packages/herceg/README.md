@@ -2155,21 +2155,96 @@ const svg = renderToSVG(options); // standalone SVG document
 const pdf = renderToPDF(options); // Uint8Array: a one-page vector PDF
 ```
 
-PDF export is a separate entry point, `herceg/pdf`, so applications that do
-not export PDFs do not bundle it (about 11 KiB gzip). The page is the chart's
-size at 0.75 points per CSS pixel, laid out as the static SVG. Marks, axes,
-and legends are vector paths, heatmaps are compressed images, and text is
-selectable text in the standard PDF fonts (Helvetica for sans-serif themes,
-Times or Courier for serif or monospace ones), so no font is embedded. The
-chart's title and description become the document's title and subject.
+PDF export is a separate entry point, `herceg/pdf`. Import `pdfFonts` to
+include the optional TrueType parser, subsetter, and embedded-font writer;
+plain PDF exports bundle none of them. The `herceg-pdf` and
+`herceg-pdf-fonts` size benchmarks include scene compilation and a line
+mark, without and with embedded-font support respectively (about 41 and
+48 KiB gzip, excluding supplied font bytes). The page is the chart's size
+at 0.75 points per CSS pixel. Marks, axes, and legends are vectors, heatmaps are compressed images,
+and text is selectable. Title and description become document metadata.
 
-- The standard fonts cover Windows-1252 (Latin-1 and common punctuation);
-  other characters, such as Greek, Cyrillic, or CJK, print as "?".
-- Colors must be hex, `rgb()`, `hsl()`, or CSS color names; others, such as
-  CSS variables, throw an error.
-- A transparent background stays transparent, which PDF viewers show as
-  white paper: give dark themes a background color.
-- The document is not tagged for assistive technology.
+Without `fonts`, text uses Helvetica, Times, or Courier (regular/bold),
+with the existing Windows-1252 encoding; uncovered characters print as "?".
+For Unicode, supply static TrueType fonts with families matching `theme.font`:
+
+```ts
+import { pdfFonts } from "herceg/pdf";
+import { specToPDF } from "herceg/spec";
+
+const fonts = pdfFonts(
+  [
+    { family: "Inter", data: regularBytes }, // Uint8Array; Node Buffer also works
+    { family: "Inter", weight: "bold", data: boldBytes },
+    { family: "Symbols", data: symbolBytes },
+  ],
+  { fallback: ["Symbols"] },
+);
+const pdf = renderToPDF({
+  ...options,
+  theme: { font: '"Inter", sans-serif' },
+  fonts,
+});
+// Portable specs take the same export options as a separate third argument:
+const fromSpec = specToPDF(spec, buffers, { fonts });
+```
+
+Both exporters take a prepared `PdfFonts` object, and reject a plain array
+with guidance to wrap it in `pdfFonts(...)`. `fallback` and `missingGlyph`
+belong to the second argument of `pdfFonts`, not the export options. The
+prepared object can be reused: every export parses its own faces and owns
+its glyph usage and subsets. Font descriptors and fallback lists are copied;
+font byte buffers are borrowed read-only for the duration of each export.
+
+`weight` is `"normal"` (default) or `"bold"`. A missing weight uses the other
+registered face of that family, without synthetic bold. Families are matched
+case-insensitively, including quoted CSS names and explicitly registered
+generic names such as `sans-serif`. Coverage follows the CSS family list,
+then `fallback`; each extended grapheme cluster stays in one face.
+Simple combining accents use NFC precomposition when the face covers both the
+source scalars and the composed glyph. Copy/search retains the original input.
+Other combining sequences are refused because they need mark positioning.
+Fonts are export options, never part of the portable spec, and are not loaded
+from CSS, installed fonts, or URLs.
+
+Embedded text uses Type0/CIDFontType2 fonts with Identity-H, explicit glyph
+maps, and UTF-16BE ToUnicode maps for copy/search, including supplementary
+characters. Subsets contain only drawn glyphs, `.notdef`, and composite
+components; layout's unused candidates do not enlarge them. Layout and PDF
+widths use identical advances (six decimal places in 1/1000 em), without
+kerning or shaping. Hanging and middle anchors use the faces' cap heights.
+OS/2 embedding restrictions are enforced; no-subsetting faces embed whole.
+Fonts larger than 32 MiB and registries larger than 64 faces are refused.
+Input font checksums are intentionally unchecked because real fonts often have
+incorrect checksums; generated subsets receive fresh checksums.
+
+- Missing embedded-font coverage throws an error naming the Unicode scalar.
+  Add a covering fallback family or explicitly set `missingGlyph: "?"` in
+  the options passed to `pdfFonts` (one covered standalone scalar, replacing
+  each uncovered grapheme cluster).
+- Embedded text admits Latin, Greek, Cyrillic, Armenian, Georgian, Han,
+  hiragana, katakana, precomposed Hangul syllables, and selected Common/Inherited
+  punctuation, digits, symbols, and composable accents. Shared characters must
+  also pass Script_Extensions checks; see the exact ranges in
+  [the architecture](../../docs/architecture.md). Other scripts, unassigned and
+  private-use characters, controls, and default-ignorable characters throw an
+  error naming the code point before fallback or replacement. Emoji modifier,
+  flag, tag, and ZWJ sequences are refused before fallback or replacement.
+  Joiners and variation sequences are also unsupported. Use SVG/PNG for these labels. CFF outlines, WOFF,
+  font collections, and uninstantiated variable fonts are refused.
+- Font fallback selects one face per extended grapheme cluster. `Intl.Segmenter`
+  supplies the boundaries when available. Otherwise conservative grouping joins
+  combining marks, Grapheme_Extend characters (including halfwidth kana voiced
+  marks), emoji modifiers, and ZWJ continuations; unsupported clusters are still
+  refused. Halfwidth kana marks retain separate glyphs and extraction scalars;
+  simple accents use NFC composition without losing their original sequence.
+- The layout measurer returns width only: unusually tall fallback faces may
+  need extra margins or smaller text. Label shortening uses code-point cuts
+  and may split grapheme clusters; no grapheme-aware shortening yet.
+- Colors must be hex, `rgb()`, `hsl()`, or CSS color names.
+  Give dark themes a background color; transparent pages appear as white paper.
+- Optional shipped fonts and tagged PDF remain open work. PDFs currently
+  have no structure tree for assistive technology.
 
 ## Charts from specs
 

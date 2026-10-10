@@ -21,6 +21,7 @@ import { ruleLabel } from "../draw/rule.ts";
 import { MIDDLE_TO_BASELINE } from "../draw/shapes.ts";
 import { SYMBOLS, symbolPath } from "../draw/symbols.ts";
 import { HALO_WIDTH, textHalo } from "../draw/text.ts";
+import { parseFont } from "../layout/text.ts";
 import {
   type Geometry,
   LEGEND_SWATCH,
@@ -34,6 +35,7 @@ import {
 import type { Theme } from "../theme.ts";
 import { cssColor } from "./css-color.ts";
 import { type DocumentInfo, literal, num, PdfPage } from "./pdf-document.ts";
+import type { PdfFontResolver } from "./pdf-font-resolver.ts";
 import { encodeText, type PdfFont, standardFont, textWidth } from "./pdf-fonts.ts";
 import { tracePath } from "./svg-path.ts";
 
@@ -233,7 +235,7 @@ const BASELINE = {
 };
 
 interface TextStyle {
-  font: PdfFont;
+  font: PdfFont | { family: string; bold: boolean };
   size: number;
   fill: string;
   opacity?: number;
@@ -244,9 +246,17 @@ interface TextStyle {
   halo?: { color: string; opacity: number } | undefined;
 }
 
+function textFont(page: PdfPage, family: string, bold: boolean): TextStyle["font"] {
+  return page.resolver ? { family, bold } : standardFont(family, bold);
+}
+
 function text(page: PdfPage, content: string, x: number, y: number, style: TextStyle): void {
-  const encoded = encodeText(content);
-  if (!encoded) return;
+  const resolved =
+    typeof style.font === "string"
+      ? undefined
+      : page.resolver!.resolve(content, style.font.family, style.font.bold);
+  const encoded = resolved ? "" : encodeText(content);
+  if (resolved ? !resolved.runs.length : !encoded) return;
   const fill = color(style.fill, style.opacity);
   if (!fill) return;
   const halo = style.halo && color(style.halo.color, style.halo.opacity);
@@ -255,14 +265,34 @@ function text(page: PdfPage, content: string, x: number, y: number, style: TextS
   const sin = Math.sin(radians);
   const along =
     (style.anchor === "middle" ? 0.5 : style.anchor === "end" ? 1 : 0) *
-    textWidth(encoded, style.font) *
+    (resolved?.width ?? textWidth(encoded, style.font as PdfFont)) *
     style.size;
-  const down = BASELINE[style.baseline] * style.size;
+  const baseline = resolved
+    ? style.baseline === "hanging"
+      ? resolved.capHeight
+      : style.baseline === "middle"
+        ? resolved.capHeight / 2
+        : 0
+    : BASELINE[style.baseline];
+  const down = baseline * style.size;
   const ox = x - along * cos - down * sin;
   const oy = y - along * sin + down * cos;
   // The page's y axis points down, so the text matrix flips glyphs upright.
-  const show = (mode: number) =>
-    `BT /${page.font(style.font)} ${num(style.size)} Tf ${mode} Tr ${num(cos)} ${num(sin)} ${num(sin)} ${num(-cos)} ${num(ox)} ${num(oy)} Tm ${literal(encoded)} Tj ET\n`;
+  const spans = resolved?.runs.map((run) => ({
+    font: run.face,
+    encoded: run.face.encode(run.glyphs),
+    width: run.width,
+  })) ?? [{ font: style.font as PdfFont, encoded: literal(encoded), width: 0 }];
+  const show = (mode: number) => {
+    let out = "";
+    let offset = 0;
+    for (const span of spans) {
+      const precision = resolved ? 6 : 2;
+      out += `BT /${page.font(span.font)} ${num(style.size, precision)} Tf ${mode} Tr ${num(cos, precision)} ${num(sin, precision)} ${num(sin, precision)} ${num(-cos, precision)} ${num(ox + offset * cos, precision)} ${num(oy + offset * sin, precision)} Tm ${span.encoded} Tj ET\n`;
+      offset += span.width * style.size;
+    }
+    return out;
+  };
   let out = "q";
   const haloAlpha = halo?.[3] ?? 1;
   if (fill[3] < 1 || haloAlpha < 1) out += ` /${page.opacity(fill[3], haloAlpha)} gs`;
@@ -395,7 +425,7 @@ function paintGeometry(
   geometry: Geometry,
   plot: Rect,
   theme: Theme,
-  font: PdfFont,
+  font: TextStyle["font"],
 ): void {
   const mark = geometry as MarkGeometry;
   const path = new PathBuilder();
@@ -495,8 +525,9 @@ function paintGeometry(
     case "shapes":
       for (const shape of mark.shapes) {
         if ("text" in shape) {
+          const { family, bold } = parseFont(mark.font);
           text(page, shape.text, shape.x, shape.y, {
-            font: standardFont(mark.font, mark.bold ?? false),
+            font: textFont(page, family, bold),
             size: mark.fontSize,
             fill: shape.fill,
             anchor: shape.anchor,
@@ -554,11 +585,15 @@ function paintGeometry(
 }
 
 /** A one-page PDF document of a scene, laid out as the static SVG output. */
-export function renderPdf(scene: Scene, info: DocumentInfo = {}): Uint8Array {
+export function renderPdf(
+  scene: Scene,
+  info: DocumentInfo = {},
+  resolver?: PdfFontResolver,
+): Uint8Array {
   const { theme, width, height } = scene;
-  const page = new PdfPage(width, height);
-  const regular = standardFont(theme.font, false);
-  const bold = standardFont(theme.font, true);
+  const page = new PdfPage(width, height, resolver);
+  const regular = textFont(page, theme.font, false);
+  const bold = textFont(page, theme.font, true);
   const size = theme.fontSize;
 
   if (theme.background !== "transparent") {

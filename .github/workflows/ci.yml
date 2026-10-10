@@ -15,6 +15,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools poppler-utils
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
@@ -32,6 +33,7 @@ jobs:
           node-version: 22
           cache: npm
       - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools poppler-utils
       - run: npm ci
       - run: npm run lint:python
       - run: npm run test:python

@@ -3,6 +3,7 @@
 // readers use to find each object. Streams are Flate-compressed.
 
 import { zlibCompress } from "./deflate.ts";
+import type { EmbeddedFace, PdfFontResolver } from "./pdf-font-resolver.ts";
 import type { PdfFont } from "./pdf-fonts.ts";
 
 /** Points per CSS pixel: CSS has 96 pixels to the inch, PDF 72 points. */
@@ -46,6 +47,13 @@ function latin1(text: string): Uint8Array {
   return out;
 }
 
+/** The object operations an embedded font needs from the document writer. */
+export interface PdfObjectWriter {
+  reserve(): number;
+  object(id: number, body: string): void;
+  stream(id: number, entries: string, data: Uint8Array): void;
+}
+
 export interface DocumentInfo {
   title?: string | undefined;
   subject?: string | undefined;
@@ -79,12 +87,14 @@ export class PdfPage {
   readonly width: number;
   readonly height: number;
   #content: string;
-  #fonts = new Map<PdfFont, string>();
+  #fonts = new Map<PdfFont | EmbeddedFace, string>();
   #states = new Map<string, string>();
   #images: Image[] = [];
   #shadings: Shading[] = [];
 
-  constructor(width: number, height: number) {
+  readonly resolver: PdfFontResolver | undefined;
+  constructor(width: number, height: number, resolver?: PdfFontResolver) {
+    this.resolver = resolver;
     this.width = width;
     this.height = height;
     const scale = POINTS_PER_PIXEL;
@@ -97,7 +107,7 @@ export class PdfPage {
   }
 
   /** The resource name of a font. */
-  font(font: PdfFont): string {
+  font(font: PdfFont | EmbeddedFace): string {
     return named(this.#fonts, font, "F");
   }
 
@@ -145,10 +155,12 @@ export class PdfPage {
       resources += "/Font <<";
       for (const [font, name] of this.#fonts) {
         const id = file.reserve();
-        file.object(
-          id,
-          `<< /Type /Font /Subtype /Type1 /BaseFont /${font} /Encoding /WinAnsiEncoding >>`,
-        );
+        if (typeof font === "string")
+          file.object(
+            id,
+            `<< /Type /Font /Subtype /Type1 /BaseFont /${font} /Encoding /WinAnsiEncoding >>`,
+          );
+        else font.write(file, id);
         resources += ` /${name} ${id} 0 R`;
       }
       resources += " >> ";

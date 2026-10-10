@@ -1424,7 +1424,7 @@ export class ChartModel {
       const values = split.values[i]!;
       const label = values.join(", ");
       if (layout) {
-        const fit = (text: string, room: number) => fitText(text, room, measure, font);
+        const fit = (text: string, room: number) => fitText(text, room, measure, `600 ${font}`);
         // A grid's row headers go beyond the right axis' labels.
         headers.push(...layout.headers(i, values, row, column, plot, grid, fit, rightRoom));
       }
