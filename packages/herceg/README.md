@@ -4,7 +4,7 @@ Framework-independent charts for analytics: columnar data, streaming updates,
 level-of-detail rendering, SVG and Canvas output, SVG and PDF export.
 
 > Early development. Line, area, bar, point (scatter), and heatmap marks, and
-> rule, region, and text annotations are available; the API may change before
+> dendrograms, and rule, region, and text annotations are available; the API may change before
 > 1.0.
 
 ## Quick start
@@ -28,9 +28,9 @@ const chart = createChart(document.querySelector("#latency")!, {
 Field names are checked against the table at compile time: `y` only accepts
 numeric or time fields, `series` only accepts category fields. A continuous
 axis is a time axis when any field a mark places on it holds times, whether
-the mark is a line, area, point, error bar, candlestick, or heatmap; bar
-lengths and histogram counts stay numbers. Set `type: "linear"` on the axis
-to read times as plain numbers.
+the mark is a line, area, point, error bar, rug, candlestick, or heatmap;
+bar lengths and histogram counts stay numbers. Set `type: "linear"` on the
+axis to read times as plain numbers.
 
 ## Data
 
@@ -216,13 +216,16 @@ and pan). Marks over tables without a binding neither write nor dim.
   table's whole selection is one).
 - **Lassos** select the rows whose drawn point is inside: a point's center, a
   line's or area's vertex, the middle of a bar's end, a span's middle, a
-  candle's close, a heatmap cell's center. Rows not drawn (a point missing
-  a value it encodes, a time inside an axis break) are not selected.
-- **Clicks** select the row of the point or bar under the pointer (within a
-  few pixels of a point's own glyph), the rows a histogram bin counts (from its left edge
-  up to its right one, the last bin's included), those of a box plot's or
-  violin's group with a value, or every row of a heatmap's cell; never a
-  summary's index as a row. Shift adds to the selection, Ctrl or Cmd adds or
+  candle's close, a heatmap cell's center, a rug tick's middle, each where
+  it is drawn (dodged, jittered, or in a legend group's slot). Rows not
+  drawn (a point missing a value it encodes, a time inside an axis break)
+  are not selected.
+- **Clicks** select the row of the point, bar, or rug tick under the pointer
+  (within a few pixels of a point's own glyph), the rows a histogram bin
+  counts (inside its bar as drawn, dodged or horizontal; from its left edge,
+  or a cumulative bin's first, up to its right one, the last bin's
+  included), those of a box plot's or violin's group with a value, or every
+  row of a heatmap's cell; never a summary's index as a row. Shift adds to the selection, Ctrl or Cmd adds or
   removes, and a click off the data clears it. With the keyboard cursor on a
   point, Space does what a click does (with the same keys), and announces how
   many rows are selected; Escape clears; Shift with the arrow keys brushes a
@@ -252,7 +255,7 @@ place, such as nonpositive values on a log axis, are left out; a line's
 runs of one row drawn are dots; lines whose x does not ascend, and rows at
 one x that spans cannot tell apart, selected together or in part, draw
 their selected rows' values over the dimmed line instead). An empty selection dims every row. Other marks
-(histograms, box plots, violins, error bars, candlesticks, heatmaps,
+(histograms, box plots, violins, error bars, candlesticks, heatmaps, rugs,
 annotations, custom marks) draw every row as before. Charts showing one
 selection share a byte per row of its table, tested again only for appended
 rows while the selection stays the same (a row set changed in place is read
@@ -551,6 +554,7 @@ point(countries, { x: "gdp", y: "life", r: "population", series: "continent" });
 point(stations, { x: "lon", y: "lat", color: "temperature", colors: viridis });
 point(cars, { x: "weight", y: "mpg", symbol: "origin" }); // a shape per origin
 point(requests, { x: "region", y: "latency" }); // a category x places points in its bands
+point(tips, { x: "day", y: "tip", series: "sex", dodge: true, jitter: { width: 0.5 } }); // strips
 errorBar(stats, { x: "group", y1: "low", y2: "high" }); // y, x1, x2 for horizontal ones
 errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
@@ -584,6 +588,40 @@ there are; on a category y axis, a point's tooltip shows its category and
 its reported `value` is the category's band index. Horizontal bars default
 to "nearest-y" tooltips, which report every series in the band under the
 pointer. Heatmaps show a color legend instead of series entries.
+
+On a category axis, `dodge: true` places a point or error bar mark's series
+side by side within each band, as grouped bars place theirs: the band is
+split among the series shown, in their order, so error bars over grouped bars
+of the same table and series field stand on their bars, and hiding a series
+regroups both. `jitter: { width, seed }` spreads points across their band, or
+with `dodge` their series' share of it, over `width`, a fraction of it from 0
+to 1: each point moves by a hash of its row's identity and `seed` (0 by
+default), not by a random draw, so it stays where it is as the chart redraws,
+resizes, and streams, rows dropped before it included. Both need a category
+`x` or `y` (not both), and `dodge` a series field. Tooltips, the keyboard,
+and the nearest-point search find points and intervals where they are drawn,
+and report their values, not where they were moved to.
+
+```ts
+bar(stats, { x: "day", y: "mean", series: "sex", legendGroup: "sex" });
+errorBar(stats, { x: "day", y1: "low", y2: "high", series: "sex", dodge: true, legendGroup: "sex" });
+```
+
+`legendGroup` names a group of marks that share their series by name: in
+one chart, series of the same name (their `series` value, or a single-series
+mark's `label`) in marks of the same group take one palette color, one legend
+entry, and one visibility, so a bar and its error bars, a line and its band,
+or points and their fit hide and show together. Explicit `fill` and `stroke`
+colors still apply (the legend entry shows the first member's color).
+Side-by-side marks of a group (grouped bars, box plots, violins, dodged
+histograms, points, and error bars) take their slots from the group's
+visible names, so an interval stands on its bar even when one mark lacks
+some of the group's series. Tooltips, the keyboard, and summaries still
+read each mark's own series. A group's entry has a key of its own, which
+`getLegend`, `setVisibility`, and `visibility` events use (a member series'
+own key acts on its group's entry); it stays hidden across updates while a
+mark names the group. Marks without a group are as before. `legendGroup`, `dodge`, and
+`jitter` need spec version 10.
 
 Heatmaps over number and time fields place their cells along number and
 time axes, which zoom, pan, and brush as other marks' do, and other marks
@@ -693,27 +731,63 @@ thin to show hollow bodies, so there direction is shown by color only.
 ticked to its left and the close to its right, in `rise` or `fall`, so the
 order of the ticks shows direction too.
 
-Histograms count values in bins shared by all their series. Bin edges are
-round numbers (multiples of 1, 2, or 5 times a power of ten) or, for times,
-calendar intervals in the chart's time zone; by default there are about
-log2(n) + 1 of them for n values, at most 1,000. `bins` takes an approximate
-count, or `{ step, start }` for fixed widths (milliseconds for times); values
-below an explicit `start` are left out, as with Plotly's `xbins.start`. Each
-bin holds values from its left edge up to its right one, the last also its
-right edge. Several series overlay translucently, or stack with `stack: true`.
-`normalize: "percent"` measures percent of each series' counted values
-(stacked percentages need not total 100), and `"density"` that share per unit
-of x (per millisecond for times), so each series' bars cover an area of 1, like
-Plotly's "probability density". Tooltips report a bin's range and its bar;
-a bin is inspected through its center, so one zoomed so far that its center
-is out of view has no tooltip. Split by facets, each panel counts its own
-rows, in bins chosen from the rows of the panels sharing its x scale: one set
-of bins for every panel when they share x, each panel's, row's, or column's
-own with `resolve: { x }` (rows without a facet value are drawn nowhere and
-widen no bins). Percent and density are over each panel's own counts of a
-series, stacks stack within each panel, and a series with no rows in a panel
-has no bars there. Bins are chosen again only when the table changes, never
-on zoom.
+Histograms take exactly one number or time field: `x` for vertical bars,
+`y` for horizontal bars, whose lengths run from x = 0. Horizontal histograms
+use the left y axis and refuse `axis: "right"`.
+
+```ts
+histogram(requests, { y: "latency", bins: [0, 10, 25, 100] });
+histogram(requests, { x: "latency", series: "region", normalize: "probability",
+  commonNorm: true, cumulative: true, dodge: true });
+```
+
+Bins are shared by every series. Default edges are round numbers (multiples
+of 1, 2, or 5 times a power of ten) or calendar intervals in the chart's time
+zone. By default there are about log2(n) + 1 bins for n values, at most 1,000.
+`bins` takes an approximate count, `{ step, start }` for fixed widths
+(milliseconds for times), or a `readonly number[]` of exact edges. Explicit
+edges must be finite and strictly increasing, with 2 to 1,001 entries;
+invalid edges throw a `RangeError`. They are copied and used exactly as given,
+shared across all series and panels, without rounding, extending, or
+coarsening. Time edges are epoch milliseconds. Each bin holds
+`edges[i] <= value < edges[i + 1]`, and the last also holds its right edge,
+as in NumPy. Non-finite values and values outside the edges are left out.
+Values below a fixed `start` are also left out.
+
+`normalize` defaults to `"count"`. `"probability"` divides each bin's count by
+its series' total count in the bins; `"percent"` multiplies that by 100.
+`"density"` divides probability by that bin's width, so each series has area
+1 (per millisecond for times). `commonNorm: true` additionally multiplies
+probability, percent, or density by that series' share of finite field values,
+counted before values outside the bins are dropped. Its denominator includes
+all series, including those hidden through the legend; hiding a series does
+not rescale the others. It has no effect with count normalization.
+
+`cumulative: true` accumulates each series' counts, probabilities, or percents
+through the current bin. Cumulative density integrates each bin's density
+by its width, so the final bar is 1, or the series' share with common
+normalization (0 when there are no values in bins). Accumulation precedes
+stacking. Tooltips report a cumulative range from the first edge to the
+current right edge, and summaries identify cumulative bars.
+
+Several series overlay translucently by default. `stack: true` stacks them;
+`dodge: true` places visible series side by side within each bin, in series
+order (or, in a legend group, the group's order), with opaque fills by
+default. Dodge and stack exclude each other in types and at runtime. The
+one-pixel gap between sufficiently wide bins stays; hiding a series gives its
+slot to the others. Tooltips report a bin's center and edges as its data
+position; the pointer finds, and keyboard reading anchors on, each dodged
+bar where it is drawn. A bin whose center is out of view has no tooltip.
+
+With facets, each panel counts its own rows. Automatic/fixed bins are chosen
+from rows in panels sharing the binned axis (`resolve.x` for vertical,
+`resolve.y` for horizontal), per panel, row, or column when requested. Rows
+without a facet value widen no bins. Normalization and common normalization
+are local to each panel, and a series absent from a panel has no bars there
+but keeps its dodge slot, so a series stands in the same place in every
+panel. Subplots draw their marks whole, with their own bins. Bins are
+chosen again only when data changes, never on zoom. All new non-default
+histogram options require portable spec version 10.
 
 Box plots accept raw values or precomputed statistics. Raw boxes summarize a
 number or time field per category of the other axis: quartiles use linear
@@ -807,6 +881,118 @@ omitted options, `split: false`, and `inner: "box"` keep earlier behavior.
 
 Marks are drawn in array order; rules and text always draw above other marks.
 
+### Dendrograms
+
+`dendrogram(table, options)` draws a hierarchical clustering linkage on
+category bands. Each merge row names its two child clusters and height:
+
+```ts
+import { dendrogram, table } from "herceg";
+
+const linkage = table({ first: [0, 2, 5], second: [1, 3, 4], height: [1, 2, 4] });
+const tree = dendrogram(linkage, {
+  first: "first", second: "second", height: "height",
+  leaves: ["a", "b", "c", "d"], // labels indexed by leaf id
+  side: "bottom", label: "Column clustering",
+});
+```
+
+The fields must hold numbers, with whole-number child ids: for n leaves,
+0 through n−1 are leaves, and merge row k creates cluster n+k. Children
+must be leaves or earlier merges, and each cluster can be merged only once.
+`leaves` must have exactly rows+1 distinct string labels. Heights must be
+finite and nonnegative; ties and decreasing heights are allowed. An empty
+linkage with one leaf draws nothing. Invalid linkage values name their row
+and field. Tables are validated again after changes.
+
+`side` is the plot edge at height zero: `"bottom"` (default) or `"top"`
+places leaves along x; `"left"` or `"right"` along y. The mark contributes
+bands in first-child-before-second-child traversal order (SciPy's
+`leaves_list`): the example is c, d, a, b. Bands from earlier marks keep
+their order, so a heatmap whose categories already have that order aligns
+unchanged. Leaves are placed at their categories' band centers; merges
+at the middle of their two children. A missing leaf omits its merge and
+all ancestors, while surviving branches stay in place.
+
+Heights run linearly from the leaves' edge to the opposite plot edge at
+the largest height, independently of axis domains and zoom. When every
+height is zero, links stay at the leaves' edge. Hide the height-direction
+axis (`axis: false`), since its ticks do not describe these plot-relative
+heights. `stroke` defaults to the theme's muted text and `strokeWidth` to
+1 CSS pixel. `label` names the accessible summary, which reports leaves,
+merges, and the merge-height range. Dendrograms have no series, legend
+entry, tooltip, keyboard stops, or value animation. With facets they
+require `facet: "repeat"`, since splitting linkage rows breaks cluster ids.
+
+For a clustered heatmap, use four subplots with shared column and row
+categories. `matrix`, `columnLinkage`, and `rowLinkage` below are tables;
+the matrix's categories must be in the dendrograms' traversal orders:
+
+```ts
+createChart(element, {
+  marks: [
+    heatmap(matrix, { x: "column", y: "row", value: "value", panel: "matrix" }),
+    dendrogram(columnLinkage, {
+      first: "first", second: "second", height: "height", leaves: columnLabels,
+      side: "bottom", panel: "top",
+    }),
+    dendrogram(rowLinkage, {
+      first: "first", second: "second", height: "height", leaves: rowLabels,
+      side: "right", panel: "left",
+    }),
+  ],
+  panels: panels([
+    { id: "corner", x: { axis: false }, y: { axis: false } },
+    { id: "top", y: { axis: false } },
+    { id: "left", x: { axis: false } },
+    { id: "matrix" },
+  ], { columns: 2, rowHeights: [1, 4], columnWidths: [1, 4] }),
+  resolve: { x: "columns", y: "rows" },
+});
+```
+
+The same options are `{ type: "dendrogram", ... }` in portable specs and
+`<Dendrogram data={linkage} ... />` in React, Vue, and Svelte. The mark
+uses one packed segments geometry for SVG, Canvas, static SVG, and PDF.
+It brings its own module only when imported; a line chart bundles none
+of its linkage validation or drawing code.
+
+### Rugs
+
+A rug shows each observation of one number or time field as a short tick
+at the plot edge. Use exactly one of `x` or `y`:
+
+```ts
+import { rug } from "herceg";
+
+rug(requests, { x: "latency", series: "service" });
+rug(requests, { y: "latency", side: "right", length: 12, label: "Requests" });
+```
+
+An x rug has vertical ticks at the bottom (default) or top; a y rug has
+horizontal ticks at the left (default) or right. `length` is finite and
+positive, 8 CSS pixels by default, clipped to the plot. The ticks stay at
+the edge through zoom and pan. `strokeWidth` defaults to 1 CSS pixel;
+`stroke` overrides every series' palette color. `label` names a rug without
+`series` in the legend and tooltip; its field name is the default.
+
+A rug contributes only to its value axis' domain. The other axis may be
+continuous or categorical and retains its other marks' domain, or the
+chart's default domain. Missing, infinite, and nonpositive log values draw
+nothing. Repeated values remain separate observations. Tooltips report the
+series and the observed value using its axis' formatter, along x or y as
+appropriate; the keyboard visits observations in ascending value order,
+including repeated values, and summaries give the count and range.
+
+Rugs split into facets and use `facet: "repeat"`, `panel`, `id`, and legend
+toggles as other data marks do. A y rug uses only the left value axis
+(`side: "right"` still selects the right plot edge). SVG, Canvas, static
+SVG, and PDF draw one packed segment geometry per series, including large
+rugs. React and Vue export `Rug`; Svelte exports `Rug.svelte` as `Rug`.
+The portable spec uses `{ type: "rug", x: "latency" }` or `y`. It uses the
+current spec version: older readers reject unknown mark types at
+`marks[i].type` rather than silently leaving their observations out.
+
 ### What each mark supports
 
 Charts share their behaviors unevenly so far: the marks along x and y axes
@@ -818,7 +1004,9 @@ the notes), — not yet (refused with an error), · not applicable.
 | line, area, bar | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
 | point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | — |
+| rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | — | ✓ | ✓ | — |
 | errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | — |
 | heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | — | · | ✓ | — |
 | rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | ◐ |
 | custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | — |
@@ -845,11 +1033,15 @@ the notes), — not yet (refused with an error), · not applicable.
   brush along x only, and facets with y scales of their own, on either
   side, do not zoom along y.
 - The right axis (see [A second y axis](#a-second-y-axis)) takes values
-  along y: horizontal bars, box plots, violins, and error bars, and points
-  on category y, stay on the left, and a rule at an x has no y to place.
+  along y: horizontal bars, box plots, violins, histograms, and error bars,
+  points on category y, and rugs along y stay on the left, and a rule at an
+  x or a rug along x has no y to place.
   In facets and subplots, every panel drawing marks on it has one.
 - Points over a row view and custom marks without series repeat in every
   facet panel instead of splitting.
+- Dendrograms repeat in every facet panel (`facet: "repeat"`); they have
+  no inspection of their own, and their heights stay fixed within the plot
+  as it zooms.
 - Heatmaps zoom and pan their number and time axes; banded axes (category
   fields, or `xBanded` / `yBanded`) do not zoom, as for other marks.
 - Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams
@@ -2285,10 +2477,13 @@ using `resolve`, `panels`, or `grid` must say 2 or later, those using
 `resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later,
 those with a `navigator` 4 or later, those with enabled x axis `seams` 5,
 raw box plots with notches or nondefault whiskers 6, split violins or
-nondefault violin interiors 7, those with `rowSelection` 8, and heatmap
-steps, `xBanded` or `yBanded` false, and calendars 9 (`SPEC_VERSION`, the
-version this herceg writes), so that older readers refuse what they would
-draw differently. Heatmaps in specs before version 9 band number and time
+nondefault violin interiors 7, those with `rowSelection` 8, heatmap steps,
+`xBanded` or `yBanded` false, and calendars 9, and marks with a
+`legendGroup`, points and error bars with `dodge`, points with `jitter`, and
+histograms with `y`, explicit edges, `"probability"`, `commonNorm: true`,
+`cumulative: true`, or `dodge: true` 10 (`SPEC_VERSION`, the version this
+herceg writes), so that older readers refuse what they would draw
+differently. Heatmaps in specs before version 9 band number and time
 fields, as those versions did. Loading checks a spec and names the property at
 fault in errors. Properties herceg does not know, misspelled or from a newer
 version, are logged with `console.warn` and otherwise ignored;

@@ -15,11 +15,14 @@ export type { Expression, Operator } from "../data/expression.ts";
  * version adds what an older reader would ignore and draw differently:
  * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
  * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`,
- * version 5 enabled x axis `seams`, version 6 raw box plot notches and non-default whiskers,
- * version 7 split violins and non-default violin interiors, version 8 `rowSelection`,
- * version 9 heatmaps over number and time fields on number and time axes.
+ * version 5 enabled x axis `seams`, version 6 raw box plot notches and
+ * non-default whiskers, version 7 split violins and non-default violin
+ * interiors, version 8 `rowSelection`, version 9 heatmaps over number and
+ * time fields on number and time axes, and version 10 marks' `legendGroup`,
+ * points' and error bars' `dodge`, points' `jitter`, and histograms' `y`,
+ * bin edges, "probability", `commonNorm`, `cumulative`, and `dodge`.
  */
-export const SPEC_VERSION = 9;
+export const SPEC_VERSION = 10;
 
 /** Column name in a table. */
 export type Field = string;
@@ -36,13 +39,16 @@ export interface ChartSpec {
    * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
    * `grid` must give 2 or later, those using `resolve.x`, a panel's `x`, or
    * x axis `breaks` 3 or later, those with a `navigator` 4 or later,
-   * those with enabled x axis `seams` 5, raw box plot notches or non-default whiskers 6,
-   * split violins or non-default violin interiors 7, `rowSelection` 8, and
-   * heatmap `xStep`, `yStep`, `date`, or `xBanded` / `yBanded` false 9, so
-   * that older readers refuse them rather than draw them differently.
-   * Heatmaps in specs before 9 band number and time fields.
+   * those with enabled x axis `seams` 5, raw box plot notches or non-default
+   * whiskers 6, split violins or non-default violin interiors 7,
+   * `rowSelection` 8, heatmap `xStep`, `yStep`, `date`, or `xBanded` /
+   * `yBanded` false 9, and marks' `legendGroup`, points' and error bars'
+   * `dodge` and `jitter`, and histograms with `y`, bin edges, "probability",
+   * `commonNorm`, `cumulative`, or `dodge` 10, so that older readers refuse
+   * them rather than draw them differently. Heatmaps in specs before 9 band
+   * number and time fields.
    */
-  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -589,11 +595,13 @@ export type MarkSpec =
   | LineSpec
   | AreaSpec
   | RuleSpec
+  | DendrogramSpec
   | RegionSpec
   | TextSpec
   | BarSpec
   | PointSpec
   | HeatmapSpec
+  | RugSpec
   | ErrorBarSpec
   | CandlestickSpec
   | HistogramSpec
@@ -632,6 +640,17 @@ interface MarkBase {
   panel?: string;
 }
 
+/** What marks drawing series (which legends list) have besides `MarkBase`. */
+interface SeriesBase extends MarkBase {
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name (a `series` value, or a mark's `label`) share a color, one legend
+   * entry, and visibility, as a bar and its error bars or a line and its
+   * band do. Needs spec version 8.
+   */
+  legendGroup?: string;
+}
+
 /**
  * How a line joins its points: straight, in steps, or "monotone", a smooth
  * curve through every point that never passes a point's value between two
@@ -640,7 +659,7 @@ interface MarkBase {
 export type Curve = "linear" | "step" | "step-before" | "step-after" | "monotone";
 
 /** Lines through (x, y). Several y fields or a series field give several lines. */
-export interface LineSpec extends MarkBase {
+export interface LineSpec extends SeriesBase {
   type: "line";
   x: Field;
   y: Field | readonly Field[];
@@ -656,7 +675,7 @@ export interface LineSpec extends MarkBase {
   label?: string;
 }
 
-interface AreaStyle extends MarkBase {
+interface AreaStyle extends SeriesBase {
   type: "area";
   x: Field;
   fill?: string;
@@ -723,6 +742,21 @@ interface RuleStyle extends MarkBase {
   text?: Field;
 }
 
+/** A SciPy-layout linkage tree, whose leaves stand on category bands. */
+export interface DendrogramSpec extends Omit<MarkBase, "axis"> {
+  type: "dendrogram";
+  first: Field;
+  second: Field;
+  height: Field;
+  /** Category labels indexed by leaf id; exactly one more than the merge rows. */
+  leaves: readonly string[];
+  /** Plot edge at height zero; default bottom. Heights use plot pixels, not an axis. */
+  side?: "bottom" | "top" | "left" | "right";
+  stroke?: string;
+  strokeWidth?: number;
+  label?: string;
+}
+
 /** The ranges a region spans: along x, along y, or both. */
 export type RegionRange<P> =
   | { x1: P; x2: P; y1?: never; y2?: never }
@@ -782,7 +816,7 @@ export interface TextSpec extends MarkBase {
  * A category `y` makes them horizontal, with lengths in `x`. Several length
  * fields are drawn side by side or stacked.
  */
-export interface BarSpec extends MarkBase {
+export interface BarSpec extends SeriesBase {
   type: "bar";
   x: Field | readonly Field[];
   y: Field | readonly Field[];
@@ -798,6 +832,24 @@ export interface BarSpec extends MarkBase {
    * are left out.
    */
   labels?: boolean | Intl.NumberFormatOptions;
+}
+
+/** Individual observations as short ticks standing at a plot edge. */
+export type RugSpec = RugStyle &
+  (
+    | { x: Field; y?: never; side?: "bottom" | "top" }
+    | { y: Field; x?: never; side?: "left" | "right"; axis?: "left" }
+  );
+
+interface RugStyle extends SeriesBase {
+  type: "rug";
+  series?: Field;
+  /** Tick length in CSS pixels, finite and positive; default 8. */
+  length?: number;
+  stroke?: string;
+  /** Tick width in CSS pixels; default 1. */
+  strokeWidth?: number;
+  label?: string;
 }
 
 /**
@@ -850,9 +902,15 @@ export type ErrorBarSpec = ErrorBarStyle &
       }
   );
 
-interface ErrorBarStyle extends MarkBase {
+interface ErrorBarStyle extends SeriesBase {
   type: "errorbar";
   series?: Field;
+  /**
+   * With `series` and category positions, the series side by side in each
+   * band, as grouped bars are, so each interval stands on its bar. Needs
+   * spec version 8.
+   */
+  dodge?: boolean;
   stroke?: string;
   strokeWidth?: number;
   /** Width of the caps at each end in pixels; 0 for none. Default 8. */
@@ -865,7 +923,7 @@ interface ErrorBarStyle extends MarkBase {
  * Candles that close at or above their open are drawn hollow in the rise
  * color, others filled in the fall color, so direction never rests on color alone.
  */
-export interface CandlestickSpec extends MarkBase {
+export interface CandlestickSpec extends SeriesBase {
   type: "candlestick";
   x: Field;
   open: Field;
@@ -963,7 +1021,7 @@ export type BoxPlotStyle = {
 };
 
 /** Box plots from raw values per category, or one precomputed box per row. */
-export type BoxPlotSpec = MarkBase &
+export type BoxPlotSpec = SeriesBase &
   BoxPlotInput & {
     type: "boxplot";
   } & BoxPlotStyle;
@@ -976,7 +1034,7 @@ export type BoxPlotSpec = MarkBase &
  * lower to the upper quartile, and a dot at the median. One of `x` and `y`
  * is a category field, the other the values.
  */
-export interface ViolinSpec extends MarkBase {
+export interface ViolinSpec extends SeriesBase {
   type: "violin";
   x: Field;
   y: Field;
@@ -1252,26 +1310,42 @@ export interface GeoPointSpec {
 }
 
 /**
- * Bars counting how many values of `x` fall in each bin. Bins are shared by
- * every series: round edges covering the field's values.
+ * Bars counting how many values of a number or time field fall in each bin:
+ * `x` for vertical bars, or `y` for horizontal ones (on the left axis). Bins
+ * are shared by every series: round edges covering the field's values, or
+ * edges given.
  */
-export interface HistogramSpec extends MarkBase {
+export type HistogramSpec = SeriesBase & {
   type: "histogram";
-  x: Field;
-  /** About how many bins, or a bin width and where bins start; by default from the data size. */
-  bins?: number | { step: number; start?: number };
-  /** Category field: one histogram per value, overlaid or stacked. */
+  /**
+   * About how many bins, a bin width and where bins start, or the bins'
+   * edges (2 to 1,001, finite, increasing, used exactly as given); by
+   * default from the data size.
+   */
+  bins?: number | { step: number; start?: number } | readonly number[];
+  /** Category field: one histogram per value, overlaid, stacked, or dodged. */
   series?: Field;
-  /** What bars measure: "count" (default), "percent" of the series' values, or "density". */
-  normalize?: "count" | "percent" | "density";
-  stack?: boolean;
+  /**
+   * What bars measure: "count" (default), "probability" or "percent" of the
+   * series' counted values, or "density".
+   */
+  normalize?: "count" | "probability" | "percent" | "density";
+  /**
+   * Weights normalized series by their share of the finite values of every
+   * series (in the panel, with facets), hidden ones included. Needs spec version 8.
+   */
+  commonNorm?: boolean;
+  /** Each bar measures its bin and the bins before it. Needs spec version 8. */
+  cumulative?: boolean;
   fill?: string;
   fillOpacity?: number;
   label?: string;
-}
+} & ({ x: Field; y?: never; axis?: "left" | "right" } | { y: Field; x?: never; axis?: "left" }) &
+  // Stacked, or with `dodge` (spec version 8) side by side within each bin.
+  ({ stack?: boolean; dodge?: false } | { stack?: false; dodge?: boolean });
 
 /** Points at (x, y): scatter plots. */
-export interface PointSpec extends MarkBase {
+export interface PointSpec extends SeriesBase {
   type: "point";
   /** A number, time, or category field; a category field places points in its bands. */
   x: Field;
@@ -1305,6 +1379,17 @@ export interface PointSpec extends MarkBase {
   symbol?: string;
   /** "pixel" draws opaque points sharing a device pixel once. Default "none". */
   sampling?: "none" | "pixel";
+  /**
+   * With `series` and a category `x` or `y`, the series side by side in each
+   * band, as grouped bars are. Needs spec version 8.
+   */
+  dodge?: boolean;
+  /**
+   * With a category `x` or `y`, points spread across their band (or their
+   * dodged share of it) over `width`, a fraction of it from 0 to 1, by a
+   * hash of each row's identity and `seed` (0 by default). Needs spec version 8.
+   */
+  jitter?: { width: number; seed?: number };
   label?: string;
 }
 

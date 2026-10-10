@@ -11,6 +11,7 @@ import { heatmap } from "../../src/marks/heatmap.ts";
 import { histogram } from "../../src/marks/histogram.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
+import { rug } from "../../src/marks/rug.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import {
   type RowSelectionChange,
@@ -113,6 +114,21 @@ describe("row selection bindings", () => {
     const boxes = { marks: [boxplot(trips, { x: "kind", y: "fare" })], rowSelection: bound };
     expect(() => drawn({ ...boxes, interaction: { brush: "y" } })).toThrow(
       "y axis holds statistics",
+    );
+    // Rug ticks have a place along their own axis only, beside a scatter plot too.
+    const ticks = {
+      marks: [point(trips, { x: "km", y: "fare" }), rug(trips, { x: "km" })],
+      rowSelection: bound,
+    };
+    for (const brush of ["y", "xy"] as const)
+      expect(() => drawn({ ...ticks, interaction: { brush } })).toThrow(
+        "A rug mark's rows are brushed along its x axis only",
+      );
+    expect(() => drawn({ ...ticks, interaction: { brush: "x" } })).not.toThrow();
+    expect(() => drawn({ ...ticks, interaction: { brush: "lasso" } })).not.toThrow();
+    const sideways = { marks: [rug(trips, { y: "fare" })], rowSelection: bound };
+    expect(() => drawn({ ...sideways, interaction: { brush: "x" } })).toThrow(
+      "brushed along its y axis only",
     );
     // Cells are lassoed at their centers.
     const cells = { marks: [heatmap(trips, { x: "kind", y: "kind", value: "fare" })] };

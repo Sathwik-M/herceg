@@ -16,6 +16,7 @@ import { boxplot } from "../../src/marks/boxplot.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
 import { monotonePolyline } from "../../src/marks/curve.ts";
 import { custom } from "../../src/marks/custom.ts";
+import { dendrogram } from "../../src/marks/dendrogram.ts";
 import { errorBar } from "../../src/marks/errorbar.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
@@ -33,6 +34,7 @@ import { point } from "../../src/marks/point.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { radar } from "../../src/marks/radar.ts";
 import { region } from "../../src/marks/region.ts";
+import { rug } from "../../src/marks/rug.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { sankey } from "../../src/marks/sankey.ts";
 import { sunburst } from "../../src/marks/sunburst.ts";
@@ -47,7 +49,13 @@ import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import { brushedRows } from "../../src/model/selected-rows.ts";
-import type { Geometry, Panel, RectGeometry, TextGeometry } from "../../src/scene/scene.ts";
+import type {
+  Geometry,
+  Panel,
+  RectGeometry,
+  SegmentGeometry,
+  TextGeometry,
+} from "../../src/scene/scene.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -118,6 +126,11 @@ const cartesian: MarkCase[] = [
     name: "violin",
     make: (p) => violin(samples, { x: "group", y: "y", series: "group", ...p }),
     kind: "area",
+  },
+  {
+    name: "rug",
+    make: (p) => rug(samples, { x: "x", series: "group", ...p }),
+    kind: "segments",
   },
   {
     name: "errorbar",
@@ -521,7 +534,7 @@ describe("capabilities: per-panel scales", () => {
     if (!c.repeats) {
       const [a, b] = model.panels();
       // Heatmap cells are along x, over categories along y.
-      const axis = c.name === "histogram" || c.name === "heatmap" ? "x" : "y";
+      const axis = ["histogram", "rug", "heatmap"].includes(c.name) ? "x" : "y";
       expect(a![axis].domain).not.toEqual(b![axis].domain);
     }
   });
@@ -599,8 +612,8 @@ describe("capabilities: per-panel scales", () => {
 
 describe("capabilities: right axis", () => {
   // Marks placing values along y; heatmaps place cells (and take no axis),
-  // and a rule at an x has no y value to place.
-  const valued = cartesian.filter((c) => c.name !== "heatmap" && c.name !== "rule");
+  // and a rule at an x and a rug of x values have no y value to place.
+  const valued = cartesian.filter((c) => !["heatmap", "rule", "rug"].includes(c.name));
   const rightOf = (panel: Panel) => panel.axes.find((a) => a.orient === "right");
 
   it.each(valued)("$name draws on a right axis in every facet panel and in its subplot", (c) => {
@@ -850,6 +863,7 @@ describe("capabilities: row selection", () => {
       "histogram",
       "boxplot",
       "violin",
+      "rug",
     ]),
   );
   const highlights = new Set(["line", "area", "bar", "point"]);
@@ -1221,5 +1235,72 @@ describe("capabilities: value animation preconditions", () => {
     });
     expect(scene.panels).toHaveLength(1);
     expect(snapshot(scene, model.panels()[0], 0)?.pie).toBeUndefined();
+  });
+});
+
+// Dendrograms band their leaves, with heights fixed to plot pixels. Their
+// facet repetition requires a categorical companion to supply facet values.
+describe("capabilities: dendrogram", () => {
+  const tree = table({ first: [0, 2], second: [1, 3], height: [1, 2] });
+  const make = (p: Placement = {}) =>
+    dendrogram(tree, {
+      first: "first",
+      second: "second",
+      height: "height",
+      leaves: ["a", "b", "c"],
+      label: "Contract dendrogram",
+      ...p,
+    });
+  it("repeats in facets, resolves panel categories, and draws named subplots", () => {
+    expect(() => build({ marks: [make()], facet: facet("group") })).toThrow('facet: "repeat"');
+    const faceted = build({
+      marks: [
+        heatmap(samples, { x: "category", y: "group", value: "y" }),
+        make({ facet: "repeat" }),
+      ],
+      facet: facet("group"),
+      resolve: { x: "independent", y: "independent" },
+    });
+    for (const panel of faceted.scene.panels) expectGeometry(panel, "segments");
+    const subplots = build({
+      marks: [make({ panel: "a" })],
+      panels: subplot,
+      resolve: { x: "independent", y: "independent" },
+    });
+    expectGeometry(subplots.scene.panels[0]!, "segments");
+    expect(subplots.scene.panels[1]!.marks).toEqual([]);
+  });
+  it("keeps heights during zoom, accepts range selections, and has summary-only reading", () => {
+    const { model, scene } = build({
+      marks: [make()],
+      legend: true,
+      interaction: { zoom: "xy", brush: "x", sync: "dendrogram-contract" },
+      animation: { values: true },
+      x: { axis: false },
+      y: { axis: false },
+    });
+    const geometry = scene.panels[0]!.marks[0] as SegmentGeometry;
+    const before = Array.from(geometry.coords.subarray(0, geometry.count * 4));
+    model.setViewport([10, 20]);
+    model.setYViewport({ y: [10, 20], yRight: null });
+    const next = model.scene(estimateText).panels[0]!.marks[0] as typeof geometry;
+    expect(Array.from(next.coords.subarray(0, next.count * 4))).toEqual(before);
+    expect(scene.legend).toEqual([]);
+    expect(model.keyboardStops("")).toEqual([]);
+    expect(model.inspect(100, 100)).toBeUndefined();
+    expect(describeChart(model)).toContain(
+      "Contract dendrogram: 3 leaves, 2 merges. Merge heights 1 to 2.",
+    );
+    expect(snapshot(scene, model.panels()[0], 0)).toBeUndefined();
+  });
+  it("refuses synced selection on panel categories resolved apart", () => {
+    expect(() =>
+      build({
+        marks: [make({ panel: "a" })],
+        panels: subplot,
+        resolve: { x: "independent" },
+        interaction: { sync: "dendrogram-contract" },
+      }),
+    ).toThrow("categories of their own");
   });
 });

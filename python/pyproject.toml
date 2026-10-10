@@ -14,6 +14,8 @@ arrow = ["pyarrow>=14"]
 export = ["mini-racer>=0.12", "resvg-py>=0.1"]
 notebook = ["anywidget>=0.9"]
 streamlit = ["streamlit>=1.51"]
+# herceg.express uses SciPy's hierarchical clustering when it is installed.
+stats = ["scipy>=1.11"]
 dev = [
   "pytest>=8",
   "ruff>=0.6",
@@ -25,6 +27,10 @@ dev = [
   "resvg-py>=0.1",
   "anywidget>=0.9",
   "streamlit>=1.51",
+  "scipy>=1.11",
+  # References herceg.express is checked against.
+  "seaborn>=0.13",
+  "statsmodels>=0.14",
 ]
 
 [build-system]

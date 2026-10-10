@@ -3,7 +3,20 @@
 // template by calling it with the props written there, and <Chart> against
 // its `$props`, so these lines check what templates check.
 import { type Chart as HercegChart, table, time } from "herceg";
-import { BoxPlot, type Chart, Custom, Line, Point, Rule, Text, Violin } from "../src/index.ts";
+import {
+  BoxPlot,
+  type Chart,
+  Custom,
+  Dendrogram,
+  ErrorBar,
+  Histogram,
+  Line,
+  Point,
+  Rug,
+  Rule,
+  Text,
+  Violin,
+} from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -92,6 +105,71 @@ BoxPlot({ data: boxData, x: "group", ...boxFields, whiskers: "range" });
 BoxPlot({ data: boxData, x: "group", ...boxFields, notch: true });
 // @ts-expect-error statistic fields must be numeric
 BoxPlot({ data: boxData, x: "group", ...boxFields, low: "group" });
+
+const tips = table({ day: ["thu"], sex: ["f"], tip: [1], low: [0], high: [2] });
+Point({ data: tips, x: "day", y: "tip", series: "sex", dodge: true, jitter: { width: 0.4 } });
+ErrorBar({ data: tips, x: "day", y1: "low", y2: "high", series: "sex", dodge: true });
+Line({ data: tips, x: "tip", y: "tip", legendGroup: "sex" });
+// @ts-expect-error jitter takes a width
+Point({ data: tips, x: "day", y: "tip", jitter: { seed: 2 } });
+
+Histogram({
+  data: metrics,
+  y: "p50",
+  bins: [0, 1, 2] as const,
+  normalize: "probability",
+  commonNorm: true,
+  cumulative: true,
+  dodge: true,
+});
+
+Histogram({ data: metrics, x: "time", axis: "right", stack: true, cumulative: true });
+
+// @ts-expect-error exactly one binned axis
+Histogram({ data: metrics, x: "time", y: "p50" });
+
+// @ts-expect-error binned axis required
+Histogram({ data: metrics, bins: 10 });
+
+// @ts-expect-error binned fields are numeric or time
+Histogram({ data: metrics, y: "service" });
+
+// @ts-expect-error horizontal histograms cannot use the right axis
+Histogram({ data: metrics, y: "p50", axis: "right" });
+
+// @ts-expect-error dodge and stack exclude each other
+Histogram({ data: metrics, x: "time", dodge: true, stack: true });
+const linkage = table({ first: [0], second: [1], height: [2], label: ["a"], timestamp: time([0]) });
+const treeProps = {
+  data: linkage,
+  first: "first",
+  second: "second",
+  height: "height",
+  leaves: ["a", "b"],
+} as const;
+Dendrogram({ ...treeProps, side: "right", facet: "repeat", panel: "tree" });
+// @ts-expect-error fields must exist
+Dendrogram({ ...treeProps, first: "missing" });
+// @ts-expect-error child ids are number fields
+Dendrogram({ ...treeProps, first: "label" });
+// @ts-expect-error heights cannot be time fields
+Dendrogram({ ...treeProps, height: "timestamp" });
+// @ts-expect-error leaves are string category labels
+Dendrogram({ ...treeProps, leaves: [1, 2] });
+// @ts-expect-error data is required
+Dendrogram({ first: "first", second: "second", height: "height", leaves: [] });
+Rug({ data: metrics, x: "time", side: "top", series: "service" });
+Rug({ data: metrics, y: "p50", side: "right" });
+// @ts-expect-error exactly one observed axis
+Rug({ data: metrics, x: "time", y: "p50" });
+// @ts-expect-error an observed axis is required
+Rug({ data: metrics });
+// @ts-expect-error rugs observe numeric or time fields
+Rug({ data: metrics, x: "service" });
+// @ts-expect-error x ticks stand at bottom or top
+Rug({ data: metrics, x: "time", side: "left" });
+// @ts-expect-error y rugs cannot use the right value axis
+Rug({ data: metrics, y: "p50", axis: "right" });
 
 Violin({
   data: metrics,

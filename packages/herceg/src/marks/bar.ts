@@ -10,6 +10,7 @@ import type { PositionScale } from "../scale/scale.ts";
 import { MOVING_BARS, type RectGeometry, type TextGeometry } from "../scene/scene.ts";
 import type { BarSpec, Frozen } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
+import { BandShares, STILL } from "./dodge.ts";
 import { definedFields } from "./line.ts";
 import {
   type BandContext,
@@ -56,6 +57,11 @@ interface BarStyle<S extends Schema> {
    * are left out.
    */
   labels?: boolean | Intl.NumberFormatOptions;
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name share a color, one legend entry, and visibility.
+   */
+  legendGroup?: string;
   id?: string;
 }
 
@@ -101,8 +107,8 @@ export interface BarPlacement {
   width: number;
   /** How many bars share a slot side by side. */
   groups: number;
-  /** Pixels from a position's center to the near edge of the bars of the `group`th shown series. */
-  offset(group: number): number;
+  /** Pixels from a position's center to the near edge of a shown series' bars. */
+  offset(series: Series): number;
 }
 
 interface Stack {
@@ -123,6 +129,8 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
   readonly #position: string;
   readonly #categorical: boolean;
   readonly #split: SeriesSplitter;
+  /** Each grouped series' slot in its positions, as geometry last placed it. */
+  readonly #shares = new BandShares();
   #stacks = new TableCache<Map<string, Stack>>();
   /** Stacks of fields over positions that never repeat, kept current as rows stream. */
   readonly #rowStack = new RowStack("signed");
@@ -367,6 +375,9 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     // `along` places bars; `across` measures their lengths.
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
+    // Grouped series take their slots (a legend group's marks by the group's
+    // series), which picking, inspection, and selections read back.
+    this.#shares.split(series, frame, this.spec.legendGroup, !this.spec.stack);
     const { share, width, groups, offset: offsetOf } = this.placement(visible, along);
     const out: (RectGeometry | TextGeometry)[] = [];
     const labels = this.spec.labels
@@ -385,9 +396,9 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     // Charts that animate changed values learn where each bar stands and
     // ends; stacks, labeled bars, and log axes show their new values at once.
     const keyed = frame.keyed && !this.spec.stack && !labels && across.type !== "log";
-    visible.forEach((s, group) => {
+    visible.forEach((s) => {
       const labeled = labels?.fits(width, spacing, Boolean(this.spec.stack)) ? labels : undefined;
-      const offset = offsetOf(group);
+      const offset = offsetOf(s);
       const [start, end] = this.range(s, frame);
       const rects = frame.floats(s.key, "rect", (end - start) * 4);
       // Unstacked bars round the corners at their value's end. The buffer
@@ -453,23 +464,44 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     return out;
   }
 
+  /** Pixels a position's bars share. */
+  #slot(along: PositionScale): number {
+    return this.#categorical ? Math.abs(along.bandwidth ?? 0) : this.#slotsOf().width(along);
+  }
+
+  /** Where a grouped series' bar stands off its position's center, for inspection. */
+  displace(s: Series, _row: number, frame: Frame): readonly [number, number] {
+    if (this.spec.stack) return STILL;
+    const along = this.#horizontal ? frame.y : frame.x;
+    const { center } = this.#shares.of(s, this.#slot(along));
+    return this.#horizontal ? [0, center] : [center, 0];
+  }
+
+  /** Grouped bars stand within their position's slot: at most half of it off. */
+  maxDisplacement(_s: Series, frame: Frame): number {
+    return this.spec.stack || this.#horizontal ? 0 : this.#slot(frame.x) / 2;
+  }
+
   /**
    * How bars of the `visible` series fill their positions' slots along
-   * `along`: each position gets a slot, which grouped series split and
+   * `along`, as geometry last split them: each position gets a slot, which
+   * grouped series split (in a legend group, by the group's series) and
    * stacked ones share. Also what selections read of the bars drawn.
    */
   placement(visible: readonly Series[], along: PositionScale): BarPlacement {
-    const slot = this.#categorical ? Math.abs(along.bandwidth ?? 0) : this.#slotsOf().width(along);
-    const groups = this.spec.stack ? 1 : Math.max(1, visible.length);
+    const slot = this.#slot(along);
+    const stack = this.spec.stack;
+    const shares = this.#shares;
+    const groups = stack || !visible[0] ? 1 : shares.slotOf(visible[0]).count;
     const share = slot / groups;
     const width = groups > 1 ? share * (1 - GROUP_GAP) : share;
-    const stack = this.spec.stack;
     return {
       slot,
       share,
       width,
       groups,
-      offset: (group) => (stack ? -slot / 2 : -slot / 2 + share * group + (share - width) / 2),
+      offset: (s) =>
+        stack ? -slot / 2 : -slot / 2 + share * shares.slotOf(s).index + (share - width) / 2,
     };
   }
 
@@ -890,6 +922,7 @@ export function bar<S extends Schema>(
       "fill",
       "fillOpacity",
       "label",
+      "legendGroup",
       "labels",
       "id",
       "axis",

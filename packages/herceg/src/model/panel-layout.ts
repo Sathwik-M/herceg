@@ -619,12 +619,15 @@ export class PanelBands {
     bands: Bands,
     resolve: ResolveSpec | undefined,
     yDefault: ScaleResolution,
+    context: BandContext,
   ): void {
     const resolution = { x: resolve?.x ?? "shared", y: resolve?.y ?? yDefault };
     const axes = (["x", "y"] as const).flatMap((axis) => {
       const chart = bands[axis];
       if (chart && resolution[axis] !== "shared")
-        return [{ axis, ...this.#placeAxis(split, columns, chart, resolution[axis], axis) }];
+        return [
+          { axis, ...this.#placeAxis(split, columns, chart, resolution[axis], axis, context) },
+        ];
       this.#groups[axis].clear();
       return [];
     });
@@ -633,6 +636,13 @@ export class PanelBands {
     // reach the panel's domain, so they are searched as unsorted.
     const copies = new Map<string, Map<Series, Series>>();
     split.panels = split.panels.map((marks, p) => {
+      marks.forEach(({ mark }, m) => {
+        if (mark.resolveBands && split.members?.[p]?.[m] !== false)
+          mark.resolveBands({
+            x: split.bands?.x?.[p] ?? bands.x,
+            y: split.bands?.y?.[p] ?? bands.y,
+          });
+      });
       const at = axes.map(({ groupOf, groups }) => groups[groupOf[p]!]!.places);
       if (at.every((places) => !places)) return marks;
       const pair = axes.map(({ groupOf }) => groupOf[p]).join();
@@ -671,8 +681,10 @@ export class PanelBands {
     chart: BandList,
     resolution: ScaleResolution,
     axis: "x" | "y",
+    context: BandContext,
   ): { groupOf: number[]; groups: GroupBands[] } {
     const count = chart.keys.length;
+    let index: Map<string, number> | undefined;
     if (this.#seen.length < count) this.#seen = new Uint8Array(count);
     const groupOf = groupsOf(resolution, split.panels.length, columns);
     const panelsOf: number[][] = [];
@@ -687,6 +699,15 @@ export class PanelBands {
       for (const p of panels)
         split.panels[p]!.forEach(({ mark, series }, m) => {
           if (split.members?.[p]?.[m] === false || mark.channelKind(axis) !== "category") return;
+          // Whole-table marks without series contribute their bands directly.
+          if (series.length === 0 && mark.resolveBands) {
+            const keys = mark.bands?.(axis, context)?.keys;
+            if (keys?.length) index ??= new Map(chart.keys.map((key, i) => [key, i]));
+            for (const key of keys ?? []) {
+              const band = index!.get(key);
+              if (band !== undefined) found.push(band);
+            }
+          }
           for (const s of series)
             for (const band of this.#rowBands(s, axis, count)) found.push(band);
         });

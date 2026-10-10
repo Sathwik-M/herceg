@@ -151,7 +151,11 @@ def _distinct_labels(values: Sequence[Any], what: str) -> list[str]:
 
 
 def convert(values: Any) -> Column:
-    """Converts one column of any supported type."""
+    """Converts one column of any supported type. A ``Column`` is checked and
+    kept as it is, so code that builds tables (herceg.express) can give
+    categories an order of its own."""
+    if isinstance(values, Column):
+        return _checked(values)
     if isinstance(values, _geo.GeometryList):
         return _shapes(values)
     module = type(values).__module__.split(".")[0]
@@ -168,6 +172,27 @@ def convert(values: Any) -> Column:
     if isinstance(values, np.ndarray):
         return _from_numpy(values)
     return _from_sequence(list(values))
+
+
+def _checked(column: Column) -> Column:
+    """A ready column, if its arrays are what its kind says they are."""
+    values = column.values
+    if column.kind in ("number", "time"):
+        if values.ndim != 1 or values.dtype.str not in ("<f8", "<f4"):
+            raise TypeError(
+                f"a {column.kind} column holds 1-D <f8 or <f4 values, not {values.dtype}"
+            )
+        return column
+    if column.kind != "category":
+        raise TypeError(
+            f"only number, time, and category columns can be given ready, not {column.kind}"
+        )
+    if values.ndim != 1 or values.dtype.str != "<i4":
+        raise TypeError(f"a category column holds 1-D <i4 codes, not {values.dtype}")
+    if len(values) and (values.min() < -1 or values.max() >= len(column.dictionary)):
+        raise ValueError("category codes must be -1 (missing) or index the dictionary")
+    _distinct_labels(column.dictionary, "category labels")
+    return column
 
 
 # NumPy -----------------------------------------------------------------------

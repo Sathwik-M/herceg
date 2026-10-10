@@ -17,6 +17,32 @@ const LEGEND_GAP = 16;
 /** A series' legend item before layout. */
 export type LegendEntry = Omit<LegendItem, "hidden" | "x" | "y">;
 
+/**
+ * The keys of series and items hidden through the legend and the
+ * visibility methods. A series of a mark in a legend group is also hidden
+ * while its group's entry for its name is: `groups` maps the keys of such
+ * series to their entries' keys (see `legendKey`).
+ */
+export class HiddenKeys extends Set<string> {
+  readonly groups: Map<string, string>;
+
+  constructor(keys?: Iterable<string>, groups = new Map<string, string>()) {
+    super(keys);
+    this.groups = groups;
+  }
+
+  override has(key: string): boolean {
+    if (super.has(key)) return true;
+    const entry = this.groups.get(key);
+    return entry !== undefined && super.has(entry);
+  }
+
+  /** Whether `key` itself is hidden, not through a group. */
+  stores(key: string): boolean {
+    return super.has(key);
+  }
+}
+
 /** How legend text is measured and set. */
 export interface LegendText {
   measure: MeasureText;

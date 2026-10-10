@@ -18,6 +18,7 @@ import {
 import { type Component, flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Annotations from "./Annotations.svelte";
+import Dendrograms from "./Dendrograms.svelte";
 import Faulty from "./Faulty.svelte";
 import Gauges from "./Gauges.svelte";
 import Lines from "./Lines.svelte";
@@ -103,6 +104,18 @@ const order = (chart: HercegChart) =>
   });
 
 describe("<Chart>", () => {
+  it("draws dendrogram components and updates reactive leaf labels", async () => {
+    const props = $state({ leaves: ["a", "b"] });
+    render(Dendrograms, props);
+    expect(host.querySelectorAll('path[stroke="#ff0000"]')).toHaveLength(1);
+    expect(host.textContent).toContain("Clustering: 2 leaves, 1 merge. Merge heights 2 to 2.");
+    props.leaves[0] = "renamed";
+    flushSync();
+    await frame();
+    expect(host.textContent).toContain("renamed");
+    expect(host.querySelectorAll('path[stroke="#ff0000"]')).toHaveLength(1);
+  });
+
   it("draws OHLC bars, and keeps equal breaks without updating", () => {
     const day = 86_400_000;
     const data = table({

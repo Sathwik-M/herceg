@@ -9,8 +9,12 @@ import {
   BoxPlot,
   type Chart,
   Custom,
+  Dendrogram,
+  ErrorBar,
+  Histogram,
   Line,
   Point,
+  Rug,
   Rule,
   Text,
   Violin,
@@ -118,6 +122,78 @@ BoxPlot(internals, { data: boxData, x: "group", ...boxFields, whiskers: "range" 
 BoxPlot(internals, { data: boxData, x: "group", ...boxFields, notch: true });
 // @ts-expect-error statistic fields must be numeric
 BoxPlot(internals, { data: boxData, x: "group", ...boxFields, low: "group" });
+
+const tips = table({ day: ["thu"], sex: ["f"], tip: [1], low: [0], high: [2] });
+Point(internals, {
+  data: tips,
+  x: "day",
+  y: "tip",
+  series: "sex",
+  dodge: true,
+  jitter: { width: 0.4 },
+});
+ErrorBar(internals, { data: tips, x: "day", y1: "low", y2: "high", series: "sex", dodge: true });
+Line(internals, { data: tips, x: "tip", y: "tip", legendGroup: "sex" });
+// @ts-expect-error jitter takes a width
+Point(internals, { data: tips, x: "day", y: "tip", jitter: { seed: 2 } });
+
+Histogram(internals, {
+  data: metrics,
+  y: "p50",
+  bins: [0, 1, 2] as const,
+  normalize: "probability",
+  commonNorm: true,
+  cumulative: true,
+  dodge: true,
+});
+
+Histogram(internals, { data: metrics, x: "time", axis: "right", stack: true, cumulative: true });
+
+// @ts-expect-error exactly one binned axis
+Histogram(internals, { data: metrics, x: "time", y: "p50" });
+
+// @ts-expect-error binned axis required
+Histogram(internals, { data: metrics, bins: 10 });
+
+// @ts-expect-error binned fields are numeric or time
+Histogram(internals, { data: metrics, y: "service" });
+
+// @ts-expect-error horizontal histograms cannot use the right axis
+Histogram(internals, { data: metrics, y: "p50", axis: "right" });
+
+// @ts-expect-error dodge and stack exclude each other
+Histogram(internals, { data: metrics, x: "time", dodge: true, stack: true });
+const linkage = table({ first: [0], second: [1], height: [2], label: ["a"], timestamp: time([0]) });
+const treeProps = {
+  data: linkage,
+  first: "first",
+  second: "second",
+  height: "height",
+  leaves: ["a", "b"],
+} as const;
+Dendrogram(internals, { ...treeProps, side: "right", facet: "repeat", panel: "tree" });
+// @ts-expect-error fields must exist
+Dendrogram(internals, { ...treeProps, first: "missing" });
+// @ts-expect-error child ids are number fields
+Dendrogram(internals, { ...treeProps, first: "label" });
+// @ts-expect-error heights cannot be time fields
+Dendrogram(internals, { ...treeProps, height: "timestamp" });
+// @ts-expect-error leaves are string category labels
+Dendrogram(internals, { ...treeProps, leaves: [1, 2] });
+// @ts-expect-error data is required
+Dendrogram(internals, { first: "first", second: "second", height: "height", leaves: [] });
+Rug(internals, { data: metrics, x: "time", side: "top", series: "service" });
+Rug(internals, { data: metrics, y: "p50", side: "right" });
+// @ts-expect-error exactly one observed axis
+Rug(internals, { data: metrics, x: "time", y: "p50" });
+// @ts-expect-error an observed axis is required
+Rug(internals, { data: metrics });
+// @ts-expect-error rugs observe numeric or time fields
+Rug(internals, { data: metrics, x: "service" });
+// @ts-expect-error x ticks stand at bottom or top
+Rug(internals, { data: metrics, x: "time", side: "left" });
+// @ts-expect-error y rugs cannot use the right value axis
+Rug(internals, { data: metrics, y: "p50", axis: "right" });
 
 Violin(internals, {
   data: metrics,

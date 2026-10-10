@@ -40,3 +40,9 @@ def live(widget: ChartWidget, state: ChartState) -> None:
     widget.on_click(lambda inspection: [point.row for point in inspection.points])
     if state.selection is not None:
         print(state.selection.y)
+
+
+# Linkage trees share the portable mark API; there is no clustermap helper yet.
+hg.Chart({"first": [0], "second": [1], "height": [2]}).dendrogram(
+    "first", "second", "height", leaves=["a", "b"], side="right", stroke_width=2
+)

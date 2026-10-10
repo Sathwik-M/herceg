@@ -64,6 +64,11 @@ interface AreaCommon {
   strokeWidth?: number;
   curve?: Curve;
   label?: string;
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name share a color, one legend entry, and visibility.
+   */
+  legendGroup?: string;
   id?: string;
 }
 
@@ -206,10 +211,11 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
     if (!this.#split) {
       const y2 = table.numbers(spec.y2 as never);
       const id = seriesKey(key, "band");
+      const label = spec.label ?? `${spec.y1}–${spec.y2}`;
       const series: Series = {
         key: id,
-        label: spec.label ?? `${spec.y1}–${spec.y2}`,
-        color: spec.fill ?? palette(id),
+        label,
+        color: spec.fill ?? palette(id, label),
         x: table.numbers(spec.x as never),
         y: y2,
         y0: table.numbers(spec.y1 as never),
@@ -520,6 +526,7 @@ export function area<S extends Schema>(
       "strokeWidth",
       "curve",
       "label",
+      "legendGroup",
       "id",
       "axis",
       "facet",

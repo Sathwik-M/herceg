@@ -14,6 +14,8 @@ import {
   type CustomOptions,
   candlestick,
   custom,
+  type DendrogramOptions,
+  dendrogram,
   type ErrorBarOptions,
   errorBar,
   type FunnelOptions,
@@ -44,10 +46,12 @@ import {
   type RegionDataOptions,
   type RegionOptions,
   type RowView,
+  type RugOptions,
   type RuleDataOptions,
   type RuleOptions,
   radar,
   region,
+  rug,
   rule,
   type SankeyOptions,
   type Schema,
@@ -189,12 +193,20 @@ export const Bar = /* @__PURE__ */ markComponent(
 export const Point = /* @__PURE__ */ markComponent(
   "Point",
   ({ data, ...options }: WithRows<PointOptions<Schema>, Schema>) => point(data, options),
+  ["dodge"],
 ) as unknown as <S extends Schema>(props: WithRows<PointOptions<S>, S>) => null;
+
+/** Individual observations as short ticks at a plot edge. */
+export const Rug = /* @__PURE__ */ markComponent(
+  "Rug",
+  ({ data, ...options }: WithData<RugOptions<Schema>, Schema>) => rug(data, options),
+) as unknown as <S extends Schema>(props: WithData<RugOptions<S>, S>) => null;
 
 /** Error bars: `x`, `y1`, `y2` (vertical) or `y`, `x1`, `x2` (horizontal). */
 export const ErrorBar = /* @__PURE__ */ markComponent(
   "ErrorBar",
   ({ data, ...options }: WithData<ErrorBarOptions<Schema>, Schema>) => errorBar(data, options),
+  ["dodge"],
 ) as unknown as <S extends Schema>(props: WithData<ErrorBarOptions<S>, S>) => null;
 
 /** A pie, or with `innerRadius` a donut; it has its chart, each facet panel, or its `panel` to itself. */
@@ -317,12 +329,18 @@ export const Candlestick = /* @__PURE__ */ markComponent(
     candlestick(data, options),
 ) as unknown as <S extends Schema>(props: WithData<CandlestickOptions<S>, S>) => null;
 
-/** Counts of a field's values in round bins: `x`, and optionally `bins` and `series`. */
+/** Counts of exactly one number or time field, `x` or `y`, with shared bins. */
 export const Histogram = /* @__PURE__ */ markComponent(
   "Histogram",
   ({ data, ...options }: WithData<HistogramOptions<Schema>, Schema>) => histogram(data, options),
-  ["stack"],
+  ["stack", "commonNorm", "cumulative", "dodge"],
 ) as unknown as <S extends Schema>(props: WithData<HistogramOptions<S>, S>) => null;
+
+/** Linkage trees whose leaves stand on category bands. */
+export const Dendrogram = /* @__PURE__ */ markComponent(
+  "Dendrogram",
+  ({ data, ...options }: WithData<DendrogramOptions<Schema>, Schema>) => dendrogram(data, options),
+) as unknown as <S extends Schema>(props: WithData<DendrogramOptions<S>, S>) => null;
 
 /** A grid of colored cells. */
 export const Heatmap = /* @__PURE__ */ markComponent(

@@ -36,6 +36,7 @@ import { RowSet } from "../data/row-set.ts";
 import { type DataSelection, selectRows, selectWhere } from "../data/selection.ts";
 import type { Table } from "../data/table.ts";
 import type { BarMark } from "../marks/bar.ts";
+import { STILL } from "../marks/dodge.ts";
 import type { HistogramMark } from "../marks/histogram.ts";
 import type { BandList, Frame, Mark } from "../marks/mark.ts";
 import { type BandPlaces, placeAt, rowOf, type Series } from "../marks/series.ts";
@@ -53,7 +54,7 @@ export interface Brushed {
   readonly lasso: readonly (readonly [number, number])[] | null;
 }
 
-/** Marks whose rows a chart selects: those drawing rows along x and y. */
+/** Marks whose rows a chart selects: those drawing rows along x and y, and rugs' ticks. */
 const SELECTS = new Set([
   "line",
   "area",
@@ -65,6 +66,7 @@ const SELECTS = new Set([
   "boxplot",
   "violin",
   "heatmap",
+  "rug",
 ]);
 
 /** Marks drawing areas of the plot, whose rows are clicked inside them. */
@@ -151,9 +153,9 @@ function readingsOf(mark: Mark): Reading[] {
     case "candlestick":
       return [{ x: field(spec.x as string), y: { low: f("low"), high: f("high") } }];
     case "histogram":
-      return [{ x: field(spec.x as string) }];
     case "boxplot":
     case "violin":
+    case "rug":
       return [{ [along]: field(spec[along] as string) }];
     case "heatmap":
       return [{ x: field(spec.x as string), y: field(spec.y as string) }];
@@ -449,13 +451,15 @@ function byMark(model: ChartModel, drawn: readonly Drawn[]): MarkParts[] {
 
 /**
  * The pixel a row of a drawn series is at, as lassos and clicks test it:
- * where the mark says (a grouped bar's end), or else at its values, a
- * span's middle; undefined when it is not drawn.
+ * where the mark says (a grouped bar's end, a rug's tick), or else at its
+ * values, a span's middle, moved as the mark moved it (dodge, jitter);
+ * undefined when it is not drawn.
  */
 function anchorOf(entry: MarkParts, d: Drawn, row: number): readonly [number, number] | undefined {
   const { mark } = entry;
   const s = d.series;
   if (mark.spec.type === "bar") return barAnchor(mark as unknown as BarMark, entry, s, row);
+  if (mark.place) return mark.place(s, row, entry.frame);
   if (!drawnRow(d, row)) return undefined;
   // A heatmap's cell is at its center, which its value need not be.
   if (mark.tooltip === "cell") return mark.pointAnchor!(s, row, entry.frame);
@@ -465,8 +469,9 @@ function anchorOf(entry: MarkParts, d: Drawn, row: number): readonly [number, nu
     const at = axis === "y" ? drawnY(d, row) : placeAt(s, axis, row);
     return low !== undefined && axis !== along ? (at + low) / 2 : at;
   };
-  const px = d.x.map(middle("x"));
-  const py = d.y.map(middle("y"));
+  const [dx, dy] = mark.displace?.(s, row, entry.frame) ?? STILL;
+  const px = d.x.map(middle("x")) + dx;
+  const py = d.y.map(middle("y")) + dy;
   return Number.isFinite(px) && Number.isFinite(py) ? [px, py] : undefined;
 }
 
@@ -477,6 +482,11 @@ function anchorOf(entry: MarkParts, d: Drawn, row: number): readonly [number, nu
  */
 function drawnRow(d: Drawn, row: number): boolean {
   const { series: s, mark } = d;
+  // Marks drawing along one axis (rugs) say where a row is, if anywhere.
+  if (mark.place) {
+    const frame = { x: d.x, y: d.y, plot: d.panel.plot } as unknown as Frame;
+    return mark.place(s, row, frame) !== undefined;
+  }
   // Placed by its scale: a band for category axes, a positive value on log
   // axes, where stacked areas draw their zeros at the low end.
   const placed = (value: number, scale: PositionScale, zero = false) =>
@@ -491,7 +501,7 @@ function drawnRow(d: Drawn, row: number): boolean {
   if (d.x.breaks?.hides(placeAt(s, "x", row))) return false;
   // A heatmap's row without a value colors no cell.
   if (mark.tooltip === "cell" && !Number.isFinite(s.values[row]!)) return false;
-  return mark.shows?.(s, row, d.y) ?? true;
+  return mark.shows?.(s, row, d.y, d.x) ?? true;
 }
 
 /** The rows of drawn series whose point is inside a lasso, an outline in data values. */
@@ -577,6 +587,10 @@ export function clickedRows(
       // Boxes, violins, and cells pick what is under the pointer at distance 0.
       const hit = mark.pick?.(series, px, py, frame);
       if (hit?.distance === 0) found = hit;
+    } else if (type === "rug") {
+      // A tick is clicked anywhere along it, measured as its mark picks it.
+      const hit = mark.pick?.(series, px, py, frame);
+      if (hit && hit.distance <= CLICK_SLOP) found = hit;
     } else {
       const reach = Math.max(mark.inset?.x ?? 0, mark.inset?.y ?? 0, 3) + CLICK_SLOP;
       found = nearest(entry, px, py, reach);
@@ -598,8 +612,9 @@ function nearest(
   for (const d of entry.parts) {
     const s = d.series;
     let [start, end] = [0, s.length];
-    // Sorted series need only the points within reach along x.
-    if (s.sorted && d.x.type !== "band") {
+    // Sorted series need only the points within reach along x (marks
+    // drawing along one axis place theirs themselves).
+    if (s.sorted && d.x.type !== "band" && !entry.mark.place) {
       const [a, b] = [d.x.invert(px - reach), d.x.invert(px + reach)];
       start = lower(s, Math.min(a, b));
       end = lower(s, Math.max(a, b), true);
@@ -641,11 +656,10 @@ function barAnchor(
   row: number,
 ): readonly [number, number] | undefined {
   const { horizontal, along, across, visible } = barAxes(mark, entry);
-  const group = visible.indexOf(s);
-  const ends = group < 0 ? undefined : mark.ends(s, row, along, across);
+  const ends = visible.includes(s) ? mark.ends(s, row, along, across) : undefined;
   if (!ends) return undefined;
   const { width, offset } = mark.placement(visible, along);
-  const middle = ends.center + offset(group) + width / 2;
+  const middle = ends.center + offset(s) + width / 2;
   return horizontal ? [ends.tip, middle] : [middle, ends.tip];
 }
 
@@ -661,7 +675,7 @@ function barHit(
   const { width, offset } = mark.placement(visible, along);
   for (let group = visible.length - 1; group >= 0; group--) {
     const s = visible[group]!;
-    const from = offset(group);
+    const from = offset(s);
     const [start, end] = mark.range(s, entry.frame);
     for (let k = end - 1; k >= start; k--) {
       const ends = mark.ends(s, rowOf(s, k), along, across);
@@ -679,25 +693,23 @@ function barHit(
   return undefined;
 }
 
-/** The histogram bin under a pixel, between its edges and from its base to its top: the topmost series'. */
+/** The histogram bin under a pixel, inside its bar as drawn: the topmost series'. */
 function binHit(
   mark: HistogramMark,
   entry: MarkParts,
   px: number,
   py: number,
 ): { series: Series; position: number } | undefined {
-  const { x, y, hidden } = entry.frame;
-  const zero = y.type === "log" ? y.range[0] : y.map(0);
+  const { frame } = entry;
   for (let i = entry.series.length - 1; i >= 0; i--) {
     const s = entry.series[i]!;
-    if (hidden.has(s.key)) continue;
-    const edges = mark.edgesOf(s);
+    if (frame.hidden.has(s.key)) continue;
     for (let b = 0; b < s.length; b++) {
-      const [a, c] = [x.map(edges[b]!), x.map(edges[b + 1]!)];
-      if (!(px >= Math.min(a, c) && px <= Math.max(a, c))) continue;
-      const tip = y.map(s.y[b]!);
-      const root = s.y0 ? y.map(s.y0[b]!) : zero;
-      if (py >= Math.min(tip, root) && py <= Math.max(tip, root)) return { series: s, position: b };
+      const rect = mark.binRect(s, b, frame);
+      if (!rect) continue;
+      const [x, y, width, height] = rect;
+      if (px >= x && px <= x + width && py >= y && py <= y + height)
+        return { series: s, position: b };
     }
   }
   return undefined;

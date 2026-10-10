@@ -39,13 +39,17 @@ import {
   Candlestick,
   Chart,
   Custom,
+  Dendrogram,
+  ErrorBar,
   Funnel,
   Gauge,
   GeoPoint,
   GeoShape,
+  Histogram,
   Line,
   Line3D,
   Pie,
+  Point,
   Point3D,
   Radar,
   Region,
@@ -99,6 +103,9 @@ const components = {
   Chart,
   BoxPlot,
   Candlestick,
+  ErrorBar,
+  Point,
+  Dendrogram,
   Line,
   Area,
   Bar,
@@ -108,6 +115,7 @@ const components = {
   Funnel,
   Radar,
   GeoShape,
+  Histogram,
   GeoPoint,
   Line3D,
   Point3D,
@@ -142,6 +150,16 @@ function spyUpdates(chart: HercegChart): (readonly unknown[])[] {
 }
 
 describe("<Chart>", () => {
+  it("draws dendrogram components with summary-only reading", () => {
+    const linkage = table({ first: [0], second: [1], height: [2] });
+    mount(
+      `<Chart renderer="svg"><Dendrogram :data="linkage" first="first" second="second" height="height" :leaves="['a', 'b']" stroke="#ff0000" label="Clustering" /></Chart>`,
+      () => ({ linkage }),
+    );
+    expect(host.querySelectorAll('path[stroke="#ff0000"]')).toHaveLength(1);
+    expect(host.textContent).toContain("Clustering: 2 leaves, 1 merge. Merge heights 2 to 2.");
+  });
+
   it("renders marks from its slot, one path per series", () => {
     mount(
       `<Chart title="Load">
@@ -277,6 +295,33 @@ describe("<Chart>", () => {
       );
     expect(statsBox("notch")).toBe(statsBox(':notch="true"'));
     expect(statsBox("notch")).not.toBe(statsBox(""));
+  });
+
+  it("reads bare dodge attributes on <Point> and <ErrorBar> as true", () => {
+    const stats = table({
+      day: ["thu", "thu"],
+      sex: ["f", "m"],
+      mean: [2, 3],
+      lo: [1, 2],
+      hi: [3, 4],
+    });
+    const drawn = (attribute: string) => {
+      mount(
+        `<Chart renderer="svg">
+          <Point :data="stats" x="day" y="mean" series="sex" ${attribute} />
+          <ErrorBar :data="stats" x="day" y1="lo" y2="hi" series="sex" ${attribute} />
+        </Chart>`,
+        () => ({ stats }),
+      );
+      const shapes = [...host.querySelectorAll("svg path, svg circle")].map((node) =>
+        [node.getAttribute("d"), node.getAttribute("cx")].join(),
+      );
+      app!.unmount();
+      app = undefined;
+      return shapes.join("|");
+    };
+    expect(drawn("dodge")).toBe(drawn(':dodge="true"'));
+    expect(drawn("dodge")).not.toBe(drawn(""));
   });
 
   it("reads bare split as true and forwards violin interiors", () => {
@@ -859,5 +904,22 @@ describe("<Chart>", () => {
     app.config.warnHandler = () => {};
     app.mount(host);
     expect(String(errors[0])).toMatch(/mark components/);
+  });
+});
+
+it("casts bare histogram boolean flags and keeps their values in the mark spec", async () => {
+  const data = table({ v: [1, 1, 3], g: ["a", "b", "b"] });
+  const { view, chart } = chartRef();
+  mount(
+    `<Chart ref="view"><Histogram :data="data" y="v" :bins="[0, 2, 4]" series="g" normalize="probability" commonNorm cumulative dodge /></Chart>`,
+    () => ({ data, view }),
+  );
+  await nextTick();
+  expect(chart().toSVG()).toContain("<path");
+  expect(optionsOf(chart()).marks[0]!.spec).toMatchObject({
+    y: "v",
+    commonNorm: true,
+    cumulative: true,
+    dodge: true,
   });
 });

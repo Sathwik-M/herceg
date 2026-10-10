@@ -23,6 +23,7 @@ import {
   Candlestick,
   Chart,
   Custom,
+  Dendrogram,
   Funnel,
   Gauge,
   GeoPoint,
@@ -69,6 +70,27 @@ const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
 
 describe("<Chart>", () => {
+  it("draws dendrogram elements with summary-only reading", () => {
+    const linkage = table({ first: [0], second: [1], height: [2] });
+    act(() =>
+      root.render(
+        <Chart renderer="svg">
+          <Dendrogram
+            data={linkage}
+            first="first"
+            second="second"
+            height="height"
+            leaves={["a", "b"]}
+            stroke="#ff0000"
+            label="Clustering"
+          />
+        </Chart>,
+      ),
+    );
+    expect(host.querySelectorAll('path[stroke="#ff0000"]')).toHaveLength(1);
+    expect(host.textContent).toContain("Clustering: 2 leaves, 1 merge. Merge heights 2 to 2.");
+  });
+
   it("renders marks from child elements, one path per series", () => {
     act(() =>
       root.render(

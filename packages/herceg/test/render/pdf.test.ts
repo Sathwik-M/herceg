@@ -17,16 +17,19 @@ import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { custom } from "../../src/marks/custom.ts";
+import { dendrogram } from "../../src/marks/dendrogram.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
 import { geopoint } from "../../src/marks/geopoint.ts";
 import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
+import { histogram } from "../../src/marks/histogram.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { radar } from "../../src/marks/radar.ts";
+import { rug } from "../../src/marks/rug.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { facet } from "../../src/model/facet.ts";
@@ -47,6 +50,7 @@ import type {
   Scene,
   TextGeometry,
 } from "../../src/scene/scene.ts";
+import { validateSpec } from "../../src/spec/validate.ts";
 import { LIGHT } from "../../src/theme.ts";
 
 interface PdfObject {
@@ -784,6 +788,28 @@ describe("renderToPDF", () => {
     expect(content).toMatch(
       /\/Span << \/ActualText \(\) >> BDC BT [^\n]+ 1 Tr [^\n]+\(10\) Tj ET EMC/,
     );
+  });
+
+  it("draws rugs as vector segments in PDF and static SVG", () => {
+    const marks = [rug(table({ v: [1, 2, 3] }), { x: "v", stroke: "#123456", strokeWidth: 2 })];
+    const { content } = readPdf(renderToPDF({ marks, width: 300, height: 150 }));
+    const svg = renderToSVG({ marks, width: 300, height: 150 });
+    expect(svg).toContain('stroke="#123456"');
+    expect(svg).toContain('stroke-width="2"');
+    expect(content).toContain("2 w");
+    // One path contains every observation's move and line, then is stroked.
+    expect(content).toMatch(/(?:[\d.]+ [\d.]+ m\n[\d.]+ [\d.]+ l\n){3}S/);
+  });
+
+  it("omits zero-width rug strokes instead of PDF hairlines", () => {
+    const { content } = readPdf(
+      renderToPDF({
+        width: 300,
+        height: 150,
+        marks: [rug(table({ v: [1, 2] }), { x: "v", strokeWidth: 0 })],
+      }),
+    );
+    expect(content).not.toContain("0 w");
   });
 
   it("renders specs like specToSVG", () => {
@@ -1737,6 +1763,66 @@ it("exports notched precomputed boxes as closed PDF paths with waist medians", (
     expect(renderToSVG(config)).toMatch(/fill="#ff0000"/);
   }
 });
+
+it("exports horizontal cumulative histograms as PDF rectangles and static SVG", () => {
+  const mark = histogram(table({ v: [1, 2, 3] }), {
+    y: "v",
+    bins: [0, 2, 4],
+    cumulative: true,
+    fill: "#ff0000",
+  });
+  const config = { width: 600, height: 300, locale: "en-US", marks: [mark] };
+  const pdf = readPdf(renderToPDF(config));
+  expect(pdf.content).toMatch(/1 0 0 rg/);
+  expect(pdf.content).toMatch(/(?:[^\n]+ re\n){2}f/);
+  expect(renderToSVG(config)).toMatch(/fill="#ff0000"/);
+  const spec = {
+    version: 10,
+    width: 600,
+    height: 300,
+    data: { t: { columns: { v: [1, 2, 3] } } },
+    marks: [{ type: "histogram", y: "v", bins: [0, 2, 4] }],
+  };
+  validateSpec(spec);
+  expect(readPdf(specToPDF(spec)).content).toMatch(/ re\n/);
+  expect(specToSVG(spec)).toContain("<path");
+});
+
+it.each(["bottom", "top", "left", "right"] as const)(
+  "exports dendrogram segments as static SVG and vector PDF (%s)",
+  (side) => {
+    const data = table({ first: [0, 2, 5], second: [1, 3, 4], height: [1, 2, 4] });
+    const options = {
+      width: 400,
+      height: 200,
+      marks: [
+        dendrogram(data, {
+          first: "first",
+          second: "second",
+          height: "height",
+          leaves: ["a", "b", "c", "d"],
+          side,
+          stroke: "#ff0000",
+          strokeWidth: 2,
+          label: "Clustering",
+        }),
+      ],
+      x: { axis: false, grid: false },
+      y: { axis: false, grid: false },
+      locale: "en-US",
+    };
+    const svg = renderToSVG(options);
+    const path = /<path[^>]*d="([^"]+)"[^>]*stroke="#ff0000"/.exec(svg)![1]!;
+    expect(path.match(/M/g)).toHaveLength(9);
+    expect(path.match(/L/g)).toHaveLength(9);
+    const pdf = readPdf(renderToPDF(options));
+    expect(pdf.content).toContain("1 0 0 RG");
+    expect(pdf.content).toContain("2 w");
+    expect(pdf.content.match(/\bm\n/g)).toHaveLength(9);
+    expect(pdf.content.match(/\bl\n/g)).toHaveLength(9);
+    expect(pdf.content).not.toContain(" Do");
+  },
+);
 
 it("exports split violin halves, dashed quartiles, and solid medians in facet PDFs", () => {
   const data = table({

@@ -114,6 +114,7 @@ export {
   type ShapeStyle,
   type TextShapeStyle,
 } from "./marks/custom.ts";
+export { type DendrogramOptions, dendrogram } from "./marks/dendrogram.ts";
 export {
   type ErrorBarOptions,
   errorBar,
@@ -142,6 +143,7 @@ export {
   type RegionOptions,
   region,
 } from "./marks/region.ts";
+export { type RugOptions, rug } from "./marks/rug.ts";
 export { type RuleDataOptions, type RuleOptions, rule } from "./marks/rule.ts";
 export { type SankeyOptions, sankey } from "./marks/sankey.ts";
 export { type SunburstOptions, sunburst } from "./marks/sunburst.ts";

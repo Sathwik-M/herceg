@@ -6,15 +6,18 @@ import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
+import { dendrogram } from "../../src/marks/dendrogram.ts";
 import { errorBar } from "../../src/marks/errorbar.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
+import { histogram } from "../../src/marks/histogram.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { region } from "../../src/marks/region.ts";
+import { rug } from "../../src/marks/rug.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { sankey } from "../../src/marks/sankey.ts";
 import { sunburst } from "../../src/marks/sunburst.ts";
@@ -25,7 +28,9 @@ import type {
   BoxPlotInput,
   BoxPlotSpec,
   ErrorBarSpec,
+  HistogramSpec,
   RegionSpec,
+  RugSpec,
   RuleSpec,
   TreemapSpec,
   ViolinSpec,
@@ -239,6 +244,99 @@ void [
   mixedBoxSpec,
   noCountBoxSpec,
 ];
+
+const tips = table({ day: ["thu"], sex: ["f"], tip: [1], low: [0], high: [2] });
+bar(tips, { x: "day", y: "tip", series: "sex", legendGroup: "sex" });
+errorBar(tips, { x: "day", y1: "low", y2: "high", series: "sex", dodge: true, legendGroup: "sex" });
+point(tips, { x: "day", y: "tip", series: "sex", dodge: true, jitter: { width: 0.4, seed: 2 } });
+point(tips, { x: "day", y: "tip", jitter: { width: 0.4 } });
+// @ts-expect-error jitter takes a width
+point(tips, { x: "day", y: "tip", jitter: { seed: 2 } });
+// @ts-expect-error jitter is an object, not a width
+point(tips, { x: "day", y: "tip", jitter: 0.4 });
+// @ts-expect-error a legend group is a name
+line(tips, { x: "tip", y: "tip", legendGroup: 1 });
+// @ts-expect-error annotations have no series to group
+rule(tips, { y: "tip", legendGroup: "sex" });
+
+// Histogram position and layout forms exclude each other.
+histogram(readings, {
+  y: "at",
+  bins: [0, 1, 2] as const,
+  normalize: "probability",
+  commonNorm: true,
+  cumulative: true,
+  dodge: true,
+});
+// @ts-expect-error exactly one binned axis
+histogram(readings, { x: "at", y: "cpu" });
+// @ts-expect-error the binned axis is required
+histogram(readings, { bins: 10 });
+// @ts-expect-error binned fields must be numeric or time
+histogram(readings, { y: "stage" });
+// @ts-expect-error horizontal histograms cannot use the right axis
+histogram(readings, { y: "cpu", axis: "right" });
+// @ts-expect-error dodge and stack exclude each other
+histogram(readings, { x: "at", stack: true, dodge: true });
+
+export const horizontalHistogramSpec: HistogramSpec = { type: "histogram", y: "v", dodge: true };
+// @ts-expect-error the spec also requires exactly one binned field
+export const invalidHistogramSpec: HistogramSpec = { type: "histogram", x: "v", y: "v" };
+// @ts-expect-error the spec excludes stack with dodge
+export const stackedDodgeSpec: HistogramSpec = {
+  type: "histogram",
+  x: "v",
+  stack: true,
+  dodge: true,
+};
+// @ts-expect-error the spec excludes right horizontal axes
+export const rightHistogramSpec: HistogramSpec = { type: "histogram", y: "v", axis: "right" };
+// Linkage child ids and heights are number fields, never categories or times.
+
+const linkage = table({ first: [0], second: [1], height: [2], label: ["a"], timestamp: time([0]) });
+dendrogram(linkage, {
+  first: "first",
+  second: "second",
+  height: "height",
+  leaves: ["a", "b"],
+  side: "right",
+});
+// @ts-expect-error child ids must be number fields
+dendrogram(linkage, { first: "label", second: "second", height: "height", leaves: ["a", "b"] });
+// @ts-expect-error merge heights cannot be time fields
+dendrogram(linkage, { first: "first", second: "second", height: "timestamp", leaves: ["a", "b"] });
+// @ts-expect-error fields must exist
+dendrogram(linkage, { first: "first", second: "missing", height: "height", leaves: ["a", "b"] });
+// @ts-expect-error leaves are string category labels
+dendrogram(linkage, { first: "first", second: "second", height: "height", leaves: [1, 2] });
+dendrogram(linkage, {
+  first: "first",
+  second: "second",
+  height: "height",
+  leaves: ["a", "b"],
+  // @ts-expect-error height is plot-relative, with no axis option
+  axis: "right",
+});
+rug(readings, { x: "at", side: "top" });
+rug(readings, { y: "cpu", side: "right" });
+// @ts-expect-error exactly one observed axis
+rug(readings, { x: "at", y: "cpu" });
+// @ts-expect-error an observed axis is required
+rug(readings, {});
+// @ts-expect-error numeric or time observations only
+rug(readings, { x: "stage" });
+// @ts-expect-error category series only
+rug(readings, { x: "at", series: "cpu" });
+// @ts-expect-error x ticks stand at bottom or top
+rug(readings, { x: "at", side: "right" });
+// @ts-expect-error y rugs cannot use the right value axis
+rug(readings, { y: "cpu", axis: "right" });
+// @ts-expect-error a portable rug spec needs one axis
+const rugMissing: RugSpec = { type: "rug" };
+// @ts-expect-error a portable rug spec cannot have two axes
+const rugBoth: RugSpec = { type: "rug", x: "at", y: "cpu" };
+
+export { rugBoth, rugMissing };
 
 violin(readings, { x: "stage", y: "cpu", series: "stage", split: true, inner: "quartiles" });
 violin(readings, { x: "cpu", y: "stage", inner: "none" });

@@ -14,6 +14,7 @@ npm run bench:react                  # herceg vs herceg through @herceg/react ->
 npm run bench:grid                   # grid suite (see "Grids") -> tmp/benchmarks/grid-<time>.json
 npm run bench:grid-remote            # remote grids (see "Remote grids") -> tmp/benchmarks/grid-remote-<time>.json
 npm run bench:report                 # regenerate the tables in docs/comparison.md
+npm run bench:express -- --out results/express.json   # herceg.express timings (Python)
 ```
 
 Run these from the repository root. The browser suite drives the locally
@@ -32,6 +33,7 @@ machine otherwise idle while it runs.
 | `src/size/` | Bundle size benchmark and its entry points. JavaScript and required CSS are reported separately. |
 | `src/grid/` | The grid suite: fixture, reference, scenarios, harness, runner, report, and one adapter per grid in `src/grid/adapters/`; the remote grid benchmark in `src/grid/remote/`. |
 | `src/report.ts` | Writes Markdown tables into `docs/comparison.md`. |
+| `python/express.py` | Timings of `herceg.express` (Python), with Seaborn's and statsmodels' computations beside them; run in the Python package's uv environment. |
 | `results/` | Committed results with environment details. |
 
 ## Methodology

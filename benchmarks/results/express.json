@@ -1,0 +1,216 @@
+{
+ "schema": 1,
+ "date": "2026-10-10T10:20:40.852759+00:00",
+ "commit": "d76b7f0",
+ "method": "npm run bench:express -- --out results/express.json\n\nEach workload is timed over repeated runs after one warmup run, with its peak\nPython memory (tracemalloc) from one more run. Boundaries:\n\n- \"compute\": the numerical routine alone (no chart);\n- \"chart\": the express function and `to_spec()` (statistics, chart, columns as bytes);\n- \"svg\": `to_svg()` of a chart already built (herceg's static renderer in V8).",
+ "environment": {
+  "machine": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "processor": "arm",
+  "python": "3.13.15",
+  "libraries": {
+   "numpy": "2.5.3",
+   "scipy": "1.18.1",
+   "seaborn": "0.13.2",
+   "statsmodels": "0.15.0",
+   "mini-racer": "0.14.1"
+  },
+  "input_seed": 20261010
+ },
+ "results": [
+  {
+   "workload": "pairplot 10,000 x 5, hue",
+   "boundary": "chart",
+   "samples_ms": [
+    32.663040910847485,
+    33.395999926142395,
+    34.01195805054158,
+    37.50170802231878,
+    34.7275419626385,
+    35.82429199013859,
+    35.06604197900742,
+    32.741624978370965,
+    32.51175000332296,
+    36.89695906359702
+   ],
+   "median_ms": 34.36975000659004,
+   "min_ms": 32.51175000332296,
+   "max_ms": 37.50170802231878,
+   "peak_python_mib": 6.344491958618164
+  },
+  {
+   "workload": "pairplot 10,000 x 5, hue",
+   "boundary": "svg",
+   "samples_ms": [
+    53.6551249679178,
+    50.012415973469615,
+    48.18724992219359,
+    47.40758298430592,
+    48.78554190509021
+   ],
+   "median_ms": 48.78554190509021,
+   "min_ms": 47.40758298430592,
+   "max_ms": 53.6551249679178,
+   "peak_python_mib": 20.3740291595459
+  },
+  {
+   "workload": "clustermap 500 x 50 (SciPy linkage)",
+   "boundary": "chart",
+   "samples_ms": [
+    2.7963750762864947,
+    2.779665985144675,
+    2.7933329110965133,
+    2.822624985128641,
+    2.7540000155568123,
+    2.7925840113312006,
+    2.766291960142553,
+    2.7142090257257223,
+    2.7682079235091805,
+    2.750416984781623
+   ],
+   "median_ms": 2.7739369543269277,
+   "min_ms": 2.7142090257257223,
+   "max_ms": 2.822624985128641,
+   "peak_python_mib": 1.0988950729370117
+  },
+  {
+   "workload": "average linkage 500 x 50, NumPy",
+   "boundary": "compute",
+   "samples_ms": [
+    72.92366703040898,
+    77.93916598893702,
+    70.87670895271003,
+    67.62216601055115,
+    67.57745798677206
+   ],
+   "median_ms": 70.87670895271003,
+   "min_ms": 67.57745798677206,
+   "max_ms": 77.93916598893702,
+   "peak_python_mib": 66.25119400024414
+  },
+  {
+   "workload": "bootstrap 1,000 means of 100,000",
+   "boundary": "compute",
+   "samples_ms": [
+    198.1440830277279,
+    215.6269169645384,
+    227.2321250056848,
+    285.617042100057,
+    199.89225000608712
+   ],
+   "median_ms": 215.6269169645384,
+   "min_ms": 198.1440830277279,
+   "max_ms": 285.617042100057,
+   "peak_python_mib": 41.21271896362305
+  },
+  {
+   "workload": "bootstrap 1,000 medians of 100,000",
+   "boundary": "compute",
+   "samples_ms": [
+    759.3274170067161,
+    760.0475000217557,
+    759.4520420534536
+   ],
+   "median_ms": 759.4520420534536,
+   "min_ms": 759.3274170067161,
+   "max_ms": 760.0475000217557,
+   "peak_python_mib": 61.81605911254883
+  },
+  {
+   "workload": "barplot 100,000 rows, 4 groups, CI",
+   "boundary": "chart",
+   "samples_ms": [
+    254.6374590601772,
+    236.8869170313701,
+    236.0211251070723
+   ],
+   "median_ms": 236.8869170313701,
+   "min_ms": 236.0211251070723,
+   "max_ms": 254.6374590601772,
+   "peak_python_mib": 45.488229751586914
+  },
+  {
+   "workload": "lowess 10,000, delta 0",
+   "boundary": "compute",
+   "samples_ms": [
+    3141.0331659717485,
+    3118.6803750460967,
+    3263.8488749507815
+   ],
+   "median_ms": 3141.0331659717485,
+   "min_ms": 3118.6803750460967,
+   "max_ms": 3263.8488749507815,
+   "peak_python_mib": 38.991722106933594
+  },
+  {
+   "workload": "lowess 10,000, delta 1% of range",
+   "boundary": "compute",
+   "samples_ms": [
+    34.29812495596707,
+    34.48691696394235,
+    34.252332989126444,
+    34.36195803806186,
+    34.11416697781533
+   ],
+   "median_ms": 34.29812495596707,
+   "min_ms": 34.11416697781533,
+   "max_ms": 34.48691696394235,
+   "peak_python_mib": 32.27907180786133
+  },
+  {
+   "workload": "Seaborn bootstrap 1,000 means of 100,000",
+   "boundary": "compute",
+   "samples_ms": [
+    279.0852499892935,
+    276.73566702287644,
+    278.79112504888326,
+    281.3082910142839,
+    290.9022910753265
+   ],
+   "median_ms": 279.0852499892935,
+   "min_ms": 276.73566702287644,
+   "max_ms": 290.9022910753265,
+   "peak_python_mib": 2.322101593017578
+  },
+  {
+   "workload": "Seaborn bootstrap 1,000 medians of 100,000",
+   "boundary": "compute",
+   "samples_ms": [
+    873.026791960001,
+    902.9432500246912,
+    948.0512500740588
+   ],
+   "median_ms": 902.9432500246912,
+   "min_ms": 873.026791960001,
+   "max_ms": 948.0512500740588,
+   "peak_python_mib": 2.3251686096191406
+  },
+  {
+   "workload": "statsmodels lowess 10,000, delta 0",
+   "boundary": "compute",
+   "samples_ms": [
+    1263.8610829599202,
+    1188.9576250687242,
+    1180.9097499353811
+   ],
+   "median_ms": 1188.9576250687242,
+   "min_ms": 1180.9097499353811,
+   "max_ms": 1263.8610829599202,
+   "peak_python_mib": 0.7012138366699219
+  },
+  {
+   "workload": "statsmodels lowess 10,000, delta 1% of range",
+   "boundary": "compute",
+   "samples_ms": [
+    13.022458995692432,
+    12.996374978683889,
+    12.930500088259578,
+    12.917375075630844,
+    12.969749979674816
+   ],
+   "median_ms": 12.969749979674816,
+   "min_ms": 12.917375075630844,
+   "max_ms": 13.022458995692432,
+   "peak_python_mib": 0.7012138366699219
+  }
+ ]
+}

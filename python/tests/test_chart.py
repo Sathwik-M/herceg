@@ -1,4 +1,5 @@
 import datetime as dt
+import inspect
 import json
 import re
 from pathlib import Path
@@ -1620,6 +1621,123 @@ def test_boxplot_rejects_invalid_whisker_rules(whiskers):
 def test_boxplot_numpy_whisker_multiples_serialize(whiskers):
     spec, _ = hg.boxplot({"g": ["a"], "v": [1]}, x="g", y="v", whiskers=whiskers).to_spec()
     assert json.loads(json.dumps(spec))["marks"][0]["whiskers"] == float(whiskers)
+
+
+def test_legend_groups_share_series_by_name():
+    summary = {
+        "day": ["thu", "thu", "fri", "fri"],
+        "sex": ["f", "m", "f", "m"],
+        "mean": [2.0, 3.0, 4.0, 5.0],
+        "low": [1.0, 2.0, 3.0, 4.0],
+        "high": [3.0, 4.0, 5.0, 6.0],
+    }
+    chart = (
+        hg.Chart(summary, width=400, height=240)
+        .bar(x="day", y="mean", series="sex", legend_group="sex")
+        .error_bar(x="day", y1="low", y2="high", series="sex", dodge=True, legend_group="sex")
+    )
+    spec, _ = chart.to_spec()
+    assert [mark.get("legendGroup") for mark in spec["marks"]] == ["sex", "sex"]
+    assert spec["marks"][1]["dodge"] is True
+    # Older readers would color and list the groups' series apart.
+    assert spec["version"] == 10
+    svg = chart.to_svg()
+    # One legend entry per sex.
+    assert svg.count(">f</text>") == 1 and svg.count(">m</text>") == 1
+    for method in ("line", "area", "point", "histogram", "candlestick", "boxplot", "violin"):
+        assert "legend_group" in inspect.signature(getattr(hg.Chart, method)).parameters
+    with pytest.raises(ValueError, match="legend_group must be a name"):
+        hg.Chart(summary).bar(x="day", y="mean", legend_group="")
+    assert hg.Chart(summary).bar(x="day", y="mean").to_spec()[0]["version"] == 4
+
+
+def test_points_dodge_and_jitter_in_category_bands():
+    rows = {"day": ["thu", "thu", "fri"], "sex": ["f", "m", "f"], "tip": [1.0, 2.0, 3.0]}
+    spec, _ = hg.scatter(rows, x="day", y="tip", series="sex", dodge=True, jitter=0.4).to_spec()
+    assert spec["marks"][0]["dodge"] is True
+    assert spec["marks"][0]["jitter"] == {"width": 0.4}
+    assert spec["version"] == 10
+    seeded = hg.Chart(rows).point(x="day", y="tip", jitter=hg.Jitter(width=0.2, seed=7))
+    assert seeded.to_spec()[0]["marks"][0]["jitter"] == {"width": 0.2, "seed": 7}
+    assert "<circle" in seeded.to_svg() or "<path" in seeded.to_svg()
+    with pytest.raises(ValueError, match="dodge places series side by side"):
+        hg.scatter(rows, x="day", y="tip", dodge=True)
+    with pytest.raises(ValueError, match="needs one category column"):
+        hg.scatter(rows, x="tip", y="tip", jitter=0.2)
+    with pytest.raises(ValueError, match="jitter width must be from 0 to 1"):
+        hg.scatter(rows, x="day", y="tip", jitter=1.5)
+    with pytest.raises(ValueError, match="jitter seed must be a whole number"):
+        hg.scatter(rows, x="day", y="tip", jitter=hg.Jitter(seed=1.5))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="error_bar dodge needs a category x"):
+        hg.Chart(rows).error_bar(x="tip", y1="tip", y2="tip", series="sex", dodge=True)
+
+
+def test_rug_has_one_axis_and_styles_per_observation():
+    spec, _ = (
+        hg.Chart(DATA)
+        .rug("t", series="host", length=12, side="top", stroke="red", stroke_width=2, id="events")
+        .to_spec()
+    )
+    assert spec["marks"][0] == {
+        "type": "rug",
+        "x": "t",
+        "series": "host",
+        "length": 12,
+        "side": "top",
+        "stroke": "red",
+        "strokeWidth": 2,
+        "id": "events",
+        "data": "data",
+    }
+    yspec, _ = hg.Chart(DATA).rug(y="p50", side="right", label="Latency").to_spec()
+    assert yspec["marks"][0]["y"] == "p50"
+    assert "x" not in yspec["marks"][0]
+    assert yspec["marks"][0]["label"] == "Latency"
+    assert not hasattr(hg, "rug")
+    svg = hg.Chart(DATA, width=300, height=150).rug("t", stroke="#123456").to_svg()
+    assert 'stroke="#123456"' in svg
+    assert 'stroke-width="1"' in svg
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"x": "t", "y": "p50"},
+        {"x": "host"},
+        {"x": "missing"},
+        {"y": "p50", "axis": "right"},
+        {"x": "t", "side": "left"},
+        {"y": "p50", "side": "top"},
+        {"x": "t", "length": 0},
+        {"x": "t", "length": -1},
+        {"x": "t", "length": float("inf")},
+        {"x": "t", "length": float("nan")},
+        {"x": "t", "stroke_width": -1},
+        {"x": "t", "stroke_width": float("inf")},
+        {"x": "t", "series": "p50"},
+    ],
+)
+def test_rug_refuses_invalid_columns_and_options(options):
+    with pytest.raises((ValueError, TypeError, KeyError)):
+        hg.Chart(DATA).rug(**options)
+
+
+def test_rug_uses_other_tables_facets_and_subplots():
+    spec, _ = hg.Chart(DATA).rug(y="v", data={"v": [3, 1, 2]}).to_spec()
+    assert spec["marks"][0]["data"] == "data2"
+    facets, _ = hg.Chart(DATA, facet="host").rug("t", repeat=True).to_spec()
+    assert facets["marks"][0]["facet"] == "repeat"
+    subplots, _ = hg.Chart(DATA, panels=[hg.Panel("main")]).rug("t", panel="main").to_spec()
+    assert subplots["marks"][0]["panel"] == "main"
+
+
+def test_rug_numeric_styles_are_serializable():
+    chart = hg.Chart(DATA).rug("t", length=np.float32(8), stroke_width=np.int64(2))
+    spec, _ = chart.to_spec()
+    assert spec["marks"][0]["length"] == 8
+    assert spec["marks"][0]["strokeWidth"] == 2
+    assert json.dumps(spec)
 
 
 @pytest.mark.parametrize("inner", [None, "box", "quartiles", "none"])

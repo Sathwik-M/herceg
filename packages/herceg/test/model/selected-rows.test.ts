@@ -4,7 +4,7 @@ import { time } from "../../src/data/column.ts";
 import { col, compileExpression, type Expression } from "../../src/data/expression.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { rowView } from "../../src/data/row-view.ts";
-import type { DataSelection } from "../../src/data/selection.ts";
+import { type DataSelection, selectionStore, selectRows } from "../../src/data/selection.ts";
 import { type Table, table as typed } from "../../src/data/table.ts";
 
 import { estimateText } from "../../src/layout/text.ts";
@@ -16,15 +16,18 @@ import { heatmap } from "../../src/marks/heatmap.ts";
 import { histogram } from "../../src/marks/histogram.ts";
 import { line } from "../../src/marks/line.ts";
 import { point } from "../../src/marks/point.ts";
+import { rug } from "../../src/marks/rug.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { rowSelection } from "../../src/model/row-selection.ts";
 import {
   brushedRows,
   clickedRows,
   cursorRows,
   type Brushed as Selection,
 } from "../../src/model/selected-rows.ts";
+import type { PointGeometry, RectGeometry } from "../../src/scene/scene.ts";
 
 /** Tables as charts read them, whatever their fields. */
 const table = (columns: Record<string, ColumnInput>, options?: { maxRows?: number }): Table =>
@@ -450,6 +453,131 @@ describe("lassos and clicks as rows", () => {
     // Stacked: a below, b above; one row of each in the panel.
     const top = clickedRows(model, new Set([values]), panel.x.map(1.5), panel.y.map(1.5));
     expect(Array.from(top!.rows)).toEqual([3]);
+  });
+
+  it("select dodged points, grouped bars, and dodged bins where they are drawn", () => {
+    const tips = table({
+      day: ["thu", "thu", "thu", "thu"],
+      sex: ["f", "m", "f", "m"],
+      v: [1, 1, 3, 3],
+    });
+    const tables = new Set([tips]);
+    const at = (model: ChartModel, kind: string, s: number) => {
+      const geometry = model.scene(estimateText).panels[0]!.marks.filter((m) => m.kind === kind);
+      return geometry[s] as unknown as { coords: Float32Array; rects: Float32Array };
+    };
+    // Dodged points: m's stand right of center, where its first point is clicked.
+    const dodged = drawn({
+      marks: [point(tips, { x: "day", y: "v", series: "sex", dodge: true })],
+    });
+    const m = at(dodged, "point", 1).coords;
+    expect(Array.from(clickedRows(dodged, tables, m[0]!, m[1]!)!.rows)).toEqual([1]);
+    // A legend group's bar stands in the group's slot for its series.
+    const onlyM = table({ day: ["thu"], sex: ["m"], v: [3] });
+    const grouped = drawn({
+      marks: [
+        bar(onlyM, { x: "day", y: "v", series: "sex", legendGroup: "sex" }),
+        point(tips, { x: "day", y: "v", series: "sex", dodge: true, legendGroup: "sex", r: 1 }),
+      ],
+    });
+    const [x, y, w] = Array.from(at(grouped, "rect", 0).rects);
+    expect(Array.from(clickedRows(grouped, new Set([onlyM]), x! + w! / 2, y! + 2)!.rows)).toEqual([
+      0,
+    ]);
+    // Dodged and horizontal bins, and a cumulative bin's rows up to its right edge.
+    for (const horizontal of [false, true]) {
+      const bins = drawn({
+        marks: [
+          histogram(tips, {
+            ...(horizontal ? { y: "v" } : { x: "v" }),
+            bins: [0, 2, 4],
+            series: "sex",
+            dodge: true,
+            cumulative: true,
+          } as never),
+        ],
+      });
+      // m's second bin: its rows at or below 4.
+      const [bx, by, bw, bh] = Array.from(at(bins, "rect", 1).rects.slice(4, 8));
+      const found = clickedRows(bins, tables, bx! + bw! / 2, by! + bh! / 2);
+      expect(Array.from(found!.rows)).toEqual([1, 3]);
+    }
+  });
+
+  it("place dodged points and grouped bars alike while a selection highlights rows", () => {
+    const tips = table({ day: ["thu", "thu"], sex: ["f", "m"], v: [1, 3] });
+    const store = selectionStore(tips);
+    store.set("c", selectRows(new RowSet(tips).add(0)));
+    for (const mark of [
+      point(tips, { x: "day", y: "v", series: "sex", dodge: true }),
+      bar(tips, { x: "day", y: "v", series: "sex" }),
+    ]) {
+      const selection = rowSelection({ store, channel: "c" });
+      const model = drawn({ marks: [mark], rowSelection: selection });
+      const chart = { selection: null, select() {}, render() {}, root: new EventTarget() as never };
+      selection.mount(
+        undefined,
+        model,
+        chart,
+        { emit() {} },
+        () => {},
+        () => null,
+        {
+          textContent: null,
+        },
+      );
+      // m's row, unselected and dimmed, stands right of the band's center.
+      const geometry = model.scene(estimateText).panels[0]!.marks;
+      const m = geometry.find(
+        (g) => g.key.includes('"m"') && ((g as { count?: number }).count ?? 0) > 0,
+      )!;
+      const [px, py] =
+        mark.spec.type === "point"
+          ? [(m as PointGeometry).coords[0]!, (m as PointGeometry).coords[1]!]
+          : [
+              (m as RectGeometry).rects[0]! + (m as RectGeometry).rects[2]! / 2,
+              (m as RectGeometry).rects[1]! + 2,
+            ];
+      expect(model.inspect(px, py, "nearest")!.points[0]!.px).toBeCloseTo(px, 3);
+      expect(Array.from(clickedRows(model, new Set([tips]), px, py)!.rows)).toEqual([1]);
+    }
+  });
+
+  it("brush a horizontal histogram's rows along its binned y", () => {
+    const values = table({ v: [0.5, 1.5, 2.5, 3.5] });
+    const model = drawn({ marks: [histogram(values, { y: "v", bins: [0, 2, 4] })] });
+    expect(rowsOf(brushedRows(model, values, yRange([0, 2]), null), values)).toEqual([0, 1]);
+  });
+
+  it("select a rug's tick, at the plot's edge", () => {
+    const values = table({ v: [1, 2, 3] });
+    const model = drawn({ marks: [rug(values, { x: "v" })] });
+    const [panel] = model.panels();
+    const bottom = panel!.plot.y + panel!.plot.height - 2;
+    expect(
+      Array.from(clickedRows(model, new Set([values]), panel!.x.map(2), bottom)!.rows),
+    ).toEqual([1]);
+    // Anywhere along a long tick.
+    const long = drawn({ marks: [rug(values, { x: "v", length: 40 })] });
+    const [tall] = long.panels();
+    const end = tall!.plot.y + tall!.plot.height - 38;
+    expect(Array.from(clickedRows(long, new Set([values]), tall!.x.map(2), end)!.rows)).toEqual([
+      1,
+    ]);
+    // Along y, at the left edge; and the keyboard selects ticks whatever the unused axis.
+    const sideways = drawn({ marks: [rug(values, { y: "v" })] });
+    const [left] = sideways.panels();
+    const tick = clickedRows(sideways, new Set([values]), left!.plot.x + 2, left!.y.map(2));
+    expect(Array.from(tick!.rows)).toEqual([1]);
+    const wide = drawn({ marks: [rug(values, { y: "v", length: 40 })] });
+    const [far] = wide.panels();
+    const reach = clickedRows(wide, new Set([values]), far!.plot.x + 38, far!.y.map(2));
+    expect(Array.from(reach!.rows)).toEqual([1]);
+    const negative = table({ v: [-1, 2] });
+    const logged = drawn({ marks: [rug(negative, { x: "v" })], y: { type: "log" } });
+    const [s] = logged.series();
+    const key = { panel: logged.panels()[0]!.key, key: s!.key, position: 0 };
+    expect(Array.from(cursorRows(logged, new Set([negative]), key)!.rows)).toEqual([0]);
   });
 
   it("select a box plot's group, leaving out rows without a value", () => {

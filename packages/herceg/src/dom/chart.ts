@@ -12,7 +12,7 @@ import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
 import { Polyline } from "../lod/polyline.ts";
 import { monotonePolyline } from "../marks/curve.ts";
 import { tablesOf, viewOf } from "../marks/layout-mark.ts";
-import { type AxisFormat, keyOwner } from "../marks/mark.ts";
+import { type AxisFormat, keyOwner, legendGroupOf } from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
 import { planAxis } from "../model/axis.ts";
 import { describeChart } from "../model/describe.ts";
@@ -360,11 +360,16 @@ export class MountedChart implements Chart {
     this.#applyOptions();
     this.#invalidate();
     // Hidden keys go with their marks' identities: their ids, or their
-    // indexes, which other marks may take.
-    const owners = new Set(this.#options.marks.map((mark, i) => mark.spec.id ?? i));
+    // indexes, which other marks may take; a legend group's entries, with
+    // the group.
+    const marks = this.#options.marks;
+    const owners = new Set(marks.map((mark, i) => mark.spec.id ?? i));
+    const groups = new Set(marks.map((mark) => mark.spec.legendGroup));
     const kept = [...this.#model.hidden].filter((key) => {
       const owner = keyOwner(key);
-      return owner !== undefined && owners.has(owner);
+      if (owner !== undefined) return owners.has(owner);
+      const group = legendGroupOf(key);
+      return group !== undefined && groups.has(group);
     });
     this.#hide(new Set(kept));
     // Panels given y scales of their own let go of the y viewport. Which x
@@ -612,9 +617,12 @@ export class MountedChart implements Chart {
 
   setVisibility(keys: string | readonly string[], visible: boolean): void {
     const hidden = new Set(this.#model.hidden);
+    const { groups } = this.#model.hidden;
     for (const key of typeof keys === "string" ? [keys] : keys) {
-      if (visible) hidden.delete(key);
-      else hidden.add(key);
+      // A series of a legend group shows and hides with its group's entry.
+      const stored = groups.get(key) ?? key;
+      if (visible) hidden.delete(stored);
+      else hidden.add(stored);
     }
     this.#hide(hidden);
   }
@@ -626,10 +634,12 @@ export class MountedChart implements Chart {
    */
   #hide(next: ReadonlySet<string>): void {
     const hidden = this.#model.hidden;
-    if (next.size === hidden.size && [...next].every((key) => hidden.has(key))) return;
+    // A series of a legend group goes with its group's entry.
+    const keys = new Set([...next].map((key) => hidden.groups.get(key) ?? key));
+    if (keys.size === hidden.size && [...keys].every((key) => hidden.stores(key))) return;
     // Scenes draw with copies of the model's set, made as they are built.
     hidden.clear();
-    for (const key of next) hidden.add(key);
+    for (const key of keys) hidden.add(key);
     this.#settle();
     this.#invalidate();
     this.#events.emit("visibility", { hiddenKeys: [...hidden] });
@@ -1818,8 +1828,9 @@ export class MountedChart implements Chart {
     else if (event.key === "Home") position = 0;
     else if (event.key === "End") position = series.length - 1;
     position = Math.min(series.length - 1, Math.max(0, position));
-    // Points an axis break hides are stepped over, in the direction of travel.
-    const breaks = to?.x.breaks;
+    // Reading series already exclude hidden points; other series step over
+    // axis breaks in the direction of travel.
+    const breaks = this.#model.markOf(series)?.readSeries ? undefined : to?.x.breaks;
     if (breaks && !across) {
       const back = event.key === "ArrowLeft" || event.key === "PageUp" || event.key === "End";
       const { x, rows, length, sorted } = series;

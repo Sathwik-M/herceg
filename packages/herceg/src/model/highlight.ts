@@ -276,6 +276,7 @@ function part(s: Series, suffix: string, rows: Uint32Array): Series {
     length: rows.length,
     stream: undefined,
     edges: undefined,
+    whole: s.whole ?? s,
   };
 }
 

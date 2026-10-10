@@ -30,6 +30,7 @@ import {
 } from "../scene/scene.ts";
 import type { Frozen, PointSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
+import { BandShares, jitterOf, STILL } from "./dodge.ts";
 import { legendParts } from "./legend-parts.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -107,7 +108,23 @@ export interface PointOptions<S extends Schema> {
    * Faster for dense scatters; edges can differ by a fraction of a pixel.
    */
   sampling?: "none" | "pixel";
+  /**
+   * With a `series` field and a category `x` or `y`: place the series side
+   * by side in each band, as grouped bars are, instead of at its center.
+   */
+  dodge?: boolean;
+  /**
+   * With a category `x` or `y`: spread points across their band (or, with
+   * `dodge`, their series' share of it) over `width`, a fraction of it, by a
+   * hash of each row and `seed`, so points stay put as data streams.
+   */
+  jitter?: { width: number; seed?: number };
   label?: string;
+  /**
+   * Marks naming the same group share series by name: series of the same
+   * name share a color, one legend entry, and visibility.
+   */
+  legendGroup?: string;
   id?: string;
 }
 
@@ -158,6 +175,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly #ringWidth: number;
   /** How far each of SYMBOLS reaches per unit of radius. */
   readonly #reaches = SYMBOLS.map(symbolReach);
+  /** The banded axis points spread along (dodge, jitter), and their series' shares of its bands. */
+  readonly #spread: { axis: "x" | "y"; shares: BandShares } | undefined;
 
   constructor(input: PointSpec, table: Table<Schema>, view?: RowView) {
     this.spec = frozen(input);
@@ -175,6 +194,19 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       x: table.kind(spec.x) === "category",
       y: table.kind(spec.y) === "category",
     };
+    const { dodge, jitter } = spec;
+    if (dodge || jitter) {
+      const option = dodge ? "dodge" : "jitter";
+      if (this.#banded.x === this.#banded.y)
+        throw new Error(`Point ${option} needs one category position, x or y`);
+      if (dodge && spec.series === undefined)
+        throw new Error("Point dodge places series side by side: give a series field");
+      if (jitter && !(jitter.width >= 0 && jitter.width <= 1))
+        throw new RangeError(`Point jitter width must be from 0 to 1, not ${jitter.width}`);
+      if (jitter?.seed !== undefined && !Number.isInteger(jitter.seed))
+        throw new RangeError(`Point jitter seed must be a whole number, not ${jitter.seed}`);
+      this.#spread = { axis: this.#banded.x ? "x" : "y", shares: new BandShares() };
+    }
     // Points in bands are in no x order.
     const xField = this.#banded.x ? undefined : spec.x;
     this.#split = new SeriesSplitter(table, xField, [spec.y], spec.series, spec.label, view);
@@ -318,7 +350,8 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     const keyKind = keyField === undefined ? undefined : this.table.kind(keyField);
     const keyLabels = keyKind === "category" ? this.table.categories(keyField as never) : undefined;
     const keyNumbers = keyLabels ? undefined : read(keyField);
-    const placeRow = this.#banded.x || this.#banded.y ? placeBanded : place;
+    this.#spread?.shares.split(series, frame, this.spec.legendGroup, Boolean(this.spec.dodge));
+    const placeRow = this.#placer();
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       const opaque =
@@ -795,6 +828,43 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     return r > 0 ? r * this.#reaches[shape]! + this.#ringWidth / 2 : Number.NaN;
   }
 
+  /** Where a row is drawn, from where its values place it: spread across its band. */
+  displace(s: Series, row: number, frame: Frame): readonly [number, number] {
+    const spread = this.#spread;
+    if (!spread) return STILL;
+    const shift = this.#shift(s, row, frame);
+    return spread.axis === "x" ? [shift, 0] : [0, shift];
+  }
+
+  /** Rows spread within their bands: at most half a band off their places. */
+  maxDisplacement(_s: Series, frame: Frame): number {
+    return this.#spread?.axis === "x" ? Math.abs(frame.x.bandwidth ?? 0) / 2 : 0;
+  }
+
+  /** How rows are placed in pixels: through their bands' places, spread as `dodge` and `jitter` say. */
+  #placer(): Place {
+    if (!this.#banded.x && !this.#banded.y) return place;
+    const spread = this.#spread;
+    if (!spread) return placeBanded;
+    const along = spread.axis === "x" ? 0 : 1;
+    return (s, row, frame, reach) => {
+      const placed = placeBanded(s, row, frame, reach);
+      if (placed) placed[along] += this.#shift(s, row, frame);
+      return placed;
+    };
+  }
+
+  /** How far a row stands from its band's center along the banded axis, in pixels. */
+  #shift(s: Series, row: number, frame: Frame): number {
+    const spread = this.#spread!;
+    const band = spread.axis === "x" ? frame.x : frame.y;
+    const { center, width } = spread.shares.of(s, band.bandwidth ?? 0);
+    const jitter = this.spec.jitter;
+    if (!jitter) return center;
+    const unit = jitterOf(this.table.rowOffset + row, jitter.seed ?? 0);
+    return center + (unit - 0.5) * jitter.width * width;
+  }
+
   /**
    * Nearest drawn point to a pixel position, through a grid index per series.
    * The index covers every visible point (not only those kept by sampling),
@@ -808,7 +878,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     }
     let best: Hit | undefined;
     const radiusOf = this.#radiusScale();
-    const placeRow = this.#banded.x || this.#banded.y ? placeBanded : place;
+    const placeRow = this.#placer();
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
       let index = indexes.get(s.key);
@@ -941,7 +1011,9 @@ export function point<S extends Schema>(
       "colorMidpoint",
       "symbol",
       "sampling",
+      "dodge",
       "label",
+      "legendGroup",
       "id",
       "axis",
       "facet",
@@ -951,6 +1023,7 @@ export function point<S extends Schema>(
   if (options.rRange) spec.rRange = [options.rRange[0], options.rRange[1]];
   if (options.colors) spec.colors = [...options.colors];
   if (options.colorDomain) spec.colorDomain = [options.colorDomain[0], options.colorDomain[1]];
+  if (options.jitter) spec.jitter = { ...options.jitter };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new PointMark(spec, table as unknown as Table, view as unknown as RowView | undefined);
