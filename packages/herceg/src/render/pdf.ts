@@ -471,7 +471,12 @@ function paintGeometry(
         path.moveTo(c[i * 4]!, c[i * 4 + 1]!);
         path.lineTo(c[i * 4 + 2]!, c[i * 4 + 3]!);
       }
-      paint(page, path, { stroke: mark.stroke, strokeWidth: mark.strokeWidth, dash: mark.dash });
+      paint(page, path, {
+        stroke: mark.stroke,
+        strokeWidth: mark.strokeWidth,
+        strokeOpacity: mark.opacity,
+        dash: mark.dash,
+      });
       return;
     }
     case "point":
@@ -491,7 +496,7 @@ function paintGeometry(
       // Shape by shape, as SVG and canvas draw them.
       mark.shapes.forEach((shape, i) => {
         const rings = new PathBuilder();
-        tracePolygon(rings, shape);
+        tracePolygon(rings, shape, mark.transform);
         paint(page, rings, {
           fill: mark.colors[mark.colorIndex[i]!],
           fillOpacity: mark.fillOpacity,

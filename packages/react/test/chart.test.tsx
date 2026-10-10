@@ -287,8 +287,7 @@ describe("<Chart>", () => {
       </Chart>
     );
     act(() => root.render(alone(teams)));
-    const circles = [...paths()].filter((path) => / 0 1 0 /.test(path.getAttribute("d") ?? ""));
-    expect(circles).toHaveLength(3);
+    expect(host.textContent).toContain("Network of 3 nodes and 3 links");
     expect(host.textContent).toContain("Sales");
     const chart = ref.current!;
     const seen: (readonly unknown[])[] = [];
@@ -375,6 +374,37 @@ describe("<Chart>", () => {
     expect(chart.camera).toMatchObject({ azimuth: 30, elevation: 25 });
     await frame();
     expect(cameras).toEqual([10]);
+  });
+
+  it("reports drilling into a tree and moving a network's nodes", () => {
+    const sales = table({ region: ["N", "N", "S"], country: ["a", "b", "c"], v: [1, 2, 3] });
+    const ref: { current: HercegChart | null } = { current: null };
+    const drills: (string | null)[] = [];
+    act(() =>
+      root.render(
+        <Chart ref={ref} interaction={{ zoom: true }} onDrill={({ key }) => drills.push(key)}>
+          <Treemap data={sales} path={["region", "country"]} value="v" />
+        </Chart>,
+      ),
+    );
+    act(() => ref.current!.setDrillRoot(["N"]));
+    expect(drills).toEqual(['[0,"N"]']);
+    expect(ref.current!.drillRoot?.path.map(({ label }) => label)).toEqual(["N"]);
+    const talks = table({ from: ["a", "b"], to: ["b", "c"] });
+    const moves: unknown[] = [];
+    act(() =>
+      root.render(
+        <Chart
+          ref={ref}
+          interaction={{ drag: true }}
+          onItemMove={({ position }) => moves.push(position)}
+        >
+          <Graph data={talks} source="from" target="to" />
+        </Chart>,
+      ),
+    );
+    act(() => ref.current!.setItemPosition('[0,"a"]', { x: 1, y: 2 }));
+    expect(moves).toEqual([{ x: 1, y: 2 }]);
   });
 
   it("builds annotations from constants or from their own data", () => {

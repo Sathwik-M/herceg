@@ -8,7 +8,7 @@ import { line } from "../../src/marks/line.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { type ChartConfig, ChartModel, type ItemInspection } from "../../src/model/model.ts";
 import { renderToSVG } from "../../src/render/static.ts";
-import type { PathShape, Scene, ShapesGeometry, TextGeometry } from "../../src/scene/scene.ts";
+import type { PointGeometry, Scene, SegmentGeometry, TextGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ChartSpec } from "../../src/spec/spec.ts";
 import { DARK, LIGHT, surface } from "../../src/theme.ts";
@@ -57,15 +57,26 @@ const teams = (options: { value?: "messages"; size?: "followers" } = {}) =>
     ...options,
   });
 
-const shapes = (scene: Scene, key: string) =>
-  (scene.panels[0]!.marks.find((m) => m.key === key) as ShapesGeometry).shapes as PathShape[];
+/** The nodes drawn, largest first: centers, radii, fills, and rings. */
+const nodesOf = (scene: Scene) =>
+  scene.panels[0]!.marks.filter(
+    (m): m is PointGeometry => m.kind === "point" && m.key.startsWith("graph-nodes"),
+  ).flatMap((g) =>
+    Array.from({ length: g.count }, (_, i) => ({
+      x: g.coords[i * 2]!,
+      y: g.coords[i * 2 + 1]!,
+      r: g.radii ? g.radii[i]! : g.radius,
+      fill: g.colors ? g.colors.palette[g.colors.index[i]!]! : g.fill,
+      stroke: g.ring?.color,
+    })),
+  );
+/** The links drawn, a geometry per width and color: how many, and how drawn. */
+const linksOf = (scene: Scene) =>
+  scene.panels[0]!.marks.filter(
+    (m): m is SegmentGeometry => m.kind === "segments" && m.key.startsWith("graph-links"),
+  );
 const labels = (scene: Scene) =>
   scene.panels[0]!.marks.filter((m): m is TextGeometry => m.kind === "text");
-/** A circle's center and radius, from the path data `circle` writes. */
-const circleOf = ({ d }: PathShape) => {
-  const [x, y, r] = d.match(/-?[\d.]+/g)!.map(Number);
-  return { x: x! + r!, y: y!, r: r! };
-};
 
 /** Every item, in keyboard order. */
 function items(model: ChartModel): ItemInspection[] {
@@ -85,22 +96,19 @@ describe("graph", () => {
     const { scene, model } = build({ marks: [teams()] });
     expect(scene.legend.map(({ label }) => label)).toEqual(["Data", "Sales"]);
     const [data, sales] = scene.legend.map(({ color }) => color);
-    const nodes = shapes(scene, "graph-nodes");
+    const nodes = nodesOf(scene);
     // Gus has no links but is in the nodes table, so it is drawn.
     expect(nodes).toHaveLength(7);
     expect(new Set(nodes.map(({ fill }) => fill))).toEqual(new Set([data, sales]));
     for (const node of nodes) {
       expect(node.stroke).toBe(surface(LIGHT));
-      expect(node.d).toMatch(/^M[\d.]+ [\d.]+a([\d.]+) \1 0 1 0 [\d.]+ 0a\1 \1 0 1 0 -[\d.]+ 0Z$/);
+      expect(node.r).toBe(5);
     }
     // Links within a team take its color; Ana — Dee, between teams, is muted.
-    const paths = shapes(scene, "graph-links");
+    const paths = linksOf(scene);
     expect(paths.map(({ stroke }) => stroke)).toEqual([LIGHT.muted, data, sales]);
-    expect(paths.map(({ d }) => d.split("M").length - 1)).toEqual([1, 3, 3]);
-    for (const path of paths) {
-      expect(path.fill).toBe("none");
-      expect(path.opacity).toBe(0.45);
-    }
+    expect(paths.map(({ count }) => count)).toEqual([1, 3, 3]);
+    for (const path of paths) expect(path.opacity).toBe(0.45);
     expect(model.inspectItem(JSON.stringify([0, "Ana", "Dee"]))!.points[0]!.color).toBe(
       LIGHT.muted,
     );
@@ -147,19 +155,19 @@ describe("graph", () => {
     ]);
     expect(read(model)).toContain("Ana — Bo: 5");
     // Widths run from 1 px toward 6 px at the heaviest link (Dee — Eve, 6).
-    const widths = shapes(scene, "graph-links").map(({ strokeWidth }) => strokeWidth);
+    const widths = linksOf(scene).map(({ strokeWidth }) => strokeWidth);
     expect(Math.max(...widths)).toBe(6);
     expect(Math.min(...widths)).toBeGreaterThanOrEqual(1);
     // Sizes by area: Ana's circle is the largest, Gus' the smallest.
     const radius = (name: string) => {
       const { points } = model.inspectItem(JSON.stringify([0, name]))!;
-      const hit = shapes(scene, "graph-nodes")
-        .map(circleOf)
-        .find(({ x, y }) => Math.hypot(x - points[0]!.px, y - points[0]!.py) < 0.2)!;
+      const hit = nodesOf(scene).find(
+        ({ x, y }) => Math.hypot(x - points[0]!.px, y - points[0]!.py) < 0.2,
+      )!;
       return hit.r;
     };
     expect(radius("Ana")).toBe(14);
-    expect(radius("Gus")).toBe(3.3);
+    expect(radius("Gus")).toBeCloseTo(3.3, 1);
     expect(model.layoutSummary()).toBe(
       "Network of 7 nodes and 7 links in 2 groups; most connected: Ana (3 links). Strongest link: Dee — Eve, messages 6. 1 link from a node to itself is not drawn.",
     );
@@ -185,14 +193,14 @@ describe("graph", () => {
     expect(a).toBe("a: 2 links, v too large to total (size 1)");
     expect(Number.isNaN(model.inspectItem(JSON.stringify([0, "a"]))!.points[0]!.value)).toBe(true);
     // Only a's size is a size: it is drawn largest, b and c smallest, without sizes in their tooltips.
-    const radii = shapes(scene, "graph-nodes").map((shape) => circleOf(shape).r);
+    const radii = nodesOf(scene).map(({ r }) => r);
     expect(radii).toEqual([14, 3, 3]);
     expect([b, c].some((text) => text!.includes("size"))).toBe(false);
   });
 
   it("keeps nodes apart and inside the room", () => {
     const { scene } = build({ marks: [teams({ size: "followers" })] }, 300, 200);
-    const circles = shapes(scene, "graph-nodes").map(circleOf);
+    const circles = nodesOf(scene);
     const { plot } = scene.panels[0]!;
     for (const [i, a] of circles.entries()) {
       expect(a.x - a.r).toBeGreaterThanOrEqual(plot.x);
@@ -209,8 +217,8 @@ describe("graph", () => {
     const before = model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
     model.hidden.add(scene.legend[1]!.key);
     const hidden = model.scene(estimateText);
-    expect(shapes(hidden, "graph-nodes")).toHaveLength(3);
-    expect(shapes(hidden, "graph-links").map(({ d }) => d.split("M").length - 1)).toEqual([3]);
+    expect(nodesOf(hidden)).toHaveLength(3);
+    expect(linksOf(hidden).map(({ count }) => count)).toEqual([3]);
     const after = model.inspectItem(JSON.stringify([0, "Ana"]))!.points[0]!;
     expect([after.px, after.py]).toEqual([before.px, before.py]);
     expect(model.inspectItem(JSON.stringify([0, "Dee"]))).toBeUndefined();
@@ -244,7 +252,7 @@ describe("graph", () => {
     const names = placed.flatMap(({ labels }) => labels);
     expect(names.length).toBeGreaterThan(4);
     expect(names).toContain("Ana");
-    const circles = shapes(scene, "graph-nodes").map(circleOf);
+    const circles = nodesOf(scene);
     const boxes = placed.flatMap((mark) =>
       mark.labels.map((text, i) => {
         const x = mark.coords[i * 2]!;
@@ -290,9 +298,9 @@ describe("graph", () => {
   it("draws one color without groups, and muted nodes outside the nodes table", () => {
     const plain = build({ marks: [graph(links(), { source: "from", target: "to" })] });
     expect(plain.scene.legend).toEqual([]);
-    const fills = new Set(shapes(plain.scene, "graph-nodes").map(({ fill }) => fill));
+    const fills = new Set(nodesOf(plain.scene).map(({ fill }) => fill));
     expect(fills).toEqual(new Set([LIGHT.palette[0]]));
-    expect(shapes(plain.scene, "graph-links").map(({ stroke }) => stroke)).toEqual([LIGHT.muted]);
+    expect(linksOf(plain.scene).map(({ stroke }) => stroke)).toEqual([LIGHT.muted]);
     expect(plain.model.layoutSummary()).toMatch(/^Network of 6 nodes and 7 links; most connected/);
     // Fay is missing from the nodes table; a later row moves Bo to Sales; a row without a name is left out.
     const partial = table({
@@ -348,7 +356,7 @@ describe("graph", () => {
   it("says when there is nothing to show, and refuses networks too large to lay out", () => {
     const empty = table({ from: category([]), to: category([]) });
     const blank = build({ marks: [graph(empty, { source: "from", target: "to" })] });
-    expect(shapes(blank.scene, "graph-nodes")).toEqual([]);
+    expect(nodesOf(blank.scene)).toEqual([]);
     expect(blank.model.inspect(300, 200)).toBeUndefined();
     expect(blank.model.stepItem(undefined, 1)).toBeUndefined();
     expect(describeChart(blank.model)).toBe("Network with nothing to show.");
@@ -427,7 +435,7 @@ describe("graph", () => {
     expect(() => build({ marks: [network, line(series, { x: "t", y: "v" })] })).toThrow(
       "has its chart to itself",
     );
-    expect(() => build({ marks: [network], interaction: { zoom: true } })).toThrow("no x axis");
+    expect(() => build({ marks: [network], interaction: { zoom: true } })).toThrow("do not zoom");
     expect(() => graph(links(), { source: "from", target: "messages" as never })).toThrow(
       "graph target needs category",
     );

@@ -432,6 +432,16 @@ export interface FitOptions {
   maxStretch: number;
 }
 
+/** Layout units to pixels: x' = cx + sx (x - mx), y' = cy + sy (y - my). */
+export interface LayoutFit {
+  cx: number;
+  cy: number;
+  mx: number;
+  my: number;
+  sx: number;
+  sy: number;
+}
+
 /**
  * Scales and centers layout positions into a room: as large as fits inside
  * the inset, up to `maxScale`, stretching one axis by up to `maxStretch`
@@ -443,6 +453,22 @@ export function fitLayout(
   room: { x: number; y: number; width: number; height: number },
   options: FitOptions,
 ): Float64Array {
+  const { cx, cy, mx, my, sx, sy } = layoutFit(positions, room, options);
+  const n = positions.length / 2;
+  const fitted = new Float64Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    fitted[i * 2] = cx + (positions[i * 2]! - mx) * sx;
+    fitted[i * 2 + 1] = cy + (positions[i * 2 + 1]! - my) * sy;
+  }
+  return fitted;
+}
+
+/** How `fitLayout` places layout positions in a room. */
+export function layoutFit(
+  positions: Float64Array,
+  room: { x: number; y: number; width: number; height: number },
+  options: FitOptions,
+): LayoutFit {
   const n = positions.length / 2;
   let x0 = Number.POSITIVE_INFINITY;
   let y0 = Number.POSITIVE_INFINITY;
@@ -464,16 +490,14 @@ export function fitLayout(
   const base = Math.min(fitX, fitY, options.maxScale);
   const scaleX = Math.min(fitX, base * options.maxStretch, options.maxScale);
   const scaleY = Math.min(fitY, base * options.maxStretch, options.maxScale);
-  const cx = room.x + room.width / 2;
-  const cy = room.y + room.height / 2;
-  const mx = (x0 + x1) / 2;
-  const my = (y0 + y1) / 2;
-  const fitted = new Float64Array(n * 2);
-  for (let i = 0; i < n; i++) {
-    fitted[i * 2] = cx + (positions[i * 2]! - mx) * (Number.isFinite(scaleX) ? scaleX : 0);
-    fitted[i * 2 + 1] = cy + (positions[i * 2 + 1]! - my) * (Number.isFinite(scaleY) ? scaleY : 0);
-  }
-  return fitted;
+  return {
+    cx: room.x + room.width / 2,
+    cy: room.y + room.height / 2,
+    mx: n > 0 ? (x0 + x1) / 2 : 0,
+    my: n > 0 ? (y0 + y1) / 2 : 0,
+    sx: Number.isFinite(scaleX) ? scaleX : 0,
+    sy: Number.isFinite(scaleY) ? scaleY : 0,
+  };
 }
 
 /**

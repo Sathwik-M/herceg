@@ -23,6 +23,12 @@ import {
 import type { SplitRows } from "./split.ts";
 
 /**
+ * How opaque rows a chart's selection leaves out are drawn when it
+ * highlights the rows it holds, as a fraction of their own opacity.
+ */
+export const DIM = 0.25;
+
+/**
  * Identifies a mark within a chart: its explicit `id`, or its index. Series
  * keys combine it with the series' source as JSON, so no pair of mark and
  * series names can produce the same key.

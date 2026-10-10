@@ -3,7 +3,9 @@
 // as one, which for maps is a `GeoMap` that settles the projection, fits
 // what every layer draws into the room, and lets each layer draw with the
 // same transform. Items are read layer by layer; the pointer finds the
-// topmost item, trying layers from the last drawn.
+// topmost item, trying layers from the last drawn. A chart's viewport, in
+// the plane's units, zooms and pans the map: wheel, drags, and keys move it
+// through map-controls.ts.
 
 import type { Table } from "../data/table.ts";
 import {
@@ -17,11 +19,22 @@ import {
   type Transform,
   worldBox,
 } from "../geo/project.ts";
+import { zoomedTransform } from "../geo/shapes.ts";
 import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry, LegendPart } from "../model/legend.ts";
+import type { ChartConfig } from "../model/model.ts";
+import { LinearScale } from "../scale/scale.ts";
+import type { Rect } from "../scene/scene.ts";
 import type { ProjectionName, ProjectionSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import type {
+  LayoutControls,
+  LayoutFrame,
+  LayoutItem,
+  LayoutMark,
+  LayoutResult,
+  Viewport,
+} from "./layout-mark.ts";
 import { legendParts } from "./legend-parts.ts";
 import type { ColorRamp, GlyphKey, MARK } from "./mark.ts";
 
@@ -31,8 +44,21 @@ const POINT_SPAN = (2 * Math.PI) / 180;
 /** What a layer draws with: the chart's frame, its own id, and the map's projection and fit. */
 export interface MapFrame extends LayoutFrame {
   plan: ProjectionPlan;
+  /** Plane to pixels, as the map is shown. */
   transform: Transform;
+  /**
+   * For a map zoomed or panned, what its shapes are projected with (see
+   * `zoomedTransform`), to be drawn moved and scaled to `transform`.
+   */
+  projected?: Transform | undefined;
 }
+
+/** Wheel, drags, keys, and buttons pan and zoom maps; lassos select their rows. */
+const PAN_ZOOM: LayoutControls = {
+  kind: "map",
+  hint: "Shift with the arrow keys pans it, plus and minus zoom, and 0 shows the whole map.",
+};
+const LASSO: LayoutControls = { kind: "map", hint: "" };
 
 /** One layer of a map. */
 export interface GeoLayer extends LayoutMark {
@@ -103,6 +129,15 @@ export class GeoMap implements LayoutMark {
     return this.layers[index]!.spec.id ?? index;
   }
 
+  /** Charts pan and zoom maps with `interaction.zoom` (true or "xy"), and lasso them with a "lasso" brush. */
+  readonly interactions = ["plane", "lasso"] as const;
+  readonly selects = true;
+
+  controls(config: ChartConfig): LayoutControls | undefined {
+    const { zoom, brush } = config.interaction ?? {};
+    return zoom ? PAN_ZOOM : brush ? LASSO : undefined;
+  }
+
   legend(_id: string | number, color: (key: string) => string, theme: Theme): LegendEntry[] {
     return this.layers.flatMap((layer, i) => layer.legend(this.#id(i), color, theme));
   }
@@ -148,11 +183,32 @@ export class GeoMap implements LayoutMark {
     }
     let reach = 0;
     for (const layer of this.layers) reach = Math.max(reach, layer.reach);
-    const transform = fitTransform(box, frame.bounds, reach + 1, POINT_SPAN);
+    const { bounds } = frame;
+    const fitted = fitTransform(box, bounds, reach + 1, POINT_SPAN);
+    const transform = viewed(fitted, bounds, frame.viewport);
+    // The fitted map projects exactly; a zoomed one at a level near its scale.
+    const projected = transform === fitted ? undefined : zoomedTransform(transform, bounds);
     const results = this.layers.map((layer, i) =>
-      layer.place({ ...frame, id: this.#id(i), plan, transform }),
+      layer.place({ ...frame, id: this.#id(i), plan, transform, projected }),
     );
-    if (results.length === 1) return results[0]!;
+    /** The plane's ranges across the room, drawn with `t`. */
+    const across = (t: Transform) =>
+      ({
+        x: [(bounds.x - t.x0) / t.k, (bounds.x + bounds.width - t.x0) / t.k],
+        y: [(t.y0 - bounds.y - bounds.height) / t.k, (t.y0 - bounds.y) / t.k],
+      }) as const;
+    const shown = across(transform);
+    const plane = {
+      x: new LinearScale(shown.x, [bounds.x, bounds.x + bounds.width]),
+      y: new LinearScale(shown.y, [bounds.y + bounds.height, bounds.y]),
+      zoom: transform.k / fitted.k,
+      // What the controls change: the view earlier commands asked for, though not drawn yet.
+      view(viewport: Viewport | undefined) {
+        const t = viewed(fitted, bounds, viewport);
+        return { ...across(t), zoom: t.k / fitted.k };
+      },
+    };
+    if (results.length === 1) return { ...results[0]!, plane };
     // Item positions: each layer's start, then the end of the last.
     const starts = [0];
     for (const result of results) starts.push(starts[starts.length - 1]! + result.count);
@@ -183,6 +239,44 @@ export class GeoMap implements LayoutMark {
         return -1;
       },
       summary: () => results.map((result) => result.summary()).join(" "),
+      rowsOf(key, table) {
+        for (const result of results) {
+          if (result.indexOf(key) >= 0) return result.rowsOf?.(key, table);
+        }
+        return undefined;
+      },
+      lassoed(polygon, table) {
+        // Layers of one table select together.
+        let rows: number[] | undefined;
+        for (const result of results) {
+          const found = result.lassoed?.(polygon, table);
+          if (found) rows = rows ? rows.concat(found) : found;
+        }
+        return rows;
+      },
+      plane,
     };
   }
+}
+
+/**
+ * The transform showing `view` (plane ranges) in `room`: the scale at which
+ * the ranges given fit, uniform, centered on them, and on the fitted map's
+ * center along an axis without a range; the fitted transform without either.
+ */
+function viewed(fitted: Transform, room: Rect, viewport: Viewport | undefined): Transform {
+  const { x, y } = viewport ?? {};
+  if (!x && !y) return fitted;
+  const cx = room.x + room.width / 2;
+  const cy = room.y + room.height / 2;
+  const k = Math.min(
+    x ? room.width / (x[1] - x[0]) : Number.POSITIVE_INFINITY,
+    y ? room.height / (y[1] - y[0]) : Number.POSITIVE_INFINITY,
+  );
+  if (!(k > 0 && Number.isFinite(k))) return fitted;
+  const centerX = x ? (x[0] + x[1]) / 2 : (cx - fitted.x0) / fitted.k;
+  const centerY = y ? (y[0] + y[1]) / 2 : (fitted.y0 - cy) / fitted.k;
+  const x0 = cx - k * centerX;
+  const y0 = cy + k * centerY;
+  return { k, x0, y0, key: `${k} ${x0} ${y0}` };
 }

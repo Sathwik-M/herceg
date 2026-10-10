@@ -2,12 +2,15 @@
 // Shift with the arrow keys turns it and plus and minus zoom, double-click
 // goes back to the configured camera, and buttons do all of it for people
 // who cannot drag. A chart loads this module the first time it draws a 3D
-// mark, so other charts never download it; it listens on the chart's root
-// itself, its keys ahead of the chart's own.
+// mark (see controls.ts), so other charts never download it; it listens on
+// the chart's root itself, its keys ahead of the chart's own.
 
+import type { ChartConfig } from "../model/model.ts";
+import type { Scene } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
-import type { Theme } from "../theme.ts";
 import { type Camera, MAX_ZOOM, MIN_ZOOM } from "../three/camera.ts";
+import type { Controls as ChartControls, ControlsHost } from "./controls.ts";
+import { RESET_GLYPH, Toolbar } from "./toolbar.ts";
 
 /**
  * Pixels a press moves before it turns the chart, as before it brushes or
@@ -22,16 +25,7 @@ const STEP = 15;
 /** Magnification per key press or button click. */
 const ZOOM = 1.25;
 
-/** The chart an orbit turns. */
-export interface OrbitHost {
-  /** The chart's camera now; undefined once it is no 3D chart. */
-  camera(): Camera | undefined;
-  /** Moves the camera (null: back to the configured one); `announce` reads the new view aloud. */
-  turn(camera: CameraSpec | null, announce: boolean): void;
-  /** Whether an event's target is the chart's drawing, not its legend. */
-  onPlot(target: EventTarget | null): boolean;
-}
-
+/** The buttons, each a change of the camera from the current one; null resets it. */
 const BUTTONS: readonly {
   label: string;
   glyph: string;
@@ -43,7 +37,7 @@ const BUTTONS: readonly {
   { label: "Tilt down", glyph: "M4 6l4 5 4-5", act: (c) => ({ elevation: tilt(c, -STEP) }) },
   { label: "Zoom in", glyph: "M8 4v8M4 8h8", act: (c) => ({ zoom: magnify(c, ZOOM) }) },
   { label: "Zoom out", glyph: "M4 8h8", act: (c) => ({ zoom: magnify(c, 1 / ZOOM) }) },
-  { label: "Reset view", glyph: "M4.5 9A3.5 3.5 0 1 0 6 5.2M4 3v3h3", act: () => null },
+  { label: "Reset view", glyph: RESET_GLYPH, act: () => null },
 ];
 
 /** An elevation `by` degrees higher, within its range. */
@@ -56,87 +50,79 @@ function magnify(camera: Camera, by: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, camera.zoom * by));
 }
 
-export class Orbit {
-  /** The buttons, shown while the pointer is over the chart or focus is in it. */
-  readonly controls: HTMLDivElement;
+export class Controls implements ChartControls {
   readonly #root: HTMLElement;
-  readonly #host: OrbitHost;
-  readonly #buttons: HTMLButtonElement[];
+  readonly #host: ControlsHost;
+  readonly #toolbar: Toolbar;
   readonly #stop: (() => void)[] = [];
   /** A press that may become a drag: its pointer, where it started, and the camera then. */
   #press: { pointer: number; x: number; y: number; from: Camera; moved: boolean } | null = null;
   #rotates = true;
   #zooms = false;
-  #theme = "";
 
-  constructor(root: HTMLElement, host: OrbitHost) {
+  constructor(host: ControlsHost) {
+    const root = host.chart.root;
     this.#root = root;
     this.#host = host;
-    const document = root.ownerDocument;
-    this.controls = document.createElement("div");
-    this.controls.setAttribute("role", "toolbar");
-    this.controls.setAttribute("aria-label", "View");
-    this.#buttons = BUTTONS.map(({ label, glyph, act }) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.title = label;
-      button.setAttribute("aria-label", label);
-      button.innerHTML = `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" style="display:block"><path d="${glyph}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-      button.addEventListener("click", () => {
-        const camera = host.camera();
-        if (camera) host.turn(act(camera), true);
-      });
-      return button;
-    });
-    this.controls.append(...this.#buttons);
-    this.#show(false);
-    root.append(this.controls);
+    this.#toolbar = new Toolbar(
+      root,
+      "View",
+      BUTTONS.map(({ label, glyph, act }) => ({
+        label,
+        glyph,
+        act: () => {
+          const camera = host.chart.camera;
+          if (camera) this.#turn(act(camera), true);
+        },
+      })),
+    );
     this.#listen();
   }
 
   /** Whether a drag is turning the chart, which shows no tooltip meanwhile. */
-  get turning(): boolean {
+  get busy(): boolean {
     return this.#press?.moved ?? false;
   }
 
   /** Follows the chart's options: whether dragging turns it and the wheel zooms it. */
-  update(rotate: boolean, zoom: boolean): void {
+  update(config: ChartConfig): void {
+    const rotate = config.interaction?.rotate !== false;
     this.#rotates = rotate;
-    this.#zooms = zoom;
+    this.#zooms = !!config.interaction?.zoom;
     // Touches turn the chart sideways and leave vertical drags to scroll the page.
     this.#root.style.touchAction = rotate ? "pan-y" : "";
   }
 
-  /** Styles the buttons for a theme, when it changed. */
-  style(theme: Theme): void {
-    const key = `${theme.text}|${theme.tooltipBackground}|${theme.tooltipBorder}`;
-    if (key === this.#theme) return;
-    this.#theme = key;
-    for (const button of this.#buttons)
-      button.style.cssText = `display:block;width:24px;height:24px;padding:3px;border:1px solid ${theme.tooltipBorder};border-radius:4px;background:${theme.tooltipBackground};color:${theme.text};cursor:pointer`;
-  }
-
-  /** A sentence saying where `camera` looks from, for the live region. */
-  describe(camera: Camera): string {
-    const zoom = camera.zoom === 1 ? "" : `, zoom ${Math.round(camera.zoom * 100) / 100}`;
-    return `Seen from azimuth ${Math.round(camera.azimuth)}°, elevation ${Math.round(camera.elevation)}°${zoom}.`;
+  draw({ theme }: Scene): void {
+    this.#toolbar.style(theme);
   }
 
   /** Stops listening and removes the buttons, for a chart no longer 3D or destroyed. */
   dispose(): void {
     for (const stop of this.#stop.splice(0)) stop();
-    this.controls.remove();
+    this.#toolbar.dispose();
     this.#press = null;
   }
 
   /** Whether an event's target is the chart's drawing, not its legend or these buttons. */
   #onPlot(target: EventTarget | null): boolean {
-    return !this.controls.contains(target as Node) && this.#host.onPlot(target);
+    return !this.#toolbar.contains(target) && this.#host.onPlot(target);
   }
 
-  /** Shows or hides the buttons; hidden ones stay focusable and show when focused. */
-  #show(visible: boolean): void {
-    this.controls.style.cssText = `position:absolute;right:6px;bottom:6px;display:flex;gap:2px;transition:opacity 120ms;opacity:${visible ? 1 : 0}`;
+  /** Moves the camera (null: back to the configured one); `announce` reads the new view aloud. */
+  #turn(camera: CameraSpec | null, announce: boolean): void {
+    const chart = this.#host.chart;
+    const before = chart.camera;
+    chart.setCamera(camera);
+    const after = chart.camera;
+    if (announce && after && JSON.stringify(after) !== JSON.stringify(before))
+      this.#host.announce(this.#describe(after));
+  }
+
+  /** A sentence saying where `camera` looks from, for the live region. */
+  #describe(camera: Camera): string {
+    const zoom = camera.zoom === 1 ? "" : `, zoom ${Math.round(camera.zoom * 100) / 100}`;
+    return `Seen from azimuth ${Math.round(camera.azimuth)}°, elevation ${Math.round(camera.elevation)}°${zoom}.`;
   }
 
   #listen(): void {
@@ -149,16 +135,8 @@ export class Orbit {
       root.addEventListener(type, handler, options);
       this.#stop.push(() => root.removeEventListener(type, handler, options));
     };
-    on("pointerenter", () => this.#show(true));
-    on("focusin", () => this.#show(true));
-    const hide = () => {
-      if (!root.matches(":hover") && !root.contains(root.ownerDocument.activeElement))
-        this.#show(false);
-    };
-    on("pointerleave", () => setTimeout(hide));
-    on("focusout", () => setTimeout(hide));
     on("pointerdown", (event) => {
-      const from = this.#host.camera();
+      const from = this.#host.chart.camera;
       // A second finger neither turns nor takes over the first one's drag.
       if (this.#press || event.button !== 0 || !from || !this.#rotates) return;
       if (!this.#onPlot(event.target)) return;
@@ -178,7 +156,7 @@ export class Orbit {
       const dy = event.clientY - press.y;
       press.moved ||= Math.hypot(dx, dy) >= DRAG_THRESHOLD;
       if (!press.moved) return;
-      this.#host.turn(
+      this.#turn(
         { azimuth: press.from.azimuth - dx * DRAGGED, elevation: tilt(press.from, dy * DRAGGED) },
         false,
       );
@@ -192,15 +170,15 @@ export class Orbit {
     on(
       "wheel",
       (event) => {
-        const camera = this.#host.camera();
+        const camera = this.#host.chart.camera;
         if (!camera || !this.#zooms) return;
         event.preventDefault();
-        this.#host.turn({ zoom: magnify(camera, Math.exp(-event.deltaY * 0.002)) }, false);
+        this.#turn({ zoom: magnify(camera, Math.exp(-event.deltaY * 0.002)) }, false);
       },
       { passive: false },
     );
     on("dblclick", (event) => {
-      if (this.#onPlot(event.target)) this.#host.turn(null, false);
+      if (this.#onPlot(event.target)) this.#turn(null, false);
     });
     // Ahead of the chart's keys, which step through points with the arrows.
     on("keydown", (event) => this.#key(event), { capture: true });
@@ -208,7 +186,7 @@ export class Orbit {
 
   /** Shift with an arrow key turns the camera, plus and minus zoom. */
   #key(event: KeyboardEvent): void {
-    const camera = this.#host.camera();
+    const camera = this.#host.chart.camera;
     if (!camera || event.target !== this.#root) return;
     const shift = event.shiftKey;
     let next: CameraSpec | undefined;
@@ -221,6 +199,6 @@ export class Orbit {
     if (!next) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    this.#host.turn(next, true);
+    this.#turn(next, true);
   }
 }

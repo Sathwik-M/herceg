@@ -614,6 +614,8 @@ const MARKS: MarkChecks = {
       source: field,
       target: field,
       value: field,
+      directed: boolean,
+      linkLabel: field,
       nodes: string,
       node: field,
       group: field,
@@ -1275,6 +1277,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           brush: oneOf("x", "y", "xy", "lasso"),
           sync: string,
           rotate: boolean,
+          drag: boolean,
         } satisfies ChecksOf<InteractionSpec>);
       },
       navigator: (v, path) => {
@@ -1396,6 +1399,15 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
         if (item[`${axis}Step`] !== undefined && item[`${axis}Banded`] === true)
           fail(`marks[${i}].${axis}Step`, `no ${axis}Step with ${axis}Banded`, item[`${axis}Step`]);
     }
+    // An older reader would draw a directed network without arrowheads, and links without names.
+    if (item.type === "graph")
+      for (const name of ["directed", "linkLabel"] as const)
+        if (item[name] !== undefined && item[name] !== false && declared < 11)
+          fail(
+            `marks[${i}].${name}`,
+            'a spec with "version": 11 or later, so that older readers refuse it',
+            item[name],
+          );
     if (item.type !== "boxplot" || item.median !== undefined) continue;
     if (
       (item.notch === true ||
@@ -1437,6 +1449,13 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           value,
         );
   }
+  // Dragging moves a network's nodes; a chart of other marks has none.
+  const interaction = chart.interaction as { drag?: unknown } | undefined;
+  if (
+    interaction?.drag === true &&
+    !(chart.marks as Record<string, unknown>[]).some(({ type }) => type === "graph")
+  )
+    fail("spec.interaction.drag", "a spec with a graph mark, whose nodes dragging moves", true);
   // A projection places maps' marks; a chart of other marks has nothing to project.
   if (
     chart.projection !== undefined &&

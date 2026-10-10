@@ -19,7 +19,7 @@ const spec = (): ChartSpec => ({
 
 describe("dendrogram spec", () => {
   it("loads at the current version without a version bump and preserves its options", () => {
-    expect(SPEC_VERSION).toBe(10);
+    expect(SPEC_VERSION).toBe(11);
     const input = spec();
     const styled = {
       ...mark,

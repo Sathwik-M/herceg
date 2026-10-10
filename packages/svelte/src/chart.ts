@@ -32,6 +32,10 @@ export interface ChartProps extends Omit<ChartUpdate, "marks"> {
   onrowselection?: ChartListener<"rowSelection"> | undefined;
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   oncamera?: ChartListener<"camera"> | undefined;
+  /** A treemap or sunburst was drilled into a node or back out: its key (null for the whole tree) and path. */
+  ondrill?: ChartListener<"drill"> | undefined;
+  /** A network's node was moved (dragged, keys, `setItemPosition`) or put back (null). */
+  onitemmove?: ChartListener<"itemMove"> | undefined;
   /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
   onvisibility?: ChartListener<"visibility"> | undefined;
   /** The chart drew a frame of its data: its panels and pixel mapping describe it, for overlays. */

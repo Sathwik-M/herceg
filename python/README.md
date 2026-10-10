@@ -73,6 +73,25 @@ with WebGL2 and depth-tested, up to 1,048,576 grid points a surface; static
 SVG, PNG, and PDF draw on the CPU, back to front, at most 250,000, and show
 the starting camera.
 
+Maps, trees, and networks take the options axes do. `zoom=True` pans and
+zooms a map (the wheel, dragging, Shift with the arrow keys, plus and minus,
+0 to show it all, and a toolbar), whose `viewport` is in its projection's
+plane, and `brush="lasso"` lassos its regions and points; `zoom=True` on a
+treemap or sunburst drills into the node clicked (Enter on the node read,
+Backspace and the breadcrumbs above it to go back); `drag=True` lets a
+network's nodes be dragged, staying where they are dropped (Shift with the
+arrow keys moves the node read). `row_selection` selects a region's or
+point's row, a tree node's rows, or a network node's or link's rows by
+click (lassos on maps). `.graph(..., directed=True)` draws links from
+source to target with arrowheads, and `link_label="kind"` writes a category
+along the links with room; both need spec version 11.
+
+```python
+hg.Chart(countries, zoom=True, brush="lasso", row_selection=hg.SelectionBinding("picked")).geoshape(color="gdp")
+hg.Chart(sales, zoom=True).treemap(path=["region", "country"], value="revenue")
+hg.Chart(talks, drag=True).graph("from", "to", directed=True, link_label="kind")
+```
+
 Violins accept `split=True` and `inner="box" | "quartiles" | "none"` in both
 `hg.violin(...)` and `Chart.violin(...)`. The default box is unchanged;
 `"quartiles"` draws dashed Q1/Q3 lines and a solid median, and `"none"`

@@ -519,6 +519,7 @@ class _SharedOptions(TypedDict, total=False):
     camera: Camera | dict[str, Any] | None
     box_aspect: tuple[float, float, float] | None
     rotate: bool | None
+    drag: bool | None
     navigator: bool | Navigator | dict[str, Any] | None
 
 
@@ -614,6 +615,7 @@ class Chart:
         camera: Camera | dict[str, Any] | None = None,
         box_aspect: tuple[float, float, float] | None = None,
         rotate: bool | None = True,
+        drag: bool | None = None,
         navigator: bool | Navigator | dict[str, Any] | None = None,
         row_selection: SelectionBinding | Sequence[SelectionBinding] | None = None,
     ) -> None:
@@ -734,6 +736,7 @@ class Chart:
             "camera": camera,
             "box_aspect": box_aspect,
             "rotate": rotate,
+            "drag": drag,
             "navigator": navigator,
         }
         self._options = spec_options(self._settings)
@@ -1949,25 +1952,32 @@ class Chart:
         size: str | None = None,
         data: Any = None,
         labels: bool | None = None,
+        directed: bool | None = None,
+        link_label: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A network: a row per link between the nodes named in ``source`` and
         ``target``, placed by a force simulation, links as wide as the sum of
         ``value`` over their rows when given.
 
-        Links have no direction: rows either way between two nodes are one
-        link. Rows without a positive value and links from a node to itself
-        are left out. ``nodes`` is a second data source with a row per node,
-        named in its ``node`` column, which adds nodes without links and
-        colors nodes by ``group`` (with a legend) or sizes them by ``size``;
-        nodes only links name have no group. A network draws at most 5,000
-        nodes and 20,000 links and has its chart to itself.
+        Links have no direction (rows either way between two nodes are one
+        link) unless ``directed``, which draws them from source to target
+        with arrowheads, a pair's links each way bowed apart. Rows without a
+        positive value and links from a node to itself are left out.
+        ``link_label`` names a category column written along the links with
+        room (none where a link's rows name it differently). ``nodes`` is a
+        second data source with a row per node, named in its ``node`` column,
+        which adds nodes without links and colors nodes by ``group`` (with a
+        legend) or sizes them by ``size``; nodes only links name have no
+        group. A network draws at most 5,000 nodes and 20,000 links and has
+        its chart to itself; ``Chart(drag=True)`` lets its nodes be dragged.
         """
         self._layout_place("graph")
         table = self._mark_table(data)
         self._require(table, source, ("category",), "graph source")
         self._require(table, target, ("category",), "graph target")
         self._require(table, value, ("number",), "graph value")
+        self._require(table, link_label, ("category",), "graph link_label")
         node_table = None
         if nodes is not None:
             if node is None:
@@ -1979,7 +1989,7 @@ class Chart:
         elif node is not None or group is not None or size is not None:
             raise ValueError("graph node, group, and size are columns of nodes, which is missing")
         nodes_count, links_count = self._network_size(
-            table, source, target, value, node_table, node
+            table, source, target, value, node_table, node, directed=directed is True
         )
         if nodes_count > MAX_NODES or links_count > MAX_LINKS:
             raise ValueError(
@@ -1996,6 +2006,8 @@ class Chart:
                 "group": group,
                 "size": size,
                 "labels": labels,
+                "directed": directed,
+                "linkLabel": link_label,
                 "id": id,
             },
             table,
@@ -2012,11 +2024,13 @@ class Chart:
         value: str | None,
         node_table: int | None,
         node: str | None,
+        *,
+        directed: bool = False,
     ) -> tuple[int, int]:
         """How many nodes and links a network draws, counted as the browser
         counts them: the names in the nodes table and in rows the links keep,
-        and one link per pair of different names, either way round, whose
-        values sum to a finite total."""
+        and one link per pair of different names (either way round, unless
+        ``directed``) whose values sum to a finite total."""
         links = self._tables[table][1]
         ends = [links.column(source), links.column(target)]
         keep = (ends[0].values >= 0) & (ends[1].values >= 0)
@@ -2029,8 +2043,9 @@ class Chart:
             for column in ends
         )
         names, ids = np.unique(np.concatenate([a, b]), return_inverse=True)
-        low = np.minimum(ids[: len(a)], ids[len(a) :])
-        high = np.maximum(ids[: len(a)], ids[len(a) :])
+        starts, ends_ = ids[: len(a)], ids[len(a) :]
+        low = starts if directed else np.minimum(starts, ends_)
+        high = ends_ if directed else np.maximum(starts, ends_)
         distinct = low != high
         pairs, rows = np.unique((low * len(names) + high)[distinct], return_inverse=True)
         links_count = len(pairs)
@@ -2051,16 +2066,33 @@ class Chart:
         """Layout marks (pies, treemaps, sunbursts, gauges, funnels, radars, Sankey
         diagrams, graphs) have no axes to zoom: they have their chart to
         themselves, or a facet panel each, or a panel of their own (see ``_add``).
-        Maps, networks, and 3D charts have no facets or panels yet."""
-        if (self._facets or self._panels) and kind not in _PANEL_LAYOUT_MARKS:
+        Networks have no facets or panels yet. A treemap or sunburst of a chart
+        of its own drills with ``zoom=True``, a network's nodes move with
+        ``drag=True``, and either selects rows."""
+        panelled = bool(self._facets or self._panels)
+        if panelled and kind not in _PANEL_LAYOUT_MARKS:
             raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
-        if self._row_selection:
+        if self._row_selection and (panelled or kind not in _SELECTING_LAYOUT_MARKS):
             raise ValueError(
                 f"charts of a {kind} cannot select rows yet: row_selection needs marks "
-                "along x and y axes"
+                "along x and y axes, or a map, treemap, sunburst, or network of their own"
             )
+        if self._settings.get("drag") and kind != "graph":
+            raise ValueError(
+                f"charts of a {kind} have nothing to drag: drag moves a network's nodes"
+            )
+        settings = self._settings
+        drills = kind in ("treemap", "sunburst") and not panelled
+        if drills and settings.get("zoom") not in (True, False, None):
+            raise ValueError(f"charts of a {kind} drill with zoom=True, not an axis")
         # A chart with panels may zoom those with axes; `to_spec` checks it has some.
-        if not self._panels and self._uses_x():
+        uses_x = (
+            self._uses_x()
+            if not drills
+            else any(settings.get(name) for name in ("brush", "sync"))
+            or (self._options.get("x") or {}).get("seams") not in (None, False)
+        )
+        if not self._panels and uses_x:
             raise ValueError(
                 f"charts of a {kind} have no x axis to zoom, brush, sync, or mark seams on"
             )
@@ -2246,16 +2278,24 @@ class Chart:
         )
 
     def _map_alone(self, kind: str) -> None:
-        """Maps have no axes to facet, zoom, brush, or sync."""
+        """Maps have no facets or panels; they zoom and pan both ways
+        (``zoom=True`` or ``"xy"``), take a ``"lasso"`` brush, select rows, and
+        sync nothing."""
         if self._facets or self._panels:
             raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
-        if self._row_selection:
+        settings = self._settings
+        if settings.get("zoom") in ("x", "y"):
             raise ValueError(
-                f"charts of a {kind} cannot select rows yet: row_selection needs marks "
-                "along x and y axes"
+                f'maps zoom both ways: give zoom=True or "xy", not {settings["zoom"]!r}'
             )
-        if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
-            raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
+        if settings.get("brush") not in (None, "lasso"):
+            raise ValueError(f'maps take brush="lasso", not {settings["brush"]!r}')
+        if settings.get("sync"):
+            raise ValueError(f"charts of a {kind} have no x axis to sync")
+        if settings.get("drag"):
+            raise ValueError(
+                f"charts of a {kind} have nothing to drag: drag moves a network's nodes"
+            )
 
     def point3d(
         self,
@@ -2812,6 +2852,10 @@ class Chart:
             raise ValueError(
                 f"charts of a {layouts[0]} have no x axis to zoom, brush, sync, or mark seams on"
             )
+        if self._settings.get("drag") and not any(
+            mark["type"] == "graph" for mark, _ in self._marks
+        ):
+            raise ValueError("drag moves a network's nodes: it needs a graph mark")
         if self._settings.get("projection") is not None and not any(
             mark["type"] in _MAP_MARKS for mark, _ in self._marks
         ):
@@ -3298,6 +3342,8 @@ _LAYOUT_MARKS = (
 
 #: Layout marks that draw in each facet panel or in a panel of their own.
 _PANEL_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey")
+#: Layout marks whose charts select rows, of a chart of their own (maps too).
+_SELECTING_LAYOUT_MARKS = ("treemap", "sunburst", "graph")
 
 #: The layers of maps, which share a chart and its projection.
 _MAP_MARKS = ("geoshape", "geopoint")
@@ -3320,6 +3366,7 @@ OPTIONS = (
     *("zoom", "brush", "sync", "animation", "resolve_x", "resolve_y", "resolve_y_right"),
     *("renderer", "theme"),
     *("locale", "time_zone", "projection", "z", "camera", "box_aspect", "rotate", "navigator"),
+    "drag",
 )
 
 
@@ -3365,6 +3412,9 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
     # Dragging turns 3D charts unless asked not to.
     if settings.get("rotate") is False:
         interaction["rotate"] = False
+    # Dragging moves a network's nodes when asked to.
+    if settings.get("drag"):
+        interaction["drag"] = True
     options = {
         "title": settings["title"],
         "description": settings["description"],
@@ -3458,6 +3508,11 @@ def spec_version(options: dict[str, Any], marks: list[dict[str, Any]]) -> int:
             needs.append(7)
         if any(mark.get(name) not in (None, False) for name in ("legendGroup", "dodge", "jitter")):
             needs.append(10)
+        # An older reader would draw a directed network without arrowheads, and links without names.
+        if mark["type"] == "graph" and (
+            mark.get("directed") is True or mark.get("linkLabel") is not None
+        ):
+            needs.append(11)
         if mark["type"] == "histogram" and (
             mark.get("y") is not None
             or isinstance(mark.get("bins"), list)
@@ -4635,6 +4690,8 @@ def graph(
     group: str | None = None,
     size: str | None = None,
     labels: bool | None = None,
+    directed: bool | None = None,
+    link_label: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -4648,6 +4705,8 @@ def graph(
         group=group,
         size=size,
         labels=labels,
+        directed=directed,
+        link_label=link_label,
         id=id,
     )
 

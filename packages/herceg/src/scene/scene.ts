@@ -223,6 +223,8 @@ export interface SegmentGeometry extends Geometry {
   strokeWidth: number;
   /** Dash pattern in CSS pixels; absent or empty for solid segments. */
   dash?: readonly number[];
+  /** From 0 to 1; 1 when absent. */
+  opacity?: number | undefined;
   coords: Float32Array;
   count: number;
 }
@@ -473,6 +475,19 @@ export interface PolygonGeometry extends Geometry {
   stroke: string;
   /** 0 for no border. */
   strokeWidth: number;
+  /**
+   * Where the shapes' points are drawn when not where they are (a map
+   * zoomed or panned, which reuses shapes projected at a nearby scale):
+   * x + k * a point's x, y + k * its y. Borders keep their width.
+   */
+  transform?: ShapeTransform | undefined;
+}
+
+/** A uniform scale and a move: a point (px, py) lands at (x + k px, y + k py). */
+export interface ShapeTransform {
+  k: number;
+  x: number;
+  y: number;
 }
 
 /** How faces of one style are drawn. */

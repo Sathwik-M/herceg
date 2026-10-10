@@ -12,17 +12,15 @@ function segmentPath(mark: SegmentGeometry): string {
 }
 
 function segmentElements(mark: SegmentGeometry): SvgElement[] {
-  return [
-    {
-      tag: "path",
-      attributes: {
-        d: segmentPath(mark),
-        fill: "none",
-        stroke: mark.stroke,
-        "stroke-width": String(mark.strokeWidth),
-      },
-    },
-  ];
+  const attributes: Record<string, string> = {
+    d: segmentPath(mark),
+    fill: "none",
+    stroke: mark.stroke,
+    "stroke-width": String(mark.strokeWidth),
+  };
+  if (mark.opacity !== undefined && mark.opacity < 1)
+    attributes["stroke-opacity"] = String(mark.opacity);
+  return [{ tag: "path", attributes }];
 }
 
 /** All segments of a series as one path, with butt ends so caps meet stems exactly. */
@@ -43,6 +41,7 @@ export const segmentDrawing: Drawing<SegmentGeometry> = {
     }
     context.strokeStyle = mark.stroke;
     context.lineWidth = mark.strokeWidth;
+    context.globalAlpha *= mark.opacity ?? 1;
     context.stroke();
     context.restore();
   },

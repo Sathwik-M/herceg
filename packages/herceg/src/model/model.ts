@@ -3,10 +3,11 @@
 // way. It keeps per-chart state that must survive between frames: geometry
 // buffers, the zoomed x range, hidden series, and layout hysteresis.
 
+import type { Table } from "../data/table.ts";
 import { type Formatter, formatNumber, timeValueFormatter } from "../format/format.ts";
 import { fitText, type MeasureText } from "../layout/text.ts";
 import { Polyline } from "../lod/polyline.ts";
-import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
+import { isLayoutMark, type LayoutControls, type LayoutMark } from "../marks/layout-mark.ts";
 import {
   type AxisFormat,
   type BandContext,
@@ -233,6 +234,11 @@ export class ChartModel {
    * bound to selection stores (see row-selection.ts).
    */
   declare highlight: typeof geometryOf | undefined;
+  /**
+   * Which of a table's rows the selection a chart highlights holds, for
+   * layout marks drawing them (maps, trees, networks): set as `highlight` is.
+   */
+  declare layoutHighlight: ((table: Table) => Uint8Array | undefined) | undefined;
   /** Visible x ranges by x scale (see `xGroupOf`). */
   readonly #viewports = new Map<string, [number, number]>();
   #yViewport: YViewport = NO_Y_VIEW;
@@ -326,6 +332,11 @@ export class ChartModel {
     if (kept.y !== y || kept.yRight !== yRight) this.#yViewport = kept;
     this.#theme = resolveTheme(config.theme, page);
     this.#layoutKey = "";
+  }
+
+  /** The controls the chart's layout marks load for its options (see `LayoutMark.controls`). */
+  get controls(): LayoutControls | undefined {
+    return this.#layouts[0]?.controls?.(this.#config);
   }
 
   /** The camera of a 3D chart (a copy), which the pointer and keyboard turn; undefined for other charts. */
@@ -1889,6 +1900,11 @@ export class ChartModel {
     const view =
       panel === undefined ? this.#views[0] : this.#views.find(({ key }) => key === panel);
     return view && this.#inPanel(view, view.inspector.inspectPosition(seriesKey, position));
+  }
+
+  /** What the chart's layout marks drew in the last scene, and the state of their items. */
+  get items(): ItemViews | undefined {
+    return this.#items;
   }
 
   /**

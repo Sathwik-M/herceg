@@ -121,7 +121,10 @@ describe("fitting", () => {
   it("measures the world's outline and boxes of degrees in the projection", () => {
     const plan = planProjection({ type: "equirectangular" }, emptyExtent());
     const world = worldBox(plan);
-    expect(Array.from(world)).toEqual([-Math.PI, -Math.PI / 2, Math.PI, Math.PI / 2]);
+    // To rounding: boxes reach past their points as far as edges bow, which straight ones do not.
+    [-Math.PI, -Math.PI / 2, Math.PI, Math.PI / 2].forEach((edge, i) => {
+      expect(world[i]).toBeCloseTo(edge, 12);
+    });
     const box = degreeBox(plan, [
       [-10, 0],
       [20, 30],
@@ -143,6 +146,35 @@ describe("fitting", () => {
 
 describe("projected shapes", () => {
   const plan = planProjection({ type: "equirectangular" }, emptyExtent());
+
+  it("box a shape's curved edges, however far they are zoomed", () => {
+    // A conic projection centered halfway between the degrees its edges are
+    // divided at: the parallel bows furthest there, between two points.
+    const extent = emptyExtent();
+    extendExtent(extent, 0.5, 40);
+    extendExtent(extent, 41.5, 50);
+    const conic = planProjection({ type: "conic-equal-area" }, extent);
+    expect(conic.clipper.center).toBe(21);
+    const ring = [0.5, 40, 41.5, 40, 41.5, 50, 0.5, 50];
+    const [x0, y0, x1, y1] = planeBox(set([[ring]]), 0, conic);
+    const out = new Float64Array(2);
+    const radians = Math.PI / 180;
+    // Every point of every edge, as the shapes drawn follow them.
+    for (let e = 0; e < 4; e++) {
+      const [lonA, latA] = [ring[e * 2]!, ring[e * 2 + 1]!];
+      const [lonB, latB] = [ring[((e + 1) % 4) * 2]!, ring[((e + 1) % 4) * 2 + 1]!];
+      for (let i = 0; i <= 1000; i++) {
+        const t = i / 1000;
+        // Longitudes from the central meridian, as the clipper gives them.
+        const lon = lonA + (lonB - lonA) * t - conic.clipper.center;
+        conic.raw(lon * radians, (latA + (latB - latA) * t) * radians, out);
+        expect(out[0]).toBeGreaterThanOrEqual(x0!);
+        expect(out[0]).toBeLessThanOrEqual(x1!);
+        expect(out[1]).toBeGreaterThanOrEqual(y0!);
+        expect(out[1]).toBeLessThanOrEqual(y1!);
+      }
+    }
+  });
 
   it("draws rings in pixels, grouped by polygon, and boxes what is on the map", () => {
     const shapes = set([[square(0, 0, 4), square(1, 1, 1)], [square(10, 0, 1)]], []);

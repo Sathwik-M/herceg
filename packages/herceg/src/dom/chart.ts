@@ -14,6 +14,7 @@ import { monotonePolyline } from "../marks/curve.ts";
 import { tablesOf, viewOf } from "../marks/layout-mark.ts";
 import { type AxisFormat, keepsKey } from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
+import type { DrillRoot } from "../marks/tree-data.ts";
 import { planAxis } from "../model/axis.ts";
 import { describeChart } from "../model/describe.ts";
 import {
@@ -43,6 +44,7 @@ import type { Camera } from "../three/camera.ts";
 import type { CrosshairLabels } from "./axis-labels.ts";
 import type { Brush } from "./brush.ts";
 import { ascending, DRAG_THRESHOLD, normalize, type Selection } from "./brushed.ts";
+import type { Controls } from "./controls.ts";
 import { type ChartEvents, type ChartListener, Emitter, type PanelTarget } from "./events.ts";
 import {
   type AxisTarget,
@@ -53,7 +55,6 @@ import {
   panelInfo,
 } from "./handle.ts";
 import { Legend } from "./legend.ts";
-import type { Orbit } from "./orbit.ts";
 import { readPage, watchPage } from "./page-theme.ts";
 import { observeVisibility, schedule, unschedule } from "./scheduler.ts";
 import { SvgLayer, svgElement } from "./svg-layer.ts";
@@ -227,9 +228,14 @@ export class MountedChart implements Chart {
   #tap: { pointer: number; x: number; y: number; moved: boolean } | null = null;
   /** The navigator's sliders, which load when the chart first has a navigator. */
   #navigator: NavigatorControls | undefined;
-  /** Turns a 3D chart's camera, once loaded; null if it failed to load. */
-  #orbit: Orbit | null | undefined;
-  #orbitLoading: Promise<void> | undefined;
+  /**
+   * What turns a 3D chart, pans a map, drills into a tree, or moves a
+   * network's nodes, once loaded; null if it failed to load.
+   */
+  #controls: Controls | null | undefined;
+  #controlsLoading: Promise<void> | undefined;
+  /** Which controls the chart has or is loading (see `LayoutControls.kind`). */
+  #controlsKind: string | undefined;
   /** The camera moved since the last `camera` event, which the next frame reports. */
   #cameraMoved = false;
   /** What is selected, in data values; the brush draws it once loaded. */
@@ -519,7 +525,7 @@ export class MountedChart implements Chart {
       this.#animationLoading,
       this.#valuesLoading,
       this.#crosshairLoading,
-      this.#orbitLoading,
+      this.#controlsLoading,
       this.#brushLoading,
       this.#navigator?.loading,
     ].filter((loading) => loading !== undefined);
@@ -531,14 +537,39 @@ export class MountedChart implements Chart {
   }
 
   setCamera(camera: CameraSpec | null): void {
-    this.#turn(camera, false);
-  }
-
-  #turn(camera: CameraSpec | null, announce: boolean): void {
     if (!this.#model.setCamera(camera)) return;
     this.#cameraMoved = true;
     this.#invalidate(false);
-    if (announce && this.#orbit) this.#live.textContent = this.#orbit.describe(this.#model.camera!);
+  }
+
+  get drillRoot(): DrillRoot | undefined {
+    return this.#model.items?.drillRoot();
+  }
+
+  setDrillRoot(node: string | readonly string[] | null): void {
+    this.#itemsChanged("drill", this.#items().setDrillRoot(node));
+  }
+
+  setItemPosition(key: string, position: { x: number; y: number } | null): void {
+    this.#itemsChanged("itemMove", this.#items().setItemPosition(key, position));
+  }
+
+  /**
+   * What the chart's layout marks drew, and their items' state, with
+   * pending changes of options or data drawn first; throws for charts without any.
+   */
+  #items() {
+    if (this.#panelsChanged) this.#flush();
+    const items = this.#model.items;
+    if (!items) throw new Error("The chart has no items");
+    return items;
+  }
+
+  /** Draws and reports a change of items' state (a drill, a move), if there was one. */
+  #itemsChanged<K extends "drill" | "itemMove">(type: K, change: ChartEvents[K] | undefined) {
+    if (!change) return;
+    this.#invalidate(false);
+    this.#events.emit(type, change);
   }
 
   getPanels(): readonly PanelInfo[] {
@@ -680,7 +711,7 @@ export class MountedChart implements Chart {
     for (const stop of this.#tables.values()) stop();
     this.#tables.clear();
     this.#clouds?.release(this);
-    this.#orbit?.dispose();
+    this.#controls?.dispose();
     this.#navigator?.dispose();
     this.#rows?.dispose();
     // A transition waiting for its first frame leaves the frame's batch;
@@ -724,6 +755,9 @@ export class MountedChart implements Chart {
    * changed: what is hovered, the camera, and with `drawn`, the frame.
    */
   #finishFrame(drawn: boolean): void {
+    // A tree whose data lost the node it was drilled into shows an ancestor:
+    // reported before listeners of the frame (hover) may drill again.
+    if (drawn) this.#itemsChanged("drill", this.#model.items?.reconciled());
     this.#drawOverlay();
     // Camera events come once a frame, however many moves a drag made.
     const camera = this.#model.camera;
@@ -903,12 +937,7 @@ export class MountedChart implements Chart {
         : along.includes("x")
           ? "pan-y"
           : "pan-x";
-    if (this.#model.camera) this.#loadOrbit();
-    else {
-      this.#orbit?.dispose();
-      this.#orbit = undefined;
-    }
-    this.#orbit?.update(options.interaction?.rotate !== false, !!zoom);
+    this.#loadControls();
     // Themes that follow the page re-read it when it may have switched themes.
     const follows = themeReadsPage(options.theme);
     if (follows && !this.#unwatchPage) {
@@ -1046,7 +1075,7 @@ export class MountedChart implements Chart {
     this.#clouds?.endFrame(this);
     this.#svg.render(scene, { marks: !this.#onCanvas });
     this.#legend.update(scene.legend, scene.theme);
-    this.#orbit?.style(scene.theme);
+    this.#controls?.draw(scene);
     this.#drawTime = performance.now() - started;
     this.#describe();
   }
@@ -1099,32 +1128,50 @@ export class MountedChart implements Chart {
     this.#invalidate(false);
   }
 
-  /** Loads what turns 3D charts the first time a chart draws one. */
-  #loadOrbit(): void {
-    if (this.#orbit !== undefined || this.#orbitLoading) return;
-    this.#orbitLoading = import("./orbit.ts")
-      .then(
-        ({ Orbit }) =>
-          new Orbit(this.root, {
-            camera: () => this.#model.camera,
-            turn: (camera, announce) => this.#turn(camera, announce),
-            onPlot: (target) => !this.#legend.element.contains(target as Node),
-          }),
+  /**
+   * Has the controls the chart's layout mark asks for (see controls.ts),
+   * following the options, loading them the first time; controls of
+   * another kind go.
+   */
+  #loadControls(): void {
+    const kind = this.#model.controls?.kind;
+    if (kind === this.#controlsKind) {
+      this.#controls?.update(this.#model.config);
+      return;
+    }
+    this.#controls?.dispose();
+    this.#controls = undefined;
+    this.#controlsKind = kind;
+    if (!kind) {
+      this.#controlsLoading = undefined;
+      return;
+    }
+    const loading = import("./layout-controls.ts")
+      .then(({ mountControls }) =>
+        mountControls(kind, {
+          chart: this,
+          model: this.#model,
+          overlay: this.#svg.overlay,
+          live: this.#live,
+          legend: this.#legend.element,
+          invalidate: () => this.#invalidate(false),
+          itemsChanged: (type, change) => this.#itemsChanged(type, change),
+          cursor: () => this.#keyboard?.key,
+        }),
       )
       .catch(() => null)
-      .then((orbit) => {
-        this.#orbitLoading = undefined;
-        // A chart destroyed, or no longer 3D, while it loaded does without.
-        if (orbit && (this.#destroyed || !this.#model.camera)) {
-          orbit.dispose();
+      .then((controls) => {
+        // Controls of a chart destroyed, or asking for others, while they loaded go.
+        if (this.#destroyed || this.#controlsLoading !== loading) {
+          controls?.dispose();
           return;
         }
-        this.#orbit = orbit;
-        if (!orbit) return;
-        const { interaction } = this.#options;
-        orbit.update(interaction?.rotate !== false, !!interaction?.zoom);
-        if (this.#scene) orbit.style(this.#scene.theme);
+        this.#controlsLoading = undefined;
+        this.#controls = controls;
+        controls?.update(this.#model.config);
+        if (this.#scene) controls?.draw(this.#scene);
       });
+    this.#controlsLoading = loading;
   }
 
   /**
@@ -1226,17 +1273,15 @@ export class MountedChart implements Chart {
     }
     this.#describedAt = performance.now();
     this.#described = { config, key };
-    const turn = this.#model.camera
-      ? " Shift with the arrow keys turns it, and plus and minus zoom."
-      : "";
-    this.#description.textContent = `${describeChart(this.#model)} Focus the chart and use the arrow keys to read values.${turn}`;
+    const hint = this.#model.controls?.hint;
+    this.#description.textContent = `${describeChart(this.#model)} Focus the chart and use the arrow keys to read values.${hint ? ` ${hint}` : ""}`;
   }
 
   /** The point the pointer or the keyboard is on. */
   #inspection(): Inspection | undefined {
     if (!this.#scene) return undefined;
-    // A chart being turned shows no tooltip.
-    if (this.#orbit?.turning) return undefined;
+    // A chart being turned, panned, or dragged shows no tooltip.
+    if (this.#controls?.busy) return undefined;
     // The model applies the configured tooltip mode.
     if (this.#pointer) return this.#model.inspect(this.#pointer.x, this.#pointer.y);
     const keyboard = this.#keyboard;
@@ -1278,7 +1323,8 @@ export class MountedChart implements Chart {
     // A selection whose panels are gone (their facet values, or a change of
     // how they share scales) goes too.
     const owner = this.#owner;
-    if (owner && !panels.some(({ xGroup }) => xGroup === owner.x)) {
+    // A map's lasso is on its plane, which has no panels.
+    if (owner && !this.#model.layout && !panels.some(({ xGroup }) => xGroup === owner.x)) {
       this.#selection = null;
       this.#owner = null;
       this.#brushAnchor = null;
@@ -1493,7 +1539,9 @@ export class MountedChart implements Chart {
       { passive: false },
     );
     on("pointerdown", (event) => {
-      if (event.button !== 0 || !this.#scene) return;
+      // Buttons (the legend's, controls') take their own presses.
+      if (event.button !== 0 || !this.#scene || (event.target as Element).closest?.("button"))
+        return;
       // A drag starts from the view it lands in, not one passing by, and
       // from values as they are.
       if (this.#animation?.playing) {
@@ -1686,7 +1734,8 @@ export class MountedChart implements Chart {
    */
   #click(point: { x: number; y: number }, event: MouseEvent) {
     const written = this.#rows?.clicked(point.x, point.y, event);
-    if (this.#options.interaction?.brush) this.select(null);
+    // A click on an item standing for none of the bound rows keeps the brush too.
+    if (this.#options.interaction?.brush && written !== null) this.select(null);
     if (this.#events.has("click"))
       this.#events.emit("click", { inspection: this.#model.inspect(point.x, point.y), ...written });
   }

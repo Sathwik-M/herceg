@@ -29,6 +29,8 @@
     onclick,
     onrowselection,
     oncamera,
+    ondrill,
+    onitemmove,
     onvisibility,
     onrender,
     ...options
@@ -104,6 +106,8 @@
   listen("click", () => onclick);
   listen("rowSelection", () => onrowselection);
   listen("camera", () => oncamera);
+  listen("drill", () => ondrill);
+  listen("itemMove", () => onitemmove);
   listen("visibility", () => onvisibility);
   listen("render", () => onrender);
 

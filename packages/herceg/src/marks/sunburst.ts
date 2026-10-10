@@ -1,4 +1,4 @@
-import { type Hierarchy, pathOf } from "../data/hierarchy.ts";
+import { pathOf } from "../data/hierarchy.ts";
 import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
 import { ArcPath, arcDrawing, inSector, sectorPaints, traceSector } from "../draw/arc.ts";
 import { textDrawing } from "../draw/text.ts";
@@ -7,14 +7,29 @@ import { layoutPartition } from "../layout/partition.ts";
 import { labelFor } from "../layout/text.ts";
 import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
+import type { ChartConfig } from "../model/model.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { ArcGeometry, Geometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, SunburstSpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import type {
+  LayoutControls,
+  LayoutFrame,
+  LayoutItem,
+  LayoutMark,
+  LayoutResult,
+} from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
-import { type ChartMark, frozen, type MARK } from "./mark.ts";
-import { type Branch, count, TreeData } from "./tree-data.ts";
+import { type ChartMark, DIM, frozen, type MARK } from "./mark.ts";
+import {
+  type Branch,
+  count,
+  drillControls,
+  selectedText,
+  TreeData,
+  type TreeView,
+  where,
+} from "./tree-data.ts";
 
 export type SunburstOptions<S extends Schema> = (
   | {
@@ -57,6 +72,8 @@ const BOX_POINTS = [
 ] as const;
 /** The empty center, as a fraction of the radius. */
 const HOLE = 0.18;
+/** How opaque a drilled sunburst's root, in its center, is. */
+const CENTER_OPACITY = 0.3;
 
 export class SunburstMark implements LayoutMark {
   declare readonly [MARK]: true;
@@ -65,6 +82,9 @@ export class SunburstMark implements LayoutMark {
   readonly spec: Frozen<SunburstSpec>;
   readonly table: Table;
   readonly measure: string;
+  /** Clicks and Enter drill into nodes with `interaction.zoom`, and charts select their rows. */
+  readonly interactions = ["zoom"] as const;
+  readonly selects = true;
   readonly #data: TreeData;
 
   constructor(input: SunburstSpec, table: Table) {
@@ -80,11 +100,29 @@ export class SunburstMark implements LayoutMark {
     return this.#data.legend(id, color);
   }
 
+  controls(config: ChartConfig): LayoutControls | undefined {
+    return drillControls(config);
+  }
+
   draw(frame: LayoutFrame): LayoutResult {
-    const { bounds, theme, measure, hidden, locale } = frame;
-    // A facet panel draws the part of the tree its rows give a value.
-    const view = this.#data.view(frame.rows);
+    const { theme, measure, hidden, locale } = frame;
+    // A facet panel draws the part of the tree its rows give a value; a
+    // chart drilled into a node, the subtree under it, the node in the middle.
+    const root = frame.root?.length ? this.#data.rootOf(frame.id, frame.root) : 0;
+    const view = root > 0 ? this.#data.drilled(root) : this.#data.view(frame.rows);
     const { tree, branch } = view;
+    // Breadcrumbs take a strip above the tree in charts that drill.
+    const path =
+      frame.drillable || root > 0 ? this.#data.breadcrumbs(frame.id, view, frame) : undefined;
+    const bounds = path
+      ? {
+          ...frame.bounds,
+          y: frame.bounds.y + path.height,
+          height: frame.bounds.height - path.height,
+        }
+      : frame.bounds;
+    const selected = frame.selected?.(this.table);
+    const counts = selected && this.#data.selectedOf(view, selected);
     const branches = this.#data.branches(frame.id, view);
     const shown = this.#data.shown(view, branches, hidden);
     const spans = new Float64Array(tree.size * 2);
@@ -118,28 +156,54 @@ export class SunburstMark implements LayoutMark {
       if (shown[node]! > 0 && paints(node)) byDepth[tree.depth[node]!]!.push(node);
     }
     for (const nodes of byDepth) nodes.sort((a, b) => spans[a * 2]! - spans[b * 2]!);
-    const geometry: Geometry[] = [];
+    const geometry: Geometry[] = [...(path?.geometry ?? [])];
     const opacityAt = (depth: number) => Math.max(0.45, 1 - 0.2 * (depth - 1));
-    for (let depth = 1; depth <= tree.height; depth++) {
-      const nodes = byDepth[depth]!;
-      if (nodes.length === 0) continue;
-      const arcs = new Float32Array(nodes.length * 6);
-      const index = new Uint32Array(nodes.length);
-      nodes.forEach((node, i) => {
-        arcs.set([cx, cy, ...radii(node), ...angles(node)], i * 6);
-        index[i] = colorIndex.get(branch[node]!) ?? 0;
-      });
+    // A drilled sunburst's root fills its middle, a faint disc of its color.
+    const centered = root > 0 && hole > GAP;
+    const centerColor = colors[0] ?? theme.muted;
+    if (centered) {
+      const lit = !counts || counts.hits[0]! > 0;
       geometry.push({
         kind: "arc",
         draw: arcDrawing,
-        key: `sunburst-${depth}`,
-        arcs,
-        count: nodes.length,
-        colors,
-        colorIndex: index,
-        fillOpacity: opacityAt(depth),
-        gap: GAP,
+        key: "sunburst-root",
+        arcs: Float32Array.of(cx, cy, 0, hole - GAP / 2, START, START + TAU),
+        count: 1,
+        colors: [centerColor],
+        colorIndex: Uint32Array.of(0),
+        fillOpacity: CENTER_OPACITY * (lit ? 1 : DIM),
+        gap: 0,
       } as ArcGeometry);
+    }
+    for (let depth = 1; depth <= tree.height; depth++) {
+      const all = byDepth[depth]!;
+      // With a selection highlighted, nodes none of whose rows it holds are dimmed.
+      const parts = counts
+        ? [
+            [all.filter((node) => counts.hits[node] === 0), true] as const,
+            [all.filter((node) => counts.hits[node]! > 0), false] as const,
+          ]
+        : [[all, false] as const];
+      for (const [nodes, dim] of parts) {
+        if (nodes.length === 0) continue;
+        const arcs = new Float32Array(nodes.length * 6);
+        const index = new Uint32Array(nodes.length);
+        nodes.forEach((node, i) => {
+          arcs.set([cx, cy, ...radii(node), ...angles(node)], i * 6);
+          index[i] = colorIndex.get(branch[node]!) ?? 0;
+        });
+        geometry.push({
+          kind: "arc",
+          draw: arcDrawing,
+          key: `sunburst-${depth}${dim ? "-dimmed" : ""}`,
+          arcs,
+          count: nodes.length,
+          colors,
+          colorIndex: index,
+          fillOpacity: opacityAt(depth) * (dim ? DIM : 1),
+          gap: GAP,
+        } as ArcGeometry);
+      }
     }
 
     if (this.spec.labels ?? true) {
@@ -147,6 +211,11 @@ export class SunburstMark implements LayoutMark {
       const lineHeight = Math.round(theme.fontSize * 1.25);
       const backdrop = surface(theme);
       const byColor = new Map<string, { coords: number[]; labels: string[] }>();
+      if (centered) {
+        const name = labelFor(view.prefix.at(-1) ?? "", 2 * hole - 8, measure, font);
+        if (name && lineHeight < hole)
+          byColor.set(theme.text, { coords: [cx, cy], labels: [name] });
+      }
       for (const nodes of byDepth) {
         for (const node of nodes) {
           const [r0, r1] = radii(node);
@@ -201,27 +270,48 @@ export class SunburstMark implements LayoutMark {
     const percent = numberFormatter({ style: "percent", maximumFractionDigits: 1 }, locale);
     const total = shown[0]!;
     const itemOf = (node: number): LayoutItem => {
+      const outline = new ArcPath();
+      const label = [...view.prefix, ...pathOf(tree, node)].join(" / ");
+      const key = this.#data.keyOf(frame.id, view, node);
+      if (node === 0) {
+        // The root in the middle: its total, the whole of what is shown.
+        traceSector(outline, cx, cy, 0, hole - GAP / 2, START, START + TAU, 0);
+        const text = `${formatNumber(total, locale)}${selectedText(counts, 0)}`;
+        return {
+          key,
+          label,
+          color: centerColor,
+          value: total,
+          text,
+          px: cx,
+          py: cy,
+          outline: outline.d,
+        };
+      }
       const [r0, r1] = radii(node);
       const [a0, a1] = angles(node);
-      const outline = new ArcPath();
       traceSector(outline, cx, cy, r0, r1, a0, a1, GAP);
       const mid = (a0 + a1) / 2;
       return {
-        key: this.#data.keyOf(frame.id, tree, node),
-        label: pathOf(tree, node).join(" / "),
+        key,
+        label,
         color: colors[colorIndex.get(branch[node]!) ?? 0] ?? theme.muted,
         value: shown[node]!,
-        text: `${formatNumber(shown[node]!, locale)} (${percent(shown[node]! / total)})`,
+        text: `${formatNumber(shown[node]!, locale)} (${percent(shown[node]! / total)}${where(view)})${selectedText(counts, node)}`,
         px: cx + ((r0 + r1) / 2) * Math.cos(mid),
         py: cy + ((r0 + r1) / 2) * Math.sin(mid),
         outline: outline.d,
       };
     };
-    const navigation = this.#data.navigation(frame.id, tree, shown, paints, itemOf);
+    const navigation = this.#data.navigation(frame.id, view, shown, paints, itemOf);
+    // A drilled sunburst's root is read first.
+    const first = centered ? 1 : 0;
+    const rootKey = centered ? this.#data.keyOf(frame.id, view, 0) : undefined;
     return {
       geometry,
       itemAt(px, py) {
         const distance = Math.hypot(px - cx, py - cy);
+        if (centered && distance < hole) return itemOf(0);
         if (!(distance >= hole && distance <= r) || ring <= 0) return undefined;
         const depth = Math.min(tree.height, Math.floor((distance - hole) / ring) + 1);
         let fraction = (Math.atan2(py - cy, px - cx) - START) / TAU;
@@ -243,23 +333,30 @@ export class SunburstMark implements LayoutMark {
       },
       // Not spread: that would read `count` and order every node now.
       get count() {
-        return navigation.count;
+        return navigation.count + first;
       },
-      item: navigation.item,
-      indexOf: navigation.indexOf,
-      summary: () => this.#summary(tree, shown, branches, locale, percent),
+      item: (index) => (index < first ? itemOf(0) : navigation.item(index - first)),
+      indexOf: (key) => {
+        if (key === rootKey) return 0;
+        const at = navigation.indexOf(key);
+        return at < 0 ? -1 : at + first;
+      },
+      summary: () => this.#summary(view, shown, branches, locale, percent),
+      rowsOf: (key, of) => (of === this.table ? this.#data.rowsOf(frame.id, view, key) : undefined),
+      drill: this.#data.drill(frame.id, root, path?.crumbs ?? []),
     };
   }
 
   #summary(
-    tree: Hierarchy,
+    view: TreeView,
     shown: Float64Array,
     branches: readonly Branch[],
     locale: string | undefined,
     percent: (value: number) => string,
   ): string {
+    const { tree } = view;
     const fields = this.spec.path?.join(" / ") ?? this.spec.node!;
-    const what = this.spec.value ? `${this.spec.value} by ${fields}` : fields;
+    const what = `${this.spec.value ? `${this.spec.value} by ${fields}` : fields}${where(view)}`;
     const total = shown[0]!;
     if (!(total > 0)) return `Sunburst of ${what}, with nothing to show.`;
     // The branches drawn: shown, and with rows (in a facet panel, its own).

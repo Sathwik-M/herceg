@@ -48,7 +48,13 @@ import {
   View,
 } from "../three/camera.ts";
 import { FaceBuffer, FaceIndex } from "../three/faces.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import type {
+  LayoutControls,
+  LayoutFrame,
+  LayoutItem,
+  LayoutMark,
+  LayoutResult,
+} from "./layout-mark.ts";
 import { legendParts } from "./legend-parts.ts";
 import type { ColorRamp, GlyphKey, MARK } from "./mark.ts";
 
@@ -190,6 +196,12 @@ export function joinLayers3D(marks: readonly LayoutMark[], config: ChartConfig):
   return new Plot3D(marks as Layer3D[], config);
 }
 
+/** Dragging turns a 3D chart unless `interaction.rotate` is false, which its controls follow. */
+const ORBIT: LayoutControls = {
+  kind: "orbit",
+  hint: "Shift with the arrow keys turns it, and plus and minus zoom.",
+};
+
 /** A chart's 3D layers, drawn in one box as one layout mark. */
 export class Plot3D implements LayoutMark {
   declare readonly [MARK]: true;
@@ -219,6 +231,13 @@ export class Plot3D implements LayoutMark {
   /** A layer's identity: its `id`, or its place among the layers. */
   #id(index: number): string | number {
     return this.layers[index]!.spec.id ?? index;
+  }
+
+  /** The wheel magnifies the camera, which dragging turns. */
+  readonly interactions = ["zoom"] as const;
+
+  controls(): LayoutControls {
+    return ORBIT;
   }
 
   camera(spec: CameraSpec | undefined, base?: Camera): Camera {

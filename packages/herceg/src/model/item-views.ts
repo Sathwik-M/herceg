@@ -4,12 +4,14 @@
 // facets or panels may have. A chart reaches this module through its
 // layout marks (`LayoutMark.views`), so charts without any never load it.
 
+import type { MovedNodes } from "../marks/graph.ts";
 import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "../marks/layout-mark.ts";
 import type { ChartMark } from "../marks/mark.ts";
+import type { DrillRoot } from "../marks/tree-data.ts";
 import type { Panel, Rect, Scene } from "../scene/scene.ts";
 import type { ItemInspection } from "./inspect.ts";
 import { EDGE } from "./legend.ts";
-import type { ChartConfig } from "./model.ts";
+import type { ChartConfig, ChartModel } from "./model.ts";
 import type { PanelItem } from "./panel-layout.ts";
 
 /** A panel a layout mark drew in, and what it drew there. */
@@ -59,19 +61,45 @@ export class ItemViews {
     const drawn = layout.join ? [layout.join(layouts, config)] : [...layouts];
     if (drawn.length > 1 || marks.length > 0)
       throw new Error(`A ${type} mark has its chart to itself; draw other marks in another chart`);
-    const interaction = config.interaction;
-    // 3D charts zoom their camera.
-    const zooms = interaction?.zoom && !drawn[0]!.camera;
-    if (zooms || interaction?.brush || interaction?.sync || config.x?.seams)
+    // Each mark takes what its controls do (see `LayoutMark.interactions`).
+    const takes: readonly string[] = drawn[0]!.interactions ?? [];
+    const { zoom, brush, drag, sync } = config.interaction ?? {};
+    const charts = `Charts of a ${type} mark`;
+    const plane = takes.includes("plane");
+    if (zoom && !(zoom === true ? plane || takes.includes("zoom") : plane && zoom === "xy"))
       throw new Error(
-        `Charts of a ${type} mark have no x axis to zoom, brush, sync, or mark seams on`,
+        plane
+          ? `${charts} zoom both ways: give interaction.zoom true or "xy", not "${zoom}"`
+          : takes.includes("zoom")
+            ? `${charts} zoom with interaction.zoom true, not "${zoom}"`
+            : `${charts} do not zoom: interaction.zoom moves axes, maps, 3D charts, treemaps, and sunbursts`,
       );
+    if (brush && !(brush === "lasso" && takes.includes("lasso")))
+      throw new Error(
+        takes.includes("lasso")
+          ? `${charts} take a "lasso" brush, not "${brush}"`
+          : `${charts} do not brush: interaction.brush selects along axes, and lassos maps`,
+      );
+    if (drag && !takes.includes("drag"))
+      throw new Error(`${charts} have nothing to drag: interaction.drag moves a network's nodes`);
+    if (sync || config.x?.seams)
+      throw new Error(`${charts} have no x axis to sync or mark seams on`);
     return drawn;
   }
 
   #views: ItemView[] = [];
   /** Whether the panels are facets or subplots, whose inspections name them, not a chart's one. */
   #named = true;
+  /**
+   * The node a chart of one tree is drilled into, as set and then as drawn,
+   * and the path to it: a node the data lost gives way to its nearest
+   * ancestor that remains, which `reconciled` reports once.
+   */
+  #root: DrillRoot = { key: null, path: [] };
+  #reconciled: DrillRoot | undefined;
+  /** A network's nodes moved, in the layout they were moved in, and the one being dragged. */
+  #moved: { layout: object; at: Map<string, readonly [number, number]> } | undefined;
+  #dragged: { key: string; at: readonly [number, number]; layout: object } | undefined;
 
   /** Whether the last scene was of one layout mark, without facets or panels. */
   get alone(): boolean {
@@ -87,16 +115,19 @@ export class ItemViews {
   /**
    * The scene of a chart of one layout mark, the chart's `index`th of
    * `marks`: `header` (its title and legends) above, and the mark in the
-   * room below, drawn with `frame`.
+   * room below, drawn with `frame` and the model's viewport (a map's) and
+   * highlighted rows.
    */
   scene(
-    size: { width: number; height: number; pixelRatio: number },
+    model: ChartModel,
     header: Header,
     mark: LayoutMark,
     marks: readonly ChartMark[],
     frame: ItemFrame,
   ): Scene {
-    const { width, height, pixelRatio } = size;
+    const { width, height, pixelRatio } = model;
+    // Of the layout drawn last, before it goes.
+    const moved = this.#movedNow();
     this.#views = [];
     this.#named = false;
     const plot: Rect = {
@@ -105,7 +136,31 @@ export class ItemViews {
       width: Math.max(0, width - 2 * EDGE),
       height: Math.max(0, height - header.top - EDGE),
     };
-    const panel = this.#draw({ key: "", label: "", plot }, mark, 0, marks, frame, undefined);
+    const viewport = { x: model.viewport, y: model.yViewport.y };
+    const drawn = {
+      ...frame,
+      viewport,
+      selected: model.layoutHighlight,
+      // The root, then its ancestors nearest first, for a root the data lost.
+      root: [this.#root.key, ...this.#root.path.map(({ key }) => key).reverse()].filter(
+        (key) => key !== null,
+      ),
+      drillable: !!model.config.interaction?.zoom,
+      moved,
+    };
+    const panel = this.#draw({ key: "", label: "", plot }, mark, 0, marks, drawn, undefined);
+    const result = this.#views[0]?.result;
+    const drill = result?.drill;
+    if (drill && drill.key !== this.#root.key)
+      this.#reconciled = { key: drill.key, path: drill.path };
+    this.#root = drill ? { key: drill.key, path: drill.path } : { key: null, path: [] };
+    // Moves made in a layout the network no longer has (its data changed) go,
+    // and those of a mark with another identity.
+    const moves = result?.moves;
+    if (this.#moved && moves?.layout !== this.#moved.layout) this.#moved = undefined;
+    if (this.#dragged && moves?.layout !== this.#dragged.layout) this.#dragged = undefined;
+    for (const key of this.#moved?.at.keys() ?? [])
+      if (!moves?.owns(key)) this.#moved!.at.delete(key);
     let vertices = 0;
     for (const item of panel.marks) vertices += item.draw.size(item);
     const { title, legend, colorLegends, glyphLegends } = header;
@@ -143,6 +198,99 @@ export class ItemViews {
     const result = mark.draw({ ...frame, id: mark.spec.id ?? index, bounds: plot, rows });
     this.#views.push({ ...panel, items: true, result, index, measure: mark.measure, marks });
     return { key, plot, grid: { x: [], y: [] }, axes: [], marks: result.geometry };
+  }
+
+  /** What the layout mark drew in `panel` (the first by default). */
+  result(panel?: string): LayoutResult | undefined {
+    return this.#view(panel)?.result;
+  }
+
+  /** The node a chart of one tree is drilled into (see `Chart.drillRoot`); undefined for other charts. */
+  drillRoot(): DrillRoot | undefined {
+    const drill = this.#named ? undefined : this.#views[0]?.result.drill;
+    // As set, though not drawn yet.
+    return drill && this.#root;
+  }
+
+  /** The drill root the data changed since last asked (a node it lost), once. */
+  reconciled(): DrillRoot | undefined {
+    const root = this.#reconciled;
+    this.#reconciled = undefined;
+    return root;
+  }
+
+  /**
+   * Drills a chart of one tree into a node, named by its item key or its
+   * names from the top level down, or with null back out to the whole tree;
+   * the drill root then, or undefined when it did not change. Throws for a
+   * node the tree does not have, and for other charts.
+   */
+  setDrillRoot(node: string | readonly string[] | null): DrillRoot | undefined {
+    const drill = this.#named ? undefined : this.#views[0]?.result.drill;
+    if (!drill) throw new Error("Only charts of one treemap or sunburst drill");
+    const key = node === null ? null : drill.find(node);
+    if (key === undefined)
+      throw new RangeError(`The tree has no node ${JSON.stringify(node)} to drill into`);
+    // Against the root set, though a frame may not have drawn it yet.
+    if (key === this.#root.key) return undefined;
+    this.#root = { key, path: key === null ? [] : drill.pathTo(key) };
+    // A change the data made before this one is no longer the chart's to report.
+    this.#reconciled = undefined;
+    return this.#root;
+  }
+
+  /**
+   * Moves a network's node, keyed as its items are, to a place in layout
+   * units, or with null back to where the layout puts it; what changed, or
+   * undefined for nothing. Throws for a key of no node drawn, unless the
+   * move is one made in `layout` (a drag's), which then lands only in that
+   * layout, and in no other the network's data has changed it to.
+   */
+  setItemPosition(
+    key: string,
+    position: { x: number; y: number } | null,
+    layout?: object,
+  ): { key: string; position: { x: number; y: number } | null } | undefined {
+    const moves = this.#views[0]?.result.moves;
+    if (!moves || this.#named) throw new Error("Only networks have items to move");
+    this.#dragged = undefined;
+    // A node moved before its group was hidden can go back all the same.
+    if (position === null && this.#moved?.at.delete(key)) return { key, position: null };
+    if (layout && (layout !== moves.layout || !moves.current() || !moves.movable(key)))
+      return undefined;
+    if (!moves.movable(key)) throw new RangeError(`The network draws no node ${key}`);
+    if (this.#moved?.layout !== moves.layout) this.#moved = { layout: moves.layout, at: new Map() };
+    const { at } = this.#moved;
+    if (position === null) return undefined;
+    const { x, y } = position;
+    if (!(Number.isFinite(x) && Number.isFinite(y)))
+      throw new RangeError(`A node's position is finite x and y, not ${JSON.stringify(position)}`);
+    const [px, py] = at.get(key) ?? [];
+    if (px === x && py === y) return undefined;
+    at.set(key, [x, y]);
+    return { key, position: { x, y } };
+  }
+
+  /** The nodes moved so far, in layout units. */
+  get movedItems(): ReadonlyMap<string, readonly [number, number]> {
+    return this.#moved?.at ?? new Map();
+  }
+
+  /** Shows a node being dragged at a place in layout units, or none (null), without making it a move. */
+  drag(key: string | null, at?: readonly [number, number]): void {
+    // In the layout drawn now, which a change of the network's data replaces.
+    const layout = this.#views[0]?.result.moves?.layout;
+    this.#dragged = key === null || !at || !layout ? undefined : { key, at, layout };
+  }
+
+  /** The moves to draw: those made, and the node being dragged, in one layout. */
+  #movedNow(): MovedNodes | undefined {
+    const dragged = this.#dragged;
+    const layout = this.#moved?.layout ?? dragged?.layout;
+    if (!layout) return undefined;
+    const at = new Map(this.#moved?.at);
+    if (dragged && dragged.layout === layout) at.set(dragged.key, dragged.at);
+    return { layout, at };
   }
 
   /** The panels drawn, in order. */
