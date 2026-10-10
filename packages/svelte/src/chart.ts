@@ -3,6 +3,7 @@ import {
   type ChartMark,
   type ChartUpdate,
   type Chart as HercegChart,
+  type Inspection,
   tablesOf,
   viewOf,
 } from "herceg";
@@ -10,7 +11,14 @@ import type { Snippet } from "svelte";
 import type { ClassValue } from "svelte/elements";
 
 /** Chart options as props: one left out, or `undefined`, takes its default. */
-export interface ChartProps extends Omit<ChartUpdate, "marks"> {
+export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip"> {
+  /**
+   * The tooltip's content (`{#snippet renderTooltip(inspection)}`), in the
+   * chart's own box, which keeps its placement, the crosshair, and the
+   * keyboard's announcements. Only the content of what the tooltip is at
+   * renders, when that changes: never a node per data point.
+   */
+  renderTooltip?: Snippet<[Inspection]> | undefined;
   /** Marks built with herceg's functions; mark components among the children are added after them. */
   marks?: readonly ChartMark[] | undefined;
   /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Line3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */

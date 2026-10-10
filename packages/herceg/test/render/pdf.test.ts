@@ -793,6 +793,19 @@ describe("renderToPDF", () => {
     expect(empty.catalog).not.toContain("/Lang");
   });
 
+  it("paints transparent themes with light text dark, as pages are white", () => {
+    const background = (theme: NonNullable<PdfOptions["theme"]>) =>
+      /\/Artifact BMC\n(q [\d. ]+ rg)\n0 0 100 50 re\nf\n/.exec(
+        readPdf(renderToPDF({ width: 100, height: 50, marks: [], theme })).content,
+      )?.[1];
+    for (const text of ["#ffffff", "white", "hsl(0 0% 95%)"])
+      expect(background({ extends: "dark", background: "transparent", text }), text).toBe(
+        "q 0 0 0 rg",
+      );
+    expect(background({ background: "transparent" })).toBeUndefined();
+    expect(background({ background: "#123456", text: "black" })).toBe("q 0.071 0.204 0.337 rg");
+  });
+
   it("writes a valid one-page document sized to the chart in points", () => {
     const pdf = readPdf(renderToPDF(latency));
     expect(pdf.page).toContain("/MediaBox [0 0 360 180]");

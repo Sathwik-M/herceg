@@ -32,6 +32,7 @@ import {
   untranspose,
 } from "./orient.ts";
 import { type Series, xExtent, yExtent } from "./series.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { IndexUse, tracePath, unionExtent } from "./trace.ts";
 
 interface LineStyle<S extends Schema> {
@@ -58,6 +59,8 @@ interface LineStyle<S extends Schema> {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -109,6 +112,7 @@ export class LineMark implements Mark<Frozen<LineSpec>> {
 
   constructor(input: LineSpec, table: Table<Schema>) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "line");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
@@ -269,6 +273,7 @@ export function line<S extends Schema>(
     x: field(options.x),
     y: field(options.y),
     ...definedFields(options, [
+      "tooltip",
       "orient",
       "series",
       "dodge",

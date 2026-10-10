@@ -199,7 +199,7 @@ and widths of the columns) for subplots, whose marks
 name their panel with `panel="latency"` (or `"*"` for all),
 `legend`, `tooltip` (`True`, `False`, `"nearest-x"`, `"nearest-y"`, `"nearest"`, or
 `hg.Tooltip(mode=..., axis_labels=True)`, which also labels the crosshair on
-the axes), `zoom`
+the axes; tooltip fields, below, are marks'), `zoom`
 (`True` or `"x"`, `"y"`, `"xy"`: wheel zoom and drag pan along those axes),
 `brush` (`"x"`, `"y"`: drag to select a range; `"xy"`: a rectangle; `"lasso"`: a
 freehand region; along zoomed axes, drag to zoom instead),
@@ -241,12 +241,45 @@ band `hg.area(df, x="time", y1="p25", y2="p75")`; their `x` and `y` name
 columns, so the axes are `x_axis` and `y_axis` there. The options are typed
 (`hg.ChartOptions`, `hg.HelperOptions`, and `hg.ChartUpdate` for live
 updates), so type checkers catch misspelled ones; `None` takes an option's
-default.
+default. At run time, a helper (or an express function) refuses an option it
+does not take by its own name, with the closest it does take, including
+other libraries' names for herceg's: `hg.line(df, x="time", y="p99",
+color="host")` raises `TypeError: line: no option 'color'; did you mean
+'series' or 'stroke'?`.
+
+Tooltips show the position and each series' value, written as the axis'
+`format` writes it; `hg.Axis(tooltip_format=...)` writes tooltips' (and the
+keyboard's and crosshair labels') values without changing tick labels.
+Marks whose points are rows (lines, areas, bars, points, rugs, error bars,
+candlesticks, heatmaps, map regions and points, 3D points and lines) show
+more of the row with `tooltip=hg.Tooltip(fields=[...])`: column names, or
+`hg.TooltipField(column, label=..., format=...)` with Intl format options
+as `Axis.format` takes them. A helper's `tooltip` is its chart's and its
+fields its one mark's; in `hg.Chart`, give them to the mark:
+
+```python
+hg.line(
+    daily,
+    x="time",
+    y="p99",
+    locale="en-US",
+    tooltip=hg.Tooltip(fields=[hg.TooltipField("requests", label="Requests")]),
+    x_axis=hg.Axis(tooltip_format={"weekday": "short", "month": "short", "day": "numeric"}),
+    y_axis=hg.Axis(title="ms", tooltip_format={"style": "unit", "unit": "millisecond"}),
+)
+hg.Chart(daily).line(x="time", y="p99", tooltip=hg.Tooltip(fields=["requests"]))
+```
+
+Marks whose points summarize rows (histograms, box plots, pies, trees,
+networks) and express charts, which draw tables they compute, refuse
+fields. Hover and click events carry them (`InspectedPoint.fields`).
 
 `theme` is `"light"` (the default), `"dark"`, `"high-contrast"`,
-`"high-contrast-dark"`, `"auto"` (light or dark to match the surface the chart
-is drawn on, in HTML output; light in static files), or a dict that overrides a
-theme's tokens: `extends`, `background`, `text`, `muted`, `grid`, `axis`,
+`"high-contrast-dark"`, each with a background of its own, `"auto"`
+(light or dark to match the surface the chart is drawn on, in HTML output,
+with the surface showing through; light in static files), or a dict that
+overrides a theme's tokens (`"background": "transparent"` shows what the
+chart is drawn on): `extends`, `background`, `text`, `muted`, `grid`, `axis`,
 `font`, `font_size`, `title_size`, `grid_dash`, `line_width`, `bar_radius`,
 `tooltip_background`, `tooltip_border`, `palette`, `sequential`, `diverging`,
 `rise`, and `fall`. Colors may be CSS variables such as
@@ -887,7 +920,9 @@ In subplots whose y axes differ, y values are read on the first panel's.
 An `hg.Inspection` is what the tooltip shows: the inspected `axis` (`"y"`
 for horizontal bars), the snapped `value` there and its axis `label`, the
 facet `panel`, and `points`, one `hg.InspectedPoint` per series with its
-`label`, `value`, and tooltip `text`, and where it comes from: `row`, the
+`label`, `value`, and tooltip `text`, the `fields` of its row its mark's
+tooltip shows (`hg.InspectedField`: `field`, `label`, `kind`, `value`, with
+datetimes for times, and `text`), and where it comes from: `row`, the
 point's row in its mark's data as the chart holds it (`df.iloc[row]` of the
 dataframe given), `mark`, the mark's index in the order marks were added,
 `mark_id`, its `id`, and `key`, which identifies its series. A point that is
@@ -1037,6 +1072,11 @@ npm run test:python    # build, then run pytest in a uv environment
 
 - Static output (a chart displayed as a cell's value, HTML files) neither
   updates nor talks back to Python; use `chart.widget()` for that.
+- A widget has no `to_png()` of what it shows: a notebook cell cannot wait
+  for the browser's answer to a message it sends, and Python does not know
+  the series hidden through the legend, the browser's size, or its fonts.
+  `chart.to_png()` and `chart.save()` draw the chart as Python built it
+  (its configured domains, not a zoom made in the browser).
 - Live charts need a running kernel. Where widgets are not rendered (GitHub,
   nbviewer, notebooks saved without widget state) they show nothing; display
   the chart itself for a static copy.

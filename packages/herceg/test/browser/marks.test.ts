@@ -22,6 +22,9 @@ import { cloudPainter } from "../../src/render/webgl.ts";
 import type { RasterGeometry, RectGeometry } from "../../src/scene/scene.ts";
 import { MOUSE, modelOf } from "./helpers.ts";
 
+/** Without a background, the canvas holds what marks paint alone. */
+const CLEAR = { background: "transparent" } as const;
+
 let host: HTMLDivElement;
 
 beforeEach(() => {
@@ -271,7 +274,7 @@ describe("new marks in the browser", () => {
     const mark = (data: ReturnType<typeof requests>) =>
       area(data, { x: "minute", y: "count", series: "status", stack: true });
     const data = requests();
-    const chart = createChart(host, { marks: [mark(data)] });
+    const chart = createChart(host, { theme: CLEAR, marks: [mark(data)] });
     const paths = () => chart.root.querySelectorAll('svg [data-kind="area"]');
     expect(paths()).toHaveLength(3);
     // The retained SVG draws what the chart exports.
@@ -289,7 +292,11 @@ describe("new marks in the browser", () => {
     chart.render();
     expect([...paths()].map((path) => path.getAttribute("d"))).not.toEqual(drawn);
     chart.destroy();
-    const canvas = createChart(host, { renderer: "canvas", marks: [mark(requests())] });
+    const canvas = createChart(host, {
+      theme: CLEAR,
+      renderer: "canvas",
+      marks: [mark(requests())],
+    });
     const pixel = canvas.toPixel(1, { axis: "x" })!;
     const context = canvas.root.querySelector("canvas")!.getContext("2d")!;
     const scale = context.canvas.width / context.canvas.clientWidth;
@@ -495,7 +502,7 @@ describe("new marks in the browser", () => {
     const chart = createChart(host, {
       marks: [sankey(flows, { source: "from", target: "to", value: "v" })],
       renderer: "canvas",
-      theme: { palette: ["#ff0000"] },
+      theme: { ...CLEAR, palette: ["#ff0000"] },
     });
     const canvas = host.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
@@ -519,7 +526,7 @@ describe("new marks in the browser", () => {
     const chart = createChart(host, {
       marks: [graph(links, { source: "from", target: "to", value: "v" })],
       renderer: "canvas",
-      theme: { palette: ["#ff0000"], muted: "#0000ff" },
+      theme: { ...CLEAR, palette: ["#ff0000"], muted: "#0000ff" },
     });
     const canvas = host.querySelector("canvas")!;
     const ratio = canvas.width / chart.root.clientWidth;
@@ -552,6 +559,7 @@ describe("new marks in the browser", () => {
       },
     });
     const chart = createChart(host, {
+      theme: CLEAR,
       marks: [line(series, { x: "x", y: "y" }), shapes],
       renderer: "canvas",
     });
@@ -647,6 +655,7 @@ describe("new marks in the browser", () => {
     // Two points at (1, 1), one at (2, 2).
     const pts = table({ x: [1, 1, 2], y: [1, 1, 2] });
     const chart = createChart(host, {
+      theme: CLEAR,
       renderer: "canvas",
       // No grid lines under the sampled pixels.
       x: { domain: [0, 3], grid: false },
@@ -711,6 +720,7 @@ describe("point clouds on the GPU", () => {
 
   it("draws large point series with WebGL once the painter has loaded", async () => {
     const chart = createChart(host, {
+      theme: CLEAR,
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
       marks: [
@@ -749,6 +759,7 @@ describe("point clouds on the GPU", () => {
     const data = cloudTable(150_000);
     const rolling = table({ x: data.numbers("x"), y: data.numbers("y") }, { maxRows: 150_000 });
     const chart = createChart(host, {
+      theme: CLEAR,
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
       marks: [point(rolling, { x: "x", y: "y", radius: 6, fill: "#000000", fillOpacity: 0.5 })],
@@ -795,6 +806,7 @@ describe("point clouds on the GPU", () => {
       { maxRows: n },
     );
     const chart = createChart(host, {
+      theme: CLEAR,
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
       marks: [point(rolling, { x: "x", y: "y", series: "kind", radius: 6, fillOpacity: 0.5 })],
@@ -859,6 +871,7 @@ describe("point clouds on the GPU", () => {
     const far = cloudTable(150_000);
     far.set("x", 3, -1e16);
     const zoomed = createChart(host, {
+      theme: CLEAR,
       x: { domain: [4, 6], grid: false },
       y: { domain: [0, 10], grid: false },
       marks: [point(far, { x: "x", y: "y", radius: 4, fill: "#000000" })],
@@ -872,6 +885,7 @@ describe("point clouds on the GPU", () => {
     huge.set("x", 3, -1e308);
     huge.set("x", 4, 1e308);
     const overflow = createChart(host, {
+      theme: CLEAR,
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
       marks: [point(huge, { x: "x", y: "y", radius: 4, fill: "#000000" })],
@@ -968,12 +982,12 @@ describe("notched box plots", () => {
         data,
         horizontal ? { y: "group", ...fields } : { x: "group", ...fields },
       );
-      const svg = createChart(host, { renderer: "svg", marks: [mark] });
+      const svg = createChart(host, { theme: CLEAR, renderer: "svg", marks: [mark] });
       const path = svg.root.querySelector('svg [data-kind="area"]')!;
       expect(path.getAttribute("d")).toMatch(/^M.*Z$/);
       expect(svg.toSVG()).toContain(`d="${path.getAttribute("d")}"`);
       svg.destroy();
-      const chart = createChart(host, { renderer: "canvas", marks: [mark] });
+      const chart = createChart(host, { theme: CLEAR, renderer: "canvas", marks: [mark] });
       const model = modelOf(chart);
       const panel = model.panels()[0]!;
       const along = horizontal ? panel.y : panel.x;

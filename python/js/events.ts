@@ -127,6 +127,14 @@ export interface InspectionPayload {
     row: number | null;
     value: number | null;
     text: string;
+    /** The fields of the row its mark's tooltip shows (`tooltip.fields`), times in epoch ms. */
+    fields?: {
+      field: string;
+      label: string;
+      kind: string;
+      value: number | string | null;
+      text: string;
+    }[];
   }[];
   /** An item's data by field (a 3D chart's point): numbers, times in epoch ms, and categories. */
   values?: Readonly<Record<string, number | string>>;
@@ -255,6 +263,7 @@ export function inspectionPayload(
       row: point.row ?? null,
       value: finite(point.value),
       text: point.text,
+      ...(point.fields && { fields: point.fields.map((field) => ({ ...field })) }),
     })),
     ...(inspection.axis === "item" && inspection.values && { values: inspection.values }),
   };

@@ -7,6 +7,7 @@ import { RowSet } from "../../src/data/row-set.ts";
 import { rowView } from "../../src/data/row-view.ts";
 import { selectionStore, selectRows } from "../../src/data/selection.ts";
 import { type Table, table } from "../../src/data/table.ts";
+import { fieldReader } from "../../src/dom/tooltip-content.ts";
 import { plan, sidesOf, snapshot } from "../../src/dom/value-transition.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { Polyline } from "../../src/lod/polyline.ts";
@@ -1264,6 +1265,76 @@ describe("capabilities: tooltip and keyboard reading", () => {
     expect(model.keyboardStops("")).toEqual([]);
     expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))).toBeUndefined();
     expect(describeChart(model)).toBe("Contract custom shapes");
+  });
+});
+
+describe("capabilities: tooltip fields", () => {
+  const fields = { fields: ["note"] } as const;
+  // Marks whose points are rows; those that summarize rows take no fields.
+  const rows: { name: string; make: () => ChartMark; items?: true }[] = [
+    { name: "line", make: () => line(samples, { x: "x", y: "y", tooltip: fields }) },
+    { name: "area", make: () => area(samples, { x: "x", y: "y", tooltip: fields }) },
+    { name: "bar", make: () => bar(samples, { x: "x", y: "y", tooltip: fields }) },
+    { name: "point", make: () => point(samples, { x: "x", y: "y", tooltip: fields }) },
+    { name: "rug", make: () => rug(samples, { x: "x", tooltip: fields }) },
+    {
+      name: "errorbar",
+      make: () => errorBar(samples, { x: "x", y1: "low", y2: "high", tooltip: fields }),
+    },
+    {
+      name: "candlestick",
+      make: () =>
+        candlestick(samples, {
+          x: "x",
+          open: "low",
+          high: "high",
+          low: "low",
+          close: "y",
+          tooltip: fields,
+        }),
+    },
+    {
+      name: "heatmap",
+      make: () => heatmap(samples, { x: "x", y: "category", color: "y", tooltip: fields }),
+    },
+    {
+      name: "custom",
+      make: () => custom(samples, { x: "x", y: "y", tooltip: fields, draw() {} }),
+    },
+    {
+      name: "geoshape",
+      make: () => geoshape(world, { tooltip: { fields: ["group"] } }),
+      items: true,
+    },
+    {
+      name: "geopoint",
+      make: () => geopoint(samples, { longitude: "x", latitude: "y", tooltip: fields }),
+      items: true,
+    },
+    {
+      name: "point3d",
+      make: () => point3d(spatial, { x: "x", y: "y", z: "z", tooltip: { fields: ["group"] } }),
+      items: true,
+    },
+    {
+      name: "line3d",
+      make: () => line3d(spatial, { x: "x", y: "y", z: "z", tooltip: { fields: ["group"] } }),
+      items: true,
+    },
+  ];
+
+  it.each(rows)("$name shows fields of the row its point is", (c) => {
+    const model = new ChartModel({ locale: "en-US", timeZone: "UTC", marks: [c.make()] });
+    // As a chart does once it has loaded what reads them.
+    model.fields = fieldReader;
+    model.setSize(600, 400, 1);
+    model.scene(estimateText);
+    const point = c.items
+      ? model.inspectItem(model.stepItem(undefined, 1)!)!.points[0]!
+      : model.inspectPosition(model.keyboardStops("")[0]!.key, 0)!.points[0]!;
+    const [field] = point.fields!;
+    expect(field!.text.length).toBeGreaterThan(0);
+    expect(field!.field).toBe(c.items && c.name !== "geopoint" ? "group" : "note");
   });
 });
 

@@ -13,7 +13,7 @@ level-of-detail rendering, SVG and Canvas output, SVG and PDF export.
 import { createChart, line, rule, table, time } from "herceg";
 
 const metrics = table({
-  time: time(timestamps), // Float64Array of epoch ms, or Date[]
+  time: time(timestamps), // Float64Array of epoch ms, Date[], or ISO 8601 strings
   p50: p50Latency, // Float64Array or number[]
   p99: p99Latency,
 });
@@ -47,24 +47,45 @@ side.
 arrays, `Date` arrays, and string arrays are converted once. Change a typed
 array's values through the table (`set`, `replace`, below): the table and the
 array share memory, but only the table's methods keep its cached extents and
-level-of-detail indexes current and redraw the charts reading it. Numbers are
-numbers: wrap epoch milliseconds in `time()` (or pass `Date`s) for a time axis,
-and give category fields strings (`codes.map(String)` for status codes or
-years).
+level-of-detail indexes current and redraw the charts reading it.
+
+Numbers are numbers, so say what else they are. Herceg does not guess from a
+field's name or magnitudes: epoch milliseconds given as plain numbers draw a
+number axis (ticks such as "1.77T"). Wrap them in `time()` for a time axis;
+`time()` also takes `Date`s and ISO 8601 strings, read as `Date.parse` reads
+them: a date alone is UTC midnight, and a date and time without an offset is
+local time, so give `Z` or an offset for instants. Numbers that name things
+(years, status codes, ids) are categories with `category()`, labeled as
+`String` writes them, in order of first appearance.
 
 ```ts
 const requests = table({
-  time: time(timestamps),
+  time: time(["2026-01-21T09:30:00Z", "2026-01-21T09:31:00Z"]),
   latency: latencies,
   service: serviceNames, // string[]: a category field
+  status: category([200, 503]), // numbers as categories: "200", "503"
 });
 requests.numbers("latency"); // Float64Array view of the live rows
 requests.categories("service"); // { codes: Int32Array, dictionary: string[] }
+requests.value("latency", 0); // number | null, typed by the field
+requests.value("time", 0); // epoch milliseconds
+requests.value("status", 1); // "503"
 ```
 
+`table.value(field, row)` reads one value as its field's kind: a number (null
+when missing), epoch milliseconds for times, a category's string, or a
+shape's code for geometry fields.
+
 Row objects can be converted with `fromRows(rows)`; their `Date` properties
-become time fields, and numbers stay numbers (set the axis' `type: "time"`
-for epoch milliseconds). Categories that are
+become time fields, numbers number fields, and strings category fields.
+`types` reads a property as another kind: `"time"` for epoch milliseconds or
+ISO 8601 strings, `"category"` for numeric codes:
+
+```ts
+const rows = fromRows(records, { types: { at: "time", status: "category" } });
+```
+
+Categories that are
 already dictionary-encoded (Arrow dictionaries, pandas categoricals) are used
 without decoding: `encodedCategory(codes, dictionary)` takes `Int32Array`
 codes (-1 for missing) and the dictionary. Shapes for maps are geometry
@@ -77,7 +98,7 @@ frame, once per frame however many changes arrive:
 ```ts
 const live = table({ time: time([]), cpu: [] as number[] }, { maxRows: 3_000 });
 live.append({ time: [Date.now()], cpu: [0.42] }); // keeps the newest 3,000 rows
-live.appendRow({ time: Date.now(), cpu: 0.4 });
+live.appendRow({ time: "2026-01-21T09:32:00Z", cpu: 0.4 }); // times as their columns take them
 live.set("cpu", 0, 0.5);
 live.replace("cpu", 0, [0.1, 0.2]); // overwrite rows 0 and 1
 live.dropBefore("time", Date.now() - 60_000);
@@ -1087,25 +1108,25 @@ Charts share their behaviors unevenly so far: the marks along x and y axes
 take part in everything, the others in less. ✓ supported, ◐ partly (see
 the notes), — not yet (refused with an error), · not applicable.
 
-| Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Tooltip and keyboard | Value animation |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| line, area, bar | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
-| point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | — |
-| rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | — | ✓ | ✓ | — |
-| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
-| dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | — |
-| heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | — | · | ✓ | — |
-| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | ◐ |
-| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | — |
-| pie | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | ✓ |
-| treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ◐ | ◐ | ✓ | ✓ | — |
-| radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | — |
-| gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | — |
-| graph | — | — | — | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — |
-| geoshape, geopoint | — | — | — | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | — |
-| point3d, line3d | — | — | — | · | turning | — | — | — | — | ✓ | ✓ | — |
-| surface | — | — | — | · | turning | — | — | — | — | · | ✓ | — |
+| Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Tooltip and keyboard | Tooltip fields | Value animation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| line, area, bar | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
+| point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | · | — |
+| rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | — | ✓ | ✓ | ✓ | — |
+| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | — |
+| dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | — |
+| heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | — | · | ✓ | ✓ | — |
+| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | · | ◐ |
+| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | ◐ | — |
+| pie | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | ✓ |
+| treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ◐ | ◐ | ✓ | ✓ | · | — |
+| radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | — |
+| gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | · | — |
+| graph | — | — | — | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — | — |
+| geoshape, geopoint | — | — | — | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| point3d, line3d | — | — | — | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
+| surface | — | — | — | · | turning | — | — | — | — | · | ✓ | · | — |
 
 - Selected rows and Highlight are what charts bound to a selection store do
   (`rowSelection`, see [Selected rows](#selected-rows)): brushes, lassos, and
@@ -1156,6 +1177,10 @@ the notes), — not yet (refused with an error), · not applicable.
   median is not positive; annotations are read in the chart's summary
   rather than one by one (a facet panel's own as the keyboard arrives
   there); custom marks are read through their series.
+- Tooltip fields (see [Tooltips](#tooltips)) show more of the row a point
+  or item is; marks whose points summarize rows (bins, groups, slices,
+  nodes, surface samples) have no one row to show, custom marks take them
+  with series, and network nodes do not yet.
 - Value animation moves unstacked, unlabeled bars, points, lines and areas
   along x whose rows stay, rules, and pie slices (see
   [Animation](#animation)), in charts of one panel; lines and areas along
@@ -2237,10 +2262,11 @@ custom(requests, {
   series: "service",
   description: "Request latency per service.", // for the chart's text alternative
   pointText: (row, format, s) => `${format.y(s.y[row]!)} ms`, // tooltip text; default: the y value
+  zero: "y", // stems stand on zero, so the y axis includes it, as for bars
   draw({ series, x, y, line, circle }) {
     for (const s of series) {
       for (let k = 0; k < s.length; k++) {
-        const row = s.rows ? s.rows[k]! : k;
+        const row = s.rowAt(k);
         const [px, py] = [x(s.x[row]!), y(s.y[row]!)];
         line(px, y(0), px, py, { stroke: s.color });
         circle(px, py, 4, { fill: s.color });
@@ -2257,12 +2283,16 @@ style (`fill`, `stroke`, `strokeWidth`, `opacity`, `dash`); they paint the same
 on a canvas as in SVG (butt caps, miter joins, opacity applied to fill and
 stroke separately). With a table, `draw` also gets it, and `series`: the
 series to draw, without those hidden from the legend, each with its `label`,
-`color`, `x` and `y` columns, `length`, and `rows` (undefined when it holds
-every row; in a facet panel, that panel's rows). A `draw` that reads the
-table directly instead draws hidden series and every panel's rows. The y
-axis fits the series' values in view, and those of the points just past
-its edges, so shapes between neighboring points stay in view; give the
-chart `y: { zero: true }` for shapes drawn from zero.
+`color`, `x` and `y` columns, `length`, `rows` (undefined when it holds
+every row; in a facet panel, that panel's rows), and `rowAt(k)`, the row of
+its point `k` (0 to `length - 1`), which indexes `x`, `y`, and the table's
+columns. A `draw` that reads the table directly instead draws hidden series
+and every panel's rows. The y axis fits the series' values in view, and
+those of the points just past its edges, so shapes between neighboring
+points stay in view; `zero: "y"` (or `"x"`, for horizontal shapes) says the
+mark's shapes are drawn from zero, which the axis then includes, as it does
+for bars, unless the axis says `zero: false`. Custom marks with series take
+`tooltip: { fields }` as other marks do (see Tooltips).
 
 Glyphs drawn from several fields of a row, such as ranges from `low` to
 `high`, are not one series per field: give them `series: false`, and their
@@ -2283,14 +2313,15 @@ is internal, and charts take only marks the mark functions make.
 | `marks` | Marks to draw, bottom to top (rules are drawn on top). |
 | `title`, `description` | Accessible name and description; the title is drawn. |
 | `width`, `height` | Fixed size; omitted dimensions follow the container (a block one in Firefox, where a chart in a `<span>` keeps its first width). |
-| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `title`, `grid`, `ticks`, `format` (Intl options), `show`; on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
+| `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `title`, `grid`, `ticks`, `format` (Intl options, for tick labels and tooltips), `tooltipFormat` (Intl options for tooltips, the keyboard, and crosshair labels only; see Tooltips), `show`; on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `resolve` | `{ x?, y?, yRight? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x, y, or right y scale (`yRight` as `y` unless given; see Small multiples, Subplots, and A second y axis). |
 | `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots). |
 | `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot (under every panel, with facets or subplots) over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
-| `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
+| `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. Marks take `tooltip: { fields }` for data of their rows (see Tooltips). |
+| `renderTooltip` | JavaScript only: the tooltip's content of your own, text or a node, in the built-in box (see Tooltips). |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom); maps and networks pan and zoom both ways (`true` or `"xy"`), and treemaps and sunbursts drill into nodes (`true`). `drag: true` moves a network's nodes. `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom), unless it selects rows for `rowSelection`. `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. Maps and networks take a `"lasso"` brush and no other. |
 | `rowSelection` | `rowSelection({ store, channel, events?, effect? }, ...)`: channels of selection stores, one per table, that brushes, lassos, and clicks write rows to and the chart highlights (see Selected rows). |
 | `animation` | `true` or `{ duration?, values? }`: the axes move gradually to views asked for, and with `values: true`, bars, pie slices, points, small lines and areas, and the axes with them, to changed values (see Animation). Off by default. |
@@ -2310,10 +2341,11 @@ position | null)` (networks), `getPanels()`,
 `toPixel`, `fromPixel`, `formatValue`, and `inspect` (see Panels and pixels),
 `getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
 `setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
-`render()`, `toSVG()`, `destroy()`, and `loading` (a promise while the GPU
-painter for large point series, the animation code, the controls of a 3D
-chart, a map, a tree, or a network, the brush, or a navigator's sliders
-load, otherwise undefined). The brush loads when a chart can brush
+`render()`, `toSVG()` and `toPNG()` (see Export), `destroy()`, and `loading`
+(a promise while the GPU painter for large point series, the animation
+code, the controls of a 3D chart, a map, a tree, or a network, the brush, a
+navigator's sliders, or what reads tooltip fields and draws
+`renderTooltip`'s content load, otherwise undefined). The brush loads when a chart can brush
 or first shows a selection; selections are kept and reported before it has,
 and a drag that starts before it arrives goes on from where it began. Tests
 that drag right after creating a chart await `chart.loading` first.
@@ -2341,6 +2373,63 @@ whole configuration: a prop left out, or `undefined`, takes its default.
 the selected x and y ranges (null along an axis the brush leaves alone; a
 lasso's extent) and a lasso's outline as `[x, y]` pairs. Code written when
 `selection` was the x range reads `chart.selection?.x`.
+
+### Tooltips
+
+The tooltip shows what is at the pointer or keyboard cursor: the position
+(the x value, or y in `nearest-y` mode, or an item's name), then a row per
+series or item with its value, written as the axis' `format` writes it.
+`tooltipFormat` on an axis writes tooltips', the keyboard's, and the
+crosshair labels' values without changing tick labels. Marks whose points
+are rows (lines, areas, bars, points, rugs, error bars, candlesticks,
+heatmaps, map regions and points, 3D points and lines, and custom marks
+with series) show more of the row with `tooltip: { fields }`: a field's
+name, or `{ field, label?, format? }` with Intl options, under each point's
+row in order. Fields are checked against the mark's table at compile time
+and when the mark is made; without a format, numbers are written as the
+chart's other numbers, times as the x axis writes them when it is a time
+axis (else as dates and times), and categories as they are; missing values
+show as "–". Marks whose points summarize rows (histogram bins, box plots,
+violins, pie slices, tree nodes, networks, Sankey diagrams) take no fields.
+
+```ts
+createChart(element, {
+  locale: "en-US",
+  marks: [
+    line(latency, {
+      x: "time",
+      y: "p99",
+      tooltip: { fields: [{ field: "requests", label: "Requests" }] },
+    }),
+  ],
+  x: { tooltipFormat: { weekday: "short", month: "short", day: "numeric" } }, // "Wed, Jan 21"
+  y: { title: "ms", tooltipFormat: { style: "unit", unit: "millisecond" } }, // "304 ms"
+});
+```
+
+The fields are in inspections too, so hover and click events, `inspect`,
+and the keyboard's announcements read them: each `InspectedPoint` has
+`fields`, `{ field, label, kind, value, text }` for each, its value a number
+(epoch milliseconds for times), a category, or null. The code that reads
+and draws them loads the first time a chart has any (`chart.loading`).
+
+For content of your own, `renderTooltip` (JavaScript only) returns text,
+which is shown as text and never parsed as markup, or a node, for an
+inspection; null or undefined shows the built-in content. The box keeps its
+placement (beside the pointer, inside the chart), the crosshair and the
+highlighted points stay, and the keyboard's announcements still read the
+inspection as the built-in content writes it. It is called when what the
+tooltip is at changes, not on every pointer move, and the box is placed
+again as the node's content changes size, so frameworks may render into it
+later. The React, Vue, and Svelte adapters render their own components
+there (a `renderTooltip` prop, slot, or snippet).
+
+```ts
+createChart(element, {
+  marks: [line(latency, { x: "time", y: "p99" })],
+  renderTooltip: ({ points }) => `${points[0]?.text ?? ""} ms`,
+});
+```
 
 ### Animation
 
@@ -2433,18 +2522,21 @@ asks for `values`.
 ### Themes
 
 The built-in themes are `"light"` (the default), `"dark"`, `"high-contrast"`,
-and `"high-contrast-dark"`. Light and dark have transparent backgrounds and
-take the page's; the high-contrast themes paint white or black surfaces of
-their own. `"auto"` is light or dark to match the surface the chart sits on:
-the background colors around it (through translucent layers and shadow
-roots), or, on a page without one, the user's `prefers-color-scheme` when the
-page's `color-scheme` allows dark. It switches when that changes. A chart in a
-frame judges the frame's own page; give it a theme or background when the page
-around the frame is dark. The categorical palettes keep adjacent series
-apart for the common forms of color blindness, and the high-contrast palettes
-reach 4.5:1 against their surfaces.
+and `"high-contrast-dark"`, each painting a surface of its own (white,
+`#12151c`, white, and black), so a chart reads the same on any page and in
+every export. `"auto"` is light or dark to match the surface the chart sits
+on, and transparent, showing that surface: the background colors around it
+(through translucent layers and shadow roots), or, on a page without one,
+the user's `prefers-color-scheme` when the page's `color-scheme` allows dark.
+It switches when that changes. A chart in a frame judges the frame's own
+page; give it a theme or background when the page around the frame is dark.
+Any theme shows the page instead with `background: "transparent"`, as for a
+chart in a tinted card. The categorical palettes keep adjacent series apart
+for the common forms of color blindness, and every color reaches 3:1 against
+its theme's surface (the high-contrast palettes 4.5:1).
 
-An object overrides any of a theme's tokens, starting from `extends`:
+An object overrides any of a theme's tokens, starting from `extends` (light
+by default):
 
 ```ts
 createChart(element, {
@@ -2476,7 +2568,10 @@ colors in any CSS syntax, from the page; they read the page again when the
 class, style, or data attributes of its root or body element change (call
 `update({})` after other theme changes). Static output (`renderToSVG`, PNG,
 and PDF) has no page: each variable takes its fallback, and `"auto"` is light.
-PDF output reads hex, `rgb()`, `hsl()`, and named colors.
+PDF output reads hex, `rgb()`, `hsl()`, and named colors. PDF pages are
+white: a transparent theme with light text (a dark theme without its
+background, or `"auto"` on a dark page) gets the dark surface it was meant
+for.
 
 ## Events
 
@@ -2665,8 +2760,24 @@ labels remain part of the figure. This does not claim PDF/UA conformance.
 
 ## Export
 
-`renderToSVG` and `renderToPDF` need no DOM, so they run on servers, in
-workers, and in build scripts:
+A mounted chart exports what it shows now, at its size, zoomed and with
+series hidden as they are: `chart.toSVG()` a standalone SVG document,
+`chart.toPNG({ scale })` a PNG `Blob` at `scale` times its size in CSS
+pixels (2 by default; drawn from the SVG export, whose transparent
+background stays transparent; its encoder loads the first time), and
+`renderToPDF(chart)` from `herceg/pdf` a PDF, laid out as the page measured
+its text:
+
+```ts
+import { renderToPDF } from "herceg/pdf";
+
+const svg = chart.toSVG();
+const png = await chart.toPNG({ scale: 2 }); // Blob, image/png
+const pdf = renderToPDF(chart, { fonts }); // Uint8Array; fonts as below, optional
+```
+
+`renderToSVG` and `renderToPDF` take chart options too, and then need no
+DOM, so they run on servers, in workers, and in build scripts:
 
 ```ts
 import { renderToSVG } from "herceg";
@@ -2681,8 +2792,8 @@ PDF export is a separate entry point, `herceg/pdf`. Import `pdfFonts` to
 include the optional TrueType parser, subsetter, and embedded-font writer;
 plain PDF exports bundle none of them. The `herceg-pdf` and
 `herceg-pdf-fonts` size benchmarks include scene compilation and a line
-mark, without and with embedded-font support respectively (about 42 and
-49.5 KiB gzip, excluding supplied font bytes). The page is the chart's size
+mark, without and with embedded-font support respectively (about 45 and
+52 KiB gzip, excluding supplied font bytes). The page is the chart's size
 at 0.75 points per CSS pixel. Marks, axes, and legends are vectors, heatmaps are compressed images,
 and text is selectable. Title and description become document metadata.
 Both font paths also emit a `Document` containing one `Figure`, with the
@@ -2768,8 +2879,8 @@ incorrect checksums; generated subsets receive fresh checksums.
 - The layout measurer returns width only: unusually tall fallback faces may
   need extra margins or smaller text. Label shortening uses code-point cuts
   and may split grapheme clusters; no grapheme-aware shortening yet.
-- Colors must be hex, `rgb()`, `hsl()`, or CSS color names.
-  Give dark themes a background color; transparent pages appear as white paper.
+- Colors must be hex, `rgb()`, `hsl()`, or CSS color names. Pages are white
+  paper: a transparent theme with light text gets a dark surface.
 - Optional shipped fonts remain open work. Tagged PDFs provide a chart
   alternative, without separate text-label semantics or PDF/UA conformance.
 

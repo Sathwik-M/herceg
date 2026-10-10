@@ -3,6 +3,7 @@ import {
   area,
   bar,
   candlestick,
+  category,
   createChart,
   custom,
   encodedCategory,
@@ -49,10 +50,20 @@ chart.setViewport([0, 1]);
 chart.update({ theme: "dark", interaction: { zoom: true, sync: "dashboard" } });
 
 // Data
-const requests = table({ time: time(timestamps), latency: latencies, service: serviceNames });
+const requests = table({
+  time: time(["2026-01-21T09:30:00Z", "2026-01-21T09:31:00Z"]),
+  latency: latencies,
+  service: serviceNames,
+  status: category([200, 503]),
+});
 requests.numbers("latency");
 requests.categories("service");
+const latency: number | null = requests.value("latency", 0);
+const when: number | null = requests.value("time", 0);
+const status: string | null = requests.value("status", 1);
+void [latency, when, status];
 fromRows([{ at: new Date(), value: 1 }]);
+fromRows([{ at: 0, status: 200 }], { types: { at: "time", status: "category" } });
 const encoded = table({ host: encodedCategory(new Int32Array([0, -1]), ["web"]), v: [1, 2] });
 line(encoded, { x: "v", y: "v", series: "host" });
 
@@ -257,7 +268,7 @@ custom(requests, {
   draw({ series, x, y, line, circle }) {
     for (const s of series) {
       for (let k = 0; k < s.length; k++) {
-        const row = s.rows ? s.rows[k]! : k;
+        const row = s.rowAt(k);
         const [px, py] = [x(s.x[row]!), y(s.y[row]!)];
         line(px, y(0), px, py, { stroke: s.color });
         circle(px, py, 4, { fill: s.color });
@@ -341,3 +352,31 @@ chart.setVisibility(first!.key, false);
 const hidden: readonly string[] = chart.getHiddenKeys();
 chart.setHiddenKeys(hidden);
 chart.on("visibility", ({ hiddenKeys }) => hiddenKeys.length);
+
+// Tooltips
+declare const daily: Float64Array;
+const latencyTable = table({ time: time(daily), p99: daily, requests: daily });
+createChart(element, {
+  locale: "en-US",
+  marks: [
+    line(latencyTable, {
+      x: "time",
+      y: "p99",
+      tooltip: { fields: [{ field: "requests", label: "Requests" }] },
+    }),
+  ],
+  x: { tooltipFormat: { weekday: "short", month: "short", day: "numeric" } },
+  y: { title: "ms", tooltipFormat: { style: "unit", unit: "millisecond" } },
+});
+createChart(element, {
+  marks: [line(latencyTable, { x: "time", y: "p99" })],
+  renderTooltip: ({ points }) => `${points[0]?.text ?? ""} ms`,
+});
+
+// Export of a mounted chart
+async function exportChart() {
+  chart.toSVG();
+  await chart.toPNG({ scale: 2 });
+  renderToPDF(chart);
+}
+void exportChart;

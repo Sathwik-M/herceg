@@ -17,6 +17,9 @@ import { facet } from "../../src/model/facet.ts";
 import { panels } from "../../src/model/panels.ts";
 import { bandBox, MOUSE, modelOf } from "./helpers.ts";
 
+/** Without a background, the canvas holds what marks paint alone. */
+const CLEAR = { background: "transparent" } as const;
+
 let host: HTMLDivElement;
 
 beforeEach(() => {
@@ -874,7 +877,7 @@ describe("facet panels with heatmaps and points on categories of their own", () 
   };
 
   it("paint each panel's cells at its own categories on a canvas", () => {
-    const chart = createChart(host, { ...cells(), renderer: "canvas" });
+    const chart = createChart(host, { theme: CLEAR, ...cells(), renderer: "canvas" });
     const pixel = pixelOf(chart);
     const [n, s] = modelOf(chart).panels();
     const gray = (value: number) => Math.round((value / 10) * 255);

@@ -244,13 +244,22 @@ export class Panels implements PanelLayout {
       if (!x && !yAxesOf(inPanel)[axis === "y" ? "left" : "right"]) return;
       const drawn = inPanel.filter((mark) => onAxis(mark, axis));
       const type = spec?.type ?? (x ? undefined : typeOf(drawn, "y"));
-      const { domain, zero, nice, ticks, format } = spec ?? {};
-      const policy = JSON.stringify([type, domain, zero, nice, ticks, format, x && spec?.title]);
+      const { domain, zero, nice, ticks, format, tooltipFormat } = spec ?? {};
+      const policy = JSON.stringify([
+        type,
+        domain,
+        zero,
+        nice,
+        ticks,
+        format,
+        tooltipFormat,
+        x && spec?.title,
+      ]);
       const seen = first.get(groupOf(i));
       if (seen === undefined) first.set(groupOf(i), policy);
       else if (seen !== policy)
         throw new Error(
-          `panels[${i}].${axis}: shares ${x ? "an x" : axis === "y" ? "a y" : "a right y"} scale with others but differs in type, domain, zero, nice, ticks, ${x ? "format, or title" : "or format"}; match them`,
+          `panels[${i}].${axis}: shares ${x ? "an x" : axis === "y" ? "a y" : "a right y"} scale with others but differs in type, domain, zero, nice, ticks, format, ${x ? "tooltipFormat, or title" : "or tooltipFormat"}; match them`,
         );
     });
   }

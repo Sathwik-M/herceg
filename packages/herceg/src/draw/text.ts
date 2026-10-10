@@ -5,13 +5,16 @@ import { escapeXml, n } from "./markup.ts";
 
 /**
  * The halo that keeps labels readable over lines and fills, an outline
- * drawn below the text: the background color, or without one, white behind
- * dark text and black behind light text. Fills given by name are taken to
- * be as light as the theme's text.
+ * drawn below the text: the background color where the text contrasts
+ * with it, else (and without a background) white behind dark text and
+ * black behind light text. Fills given by name are taken to be as light as
+ * the theme's text.
  */
 export function textHalo(fill: string, theme: Theme): { color: string; opacity: number } {
-  if (theme.background !== "transparent") return { color: theme.background, opacity: 1 };
   const light = isLightColor(fill) ?? isLightColor(theme.text);
+  const { background } = theme;
+  if (background !== "transparent" && isLightColor(background) !== light)
+    return { color: background, opacity: 1 };
   return { color: light ? "#000000" : "#ffffff", opacity: 0.85 };
 }
 

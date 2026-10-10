@@ -55,6 +55,22 @@ class Selection:
 
 
 @dataclass(frozen=True)
+class InspectedField:
+    """A column of the row a tooltip is at that its mark's tooltip shows
+    (``hg.Tooltip(fields=...)``)."""
+
+    field: str
+    #: What the tooltip names it by.
+    label: str
+    #: "number", "time", or "category".
+    kind: str
+    #: A number, a datetime for times, a category, or None when missing.
+    value: Value | None
+    #: The value as the tooltip writes it.
+    text: str
+
+
+@dataclass(frozen=True)
 class InspectedPoint:
     """One point under the pointer: a series' value, or a pie slice, a tree's node,
     and other items of charts without axes."""
@@ -79,6 +95,8 @@ class InspectedPoint:
     mark_id: str | None = None
     #: Identifies the point's series (or item) in the chart.
     key: str = ""
+    #: The columns of ``row`` its mark's tooltip shows besides its value.
+    fields: tuple[InspectedField, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -304,6 +322,16 @@ def decode_inspection(payload: Any) -> Inspection | None:
                 mark=point["mark"],
                 mark_id=point.get("markId"),
                 key=point["key"],
+                fields=tuple(
+                    InspectedField(
+                        field=field["field"],
+                        label=field["label"],
+                        kind=field["kind"],
+                        value=_value(field["value"], field["kind"] == "time"),
+                        text=field["text"],
+                    )
+                    for field in point.get("fields", ())
+                ),
             )
             for point in payload.get("points", ())
         ),

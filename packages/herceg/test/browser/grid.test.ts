@@ -562,7 +562,9 @@ describe("grid layout", () => {
     const dark = resolveTheme("dark");
     const style = grid.root.style;
     expect(style.getPropertyValue("--hg-text")).toBe(dark.text);
-    expect(style.getPropertyValue("--hg-surface")).toBe(dark.tooltipBackground);
+    // Named themes have surfaces of their own, which the sticky header covers rows with.
+    expect(style.getPropertyValue("--hg-surface")).toBe(dark.background);
+    expect(style.getPropertyValue("--hg-background")).toBe(dark.background);
     grid.update({ theme: "high-contrast", ariaLabel: "Latest" });
     expect(style.getPropertyValue("--hg-text")).toBe("#000000");
     expect(style.getPropertyValue("--hg-surface")).toBe("#ffffff");

@@ -175,7 +175,7 @@ function lollipops(seen: (readonly CustomSeries[])[], options: { facet?: "repeat
       seen.push(series);
       for (const s of series) {
         for (let k = 0; k < s.length; k++) {
-          const row = s.rows ? s.rows[k]! : k;
+          const row = s.rowAt(k);
           stem(x(s.x[row]!), y(0), x(s.x[row]!), y(s.y[row]!), { stroke: s.color });
           circle(x(s.x[row]!), y(s.y[row]!), 3, { fill: s.color });
         }
@@ -185,7 +185,7 @@ function lollipops(seen: (readonly CustomSeries[])[], options: { facet?: "repeat
 }
 
 /** The rows a series holds. */
-const rowsOf = (s: CustomSeries) => Array.from({ length: s.length }, (_, k) => s.rows?.[k] ?? k);
+const rowsOf = (s: CustomSeries) => Array.from({ length: s.length }, (_, k) => s.rowAt(k));
 
 describe("custom marks with series", () => {
   it("show y fields split by a series field, with a legend entry per series in its color", () => {
@@ -292,6 +292,55 @@ describe("custom marks with series", () => {
     ]);
   });
 
+  it("give each point's row, as the series' rows or all of them hold it", () => {
+    const seen: (readonly CustomSeries[])[] = [];
+    build({ marks: [lollipops(seen)] });
+    const [a] = seen[0]!;
+    expect([a!.rows === undefined, rowsOf(a!)]).toEqual([false, [0, 2, 4]]);
+    seen.length = 0;
+    const one = custom(load, {
+      x: "time",
+      y: "cpu",
+      draw({ series }) {
+        seen.push(series);
+      },
+    });
+    build({ marks: [one] });
+    const [all] = seen[0]!;
+    expect([all!.rows, rowsOf(all!)]).toEqual([undefined, [0, 1, 2, 3, 4, 5]]);
+  });
+
+  it("put zero in the axis they are drawn from zero along, as bars do", () => {
+    const stems = (zero?: "x" | "y") => ({ ...(zero && { zero }), draw() {} });
+    const fit = build({ marks: [custom(load, { x: "time", y: "cpu", ...stems() })] }).model;
+    expect(fit.yScale()!.domain[0]).toBeGreaterThan(0);
+    const from = build({ marks: [custom(load, { x: "time", y: "cpu", ...stems("y") })] }).model;
+    expect(from.yScale()!.domain[0]).toBe(0);
+    // Marks without series stand on it whenever they draw.
+    const glyphs = build({
+      marks: [custom(prices, { x: "time", y: ["low", "high"], series: false, ...stems("y") })],
+    }).model;
+    expect(glyphs.yScale()!.domain[0]).toBe(0);
+    const sideways = build({
+      marks: [custom(prices, { x: ["low", "high"], series: false, ...stems("x") })],
+    }).model;
+    expect(sideways.xScale()!.domain[0]).toBe(0);
+    // The axis has the last word, with series or without.
+    const cut = build({
+      marks: [custom(load, { x: "time", y: "cpu", ...stems("y") })],
+      y: { zero: false },
+    }).model;
+    expect(cut.yScale()!.domain[0]).toBeGreaterThan(0);
+    const cutGlyphs = build({
+      marks: [custom(prices, { x: "time", y: ["low", "high"], series: false, ...stems("y") })],
+      y: { zero: false, nice: false },
+    }).model;
+    expect(cutGlyphs.yScale()!.domain).toEqual([9, 20]);
+    expect(() => custom(load, { x: "time", y: "cpu", zero: "z" as never, draw() {} })).toThrow(
+      'custom zero: expected "x" or "y"; received "z"',
+    );
+  });
+
   it("summarize their series in the text alternative", () => {
     const { model } = build({ marks: [lollipops([])] });
     expect(describeChart(model)).toBe(
@@ -367,7 +416,7 @@ describe("custom marks with series", () => {
 
   it("refuse series options they cannot show", () => {
     expect(() => custom(prices, { y: "low", label: "Low", draw() {} })).toThrow(
-      /custom: series, label, and pointText need one x field, y fields/,
+      /custom: series, label, pointText, and tooltip need one x field, y fields/,
     );
     expect(() =>
       custom(prices, { x: "time", y: "low", series: false, pointText: () => "", draw() {} }),

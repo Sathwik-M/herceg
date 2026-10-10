@@ -13,7 +13,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
-import { daily, days, p50, p99 } from "./data.ts";
+import { daily, days, p50, p99, requests } from "./data.ts";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -279,24 +279,38 @@ describe("02: a multi-series chart", () => {
 describe("03: a custom tooltip", () => {
   // Hovering the middle of the plot shows the day's latency and request count.
   const shows = /\w{3}, \w{3} \d+: \d+ ms, [\d,]+ requests/;
-  for (const library of ["herceg", "herceg-react", "tanstack", "tanstack-react", "echarts"]) {
+  for (const library of ["tanstack", "tanstack-react", "echarts"]) {
     test(library, async () => {
       const { elements } = await mount("03-tooltip", library);
       await userEvent.hover(elements[0]!, { position: PLOT });
       await expect.poll(() => elements[0]!.textContent).toMatch(shows);
     });
   }
+  // Herceg's built-in tooltip: the day, then a row per series and its fields.
+  const tooltip = (element: Element) =>
+    [...element.querySelectorAll<HTMLElement>('div[aria-hidden="true"]')].find((div) =>
+      div.textContent?.includes("requests"),
+    );
   for (const library of ["herceg", "herceg-react"]) {
+    test(library, async () => {
+      const { elements } = await mount("03-tooltip", library);
+      await userEvent.hover(elements[0]!, { position: PLOT });
+      await expect
+        .poll(() => [...(tooltip(elements[0]!)?.children ?? [])].map((row) => row.textContent))
+        .toEqual([
+          expect.stringMatching(/^\w{3}, \w{3} \d+$/),
+          expect.stringMatching(/^p99\d+ ms$/),
+          expect.stringMatching(/^requests[\d,]+$/),
+        ]);
+    });
     test(`${library}: the tooltip stays inside the chart at its right edge`, async () => {
       const { elements } = await mount("03-tooltip", library);
       await userEvent.hover(elements[0]!, { position: { x: 625, y: 160 } });
-      const tip = () =>
-        [...elements[0]!.querySelectorAll("div")].find((div) =>
-          /requests$/.test(div.textContent ?? ""),
-        );
-      await expect.poll(() => tip()?.getBoundingClientRect().width).toBeGreaterThan(100);
+      await expect
+        .poll(() => tooltip(elements[0]!)?.getBoundingClientRect().width)
+        .toBeGreaterThan(80);
       const box = elements[0]!.getBoundingClientRect();
-      const rect = tip()!.getBoundingClientRect();
+      const rect = tooltip(elements[0]!)!.getBoundingClientRect();
       expect(rect.left).toBeGreaterThanOrEqual(box.left);
       expect(rect.right).toBeLessThanOrEqual(box.right);
     });
@@ -647,9 +661,14 @@ describe("10: export to SVG, PNG, and PDF", () => {
 });
 
 describe("12: bars and a line over categories", () => {
-  test("herceg (points: lines need a number or time x)", async () => {
+  test("herceg", async () => {
     const { elements } = await mount("12-bar-line", "herceg");
     expect(hercegSeries(elements[0]!)).toBe(2);
+    // The target is a line through the six months' bands.
+    const lines = [...elements[0]!.querySelectorAll('path[fill="none"]')].map(
+      (path) => path.getAttribute("d")?.split("L").length,
+    );
+    expect(lines).toContain(6);
   });
   test("echarts", async () => {
     const { result } = await mount("12-bar-line", "echarts");
@@ -731,7 +750,17 @@ describe("mistakes", () => {
       status: days.map((_, i) => (i % 2 ? 500 : 200)),
     });
     expect(() => line(rows, { x: "time", y: "latency", series: "status" as never })).toThrow(
-      'line series: field "status" holds number values; expected category; give its values as strings',
+      'line series: field "status" holds number values; expected category; give its values as strings, or numbers wrapped in category()',
+    );
+  });
+
+  test("03: a misspelled tooltip field", async () => {
+    const { line, table, time } = await herceg;
+    const latency = table({ time: time(days), p99, requests });
+    expect(() =>
+      line(latency, { x: "time", y: "p99", tooltip: { fields: ["reqeusts" as never] } }),
+    ).toThrow(
+      'line tooltip.fields[0]: no field "reqeusts"; the table has "time", "p99", "requests"',
     );
   });
 

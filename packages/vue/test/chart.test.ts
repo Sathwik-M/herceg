@@ -947,6 +947,49 @@ describe("<Chart>", () => {
     expect(view.value).toBeNull();
   });
 
+  it("renders the renderTooltip slot in the chart's tooltip box", async () => {
+    const { view } = chartRef();
+    const shows = ref(true);
+    mount(
+      `<Chart ref="view" locale="en-US">
+        <Line :data="metrics" x="t" y="a" :tooltip="{ fields: ['b'] }" />
+        <template v-if="shows" #renderTooltip="{ inspection }">
+          <b>{{ inspection.points[0].text }} {{ unit }}</b>
+        </template>
+      </Chart>`,
+      () => ({ metrics, view, unit: "ms", shows }),
+    );
+    const chart = view.value!.chart!;
+    await chart.loading;
+    const hover = async (x: number) => {
+      const rect = chart.root.getBoundingClientRect();
+      const { plot } = chart.getPanels()[0]!;
+      chart.root.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          clientX: rect.left + chart.toPixel(x, { axis: "x" })!,
+          clientY: rect.top + plot.y + plot.height / 2,
+        }),
+      );
+      chart.render();
+      await nextTick();
+    };
+    const box = () =>
+      [...host.querySelectorAll<HTMLElement>('div[aria-hidden="true"]')].find(
+        (div) => div.style.display === "block",
+      );
+    await hover(1);
+    expect(box()!.textContent!.trim()).toBe("2 ms");
+    expect(box()!.querySelector("b")).not.toBeNull();
+    await hover(2);
+    expect(box()!.textContent!.trim()).toBe("3 ms");
+    // Without the slot, the built-in content shows the fields.
+    shows.value = false;
+    await nextTick();
+    await hover(3);
+    expect([...box()!.children].map((row) => row.textContent)).toEqual(["3", "a4", "b1"]);
+  });
+
   it("rejects children that are not marks", () => {
     const errors: unknown[] = [];
     app = createApp(defineComponent({ components, template: "<Chart><span /></Chart>" }));

@@ -12,6 +12,8 @@
     type ChartUpdate,
     createChart,
     type Chart as HercegChart,
+    type Inspection,
+    type RenderTooltip,
   } from "herceg";
   import { untrack } from "svelte";
   import { type ChartProps, canonical, sameMark } from "./chart.js";
@@ -33,10 +35,24 @@
     onitemmove,
     onvisibility,
     onrender,
+    renderTooltip,
     ...options
   }: ChartProps = $props();
 
   type Options = Omit<ChartUpdate, "marks">;
+
+  /** What the tooltip is at, which the `renderTooltip` snippet renders into `tooltipHost`. */
+  let shown = $state.raw<Inspection | null>(null);
+  let tooltipHost = $state<HTMLDivElement>();
+  /** The chart's `renderTooltip` with the snippet: it shows the snippet's element. */
+  const showTooltip: RenderTooltip = (inspection) => {
+    shown = inspection;
+    return tooltipHost;
+  };
+  // A snippet given again starts empty, until the chart shows what it is at.
+  $effect.pre(() => {
+    if (!renderTooltip) shown = null;
+  });
 
   /** What the chart shows, to skip updates when nothing changed. */
   interface View {
@@ -78,7 +94,13 @@
     void moves;
     const view = plain(options) as Options;
     const next = [...marks, ...entries.toSorted(byPosition).map((entry) => entry.mark)];
-    return { marks: next, options: view, key: canonical(view) };
+    // The tooltip's renderer is a function, which canonical JSON leaves out.
+    const rendered = renderTooltip !== undefined;
+    return {
+      marks: next,
+      options: rendered ? { ...view, renderTooltip: showTooltip } : view,
+      key: `${canonical(view)}${rendered ? " rendered tooltip" : ""}`,
+    };
   });
 
   // The chart is created before its handlers subscribe, and updated after
@@ -170,4 +192,8 @@
 >
   <!-- Mark components render only empty anchors, kept out of the layout. -->
   <div bind:this={anchors} hidden>{@render children?.()}</div>
+  <!-- The chart shows this in its tooltip's box. -->
+  {#if renderTooltip}
+    <div bind:this={tooltipHost}>{#if shown}{@render renderTooltip(shown)}{/if}</div>
+  {/if}
 </div>

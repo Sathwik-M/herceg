@@ -22,6 +22,7 @@ import { MIDDLE_TO_BASELINE } from "../draw/shapes.ts";
 import { SYMBOLS, symbolPath } from "../draw/symbols.ts";
 import { HALO_WIDTH, textHalo } from "../draw/text.ts";
 import { parseFont } from "../layout/text.ts";
+import { isLightColor } from "../scale/color.ts";
 import {
   type Geometry,
   LEGEND_SWATCH,
@@ -32,7 +33,7 @@ import {
   type Scene,
   tickLabelGap,
 } from "../scene/scene.ts";
-import type { Theme } from "../theme.ts";
+import { surface, type Theme } from "../theme.ts";
 import { cssColor } from "./css-color.ts";
 import { type DocumentInfo, literal, num, PdfPage } from "./pdf-document.ts";
 import type { PdfFontResolver } from "./pdf-font-resolver.ts";
@@ -603,10 +604,15 @@ export function renderPdf(
   const size = theme.fontSize;
 
   page.write("/Artifact BMC\n");
-  if (theme.background !== "transparent") {
+  // Pages are white: a transparent theme with light text gets the dark
+  // surface it was meant for (see `surface`), its text read as PDF reads
+  // colors (named ones among them).
+  const rgb = cssColor(theme.text);
+  const ink = rgb ? `rgb(${rgb.slice(0, 3).map(Math.round).join(", ")})` : theme.text;
+  if (theme.background !== "transparent" || isLightColor(ink)) {
     const background = new PathBuilder();
     background.rect(0, 0, width, height);
-    paint(page, background, { fill: theme.background });
+    paint(page, background, { fill: surface({ ...theme, text: ink }) });
   }
 
   const grid = new PathBuilder();

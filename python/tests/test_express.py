@@ -338,6 +338,24 @@ def _matches(grid, values, curves):
     )
 
 
+def test_tooltip_fields_are_refused_by_charts_of_computed_tables():
+    with pytest.raises(ValueError, match=r"^barplot tooltip fields: express charts draw tables"):
+        hx.barplot(TIPS, x="day", y="tip", tooltip=hg.Tooltip(fields=["size"]))
+
+
+def test_options_a_function_does_not_take_are_refused_by_its_name():
+    with pytest.raises(TypeError, match=r"^stripplot: no option 'hue'; did you mean 'series'\?$"):
+        hx.stripplot(TIPS, x="day", y="tip", hue="sex")
+    with pytest.raises(
+        TypeError, match=r"^barplot: no option 'col'; did you mean 'facet_column'\?$"
+    ):
+        hx.barplot(TIPS, x="day", y="tip", col="sex")
+    with pytest.raises(
+        TypeError, match=r"^histplot: no option 'bogus'; see help\(herceg.express.histplot\)"
+    ):
+        hx.histplot(TIPS, x="tip", bogus=3)
+
+
 def test_histplot_bins_and_measures_follow_seaborn():
     statistics = pytest.importorskip("seaborn._statistics")
     flipper = PENGUINS["flipper"]

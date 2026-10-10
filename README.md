@@ -61,15 +61,17 @@ line, and surface charts (orthographic or perspective, turned by dragging,
 keys, and buttons, drawn back to front in SVG, Canvas, and PDF, and on the
 GPU with a depth test when large: point clouds, long lines, and surfaces of
 up to a million cells), monotone curves, named
-color schemes and diverging color, built-in themes (light, dark, high
-contrast, and one that follows the page) with CSS-variable theming, rule,
+color schemes and diverging color, built-in themes (light, dark, and high
+contrast on surfaces of their own, and one that follows the page) with
+CSS-variable theming, rule,
 region, and text annotations from constants or data (with labels hidden or
 moved where they would overlap), custom marks drawing
 through the same renderers (with series, legends, and tooltips), derived
 tables (filter, calculate, bin, aggregate, rolling windows, sort) with
 portable expressions, level of detail, streaming updates (stacks of fields and of series
 restacking only what appended and dropped rows touch), a shared
-scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
+scheduler, browser interaction (tooltips, with fields of the rows marks
+draw and content of the application's own, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
 selections, animated changes of view and of values (bars, pies, points,
 and small lines and areas, with the axes they move), crosshair
@@ -77,7 +79,8 @@ labels on the axes), a range navigator (a strip under the plot, or under
 all the panels of facets and subplots, over the whole x axis whose window
 pans and zooms by pointer and keyboard), time
 axes that leave out breaks (nights, weekends, holidays) in any time zone,
-static SVG and PDF export (Unicode with opt-in `pdfFonts` and supplied
+SVG, PNG, and PDF export of a mounted chart as it is, static SVG and PDF
+export without a DOM (Unicode with opt-in `pdfFonts` and supplied
 TrueType fonts), React, Vue, and Svelte adapters, min/max indexes for zooming
 and streaming large line
 series (whole columns or split by a series field), WebGL drawing of large

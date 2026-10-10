@@ -42,6 +42,7 @@ import {
 } from "./orient.ts";
 import { type LayerEdges, lowerPosition, rowOf, type Series, xExtent, yExtent } from "./series.ts";
 import { RowStack } from "./stack.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import {
   curveLayers,
   curveRows,
@@ -115,8 +116,10 @@ interface Banded {
  * `orient: "y"`, a category y, or a band between `x1` and `x2`. Category
  * positions place points at their bands' centers, in band order.
  */
-export type AreaOptions<S extends Schema> = AreaCommon &
-  (
+export type AreaOptions<S extends Schema> = AreaCommon & {
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
+} & (
     | (Filled<S> & {
         orient?: "x";
         /** Positions: a number or time field, or a category field. */
@@ -253,6 +256,7 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
 
   constructor(input: AreaSpec, table: Table<Schema>) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "area");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
@@ -797,6 +801,7 @@ export function area<S extends Schema>(
   const spec = {
     type: "area",
     ...definedFields(options, [
+      "tooltip",
       "orient",
       "y1",
       "y2",

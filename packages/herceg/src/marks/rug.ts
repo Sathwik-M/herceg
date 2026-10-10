@@ -22,6 +22,7 @@ import {
   type SummaryContext,
 } from "./mark.ts";
 import { lowerPosition, rowOf, type Series, TableCache, xExtent } from "./series.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 interface RugStyle<S extends Schema> {
@@ -40,6 +41,8 @@ interface RugStyle<S extends Schema> {
   axis?: "left" | "right";
   facet?: "repeat";
   panel?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -64,6 +67,7 @@ export class RugMark implements Mark<Frozen<RugSpec>> {
 
   constructor(input: RugSpec, table: Table) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "rug");
     this.table = table;
     const spec = this.spec;
     if ((spec.x !== undefined) === (spec.y !== undefined))
@@ -287,6 +291,7 @@ export function rug<S extends Schema>(
   const spec = {
     type: "rug",
     ...definedFields(options as Partial<Record<keyof RugSpec, unknown>>, [
+      "tooltip",
       "x",
       "y",
       "series",

@@ -38,6 +38,7 @@ from ._chart import (
     Panel,
     Projection,
     Tooltip,
+    TooltipField,
     area,
     bar,
     boxplot,
@@ -62,7 +63,15 @@ from ._chart import (
     violin,
 )
 from ._derive import Derived, Expr, col, derive, when
-from ._events import DrillRoot, InspectedPoint, Inspection, ItemPositions, Selection, Viewport
+from ._events import (
+    DrillRoot,
+    InspectedField,
+    InspectedPoint,
+    Inspection,
+    ItemPositions,
+    Selection,
+    Viewport,
+)
 from ._rows import RowSelection, SelectionBinding
 
 __all__ = [
@@ -84,10 +93,12 @@ __all__ = [
     "Selection",
     "SelectionBinding",
     "Tooltip",
+    "TooltipField",
     "Viewport",
     "Derived",
     "DrillRoot",
     "Expr",
+    "InspectedField",
     "InspectedPoint",
     "Inspection",
     "ItemPositions",

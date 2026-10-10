@@ -28,6 +28,7 @@ import {
 import type { NavigatorControls } from "../model/navigator.ts";
 import type { RowLink, RowSelectionChange } from "../model/row-selection.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
+import { EXPORT_SCENE, type ExportsScene } from "../render/export-scene.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import {
@@ -64,7 +65,7 @@ import {
   join,
   type SyncMember,
 } from "./sync.ts";
-import { describeInspection, Tooltip } from "./tooltip.ts";
+import { describeInspection, type RenderTooltip, Tooltip } from "./tooltip.ts";
 import type { ViewAnimation } from "./transition.ts";
 import type { ValueAnimation } from "./value-transition.ts";
 
@@ -74,6 +75,15 @@ export interface ChartOptions extends ChartConfig {
   /** Fixed size in CSS pixels; omitted dimensions follow the container. */
   width?: number;
   height?: number;
+  /**
+   * The tooltip's content, of your own (JavaScript only): text, or a node
+   * to show in the built-in box, which keeps its placement, the crosshair
+   * and highlighted points, and the keyboard's announcements (which read
+   * the inspection as the built-in content writes it, fields and all);
+   * null or undefined for the built-in content. Called when what the
+   * tooltip is at changes.
+   */
+  renderTooltip?: RenderTooltip | undefined;
 }
 
 /**
@@ -128,7 +138,7 @@ const HIDDEN_TEXT =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0";
 
 /** The chart behind a `Chart` handle: what `createChart` mounts. */
-export class MountedChart implements Chart {
+export class MountedChart implements Chart, ExportsScene {
   readonly root: HTMLDivElement;
   readonly #model: ChartModel;
   #options: ChartOptions;
@@ -151,6 +161,8 @@ export class MountedChart implements Chart {
   /** Labels on the axes at the crosshair, once loaded for `tooltip.axisLabels`; null if it failed to load. */
   #crosshair: CrosshairLabels | null | undefined;
   #crosshairLoading: Promise<void> | undefined;
+  /** What reads tooltip fields and draws `renderTooltip`'s content, while it loads. */
+  #contentLoading: Promise<void> | undefined;
   #canvas: HTMLCanvasElement | null = null;
   #onCanvas = false;
   /** GPU painter for large point series once loaded; null when unavailable. */
@@ -516,6 +528,7 @@ export class MountedChart implements Chart {
       this.#animationLoading,
       this.#valuesLoading,
       this.#crosshairLoading,
+      this.#contentLoading,
       this.#model.items?.controlsLoading,
       this.#brushLoading,
       this.#navigator?.loading,
@@ -669,7 +682,31 @@ export class MountedChart implements Chart {
   }
 
   toSVG(): string {
-    // The export shows the latest state at the container's current size: what
+    return this[EXPORT_SCENE]((scene, model) => this.#svgOf(scene, model));
+  }
+
+  toPNG(options?: { scale?: number }): Promise<Blob> {
+    // The state now, whatever changes while the encoder loads.
+    const [svg, width, height] = this[EXPORT_SCENE](
+      (scene, model) => [this.#svgOf(scene, model), scene.width, scene.height] as const,
+    );
+    return import("./png-export.ts").then((png) =>
+      png.svgToPng(svg, width, height, this.root.ownerDocument, options),
+    );
+  }
+
+  /** The SVG export of a scene of the chart. */
+  #svgOf(scene: Scene, model: ChartModel): string {
+    const document = this.root.ownerDocument;
+    return renderSvg(scene, {
+      idPrefix: `${this.#id}-export`,
+      encodeRaster: (mark) => canvasRasterUrl(mark, document),
+      description: describeChart(model),
+    });
+  }
+
+  [EXPORT_SCENE]<T>(use: (scene: Scene, model: ChartModel) => T): T {
+    // An export shows the latest state at the container's current size: what
     // is pending is drawn first, and no frame is drawn when nothing is, so
     // render listeners may export.
     this.#remember();
@@ -677,16 +714,11 @@ export class MountedChart implements Chart {
     const { width, height } = this.#size();
     if (width !== this.#model.width || height !== this.#model.height) this.#dirty = true;
     const drawn = this.#drawPending();
-    const document = this.root.ownerDocument;
-    const svg = renderSvg(this.#model.scene(measurer(document)), {
-      idPrefix: `${this.#id}-export`,
-      encodeRaster: (mark) => canvasRasterUrl(mark, document),
-      description: describeChart(this.#model),
-    });
-    // Listeners hear of the frame once the export is written: what they
+    const result = use(this.#model.scene(measurer(this.root.ownerDocument)), this.#model);
+    // Listeners hear of the frame once the export is made: what they
     // change then is drawn on the next frame, as after any other.
     if (drawn) this.#finishFrame(true);
-    return svg;
+    return result;
   }
 
   destroy(): void {
@@ -896,6 +928,8 @@ export class MountedChart implements Chart {
     if (options.animation) this.#loadAnimation();
     if (typeof options.animation === "object" && options.animation.values) this.#loadValues();
     if (typeof options.tooltip === "object" && options.tooltip.axisLabels) this.#loadCrosshair();
+    if (options.renderTooltip || options.marks.some((mark) => mark.spec.tooltip))
+      this.#loadTooltipContent();
     // The navigator's sliders stay as options change, keeping their focus,
     // and go when it does.
     this.#navigator =
@@ -1195,6 +1229,24 @@ export class MountedChart implements Chart {
       .then((values) => {
         if (!this.#destroyed) this.#values = values;
         this.#valuesLoading = undefined;
+      });
+  }
+
+  /** Loads what reads tooltip fields and draws content of the application's own. */
+  #loadTooltipContent(): void {
+    if (this.#model.fields || this.#contentLoading) return;
+    this.#contentLoading = import("./tooltip-content.ts")
+      .then(({ fieldReader, ownContent }) => {
+        if (this.#destroyed) return;
+        this.#model.fields = fieldReader;
+        this.#cleanup.push(ownContent(this.#tooltip, () => this.#options.renderTooltip));
+      })
+      // Without it, tooltips show the built-in content.
+      .catch(() => {})
+      .then(() => {
+        this.#contentLoading = undefined;
+        // Inspections read the fields from the next frame on.
+        if (!this.#destroyed) this.#invalidate(false);
       });
   }
 

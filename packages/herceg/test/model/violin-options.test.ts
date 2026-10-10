@@ -58,6 +58,8 @@ describe("violin options", () => {
           height: 300,
           locale: "en-US",
           timeZone: "UTC",
+          // The fixture's light colors on no background, as light was then.
+          theme: "auto",
           marks: [
             violin(samples, {
               ...axes,

@@ -35,6 +35,7 @@ import {
   type MARK,
   requireField,
 } from "./mark.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 
 export interface GeoShapeOptions<S extends Schema> {
   /** The geometry field; the table's only one by default. */
@@ -67,6 +68,8 @@ export interface GeoShapeOptions<S extends Schema> {
   strokeWidth?: number;
   /** What the regions are, in tooltips without `color`. */
   label?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -105,6 +108,7 @@ export class GeoShapeMark implements GeoLayer {
 
   constructor(input: GeoShapeSpec, table: Table) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "geoshape");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     const geometries = table.fields().filter((field) => table.kind(field) === "geometry");
@@ -488,6 +492,7 @@ export function geoshape<S extends Schema>(
   const spec: GeoShapeSpec = {
     type: "geoshape",
     ...definedFields(options, [
+      "tooltip",
       "geometry",
       "labelField",
       "color",

@@ -56,7 +56,10 @@ describe("architecture", () => {
     ];
     for (const file of [join(SRC, "pdf.ts"), ...modules.map((name) => join(render, name))]) {
       const source = readFileSync(file, "utf8").replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, "");
-      const imports = [...source.matchAll(/from "([^"]+)"/g)].map(([, path]) => path!);
+      // Types (the chart handle a mounted chart's export takes) load no code.
+      const imports = [...source.matchAll(/^import (?!type )[^;]*?from "([^"]+)"/gm)].map(
+        ([, path]) => path!,
+      );
       const code = source.replace(/from "[^"]+"/g, "");
       expect(DOM.test(code), `${file} uses a DOM API`).toBe(false);
       expect(/\b(TextEncoder|btoa|atob|Blob|CompressionStream)\b/.test(code), file).toBe(false);

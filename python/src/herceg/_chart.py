@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import datetime as _dt
+import difflib
+import functools
+import inspect
 import math
 import numbers
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, ParamSpec, Protocol, TypedDict, TypeVar
 
 import numpy as np
 
@@ -228,6 +231,12 @@ class Axis:
 
     ``seams=True`` marks their collapsed boundaries with dashed vertical lines;
     ``seams={"min_spacing": 40}`` sets their minimum spacing in CSS pixels.
+
+    ``format`` writes tick labels and tooltips' values, as Intl format options;
+    ``tooltip_format`` writes one value of the axis in tooltips, the keyboard's
+    announcements, and crosshair labels only, such as ``{"weekday": "short",
+    "month": "short", "day": "numeric"}`` or ``{"style": "unit", "unit":
+    "millisecond"}``.
     """
 
     type: Literal["linear", "log", "time"] | None = None
@@ -238,12 +247,14 @@ class Axis:
     grid: bool | None = None
     ticks: int | None = None
     format: dict[str, Any] | None = None
+    tooltip_format: dict[str, Any] | None = None
     show: bool | None = None
     breaks: Sequence[Break | dict[str, Any]] | None = None
     seams: bool | dict[str, float] | None = None
 
     def __post_init__(self) -> None:
         _check_format(self.format, "Axis format", _NUMBER_FORMAT | _TIME_FORMAT)
+        _check_format(self.tooltip_format, "Axis tooltip_format", _NUMBER_FORMAT | _TIME_FORMAT)
 
     def _spec(self) -> dict[str, Any]:
         seams = self.seams
@@ -279,6 +290,7 @@ class Axis:
             "grid": self.grid,
             "ticks": self.ticks,
             "format": self.format,
+            "tooltipFormat": self.tooltip_format,
             "show": self.show,
             "breaks": [_break(rule) for rule in self.breaks] if self.breaks is not None else None,
             "seams": seams,
@@ -365,23 +377,90 @@ class Projection:
         return {key: value for key, value in spec.items() if value is not None}
 
 
+@dataclass(frozen=True)
+class TooltipField:
+    """A column a mark's tooltips show of the row they are at, besides its
+    values: ``field`` names it, ``label`` names it in the tooltip (the
+    column's name by default), and ``format`` writes it, as Intl format
+    options (``{"maximumFractionDigits": 0}``, ``{"weekday": "short"}``), as
+    ``Axis.format`` takes them. Without a format, numbers are written as the
+    chart's other numbers, times as the x axis writes them when it is a time
+    axis (else as dates and times), and categories as they are."""
+
+    field: str
+    label: str | None = None
+    format: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.field, str):
+            raise TypeError(
+                f"TooltipField field: expected a column name; received {shown(self.field)}"
+            )
+        _check_format(self.format, "TooltipField format", _NUMBER_FORMAT | _TIME_FORMAT)
+
+    def _spec(self) -> dict[str, Any]:
+        spec = {"field": self.field, "label": self.label, "format": self.format}
+        return {key: value for key, value in spec.items() if value is not None}
+
+
 @dataclass
 class Tooltip:
     """Tooltip options: ``mode`` ("nearest-x", "nearest-y", or "nearest"; by
     default one suited to the marks) and ``axis_labels``, which labels the
     crosshair on the axes, as financial charts do: the inspected value on the
-    axis it follows and the pointer's position on the other."""
+    axis it follows and the pointer's position on the other.
+
+    ``fields`` are columns of the row a tooltip is at that it shows besides a
+    mark's values, such as a count that is not plotted: column names or
+    ``hg.TooltipField``. They belong to marks whose points are rows (lines,
+    areas, bars, points, heatmaps, maps, 3D points and lines): give them to
+    the mark, ``chart.line(..., tooltip=hg.Tooltip(fields=["requests"]))``,
+    or to a one-call helper, ``hg.line(..., tooltip=...)``, whose one mark
+    takes them. The keyboard's announcements and hover events read them too.
+    """
 
     mode: TooltipMode | None = None
     axis_labels: bool = False
+    fields: Sequence[str | TooltipField] | None = None
 
     def _spec(self) -> dict[str, Any]:
+        if self.fields is not None:
+            raise ValueError(
+                "Chart tooltip fields: belong to the marks whose rows they show; give "
+                "them to a mark, as in chart.line(..., tooltip=hg.Tooltip(fields=[...]))"
+            )
         spec: dict[str, Any] = {}
         if self.mode is not None:
             spec["mode"] = self.mode
         if self.axis_labels:
             spec["axisLabels"] = True
         return spec
+
+    def _mark_spec(self, mark: str) -> dict[str, Any]:
+        """The tooltip of mark ``mark``: its fields."""
+        if self.mode is not None or self.axis_labels:
+            option = "mode" if self.mode is not None else "axis_labels"
+            raise ValueError(
+                f"{mark} tooltip {option}: is the chart's; give it to the chart's tooltip"
+            )
+        if self.fields is None:
+            return {}
+        if isinstance(self.fields, str):
+            raise ValueError(
+                f"{mark} tooltip fields: expected a list of columns; received {shown(self.fields)}"
+            )
+        fields: list[Any] = []
+        for i, entry in enumerate(self.fields):
+            if isinstance(entry, TooltipField):
+                fields.append(entry._spec())
+            elif isinstance(entry, str):
+                fields.append(entry)
+            else:
+                raise TypeError(
+                    f"{mark} tooltip fields[{i}]: expected a column name or an hg.TooltipField; "
+                    f"received {shown(entry)}"
+                )
+        return {"fields": fields}
 
 
 @dataclass
@@ -840,6 +919,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Lines through x and y columns; several value columns or a series column give
@@ -876,6 +956,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "line"),
                 "panel": panel,
+                "tooltip": self._mark_tooltip(table, tooltip, "line"),
                 "id": id,
             },
             table,
@@ -907,6 +988,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Filled areas: down to zero, stacked, or the band between ``y1`` and ``y2``.
@@ -1013,6 +1095,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "area"),
                 "panel": panel,
+                "tooltip": self._mark_tooltip(table, tooltip, "area"),
                 "id": id,
             },
             table,
@@ -1034,6 +1117,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Bars: one band per category of x, or bars centered on number or time x.
@@ -1077,6 +1161,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "bar"),
                 "panel": panel,
+                "tooltip": self._mark_tooltip(table, tooltip, "bar"),
                 "id": id,
             },
             table,
@@ -1098,6 +1183,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """One tick per observation of exactly one number or time column.
@@ -1146,6 +1232,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "rug"),
                 "panel": panel,
+                "tooltip": self._mark_tooltip(table, tooltip, "rug"),
                 "id": id,
             },
             table,
@@ -1173,6 +1260,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Error bars at each ``x``, from ``y1`` to ``y2`` or ``y`` ± ``y_error``; or, at each
@@ -1258,6 +1346,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "error_bar"),
                 "panel": panel,
+                "tooltip": self._mark_tooltip(table, tooltip, "error_bar"),
                 "id": id,
             },
             table,
@@ -1292,6 +1381,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Scatter points.
@@ -1397,6 +1487,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "point"),
                 "panel": panel,
+                "tooltip": self._mark_tooltip(table, tooltip, "point"),
                 "id": id,
             },
             table,
@@ -1529,6 +1620,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Open-high-low-close candles at each ``x``, as for prices.
@@ -1562,6 +1654,7 @@ class Chart:
                 "axis": axis,
                 "facet": _mark_facet(facet, "candlestick"),
                 "panel": panel,
+                "tooltip": self._mark_tooltip(table, tooltip, "candlestick"),
                 "id": id,
             },
             table,
@@ -2377,6 +2470,7 @@ class Chart:
         geojson: Any = None,
         locations: str | None = None,
         feature_id_key: str = "id",
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Regions of a map: each row's shape, filled by ``color``, a numeric column
@@ -2468,6 +2562,7 @@ class Chart:
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "label": label,
+                "tooltip": self._mark_tooltip(table, tooltip, "geoshape"),
                 "id": id,
             },
             table,
@@ -2493,6 +2588,7 @@ class Chart:
         stroke: str | None = None,
         stroke_width: float | None = None,
         label: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Points of a map at ``longitude`` and ``latitude`` columns (degrees):
@@ -2544,6 +2640,7 @@ class Chart:
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "label": label,
+                "tooltip": self._mark_tooltip(table, tooltip, "geopoint"),
                 "id": id,
             },
             table,
@@ -2589,6 +2686,7 @@ class Chart:
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Points in a 3D chart at the numeric or datetime columns ``x``, ``y``,
@@ -2631,6 +2729,7 @@ class Chart:
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "label": label,
+                "tooltip": self._mark_tooltip(table, tooltip, "point_3d"),
                 "id": id,
             },
             table,
@@ -2647,6 +2746,7 @@ class Chart:
         stroke: str | None = None,
         stroke_width: float | None = None,
         label: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """Lines in a 3D chart through the numeric or datetime columns ``x``,
@@ -2678,6 +2778,7 @@ class Chart:
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "label": label,
+                "tooltip": self._mark_tooltip(table, tooltip, "line_3d"),
                 "id": id,
             },
             table,
@@ -2801,6 +2902,7 @@ class Chart:
         label: str | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
         """A grid of cells colored by the numeric column ``color``: cells at ``x`` and ``y``, or the
@@ -2847,6 +2949,7 @@ class Chart:
             "label": label,
             "facet": _mark_facet(facet, "heatmap"),
             "panel": panel,
+            "tooltip": self._mark_tooltip(table, tooltip, "heatmap"),
             "id": id,
         }
         if date is not None:
@@ -3524,7 +3627,7 @@ class Chart:
             # Categories come from strings, and times (only a heatmap's date takes
             # nothing else) from datetimes, so the usual fix is the column's type.
             if kinds[0] == "category":
-                fix = "; give its values as strings"
+                fix = "; give its values as strings, or make it a categorical column"
             elif kinds[0] == "time":
                 fix = "; give datetimes"
             elif kind == "category" and "number" in kinds:
@@ -3534,6 +3637,24 @@ class Chart:
             raise TypeError(
                 f"{role}: column {field!r} holds {kind} values; expected {' or '.join(kinds)}{fix}"
             )
+
+    def _mark_tooltip(
+        self, table: int, tooltip: Tooltip | None, mark: str
+    ) -> dict[str, Any] | None:
+        """The spec of a mark's ``tooltip``, its fields checked against its data."""
+        if tooltip is None:
+            return None
+        if not isinstance(tooltip, Tooltip):
+            raise TypeError(
+                f"{mark} tooltip: expected an hg.Tooltip with fields; received {shown(tooltip)}"
+            )
+        spec = tooltip._mark_spec(mark)
+        for i, entry in enumerate(spec.get("fields", ())):
+            field = entry if isinstance(entry, str) else entry["field"]
+            self._require(
+                table, field, ("number", "time", "category"), f"{mark} tooltip fields[{i}]"
+            )
+        return spec or None
 
     def _kind(self, table: int, field: str) -> str | None:
         source = self._tables[table][1]
@@ -4092,6 +4213,9 @@ def _fields(spec: dict[str, Any]) -> set[str]:
             fields.update(value)
         elif isinstance(value, dict) and isinstance(value.get("field"), str):
             fields.add(value["field"])
+    # Columns only tooltips show travel too.
+    for entry in (spec.get("tooltip") or {}).get("fields", ()):
+        fields.add(entry if isinstance(entry, str) else entry["field"])
     return fields
 
 
@@ -4509,6 +4633,93 @@ def _position(value: Any, role: str) -> str | float | None:
 
 # Express-style helpers: one call, one chart -----------------------------------
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+#: Names other libraries give options herceg names otherwise (Plotly
+#: Express, Seaborn), and the options a helper may take instead.
+_ELSEWHERE: dict[str, tuple[str, ...]] = {
+    "color": ("series", "stroke", "fill"),
+    "colour": ("series", "stroke", "fill"),
+    "hue": ("series",),
+    "hue_order": ("series_order",),
+    "row": ("facet_row",),
+    "col": ("facet_column",),
+    "facet_col": ("facet_column",),
+    "col_wrap": ("facet_columns",),
+    "facet_col_wrap": ("facet_columns",),
+    "template": ("theme",),
+    "labels": ("x_axis", "y_axis"),
+}
+
+
+def helper(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Makes a one-call helper (``hg.line``, ``hx.barplot``, ...) refuse
+    keyword arguments it does not take by its own name, suggesting those it
+    does: otherwise Python's error would name ``Chart.__init__``, which the
+    helper passes its chart options to."""
+    own = [
+        name
+        for name, parameter in inspect.signature(function).parameters.items()
+        if parameter.kind is not parameter.VAR_KEYWORD
+    ]
+    known = {*own, *HelperOptions.__optional_keys__}
+    express = function.__module__.startswith("herceg.express")
+    rows = not express and function.__name__ in _ROW_HELPERS
+
+    @functools.wraps(function)
+    def checked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        for name in kwargs:
+            if name not in known:
+                raise TypeError(_unknown_option(function, name, known))
+        tooltip = kwargs.get("tooltip")
+        if not rows and isinstance(tooltip, Tooltip) and tooltip.fields is not None:
+            raise ValueError(
+                f"{function.__name__} tooltip fields: "
+                + (
+                    "express charts draw tables they compute, without the data's other "
+                    "columns; draw the chart with hg.Chart and give fields to its marks"
+                    if express
+                    else "its points summarize rows, so they have no row's fields to show; "
+                    "drop fields"
+                )
+            )
+        return function(*args, **kwargs)
+
+    return checked
+
+
+#: Helpers whose mark's points are rows of the data, which tooltip fields read.
+_ROW_HELPERS = frozenset(
+    ("line", "area", "bar", "scatter", "scatter_3d", "line_3d", "heatmap")
+    + ("choropleth", "scatter_geo", "candlestick")
+)
+
+
+def _unknown_option(function: Callable[..., Any], name: str, known: set[str]) -> str:
+    suggested = [option for option in _ELSEWHERE.get(name, ()) if option in known]
+    suggested += difflib.get_close_matches(name, sorted(known - set(suggested)), n=1, cutoff=0.7)
+    where = "herceg.express" if function.__module__.startswith("herceg.express") else "herceg"
+    hint = (
+        f"did you mean {' or '.join(repr(option) for option in suggested)}?"
+        if suggested
+        else f"see help({where}.{function.__name__}) for the options it takes"
+    )
+    return f"{function.__name__}: no option {name!r}; {hint}"
+
+
+def _rows_chart_of(data: Any, options: HelperOptions) -> tuple[Chart, Tooltip | None]:
+    """The chart of a helper whose mark's points are rows, and the mark's
+    tooltip: the ``fields`` of the helper's ``tooltip``, which are the mark's."""
+    tooltip = options.get("tooltip")
+    if not (isinstance(tooltip, Tooltip) and tooltip.fields is not None):
+        return _chart_of(data, options), None
+    # The chart keeps the rest, or its default tooltip without any.
+    rest = tooltip.mode is not None or tooltip.axis_labels
+    shared = Tooltip(mode=tooltip.mode, axis_labels=tooltip.axis_labels) if rest else None
+    chart = _chart_of(data, {**options, "tooltip": shared})
+    return chart, Tooltip(fields=tooltip.fields)
+
 
 def _chart_of(data: Any, options: HelperOptions) -> Chart:
     """A helper's chart: its ``x_axis``, ``y_axis``, and ``z_axis`` are the chart's
@@ -4520,6 +4731,7 @@ def _chart_of(data: Any, options: HelperOptions) -> Chart:
     return Chart(data, **settings)
 
 
+@helper
 def line(
     data: Any,
     x: str | Sequence[str],
@@ -4541,7 +4753,8 @@ def line(
 ) -> Chart:
     """A line chart, along x, or along y with ``orient="y"`` (see ``Chart.line``).
     Remaining keyword arguments are chart options (``HelperOptions``)."""
-    return _chart_of(data, options).line(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.line(
         x,
         y,
         orient=orient,
@@ -4555,10 +4768,12 @@ def line(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        tooltip=tooltip,
         id=id,
     )
 
 
+@helper
 def area(
     data: Any,
     x: str | Sequence[str] | None = None,
@@ -4593,7 +4808,8 @@ def area(
     any of them has: ``stack_gaps`` says what a series counts as where it
     has no row, ``"zero"`` (the default) or ``"interpolate"``.
     """
-    return _chart_of(data, options).area(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.area(
         x,
         y,
         y1=y1,
@@ -4615,10 +4831,12 @@ def area(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        tooltip=tooltip,
         id=id,
     )
 
 
+@helper
 def bar(
     data: Any,
     x: str | Sequence[str],
@@ -4637,7 +4855,8 @@ def bar(
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A bar chart, grouped or stacked; horizontal when ``y`` is a category."""
-    return _chart_of(data, options).bar(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.bar(
         x,
         y,
         series=series,
@@ -4649,10 +4868,12 @@ def bar(
         labels=labels,
         axis=axis,
         panel=panel,
+        tooltip=tooltip,
         id=id,
     )
 
 
+@helper
 def scatter(
     data: Any,
     x: str,
@@ -4685,7 +4906,8 @@ def scatter(
 ) -> Chart:
     """A scatter plot; ``size``, ``color``, and ``symbol`` can encode columns
     (see ``Chart.point``)."""
-    return _chart_of(data, options).point(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.point(
         x,
         y,
         series=series,
@@ -4710,10 +4932,12 @@ def scatter(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        tooltip=tooltip,
         id=id,
     )
 
 
+@helper
 def scatter_3d(
     data: Any,
     x: str,
@@ -4736,7 +4960,8 @@ def scatter_3d(
     """A 3D scatter plot (see ``Chart.point_3d``). Remaining keyword arguments
     are chart options (``HelperOptions``), such as ``camera``; ``z_axis`` is
     the chart's ``z``."""
-    return _chart_of(data, options).point_3d(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.point_3d(
         x,
         y,
         z,
@@ -4750,10 +4975,12 @@ def scatter_3d(
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,
+        tooltip=tooltip,
         id=id,
     )
 
 
+@helper
 def line_3d(
     data: Any,
     x: str,
@@ -4773,7 +5000,8 @@ def line_3d(
 
         hg.line_3d(df, x="east", y="north", z="altitude", series="flight")
     """
-    return _chart_of(data, options).line_3d(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.line_3d(
         x,
         y,
         z,
@@ -4781,10 +5009,12 @@ def line_3d(
         stroke=stroke,
         stroke_width=stroke_width,
         label=label,
+        tooltip=tooltip,
         id=id,
     )
 
 
+@helper
 def surface(
     data: Any = None,
     x: Any = None,
@@ -4825,6 +5055,7 @@ def surface(
     )
 
 
+@helper
 def heatmap(
     data: Any,
     x: str | None = None,
@@ -4848,7 +5079,8 @@ def heatmap(
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A heatmap; ``colors`` is a scheme name or a list of hex colors (see ``Chart.heatmap``)."""
-    return _chart_of(data, options).heatmap(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.heatmap(
         x,
         y,
         color,
@@ -4865,6 +5097,7 @@ def heatmap(
         y_banded=y_banded,
         label=label,
         panel=panel,
+        tooltip=tooltip,
         id=id,
     )
 
@@ -4933,6 +5166,7 @@ def _histogram_bins(
     return edges
 
 
+@helper
 def histogram(
     data: Any,
     x: str | None = None,
@@ -4980,6 +5214,7 @@ def histogram(
     )
 
 
+@helper
 def pie(
     data: Any,
     category: str,
@@ -5004,6 +5239,7 @@ def pie(
     )
 
 
+@helper
 def gauge(
     data: Any,
     value: str,
@@ -5030,6 +5266,7 @@ def gauge(
     )
 
 
+@helper
 def funnel(
     data: Any,
     category: str,
@@ -5052,6 +5289,7 @@ def funnel(
     )
 
 
+@helper
 def boxplot(
     data: Any,
     x: str | None = None,
@@ -5098,6 +5336,7 @@ def boxplot(
     )
 
 
+@helper
 def violin(
     data: Any,
     x: str,
@@ -5134,6 +5373,7 @@ def violin(
     )
 
 
+@helper
 def treemap(
     data: Any,
     path: Sequence[str] | None = None,
@@ -5158,6 +5398,7 @@ def treemap(
     )
 
 
+@helper
 def sunburst(
     data: Any,
     path: Sequence[str] | None = None,
@@ -5182,6 +5423,7 @@ def sunburst(
     )
 
 
+@helper
 def radar(
     data: Any,
     category: str | None = None,
@@ -5212,6 +5454,7 @@ def radar(
     )
 
 
+@helper
 def sankey(
     data: Any,
     source: str,
@@ -5238,6 +5481,7 @@ def sankey(
     )
 
 
+@helper
 def graph(
     data: Any,
     source: str,
@@ -5270,6 +5514,7 @@ def graph(
     )
 
 
+@helper
 def choropleth(
     data: Any,
     color: str | None = None,
@@ -5295,7 +5540,8 @@ def choropleth(
     joined to the features of ``geojson`` by ``locations`` and ``feature_id_key``.
     Remaining keyword arguments are chart options (title, projection, ...)."""
     joined = geojson is not None
-    return _chart_of(None if joined else data, options).geoshape(
+    chart, tooltip = _rows_chart_of(None if joined else data, options)
+    return chart.geoshape(
         data=data if joined else None,
         color=color,
         geometry=geometry,
@@ -5311,10 +5557,12 @@ def choropleth(
         geojson=geojson,
         locations=locations,
         feature_id_key=feature_id_key,
+        tooltip=tooltip,
         id=id,
     )
 
 
+@helper
 def scatter_geo(
     data: Any,
     longitude: str,
@@ -5338,7 +5586,8 @@ def scatter_geo(
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Points or bubbles on a map at ``longitude`` and ``latitude`` (see ``Chart.geopoint``)."""
-    return _chart_of(data, options).geopoint(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.geopoint(
         longitude,
         latitude,
         label_field=label_field,
@@ -5355,10 +5604,12 @@ def scatter_geo(
         stroke=stroke,
         stroke_width=stroke_width,
         label=label,
+        tooltip=tooltip,
         id=id,
     )
 
 
+@helper
 def candlestick(
     data: Any,
     x: str,
@@ -5379,7 +5630,8 @@ def candlestick(
 ) -> Chart:
     """A candlestick chart of open, high, low, and close prices; OHLC bars with
     ``variant="ohlc"``."""
-    return _chart_of(data, options).candlestick(
+    chart, tooltip = _rows_chart_of(data, options)
+    return chart.candlestick(
         x,
         open,
         high,
@@ -5392,5 +5644,6 @@ def candlestick(
         legend_group=legend_group,
         axis=axis,
         panel=panel,
+        tooltip=tooltip,
         id=id,
     )

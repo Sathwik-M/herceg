@@ -75,8 +75,10 @@ const DIVERGING = [
   "#d6604d",
   "#b2182b",
 ];
+// Named themes paint a surface of their own, so they read the same on any
+// page and in exports; "auto" is transparent, taking the page's.
 export const LIGHT: Theme = {
-  background: "transparent",
+  background: "#ffffff",
   text: "#1c2333",
   muted: "#5d6677",
   grid: "#e8ebf0",
@@ -98,6 +100,7 @@ export const LIGHT: Theme = {
 
 export const DARK: Theme = {
   ...LIGHT,
+  background: "#12151c",
   text: "#e8ebf1",
   muted: "#9aa3b4",
   grid: "#252a34",
@@ -110,8 +113,7 @@ export const DARK: Theme = {
   fall: "#e0555d",
 };
 
-// High contrast: a surface of its own, so contrast does not depend on the
-// page; text and axes in black or white, grid lines at 4.5:1, wider
+// High contrast: text and axes in black or white, grid lines at 4.5:1, wider
 // lines, larger text, and categorical colors each at least 4.5:1 against the
 // page (checked with OKLab color-vision simulation for adjacent series).
 export const HIGH_CONTRAST: Theme = {
@@ -159,7 +161,6 @@ const THEMES: Record<Exclude<ThemeName, "auto">, Theme> = {
  * The DOM runtime supplies one; without it, "auto" is light and a CSS
  * variable takes its fallback (`var(--accent, #2a78d6)`).
  */
-/** What themes that follow the page ("auto", CSS variables) read from it. */
 export interface ThemeEnvironment {
   /** Whether the chart sits on a dark surface, which "auto" follows. */
   dark?: boolean;
@@ -202,7 +203,7 @@ export function resolveTheme(
 ): Theme {
   const named = (name: ThemeName | undefined, role: string) => {
     if (name === undefined) return LIGHT;
-    if (name === "auto") return environment.dark ? DARK : LIGHT;
+    if (name === "auto") return { ...(environment.dark ? DARK : LIGHT), background: "transparent" };
     if (!Object.hasOwn(THEMES, name))
       throw new Error(
         `${role}: no theme "${name}"; use "${[...Object.keys(THEMES), "auto"].join('", "')}"`,

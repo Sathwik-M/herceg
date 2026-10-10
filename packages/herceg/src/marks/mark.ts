@@ -11,7 +11,7 @@ import type { LegendPart } from "../model/legend.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
-import type { Frozen } from "../spec/spec.ts";
+import type { Frozen, MarkTooltipSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import {
   isSortedSubset,
@@ -230,6 +230,8 @@ export interface MarkIdentity {
   readonly panel?: string | undefined;
   /** Series of marks in the same legend group share colors, legend entries, and visibility by name. */
   readonly legendGroup?: string | undefined;
+  /** What tooltips show of the rows of marks whose points are rows, besides their values. */
+  readonly tooltip?: Frozen<MarkTooltipSpec> | undefined;
 }
 
 /**
@@ -348,8 +350,14 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
     context: BandContext,
     yGroupOf: readonly number[],
   ): Series[][];
-  /** The axis whose domain includes zero, for marks drawn from a zero baseline. */
+  /**
+   * The axis whose domain includes zero, for marks drawn from a zero
+   * baseline: while one of their series is shown, or for marks that draw
+   * without series (`seriesless`), whenever they draw.
+   */
   readonly zero?: "x" | "y" | undefined;
+  /** The mark draws from fields without series (custom marks of fields), whatever the legend hides. */
+  readonly seriesless?: boolean;
   /**
    * x extent; with `log`, of positive values only. On a time axis with
    * `breaks`, room a mark leaves at the ends is time shown. Marks reading
@@ -541,11 +549,12 @@ export function requireField(
   }
   const kind = table.kind(field);
   if (!kinds.includes(kind)) {
-    // Categories come from strings, and times (only a heatmap's date takes
-    // nothing else) from Dates or time(), so the usual fix is the values' type.
+    // Categories come from strings or category(), and times (only a heatmap's
+    // date takes nothing else) from Dates or time(), so the usual fix is the
+    // values' type.
     const fix =
       kinds[0] === "category"
-        ? "; give its values as strings"
+        ? "; give its values as strings, or numbers wrapped in category()"
         : kinds[0] === "time"
           ? "; give Dates or time() values"
           : kind === "category" && kinds.includes("number")

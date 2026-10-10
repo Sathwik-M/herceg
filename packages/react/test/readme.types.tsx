@@ -245,3 +245,17 @@ export function ViolinOptions() {
     </Chart>
   );
 }
+
+function LatencyTip({ point }: { point: { text: string } | undefined }) {
+  return <b>{point?.text} ms</b>;
+}
+
+export function Tooltips() {
+  return (
+    <Chart renderTooltip={(inspection) => <LatencyTip point={inspection.points[0]} />}>
+      <Line data={metrics} x="time" y="p99" tooltip={{ fields: ["service"] }} />
+      {/* @ts-expect-error tooltip fields are fields of the mark's data */}
+      <Line data={metrics} x="time" y="p99" tooltip={{ fields: ["services"] }} />
+    </Chart>
+  );
+}

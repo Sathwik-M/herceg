@@ -11,6 +11,7 @@ import { pie } from "../../src/marks/pie.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { facet } from "../../src/model/facet.ts";
+import { renderToPDF } from "../../src/pdf.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 
 let host: HTMLDivElement;
@@ -569,5 +570,88 @@ describe("render events", () => {
     expect(renders).toBe(1);
     expect(chart.getViewport({ panel: "b" }).x).toEqual([0.5, 1]);
     expect(chart.selectionPanels).toEqual(["a"]);
+  });
+});
+
+/** The text a PDF's content streams draw, inflated. */
+async function pdfText(pdf: Uint8Array): Promise<string> {
+  const latin1 = new TextDecoder("latin1");
+  const raw = latin1.decode(pdf);
+  let text = "";
+  for (const match of raw.matchAll(/>>\nstream\n/g)) {
+    const start = match.index + match[0].length;
+    const length = Number(
+      /\/Length (\d+)/.exec(raw.slice(raw.lastIndexOf("<<", start), start))![1],
+    );
+    const stream = new Blob([pdf.slice(start, start + length)])
+      .stream()
+      .pipeThrough(new DecompressionStream("deflate"));
+    text += latin1.decode(await new Response(stream).arrayBuffer());
+  }
+  return text;
+}
+
+describe("exports", () => {
+  const ramp = () =>
+    table({
+      t: Float64Array.from({ length: 101 }, (_, i) => i),
+      a: Float64Array.from({ length: 101 }, (_, i) => i % 7),
+      b: Float64Array.from({ length: 101 }, (_, i) => 50 + (i % 5)),
+    });
+
+  it("give a PNG of the current state at a scale of the chart's size", async () => {
+    const chart = mount({ marks: [line(ramp(), { x: "t", y: ["a", "b"] })] });
+    const png = await chart.toPNG();
+    expect(png.type).toBe("image/png");
+    const image = await createImageBitmap(png);
+    expect([image.width, image.height]).toEqual([1200, 600]);
+    const small = await createImageBitmap(await chart.toPNG({ scale: 0.5 }));
+    expect([small.width, small.height]).toEqual([300, 150]);
+    await expect(chart.toPNG({ scale: 0 })).rejects.toThrow(
+      "toPNG scale: expected a positive number; received 0",
+    );
+  });
+
+  it("give a PNG of the state they drew, whatever render listeners change after", async () => {
+    const chart = mount({ marks: [line(ramp(), { x: "t", y: "a" })] });
+    chart.update({ title: "Pending" });
+    const resize = chart.on("render", () => {
+      resize();
+      host.style.width = "300px";
+      chart.render();
+    });
+    const image = await createImageBitmap(await chart.toPNG({ scale: 1 }));
+    expect([image.width, image.height]).toEqual([600, 300]);
+    expect(chart.getPanels()[0]!.plot.width).toBeLessThan(300);
+  });
+
+  it("keep the theme's background in PNGs, and none for auto", async () => {
+    const corner = async (chart: Chart) => {
+      const image = await createImageBitmap(await chart.toPNG({ scale: 1 }));
+      const canvas = new OffscreenCanvas(image.width, image.height);
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      return [...context.getImageData(1, 1, 1, 1).data];
+    };
+    const marks = [line(ramp(), { x: "t", y: "a" })];
+    expect(await corner(mount({ marks }))).toEqual([255, 255, 255, 255]);
+    expect(await corner(mount({ marks, theme: "dark" }))).toEqual([0x12, 0x15, 0x1c, 255]);
+    expect((await corner(mount({ marks, theme: "auto" })))[3]).toBe(0);
+  });
+
+  it("give a PDF of a mounted chart as it is now: zoomed, with series hidden", async () => {
+    const chart = mount({ title: "Ramp", marks: [line(ramp(), { x: "t", y: ["a", "b"] })] });
+    const whole = await pdfText(renderToPDF(chart));
+    expect(whole).toContain("(40) Tj");
+    expect(whole).not.toContain("(44) Tj");
+    chart.setViewport([41, 49]);
+    chart.setVisibility(chart.getLegend()[1]!.key, false);
+    const pdf = renderToPDF(chart);
+    expect(new TextDecoder().decode(pdf.slice(0, 5))).toBe("%PDF-");
+    const zoomed = await pdfText(pdf);
+    expect(zoomed).toContain("(44) Tj");
+    // Without the hidden series, the y axis fits the other's values (0 to 6).
+    expect(zoomed).not.toContain("(50) Tj");
+    expect(whole).toContain("(50) Tj");
   });
 });

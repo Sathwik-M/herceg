@@ -237,8 +237,10 @@ export interface ProjectionSpec {
   fit?: "data" | "world" | readonly [readonly [number, number], readonly [number, number]];
 }
 /**
- * A built-in theme. "auto" is "light" or "dark" as the page prefers, and
- * follows changes; it is "light" where there is no page.
+ * A built-in theme. Each paints a background of its own (light, the
+ * default, white), except "auto": "light" or "dark" as the page behind the
+ * chart is, on a transparent background that shows the page, following
+ * its changes; "light" where there is no page.
  */
 export type ThemeName = "light" | "dark" | "high-contrast" | "high-contrast-dark" | "auto";
 
@@ -400,6 +402,14 @@ export interface AxisSpec {
   ticks?: number;
   /** Intl.NumberFormat options, or Intl.DateTimeFormat options for time. */
   format?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
+  /**
+   * How tooltips, the keyboard's announcements, and crosshair labels write
+   * one value of the axis, such as `{ weekday: "short", month: "short",
+   * day: "numeric" }` or `{ style: "unit", unit: "millisecond" }`, leaving
+   * tick labels as they are: Intl options, as `format` takes them; `format`
+   * by default.
+   */
+  tooltipFormat?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
   /** Draw the axis. Default true. */
   show?: boolean;
 }
@@ -544,9 +554,9 @@ export type BrushSpec = "x" | "y" | "xy" | "lasso";
  * fallback, `var(--name, #2a78d6)`.
  */
 export interface ThemeSpec {
-  /** Base theme to extend. */
+  /** Base theme to extend; "light" by default. */
   extends?: ThemeName;
-  /** Chart background; "transparent" inherits the page. */
+  /** Chart background; "transparent" shows the page (or, in exports, what they are shown on). */
   background?: string;
   text?: string;
   /** Axis labels and secondary text. */
@@ -638,6 +648,36 @@ interface SeriesBase extends MarkBase {
 }
 
 /**
+ * A field of a row that tooltips show besides the mark's values: its name,
+ * or its name with a label (the name by default) and Intl format options,
+ * as axes take them. Without a format, numbers are written as the chart's
+ * other numbers, times by the x axis' format when x is a time axis (else
+ * as dates and times), and categories as they are.
+ */
+export type TooltipField =
+  | Field
+  | {
+      field: Field;
+      label?: string;
+      format?: Intl.NumberFormatOptions | Intl.DateTimeFormatOptions;
+    };
+
+/** What a mark's tooltips show of the rows they are at. */
+export interface MarkTooltipSpec {
+  /**
+   * Fields of the row the tooltip is at, shown in order under the mark's
+   * values: data that is not plotted, such as a request count. The
+   * keyboard's announcements and hover events read them too.
+   */
+  fields?: readonly TooltipField[];
+}
+
+/** Marks whose points are rows of their table, so that tooltips can show more of the row. */
+interface RowTooltip {
+  tooltip?: MarkTooltipSpec;
+}
+
+/**
  * How a line joins its points: straight, in steps, or "monotone", a smooth
  * curve through every point that never passes a point's value between two
  * points.
@@ -658,7 +698,7 @@ export type Orient = "x" | "y";
  * give several lines. A category position places points at its bands'
  * centers, in band order.
  */
-export interface LineSpec extends SeriesBase {
+export interface LineSpec extends SeriesBase, RowTooltip {
   type: "line";
   /** Positions along x, or with `orient: "y"` the values: one field or several. */
   x: Field | readonly Field[];
@@ -682,7 +722,7 @@ export interface LineSpec extends SeriesBase {
   label?: string;
 }
 
-interface AreaStyle extends SeriesBase {
+interface AreaStyle extends SeriesBase, RowTooltip {
   type: "area";
   orient?: Orient;
   /** On a category position axis, with `series` and no stack: the series side by side in each band. */
@@ -856,7 +896,7 @@ export interface TextSpec extends MarkBase {
  * A category `y` makes them horizontal, with lengths in `x`. Several length
  * fields are drawn side by side or stacked.
  */
-export interface BarSpec extends SeriesBase {
+export interface BarSpec extends SeriesBase, RowTooltip {
   type: "bar";
   x: Field | readonly Field[];
   y: Field | readonly Field[];
@@ -881,7 +921,7 @@ export type RugSpec = RugStyle &
     | { y: Field; x?: never; side?: "left" | "right"; axis?: "left" }
   );
 
-interface RugStyle extends SeriesBase {
+interface RugStyle extends SeriesBase, RowTooltip {
   type: "rug";
   series?: Field;
   /** Tick length in CSS pixels, finite and positive; default 8. */
@@ -942,7 +982,7 @@ export type ErrorBarSpec = ErrorBarStyle &
       }
   );
 
-interface ErrorBarStyle extends SeriesBase {
+interface ErrorBarStyle extends SeriesBase, RowTooltip {
   type: "errorbar";
   series?: Field;
   /**
@@ -962,7 +1002,7 @@ interface ErrorBarStyle extends SeriesBase {
  * Candles that close at or above their open are drawn hollow in the rise
  * color, others filled in the fall color, so direction never rests on color alone.
  */
-export interface CandlestickSpec extends SeriesBase {
+export interface CandlestickSpec extends SeriesBase, RowTooltip {
   type: "candlestick";
   x: Field;
   open: Field;
@@ -1296,7 +1336,7 @@ export interface GraphSpec {
  * a color per value) or with `fill`. Maps project every geo mark of a chart
  * with the chart's `projection`.
  */
-export interface GeoShapeSpec {
+export interface GeoShapeSpec extends RowTooltip {
   type: "geoshape";
   data?: string;
   id?: string;
@@ -1342,7 +1382,7 @@ export type PointSizeSpec =
  */
 export type GeoPointSpec = GeoPointStyleSpec & PointSizeSpec;
 
-interface GeoPointStyleSpec {
+interface GeoPointStyleSpec extends RowTooltip {
   type: "geopoint";
   data?: string;
   id?: string;
@@ -1418,7 +1458,7 @@ export type HistogramSpec = SeriesBase & {
 /** Points: `PointStyleSpec` with a radius of 2.5 pixels, or sizes from 2 to 12 pixels, by default. */
 export type PointSpec = PointStyleSpec & PointSizeSpec;
 
-interface PointStyleSpec extends SeriesBase {
+interface PointStyleSpec extends SeriesBase, RowTooltip {
   type: "point";
   /** A number, time, or category field; a category field places points in its bands. */
   x: Field;
@@ -1480,7 +1520,7 @@ interface PointStyleSpec extends SeriesBase {
 export type HeatmapSpec = HeatmapGridSpec | HeatmapCalendarSpec;
 
 /** The options both forms of heatmap share. */
-interface HeatmapBase extends MarkBase {
+interface HeatmapBase extends MarkBase, RowTooltip {
   type: "heatmap";
   /** Number or time field: each cell's value, mapped to color. */
   color: Field;
@@ -1546,7 +1586,7 @@ export interface HeatmapCalendarSpec extends HeatmapBase {
  * Points at (x, y, z) in a 3D chart: number or time fields, z vertical.
  * Points share the chart's box with the chart's other 3D marks.
  */
-export interface Point3DSpec {
+export interface Point3DSpec extends RowTooltip {
   type: "point3d";
   data?: string;
   id?: string;
@@ -1578,7 +1618,7 @@ export interface Point3DSpec {
  * (or without a place on a log axis) breaks it. Lines share the chart's box
  * with its other 3D marks.
  */
-export interface Line3DSpec {
+export interface Line3DSpec extends RowTooltip {
   type: "line3d";
   data?: string;
   id?: string;

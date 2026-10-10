@@ -575,7 +575,7 @@ function yScale(
   const data = unionExtent(
     marks.map(({ mark, series }) => {
       const visible = series.filter((s) => !hidden.has(s.key));
-      if (mark.zero === "y" && visible.length > 0) stands = true;
+      if (mark.zero === "y" && (visible.length > 0 || mark.seriesless)) stands = true;
       return mark.yExtent(visible, x0, x1, log, x.breaks);
     }),
   );

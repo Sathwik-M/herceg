@@ -18,6 +18,7 @@ import {
   type SelectionStore,
   selectRows,
   type ThemeName,
+  type ThemeSpec,
   type Viewport,
 } from "herceg";
 import { type ChartSpec, loadSpec } from "herceg/spec";
@@ -130,7 +131,7 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   const kept = previous && keptView(previous.chart, previous.plane);
   if (previous?.itemFrame !== undefined) cancelAnimationFrame(previous.itemFrame);
   previous?.chart.destroy();
-  const chart = createChart(element, theme ? { ...config, theme } : config);
+  const chart = createChart(element, followsApp ? { ...config, theme: appColors(theme) } : config);
   const unbrushed = bindings.map(({ store, channel }) => store.get(channel));
   const positions: ItemPositionsPayload = {};
   if (header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch)
@@ -399,7 +400,15 @@ function followApp(instance: Instance) {
   const theme = appTheme(instance.element);
   if (theme === instance.theme) return;
   instance.theme = theme;
-  instance.chart.update({ theme: theme ?? "light" });
+  instance.chart.update({ theme: appColors(theme) });
+}
+
+/**
+ * The app's light or dark colors (light where it says neither) on its own
+ * background, which the chart shows through.
+ */
+function appColors(theme: ThemeName | undefined): ThemeSpec {
+  return { extends: theme ?? "light", background: "transparent" };
 }
 
 /**

@@ -47,6 +47,7 @@ import {
   type Placed3D,
   positiveExtent,
 } from "./plot3d.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 
 export interface Line3DOptions<S extends Schema> {
   /** Number or time fields: each sample's position; z is vertical. */
@@ -61,6 +62,8 @@ export interface Line3DOptions<S extends Schema> {
   strokeWidth?: number;
   /** Legend and tooltip name of the path without `series`. */
   label?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -126,6 +129,7 @@ export class Line3DMark implements Layer3D {
 
   constructor(input: Line3DSpec, table: Table) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "line3d");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     for (const axis of ["x", "y", "z"] as const)
@@ -673,7 +677,7 @@ export function line3d<S extends Schema>(
     x: options.x,
     y: options.y,
     z: options.z,
-    ...definedFields(options, ["series", "stroke", "strokeWidth", "label", "id"]),
+    ...definedFields(options, ["tooltip", "series", "stroke", "strokeWidth", "label", "id"]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

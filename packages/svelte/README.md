@@ -52,7 +52,7 @@ stores and channels. The chart listens only
 while a handler is given and calls the current one, so passing a new function does not
 resubscribe. `bind:chart` gives the underlying chart, herceg's `Chart` (null until
 mounted), for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibility`,
-`toSVG`):
+`toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`):
 
 ```svelte
 <script lang="ts">
@@ -79,6 +79,25 @@ returns plain drags to navigation or node dragging. With `drag: true`,
 nodes move while zoomed and `setItemPosition` still uses layout units.
 When zoom is on, Alt+Shift+arrows moves the node read; Shift+arrows and 0
 navigate the view. The toolbar restores moved nodes.
+
+## Tooltips
+
+Mark components take `tooltip={{ fields: [...] }}` for more of the row a
+point is, and axes `tooltipFormat` for how tooltips write their values, as
+in herceg (see [Tooltips](../herceg/README.md#tooltips)). For content of
+your own, a `renderTooltip` snippet renders in the chart's box, which keeps
+its placement, the crosshair and highlighted points, and the keyboard's
+announcements. Only the content of what the tooltip is at renders, when
+that changes, never a node per data point.
+
+```svelte
+<Chart>
+  <Line data={latency} x="time" y="p99" tooltip={{ fields: ["requests"] }} />
+  {#snippet renderTooltip(inspection)}
+    <LatencyTip point={inspection.points[0]} />
+  {/snippet}
+</Chart>
+```
 
 ## Live data
 

@@ -31,6 +31,7 @@ import {
 } from "./mark.ts";
 import { rowOf, type Series, visibleRange, xExtent } from "./series.ts";
 import { FILL, Slots } from "./slots.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 export interface CandlestickOptions<S extends Schema> {
@@ -62,6 +63,8 @@ export interface CandlestickOptions<S extends Schema> {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -121,6 +124,7 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
 
   constructor(input: CandlestickSpec, table: Table<Schema>) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "candlestick");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
@@ -475,6 +479,7 @@ export function candlestick<S extends Schema>(
     low: options.low,
     close: options.close,
     ...definedFields(options, [
+      "tooltip",
       "variant",
       "rise",
       "fall",
