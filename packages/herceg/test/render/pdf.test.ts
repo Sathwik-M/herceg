@@ -35,11 +35,13 @@ import { violin } from "../../src/marks/violin.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { ChartModel, STATIC_RASTER_RATIO } from "../../src/model/model.ts";
+import { rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
 import { type PdfOptions, pdfFonts, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
 import { NO_PAGE } from "../../src/render/fallbacks.ts";
 import { cellRepeat, renderPdf } from "../../src/render/pdf.ts";
+import { num } from "../../src/render/pdf-document.ts";
 import { fontChecksum } from "../../src/render/pdf-font-binary.ts";
 import { PdfFontResolver, type PdfFontSource } from "../../src/render/pdf-font-resolver.ts";
 import { subsetTrueType, writeSfnt } from "../../src/render/pdf-font-subset.ts";
@@ -557,6 +559,71 @@ describe("renderPdf", () => {
 });
 
 describe("renderToPDF", () => {
+  it("exports dense navigator bars as column envelopes", () => {
+    const data = table({
+      t: Float64Array.from({ length: 5000 }, (_, i) => i),
+      v: Float64Array.from({ length: 5000 }, (_, i) => (i % 2 ? -10 : 15)),
+    });
+    const options = {
+      width: 600,
+      height: 300,
+      marks: [bar(data, { x: "t", y: "v" })],
+      x: { show: false },
+      y: { domain: [-20, 20] as const },
+    };
+    const empty = readPdf(renderToPDF({ ...options, navigator: rangeNavigator({ marks: [] }) }));
+    const drawn = readPdf(renderToPDF({ ...options, navigator: rangeNavigator() }));
+    const rectangles = (pdf: ParsedPdf) => pdf.content.match(/ re\n/g)?.length ?? 0;
+    // Both PDFs draw the same 5,000 main bars and strip frame. Only the
+    // overview differs: at most one rectangle per sign and CSS column.
+    const added = rectangles(drawn) - rectangles(empty);
+    expect(added).toBeGreaterThan(500);
+    expect(added).toBeLessThanOrEqual(1200);
+  });
+
+  it.each([false, true])(
+    "exports signed stack colors and proportions with reversed y=%s",
+    (reversed) => {
+      const data = table({
+        t: Float64Array.from({ length: 5000 }, (_, i) => i),
+        a: Float64Array.from({ length: 5000 }, (_, i) => [6, 1, -4, -8][i % 4]!),
+        b: Float64Array.from({ length: 5000 }, (_, i) => [4, 8, -7, -1][i % 4]!),
+      });
+      const options = {
+        width: 600,
+        height: 300,
+        marks: [bar(data, { x: "t", y: ["a", "b"], stack: true })],
+        x: { show: false },
+        y: { show: false, domain: (reversed ? [20, -20] : [-20, 20]) as [number, number] },
+        navigator: rangeNavigator(),
+        theme: { palette: ["#ff0000", "#0000ff"] },
+        legend: false as const,
+      };
+      const model = new ChartModel(options);
+      model.setSize(600, 300, 1);
+      const strip = model.scene(estimateText).panels.find((p) => p.key === "navigator")!;
+      const bars = strip.marks.filter((g): g is RectGeometry => g.kind === "rect");
+      expect(bars.map((g) => g.fill)).toEqual(["#ff0000", "#0000ff"]);
+      const pdf = readPdf(renderToPDF(options));
+      const clip = `${[strip.plot.x, strip.plot.y, strip.plot.width, strip.plot.height].map((v) => num(v)).join(" ")} re W n`;
+      const start = pdf.content.lastIndexOf(clip);
+      expect(start).toBeGreaterThan(0);
+      const content = pdf.content.slice(start);
+      const fills = [
+        ...content.matchAll(/q [^\n]*?([01] [01] [01]) rg\n((?:[-\d. ]+ re\n)+)f\nQ/g),
+      ];
+      expect(fills.map((match) => match[1])).toEqual(["1 0 0", "0 0 1"]);
+      bars.forEach((g, i) => {
+        const rectangles = Array.from(
+          { length: g.count },
+          (_, row) =>
+            `${Array.from(g.rects.subarray(row * 4, row * 4 + 4), (v) => num(v)).join(" ")} re\n`,
+        ).join("");
+        expect(fills[i]![2]).toBe(rectangles);
+      });
+    },
+  );
+
   it.each([false, true])(
     "tags the full chart with its DOM description (embedded fonts: %s)",
     (embedded) => {

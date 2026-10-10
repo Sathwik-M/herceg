@@ -299,6 +299,14 @@ draws every panel's marks (each panel's part apart, over that panel's y
 scale), and moves the x range they share, so the panels must share x
 (`resolve_x="shared"`, the default).
 
+Dense bar strips use pixel-column envelopes in live charts and SVG, PDF,
+and PNG: each sign keeps the extreme bar's series color (ties use series,
+then row order), each placed bar covers every column it intersects, and
+stacks keep all segments at the most extreme position per sign. Shorter
+bars and their colors can be hidden. Below two nonempty rectangles
+intersecting the strip per column, bars are drawn exactly. Missing, zero-area, and wholly clipped bars do not
+count toward reduction; missing-heavy sources are scanned once.
+
 ```python
 hg.line(prices, x="time", y="close", id="close", navigator=hg.Navigator(marks=["close"]))
 
