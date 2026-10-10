@@ -1,6 +1,6 @@
 // Events a chart emits to the application.
 
-import type { DrillRoot } from "../marks/tree-data.ts";
+import type { ItemChanges } from "../model/item-views.ts";
 import type { Inspection, Viewport } from "../model/model.ts";
 import type { RowSelectionChange } from "../model/row-selection.ts";
 import type { Camera } from "../three/camera.ts";
@@ -69,13 +69,13 @@ export interface ChartEvents {
    * Enter, Backspace, a breadcrumb, or `setDrillRoot`): the node's item key,
    * null for the whole tree, and the path to it.
    */
-  drill: DrillRoot;
+  drill: ItemChanges["drill"];
   /**
    * A network's node was moved (dragged, Shift with the arrow keys, or
    * `setItemPosition`), or put back where the layout puts it (null): its
    * item key and where it is now, in the network's layout units.
    */
-  itemMove: { key: string; position: { x: number; y: number } | null };
+  itemMove: ItemChanges["itemMove"];
   /**
    * Series or items were hidden or shown: through the legend,
    * `setVisibility` or `setHiddenKeys`, or as marks the chart no longer

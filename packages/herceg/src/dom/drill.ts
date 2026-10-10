@@ -82,7 +82,7 @@ export class Controls implements ChartControls {
   /** Drills into the node keyed `key` (null: the whole tree), and says where the chart is now. */
   #open(key: string | null): void {
     const { chart, model } = this.#host;
-    this.#host.itemsChanged("drill", model.items?.setDrillRoot(key));
+    model.items?.setDrillRoot(key);
     // Drawn now, so what is said is what the chart shows.
     chart.render();
     const path = chart.drillRoot?.path ?? [];

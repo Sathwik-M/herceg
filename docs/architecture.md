@@ -3074,31 +3074,47 @@ all of them: it loads `dom/layout-controls.ts` with one dynamic `import()`
 when its mark asks for controls, which loads that family's module and
 mounts it with a host (`dom/controls.ts`: the chart's handle, its model,
 the pointer overlay, announcements, a redraw, the legend, and the keyboard
-cursor's item); controls of another kind, or of a chart destroyed or
-changed while they loaded, are disposed. Controls listen on the chart's
-root themselves, their keys in the capture phase ahead of the chart's (they
+cursor's item). The optional `ItemViews` runtime owns the active controls,
+their pending import, and their latest scene through a portable lifecycle
+interface; it contains no browser imports. Controls of another kind, or of
+a chart destroyed or changed while they loaded, are disposed. Promise
+identity rejects obsolete imports even through a switch back to the same
+family. Layout item state is available before the first scene, so option
+updates can start loading controls immediately, including when an axes
+chart becomes a layout chart; `Chart.loading` includes that import. Controls listen on the chart's root themselves, their keys
+in the capture phase ahead of the chart's (they
 take Shift with the arrows, plus, minus, 0, Enter, and Backspace, and stop
 those they act on), and change the chart through its public methods
 (`setViewport`, `setCamera`, `select`) or, for drills and node moves, the
 same item state the public `setDrillRoot` and `setItemPosition` change,
-reported through the chart's `drill` and `itemMove` events. Each command
-starts from the pending state (the viewport, drill root, or node position
-asked for, drawn or not), so presses faster than frames add up, and node
+reported through the chart's `drill` and `itemMove` events by an optional
+item-change sink. Programmatic setters connect that sink synchronously,
+even with gestures disabled; loaded controls connect it for gestures.
+Reconciled roots are reported before the frame's hover and render listeners.
+Each command starts from the pending state (the viewport, drill root, or
+node position asked for, drawn or not), so presses faster than frames add up, and node
 moves name the layout they were made in, so one made on a network whose
 data changed and is not yet drawn again is dropped rather than misplaced. A
 drag owns its pointer (captured) and is no click once it moves 3 px, which
 the chart's own press tracking sees too. They share a toolbar
-(`dom/toolbar.ts`) of named buttons, focusable while hidden. Generalizing
-the orbit's loading cost nothing; the line chart grew 147 B gzip (436 B
-minified, `npm run bench:size`) with these controls, for the three chart
-methods (`drillRoot`, `setDrillRoot`, `setItemPosition`, which draw
-pending option changes first), the seam the controls change items through,
-the `drill` event a data change makes, the button test that keeps the
-legend's and the controls' presses from being plot clicks, and keeping the
-brush when a click lands on an item of no bound row. The controls
-are lazy chunks loaded one family at a time, with the shared router and
-toolbar: about 2.5 KB gzip for a 3D chart's, a tree's, or a network's, and
-4.8 KB for a map's, which brings the brush that draws its lasso.
+(`dom/toolbar.ts`) of named buttons, focusable while hidden.
+
+The controls lifecycle and item notifications live behind the optional
+item runtime, so ordinary line charts carry only the public setters and
+small bridges for loading, drawing, and events. Esbuild metafiles attribute
+the initial growth from layout interaction to 355 minified bytes in
+`dom/chart.ts` and 81 in `model/model.ts`; the family implementations were
+already outside the line entry's initial chunks. With the lifecycle and
+notifications moved, the line entry is 50 B gzip above `4fe2634^`, before
+layout interaction (43,811 to 43,861 B), measured with unchanged
+`npm run bench:size` settings. Buttons retain their own presses, and a click
+on an item representing none of the bound rows retains the brush. Controls
+remain lazy chunks loaded one family at a time, with a shared router and
+toolbar; map controls also load the brush that draws their lasso. The line
+entry's reachable lazy chunks total 31,946 B gzip, 17 B more than before
+the trim. Making item state available before drawing adds 14 B gzip to
+each PDF entry through the shared model, preserving immediate controls
+loading when charts change family.
 
 An inspected point carries its identity: the mark's index in the chart's
 marks (each panel's inspector is given the index of every mark it inspects,

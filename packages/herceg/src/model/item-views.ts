@@ -5,7 +5,13 @@
 // layout marks (`LayoutMark.views`), so charts without any never load it.
 
 import type { MovedNodes } from "../marks/graph.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "../marks/layout-mark.ts";
+import type {
+  LayoutControls,
+  LayoutFrame,
+  LayoutItem,
+  LayoutMark,
+  LayoutResult,
+} from "../marks/layout-mark.ts";
 import type { ChartMark } from "../marks/mark.ts";
 import type { DrillRoot } from "../marks/tree-data.ts";
 import type { Panel, Rect, Scene } from "../scene/scene.ts";
@@ -13,6 +19,20 @@ import type { ItemInspection } from "./inspect.ts";
 import { EDGE } from "./legend.ts";
 import type { ChartConfig, ChartModel } from "./model.ts";
 import type { PanelItem } from "./panel-layout.ts";
+
+/** Changes of layout items, reported by mounted charts through their matching events. */
+export interface ItemChanges {
+  drill: DrillRoot;
+  itemMove: { key: string; position: { x: number; y: number } | null };
+}
+
+/** Optional navigation attached to layout items by an interactive runtime. */
+export interface Controls {
+  update(config: ChartConfig): void;
+  draw(scene: Scene): void;
+  readonly busy: boolean;
+  dispose(): void;
+}
 
 /** A panel a layout mark drew in, and what it drew there. */
 interface ItemView extends ItemPanel {
@@ -45,6 +65,14 @@ export type Header = Pick<Scene, "title" | "legend" | "colorLegends" | "glyphLeg
 
 /** One chart's record of what its layout marks drew; layout marks give charts the class. */
 export class ItemViews {
+  /** Optional sink for item changes; model-only consumers keep the returned values. */
+  declare changed:
+    | ((
+        ...change:
+          | [type: "drill", change: ItemChanges["drill"]]
+          | [type: "itemMove", change: ItemChanges["itemMove"]]
+      ) => void)
+    | undefined;
   /**
    * Checks the layout marks of a chart without facets or panels, which has
    * them to itself (`marks` along axes are refused), and returns the one
@@ -99,6 +127,60 @@ export class ItemViews {
   /** A network's nodes moved, in the layout they were moved in, and the one being dragged. */
   #moved: { layout: object; at: Map<string, readonly [number, number]> } | undefined;
   #dragged: { key: string; at: readonly [number, number]; layout: object } | undefined;
+
+  /** Controls attached by the DOM runtime; absent for model-only consumers. */
+  controls: Controls | null | undefined;
+  controlsLoading: Promise<void> | undefined;
+  #controlsKind: LayoutControls["kind"] | undefined;
+  #controlsScene: Scene | undefined;
+  #controlsDisposed = false;
+
+  /** Follows the requested family, rejecting obsolete imports by promise identity. */
+  updateControls(
+    model: ChartModel,
+    mount: (kind: LayoutControls["kind"]) => Promise<Controls>,
+  ): void {
+    if (this.#controlsDisposed) return;
+    const kind = model.controls?.kind;
+    if (kind === this.#controlsKind) {
+      this.controls?.update(model.config);
+      return;
+    }
+    this.controls?.dispose();
+    this.controls = undefined;
+    this.#controlsKind = kind;
+    if (!kind) {
+      this.controlsLoading = undefined;
+      return;
+    }
+    const loading = mount(kind)
+      .catch(() => null)
+      .then((controls) => {
+        if (this.#controlsDisposed || this.controlsLoading !== loading) {
+          controls?.dispose();
+          return;
+        }
+        this.controlsLoading = undefined;
+        this.controls = controls;
+        controls?.update(model.config);
+        if (this.#controlsScene) controls?.draw(this.#controlsScene);
+      });
+    this.controlsLoading = loading;
+  }
+
+  drawControls(scene: Scene): void {
+    this.#controlsScene = scene;
+    this.controls?.draw(scene);
+  }
+
+  disposeControls(): void {
+    this.#controlsDisposed = true;
+    this.controls?.dispose();
+    this.controls = undefined;
+    this.#controlsScene = undefined;
+    this.controlsLoading = undefined;
+    this.changed = undefined;
+  }
 
   /** Whether the last scene was of one layout mark, without facets or panels. */
   get alone(): boolean {
@@ -218,6 +300,12 @@ export class ItemViews {
     return root;
   }
 
+  /** Reports a root the data changed before the frame's hover and render listeners run. */
+  finishFrame(): void {
+    const root = this.reconciled();
+    if (root) this.changed?.("drill", root);
+  }
+
   /**
    * Drills a chart of one tree into a node, named by its item key or its
    * names from the top level down, or with null back out to the whole tree;
@@ -232,10 +320,12 @@ export class ItemViews {
       throw new RangeError(`setDrillRoot: no node ${JSON.stringify(node)} in the tree`);
     // Against the root set, though a frame may not have drawn it yet.
     if (key === this.#root.key) return undefined;
-    this.#root = { key, path: key === null ? [] : drill.pathTo(key) };
+    const root = { key, path: key === null ? [] : drill.pathTo(key) };
+    this.#root = root;
     // A change the data made before this one is no longer the chart's to report.
     this.#reconciled = undefined;
-    return this.#root;
+    this.changed?.("drill", root);
+    return root;
   }
 
   /**
@@ -254,7 +344,8 @@ export class ItemViews {
     if (!moves || this.#named) throw new Error("setItemPosition: only networks have items to move");
     this.#dragged = undefined;
     // A node moved before its group was hidden can go back all the same.
-    if (position === null && this.#moved?.at.delete(key)) return { key, position: null };
+    if (position === null && this.#moved?.at.delete(key))
+      return this.#itemMoved({ key, position: null });
     if (layout && (layout !== moves.layout || !moves.current() || !moves.movable(key)))
       return undefined;
     if (!moves.movable(key))
@@ -270,7 +361,12 @@ export class ItemViews {
     const [px, py] = at.get(key) ?? [];
     if (px === x && py === y) return undefined;
     at.set(key, [x, y]);
-    return { key, position: { x, y } };
+    return this.#itemMoved({ key, position: { x, y } });
+  }
+
+  #itemMoved(change: ItemChanges["itemMove"]): ItemChanges["itemMove"] {
+    this.changed?.("itemMove", change);
+    return change;
   }
 
   /** The nodes moved so far, in layout units. */

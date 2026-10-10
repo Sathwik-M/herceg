@@ -12,6 +12,7 @@ import type { ChartEvents } from "../../src/dom/events.ts";
 import { geopoint } from "../../src/marks/geopoint.ts";
 import { geoshape } from "../../src/marks/geoshape.ts";
 import { graph } from "../../src/marks/graph.ts";
+import { line } from "../../src/marks/line.ts";
 import { sunburst } from "../../src/marks/sunburst.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import type { ItemInspection } from "../../src/model/model.ts";
@@ -25,7 +26,7 @@ afterEach(() => {
   for (const host of hosts.splice(0)) host.remove();
 });
 
-async function mount(options: ChartOptions): Promise<Chart> {
+function mountNow(options: ChartOptions): Chart {
   const host = document.createElement("div");
   // Within the test frame's 414 pixels: input beyond them lands nowhere.
   host.style.cssText = "width:400px;height:300px";
@@ -33,6 +34,11 @@ async function mount(options: ChartOptions): Promise<Chart> {
   hosts.push(host);
   const chart = createChart(host, { locale: "en-US", renderer: "svg", ...options });
   mounted.push(chart);
+  return chart;
+}
+
+async function mount(options: ChartOptions): Promise<Chart> {
+  const chart = mountNow(options);
   // Controls load the first time a chart draws a mark that has them.
   await chart.loading;
   return chart;
@@ -654,6 +660,60 @@ describe("treemaps and sunbursts", () => {
     await frame();
     expect(drills).toEqual(['[0,"Europe"]', '[0,"Asia"]']);
     expect(chart.drillRoot?.key).toBe('[0,"Asia"]');
+  });
+
+  it("reports programmatic drills before controls load and reconciles with gestures disabled", async () => {
+    const data = sales();
+    const chart = mountNow({
+      marks: [treemap(data, { path: ["region", "country", "city"], value: "revenue" })],
+      interaction: { zoom: true },
+    });
+    const loading = chart.loading;
+    const roots: (string | null)[] = [];
+    chart.on("drill", ({ key }) => roots.push(key));
+    chart.setDrillRoot(["Europe", "Spain"]);
+    chart.setDrillRoot(["Europe", "Spain"]);
+    expect(roots).toEqual(['[0,"Europe","Spain"]']);
+    expect(chart.drillRoot?.key).toBe('[0,"Europe","Spain"]');
+    chart.update({ interaction: { zoom: false } });
+    chart.render();
+    data.reset({
+      region: ["Europe", "Asia"],
+      country: ["France", "Japan"],
+      city: ["Paris", "Tokyo"],
+      revenue: [40, 50],
+    });
+    const order: string[] = [];
+    chart.on("drill", () => order.push("drill"));
+    chart.on("render", () => order.push("render"));
+    chart.render();
+    expect(roots).toEqual(['[0,"Europe","Spain"]', '[0,"Europe"]']);
+    expect(order).toEqual(["drill", "render"]);
+    expect(chart.drillRoot?.key).toBe('[0,"Europe"]');
+    await loading;
+    expect(chart.root.querySelector("[role=toolbar]")).toBeNull();
+  });
+
+  it("starts loading controls when an SVG chart changes from axes to a layout", async () => {
+    const chart = mountNow({
+      marks: [line(table({ x: [0, 1], y: [1, 2] }), { x: "x", y: "y" })],
+    });
+    expect(chart.drillRoot).toBeUndefined();
+    expect(() => chart.setDrillRoot(null)).toThrow("chart: no items to drill or move");
+    expect(() => chart.setItemPosition("a", null)).toThrow("chart: no items to drill or move");
+    chart.update({
+      marks: [treemap(sales(), { path: ["region", "country", "city"], value: "revenue" })],
+      interaction: { zoom: true },
+    });
+    const loading = chart.loading;
+    expect(loading).toBeDefined();
+    await loading;
+    expect(chart.loading).toBeUndefined();
+    chart.render();
+    const roots = heard(chart, "drill");
+    chart.setDrillRoot(["Europe"]);
+    expect(roots.map(({ key }) => key)).toEqual(['[0,"Europe"]']);
+    expect(chart.root.querySelector("[aria-label=Tree]")).not.toBeNull();
   });
 
   it("go up from the root set when the data took it before a frame", async () => {

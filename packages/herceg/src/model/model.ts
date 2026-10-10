@@ -1661,8 +1661,7 @@ export class ChartModel {
     this.#floats.clear();
     this.#doubles.clear();
     this.#bytes.clear();
-    this.#items ??= new mark.views();
-    const scene = this.#items.scene(this, header, mark, marks, {
+    const scene = this.items!.scene(this, header, mark, marks, {
       theme,
       locale,
       measure,
@@ -1673,7 +1672,7 @@ export class ChartModel {
       clouds,
       keyed: keyedBy(this.#config),
     });
-    this.#all = this.#items.panels;
+    this.#all = this.#items!.panels;
     return scene;
   }
 
@@ -1897,8 +1896,9 @@ export class ChartModel {
     return view && this.#inPanel(view, view.inspector.inspectPosition(seriesKey, position));
   }
 
-  /** What the chart's layout marks drew in the last scene, and the state of their items. */
+  /** Layout items and their state, available before the first scene so controls can start loading. */
   get items(): ItemViews | undefined {
+    this.#items ??= this.#layouts[0] && new this.#layouts[0].views();
     return this.#items;
   }
 
