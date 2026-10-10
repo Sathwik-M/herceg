@@ -306,6 +306,19 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   /** Nearest point to a pixel, for marks with a faster lookup than the chart's generic search. */
   pick?(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined;
   /**
+   * How far a row's glyph reaches from its place, in pixels, for marks
+   * whose glyphs differ in size (points sized by a field); NaN when the row
+   * is not drawn. Clicks that select rows read it.
+   */
+  reach?(row: number): number;
+  /**
+   * For marks whose points summarize rows (histogram bins, box plot
+   * groups): whether a table row is one of those the point at `position`
+   * of `series` summarizes, so that selecting the point selects them. Rows
+   * of other facet panels are the caller's to leave out.
+   */
+  summarized?(series: Series, position: number): (row: number) => boolean;
+  /**
    * For marks that pair rows of their series (stacks of a series field):
    * the position of `s` to read beside the point of `anchor` at
    * `position`, where the keyboard is, or -1 for none; undefined leaves it

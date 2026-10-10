@@ -115,9 +115,14 @@ export interface Chart {
    * Sets or clears (null) the selection, as if the user had brushed it in
    * `panel`; an x range alone may be given as a pair. In charts whose panels
    * have x scales of their own, a selection needs the panel it is in, and
-   * belongs to the panels sharing its x scale.
+   * belongs to the panels sharing its x scale. With `rowSelection`, it
+   * writes the rows it covers, unless `rows` is false: a selection another
+   * view made and wrote, shown here too.
    */
-  select(selection: Selection | readonly [number, number] | null, target?: PanelTarget): void;
+  select(
+    selection: Selection | readonly [number, number] | null,
+    target?: PanelTarget & { rows?: boolean },
+  ): void;
   /** Where a 3D chart is seen from (a copy); undefined for other charts. */
   readonly camera: Camera | undefined;
   /**

@@ -291,7 +291,7 @@ export interface PointGeometry extends Geometry {
    * points with one are drawn one by one, each ring over its point, so
    * rings keep overlapping points apart.
    */
-  ring?: { color: string; width: number } | undefined;
+  ring?: { color: string; width: number; opacity?: number } | undefined;
   /** Set when the series is left to a GPU painter instead of `coords`. */
   cloud?: PointCloud;
   /** Points in scenes that animate changed values: their row identities or explicit keys. */

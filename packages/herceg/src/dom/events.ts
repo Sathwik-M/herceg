@@ -1,6 +1,7 @@
 // Events a chart emits to the application.
 
 import type { Inspection, Viewport } from "../model/model.ts";
+import type { RowSelectionChange } from "../model/row-selection.ts";
 import type { Camera } from "../three/camera.ts";
 import type { Selection } from "./brushed.ts";
 import { report } from "./scheduler.ts";
@@ -36,11 +37,27 @@ export interface ChartEvents {
      * it belonged to.
      */
     panels?: readonly string[];
+    /**
+     * With `rowSelection`, what the selection wrote to the channels it
+     * binds: per table, the rows it covers (a condition for brushes, rows
+     * for lassos), or null where clearing it cleared them. Selections from
+     * synced charts write nothing.
+     */
+    rows?: readonly RowSelectionChange[];
   };
   /** The data under the pointer or cursor changed; undefined when there is none. */
   hover: { inspection: Inspection | undefined };
-  /** The plot was clicked (not dragged), with the data under the pointer. */
-  click: { inspection: Inspection | undefined };
+  /**
+   * The plot was clicked (not dragged), with the data under the pointer and,
+   * with `rowSelection` taking clicks, what the click wrote to the channels
+   * (the rows clicked, or null where a click off the data cleared them).
+   */
+  click: { inspection: Inspection | undefined; rows?: readonly RowSelectionChange[] };
+  /**
+   * A channel `rowSelection` binds changed, whoever changed it (this chart,
+   * another, a grid): its table, its name, and what it holds now.
+   */
+  rowSelection: RowSelectionChange;
   /**
    * A 3D chart's camera moved: dragged, zoomed, reset, turned by keys or
    * buttons, or set with `setCamera`; once a frame at most.

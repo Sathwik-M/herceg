@@ -292,7 +292,8 @@ in sorted ones. `SelectionStore`
 (`data/selection.ts`) keeps an application's selections of one table by
 channel, as portable conditions or local row sets; consumers choose which
 channels they read and whether to filter or highlight, so a chart's brush
-need not filter the chart that drew it.
+need not filter the chart that drew it. Grids write and show a channel, and
+charts bound to one do too (see Selected rows).
 
 Marks show a view's rows through the row lists series already carry
 (`Series.rows`): a point mark over a view keeps the view's table as its
@@ -2633,6 +2634,7 @@ axis types and category order. Shift with the arrow keys selects a range
 from where the keyboard cursor started, along the axis it steps along (x for
 lines and vertical bars, y for horizontal bars): with brushes along that
 axis, and with rectangle and lasso brushes, which only the pointer draws.
+With `rowSelection` taking brushes, a brush selects rows and never zooms.
 The live region announces selections made with the keyboard and the
 pointer.
 
@@ -2675,6 +2677,156 @@ say so with `summarizes`, and their points have no row. Layout items carry a
 row where one row is the item (gauges, radar points, map shapes and points);
 a map of several layers tags its items with the layer's index. Building an
 inspection costs three more fields per point and one map lookup.
+
+## Selected rows
+
+A chart's `rowSelection` binds it to channels of selection stores, one per
+table its marks read (`model/row-selection.ts`). The binding is an object
+made by `rowSelection()`, as facets and navigators are, so the code comes
+only with charts that import it: a line chart that binds no store carries
+the hooks that call it (about 150 B gzip). The model calls the binding's
+`check` as it validates (layout marks, maps, and 3D marks refuse one, in a
+panel of their own too; so do
+stores of tables no mark reads, and brushes or lassos over summaries'
+statistics), and the mounted chart calls `mount`, which gives it a
+`RowLink`: the store subscriptions, what the chart's gestures wrote, and the
+model's `highlight` hook. The chart calls the link where its gestures end: a
+selection set by the pointer, the keyboard, or `select()` (not one a synced
+chart sent, which would write another chart's selection again, nor one set
+with `rows: false`, which notebook widgets use to show one view's brush in
+the others, since the views share their stores, and for brushes Python
+sets, which draw without selecting rows; such a selection replaces the
+brush, so the link no longer clears what the brush wrote), a click
+(before the brush is cleared, so a click writes once), a brush the chart
+lets go of because its panels are gone (its rows go too, from channels
+that still hold them), and the brush's zoom test, which a brush that writes
+rows never passes. The link listens to the
+chart's keys itself for Space and Escape, after the chart's own handling;
+Space draws pending changes first (`render()`), so it selects what the
+cursor shows. A link that replaces another (a new binding of the
+same channels, as adapters' props change) takes over what its brush wrote,
+and the check of a change the old link had pending.
+Writes nest: a listener may replace what the chart just
+wrote, so the link checks once the outermost write is done whether any
+channel still holds its brush's rows. After another writer's change it
+checks a microtask later, once the change has been reported, so a view
+that shows the writer's brush (with `rows: false`) has let its own go and
+does not clear the brush it now shows.
+Everything in the model directory stays free of the DOM: the link reads the
+chart through a structural interface.
+
+What a gesture selects is `model/selected-rows.ts`'s, from what the last
+scene drew (rows a mark does not draw, by `Mark.shows`, a band, an axis
+break, or a value its scale cannot place, the low end of a range or of a
+stacked area too, are never selected by lassos, clicks, and keys, and a
+stacked area's zeros on a log axis are where it draws them, at the low end; points are clicked within
+their own glyph's reach, `Mark.reach`): the panels' series (`panelSeries`), their marks (`markOf`), and
+the panels' scales. A range brush becomes, per table, the disjunction over
+the marks drawn in its panels of each mark's condition: per series reading
+(a mark's y fields are its series), the conjunction of its places along the
+brushed axes being in range (a field's value, or a span overlapping it), with
+category ranges listed by the bands' values (`c:` keys are labels, `n:`
+keys numbers or times), joined by the shown series of a series field, a row
+view's filter, and the facet panels the brush covers when it covers only
+some. A y range is read on a right axis through the same pixels, panel by
+panel where panels have right axes of their own. A stack brushed along its values is selected by its drawn tops, as rows,
+as is a point mark over a view restricted to a row set (which no condition
+says), and then the table's other marks' conditions are evaluated into the
+same row set. Summaries take no part in lassos or in brushes along their
+statistics, whichever way the selection was set. Lassos test each row's anchor (bars' through the bar mark's own
+placement, `BarMark.placement` and `ends`, so grouped bars are found where
+they are drawn) against the outline in pixels, after its bounding box.
+Clicks find the topmost mark's point under the pointer: a bar or histogram
+bin containing it, a box, violin, or cell picked at distance 0, or the
+nearest anchor within the mark's reach plus a few pixels (a binary search
+window on sorted series). Points summarizing rows give their rows through
+`Mark.summarized`, a test of a table row (a bin's exact edges and its series,
+a group's category and series value with a value), evaluated over the
+table's rows (or the view's) of the clicked panel; a summary's index is
+never taken for a row. Results are computed for every table before any
+channel changes.
+
+Highlighting (`model/highlight.ts`) replaces a mark's geometry through the
+model's hook while the mark's table's channel holds a selection (a row set
+of an earlier generation is none), and only for points, bars, lines, and
+areas. Membership is a byte per table row, kept per table and selection
+object (in weak maps, so charts showing one selection share it) while the
+table's version and, for row sets, the set's own `version` are the same;
+when the table only appended or dropped rows (`modifiedVersion` and
+generation unchanged), kept rows keep their bytes and only appended rows are
+tested, so a live condition over a rolling window costs the new rows. What
+is made from a membership (series' rows split by it, values masked by it)
+is kept in weak maps keyed by the membership first, so it goes with it.
+Points and bars draw twice through the mark's own geometry, once for each series cut
+down to its unselected rows (dimmed: `fillOpacity` times 0.25, translucent
+so overlaps darken as other translucent points do) and once to its selected
+rows, under keys of their own (`\u0001off`, `\u0001on`) so they draw into
+buffers of their own; the list keeps every series, so grouped bars keep
+their slots, and frames say `keyed: false`, so value transitions do not
+take the parts for new items. Lines and areas draw whole and dimmed (a line
+through a wrapper of its drawing that multiplies the canvas' global alpha
+and adds an SVG `opacity`, an area's fill at a fraction of its opacity and
+its outline as a dimmed line, since areas paint the outline opaque), clipped
+to the plot outside the pixel spans of each series' runs of selected rows,
+and the same geometry as drawn clipped to the spans (from a run's first row
+to its last in x order, ascending, merged where they touch, at least a pixel
+wide, across the plot's height: an SVG `clipPath` of rectangles, or a canvas
+clip; a run ends at its outermost rows the mark draws through, by the rule
+it draws by: x, y, and a range's or a stack's lower end placed, a stacked
+area's zeros at a log axis' low end, rows inside axis breaks hidden, and for
+a layer drawn through its stack's edges x alone, since the edges draw what
+is there; a run goes on across rows a break hides, as the line joins the
+rows either side, and keeps rows inside it the line breaks at, since the
+caps either side are within its span, so only runs' ends are placed; a run
+that ends a path reaches half the stroke width further, over its round
+cap), so each pixel is painted once and the highlighted part is the very
+curve, level-of-detail reduction, and stack the mark drew; a layer of a
+series field's stack, drawn through the union's edges, reaches the union's
+ends past its own first and last rows. A line's runs of one row drawn are
+dots. Lines whose x does not ascend, and rows at one x that no span tells
+apart (a vertical run of selected rows, or other rows drawn at the x where
+a run ends, past rows the line breaks at), draw whole and dimmed with
+a copy of their values over them, the unselected rows' missing, drawn at
+the opacity that over the dimmed drawing of the same color shows its own:
+`(1 - 0.25) a / (1 - 0.25 a)`, `a` being the color's own alpha (read from
+hex and functional CSS colors; others count as opaque) times the mark's
+opacity, an area's fill and outline each so, series by series in the
+mark's order and an area's fill before its outline, as the mark paints
+them. Point series large enough for
+the GPU painter would fall to the CPU if split, so they draw as two clouds,
+of their unselected and selected rows, so each point composites once; each
+part streams as its cloud does (`PointCloud.stream`: a key per cloud and
+part, the rows it has lost from its front, and an epoch that changes with
+the selection, the generation, or values changed in place), since under one
+selection a part only loses rows from its front and gains them at its end,
+and the painter appends to its upload; parts are kept in weak maps by
+selection, then by their cloud's stream key, so a selection's parts go with
+it. Dimmed points' rings dim too. Highlights belong to the mounted chart:
+static exports from options draw every row.
+
+Payloads: `select` and `click` events carry what the gesture wrote, and
+`rowSelection` events every change of a bound channel, from any writer
+(each change once: the link compares the channel's selection object). The
+Python widget numbers rows as Python does: its snapshot gives, per bound
+table, the rows dropped since the last replace and the replaces so far, and
+the browser reports a row set's identities as that count plus its own
+`rowOffset` plus the position (`generation` 0, the snapshot's table) and the
+generation as Python's count plus its own, so Python maps them to positions
+in its data now whatever was appended or dropped since, and drops reports of
+an earlier generation, and reports made before a change it has not seen
+(each report carries the revision it was made at, as selections and
+viewports do). Python sets rows by position, which the browser applies in
+order with Python's other changes, and keeps its positions on their rows as
+`append` drops rows from the front; a `replace` lets row selections go. Streamlit remounts a chart
+when its payload changes, so its positions are qualified by a digest of the
+payload's data instead: a run that changes only how the chart looks keeps
+the digest, and the new chart's stores take the rows clicks and lassos
+selected, at the same positions; what the brush wrote (a condition, or a
+stack's rows) comes back only with the brush, where it can be kept, and the
+script hears when it could not: after a redraw, each channel is reported
+unless it holds what was last sent, of the same data. Conditions Python sets must test columns the chart
+sends (a binding's `fields` adds columns its marks do not read); the widget
+refuses others before changing what it holds.
 
 ## Accessibility
 
@@ -2810,12 +2962,16 @@ number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec
 A spec says which format version it is written in when it uses a feature an
 older reader would silently ignore and draw something else for: version 2
 adds `resolve` and `panels`, version 3 `resolve.x`, panels' own `x`, and
-the x axis' `breaks`, version 4 `navigator`, and version 5 enabled x axis
+the x axis' `breaks`, version 4 `navigator`, version 5 enabled x axis
 `seams` (`false` needs none for either), and version 6 raw box plot notches
-and nondefault whiskers, and version 7 split violins and nondefault violin
-interiors. Precomputed box plots need no version gate: earlier
-readers require both raw axis fields and refuse the one-axis statistics form.
-The loader reads every version up to
+and nondefault whiskers, version 7 split violins and nondefault violin
+interiors, and version 8 `rowSelection`, which an older reader would ignore
+and draw every row undimmed whatever is selected. Precomputed box plots need
+no version gate: earlier readers require both raw axis fields and refuse the
+one-axis statistics form. A spec's bindings name tables, not stores:
+`loadSpec` makes a store per bound table, or takes the stores (and the
+tables, so that specs loaded apart share rows) in its options. The loader
+reads every version up to
 its own and refuses later ones. Maps did not
 change the format's version: a reader that predates them refuses their mark
 types and geometry columns with an error rather than drawing something
@@ -2956,6 +3112,29 @@ document when `OffscreenCanvas` is unavailable.
   million-point line with ten years of sessions takes about 1.2 ms a scene
   instead of 0.6 ms. A calendar keeps every span it resolved for as long as
   its `TimeBreaks` lives (24 bytes per interval).
+- Row selections cover marks along axes: layout marks, maps, and 3D marks
+  refuse a binding, and custom marks and annotations neither write nor dim.
+  Histograms, box plots, violins, error bars, candlesticks, and heatmaps
+  write rows but draw every row undimmed (a bin with some rows selected is
+  not shown as such), and lassos and brushes along a summary's statistics
+  select none of their rows. A brush selects whole rows of every mark of
+  its table drawn in its panels; marks over several tables never join
+  them. Streaming 1,000 rows a frame into a 100,000-row window with a live
+  condition, highlighting costs about 0.5 ms of JavaScript a frame for
+  points drawn by the GPU (0.5 to 1.0 ms instead of 0.2 to 0.4) and 1.5 ms
+  for a line (1.7 ms instead of 0.2: a pass over its rows' bytes, its runs'
+  ends placed, a dot per run of one row, and the line drawn twice, clipped),
+  in Chrome, for a condition that leaves about 15,000 runs among 20,000
+  selected rows; the scene alone in Node takes about 0.25 ms more for
+  CPU-drawn points, and for the line 1.4 ms more, or 0.15 ms for one run
+  (one-off interleaved runs, Apple M6). The cost follows the runs: a million
+  rows on a log axis take 1.3 ms more for one run and 14.5 ms more for a
+  scattered condition of 150,000 runs. Charts
+  showing a selection share a byte per row of its table, and points and
+  bars split their rows at 4 bytes per row (lines whose x does not ascend
+  copy their values, 8 bytes per row and field), made again as rows stream
+  in. Brushes Python sets on a widget draw without selecting rows. PDF and
+  static SVG export from options do not highlight.
 - Range navigators need one panel and a number or time x axis: no facets,
   subplots, layout marks, or horizontal bars. The strip draws lines, areas,
   points (a sample of one per pixel, in one size and shape), vertical bars,

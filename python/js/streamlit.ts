@@ -13,6 +13,10 @@ import {
   type Chart,
   createChart,
   type PanelInfo,
+  type RowSelectionChange,
+  RowSet,
+  type SelectionStore,
+  selectRows,
   type ThemeName,
   type Viewport,
 } from "herceg";
@@ -27,7 +31,7 @@ export interface Component {
   setTriggerValue(name: string, value: unknown): void;
 }
 
-type Event = "select" | "click";
+type Event = "select" | "click" | "rowSelection";
 
 /** The payload's JSON header. */
 export interface Header {
@@ -36,6 +40,11 @@ export interface Header {
   buffers: [number, number][];
   /** Events the script reacts to. Others are not sent: each one reruns the script. */
   events: Event[];
+  /**
+   * Names this payload's data (not how it is drawn), so the script can tell
+   * rows selected in it from rows of data it has replaced since.
+   */
+  epoch?: string;
 }
 
 interface Instance {
@@ -50,6 +59,13 @@ interface Instance {
   component: Component;
   /** The selection last sent, as JSON: an unchanged one would rerun the script for nothing. */
   sent: string;
+  epoch: string | undefined;
+  /** The row selection's stores, by table name. */
+  stores: ReadonlyMap<string, SelectionStore>;
+  /** What the chart's brush wrote to them, which comes back only with the brush. */
+  brushed: WeakSet<object>;
+  /** What the script was last sent of each channel, with its epoch, as JSON, by table and channel. */
+  reported: Map<string, string>;
 }
 
 const DEFAULT_HEIGHT = 320;
@@ -77,7 +93,13 @@ export default function herceg(component: Component): () => void {
 
 function mount(component: Component, data: Uint8Array, previous: Instance | undefined): Instance {
   const { bytes, header, buffers } = decodePayload(data);
-  const { config } = loadSpec(header.spec, buffers);
+  const { config, stores } = loadSpec(header.spec, buffers);
+  // A run that changes how the chart looks, not its data, keeps the rows
+  // clicks and lassos selected; a brush's rows come back with the brush.
+  const same = previous?.epoch !== undefined && previous.epoch === header.epoch;
+  if (same) carryRows(previous!.stores, stores, previous!.brushed);
+  const bindings = config.rowSelection?.bindings ?? [];
+  const nameOf = (table: unknown) => [...stores].find(([, store]) => store.source === table)?.[0];
   const element = previous?.element ?? component.parentElement.ownerDocument.createElement("div");
   element.style.width = config.width === undefined ? "100%" : `${config.width}px`;
   element.style.height = `${config.height ?? DEFAULT_HEIGHT}px`;
@@ -87,7 +109,14 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   const kept = previous && keptView(previous.chart);
   previous?.chart.destroy();
   const chart = createChart(element, theme ? { ...config, theme } : config);
+  const unbrushed = bindings.map(({ store, channel }) => store.get(channel));
   if (kept) restore(chart, kept);
+  // What the brush wrote as it was restored, before the chart had listeners.
+  const brushed = new WeakSet<object>();
+  bindings.forEach(({ store, channel }, i) => {
+    const selection = store.get(channel);
+    if (selection && selection !== unbrushed[i]) brushed.add(selection);
+  });
   const instance: Instance = {
     bytes,
     element,
@@ -97,18 +126,81 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     theme,
     component,
     sent: previous?.sent ?? "null",
+    epoch: header.epoch,
+    stores,
+    brushed,
+    reported: previous?.reported ?? new Map(),
   };
   // The script hears if the brush could not be kept, or now covers other categories.
   reportSelection(instance);
-  chart.on("select", () => reportSelection(instance));
+  chart.on("select", ({ rows }) => {
+    for (const { selection } of rows ?? []) if (selection) brushed.add(selection);
+    reportSelection(instance);
+  });
   chart.on("click", ({ inspection }) => {
     if (!inspection || !instance.events.includes("click")) return;
     instance.component.setTriggerValue("click", inspectionPayload(chart, inspection));
   });
+  // What the chart's row selection holds, rows by position in this payload's data.
+  const reportRows = ({ table, channel, selection }: RowSelectionChange) => {
+    if (!instance.events.includes("rowSelection")) return;
+    const value = rowsValue(selection);
+    instance.reported.set(
+      `${nameOf(table)}\u0000${channel}`,
+      JSON.stringify([header.epoch, value]),
+    );
+    instance.component.setStateValue("rows", {
+      table: nameOf(table),
+      channel,
+      epoch: header.epoch,
+      selection: value,
+    });
+  };
+  chart.on("rowSelection", reportRows);
+  // A brush kept across a redraw wrote its rows before the chart had
+  // listeners, one that could not be kept took its rows with it, and rows
+  // or data may have changed while the script did not listen: it hears what
+  // the channels hold, as of this payload, unless it was last sent that
+  // (the same rows of the same data).
+  if (kept)
+    for (const { store, channel } of bindings) {
+      const selection = store.get(channel);
+      const now = JSON.stringify([header.epoch, rowsValue(selection)]);
+      const sent = instance.reported.get(`${nameOf(store.source)}\u0000${channel}`);
+      if (now !== (sent ?? JSON.stringify([previous?.epoch, null])))
+        reportRows({ table: store.source, channel, selection });
+    }
   return instance;
 }
 
+/** A channel's selection as the script reads it: rows by position, or a condition. */
+function rowsValue(selection: RowSelectionChange["selection"]) {
+  return selection?.kind === "rows"
+    ? { kind: "rows", rows: Array.from(selection.rows.positions()) }
+    : selection && { kind: "predicate", expression: selection.expression };
+}
+
 type Range = readonly [number, number];
+
+/**
+ * Gives new stores of the same data the rows the old ones' channels hold,
+ * at the same positions, but for what the old chart's brush wrote, which
+ * it writes again where it can be kept.
+ */
+function carryRows(
+  from: ReadonlyMap<string, SelectionStore>,
+  to: ReadonlyMap<string, SelectionStore>,
+  brushed: WeakSet<object>,
+) {
+  for (const [name, store] of to) {
+    const before = from.get(name);
+    for (const channel of before?.channels ?? []) {
+      const held = before!.get(channel)!;
+      if (held.kind === "rows" && !brushed.has(held))
+        store.set(channel, selectRows(new RowSet(store.source).addAll(held.rows.positions())));
+    }
+  }
+}
 
 /** What the user had: each panel's axes and zoom, and the whole selection, more than the script hears of. */
 interface Kept {

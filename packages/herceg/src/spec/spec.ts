@@ -16,9 +16,9 @@ export type { Expression, Operator } from "../data/expression.ts";
  * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
  * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`,
  * version 5 enabled x axis `seams`, version 6 raw box plot notches and non-default whiskers,
- * version 7 split violins and non-default violin interiors.
+ * version 7 split violins and non-default violin interiors, version 8 `rowSelection`.
  */
-export const SPEC_VERSION = 7;
+export const SPEC_VERSION = 8;
 
 /** Column name in a table. */
 export type Field = string;
@@ -36,10 +36,10 @@ export interface ChartSpec {
    * `grid` must give 2 or later, those using `resolve.x`, a panel's `x`, or
    * x axis `breaks` 3 or later, those with a `navigator` 4 or later,
    * those with enabled x axis `seams` 5, raw box plot notches or non-default whiskers 6,
-   * and split violins or non-default violin interiors 7, so that
-   * older readers refuse them rather than draw them differently.
+   * split violins or non-default violin interiors 7, and `rowSelection` 8,
+   * so that older readers refuse them rather than draw them differently.
    */
-  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -75,6 +75,15 @@ export interface ChartSpec {
   legend?: boolean;
   tooltip?: boolean | TooltipSpec;
   interaction?: InteractionSpec;
+  /**
+   * Binds the chart to a channel of a table's selection store, one binding
+   * per table: brushes, lassos, and clicks write the rows they select
+   * there, and the chart highlights the rows the channel holds, whoever
+   * selected them (another chart, a grid). Stores are not part of the
+   * spec: `loadSpec` takes them, or makes them. Needs spec version 8, and
+   * marks along axes.
+   */
+  rowSelection?: RowSelectionSpec | readonly RowSelectionSpec[];
   /**
    * A range navigator: a strip under the plot drawing the chart's marks
    * over the whole x domain, with a window showing the x range in view,
@@ -478,6 +487,25 @@ export interface InteractionSpec {
    * false: the wheel magnifies them.
    */
   rotate?: boolean;
+}
+
+/** What selects rows in a chart bound to a selection store: range and rectangle brushes, lassos, and clicks. */
+export type SelectionGesture = "brush" | "lasso" | "click";
+
+/** A chart's binding to a channel of a table's selection store (see `ChartSpec.rowSelection`). */
+export interface RowSelectionSpec {
+  /** The table, by name in `data`; may be left out when the marks read one table. */
+  data?: string;
+  /** The store's channel the chart writes its selections to and highlights. */
+  channel: string;
+  /**
+   * The gestures that write to the channel: all three by default; none for
+   * a chart that only highlights. They write only where `interaction.brush`
+   * draws a brush or a lasso; a brush that writes rows never zooms.
+   */
+  events?: readonly SelectionGesture[];
+  /** "highlight" (the default) dims the rows the channel does not hold; "none" leaves them. */
+  effect?: "highlight" | "none";
 }
 
 /** The range navigator's options. */

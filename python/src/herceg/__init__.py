@@ -62,6 +62,7 @@ from ._chart import (
 )
 from ._derive import Derived, Expr, col, derive, when
 from ._events import InspectedPoint, Inspection, Selection, Viewport
+from ._rows import RowSelection, SelectionBinding
 
 __all__ = [
     "SCHEMES",
@@ -77,7 +78,9 @@ __all__ = [
     "Navigator",
     "Panel",
     "Projection",
+    "RowSelection",
     "Selection",
+    "SelectionBinding",
     "Tooltip",
     "Viewport",
     "Derived",

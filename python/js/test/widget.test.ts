@@ -27,8 +27,8 @@ class MockModel implements Model {
     this.#emit(`change:${name}`);
   }
 
-  send(content: object) {
-    this.sent.push(content as Record<string, unknown>);
+  send(content: object, _callbacks?: unknown, buffers?: ArrayBuffer[] | ArrayBufferView[]) {
+    this.sent.push({ ...(content as Record<string, unknown>), ...(buffers && { buffers }) });
   }
 
   on(event: string, callback: Handler) {
@@ -502,6 +502,109 @@ describe("notebook widget", () => {
     model.receive({ type: "select", revision: 2, selection: null });
     await frame();
     expect(band(first!)!.getAttribute("visibility")).toBe("hidden");
+  });
+
+  it("reports row selections numbered as Python numbers rows, and shows Python's", async () => {
+    const base = snapshot({ interaction: { brush: "x" } });
+    const model = new MockModel({
+      _chart: {
+        ...base,
+        spec: { ...base.spec, version: 8, rowSelection: { channel: "focus" } },
+        // Five rows dropped and two replaces before this snapshot.
+        rows: { data: [5, 2] },
+        rowSelections: [{ table: "data", channel: "focus", selection: null }],
+      } satisfies Snapshot,
+      _listening: [],
+    });
+    const [first, second] = mount(model, 2);
+    await vi.dynamicImportSettled();
+    press(first!, "pointerdown", 0.3);
+    press(first!, "pointermove", 0.5);
+    press(first!, "pointermove", 0.7);
+    press(first!, "pointerup", 0.7);
+    await frame();
+    const [brushed] = model.messages("rowSelection") as {
+      selection: { kind: string; expression: unknown };
+    }[];
+    expect(brushed).toMatchObject({ table: "data", channel: "focus" });
+    expect(brushed!.selection.kind).toBe("predicate");
+    // Both views draw the same store: the other dims rows outside it too.
+    await frame();
+    expect(second!.querySelector('svg [opacity="0.25"]')).not.toBeNull();
+    // Space under the keyboard cursor selects its row: identity 5 + 0, generation 2.
+    const root = figure(first!) as HTMLElement;
+    root.focus();
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    root.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const clicked = model.messages("rowSelection").at(-1) as {
+      selection: { kind: string; generation: number };
+      buffers: ArrayBuffer[];
+    };
+    expect(clicked.selection).toEqual({ kind: "rows", generation: 2 });
+    expect(Array.from(new Float64Array(clicked.buffers[0]!))).toEqual([5]);
+    // Rows Python selects show without going back to Python.
+    const reports = model.messages("rowSelection").length;
+    model.receive(
+      { type: "rows", revision: 1, table: "data", channel: "focus", selection: { kind: "rows" } },
+      [new Uint32Array([1, 2])],
+    );
+    await frame();
+    expect(model.messages("rowSelection")).toHaveLength(reports);
+    model.receive({
+      type: "rows",
+      revision: 2,
+      table: "data",
+      channel: "focus",
+      selection: null,
+    });
+    await frame();
+    expect(second!.querySelector('svg [opacity="0.25"]')).toBeNull();
+    // Options change without touching the binding.
+    model.receive({ type: "options", revision: 3, options: { title: "Retitled" } });
+    expect(figure(first!).getAttribute("aria-label")).toBe("Retitled");
+    // A brush in one view is shown in the other without writing its rows again.
+    const before = model.messages("rowSelection").length;
+    press(second!, "pointerdown", 0.3);
+    press(second!, "pointermove", 0.5);
+    press(second!, "pointermove", 0.7);
+    press(second!, "pointerup", 0.7);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(model.messages("rowSelection")).toHaveLength(before + 1);
+    expect(band(first!)!.getAttribute("visibility")).toBe("visible");
+    expect(band(second!)!.getAttribute("visibility")).toBe("visible");
+  });
+
+  it("keeps the brush a view drew last over another view's, with its rows", async () => {
+    const base = snapshot({ interaction: { brush: "x" } });
+    const model = new MockModel({
+      _chart: {
+        ...base,
+        spec: { ...base.spec, version: 8, rowSelection: { channel: "focus" } },
+        rows: { data: [0, 0] },
+        rowSelections: [{ table: "data", channel: "focus", selection: null }],
+      } satisfies Snapshot,
+      _listening: [],
+    });
+    const [first, second] = mount(model, 2);
+    await vi.dynamicImportSettled();
+    const drag = (host: HTMLElement, from: number, to: number) => {
+      press(host, "pointerdown", from);
+      press(host, "pointermove", (from + to) / 2);
+      press(host, "pointermove", to);
+      press(host, "pointerup", to);
+    };
+    drag(first!, 0.2, 0.4);
+    await frame();
+    // The second view's brush replaces the first's rows: the first shows it, and lets its own go.
+    drag(second!, 0.6, 0.8);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(band(first!)!.getAttribute("visibility")).toBe("visible");
+    expect(band(second!)!.getAttribute("visibility")).toBe("visible");
+    const last = model.messages("rowSelection").at(-1) as { selection: { kind: string } | null };
+    expect(last.selection?.kind).toBe("predicate");
+    const selected = model.messages("select").at(-1) as { selection: SelectionPayload | null };
+    expect(selected.selection?.x).not.toBeNull();
   });
 
   it("starts from Python's viewport, reports zooming, and follows Python", async () => {

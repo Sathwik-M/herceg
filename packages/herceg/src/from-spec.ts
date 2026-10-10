@@ -13,13 +13,18 @@ export { SPEC_VERSION } from "./spec/spec.ts";
 export { validateSpec } from "./spec/validate.ts";
 export { type LoadedSpec, type LoadOptions, loadSpec, type SpecBuffer };
 
-/** Creates a chart in `element` from a spec and the binary buffers it references. */
+/**
+ * Creates a chart in `element` from a spec and the binary buffers it
+ * references; `options` as `loadSpec` takes them, such as the tables and
+ * selection stores it shares with other charts.
+ */
 export function chartFromSpec(
   element: HTMLElement,
   spec: ChartSpec,
   buffers: readonly SpecBuffer[] = [],
+  options: LoadOptions = {},
 ): Chart {
-  return createChart(element, loadSpec(spec, buffers).config);
+  return createChart(element, loadSpec(spec, buffers, options).config);
 }
 
 /**

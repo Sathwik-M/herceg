@@ -15,6 +15,7 @@ import numpy as np
 from . import _geo, _render
 from ._data import Column, Table
 from ._derive import Derived
+from ._rows import SelectionBinding, bindings
 
 # Annotations read at runtime (typing.get_type_hints) need Unpack too.
 if sys.version_info >= (3, 11):
@@ -510,6 +511,10 @@ class _LayoutOptions(TypedDict, total=False):
     panel_column_widths: Sequence[float] | None
 
 
+class _BindingOptions(TypedDict, total=False):
+    row_selection: SelectionBinding | Sequence[SelectionBinding] | None
+
+
 class ChartUpdate(_SharedOptions, total=False):
     """Chart options a live chart can change (``widget.update``): those of
     ``Chart`` but data, facets, and panels. ``None`` takes an option's default."""
@@ -519,11 +524,11 @@ class ChartUpdate(_SharedOptions, total=False):
     z: Axis | dict[str, Any] | None
 
 
-class ChartOptions(ChartUpdate, _LayoutOptions, total=False):
+class ChartOptions(ChartUpdate, _LayoutOptions, _BindingOptions, total=False):
     """``Chart``'s keyword arguments. ``None`` takes an option's default."""
 
 
-class HelperOptions(_SharedOptions, _LayoutOptions, total=False):
+class HelperOptions(_SharedOptions, _LayoutOptions, _BindingOptions, total=False):
     """Chart options as the one-call helpers (``hg.line``, ``hg.scatter``, ...)
     take them, after their own: ``x_axis``, ``y_axis``, and ``z_axis`` are the
     chart's ``x``, ``y``, and ``z``, since the helpers' ``x``, ``y``, and ``z``
@@ -588,6 +593,7 @@ class Chart:
         box_aspect: tuple[float, float, float] | None = None,
         rotate: bool | None = True,
         navigator: bool | Navigator | dict[str, Any] | None = None,
+        row_selection: SelectionBinding | Sequence[SelectionBinding] | None = None,
     ) -> None:
         if facet_columns is not None and facet is None:
             raise ValueError("facet_columns needs facet")
@@ -709,6 +715,8 @@ class Chart:
             "navigator": navigator,
         }
         self._options = spec_options(self._settings)
+        # Bindings to channels of row selections, one per table (see SelectionBinding).
+        self._row_selection = bindings(row_selection)
 
     # Marks -----------------------------------------------------------------
 
@@ -1872,6 +1880,11 @@ class Chart:
         Maps, networks, and 3D charts have no facets or panels yet."""
         if (self._facets or self._panels) and kind not in _PANEL_LAYOUT_MARKS:
             raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
+        if self._row_selection:
+            raise ValueError(
+                f"charts of a {kind} cannot select rows yet: row_selection needs marks "
+                "along x and y axes"
+            )
         # A chart with panels may zoom those with axes; `to_spec` checks it has some.
         if not self._panels and self._uses_x():
             raise ValueError(
@@ -2062,6 +2075,11 @@ class Chart:
         """Maps have no axes to facet, zoom, brush, or sync."""
         if self._facets or self._panels:
             raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
+        if self._row_selection:
+            raise ValueError(
+                f"charts of a {kind} cannot select rows yet: row_selection needs marks "
+                "along x and y axes"
+            )
         if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
             raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
 
@@ -2242,6 +2260,11 @@ class Chart:
         """3D charts have no x axis to facet, brush, or sync, and zoom only their camera."""
         if self._facets or self._panels:
             raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
+        if self._row_selection:
+            raise ValueError(
+                f"charts of a {kind} cannot select rows yet: row_selection needs marks "
+                "along x and y axes"
+            )
         if any(self._settings.get(name) for name in ("brush", "sync")):
             raise ValueError(f"charts of a {kind} have no x axis to brush or sync")
         if self._settings.get("zoom") not in (True, False, None):
@@ -2461,7 +2484,7 @@ class Chart:
                     f"{name} is an option of 3D charts: add point3d, line3d, or surface marks"
                 )
         return assemble_spec(
-            self._options,
+            self._spec_options(),
             self._layout_spec(),
             self._used_columns(),
             self._mark_specs(),
@@ -2524,6 +2547,77 @@ class Chart:
 
     # Internals -------------------------------------------------------------
 
+    def _spec_options(self) -> dict[str, Any]:
+        """The spec's chart options, with its row selection, whose tables are named
+        once the marks are known."""
+        if not self._row_selection:
+            return self._options
+        names = [self._bound_table(binding) for binding in self._row_selection]
+        if len(set(names)) < len(names):
+            raise ValueError("row_selection binds each table once: one binding per data")
+        for binding, name in zip(self._row_selection, names, strict=True):
+            self._check_brush(binding, name)
+        specs = [
+            binding._spec(name) for binding, name in zip(self._row_selection, names, strict=True)
+        ]
+        return {**self._options, "rowSelection": specs[0] if len(specs) == 1 else specs}
+
+    def _check_brush(self, binding: SelectionBinding, name: str) -> None:
+        """Brushes along a summary's statistics (a histogram's counts, a box
+        plot's values), and lassos over summaries, select no rows yet."""
+        brush = self._settings["brush"]
+        if brush is None or ("lasso" if brush == "lasso" else "brush") not in binding.events:
+            return
+        for mark, table in self._marks:
+            kind = mark["type"]
+            if table is None or table_name(table) != name:
+                continue
+            if brush == "lasso" and kind in ("histogram", "boxplot", "violin"):
+                raise ValueError(
+                    f"lassos cannot select the rows of {kind} marks yet; leave 'lasso' out "
+                    "of the row selection's events"
+                )
+            if kind not in ("histogram", "boxplot", "violin"):
+                continue
+            # A summary's value axis holds statistics; box plots may lie along y.
+            categories = "x"
+            y = mark.get("y")
+            if kind != "histogram" and y is not None and self._kind(table, y) == "category":
+                categories = "y"
+            values = "y" if categories == "x" else "x"
+            if brush in (values, "xy"):
+                raise ValueError(
+                    f"a {kind} mark's rows are brushed along its {categories} axis only: "
+                    f"its {values} axis holds statistics"
+                )
+
+    def _bound_table(self, binding: SelectionBinding) -> str:
+        """The name of the table a binding selects rows of."""
+        return table_name(self._bound_index(binding))
+
+    def _bound_index(self, binding: SelectionBinding) -> int:
+        """The table a binding selects rows of: its ``data``, or else the chart's
+        data, or the one table the marks read."""
+        read = sorted({table for _, table in self._marks if table is not None})
+        if binding.data is None:
+            if self._default is not None and self._default in read:
+                return self._default
+            if len(read) != 1:
+                raise ValueError(
+                    "row_selection needs data= (the object given to a mark) where the "
+                    "chart has no data of its own and the marks read several tables"
+                )
+            return read[0]
+        found = next(
+            (index for index, (source, _) in enumerate(self._tables) if source is binding.data),
+            None,
+        )
+        if found is None or found not in read:
+            raise ValueError(
+                "a row selection's data must be an object given to one of the chart's marks"
+            )
+        return found
+
     def _layout_spec(self) -> dict[str, Any]:
         """The spec's facet, or its panels and grid; nothing for one panel."""
         if self._facet is not None:
@@ -2561,6 +2655,18 @@ class Chart:
                 used.setdefault(node_table, set()).update(
                     spec[key] for key in _NODE_FIELDS if spec.get(key) is not None
                 )
+        # Columns row selections' conditions set from Python test.
+        for binding in self._row_selection:
+            if not binding.fields:
+                continue
+            index = self._bound_index(binding)
+            names = self._tables[index][1].names if index not in self._derived else ()
+            for name in binding.fields:
+                if name not in names:
+                    raise ValueError(
+                        f"a row selection's fields are columns of its data: {name!r} is not one"
+                    )
+            used.setdefault(index, set()).update(binding.fields)
         # Later tables derive from earlier ones, so needs flow back in one pass.
         for table in sorted(self._derived, reverse=True):
             if table not in used:
@@ -2941,6 +3047,8 @@ def assemble_spec(
         for mark in marks
     ):
         version = 7
+    if "rowSelection" in options:
+        version = 8
     spec: dict[str, Any] = {"version": version, **options}
     for key, value in layout.items():
         spec[key] = (

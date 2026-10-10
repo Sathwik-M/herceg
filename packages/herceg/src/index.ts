@@ -162,6 +162,12 @@ export type {
 } from "./model/model.ts";
 export { type Navigator, rangeNavigator } from "./model/navigator.ts";
 export { type Panels, panels } from "./model/panels.ts";
+export {
+  type RowSelection,
+  type RowSelectionChange,
+  rowSelection,
+  type SelectionBinding,
+} from "./model/row-selection.ts";
 export { renderToSVG, type StaticOptions } from "./render/static.ts";
 export { type TimeBreaks, timeBreaks } from "./scale/breaks.ts";
 export * from "./scale/schemes.ts";

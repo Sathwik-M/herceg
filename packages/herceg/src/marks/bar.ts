@@ -6,6 +6,7 @@ import { type Formatter, numberFormatter } from "../format/format.ts";
 import { estimateText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
 import { contrastingText } from "../scale/color.ts";
+import type { PositionScale } from "../scale/scale.ts";
 import { MOVING_BARS, type RectGeometry, type TextGeometry } from "../scene/scene.ts";
 import type { BarSpec, Frozen } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
@@ -80,6 +81,29 @@ export type BarOptions<S extends Schema> = VerticalBarOptions<S> | HorizontalBar
 
 /** Gap between grouped bars, as a fraction of each bar's slot. */
 const GROUP_GAP = 0.1;
+
+/** Where a bar is drawn: its position, its center along the position axis, and its tip and root across, in pixels. */
+export interface BarEnds {
+  at: number;
+  center: number;
+  tip: number;
+  root: number;
+}
+
+/** What `BarMark.ends` returns, reused rather than allocated per bar. */
+const placed: BarEnds = { at: 0, center: 0, tip: 0, root: 0 };
+
+/** How bars fill their positions' slots (see `BarMark.placement`). */
+export interface BarPlacement {
+  slot: number;
+  share: number;
+  /** Each bar's thickness, in pixels. */
+  width: number;
+  /** How many bars share a slot side by side. */
+  groups: number;
+  /** Pixels from a position's center to the near edge of the bars of the `group`th shown series. */
+  offset(group: number): number;
+}
 
 interface Stack {
   tops: Float64Array[];
@@ -343,13 +367,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     // `along` places bars; `across` measures their lengths.
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
-    // Each position gets a slot; grouped series split it, stacked ones share it.
-    const slot = this.#categorical ? Math.abs(along.bandwidth ?? 0) : this.#slotsOf().width(along);
-    const groups = this.spec.stack ? 1 : Math.max(1, visible.length);
-    const share = slot / groups;
-    const width = groups > 1 ? share * (1 - GROUP_GAP) : share;
-    // A zero base has no place on a log axis; bars grow from its low end.
-    const zero = across.type === "log" ? across.range[0] : across.map(0);
+    const { share, width, groups, offset: offsetOf } = this.placement(visible, along);
     const out: (RectGeometry | TextGeometry)[] = [];
     const labels = this.spec.labels
       ? new BarLabels(this.#format(frame.locale), frame, horizontal)
@@ -369,16 +387,8 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     const keyed = frame.keyed && !this.spec.stack && !labels && across.type !== "log";
     visible.forEach((s, group) => {
       const labeled = labels?.fits(width, spacing, Boolean(this.spec.stack)) ? labels : undefined;
-      // Stacked series share the whole slot; grouped ones take their share of it.
-      const offset = this.spec.stack ? -slot / 2 : -slot / 2 + share * group + (share - width) / 2;
-      const [start, end] = horizontal
-        ? [0, s.length]
-        : visibleRange(s, along.domain[0], along.domain[1]);
-      const positions = horizontal ? s.y : s.x;
-      // On a panel's own categories, chart bands are read through their places (see placeAt).
-      const places = s.places?.[horizontal ? "y" : "x"];
-      const ends = horizontal ? s.x : s.y;
-      const bases = horizontal ? s.x0 : s.y0;
+      const offset = offsetOf(group);
+      const [start, end] = this.range(s, frame);
       const rects = frame.floats(s.key, "rect", (end - start) * 4);
       // Unstacked bars round the corners at their value's end. The buffer
       // matches the rectangles' capacity, so it grows only when they do.
@@ -390,21 +400,11 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       const shown = items ? frame.doubles(s.key, "at", end - start) : undefined;
       const span = items ? frame.floats(s.key, "span", (end - start) * 2) : undefined;
       let count = 0;
-      // Bars at times an axis break leaves out are not drawn.
-      const breaks = along.breaks;
       for (let k = start; k < end; k++) {
         const row = rowOf(s, k);
-        const band = positions[row]!;
-        const at = places && band >= 0 ? places.at(band) : band;
-        const value = ends[row]!;
-        if (!Number.isFinite(value) || (this.#categorical && at < 0)) continue;
-        if (breaks?.hides(at)) continue;
-        const base = bases ? bases[row]! : Number.NaN;
-        const center = along.map(at);
-        const tip = across.map(value);
-        let root = Number.isFinite(base) ? across.map(base) : zero;
-        if (!Number.isFinite(root)) root = zero;
-        if (!(Number.isFinite(center) && Number.isFinite(tip))) continue;
+        const ends = this.ends(s, row, along, across);
+        if (!ends) continue;
+        const { at, center, tip, root } = ends;
         const i = count * 4;
         if (horizontal) {
           rects[i] = Math.min(tip, root);
@@ -451,6 +451,60 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       if (labeled) out.push(...labeled.flush(s.key));
     });
     return out;
+  }
+
+  /**
+   * How bars of the `visible` series fill their positions' slots along
+   * `along`: each position gets a slot, which grouped series split and
+   * stacked ones share. Also what selections read of the bars drawn.
+   */
+  placement(visible: readonly Series[], along: PositionScale): BarPlacement {
+    const slot = this.#categorical ? Math.abs(along.bandwidth ?? 0) : this.#slotsOf().width(along);
+    const groups = this.spec.stack ? 1 : Math.max(1, visible.length);
+    const share = slot / groups;
+    const width = groups > 1 ? share * (1 - GROUP_GAP) : share;
+    const stack = this.spec.stack;
+    return {
+      slot,
+      share,
+      width,
+      groups,
+      offset: (group) => (stack ? -slot / 2 : -slot / 2 + share * group + (share - width) / 2),
+    };
+  }
+
+  /** The positions of a series to draw: those in view along x for vertical bars. */
+  range(s: Series, frame: Frame): readonly [number, number] {
+    return this.#horizontal ? [0, s.length] : visibleRange(s, frame.x.domain[0], frame.x.domain[1]);
+  }
+
+  /**
+   * Where a row's bar is drawn (an object reused by the next call), or
+   * undefined when it is not drawn: a missing value or band, or a time an
+   * axis break leaves out.
+   */
+  ends(s: Series, row: number, along: PositionScale, across: PositionScale): BarEnds | undefined {
+    const horizontal = this.#horizontal;
+    const band = (horizontal ? s.y : s.x)[row]!;
+    // On a panel's own categories, chart bands are read through their places (see placeAt).
+    const places = s.places?.[horizontal ? "y" : "x"];
+    const at = places && band >= 0 ? places.at(band) : band;
+    const value = (horizontal ? s.x : s.y)[row]!;
+    if (!Number.isFinite(value) || (this.#categorical && at < 0) || along.breaks?.hides(at))
+      return undefined;
+    // A zero base has no place on a log axis; bars grow from its low end.
+    const zero = across.type === "log" ? across.range[0] : across.map(0);
+    const base = (horizontal ? s.x0 : s.y0)?.[row] ?? Number.NaN;
+    const center = along.map(at);
+    const tip = across.map(value);
+    let root = Number.isFinite(base) ? across.map(base) : zero;
+    if (!Number.isFinite(root)) root = zero;
+    if (!(Number.isFinite(center) && Number.isFinite(tip))) return undefined;
+    placed.at = at;
+    placed.center = center;
+    placed.tip = tip;
+    placed.root = root;
+    return placed;
   }
 
   /** Room past the bars' ends for their labels; stacked labels sit inside. */

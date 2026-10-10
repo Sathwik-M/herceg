@@ -46,6 +46,7 @@ const optionProps = {
   legend: { type: Boolean, default: undefined },
   tooltip: { type: [Boolean, Object] as Option<"tooltip">, default: undefined },
   interaction: Object as Option<"interaction">,
+  rowSelection: Object as Option<"rowSelection">,
   navigator: Object as Option<"navigator">,
   animation: { type: [Boolean, Object] as Option<"animation">, default: undefined },
   renderer: String as Option<"renderer">,
@@ -75,8 +76,10 @@ const emits = {
   select: (_: ChartEvents["select"]) => true,
   /** The data under the pointer or keyboard cursor changed, as for a tooltip of your own. */
   hover: (_: ChartEvents["hover"]) => true,
-  /** The plot was clicked, with the data under the pointer. */
+  /** The plot was clicked, with the data under the pointer (and with `rowSelection`, the rows it selected). */
   click: (_: ChartEvents["click"]) => true,
+  /** A channel `rowSelection` binds changed, by any chart or grid: what it holds now. */
+  rowSelection: (_: ChartEvents["rowSelection"]) => true,
   /** A 3D chart's camera moved (dragged, zoomed, reset, keys, `setCamera`); once a frame at most. */
   camera: (_: ChartEvents["camera"]) => true,
   /** Series or items were hidden or shown (legend, `setVisibility`): the keys now hidden. */
@@ -228,6 +231,7 @@ export const Chart = defineComponent({
         created.on("select", (event) => emit("select", event));
         created.on("hover", (event) => emit("hover", event));
         created.on("click", (event) => emit("click", event));
+        created.on("rowSelection", (event) => emit("rowSelection", event));
         created.on("camera", (event) => emit("camera", event));
         created.on("visibility", (event) => emit("visibility", event));
         created.on("render", (event) => emit("render", event));

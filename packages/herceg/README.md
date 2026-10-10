@@ -153,7 +153,8 @@ which later rows meet or not and which can run where the data lives) or a
 row set (`selectRows(set)`); `store.condition(["brush", "legend"])` is the
 conjunction of channels' conditions, to filter a view by. Nothing
 propagates between views on its own: the application decides which views
-read which channels.
+read which channels, and grids and charts bound to a channel (below) write
+and highlight it.
 
 Point marks take a view where they take a table, `point(view, { x, y })`,
 and draw only its rows, read from the table's columns, redrawing as the
@@ -162,6 +163,103 @@ of the data. Points of a view are drawn on the CPU (not the WebGL painter),
 size and color scales span the whole table, facets repeat them in every
 panel (`facet: "repeat"`) rather than splitting them, and views have no
 place in portable specs yet; other marks take tables only.
+
+### Selected rows
+
+A chart bound to a channel of a selection store writes the rows its brushes,
+lassos, and clicks select there, and highlights the rows the channel holds,
+whoever selected them: brushing one chart highlights the same records in
+other charts and in grids sharing the channel, and keeps highlighting them
+while rows stream in.
+
+```ts
+import { createChart, line, point, rowSelection, rowView, selectionStore } from "herceg";
+import { createGrid, createGridModel } from "herceg/grid";
+
+const focus = selectionStore(trips);
+createChart(scatter, {
+  marks: [point(trips, { x: "distance", y: "fare" })],
+  interaction: { brush: "xy" },
+  rowSelection: rowSelection({ store: focus, channel: "focus" }),
+});
+createChart(timeline, {
+  marks: [line(trips, { x: "pickup", y: "fare" })],
+  rowSelection: rowSelection({ store: focus, channel: "focus", events: [] }), // highlights only
+});
+createGrid(list, {
+  model: createGridModel({ data: rowView(trips), columns, selection: focus, channel: "focus" }),
+});
+```
+
+`rowSelection(...bindings)` binds one store per table the marks read, each
+`{ store, channel, events?, effect? }`: `events` are the gestures that write
+(`"brush"`, `"lasso"`, `"click"`, all by default; `[]` for a chart that only
+highlights), and `effect: "none"` writes without dimming. A brush or lasso
+writes where `interaction.brush` draws one, and a brush that writes rows
+selects rather than zooming (the wheel and dragging with Shift still zoom
+and pan). Marks over tables without a binding neither write nor dim.
+
+- **Brushes** write a condition on the marks' fields: a row is selected when
+  its value along each brushed axis is in the brush's range (for error bars,
+  bands, and candles, when its span overlaps it), so rows appended later that
+  meet it are selected too. On category axes the condition lists the
+  categories' labels (or a banded field's numbers or times), so it keeps
+  holding when categories are renumbered. A mark's several y fields are its
+  series: a row is in when any shown one is. Series hidden through the
+  legend leave the condition, a point mark's row view adds its filter, and
+  facet panels with x scales of their own that the brush leaves out leave
+  their rows out. Each table gets its own condition; nothing joins tables.
+  A point mark over a view restricted to a row set selects the view's rows
+  in the brush, as rows.
+- **Stacks** are drawn at their tops, not their values: a brush along a
+  stack's values selects the rows drawn inside it, as a row set (and so the
+  table's whole selection is one).
+- **Lassos** select the rows whose drawn point is inside: a point's center, a
+  line's or area's vertex, the middle of a bar's end, a span's middle, a
+  candle's close, a heatmap cell's center. Rows not drawn (a point missing
+  a value it encodes, a time inside an axis break) are not selected.
+- **Clicks** select the row of the point or bar under the pointer (within a
+  few pixels of a point's own glyph), the rows a histogram bin counts (from its left edge
+  up to its right one, the last bin's included), those of a box plot's or
+  violin's group with a value, or every row of a heatmap's cell; never a
+  summary's index as a row. Shift adds to the selection, Ctrl or Cmd adds or
+  removes, and a click off the data clears it. With the keyboard cursor on a
+  point, Space does what a click does (with the same keys), and announces how
+  many rows are selected; Escape clears; Shift with the arrow keys brushes a
+  range as before.
+
+Lassos and clicks write `RowSet`s of the table's generation, which keep their
+rows while others are appended and dropped and are empty after a reset
+(charts then draw every row again). Clearing a brush clears the channel only
+while it still holds what the brush wrote; another view replacing it lets the
+brush go. `chart.select(selection, { rows: false })` shows a selection without
+writing its rows, as when mirroring another view's brush, and lets the
+chart's own brush go (what it wrote stays in the channel). Histograms are
+brushed along their bins and box plots and violins along their categories,
+and lassos select no rows of them yet: the chart refuses those gestures in
+its bindings (and a selection set through `select` selects none of their
+rows).
+
+Highlighting dims the rows the channel does not hold to a quarter of their
+opacity: points and bars draw each row once, dimmed or not, in the place it
+has without a selection (point series large enough for WebGL stay on the
+GPU, as two clouds whose uploads follow streamed rows); lines and areas draw
+as they are within the x spans of their runs of selected rows and dimmed
+outside them, so each pixel is painted once and the highlighted part is the
+same curve and stack (spans reach over a line's round caps where it ends,
+and runs end at their outermost rows the mark draws, so rows it cannot
+place, such as nonpositive values on a log axis, are left out; a line's
+runs of one row drawn are dots; lines whose x does not ascend, and rows at
+one x that spans cannot tell apart, selected together or in part, draw
+their selected rows' values over the dimmed line instead). An empty selection dims every row. Other marks
+(histograms, box plots, violins, error bars, candlesticks, heatmaps,
+annotations, custom marks) draw every row as before. Charts showing one
+selection share a byte per row of its table, tested again only for appended
+rows while the selection stays the same (a row set changed in place is read
+again). Highlights are a mounted chart's: its `toSVG()`
+shows them, while `renderToSVG`, `renderToPDF`, and the spec exports draw
+every row undimmed. Layout marks, maps, and 3D charts cannot select rows yet
+and refuse a binding, as charts with a layout mark in a panel of its own do.
 
 ### Row groups
 
@@ -669,26 +767,32 @@ take part in everything, the others in less. ✓ supported, ◐ partly (see
 the notes), — not yet (refused with an error, or for heatmaps' zoom, without
 effect), · not applicable.
 
-| Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Legend toggle | Tooltip and keyboard | Value animation |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| line, area, bar | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
-| point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ◐ | — |
-| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| heatmap | ✓ | ✓ | ✓ | · | — | ✓ | ✓ | · | ✓ | — |
-| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | ◐ | ◐ |
-| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | — |
-| pie | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | ✓ |
-| treemap, sunburst, radar | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | — |
-| gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | · | ✓ | — |
-| graph | — | — | — | · | — | — | — | ◐ | ✓ | — |
-| geoshape, geopoint | — | — | — | · | — | — | — | ✓ | ✓ | — |
-| point3d, line3d | — | — | — | · | turning | — | — | ✓ | ✓ | — |
-| surface | — | — | — | · | turning | — | — | · | ✓ | — |
+| Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Tooltip and keyboard | Value animation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| line, area, bar | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
+| point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | — |
+| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — |
+| heatmap | ✓ | ✓ | ✓ | · | — | ✓ | ✓ | ◐ | — | · | ✓ | — |
+| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | ◐ |
+| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | — |
+| pie | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | ✓ |
+| treemap, sunburst, radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | — |
+| gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | — |
+| graph | — | — | — | · | — | — | — | — | — | ◐ | ✓ | — |
+| geoshape, geopoint | — | — | — | · | — | — | — | — | — | ✓ | ✓ | — |
+| point3d, line3d | — | — | — | · | turning | — | — | — | — | ✓ | ✓ | — |
+| surface | — | — | — | · | turning | — | — | — | — | · | ✓ | — |
 
-- Brushes and synced selections report ranges and outlines, not the rows
-  inside them; mapping them to rows (and to a selection store) is the
-  application's for now.
+- Selected rows and Highlight are what charts bound to a selection store do
+  (`rowSelection`, see [Selected rows](#selected-rows)): brushes, lassos, and
+  clicks write rows to its channel, and the chart highlights what the channel
+  holds. Histograms are brushed along their bins and box plots and violins
+  along their categories, heatmaps' cells are clicked, brushed, or lassoed,
+  and lassos select none of the summaries' rows yet; these marks, error bars,
+  and candlesticks draw every row undimmed. Charts of layout marks, maps, and 3D marks refuse
+  a binding. Brushes and synced selections themselves are ranges and
+  outlines in data values.
 - Zoom, pan, and brushes work on number and time axes; subplots zoom and
   brush along x only, and facets with y scales of their own, on either
   side, do not zoom along y.
@@ -1647,7 +1751,8 @@ is internal, and charts take only marks the mark functions make.
 | `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
-| `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom). `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. |
+| `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom). `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom), unless it selects rows for `rowSelection`. `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. |
+| `rowSelection` | `rowSelection({ store, channel, events?, effect? }, ...)`: channels of selection stores, one per table, that brushes, lassos, and clicks write rows to and the chart highlights (see Selected rows). |
 | `animation` | `true` or `{ duration?, values? }`: the axes move gradually to views asked for, and with `values: true`, bars, pie slices, points, small lines and areas, and the axes with them, to changed values (see Animation). Off by default. |
 | `renderer` | `"auto"` (default), `"svg"`, or `"canvas"`. |
 | `theme` | A theme name or an object overriding a theme's tokens (see Themes). |
@@ -1847,6 +1952,8 @@ chart.on("click", ({ inspection }) => {
   // The row of the mark's table the point is: the record clicked.
   if (point?.markId === "orders" && point.row !== undefined) openOrder(orders.value("id", point.row));
 });
+chart.on("select", ({ rows }) => rows && saveFocus(rows)); // with rowSelection: what the brush wrote
+chart.on("rowSelection", ({ table, channel, selection }) => count(selection)); // a bound channel changed
 chart.on("camera", ({ camera }) => saveView(camera)); // a 3D chart turned
 chart.on("visibility", ({ hiddenKeys }) => saveHidden(hiddenKeys)); // legend, setVisibility
 chart.on("render", () => placeOverlay(chart.getPanels())); // a frame of the data was drawn
@@ -1882,6 +1989,13 @@ horizontal bars), with brushes along that axis or rectangle and lasso
 brushes, which only the pointer draws; Enter zooms to the range when zoom is
 on along it, and Escape clears it. Selections made with the keyboard or the
 pointer are announced.
+
+With `rowSelection`, `select` and `click` events also carry `rows`: per
+table, what the gesture wrote to its channel (a brush's condition, the rows
+of a lasso or click, or null where it cleared them). Selections a synced
+chart shows write nothing. `rowSelection` events report a bound channel's
+changes by any writer (this chart, another, a grid): its `table`, `channel`,
+and `selection`, a `DataSelection` or null.
 
 ## Panels and pixels
 
@@ -2033,13 +2147,23 @@ Marks are the same objects as a TypeScript mark's `spec`, with `data` naming
 their table. A mark's `spec` is frozen, readonly all the way down: to change
 a mark, build a new one and pass it to `chart.update({ marks })`.
 
+A spec's `rowSelection` is a binding or a list of them as `rowSelection()`
+takes them, with `data` naming the table instead of a store (it may be left
+out when the marks read one table): `{ "data": "trips", "channel": "focus",
+"events": ["brush", "click"] }`. Stores are not part of a spec: `loadSpec`
+makes one per bound table, returned in `stores`, or takes them in its
+options, `loadSpec(spec, buffers, { tables, stores })`, with tables to use
+instead of making them from the spec's columns, so that charts of several
+specs share rows and selections; `chartFromSpec` takes the same options.
+
 Specs say which format `version` they are; one without is version 1. Specs
 using `resolve`, `panels`, or `grid` must say 2 or later, those using
-`resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later, and
+`resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later,
 those with a `navigator` 4 or later, those with enabled x axis `seams` 5,
-raw box plots with notches or nondefault whiskers 6, and split violins or
-nondefault violin interiors 7 (`SPEC_VERSION`), so that older readers refuse
-what they would draw differently. Loading checks a spec and names the property at
+raw box plots with notches or nondefault whiskers 6, split violins or
+nondefault violin interiors 7, and those with `rowSelection` 8
+(`SPEC_VERSION`, the version this herceg writes), so that older readers
+refuse what they would draw differently. Loading checks a spec and names the property at
 fault in errors. Properties herceg does not know, misspelled or from a newer
 version, are logged with `console.warn` and otherwise ignored;
 `loadSpec(spec, buffers, { unknown: "error" })` refuses them instead, and

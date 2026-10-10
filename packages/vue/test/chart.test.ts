@@ -9,8 +9,12 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  RowSet,
   rangeNavigator,
+  rowSelection,
   type Schema,
+  selectionStore,
+  selectRows,
   table,
   time,
   timeBreaks,
@@ -611,6 +615,30 @@ describe("<Chart>", () => {
     await nextTick();
     expect(host.querySelector("p")!.textContent).toBe("2");
     expect(updates).toHaveLength(0);
+  });
+
+  it("binds a row selection from reactive state, kept while its store and channel are", async () => {
+    const { view, chart } = chartRef();
+    const store = selectionStore(metrics);
+    const tick = ref(1);
+    const seen: unknown[] = [];
+    // The binding lives in reactive state, which wraps it in a proxy.
+    const state = reactive({ bound: rowSelection({ store, channel: "focus" }) });
+    mount(
+      `<p>{{ tick }}</p>
+      <Chart ref="view" :row-selection="state.bound" @row-selection="seen.push($event.selection)">
+        <Line :data="metrics" x="t" y="a" />
+      </Chart>`,
+      () => ({ metrics, view, tick, state, seen }),
+    );
+    const updates = spyUpdates(chart());
+    state.bound = rowSelection({ store, channel: "focus" });
+    tick.value = 2;
+    await nextTick();
+    expect(updates).toHaveLength(0);
+    const rows = selectRows(new RowSet(metrics).add(1));
+    store.set("focus", rows);
+    expect(seen).toEqual([rows]);
   });
 
   it("draws OHLC bars from a static variant, and keeps equal breaks without updating", async () => {

@@ -15,6 +15,7 @@ import {
   type ChartMark,
   type Frame,
   type Mark,
+  type MarkKey,
   numericBands,
   type RowParts,
   usesY,
@@ -26,6 +27,7 @@ import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
 import {
   type AxisGeometry,
+  type Geometry,
   type Panel,
   type Rect,
   type Scene,
@@ -62,6 +64,7 @@ import { EDGE, type LegendEntry, type LegendPart, layoutLegends } from "./legend
 import type { Navigator } from "./navigator.ts";
 import type { PanelAxis, PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
 import type { Panels } from "./panels.ts";
+import type { RowSelection } from "./row-selection.ts";
 
 /** Chart options with marks bound to their data. */
 export type ChartConfig = Omit<
@@ -76,6 +79,7 @@ export type ChartConfig = Omit<
   | "grid"
   | "x"
   | "navigator"
+  | "rowSelection"
 > & {
   /**
    * Marks along axes, or one layout mark (a pie) that has the chart to
@@ -89,6 +93,8 @@ export type ChartConfig = Omit<
   panels?: Panels | undefined;
   /** A strip under the plot to see and move the x range by (see `rangeNavigator`). */
   navigator?: Navigator | undefined;
+  /** Channels of selection stores the chart writes rows to and highlights (see `rowSelection`). */
+  rowSelection?: RowSelection | undefined;
 };
 
 /** The x axis' options: its `breaks` are built with `timeBreaks`. */
@@ -222,6 +228,11 @@ export class ChartModel {
   rasterRatio = 1;
   /** Keys of series hidden through the legend. */
   readonly hidden = new Set<string>();
+  /**
+   * Draws marks with the rows of a selection highlighted: set by a chart
+   * bound to selection stores (see row-selection.ts).
+   */
+  declare highlight: typeof geometryOf | undefined;
   /** Visible x ranges by x scale (see `xGroupOf`). */
   readonly #viewports = new Map<string, [number, number]>();
   #yViewport: YViewport = NO_Y_VIEW;
@@ -1396,6 +1407,7 @@ export class ChartModel {
     const views: PanelView[] = [];
     const headers: SceneText[] = [];
     const all: (ItemPanel & { items: boolean })[] = [];
+    const draw = this.highlight ?? geometryOf;
     const panels = split.keys.map((key, i): Panel => {
       const row = Math.floor(i / columns);
       const column = i % columns;
@@ -1491,7 +1503,7 @@ export class ChartModel {
       const geometry = panelMarks.flatMap(({ mark, series, rows }, index) =>
         members && !members[index]
           ? []
-          : mark.geometry(series, frameOf(mark), mark.spec.id ?? this.#positions[index]!, rows),
+          : draw(mark, series, frameOf(mark), mark.spec.id ?? this.#positions[index]!, rows),
       );
       if (seams) {
         const segments = xContexts[h]!.breaks?.seams?.(x, plot, seams, theme.grid);
@@ -2011,7 +2023,19 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
     if (layouts[0]) layouts = layouts[0].views.alone(layouts, marks, config);
     config.navigator?.check(marks, config);
   }
+  config.rowSelection?.check(config, marks, layouts);
   return [marks, layouts, positions];
+}
+
+/** A mark's part of a panel's scene, as it draws it. */
+function geometryOf(
+  mark: Mark,
+  series: readonly Series[],
+  frame: Frame,
+  key: MarkKey,
+  rows?: RowParts,
+): Geometry[] {
+  return mark.geometry(series, frame, key, rows);
 }
 
 /** An ascending range, or null for none or an empty one. */

@@ -40,9 +40,12 @@ The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or `style` says otherwise. A `ref` gives the underlying chart, herceg's
 `Chart`, for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibility`,
 `toSVG`). Chart events are props: `onViewportChange`, `onSelect`, `onHover`, `onClick`,
+`onRowSelection` (a channel of the chart's `rowSelection` changed),
 `onCameraChange`, `onVisibilityChange` (series hidden or shown), and `onRender` (a frame
 of the data drawn, for overlays, the first one once the ref is set); the latest handler
-is called, so inline functions do not resubscribe.
+is called, so inline functions do not resubscribe. A `rowSelection` prop
+(`rowSelection({ store, channel })`) made again each render is the same binding while it
+binds the same stores and channels, so it neither updates nor resubscribes the chart.
 
 ## Reusing groups of marks
 

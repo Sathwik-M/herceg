@@ -25,6 +25,7 @@ import {
   type YViewport,
 } from "../model/model.ts";
 import type { NavigatorControls } from "../model/navigator.ts";
+import type { RowLink, RowSelectionChange } from "../model/row-selection.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { renderSvg } from "../render/svg.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -243,6 +244,8 @@ export class MountedChart implements Chart {
    * one every panel shares) and their keys; null without a selection.
    */
   #owner: { x: string; panels: readonly string[] } | null = null;
+  /** Writes the rows gestures select to the stores `rowSelection` binds, and highlights theirs. */
+  #rows: RowLink | undefined;
   /** Where a keyboard selection (Shift + arrows) started: a value along the cursor's axis and its label. */
   #brushAnchor: { value: number; label: string; axis: "x" | "y" } | null = null;
   readonly #events = new Emitter();
@@ -442,18 +445,26 @@ export class MountedChart implements Chart {
     return this.#owner && this.#keysOf(this.#owner.x);
   }
 
-  select(selection: Selection | readonly [number, number] | null, target: PanelTarget = {}): void {
-    this.#selectIn(selection, this.#current(target.panel));
+  select(
+    selection: Selection | readonly [number, number] | null,
+    target: PanelTarget & { rows?: boolean } = {},
+  ): void {
+    this.#selectIn(selection, this.#current(target.panel), target.rows);
   }
 
-  /** Selects in a panel of the last scene, and shares the selection with synced charts. */
-  #selectIn(selection: Selection | readonly [number, number] | null, panel?: DrawnPanel) {
-    this.#select(selection, panel);
+  /** Selects in a panel of the last scene (writing its rows), and shares the selection with synced charts. */
+  #selectIn(
+    selection: Selection | readonly [number, number] | null,
+    panel?: DrawnPanel,
+    rows = true,
+  ) {
+    this.#select(selection, panel, rows);
     const sync = this.#options.interaction?.sync;
     if (sync && this.#model.sharesX) broadcastSelection(sync, this.#member, this.#selection);
   }
 
-  #select(selection: Selection | readonly [number, number] | null, at?: DrawnPanel) {
+  /** Sets the selection; one of the chart's own (`local`), not a synced chart's, writes its rows. */
+  #select(selection: Selection | readonly [number, number] | null, at?: DrawnPanel, local = false) {
     const given = Array.isArray(selection)
       ? { x: selection as readonly [number, number], y: null, lasso: null }
       : (selection as Selection | null);
@@ -470,24 +481,35 @@ export class MountedChart implements Chart {
     // A selection is drawn by the brush.
     else this.#loadBrush();
     const before = this.#owner;
-    if (sameSelection(next, this.#selection) && x === before?.x) return;
+    if (sameSelection(next, this.#selection) && x === before?.x) {
+      // Shown without writing, even unchanged, it is no longer the brush's own.
+      if (!local) this.#rows?.brushed(null, null, false);
+      return;
+    }
     this.#selection = next;
     this.#owner = next && {
       x: x!,
       panels: this.#keysOf(x!),
     };
     schedule(this.#scheduled);
-    this.#emitSelection(next, this.#owner ?? before);
+    const written = this.#rows?.brushed(next, this.#owner, local);
+    // A listener may have changed the selection as its rows were written: that change reported itself.
+    if (this.#selection === next) this.#emitSelection(next, this.#owner ?? before, written);
   }
 
-  /** Reports a selection, naming its panels when they are only some (the cleared one's, for none). */
+  /**
+   * Reports a selection, naming its panels when they are only some (the
+   * cleared one's, for none), with the rows it wrote (`written`).
+   */
   #emitSelection(
     selection: Selection | null,
     owner: { x: string; panels: readonly string[] } | null,
+    written?: { rows: readonly RowSelectionChange[] } | false,
   ) {
     this.#events.emit("select", {
       ...(selection ?? { x: null, y: null, lasso: null }),
       ...(owner?.x && { panels: owner.panels }),
+      ...written,
     });
   }
 
@@ -654,6 +676,7 @@ export class MountedChart implements Chart {
     this.#clouds?.release(this);
     this.#orbit?.dispose();
     this.#navigator?.dispose();
+    this.#rows?.dispose();
     // A transition waiting for its first frame leaves the frame's batch;
     // values let go of what they moved.
     this.#animation?.settle();
@@ -854,6 +877,16 @@ export class MountedChart implements Chart {
         this as Chart,
         this.#model,
       ) ?? this.#navigator?.dispose();
+    this.#rows =
+      options.rowSelection?.mount(
+        this.#rows,
+        this.#model,
+        this,
+        this.#events,
+        () => this.#invalidate(false),
+        () => this.#keyboard,
+        this.#live,
+      ) ?? this.#rows?.dispose();
     // Drags pan or brush; the page still scrolls along an axis they leave alone.
     const { zoom, brush } = options.interaction ?? {};
     const along = `${zoom === true ? "x" : zoom || ""}${brush === "lasso" ? "xy" : (brush ?? "")}`;
@@ -1243,7 +1276,8 @@ export class MountedChart implements Chart {
       this.#selection = null;
       this.#owner = null;
       this.#brushAnchor = null;
-      this.#emitSelection(null, owner);
+      // So do the rows it wrote, from the channels that still hold them.
+      this.#emitSelection(null, owner, this.#rows?.brushed(null, null, true));
     }
     // A drag draws in the panels it would select in, a selection in its own.
     const press = this.#press;
@@ -1484,14 +1518,14 @@ export class MountedChart implements Chart {
       if (tap) {
         if (tap.pointer !== event.pointerId) return;
         this.#tap = null;
-        if (!tap.moved) this.#click(local(event));
+        if (!tap.moved) this.#click(local(event), event);
         return;
       }
       const press = this.#press;
       this.#press = null;
       if (!press) return;
       if (!press.moved) {
-        this.#click(local(event));
+        this.#click(local(event), event);
         return;
       }
       if (press.mode !== "brush") return;
@@ -1584,7 +1618,7 @@ export class MountedChart implements Chart {
    * every axis it has a range on. Lassos only select.
    */
   #zooms(selection: Selection, panel: DrawnPanel): boolean {
-    if (selection.lasso || !(selection.x || selection.y)) return false;
+    if (selection.lasso || !(selection.x || selection.y) || this.#rows?.brushes) return false;
     const zoom = this.#zoomAxes(panel);
     return (!selection.x || zoom.x) && (!selection.y || zoom.y);
   }
@@ -1640,11 +1674,15 @@ export class MountedChart implements Chart {
     return this.#model.allPanels().some(({ items, plot }) => items && holds(plot, x, y));
   }
 
-  /** A press released without dragging: clears the selection and reports the data there. */
-  #click(point: { x: number; y: number }) {
+  /**
+   * A press released without dragging: selects the rows there (with
+   * `rowSelection`), clears the brushed selection, and reports the data there.
+   */
+  #click(point: { x: number; y: number }, event: MouseEvent) {
+    const written = this.#rows?.clicked(point.x, point.y, event);
     if (this.#options.interaction?.brush) this.select(null);
     if (this.#events.has("click"))
-      this.#events.emit("click", { inspection: this.#model.inspect(point.x, point.y) });
+      this.#events.emit("click", { inspection: this.#model.inspect(point.x, point.y), ...written });
   }
 
   /**

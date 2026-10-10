@@ -327,6 +327,32 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     return out;
   }
 
+  /** The edges of the bins a series counts: bin b spans edges b to b + 1. */
+  edgesOf(series: Series): Float64Array {
+    return this.#binsOf(series).edges;
+  }
+
+  /**
+   * Whether a row is counted in bin `position` of a series: its value from
+   * the bin's left edge up to its right one (the last bin's included), and
+   * its series field the series'.
+   */
+  summarized(series: Series, position: number): (row: number) => boolean {
+    const { edges } = this.#binsOf(series);
+    const [lo, hi] = [edges[position]!, edges[position + 1]!];
+    const last = position === edges.length - 2;
+    const values = this.table.numbers(this.spec.x as never);
+    const field = this.spec.series;
+    const codes = field === undefined ? undefined : this.table.categories(field as never);
+    const code = codes?.dictionary.indexOf(String((JSON.parse(series.key) as unknown[])[1]));
+    return (row) => {
+      const value = values[row]!;
+      return (
+        (!codes || codes.codes[row] === code) && value >= lo && (last ? value <= hi : value < hi)
+      );
+    };
+  }
+
   /** A bin's range and what its bar measures. */
   pointText(series: Series, row: number, format: AxisFormat): string {
     const { edges } = this.#binsOf(series);

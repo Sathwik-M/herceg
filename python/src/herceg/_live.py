@@ -23,6 +23,7 @@ from ._chart import (
     table_name,
 )
 from ._data import Column, Table
+from ._rows import bound_tables
 
 if TYPE_CHECKING:
     from ._chart import Chart
@@ -46,6 +47,19 @@ class LiveChart:
         self._joins = [
             (join.source, table_name(index), join) for index, join in chart._joins.items()
         ]
+        rows = chart._spec_options().get("rowSelection")
+        #: The spec's row selection, which updates never change.
+        self._row_selection = rows
+        #: The tables row selections bind and their channels, as (name, channel, data).
+        self.bound = [
+            (spec["data"], spec["channel"], self._source_of(spec["data"]))
+            for spec in bound_tables(rows)
+        ]
+        check_live_rows(chart)
+        #: Per table, the rows dropped from its front since it was last replaced and
+        #: how many times it was: rows of row selections are numbered with them.
+        self.dropped = {name: 0 for name in self._tables}
+        self.generation = {name: 0 for name in self._tables}
 
     @property
     def shares_y(self) -> bool:
@@ -60,7 +74,18 @@ class LiveChart:
         return resolution in (None, "shared") and "panels" not in self._layout
 
     def to_spec(self) -> Message:
-        return assemble_spec(self._options, self._layout, self._tables, self._marks, self._derived)
+        options = self._options
+        if self._row_selection is not None:
+            options = {**options, "rowSelection": self._row_selection}
+        return assemble_spec(options, self._layout, self._tables, self._marks, self._derived)
+
+    def columns(self, name: str) -> set[str]:
+        """The columns a table sends to the browser."""
+        return set(self._tables[name])
+
+    def length(self, name: str) -> int:
+        """How many rows a table has now."""
+        return _length(self._tables[name]) if self._tables[name] else 0
 
     def append(self, rows: Any, data: Any = None, max_rows: int | None = None) -> Message | None:
         """Adds rows to a table, keeping at most `max_rows` of them; None when there are none."""
@@ -79,9 +104,11 @@ class LiveChart:
             # Rows that would be dropped at once are not sent.
             batch = {field: _tail(column, max_rows) for field, column in batch.items()}
         current = self._tables[name]
+        before = self.length(name)
         for field, column in batch.items():
             joined = _concatenate(current[field], column)
             current[field] = _tail(joined, max_rows) if max_rows is not None else joined
+        self.dropped[name] += before + _length(batch) - self.length(name)
         buffers: list[bytes] = []
         message: dict[str, Any] = {
             "type": "append",
@@ -111,6 +138,9 @@ class LiveChart:
         # The message is made first, so rows it cannot carry change nothing.
         columns = columns_spec(batch, buffers)
         self._tables[name] = batch
+        # The browser resets the table: rows are numbered from its first again.
+        self.dropped[name] = 0
+        self.generation[name] += 1
         return {"type": "replace", "table": name, "columns": columns}, buffers
 
     def update(self, changes: Mapping[str, Any]) -> Message | None:
@@ -156,6 +186,10 @@ class LiveChart:
             raise ValueError("no mark of the chart reads columns of that data")
         return name
 
+    def _source_of(self, name: str) -> Any:
+        """The object given to the chart or a mark as the table named `name`."""
+        return next(source for source, table in self._sources if table == name)
+
     def _joins_of(self, data: Any) -> list[tuple[Any, str, Any]]:
         """The joined maps made from `data`, one per table of features."""
         return [join for join in self._joins if join[0] is data]
@@ -183,6 +217,18 @@ class LiveChart:
         if len(set(lengths.values())) > 1:
             raise ValueError(f"columns differ in length: {lengths}")
         return batch
+
+
+def check_live_rows(chart: Chart) -> None:
+    """Live charts report rows by position in data Python holds: a derived
+    table's rows are computed in the browser."""
+    derived = {table_name(index) for index in chart._derived}
+    for spec in bound_tables(chart._spec_options().get("rowSelection")):
+        if spec["data"] in derived:
+            raise ValueError(
+                "live charts report rows of data Python holds: bind the data a derived "
+                "table derives from, not the derived table"
+            )
 
 
 def _check_live(settings: dict[str, Any]) -> None:

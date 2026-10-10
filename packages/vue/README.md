@@ -42,8 +42,10 @@ The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or a style says otherwise; `class`, `style`, and other attributes
 go to the container element. Chart events are Vue events: `@viewport`,
 `@select`, `@hover`, `@camera` (a 3D chart turned), `@visibility` (series hidden or shown),
-`@render` (a frame of the data drawn, for overlays, the first one as the chart mounts), and `@click` (the chart's click, with the
-data under the pointer, not the element's). A template ref exposes the underlying chart,
+`@render` (a frame of the data drawn, for overlays, the first one as the chart mounts), `@row-selection` (a channel of
+the chart's `rowSelection` changed), and `@click` (the chart's click, with the
+data under the pointer, not the element's). A `:row-selection` binding made again,
+or kept in reactive state, is the same while it binds the same stores and channels. A template ref exposes the underlying chart,
 herceg's `Chart`, as `chart` (null until mounted) for imperative calls (`setViewport`,
 `select`, `toPixel`, `setVisibility`, `toSVG`):
 
