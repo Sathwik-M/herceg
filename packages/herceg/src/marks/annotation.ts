@@ -1,12 +1,13 @@
 // Annotations (rules, regions, and text) draw one item from constant
 // positions, or one item per row of a table when a position or the text is a
-// field. This module resolves those channels for the three marks.
+// field; facets split those rows into panels, which draw and summarize their
+// own. This module resolves those channels for the three marks.
 
 import type { FieldKind, NumericArray } from "../data/column.ts";
 import type { Schema, Table } from "../data/table.ts";
 import { formatNumber } from "../format/format.ts";
 import type { Position } from "../spec/spec.ts";
-import { NUMERIC, requireField } from "./mark.ts";
+import { NUMERIC, type RowParts, requireField } from "./mark.ts";
 
 /** Fields whose values can be drawn as text: categories and numbers. */
 export type TextField<S extends Schema> = string extends keyof S
@@ -69,6 +70,27 @@ export class AnnotationData {
     return this.table ? this.table.length : 1;
   }
 
+  /** How many items `rows` holds: every item without them. */
+  size(rows: RowParts | undefined): number {
+    if (!rows) return this.count;
+    let size = 0;
+    for (const part of rows) size += part.length;
+    return size;
+  }
+
+  /**
+   * Visits the items `rows` holds (every item without them), in order: each
+   * item, which is its row of the table, and its place among them.
+   */
+  each(rows: RowParts | undefined, visit: (item: number, place: number) => void): void {
+    if (!rows) {
+      for (let i = 0; i < this.count; i++) visit(i, i);
+      return;
+    }
+    let place = 0;
+    for (const part of rows) for (let k = 0; k < part.length; k++) visit(part[k]!, place++);
+  }
+
   channel(position: Position): Channel {
     return typeof position === "number" ? position : this.table!.numbers(position as never);
   }
@@ -96,52 +118,56 @@ export class AnnotationData {
   }
 
   /**
-   * A sentence for the chart's text alternative listing items: their text
-   * and where they are, as `where` describes it (undefined for items that
-   * are not drawn), such as "Rules: deploy v41 (x 03:00), deploy v42 (x 08:30)."
-   * At most ten items are listed.
+   * A sentence for the chart's text alternative listing the items of
+   * `rows` (every item without them): their text and where they are, as
+   * `where` describes it (undefined for items that are not drawn), such as
+   * "Rules: deploy v41 (x 03:00), deploy v42 (x 08:30)." At most ten items
+   * are listed.
    */
   summary(
     [one, many]: [string, string],
     locale: string | undefined,
     where: (item: number) => string | undefined,
+    rows?: RowParts,
   ): string | undefined {
     const items: string[] = [];
     let total = 0;
-    for (let i = 0; i < this.count; i++) {
+    this.each(rows, (i) => {
       const at = where(i);
-      if (at === undefined) continue;
+      if (at === undefined) return;
       total++;
-      if (items.length >= SUMMARY_ITEMS) continue;
+      if (items.length >= SUMMARY_ITEMS) return;
       const text = this.labeled ? this.text(i, locale) : "";
       items.push(text ? `${text} (${at})` : at);
-    }
+    });
     if (total === 0) return undefined;
     const more = total > items.length ? `, and ${total - items.length} more` : "";
     return `${total === 1 ? one : many}: ${items.join(", ")}${more}.`;
   }
 
   /**
-   * [min, max] of usable values of the channels over items that `keep`
-   * accepts; with `log`, positive values only. Thresholds and events count
-   * toward the axis domain so they stay in view.
+   * [min, max] of usable values of the channels over the items of `rows`
+   * (every item without them) that `keep` accepts; with `log`, positive
+   * values only. Thresholds and events count toward the axis domain so
+   * they stay in view.
    */
   extent(
     positions: readonly (Position | undefined)[],
     log: boolean,
     keep?: (item: number) => boolean,
+    rows?: RowParts,
   ): [number, number] | undefined {
     let min = Infinity;
     let max = -Infinity;
     for (const position of positions) {
       if (position === undefined) continue;
       const channel = this.channel(position);
-      for (let i = 0; i < this.count; i++) {
+      this.each(rows, (i) => {
         const value = valueAt(channel, i);
-        if (!Number.isFinite(value) || (log && value <= 0) || (keep && !keep(i))) continue;
+        if (!Number.isFinite(value) || (log && value <= 0) || (keep && !keep(i))) return;
         if (value < min) min = value;
         if (value > max) max = value;
-      }
+      });
     }
     return min <= max ? [min, max] : undefined;
   }

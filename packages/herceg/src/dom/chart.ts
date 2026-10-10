@@ -1797,11 +1797,16 @@ export class MountedChart implements Chart {
     if (!inspection) return;
     this.#keyboard.last = inspection;
     let text = describeInspection(inspection);
+    // Arriving in a panel, the cursor names it and the annotations it alone draws.
     if (
       inspection.panel !== undefined &&
       (before?.panel !== inspection.panel || panel !== start.panel)
     )
-      text = `${panels.find(({ key }) => key === inspection.panel)?.label ?? inspection.panel}: ${text}`;
+      text = [
+        `${panels.find(({ key }) => key === inspection.panel)?.label ?? inspection.panel}:`,
+        ...this.#model.annotationSummaries(inspection.panel),
+        text,
+      ].join(" ");
     // Shift selects a range along the axis the cursor steps along: for
     // brushes along that axis, and for rectangles and lassos, which the
     // keyboard cannot draw. A range does not go on into a panel with

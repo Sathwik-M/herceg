@@ -42,7 +42,7 @@ import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
-import type { Geometry, Panel } from "../../src/scene/scene.ts";
+import type { Geometry, Panel, RectGeometry, TextGeometry } from "../../src/scene/scene.ts";
 
 function build(config: ChartConfig) {
   const model = new ChartModel({ locale: "en-US", timeZone: "UTC", ...config });
@@ -59,7 +59,7 @@ const samples = table({
   group: ["N", "N", "N", "S", "S", "S"],
   note: ["one", "two", "three", "four", "five", "six"],
 });
-type Placement = { panel?: string; facet?: "repeat" };
+type Placement = { panel?: string; facet?: "repeat"; axis?: "right" };
 type MarkCase = {
   name: string;
   make: (placement?: Placement) => ChartMark;
@@ -73,7 +73,7 @@ type MarkCase = {
   animates?: true;
 };
 
-// These cases have axes; annotations repeat rather than splitting rows.
+// These cases have axes; annotations of constants repeat in every panel.
 const cartesian: MarkCase[] = [
   {
     name: "line",
@@ -314,8 +314,10 @@ function itemKeys(model: ChartModel, panel?: string): string[] {
 }
 
 function facetConfig(c: MarkCase, extra: Partial<ChartConfig> = {}): ChartConfig {
+  // With resolve.yRight, the mark under test is on the right axis.
+  const right = extra.resolve?.yRight ? { axis: "right" as const } : {};
   return {
-    marks: [...(c.repeats ? [line(samples, { x: "x", y: "y" })] : []), c.make()],
+    marks: [...(c.repeats ? [line(samples, { x: "x", y: "y" })] : []), c.make(right)],
     facet: facet("group"),
     ...extra,
   };
@@ -399,15 +401,31 @@ describe("capabilities: facets", () => {
       kind: "text",
     },
   ] satisfies MarkCase[];
-  it.each(boundAnnotations)("$name over a table refuses splitting and accepts repetition", (c) => {
-    expect(() => build({ marks: [c.make()], facet: facet("group") })).toThrow(
-      `${c.name} mark over a table cannot be split into panels yet`,
-    );
-    const { scene } = build({
+  it.each(boundAnnotations)("$name over a table splits its rows, or repeats them", (c) => {
+    // Each panel draws its own three rows' items, or with a repeat all six.
+    const count = (panel: Panel) =>
+      panel.marks.reduce((n, m) => {
+        if (m.kind !== c.kind) return n;
+        return n + (m.kind === "rule" ? 1 : (m as RectGeometry | TextGeometry).count);
+      }, 0);
+    const split = build({
+      marks: [line(samples, { x: "x", y: "y" }), c.make()],
+      facet: facet("group"),
+    });
+    const whole = build({
       marks: [line(samples, { x: "x", y: "y" }), c.make({ facet: "repeat" })],
       facet: facet("group"),
     });
-    for (const panel of scene.panels) expectGeometry(panel, c.kind);
+    for (const [i, panel] of split.scene.panels.entries()) {
+      expectGeometry(panel, c.kind);
+      expectGeometry(whole.scene.panels[i]!, c.kind);
+      expect(count(panel)).toBe(3);
+      expect(count(whole.scene.panels[i]!)).toBe(6);
+      // Read in the summary, after the panel's name, and when the keyboard arrives there.
+      expect(split.model.annotationSummaries(panel.key)).toHaveLength(1);
+      expect(whole.model.annotationSummaries(panel.key)).toEqual([]);
+    }
+    expect(describeChart(split.model)).toMatch(/N: \w+: one /);
   });
 
   it("custom marks without series must repeat", () => {
@@ -550,23 +568,57 @@ describe("capabilities: per-panel scales", () => {
         }),
     },
   ];
-  it.each(financial)(
-    "$name needs shared categories, while its continuous value scales may differ",
-    (c) => {
-      const config = { marks: [c.make()], facet: facet("group") };
-      const { model } = build({ ...config, resolve: { x: "shared", y: "independent" } });
-      const [a, b] = model.panels();
-      expect(a!.x.type).toBe("band");
-      expect(a!.x.domain).toEqual(b!.x.domain);
-      expect(a!.y.domain).not.toEqual(b!.y.domain);
-      expect(() => build({ ...config, resolve: { x: "independent" } })).toThrow(
-        `${c.name} mark's categories cannot be resolved per panel yet`,
-      );
-      expect(() =>
-        build({ marks: [c.make({ panel: "*" })], panels: subplot, resolve: { x: "independent" } }),
-      ).toThrow('give the chart resolve: { x: "shared" }');
-    },
-  );
+  it.each(financial)("$name resolves its categories per panel, as its value scales", (c) => {
+    const config = { marks: [c.make()], facet: facet("group") };
+    const { model } = build({ ...config, resolve: { x: "shared", y: "independent" } });
+    const [a, b] = model.panels();
+    expect(a!.x.type).toBe("band");
+    expect(a!.x.domain).toEqual(b!.x.domain);
+    expect(a!.y.domain).not.toEqual(b!.y.domain);
+    // The categories here are a, b, c in both panels: resolved apart, each holds its own.
+    const own = build({ ...config, resolve: { x: "independent" } });
+    for (const panel of own.scene.panels) expectGeometry(panel, "segments");
+    expect(own.model.panels().map(({ x }) => x.categories)).toEqual([
+      ["a", "b", "c"],
+      ["a", "b", "c"],
+    ]);
+    const stacked = build({
+      marks: [c.make({ panel: "*" })],
+      panels: subplot,
+      resolve: { x: "independent" },
+    });
+    for (const panel of stacked.scene.panels) expectGeometry(panel, "segments");
+  });
+});
+
+describe("capabilities: right axis", () => {
+  // Marks placing values along y; heatmaps place cells (and take no axis),
+  // and a rule at an x has no y value to place.
+  const valued = cartesian.filter((c) => c.name !== "heatmap" && c.name !== "rule");
+  const rightOf = (panel: Panel) => panel.axes.find((a) => a.orient === "right");
+
+  it.each(valued)("$name draws on a right axis in every facet panel and in its subplot", (c) => {
+    const faceted = build(facetConfig(c, { resolve: { yRight: "independent" } }));
+    for (const [i, panel] of faceted.scene.panels.entries()) {
+      expectGeometry(panel, c.kind);
+      expect(rightOf(panel)).toBeDefined();
+      expect(faceted.model.panels()[i]!.yRight).toBeDefined();
+    }
+    const stacked = build({
+      marks: [c.make({ panel: "a", axis: "right" }), c.make({ panel: "b" })],
+      panels: subplot,
+    });
+    expect(rightOf(stacked.scene.panels[0]!)).toBeDefined();
+    expect(rightOf(stacked.scene.panels[1]!)).toBeUndefined();
+    for (const panel of stacked.scene.panels) expectGeometry(panel, c.kind);
+  });
+
+  it("refuses it to marks placed along y", () => {
+    const sideways = bar(samples, { x: "y", y: "category", axis: "right" as never });
+    expect(() => build({ marks: [sideways], facet: facet("group") })).toThrow(
+      "A bar mark placed along y cannot use the right axis",
+    );
+  });
 });
 
 describe("capabilities: zoom and pan", () => {

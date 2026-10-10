@@ -3,7 +3,7 @@
 // what one scene drew; the chart model makes one per scene.
 
 import type { Formatter } from "../format/format.ts";
-import type { Frame, Hit, Mark } from "../marks/mark.ts";
+import type { Frame, Hit, Mark, RowParts } from "../marks/mark.ts";
 import {
   lowerPosition,
   nearestPosition,
@@ -84,10 +84,14 @@ const GAP_WALK = 1024;
 
 export type TooltipMode = "nearest-x" | "nearest-y" | "nearest";
 
-/** A mark and the series it resolved for a scene. */
+/**
+ * A mark and the series it resolved for a scene; for a mark that reads its
+ * table's rows without series (annotations), the rows drawn when not all.
+ */
 export interface MarkSeries {
   mark: Mark;
   series: Series[];
+  rows?: RowParts | undefined;
 }
 
 /** A mark a panel inspects: its series there, and its index in the chart's marks. */

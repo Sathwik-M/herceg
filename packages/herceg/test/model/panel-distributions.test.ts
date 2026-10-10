@@ -6,10 +6,8 @@ import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
-import { candlestick } from "../../src/marks/candlestick.ts";
 import { histogram } from "../../src/marks/histogram.ts";
 import { point } from "../../src/marks/point.ts";
-import { rule } from "../../src/marks/rule.ts";
 import type { Series } from "../../src/marks/series.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { describeChart } from "../../src/model/describe.ts";
@@ -473,32 +471,5 @@ describe("box plots and violins split by facets", () => {
     second.scene(estimateText);
     first.scene(estimateText);
     expect(placed(first)).toBe(before);
-  });
-
-  it("still refuse annotations over a table, and candlesticks on categories per panel", () => {
-    const data = sales();
-    expect(() =>
-      build({
-        marks: [boxplot(data, { x: "product", y: "units" }), rule(data, { y: "units" })],
-        facet: facet("region"),
-      }),
-    ).toThrow(/rule mark over a table cannot be split into panels yet/);
-    const prices = table({
-      region: ["N", "S"],
-      day: ["mon", "tue"],
-      open: [1, 2],
-      high: [3, 4],
-      low: [0, 1],
-      close: [2, 3],
-    });
-    expect(() =>
-      build({
-        marks: [
-          candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" }),
-        ],
-        facet: facet("region"),
-        resolve: { x: "independent" },
-      }),
-    ).toThrow(/candlestick mark's categories cannot be resolved per panel yet/);
   });
 });

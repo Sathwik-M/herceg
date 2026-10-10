@@ -486,8 +486,39 @@ def test_charts_without_one_y_scale_refuse_a_y_viewport():
         .widget()
     )
     widget.viewport = (T0, T0 + dt.timedelta(seconds=30))
-    with pytest.raises(ValueError, match="no one y viewport"):
+    with pytest.raises(ValueError, match="no one viewport"):
         widget.viewport = hg.Viewport(y=(0, 1))
+
+
+def test_right_y_scales_of_their_own_refuse_only_a_right_y_viewport():
+    chart = hg.Chart(data(), zoom="x", facet="host").line(x="t", y="v")
+    widget = chart.line(x="t", y="v", axis="right").widget()
+    browser = Browser(widget)
+    widget.viewport = hg.Viewport(y=(0, 10), y_right=(0, 100))
+    widget.update(resolve_y_right="independent")
+    # The left zoom stays; the right one goes, as in the browser.
+    assert widget.viewport == hg.Viewport(y=(0, 10))
+    assert browser.last[0]["viewport"]["yRight"] is None
+    with pytest.raises(ValueError, match="no one viewport"):
+        widget.viewport = hg.Viewport(y_right=(0, 1))
+
+
+def test_live_updates_refuse_a_y_zoom_over_right_y_scales_of_their_own():
+    chart = hg.Chart(data(), zoom="xy", facet="host").line(x="t", y="v")
+    widget = chart.line(x="t", y="v", axis="right").widget()
+    browser = Browser(widget)
+    sent = len(browser.sent)
+    with pytest.raises(ValueError, match="right y scales of their own"):
+        widget.update(resolve_y_right="independent")
+    # Nothing changed or went to the browser; zooming along x only is fine.
+    assert widget._live._settings["resolve_y_right"] is None
+    assert len(browser.sent) == sent
+    widget.update(zoom="x", resolve_y_right="independent")
+    with pytest.raises(ValueError, match="y scales of their own cannot zoom along y"):
+        widget.update(zoom="xy", resolve_y="independent")
+    # Rules at an x on the right place no values there.
+    ruled = hg.Chart(data(), zoom="xy", facet="host").line(x="t", y="v")
+    ruled.rule(x=T0, axis="right").widget().update(resolve_y_right="independent")
 
 
 def zoom(browser, seconds, origin, revision):

@@ -128,8 +128,6 @@ describe("panels", () => {
     expect(() => build({ marks: [loose], panels: stacked })).toThrow("needs a panel");
     const lost = line(metrics, { x: "t", y: "latency", panel: "errors" });
     expect(() => build({ marks: [lost], panels: stacked })).toThrow('names the panel "errors"');
-    const right = line(metrics, { x: "t", y: "latency", panel: "latency", axis: "right" });
-    expect(() => build({ marks: [right], panels: stacked })).toThrow("right axis");
     expect(() => build({ marks, panels: stacked, interaction: { zoom: "xy" } })).toThrow(
       "along x only",
     );

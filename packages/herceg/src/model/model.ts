@@ -16,6 +16,8 @@ import {
   type Frame,
   type Mark,
   numericBands,
+  type RowParts,
+  usesY,
 } from "../marks/mark.ts";
 import { type Series, samePositions } from "../marks/series.ts";
 import { unionExtent } from "../marks/trace.ts";
@@ -58,7 +60,7 @@ import type { Facet } from "./facet.ts";
 import type { ItemPanel, ItemViews } from "./item-views.ts";
 import { EDGE, type LegendEntry, type LegendPart, layoutLegends } from "./legend.ts";
 import type { Navigator } from "./navigator.ts";
-import type { PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
+import type { PanelAxis, PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
 import type { Panels } from "./panels.ts";
 
 /** Chart options with marks bound to their data. */
@@ -107,6 +109,7 @@ interface PanelView {
   plot: Rect;
   xGroup: string;
   yGroup: string;
+  yRightGroup: string;
   inspector: Inspector;
   plans: PanelPlans;
 }
@@ -148,7 +151,10 @@ export interface DrawnPanel {
   y: PositionScale;
   /** Names the left y scale the panel shares with others: "" when every panel does. */
   yGroup: string;
+  /** The right y axis' scale, in panels drawing marks on it. */
   yRight?: PositionScale | undefined;
+  /** Names the right y scale the panel shares with others: "" when every panel does, or without one. */
+  yRightGroup: string;
   plans: PanelPlans;
 }
 
@@ -194,8 +200,6 @@ export type {
 export const STATIC_RASTER_RATIO = 2;
 
 const TICK = 5;
-/** Smallest plot side, in pixels, of a panel among several. */
-const MIN_PANEL = 20;
 const GAP = 6;
 /** Left inset of the title and legend. */
 
@@ -302,7 +306,13 @@ export class ChartModel {
       this.#camera = configured;
     this.#configured = configured;
     this.#config = config;
-    if (!this.sharesY) this.#yViewport = NO_Y_VIEW;
+    // Sides whose panels have scales of their own let go of their y viewport.
+    const { y, yRight } = this.#yViewport;
+    const kept = {
+      y: this.#shares("y") ? y : null,
+      yRight: this.#shares("yRight") ? yRight : null,
+    };
+    if (kept.y !== y || kept.yRight !== yRight) this.#yViewport = kept;
     this.#theme = resolveTheme(config.theme, page);
     this.#layoutKey = "";
   }
@@ -360,7 +370,7 @@ export class ChartModel {
 
   /** Whether every panel shares one x scale: unless the chart's `resolve.x` says otherwise. */
   get sharesX(): boolean {
-    return this.#resolutionX === "shared";
+    return this.#resolution("x") === "shared";
   }
 
   /**
@@ -401,10 +411,15 @@ export class ChartModel {
     this.#yViewport = { y: range(viewport.y), yRight: range(viewport.yRight) };
   }
 
-  /** Throws for y ranges in charts whose panels have y scales of their own: they have no one y viewport. */
+  /**
+   * Throws for a y range in a chart whose panels have scales of their own
+   * on that side: they have no one viewport there.
+   */
   checkYViewport(viewport: Partial<YViewport>): void {
-    if ((viewport.y || viewport.yRight) && !this.sharesY)
-      throw new Error("Charts whose panels have y scales of their own have no one y viewport");
+    if ((viewport.y && !this.#shares("y")) || (viewport.yRight && !this.#shares("yRight")))
+      throw new Error(
+        "Charts whose panels have y scales of their own have no one viewport of them",
+      );
   }
 
   /**
@@ -416,20 +431,18 @@ export class ChartModel {
     this.#transition = domains;
   }
 
-  /** Whether every panel shares the y scale: without facets, or without `resolve.y`. */
-  get sharesY(): boolean {
-    return !this.#config.panels && this.#resolutionY === "shared";
+  /**
+   * Whether every panel shares a y axis' scale, so the chart has one
+   * viewport of it: without facets or with that axis' `resolve` "shared";
+   * subplots never do.
+   */
+  #shares(axis: "y" | "yRight"): boolean {
+    return !this.#config.panels && this.#resolution(axis) === "shared";
   }
 
-  /** How the chart's panels share y: one scale without panels. */
-  get #resolutionY(): ScaleResolution {
-    const layout = this.#panels;
-    return layout ? (this.#config.resolve?.y ?? layout.yDefault) : "shared";
-  }
-
-  /** How the chart's panels share x: one scale unless `resolve.x` says otherwise. */
-  get #resolutionX(): ScaleResolution {
-    return (this.#panels && this.#config.resolve?.x) || "shared";
+  /** How the chart's panels share an axis' scale (see `PanelLayout.resolution`): one without panels. */
+  #resolution(axis: PanelAxis): ScaleResolution {
+    return this.#panels?.resolution(axis, this.#config.resolve) ?? "shared";
   }
 
   /** What lays the chart out in panels, if anything does. */
@@ -534,18 +547,7 @@ export class ChartModel {
       return { keys: [""], values: [[]], dimensions: [], panels: [base], all: base };
     }
     if (this.#splitter?.layout !== layout) this.#splitter = { layout, splitter: layout.splitter() };
-    // Panels that could never fit are refused before they are listed.
-    const { width, height } = this;
-    return this.#splitter.splitter.split(
-      base,
-      ({ rows, columns }, panels) => {
-        if (rows > height / MIN_PANEL || columns > width / MIN_PANEL)
-          throw tooSmall(panels, columns, width, height, layout.remedy);
-      },
-      this,
-      this.#bands,
-      context,
-    );
+    return this.#splitter.splitter.split(base, this, this.#bands, context);
   }
 
   /** x extent of all data drawn, ignoring the viewport. */
@@ -556,8 +558,8 @@ export class ChartModel {
     const marks = this.#split(this.#resolveSeries(this.#bands, context), context).all;
     const breaks = this.#xBreaks(type, context.zone);
     return unionExtent(
-      marks.map(({ mark, series }) =>
-        mark.xExtent(this.#xSeries(mark, series), type === "log", breaks),
+      marks.map(({ mark, series, rows }) =>
+        mark.xExtent(this.#xSeries(mark, series), type === "log", breaks, rows),
       ),
     );
   }
@@ -595,10 +597,10 @@ export class ChartModel {
     let stands = false;
     const data = unionExtent(
       parts.flatMap(({ marks, x0, x1, breaks }) =>
-        marks.map(({ mark, series }) => {
+        marks.map(({ mark, series, rows }) => {
           const visible = series.filter((s) => !this.hidden.has(s.key));
           if (mark.zero === "y" && visible.length > 0) stands = true;
-          return mark.yExtent(visible, x0, x1, log, breaks);
+          return mark.yExtent(visible, x0, x1, log, breaks, rows);
         }),
       ),
     );
@@ -723,13 +725,7 @@ export class ChartModel {
     const xSpec = layout
       ? layout.panelAxis("x", Math.max(0, items?.indexOf(undefined) ?? 0), config.x)
       : config.x;
-    const xContext: AxisContext = {
-      type: xType === "band" ? xType : (xSpec?.type ?? xType),
-      spec: xSpec,
-      zone,
-      locale,
-    };
-    const yContext: AxisContext = { type: yType, spec: config.y, zone, locale };
+    const xScale = { type: xType === "band" ? xType : (xSpec?.type ?? xType), spec: xSpec };
     const font = `${theme.fontSize}px ${theme.font}`;
     const lineHeight = Math.round(theme.fontSize * 1.25);
     const padding = (axis: "x" | "y") =>
@@ -766,23 +762,20 @@ export class ChartModel {
 
     // x scales: one for every panel, or with `resolve.x` one per group of
     // panels (each alone, a row, or a column), from what the group draws.
-    const xResolution = this.#resolutionX;
+    const xResolution = this.#resolution("x");
     const xGroups =
-      xResolution === "shared" ? undefined : layout!.groups(xResolution, split, columns, "x");
+      xResolution === "shared"
+        ? undefined
+        : layout!.groups(xResolution, split, columns, "x", config.x, xType);
     const xGroupAt = xGroups?.groupOf ?? new Array<number>(panelCount).fill(0);
     // Each group's marks, with every mark's series in the group's panels.
     const xMarks = xGroups?.drawn ?? [marks];
-    const xContexts = (
-      xGroups
-        ? xMarks.map(
-            (among, h): AxisContext => ({
-              ...layout!.groupAxis("x", xGroups.first[h]!, among, config.x, xType),
-              zone,
-              locale,
-            }),
-          )
-        : [xContext]
-    ).map((context) => ({ ...context, breaks: this.#xBreaks(context.type, zone) }));
+    const xContexts = (xGroups?.axes ?? [xScale]).map((scale) => ({
+      ...scale,
+      zone,
+      locale,
+      breaks: this.#xBreaks(scale.type, zone),
+    }));
     const seams = config.x?.seams;
     if (config.x?.breaks && !xContexts.some(({ breaks }) => breaks))
       throw new Error(`Axis breaks need a time x axis, not a ${xContexts[0]!.type} one`);
@@ -816,8 +809,8 @@ export class ChartModel {
       const log = type === "log";
       const breaks = xContexts[h]!.breaks;
       let dataX = unionExtent(
-        xMarks[h]!.map(({ mark, series }) =>
-          mark.xExtent(this.#xSeries(mark, series), log, breaks),
+        xMarks[h]!.map(({ mark, series, rows }) =>
+          mark.xExtent(this.#xSeries(mark, series), log, breaks, rows),
         ),
       );
       if ((spec?.zero ?? xMeasures[h]) && !log) dataX = unionExtent([dataX, [0, 0]]);
@@ -837,39 +830,28 @@ export class ChartModel {
       return { marks: among, x0, x1, breaks: xContexts[h]!.breaks };
     };
 
-    // y domains from data visible in the x domains, unless they are fixed;
-    // marks with `axis: "right"` (in charts of one panel) have their own.
-    const leftMarks = marks.filter(({ mark }) => sideOf(mark) === "left");
-    const rightMarks = marks.filter(({ mark }) => sideOf(mark) === "right");
     // With x scales of their own, what panels draw counts within their own x
     // domain, so zooming one group can change a y scale it shares; category
     // x scales show all of theirs.
     const byX = xType !== "band" && xGroups;
-    const leftParts = byX ? xMarks.map(part) : [part(leftMarks, 0)];
-    // A y axis is shown when one of its marks places values along y, and
-    // the left one also when the right one is not.
-    const placesY = (side: readonly MarkSeries[]) => side.some(({ mark }) => usesY(mark));
-    const rightUsed = placesY(rightMarks);
+    // Each y axis is for the marks on its side: the left one's, or with
+    // `axis: "right"` the right one's. A panel has a y axis when one of its
+    // marks places values along it, and the left one also without a right
+    // one (as `yAxesOf` says to the panels' groups and their agreement).
+    const onSide = (among: readonly MarkSeries[], right: boolean) =>
+      among.filter(({ mark }) => (sideOf(mark) === "right") === right);
+    const placesY = (i: number, right: boolean) =>
+      split.panels[i]!.some(
+        ({ mark }, m) =>
+          (sideOf(mark) === "right") === right && usesY(mark) && split.members?.[i]?.[m] !== false,
+      );
+    const rightIn = split.keys.map((_, i) => axesIn(i) && placesY(i, true));
+    const leftIn = split.keys.map((_, i) => axesIn(i) && (!rightIn[i] || placesY(i, false)));
+    const rightUsed = rightIn.includes(true);
     const yRightType = rightUsed ? this.#axisType("yRight") : "linear";
-    // Facet panels share one y scale unless `resolve.y` groups them.
-    const sharedY = this.sharesY;
-    let yBase: [number, number] = [0, 1];
-    let leftUsed = true;
     // Whether the left axis has anything to label: a band axis may have no bands.
-    let leftData = true;
-    if (yType === "band") {
-      leftData = (bands.y?.keys.length ?? 0) > 0;
-      if (!(leftData || rightUsed)) xHas.fill(false);
-    } else {
-      leftUsed = !rightUsed || placesY(leftMarks);
-      if (sharedY)
-        yBase = usableDomain(
-          yView
-            ? oriented(yView, config.y?.domain)
-            : (config.y?.domain ?? this.#yData(leftParts, yType, config.y)),
-          yType,
-        );
-    }
+    const leftData = yType !== "band" || (bands.y?.keys.length ?? 0) > 0;
+    if (!(leftData || rightUsed)) xHas.fill(false);
     const hasData = xHas.includes(true);
 
     // Vertical layout depends only on fonts, titles, and the legends.
@@ -919,28 +901,14 @@ export class ChartModel {
     const below = showX ? xLabels + lineHeight + xTitle + 2 : 4;
     const strip = navigator ? navigator.room(height - top - below) : 0;
     const bottom = below + strip;
-    // A wrapped facet's panels each have a header with their value, and rows
-    // leave room below for the x labels of panels above an empty cell. A
-    // grid of facets has a column per value of its column field, headed
-    // once above the top row, and a row per value of its row field, headed
-    // once beside the last column. Rows leave room between them for the y
-    // labels at their ends, and for x labels and titles between them.
-    const aboveEmpty = showX && panelCount % columns !== 0;
-    // A title between rows: an x scale's own, or the shared one above a layout mark's panel.
-    const titleRoom = xGroups || grid.between ? xTitle : 0;
-    const rowGap =
-      rows <= 1
-        ? 0
-        : (xBetween || grid.between) && showX
-          ? xLabels + lineHeight + titleRoom + (header ? 8 : Math.ceil(lineHeight / 2) + 4)
-          : header
-            ? (aboveEmpty ? xLabels + lineHeight + titleRoom : Math.ceil(lineHeight / 2)) + 8
-            : lineHeight + 10;
+    // Rows of panels leave room between them for what goes there (see `PanelLayout.rowGap`).
+    const space = { xBetween, ownX: xGroups !== undefined, showX, xLabels, lineHeight, xTitle };
+    const rowGap = layout ? layout.rowGap(grid, panelCount, space) : 0;
     // Rows share the height left for plots equally, or by the grid's weights.
     const free = height - top - bottom - columnHeader - (rows - 1) * rowGap - rows * header;
-    const heights = trackSizes(free, rows, grid.rowWeights);
-    if (panelCount > 1 && Math.min(...heights) < MIN_PANEL)
-      throw tooSmall(panelCount, columns, width, height, layout!.remedy);
+    const heights = layout
+      ? layout.tracks(free, rows, grid.rowWeights, panelCount, columns, this)
+      : [free];
     const rowHeights = heights.map((h) => Math.max(10, h));
     // The first row's height plans the axes of charts with equal rows.
     const plotHeight = rowHeights[0]!;
@@ -986,25 +954,6 @@ export class ChartModel {
       );
     };
 
-    // y ticks decide the left margin. Panels share one plan unless their
-    // resolution gives each panel, row, or column its own, from what those
-    // panels draw. Each group's axis is the chart's with its first panel's
-    // settings; subplots take their type from their own marks.
-    const resolution = this.#resolutionY;
-    // Subplots always plan by group, to read each panel's own settings; a
-    // shared category axis is the one plan.
-    const byGroup = config.panels ? yType !== "band" || resolution !== "shared" : !sharedY;
-    const groups = byGroup ? layout!.groups(resolution, split, columns, "y") : undefined;
-    const groupOf = groups?.groupOf ?? new Array<number>(panelCount).fill(0);
-    const contexts = groups
-      ? groups.drawn.map(
-          (drawn, g): AxisContext => ({
-            ...layout!.groupAxis("y", groups.first[g]!, drawn, config.y, yType),
-            zone,
-            locale,
-          }),
-        )
-      : [yContext];
     /** The category y axis of panel `i` over the plot from `y`, `size` tall. */
     const planCategories = (y: number, size: number, i: number): AxisPlan => {
       // Categories read top to bottom; bands of numbers rise like a numeric axis.
@@ -1020,93 +969,133 @@ export class ChartModel {
       plan.labels = plan.labels.map((label) => fitText(label, room, measure, font));
       return plan;
     };
-    // Each group is planned over its shortest row with axes, so what marks
-    // draw past their values (points, bar labels) fits in every row; a group
-    // of panels drawing layout marks only has nothing to fit.
-    const groupHeights = contexts.map(() => Number.POSITIVE_INFINITY);
-    groupOf.forEach((g, i) => {
-      if (axesIn(i)) groupHeights[g] = Math.min(groupHeights[g]!, rowHeights[rowOf(i)]!);
-    });
-    const groupHeight = (g: number) =>
-      groupHeights[g]! < Infinity ? groupHeights[g]! : plotHeight;
-    const groupPlans: AxisPlan[] = [];
-    // Groups of panels with nothing to show along y have no y labels.
-    const emptyGroups = new Set<number>();
-    if (yType === "band") {
-      contexts.forEach((_, g) => {
-        groupPlans[g] = planCategories(plotTop, groupHeight(g), groupOf.indexOf(g));
-      });
-    } else if (!groups) {
-      groupPlans.push(
-        planValueAxis(yContext, yBase, leftMarks, yView !== undefined, groupHeight(0)),
+    /**
+     * The plans of one side's y axis (`right`, or the left), whose ticks
+     * decide that side's margin. Panels share one plan unless the side's
+     * resolution gives each panel, row, or column its own, from what those
+     * panels draw on that side. Each group's axis is the chart's with its
+     * first panel's settings; subplots take their type from their own marks.
+     */
+    const planY = (right: boolean) => {
+      const axis = right ? "yRight" : "y";
+      const type = right ? yRightType : yType;
+      const view = right ? yRightView : yView;
+      const resolution = this.#resolution(axis);
+      const drawsAxis = right ? rightIn : leftIn;
+      // Subplots always plan by group, to read each panel's own settings; a
+      // shared category axis is the one plan.
+      const groups =
+        (config.panels && type !== "band") || resolution !== "shared"
+          ? layout!.groups(resolution, split, columns, axis, config[axis], type)
+          : undefined;
+      const groupOf = groups?.groupOf ?? new Array<number>(panelCount).fill(0);
+      // What each group draws on this side, and its axis.
+      const drawnOn = groups?.drawn ?? [onSide(marks, right)];
+      const contexts = (groups?.axes ?? [{ type, spec: config[axis] }]).map(
+        (scale): AxisContext => ({ ...scale, zone, locale }),
       );
-    } else {
+      // Each group is planned over its shortest row with the axis, so what
+      // marks draw past their values (points, bar labels) fits in every row;
+      // a group of panels drawing layout marks only has nothing to fit.
+      const heights = contexts.map(() => Number.POSITIVE_INFINITY);
+      groupOf.forEach((g, i) => {
+        if (drawsAxis[i]) heights[g] = Math.min(heights[g]!, rowHeights[rowOf(i)]!);
+      });
+      const heightOf = (g: number) => (heights[g]! < Infinity ? heights[g]! : plotHeight);
+      const plans: AxisPlan[] = [];
+      // Groups of panels with nothing to show along y have no y labels.
+      const empty = new Set<number>();
       // With x scales of their own, a y group's panels are read by x group:
       // what the panels of both draw, within that x group's domain.
-      const crossed = byX && layout!.across(split, groupOf, xGroupAt);
-      groups.drawn.forEach((drawn, g) => {
-        const parts = crossed ? crossed[g]!.map(([h, among]) => part(among, h)) : [part(drawn, 0)];
+      const crossed =
+        byX &&
+        (groups
+          ? layout!.across(split, groupOf, xGroupAt)
+          : [xMarks.map((among, h) => [h, among] as const)]);
+      drawnOn.forEach((among, g) => {
+        if (type === "band") {
+          plans[g] = planCategories(plotTop, heightOf(g), groupOf.indexOf(g));
+          return;
+        }
+        const parts = crossed
+          ? crossed[g]!.map(([h, those]) => part(onSide(those, right), h))
+          : [part(among, 0)];
+        // A group's own type: a subplot's log or time axis.
+        const { type: own, spec } = contexts[g]!;
+        const zoomed = !groups && view !== undefined;
+        const fixed = zoomed ? oriented(view, spec?.domain) : spec?.domain;
         // A group shows something when its marks place a value along y,
-        // annotations included.
-        const { type, spec } = contexts[g]!;
-        const extent = this.#yData(parts, type, spec);
-        if (!extent) emptyGroups.add(g);
-        const domain = spec?.domain ?? extent;
-        const base = usableDomain(domain, type);
-        groupPlans[g] = planValueAxis(contexts[g]!, base, drawn, false, groupHeight(g));
+        // annotations included; the extent of a fixed shared domain is not read.
+        const extent = groups || !fixed ? this.#yData(parts, own, spec) : undefined;
+        if (groups && !extent) empty.add(g);
+        const base = usableDomain(fixed ?? extent, own);
+        plans[g] = planValueAxis(contexts[g]!, base, among, zoomed, heightOf(g));
       });
-    }
-    const yPlan = groupPlans[0]!;
-    // Every panel's y plan: its group's moved to its row. A row of another
-    // height than the group's keeps the group's domain with ticks for its height.
-    const yPlans = split.keys.map((_, i) => {
-      const row = rowOf(i);
-      const g = groupOf[i]!;
-      const plan = groupPlans[g]!;
-      const context = contexts[g]!;
-      const size = rowHeights[row]!;
-      if (size === groupHeight(g)) return shiftPlan(plan, context, rowOffset(row));
-      const y = plotTop + rowOffset(row);
-      if (yType === "band") return planCategories(y, size, i);
-      const [d0, d1] = plan.scale.domain;
-      const count = tickCount(context.spec, size);
-      return planAxis(context, [d0!, d1!], [y + size, y], count, plan.within);
-    });
-    // Panels in other columns than the first show their own y labels when
-    // their scales differ from their row's; subplots always label their own.
-    const columnLabels =
-      config.panels !== undefined || resolution === "independent" || resolution === "columns";
-    // Subplots show, title, and grid each panel's y axis as its own settings
+      // Every panel's plan: its group's moved to its row. A row of another
+      // height than the group's keeps the group's domain with ticks for its height.
+      const byPanel = split.keys.map((_, i) => {
+        const row = rowOf(i);
+        const g = groupOf[i]!;
+        const plan = plans[g]!;
+        const context = contexts[g]!;
+        const size = rowHeights[row]!;
+        if (size === heightOf(g)) return shiftPlan(plan, context, rowOffset(row));
+        const y = plotTop + rowOffset(row);
+        if (type === "band") return planCategories(y, size, i);
+        const [d0, d1] = plan.scale.domain;
+        const count = tickCount(context.spec, size);
+        return planAxis(context, [d0!, d1!], [y + size, y], count, plan.within);
+      });
+      // Panels show their own labels unless their scale is their row's:
+      // beside the row's first panel on the left, its last on the right.
+      const own =
+        config.panels !== undefined || resolution === "independent" || resolution === "columns";
+      return { axis, type, groups, groupOf, contexts, plans: byPanel, empty, own };
+    };
+    const leftY = planY(false);
+    const rightY = rightUsed ? planY(true) : undefined;
+    /** Names the scale panel `i` shares on a side: "" when every panel does. */
+    const groupKey = (side: typeof leftY, i: number) => side.groups?.keys[side.groupOf[i]!] ?? "";
+    // Subplots show, title, and grid each panel's y axes as its own settings
     // say; other charts title the chart's once.
-    const panelAxis = (i: number) => (layout ? layout.panelAxis("y", i, config.y) : config.y);
-    const titleOf = (i: number) =>
-      config.panels ? panelAxis(i)?.label : i === 0 ? config.y?.label : undefined;
-    const titled = split.keys.some((_, i) => axesIn(i) && titleOf(i));
-    const yRightContext: AxisContext = { type: yRightType, spec: config.yRight, zone, locale };
-    const yRightPlan = rightUsed
-      ? planValueAxis(
-          yRightContext,
-          usableDomain(
-            yRightView
-              ? oriented(yRightView, config.yRight?.domain)
-              : (config.yRight?.domain ??
-                  this.#yData([part(rightMarks, 0)], yRightType, config.yRight)),
-            yRightType,
-          ),
-          rightMarks,
-          yRightView !== undefined,
-        )
-      : undefined;
-    // Panels that all draw layout marks label no y axis.
-    const showLeft = showY && leftUsed && !items?.every(Boolean);
-    const labelsOf = (plan: AxisPlan) => (hasData && showLeft && leftData ? plan.labels : []);
-    const labelWidth = Math.max(
-      0,
-      ...yPlans.flatMap((plan, i) => (axesIn(i) ? labelsOf(plan) : [])).map(measureLabel),
-    );
+    const panelAxis = (i: number, axis: "y" | "yRight" = "y") =>
+      layout ? layout.panelAxis(axis, i, config[axis]) : config[axis];
+    /**
+     * Where a side's y labels go: beside each row's first panel on the left
+     * and its last on the right, or beside every panel when panels have
+     * scales of their own there (and in subplots), of the panels `drawn`
+     * that show the axis. Its widest labels and its title decide its
+     * margin, and with labels beside every panel, the gaps between columns.
+     */
+    const yLabels = (side: typeof leftY | undefined, drawn: readonly boolean[]) => {
+      const right = side !== leftY;
+      const axis = right ? "yRight" : "y";
+      const labeled = drawn.map(
+        (shows, i) =>
+          shows &&
+          (panelAxis(i, axis)?.axis ?? true) &&
+          (side!.own ||
+            (right ? i % columns === columns - 1 || i === panelCount - 1 : i % columns === 0)),
+      );
+      const labelsOf = (i: number) =>
+        hasData && (right || leftData) && !side!.empty.has(side!.groupOf[i]!)
+          ? side!.plans[i]!.labels
+          : [];
+      const widest = Math.max(
+        0,
+        ...labeled.flatMap((l, i) => (l ? labelsOf(i) : [])).map(measureLabel),
+      );
+      const room = labeled.includes(true) ? Math.ceil(widest) + GAP + 2 : 0;
+      const title = labeled.some((l, i) => l && panelAxis(i, axis)?.label) ? lineHeight + GAP : 0;
+      // Between columns, with the room kept between the plots.
+      const between = side?.own && room ? room + (right ? 0 : 8) + (config.panels ? title : 0) : 0;
+      return { labeled, labelsOf, room, title, between, first: labeled.indexOf(true) };
+    };
+    // Panels that all draw layout marks, or marks on the right only, label no left axis.
+    const leftLabels = yLabels(leftY, showY ? leftIn : []);
+    const rightLabels = yLabels(rightY, rightY ? rightIn : []);
     // The widest label starts at the chart's edge inset, in line with the title.
-    let left = showLeft ? Math.ceil(labelWidth) + GAP + 2 + EDGE : EDGE;
-    if (showLeft && titled) left += lineHeight + GAP;
+    let left = leftLabels.room + (leftLabels.room && leftLabels.title) + EDGE;
     // Avoid layout jitter while data streams: margins grow at once but only
     // shrink when the size or configuration changes.
     const layoutKey = `${width}x${height}`;
@@ -1120,14 +1109,13 @@ export class ChartModel {
     else if (sameLayout) left = Math.max(left, this.#left);
     this.#layoutKey = layoutKey;
 
-    // The right axis' labels decide the right margin, as the left one's do the left.
-    const showRight = yRightPlan !== undefined && (config.yRight?.axis ?? true);
-    const yRightLabels = showRight && hasData ? yRightPlan.labels : [];
-    let right = rowHeader ? rowHeader + GAP + EDGE : 12;
-    if (showRight) {
-      right = Math.ceil(Math.max(0, ...yRightLabels.map(measureLabel))) + GAP + 2 + EDGE;
-      if (config.yRight?.label) right += lineHeight + GAP;
-    }
+    // The right labels decide the right margin, with a grid's row headers
+    // and the right title beyond them.
+    const { room: rightRoom } = rightLabels;
+    let right =
+      rightRoom || rowHeader
+        ? rightRoom + (rowHeader && rowHeader + GAP) + rightLabels.title + EDGE
+        : 12;
     if (frozen) right = this.#right;
     else if (sameLayout) right = Math.max(right, this.#right);
 
@@ -1136,16 +1124,19 @@ export class ChartModel {
     // neighboring panels would meet, by up to a quarter of the width each:
     // labels that cannot fit must not squeeze the plots away.
     const edgeRoom = Math.floor(width / 4);
-    const labelRoom =
-      columnLabels && showLeft
-        ? Math.ceil(labelWidth) + GAP + 2 + 8 + (titled && config.panels ? lineHeight + GAP : 0)
-        : 0;
+    // Between columns: the right labels and titles of the panels before,
+    // and the left ones of those after, when panels label their own.
+    const labelRoom = leftLabels.between + rightLabels.between;
     let columnGap = columns > 1 ? Math.max(16, labelRoom, sameLayout ? this.#columnGap : 0) : 0;
     if (frozen) columnGap = this.#columnGap;
     // Columns share the width left for plots as rows share the height.
     const weighted = grid.columnWeights !== undefined;
-    const widthsOf = () =>
-      trackSizes(width - left - right - (columns - 1) * columnGap, columns, grid.columnWeights);
+    const widthsOf = () => {
+      const free = width - left - right - (columns - 1) * columnGap;
+      return layout
+        ? layout.tracks(free, columns, grid.columnWeights, panelCount, columns, this)
+        : [free];
+    };
     let widths: number[] = [];
     // Where each column starts, from `left`; equal columns a whole step apart.
     let offsets: number[] = [];
@@ -1281,8 +1272,6 @@ export class ChartModel {
       columnGap = nextGap;
       layoutColumns();
     }
-    if (panelCount > 1 && Math.min(...widthsOf()) < MIN_PANEL)
-      throw tooSmall(panelCount, columns, width, height, layout!.remedy);
     if (!moving) {
       this.#left = left;
       this.#right = right;
@@ -1305,10 +1294,6 @@ export class ChartModel {
       const h = xGroupAt[i]!;
       return xHas[h]! && xContexts[h]!.type !== "band" && (panelX(i)?.grid ?? xMeasures[h]!);
     };
-    // Horizontal grid lines follow the left axis, or the right one when the left is unused.
-    const gridPlan = leftUsed
-      ? yType !== "band" && (config.y?.grid ?? true) && yPlan
-      : (config.yRight?.grid ?? true) && yRightPlan;
     // A y axis along one side of a plot, its title outside the labels,
     // centered on the grid, or on the plot for a subplot's own title.
     const yAxis = (
@@ -1364,20 +1349,18 @@ export class ChartModel {
       return format;
     };
     const formats = new Map<string, Formatter>();
-    const formatOf = (i: number): Formatter => {
-      const g = groupOf[i]!;
-      const size = rowHeights[rowOf(i)]!;
-      const key = `${g} ${size}`;
+    const formatOf = (i: number, side = leftY): Formatter => {
+      const g = side.groupOf[i]!;
+      const key = `${side.axis} ${g} ${rowHeights[rowOf(i)]}`;
       let format = formats.get(key);
       if (!format) {
-        const { scale } = yPlans[i]!;
-        format = yType === "band" ? categoryOf(scale) : valueFormat(contexts[g]!, scale);
+        const { scale } = side.plans[i]!;
+        format = side.type === "band" ? categoryOf(scale) : valueFormat(side.contexts[g]!, scale);
         formats.set(key, format);
       }
       return format;
     };
-    const formatRight = yRightPlan && valueFormat(yRightContext, yRightPlan.scale);
-    const rightSet = new Set(rightMarks.map(({ mark }) => mark));
+    const rightSet = new Set(onSide(marks, true).map(({ mark }) => mark));
 
     // Each x scale's title goes once, under the last panel labeled with it:
     // centered under the grid when every panel shares x, else under its
@@ -1418,7 +1401,7 @@ export class ChartModel {
       const column = i % columns;
       const h = xGroupAt[i]!;
       const xAt = xPlanOf(h, column);
-      const yAt = yPlans[i]!;
+      const yAt = leftY.plans[i]!;
       const x = xAt.scale;
       const plot: Rect = {
         x: left + offsets[column]!,
@@ -1430,7 +1413,8 @@ export class ChartModel {
       const label = values.join(", ");
       if (layout) {
         const fit = (text: string, room: number) => fitText(text, room, measure, font);
-        headers.push(...layout.headers(i, values, row, column, plot, grid, fit));
+        // A grid's row headers go beyond the right axis' labels.
+        headers.push(...layout.headers(i, values, row, column, plot, grid, fit, rightRoom));
       }
       const item = items?.[i];
       all.push({ key, label, plot, items: !!item });
@@ -1454,26 +1438,33 @@ export class ChartModel {
           title: xTitleOf(h, i, plot),
         });
       }
-      if (showLeft && (panelAxis(i)?.axis ?? true) && (column === 0 || columnLabels)) {
-        const labels = emptyGroups.has(groupOf[i]!) ? [] : labelsOf(yAt);
-        // A subplot's title sits as far left of its plot as the first column's does.
-        const titleX = lineHeight / 2 + 2 + (config.panels ? plot.x - left : 0);
+      const rightAt = rightIn[i] ? rightY!.plans[i] : undefined;
+      // The y axes: a subplot's title as far out from its plot as the first
+      // column's (on the right, the last one's), other charts' once.
+      for (const right of [false, true]) {
+        const labels = right ? rightLabels : leftLabels;
+        if (!labels.labeled[i]) continue;
+        const title =
+          config.panels || i === labels.first
+            ? panelAxis(i, right ? "yRight" : "y")?.label
+            : undefined;
+        const out = config.panels
+          ? right
+            ? left + gridWidth - plot.x - plot.width
+            : plot.x - left
+          : 0;
+        const titleX = right ? width - lineHeight / 2 - 2 - out : lineHeight / 2 + 2 + out;
         const titleY = config.panels ? plot.y + plot.height / 2 : undefined;
-        axes.push(yAxis("left", plot, yAt, labels, titleOf(i), titleX, titleY));
-      }
-      if (showRight) {
-        const title = i === 0 ? config.yRight?.label : undefined;
+        const plan = right ? rightAt! : yAt;
         axes.push(
-          yAxis("right", plot, yRightPlan, yRightLabels, title, width - lineHeight / 2 - 2),
+          yAxis(right ? "right" : "left", plot, plan, labels.labelsOf(i), title, titleX, titleY),
         );
       }
-      // A subplot may turn its own grid lines on or off.
-      const ownGrid = config.panels !== undefined && leftUsed && yType !== "band";
-      const gridAt = ownGrid
-        ? (panelAxis(i)?.grid ?? true) && yAt
-        : gridPlan === yPlan
-          ? yAt
-          : gridPlan;
+      // Horizontal grid lines follow the left axis, or the right one where
+      // the left is unused, as a subplot's own settings say.
+      const gridAt = leftIn[i]
+        ? yType !== "band" && (panelAxis(i)?.grid ?? true) && yAt
+        : rightAt && (panelAxis(i, "yRight")?.grid ?? true) && rightAt;
 
       const frame: Frame = {
         x,
@@ -1492,15 +1483,15 @@ export class ChartModel {
         ...this.#pools(i),
       };
       // Marks on the right axis draw with its scale.
-      const rightFrame: Frame | undefined = yRightPlan && { ...frame, y: yRightPlan.scale };
+      const rightFrame: Frame | undefined = rightAt && { ...frame, y: rightAt.scale };
       const frameOf = (mark: Mark) => (sideOf(mark) === "right" && rightFrame) || frame;
       // Marks keep their index in the chart as their identity in every panel.
       const members = split.members?.[i];
       const panelMarks = split.panels[i]!;
-      const geometry = panelMarks.flatMap(({ mark, series }, index) =>
+      const geometry = panelMarks.flatMap(({ mark, series, rows }, index) =>
         members && !members[index]
           ? []
-          : mark.geometry(series, frameOf(mark), mark.spec.id ?? this.#positions[index]!),
+          : mark.geometry(series, frameOf(mark), mark.spec.id ?? this.#positions[index]!, rows),
       );
       if (seams) {
         const segments = xContexts[h]!.breaks?.seams?.(x, plot, seams, theme.grid);
@@ -1512,7 +1503,7 @@ export class ChartModel {
       const inspector = new Inspector({
         marks: inspected,
         frame,
-        right: rightFrame && { marks: rightSet, frame: rightFrame, formatY: formatRight! },
+        right: rightFrame && { marks: rightSet, frame: rightFrame, formatY: formatOf(i, rightY) },
         mode: members ? modeOf(inspected.filter(({ series }) => series.length > 0)) : mode,
         hidden,
         formatX: formatXOf(h, column),
@@ -1524,9 +1515,10 @@ export class ChartModel {
         label,
         plot,
         xGroup: xKeys[h]!,
-        yGroup: groups?.keys[groupOf[i]!] ?? "",
+        yGroup: groupKey(leftY, i),
+        yRightGroup: rightAt ? groupKey(rightY!, i) : "",
         inspector,
-        plans: { x: xAt, y: yAt, yRight: yRightPlan, grid: gridAt },
+        plans: { x: xAt, y: yAt, yRight: rightAt, grid: gridAt },
       });
       return {
         key,
@@ -1677,17 +1669,20 @@ export class ChartModel {
   panels(): readonly DrawnPanel[] {
     const views = this.#views;
     if (this.#panelList?.views !== views) {
-      const panels = views.map(({ key, label, plot, xGroup, yGroup, inspector, plans }) => ({
-        key,
-        label,
-        plot,
-        x: inspector.frame.x,
-        xGroup,
-        y: inspector.frame.y,
-        yGroup,
-        yRight: inspector.rightFrame?.y,
-        plans,
-      }));
+      const panels = views.map(
+        ({ key, label, plot, xGroup, yGroup, yRightGroup, inspector, plans }) => ({
+          key,
+          label,
+          plot,
+          x: inspector.frame.x,
+          xGroup,
+          y: inspector.frame.y,
+          yGroup,
+          yRight: inspector.rightFrame?.y,
+          yRightGroup,
+          plans,
+        }),
+      );
       this.#panelList = { views, panels };
     }
     return this.#panelList.panels;
@@ -1771,10 +1766,17 @@ export class ChartModel {
     return this.#views[0]?.inspector.mode ?? "nearest-x";
   }
 
-  /** Sentences describing marks without series (annotations), as of the last scene. */
-  annotationSummaries(): string[] {
-    return this.#marks.flatMap(
-      (mark) => mark.describe?.(this.formatsOf(mark), this.#config.locale) ?? [],
+  /**
+   * Sentences describing marks without series (annotations), as of the last
+   * scene: with facets or panels, as `PanelLayout.annotations` says (of what
+   * `panel` alone draws, when given); in a chart of one panel, every one's.
+   */
+  annotationSummaries(panel?: string): string[] {
+    const describe = (mark: Mark, view?: string, rows?: RowParts) =>
+      mark.describe?.(this.formatsOf(mark, view), this.#config.locale, rows) ?? [];
+    return (
+      this.#panels?.annotations(this.#views, this.#marks, describe, panel) ??
+      this.#marks.flatMap((mark) => describe(mark))
     );
   }
 
@@ -1927,22 +1929,8 @@ export class ChartModel {
   }
 }
 
-/** Refuses a grid of panels the chart has no room for. */
 /** Where a chart without facets draws: one panel, without headers. */
 const ONE_PANEL: PanelGrid = { columns: 1, rows: 1, header: 0, columnHeader: 0, rowHeader: 0 };
-
-function tooSmall(
-  panels: number,
-  columns: number,
-  width: number,
-  height: number,
-  remedy: string,
-): RangeError {
-  const rows = Math.ceil(panels / columns);
-  return new RangeError(
-    `${panels} panels in ${rows} rows of ${columns} do not fit a ${width}×${height} chart; make it larger or ${remedy}`,
-  );
-}
 
 function numberFormatter(locale: string | undefined): Formatter {
   return (value) => formatNumber(value, locale);
@@ -1957,17 +1945,6 @@ function categoryOf(scale: PositionScale): Formatter {
  * Precision for x values in tooltips: finer when each pixel covers less
  * time (on axes with breaks, less time shown).
  */
-/**
- * `free` pixels shared by `count` rows or columns, equally or by `weights`.
- * Weights are scaled to the largest first, so huge ones cannot overflow.
- */
-function trackSizes(free: number, count: number, weights?: readonly number[]): number[] {
-  const largest = weights ? Math.max(...weights) : 1;
-  const share = (k: number) => (weights ? weights[k]! / largest : 1);
-  let total = 0;
-  for (let k = 0; k < count; k++) total += share(k);
-  return Array.from({ length: count }, (_, k) => (free * share(k)) / total);
-}
 
 function timeUnitFor(scale: PositionScale): TimeUnit {
   const perPixel = Math.abs(1 / scale.mapping().factor);
@@ -1985,16 +1962,6 @@ function keyedBy(config: ChartConfig): boolean {
 
 function sideOf(mark: Mark): "left" | "right" {
   return mark.spec.axis === "right" ? "right" : "left";
-}
-
-/**
- * Whether a mark places values along y: a y position in its spec or a y
- * field, whatever its data and the view. Vertical rules and custom marks
- * without fields do not.
- */
-function usesY(mark: Mark): boolean {
-  const { y, y1, y2 } = mark.spec as { y?: unknown; y1?: unknown; y2?: unknown };
-  return y !== undefined || y1 !== undefined || y2 !== undefined || !!mark.channelKind("y");
 }
 
 /**

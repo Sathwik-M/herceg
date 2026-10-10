@@ -434,7 +434,10 @@ rounds.
 Empty labels take no room. Placement measures text with the browser's fonts
 on screen and with estimated widths in static SVG and PDF output, so the two
 can place labels differently. Text is meant for annotations and labeling a
-few hundred points, not every point of a large series.
+few hundred points, not every point of a large series. In charts with
+facets, annotations over a table draw each row in its own row's panel, and
+labels keep off the labels of their own panel only (see [Small
+multiples](#small-multiples)).
 
 Bars, points, error bars, heatmaps, candlesticks, histograms, box plots, and violins:
 
@@ -666,32 +669,35 @@ take part in everything, the others in less. ✓ supported, ◐ partly (see
 the notes), — not yet (refused with an error, or for heatmaps' zoom, without
 effect), · not applicable.
 
-| Marks | Facets | Subplots | Panel scales | Zoom and pan | Brushes | Synced selection | Legend toggle | Tooltip and keyboard | Value animation |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| line, area, bar | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
-| point | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| histogram, boxplot, violin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | — |
-| errorbar, candlestick | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| heatmap | ✓ | ✓ | ✓ | — | ✓ | ✓ | · | ✓ | — |
-| rule, region, text | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | · | ◐ | ◐ |
-| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | — |
-| pie | ✓ | ✓ | · | — | — | — | ✓ | ✓ | ✓ |
-| treemap, sunburst, radar | ✓ | ✓ | · | — | — | — | ✓ | ✓ | — |
-| gauge, funnel, sankey | ✓ | ✓ | · | — | — | — | · | ✓ | — |
-| graph | — | — | — | — | — | — | ◐ | ✓ | — |
-| geoshape, geopoint | — | — | — | — | — | — | ✓ | ✓ | — |
-| point3d, line3d | — | — | — | turning | — | — | ✓ | ✓ | — |
-| surface | — | — | — | turning | — | — | · | ✓ | — |
+| Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Legend toggle | Tooltip and keyboard | Value animation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| line, area, bar | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
+| point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ◐ | — |
+| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| heatmap | ✓ | ✓ | ✓ | · | — | ✓ | ✓ | · | ✓ | — |
+| rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | ◐ | ◐ |
+| custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | — |
+| pie | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | ✓ |
+| treemap, sunburst, radar | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | — |
+| gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | · | ✓ | — |
+| graph | — | — | — | · | — | — | — | ◐ | ✓ | — |
+| geoshape, geopoint | — | — | — | · | — | — | — | ✓ | ✓ | — |
+| point3d, line3d | — | — | — | · | turning | — | — | ✓ | ✓ | — |
+| surface | — | — | — | · | turning | — | — | · | ✓ | — |
 
 - Brushes and synced selections report ranges and outlines, not the rows
   inside them; mapping them to rows (and to a selection store) is the
   application's for now.
 - Zoom, pan, and brushes work on number and time axes; subplots zoom and
-  brush along x only, and facets with y scales of their own do not zoom
-  along y. A second y axis needs a single panel.
-- Points over a row view, annotations over a table, and custom marks
-  without series repeat in every facet panel instead of splitting; error
-  bars and candlesticks need their categories shared between panels.
+  brush along x only, and facets with y scales of their own, on either
+  side, do not zoom along y.
+- The right axis (see [A second y axis](#a-second-y-axis)) takes values
+  along y: horizontal bars, box plots, violins, and error bars, and points
+  on category y, stay on the left, and a rule at an x has no y to place.
+  In facets and subplots, every panel drawing marks on it has one.
+- Points over a row view and custom marks without series repeat in every
+  facet panel instead of splitting.
 - Heatmaps band both axes, number and time fields too, so they neither zoom
   nor pan.
 - Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams
@@ -702,7 +708,8 @@ effect), · not applicable.
   charts to themselves.
 - Box plots and violins on log axes have no keyboard stop for groups whose
   median is not positive; annotations are read in the chart's summary
-  rather than one by one; custom marks are read through their series.
+  rather than one by one (a facet panel's own as the keyboard arrives
+  there); custom marks are read through their series.
 - Value animation moves unstacked, unlabeled bars, points, lines and areas
   whose rows stay, rules, and pie slices (see [Animation](#animation)), in
   charts of one panel.
@@ -1155,11 +1162,44 @@ createChart(element, {
 ```
 
 Each axis fits its own marks, and tooltips format each value by its axis.
-Grid lines follow the left axis (the right one when every mark is on the
+Grid lines follow the left axis (the right one where every mark is on the
 right). Category values and marks placed along y (horizontal bars and error
 bars) stay on the left; custom marks take `axis` too. Two scales in one plot invite comparisons between
 heights that mean different things; for unrelated measures, two charts
 sharing x through `interaction: { sync }` are often easier to read.
+
+In charts with facets or subplots, every panel drawing marks on the right
+axis has one. Its scale is shared as the left one's is (`resolve.y`), unless
+`resolve.yRight` says otherwise:
+
+```ts
+createChart(element, {
+  marks: [
+    line(traffic, { x: "time", y: "latency" }),
+    line(traffic, { x: "time", y: "requests", axis: "right" }),
+  ],
+  facet: facet("region"),
+  resolve: { yRight: "independent" }, // each region's requests on a scale of its own
+  yRight: { label: "requests/s" },
+});
+```
+
+Right labels go beside the last panel of each row when the panels of a
+row share the right scale, and beside every panel otherwise (making room
+between the columns); the right title goes once at the chart's right edge,
+beyond a grid's row headers. A subplot draws a right axis only when its
+marks are on it, labels and titles it beside itself, and takes its own
+settings from its `yRight` over the chart's (panels sharing a right scale
+must agree on its type, domain, `zero`, `nice`, ticks, and format, as for
+y); a subplot whose marks are all on the right has no left axis, and its
+grid lines follow the right one. Zooming along y moves both axes through
+the pixels it zooms, so it needs every panel to share both scales: facets
+whose right scales are their own cannot zoom along y, and `setViewport` takes
+a `yRight` range only when the right scale is shared (subplots take no y
+ranges). Brushes report y ranges in the left axis' values. `getPanels()`
+gives each panel's right axis with its `group`. Specs need no new version:
+readers from before refuse marks on the right axis in charts with facets or
+panels.
 
 ### Financial charts
 
@@ -1302,6 +1342,7 @@ createChart(element, {
     line(sales, { x: "week", y: "units" }), // one line per panel: that region's rows
     line(targets, { x: "week", y: "target", facet: "repeat" }), // whole, in every panel
     rule({ y: 100, label: "goal" }), // constants repeat
+    rule(launches, { x: "week", text: "product" }), // each launch in its region's panel
   ],
   facet: facet("region", { columns: 3 }), // in a spec: { field: "region", columns: 3 }
 });
@@ -1367,9 +1408,15 @@ between its series and on to the next panel. Stacked bars and areas stack within
 panel (areas of a series field on the x positions of that panel's rows), and each panel's heatmap cell shows the last of that panel's rows
 with a value there; a heatmap's colors follow one scale in every panel,
 over all its table's values. Histograms count, and box plots and violins
-summarize, each panel's rows apart. Annotations over a table (which read it
-whole, having no series) and custom marks over a table without series can
-only repeat for now, and charts with facets have no right axis. A chart too small for its
+summarize, each panel's rows apart. Annotations over a table draw each
+row's rule, region, or label in its own row's panel, as other marks do:
+labels hide or move off each other within their panel, a panel's scales
+fit its own annotations, and the chart's description lists each panel's
+after its name (twenty panels at most), as the keyboard does arriving in
+a panel; `facet: "repeat"` draws them all in every panel, and constants
+repeat. Custom marks over a table without series can only repeat for now.
+Marks on the right axis get one in every panel (see [A second y
+axis](#a-second-y-axis)). A chart too small for its
 panels (under 20 pixels a side) throws an error naming the grid; give it
 more room or fewer columns.
 
@@ -1392,9 +1439,9 @@ values mean the same thing. A scale's zoom is kept while its panels stay the
 same: when they change (a new facet value wraps the panels anew), it fits
 its data again.
 
-A category axis of bars, heatmaps, points, box plots, or violins that panels
-do not share holds only the categories of the rows its panels draw (for box
-plots and violins, of the rows with a value), in the order the shared axis would have them
+A category axis that panels do not share holds only the categories of the
+rows its panels draw (for box plots and violins, of the rows with a value),
+in the order the shared axis would have them
 (dictionary order, across the marks' tables in the chart's order), so a
 category's band index can differ from one panel to the next: tooltips,
 `toPixel`, `formatValue`, and selections read each panel's own (its axis'
@@ -1406,9 +1453,8 @@ stacks, split into panels first, never reach across them. A selection on such an
 its panels' categories change, since its band indices would then name other
 categories (the axis' `group` changes with them), and the keyboard carries
 its cursor to another scale by its place across the plot (into a heatmap,
-at its top left cell). Error bars and candlesticks on a category axis still
-need it shared, and charts with categories of their own cannot be synced or
-brushed along a y axis of categories.
+at its top left cell). Charts with categories of their own cannot be synced
+or brushed along a y axis of categories.
 
 ### Subplots
 
@@ -1474,9 +1520,8 @@ createChart(element, {
 Marks keep their place in the chart's list as their identity, so colors,
 the legend, and hidden series do not depend on the panel a mark draws in. Inspections report the `panel`
 id. Specs with `panels` need `"version": 2`, and panels with their own `x`
-`"version": 3`. Charts with panels have no right
-axis, error bars and candlesticks on a category y axis need it shared
-(`resolve: { y: "shared" }`), and zooming and brushing act on x only.
+`"version": 3`. A panel's `yRight` sets its right axis (see [A second y
+axis](#a-second-y-axis)), and zooming and brushing act on x only.
 
 ### Layout marks in panels
 
@@ -1579,7 +1624,8 @@ Glyphs drawn from several fields of a row, such as ranges from `low` to
 `high`, are not one series per field: give them `series: false`, and their
 fields only count toward the domains, as do fields other than one `x` and
 the `y` fields (both ends of horizontal spans, `x: ["start", "end"]`). Such
-marks have no series, and in charts with facets need `facet: "repeat"`.
+marks have no series, and in charts with facets need `facet: "repeat"`
+(annotations, which have none either, split by panel as other marks do).
 Custom marks are JavaScript only (a chart spec cannot hold a function), are
 found by their points rather than their shapes, and are meant for shapes in
 the thousands, not millions. They are how applications add marks: what the
@@ -1596,7 +1642,7 @@ is internal, and charts take only marks the mark functions make.
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `label`, `grid`, `ticks`, `format` (Intl options), `axis`; on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
-| `resolve` | `{ x?, y? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x or y scale (see Small multiples and Subplots). |
+| `resolve` | `{ x?, y?, yRight? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x, y, or right y scale (`yRight` as `y` unless given; see Small multiples, Subplots, and A second y axis). |
 | `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots). |
 | `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
@@ -1846,7 +1892,7 @@ each one's `key` and `label`, its `plot` (the area inside the axes), and its
 category axes its `categories` and `bandwidth`; panels whose axis has the same
 `group` share its scale, and `canSetViewport` says whether `setViewport`
 zooms it (not category axes, nor y axes of panels with y scales of their
-own). A panel a layout mark draws in (a pie's, and the one panel of a chart
+own on that side). A panel a layout mark draws in (a pie's, and the one panel of a chart
 of a layout mark, a map, or a 3D chart) has no axes, and `toPixel` and
 `fromPixel` give undefined there. Pixels are CSS pixels from the top left
 corner of `chart.root`, whatever the device pixel ratio.
@@ -1926,7 +1972,10 @@ row or column when none is in line (Home and End go to a row's ends, Page
 Up and Page Down to a column's). The description also says what color
 scales and size and shape keys show. Pies, trees, and other layout
 marks step through their items; in facet panels and subplots, Left and
-Right read a panel's items and Up and Down move between panels. Legend entries are toggle buttons, and a
+Right read a panel's items and Up and Down move between panels. Arriving in
+a panel, the cursor names it and reads the annotations that panel alone
+draws (its rows of annotations over a table, a subplot's own), which the
+description lists after each panel's name. Legend entries are toggle buttons, and a
 range navigator's window and edges are sliders (see Range navigator).
 
 ## Export

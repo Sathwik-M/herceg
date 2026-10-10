@@ -1075,6 +1075,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
             title: string,
             x: axis,
             y: axis,
+            yRight: axis,
           } satisfies ChecksOf<PanelSpec>);
           const id = panel.id as string;
           if (id === "" || id === "*") fail(`${at}.id`, 'a name other than "" and "*"', id);
@@ -1101,6 +1102,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
         properties(r as Record<string, unknown>, path, {
           x: oneOf("shared", "independent", "rows", "columns"),
           y: oneOf("shared", "independent", "rows", "columns"),
+          yRight: oneOf("shared", "independent", "rows", "columns"),
         } satisfies ChecksOf<ResolveSpec>);
       },
       facet: (f, path) => {

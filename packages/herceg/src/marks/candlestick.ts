@@ -209,6 +209,8 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
         ? [0, s.length]
         : visibleRange(s, x.domain[0], x.domain[1]);
       const width = this.#categorical ? Math.abs(x.bandwidth ?? 0) : this.#slots!.width(x);
+      // On a panel's own categories, chart bands are read through their places (see placeAt).
+      const places = s.places?.x;
       // Candles whose body reaches the plot.
       const reaches = (center: number) =>
         center >= plot.x - width / 2 && center <= plot.x + plot.width + width / 2;
@@ -220,7 +222,8 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
         const row = rowOf(s, k);
         const at = s.x[row]!;
         if ((this.#categorical && at < 0) || breaks?.hides(at)) continue;
-        if (reaches(x.map(at)) && candleOf(prices, row, log, candle)) count++;
+        if (reaches(x.map(places ? places.at(at) : at)) && candleOf(prices, row, log, candle))
+          count++;
       }
       const merged = count > columns;
       const capacity = merged ? columns : count;
@@ -286,7 +289,7 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
           const row = rowOf(s, k);
           const at = s.x[row]!;
           if ((this.#categorical && at < 0) || breaks?.hides(at)) continue;
-          const center = x.map(at);
+          const center = x.map(places ? places.at(at) : at);
           if (!reaches(center) || !candleOf(prices, row, log, candle)) continue;
           draw(center, width, candle[0]!, candle[1]!, candle[2]!, candle[3]!);
         }
@@ -345,6 +348,8 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
     const { x, plot } = frame;
     const prices = this.#prices();
     const candle = this.#candle;
+    // Places keep the chart's order, so candles compare by their chart bands.
+    const places = s.places?.x;
     // Per column: the rows of its first and last candle, and its low and high.
     const first = new Int32Array(columns).fill(-1);
     const last = new Int32Array(columns);
@@ -354,7 +359,7 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
       const row = rowOf(s, k);
       const at = s.x[row]!;
       if ((this.#categorical && at < 0) || x.breaks?.hides(at)) continue;
-      const offset = x.map(at) - plot.x;
+      const offset = x.map(places ? places.at(at) : at) - plot.x;
       // Only candles centered in the plot; the domain's end maps to its edge.
       if (!(offset >= 0 && offset <= plot.width)) continue;
       if (!candleOf(prices, row, log, candle)) continue;

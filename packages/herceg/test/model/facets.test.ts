@@ -131,20 +131,18 @@ describe("facets", () => {
     expect(() =>
       build({ marks: [line(sales, { x: "t", y: "units" })], facet: facet("units") }),
     ).toThrow(/Facet field "units" is number/);
-    const cells = table({ x: ["a"], y: ["b"], v: [1], region: ["N"] });
-    expect(() => build({ marks: [rule(cells, { y: "v" })], facet: panels })).toThrow(
-      /rule mark over a table cannot be split into panels yet/,
+    expect(() => build({ marks: [rule(other, { y: "v" })], facet: panels })).toThrow(
+      /rule mark's table has no field "region" to split into panels; give it facet: "repeat"/,
     );
-    expect(() =>
-      build({ marks: [line(sales, { x: "t", y: "units", axis: "right" })], facet: panels }),
-    ).toThrow(/cannot use the right axis yet/);
+    const cells = table({ x: ["a"], y: ["b"], v: [1], region: ["N"] });
     expect(() =>
       build({
         marks: [line(sales, { x: "t", y: "units" })],
         facet: facet("region", { columns: 0 }),
       }),
     ).toThrow(/at least 1/);
-    // Repeated, a rule is fine; heatmaps and histograms split.
+    // Rules split, or repeat; so do heatmaps and histograms.
+    expect(() => build({ marks: [rule(cells, { y: "v" })], facet: panels })).not.toThrow();
     const repeated = rule(cells, { y: "v", facet: "repeat" });
     expect(() => build({ marks: [repeated], facet: panels })).not.toThrow();
     const split = heatmap(cells, { x: "x", y: "y", value: "v" });
@@ -617,7 +615,7 @@ describe("facet panels with y scales of their own", () => {
     expect(model.yViewport.y).toEqual([0, 50]);
     model.update({ marks, facet: facet("region"), resolve: { y: "independent" } });
     expect(model.yViewport).toEqual({ y: null, yRight: null });
-    expect(() => model.setYViewport({ y: [0, 50], yRight: null })).toThrow("no one y viewport");
+    expect(() => model.setYViewport({ y: [0, 50], yRight: null })).toThrow("no one viewport");
   });
 
   it("refuse y zoom, and need spec version 2", () => {
@@ -933,14 +931,13 @@ describe("panel groups", () => {
       .splitter()
       .split(
         model.series().length ? [{ mark: marks[0] as LineMark, series: model.series() }] : [],
-        () => {},
         model,
         {},
         { zone: "UTC", locale: undefined, theme: model.theme },
       );
-    const byPanel = layout.groups("independent", split, 2, "x");
+    const byPanel = layout.groups("independent", split, 2, "x", undefined, "linear");
     expect(byPanel.keys).toEqual(['["a"]', '["b"]', '["c"]', '["d"]']);
-    const byRow = layout.groups("rows", split, 2, "y");
+    const byRow = layout.groups("rows", split, 2, "y", undefined, "linear");
     expect(byRow.keys).toEqual(['["a","b"]', '["c","d"]']);
     // Rows by panels: each row has its two panels, and no other pairs.
     const parts = layout.across(split, byRow.groupOf, byPanel.groupOf);

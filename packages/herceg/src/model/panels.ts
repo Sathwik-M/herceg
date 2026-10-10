@@ -7,25 +7,36 @@
 import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
 import type { Bands, Mark } from "../marks/mark.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
-import type { AxisSpec, GridSpec, PanelSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisSpec, GridSpec, PanelSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
+  type AnnotatedPanel,
   across,
+  annotations,
   checkBands,
+  checkFit,
   checkLayouts,
+  type DescribeAnnotation,
   groups,
   type LayoutOptions,
   lowestWithAxes,
+  onAxis,
+  type PanelAxis,
   PanelBands,
   type PanelChart,
-  type PanelCheck,
   type PanelGrid,
-  type PanelGroups,
   type PanelLayout,
+  type PanelRoom,
   type PanelSplit,
   type PanelSplitter,
+  type RowSpace,
   refuseAxes,
+  resolutionOf,
+  rowGap,
+  type ScaleGroups,
+  trackSizes,
+  yAxesOf,
 } from "./panel-layout.ts";
 
 /** The `panel` that draws a mark in every panel. */
@@ -117,8 +128,8 @@ export class Panels implements PanelLayout {
   /**
    * Rejects marks that name no panel or an unknown one, marks sharing a
    * panel with a layout mark, which has it to itself, and what panels with
-   * axes of their own cannot do yet: right axes, zooming or brushing along
-   * y, and a navigator.
+   * axes of their own cannot do yet: zooming or brushing along y, and a
+   * navigator.
    */
   check(marks: readonly Mark[], options: LayoutOptions, layouts: readonly LayoutMark[] = []): void {
     if (options.navigator) throw new Error("Charts with panels cannot have a navigator yet");
@@ -143,10 +154,10 @@ export class Panels implements PanelLayout {
       held.set(panel, type);
     }
     if (held.size === this.list.length) refuseAxes(layouts[0]!.spec.type, options);
-    for (const { id, x, y } of this.list)
-      if (held.has(id) && (x || y))
+    for (const { id, x, y, yRight } of this.list)
+      if (held.has(id) && (x || y || yRight))
         throw new Error(
-          `Panel "${id}" draws a ${held.get(id)} mark, which has no axes: it takes no x or y settings`,
+          `Panel "${id}" draws a ${held.get(id)} mark, which has no axes: it takes no x, y, or yRight settings`,
         );
     const [first] = held;
     for (const mark of marks) {
@@ -164,8 +175,6 @@ export class Panels implements PanelLayout {
         throw new Error(
           `A ${type} mark names the panel "${panel}", which a ${held.get(panel)} mark has to itself`,
         );
-      if (mark.spec.axis === "right")
-        throw new Error("Charts with panels cannot use the right axis yet");
     }
     const { zoom, brush } = options.interaction ?? {};
     if (
@@ -175,8 +184,16 @@ export class Panels implements PanelLayout {
       brush === "lasso"
     )
       throw new Error("Charts with panels can zoom and brush along x only");
-    this.#agree("x", marks, options.resolve?.x ?? "shared", options.x, held);
-    this.#agree("y", marks, options.resolve?.y ?? "independent", options.y, held);
+    const { resolve } = options;
+    this.#agree("x", marks, resolve?.x ?? "shared", options.x, held);
+    this.#agree("y", marks, resolve?.y ?? "independent", options.y, held);
+    this.#agree(
+      "yRight",
+      marks,
+      resolve?.yRight ?? resolve?.y ?? "independent",
+      options.yRight,
+      held,
+    );
     checkBands(marks, options, this.yDefault);
   }
 
@@ -187,14 +204,15 @@ export class Panels implements PanelLayout {
 
   /**
    * Panels sharing a scale must agree on how it is set up: as the chart's
-   * settings with their own, and for y with the type their marks give. An
-   * x scale takes the chart's type unless they set one, as it did before
-   * panels could have x scales of their own, and draws one title, which
-   * they must agree on too; y titles are each panel's own. Panels a layout
-   * mark has (`held`) have no axes, and so nothing to agree on.
+   * settings with their own, and for y with the type their marks on that
+   * side give. An x scale takes the chart's type unless they set one, as it
+   * did before panels could have x scales of their own, and draws one
+   * title, which they must agree on too; y titles are each panel's own.
+   * Panels a layout mark has (`held`) have no axes, and panels without
+   * marks on the right axis none there, and so nothing to agree on.
    */
   #agree(
-    axis: "x" | "y",
+    axis: PanelAxis,
     marks: readonly Mark[],
     resolution: ScaleResolution,
     chart: AxisSpec | undefined,
@@ -205,19 +223,22 @@ export class Panels implements PanelLayout {
     const groupOf = (i: number) =>
       resolution === "rows" ? Math.floor(i / columns) : resolution === "columns" ? i % columns : 0;
     const first = new Map<number, string>();
+    const x = axis === "x";
     this.list.forEach(({ id }, i) => {
       if (held.has(id)) return;
       const spec = this.panelAxis(axis, i, chart);
-      const drawn = marks.filter(({ spec }) => spec.panel === id || spec.panel === EVERY_PANEL);
-      const x = axis === "x";
-      const type = spec?.type ?? (x ? undefined : typeOf(drawn, axis));
+      const inPanel = marks.filter(({ spec }) => spec.panel === id || spec.panel === EVERY_PANEL);
+      // Panels without the axis (as the chart draws them) have nothing to agree on.
+      if (!x && !yAxesOf(inPanel)[axis === "y" ? "left" : "right"]) return;
+      const drawn = inPanel.filter((mark) => onAxis(mark, axis));
+      const type = spec?.type ?? (x ? undefined : typeOf(drawn, "y"));
       const { domain, zero, nice, ticks, format } = spec ?? {};
       const policy = JSON.stringify([type, domain, zero, nice, ticks, format, x && spec?.label]);
       const seen = first.get(groupOf(i));
       if (seen === undefined) first.set(groupOf(i), policy);
       else if (seen !== policy)
         throw new Error(
-          `Panel "${id}" shares ${x ? "an x" : "a y"} scale with others but differs in its type, domain, zero, nice, ticks, ${x ? "format, or label" : "or format"}`,
+          `Panel "${id}" shares ${x ? "an x" : axis === "y" ? "a y" : "a right y"} scale with others but differs in its type, domain, zero, nice, ticks, ${x ? "format, or label" : "or format"}`,
         );
     });
   }
@@ -225,19 +246,19 @@ export class Panels implements PanelLayout {
   /** A chart's splitter, which keeps its panels' categories (see PanelBands). */
   splitter(): PanelSplitter {
     const placed = new PanelBands();
-    return { split: (base, check, chart, bands) => this.#split(base, check, chart, bands, placed) };
+    return { split: (base, chart, bands) => this.#split(base, chart, bands, placed) };
   }
 
   /** Every mark in the panels it names, with all of its series there; layout marks alone. */
   #split(
     base: readonly MarkSeries[],
-    check: PanelCheck,
     chart: PanelChart,
     bands: Bands,
     placed: PanelBands,
   ): PanelSplit {
     const columns = Math.min(this.columns, this.list.length);
-    check({ rows: Math.ceil(this.list.length / columns), columns }, this.list.length);
+    const { length } = this.list;
+    checkFit({ rows: Math.ceil(length / columns), columns }, length, chart, this.remedy);
     const members = this.list.map(({ id }) =>
       base.map(({ mark }) => mark.spec.panel === id || mark.spec.panel === EVERY_PANEL),
     );
@@ -293,42 +314,55 @@ export class Panels implements PanelLayout {
     return [{ text, x: plot.x, y: plot.y - grid.header / 2, anchor: "start", angle: 0 }];
   }
 
-  /**
-   * A group's axis is its first panel's, which the others agree with (see
-   * `check`); a category axis is one in every panel.
-   */
-  groupAxis(
-    axis: "x" | "y",
-    index: number,
-    drawn: readonly MarkSeries[],
-    chart: AxisSpec | undefined,
-    chartType: AxisType,
-  ): { type: AxisType; spec: AxisSpec | undefined } {
-    const spec = this.panelAxis(axis, index, chart);
-    const type =
-      chartType === "band"
-        ? chartType
-        : (spec?.type ??
-          typeOf(
-            drawn.map(({ mark }) => mark),
-            axis,
-          ));
-    return { type, spec };
-  }
-
-  /** The chart's `x` or `y`, with the panel's own settings in place of its. */
-  panelAxis(axis: "x" | "y", index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
+  /** The chart's `x`, `y`, or `yRight`, with the panel's own settings in place of its. */
+  panelAxis(axis: PanelAxis, index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
     const own = this.list[index]?.[axis];
     return own ? { ...chart, ...own } : chart;
   }
 
+  rowGap(grid: PanelGrid, panels: number, space: RowSpace): number {
+    return rowGap(grid, panels, space);
+  }
+
+  tracks(
+    free: number,
+    count: number,
+    weights: readonly number[] | undefined,
+    panels: number,
+    columns: number,
+    room: PanelRoom,
+  ): number[] {
+    return trackSizes(free, count, weights, panels, columns, room, this.remedy);
+  }
+
+  resolution(axis: PanelAxis, resolve: ResolveSpec | undefined): ScaleResolution {
+    return resolutionOf(axis, resolve, this.yDefault);
+  }
+
+  /**
+   * A group's axis is its first panel's, which the others agree with (see
+   * `check`), of the type its marks give unless that panel sets one; a
+   * category axis is one in every panel.
+   */
   groups(
     resolution: ScaleResolution,
     split: PanelSplit,
     columns: number,
-    axis: "x" | "y",
-  ): PanelGroups {
-    return groups(resolution, split, columns, axis);
+    axis: PanelAxis,
+    chart: AxisSpec | undefined,
+    chartType: AxisType,
+  ): ScaleGroups {
+    const found = groups(resolution, split, columns, axis);
+    const channel = axis === "x" ? "x" : "y";
+    const axes = found.drawn.map((drawn, g) => {
+      const spec = this.panelAxis(axis, found.first[g]!, chart);
+      const marks = drawn.map(({ mark }) => mark);
+      return {
+        type: chartType === "band" ? chartType : (spec?.type ?? typeOf(marks, channel)),
+        spec,
+      };
+    });
+    return { ...found, axes };
   }
 
   across(
@@ -337,6 +371,15 @@ export class Panels implements PanelLayout {
     by: readonly number[],
   ): [number, MarkSeries[]][][] {
     return across(split, groupOf, by);
+  }
+
+  annotations(
+    views: readonly AnnotatedPanel[],
+    marks: readonly Mark[],
+    describe: DescribeAnnotation,
+    panel?: string,
+  ): string[] {
+    return annotations(views, marks, describe, true, panel);
   }
 
   describe(labels: readonly string[], max: number): string {

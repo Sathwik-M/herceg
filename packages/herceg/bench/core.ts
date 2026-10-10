@@ -11,10 +11,14 @@ import { estimateText } from "../src/layout/text.ts";
 import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
+import { line } from "../src/marks/line.ts";
 import { pie } from "../src/marks/pie.ts";
 import { PositionStack } from "../src/marks/position-stack.ts";
+import { region } from "../src/marks/region.ts";
+import { rule } from "../src/marks/rule.ts";
 import { SplitRows } from "../src/marks/split.ts";
 import { RowStack } from "../src/marks/stack.ts";
+import { text } from "../src/marks/text.ts";
 import { treemap } from "../src/marks/treemap.ts";
 import { UnionStack } from "../src/marks/union-stack.ts";
 import { facet } from "../src/model/facet.ts";
@@ -335,3 +339,56 @@ measure(
   },
   { warmup: 2, samples: 10 },
 );
+
+// Annotations over a table split by facets: a rule, a region, and a label
+// per row, 100,000 rows over 50 regions (2,000 of each to a panel), with
+// labels left out where they would cover others. Each panel reads only its
+// own rows.
+const events = table({
+  region: Array.from({ length: SALES_ROWS }, (_, i) => `region ${i % PANELS}`),
+  t: Float64Array.from({ length: SALES_ROWS }, (_, i) => Math.floor(i / PANELS)),
+  v: Float64Array.from({ length: SALES_ROWS }, (_, i) => (i * 13) % 100),
+  end: Float64Array.from({ length: SALES_ROWS }, (_, i) => Math.floor(i / PANELS) + 0.5),
+  note: Array.from({ length: SALES_ROWS }, (_, i) => `event ${i % 97}`),
+});
+const annotated = () => {
+  const model = new ChartModel({
+    marks: [
+      rule(events, { x: "t" }),
+      region(events, { x1: "t", x2: "end" }),
+      text(events, { x: "t", y: "v", text: "note", overlap: "hide" }),
+    ],
+    facet: facet("region", { columns: 10 }),
+  });
+  model.setSize(2000, 1200, 1);
+  return model;
+};
+measure(
+  "facets: first scene of 50 panels of annotations over 100k rows",
+  () => annotated().scene(estimateText),
+  { warmup: 2, samples: 10 },
+);
+const notes = annotated();
+notes.scene(estimateText);
+measure("facets: redraw 50 panels of annotations over 100k rows", () => notes.scene(estimateText), {
+  warmup: 3,
+  samples: 20,
+});
+
+// The same rows as two lines per panel, both on the left axis, or one on
+// each with the right axis' scale shared by every panel or each panel's own.
+for (const side of ["left only", "shared", "independent"] as const) {
+  const right = side !== "left only";
+  const model = new ChartModel({
+    marks: [
+      line(events, { x: "t", y: "v" }),
+      line(events, { x: "t", y: "end", ...(right && { axis: "right" as const }) }),
+    ],
+    facet: facet("region", { columns: 10 }),
+    ...(right && { resolve: { yRight: side } }),
+  });
+  model.setSize(2000, 1200, 1);
+  measure(`facets: 50 panels of two lines over 100k rows, ${side}`, () =>
+    model.scene(estimateText),
+  );
+}

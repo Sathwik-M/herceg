@@ -3,7 +3,15 @@
 // through these types; their code loads only with a facet or panels.
 
 import type { LayoutMark } from "../marks/layout-mark.ts";
-import type { BandContext, BandList, Bands, ChartMark, Mark } from "../marks/mark.ts";
+import {
+  type BandContext,
+  type BandList,
+  type Bands,
+  type ChartMark,
+  type Mark,
+  type RowParts,
+  usesY,
+} from "../marks/mark.ts";
 import { type BandPlaces, rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
 import type { AxisSpec, ChartSpec, ResolveSpec, ScaleResolution, XAxisSpec } from "../spec/spec.ts";
@@ -67,20 +75,109 @@ export interface PanelItem {
 }
 
 /**
- * What preparing panels' series reads of the chart: the series its legend
- * hid, which stacks count as zero, its `resolve`, and its marks, of which
- * layout marks have panels of their own.
+ * What preparing panels' series reads of the chart: its size, which the
+ * panels must fit, the series its legend hid, which stacks count as zero,
+ * its `resolve`, and its marks, of which layout marks have panels of their own.
  */
-export interface PanelChart {
+export interface PanelChart extends PanelRoom {
   readonly hidden: ReadonlySet<string>;
   readonly config: Pick<ChartSpec, "resolve"> & { readonly marks: readonly ChartMark[] };
 }
 
-/** Sees a split's rows and columns of panels, and throws if the chart cannot draw them. */
-export type PanelCheck = (shape: { rows: number; columns: number }, panels: number) => void;
+/** A chart's size in CSS pixels, which its panels must fit. */
+export interface PanelRoom {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** What goes between rows of panels besides y labels, as the chart lays out its x axes. */
+export interface RowSpace {
+  /** Whether x labels go under every panel: x is resolved per panel or per row. */
+  xBetween: boolean;
+  /** Whether panels have x scales of their own, whose titles go under their own rows. */
+  ownX: boolean;
+  /** Whether any panel shows x labels. */
+  showX: boolean;
+  /** The room under a plot before the x labels' line of text. */
+  xLabels: number;
+  lineHeight: number;
+  /** An x title's room. */
+  xTitle: number;
+}
+
+/**
+ * The room between rows of `panels` placed as `grid` says. A wrapped
+ * facet's panels each have a header with their value, and rows leave room
+ * below for the x labels of panels above an empty cell. A grid of facets
+ * has a column per value of its column field, headed once above the top
+ * row, and a row per value of its row field, headed once beside the last
+ * column. Rows leave room between them for the y labels at their ends, and
+ * for x labels and titles between them: an x scale's own title, or the
+ * shared one above a layout mark's panel.
+ */
+export function rowGap(grid: PanelGrid, panels: number, space: RowSpace): number {
+  const { rows, columns, header, between } = grid;
+  const { xBetween, ownX, showX, xLabels, lineHeight, xTitle } = space;
+  if (rows <= 1) return 0;
+  const title = ownX || between ? xTitle : 0;
+  if ((xBetween || between) && showX)
+    return xLabels + lineHeight + title + (header ? 8 : Math.ceil(lineHeight / 2) + 4);
+  if (!header) return lineHeight + 10;
+  const aboveEmpty = showX && panels % columns !== 0;
+  return (aboveEmpty ? xLabels + lineHeight + title : Math.ceil(lineHeight / 2)) + 8;
+}
+
+/** Smallest plot side, in pixels, of a panel among several. */
+const MIN_PANEL = 20;
+
+/** Refuses `panels` in rows of `columns` that do not fit `room`, saying what to do: `remedy`. */
+function tooSmall(panels: number, columns: number, room: PanelRoom, remedy: string): RangeError {
+  const rows = Math.ceil(panels / columns);
+  return new RangeError(
+    `${panels} panels in ${rows} rows of ${columns} do not fit a ${room.width}×${room.height} chart; make it larger or ${remedy}`,
+  );
+}
+
+/**
+ * Throws when `panels` in `rows` and `columns` could never fit `room`, so
+ * that panels are refused before they are listed.
+ */
+export function checkFit(
+  { rows, columns }: { rows: number; columns: number },
+  panels: number,
+  room: PanelRoom,
+  remedy: string,
+): void {
+  if (rows > room.height / MIN_PANEL || columns > room.width / MIN_PANEL)
+    throw tooSmall(panels, columns, room, remedy);
+}
+
+/**
+ * `free` pixels shared by `count` rows or columns of `panels` in rows of
+ * `columns`, equally or by `weights` (scaled to the largest first, so huge
+ * ones cannot overflow); throws when one of several panels would be less
+ * than MIN_PANEL pixels a side.
+ */
+export function trackSizes(
+  free: number,
+  count: number,
+  weights: readonly number[] | undefined,
+  panels: number,
+  columns: number,
+  room: PanelRoom,
+  remedy: string,
+): number[] {
+  const largest = weights ? Math.max(...weights) : 1;
+  const share = (k: number) => (weights ? weights[k]! / largest : 1);
+  let total = 0;
+  for (let k = 0; k < count; k++) total += share(k);
+  const sizes = Array.from({ length: count }, (_, k) => (free * share(k)) / total);
+  if (panels > 1 && Math.min(...sizes) < MIN_PANEL) throw tooSmall(panels, columns, room, remedy);
+  return sizes;
+}
 
 /** The chart options a layout checks; the x axis as panels read it, breaks aside. */
-export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y"> & {
+export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y" | "yRight"> & {
   x?: (AxisSpec & Pick<XAxisSpec, "seams">) | undefined;
   /** Layouts refuse a navigator, which the model then need not check. */
   navigator?: object | boolean | undefined;
@@ -88,13 +185,13 @@ export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y"> & {
 
 /**
  * Splits a chart's series into panels, keeping what it can from one scene
- * to the next; `bands` are the chart's band axes' bands, in order, and
- * `context` what labels them (and the zone of calendar bins).
+ * to the next, and refuses panels the chart has no room for; `bands` are
+ * the chart's band axes' bands, in order, and `context` what labels them
+ * (and the zone of calendar bins).
  */
 export interface PanelSplitter {
   split(
     base: readonly MarkSeries[],
-    check: PanelCheck,
     chart: PanelChart,
     bands: Bands,
     context: BandContext,
@@ -109,8 +206,13 @@ export interface PanelLayout {
   /** How panels share y when the chart's `resolve` does not say. */
   readonly yDefault: ScaleResolution;
   splitter(): PanelSplitter;
+  /** How the panels share `axis`' scale under the chart's `resolve` (see `resolutionOf`). */
+  resolution(axis: PanelAxis, resolve: ResolveSpec | undefined): ScaleResolution;
   grid(split: PanelSplit, lineHeight: number): PanelGrid;
-  /** The headers panel `index`, named by `values`, at `plot`, carries. */
+  /**
+   * The headers panel `index`, named by `values`, at `plot`, carries;
+   * `aside` is the room right of it its right axis' labels take.
+   */
   headers(
     index: number,
     values: readonly string[],
@@ -119,28 +221,36 @@ export interface PanelLayout {
     plot: Rect,
     grid: PanelGrid,
     fit: (text: string, room: number) => string,
+    aside: number,
   ): SceneText[];
   /** What to do when the panels do not fit, for the error saying so. */
   readonly remedy: string;
-  /**
-   * The `axis` of a group of panels sharing a scale, whose first is panel
-   * `index` and which draws `drawn`: its settings over the chart's, and its type.
-   */
-  groupAxis(
-    axis: "x" | "y",
-    index: number,
-    drawn: readonly MarkSeries[],
-    chart: AxisSpec | undefined,
-    chartType: AxisType,
-  ): { type: AxisType; spec: AxisSpec | undefined };
+  /** See `rowGap`. */
+  rowGap(grid: PanelGrid, panels: number, space: RowSpace): number;
+  /** See `trackSizes`: the sizes of a grid's rows or columns, refusing panels too small. */
+  tracks(
+    free: number,
+    count: number,
+    weights: readonly number[] | undefined,
+    panels: number,
+    columns: number,
+    room: PanelRoom,
+  ): number[];
   /** Panel `index`'s `axis` settings: the chart's, with the panel's own. */
-  panelAxis(axis: "x" | "y", index: number, chart: AxisSpec | undefined): AxisSpec | undefined;
+  panelAxis(axis: PanelAxis, index: number, chart: AxisSpec | undefined): AxisSpec | undefined;
+  /**
+   * The groups of panels sharing `axis`' scale (see `groups`), each with its
+   * axis: the chart's settings `chart` with its first panel's own, and its
+   * type, the chart's `chartType` or (subplots) its own marks'.
+   */
   groups(
     resolution: ScaleResolution,
     split: PanelSplit,
     columns: number,
-    axis: "x" | "y",
-  ): PanelGroups;
+    axis: PanelAxis,
+    chart: AxisSpec | undefined,
+    chartType: AxisType,
+  ): ScaleGroups;
   /** See `across`. */
   across(
     split: PanelSplit,
@@ -149,6 +259,102 @@ export interface PanelLayout {
   ): [number, MarkSeries[]][][];
   /** A sentence naming the panels, up to `max` of their labels. */
   describe(labels: readonly string[], max: number): string;
+  /** See `annotations`. */
+  annotations(
+    views: readonly AnnotatedPanel[],
+    marks: readonly Mark[],
+    describe: DescribeAnnotation,
+    panel?: string,
+  ): string[];
+}
+
+/** A panel of the last scene as its annotations' summaries read it: its marks there. */
+export interface AnnotatedPanel {
+  key: string;
+  label: string;
+  inspector: { readonly marks: readonly MarkSeries[] };
+}
+
+/** A mark's sentences, as panel `panel` formats values (the first drawing it without), of `rows`. */
+export type DescribeAnnotation = (mark: Mark, panel?: string, rows?: RowParts) => string | string[];
+
+/** Panels' own annotations described, at most this many panels' in a chart's summary. */
+const ANNOTATED = 20;
+
+/**
+ * Sentences describing annotations (marks with `describe`) in a chart's
+ * panels. With `panel`, of what that panel alone draws: its rows of
+ * annotations that facets split (`MarkSeries.rows`), and in subplots the
+ * annotations naming it. Without, every annotation: what every panel draws
+ * once, then what panels draw alone after their names, up to ANNOTATED panels.
+ */
+export function annotations(
+  views: readonly AnnotatedPanel[],
+  marks: readonly Mark[],
+  describe: DescribeAnnotation,
+  subplots: boolean,
+  panel?: string,
+): string[] {
+  const alone = new Set<Mark>();
+  const own = ({ key, inspector }: AnnotatedPanel) =>
+    inspector.marks.flatMap(({ mark, rows }) => {
+      if (!mark.describe || !(rows || (subplots && mark.spec.panel === key))) return [];
+      alone.add(mark);
+      return describe(mark, key, rows);
+    });
+  if (panel !== undefined) {
+    const view = views.find(({ key }) => key === panel);
+    return view ? own(view) : [];
+  }
+  const named = views.flatMap((view) => {
+    const sentences = own(view);
+    return sentences.length > 0 ? [`${view.label}: ${sentences.join(" ")}`] : [];
+  });
+  if (named.length > ANNOTATED)
+    named.splice(ANNOTATED, Infinity, `Annotations in ${named.length - ANNOTATED} more panels.`);
+  return [...marks.flatMap((mark) => (alone.has(mark) ? [] : describe(mark))), ...named];
+}
+
+/** A panel's axes: x, and the left and right y. */
+export type PanelAxis = "x" | "y" | "yRight";
+
+/**
+ * How panels share `axis`' scale under `resolve`: x shared by default, y as
+ * the layout's `yDefault` says, and the right y as the left.
+ */
+export function resolutionOf(
+  axis: PanelAxis,
+  resolve: ResolveSpec | undefined,
+  yDefault: ScaleResolution,
+): ScaleResolution {
+  if (axis === "x") return resolve?.x ?? "shared";
+  const y = resolve?.y ?? yDefault;
+  return axis === "y" ? y : (resolve?.yRight ?? y);
+}
+
+/**
+ * The y axes a panel drawing `marks` has, as the model gives them: the
+ * right one when a mark with `axis: "right"` places values along y, and the
+ * left one unless every mark that does is on the right.
+ */
+export function yAxesOf(marks: readonly Mark[]): { left: boolean; right: boolean } {
+  let [left, right] = [false, false];
+  for (const mark of marks) {
+    if (!usesY(mark)) continue;
+    if (mark.spec.axis === "right") right = true;
+    else left = true;
+  }
+  return { left: left || !right, right };
+}
+
+/** Whether a mark is on the side of y axis `axis`: every mark is along x. */
+export function onAxis(mark: Mark, axis: PanelAxis): boolean {
+  return axis === "x" || (mark.spec.axis === "right") === (axis === "yRight");
+}
+
+/** Groups of panels sharing a scale, with each group's axis: its settings and type. */
+export interface ScaleGroups extends PanelGroups {
+  axes: { type: AxisType; spec: AxisSpec | undefined }[];
 }
 
 /** Panels sharing a scale: each panel's group, and each group's marks and name. */
@@ -171,23 +377,33 @@ export interface PanelGroups {
 /**
  * The groups of a split's panels that share a scale along `axis` under
  * `resolution` (each panel alone, or the panels of a row or of a column, in
- * rows of `columns`): each panel's group, and what each group's panels draw.
+ * rows of `columns`): each panel's group, and what each group's panels draw
+ * on that axis' side. A right axis' group takes its settings from its first
+ * panel drawing a mark on it.
  */
 export function groups(
   resolution: ScaleResolution,
   split: PanelSplit,
   columns: number,
-  axis: "x" | "y",
+  axis: PanelAxis,
 ): PanelGroups {
   const groupOf = groupsOf(resolution, split.panels.length, columns);
-  const drawn = drawnBy(split, groupOf) as MarkSeries[][];
+  const drawn = drawnBy(split, groupOf, axis) as MarkSeries[][];
   const members: (string | number)[][] = drawn.map(() => []);
   const first = drawn.map(() => -1);
+  const right = axis === "yRight";
   groupOf.forEach((g, i) => {
     members[g]!.push(split.keys[i]!);
-    if (first[g]! < 0 && !split.items?.[i]) first[g] = i;
+    if (first[g]! >= 0 || split.items?.[i]) return;
+    // A y group's settings are its first panel's that has the axis.
+    if (axis !== "x") {
+      const drawn = split.panels[i]!.flatMap(({ mark }, m) => (drawsAt(split, i, m) ? mark : []));
+      if (!yAxesOf(drawn)[right ? "right" : "left"]) return;
+    }
+    first[g] = i;
   });
-  const lists = split.bands?.[axis];
+  // Categories are on the left axis only.
+  const lists = right ? undefined : split.bands?.[axis];
   return {
     groupOf,
     first: first.map((at, g) => (at < 0 ? groupOf.indexOf(g) : at)),
@@ -247,24 +463,35 @@ export function across(
 /**
  * What the panels of each group draw, for panels grouped by `groupOf`: the
  * marks drawn in any of them, in the chart's order, with their series
- * there; undefined for a group without panels.
+ * there (and annotations' rows, each panel's a part); undefined for a group
+ * without panels.
  */
-function drawnBy(split: PanelSplit, groupOf: readonly number[]): (MarkSeries[] | undefined)[] {
-  const drawn: (MarkSeries | undefined)[][] = [];
+function drawnBy(
+  split: PanelSplit,
+  groupOf: readonly number[],
+  axis: PanelAxis = "x",
+): (MarkSeries[] | undefined)[] {
+  const drawn: ((MarkSeries & { rows?: Uint32Array[] }) | undefined)[][] = [];
   split.panels.forEach((marks, i) => {
     const at = groupOf[i]!;
     drawn[at] ??= marks.map(() => undefined);
     const group = drawn[at];
-    marks.forEach(({ mark, series }, m) => {
-      if (split.members && !split.members[i]![m]) return;
-      group[m] ??= { mark, series: [] };
+    marks.forEach(({ mark, series, rows }, m) => {
+      if (!drawsAt(split, i, m) || !onAxis(mark, axis)) return;
+      group[m] ??= rows ? { mark, series: [], rows: [] } : { mark, series: [] };
       const entry = group[m];
       // A mark with no rows in a panel adds nothing to its group, not even
       // the zero a bar stands on; a mark repeated in every panel, once.
       for (const s of series) if (s.length > 0 && !entry.series.includes(s)) entry.series.push(s);
+      if (rows) entry.rows?.push(...rows);
     });
   });
   return Array.from(drawn, (group) => group?.filter((entry) => entry !== undefined));
+}
+
+/** Whether panel `i` of a split draws its mark `m` (subplots draw only the marks naming them). */
+function drawsAt(split: PanelSplit, i: number, m: number): boolean {
+  return !split.members || split.members[i]![m]!;
 }
 
 /**
@@ -312,15 +539,12 @@ export function refuseAxes(type: string, options: LayoutOptions): void {
     );
 }
 
-/** Marks that read their categorical positions through panels' places. */
-const PLACED = new Set(["bar", "heatmap", "point", "boxplot", "violin"]);
-
 /**
- * Refuses what panels with categories of their own cannot draw yet: with
- * `resolve` other than "shared" on a category axis, marks other than bars,
- * heatmaps, points, box plots, and violins banding it (error bars and
- * candlesticks), synced charts (a band index means another category in
- * each panel), and brushes along a y axis of such categories.
+ * Refuses what panels with categories of their own (`resolve` other than
+ * "shared" on a category axis) cannot do yet: sync (a band index means
+ * another category in each panel), and brush along a y axis of such
+ * categories. Every mark banding an axis reads its positions through the
+ * panels' places (see PanelBands).
  */
 export function checkBands(
   marks: readonly Mark[],
@@ -329,13 +553,8 @@ export function checkBands(
 ): void {
   for (const axis of ["x", "y"] as const) {
     const resolution = options.resolve?.[axis] ?? (axis === "x" ? "shared" : yDefault);
-    const banding = marks.filter((mark) => mark.channelKind(axis) === "category");
-    if (resolution === "shared" || banding.length === 0) continue;
-    const other = banding.find((mark) => !PLACED.has(mark.spec.type));
-    if (other)
-      throw new Error(
-        `A ${other.spec.type} mark's categories cannot be resolved per panel yet; give the chart resolve: { ${axis}: "shared" }`,
-      );
+    if (resolution === "shared" || !marks.some((mark) => mark.channelKind(axis) === "category"))
+      continue;
     const { brush, sync } = options.interaction ?? {};
     if (sync)
       throw new Error(
@@ -419,15 +638,16 @@ export class PanelBands {
       const pair = axes.map(({ groupOf }) => groupOf[p]).join();
       const copied = copies.get(pair) ?? new Map<Series, Series>();
       copies.set(pair, copied);
-      return marks.map(({ mark, series }) => {
+      return marks.map((entry) => {
+        const { mark, series } = entry;
         // Only the axes a mark bands: its other positions are values.
         const own = axes.flatMap(({ axis }, i) =>
           at[i] && mark.channelKind(axis) === "category" ? [[axis, at[i]] as const] : [],
         );
-        if (own.length === 0) return { mark, series };
+        if (own.length === 0) return entry;
         const places = Object.fromEntries(own);
         return {
-          mark,
+          ...entry,
           series: series.map((s) => {
             let copy = copied.get(s);
             if (!copy) {

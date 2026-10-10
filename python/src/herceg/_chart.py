@@ -6,7 +6,7 @@ import datetime as _dt
 import math
 import numbers
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 
@@ -451,14 +451,16 @@ class Camera:
 class Panel:
     """One of a chart's ``panels``: marks with ``panel=id`` draw in it.
 
-    ``x`` and ``y`` set the panel's own axes over the chart's ``x`` and ``y``;
-    panels sharing an x scale take the first one's.
+    ``x``, ``y``, and ``y_right`` set the panel's own axes over the chart's
+    ``x``, ``y``, and ``y_right`` (the right axis of its marks with
+    ``axis="right"``); panels sharing an x scale take the first one's.
     """
 
     id: str
     title: str | None = None
     y: Axis | dict[str, Any] | None = None
     x: Axis | dict[str, Any] | None = None
+    y_right: Axis | dict[str, Any] | None = None
 
     def _spec(self) -> dict[str, Any]:
         spec = {
@@ -466,6 +468,7 @@ class Panel:
             "title": self.title,
             "x": _axis(self.x, "a panel's x"),
             "y": _axis(self.y, "a panel's y"),
+            "yRight": _axis(self.y_right, "a panel's y_right"),
         }
         return {key: value for key, value in spec.items() if value is not None}
 
@@ -484,6 +487,7 @@ class _SharedOptions(TypedDict, total=False):
     animation: bool | float | Animation | None
     resolve_x: Literal["shared", "independent", "rows", "columns"] | None
     resolve_y: Literal["shared", "independent", "rows", "columns"] | None
+    resolve_y_right: Literal["shared", "independent", "rows", "columns"] | None
     renderer: Literal["auto", "svg", "canvas"] | None
     theme: ThemeName | dict[str, Any] | None
     locale: str | None
@@ -563,6 +567,7 @@ class Chart:
         facet_col: str | None = None,
         resolve_x: Literal["shared", "independent", "rows", "columns"] | None = None,
         resolve_y: Literal["shared", "independent", "rows", "columns"] | None = None,
+        resolve_y_right: Literal["shared", "independent", "rows", "columns"] | None = None,
         panels: Sequence[Panel | str] | None = None,
         panel_columns: int | None = None,
         panel_row_heights: Sequence[float] | None = None,
@@ -628,7 +633,11 @@ class Chart:
             raise ValueError("charts with panels can zoom and brush along x only")
         if _navigator(navigator) is not None and (panel_list or facet or facet_row or facet_col):
             raise ValueError("charts with facets or panels cannot have a navigator yet")
-        for name, resolution in (("resolve_x", resolve_x), ("resolve_y", resolve_y)):
+        for name, resolution in (
+            ("resolve_x", resolve_x),
+            ("resolve_y", resolve_y),
+            ("resolve_y_right", resolve_y_right),
+        ):
             if resolution not in (None, "shared", "independent", "rows", "columns"):
                 raise ValueError(
                     f"{name} must be 'shared', 'independent', 'rows', or 'columns', "
@@ -638,8 +647,7 @@ class Chart:
                 facet is not None or facet_row is not None or facet_col is not None or panel_list
             ):
                 raise ValueError(f"{name} needs facet, facet_row, facet_col, or panels")
-        if resolve_y not in (None, "shared") and zoom in ("y", "xy"):
-            raise ValueError("charts whose panels have y scales of their own cannot zoom along y")
+        check_y_zoom({"zoom": zoom, "resolve_y": resolve_y, "resolve_y_right": None}, right=False)
         _animation(animation)
         if facet_row is not None and facet_row == facet_col:
             raise ValueError(f"facet_row and facet_col must differ, not both {facet_row!r}")
@@ -684,6 +692,7 @@ class Chart:
             "tooltip": tooltip,
             "resolve_x": resolve_x,
             "resolve_y": resolve_y,
+            "resolve_y_right": resolve_y_right,
             "zoom": zoom,
             "brush": brush,
             "sync": sync,
@@ -2698,8 +2707,8 @@ class Chart:
             raise ValueError(f"a {kind} has its chart to itself; draw other marks in another chart")
         if spec.get("axis") not in (None, "left", "right"):
             raise ValueError(f"axis must be 'left' or 'right', not {spec['axis']!r}")
-        if self._facets and spec.get("axis") == "right":
-            raise ValueError("charts with facets cannot use the right axis yet")
+        if self._facets and on_right_axis(spec):
+            check_y_zoom(self._settings, right=True)
         if self._panels:
             panel = spec.get("panel")
             if panel is None:
@@ -2712,19 +2721,11 @@ class Chart:
                     f"a {spec['type']} mark names the panel {panel!r}, "
                     "which the chart does not have"
                 )
-            if spec.get("axis") == "right":
-                raise ValueError("charts with panels cannot use the right axis yet")
         elif spec.get("panel") is not None:
             raise ValueError("panel= needs a chart with panels")
         if self._facets and table is not None and spec.get("facet") is None:
             for field in self._facets:
                 self._require(table, field, ("category",), "facet")
-            kind = spec["type"]
-            if kind in ("rule", "region", "text"):
-                raise ValueError(
-                    f"{kind} marks over a table cannot be split into panels yet; "
-                    "pass repeat=True to draw them whole in every panel"
-                )
         self._check_categories(spec, table)
         self._marks.append((spec, table))
         return self
@@ -2768,17 +2769,16 @@ class Chart:
                     f"a {mark['type']} mark names the panel {panel!r}, which a {kind} has to itself"
                 )
         own = next((p for p in self._panels if p.id == panel), None)
-        if own is not None and (own.x is not None or own.y is not None):
+        if own is not None and (own.x is not None or own.y is not None or own.y_right is not None):
             raise ValueError(
-                f"panel {panel!r} draws a {kind}, which has no axes: it takes no x or y settings"
+                f"panel {panel!r} draws a {kind}, which has no axes: "
+                "it takes no x, y, or y_right settings"
             )
 
     def _check_categories(self, spec: dict[str, Any], table: int | None) -> None:
         """Refuses, as the browser would, what panels with categories of their own
         (``resolve_x`` or ``resolve_y`` other than ``"shared"`` on a category axis)
-        cannot draw yet: marks other than bars, heatmaps, points, box plots, and
-        violins on such an axis (error bars and candlesticks), synced charts, and
-        brushes along a y axis of such categories."""
+        cannot do yet: sync, and brush along a y axis of such categories."""
         if table is None or not (self._facets or self._panels):
             return
         kind = spec["type"]
@@ -2791,11 +2791,6 @@ class Chart:
             )
             if resolution == "shared" or not banded:
                 continue
-            if kind not in ("bar", "heatmap", "point", "boxplot", "violin"):
-                raise ValueError(
-                    f"a {kind} mark's categories cannot be resolved per panel yet; "
-                    f"pass resolve_{axis}='shared'"
-                )
             if self._settings["sync"] is not None:
                 raise ValueError(
                     f"charts whose panels have categories of their own (resolve_{axis}) "
@@ -2834,9 +2829,36 @@ _NODE_FIELDS = ("node", "group", "size")
 #: which decide the columns sent.
 OPTIONS = (
     *("title", "description", "width", "height", "x", "y", "y_right", "legend", "tooltip"),
-    *("zoom", "brush", "sync", "animation", "resolve_x", "resolve_y", "renderer", "theme"),
+    *("zoom", "brush", "sync", "animation", "resolve_x", "resolve_y", "resolve_y_right"),
+    *("renderer", "theme"),
     *("locale", "time_zone", "projection", "z", "camera", "box_aspect", "rotate", "navigator"),
 )
+
+
+def on_right_axis(spec: Mapping[str, Any]) -> bool:
+    """Whether a mark places values on the right y axis: with ``axis="right"``,
+    unless it is a rule at an x or a region across an x range, which have no y."""
+    if spec.get("axis") != "right":
+        return False
+    return spec["type"] not in ("rule", "region") or any(
+        spec.get(key) is not None for key in ("y", "y1", "y2")
+    )
+
+
+def check_y_zoom(settings: Mapping[str, Any], *, right: bool) -> None:
+    """Refuses, as the browser does, zooming along y in charts whose facet panels
+    have y scales of their own (``resolve_y``), or with marks on the right axis
+    (``right``), right y scales of their own (``resolve_y_right``): a y zoom moves
+    both axes through the same pixels, in every panel."""
+    if settings["zoom"] not in ("y", "xy"):
+        return
+    if settings["resolve_y"] not in (None, "shared"):
+        raise ValueError("charts whose panels have y scales of their own cannot zoom along y")
+    if right and settings["resolve_y_right"] not in (None, "shared"):
+        raise ValueError(
+            "charts whose panels have right y scales of their own (resolve_y_right) "
+            "cannot zoom along y"
+        )
 
 
 def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
@@ -2872,7 +2894,13 @@ def spec_options(settings: dict[str, Any]) -> dict[str, Any]:
         "interaction": interaction or None,
         "animation": _animation(animation),
         "resolve": {
-            axis: settings[f"resolve_{axis}"] for axis in ("x", "y") if settings[f"resolve_{axis}"]
+            axis: settings[name]
+            for axis, name in (
+                ("x", "resolve_x"),
+                ("y", "resolve_y"),
+                ("yRight", "resolve_y_right"),
+            )
+            if settings[name]
         }
         or None,
         "renderer": settings["renderer"],

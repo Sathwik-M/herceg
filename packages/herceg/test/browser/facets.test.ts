@@ -12,6 +12,7 @@ import { histogram } from "../../src/marks/histogram.ts";
 import { line } from "../../src/marks/line.ts";
 import type { ChartMark } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
+import { rule } from "../../src/marks/rule.ts";
 import { facet } from "../../src/model/facet.ts";
 import { panels } from "../../src/model/panels.ts";
 import { bandBox, modelOf } from "./helpers.ts";
@@ -305,9 +306,9 @@ describe("facet panels with y scales of their own", () => {
   it("refuse a y viewport, which no one scale could show", () => {
     const data = table({ x: [0, 1, 0, 1], y: [1, 2, 100, 200], f: ["A", "A", "B", "B"] });
     const chart = grouped(line(data, { x: "x", y: "y" }));
-    expect(() => chart.setViewport({ y: [500, 600] })).toThrow("no one y viewport");
+    expect(() => chart.setViewport({ y: [500, 600] })).toThrow("no one viewport");
     // A change refused in part changes nothing.
-    expect(() => chart.setViewport({ x: [0, 0.5], y: [500, 600] })).toThrow("no one y viewport");
+    expect(() => chart.setViewport({ x: [0, 0.5], y: [500, 600] })).toThrow("no one viewport");
     expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: null });
     chart.setViewport({ y: null });
     chart.destroy();
@@ -1029,6 +1030,134 @@ describe("facet panels with histograms and box plots", () => {
     expect(live.textContent).toMatch(/^N: a\. units: median 2,/);
     key(chart, "ArrowDown");
     expect(live.textContent).toMatch(/^S: b\. units: median 200,/);
+    chart.destroy();
+  });
+});
+
+describe("right axes in panels", () => {
+  // Two regions: latency on the left, requests on the right, ten times as many in b.
+  const traffic = table({
+    t: [0, 1, 2, 0, 1, 2],
+    ms: [10, 20, 30, 15, 25, 35],
+    requests: [100, 200, 300, 1000, 2000, 3000],
+    region: ["a", "a", "a", "b", "b", "b"],
+  });
+  const marks = [
+    line(traffic, { x: "t", y: "ms" }),
+    line(traffic, { x: "t", y: "requests", axis: "right" }),
+  ];
+  const wheel = (chart: Chart, x: number, y: number) => {
+    const rect = chart.root.getBoundingClientRect();
+    chart.root.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: -200,
+        clientX: rect.left + x,
+        clientY: rect.top + y,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  };
+
+  it("zoom both y axes of every panel through the pixels under the pointer", () => {
+    const chart = createChart(host, { marks, facet: facet("region"), interaction: { zoom: "xy" } });
+    const viewports: ChartEvents["viewport"][] = [];
+    chart.on("viewport", (view) => viewports.push(view));
+    const [, b] = modelOf(chart).panels();
+    const py = b!.plot.y + b!.plot.height / 3;
+    const under = [b!.y.invert(py), b!.yRight!.invert(py)];
+    wheel(chart, b!.x.map(1), py);
+    chart.render();
+    const [a, after] = modelOf(chart).panels();
+    expect(after!.y.map(under[0]!)).toBeCloseTo(py, 4);
+    expect(after!.yRight!.map(under[1]!)).toBeCloseTo(py, 4);
+    // Both axes changed in one event, and every panel shows the same right range.
+    expect(viewports).toHaveLength(1);
+    expect(viewports[0]!.y && viewports[0]!.yRight).not.toBeNull();
+    expect(a!.yRight!.domain).toEqual(after!.yRight!.domain);
+    const [info] = chart.getPanels();
+    expect([info!.yRight!.group, info!.yRight!.canSetViewport]).toEqual(["", true]);
+    chart.destroy();
+  });
+
+  it("zoom a brushed rectangle on both y axes, and report the brush in left values", async () => {
+    const chart = createChart(host, {
+      marks,
+      facet: facet("region"),
+      interaction: { brush: "xy", zoom: "xy" },
+    });
+    await chart.loading;
+    const [, b] = modelOf(chart).panels();
+    const [top, bottom] = [b!.plot.y + 20, b!.plot.y + b!.plot.height - 20];
+    const expected = {
+      y: [b!.y.invert(bottom), b!.y.invert(top)],
+      yRight: [b!.yRight!.invert(bottom), b!.yRight!.invert(top)],
+    };
+    pointer(chart.root, "pointerdown", b!.x.map(0.5), top);
+    pointer(chart.root, "pointermove", b!.x.map(1.5), bottom);
+    pointer(chart.root, "pointerup", b!.x.map(1.5), bottom);
+    const view = chart.getViewport();
+    expect(view.y![0]).toBeCloseTo(expected.y[0]!, 4);
+    expect(view.yRight![1]).toBeCloseTo(expected.yRight[1]!, 4);
+    chart.destroy();
+    // Without zoom, the brush selects: its y is the left axis' values.
+    const selecting = createChart(host, {
+      marks,
+      facet: facet("region"),
+      interaction: { brush: "xy" },
+    });
+    await selecting.loading;
+    const [, c] = modelOf(selecting).panels();
+    pointer(selecting.root, "pointerdown", c!.x.map(0.5), top);
+    pointer(selecting.root, "pointermove", c!.x.map(1.5), bottom);
+    pointer(selecting.root, "pointerup", c!.x.map(1.5), bottom);
+    expect(selecting.selection!.y![1]).toBeCloseTo(c!.y.invert(top), 4);
+    selecting.destroy();
+  });
+
+  it("keep right scales of their own out of viewports, and place values on each panel's", () => {
+    const chart = createChart(host, {
+      marks,
+      facet: facet("region"),
+      resolve: { yRight: "independent" },
+      interaction: { zoom: "x" },
+    });
+    const [a, b] = chart.getPanels();
+    expect(a!.yRight!.canSetViewport).toBe(false);
+    expect(a!.yRight!.group).not.toBe(b!.yRight!.group);
+    expect(() => chart.setViewport({ yRight: [0, 10] })).toThrow("no one viewport");
+    chart.setViewport({ y: [0, 20] });
+    expect(chart.getViewport()).toEqual({ x: null, y: [0, 20], yRight: null });
+    // The same value sits at another height in each panel.
+    const at = (panel: string) => chart.toPixel(300, { panel, axis: "yRight" })!;
+    expect(at("a")).not.toBeCloseTo(at("b"), 0);
+    expect(chart.formatValue(2500, { panel: "b", axis: "yRight" })).toBe("2,500");
+    chart.destroy();
+    expect(() =>
+      createChart(host, {
+        marks,
+        facet: facet("region"),
+        resolve: { yRight: "independent" },
+        interaction: { zoom: "y" },
+      }),
+    ).toThrow("cannot zoom along y");
+  });
+
+  it("announce a panel's own annotations as the keyboard arrives there", () => {
+    const events = table({ at: [1, 2], note: ["deploy", "outage"], region: ["a", "b"] });
+    const chart = createChart(host, {
+      locale: "en-US",
+      marks: [line(traffic, { x: "t", y: "ms" }), rule(events, { x: "at", text: "note" })],
+      facet: facet("region"),
+    });
+    const live = chart.root.querySelector("[aria-live]")!;
+    key(chart, "ArrowRight");
+    expect(live.textContent).toMatch(/^a: Rule: deploy \(x 1\)\. 0\. ms: 10/);
+    // Within the panel, it is not repeated.
+    key(chart, "ArrowRight");
+    expect(live.textContent).not.toContain("deploy");
+    key(chart, "ArrowDown");
+    expect(live.textContent).toMatch(/^b: Rule: outage \(x 2\)\. /);
     chart.destroy();
   });
 });

@@ -270,6 +270,8 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
         ? [0, s.length]
         : visibleRange(s, along.domain[0], along.domain[1]);
       const { positions, lows, highs } = columns(s, horizontal);
+      // On a panel's own categories, chart bands are read through their places (see placeAt).
+      const places = s.places?.[horizontal ? "y" : "x"];
       // A stem and up to two caps per interval.
       const coords = frame.floats(s.key, "segments", (end - start) * 12);
       let count = 0;
@@ -284,7 +286,8 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
       };
       for (let k = start; k < end; k++) {
         const row = rowOf(s, k);
-        const at = positions[row]!;
+        const band = positions[row]!;
+        const at = places && band >= 0 ? places.at(band) : band;
         if (this.#categorical && at < 0) continue;
         // Intervals at times an axis break leaves out are not drawn.
         if (along.breaks?.hides(at)) continue;
@@ -327,10 +330,12 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
     let best: Hit | undefined;
     for (const s of series) {
       const { positions, lows, highs } = columns(s, horizontal);
+      const places = s.places?.[horizontal ? "y" : "x"];
       /** Considers position k; returns how far along the position axis it stands. */
       const consider = (k: number): number => {
         const row = rowOf(s, k);
-        const at = positions[row]!;
+        const band = positions[row]!;
+        const at = places && band >= 0 ? places.at(band) : band;
         const p = along.map(at);
         if (!Number.isFinite(p)) return 0;
         const offset = Math.abs(p - pointer);

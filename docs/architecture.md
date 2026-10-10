@@ -1387,7 +1387,18 @@ and sorts nothing. A summary series finds its summary through its `values`
 (the summary's medians, which panels' copies share), and a box's band comes
 from the chart's band of a table row of its group, so panels read the
 chart's one mapping instead of making their own. Annotations over a table
-still read it whole, having no series, and only repeat. Continuous domains come from every panel's series, so rows
+have no series to split: the splitter hands each panel its rows of their
+table from the same partition (`MarkSeries.rows`, one part per panel, so
+annotations over one table share it), groups of panels sharing a scale read
+their panels' parts without copying them together, and `geometry`, the
+extents, and `describe` take the parts as a trailing argument
+(`RowParts`); scratch and pooled buffers are sized by a panel's rows, not
+the table's. In Node on the development machine (with other work running),
+a rule, a region, and a label (`overlap: "hide"`) per row of 100,000 rows in
+50 panels take about 55 ms a scene, as one panel of the same rows does
+(rules about 9 ms, regions 3.5 ms, labels 40 ms, most of it measuring and
+hiding labels; `npm run bench:core`). `split.all` carries every panel's
+parts, so rows without a facet value count toward no domain. Continuous domains come from every panel's series, so rows
 without a facet value are left out of them; the bands of a shared category
 axis still come from whole tables. Each panel gets a frame whose scales are the
 shared plans moved to its row and column, and whose buffer pools are its
@@ -1406,6 +1417,31 @@ scale each (`resolve.y` "independent"); each group of panels sharing y plans
 it from what its panels draw, with the chart's `y` and its first panel's own
 settings, and subplots infer each group's type (linear or time) from their
 own marks.
+
+The right y axis is planned as the left one is, by one planner over either
+side's marks: shared, or with `resolve.yRight` (by default the left one's
+resolution) by panel, row, or column, each group from what its panels draw
+on that side (`PanelLayout.groups` filters marks by side; a right group takes
+its settings from its first panel drawing on the right, and subplots'
+`yRight` settings agree as y's do). A panel has a right axis when a mark it
+draws places values on it, and a left one unless all of them are on the
+right, so subplots without right marks draw no right axis and a subplot of
+right marks only no left one, its grid lines following the right axis. The
+two sides' labels go by one rule: beside each row's first panel on the
+left and its last on the right, or beside every panel whose scale is its
+own (and in subplots), the gaps between columns holding the right labels of
+the panel before and the left ones of the panel after; a grid's row
+headers go beyond the right labels, and the right title beyond them. Each
+panel's frame, inspector, formatter, and `DrawnPanel.yRightGroup` read its
+own right plan. A y zoom moves both axes through the same pixels, so facets
+refuse it when right marks have scales of their own, and `setViewport`
+checks each side's range against that side's resolution. Older readers
+refuse right marks in faceted charts and subplots, so `resolve.yRight` and
+panels' `yRight` need no new spec version. Fifty panels of two lines over
+100,000 rows take about 1.6 ms a scene with both on the left or a shared
+right axis, and 1.8 ms with right axes of their own. What only a grid of panels needs
+(fitting it to the chart, weighted rows and columns, the room between rows)
+is the layout's (`PanelLayout.tracks`, `rowGap`), loaded only with it.
 
 `resolve.x` groups panels for x the same way (`PanelLayout.groups`), and the
 model plans each group as it plans the one shared x scale: the x extent of
@@ -1493,11 +1529,13 @@ place is turned back into a chart band (`BandPlaces.band`) to look a cell up,
 and the keyboard compares cells at their places, as the panel draws them.
 Text summaries read series' parts in every panel, which hold chart band
 indices, so they name categories by the chart's bands (`SummaryContext.bands`)
-rather than one panel's. Bars, heatmaps, points, box plots, and violins
-place categories per panel (box plots and violins hold the categories of
-their groups with values); other marks on such an axis (error bars,
-candlesticks), synced charts, and brushes along a y axis of such categories
-are refused, and category axes still do not zoom.
+rather than one panel's. Every mark that bands an axis (bars, heatmaps,
+points, box plots, violins, error bars, and candlesticks, whose merged
+pixel columns compare candles by chart band, which places keep in order)
+reads its positions through the places (`Mark.bands` says so); box plots and
+violins hold the categories of their groups with values. Synced charts and
+brushes along a y axis of such categories are refused, and category axes
+still do not zoom.
 
 ## Points and rasters
 
@@ -2224,8 +2262,13 @@ eight spots touching their point, nearest sides first, off the other rows'
 points and inside the plot. Annotations have no series, so
 they appear in neither legends nor tooltips; the chart's text alternative
 lists them (up to ten items each, with positions formatted as in tooltips)
-after the series summaries. `Mark.geometry` receives the mark's key so their
-geometry and buffers stay distinct per mark. Fields must be numbers or
+after the series summaries; in charts with panels, those every panel draws
+once, then each panel's own (a facet panel's rows, a subplot's annotations)
+after its name, up to twenty panels (`PanelLayout.annotations`), which the
+keyboard also reads arriving in a panel. `Mark.geometry` receives the mark's key so their
+geometry and buffers stay distinct per mark. In facets, an annotation over
+a table draws, places labels among, and describes only its panel's rows
+(see Small multiples). Fields must be numbers or
 times; on a category axis a constant is a band index, as in Plotly (0 is the
 first band's center, -0.5 its edge).
 
@@ -2924,19 +2967,16 @@ document when `OffscreenCanvas` is unavailable.
   marks only in scenes of one panel), and charts too short
   to leave the plot 30 pixels beside the strip have none.
   The sliders' announcements are in English.
-- Subplots route whole marks; they have no right axes, categories of their
-  own only for bars, heatmaps, points, box plots, and violins, x-only zoom
-  and brushing, and no
+- Subplots route whole marks; they have x-only zoom and brushing, and no
   facets inside a panel.
   Rows and columns may be weighted; a scale shared across sizes is planned
   over its smallest panel, so what marks draw past their values fits in
   every one, and the others keep its domain with ticks for their size.
 - Facets wrap one category field into rows of panels, or lay out a grid by
-  two; x and y are shared or resolved per panel, row, or column, category
-  axes only for bars, heatmaps, points, box plots, and violins. No y zoom
-  with independent y, sync of charts with categories per panel, or right
-  axes in faceted charts, and annotations over a table and custom marks
-  over a table without series can only repeat in every panel. Panel splits are recomputed whenever their
+  two; x, y, and the right y are shared or resolved per panel, row, or
+  column. No y zoom with y scales of their own on either side, no sync of
+  charts with categories per panel, and custom marks over a table without
+  series can only repeat in every panel. Panel splits are recomputed whenever their
   table changes, and rows of a faceted large line do not use its min/max
   index. A category whose rows all lack a facet value still gets an (empty)
   band. Panels smaller than 20 pixels a side are refused with an error

@@ -125,12 +125,18 @@ class ChartWidget(anywidget.AnyWidget):
         ``None`` restores an option's default."""
         with self._lock:
             self._push(self._live.update(options))
-            # Panels given y scales of their own let go of the y viewport, as
-            # the browser's chart does.
+            # Panels given y scales of their own on a side let go of its
+            # viewport, as the browser's chart does.
             viewport = self._states["viewport"]
             cleared = False
-            if viewport and (viewport["y"] or viewport["yRight"]) and not self._live.shares_y:
-                cleared = self._change("viewport", {**viewport, "y": None, "yRight": None}, None)
+            if viewport:
+                kept = {
+                    **viewport,
+                    "y": viewport["y"] if self._live.shares_y else None,
+                    "yRight": viewport["yRight"] if self._live.shares_y_right else None,
+                }
+                if kept != viewport:
+                    cleared = self._change("viewport", kept, None)
         if cleared:
             self._callbacks["viewport"](_decoded("viewport", self._states["viewport"]))
 
@@ -155,10 +161,12 @@ class ChartWidget(anywidget.AnyWidget):
     @viewport.setter
     def viewport(self, value: Viewport | Range | None) -> None:
         payload = encode_viewport(value)
-        if (payload["y"] or payload["yRight"]) and not self._live.shares_y:
+        if (payload["y"] and not self._live.shares_y) or (
+            payload["yRight"] and not self._live.shares_y_right
+        ):
             raise ValueError(
-                "charts whose panels have y scales of their own (resolve_y, panels) "
-                "have no one y viewport"
+                "charts whose panels have y scales of their own "
+                "(resolve_y, resolve_y_right, panels) have no one viewport of them"
             )
         self._set("viewport", payload)
 
