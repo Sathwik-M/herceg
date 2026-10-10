@@ -2,6 +2,7 @@ import type { NumericArray } from "../data/column.ts";
 import { scanExtent, type Table } from "../data/table.ts";
 import type { Breaks, Mapping } from "../lod/m4.ts";
 import type { RangeExtremes, RangeIndex } from "../lod/minmax-index.ts";
+import type { TraceBuffers, TraceColumns, TraceSource } from "../lod/point-view.ts";
 import type { Polyline } from "../lod/polyline.ts";
 
 /**
@@ -88,6 +89,8 @@ export interface BandPlaces {
   at(band: number): number;
   /** The chart band at place `place`, or -1 past the axis' bands. */
   band(place: number): number;
+  /** Copies a trace through this panel's band positions, without rows hidden by breaks. */
+  trace(s: TraceSource, buffers: TraceBuffers, breaks?: Breaks): TraceColumns;
 }
 
 /**

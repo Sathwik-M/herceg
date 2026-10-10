@@ -10,6 +10,13 @@ import { type TimeZone, toWall, zoneOffset } from "../format/zone.ts";
 import type { Breaks, Mapping } from "../lod/m4.ts";
 import { brokenM4 } from "../lod/m4-breaks.ts";
 import type { RangeIndex } from "../lod/minmax-index.ts";
+import {
+  copyTrace,
+  type PositionLookup,
+  type TraceBuffers,
+  type TraceColumns,
+  type TraceSource,
+} from "../lod/point-view.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { Rect, SegmentGeometry } from "../scene/scene.ts";
 import type { TimeBreakSpec, Weekday, XAxisSpec } from "../spec/spec.ts";
@@ -362,6 +369,10 @@ export class Calendar implements Breaks {
   constructor(rules: readonly Rule[], zone: TimeZone) {
     this.#rules = rules;
     this.zone = zone;
+  }
+
+  trace(s: TraceSource, buffers: TraceBuffers, places?: PositionLookup): TraceColumns {
+    return copyTrace(s, buffers, places, this);
   }
 
   /** Resolves the breaks over at least [lo, hi]. Non-finite ends are ignored. */

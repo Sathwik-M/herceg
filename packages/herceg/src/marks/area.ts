@@ -46,6 +46,7 @@ import {
   curveLayers,
   curveRows,
   IndexUse,
+  type TraceFrame,
   traceBand,
   traceCurvedLayers,
   tracePath,
@@ -765,7 +766,7 @@ function edgeSeries(s: Series, edges: LayerEdges, orient: "x" | "y"): Series {
 function atLow(
   values: NumericArray,
   low: number,
-  frame: Frame,
+  frame: TraceFrame,
   key: string,
   stage: string,
 ): NumericArray {

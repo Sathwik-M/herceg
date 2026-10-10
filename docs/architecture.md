@@ -1148,6 +1148,11 @@ positions, from each layer's rows with a band in table order (the union
 stack's streaming needs them ascending), and are read in band order after.
 In panels with categories of their own, positions are mapped through the
 panel's places (which keep the chart's order) into a buffer for tracing.
+Panel places and time breaks carry the synchronous point-view copying path
+(`lod/point-view.ts`), so ordinary numeric traces retain their source
+columns and do not bundle that copying code. Tracing frames expose only
+the position scale's type, domain, mapping, and breaks; a dodged trace
+shifts its mapping without wrapping the scale's inspection or tick methods.
 Lines and areas take only categories as bands (`categoryBands`,
 `categoryIndices`), so their code carries none of the labels of banded
 numbers and times.

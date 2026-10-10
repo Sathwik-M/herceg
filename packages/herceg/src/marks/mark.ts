@@ -572,6 +572,22 @@ export interface SeriesSource {
   stream?: SeriesStream | undefined;
 }
 
+/** Checks whether fields identify separate series or values within one grouped series. */
+export function requireSeriesFields(
+  fields: readonly string[],
+  series: string | undefined,
+  role = "y",
+  correction = false,
+): void {
+  if (series !== undefined && fields.length > 1)
+    throw new Error(`${role}: several fields or a series field, not both; drop one`);
+  const repeated = fields.find((field, i) => fields.indexOf(field) !== i);
+  if (repeated !== undefined)
+    throw new Error(
+      `${role}: field "${repeated}" is listed twice${correction ? "; list it once" : ""}`,
+    );
+}
+
 /** What keeps long-format rows grouped as tables stream, loaded the first time a splitter needs it. */
 let splitRows: Promise<typeof import("./split.ts")> | undefined;
 /** The same once loaded, so splitters made after it group through it from their first scene. */
@@ -613,12 +629,7 @@ export class SeriesSplitter {
     this.yFields = yFields;
     this.#seriesField = seriesField;
     this.#label = label;
-    if (seriesField !== undefined && yFields.length > 1) {
-      throw new Error("y: several fields or a series field, not both; drop one");
-    }
-    // Each y field is one series, identified by its name.
-    const repeated = yFields.find((y, i) => yFields.indexOf(y) !== i);
-    if (repeated !== undefined) throw new Error(`y: field "${repeated}" is listed twice`);
+    requireSeriesFields(yFields, seriesField);
   }
 
   sources(): SeriesSource[] {
