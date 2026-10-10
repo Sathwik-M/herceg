@@ -42,7 +42,8 @@ export default defineConfig({
     browser: {
       enabled: true,
       headless: true,
-      // The locally installed Chrome; no browser download needed.
+      // Chrome only: these check that the samples' code stays valid and draws;
+      // the library's own suites cover Firefox and WebKit (scripts/browser).
       provider: playwright({ launchOptions: { channel: "chrome" } }),
       instances: [{ browser: "chromium" }],
       // Room for the 640 px charts, which the default 414 px viewport would cut off.
