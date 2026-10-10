@@ -74,11 +74,12 @@ axes that leave out breaks (nights, weekends, holidays) in any time zone,
 static SVG and PDF export, React, Vue, and Svelte adapters, min/max indexes for zooming and streaming large line
 series (whole columns or split by a series field), WebGL drawing of large
 point series, chart specs with binary columns, a Python package, a second
-y axis, small multiples (wrapped or by row and column, with shared or
-per-panel x and y scales, histograms, box plots, and violins summarizing
-each panel's rows, and categories per panel for bars, heatmaps, points, box
-plots, and violins), points on category axes, subplots (with weighted rows and
-columns), pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey
+y axis (in facets and subplots too, shared or per panel), small multiples
+(wrapped or by row and column, with shared or per-panel x and y scales,
+histograms, box plots, and violins summarizing each panel's rows,
+annotations over a table drawing each row in its own panel, and categories
+per panel for every mark on a category axis), points on category axes,
+subplots (with weighted rows and columns), pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey
 diagrams in each facet panel or in a subplot of their own, live notebook charts (a widget that streams updates from Python
 and reports interaction back), a Streamlit component, row views and selection stores shared by charts and
 grids, row groups whose aggregates charts and grids share, and an
@@ -94,13 +95,11 @@ servers.
 
 Next, in order:
 
-1. Layout: annotations over a table split by facets, error bars and
-   candlesticks on categories per panel, and maps, networks, and 3D charts
-   in panels.
+1. Layout: maps, networks, and 3D charts in panels, and range navigators
+   in charts with panels.
 2. Animation of stacked and labeled bars, of categories that come and go,
    and of panels.
-3. More financial tools (drawing tools, range navigators
-   in charts with panels); 3D meshes, parametric surfaces, and translucent
+3. More financial tools (drawing tools); 3D meshes, parametric surfaces, and translucent
    and wireframed surfaces on the GPU.
 4. Grid: pivots over remote sources, bins in grid queries, a SQL
    generator for them, remote grids from Python, and editing.

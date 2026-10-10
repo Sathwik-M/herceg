@@ -133,23 +133,25 @@ hg.Chart(sales, facet="region").pie("product", "revenue")
 
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
 (`hg.Axis(type="log", domain=(0, 100), label="ms", ...)` or a dict),
-`y_right` (the axis for marks added with `axis="right"`), `facet` and
+`y_right` (the axis for marks added with `axis="right"`, in every panel
+that draws them), `facet` and
 `facet_columns` (a panel per value of a category column, wrapped into rows),
 or `facet_row` and `facet_col` (a grid with a row per value of one category
 column and a column per value of another; either may be left out), with
-`resolve_x` and `resolve_y` (`"shared"`, `"independent"`, `"rows"`, or
-`"columns"`) choosing which panels share an x or a y scale (facets share
-both by default, subplots x; on a category axis of bars, heatmaps, points,
-box plots, or violins, panels that do not share it show only the categories
-their rows hold); histograms, box plots, and violins summarize each panel's
-rows (histograms in bins chosen from the rows of the panels sharing an x
-scale); marks with `repeat=True` draw all their rows in every panel, which
-annotations over a table need; pies, treemaps, sunbursts, gauges, funnels,
+`resolve_x`, `resolve_y`, and `resolve_y_right` (`"shared"`,
+`"independent"`, `"rows"`, or `"columns"`) choosing which panels share an x,
+a y, or a right y scale (facets share them by default, subplots x; the right
+y as `resolve_y` unless given; on a category axis, panels that do not share
+it show only the categories their rows hold); histograms, box plots, and
+violins summarize each panel's rows (histograms in bins chosen from the rows
+of the panels sharing an x scale); annotations over a table draw each row in
+its own row's panel; marks with `repeat=True` draw all their rows in every
+panel; pies, treemaps, sunbursts, gauges, funnels,
 radars, and Sankey diagrams draw each facet panel's rows in it, as a
 faceted chart's only mark, or fill a panel of their own with `panel=` (no
 `"*"`, and no other mark there), whose neighbors keep their axes; `panels` (ids or
 `hg.Panel("latency", title="Latency", x=hg.Axis(label="Time"),
-y=hg.Axis(label="ms"))`), `panel_columns`, and
+y=hg.Axis(label="ms"), y_right=hg.Axis(label="requests"))`), `panel_columns`, and
 `panel_row_heights` and `panel_column_widths` (relative heights of the rows
 and widths of the columns) for subplots, whose marks
 name their panel with `panel="latency"` (or `"*"` for all),
@@ -532,7 +534,8 @@ npm run test:python    # build, then run pytest in a uv environment
 - Live charts report one viewport and selection, so `chart.widget()` refuses
   charts whose panels have x scales of their own (`resolve_x`); display them
   statically. Charts whose panels have y scales of their own (`resolve_y`,
-  subplots) take no y viewport.
+  subplots) take no y viewport, and those with right y scales of their own
+  (`resolve_y_right`) no right one.
   In Streamlit they show (each panel keeping its zoom across reruns) and
   report clicks, but `on_select` is refused.
 - In Streamlit, a chart that changes between script runs is sent whole: its

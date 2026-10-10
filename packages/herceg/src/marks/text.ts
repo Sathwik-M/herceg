@@ -14,6 +14,7 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type RowParts,
   seriesKey,
 } from "./mark.ts";
 
@@ -114,34 +115,57 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     return [];
   }
 
-  describe(format: AxisFormat, locale: string | undefined): string | undefined {
+  describe(format: AxisFormat, locale: string | undefined, rows?: RowParts): string | undefined {
     const x = this.#data.channel(this.spec.x);
     const y = this.#data.channel(this.spec.y);
-    return this.#data.summary(["Label", "Labels"], locale, (i) => {
-      const at = valueAt(x, i);
-      const value = valueAt(y, i);
-      return Number.isFinite(at) && Number.isFinite(value)
-        ? `x ${format.x(at)}, y ${format.y(value)}`
-        : undefined;
-    });
+    return this.#data.summary(
+      ["Label", "Labels"],
+      locale,
+      (i) => {
+        const at = valueAt(x, i);
+        const value = valueAt(y, i);
+        return Number.isFinite(at) && Number.isFinite(value)
+          ? `x ${format.x(at)}, y ${format.y(value)}`
+          : undefined;
+      },
+      rows,
+    );
   }
 
-  xExtent(_series: unknown, log: boolean): [number, number] | undefined {
-    return this.#data.extent([this.spec.x], log);
+  xExtent(_series: unknown, log: boolean, _breaks?: unknown, rows?: RowParts) {
+    return this.#data.extent([this.spec.x], log, undefined, rows);
   }
 
-  yExtent(_series: unknown, x0: number, x1: number, log: boolean): [number, number] | undefined {
+  yExtent(
+    _series: unknown,
+    x0: number,
+    x1: number,
+    log: boolean,
+    _breaks?: unknown,
+    rows?: RowParts,
+  ) {
     // Only labels inside the x view count toward y.
     const x = this.#data.channel(this.spec.x);
     const lo = Math.min(x0, x1);
     const hi = Math.max(x0, x1);
-    return this.#data.extent([this.spec.y], log, (i) => {
+    const inView = (i: number) => {
       const value = valueAt(x, i);
       return value >= lo && value <= hi;
-    });
+    };
+    return this.#data.extent([this.spec.y], log, inView, rows);
   }
 
-  geometry(_series: unknown, frame: Frame, key: MarkKey): (SegmentGeometry | TextGeometry)[] {
+  /**
+   * Labels of the items of `rows` (every item without them), placed in
+   * their order. Scratch is as large as the items drawn: a facet panel's,
+   * not the table's.
+   */
+  geometry(
+    _series: unknown,
+    frame: Frame,
+    key: MarkKey,
+    rows?: RowParts,
+  ): (SegmentGeometry | TextGeometry)[] {
     const { spec } = this;
     const { plot, theme } = frame;
     const data = this.#data;
@@ -160,23 +184,29 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     const inPlot = (x0: number, y0: number, x1: number, y1: number) =>
       x0 >= plot.x && x1 <= plot.x + plot.width && y0 >= plot.y && y1 <= plot.y + plot.height;
     const pointAt = (row: number) => [frame.x.map(valueAt(x, row)), frame.y.map(valueAt(y, row))];
+    // Scratch is indexed by each item's place among those drawn, whose row
+    // `rowAt` gives: a panel's rows are one part, read as they are.
+    const size = data.size(rows);
+    const items = rows?.length === 1 ? rows[0]! : rows && new Uint32Array(size);
+    if (items && items !== rows![0]) data.each(rows, (row, place) => (items[place] = row));
+    const rowAt = (place: number) => (items ? items[place]! : place);
     // Moved labels keep off the points of the other rows in view.
     const dots = moving ? new LabelBoxes() : undefined;
-    const dotOf = new Int32Array(dots ? data.count : 0).fill(-1);
+    const dotOf = new Int32Array(dots ? size : 0).fill(-1);
     if (dots) {
-      for (let row = 0; row < data.count; row++) {
-        const [px, py] = pointAt(row) as [number, number];
+      for (let place = 0; place < size; place++) {
+        const [px, py] = pointAt(rowAt(place)) as [number, number];
         const s = POINT_SIZE;
-        if (inPlot(px, py, px, py)) dotOf[row] = dots.add(px - s, py - s, px + s, py + s);
+        if (inPlot(px, py, px, py)) dotOf[place] = dots.add(px - s, py - s, px + s, py + s);
       }
     }
-    // Each row's label and where it goes, kept in row order whichever pass places it.
-    const texts: (string | undefined)[] = new Array(data.count);
-    const at = new Float64Array(data.count * 2);
-    const add = (row: number, label: string, lx: number, ly: number) => {
-      texts[row] = label;
-      at[row * 2] = lx;
-      at[row * 2 + 1] = ly;
+    // Each item's label and where it goes, kept in order whichever pass places it.
+    const texts: (string | undefined)[] = new Array(size);
+    const at = new Float64Array(size * 2);
+    const add = (place: number, label: string, lx: number, ly: number) => {
+      texts[place] = label;
+      at[place * 2] = lx;
+      at[place * 2 + 1] = ly;
     };
     // Lines from labels moved past the first ring back to their points.
     const leaders: number[] = [];
@@ -189,9 +219,9 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
     // Places are boxes' centers: the author's (place 0), then, when moving,
     // the spots around the point, ring by ring, nearest sides first.
     const nearPlaces = moving ? 1 + AROUND.length : 1;
-    /** Puts a row's label at the first free place in [from, to); false if none is. */
-    const place = (row: number, label: string, width: number, from: number, to: number) => {
-      const [px, py] = pointAt(row) as [number, number];
+    /** Puts an item's label at the first free spot in [from, to); false if none is. */
+    const place = (item: number, label: string, width: number, from: number, to: number) => {
+      const [px, py] = pointAt(rowAt(item)) as [number, number];
       // From the anchor to the label's center, and half its box's width.
       const shift = anchor === "start" ? width / 2 : anchor === "end" ? -width / 2 : 0;
       const reach = width / 2 + LABEL_GAP;
@@ -208,7 +238,7 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
         // Labels before dots: in a crowded plot labels refuse most places,
         // and there are fewer of them to check.
         if (placed!.hits(x0, y0, x1, y1)) continue;
-        if (p > 0 && dots!.hits(x0, y0, x1, y1, dotOf[row])) continue;
+        if (p > 0 && dots!.hits(x0, y0, x1, y1, dotOf[item])) continue;
         if (meetsLeader((sx, sy, ex, ey) => segmentMeetsBox(sx, sy, ex, ey, x0, y0, x1, y1)))
           continue;
         if (ring > 1) {
@@ -221,44 +251,45 @@ export class TextMark implements Mark<Frozen<TextSpec>> {
           const sx = px + ((ex - px) / length) * POINT_SIZE;
           const sy = py + ((ey - py) / length) * POINT_SIZE;
           if (placed!.crosses(sx, sy, ex, ey)) continue;
-          if (dots!.crosses(sx, sy, ex, ey, dotOf[row])) continue;
+          if (dots!.crosses(sx, sy, ex, ey, dotOf[item])) continue;
           if (meetsLeader((ax, ay, bx, by) => segmentsMeet(sx, sy, ex, ey, ax, ay, bx, by)))
             continue;
           leaders.push(sx, sy, ex, ey);
         }
         placed!.add(x0, y0, x1, y1);
-        add(row, label, cx - shift, cy);
+        add(item, label, cx - shift, cy);
         return true;
       }
       return false;
     };
-    // Labels that found no place near their point: row, text, and width.
+    // Labels that found no place near their point: item, text, and width.
     const later: [number, string, number][] = [];
-    for (let row = 0; row < data.count; row++) {
+    for (let item = 0; item < size; item++) {
+      const row = rowAt(item);
       const [px, py] = pointAt(row) as [number, number];
       // Labels are not clipped, so ones whose point is out of view are left out.
       if (!inPlot(px, py, px, py)) continue;
       const label = data.text(row, frame.locale);
       if (!placed) {
-        add(row, label, px + dx, py + dy);
+        add(item, label, px + dx, py + dy);
         continue;
       }
       // Empty labels draw nothing, so they take no room.
       if (label === "") continue;
       const width = frame.measure(label, font);
-      if (!place(row, label, width, 0, nearPlaces) && moving) later.push([row, label, width]);
+      if (!place(item, label, width, 0, nearPlaces) && moving) later.push([item, label, width]);
     }
     // Then those go farther out, once every label that fits near its point
     // has its place, so lines never take a nearer label's room.
-    for (const [row, label, width] of later)
-      place(row, label, width, nearPlaces, nearPlaces + (RINGS - 1) * AROUND.length);
-    const coords = frame.floats(id, "text", data.count * 2);
+    for (const [item, label, width] of later)
+      place(item, label, width, nearPlaces, nearPlaces + (RINGS - 1) * AROUND.length);
+    const coords = frame.floats(id, "text", size * 2);
     const labels: string[] = [];
-    for (let row = 0; row < data.count; row++) {
-      const label = texts[row];
+    for (let item = 0; item < size; item++) {
+      const label = texts[item];
       if (label === undefined) continue;
-      coords[labels.length * 2] = at[row * 2]!;
-      coords[labels.length * 2 + 1] = at[row * 2 + 1]!;
+      coords[labels.length * 2] = at[item * 2]!;
+      coords[labels.length * 2 + 1] = at[item * 2 + 1]!;
       labels.push(label);
     }
     if (labels.length === 0) return [];

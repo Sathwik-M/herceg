@@ -13,7 +13,15 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from . import _geo
-from ._chart import OPTIONS, assemble_spec, columns_spec, spec_options, table_name
+from ._chart import (
+    OPTIONS,
+    assemble_spec,
+    check_y_zoom,
+    columns_spec,
+    on_right_axis,
+    spec_options,
+    table_name,
+)
 from ._data import Column, Table
 
 if TYPE_CHECKING:
@@ -43,6 +51,13 @@ class LiveChart:
     def shares_y(self) -> bool:
         """Whether every panel shares one y scale, so the chart has one y viewport."""
         return self._settings["resolve_y"] in (None, "shared") and "panels" not in self._layout
+
+    @property
+    def shares_y_right(self) -> bool:
+        """Whether every panel shares one right y scale (resolved as y unless
+        ``resolve_y_right`` says), so the chart has one right y viewport."""
+        resolution = self._settings["resolve_y_right"] or self._settings["resolve_y"]
+        return resolution in (None, "shared") and "panels" not in self._layout
 
     def to_spec(self) -> Message:
         return assemble_spec(self._options, self._layout, self._tables, self._marks, self._derived)
@@ -108,6 +123,9 @@ class LiveChart:
             raise TypeError(f"unknown chart option {', '.join(map(repr, unknown))}{hint}")
         settings = {**self._settings, **changes}
         _check_live(settings)
+        # Checked before anything changes, as the chart checks it when made.
+        if "facet" in self._layout:
+            check_y_zoom(settings, right=any(on_right_axis(mark) for mark in self._marks))
         options = spec_options(settings)
         # Checked before anything changes, as the chart checks it when made.
         if options.get("navigator") and self._layout:

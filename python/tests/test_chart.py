@@ -316,14 +316,46 @@ def test_facets_split_marks_into_panels():
     assert ">a</text>" in svg and ">b</text>" in svg
     with pytest.raises(KeyError, match="facet: no column 'region'"):
         hg.Chart(DATA, facet="region").line(x="t", y="p50")
-    with pytest.raises(ValueError, match="pass repeat=True"):
-        hg.Chart(DATA, facet="host").rule(x="t")
+    # A rule over the table draws each row in its own row's panel.
+    rules = hg.Chart(DATA, facet="host", width=400, height=200).line(x="t", y="p50").rule(x="t")
+    spec, _ = rules.to_spec()
+    assert "facet" not in spec["marks"][1]
+    assert sorted(spec["data"]["data"]["columns"]) == ["host", "p50", "t"]
     with pytest.raises(ValueError, match="facet_columns needs facet"):
         hg.Chart(DATA, facet_columns=2)
     with pytest.raises(ValueError, match="whole number"):
         hg.Chart(DATA, facet="host", facet_columns=True)
-    with pytest.raises(ValueError, match="cannot use the right axis"):
-        hg.Chart(DATA, facet="host").rule(y=1, axis="right")
+
+
+def test_right_axes_in_facets_and_panels():
+    chart = (
+        hg.Chart(DATA, facet="host", resolve_y_right="independent", width=400, height=200)
+        .line(x="t", y="p50")
+        .line(x="t", y="p99", axis="right")
+    )
+    spec, _ = chart.to_spec()
+    assert spec["resolve"] == {"yRight": "independent"}
+    assert spec["version"] == 4
+    assert spec["marks"][1]["axis"] == "right"
+    assert chart.to_svg().count("<svg") == 1
+    subplots = (
+        hg.Chart(DATA, panels=[hg.Panel("a", y_right=hg.Axis(label="p99", type="log")), "b"])
+        .line(x="t", y="p50", panel="a")
+        .line(x="t", y="p99", panel="a", axis="right")
+        .line(x="t", y="p50", panel="b")
+    )
+    spec, _ = subplots.to_spec()
+    assert spec["panels"][0] == {"id": "a", "yRight": {"label": "p99", "type": "log"}}
+    assert ">p99</text>" in subplots.to_svg()
+    with pytest.raises(ValueError, match="resolve_y_right must be"):
+        hg.Chart(DATA, facet="host", resolve_y_right="free")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="resolve_y_right needs facet"):
+        hg.Chart(DATA, resolve_y_right="independent")
+    zoomed = hg.Chart(DATA, facet="host", zoom="xy", resolve_y_right="independent")
+    with pytest.raises(ValueError, match="right y scales of their own"):
+        zoomed.line(x="t", y="p99", axis="right")
+    # A rule at an x places no value on the right axis, so it has no scale to zoom.
+    zoomed.rule(x=1, axis="right")
 
 
 def test_facets_lay_panels_out_by_row_and_column():
@@ -414,12 +446,14 @@ def test_panels_can_have_categories_of_their_own():
         .bar(x="v", y="name", data={"name": ["vw", "audi"], "v": [5, 6]}, panel="cars")
     )
     assert ">audi</text>" in subplots.to_svg()
-    with pytest.raises(
-        ValueError, match="candlestick mark's categories cannot be resolved per panel"
-    ):
-        hg.Chart(sales, facet="region", resolve_x="independent").candlestick(
-            x="product", open="units", high="units", low="units", close="units"
-        )
+    # Error bars and candlesticks draw on each panel's own categories too.
+    intervals = (
+        hg.Chart(sales, facet="region", resolve_x="independent", width=500, height=250)
+        .error_bar(x="product", y="units", y_error="units")
+        .candlestick(x="product", open="units", high="units", low="units", close="units")
+    )
+    assert intervals.to_spec()[0]["resolve"] == {"x": "independent"}
+    assert all(f">{label}</text>" in intervals.to_svg() for label in "abcd")
     with pytest.raises(ValueError, match="cannot be synced yet"):
         hg.Chart(sales, facet="region", resolve_x="rows", sync="board").bar(x="product", y="units")
     with pytest.raises(ValueError, match="can brush along x only"):
@@ -496,8 +530,12 @@ def test_histograms_and_box_plots_split_by_facets():
     assert all(f">{label}</text>" in svg for label in ("p", "q", "r"))
     sideways = hg.Chart(load, facet="region", resolve_y="independent").violin(x="ms", y="host")
     assert sideways.to_spec()[0]["resolve"] == {"y": "independent"}
-    with pytest.raises(ValueError, match="text marks over a table cannot be split into panels"):
-        hg.Chart(load, facet="region").text(x="ms", y="ms", text="host")
+    labeled = hg.Chart(load, facet="region", width=500, height=250).text(
+        x="ms", y="ms", text="host"
+    )
+    spec, _ = labeled.to_spec()
+    assert sorted(spec["data"]["data"]["columns"]) == ["host", "ms", "region"]
+    assert ">r</text>" in labeled.to_svg()
 
 
 def test_candlesticks_send_their_four_prices():
@@ -1196,8 +1234,9 @@ def test_a_layout_marks_panel_is_its_own():
         hg.Chart(SALES, panels=["a", "b"]).pie("product", panel="b").rule(y=1, panel="*")
     with pytest.raises(ValueError, match="panel='\\*' would draw in panel 'b'"):
         hg.Chart(SALES, panels=["a", "b"]).rule(y=1, panel="*").pie("product", panel="b")
-    with pytest.raises(ValueError, match="has no axes: it takes no x or y settings"):
-        hg.Chart(SALES, panels=["a", hg.Panel("b", y=hg.Axis(label="n"))]).pie("product", panel="b")
+    for own in ({"y": hg.Axis(label="n")}, {"y_right": hg.Axis(label="n")}):
+        with pytest.raises(ValueError, match="has no axes: it takes no x, y, or y_right settings"):
+            hg.Chart(SALES, panels=["a", hg.Panel("b", **own)]).pie("product", panel="b")
     with pytest.raises(ValueError, match="no x axis to zoom, brush, sync, or mark seams on"):
         hg.Chart(SALES, panels=["a"], zoom="x").pie("product", panel="a").to_spec()
     with pytest.raises(ValueError, match="charts of a point3d cannot have facets or panels"):

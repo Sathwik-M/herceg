@@ -54,7 +54,8 @@ export interface ChartSpec {
   y?: AxisSpec;
   /**
    * A second y axis on the right, for marks with `axis: "right"`, with its
-   * own scale and domain. Grid lines follow it only when no mark uses the left axis.
+   * own scale and domain; in charts with facets or panels, in every panel
+   * drawing such marks. Grid lines follow it only where no mark uses the left axis.
    */
   yRight?: AxisSpec;
   /** Small multiples: the chart drawn once per value of a category field. */
@@ -148,16 +149,17 @@ export type ScaleResolution = "shared" | "independent" | "rows" | "columns";
 
 /**
  * Scale sharing between panels; needs spec version 2 (3 for `x`). A category
- * axis of bars, heatmaps, points, box plots, or violins that panels do not
- * share holds only the categories of the rows they draw; error bars and
- * candlesticks on category axes need them shared. Histograms choose their
- * bins from the rows of the panels sharing an x scale.
+ * axis that panels do not share holds only the categories of the rows they
+ * draw. Histograms choose their bins from the rows of the panels sharing an
+ * x scale.
  */
 export interface ResolveSpec {
   /** Shared by default. */
   x?: ScaleResolution;
   /** Shared by default in facets, independent in subplots. */
   y?: ScaleResolution;
+  /** The right y axis' scale: shared as `y` is, unless this says otherwise. */
+  yRight?: ScaleResolution;
 }
 
 /** One of a chart's `panels`. */
@@ -177,6 +179,8 @@ export interface PanelSpec {
    * its own (`format` replaces the chart's whole).
    */
   y?: AxisSpec;
+  /** The panel's right y axis, for its marks with `axis: "right"`: the chart's `yRight`, with these settings. */
+  yRight?: AxisSpec;
 }
 
 export interface GridSpec {

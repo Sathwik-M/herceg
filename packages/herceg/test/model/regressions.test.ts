@@ -124,9 +124,9 @@ describe("domains", () => {
       channelKind: (axis) => inner.channelKind(axis),
       series: (key, palette) => inner.series(key, palette),
       xExtent: (series, log) => inner.xExtent(series, log),
-      yExtent: (...args) => {
+      yExtent: (series, x0, x1, log, breaks) => {
         scans++;
-        return inner.yExtent(...args);
+        return inner.yExtent(series, x0, x1, log, breaks);
       },
       geometry: (series, frame) => inner.geometry(series, frame),
     };

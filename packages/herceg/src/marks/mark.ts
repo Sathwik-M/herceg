@@ -125,6 +125,13 @@ export interface AxisFormat {
   value: (value: number) => string;
 }
 
+/**
+ * Rows of a mark's table, in parts that are never copied together: what a
+ * panel, or a group of panels, draws of a mark that reads its table's rows
+ * without series (annotations split by facets). Undefined means every row.
+ */
+export type RowParts = readonly Uint32Array[];
+
 /** A point found by a mark's own lookup: series, position in it, pixel distance. */
 export interface Hit {
   series: Series;
@@ -200,7 +207,11 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * band scale; "time" makes it a time axis.
    */
   channelKind(axis: "x" | "y"): FieldKind | undefined;
-  /** Bands this mark places on a band axis, in order. */
+  /**
+   * Bands this mark places on a band axis, in order. Its series hold chart
+   * band indices, which it reads through their places (`placeAt`) where a
+   * panel holds only some of the bands.
+   */
   bands?(axis: "x" | "y", context: BandContext): BandList | undefined;
   /** Gap between bands, as a fraction of each band's step. */
   readonly bandPadding?: number;
@@ -264,16 +275,19 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   readonly zero?: "x" | "y" | undefined;
   /**
    * x extent; with `log`, of positive values only. On a time axis with
-   * `breaks`, room a mark leaves at the ends is time shown.
+   * `breaks`, room a mark leaves at the ends is time shown. Marks reading
+   * rows without series (annotations) read only `rows`, when given.
    */
   xExtent(
     series: readonly Series[],
     log: boolean,
     breaks?: Breaks,
+    rows?: RowParts,
   ): readonly [number, number] | undefined;
   /**
    * y extent of what the x range [x0, x1] shows; with `log`, of positive
-   * values only; with x `breaks`, of points they do not hide.
+   * values only; with x `breaks`, of points they do not hide; for
+   * annotations, of `rows` only, when given.
    */
   yExtent(
     series: readonly Series[],
@@ -281,12 +295,14 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
     x1: number,
     log: boolean,
     breaks?: Breaks,
+    rows?: RowParts,
   ): readonly [number, number] | undefined;
   /**
    * The mark's part of the scene. `key` identifies the mark, for marks whose
-   * geometry is not keyed by series (annotations).
+   * geometry is not keyed by series (annotations), which draw only `rows`
+   * when given (a facet panel's).
    */
-  geometry(series: readonly Series[], frame: Frame, key: MarkKey): Geometry[];
+  geometry(series: readonly Series[], frame: Frame, key: MarkKey, rows?: RowParts): Geometry[];
   /** Nearest point to a pixel, for marks with a faster lookup than the chart's generic search. */
   pick?(series: readonly Series[], px: number, py: number, frame: Frame): Hit | undefined;
   /**
@@ -340,9 +356,10 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   summarize?(parts: readonly Series[], name: string, context: SummaryContext): string | undefined;
   /**
    * A sentence describing what the mark shows, for marks without series
-   * (annotations), which the chart's data summary would otherwise leave out.
+   * (annotations), which the chart's data summary would otherwise leave
+   * out: of `rows` only, when given.
    */
-  describe?(format: AxisFormat, locale: string | undefined): string | undefined;
+  describe?(format: AxisFormat, locale: string | undefined, rows?: RowParts): string | undefined;
   /**
    * Pixels the mark draws past its data at the ends of its value axis (the
    * `zero` axis) that lie away from zero, such as bar labels; automatic
@@ -366,6 +383,16 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
     theme: Theme,
     format: (value: number) => string,
   ): LegendPart[];
+}
+
+/**
+ * Whether a mark places values along y: a y position in its spec or a y
+ * field, whatever its data and the view. Vertical rules and custom marks
+ * without fields do not.
+ */
+export function usesY(mark: Mark): boolean {
+  const { y, y1, y2 } = mark.spec as { y?: unknown; y1?: unknown; y2?: unknown };
+  return y !== undefined || y1 !== undefined || y2 !== undefined || !!mark.channelKind("y");
 }
 
 /**

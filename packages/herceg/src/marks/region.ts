@@ -22,6 +22,7 @@ import {
   type MARK,
   type Mark,
   type MarkKey,
+  type RowParts,
   seriesKey,
 } from "./mark.ts";
 
@@ -102,7 +103,7 @@ export class RegionMark implements Mark<Frozen<RegionSpec>> {
     return this.#data.kind(a) ?? this.#data.kind(b);
   }
 
-  describe(format: AxisFormat, locale: string | undefined): string | undefined {
+  describe(format: AxisFormat, locale: string | undefined, rows?: RowParts): string | undefined {
     const x = this.#channels("x");
     const y = this.#channels("y");
     const range = (channels: [Channel, Channel] | undefined, f: Formatter, i: number) => {
@@ -111,52 +112,73 @@ export class RegionMark implements Mark<Frozen<RegionSpec>> {
       const b = valueAt(channels[1], i);
       return Number.isFinite(a) && Number.isFinite(b) ? `${f(a)} to ${f(b)}` : undefined;
     };
-    return this.#data.summary(["Region", "Regions"], locale, (i) => {
-      const across = range(x, format.x, i);
-      const down = range(y, format.y, i);
-      if (across === undefined || down === undefined) return undefined;
-      return [across && `x ${across}`, down && `y ${down}`].filter(Boolean).join(", ");
-    });
+    return this.#data.summary(
+      ["Region", "Regions"],
+      locale,
+      (i) => {
+        const across = range(x, format.x, i);
+        const down = range(y, format.y, i);
+        if (across === undefined || down === undefined) return undefined;
+        return [across && `x ${across}`, down && `y ${down}`].filter(Boolean).join(", ");
+      },
+      rows,
+    );
   }
 
   series() {
     return [];
   }
 
-  xExtent(_series: unknown, log: boolean): [number, number] | undefined {
-    return this.#data.extent(this.#pair("x"), log);
+  xExtent(_series: unknown, log: boolean, _breaks?: unknown, rows?: RowParts) {
+    return this.#data.extent(this.#pair("x"), log, undefined, rows);
   }
 
-  yExtent(_series: unknown, x0: number, x1: number, log: boolean): [number, number] | undefined {
+  yExtent(
+    _series: unknown,
+    x0: number,
+    x1: number,
+    log: boolean,
+    _breaks?: unknown,
+    rows?: RowParts,
+  ) {
     const [a, b] = this.#pair("x");
-    if (a === undefined || b === undefined) return this.#data.extent(this.#pair("y"), log);
+    if (a === undefined || b === undefined)
+      return this.#data.extent(this.#pair("y"), log, undefined, rows);
     // Regions that also span x count toward y only where they overlap the view.
     const start = this.#data.channel(a);
     const end = this.#data.channel(b);
     const lo = Math.min(x0, x1);
     const hi = Math.max(x0, x1);
-    return this.#data.extent(this.#pair("y"), log, (i) => {
+    const overlaps = (i: number) => {
       const p = valueAt(start, i);
       const q = valueAt(end, i);
       return Math.max(p, q) >= lo && Math.min(p, q) <= hi;
-    });
+    };
+    return this.#data.extent(this.#pair("y"), log, overlaps, rows);
   }
 
-  geometry(_series: unknown, frame: Frame, key: MarkKey): (RectGeometry | TextGeometry)[] {
+  geometry(
+    _series: unknown,
+    frame: Frame,
+    key: MarkKey,
+    rows?: RowParts,
+  ): (RectGeometry | TextGeometry)[] {
     const { plot, theme } = frame;
     const data = this.#data;
     const id = seriesKey(key, "region");
     const xs = this.#channels("x");
     const ys = this.#channels("y");
-    const rects = frame.floats(id, "rect", data.count * 4);
-    const coords = frame.floats(id, "text", data.labeled ? data.count * 2 : 0);
+    // Buffers as large as the items drawn: a facet panel's, not the table's.
+    const size = data.size(rows);
+    const rects = frame.floats(id, "rect", size * 4);
+    const coords = frame.floats(id, "text", data.labeled ? size * 2 : 0);
     const labels: string[] = [];
     let count = 0;
-    for (let i = 0; i < data.count; i++) {
+    data.each(rows, (i) => {
       // Each region is clipped to the plot, so a label stays in its visible part.
       const across = span(xs, i, frame.x, plot.x, plot.x + plot.width);
       const down = span(ys, i, frame.y, plot.y, plot.y + plot.height);
-      if (!across || !down) continue;
+      if (!across || !down) return;
       rects[count * 4] = across[0];
       rects[count * 4 + 1] = down[0];
       rects[count * 4 + 2] = across[1] - across[0];
@@ -167,7 +189,7 @@ export class RegionMark implements Mark<Frozen<RegionSpec>> {
         labels.push(data.text(i, frame.locale));
       }
       count++;
-    }
+    });
     const out: (RectGeometry | TextGeometry)[] = [
       {
         kind: "rect",

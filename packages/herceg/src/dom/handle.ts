@@ -204,16 +204,15 @@ export interface Chart {
 
 /** A snapshot of a panel of the last scene. */
 export function panelInfo(panel: DrawnPanel): PanelInfo {
-  const { key, label, plot, x, y, yGroup, yRight } = panel;
+  const { key, label, plot, x, y, yGroup, yRight, yRightGroup } = panel;
   return {
     key,
     label,
     plot: { ...plot },
     x: axisInfo(x, panel.xGroup, x.type !== "band"),
-    // The chart has one y viewport when every panel shares the y scale.
+    // The chart has one viewport of each y axis when every panel shares its scale.
     y: axisInfo(y, yGroup, yGroup === "" && y.type !== "band"),
-    // Only charts of one panel have a right axis.
-    yRight: yRight && axisInfo(yRight, "", true),
+    yRight: yRight && axisInfo(yRight, yRightGroup, yRightGroup === ""),
   };
 }
 

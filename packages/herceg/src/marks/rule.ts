@@ -4,7 +4,7 @@ import type { RuleGeometry } from "../scene/scene.ts";
 import type { Frozen, RulePosition, RuleSpec } from "../spec/spec.ts";
 import { AnnotationData, position, readsTable, type TextField, valueAt } from "./annotation.ts";
 import { definedFields } from "./line.ts";
-import type { AxisFormat, ChartMark, Frame, MARK, Mark, MarkKey } from "./mark.ts";
+import type { AxisFormat, ChartMark, Frame, MARK, Mark, MarkKey, RowParts } from "./mark.ts";
 import { frozen } from "./mark.ts";
 
 interface RuleStyle {
@@ -70,25 +70,37 @@ export class RuleMark implements Mark<Frozen<RuleSpec>> {
     return [];
   }
 
-  describe(format: AxisFormat, locale: string | undefined): string | undefined {
+  describe(format: AxisFormat, locale: string | undefined, rows?: RowParts): string | undefined {
     const vertical = this.spec.x !== undefined;
     const channel = this.#data.channel(vertical ? this.spec.x! : this.spec.y!);
     const f = vertical ? format.x : format.y;
-    return this.#data.summary(["Rule", "Rules"], locale, (i) => {
-      const value = valueAt(channel, i);
-      return Number.isFinite(value) ? `${vertical ? "x" : "y"} ${f(value)}` : undefined;
-    });
+    return this.#data.summary(
+      ["Rule", "Rules"],
+      locale,
+      (i) => {
+        const value = valueAt(channel, i);
+        return Number.isFinite(value) ? `${vertical ? "x" : "y"} ${f(value)}` : undefined;
+      },
+      rows,
+    );
   }
 
-  xExtent(_series: unknown, log: boolean): [number, number] | undefined {
-    return this.#data.extent([this.spec.x], log);
+  xExtent(_series: unknown, log: boolean, _breaks?: unknown, rows?: RowParts) {
+    return this.#data.extent([this.spec.x], log, undefined, rows);
   }
 
-  yExtent(_series: unknown, _x0: number, _x1: number, log: boolean): [number, number] | undefined {
-    return this.#data.extent([this.spec.y], log);
+  yExtent(
+    _series: unknown,
+    _x0: number,
+    _x1: number,
+    log: boolean,
+    _breaks?: unknown,
+    rows?: RowParts,
+  ) {
+    return this.#data.extent([this.spec.y], log, undefined, rows);
   }
 
-  geometry(_series: unknown, frame: Frame, key: MarkKey): RuleGeometry[] {
+  geometry(_series: unknown, frame: Frame, key: MarkKey, rows?: RowParts): RuleGeometry[] {
     const { spec } = this;
     const { plot } = frame;
     const vertical = spec.x !== undefined;
@@ -97,12 +109,12 @@ export class RuleMark implements Mark<Frozen<RuleSpec>> {
     const lo = Math.min(scale.domain[0], scale.domain[1]);
     const hi = Math.max(scale.domain[0], scale.domain[1]);
     const out: RuleGeometry[] = [];
-    for (let i = 0; i < this.#data.count; i++) {
+    this.#data.each(rows, (i) => {
       const value = valueAt(channel, i);
       // Rules are drawn unclipped, so ones outside the visible range are skipped.
-      if (!(value >= lo && value <= hi)) continue;
+      if (!(value >= lo && value <= hi)) return;
       const at = scale.map(value);
-      if (!Number.isFinite(at)) continue;
+      if (!Number.isFinite(at)) return;
       out.push({
         kind: "rule",
         draw: ruleDrawing,
@@ -116,7 +128,7 @@ export class RuleMark implements Mark<Frozen<RuleSpec>> {
         y2: vertical ? plot.y + plot.height : at,
         label: this.#data.labeled ? this.#data.text(i, frame.locale) : undefined,
       });
-    }
+    });
     return out;
   }
 }

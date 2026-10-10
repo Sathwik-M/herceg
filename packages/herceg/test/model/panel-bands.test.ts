@@ -4,14 +4,14 @@ import { describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { bar } from "../../src/marks/bar.ts";
-import { boxplot } from "../../src/marks/boxplot.ts";
+import { candlestick } from "../../src/marks/candlestick.ts";
 import { errorBar } from "../../src/marks/errorbar.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
 import { renderToSVG } from "../../src/render/static.ts";
-import type { RectGeometry, Scene } from "../../src/scene/scene.ts";
+import type { RectGeometry, Scene, SegmentGeometry } from "../../src/scene/scene.ts";
 import { loadSpec } from "../../src/spec/load.ts";
 import type { ScaleResolution } from "../../src/spec/spec.ts";
 
@@ -65,6 +65,36 @@ function barsOf(model: ChartModel, scene: Scene, panel: number, horizontal = fal
           to: Math.max(a, b),
         };
       }),
+  );
+}
+
+/** Rows of error bars a panel's region, product, and ends; each panel holds two products. */
+const intervals = () =>
+  table({
+    region: ["N", "S", "E", "N", "S", "E"],
+    product: ["b", "a", "c", "d", "c", "d"],
+    low: [1, 2, 3, 4, 5, 6],
+    high: [2, 3, 4, 5, 6, 7],
+  });
+
+/** Each error bar's category and ends a panel draws, read from its stem (the first of its segments). */
+function stemsOf(model: ChartModel, scene: Scene, panel: number, horizontal = false) {
+  const { x, y } = model.panels()[panel]!;
+  const [along, across] = horizontal ? [y, x] : [x, y];
+  const segments = scene.panels[panel]!.marks.filter(
+    (m): m is SegmentGeometry => m.kind === "segments",
+  );
+  return segments.flatMap((m) =>
+    Array.from({ length: m.count / 3 }, (_, k) => {
+      const [x1, y1, x2, y2] = m.coords.subarray(k * 12, k * 12 + 4) as unknown as number[];
+      const [at, from, to] = horizontal ? [y1!, x1!, x2!] : [x1!, y1!, y2!];
+      const ends = [across.invert(from), across.invert(to)].map((v) => Math.round(v * 1e6) / 1e6);
+      return [
+        along.categories![Math.round(along.invert(at))],
+        Math.min(...ends),
+        Math.max(...ends),
+      ];
+    }),
   );
 }
 
@@ -662,31 +692,108 @@ describe("categories resolved per panel", () => {
     expect(barsOf(model, scene, 1).map((b) => b.category)).toEqual(["pear", "kiwi"]);
   });
 
-  it("refuse what panels cannot resolve per panel yet", () => {
+  it("place error bars on each panel's own categories, vertical and horizontal", () => {
+    const { model, scene } = build({
+      marks: [errorBar(intervals(), { x: "product", y1: "low", y2: "high" })],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+    });
+    expect(categories(model)).toEqual([
+      ["b", "d"],
+      ["a", "c"],
+      ["c", "d"],
+    ]);
+    expect([0, 1, 2].map((i) => stemsOf(model, scene, i))).toEqual([
+      [
+        ["b", 1, 2],
+        ["d", 4, 5],
+      ],
+      [
+        ["a", 2, 3],
+        ["c", 5, 6],
+      ],
+      [
+        ["c", 3, 4],
+        ["d", 6, 7],
+      ],
+    ]);
+    // The pointer finds the interval it is on, and the keyboard reads it by its own category.
+    const s = model.panels()[1]!;
+    const hit = model.inspect(s.x.map(1), s.y.map(5.5), "nearest", "S")!;
+    expect(hit.points.map(({ row, text }) => [row, text])).toEqual([[4, "5 – 6"]]);
+    const [stop] = model.keyboardStops("S");
+    expect(model.inspectPosition(stop!.key, 1, "S")!.label).toBe("c");
+
+    // Horizontal ones, in subplots, whose y categories are their own by default.
+    const two = build({
+      marks: [
+        errorBar(intervals(), { y: "product", x1: "low", x2: "high", panel: "a" }),
+        errorBar(table({ product: ["d"], low: [0], high: [9] }), {
+          y: "product",
+          x1: "low",
+          x2: "high",
+          panel: "b",
+        }),
+      ],
+      panels: panels([{ id: "a" }, { id: "b" }]),
+    });
+    expect(categories(two.model, "y")).toEqual([["b", "a", "c", "d"], ["d"]]);
+    expect(stemsOf(two.model, two.scene, 1, true)).toEqual([["d", 0, 9]]);
+    const b = two.model.panels()[1]!;
+    expect(two.model.inspect(b.x.map(4), b.y.map(0), "nearest", "b")!.points[0]!.text).toBe(
+      "0 – 9",
+    );
+  });
+
+  it("place candlesticks on each panel's own categories", () => {
+    const prices = table({
+      region: ["N", "S", "N", "S"],
+      day: ["mon", "tue", "wed", "wed"],
+      open: [1, 5, 3, 2],
+      high: [4, 6, 5, 3],
+      low: [0, 2, 1, 1],
+      close: [3, 4, 2, 2.5],
+    });
+    const { model, scene } = build({
+      marks: [
+        candlestick(prices, {
+          x: "day",
+          open: "open",
+          high: "high",
+          low: "low",
+          close: "close",
+          variant: "ohlc",
+        }),
+      ],
+      facet: facet("region"),
+      resolve: { x: "independent" },
+    });
+    expect(categories(model)).toEqual([
+      ["mon", "wed"],
+      ["tue", "wed"],
+    ]);
+    // Each bar's line from high to low stands at its own category.
+    const lines = (panel: number) => {
+      const { x, y } = model.panels()[panel]!;
+      const segments = scene.panels[panel]!.marks.filter(
+        (m): m is SegmentGeometry => m.kind === "segments",
+      );
+      return segments.flatMap((m) =>
+        Array.from({ length: m.count / 3 }, (_, k) => {
+          const [x1, y1, , y2] = m.coords.subarray(k * 12, k * 12 + 4);
+          return [x.categories![Math.round(x.invert(x1!))], y.invert(y1!), y.invert(y2!)];
+        }),
+      );
+    };
+    expect(lines(0).map(([day]) => day)).toEqual(["mon", "wed"]);
+    expect(lines(1).map(([day]) => day)).toEqual(["wed", "tue"]);
+    const [stop] = model.keyboardStops("S");
+    const read = model.inspectPosition(stop!.key, 1, "S")!;
+    expect([read.label, read.points[0]!.text]).toEqual(["wed", "open 2, high 3, low 1, close 2.5"]);
+  });
+
+  it("refuse what panels cannot do with categories of their own yet", () => {
     const data = sales();
-    expect(() =>
-      build({
-        marks: [
-          bar(data, { x: "product", y: "units" }),
-          errorBar(data, { x: "product", y: "units", yError: "units" }),
-        ],
-        facet: facet("region"),
-        resolve: { x: "rows" },
-      }),
-    ).toThrow(/errorbar mark's categories cannot be resolved per panel yet/);
-    // Subplots' y categories are their own by default.
-    expect(() =>
-      build({
-        marks: [errorBar(data, { x: "units", y: "product", xError: "units", panel: "*" })],
-        panels: panels([{ id: "a" }]),
-      }),
-    ).toThrow(`give the chart resolve: { y: "shared" }`);
-    expect(() =>
-      build({
-        marks: [boxplot(data, { x: "units", y: "product", panel: "*" })],
-        panels: panels([{ id: "a" }]),
-      }),
-    ).not.toThrow();
     expect(() =>
       build({
         marks: [bar(data, { x: "product", y: "units" })],

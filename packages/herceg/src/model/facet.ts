@@ -9,27 +9,36 @@ import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 import type { CustomSpec } from "../marks/custom.ts";
 import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
-import type { BandContext, Bands, Mark } from "../marks/mark.ts";
+import { type BandContext, type Bands, type Mark, usesY } from "../marks/mark.ts";
 import type { Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
-import type { AxisSpec, FacetSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisSpec, FacetSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 import {
+  type AnnotatedPanel,
   across,
+  annotations,
   checkBands,
+  checkFit,
   checkLayouts,
+  type DescribeAnnotation,
   groups,
   groupsOf,
   type LayoutOptions,
+  type PanelAxis,
   PanelBands,
   type PanelChart,
-  type PanelCheck,
   type PanelGrid,
-  type PanelGroups,
   type PanelLayout,
+  type PanelRoom,
   type PanelSplit,
+  type RowSpace,
   refuseAxes,
+  resolutionOf,
+  rowGap,
+  type ScaleGroups,
+  trackSizes,
 } from "./panel-layout.ts";
 
 export interface FacetOptions {
@@ -63,10 +72,10 @@ export function facet(by: string | FacetGrid, options: FacetOptions = {}): Facet
 }
 
 /**
- * Marks that cannot split their rows into panels yet; they can repeat in
- * every panel. Annotations over a table read it whole, having no series.
+ * Marks that read their table's rows without series (annotations): panels
+ * hand them the rows they draw (`MarkSeries.rows`).
  */
-const UNSPLIT = new Set(["rule", "region", "text"]);
+const ROWS = new Set(["rule", "region", "text"]);
 
 export class Facet implements PanelLayout {
   /** The field whose values wrap into rows of `columns` panels. */
@@ -131,22 +140,23 @@ export class Facet implements PanelLayout {
       this.#splitting(type, layout.table!, "");
     }
     checkBands(marks, options, this.yDefault);
-    const zoom = options.interaction?.zoom;
-    if (
-      (options.resolve?.y ?? "shared") !== "shared" &&
-      typeof zoom === "string" &&
-      zoom.includes("y")
-    )
-      throw new Error("Charts whose panels have y scales of their own cannot zoom along y yet");
+    // A y zoom moves both y scales through the same pixels, so every panel must share each.
+    const { zoom } = options.interaction ?? {};
+    if (typeof zoom === "string" && zoom.includes("y")) {
+      const y = options.resolve?.y ?? "shared";
+      const right = options.resolve?.yRight ?? y;
+      if (y !== "shared")
+        throw new Error("Charts whose panels have y scales of their own cannot zoom along y yet");
+      if (right !== "shared" && marks.some((mark) => mark.spec.axis === "right" && usesY(mark)))
+        throw new Error(
+          `Charts whose panels have right y scales of their own (resolve.yRight "${right}") cannot zoom along y yet; share them or zoom along x`,
+        );
+    }
     for (const mark of marks) {
       const { type } = mark.spec;
-      if (mark.spec.axis === "right")
-        throw new Error("Charts with facets cannot use the right axis yet");
       if (!mark.table || mark.spec.facet === "repeat") continue;
       const repeat = `give it facet: "repeat" to draw it whole in every panel`;
       this.#splitting(type, mark.table, `; ${repeat}`);
-      if (UNSPLIT.has(type))
-        throw new Error(`A ${type} mark over a table cannot be split into panels yet; ${repeat}`);
       // Custom marks split the rows of the series they show. Those without
       // series (which need one x field and y fields) have no rows to split:
       // their `draw` reads the table whole.
@@ -207,28 +217,40 @@ export class Facet implements PanelLayout {
       : "facet by fields with fewer values";
   }
 
-  /** Every panel's axes are the chart's. */
-  groupAxis(
-    _axis: "x" | "y",
-    _index: number,
-    _drawn: readonly MarkSeries[],
-    chart: AxisSpec | undefined,
-    type: AxisType,
-  ): { type: AxisType; spec: AxisSpec | undefined } {
-    return { type, spec: chart };
-  }
-
-  panelAxis(_axis: "x" | "y", _index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
+  panelAxis(_axis: PanelAxis, _index: number, chart: AxisSpec | undefined): AxisSpec | undefined {
     return chart;
   }
 
+  rowGap(grid: PanelGrid, panels: number, space: RowSpace): number {
+    return rowGap(grid, panels, space);
+  }
+
+  tracks(
+    free: number,
+    count: number,
+    weights: readonly number[] | undefined,
+    panels: number,
+    columns: number,
+    room: PanelRoom,
+  ): number[] {
+    return trackSizes(free, count, weights, panels, columns, room, this.remedy);
+  }
+
+  resolution(axis: PanelAxis, resolve: ResolveSpec | undefined): ScaleResolution {
+    return resolutionOf(axis, resolve, this.yDefault);
+  }
+
+  /** Every panel's axes are the chart's. */
   groups(
     resolution: ScaleResolution,
     split: PanelSplit,
     columns: number,
-    axis: "x" | "y",
-  ): PanelGroups {
-    return groups(resolution, split, columns, axis);
+    axis: PanelAxis,
+    chart: AxisSpec | undefined,
+    type: AxisType,
+  ): ScaleGroups {
+    const found = groups(resolution, split, columns, axis);
+    return { ...found, axes: found.drawn.map(() => ({ type, spec: chart })) };
   }
 
   across(
@@ -256,7 +278,8 @@ export class Facet implements PanelLayout {
   /**
    * The headers a panel with `values` at `plot` carries: its values above it
    * when wrapped; in a grid, its column's value above the top row and its
-   * row's beside the last column, reading top to bottom.
+   * row's beside the last column (past its right axis' labels, `aside`),
+   * reading top to bottom.
    */
   headers(
     _index: number,
@@ -266,6 +289,7 @@ export class Facet implements PanelLayout {
     plot: Rect,
     grid: PanelGrid,
     fit: (text: string, room: number) => string,
+    aside: number,
   ): SceneText[] {
     const out: SceneText[] = [];
     // The one panel of a facet without values has nothing to name.
@@ -282,10 +306,19 @@ export class Facet implements PanelLayout {
     }
     if (rowHeader && column === grid.columns - 1) {
       const text = fit(values[0]!, plot.height);
-      const x = plot.x + plot.width + rowHeader / 2 + 4;
+      const x = plot.x + plot.width + aside + rowHeader / 2 + 4;
       out.push({ text, x, y: plot.y + plot.height / 2, anchor: "middle", angle: 90 });
     }
     return out;
+  }
+
+  annotations(
+    views: readonly AnnotatedPanel[],
+    marks: readonly Mark[],
+    describe: DescribeAnnotation,
+    panel?: string,
+  ): string[] {
+    return annotations(views, marks, describe, false, panel);
   }
 
   /** A sentence naming the fields and, up to `max`, the panels by their labels. */
@@ -332,7 +365,7 @@ interface PanelValues {
 
 export class Splitter {
   readonly fields: readonly string[];
-  readonly #facet: Pick<Facet, "fields" | "splits" | "yDefault">;
+  readonly #facet: Pick<Facet, "fields" | "splits" | "yDefault" | "remedy">;
   readonly #shape: (counts: readonly number[]) => { rows: number; columns: number };
   /** Each field's values, in order of first appearance across the split tables. */
   #dimensions: string[][];
@@ -349,7 +382,7 @@ export class Splitter {
   readonly #bands = new PanelBands();
 
   constructor(
-    facet: Pick<Facet, "fields" | "splits" | "yDefault">,
+    facet: Pick<Facet, "fields" | "splits" | "yDefault" | "remedy">,
     shape: (counts: readonly number[]) => { rows: number; columns: number },
   ) {
     this.fields = facet.fields;
@@ -365,11 +398,11 @@ export class Splitter {
    * there is one empty panel. Marks whose drawing combines rows (stacks)
    * combine each panel's apart; marks that summarize rows (histograms, box
    * plots) summarize each panel's rows of their table, as a layout mark
-   * (a chart's only mark) does.
+   * (a chart's only mark) does, and annotations over a table draw each
+   * panel's rows of it.
    */
   split(
     base: readonly MarkSeries[],
-    check: PanelCheck,
     chart: PanelChart,
     bands: Bands,
     context: BandContext,
@@ -380,7 +413,7 @@ export class Splitter {
     const at = marks.findIndex(isLayoutMark);
     const layout = marks[at] as LayoutMark | undefined;
     if (layout) tables.add(layout.table!);
-    this.#update(tables, check);
+    this.#update(tables, chart);
     const empty = this.#panels.length === 0;
     const keys = empty ? [""] : this.#panels.map(({ key }) => key);
     const values = empty ? [[]] : this.#panels.map(({ values }) => values);
@@ -421,12 +454,23 @@ export class Splitter {
     base.forEach(({ mark }, i) => {
       if (parts[i]) mark.stackPanels?.(byPanel[i]!, chart.hidden);
     });
+    // Annotations read each panel's rows of their table; all of them, the
+    // rows of every panel (not those without facet values).
+    const rows = base.map(({ mark }) =>
+      splits(mark) && ROWS.has(mark.spec.type) ? this.#tableRows(mark.table!) : undefined,
+    );
     const panels = keys.map((_, p) =>
-      base.map(({ mark }, i) => ({ mark, series: byPanel[i]![p]! })),
+      base.map(({ mark }, i): MarkSeries => {
+        const own = rows[i]?.[p];
+        return own
+          ? { mark, series: byPanel[i]![p]!, rows: [own] }
+          : { mark, series: byPanel[i]![p]! };
+      }),
     );
     const all = base.map(({ mark, series }, i) => ({
       mark,
       series: summaries[i]?.flat() ?? parts[i]?.flat() ?? series,
+      rows: rows[i],
     }));
     const split: PanelSplit = { keys, values, dimensions, panels, all };
     if (layout) {
@@ -439,10 +483,10 @@ export class Splitter {
 
   /**
    * Finds each field's values in the tables' current rows, keeping the
-   * panels while they are unchanged. `check` sees their shape first, and
-   * may refuse it before they are listed.
+   * panels while they are unchanged; refuses a shape that could never fit
+   * `room` before they are listed.
    */
-  #update(tables: Iterable<Table>, check: PanelCheck): void {
+  #update(tables: Iterable<Table>, room: PanelRoom): void {
     const list = [...tables];
     let changed = false;
     const dimensions = this.fields.map((field, f) => {
@@ -463,7 +507,8 @@ export class Splitter {
       return values;
     });
     const count = dimensions.reduce((product, values) => product * values.length, 1);
-    check(this.#shape(dimensions.map((values) => values.length)), count);
+    const shape = this.#shape(dimensions.map((values) => values.length));
+    checkFit(shape, count, room, this.#facet.remedy);
     if (!changed) return;
     this.#dimensions = dimensions;
     // Rows, then columns: the last field varies fastest. One field's panels

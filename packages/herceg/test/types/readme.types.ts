@@ -138,16 +138,35 @@ createChart(element, {
 });
 // @ts-expect-error marks go on the left or right axis
 line(traffic, { x: "time", y: "requests", axis: "top" });
+const regionalTraffic = table({
+  time: time(timestamps),
+  latency: latencies,
+  requests: p50Latency,
+  region: serviceNames,
+});
+createChart(element, {
+  marks: [
+    line(regionalTraffic, { x: "time", y: "latency" }),
+    line(regionalTraffic, { x: "time", y: "requests", axis: "right" }),
+  ],
+  facet: facet("region"),
+  resolve: { yRight: "independent" },
+  yRight: { label: "requests/s" },
+});
+// @ts-expect-error a right axis is shared, independent, or by rows or columns
+createChart(element, { marks: [], facet: facet("region"), resolve: { yRight: "own" } });
 
 // Small multiples
 declare const targets: Float64Array;
 const regional = table({ week: timestamps, units: latencies, region: serviceNames });
 const goals = table({ week: timestamps, target: targets });
+const launches = table({ week: timestamps, product: serviceNames, region: serviceNames });
 createChart(element, {
   marks: [
     line(regional, { x: "week", y: "units" }),
     line(goals, { x: "week", y: "target", facet: "repeat" }),
     rule({ y: 100, label: "goal" }),
+    rule(launches, { x: "week", text: "product" }),
   ],
   facet: facet("region", { columns: 3 }),
 });
