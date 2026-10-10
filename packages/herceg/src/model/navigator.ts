@@ -1,10 +1,12 @@
-// The range navigator: a strip under the plot drawing the chart's marks over
-// the whole x domain, with a window showing the x range in view. A chart's
-// `navigator` option holds a Navigator, made by `rangeNavigator`; charts
-// without one never load this module. The strip is a panel of the scene but
-// not one of the model's views, so tooltips, the keyboard, and viewports
-// never see it, and every renderer draws it. In the browser, sliders over
-// the strip (dom/navigator.ts) move the window; they load on demand.
+// The range navigator: a strip under the plots drawing the chart's marks
+// over the whole x domain, with a window showing the x range in view. A
+// chart's `navigator` option holds a Navigator, made by `rangeNavigator`;
+// charts without one never load this module. The strip is a panel of the
+// scene but not one of the model's views, so tooltips, the keyboard, and
+// viewports never see it, and every renderer draws it. In charts with
+// facets or subplots, one strip under all the panels draws the marks of
+// every panel and moves the x range they share. In the browser, sliders
+// over the strip (dom/navigator.ts) move the window; they load on demand.
 
 import type { NumericArray } from "../data/column.ts";
 import { escapeXml, n } from "../draw/markup.ts";
@@ -30,7 +32,7 @@ import type {
 import type { NavigatorSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type AxisContext, type AxisPlan, createScale, usableDomain } from "./axis.ts";
-import type { InspectedMark, Inspector } from "./inspect.ts";
+import type { InspectedMark, Inspector, MarkSeries } from "./inspect.ts";
 import type { ChartConfig } from "./model.ts";
 
 /** The strip's height when the options give none, in CSS pixels. */
@@ -39,7 +41,7 @@ const HEIGHT = 40;
 const MIN_HEIGHT = 16;
 /** Room between the x axis' labels (or the plot) and the strip. */
 const GAP = 10;
-/** The least height a plot keeps beside a strip; charts shorter than that have none. */
+/** The least height the plots keep beside a strip; charts shorter than that have none. */
 const MIN_PLOT = 30;
 /** Room under the strip. */
 const BOTTOM = 2;
@@ -47,7 +49,7 @@ const BOTTOM = 2;
 const PAD = 3;
 /** Marks the strip draws by default, and the only ones it can. */
 const DRAWN = new Set(["line", "area", "point", "bar", "candlestick"]);
-/** The scene's key for the strip's panel. */
+/** The scene's key for the strip's panel, unless a panel of the chart's has it (see `panel`). */
 export const NAVIGATOR_PANEL = "navigator";
 
 /**
@@ -63,8 +65,30 @@ export interface DrawnStrip {
   plot: Rect;
   /** Maps values over the whole x domain (or a view reaching past it) to the strip. */
   rail: PositionScale;
-  /** The x range the plot shows, ascending: the strip's window. */
+  /** The x range the plots show, ascending: the strip's window. */
   shown: readonly [number, number];
+  /**
+   * The keys of the panels whose x range the window shows, which values
+   * are formatted for as the first one's x axis formats them.
+   */
+  panels: readonly string[];
+}
+
+/**
+ * A panel of the scene as the strip reads it: its marks there, its frames,
+ * and the names of the y scales it shares with others (see `DrawnPanel`).
+ */
+export interface StripSource {
+  readonly key: string;
+  readonly yGroup: string;
+  readonly yRightGroup: string;
+  readonly inspector: Inspector;
+}
+
+/** A mark the strip draws as panel `at` of its sources draws it. */
+interface Drawn {
+  at: number;
+  entry: InspectedMark;
 }
 
 /** A chart's model, as the strip reads it. */
@@ -102,7 +126,7 @@ interface StripState {
   overview: Geometry[];
   labels: TextGeometry | undefined;
   grid: number[];
-  /** Buffers the overview's marks draw into, by stage and series key, kept across scenes. */
+  /** Buffers the overview's marks draw into, by stage, panel, and series key, kept across scenes. */
   buffers: Map<string, Polyline | Float32Array | Float64Array | Uint8ClampedArray<ArrayBuffer>>;
   /** The strip the last scene that had one drew, and that scene's panels. */
   drawn: DrawnStrip | undefined;
@@ -118,7 +142,8 @@ const states = new WeakMap<object, StripState>();
  * the x range in view. Dragging the window pans, dragging its edges zooms,
  * dragging elsewhere in the strip shows the range dragged over, and a double
  * click shows everything; the window's edges and the window itself are
- * sliders for the keyboard.
+ * sliders for the keyboard. In charts with facets or subplots, the strip
+ * goes under all the panels and moves the x range they share.
  *
  * ```ts
  * createChart(element, {
@@ -165,14 +190,20 @@ export class Navigator {
   }
 
   /**
-   * Refuses what the strip cannot draw along: facets and panels (whose
-   * checks refuse navigators, so the model asks only one of them), layout
-   * marks, category x axes, marks placed along y, and named marks the chart
-   * lacks or the strip cannot draw.
+   * Refuses what the strip cannot draw along: panels with x scales of their
+   * own, layout marks, category x axes, marks placed along y, and named
+   * marks the chart lacks or the strip cannot draw.
    */
   check(marks: readonly Mark[], options: ChartConfig): void {
     const layout = options.marks.find(isLayoutMark);
     if (layout) throw new Error(`${layout.spec.type}: no x axis for a navigator; drop navigator`);
+    // One window shows one x range, so every panel must share it, also
+    // before data gives them more than one.
+    const x = options.resolve?.x;
+    if ((options.facet || options.panels) && x && x !== "shared")
+      throw new Error(
+        `navigator: needs one x scale shared by every panel, and resolve.x is "${x}"; set resolve.x to "shared" or drop navigator`,
+      );
     for (const mark of marks) {
       const { type } = mark.spec;
       if (mark.channelKind("x") === "category")
@@ -193,26 +224,29 @@ export class Navigator {
   }
 
   /**
-   * The room the strip takes at the bottom of a chart whose plot and strip
-   * share `available` pixels of height: at most a third of them, and none
-   * when the plot would keep less than MIN_PLOT pixels.
+   * The room the strip takes at the bottom of a chart whose plots and strip
+   * share `available` pixels of height: at most a third of them, less when
+   * the plots would keep less than `least` pixels (and MIN_PLOT), as rows of
+   * several panels must, and none when they would at its least height.
    */
-  room(available: number): number {
-    const height = Math.max(MIN_HEIGHT, Math.min(this.height, Math.floor(available / 3)));
-    const room = GAP + height + BOTTOM;
-    return available - room >= MIN_PLOT ? room : 0;
+  room(available: number, least = 0): number {
+    const height = Math.min(
+      Math.max(MIN_HEIGHT, Math.min(this.height, Math.floor(available / 3))),
+      Math.floor(available - Math.max(MIN_PLOT, Math.ceil(least)) - GAP - BOTTOM),
+    );
+    return height >= MIN_HEIGHT ? GAP + height + BOTTOM : 0;
   }
 
   /**
    * The strip's panel for a scene of the chart `owner`, at the bottom of the
-   * `room` pixels it took (see `room`): its marks and frame are those of
-   * `inspector`, the chart's one panel; `plan` plans x over a domain as the
-   * plot's axis is planned, along the plot's width, and `context` is the
-   * plot's x axis.
+   * `room` pixels it took (see `room`), under the plots of `sources`, the
+   * scene's panels, whose marks it draws; `plan` plans x over a domain as
+   * the plots' shared axis is planned, along a width, and `context` is that
+   * axis.
    */
   panel(
     owner: Owner & { readonly height: number },
-    inspector: Inspector,
+    sources: readonly StripSource[],
     plan: XPlan,
     context: AxisContext,
     room: number,
@@ -233,24 +267,30 @@ export class Navigator {
       };
       states.set(owner, state);
     }
-    const { frame } = inspector;
-    const { plot, theme } = frame;
+    const { frame } = sources[0]!.inspector;
+    const { theme } = frame;
+    const plots = sources.map(({ inspector }) => inspector.frame.plot);
     const height = room - GAP - BOTTOM;
+    // From the leftmost plot's left edge to the rightmost one's right edge,
+    // across the gaps between columns.
+    const x = Math.min(...plots.map((plot) => plot.x));
     const strip: Rect = {
-      x: plot.x,
+      x,
       y: owner.height - BOTTOM - height,
-      width: plot.width,
+      width: Math.max(...plots.map((plot) => plot.x + plot.width)) - x,
       height,
     };
     const shown = ascending(frame.x.domain);
     const { rail, labeled } = railPlan(
-      inspector.marks,
-      (domain, auto) => plan(plot.width, 0, domain, auto),
+      sources.flatMap(({ inspector }) => inspector.marks),
+      (width, domain, auto) => plan(width, 0, domain, auto),
+      Math.min(...plots.map((plot) => plot.width)),
+      strip.width,
       context,
       shown,
     );
     const { scale } = rail;
-    const drawn = this.#drawnMarks(inspector.marks);
+    const drawn = this.#drawnMarks(sources);
     const key = JSON.stringify([
       labeled,
       scale.type,
@@ -258,10 +298,16 @@ export class Navigator {
       scale.range,
       strip,
       frame.pixelRatio,
-      frame.y.type,
-      inspector.rightFrame?.y.type,
+      // Facet values that come and go, and the y scales panels share.
+      sources.map(({ key, yGroup, yRightGroup, inspector }) => [
+        key,
+        yGroup,
+        yRightGroup,
+        inspector.frame.y.type,
+        inspector.rightFrame?.y.type,
+      ]),
       [...frame.hidden],
-      drawn.flatMap(({ mark }) => [
+      [...new Set(drawn.map(({ entry }) => entry.mark))].flatMap((mark) => [
         ...tablesOf(mark).map((table) => table.version),
         viewOf(mark)?.revision ?? -1,
       ]),
@@ -276,33 +322,34 @@ export class Navigator {
       state.config = owner.config;
       state.theme = theme;
       state.measure = frame.measure;
-      state.overview = overview(
-        drawn,
-        frame,
-        inspector.rightFrame?.y,
-        scale,
-        strip,
-        owner.config,
-        context,
-        state.buffers,
-      );
+      state.overview = overview(drawn, sources, scale, strip, owner.config, context, state.buffers);
       ({ grid: state.grid, labels: state.labels } = labeled
         ? stripTicks(rail, strip, frame)
         : { grid: [], labels: undefined });
     }
-    state.drawn = { plot: strip, rail: scale, shown };
+    state.drawn = { plot: strip, rail: scale, shown, panels: sources.map(({ key }) => key) };
     state.of = owner.panels();
     const marks: Geometry[] = [...state.overview, frameShapes(strip, scale, shown, theme)];
     if (state.labels) marks.push(state.labels);
-    return { key: NAVIGATOR_PANEL, plot: strip, grid: { x: state.grid, y: [] }, axes: [], marks };
+    // A key no panel has: renderers keep each panel's drawing by its key.
+    let name = NAVIGATOR_PANEL;
+    while (sources.some((source) => source.key === name)) name += "~";
+    return { key: name, plot: strip, grid: { x: state.grid, y: [] }, axes: [], marks };
   }
 
-  /** The marks the strip draws, with their series in the plot. */
-  #drawnMarks(marks: readonly InspectedMark[]): InspectedMark[] {
+  /**
+   * The marks the strip draws, with their series in each panel: in the
+   * chart's order, and each mark's in the panels' order.
+   */
+  #drawnMarks(sources: readonly StripSource[]): Drawn[] {
     const ids = this.marks;
-    return marks.filter(({ mark }) =>
-      ids ? ids.includes(mark.spec.id as string) : drawable(mark),
-    );
+    return sources
+      .flatMap(({ inspector }, at) =>
+        inspector.marks
+          .filter(({ mark }) => (ids ? ids.includes(mark.spec.id as string) : drawable(mark)))
+          .map((entry) => ({ at, entry })),
+      )
+      .sort((a, b) => a.entry.index - b.entry.index);
   }
 
   /**
@@ -362,14 +409,17 @@ function ascending(domain: readonly [number, number]): [number, number] {
 }
 
 /**
- * The strip's x axis: the x domain of every mark, unzoomed, planned as the
- * plot's axis is when it shows everything, and widened to hold a view that
- * reaches past it; and whether it has values to label, as the plot's axis
- * has only with data or a configured domain.
+ * The strip's x axis, `width` pixels wide: the x domain of every mark in
+ * every panel, unzoomed, planned as the plots' axis is when it shows
+ * everything (over the `narrowest` plot, whose glyphs it gives room), and
+ * widened to hold a view that reaches past it; and whether it has values to
+ * label, as the plots' axis has only with data or a configured domain.
  */
 function railPlan(
-  marks: readonly InspectedMark[],
-  plan: (domain: [number, number], auto: boolean) => AxisPlan,
+  marks: readonly MarkSeries[],
+  plan: (width: number, domain: [number, number], auto: boolean) => AxisPlan,
+  narrowest: number,
+  width: number,
   context: AxisContext,
   shown: readonly [number, number],
 ): { rail: AxisPlan; labeled: boolean } {
@@ -377,29 +427,38 @@ function railPlan(
   const log = type === "log";
   // As the model finds an unzoomed x domain: no mark is placed along y, so
   // every series counts, and zero only when the axis asks for it.
-  let data = unionExtent(marks.map(({ mark, series }) => mark.xExtent(series, log, breaks)));
+  let data = unionExtent(
+    marks.map(({ mark, series, rows }) => mark.xExtent(series, log, breaks, rows)),
+  );
   if (spec?.zero && !log) data = unionExtent([data, [0, 0]]);
   let domain = usableDomain(spec?.domain ?? data, type);
   if (breaks) domain = breaks.showing(domain, spec?.domain !== undefined);
-  const full = plan(domain, spec?.domain === undefined);
+  let full = plan(narrowest, domain, spec?.domain === undefined);
+  // A strip wider than the narrowest plot (under columns of panels) keeps
+  // that domain, rounded and padded as the plots have it, with ticks for its
+  // own width: planned again for the strip, a shown reset could fall short of it.
+  const [d0, d1] = full.scale.domain;
+  if (width !== narrowest) full = plan(width, [d0, d1], false);
   const labeled = data !== undefined || spec?.domain !== undefined;
   const [lo, hi] = ascending(full.scale.domain);
   if (shown[0] >= lo && shown[1] <= hi) return { rail: full, labeled };
   const reach: [number, number] = [Math.min(lo, shown[0]), Math.max(hi, shown[1])];
-  const reversed = full.scale.domain[0] > full.scale.domain[1];
-  return { rail: plan(reversed ? [reach[1], reach[0]] : reach, false), labeled };
+  return { rail: plan(width, d0 > d1 ? [reach[1], reach[0]] : reach, false), labeled };
 }
 
 /**
  * The marks drawn small over the whole x domain into the strip: lines,
  * areas, bars, and candlesticks as they draw themselves (lines and areas
  * reduced to a few points per pixel column), points as a sample of one per
- * pixel. Buffers come from `buffers`, apart from the plot's.
+ * pixel. Each panel's part of a mark is drawn apart, so facets' parts of a
+ * series never join, with a y scale per y scale the panels have: one their
+ * groups share, or each its own. A mark a panel draws whole that another
+ * sharing that y scale drew already (a facet's repeated mark) is drawn
+ * once. Buffers come from `buffers`, apart from the plots', by panel.
  */
 function overview(
-  drawn: readonly InspectedMark[],
-  frame: Frame,
-  yRight: PositionScale | undefined,
+  drawn: readonly Drawn[],
+  sources: readonly StripSource[],
   rail: PositionScale,
   strip: Rect,
   config: ChartConfig,
@@ -416,44 +475,68 @@ function overview(
     }
     return value;
   };
-  const sized = <T extends { length: number }>(make: (length: number) => T) => {
+  const sized = <T extends { length: number }>(tag: string, make: (length: number) => T) => {
     return (seriesKey: string, stage: string, length: number): T =>
       pooled(
-        `${stage}|${seriesKey}`,
+        `${stage}${tag}|${seriesKey}`,
         () => make(Math.max(16, Math.ceil(length * 1.5))),
         (buffer) => buffer.length >= length,
       );
   };
+  const { frame } = sources[0]!.inspector;
   const theme: Theme = { ...frame.theme, lineWidth: 1, barRadius: 0 };
-  const side = (right: boolean): Frame => ({
-    ...frame,
-    x: rail,
-    y: yScale(
-      drawn.filter(({ mark }) => (mark.spec.axis === "right") === right),
-      (right ? yRight : frame.y)?.type ?? "linear",
-      frame.hidden,
-      rail,
-      strip,
-      right ? config.yRight : config.y,
-      context,
-    ),
-    plot: strip,
-    theme,
-    clouds: false,
-    keyed: false,
-    polyline: (key, stage) => pooled(`${stage}|${key}`, () => new Polyline()),
-    floats: sized((length) => new Float32Array(length)),
-    doubles: sized((length) => new Float64Array(length)),
-    bytes: sized((length) => new Uint8ClampedArray(length)),
-  });
-  const left = side(false);
-  const right = drawn.some(({ mark }) => mark.spec.axis === "right") ? side(true) : left;
-  const out = drawn.flatMap(({ mark, series, index }) => {
-    const at = mark.spec.axis === "right" ? right : left;
-    return mark.spec.type === "point"
-      ? samplePoints(series, at)
-      : mark.geometry(series, at, mark.spec.id ?? index);
-  });
+  const layout = config.facet ?? config.panels;
+  // The y scale of a panel's marks on a side is its group's, whose panels
+  // agree on its settings.
+  const groupOf = (right: boolean, at: number) =>
+    `${right} ${right ? sources[at]!.yRightGroup : sources[at]!.yGroup}`;
+  const groups = new Map<string, { y: PositionScale; seen: Set<Series> }>();
+  const out: Geometry[] = [];
+  for (const { at, entry } of drawn) {
+    const { mark, series, index } = entry;
+    const right = mark.spec.axis === "right";
+    const group = groupOf(right, at);
+    let found = groups.get(group);
+    if (!found) {
+      const axis = right ? "yRight" : "y";
+      const { inspector } = sources[at]!;
+      const among = drawn.flatMap((other) =>
+        (other.entry.mark.spec.axis === "right") === right && groupOf(right, other.at) === group
+          ? [other.entry]
+          : [],
+      );
+      const type = (right ? inspector.rightFrame : inspector.frame)?.y.type ?? "linear";
+      const spec = layout ? layout.panelAxis(axis, at, config[axis]) : config[axis];
+      found = { y: yScale(among, type, frame.hidden, rail, strip, spec, context), seen: new Set() };
+      groups.set(group, found);
+    }
+    // What another panel sharing the scale drew whole is drawn already.
+    const { y, seen } = found;
+    if (series.length > 0 && series.every((s) => seen.has(s))) continue;
+    for (const s of series) seen.add(s);
+    // Each panel's parts of marks draw into buffers of their own.
+    const tag = at ? `~${at}` : "";
+    const own: Frame = {
+      ...frame,
+      x: rail,
+      y,
+      plot: strip,
+      theme,
+      clouds: false,
+      keyed: false,
+      polyline: (key, stage) => pooled(`${stage}${tag}|${key}`, () => new Polyline()),
+      floats: sized(tag, (length) => new Float32Array(length)),
+      doubles: sized(tag, (length) => new Float64Array(length)),
+      bytes: sized(tag, (length) => new Uint8ClampedArray(length)),
+    };
+    const geometry =
+      mark.spec.type === "point"
+        ? samplePoints(series, own)
+        : mark.geometry(series, own, mark.spec.id ?? index);
+    // A panel's geometry is kept by its key, which parts of one mark in
+    // several panels share.
+    out.push(...(at ? geometry.map((part) => ({ ...part, key: `${part.key}${tag}` })) : geometry));
+  }
   for (const key of buffers.keys()) if (!used.has(key)) buffers.delete(key);
   return out;
 }

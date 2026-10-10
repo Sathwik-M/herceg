@@ -86,7 +86,7 @@ describe("a navigator's strip", () => {
     expect(model.inspect(strip.plot.x + 10, strip.plot.y + 10)).toBeUndefined();
   });
 
-  it("takes at most a third of the plot's room, leaving the plot 30 pixels, or stays out", () => {
+  it("takes at most a third of the plot's room, less to leave the plot 30 pixels, or stays out", () => {
     const data = waves(20);
     const marks = [line(data, { x: "t", y: "a" })];
     const tall = build({ marks, navigator: rangeNavigator({ height: 64 }) });
@@ -107,11 +107,19 @@ describe("a navigator's strip", () => {
       expect(plot.y + plot.height).toBeLessThan(title.y);
       expect(title.y).toBeLessThan(strip.y);
     }
+    // A third would leave the plot less than 30 pixels: the strip is shorter.
+    const short = build(
+      { marks, title: "Short", x: { title: "Time" }, navigator: rangeNavigator() },
+      600,
+      140,
+    );
+    expect(short.model.panels()[0]!.plot.height).toBe(30);
+    expect(stripOf(short.scene).plot.height).toBe(19);
     // Too short for both, the chart has no strip.
     const tiny = build(
       { marks, title: "Tiny", x: { title: "Time" }, navigator: rangeNavigator() },
       600,
-      140,
+      135,
     );
     expect(tiny.scene.panels.map(({ key }) => key)).toEqual([""]);
   });
@@ -460,6 +468,443 @@ describe("a navigator's strip", () => {
   });
 });
 
+describe("a navigator's strip under panels", () => {
+  function prices(n = 200) {
+    return table({
+      t: Float64Array.from({ length: n }, (_, i) => i),
+      close: Float64Array.from({ length: n }, (_, i) => 100 + Math.sin(i / 20) * 5),
+      volume: Float64Array.from({ length: n }, (_, i) => 1e6 + (i % 7) * 1e5),
+    });
+  }
+  /** `n` rows in `values.length` facet panels, each value's rows offset by `step`. */
+  function regions(values: readonly string[], n = 300, step = 100) {
+    return table({
+      t: Float64Array.from({ length: n }, (_, i) => i),
+      v: Float64Array.from({ length: n }, (_, i) => (i % values.length) * step + Math.sin(i / 10)),
+      k: Array.from({ length: n }, (_, i) => values[i % values.length]!),
+    });
+  }
+  const linesOf = (panel: Panel) =>
+    panel.marks.filter(({ kind }) => kind === "line") as LineGeometry[];
+  const ysOf = (g: LineGeometry) =>
+    Array.from({ length: g.path.count }, (_, i) => g.path.coords[i * 2 + 1]!);
+  const xsOf = (g: LineGeometry) =>
+    Array.from({ length: g.path.count }, (_, i) => g.path.coords[i * 2]!);
+  const faded = (strip: Panel) =>
+    windowOf(strip).shapes.filter((s) => "d" in s && s.opacity < 1) as { d: string }[];
+
+  it("goes under stacked subplots, aligned with their plots, below the x labels and title", () => {
+    const { model, scene } = build(
+      {
+        marks: [
+          line(prices(), { x: "t", y: "close", panel: "price", id: "close" }),
+          bar(prices(), { x: "t", y: "volume", panel: "volume", id: "volume" }),
+        ],
+        panels: panels([{ id: "price" }, { id: "volume" }], { rowHeights: [3, 1] }),
+        x: { title: "Time" },
+        navigator: rangeNavigator(),
+      },
+      600,
+      400,
+    );
+    const [price, volume] = model.panels();
+    expect(scene.panels.map(({ key }) => key)).toEqual(["price", "volume", NAVIGATOR_PANEL]);
+    const strip = stripOf(scene);
+    expect(strip.plot).toEqual({
+      x: price!.plot.x,
+      y: 400 - 2 - 40,
+      width: price!.plot.width,
+      height: 40,
+    });
+    expect(volume!.plot.x).toBe(price!.plot.x);
+    const title = scene.panels[1]!.axes.find((axis) => axis.orient === "bottom")!.title!;
+    expect(volume!.plot.y + volume!.plot.height).toBeLessThan(title.y);
+    expect(title.y).toBeLessThan(strip.plot.y);
+    // The weighted rows keep their shares of what the strip leaves.
+    expect(price!.plot.height / volume!.plot.height).toBeCloseTo(3, 5);
+    expect(model.panels()).toHaveLength(2);
+  });
+
+  it("draws every panel's marks, each over the y scale of its own panel", () => {
+    const { scene } = build({
+      marks: [
+        line(prices(), { x: "t", y: "close", panel: "price" }),
+        bar(prices(), { x: "t", y: "volume", panel: "volume" }),
+      ],
+      panels: panels([{ id: "price" }, { id: "volume" }]),
+      navigator: rangeNavigator(),
+    });
+    const strip = stripOf(scene);
+    expect(strip.marks.map(({ kind }) => kind)).toEqual(["line", "rect", "shapes", "text"]);
+    // Prices near 100 span the strip on their own scale, not flattened by
+    // volumes in the millions; the tallest volume bar reaches its top.
+    const [close] = linesOf(strip);
+    const ys = ysOf(close!);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(strip.plot.height / 2);
+    const bars = strip.marks.find(({ kind }) => kind === "rect") as unknown as {
+      rects: Float32Array;
+      count: number;
+    };
+    expect(bars.count).toBe(200);
+    const tops = Array.from({ length: bars.count }, (_, i) => bars.rects[i * 4 + 1]!);
+    expect(Math.min(...tops)).toBeCloseTo(strip.plot.y + 3, 0);
+  });
+
+  it("draws only the marks it names, whichever panel draws them", () => {
+    const { scene } = build({
+      marks: [
+        line(prices(), { x: "t", y: "close", panel: "price", id: "close" }),
+        bar(prices(), { x: "t", y: "volume", panel: "volume", id: "volume" }),
+      ],
+      panels: panels([{ id: "price" }, { id: "volume" }]),
+      navigator: rangeNavigator({ marks: ["volume"] }),
+    });
+    expect(stripOf(scene).marks.map(({ kind }) => kind)).toEqual(["rect", "shapes", "text"]);
+  });
+
+  it("shows the x range every panel shares, from any panel, and keeps its overview meanwhile", () => {
+    const { model, scene } = build({
+      marks: [
+        line(prices(), { x: "t", y: "close", panel: "price" }),
+        bar(prices(), { x: "t", y: "volume", panel: "volume" }),
+      ],
+      // Fixed y labels and no x labels: the margins, and so the strip, stay.
+      panels: panels([
+        { id: "price", y: { domain: [90, 110] } },
+        { id: "volume", y: { domain: [0, 2e6] } },
+      ]),
+      x: { show: false },
+      navigator: rangeNavigator(),
+    });
+    const before = stripOf(scene);
+    expect(faded(before)).toHaveLength(0);
+    model.setViewport([50, 100], "volume");
+    const zoomed = model.scene(estimateText);
+    expect(model.panels().map(({ x }) => x.domain)).toEqual([
+      [50, 100],
+      [50, 100],
+    ]);
+    const strip = stripOf(zoomed);
+    expect(faded(strip)).toHaveLength(2);
+    // The same overview: zooming changed neither its data nor its scales.
+    expect(strip.marks[0]).toBe(before.marks[0]);
+    expect(strip.marks[1]).toBe(before.marks[1]);
+  });
+
+  it("spans columns of unequal widths, its window filling it unzoomed", () => {
+    const data = prices(101);
+    const { model, scene } = build(
+      {
+        marks: [
+          bar(data, { x: "t", y: "volume", panel: "a" }),
+          line(data, { x: "t", y: "close", panel: "b" }),
+          point(data, { x: "t", y: "close", panel: "c" }),
+        ],
+        panels: panels([{ id: "a" }, { id: "b" }, { id: "c" }], {
+          columns: 2,
+          columnWidths: [1, 3],
+        }),
+        navigator: rangeNavigator(),
+      },
+      800,
+      400,
+    );
+    const [a, b, c] = model.panels();
+    const strip = stripOf(scene);
+    expect(strip.plot.x).toBe(a!.plot.x);
+    expect(strip.plot.x + strip.plot.width).toBe(b!.plot.x + b!.plot.width);
+    expect(c!.plot.x).toBe(a!.plot.x);
+    // The plots' x domain, rounded and padded for bars over the narrow
+    // column, is the strip's: unzoomed, nothing is faded.
+    expect(faded(strip)).toHaveLength(0);
+    // Ticks for the strip's width, more than the narrow column has.
+    const narrow = scene.panels[0]!.grid.x.length;
+    expect(strip.grid.x.length).toBeGreaterThan(narrow);
+    for (const at of strip.grid.x) {
+      expect(at).toBeGreaterThanOrEqual(strip.plot.x);
+      expect(at).toBeLessThanOrEqual(strip.plot.x + strip.plot.width);
+    }
+    // And the window shows a view where the plots show it.
+    model.setViewport([25, 75]);
+    const zoomed = stripOf(model.scene(estimateText));
+    const [left, right] = faded(zoomed).map(({ d }) => d.match(/-?[\d.]+/g)!.map(Number));
+    const rail = (value: number) =>
+      zoomed.plot.x +
+      ((value - a!.x.domain[0]) / (a!.x.domain[1] - a!.x.domain[0])) * zoomed.plot.width;
+    expect(left![2]).toBeCloseTo(rail(25), 0);
+    expect(right![0]).toBeCloseTo(rail(75), 0);
+  });
+
+  it("goes under wrapped facets, drawing each panel's part of a series apart", () => {
+    const values = ["a", "b", "c", "d", "e"];
+    const { model, scene } = build(
+      {
+        marks: [line(regions(values), { x: "t", y: "v" })],
+        facet: facet("k", { columns: 3 }),
+        navigator: rangeNavigator(),
+      },
+      600,
+      400,
+    );
+    const views = model.panels();
+    expect(views).toHaveLength(5);
+    const strip = stripOf(scene);
+    // Across the top row, which the short last row leaves wider.
+    expect(strip.plot.x).toBe(views[0]!.plot.x);
+    expect(strip.plot.x + strip.plot.width).toBe(views[2]!.plot.x + views[2]!.plot.width);
+    // A line per panel, in buffers of its own, under keys of its own.
+    const lines = linesOf(strip);
+    expect(lines).toHaveLength(5);
+    expect(new Set(lines.map(({ path }) => path)).size).toBe(5);
+    expect(new Set(lines.map(({ key }) => key)).size).toBe(5);
+    for (const g of linesOf(scene.panels[0]!))
+      expect(lines.map(({ path }) => path)).not.toContain(g.path);
+    // Never joined: each part runs left to right on its own.
+    for (const g of lines) {
+      const xs = xsOf(g);
+      expect(xs.every((x, i) => i === 0 || x >= xs[i - 1]!)).toBe(true);
+    }
+    // Panels sharing y share it in the strip: each value's level apart.
+    const middles = lines.map((g) => {
+      const ys = ysOf(g);
+      return (Math.max(...ys) + Math.min(...ys)) / 2;
+    });
+    expect(middles).toEqual([...middles].sort((p, q) => q - p));
+    expect(middles[0]! - middles[4]!).toBeGreaterThan(strip.plot.height / 2);
+  });
+
+  it("gives facets with y scales of their own a y scale each, and draws a repeated mark once per scale", () => {
+    const data = regions(["a", "b", "c"]);
+    const own = stripOf(
+      build(
+        {
+          marks: [line(data, { x: "t", y: "v" })],
+          facet: facet("k"),
+          resolve: { y: "independent" },
+          navigator: rangeNavigator(),
+        },
+        600,
+        400,
+      ).scene,
+    );
+    // Each panel's part spans much of the strip on its own scale.
+    for (const g of linesOf(own)) {
+      const ys = ysOf(g);
+      expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(own.plot.height / 2);
+    }
+    const level = table({ t: [0, 299], v: [0, 0] });
+    const marks = [
+      line(data, { x: "t", y: "v" }),
+      line(level, { x: "t", y: "v", facet: "repeat", id: "level" }),
+    ];
+    const strip = (resolve: NonNullable<ChartConfig["resolve"]> = {}) =>
+      stripOf(
+        build({ marks, facet: facet("k"), resolve, navigator: rangeNavigator() }, 600, 400).scene,
+      );
+    // Once over the one y scale the panels share, and once in each of theirs.
+    expect(linesOf(strip())).toHaveLength(4);
+    expect(linesOf(strip({ y: "independent" }))).toHaveLength(6);
+    expect(new Set(linesOf(strip({ y: "independent" })).map(({ key }) => key)).size).toBe(6);
+  });
+
+  it("goes under a grid of facets, short of the row headers", () => {
+    const n = 400;
+    const data = table({
+      t: Float64Array.from({ length: n }, (_, i) => i),
+      v: Float64Array.from({ length: n }, (_, i) => Math.sin(i / 10)),
+      r: Array.from({ length: n }, (_, i) => (i % 2 ? "east" : "west")),
+      c: Array.from({ length: n }, (_, i) => (i % 4 < 2 ? "A" : "B")),
+    });
+    const { model, scene } = build(
+      {
+        marks: [line(data, { x: "t", y: "v" })],
+        facet: facet({ row: "r", column: "c" }),
+        navigator: rangeNavigator(),
+      },
+      600,
+      400,
+    );
+    const views = model.panels();
+    const strip = stripOf(scene);
+    const right = Math.max(...views.map(({ plot }) => plot.x + plot.width));
+    expect(strip.plot.x).toBe(Math.min(...views.map(({ plot }) => plot.x)));
+    expect(strip.plot.x + strip.plot.width).toBe(right);
+    const rowHeaders = scene.headers.filter(({ angle }) => angle === 90);
+    expect(rowHeaders.length).toBeGreaterThan(0);
+    for (const header of rowHeaders) expect(header.x).toBeGreaterThan(right);
+    expect(linesOf(strip)).toHaveLength(4);
+  });
+
+  it("follows facet values that come and go", () => {
+    const data = table({ t: [0, 1, 2, 3], v: [1, 2, 3, 4], k: ["a", "b", "a", "b"] });
+    const { model, scene } = build({
+      marks: [line(data, { x: "t", y: "v" })],
+      facet: facet("k"),
+      navigator: rangeNavigator(),
+    });
+    expect(linesOf(stripOf(scene))).toHaveLength(2);
+    data.append({ t: [4, 5], v: [5, 6], k: ["c", "c"] });
+    const grown = stripOf(model.scene(estimateText));
+    expect(linesOf(grown)).toHaveLength(3);
+    expect(grown.plot.width).toBeLessThan(stripOf(scene).plot.width + 1);
+  });
+
+  it("stacks areas within each facet panel, as the panels do", () => {
+    const n = 40;
+    const data = table({
+      t: Float64Array.from({ length: n }, (_, i) => Math.floor(i / 2)),
+      v: Float64Array.from({ length: n }, () => 1),
+      w: Float64Array.from({ length: n }, () => 2),
+      k: Array.from({ length: n }, (_, i) => (i % 2 ? "a" : "b")),
+    });
+    const { scene } = build({
+      marks: [area(data, { x: "t", y: ["v", "w"], stack: true })],
+      facet: facet("k"),
+      navigator: rangeNavigator(),
+    });
+    const areas = stripOf(scene).marks.filter(({ kind }) => kind === "area");
+    // Two stacked fields in each of two panels.
+    expect(areas).toHaveLength(4);
+  });
+
+  it("leaves out series the legend hides, in every panel", () => {
+    const data = table({
+      t: [0, 1, 2, 3],
+      v: [1, 2, 3, 4],
+      w: [4, 3, 2, 1],
+      k: ["a", "b", "a", "b"],
+    });
+    const { model } = build({
+      marks: [line(data, { x: "t", y: "v" }), line(data, { x: "t", y: "w" })],
+      facet: facet("k"),
+      navigator: rangeNavigator(),
+    });
+    model.hidden.add(model.series()[1]!.key);
+    const strip = stripOf(model.scene(estimateText));
+    const drawn = linesOf(strip).filter(({ path }) => path.count > 0);
+    expect(drawn).toHaveLength(2);
+  });
+
+  it("gives each side of a subplot's y axes a scale of its own", () => {
+    const data = prices();
+    const { scene } = build({
+      marks: [
+        line(data, { x: "t", y: "close", panel: "p" }),
+        line(data, { x: "t", y: "volume", panel: "p", axis: "right" }),
+        line(data, { x: "t", y: "close", panel: "q" }),
+      ],
+      panels: panels([{ id: "p" }, { id: "q" }]),
+      navigator: rangeNavigator(),
+    });
+    const strip = stripOf(scene);
+    const lines = linesOf(strip);
+    expect(lines).toHaveLength(3);
+    for (const g of lines) {
+      const ys = ysOf(g);
+      expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(strip.plot.height / 3);
+    }
+  });
+
+  it("is shorter, or stays out, where rows of panels would get too short", () => {
+    const data = prices(20);
+    const marks = ["a", "b", "c", "d"].map((panel) => line(data, { x: "t", y: "close", panel }));
+    const layout = panels(["a", "b", "c", "d"].map((id) => ({ id })));
+    // Each row needs 20 pixels: 4 rows and a 40-pixel strip would not fit.
+    for (const height of [215, 245, 260, 300]) {
+      const { model, scene } = build(
+        { marks, panels: layout, navigator: rangeNavigator() },
+        600,
+        height,
+      );
+      const without = build({ marks, panels: layout }, 600, height).model.panels();
+      const rows = model.panels().map(({ plot }) => plot.height);
+      expect(Math.min(...rows)).toBeGreaterThanOrEqual(20);
+      const strip = scene.panels.find(({ key }) => key === NAVIGATOR_PANEL);
+      if (strip) {
+        expect(strip.plot.height).toBeGreaterThanOrEqual(16);
+        expect(strip.plot.height).toBeLessThanOrEqual(40);
+        expect(rows[0]).toBeLessThan(without[0]!.plot.height);
+      } else expect(rows[0]).toBe(without[0]!.plot.height);
+    }
+    const strip = (height: number) =>
+      build({ marks, panels: layout, navigator: rangeNavigator() }, 600, height).scene.panels.find(
+        ({ key }) => key === NAVIGATOR_PANEL,
+      )?.plot.height;
+    expect(strip(215)).toBeUndefined();
+    expect(strip(245)).toBe(19);
+    expect(strip(300)).toBe(40);
+  });
+
+  it("leaves weighted rows what they need, to the pixel, and takes huge weights", () => {
+    const data = prices(20);
+    const marks = [
+      line(data, { x: "t", y: "close", panel: "a" }),
+      line(data, { x: "t", y: "close", panel: "b" }),
+    ];
+    const hidden = { x: { show: false }, y: { show: false }, legend: false } as const;
+    const weighted = (rowHeights: number[], height: number) =>
+      build(
+        {
+          marks,
+          panels: panels([{ id: "a" }, { id: "b" }], { rowHeights }),
+          ...hidden,
+          navigator: rangeNavigator(),
+        },
+        600,
+        height,
+      );
+    // The short row would be a rounding error under 20 pixels at the least height.
+    for (let height = 195; height <= 215; height++) {
+      const { model } = weighted([1, 6], height);
+      expect(Math.min(...model.panels().map(({ plot }) => plot.height))).toBeGreaterThanOrEqual(20);
+    }
+    // Weights too large to add up are shares of the largest, as the rows' are.
+    expect(stripOf(weighted([1e308, 1e308], 300).scene).plot.height).toBe(40);
+  });
+
+  it("has a key of its own when a panel or a facet value is called navigator", () => {
+    const data = table({
+      t: [0, 1, 2, 3],
+      v: [1, 2, 3, 4],
+      k: ["navigator", "b", "navigator", "b"],
+    });
+    const faceted = build({
+      marks: [line(data, { x: "t", y: "v" })],
+      facet: facet("k"),
+      navigator: rangeNavigator(),
+    }).scene;
+    const keys = faceted.panels.map(({ key }) => key);
+    expect(keys.slice(0, 2)).toEqual(["navigator", "b"]);
+    expect(new Set(keys).size).toBe(3);
+    expect(faceted.panels[2]!.marks.some(({ key }) => key === "navigator-frame")).toBe(true);
+    const named = build({
+      marks: [line(data, { x: "t", y: "v", panel: "navigator" })],
+      panels: panels([{ id: "navigator" }]),
+      navigator: rangeNavigator(),
+    }).scene;
+    expect(new Set(named.panels.map(({ key }) => key)).size).toBe(2);
+  });
+
+  it("draws in static SVG and PDF under every panel", () => {
+    const data = prices();
+    const options = {
+      width: 500,
+      height: 360,
+      marks: [
+        line(data, { x: "t", y: "close", panel: "price" }),
+        bar(data, { x: "t", y: "volume", panel: "volume" }),
+      ],
+      panels: panels([{ id: "price" }, { id: "volume" }]),
+      navigator: rangeNavigator(),
+      locale: "en-US",
+    };
+    const svg = renderToSVG(options);
+    // Each panel's data and the strip's, each clipped.
+    expect(svg.match(/<clipPath /g)).toHaveLength(3);
+    expect(new TextDecoder("latin1").decode(renderToPDF(options))).toMatch(/^%PDF-1\.4/);
+  });
+});
+
 describe("navigators refuse", () => {
   const data = waves(10);
   const fail = (config: Partial<ChartConfig>) => () =>
@@ -469,22 +914,46 @@ describe("navigators refuse", () => {
       navigator: rangeNavigator(config.navigator?.toJSON()),
     });
 
-  it("facets, panels, layout marks, category x axes, and marks along y", () => {
+  it("panels with x scales of their own, layout marks, category x axes, and marks along y", () => {
     const hosts = table({ t: [0, 1], v: [1, 2], host: ["a", "b"] });
+    for (const x of ["independent", "rows", "columns"] as const) {
+      const message = `navigator: needs one x scale shared by every panel, and resolve.x is "${x}"; set resolve.x to "shared" or drop navigator`;
+      expect(() =>
+        build({
+          marks: [line(hosts, { x: "t", y: "v" })],
+          facet: facet("host"),
+          resolve: { x },
+          navigator: rangeNavigator(),
+        }),
+      ).toThrow(message);
+      // Also with one panel, which more data would make several.
+      expect(() =>
+        build({
+          marks: [line(hosts, { x: "t", y: "v", panel: "p" })],
+          panels: panels([{ id: "p" }]),
+          resolve: { x },
+          navigator: rangeNavigator(),
+        }),
+      ).toThrow(message);
+    }
     expect(() =>
       build({
         marks: [line(hosts, { x: "t", y: "v" })],
         facet: facet("host"),
+        resolve: { x: "shared" },
         navigator: rangeNavigator(),
       }),
-    ).toThrow("navigator: charts with facets have none yet; drop navigator or facet");
+    ).not.toThrow();
     expect(() =>
       build({
-        marks: [line(hosts, { x: "t", y: "v", panel: "p" })],
-        panels: panels([{ id: "p" }]),
+        marks: [
+          line(hosts, { x: "t", y: "v", panel: "p" }),
+          pie(hosts, { category: "host", value: "v", panel: "q" }),
+        ],
+        panels: panels([{ id: "p" }, { id: "q" }]),
         navigator: rangeNavigator(),
       }),
-    ).toThrow("navigator: charts with panels have none yet; drop navigator or panels");
+    ).toThrow("pie: no x axis for a navigator; drop navigator");
     expect(() =>
       build({ marks: [pie(hosts, { category: "host", value: "v" })], navigator: rangeNavigator() }),
     ).toThrow("pie: no x axis for a navigator; drop navigator");
@@ -534,6 +1003,14 @@ describe("navigators refuse", () => {
     expect(() =>
       model.update({ marks: [bar(hosts, { x: "host", y: "v" })], navigator: rangeNavigator() }),
     ).toThrow("bar x holds categories");
+    expect(() =>
+      model.update({
+        marks: [line(hosts, { x: "t", y: "v" })],
+        facet: facet("host"),
+        resolve: { x: "independent" },
+        navigator: rangeNavigator(),
+      }),
+    ).toThrow('resolve.x is "independent"');
   });
 });
 
@@ -554,6 +1031,20 @@ describe("navigator specs", () => {
     const model = new ChartModel(config);
     model.setSize(400, 300, 1);
     expect(stripOf(model.scene(estimateText)).plot.height).toBe(50);
+  });
+
+  it("load under facets and subplots, and refuse x scales of their own", () => {
+    const hosts = { d: { columns: { t: [0, 1, 2, 3], v: [1, 3, 2, 4], k: ["a", "b", "a", "b"] } } };
+    const lines: ChartSpec["marks"] = [{ type: "line", x: "t", y: "v" }];
+    const draw = (spec: Partial<ChartSpec>) => {
+      const model = new ChartModel(loadSpec({ data: hosts, marks: lines, ...spec }).config);
+      model.setSize(400, 300, 1);
+      return model.scene(estimateText);
+    };
+    expect(stripOf(draw({ facet: { field: "k" }, navigator: true })).plot.height).toBe(40);
+    expect(() =>
+      draw({ facet: { field: "k" }, resolve: { x: "columns" }, navigator: { height: 30 } }),
+    ).toThrow('resolve.x is "columns"');
   });
 
   it("are checked", () => {

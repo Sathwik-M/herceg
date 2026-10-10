@@ -27,8 +27,8 @@ One name per concept, used the same way in code and docs.
 | **Controls** | What a chart of a 3D, map, tree, or network mark loads to turn, pan and zoom, drill, or move nodes by pointer, keyboard, and toolbar (`dom/controls.ts`). |
 | **Spec** | The portable, JSON-serializable description of a chart (`ChartSpec`). |
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
-| **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one, and with a navigator, the strip is a panel of the scene too, though not one the chart inspects or zooms. |
-| **Navigator** | A strip under the plot drawing a chart's marks over its whole x axis, with a window over the x range in view (the viewport) that the pointer and keyboard move and resize (`navigator`, a chart option made by `rangeNavigator`). |
+| **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one, or one per facet value or subplot, and with a navigator, the strip under them is a panel of the scene too, though not one the chart inspects or zooms. |
+| **Navigator** | A strip under the plot (under every panel, with facets or subplots) drawing a chart's marks over its whole x axis, with a window over the x range in view (the viewport) that the pointer and keyboard move and resize (`navigator`, a chart option made by `rangeNavigator`). |
 | **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (rugs, error bars, candle wicks, dendrogram links, network links and arrowheads), points (network nodes too), a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, a directed network's bowed links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`), and the handle applications hold to it (`Chart`). |
@@ -1317,33 +1317,64 @@ refused. Animated view changes interpolate positions.
 
 A chart's `navigator` (`rangeNavigator(options)`, a `Navigator`; in specs,
 `true` or `{ height?, marks? }`) adds a strip under the
-plot (`model/navigator.ts`). The native option is a prepared object, as
+plot, or under all the panels of facets and subplots, with one window over
+the x range they share (`model/navigator.ts`). The native option is a prepared object, as
 breaks, facets, and panels are, so the model reaches the strip only through
 it: a line chart without one bundles a few hooks (room under the axis, the
 strip's panel, the check, and mounting the sliders), about 110 bytes gzip.
 `renderToSVG`, `toSVG`, and PDF export stay synchronous because the strip's
 drawing is the model's, and only the browser's sliders load on demand.
 
-**Layout.** The model takes the strip's room (its height, at most a third
-of what the plot and the strip share, plus 12 pixels) from the bottom
-before it lays out the plot, so the x axis and its title move up, or none
-when the plot would keep less than 30 pixels; it appends the strip's panel to
-the scene after its views: the scene's renderers (SVG, Canvas, PDF, and so
+**Layout.** The model takes the strip's room (its height plus 12 pixels)
+from the height the rows of plots share, after the title, legends, panel
+headers, the gaps between rows, the x labels, and the x title, before it
+lays out the plots, so the x axis and its title move up. The strip is at
+most a third of what the plots and the strip share, shorter where the
+plots would keep less than 30 pixels or less than the least the grid's
+rows need (`PanelGrid.least`: 20 pixels for each row of several panels, by
+their weights, which `trackSizes` would otherwise refuse), and none when
+even 16 pixels would not leave them that, so a strip never makes rows too
+short. Columns can still come out too narrow: shorter rows plan fewer y
+ticks, whose labels may be wider, so a grid whose columns are within a few
+pixels of 20 is refused with the strip, as it is without one when its data
+widens its labels. The strip spans the plots: from the left edge
+of the leftmost to the right edge of the rightmost, across the gaps
+between columns and an incomplete last row's empty cells, short of right
+axes and a grid's row headers. The model appends the strip's panel to the
+scene after its views: the scene's renderers (SVG, Canvas, PDF, and so
 PNG) draw it like any panel, while inspection, the keyboard, viewports,
-`getPanels`, and sync never see it. Charts with facets or panels, layout
-marks, category x axes, or marks placed along y are refused: facets and
-panels refuse a navigator in their own check, so the model asks one of the
-three to check the marks.
+`getPanels`, and sync never see it. Its scene key is `"navigator"`, with
+`~` added until no panel has that key (a facet value or subplot of that
+name), as the live SVG renderer keeps each panel's nodes by key. The
+navigator's check runs after the layout's own: it refuses layout marks,
+category x axes, marks placed along y, and with facets or panels a
+`resolve.x` other than `"shared"`, also while every panel's data shares
+one x scale, as one window shows one x range.
 
-**Overview.** The strip's x axis (the rail) is the x domain unzoomed,
-planned by the model's own x planning over the plot's width (rounding, room
-for glyphs, and breaks as the unzoomed plot has them), and widened to hold
-a view reaching past the data, such as a synced chart's or a wheel zoom's.
-Each side's y scale is its marks' extent over the whole rail, or the axis'
-`domain`, from zero for bars and areas. Lines, areas, bars, and
+**Overview.** The strip's x axis (the rail) is the unzoomed x domain of
+every panel's marks, planned by the model's own x planning (rounding, room
+for glyphs, and breaks as the unzoomed plots have them) over the narrowest
+plot, as the model plans a shared x scale over its narrowest column; a
+strip wider than that (under columns of panels) keeps that domain with
+ticks planned for its own width, since rounding or padding it again for the
+wider strip could leave a reset window short of the rail. The rail widens
+to hold a view reaching past the data, such as a synced chart's or a wheel
+zoom's. The strip draws the marks it names, or every one it can, in the
+chart's order of marks and then of panels: each panel's series (a facet's
+parts of them) apart, so parts of one series never join across panels,
+each with the y scale of its panel's y group on its side (as
+`DrawnPanel.yGroup` and `yRightGroup` name them: one for panels sharing y,
+each panel's own otherwise). A group's scale is the extent of the group's
+drawn marks over the whole rail, or its axis' `domain` (its panels agree on
+the settings), from zero for bars and areas. A mark drawn whole in several
+panels of one group (a facet's repeated mark, a subplot mark in `"*"`) is
+drawn once; facets' stacks stay each panel's own. Lines, areas, bars, and
 candlesticks draw themselves through their `geometry` with a frame of the
-rail, the strip, and buffers of the strip's own (so the plot's buffers are
-never overwritten): lines and areas are M4-reduced at the strip's pixel
+rail, the strip, and buffers of the strip's own, by stage, panel index,
+and series key (so neither the plots' buffers nor another panel's part are
+ever overwritten), their geometry keys given the panel index too, as parts
+of one series in several panels would share keys in the one strip: lines
+and areas are M4-reduced at the strip's pixel
 width, through the same min/max indexes as the plot (the same chart and
 scene count a draw once), and bars and candlesticks are as the plot draws
 them, bars one rectangle each. Unsorted lines are drawn whole, as the plot
@@ -1352,11 +1383,12 @@ strip, drawn as small squares by a drawing of the strip's own (the point
 drawing's symbols would add 5 KiB to charts of lines), so a series holds at
 most as many as the strip has pixels, though finding them reads every
 point. The overview is kept per chart and drawn again only when the rail,
-the strip, the pixel ratio, the y types, the hidden series, the options,
-the theme, text measurement, or the versions of the tables and row views
-its marks read change: moving the window rebuilds the plot's scene but
-reuses the overview, while each streamed change rebuilds it (the rail's
-pixel columns move as the domain grows). The window is drawn every scene
+the strip, the pixel ratio, the panels (their keys, y groups, and y types),
+the hidden series, the options, the theme, text measurement, or the
+versions of the tables and row views its marks read change: moving the
+window rebuilds the plots' scene but reuses the overview, while each
+streamed change rebuilds it (the rail's pixel columns move as the domain
+grows), and buffers of panels gone are let go. The window is drawn every scene
 from the plot's x domain as drawn, so a playing animation moves it too:
 the parts outside it faded, an outline, and a grip at each edge (one shapes
 geometry), and the rail's ticks are the strip's grid lines with their
@@ -1372,17 +1404,22 @@ pixels outside the window and up to 4 inside, leaving at least 6 in the
 middle to the window, so a narrow window still pans. A press focuses the
 slider it lands on (the window's, elsewhere in the strip), so that Escape
 reaches the drag, and a strip that goes (the chart grows too short for it)
-ends a drag held over it. The chart mounts
+ends a drag held over it. Under several panels, the group's description
+says the window moves the x range of all of them. The chart mounts
 them through the navigator's `mount`, which keeps one set per chart across
 updates (so focus stays), and they follow the chart through its handle:
 they redraw on `render` events, read the strip the model last drew, format
-values with `formatValue`, and change the view with `setViewport` followed
+values with `formatValue` as the x axis of the strip's first panel writes
+them, and change the view with `setViewport` followed
 by `render()`, which ends any transition that `animation` started, so
 drags follow the pointer and are reported and synced as any `setViewport`.
 A drag keeps the rail it started on, so data arriving meanwhile does not
 move the window under the pointer, and ends if anything else changed the
-view since its last move, a viewport listener moved it, or the strip moved
-or resized; one pointer drags at a time, a second finger doing nothing.
+view since its last move or a viewport listener moved it; a strip that
+moved or resized (margins that grew for wider labels, which panning
+several panels' axes makes common, or a resized chart) takes it on from
+where the window is, a selection from the value it started at. One
+pointer drags at a time, a second finger doing nothing.
 Window and edge drags are pixel shifts through the rail, so log axes keep
 their ratios and axes with breaks the time shown, and an edge that does
 not move keeps its value exactly (a break collapses many values into one
@@ -1413,6 +1450,27 @@ overview of a 100,000-point line holds about 35 KiB (Node); in Chrome, ten
 such charts take about 0.9 MiB more with a navigator than without (canvas
 rendering), about half of it with an empty strip (`marks: []`), the sliders
 and the strip's drawing.
+
+Under panels (one-off runs through the browser tests in headless Chrome,
+1000×600 CSS pixels, other work on the machine; JavaScript of each pointer
+move over the window, p50 of 110 moves interleaved with `setViewport` and
+`render()` on a copy without a navigator, to the 0.1 ms the timer gives):
+over 12 facet panels of a 100,000-row line, a move takes about 0.5 to 0.6
+ms against 0.2 to 0.3 ms, the strip drawing its twelve lines each frame;
+over 4 subplots of 100,000 rows (two lines, 100,000 volume bars, an area,
+and a line), about 3.2 to 3.5 ms against 0.9 to 1.0 ms, nearly all of it
+the strip's 100,000 bars drawn each frame, and 1.1 ms with `marks` leaving
+the bars out. A row appended and drawn takes 1.5 ms instead of 0.7 to 0.8
+ms (facets) and 5.3 to 5.9 ms instead of 1.9 to 2.4 ms (subplots; 2.4 to
+2.5 ms without the bars), the overview drawn again. In Node, a moved view
+costs the strip nothing measurable (a scene of 0.24 to 0.28 ms against
+0.23 to 0.26 ms, and 0.49 to 0.54 ms against 0.47 to 0.54 ms), and drawing
+the overview again adds about 0.7 to 0.9 ms for the facets and 1.5 to 1.7
+ms for the subplots (0.6 ms without the bars). The strip's buffers hold
+384 KiB for the facets' twelve lines and 2.5 MiB for the subplots, 256 KiB
+of it without the bars, which take 16 bytes each, with room to grow. A
+single panel's strip over a 1,000,000-point line costs what it did, by
+interleaved runs of the code before.
 
 ## Small multiples
 
@@ -3622,16 +3680,20 @@ document when `OffscreenCanvas` is unavailable.
   copy their values, 8 bytes per row and field), made again as rows stream
   in. Brushes Python sets on a widget draw without selecting rows. PDF and
   static SVG export from options do not highlight.
-- Range navigators need one panel and a number or time x axis: no facets,
-  subplots, layout marks, or horizontal bars. The strip draws lines, areas,
+- Range navigators need a number or time x axis that every panel shares:
+  no x scales per panel, layout marks, or horizontal bars. The strip draws lines, areas,
   points (a sample of one per pixel, in one size and shape), vertical bars,
   and candlesticks, not heatmaps, error bars, histograms, box plots,
   violins, annotations, or custom marks. Its bars are one rectangle each,
   points cost a pass over their rows, and unsorted lines are drawn whole,
-  so those overviews cost their data's size whenever data changes. Charts
+  so those overviews cost their data's size whenever data changes, and its
+  bars every frame (a volume subplot of 100,000 bars adds about 2.3 ms a
+  drag move and 2.3 MiB); the strip has no y axis, its y scales differing
+  under panels with scales of their own. Charts
   with a navigator show changed values at once (`animation.values` moves
   marks only in scenes of one panel), and charts too short
-  to leave the plot 30 pixels beside the strip have none.
+  to leave their plots 30 pixels (and each row of several panels 20) beside
+  a 16-pixel strip have none.
   The sliders' announcements are in English.
 - Subplots route whole marks; they have x-only zoom and brushing, and no
   facets inside a panel.

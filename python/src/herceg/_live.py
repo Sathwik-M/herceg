@@ -179,12 +179,6 @@ class LiveChart:
         if "facet" in self._layout:
             check_y_zoom(settings, right=any(on_right_axis(mark) for mark in self._marks))
         options = spec_options(settings)
-        # Checked before anything changes, as the chart checks it when made.
-        if options.get("navigator") and self._layout:
-            raise ValueError(
-                "widget.update navigator: charts with facets or panels have no navigator yet; "
-                "drop navigator"
-            )
         changed = {
             key: options.get(key)
             for key in sorted(set(options) | set(self._options))

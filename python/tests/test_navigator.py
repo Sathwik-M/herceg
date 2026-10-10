@@ -40,14 +40,49 @@ def test_navigator_options_are_checked():
         hg.Chart(DATA, navigator=hg.Navigator(marks="a"))
     with pytest.raises(TypeError, match="Chart navigator: expected True, False, an hg.Navigator"):
         hg.Chart(DATA, navigator=40)  # type: ignore[arg-type]
-    with pytest.raises(
-        ValueError, match="Chart navigator: charts with facets or panels have no navigator yet"
-    ):
-        hg.Chart({**DATA, "k": ["a", "b"] * 250}, facet="k", navigator=True)
-    with pytest.raises(
-        ValueError, match="Chart navigator: charts with facets or panels have no navigator yet"
-    ):
-        hg.Chart(DATA, panels=["a"], navigator=True)
+    # One window shows one x range, which every panel must share.
+    for resolution in ("independent", "rows", "columns"):
+        for layout in ({"facet": "k"}, {"panels": ["a", "b"]}):
+            with pytest.raises(
+                ValueError,
+                match=(
+                    "Chart navigator: needs one x scale shared by every panel, and resolve_x is "
+                    f'"{resolution}"; set resolve_x="shared" or drop navigator'
+                ),
+            ):
+                hg.Chart(KEYED, navigator=True, resolve_x=resolution, **layout)  # type: ignore[arg-type]
+
+
+KEYED = {**DATA, "k": ["a", "b"] * 250, "r": ["x"] * 250 + ["y"] * 250}
+
+
+def test_facets_and_panels_take_a_navigator():
+    spec, _ = (
+        hg.Chart(KEYED, panels=["price", "volume"], navigator=hg.Navigator(marks=["close"]))
+        .line("t", "v", id="close", panel="price")
+        .bar("t", "v", panel="volume")
+        .to_spec()
+    )
+    assert spec["navigator"] == {"marks": ["close"]}
+    assert [panel["id"] for panel in spec["panels"]] == ["price", "volume"]
+    for layout in ({"facet": "k", "facet_columns": 2}, {"facet_row": "r", "facet_column": "k"}):
+        chart = hg.line(KEYED, x="t", y="v", navigator=True, resolve_x="shared", **layout)
+        spec, _ = chart.to_spec()
+        assert spec["navigator"] is True
+        assert "facet" in spec
+
+
+def test_static_output_draws_one_strip_under_every_panel():
+    pytest.importorskip("py_mini_racer")
+    chart = (
+        hg.Chart(KEYED, width=500, height=360, panels=["price", "volume"], navigator=True)
+        .line("t", "v", panel="price")
+        .area("t", "v", panel="volume")
+    )
+    # Each panel's clipped data, and the strip's.
+    assert chart.to_svg().count("<clipPath ") == 3
+    facets = hg.line(KEYED, x="t", y="v", facet="k", width=500, height=360, navigator=True)
+    assert facets.to_svg().count("<clipPath ") == 3
 
 
 def test_static_output_draws_the_strip():
@@ -74,16 +109,13 @@ def test_live_charts_add_and_remove_a_navigator():
     message = live.update({"navigator": None})
     assert message is not None
     assert message[0]["options"] == {"navigator": None}
-    # Charts with facets or panels refuse one, keeping what they had.
+    # Charts with facets or panels take one too, under all their panels.
     for chart in (
-        hg.Chart({**DATA, "k": ["a", "b"] * 250}, facet="k").line("t", "v"),
+        hg.Chart(KEYED, facet="k").line("t", "v"),
         hg.Chart(DATA, panels=["a"]).line("t", "v", panel="a"),
     ):
         faceted = LiveChart(chart)
-        before = faceted.to_spec()[0]
-        with pytest.raises(
-            ValueError,
-            match="widget.update navigator: charts with facets or panels have no navigator yet",
-        ):
-            faceted.update({"navigator": True})
-        assert faceted.to_spec()[0] == before
+        message = faceted.update({"navigator": True})
+        assert message is not None
+        assert message[0]["options"] == {"navigator": True}
+        assert faceted.to_spec()[0]["navigator"] is True

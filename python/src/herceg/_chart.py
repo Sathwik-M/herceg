@@ -412,11 +412,13 @@ class Navigator:
     the x range in view, which dragging and the keyboard move and resize.
 
     ``height`` is the strip's height in pixels (40 by default, at least 16,
-    and at most a third of what the plot and the strip share; a chart too
-    short to leave its plot 30 pixels has none); ``marks`` names the ``id`` of each
-    mark the strip draws (by default every line, area, scatter, bar, and
-    candlestick mark). ``navigator=True`` is ``Navigator()``. The chart needs
-    a number or time x axis, and no facets or panels.
+    and at most a third of what the plots and the strip share; a chart too
+    short to leave its plots room beside a 16-pixel strip has none);
+    ``marks`` names the ``id`` of each mark the strip draws (by default every
+    line, area, scatter, bar, and candlestick mark). ``navigator=True`` is
+    ``Navigator()``. The chart needs a number or time x axis; with facets or
+    panels, the strip goes under all of them, draws every panel's marks, and
+    moves the x range they share, so ``resolve_x`` must be ``"shared"``.
     """
 
     height: float | None = None
@@ -722,11 +724,6 @@ class Chart:
             raise ValueError(
                 f"Chart brush: charts with panels brush along x only; received {shown(brush)}"
             )
-        if _navigator(navigator) is not None and (panel_list or facet or facet_row or facet_column):
-            raise ValueError(
-                "Chart navigator: charts with facets or panels have no navigator yet; "
-                "drop navigator"
-            )
         for name, resolution in (
             ("resolve_x", resolve_x),
             ("resolve_y", resolve_y),
@@ -744,6 +741,12 @@ class Chart:
                     f"Chart {name}: resolves the scales of facets or panels, and the chart has "
                     "none; give facet, facet_row, facet_column, or panels"
                 )
+        # One window shows one x range, so every panel must share it.
+        if _navigator(navigator) is not None and resolve_x not in (None, "shared"):
+            raise ValueError(
+                "Chart navigator: needs one x scale shared by every panel, and resolve_x is "
+                f'{shown(resolve_x)}; set resolve_x="shared" or drop navigator'
+            )
         check_y_zoom({"zoom": zoom, "resolve_y": resolve_y, "resolve_y_right": None}, right=False)
         _animation(animation)
         if facet_row is not None and facet_row == facet_column:

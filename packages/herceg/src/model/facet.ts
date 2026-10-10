@@ -27,6 +27,7 @@ import {
   groups,
   groupsOf,
   type LayoutOptions,
+  leastHeight,
   type PanelAxis,
   PanelBands,
   type PanelChart,
@@ -138,8 +139,6 @@ export class Facet implements PanelLayout {
     options: LayoutOptions = {},
     layouts: readonly LayoutMark[] = [],
   ): void {
-    if (options.navigator)
-      throw new Error("navigator: charts with facets have none yet; drop navigator or facet");
     const [layout] = layouts;
     if (layout) {
       const { type, facet } = layout.spec;
@@ -289,6 +288,7 @@ export class Facet implements PanelLayout {
       header: wrapped ? header : 0,
       columnHeader: !wrapped && this.column !== undefined ? header : 0,
       rowHeader: !wrapped && this.row !== undefined ? header : 0,
+      least: leastHeight(rows, undefined, split.keys.length),
     };
   }
 

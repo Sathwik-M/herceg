@@ -70,8 +70,9 @@ scheduler, browser interaction (tooltips, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and
 selections, animated changes of view and of values (bars, pies, points,
 and small lines and areas, with the axes they move), crosshair
-labels on the axes), a range navigator (a strip under the plot over the
-whole x axis whose window pans and zooms by pointer and keyboard), time
+labels on the axes), a range navigator (a strip under the plot, or under
+all the panels of facets and subplots, over the whole x axis whose window
+pans and zooms by pointer and keyboard), time
 axes that leave out breaks (nights, weekends, holidays) in any time zone,
 static SVG and PDF export (Unicode with opt-in `pdfFonts` and supplied
 TrueType fonts), React, Vue, and Svelte adapters, min/max indexes for zooming
@@ -105,8 +106,7 @@ servers.
 
 Next, in order:
 
-1. Layout: maps, networks, and 3D charts in panels, and range navigators
-   in charts with panels.
+1. Layout: maps, networks, and 3D charts in panels.
 2. Animation of stacked and labeled bars, of categories that come and go,
    and of panels.
 3. Linked selections beyond points, bars, lines, areas, maps, trees, and

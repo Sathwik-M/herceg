@@ -222,6 +222,35 @@ describe("accessibility audits", () => {
     });
   }
 
+  it("find nothing to fix in a range navigator under facet panels and subplots", async () => {
+    for (const layout of [
+      { facet: facet("host") },
+      {
+        panels: panels([
+          { id: "a", title: "A" },
+          { id: "b", title: "B" },
+        ]),
+      },
+    ]) {
+      const chart = mount({
+        title: "Latency",
+        marks: layout.facet
+          ? [line(metrics, { x: "t", y: "a" })]
+          : [
+              line(metrics, { x: "t", y: "a", panel: "a" }),
+              line(metrics, { x: "t", y: "b", panel: "b" }),
+            ],
+        ...layout,
+        navigator: rangeNavigator(),
+      });
+      await chart.loading;
+      chart.setViewport([start + 6 * 3_600_000, start + 18 * 3_600_000]);
+      chart.render();
+      chart.root.querySelector<HTMLElement>('[role="slider"]')!.focus();
+      expect(await violations(chart.root)).toEqual([]);
+    }
+  });
+
   it("find nothing to fix in static SVG", async () => {
     const host = document.createElement("div");
     host.innerHTML = renderToSVG({
