@@ -1651,14 +1651,15 @@ polygons of the same area as the circle of the same radius.
 ## Layout marks
 
 Most marks place data along x and y scales. Layout marks (pies, treemaps,
-sunbursts, gauges, funnels, radars, Sankey diagrams, and networks) place their own geometry in a panel instead: the chart model gives one the
-room below the title and legend (`LayoutFrame`: bounds, theme, text
+sunbursts, gauges, funnels, radars, Sankey diagrams, and networks) place their own geometry in a panel instead: the chart model gives one a
+room (`LayoutFrame`: bounds, the rows of its table to draw, theme, text
 measurement, hidden keys, and stable colors per item key) and draws what it
 returns (`LayoutResult`: geometry, an item lookup by pixel, the items in
-reading order, and a summary). A chart holds marks along axes or one layout
-mark (or the layers of one map, drawn as one; see Maps), never both, so the
-Cartesian layout code runs unchanged and a line chart carries only the small
-dispatch, not the pie.
+reading order, and a summary). The room is the space below a chart's title
+and legend, for a chart of one layout mark (or of the layers of one map or
+3D box, drawn as one; see Maps), or a panel's plot, for a layout mark in
+facet panels or in a subplot of its own (see Layout marks in panels). A
+panel holds marks along axes or one layout mark, never both.
 
 What a tooltip or keyboard cursor is on is an `Inspection`: an axis
 inspection (a position along x or y and each series' point there) or an item
@@ -1757,6 +1758,76 @@ largest first, each filled and ringed in the surface color, so overlaps stay
 legible in SVG, Canvas, and PDF without a geometry kind of their own; links
 are one path per width and color. The pointer lookup scans every node, then
 every link.
+
+### Layout marks in panels
+
+Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams draw
+in panels; networks, maps, and 3D charts, whose layouts and navigation are
+their own, still have charts to themselves (`IN_PANELS` in
+`model/panel-layout.ts`). The `PanelLayout`'s checks own the rules: with a
+facet, a layout mark is the chart's only mark and splits its rows (it cannot
+repeat); with subplots, it names one panel, which takes no axis settings and
+no other mark, `"*"` marks included. A chart whose panels all draw layout
+marks refuses zoom, brushes, and sync, having no axes.
+
+The splitter marks such panels in its split (`PanelSplit.items`: the mark,
+its index among the chart's marks, and its rows there). A facet hands the
+mark each panel's rows of its table from the same partition that
+summarizing marks read (4 bytes per row, kept per table version and panel
+list); a subplot draws the whole table. The model's one scene path lays the
+chart out as for marks along axes and draws the layout mark into its panel's
+plot: those panels get no axes, grid lines, or inspector, nor any part in
+scales, so the grid labels a shared x scale under the lowest panel with
+axes of each column (`PanelGrid.lowest`, leaving room between rows when that
+is above a layout mark's panel), a scale takes the settings of its group's
+first panel with axes (`PanelGroups.first`), and a chart of layout marks
+alone has no axis margins. `model.panels()` (panels with scales) leaves them
+out; `model.allPanels()` lists every panel in order, for `getPanels`, the
+keyboard, and the pointer. Marks keep their index among the chart's marks as
+their identity whatever their kind, so series and item keys never collide
+and inspections name the right mark.
+
+Each layout mark reads its frame's `rows`, caching what it works out per
+table version and row list (`RowsCache`), so 50 panels keep 50 sets of sums
+rather than recomputing one: pies and funnels sum per category, trees total
+each panel's rows over the table's one tree and keep the part with a value
+as a tree of its own (`pruneHierarchy`), so a panel's arrays, boxes, and
+keys are as large as its own nodes rather than the whole tree, a gauge
+scans its rows back for the last finite value, a
+radar reads each panel's latest values on the table's spokes and series
+(found once per table version), and a Sankey diagram aggregates each
+panel's flows and keeps a layout per flows and bounds. Items keep their keys
+(`[id, name]`) in every panel, so the chart's palette, which gives a key a
+color on first request (the legend asks first, over the whole table), and its
+hidden keys apply in every panel. Normalization is each panel's own: shares,
+areas, flows, and a radar's automatic domain fit their panel.
+
+What layout marks drew is kept by an `ItemViews` (`model/item-views.ts`), one
+per chart: each panel's `LayoutResult` with its key, name, plot, and mark, the
+item inspections (named by panel in charts of panels), the stepping of the
+keyboard through a panel's items, and the per-panel summaries the
+description lists (up to 20 panels). It also builds the scene of a chart of
+one layout mark and checks such a chart (`ItemViews.alone`). Charts reach it
+through their layout marks, each of which gives the class (`LayoutMark.views`),
+so a line chart loads none of it; moving the lone layout chart's code there
+paid for panels' code in the model, and a line chart's bundle is about 50
+bytes smaller than before. In the DOM chart, Up and Down move between stops:
+a panel of marks along axes has its series', and a layout mark's panel is
+one stop, whose items Left, Right, Home, End, and the page keys read; the
+cursor is the panel and the item's key, since one key is in several panels.
+A press in a layout mark's panel is a click, and the wheel there zooms
+nothing. Value transitions play only in a chart of one panel, and layout
+marks in panels draw without the descriptions a transition needs.
+
+In Node on the development machine (with other work running), the first
+scene of 50 pies over 100,000 rows (8 categories, laid out 10 by 5 at
+1600 x 1200) takes about 1.4 ms, which splits the rows by panel and sums each
+panel's; drawing it again takes about 0.2 ms, and after a row arrives about
+1.3 ms (`npm run bench:core`). Treemaps of 100,000 distinct leaves, 2,000 in
+each of 50 panels, take about 120 ms the first time, and keep about 11 MB of
+typed arrays and 71 MB of heap after collection, against about 8 MB and
+65 MB for one treemap of the same leaves: each panel's part of the tree,
+not the whole tree 50 times.
 
 ## Maps
 

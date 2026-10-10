@@ -5,6 +5,7 @@ import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
 import { ELBOW, placePieLabels, RUN } from "../layout/pie-labels.ts";
 import { fitText } from "../layout/text.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type {
   ArcGeometry,
@@ -14,7 +15,13 @@ import type {
   TextGeometry,
 } from "../scene/scene.ts";
 import type { Frozen, PieSpec } from "../spec/spec.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import {
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+  RowsCache,
+} from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface PieOptions<S extends Schema> {
@@ -29,6 +36,8 @@ export interface PieOptions<S extends Schema> {
   /** Labels beside the slices, joined to them by lines; true by default. */
   labels?: boolean;
   id?: string;
+  /** With the chart's `panels`, the id of the panel the pie has to itself. */
+  panel?: string;
 }
 
 /** Slices start at the top and go clockwise. */
@@ -40,11 +49,12 @@ const GAP = 2;
 export class PieMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec: Frozen<PieSpec>;
   readonly table: Table;
   readonly measure: string;
-  /** Totals per category code, and the table version they are for. */
-  #totals: { version: number; values: Float64Array } | undefined;
+  /** Totals per category code, of all rows and of each facet panel's. */
+  readonly #totals = new RowsCache<Float64Array>();
 
   constructor(input: PieSpec, table: Table) {
     this.spec = frozen(input);
@@ -61,28 +71,30 @@ export class PieMark implements LayoutMark {
   }
 
   /**
-   * The sum of the value (or the row count) per category code; negative,
-   * missing, and infinite values count as 0.
+   * The sum of the value (or the row count) per category code over `rows`
+   * (all rows by default); negative, missing, and infinite values count as 0.
    */
-  #sums(): Float64Array {
+  #sums(rows: Uint32Array | undefined): Float64Array {
     const table = this.table;
-    if (this.#totals?.version === table.version) return this.#totals.values;
-    const { codes, dictionary } = table.categories(this.spec.category);
-    const values = this.spec.value === undefined ? undefined : table.numbers(this.spec.value);
-    const sums = new Float64Array(dictionary.length);
-    for (let row = 0; row < table.length; row++) {
-      const code = codes[row]!;
-      if (code < 0) continue;
-      const value = values ? values[row]! : 1;
-      if (value > 0 && value < Number.POSITIVE_INFINITY) sums[code]! += value;
-    }
-    this.#totals = { version: table.version, values: sums };
-    return sums;
+    return this.#totals.get(table, rows, () => {
+      const { codes, dictionary } = table.categories(this.spec.category);
+      const values = this.spec.value === undefined ? undefined : table.numbers(this.spec.value);
+      const sums = new Float64Array(dictionary.length);
+      const count = rows ? rows.length : table.length;
+      for (let k = 0; k < count; k++) {
+        const row = rows ? rows[k]! : k;
+        const code = codes[row]!;
+        if (code < 0) continue;
+        const value = values ? values[row]! : 1;
+        if (value > 0 && value < Number.POSITIVE_INFINITY) sums[code]! += value;
+      }
+      return sums;
+    });
   }
 
-  /** Every category with rows, in slice order. */
-  #slices(id: string | number): PieSlice[] {
-    const sums = this.#sums();
+  /** Every category with rows among `rows` (all rows by default), in slice order. */
+  #slices(id: string | number, rows?: Uint32Array): PieSlice[] {
+    const sums = this.#sums(rows);
     const { dictionary } = this.table.categories(this.spec.category);
     const slices: PieSlice[] = [];
     for (let code = 0; code < dictionary.length; code++) {
@@ -103,7 +115,7 @@ export class PieMark implements LayoutMark {
     const { bounds, theme, measure, hidden, locale } = frame;
     const font = `${theme.fontSize}px ${theme.font}`;
     const lineHeight = Math.round(theme.fontSize * 1.25);
-    const slices = this.#slices(frame.id).filter(({ key }) => !hidden.has(key));
+    const slices = this.#slices(frame.id, frame.rows).filter(({ key }) => !hidden.has(key));
     // Each slice's share, through fractions of the largest, so a total of
     // huge values does not overflow.
     const largest = Math.max(0, ...slices.map(({ value }) => value));
@@ -330,7 +342,9 @@ export class PieMark implements LayoutMark {
 
 /**
  * A pie or donut chart: a slice per category of `category`, sized by the
- * sum of `value` over its rows, or their count.
+ * sum of `value` over its rows, or their count. With the chart's `facet`, a
+ * pie per panel, each of its panel's rows; with its `panels`, a pie in the
+ * panel it names.
  *
  * ```ts
  * pie(sales, { category: "region", value: "revenue", innerRadius: 0.6 })
@@ -346,6 +360,7 @@ export function pie<S extends Schema>(
   if (options.sort !== undefined) spec.sort = options.sort;
   if (options.labels !== undefined) spec.labels = options.labels;
   if (options.id !== undefined) spec.id = options.id;
+  if (options.panel !== undefined) spec.panel = options.panel;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new PieMark(spec, table as unknown as Table);

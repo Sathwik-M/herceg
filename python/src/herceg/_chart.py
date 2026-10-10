@@ -1183,6 +1183,7 @@ class Chart:
         inner_radius: float | None = None,
         sort: Literal["value", "input"] | None = None,
         labels: bool | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A pie: a slice per value of ``category``, sized by the sum of
@@ -1190,9 +1191,10 @@ class Chart:
 
         ``inner_radius``, a fraction of the pie's radius below 1, makes a
         donut. Slices go largest first, clockwise from the top, unless
-        ``sort="input"``. A pie has its chart to itself.
+        ``sort="input"``. A pie has its chart to itself; with facets, each
+        panel, a pie of the panel's rows; with panels, the one ``panel`` names.
         """
-        self._layout_alone("pie")
+        self._layout_place("pie")
         if inner_radius is not None and not (
             isinstance(inner_radius, numbers.Real)
             and not isinstance(inner_radius, bool)
@@ -1210,6 +1212,7 @@ class Chart:
                 "innerRadius": inner_radius,
                 "sort": sort,
                 "labels": labels,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1225,6 +1228,7 @@ class Chart:
         bands: Sequence[float | tuple[float, str]] | None = None,
         label: str | None = None,
         format: dict[str, Any] | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A gauge: the last finite value of the ``value`` column on a dial
@@ -1236,9 +1240,10 @@ class Chart:
         Each starts where the previous one ends, the first at ``min``; colors
         default to the theme's palette. ``format`` takes Intl.NumberFormat
         options for the value and the dial's ends. A gauge has its chart to
-        itself.
+        itself; with facets, each panel, the last value of the panel's rows;
+        with panels, the one ``panel`` names.
         """
-        self._layout_alone("gauge")
+        self._layout_place("gauge")
         _check_format(format, "gauge format", _NUMBER_FORMAT)
         table = self._mark_table(data)
         self._require(table, value, ("number",), "gauge value")
@@ -1257,6 +1262,7 @@ class Chart:
                 "bands": _gauge_bands(bands, low, high),
                 "label": label,
                 "format": format,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1270,6 +1276,7 @@ class Chart:
         data: Any = None,
         sort: Literal["input", "value"] | None = None,
         labels: bool | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A funnel: a centered bar per value of ``category``, top to bottom,
@@ -1280,9 +1287,10 @@ class Chart:
         Stages keep the column's order unless ``sort="value"`` puts the
         largest first. ``labels=False`` leaves out the stage names and the
         values with their share of the first stage. A funnel has its chart to
-        itself.
+        itself; with facets, each panel, a funnel of the panel's rows; with
+        panels, the one ``panel`` names.
         """
-        self._layout_alone("funnel")
+        self._layout_place("funnel")
         table = self._mark_table(data)
         self._require(table, category, ("category",), "funnel category")
         self._require(table, value, ("number",), "funnel value")
@@ -1293,6 +1301,7 @@ class Chart:
                 "value": value,
                 "sort": sort,
                 "labels": labels,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1513,6 +1522,7 @@ class Chart:
         parent: str | None = None,
         data: Any = None,
         labels: bool | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A treemap: nested rectangles for a tree, each leaf's area its share
@@ -1521,9 +1531,10 @@ class Chart:
         The tree is ``path``, category columns from the outermost group in, or
         ``node`` and ``parent`` columns naming each row's node and its parent.
         Leaves take their top-level group's color; the legend toggles groups.
-        A treemap has its chart to itself.
+        A treemap has its chart to itself; with facets, each panel, a treemap
+        of the panel's rows; with panels, the one ``panel`` names.
         """
-        return self._tree("treemap", path, value, node, parent, data, labels, id)
+        return self._tree("treemap", path, value, node, parent, data, labels, panel, id)
 
     def sunburst(
         self,
@@ -1534,12 +1545,13 @@ class Chart:
         parent: str | None = None,
         data: Any = None,
         labels: bool | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A sunburst: a tree as rings around a center, each node's angle its
-        share of its parent's; the tree as for ``treemap``. A sunburst has its
-        chart to itself."""
-        return self._tree("sunburst", path, value, node, parent, data, labels, id)
+        share of its parent's; the tree, and where it is drawn, as for
+        ``treemap``."""
+        return self._tree("sunburst", path, value, node, parent, data, labels, panel, id)
 
     def _tree(
         self,
@@ -1550,9 +1562,10 @@ class Chart:
         parent: str | None,
         data: Any,
         labels: bool | None,
+        panel: str | None,
         id: str | None,
     ) -> Chart:
-        self._layout_alone(kind)
+        self._layout_place(kind)
         table = self._mark_table(data)
         if path is not None and (node is not None or parent is not None):
             raise ValueError(f"{kind} takes a path, or node and parent, not both")
@@ -1575,6 +1588,7 @@ class Chart:
                 "parent": parent,
                 "value": value,
                 "labels": labels,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1592,6 +1606,7 @@ class Chart:
         fill_opacity: float | None = None,
         points: bool | None = None,
         label: str | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A radar: spokes from a center, clockwise from the top, and a polygon
@@ -1606,9 +1621,11 @@ class Chart:
         smallest value) to a round number above the largest, or ``domain``;
         values outside it are drawn at the rim or the center. A missing value
         breaks the polygon's outline there and leaves it unfilled. A radar has
-        its chart to itself.
+        its chart to itself; with facets, each panel, the values of the
+        panel's rows on the table's spokes, each panel scaled to its own
+        values unless ``domain`` is given; with panels, the one ``panel`` names.
         """
-        self._layout_alone("radar")
+        self._layout_place("radar")
         table = self._mark_table(data)
         long = category is not None or value is not None
         if long == (fields is not None) or (long and (category is None or value is None)):
@@ -1652,6 +1669,7 @@ class Chart:
                 "fillOpacity": fill_opacity,
                 "points": points,
                 "label": label,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1667,6 +1685,7 @@ class Chart:
         labels: bool | None = None,
         node_width: float | None = None,
         sort: Literal["input", "value"] | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A Sankey diagram: a row per flow, from the node named in ``source``
@@ -1678,9 +1697,11 @@ class Chart:
         left out. Nodes are ordered in their column to keep links short and
         crossings few, unless ``sort="input"`` keeps the order they first
         appear in or ``sort="value"`` puts the largest first. ``node_width``
-        is in pixels. A Sankey diagram has its chart to itself.
+        is in pixels. A Sankey diagram has its chart to itself; with facets,
+        each panel, the flows of the panel's rows; with panels, the one
+        ``panel`` names.
         """
-        self._layout_alone("sankey")
+        self._layout_place("sankey")
         if node_width is not None and not (
             isinstance(node_width, numbers.Real)
             and not isinstance(node_width, bool)
@@ -1702,6 +1723,7 @@ class Chart:
                 "labels": labels,
                 "nodeWidth": node_width,
                 "sort": sort,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -1733,7 +1755,7 @@ class Chart:
         nodes only links name have no group. A network draws at most 5,000
         nodes and 20,000 links and has its chart to itself.
         """
-        self._layout_alone("graph")
+        self._layout_place("graph")
         table = self._mark_table(data)
         self._require(table, source, ("category",), "graph source")
         self._require(table, target, ("category",), "graph target")
@@ -1817,13 +1839,26 @@ class Chart:
             found.update(np.asarray(ids_column.dictionary, dtype=object)[codes])
         return len(found), links_count
 
-    def _layout_alone(self, kind: str) -> None:
+    def _layout_place(self, kind: str) -> None:
         """Layout marks (pies, treemaps, sunbursts, gauges, funnels, radars, Sankey
-        diagrams, graphs) have no axes to facet or zoom."""
-        if self._facets or self._panels:
+        diagrams, graphs) have no axes to zoom: they have their chart to
+        themselves, or a facet panel each, or a panel of their own (see ``_add``).
+        Maps, networks, and 3D charts have no facets or panels yet."""
+        if (self._facets or self._panels) and kind not in _PANEL_LAYOUT_MARKS:
             raise ValueError(f"charts of a {kind} cannot have facets or panels yet")
-        if any(self._settings.get(name) for name in ("zoom", "brush", "sync")):
-            raise ValueError(f"charts of a {kind} have no x axis to zoom, brush, or sync")
+        # A chart with panels may zoom those with axes; `to_spec` checks it has some.
+        if not self._panels and self._uses_x():
+            raise ValueError(
+                f"charts of a {kind} have no x axis to zoom, brush, sync, or mark seams on"
+            )
+
+    def _uses_x(self) -> bool:
+        """Whether the chart zooms, brushes, syncs, or marks seams on an x axis."""
+        seams = (self._options.get("x") or {}).get("seams")
+        settings = self._settings
+        return seams not in (None, False) or any(
+            settings.get(name) for name in ("zoom", "brush", "sync")
+        )
 
     def geoshape(
         self,
@@ -2383,6 +2418,12 @@ class Chart:
 
     def to_spec(self) -> tuple[dict[str, Any], list[bytes]]:
         """The portable chart spec and the binary buffers its columns reference."""
+        layouts = [mark["type"] for mark, _ in self._marks if mark["type"] in _LAYOUT_MARKS]
+        # Layout marks have a panel each, so when they have every one, no panel has axes.
+        if self._panels and len(layouts) == len(self._panels) and self._uses_x():
+            raise ValueError(
+                f"charts of a {layouts[0]} have no x axis to zoom, brush, sync, or mark seams on"
+            )
         if self._settings.get("projection") is not None and not any(
             mark["type"] in _MAP_MARKS for mark, _ in self._marks
         ):
@@ -2619,8 +2660,14 @@ class Chart:
         layers = any(
             spec["type"] in group and set(kinds) <= set(group) for group in (_MAP_MARKS, _MARKS_3D)
         )
-        if not layers and (layouts or (spec["type"] in _LAYOUT_MARKS and self._marks)):
+        if self._panels:
+            self._place_in_panels(spec)
+        elif not layers and (layouts or (spec["type"] in _LAYOUT_MARKS and self._marks)):
             kind = layouts[0] if layouts else spec["type"]
+            if self._facets:
+                raise ValueError(
+                    f"a {kind} has each facet panel to itself; draw other marks in another chart"
+                )
             if kind in _MAP_MARKS:
                 raise ValueError(
                     f"a {kind} shares its chart only with geoshape and geopoint marks; "
@@ -2665,6 +2712,50 @@ class Chart:
         self._marks.append((spec, table))
         return self
 
+    def _place_in_panels(self, spec: dict[str, Any]) -> None:
+        """Refuses, as the browser would, a layout mark (a pie) without a panel of
+        its own, and marks drawing in a panel a layout mark has to itself."""
+        kind, panel = spec["type"], spec.get("panel")
+        held = {
+            mark["panel"]: mark["type"] for mark, _ in self._marks if mark["type"] in _LAYOUT_MARKS
+        }
+        if kind not in _LAYOUT_MARKS:
+            if panel == "*" and held:
+                first = next(iter(held))
+                raise ValueError(
+                    f"a {kind} mark with panel='*' would draw in panel {first!r}, which a "
+                    f"{held[first]} has to itself; give it the id of a panel with axes"
+                )
+            if panel in held:
+                raise ValueError(
+                    f"a {kind} mark names the panel {panel!r}, which a {held[panel]} has to itself"
+                )
+            return
+        if panel is None or panel == "*":
+            raise ValueError(
+                f"a {kind} in a chart with panels needs panel=: the id of the panel it draws in"
+            )
+        if panel in held:
+            raise ValueError(
+                f"panel {panel!r} has two layout marks, a {held[panel]} and a {kind}; "
+                "give each a panel of its own"
+            )
+        for mark, _ in self._marks:
+            if mark.get("panel") == "*":
+                raise ValueError(
+                    f"a {mark['type']} mark with panel='*' would draw in panel {panel!r}, which "
+                    f"a {kind} has to itself; give it the id of a panel with axes"
+                )
+            if mark.get("panel") == panel:
+                raise ValueError(
+                    f"a {mark['type']} mark names the panel {panel!r}, which a {kind} has to itself"
+                )
+        own = next((p for p in self._panels if p.id == panel), None)
+        if own is not None and (own.x is not None or own.y is not None):
+            raise ValueError(
+                f"panel {panel!r} draws a {kind}, which has no axes: it takes no x or y settings"
+            )
+
     def _check_categories(self, spec: dict[str, Any], table: int | None) -> None:
         """Refuses, as the browser would, what panels with categories of their own
         (``resolve_x`` or ``resolve_y`` other than ``"shared"`` on a category axis)
@@ -2704,6 +2795,9 @@ _LAYOUT_MARKS = (
     *("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey", "graph"),
     *("geoshape", "geopoint", "point3d", "line3d", "surface"),
 )
+
+#: Layout marks that draw in each facet panel or in a panel of their own.
+_PANEL_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey")
 
 #: The layers of maps, which share a chart and its projection.
 _MAP_MARKS = ("geoshape", "geopoint")
@@ -3619,6 +3713,7 @@ def pie(
     inner_radius: float | None = None,
     sort: Literal["value", "input"] | None = None,
     labels: bool | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -3629,6 +3724,7 @@ def pie(
         inner_radius=inner_radius,
         sort=sort,
         labels=labels,
+        panel=panel,
         id=id,
     )
 
@@ -3642,6 +3738,7 @@ def gauge(
     bands: Sequence[float | tuple[float, str]] | None = None,
     label: str | None = None,
     format: dict[str, Any] | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -3653,6 +3750,7 @@ def gauge(
         bands=bands,
         label=label,
         format=format,
+        panel=panel,
         id=id,
     )
 
@@ -3664,6 +3762,7 @@ def funnel(
     *,
     sort: Literal["input", "value"] | None = None,
     labels: bool | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -3673,6 +3772,7 @@ def funnel(
         value,
         sort=sort,
         labels=labels,
+        panel=panel,
         id=id,
     )
 
@@ -3763,6 +3863,7 @@ def treemap(
     node: str | None = None,
     parent: str | None = None,
     labels: bool | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -3773,6 +3874,7 @@ def treemap(
         node=node,
         parent=parent,
         labels=labels,
+        panel=panel,
         id=id,
     )
 
@@ -3785,6 +3887,7 @@ def sunburst(
     node: str | None = None,
     parent: str | None = None,
     labels: bool | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -3795,6 +3898,7 @@ def sunburst(
         node=node,
         parent=parent,
         labels=labels,
+        panel=panel,
         id=id,
     )
 
@@ -3810,6 +3914,7 @@ def radar(
     fill_opacity: float | None = None,
     points: bool | None = None,
     label: str | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -3823,6 +3928,7 @@ def radar(
         fill_opacity=fill_opacity,
         points=points,
         label=label,
+        panel=panel,
         id=id,
     )
 
@@ -3836,6 +3942,7 @@ def sankey(
     labels: bool | None = None,
     node_width: float | None = None,
     sort: Literal["input", "value"] | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -3847,6 +3954,7 @@ def sankey(
         labels=labels,
         node_width=node_width,
         sort=sort,
+        panel=panel,
         id=id,
     )
 

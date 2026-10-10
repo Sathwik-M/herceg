@@ -869,6 +869,8 @@ export interface PieSpec {
   sort?: "value" | "input";
   /** Labels beside the slices, joined to them by lines; true by default. */
   labels?: boolean;
+  /** With the chart's `panels`, the id of the panel the pie has to itself. */
+  panel?: string;
 }
 
 /** Fields naming one box's precomputed statistics per row; no outliers. */
@@ -976,6 +978,8 @@ interface TreemapStyle {
   value?: string;
   /** Names inside the rectangles that have room for them; true by default. */
   labels?: boolean;
+  /** With the chart's `panels`, the id of the panel the treemap has to itself. */
+  panel?: string;
 }
 
 /**
@@ -991,6 +995,8 @@ interface SunburstStyle {
   value?: string;
   /** Names inside the sectors that have room for them; true by default. */
   labels?: boolean;
+  /** With the chart's `panels`, the id of the panel the sunburst has to itself. */
+  panel?: string;
 }
 
 /** A colored range of a gauge's dial: from the previous band's end, or `min`, up to `to`. */
@@ -1020,6 +1026,8 @@ export interface GaugeSpec {
   label?: string;
   /** Intl.NumberFormat options for the value and the dial's ends. */
   format?: Intl.NumberFormatOptions;
+  /** With the chart's `panels`, the id of the panel the gauge has to itself. */
+  panel?: string;
 }
 
 /**
@@ -1039,6 +1047,8 @@ export interface FunnelSpec {
   sort?: "input" | "value";
   /** Stage names beside the bars and values on them; true by default. */
   labels?: boolean;
+  /** With the chart's `panels`, the id of the panel the funnel has to itself. */
+  panel?: string;
 }
 
 /**
@@ -1067,6 +1077,8 @@ export interface RadarSpec {
   points?: boolean;
   /** Name of the polygon of a radar without `series`, and of its values in tooltips. */
   label?: string;
+  /** With the chart's `panels`, the id of the panel the radar has to itself. */
+  panel?: string;
 }
 
 /**
@@ -1096,6 +1108,8 @@ export interface SankeySpec {
    * first appear in the table, "value" puts the largest first.
    */
   sort?: "input" | "value";
+  /** With the chart's `panels`, the id of the panel the Sankey diagram has to itself. */
+  panel?: string;
 }
 
 /**

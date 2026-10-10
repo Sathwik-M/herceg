@@ -2,11 +2,13 @@
 // pies, treemaps, networks, and the like. The chart model gives each the
 // panel's room and draws what it returns, as it does for marks along axes;
 // items, rather than axis positions, are what tooltips, hover events, and
-// the keyboard visit.
+// the keyboard visit. A layout mark has a chart to itself, or one of a
+// chart's facet panels or subplots.
 
 import type { RowView } from "../data/row-view.ts";
 import type { Table } from "../data/table.ts";
 import type { MeasureText } from "../layout/text.ts";
+import type { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import type { Geometry, Rect } from "../scene/scene.ts";
@@ -21,6 +23,11 @@ export interface LayoutFrame {
   id: string | number;
   /** The panel's room, label space included. */
   bounds: Rect;
+  /**
+   * The rows of the mark's table to draw, ascending, as in a facet panel:
+   * the rows with the panel's values. All of them when absent.
+   */
+  rows?: Uint32Array | undefined;
   theme: Theme;
   locale: string | undefined;
   measure: MeasureText;
@@ -79,10 +86,15 @@ export interface LayoutResult {
 }
 
 /** A mark that lays out its own geometry in a panel; internal, as `Mark` is. */
-export interface LayoutMark
-  extends ChartMark<{ readonly type: string; readonly id?: string | undefined }> {
+export interface LayoutMark extends ChartMark {
   /** Tells layout marks from marks along axes. */
   readonly layout: true;
+  /**
+   * What charts keep of what their layout marks drew, and check charts of
+   * layout marks with: every layout mark gives the same class, through which
+   * charts reach it, so that charts without layout marks do not load it.
+   */
+  readonly views: typeof ItemViews;
   readonly table: Table | undefined;
   /** Tables the mark reads besides `table`, such as a network's nodes; charts follow their changes too. */
   readonly otherTables?: readonly Table[];
@@ -109,6 +121,27 @@ export interface LayoutMark
 
 export function isLayoutMark(mark: object): mark is LayoutMark {
   return (mark as Partial<LayoutMark>).layout === true;
+}
+
+/**
+ * What a layout mark works out from rows of its table (a pie's sums), kept
+ * while the table is unchanged: for all rows, and for each list of rows a
+ * frame gives (each facet panel's, which charts keep while the table and
+ * the panels are unchanged), dropped with the list.
+ */
+export class RowsCache<T> {
+  #all: { version: number; value: T } | undefined;
+  readonly #some = new WeakMap<Uint32Array, { version: number; value: T }>();
+
+  /** The value for `rows` of `table`, or all its rows, from `compute` unless kept. */
+  get(table: Table, rows: Uint32Array | undefined, compute: () => T): T {
+    const kept = rows ? this.#some.get(rows) : this.#all;
+    if (kept?.version === table.version) return kept.value;
+    const entry = { version: table.version, value: compute() };
+    if (rows) this.#some.set(rows, entry);
+    else this.#all = entry;
+    return entry.value;
+  }
 }
 
 /**

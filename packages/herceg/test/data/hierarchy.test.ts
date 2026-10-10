@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { category } from "../../src/data/column.ts";
-import { hierarchy, pathOf, subtreeValues } from "../../src/data/hierarchy.ts";
+import { hierarchy, pathOf, pruneHierarchy, subtreeValues } from "../../src/data/hierarchy.ts";
 import { table } from "../../src/data/table.ts";
 
 const names = (tree: { names: readonly string[] }, nodes: ArrayLike<number>) =>
@@ -87,6 +87,26 @@ describe("hierarchy", () => {
     const tree = hierarchy(chain, { id: "id", parent: "up" });
     expect(tree.height).toBe(n);
     expect(tree.depth[tree.nodeOfRow[n - 1]!]).toBe(n);
+  });
+
+  it("totals some rows, and keeps the part of a tree they give a value", () => {
+    const sales = table({
+      region: ["Europe", "Europe", "Asia", "Asia", "Africa"],
+      country: ["France", "Spain", "Japan", "Laos", "Mali"],
+      amount: [5, 3, 7, 2, 4],
+    });
+    const tree = hierarchy(sales, { path: ["region", "country"] });
+    const some = subtreeValues(tree, sales.numbers("amount"), Uint32Array.of(1, 2));
+    expect(Array.from(some)).toEqual([10, 3, 0, 3, 7, 7, 0, 0, 0]);
+    const part = pruneHierarchy(tree, some);
+    // The root, Europe and Spain, and Asia and Japan, in the tree's order.
+    expect(part.tree.size).toBe(5);
+    expect(part.tree.names).toEqual(["", "Europe", "Spain", "Asia", "Japan"]);
+    expect(Array.from(part.values)).toEqual([10, 3, 3, 7, 7]);
+    expect(pathOf(part.tree, 4)).toEqual(["Asia", "Japan"]);
+    expect(Array.from(part.tree.depth)).toEqual([0, 1, 2, 1, 2]);
+    expect(Array.from(part.index)).toEqual([0, 1, -1, 2, 3, 4, -1, -1, -1]);
+    expect(part.tree.nodeOfRow).toHaveLength(0);
   });
 
   it("handles an empty table", () => {

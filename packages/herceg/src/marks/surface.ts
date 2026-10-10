@@ -11,6 +11,7 @@
 import type { NumberField, PositionField, Schema, Table } from "../data/table.ts";
 import { symbolPath } from "../draw/symbols.ts";
 import { formatNumber } from "../format/format.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
@@ -159,6 +160,7 @@ const meshes = new PerChart<Mesh>();
 export class SurfaceMark implements Layer3D {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly dimensions = 3;
   readonly spec: Frozen<SurfaceSpec>;
   readonly table: Table;

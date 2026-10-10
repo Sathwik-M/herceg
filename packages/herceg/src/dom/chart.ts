@@ -31,6 +31,7 @@ import type { PositionScale } from "../scale/scale.ts";
 import {
   type CloudPainter,
   type FaceGeometry,
+  type PlotRect,
   type PointGeometry,
   type Scene,
   tickLabelGap,
@@ -519,11 +520,14 @@ export class MountedChart implements Chart {
   }
 
   getPanels(): readonly PanelInfo[] {
-    const model = this.#model;
-    if (!model.layout) return model.panels().map(panelInfo);
-    // A layout mark had the last frame's one panel to itself, without axes.
-    const plot = this.#scene?.panels[0]?.plot;
-    return plot ? [{ key: "", label: "", plot: { ...plot } }] : [];
+    const drawn = this.#model.panels();
+    let at = 0;
+    // Panels a layout mark drew in have no axes.
+    return this.#model
+      .allPanels()
+      .map(({ key, label, plot, items }) =>
+        items ? { key, label, plot: { ...plot } } : panelInfo(drawn[at++]!),
+      );
   }
 
   toPixel(value: number, { panel, axis }: AxisTarget): number | undefined {
@@ -557,17 +561,18 @@ export class MountedChart implements Chart {
 
   /**
    * The panel of the last frame named `panel`, which charts of several
-   * panels need; throws for one the chart does not have. Undefined in a
-   * chart of a layout mark, whose one panel ("") has no axes.
+   * panels need; throws for one the chart does not have. Undefined for a
+   * panel a layout mark drew in, which has no axes.
    */
   #panelOf(panel: string | undefined): DrawnPanel | undefined {
     const panels = this.#model.panels();
+    const all = this.#model.allPanels();
     if (panel === undefined) {
-      if (panels.length > 1) throw new Error("Charts of several panels need a panel");
+      if (all.length > 1) throw new Error("Charts of several panels need a panel");
       return panels[0];
     }
     // Throws for a panel the last frame did not have.
-    if (!this.#model.layout || panel !== "") this.#model.xGroupOf(panel);
+    if (!all.some(({ key }) => key === panel)) this.#model.xGroupOf(panel);
     return panels.find(({ key }) => key === panel);
   }
 
@@ -1196,9 +1201,11 @@ export class MountedChart implements Chart {
     // The model applies the configured tooltip mode.
     if (this.#pointer) return this.#model.inspect(this.#pointer.x, this.#pointer.y);
     const keyboard = this.#keyboard;
-    if (keyboard && this.#model.layout) return this.#model.inspectItem(keyboard.key);
     if (keyboard)
-      return this.#model.inspectPosition(keyboard.key, keyboard.position, keyboard.panel);
+      return (
+        this.#model.inspectItem(keyboard.key, keyboard.panel) ??
+        this.#model.inspectPosition(keyboard.key, keyboard.position, keyboard.panel)
+      );
     return undefined;
   }
 
@@ -1408,6 +1415,7 @@ export class MountedChart implements Chart {
       (event) => {
         if (!this.#options.interaction?.zoom || !this.#scene) return;
         const point = local(event);
+        if (this.#onItems(point.x, point.y)) return;
         // Outside the plots, the wheel zooms the one x scale every panel
         // shares; with several, none, and the page scrolls.
         const panel =
@@ -1454,7 +1462,8 @@ export class MountedChart implements Chart {
       }
       this.#showValues();
       const { x, y } = local(event);
-      if (this.#model.layout) {
+      // Presses on what layout marks draw are clicks, not drags.
+      if (this.#model.layout || this.#onItems(x, y)) {
         // A second pointer down makes neither a click (a pinch, say).
         if (this.#tap) this.#tap.moved = true;
         else this.#tap = { pointer: event.pointerId, x, y, moved: false };
@@ -1522,6 +1531,7 @@ export class MountedChart implements Chart {
       if (!this.#options.interaction?.zoom) return;
       if (this.#legend.element.contains(event.target as Node)) return;
       const { x, y } = local(event);
+      if (this.#onItems(x, y)) return;
       const panel = this.#model.sharesX ? undefined : this.#panelAt(x, y)?.key;
       this.#animated(() =>
         this.#changeView(() => {
@@ -1622,12 +1632,12 @@ export class MountedChart implements Chart {
 
   /** The panel whose plot holds a point of the chart. */
   #panelAt(x: number, y: number): DrawnPanel | undefined {
-    return this.#model
-      .panels()
-      .find(
-        ({ plot }) =>
-          x >= plot.x && x <= plot.x + plot.width && y >= plot.y && y <= plot.y + plot.height,
-      );
+    return this.#model.panels().find(({ plot }) => holds(plot, x, y));
+  }
+
+  /** Whether a point of the chart is in a panel a layout mark drew in. */
+  #onItems(x: number, y: number): boolean {
+    return this.#model.allPanels().some(({ items, plot }) => items && holds(plot, x, y));
   }
 
   /** A press released without dragging: clears the selection and reports the data there. */
@@ -1688,13 +1698,18 @@ export class MountedChart implements Chart {
       return;
     }
     // Where the cursor stops, panel by panel: Left and Right move through a
-    // stop's points, Up and Down to the stop before or after.
-    const stops = panels.flatMap(({ key }) =>
-      this.#model.keyboardStops(key).map((series) => ({ panel: key, series })),
-    );
+    // stop's points, or a layout mark's items (a stop of their own), Up and
+    // Down to the stop before or after.
+    const stops = this.#model
+      .allPanels()
+      .flatMap(({ key, items }): { panel: string; series?: Series }[] =>
+        items
+          ? [{ panel: key }]
+          : this.#model.keyboardStops(key).map((series) => ({ panel: key, series })),
+      );
     const keyboard = this.#keyboard;
     let at = stops.findIndex(
-      ({ panel, series }) => panel === keyboard?.panel && series.key === keyboard.key,
+      ({ panel, series }) => panel === keyboard?.panel && (!series || series.key === keyboard.key),
     );
     // The cursor's stop may be gone (its series hidden): then it starts afresh in its panel.
     const found = at >= 0;
@@ -1706,14 +1721,19 @@ export class MountedChart implements Chart {
       );
     const start = stops[at];
     if (!start) return;
+    if (!start.series && !vertical) {
+      this.#itemKey(event, start.panel);
+      return;
+    }
     // Heatmaps step cell by cell, in rows and columns as drawn; Up and Down
     // leave the grid at its edges.
-    const cells = (stop: { series: Series }) => this.#model.markOf(stop.series)?.tooltip === "cell";
+    const cells = ({ series }: { series?: Series }) =>
+      series !== undefined && this.#model.markOf(series)?.tooltip === "cell";
     let cell: number | undefined;
     if (cells(start) && current >= 0) {
       const [columns, rows] = CELL_STEPS[event.key] ?? [0, 0];
       cell =
-        this.#model.stepCell(start.panel, start.series.key, current, columns, rows) ??
+        this.#model.stepCell(start.panel, start.series!.key, current, columns, rows) ??
         (vertical ? undefined : current);
     }
     let across = keyboard !== null && !found;
@@ -1724,6 +1744,10 @@ export class MountedChart implements Chart {
       at = next;
     }
     const { panel, series } = stops[at]!;
+    if (!series) {
+      this.#itemKey(event, panel, true);
+      return;
+    }
     // Entering a grid, the cursor starts at its top left cell.
     if (cell === undefined && cells(stops[at]!) && (across || current < 0))
       cell = this.#model.stepCell(panel, series.key, -1, 0, 0);
@@ -1808,8 +1832,13 @@ export class MountedChart implements Chart {
     }
     this.#live.textContent = text;
   }
-  /** Arrow keys step through a layout mark's items, in reading order; Escape leaves them. */
-  #itemKey(event: KeyboardEvent) {
+  /**
+   * Arrow keys step through a layout mark's items in `panel`, in reading
+   * order; Up and Down `enter` the panel at its first item. Arriving in a
+   * facet panel or subplot, the cursor names it. Escape leaves a chart of
+   * one layout mark's items.
+   */
+  #itemKey(event: KeyboardEvent, panel = "", enters = false) {
     if (event.key === "Escape") {
       event.preventDefault();
       this.#keyboard = null;
@@ -1817,16 +1846,25 @@ export class MountedChart implements Chart {
       schedule(this.#scheduled);
       return;
     }
-    const step = ITEM_STEPS[event.key];
+    const step = enters ? 1 : ITEM_STEPS[event.key];
     if (step === undefined) return;
     event.preventDefault();
-    const key = this.#model.stepItem(this.#keyboard?.key, step);
-    if (key === undefined) return;
-    this.#keyboard = { panel: "", key, position: 0 };
+    const from = this.#keyboard;
+    const arrives = from?.panel !== panel;
+    // Steps go from the item the cursor is on; arriving, or when that item
+    // went (hidden, or the panel drawn anew), from the panel's first or last.
+    const on = !arrives && this.#model.inspectItem(from!.key, panel) !== undefined;
+    const key = this.#model.stepItem(on ? from!.key : undefined, step, panel);
+    // A panel with nothing to read is still a stop, which says so.
+    this.#keyboard = { panel, key: key ?? "", position: 0 };
     this.#pointer = null;
+    this.#brushAnchor = null;
     this.#finishFrame(false);
     const inspection = this.#inspection();
-    if (inspection) this.#live.textContent = describeInspection(inspection);
+    const text = inspection ? describeInspection(inspection) : this.#model.layoutSummary(panel);
+    // Arriving in a facet panel or subplot, the cursor names it.
+    const name = this.#model.allPanels().find(({ key }) => key === panel)?.label;
+    this.#live.textContent = arrives && name ? `${name}: ${text}` : (text ?? "");
   }
 }
 
@@ -1936,6 +1974,11 @@ function sameRange(
 /** A number, or undefined for none: NaN and infinities are where nothing is. */
 function finite(value: number): number | undefined {
   return Number.isFinite(value) ? value : undefined;
+}
+
+/** Whether a plot holds a point of the chart. */
+function holds(plot: PlotRect, x: number, y: number): boolean {
+  return x >= plot.x && x <= plot.x + plot.width && y >= plot.y && y <= plot.y + plot.height;
 }
 
 /** What a hover event reports, as a key that changes when any of it does. */

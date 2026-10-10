@@ -17,6 +17,7 @@ import {
   type Transform,
   worldBox,
 } from "../geo/project.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ProjectionName, ProjectionSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
@@ -79,6 +80,7 @@ export function joinLayers(
 export class GeoMap implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec = { type: "map" } as const;
   readonly table = undefined;
   readonly otherTables: readonly Table[];

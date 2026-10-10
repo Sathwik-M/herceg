@@ -78,7 +78,8 @@ y axis, small multiples (wrapped or by row and column, with shared or
 per-panel x and y scales, histograms, box plots, and violins summarizing
 each panel's rows, and categories per panel for bars, heatmaps, points, box
 plots, and violins), points on category axes, subplots (with weighted rows and
-columns), live notebook charts (a widget that streams updates from Python
+columns), pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey
+diagrams in each facet panel or in a subplot of their own, live notebook charts (a widget that streams updates from Python
 and reports interaction back), a Streamlit component, row views and selection stores shared by charts and
 grids, row groups whose aggregates charts and grids share, and an
 analytical grid (`herceg/grid`: virtualized rows and columns over the same
@@ -93,8 +94,9 @@ servers.
 
 Next, in order:
 
-1. Layout: annotations over a table split by facets, and error bars and
-   candlesticks on categories per panel.
+1. Layout: annotations over a table split by facets, error bars and
+   candlesticks on categories per panel, and maps, networks, and 3D charts
+   in panels.
 2. Animation of stacked and labeled bars, of categories that come and go,
    and of panels.
 3. More financial tools (drawing tools, range navigators

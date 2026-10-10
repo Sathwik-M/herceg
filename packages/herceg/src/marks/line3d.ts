@@ -11,6 +11,7 @@
 
 import type { CategoryField, NumericField, Schema, Table } from "../data/table.ts";
 import { symbolPath } from "../draw/symbols.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { isOpaqueColor } from "../scale/color.ts";
@@ -115,6 +116,7 @@ const keys = new PerChart<{ paths: Paths; key: object }>();
 export class Line3DMark implements Layer3D {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly dimensions = 3;
   readonly spec: Frozen<Line3DSpec>;
   readonly table: Table;

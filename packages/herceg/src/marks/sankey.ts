@@ -13,6 +13,7 @@ import {
   type SankeyLayout,
 } from "../layout/sankey.ts";
 import { labelFor } from "../layout/text.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { isLightColor } from "../scale/color.ts";
 import type {
@@ -25,7 +26,13 @@ import type {
 } from "../scene/scene.ts";
 import type { Frozen, SankeySpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import {
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+  RowsCache,
+} from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface SankeyOptions<S extends Schema> {
@@ -46,6 +53,8 @@ export interface SankeyOptions<S extends Schema> {
    */
   sort?: "input" | "value";
   id?: string;
+  /** With the chart's `panels`, the id of the panel the Sankey diagram has to itself. */
+  panel?: string;
 }
 
 const NODE_WIDTH = 12;
@@ -61,9 +70,8 @@ const LABEL_GAP = 6;
 /** Links thinner than twice this are found this many pixels either side of their middle. */
 const REACH = 2;
 
-/** The table's flows, rebuilt when it changes. */
+/** The flows of a table's rows, rebuilt when it changes. */
 interface Flows {
-  version: number;
   /** Node names, in the order they first appear. */
   names: string[];
   nodeOf: Map<string, number>;
@@ -76,12 +84,14 @@ interface Flows {
 export class SankeyMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec: Frozen<SankeySpec>;
   readonly table: Table;
   readonly measure: string;
-  #flows: Flows | undefined;
-  /** The last layout, and the table version and bounds it is for. */
-  #placed: { key: string; layout: SankeyLayout } | undefined;
+  /** The flows of all rows and of each facet panel's. */
+  readonly #flows = new RowsCache<Flows>();
+  /** Each flows' last layout, and the bounds it is for. */
+  readonly #placed = new WeakMap<Flows, { key: string; layout: SankeyLayout }>();
 
   constructor(input: SankeySpec, table: Table) {
     this.spec = frozen(input);
@@ -99,14 +109,19 @@ export class SankeyMark implements LayoutMark {
   }
 
   /**
-   * One link per source and target that has rows with a positive, finite
-   * value, summing them (or counting them); a total beyond the largest
-   * double is Infinity, which the layout leaves out. Rows with a missing
-   * name or any other value are left out, and so are names only they mention.
+   * One link per source and target that has rows (among `rows`, all rows by
+   * default) with a positive, finite value, summing them (or counting
+   * them); a total beyond the largest double is Infinity, which the layout
+   * leaves out. Rows with a missing name or any other value are left out,
+   * and so are names only they mention.
    */
-  #graph(): Flows {
+  #graph(rows: Uint32Array | undefined): Flows {
+    return this.#flows.get(this.table, rows, () => this.#gather(rows));
+  }
+
+  /** The flows of `rows` (all rows without them); see `#graph`. */
+  #gather(rows: Uint32Array | undefined): Flows {
     const table = this.table;
-    if (this.#flows?.version === table.version) return this.#flows;
     const from = table.categories(this.spec.source);
     const to = table.categories(this.spec.target);
     const values = this.spec.value === undefined ? undefined : table.numbers(this.spec.value);
@@ -134,7 +149,9 @@ export class SankeyMark implements LayoutMark {
     const source: number[] = [];
     const target: number[] = [];
     const sums: number[] = [];
-    for (let row = 0; row < table.length; row++) {
+    const count = rows ? rows.length : table.length;
+    for (let k = 0; k < count; k++) {
+      const row = rows ? rows[k]! : k;
       const a = from.codes[row]!;
       const b = to.codes[row]!;
       if (a < 0 || b < 0) continue;
@@ -152,8 +169,7 @@ export class SankeyMark implements LayoutMark {
       }
       sums[link]! += value;
     }
-    this.#flows = {
-      version: table.version,
+    return {
       names,
       nodeOf,
       linkOf,
@@ -165,19 +181,18 @@ export class SankeyMark implements LayoutMark {
         value: Float64Array.from(sums),
       },
     };
-    this.#placed = undefined;
-    return this.#flows;
   }
 
   #layout(flows: Flows, bounds: Rect): SankeyLayout {
-    const key = `${flows.version} ${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`;
-    if (this.#placed?.key === key) return this.#placed.layout;
+    const key = `${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`;
+    const placed = this.#placed.get(flows);
+    if (placed?.key === key) return placed.layout;
     const layout = layoutSankey(flows.graph, bounds, {
       nodeWidth: this.spec.nodeWidth ?? NODE_WIDTH,
       nodePadding: NODE_PADDING,
       order: this.spec.sort ?? "auto",
     });
-    this.#placed = { key, layout };
+    this.#placed.set(flows, { key, layout });
     return layout;
   }
 
@@ -188,7 +203,7 @@ export class SankeyMark implements LayoutMark {
 
   draw(frame: LayoutFrame): LayoutResult {
     const { bounds, theme, locale } = frame;
-    const flows = this.#graph();
+    const flows = this.#graph(frame.rows);
     const { names, graph } = flows;
     const layout = this.#layout(flows, bounds);
     const { boxes, order, status, sourceY, targetY, thickness } = layout;
@@ -531,6 +546,7 @@ export function sankey<S extends Schema>(
   if (options.nodeWidth !== undefined) spec.nodeWidth = options.nodeWidth;
   if (options.sort !== undefined) spec.sort = options.sort;
   if (options.id !== undefined) spec.id = options.id;
+  if (options.panel !== undefined) spec.panel = options.panel;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new SankeyMark(spec, table as unknown as Table);

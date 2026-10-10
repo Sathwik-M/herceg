@@ -141,7 +141,9 @@ describe("panels", () => {
       }),
     ).toThrow("facets or panels, not both");
     const slices = pie(table({ k: ["a"], v: [1] }), { category: "k", value: "v" });
-    expect(() => build({ marks: [slices], panels: stacked })).toThrow("facets or panels");
+    expect(() => build({ marks: [slices], panels: stacked })).toThrow(
+      "needs the id of the panel it draws in",
+    );
     expect(() => panels([])).toThrow("at least one panel");
     expect(() => panels([{ id: "a" }, { id: "a" }])).toThrow('Two panels have the id "a"');
     expect(() => panels([{ id: "*" }])).toThrow("other than");

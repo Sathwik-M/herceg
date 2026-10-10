@@ -10,6 +10,7 @@ import type { GeoExtent, PixelShape } from "../geo/project.ts";
 import { extendExtent } from "../geo/project.ts";
 import { anchorOf, ShapeIndex } from "../geo/shape-index.ts";
 import { boxOfCodes, pixelShape } from "../geo/shapes.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
@@ -77,6 +78,7 @@ interface Drawn {
 export class GeoShapeMark implements GeoLayer {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly geo = true;
   readonly spec: Frozen<GeoShapeSpec>;
   readonly table: Table;

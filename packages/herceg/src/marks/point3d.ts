@@ -6,6 +6,7 @@
 import type { CategoryField, NumberField, NumericField, Schema, Table } from "../data/table.ts";
 import { symbolPath } from "../draw/symbols.ts";
 import { formatNumber } from "../format/format.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import {
@@ -108,6 +109,7 @@ const screens = new PerChart<Screen>();
 export class Point3DMark implements Layer3D {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly dimensions = 3;
   readonly spec: Frozen<Point3DSpec>;
   readonly table: Table;

@@ -64,6 +64,8 @@ type MarkCase = {
   name: string;
   make: (placement?: Placement) => ChartMark;
   kind: Geometry["kind"];
+  /** Layout marks that draw in facet panels and subplots. */
+  panels?: true;
   repeats?: true;
   reading?: "summary";
   noLegend?: true;
@@ -175,7 +177,12 @@ const cartesian: MarkCase[] = [
   },
 ];
 
-const links = table({ source: ["a", "b"], target: ["b", "c"], value: [3, 2] });
+const links = table({
+  source: ["a", "b", "a"],
+  target: ["b", "c", "c"],
+  value: [3, 2, 4],
+  group: ["N", "N", "S"],
+});
 const nodes = table({ node: ["a", "b", "c"], group: ["N", "S", "S"] });
 const world = fromGeoJSON({
   type: "FeatureCollection",
@@ -204,39 +211,47 @@ const spatial = table({
   group: ["N", "N", "S", "S"],
 });
 
-// These marks own their chart. A 3D camera is their only navigation exception.
+// These marks lay out their own geometry: in a chart of their own, or (those
+// with `panels`) in each facet panel or in one subplot. A 3D camera is their
+// only navigation exception.
 const layouts: MarkCase[] = [
   {
     name: "pie",
-    make: () => pie(samples, { category: "category", value: "y", labels: false }),
+    make: (p) => pie(samples, { category: "category", value: "y", labels: false, ...p }),
     kind: "arc",
+    panels: true,
     animates: true,
   },
   {
     name: "treemap",
-    make: () => treemap(samples, { path: ["group", "category"], value: "y" }),
+    make: (p) => treemap(samples, { path: ["group", "category"], value: "y", ...p }),
     kind: "rect",
+    panels: true,
   },
   {
     name: "sunburst",
-    make: () => sunburst(samples, { path: ["group", "category"], value: "y" }),
+    make: (p) => sunburst(samples, { path: ["group", "category"], value: "y", ...p }),
     kind: "arc",
+    panels: true,
   },
-  { name: "gauge", make: () => gauge(samples, { value: "y" }), kind: "arc" },
+  { name: "gauge", make: (p) => gauge(samples, { value: "y", ...p }), kind: "arc", panels: true },
   {
     name: "funnel",
-    make: () => funnel(samples, { category: "category", value: "y" }),
+    make: (p) => funnel(samples, { category: "category", value: "y", ...p }),
     kind: "shapes",
+    panels: true,
   },
   {
     name: "radar",
-    make: () => radar(samples, { category: "category", value: "y", series: "group" }),
+    make: (p) => radar(samples, { category: "category", value: "y", series: "group", ...p }),
     kind: "shapes",
+    panels: true,
   },
   {
     name: "sankey",
-    make: () => sankey(links, { source: "source", target: "target", value: "value" }),
+    make: (p) => sankey(links, { source: "source", target: "target", value: "value", ...p }),
     kind: "rect",
+    panels: true,
   },
   {
     name: "graph",
@@ -272,6 +287,15 @@ const layouts: MarkCase[] = [
 const all = [...cartesian, ...layouts];
 const annotations = cartesian.filter((c) => c.reading === "summary");
 const subplot = panels([{ id: "a" }, { id: "b" }]);
+// Layout marks in panels, and those that have charts to themselves (maps, networks, 3D).
+const paneled = layouts.filter((c) => c.panels);
+const alone = layouts.filter((c) => !c.panels);
+/** A line in subplot "a" beside a layout mark in subplot "b". */
+const besideLine = (c: MarkCase, extra: Partial<ChartConfig> = {}): ChartConfig => ({
+  marks: [line(samples, { x: "x", y: "y", panel: "a" }), c.make({ panel: "b" })],
+  panels: subplot,
+  ...extra,
+});
 
 function expectGeometry(panel: Panel, kind: Geometry["kind"]) {
   expect(panel.marks.some((m) => m.kind === kind && (m.draw.guide || m.draw.size(m) > 0))).toBe(
@@ -279,12 +303,12 @@ function expectGeometry(panel: Panel, kind: Geometry["kind"]) {
   );
 }
 
-function itemKeys(model: ChartModel): string[] {
+function itemKeys(model: ChartModel, panel?: string): string[] {
   const keys: string[] = [];
-  let key = model.stepItem(undefined, 1);
+  let key = model.stepItem(undefined, 1, panel);
   while (key !== undefined && !keys.includes(key)) {
     keys.push(key);
-    key = model.stepItem(key, 1);
+    key = model.stepItem(key, 1, panel);
   }
   return keys;
 }
@@ -310,9 +334,36 @@ describe("capabilities: facets", () => {
     }
   });
 
-  it.each(layouts)("$name refuses facets", (c) => {
+  it.each(paneled)("$name draws each facet panel's rows in it, without axes", (c) => {
+    const { scene, model } = build({ marks: [c.make()], facet: facet("group") });
+    expect(scene.panels.map((p) => p.key)).toEqual(["N", "S"]);
+    for (const panel of scene.panels) {
+      expectGeometry(panel, c.kind);
+      expect(panel.axes).toEqual([]);
+      // What a panel draws is its own rows', read in it.
+      const [key] = itemKeys(model, panel.key);
+      expect(model.inspectItem(key!, panel.key)!.panel).toBe(panel.key);
+    }
+    expect(model.panels()).toEqual([]);
+    expect(model.allPanels().map(({ key, items }) => [key, items])).toEqual([
+      ["N", true],
+      ["S", true],
+    ]);
+    expect(describeChart(model)).toMatch(/^Panels by group: N, S\. N: .+ S: /);
+  });
+
+  it.each(alone)("$name refuses facets", (c) => {
     expect(() => build({ marks: [c.make()], facet: facet("group") })).toThrow(
       "cannot have facets or panels",
+    );
+  });
+
+  it.each(paneled)("$name has each facet panel to itself, splitting its rows", (c) => {
+    expect(() =>
+      build({ marks: [c.make(), line(samples, { x: "x", y: "y" })], facet: facet("group") }),
+    ).toThrow("has each facet panel to itself");
+    expect(() => build({ marks: [c.make(), c.make()], facet: facet("group") })).toThrow(
+      "has each facet panel to itself",
     );
   });
 
@@ -393,10 +444,46 @@ describe("capabilities: subplots", () => {
     expect(scene.panels[1]!.marks).toEqual([]);
   });
 
-  it.each(layouts)("$name refuses subplots", (c) => {
+  it.each(paneled)("$name fills its named subplot beside a line", (c) => {
+    const { scene, model } = build(besideLine(c));
+    const [a, b] = scene.panels;
+    expectGeometry(a!, "line");
+    expect(a!.axes.length).toBeGreaterThan(0);
+    expectGeometry(b!, c.kind);
+    expect(b!.axes).toEqual([]);
+    expect(model.panels().map(({ key }) => key)).toEqual(["a"]);
+    const [key] = itemKeys(model, "b");
+    expect(model.inspectItem(key!, "b")!.points[0]!.mark).toBe(1);
+  });
+
+  it.each(alone)("$name refuses subplots", (c) => {
     expect(() => build({ marks: [c.make()], panels: subplot })).toThrow(
       "cannot have facets or panels",
     );
+  });
+
+  it.each(paneled)("$name has its subplot to itself", (c) => {
+    expect(() => build({ marks: [c.make()], panels: subplot })).toThrow(
+      "needs the id of the panel it draws in",
+    );
+    expect(() => build({ marks: [c.make({ panel: "*" })], panels: subplot })).toThrow(
+      "needs the id of the panel it draws in",
+    );
+    expect(() =>
+      build({ marks: [c.make({ panel: "b" }), c.make({ panel: "b" })], panels: subplot }),
+    ).toThrow('Panel "b" has two layout marks');
+    expect(() =>
+      build({
+        marks: [c.make({ panel: "b" }), line(samples, { x: "x", y: "y", panel: "b" })],
+        panels: subplot,
+      }),
+    ).toThrow(`names the panel "b", which a ${c.name} mark has to itself`);
+    expect(() =>
+      build({
+        marks: [c.make({ panel: "b" }), rule({ x: 1, panel: "*" })],
+        panels: subplot,
+      }),
+    ).toThrow('with panel "*" would draw in panel "b"');
   });
 });
 
@@ -415,7 +502,24 @@ describe("capabilities: per-panel scales", () => {
     }
   });
 
-  it.each(layouts)("$name refuses panels with their own scales", (c) => {
+  it.each(paneled)("$name's panel has no scales of its own; the others' may differ", (c) => {
+    const resolve = { x: "independent", y: "independent" } as const;
+    const { scene } = build(besideLine(c, { resolve }));
+    expectGeometry(scene.panels[1]!, c.kind);
+    expect(() =>
+      build(
+        besideLine(c, {
+          resolve,
+          panels: panels([
+            { id: "a", y: { domain: [0, 10] } },
+            { id: "b", y: { domain: [0, 1] } },
+          ]),
+        }),
+      ),
+    ).toThrow(`Panel "b" draws a ${c.name} mark, which has no axes`);
+  });
+
+  it.each(alone)("$name refuses panels with their own scales", (c) => {
     expect(() =>
       build({
         marks: [c.make()],
@@ -515,6 +619,20 @@ describe("capabilities: zoom and pan", () => {
     );
   });
 
+  it.each(paneled)("$name panels refuse zoom unless a panel has axes", (c) => {
+    const interaction = { zoom: "x" } as const;
+    expect(() => build({ marks: [c.make()], facet: facet("group"), interaction })).toThrow(
+      "have no x axis to zoom, brush, sync",
+    );
+    expect(() =>
+      build({ marks: [c.make({ panel: "a" })], panels: panels([{ id: "a" }]), interaction }),
+    ).toThrow("have no x axis to zoom, brush, sync");
+    const { model } = build(besideLine(c, { interaction }));
+    model.setViewport([1, 2], "a");
+    model.scene(estimateText);
+    expect(model.panels()[0]!.x.domain).toEqual([1, 2]);
+  });
+
   it.each(layouts.filter((c) => c.turns))("$name turns and magnifies its camera", (c) => {
     const { model, scene } = build({
       marks: [c.make()],
@@ -564,6 +682,14 @@ describe("capabilities: brushes", () => {
     expect(() => build({ marks: [c.make()], interaction: { brush: "x" } })).toThrow(
       "have no x axis to zoom, brush, sync",
     );
+  });
+
+  it.each(paneled)("$name beside a line accepts an x brush for the line's panel", (c) => {
+    const { scene } = build(besideLine(c, { interaction: { brush: "x" } }));
+    expectGeometry(scene.panels[1]!, c.kind);
+    expect(() =>
+      build({ marks: [c.make()], facet: facet("group"), interaction: { brush: "x" } }),
+    ).toThrow("have no x axis to zoom, brush, sync");
   });
 
   it.each(cartesian)("$name subplots accept x brushes and refuse other brushes", (c) => {
@@ -619,6 +745,14 @@ describe("capabilities: synced selection", () => {
     expect(() =>
       build({ marks: [c.make()], interaction: { sync: "capability-contract" } }),
     ).toThrow("have no x axis to zoom, brush, sync");
+  });
+
+  it.each(paneled)("$name beside a line accepts a sync group for the line's panel", (c) => {
+    const interaction = { sync: "capability-contract" };
+    expectGeometry(build(besideLine(c, { interaction })).scene.panels[1]!, c.kind);
+    expect(() => build({ marks: [c.make()], facet: facet("group"), interaction })).toThrow(
+      "have no x axis to zoom, brush, sync",
+    );
   });
 
   it.each(
@@ -692,6 +826,29 @@ describe("capabilities: legend toggle", () => {
     },
   );
 
+  it.each(paneled.filter((c) => !noToggle.has(c.name)))(
+    "$name toggles an item in every facet panel at once",
+    (c) => {
+      const { model, scene } = build({ marks: [c.make()], facet: facet("group"), legend: true });
+      // One legend, its entries each once, for every panel.
+      const keys = scene.legend.map(({ key }) => key);
+      expect(new Set(keys).size).toBe(keys.length);
+      const entry = scene.legend.at(-1)!;
+      const before = ["N", "S"].map((panel) => itemKeys(model, panel));
+      const colors = ["N", "S"].map(
+        (panel) =>
+          model.inspectItem(before[["N", "S"].indexOf(panel)]![0]!, panel)!.points[0]!.color,
+      );
+      model.hidden.add(entry.key);
+      model.scene(estimateText);
+      const after = ["N", "S"].map((panel) => itemKeys(model, panel));
+      expect(after.flat().length).toBeLessThan(before.flat().length);
+      for (const keys of after) expect(keys).not.toContain(entry.key);
+      // Items keep the colors of their keys, whichever panel draws them.
+      expect(colors.every((color) => color.startsWith("#"))).toBe(true);
+    },
+  );
+
   it("graph toggles groups and has no toggle without a group field", () => {
     const ungrouped = graph(links, { source: "source", target: "target" });
     const { scene } = build({ marks: [ungrouped], legend: true });
@@ -748,6 +905,18 @@ describe("capabilities: tooltip and keyboard reading", () => {
     const inspection = model.inspectItem(key!)!;
     expect(inspection).toBeDefined();
     expect(inspection.points[0]!.text.length).toBeGreaterThan(0);
+  });
+
+  it.each(paneled)("$name reads each panel's items, the pointer finding its panel's", (c) => {
+    const { model } = build({ marks: [c.make()], facet: facet("group") });
+    for (const panel of ["N", "S"]) {
+      const key = model.stepItem(undefined, 1, panel)!;
+      const item = model.inspectItem(key, panel)!;
+      expect(item.panel).toBe(panel);
+      const { px, py } = item.points[0]!;
+      expect(model.inspect(px, py)?.panel).toBe(panel);
+      expect(model.layoutSummary(panel)!.length).toBeGreaterThan(0);
+    }
   });
 
   it.each([
@@ -909,4 +1078,15 @@ describe("capabilities: value animation preconditions", () => {
       expect(snapshot(scene, model.panels()[0], 0)).toBeUndefined();
     },
   );
+
+  it("pies in panels show changed values at once, even in a facet of one panel", () => {
+    const one = table({ category: ["a", "b"], value: [3, 1], group: ["N", "N"] });
+    const { scene, model } = build({
+      marks: [pie(one, { category: "category", value: "value", labels: false })],
+      facet: facet("group"),
+      animation: { values: true },
+    });
+    expect(scene.panels).toHaveLength(1);
+    expect(snapshot(scene, model.panels()[0], 0)?.pie).toBeUndefined();
+  });
 });

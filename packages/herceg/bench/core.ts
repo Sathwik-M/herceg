@@ -7,13 +7,18 @@ import { col } from "../src/data/expression.ts";
 import { type RowQuery, rowView } from "../src/data/row-view.ts";
 import { type Table, table } from "../src/data/table.ts";
 import { fromWall } from "../src/format/zone.ts";
+import { estimateText } from "../src/layout/text.ts";
 import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
+import { pie } from "../src/marks/pie.ts";
 import { PositionStack } from "../src/marks/position-stack.ts";
 import { SplitRows } from "../src/marks/split.ts";
 import { RowStack } from "../src/marks/stack.ts";
+import { treemap } from "../src/marks/treemap.ts";
 import { UnionStack } from "../src/marks/union-stack.ts";
+import { facet } from "../src/model/facet.ts";
+import { ChartModel } from "../src/model/model.ts";
 import { timeBreaks } from "../src/scale/breaks.ts";
 import { LinearScale } from "../src/scale/scale.ts";
 
@@ -271,4 +276,62 @@ measure(
     sorted.read();
   },
   { warmup: 5, samples: 30 },
+);
+
+// Small multiples of a layout mark: a pie of eight products per region, 50
+// regions over 100,000 rows, labeled, at 1600 x 1200. A first scene splits the
+// rows by panel and sums each panel's; a redraw reads what those kept.
+const PANELS = 50;
+const SALES_ROWS = 100_000;
+const sales = table({
+  region: Array.from({ length: SALES_ROWS }, (_, i) => `region ${i % PANELS}`),
+  product: Array.from({ length: SALES_ROWS }, (_, i) => `product ${(i * 7) % 8}`),
+  revenue: Float64Array.from({ length: SALES_ROWS }, (_, i) => (i * 13) % 100),
+});
+const pies = () => {
+  const model = new ChartModel({
+    marks: [pie(sales, { category: "product", value: "revenue" })],
+    facet: facet("region", { columns: 10 }),
+  });
+  model.setSize(1600, 1200, 1);
+  return model;
+};
+measure("facets: first scene of 50 pies over 100k rows", () => pies().scene(estimateText), {
+  warmup: 5,
+  samples: 30,
+});
+const drawn = pies();
+drawn.scene(estimateText);
+measure("facets: redraw 50 pies over 100k rows", () => drawn.scene(estimateText), {
+  warmup: 10,
+  samples: 50,
+});
+measure(
+  "facets: 50 pies over 100k rows after a row arrives",
+  () => {
+    sales.append({ region: ["region 3"], product: ["product 1"], revenue: [5] });
+    drawn.scene(estimateText);
+  },
+  { warmup: 5, samples: 30 },
+);
+
+// A treemap per region of 100,000 distinct leaves, 2,000 to a panel: each
+// panel keeps the part of the tree its rows give a value, not all of it.
+const leaves = table({
+  region: Array.from({ length: SALES_ROWS }, (_, i) => `region ${i % PANELS}`),
+  leaf: Array.from({ length: SALES_ROWS }, (_, i) => `leaf ${i}`),
+  revenue: Float64Array.from({ length: SALES_ROWS }, (_, i) => 1 + (i % 7)),
+});
+measure(
+  "facets: first scene of 50 treemaps of 2,000 leaves each",
+  () => {
+    const model = new ChartModel({
+      marks: [treemap(leaves, { path: ["leaf"], value: "revenue", labels: false })],
+      facet: facet("region", { columns: 10 }),
+      legend: false,
+    });
+    model.setSize(2000, 1200, 1);
+    model.scene(estimateText);
+  },
+  { warmup: 2, samples: 10 },
 );

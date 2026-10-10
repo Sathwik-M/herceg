@@ -6,12 +6,7 @@
 import { type Formatter, formatNumber, timeValueFormatter } from "../format/format.ts";
 import { fitText, type MeasureText } from "../layout/text.ts";
 import { Polyline } from "../lod/polyline.ts";
-import {
-  isLayoutMark,
-  type LayoutItem,
-  type LayoutMark,
-  type LayoutResult,
-} from "../marks/layout-mark.ts";
+import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
 import {
   type AxisFormat,
   type BandContext,
@@ -60,6 +55,7 @@ import {
   valueFormatter,
 } from "./axis.ts";
 import type { Facet } from "./facet.ts";
+import type { ItemPanel, ItemViews } from "./item-views.ts";
 import { EDGE, type LegendEntry, type LegendPart, layoutLegends } from "./legend.ts";
 import type { Navigator } from "./navigator.ts";
 import type { PanelGrid, PanelLayout, PanelSplit } from "./panel-layout.ts";
@@ -79,7 +75,10 @@ export type ChartConfig = Omit<
   | "x"
   | "navigator"
 > & {
-  /** Marks along axes, or one layout mark (a pie) that has the chart to itself. */
+  /**
+   * Marks along axes, or one layout mark (a pie) that has the chart to
+   * itself; with facets or panels, layout marks that have a panel each.
+   */
   marks: readonly ChartMark[];
   x?: XAxisConfig | undefined;
   /** Small multiples: a panel per value of a category field (see `facet`). */
@@ -202,14 +201,15 @@ const GAP = 6;
 
 export class ChartModel {
   #config: ChartConfig;
-  /** The chart's marks along axes, and its layout marks: one kind or the other. */
+  /** The chart's marks along axes, and its layout marks. */
   #marks: readonly Mark[] = [];
   #layouts: readonly LayoutMark[] = [];
-  /**
-   * What the layout mark drew in the last scene, with what its items are
-   * reported with: its measure, and the chart's marks then.
-   */
-  #layout: { result: LayoutResult; measure: string; marks: readonly ChartMark[] } | undefined;
+  /** Each mark along axes' index among the chart's marks, which identifies it. */
+  #positions: readonly number[] = [];
+  /** What layout marks drew in the last scene, for charts with any. */
+  #items: ItemViews | undefined;
+  /** Every panel of the last scene, in order: with marks along axes, or a layout mark. */
+  #all: readonly (ItemPanel & { items: boolean })[] = [];
   #theme: Theme;
   width = 640;
   height = 400;
@@ -266,7 +266,7 @@ export class ChartModel {
 
   /** `page` resolves themes that follow the page: "auto" and CSS variables. */
   constructor(config: ChartConfig, page?: ThemeEnvironment) {
-    [this.#marks, this.#layouts] = validate(config);
+    [this.#marks, this.#layouts, this.#positions] = validate(config);
     this.#config = config;
     this.#theme = resolveTheme(config.theme, page);
     this.#configured = this.#layouts[0]?.camera?.(config.camera);
@@ -291,7 +291,7 @@ export class ChartModel {
   }
 
   update(config: ChartConfig, page?: ThemeEnvironment): void {
-    [this.#marks, this.#layouts] = validate(config);
+    [this.#marks, this.#layouts, this.#positions] = validate(config);
     // A camera configured differently is shown; the same one keeps the view turned.
     const configured = this.#layouts[0]?.camera?.(config.camera);
     if (
@@ -512,7 +512,7 @@ export class ChartModel {
     return this.#marks.map((mark, index) => ({
       mark,
       series: mark.series(
-        mark.spec.id ?? index,
+        mark.spec.id ?? this.#positions[index]!,
         this.#palette,
         this.hidden,
         bands,
@@ -695,9 +695,10 @@ export class ChartModel {
    * `clouds`, large point series are left to a GPU painter (see PointCloud).
    */
   scene(measure: MeasureText, clouds = false): Scene {
-    if (this.#layouts.length > 0) return this.#layoutScene(measure, clouds);
-    this.#layout = undefined;
     const config = this.#config;
+    const layout = this.#panels;
+    if (!layout && this.#layouts.length > 0) return this.#layoutScene(measure, clouds);
+    this.#items?.clear();
     const theme = this.#theme;
     const { width, height } = this;
     const context = this.#context();
@@ -715,9 +716,13 @@ export class ChartModel {
       (split.bands?.[axis]?.[panel] ?? bands[axis])!;
     // Domains and layout consider what every panel draws.
     const marks = split.all;
-    const layout = this.#panels;
+    // Panels drawing a layout mark have no axes; the others place, label, and share scales.
+    const items = split.items;
+    const axesIn = (i: number) => !items?.[i];
     // Subplots take their first panel's x settings when every panel shares x.
-    const xSpec = layout ? layout.panelAxis("x", 0, config.x) : config.x;
+    const xSpec = layout
+      ? layout.panelAxis("x", Math.max(0, items?.indexOf(undefined) ?? 0), config.x)
+      : config.x;
     const xContext: AxisContext = {
       type: xType === "band" ? xType : (xSpec?.type ?? xType),
       spec: xSpec,
@@ -771,7 +776,7 @@ export class ChartModel {
       xGroups
         ? xMarks.map(
             (among, h): AxisContext => ({
-              ...layout!.groupAxis("x", xGroupAt.indexOf(h), among, config.x, xType),
+              ...layout!.groupAxis("x", xGroups.first[h]!, among, config.x, xType),
               zone,
               locale,
             }),
@@ -876,26 +881,33 @@ export class ChartModel {
       for (const part of mark.legends?.(series, theme, format) ?? [])
         if (!parts.has(part.key)) parts.set(part.key, part);
     }
-    const entries = base.flatMap(({ mark, series }) =>
-      series.flatMap((s) => {
+    // Entries in the order of the chart's marks: series, and layout marks' items.
+    let along = 0;
+    const entries = config.marks.flatMap((chartMark, index) => {
+      if (isLayoutMark(chartMark))
+        return chartMark.legend(chartMark.spec.id ?? index, this.#palette, theme);
+      const { mark, series } = base[along++]!;
+      return series.flatMap((s) => {
         const entry = mark.legendEntry ? mark.legendEntry(s, theme) : { color: s.color };
         if (!entry) return [];
         const item: LegendEntry = { key: s.key, label: s.label, color: entry.color };
         if (entry.glyph) item.glyph = entry.glyph;
         if (entry.stroke) item.stroke = entry.stroke;
         return [item];
-      }),
-    );
+      });
+    });
     const head = this.#header(entries, [...parts.values()], measure);
     const top = head.top;
     const showY = config.y?.axis ?? true;
-    // x labels go under the lowest panel of each column, and under every
-    // panel when the panels of a column have x scales of their own, as
+    // x labels go under the lowest panel with axes of each column, and under
+    // every panel when the panels of a column have x scales of their own, as
     // each panel's `axis` setting (a subplot's own over the chart's) says.
     const xBetween = xResolution === "independent" || xResolution === "rows";
     const panelX = (i: number) => (layout ? layout.panelAxis("x", i, config.x) : config.x);
     const labelsX = (i: number) =>
-      (panelX(i)?.axis ?? true) && (xBetween || i + columns >= panelCount);
+      axesIn(i) &&
+      (panelX(i)?.axis ?? true) &&
+      (xBetween || (grid.lowest?.[i] ?? i + columns >= panelCount));
     const showX = split.keys.some((_, i) => labelsX(i));
     // Room under the plot before the x labels' line of text: more for large
     // text, whose labels sit further below the axis.
@@ -914,11 +926,12 @@ export class ChartModel {
     // once beside the last column. Rows leave room between them for the y
     // labels at their ends, and for x labels and titles between them.
     const aboveEmpty = showX && panelCount % columns !== 0;
-    const titleRoom = xGroups ? xTitle : 0;
+    // A title between rows: an x scale's own, or the shared one above a layout mark's panel.
+    const titleRoom = xGroups || grid.between ? xTitle : 0;
     const rowGap =
       rows <= 1
         ? 0
-        : xBetween && showX
+        : (xBetween || grid.between) && showX
           ? xLabels + lineHeight + titleRoom + (header ? 8 : Math.ceil(lineHeight / 2) + 4)
           : header
             ? (aboveEmpty ? xLabels + lineHeight + titleRoom : Math.ceil(lineHeight / 2)) + 8
@@ -986,7 +999,7 @@ export class ChartModel {
     const contexts = groups
       ? groups.drawn.map(
           (drawn, g): AxisContext => ({
-            ...layout!.groupAxis("y", groupOf.indexOf(g), drawn, config.y, yType),
+            ...layout!.groupAxis("y", groups.first[g]!, drawn, config.y, yType),
             zone,
             locale,
           }),
@@ -1007,13 +1020,15 @@ export class ChartModel {
       plan.labels = plan.labels.map((label) => fitText(label, room, measure, font));
       return plan;
     };
-    // Each group is planned over its shortest row, so what marks draw past
-    // their values (points, bar labels) fits in every row.
+    // Each group is planned over its shortest row with axes, so what marks
+    // draw past their values (points, bar labels) fits in every row; a group
+    // of panels drawing layout marks only has nothing to fit.
     const groupHeights = contexts.map(() => Number.POSITIVE_INFINITY);
     groupOf.forEach((g, i) => {
-      groupHeights[g] = Math.min(groupHeights[g]!, rowHeights[rowOf(i)]!);
+      if (axesIn(i)) groupHeights[g] = Math.min(groupHeights[g]!, rowHeights[rowOf(i)]!);
     });
-    const groupHeight = (g: number) => groupHeights[g]!;
+    const groupHeight = (g: number) =>
+      groupHeights[g]! < Infinity ? groupHeights[g]! : plotHeight;
     const groupPlans: AxisPlan[] = [];
     // Groups of panels with nothing to show along y have no y labels.
     const emptyGroups = new Set<number>();
@@ -1066,7 +1081,7 @@ export class ChartModel {
     const panelAxis = (i: number) => (layout ? layout.panelAxis("y", i, config.y) : config.y);
     const titleOf = (i: number) =>
       config.panels ? panelAxis(i)?.label : i === 0 ? config.y?.label : undefined;
-    const titled = split.keys.some((_, i) => titleOf(i));
+    const titled = split.keys.some((_, i) => axesIn(i) && titleOf(i));
     const yRightContext: AxisContext = { type: yRightType, spec: config.yRight, zone, locale };
     const yRightPlan = rightUsed
       ? planValueAxis(
@@ -1082,9 +1097,13 @@ export class ChartModel {
           yRightView !== undefined,
         )
       : undefined;
-    const showLeft = showY && leftUsed;
+    // Panels that all draw layout marks label no y axis.
+    const showLeft = showY && leftUsed && !items?.every(Boolean);
     const labelsOf = (plan: AxisPlan) => (hasData && showLeft && leftData ? plan.labels : []);
-    const labelWidth = Math.max(0, ...yPlans.flatMap(labelsOf).map(measureLabel));
+    const labelWidth = Math.max(
+      0,
+      ...yPlans.flatMap((plan, i) => (axesIn(i) ? labelsOf(plan) : [])).map(measureLabel),
+    );
     // The widest label starts at the chart's edge inset, in line with the title.
     let left = showLeft ? Math.ceil(labelWidth) + GAP + 2 + EDGE : EDGE;
     if (showLeft && titled) left += lineHeight + GAP;
@@ -1130,8 +1149,8 @@ export class ChartModel {
     let widths: number[] = [];
     // Where each column starts, from `left`; equal columns a whole step apart.
     let offsets: number[] = [];
-    // Each x group is planned over its narrowest column, so what marks draw
-    // past their values fits in every column.
+    // Each x group is planned over its narrowest column with axes, so what
+    // marks draw past their values fits in every column.
     let groupWidths: number[] = [];
     const xTicks = ({ type, spec }: AxisContext, size: number) =>
       spec?.ticks ?? Math.max(2, Math.round(size / (type === "time" ? 100 : 80)));
@@ -1183,8 +1202,9 @@ export class ChartModel {
       groupWidths = xContexts.map(() => Number.POSITIVE_INFINITY);
       for (let i = 0; i < panelCount; i++) {
         const h = xGroupAt[i]!;
-        groupWidths[h] = Math.min(groupWidths[h]!, widths[i % columns]!);
+        if (axesIn(i)) groupWidths[h] = Math.min(groupWidths[h]!, widths[i % columns]!);
       }
+      groupWidths = groupWidths.map((w) => (w < Infinity ? w : widths[0]!));
       xPlans = xContexts.map((_, h) => planX(groupWidths[h]!, h));
       ends.clear();
     };
@@ -1392,6 +1412,7 @@ export class ChartModel {
     this.#drawnHidden = hidden;
     const views: PanelView[] = [];
     const headers: SceneText[] = [];
+    const all: (ItemPanel & { items: boolean })[] = [];
     const panels = split.keys.map((key, i): Panel => {
       const row = Math.floor(i / columns);
       const column = i % columns;
@@ -1405,6 +1426,20 @@ export class ChartModel {
         width: widths[column]!,
         height: rowHeights[row]!,
       };
+      const values = split.values[i]!;
+      const label = values.join(", ");
+      if (layout) {
+        const fit = (text: string, room: number) => fitText(text, room, measure, font);
+        headers.push(...layout.headers(i, values, row, column, plot, grid, fit));
+      }
+      const item = items?.[i];
+      all.push({ key, label, plot, items: !!item });
+      // A layout mark draws its rows in the panel, which has no axes.
+      if (item) {
+        this.#items ??= new item.mark.views();
+        const frame = { theme, locale, measure, hidden, color: this.#palette };
+        return this.#items.panel({ key, label, plot }, item, config.marks, frame);
+      }
       const axes: AxisGeometry[] = [];
       if (labelsX(i)) {
         axes.push({
@@ -1465,14 +1500,14 @@ export class ChartModel {
       const geometry = panelMarks.flatMap(({ mark, series }, index) =>
         members && !members[index]
           ? []
-          : mark.geometry(series, frameOf(mark), mark.spec.id ?? index),
+          : mark.geometry(series, frameOf(mark), mark.spec.id ?? this.#positions[index]!),
       );
       if (seams) {
         const segments = xContexts[h]!.breaks?.seams?.(x, plot, seams, theme.grid);
         if (segments) geometry.unshift(segments);
       }
       const inspected = panelMarks.flatMap((entry, index) =>
-        members && !members[index] ? [] : [{ ...entry, index }],
+        members && !members[index] ? [] : [{ ...entry, index: this.#positions[index]! }],
       );
       const inspector = new Inspector({
         marks: inspected,
@@ -1484,14 +1519,9 @@ export class ChartModel {
         formatY: formatOf(i),
         formatValue: formatNumbers,
       });
-      const values = split.values[i]!;
-      if (layout) {
-        const fit = (text: string, room: number) => fitText(text, room, measure, font);
-        headers.push(...layout.headers(i, values, row, column, plot, grid, fit));
-      }
       views.push({
         key,
-        label: values.join(", "),
+        label,
         plot,
         xGroup: xKeys[h]!,
         yGroup: groups?.keys[groupOf[i]!] ?? "",
@@ -1515,6 +1545,7 @@ export class ChartModel {
       for (const key of pool.keys()) if (!this.#used.has(key)) pool.delete(key);
     }
     this.#views = views;
+    this.#all = all;
     this.#namesPanels = layout !== undefined;
     this.#drawn = marks;
     this.#base = base;
@@ -1577,32 +1608,15 @@ export class ChartModel {
 
   /** A chart of one layout mark: the header, and the mark in the room below it. */
   #layoutScene(measure: MeasureText, clouds: boolean): Scene {
-    const { width, height } = this;
     const theme = this.#theme;
+    const { locale, marks } = this.#config;
     const mark = this.#layouts[0]!;
-    const id = mark.spec.id ?? 0;
-    const parts = mark.legends?.(theme, this.#config.locale) ?? [];
-    const header = this.#header(mark.legend(id, this.#palette, this.#theme), parts, measure);
-    const bounds: Rect = {
-      x: EDGE,
-      y: header.top,
-      width: Math.max(0, width - 2 * EDGE),
-      height: Math.max(0, height - header.top - EDGE),
-    };
-    const result = mark.draw({
-      id,
-      bounds,
-      theme,
-      locale: this.#config.locale,
+    const parts = mark.legends?.(theme, locale) ?? [];
+    const header = this.#header(
+      mark.legend(mark.spec.id ?? 0, this.#palette, theme),
+      parts,
       measure,
-      // A copy, which items found before the next scene still read.
-      hidden: new Set(this.hidden),
-      color: this.#palette,
-      camera: this.#camera,
-      clouds,
-      keyed: keyedBy(this.#config),
-    });
-    this.#layout = { result, measure: mark.measure, marks: this.#config.marks };
+    );
     // Nothing is drawn along axes: let go of what the last such scene kept.
     this.#views = [];
     this.#drawn = [];
@@ -1613,21 +1627,20 @@ export class ChartModel {
     this.#floats.clear();
     this.#doubles.clear();
     this.#bytes.clear();
-    let vertices = 0;
-    for (const item of result.geometry) vertices += item.draw.size(item);
-    return {
-      width,
-      height,
-      pixelRatio: this.pixelRatio,
+    this.#items ??= new mark.views();
+    const scene = this.#items.scene(this, header, mark, marks, {
       theme,
-      title: header.title,
-      headers: [],
-      panels: [{ key: "", plot: bounds, grid: { x: [], y: [] }, axes: [], marks: result.geometry }],
-      legend: header.legend,
-      colorLegends: header.colorLegends,
-      glyphLegends: header.glyphLegends,
-      vertices,
-    };
+      locale,
+      measure,
+      // A copy, which items found before the next scene still read.
+      hidden: new Set(this.hidden),
+      color: this.#palette,
+      camera: this.#camera,
+      clouds,
+      keyed: keyedBy(this.#config),
+    });
+    this.#all = this.#items.panels;
+    return scene;
   }
 
   /** x scale of the last scene's first panel (the only one without facets). */
@@ -1823,10 +1836,12 @@ export class ChartModel {
    * it or in `panel`; see `Inspector.inspect`.
    */
   inspect(px: number, py: number, mode?: TooltipMode, panel?: string): Inspection | undefined {
-    if (this.#layout) return this.#item(this.#layout.result.itemAt(px, py));
     const view =
       panel === undefined ? this.#viewAt(px, py) : this.#views.find(({ key }) => key === panel);
-    return view && this.#inPanel(view, view.inspector.inspect(px, py, mode));
+    return (
+      this.#items?.inspect(px, py, panel) ??
+      (view && this.#inPanel(view, view.inspector.inspect(px, py, mode)))
+    );
   }
 
   /**
@@ -1840,31 +1855,34 @@ export class ChartModel {
   }
 
   /**
-   * Whether the last scene was one layout mark's, whose items the pointer
-   * and keyboard visit.
+   * Whether the last scene was one layout mark's, without facets or panels,
+   * whose items the pointer and every arrow key visit.
    */
   get layout(): boolean {
-    return this.#layout !== undefined;
-  }
-
-  /** An item of the last scene's layout mark, by key. */
-  inspectItem(key: string): Inspection | undefined {
-    const layout = this.#layout?.result;
-    const at = layout?.indexOf(key) ?? -1;
-    return at < 0 ? undefined : this.#item(layout!.item(at));
+    return this.#items?.alone === true;
   }
 
   /**
-   * The key of the item `step` items after the one keyed `key` (before, for
-   * negative steps), stopping at the ends. Without a current item, steps
-   * count from before the first item, or after the last for negative ones.
+   * Every panel of the last scene, in order: those with marks along axes,
+   * which `panels` describes, and those a layout mark drew in (`items`).
    */
-  stepItem(key: string | undefined, step: number): string | undefined {
-    const layout = this.#layout?.result;
-    if (!layout || layout.count === 0) return undefined;
-    const at = key === undefined ? -1 : layout.indexOf(key);
-    const from = at >= 0 ? at : step > 0 ? -1 : layout.count;
-    return layout.item(Math.min(layout.count - 1, Math.max(0, from + step))).key;
+  allPanels(): readonly (ItemPanel & { items: boolean })[] {
+    return this.#all;
+  }
+
+  /** An item a layout mark drew in the last scene, by key, in `panel` (the first by default). */
+  inspectItem(key: string, panel?: string): Inspection | undefined {
+    return this.#items?.inspectItem(key, panel);
+  }
+
+  /**
+   * In `panel` (the first drawn by a layout mark by default), the key of the
+   * item `step` items after the one keyed `key` (before, for negative
+   * steps), stopping at the ends. Without a current item, steps count from
+   * before the first item, or after the last for negative ones.
+   */
+  stepItem(key: string | undefined, step: number, panel?: string): string | undefined {
+    return this.#items?.stepItem(key, step, panel);
   }
 
   /**
@@ -1876,38 +1894,13 @@ export class ChartModel {
     return this.#legendParts.map((part) => part.describe(this.#config.locale));
   }
 
-  /** A sentence describing the layout mark's last scene. */
-  layoutSummary(): string | undefined {
-    return this.#layout?.result.summary();
-  }
-
-  #item(item: LayoutItem | undefined): Inspection | undefined {
-    if (!item) return undefined;
-    const { key, label, color, text, value, px, py, outline, values } = item;
-    // The chart's marks are the layout mark, or the layers of a map or a 3D box.
-    const mark = item.layer ?? 0;
-    return {
-      axis: "item",
-      key,
-      value,
-      label: item.measure ?? this.#layout!.measure,
-      points: [
-        {
-          mark,
-          markId: this.#layout!.marks[mark]?.spec.id,
-          key,
-          label,
-          row: item.row,
-          color,
-          text,
-          value,
-          px,
-          py,
-        },
-      ],
-      outline,
-      ...(values && { values }),
-    };
+  /**
+   * Sentences describing what layout marks drew in the last scene: in
+   * `panel`, or in the chart's one panel, or each panel's after its name,
+   * up to `max` panels.
+   */
+  layoutSummary(panel?: string, max?: number): string | undefined {
+    return this.#items?.summary(panel, max);
   }
 
   /** With facets, the inspection names its panel. */
@@ -1927,7 +1920,8 @@ export class ChartModel {
     this.#base = undefined;
     this.#entries = [];
     this.#splitter = undefined;
-    this.#layout = undefined;
+    this.#items = undefined;
+    this.#all = [];
     // Joined layout marks (a 3D chart's box) keep their geometry buffers.
     this.#layouts = [];
   }
@@ -2005,33 +1999,24 @@ function usesY(mark: Mark): boolean {
 
 /**
  * Rejects configurations whose mark identities would collide or cannot be
- * laid out; returns the marks along axes and the layout marks.
+ * laid out; returns the marks along axes, the layout marks, and each mark
+ * along axes' index among the chart's marks.
  */
-function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
+function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
   const marks: Mark[] = [];
+  const positions: number[] = [];
   let layouts: LayoutMark[] = [];
-  for (const mark of config.marks) {
-    if (isLayoutMark(mark)) layouts.push(mark);
-    else marks.push(mark as Mark);
-  }
-  const [layout] = layouts;
-  if (layout) {
-    const type = layout.spec.type;
-    // Layers of a map share its chart; they are drawn as one mark.
-    if (layout.join) layouts = [layout.join(layouts, config)];
-    if (layouts.length > 1 || marks.length > 0)
-      throw new Error(`A ${type} mark has its chart to itself; draw other marks in another chart`);
-    if (config.facet || config.panels)
-      throw new Error(`Charts of a ${type} mark cannot have facets or panels yet`);
-    const interaction = config.interaction;
-    // 3D charts zoom their camera.
-    const zooms = interaction?.zoom && !layouts[0]!.camera;
-    if (zooms || interaction?.brush || interaction?.sync || config.x?.seams)
-      throw new Error(
-        `Charts of a ${type} mark have no x axis to zoom, brush, sync, or mark seams on`,
-      );
-  }
   const ids = new Set<string>();
+  config.marks.forEach((mark, index) => {
+    const id = mark.spec.id;
+    if (id !== undefined && ids.has(id)) throw new Error(`Duplicate mark id "${id}"`);
+    if (id !== undefined) ids.add(id);
+    if (isLayoutMark(mark)) layouts.push(mark);
+    else {
+      marks.push(mark as Mark);
+      positions.push(index);
+    }
+  });
   for (const mark of marks) {
     // The right axis measures values; marks placed along y belong on the left.
     if (sideOf(mark) === "right" && (mark.tooltip === "y" || mark.tooltip === "cell"))
@@ -2041,23 +2026,25 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[]] {
       throw new Error(
         `A ${mark.spec.type} mark over a row view cannot be split by facets yet; give it facet: "repeat"`,
       );
-    const id = mark.spec.id;
-    if (id === undefined) continue;
-    if (ids.has(id)) throw new Error(`Duplicate mark id "${id}"`);
-    ids.add(id);
   }
   if (config.facet && config.panels) throw new Error("A chart has facets or panels, not both");
   const duration = typeof config.animation === "object" ? config.animation.duration : undefined;
   if (duration !== undefined && !(Number.isFinite(duration) && duration >= 0))
     throw new RangeError(`animation.duration must be milliseconds of at least 0, not ${duration}`);
   if (!config.panels) {
-    const named = marks.find((mark) => mark.spec.panel !== undefined);
+    const named = config.marks.find((mark) => mark.spec.panel !== undefined);
     if (named)
       throw new Error(`A ${named.spec.type} mark names a panel, but the chart has no panels`);
   }
-  // Facets and panels refuse navigators, so one of the three checks the marks.
-  (config.facet ?? config.panels ?? config.navigator)?.check(marks, config);
-  return [marks, layouts];
+  // Facets and panels check their marks, layout marks too, and refuse navigators.
+  const panelled = config.facet ?? config.panels;
+  if (panelled) panelled.check(marks, config, layouts);
+  else {
+    // Without them, layout marks have the chart to themselves.
+    if (layouts[0]) layouts = layouts[0].views.alone(layouts, marks, config);
+    config.navigator?.check(marks, config);
+  }
+  return [marks, layouts, positions];
 }
 
 /** An ascending range, or null for none or an empty one. */

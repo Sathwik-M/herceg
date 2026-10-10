@@ -8,6 +8,7 @@ import { pointDrawing } from "../draw/point.ts";
 import { symbolPath } from "../draw/symbols.ts";
 import { formatNumber } from "../format/format.ts";
 import { extendExtent, type GeoExtent, type ProjectionPlan } from "../geo/project.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import {
@@ -90,6 +91,7 @@ interface Drawn {
 export class GeoPointMark implements GeoLayer {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly geo = true;
   readonly spec: Frozen<GeoPointSpec>;
   readonly table: Table;

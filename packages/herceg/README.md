@@ -645,9 +645,9 @@ effect), · not applicable.
 | heatmap | ✓ | ✓ | ✓ | — | ✓ | ✓ | · | ✓ | — |
 | rule, region, text | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | · | ◐ | ◐ |
 | custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | — |
-| pie | — | — | — | — | — | — | ✓ | ✓ | ✓ |
-| treemap, sunburst, radar | — | — | — | — | — | — | ✓ | ✓ | — |
-| gauge, funnel, sankey | — | — | — | — | — | — | · | ✓ | — |
+| pie | ✓ | ✓ | · | — | — | — | ✓ | ✓ | ✓ |
+| treemap, sunburst, radar | ✓ | ✓ | · | — | — | — | ✓ | ✓ | — |
+| gauge, funnel, sankey | ✓ | ✓ | · | — | — | — | · | ✓ | — |
 | graph | — | — | — | — | — | — | ◐ | ✓ | — |
 | geoshape, geopoint | — | — | — | — | — | — | ✓ | ✓ | — |
 | point3d, line3d | — | — | — | turning | — | — | ✓ | ✓ | — |
@@ -664,11 +664,18 @@ effect), · not applicable.
   bars and candlesticks need their categories shared between panels.
 - Heatmaps band both axes, number and time fields too, so they neither zoom
   nor pan.
+- Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams
+  draw each facet panel's rows in it, or fill a subplot of their own beside
+  panels with axes (see [Layout marks in panels](#layout-marks-in-panels)).
+  Their panels have no axes, so they neither zoom, pan, brush, nor sync;
+  panels with axes beside them do. Networks, maps, and 3D charts have
+  charts to themselves.
 - Box plots and violins on log axes have no keyboard stop for groups whose
   median is not positive; annotations are read in the chart's summary
   rather than one by one; custom marks are read through their series.
 - Value animation moves unstacked, unlabeled bars, points, lines and areas
-  whose rows stay, rules, and pie slices (see [Animation](#animation)).
+  whose rows stay, rules, and pie slices (see [Animation](#animation)), in
+  charts of one panel.
 - Every mark draws in SVG, Canvas, static SVG, and PDF; large point series
   and 3D charts also draw with WebGL. Every mark has a React, Vue, and
   Svelte component, and every mark but custom marks (JavaScript only) a
@@ -691,8 +698,10 @@ are labeled beside the pie with lines to them when there is room
 (`labels: false` turns that off); labels that do not fit, smallest slices
 first, are left out. The legend toggles slices, and the rest fill the circle.
 Tooltips, hover and click events, and the arrow keys report a slice's value
-and its share of the slices shown. A pie has its chart to itself: it cannot
-share one with other marks, have facets, or zoom, brush, or sync.
+and its share of the slices shown. A pie has its chart to itself, or with
+facets a panel each, or a subplot of its own (see [Layout marks in
+panels](#layout-marks-in-panels)): it shares no panel with other marks, and
+does not zoom, brush, or sync.
 
 ### Treemaps and sunbursts
 
@@ -756,7 +765,8 @@ share of the first stage go on its bar, or beside it when the bar is too
 narrow (`labels: false` leaves both out). Tooltips, events, and the arrow
 keys report a stage's value, share of the first stage, and share of the
 previous one. All stages take the palette's first color, and there is no
-legend. Like a pie, a gauge or a funnel has its chart to itself.
+legend. Like a pie, a gauge or a funnel has its chart, each facet panel, or
+its subplot to itself.
 
 ### Radars
 
@@ -790,7 +800,9 @@ polygon goes unfilled. The legend toggles series (a radar of one polygon
 shows one only with `legend: true`), and the scale fits what is shown. Tooltips, hover and click
 events, and the arrow keys report one value at a time, series by series and
 spoke by spoke; the pointer finds the nearest value within 24 pixels. Like a
-pie, a radar has its chart to itself.
+pie, a radar has its chart, each facet panel, or its subplot to itself; in
+facet panels, every radar has the table's spokes and series, each scaled to
+its own panel's values unless `domain` is given.
 
 ### Sankey diagrams
 
@@ -828,7 +840,8 @@ is no legend. Tooltips, hover and click events, and the arrow keys report a
 node's inflow and outflow or a link's value, nodes first (column by column,
 top to bottom), then links (by source, then target). The layout is computed
 again whenever the table changes, so streamed rows redraw the whole diagram.
-Like a pie, a Sankey diagram has its chart to itself.
+Like a pie, a Sankey diagram has its chart, each facet panel, or its subplot
+to itself.
 
 ### Networks
 
@@ -1304,7 +1317,9 @@ their value above them. Panels are keyed by their value, or in a grid by
 both as a JSON array (`["North","A"]`), which inspections report as `panel`;
 announcements and the chart's description name them by their values. Marks
 over a table split its rows by the fields, which the table must have, unless
-they have `facet: "repeat"`; marks without a table repeat. Panels share
+they have `facet: "repeat"`; marks without a table repeat. A layout mark (a
+pie) is a faceted chart's only mark, and splits its rows too (see [Layout
+marks in panels](#layout-marks-in-panels)). Panels share
 their x and y scales; `resolve: { y }` gives each panel a y scale of its own
 fitting what it draws (`"independent"`), or one per row (`"rows"`) or per
 column (`"columns"`), and `resolve: { x }` does the same for x. x labels go
@@ -1432,6 +1447,58 @@ id. Specs with `panels` need `"version": 2`, and panels with their own `x`
 `"version": 3`. Charts with panels have no right
 axis, error bars and candlesticks on a category y axis need it shared
 (`resolve: { y: "shared" }`), and zooming and brushing act on x only.
+
+### Layout marks in panels
+
+Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams draw
+in panels too: with a facet, a layout mark is the chart's only mark and
+draws each panel's rows there, as marks along axes do; with subplots, it has
+the panel it names to itself, beside panels with axes.
+
+```ts
+// Small multiples: a pie of each region's sales, with one legend for all.
+createChart(element, {
+  marks: [pie(sales, { category: "product", value: "revenue" })],
+  facet: facet("region", { columns: 4 }),
+});
+
+// A dashboard row: revenue over time, and each product's share beside it.
+createChart(element, {
+  marks: [
+    line(sales, { x: "week", y: "revenue", panel: "trend" }),
+    pie(sales, { category: "product", value: "revenue", innerRadius: 0.6, panel: "share" }),
+  ],
+  panels: panels(
+    [
+      { id: "trend", title: "Revenue" },
+      { id: "share", title: "By product" },
+    ],
+    { columns: 2, columnWidths: [2, 1] },
+  ),
+  interaction: { zoom: "x" }, // the line's panel zooms; the pie's has no axes
+});
+```
+
+A layout mark's panel has no axes, and nothing else draws in it: the mark
+takes the room its neighbors' plots have, its labels kept inside. Each
+facet panel's pie sums only that panel's rows; each treemap and sunburst
+totals them over the table's tree, each gauge shows their last finite
+value, and each funnel, radar, and Sankey diagram reads only them. Radars
+keep the table's spokes and series in every panel, each scaled to its own
+values unless `domain` is given; funnels have the stages their panel's rows
+name. An item keeps its key in every panel, so a category has one color and
+one legend entry, and its legend button hides it everywhere. Tooltips,
+hover, and click events report the panel's key as `panel`; the arrow keys
+read a panel's items, Up and Down moving on to the next panel or series,
+and the chart's description names each panel before what it shows (up to
+20). In a chart of subplots, a layout mark names one panel (not `"*"`),
+which takes no `x` or `y` settings, and marks with `panel: "*"` are
+refused there, since they would draw in it. Panels with axes keep zooming,
+brushing, and syncing; a chart whose panels all draw layout marks has no x
+axis for those. Values animate only in a chart of one layout mark. Networks,
+maps, and 3D charts have charts to themselves. Readers from before layout
+marks could draw in panels refuse these specs, so they need no new spec
+version.
 
 ### Custom marks
 
@@ -1749,9 +1816,10 @@ each one's `key` and `label`, its `plot` (the area inside the axes), and its
 category axes its `categories` and `bandwidth`; panels whose axis has the same
 `group` share its scale, and `canSetViewport` says whether `setViewport`
 zooms it (not category axes, nor y axes of panels with y scales of their
-own). A chart of a layout mark (a pie, a map, a 3D chart) has one panel,
-without axes. Pixels are CSS pixels from the top left corner of
-`chart.root`, whatever the device pixel ratio.
+own). A panel a layout mark draws in (a pie's, and the one panel of a chart
+of a layout mark, a map, or a 3D chart) has no axes, and `toPixel` and
+`fromPixel` give undefined there. Pixels are CSS pixels from the top left
+corner of `chart.root`, whatever the device pixel ratio.
 
 ```ts
 const box = chart.root.getBoundingClientRect();
@@ -1827,7 +1895,8 @@ as they are drawn, skipping empty cells, or to the nearest cell of the next
 row or column when none is in line (Home and End go to a row's ends, Page
 Up and Page Down to a column's). The description also says what color
 scales and size and shape keys show. Pies, trees, and other layout
-marks step through their items. Legend entries are toggle buttons, and a
+marks step through their items; in facet panels and subplots, Left and
+Right read a panel's items and Up and Down move between panels. Legend entries are toggle buttons, and a
 range navigator's window and edges are sliders (see Range navigator).
 
 ## Export

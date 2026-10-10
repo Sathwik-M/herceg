@@ -150,14 +150,21 @@ function link(parent: Int32Array, names: readonly string[], nodeOfRow: Int32Arra
 /**
  * The total weight under each node: the sum of `weights` over the rows of
  * the node and its descendants, or the number of those rows without
- * weights. Missing weights count as zero; negative and infinite ones are
- * refused, as are totals too large for a double.
+ * weights; of `rows` only, when given. Missing weights count as zero;
+ * negative and infinite ones are refused, as are totals too large for a
+ * double.
  */
-export function subtreeValues(tree: Hierarchy, weights?: NumericArray): Float64Array {
+export function subtreeValues(
+  tree: Hierarchy,
+  weights?: NumericArray,
+  rows?: Uint32Array,
+): Float64Array {
   const values = new Float64Array(tree.size);
-  const rows = tree.nodeOfRow;
-  for (let row = 0; row < rows.length; row++) {
-    const node = rows[row]!;
+  const nodes = tree.nodeOfRow;
+  const count = rows ? rows.length : nodes.length;
+  for (let k = 0; k < count; k++) {
+    const row = rows ? rows[k]! : k;
+    const node = nodes[row]!;
     if (node < 0) continue;
     const weight = weights ? weights[row]! : 1;
     if (Number.isNaN(weight)) continue;
@@ -174,6 +181,34 @@ export function subtreeValues(tree: Hierarchy, weights?: NumericArray): Float64A
     throw new RangeError("hierarchy: the weights add up to more than a double holds");
   }
   return values;
+}
+
+/**
+ * The part of `tree` with a value in `values`: the root and every node whose
+ * value is positive (so are its ancestors', values being subtree totals),
+ * as a tree of its own, its nodes and their children in `tree`'s order,
+ * with their values; `index` gives each node of `tree` its node there, or
+ * -1. The part maps no rows (`nodeOfRow` is empty).
+ */
+export function pruneHierarchy(
+  tree: Hierarchy,
+  values: Float64Array,
+): { tree: Hierarchy; values: Float64Array; index: Int32Array } {
+  const index = new Int32Array(tree.size).fill(-1);
+  const kept = [0];
+  index[0] = 0;
+  for (let node = 1; node < tree.size; node++) {
+    if (!(values[node]! > 0)) continue;
+    index[node] = kept.length;
+    kept.push(node);
+  }
+  const parent = Int32Array.from(kept, (node) => (node === 0 ? -1 : index[tree.parent[node]!]!));
+  const names = kept.map((node) => tree.names[node]!);
+  return {
+    tree: link(parent, names, new Int32Array(0)),
+    values: Float64Array.from(kept, (node) => values[node]!),
+    index,
+  };
 }
 
 /** Names from the outermost ancestor down to `node`, for labels and tooltips. */

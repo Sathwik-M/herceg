@@ -8,6 +8,7 @@
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 import type { CustomSpec } from "../marks/custom.ts";
+import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
 import type { BandContext, Bands, Mark } from "../marks/mark.ts";
 import type { Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
@@ -17,6 +18,7 @@ import type { MarkSeries } from "./inspect.ts";
 import {
   across,
   checkBands,
+  checkLayouts,
   groups,
   groupsOf,
   type LayoutOptions,
@@ -27,6 +29,7 @@ import {
   type PanelGroups,
   type PanelLayout,
   type PanelSplit,
+  refuseAxes,
 } from "./panel-layout.ts";
 
 export interface FacetOptions {
@@ -105,10 +108,28 @@ export class Facet implements PanelLayout {
 
   /**
    * Rejects marks that cannot be split by the fields, panels cannot draw
-   * yet, and a y zoom over panels with y scales of their own.
+   * yet, and a y zoom over panels with y scales of their own. A layout mark
+   * has every panel to itself, splitting its rows.
    */
-  check(marks: readonly Mark[], options: LayoutOptions = {}): void {
+  check(
+    marks: readonly Mark[],
+    options: LayoutOptions = {},
+    layouts: readonly LayoutMark[] = [],
+  ): void {
     if (options.navigator) throw new Error("Charts with facets cannot have a navigator yet");
+    const [layout] = layouts;
+    if (layout) {
+      const { type, facet } = layout.spec;
+      checkLayouts(layouts);
+      refuseAxes(type, options);
+      if (layouts.length > 1 || marks.length > 0)
+        throw new Error(
+          `A ${type} mark has each facet panel to itself; draw other marks in another chart`,
+        );
+      if (facet !== undefined)
+        throw new Error(`A ${type} mark splits its rows into facet panels; it cannot repeat`);
+      this.#splitting(type, layout.table!, "");
+    }
     checkBands(marks, options, this.yDefault);
     const zoom = options.interaction?.zoom;
     if (
@@ -123,15 +144,7 @@ export class Facet implements PanelLayout {
         throw new Error("Charts with facets cannot use the right axis yet");
       if (!mark.table || mark.spec.facet === "repeat") continue;
       const repeat = `give it facet: "repeat" to draw it whole in every panel`;
-      for (const field of this.fields) {
-        if (!mark.table.has(field))
-          throw new Error(
-            `A ${type} mark's table has no field "${field}" to split into panels; ${repeat}`,
-          );
-        const kind = mark.table.kind(field);
-        if (kind !== "category")
-          throw new TypeError(`Facet field "${field}" is ${kind}; panels need a category field`);
-      }
+      this.#splitting(type, mark.table, `; ${repeat}`);
       if (UNSPLIT.has(type))
         throw new Error(`A ${type} mark over a table cannot be split into panels yet; ${repeat}`);
       // Custom marks split the rows of the series they show. Those without
@@ -139,6 +152,19 @@ export class Facet implements PanelLayout {
       // their `draw` reads the table whole.
       if (type === "custom" && (mark.spec as CustomSpec).y === undefined)
         throw new Error(`A custom mark without series cannot be split into panels; ${repeat}`);
+    }
+  }
+
+  /** Refuses a table a `type` mark reads that the fields cannot split; `remedy` ends the message. */
+  #splitting(type: string, table: Table, remedy: string): void {
+    for (const field of this.fields) {
+      if (!table.has(field))
+        throw new Error(
+          `A ${type} mark's table has no field "${field}" to split into panels${remedy}`,
+        );
+      const kind = table.kind(field);
+      if (kind !== "category")
+        throw new TypeError(`Facet field "${field}" is ${kind}; panels need a category field`);
     }
   }
 
@@ -338,7 +364,8 @@ export class Splitter {
    * repeat. Rows without a value are in no panel; with no values at all,
    * there is one empty panel. Marks whose drawing combines rows (stacks)
    * combine each panel's apart; marks that summarize rows (histograms, box
-   * plots) summarize each panel's rows of their table.
+   * plots) summarize each panel's rows of their table, as a layout mark
+   * (a chart's only mark) does.
    */
   split(
     base: readonly MarkSeries[],
@@ -349,6 +376,10 @@ export class Splitter {
   ): PanelSplit {
     const splits = (mark: Mark) => this.#facet.splits(mark);
     const tables = new Set(base.filter(({ mark }) => splits(mark)).map(({ mark }) => mark.table!));
+    const { marks } = chart.config;
+    const at = marks.findIndex(isLayoutMark);
+    const layout = marks[at] as LayoutMark | undefined;
+    if (layout) tables.add(layout.table!);
     this.#update(tables, check);
     const empty = this.#panels.length === 0;
     const keys = empty ? [""] : this.#panels.map(({ key }) => key);
@@ -397,7 +428,11 @@ export class Splitter {
       mark,
       series: summaries[i]?.flat() ?? parts[i]?.flat() ?? series,
     }));
-    const split = { keys, values, dimensions, panels, all };
+    const split: PanelSplit = { keys, values, dimensions, panels, all };
+    if (layout) {
+      const rows = this.#tableRows(layout.table!);
+      split.items = keys.map((_, p) => ({ mark: layout, index: at, rows: rows[p] }));
+    }
     this.#bands.place(split, columns, bands, chart.config.resolve, this.#facet.yDefault);
     return split;
   }

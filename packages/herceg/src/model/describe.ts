@@ -1,5 +1,6 @@
 import { scanExtent } from "../data/table.ts";
 import { formatNumber } from "../format/format.ts";
+import { isLayoutMark } from "../marks/layout-mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import type { ChartModel } from "./model.ts";
 
@@ -58,16 +59,17 @@ function summarize(parts: readonly Series[], name: string, locale: string | unde
  */
 export function describeChart(model: ChartModel): string {
   const { config } = model;
-  const layout = model.layoutSummary();
-  if (layout !== undefined) {
-    return [config.description, layout, ...model.legendSummaries()].filter(Boolean).join(" ");
+  // Layout marks say what they drew: in panels, each after its panel's name.
+  const items = model.layoutSummary(undefined, MAX_SERIES);
+  if (model.layout) {
+    return [config.description, items, ...model.legendSummaries()].filter(Boolean).join(" ");
   }
   const series = model.series();
-  // Annotations describe themselves; the chart kind names the data marks.
+  // Annotations and layout marks describe themselves; the chart kind names the data marks.
   const kinds = [
     ...new Set(
       config.marks
-        .filter((mark) => !("describe" in mark && mark.describe))
+        .filter((mark) => !("describe" in mark && mark.describe) && !isLayoutMark(mark))
         .map((mark) => mark.spec.type),
     ),
   ].join(" and ");
@@ -78,8 +80,8 @@ export function describeChart(model: ChartModel): string {
   }
   const panelLayout = config.facet ?? config.panels;
   if (panelLayout) {
-    const panels = model.panels().map(({ label }) => label);
-    parts.push(panelLayout.describe(panels, MAX_SERIES));
+    const panels = model.allPanels().map(({ label }) => label);
+    parts.push(panelLayout.describe(panels, MAX_SERIES), items);
   }
   // With series on both y axes, each one's name says which it is on.
   const right = series.filter((s) => model.onRight(s));
