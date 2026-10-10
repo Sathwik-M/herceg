@@ -23,10 +23,12 @@ const HOSTS = ["web", "api", "db"];
 
 /**
  * `rows` rows computed from their place, never stored: an id (the key), a
- * value, and a host. Answers after `latency` ms; `fail` refuses requests.
+ * value, and a host. Answers can be paused; `fail` refuses requests.
  */
-function synthetic(rows: number, latency: number, fail?: (request: RowsRequest) => boolean) {
+function synthetic(rows: number, fail?: (request: RowsRequest) => boolean) {
   const requests: RowsRequest[] = [];
+  const pending = new Set<() => void>();
+  let paused = false;
   let snapshots = 0;
   const source: GridSource = {
     schema: {
@@ -38,7 +40,9 @@ function synthetic(rows: number, latency: number, fail?: (request: RowsRequest) 
     rows: (request, signal) =>
       new Promise<RowsWindow>((resolve, reject) => {
         requests.push(request);
-        const timer = setTimeout(() => {
+        const answer = () => {
+          pending.delete(answer);
+          signal.removeEventListener("abort", abort);
           if (fail?.(request)) {
             reject(new GridSourceError("unavailable", "The server is down"));
             return;
@@ -59,14 +63,29 @@ function synthetic(rows: number, latency: number, fail?: (request: RowsRequest) 
               host: { codes: Int32Array.from(id, (x) => x % 3), dictionary: HOSTS },
             },
           });
-        }, latency);
-        signal.addEventListener("abort", () => {
-          clearTimeout(timer);
+        };
+        const abort = () => {
+          pending.delete(answer);
           reject(new DOMException("aborted", "AbortError"));
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        pending.add(answer);
+        queueMicrotask(() => {
+          if (!paused && pending.has(answer)) answer();
         });
       }),
   };
-  return { source, requests };
+  return {
+    source,
+    requests,
+    pause: () => {
+      paused = true;
+    },
+    resume: () => {
+      paused = false;
+      for (const answer of pending) answer();
+    },
+  };
 }
 
 const grids: { destroy(): void; root: HTMLElement }[] = [];
@@ -117,24 +136,28 @@ const rows = (grid: RemoteGrid) =>
 const said = (grid: RemoteGrid) => grid.root.querySelector("[aria-live]")!.textContent?.trim();
 
 describe("remote grids in the browser", () => {
-  it("scroll ten million rows with latency: placeholders marked busy, then rows", async () => {
-    const { source, requests } = synthetic(10_000_000, 20);
+  it("scroll ten million rows while loading: placeholders marked busy, then rows", async () => {
+    const { source, requests, pause, resume } = synthetic(10_000_000);
+    pause();
     const { grid, model } = mount(source);
     const scroller = scrollerOf(grid);
-    // The first frame: the grid waits for its first rows, each a busy placeholder.
+    // At mount, the grid waits for its first rows, each a busy placeholder.
     expect(scroller.getAttribute("aria-busy")).toBe("true");
     expect(rows(grid)[0]).toMatchObject({ busy: "true", state: "loading", text: "Loading…" });
+    resume();
     await until(() => rows(grid)[0]!.text === "0");
     expect(scroller.hasAttribute("aria-busy")).toBe(false);
     expect(rows(grid)[0]!.busy).toBeNull();
     expect(scroller.getAttribute("aria-rowcount")).toBe("10000001");
     // Nothing failed: the notice takes no room.
     expect(getComputedStyle(grid.root.querySelector(".hg-status")!).display).toBe("none");
-    // Halfway down: placeholders at once, rows a latency later.
+    // Halfway down: keep answers pending until the placeholders are checked.
+    pause();
     scroller.scrollTop = scroller.scrollHeight / 2;
     await until(() => rows(grid).some(({ state }) => state === "loading"));
     const first = Math.floor(model.top / model.rowHeight);
     expect(first).toBeGreaterThan(4_000_000);
+    resume();
     await until(() => rows(grid).every(({ state }) => state === null));
     const shown = rows(grid).find(({ index }) => index === first)!;
     expect(shown.text).toBe(first.toLocaleString("en-US"));
@@ -144,7 +167,7 @@ describe("remote grids in the browser", () => {
   });
 
   it("move the focus and select by keyboard over rows still loading", async () => {
-    const { source } = synthetic(10_000_000, 30);
+    const { source, pause, resume } = synthetic(10_000_000);
     const { grid, model } = mount(source);
     await until(() => rows(grid)[0]!.text === "0");
     scrollerOf(grid).focus();
@@ -156,15 +179,22 @@ describe("remote grids in the browser", () => {
     await userEvent.keyboard(`{${COMMAND}>}a{/${COMMAND}}`);
     expect(said(grid)).toBe("Matching rows selected");
     // The last row: a placeholder, focused at once and filled when it loads.
+    pause();
     await userEvent.keyboard(`{${COMMAND}>}{End}{/${COMMAND}}`);
     expect(model.focus!.rowIndex).toBe(9_999_999);
     const focused = document.activeElement as HTMLElement;
     expect(focused.getAttribute("role")).toBe("gridcell");
+    expect(focused.parentElement!.getAttribute("aria-rowindex")).toBe("10000001");
     expect(focused.parentElement!.getAttribute("aria-busy")).toBe("true");
-    await until(() => model.row(9_999_999).kind === "row");
+    // Loading cannot finish during the keyboard action or a later frame.
     await frame();
-    await frame();
+    expect(document.activeElement).toBe(focused);
+    expect(focused.parentElement!.getAttribute("aria-busy")).toBe("true");
+    resume();
+    await until(() => focused.parentElement?.getAttribute("aria-busy") === null);
     const cell = document.activeElement as HTMLElement;
+    expect(cell).toBe(focused);
+    expect(model.row(9_999_999).kind).toBe("row");
     expect(cell.parentElement!.getAttribute("aria-busy")).toBeNull();
     expect(model.textAt(9_999_999, 2)).toBe(HOSTS[9_999_999 % 3]);
     // Selected by the condition: rows loaded later are selected too.
@@ -173,7 +203,7 @@ describe("remote grids in the browser", () => {
 
   it("show and announce failures, and try again", async () => {
     let failing = true;
-    const { source } = synthetic(1000, 10, () => failing);
+    const { source } = synthetic(1000, () => failing);
     const { grid, model } = mount(source);
     await until(() => rows(grid)[0]!.state === "failed");
     expect(rows(grid)[0]).toMatchObject({ busy: null, text: "Couldn't load rows" });
@@ -201,7 +231,7 @@ describe("remote grids in the browser", () => {
 
   it("try again where the rows failed, keeping the grid there", async () => {
     let failing = true;
-    const { source } = synthetic(10_000, 0, (request) => failing && request.offset >= 500);
+    const { source } = synthetic(10_000, (request) => failing && request.offset >= 500);
     // Wider than the grid: twelve columns of 120 pixels in 600.
     const columns = Array.from({ length: 12 }, (_, i) => ({ field: "v", id: `v${i}` }));
     const { grid, model } = mount(source, [{ field: "id" }, ...columns]);
@@ -225,7 +255,7 @@ describe("remote grids in the browser", () => {
 
   it("refresh after an expired snapshot back to a record in view", async () => {
     let expired = true;
-    const { source } = synthetic(10_000, 0, () => false);
+    const { source } = synthetic(10_000);
     const expiring: GridSource = {
       ...source,
       rows: (request, signal) =>
@@ -259,7 +289,8 @@ describe("remote grids in the browser", () => {
   });
 
   it("write placeholders' text where the first column is after columns move", async () => {
-    const { source } = synthetic(1000, 300);
+    const { source, pause } = synthetic(1000);
+    pause();
     const { grid, model } = mount(source);
     await frame();
     model.moveColumn("host", "id");
@@ -304,7 +335,7 @@ describe("remote grids in the browser", () => {
   });
 
   it("keep the rows above the notice as it grows with a narrower grid", async () => {
-    const { source } = synthetic(1000, 0);
+    const { source } = synthetic(1000);
     const refusing: GridSource = {
       ...source,
       rows: () =>
@@ -320,9 +351,11 @@ describe("remote grids in the browser", () => {
     const notice = grid.root.querySelector<HTMLElement>(".hg-status")!;
     const scroller = scrollerOf(grid);
     grid.root.parentElement!.style.width = "160px";
-    await frame();
-    await frame();
-    await frame();
+    await until(
+      () =>
+        notice.offsetHeight > 40 &&
+        scroller.getBoundingClientRect().bottom <= notice.getBoundingClientRect().top + 0.5,
+    );
     expect(notice.offsetHeight).toBeGreaterThan(40);
     expect(scroller.getBoundingClientRect().bottom).toBeLessThanOrEqual(
       notice.getBoundingClientRect().top + 0.5,
@@ -332,7 +365,7 @@ describe("remote grids in the browser", () => {
   it("let go of a grid and its model once destroyed and disposed", async () => {
     // Mounted in a function of its own, so the test keeps no reference to them.
     const refs = await (async () => {
-      const { source } = synthetic(1000, 0, () => true);
+      const { source } = synthetic(1000, () => true);
       const { grid, model } = mount(source);
       await until(() => rows(grid)[0]!.state === "failed");
       grids.splice(grids.indexOf(grid), 1);
@@ -351,7 +384,7 @@ describe("remote grids in the browser", () => {
   });
 
   it("let go of a model no one keeps, though never disposed", async () => {
-    const { source } = synthetic(1000, 0);
+    const { source } = synthetic(1000);
     const store = remoteSelectionStore(source.schema);
     const ref = await (async () => {
       const model = createRemoteGridModel({
@@ -444,7 +477,7 @@ describe("remote grids in the browser", () => {
   });
 
   it("offer no retry for a query the source refuses", async () => {
-    const { source } = synthetic(1000, 0);
+    const { source } = synthetic(1000);
     const refusing: GridSource = {
       ...source,
       rows: () => Promise.reject(new GridSourceError("unsupported-query", "No grouping here")),
@@ -457,7 +490,7 @@ describe("remote grids in the browser", () => {
   });
 
   it("announce what the model refuses", async () => {
-    const { source } = synthetic(100_000, 0);
+    const { source } = synthetic(100_000);
     const { grid, model } = mount(source);
     await until(() => rows(grid)[0]!.text === "0");
     model.select(0);
@@ -469,7 +502,8 @@ describe("remote grids in the browser", () => {
   });
 
   it("pass an accessibility audit while loading", async () => {
-    const { source } = synthetic(1000, 200);
+    const { source, pause } = synthetic(1000);
+    pause();
     const { grid } = mount(source);
     await frame();
     expect(rows(grid)[0]!.busy).toBe("true");

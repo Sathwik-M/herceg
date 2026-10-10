@@ -250,11 +250,11 @@ describe("remote grids", () => {
       .map(({ request }) => request.offset);
     expect(aborted.sort((a, b) => a - b)).toEqual([50, 100]);
     // Those for the view go out once the jump settles: in view, then ahead.
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    const live = pending
-      .filter(({ signal }) => !signal.aborted)
-      .map(({ request }) => request.offset);
-    expect(live).toEqual([8000, 8050]);
+    await vi.waitFor(() =>
+      expect(
+        pending.filter(({ signal }) => !signal.aborted).map(({ request }) => request.offset),
+      ).toEqual([8000, 8050]),
+    );
   });
 
   it("start the snapshot again when its first request was aborted", async () => {
@@ -420,11 +420,15 @@ describe("remote grids", () => {
   });
 
   it("keep a bounded cache of windows, dropping those farthest from the view", async () => {
-    const { source, answerAll } = controlled(10_000);
+    const { source, pending, answerAll } = controlled(10_000);
     const m = model(source, { cachedBlocks: 4 });
     for (const row of [0, 2000, 4000, 6000, 8000]) {
       m.scrollTo({ top: row * 28 });
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await vi.waitFor(() =>
+        expect(
+          pending.some(({ request, signal }) => !signal.aborted && request.offset === row),
+        ).toBe(true),
+      );
       await answerAll();
     }
     // Four besides the three the view wants (in view, ahead, behind).
@@ -436,7 +440,11 @@ describe("remote grids", () => {
     // The focused row's window stays while the view moves away.
     m.focusCell(8005, "id");
     m.scrollTo({ top: 0 });
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await vi.waitFor(() =>
+      expect(pending.some(({ request, signal }) => !signal.aborted && request.offset === 0)).toBe(
+        true,
+      ),
+    );
     await answerAll();
     expect(m.focus!.rowIndex).toBe(8005);
     expect(m.textAt(8005, 0)).toBe("8,005");
@@ -564,13 +572,17 @@ describe("remote grids", () => {
   });
 
   it("refuse ranges over rows not loaded, saying why", async () => {
-    const { source, answerAll } = controlled(10_000);
+    const { source, pending, answerAll } = controlled(10_000);
     const m = model(source, { cachedBlocks: 2 });
     await settle();
     await answerAll();
     m.select(0);
     m.scrollTo({ top: 5000 * 28 });
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await vi.waitFor(() =>
+      expect(
+        pending.some(({ request, signal }) => !signal.aborted && request.offset === 5000),
+      ).toBe(true),
+    );
     await answerAll();
     const before = m.selectionStore.revision;
     m.select(5005, "range");

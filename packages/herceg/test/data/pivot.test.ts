@@ -320,16 +320,28 @@ describe("row pivots", () => {
       cells.set(key, [...(cells.get(key) ?? []), position]);
     }
     let present = 0;
-    for (let r = 0; r < snapshot.rowCount; r++)
+    const ms = t.numbers("ms");
+    for (let r = 0; r < snapshot.rowCount; r++) {
+      const row = snapshot.rowKey(r);
+      const unexpected: PivotValue[] = [];
       snapshot.values.forEach((value, index) => {
-        const members = cells.get(pair(snapshot.rowKey(r), value));
+        const members = cells.get(pair(row, value));
+        const position = snapshot.cell(r, index);
         if (!members) {
-          expect(snapshot.cell(r, index)).toBe(-1);
+          if (position !== -1) unexpected.push(value);
           return;
         }
         present++;
+        expect(position).toBeGreaterThanOrEqual(0);
         expect(snapshot.value(r, index, "n")).toBe(members.length);
+        expect(snapshot.value(r, index, "total")).toBe(
+          members.reduce((sum, member) => sum + ms[member]!, 0),
+        );
       });
+      // Check every absent combination, with one assertion per row instead
+      // of over a million assertion objects for this deliberately sparse case.
+      expect(unexpected, `unexpected combinations in row ${row}`).toEqual([]);
+    }
     expect(present).toBe(cells.size);
   });
 
