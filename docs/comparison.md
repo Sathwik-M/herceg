@@ -117,7 +117,10 @@ and `@herceg/svelte` and leave Vue and Svelte's runtime out. Sizes are what
 a page loads before the chart renders: the entry chunk and every chunk it
 imports statically, each compressed on its own (Herceg's scheduler is one
 such chunk, shared with its lazily loaded painters); chunks reached only by
-dynamic imports are listed as loaded on demand. `herceg-grid` is not a
+dynamic imports are listed as optional chunks: every chunk the entry could
+load for some chart (WebGL points, animation, crosshair labels, map and tree
+controls), not what this chart downloads, which for these entries is
+nothing more until a feature that needs one is used. `herceg-grid` is not a
 chart: it mounts a two-column grid (`herceg/grid`) over the same data, with
 its model, row view, and selection store; no other library here has a grid
 to compare it with. `herceg-bar` (bars stacked by a series field),
@@ -138,7 +141,7 @@ copying for independent panel bands or time breaks are excluded from its
 initial bundle; the placement providers carry the synchronous copying path.
 
 <!-- results:size -->
-| Entry | Version | Minified KiB | Gzip KiB | Brotli KiB | Required CSS, gzip KiB | Loaded on demand, gzip KiB |
+| Entry | Version | Minified KiB | Gzip KiB | Brotli KiB | Required CSS, gzip KiB | Optional chunks, gzip KiB |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | chartjs-auto | 4.5.1 | 246.8 | 79.9 | 69.3 | - | - |
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
