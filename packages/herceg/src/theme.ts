@@ -200,10 +200,17 @@ export function resolveTheme(
   theme: ThemeName | ThemeSpec | undefined,
   environment: ThemeEnvironment = {},
 ): Theme {
-  const named = (name: ThemeName | undefined) =>
-    name === undefined ? LIGHT : name === "auto" ? (environment.dark ? DARK : LIGHT) : THEMES[name];
-  if (theme === undefined || typeof theme === "string") return named(theme);
-  const base = named(theme.extends);
+  const named = (name: ThemeName | undefined, role: string) => {
+    if (name === undefined) return LIGHT;
+    if (name === "auto") return environment.dark ? DARK : LIGHT;
+    if (!Object.hasOwn(THEMES, name))
+      throw new Error(
+        `${role}: no theme "${name}"; use "${[...Object.keys(THEMES), "auto"].join('", "')}"`,
+      );
+    return THEMES[name];
+  };
+  if (theme === undefined || typeof theme === "string") return named(theme, "theme");
+  const base = named(theme.extends, "theme.extends");
   const resolved: Theme = { ...base };
   for (const key of Object.keys(base) as (keyof Theme)[]) {
     const value = theme[key];

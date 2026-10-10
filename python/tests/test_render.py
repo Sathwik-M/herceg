@@ -48,6 +48,23 @@ def test_notebook_display_is_an_isolated_iframe():
     assert output.startswith("<iframe srcdoc=") and 'sandbox="allow-scripts"' in output
 
 
+def test_what_the_renderer_refuses_raises_its_message():
+    # Python leaves theme names to the spec's checks; the error is the renderer's
+    # message alone, without V8's report of where in the bundle it was thrown.
+    themed = hg.Chart(DATA, theme="drak").line(x="t", y="v")  # type: ignore[arg-type]
+    with pytest.raises(ValueError) as refused:
+        themed.to_svg()
+    assert str(refused.value) == (
+        'spec.theme: expected "light", "dark", "high-contrast", "high-contrast-dark", '
+        'or "auto"; received "drak"'
+    )
+    # Messages carrying the caller's text keep it whole, line breaks included.
+    family = "No\n\n    at family"
+    with pytest.raises(ValueError) as refused:
+        unicode_chart().to_pdf(fonts=unicode_fonts(), fallback=[family])
+    assert str(refused.value) == f"PDF fallback family {family.lower()} is not registered"
+
+
 def test_svg_matches_the_typescript_renderer(tmp_path):
     svg = chart().to_svg()
     assert svg.startswith("<svg") and "Latency" in svg and "limit" in svg
@@ -210,8 +227,12 @@ def test_unicode_pdf_requires_coverage_and_allows_explicit_replacement():
     with pytest.raises(Exception, match="U\\+96EA.*supply a covering font"):
         unicode_chart("雪").to_pdf(fonts=unicode_fonts())
     assert unicode_chart("雪").to_pdf(fonts=unicode_fonts(), missing_glyph="?").startswith(b"%PDF")
-    with pytest.raises(Exception, match="require embedded fonts"):
+    with pytest.raises(
+        ValueError, match="to_pdf fallback and missing_glyph: choose among embedded"
+    ):
         chart().to_pdf(missing_glyph="?")
+    with pytest.raises(ValueError, match="supply fonts, or leave them out"):
+        chart().to_pdf(fallback=["Symbols"])
 
 
 @pytest.mark.parametrize("title", ["مرحبا", "שלום", "नमस्ते", "\U00010940", "\U00013430", "\u0378"])

@@ -111,9 +111,20 @@ def _engine() -> Any:
     return engine
 
 
+def _call(function: str, *args: Any) -> str:
+    """Calls an export of the embedded renderer, which returns its output, or
+    ``{"error": message}`` for what it refuses (a spec it does not accept, a
+    font it cannot embed): raised here as a ValueError with herceg's message.
+    The engine's own failures (out of memory, a timeout) propagate as they are."""
+    result = _engine().call(function, *args)
+    if isinstance(result, str):
+        return result
+    raise ValueError(result["error"])
+
+
 def svg(spec: dict[str, Any], buffers: list[bytes]) -> str:
     """Standalone SVG, rendered by herceg's DOM-free renderer in an embedded V8."""
-    return _engine().call("hercegStatic.svg", json.dumps(spec), _encoded(buffers))
+    return _call("hercegStatic.svg", json.dumps(spec), _encoded(buffers))
 
 
 def pdf(
@@ -155,12 +166,15 @@ def pdf(
         faces.append(
             {"family": family, "weight": weight, "data": base64.b64encode(raw).decode("ascii")}
         )
+    if not faces and (fallback or missing_glyph is not None):
+        raise ValueError(
+            "to_pdf fallback and missing_glyph: choose among embedded fonts; "
+            "supply fonts, or leave them out"
+        )
     options: dict[str, Any] = {"fonts": faces, "fallback": list(fallback)}
     if missing_glyph is not None:
         options["missingGlyph"] = missing_glyph
-    encoded = _engine().call(
-        "hercegStatic.pdf", json.dumps(spec), _encoded(buffers), json.dumps(options)
-    )
+    encoded = _call("hercegStatic.pdf", json.dumps(spec), _encoded(buffers), json.dumps(options))
     return base64.b64decode(encoded)
 
 

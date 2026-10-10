@@ -540,10 +540,21 @@ export function requireField(
     );
   }
   const kind = table.kind(field);
-  if (!kinds.includes(kind))
+  if (!kinds.includes(kind)) {
+    // Categories come from strings, and times (only a heatmap's date takes
+    // nothing else) from Dates or time(), so the usual fix is the values' type.
+    const fix =
+      kinds[0] === "category"
+        ? "; give its values as strings"
+        : kinds[0] === "time"
+          ? "; give Dates or time() values"
+          : kind === "category" && kinds.includes("number")
+            ? "; give numbers, not strings"
+            : "";
     throw new TypeError(
-      `${role}: field "${field}" holds ${kind} values; expected ${kinds.join(" or ")}`,
+      `${role}: field "${field}" holds ${kind} values; expected ${kinds.join(" or ")}${fix}`,
     );
+  }
 }
 
 export const NUMERIC: readonly FieldKind[] = ["number", "time"];

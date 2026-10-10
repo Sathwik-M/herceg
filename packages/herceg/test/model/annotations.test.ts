@@ -79,7 +79,15 @@ describe("rule", () => {
     model.setViewport([start, start + hour]);
     expect(of(model.scene(estimateText), "rule")).toHaveLength(0);
     expect(of(scene, "rule").length).toBe(2);
-    expect(() => rule({ x: "at" } as never)).toThrow("rule: fields need a table; pass one");
+    expect(() => rule({ x: "at" } as never)).toThrow(
+      'rule x: "at" names a field, and fields need a table; pass the table first, or give a number or Date',
+    );
+    expect(() => region({ x1: "2026-01-21", x2: "2026-01-25" } as never)).toThrow(
+      'region x1: "2026-01-21" names a field',
+    );
+    expect(() => rule({ y: 250, textField: "version" } as never)).toThrow(
+      'rule textField: "version" names a field, and fields need a table; pass the table first, or give constant text as label',
+    );
   });
 });
 

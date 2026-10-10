@@ -13,6 +13,14 @@ describe("resolveTheme", () => {
     expect(resolveTheme("auto")).toEqual(resolveTheme("light"));
   });
 
+  it("names the themes there are when given another", () => {
+    const names = '"light", "dark", "high-contrast", "high-contrast-dark", "auto"';
+    expect(() => resolveTheme("drak" as never)).toThrow(`theme: no theme "drak"; use ${names}`);
+    expect(() => resolveTheme({ extends: "toString" as never })).toThrow(
+      `theme.extends: no theme "toString"; use ${names}`,
+    );
+  });
+
   it("replaces CSS variables by their fallbacks without a page, wherever they appear", () => {
     const theme = resolveTheme(
       {

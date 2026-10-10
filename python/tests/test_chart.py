@@ -97,8 +97,19 @@ def test_marks_with_their_own_data_get_their_own_table():
 def test_fields_are_checked_with_readable_errors():
     with pytest.raises(KeyError, match="line y: no column 'p90'; the data has 't', 'p50'"):
         hg.Chart(DATA).line(x="t", y="p90")
-    with pytest.raises(TypeError, match="line y: column 'host' holds category values"):
+    # The correction names the column type that gives the kind expected.
+    with pytest.raises(
+        TypeError,
+        match="line y: column 'host' holds category values; expected number or time; "
+        "give numbers, not strings",
+    ):
         hg.Chart(DATA).line(x="t", y="host")
+    with pytest.raises(
+        TypeError,
+        match="line series: column 'p50' holds number values; expected category; "
+        "give its values as strings",
+    ):
+        hg.Chart(DATA).line(x="t", y="p50", series="p50")
     with pytest.raises(ValueError, match="rule: needs exactly one of x and y"):
         hg.Chart(DATA).rule()
     with pytest.raises(ValueError, match="Chart data: the chart has none"):
@@ -814,8 +825,16 @@ def test_calendar_heatmaps_lay_out_days():
         hg.heatmap(days, "day", color="commits")
     with pytest.raises(ValueError, match="heatmap week_start: applies to calendars of weeks"):
         hg.heatmap(days, date="day", color="commits", calendar="months", week_start="sun")
-    with pytest.raises(TypeError, match="heatmap date: column 'commits' holds number values"):
+    with pytest.raises(
+        TypeError,
+        match="heatmap date: column 'commits' holds number values; expected time; give datetimes$",
+    ):
         hg.heatmap(days, date="commits", color="commits")
+    with pytest.raises(
+        TypeError,
+        match="heatmap date: column 'day' holds category values; expected time; give datetimes",
+    ):
+        hg.heatmap({"day": ["2026-01-01"], "commits": [1]}, date="day", color="commits")
     # Weekdays are categories, so panels with weekdays of their own cannot sync.
     with pytest.raises(
         ValueError, match=r"Chart sync: panels with categories of their own \(resolve_y\)"
@@ -1920,8 +1939,6 @@ def test_violin_options_serialize(inner, split):
 
 
 def test_violin_option_errors():
-    from py_mini_racer import JSEvalException
-
     data = {"g": ["a", "a"], "v": [1, 2]}
     with pytest.raises(
         ValueError, match="violin split: halves each category between two series; give series"
@@ -1936,7 +1953,7 @@ def test_violin_option_errors():
         ):
             hg.violin(data, "g", "v", inner=inner)
     many = {"g": ["a", "b", "c"], "s": ["first", "second", "third"], "v": [1, 2, 3]}
-    with pytest.raises(JSEvalException, match='series field "s" has 3 values'):
+    with pytest.raises(ValueError, match='series field "s" has 3 values'):
         hg.violin(many, "g", "v", series="s", split=True).to_svg()
 
 

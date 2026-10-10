@@ -3426,8 +3426,18 @@ class Chart:
             raise KeyError(f"{role}: no column {field!r}; the data has {available}")
         kind = source.column(field).kind
         if kind not in kinds:
+            # Categories come from strings, and times (only a heatmap's date takes
+            # nothing else) from datetimes, so the usual fix is the column's type.
+            if kinds[0] == "category":
+                fix = "; give its values as strings"
+            elif kinds[0] == "time":
+                fix = "; give datetimes"
+            elif kind == "category" and "number" in kinds:
+                fix = "; give numbers, not strings"
+            else:
+                fix = ""
             raise TypeError(
-                f"{role}: column {field!r} holds {kind} values; expected {' or '.join(kinds)}"
+                f"{role}: column {field!r} holds {kind} values; expected {' or '.join(kinds)}{fix}"
             )
 
     def _kind(self, table: int, field: str) -> str | None:
