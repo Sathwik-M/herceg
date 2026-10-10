@@ -612,10 +612,13 @@ effect), · not applicable.
 | heatmap | ✓ | ✓ | ✓ | — | ✓ | ✓ | · | ✓ | — |
 | rule, region, text | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | · | ◐ | ◐ |
 | custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ◐ | — |
-| pie, treemap, sunburst, gauge, funnel, radar, sankey | — | — | — | — | — | — | ✓ | ✓ | ◐ |
+| pie | — | — | — | — | — | — | ✓ | ✓ | ✓ |
+| treemap, sunburst, radar | — | — | — | — | — | — | ✓ | ✓ | — |
+| gauge, funnel, sankey | — | — | — | — | — | — | · | ✓ | — |
 | graph | — | — | — | — | — | — | ◐ | ✓ | — |
 | geoshape, geopoint | — | — | — | — | — | — | ✓ | ✓ | — |
-| point3d, line3d, surface | — | — | — | turning | — | — | ✓ | ✓ | — |
+| point3d, line3d | — | — | — | turning | — | — | ✓ | ✓ | — |
+| surface | — | — | — | turning | — | — | · | ✓ | — |
 
 - Brushes and synced selections report ranges and outlines, not the rows
   inside them; mapping them to rows (and to a selection store) is the
