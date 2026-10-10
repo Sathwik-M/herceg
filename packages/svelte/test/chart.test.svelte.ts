@@ -29,6 +29,7 @@ import Parent from "./Parent.svelte";
 import Pies from "./Pies.svelte";
 import Prices from "./Prices.svelte";
 import Solids from "./Solids.svelte";
+import Stacks from "./Stacks.svelte";
 import Stray from "./Stray.svelte";
 import Tips from "./Tips.svelte";
 
@@ -106,6 +107,21 @@ const order = (chart: HercegChart) =>
   });
 
 describe("<Chart>", () => {
+  for (const stack of ["fill", "center", "wiggle"] as const) {
+    it(`passes ${stack} and inside-out area options through Svelte`, () => {
+      const props = $state({ data: metrics, stack, chart: null as HercegChart | null });
+      render(Stacks, props);
+      expect(props.chart!.toSVG()).toContain('fill-opacity="0.85"');
+      expect(optionsOf(props.chart!).marks[0]!.spec).toMatchObject({
+        stack,
+        stackOrder: "inside-out",
+      });
+      const before = props.chart!.toSVG();
+      props.chart!.setVisibility(props.chart!.getLegend()[0]!.key, false);
+      props.chart!.render();
+      expect(props.chart!.toSVG()).not.toBe(before);
+    });
+  }
   it("draws dendrogram components and updates reactive leaf labels", async () => {
     const props = $state({ leaves: ["a", "b"] });
     render(Dendrograms, props);

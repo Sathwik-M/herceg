@@ -161,6 +161,49 @@ JavaScript per frame instead of 13 ms (Chrome, interleaved runs), and
 indexes, so long-format lines zoom and stream at about the cost of whole
 columns.
 
+Stack offsets live in `marks/stack-offset.ts`, imported by the area/bar stacking
+modules, with no dependency from the line entry. Row storage accepts an offset
+routine from its mark: bars use fill alone, so they carry no area ordering or
+stream baseline code. The portable area `stack` is boolean, `"fill"`, `"center"`,
+or `"wiggle"`; bar `stack` is boolean or `"fill"`.
+Fill means the same per-position shares as histogram fill. New modes require
+nonnegative finite contributions; NaN and infinities remain per-layer gaps and
+count as zero for other layers. Zero totals have zero thickness. Mixed signs
+require ordinary signed stacking. Input-order fill/center operate on the rows
+or union positions being restacked, retaining incremental append/drop behavior.
+Union offsets retain an explicit first base (one extra float64 per position).
+Fill also keeps one float64 total per row, shared across layers, and union fill
+one per aligned position; readings use source values divided by these totals
+rather than subtracting rounded cumulative boundaries.
+Wiggle uses the Byron–Wattenberg weighted-slope recurrence in position order,
+starting at zero; inside-out balances layers in peak-position order, preserving
+series identity and legend order. Both recompute after a retained-window change.
+Sorted wiggle positions can be visited directly; unsorted inputs need an order.
+Peak ties preserve chronological occurrence order. Category key-list identity
+invalidates cached offsets and union edges without disabling numeric append paths.
+Every cumulative offset boundary must remain finite; overflow asks the caller
+to rescale values.
+Facet field stacks offset each panel's rows directly in table-sized owned
+arrays, without packing or streaming scratch stacks. Each chart's facet planner
+owns a cache keyed by table version, panel rows,
+visibility, and category positions. Unchanged redraws keep boundaries, and
+restacking reuses buffers of the same size. Series-field facets offset their
+own union. Zoom never changes the retained-data denominators or stream baseline.
+
+Fill's automatic value domain is 0–1; axis percent formatting is explicit.
+Center and wiggle use raw extents and refuse logarithmic value scales. Mark-local
+`pointText` hooks supply shares with raw values for fill. Streams use ordinary
+inspection, which formats raw thickness with the value axis's tooltip formatter.
+Center requires nonnegative thicknesses; d3's silhouette accepts signed inputs
+algebraically, and its separate diverging offset splits positive and negative
+layers. Herceg's signed option is `stack: true`. Bar value labels use shares for
+fill.
+Inspection events retain source values for area/bar, and existing bin-share
+values for histograms, whose text also gives raw counts/weights. Missing and
+interpolated synthetic rows never become observations. All render/export paths
+read the same boundaries. Input-order areas along x retain value animation;
+inside-out order changes display immediately to avoid crossing layers.
+
 Stacks of several fields sharing rows (`marks/stack.ts`) are kept current
 as the table streams: appended rows are stacked on their own and dropped
 rows leave from the front, using the table's stable row identities

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { table } from "../../src/data/table.ts";
 import type { RangeExtremes } from "../../src/lod/minmax-index.ts";
 import { RowStack, type StackedLayers, type StackKind } from "../../src/marks/stack.ts";
+import { offsetLayers } from "../../src/marks/stack-offset.ts";
 import { INDEXED_POINTS } from "../../src/marks/trace.ts";
 
 /** The stack computed directly from the values, row by row. */
@@ -91,58 +92,71 @@ describe("row stacks", () => {
     });
   }
 
-  it("keep indexes of long stacks that agree with scanning", () => {
-    const length = INDEXED_POINTS + 1000;
-    const wave = (n: number, phase: number) =>
-      Float64Array.from({ length: n }, (_, i) =>
-        i % 9973 === 0 ? Number.NaN : 1 + Math.sin(i / 50 + phase),
-      );
-    const data = table({ a: wave(length, 0), b: wave(length, 1) }, { maxRows: length });
-    const stack = new RowStack("sum", { indexed: true });
-    const layers = () => [data.numbers("a"), data.numbers("b")];
-    let state = stack.update(data, layers(), "11");
-    const out: RangeExtremes = { low: -1, high: -1, gap: false };
-    const verify = () => {
-      expect(state.indexes).toBeDefined();
-      for (const [l, { top, bottom }] of state.indexes!.entries()) {
-        for (const [edge, values] of [
-          [top, state.tops[l]!],
-          [bottom, state.bases[l]],
-        ] as const) {
-          if (!edge || !values) continue;
-          expect(edge.length).toBe(values.length);
-          for (const [from, to] of [
-            [0, values.length],
-            [123, 45_678],
-            [values.length - 500, values.length],
+  it.each([true, "fill", "center", "wiggle"] as const)(
+    "keep indexes of long %s stacks that agree with scanning",
+    (offset) => {
+      const length = INDEXED_POINTS + 1000;
+      const wave = (n: number, phase: number) =>
+        Float64Array.from({ length: n }, (_, i) =>
+          i % 9973 === 0 ? Number.NaN : 1 + Math.sin(i / 50 + phase),
+        );
+      const data = table({ a: wave(length, 0), b: wave(length, 1) }, { maxRows: length });
+      const stack = new RowStack("sum", {
+        indexed: true,
+        ...(offset !== true && {
+          offset: {
+            fill: offset === "fill",
+            global: offset === "wiggle",
+            resolve: (tops, bases, positions, totals) =>
+              offsetLayers(tops, bases, offset, "input", positions, totals),
+          },
+        }),
+      });
+      const layers = () => [data.numbers("a"), data.numbers("b")];
+      let state = stack.update(data, layers(), "11");
+      const out: RangeExtremes = { low: -1, high: -1, gap: false };
+      const verify = () => {
+        expect(state.indexes).toBeDefined();
+        for (const [l, { top, bottom }] of state.indexes!.entries()) {
+          for (const [edge, values] of [
+            [top, state.tops[l]!],
+            [bottom, state.bases[l]],
           ] as const) {
-            edge.query(values, from, to, out);
-            let min = Number.POSITIVE_INFINITY;
-            let max = Number.NEGATIVE_INFINITY;
-            let gap = false;
-            for (let i = from; i < to; i++) {
-              const v = values[i]!;
-              if (!Number.isFinite(v)) gap = true;
-              else {
-                min = Math.min(min, v);
-                max = Math.max(max, v);
+            if (!edge || !values) continue;
+            expect(edge.length).toBe(values.length);
+            for (const [from, to] of [
+              [0, values.length],
+              [123, 45_678],
+              [values.length - 500, values.length],
+            ] as const) {
+              edge.query(values, from, to, out);
+              let min = Number.POSITIVE_INFINITY;
+              let max = Number.NEGATIVE_INFINITY;
+              let gap = false;
+              for (let i = from; i < to; i++) {
+                const v = values[i]!;
+                if (!Number.isFinite(v)) gap = true;
+                else {
+                  min = Math.min(min, v);
+                  max = Math.max(max, v);
+                }
               }
+              expect(values[out.low]).toBe(min);
+              expect(values[out.high]).toBe(max);
+              expect(out.gap).toBe(gap);
             }
-            expect(values[out.low]).toBe(min);
-            expect(values[out.high]).toBe(max);
-            expect(out.gap).toBe(gap);
           }
         }
-      }
-    };
-    verify();
-    // Stacks that do not ask for indexes get none.
-    expect(new RowStack("sum").update(data, layers(), "11").indexes).toBeUndefined();
-    // Appends that drop rows from the front, then enough to move the buffers.
-    for (const count of [10, 5000, 100_000, 200_000]) {
-      data.append({ a: wave(count, 2), b: wave(count, 3) });
-      state = stack.update(data, layers(), "11");
+      };
       verify();
-    }
-  });
+      // Stacks that do not ask for indexes get none.
+      expect(new RowStack("sum").update(data, layers(), "11").indexes).toBeUndefined();
+      // Appends that drop rows from the front, then enough to move the buffers.
+      for (const count of [10, 5000, 100_000, 200_000]) {
+        data.append({ a: wave(count, 2), b: wave(count, 3) });
+        state = stack.update(data, layers(), "11");
+        verify();
+      }
+    },
+  );
 });

@@ -747,6 +747,13 @@ interface AreaStyle extends SeriesBase, RowTooltip {
  */
 export type StackGaps = "zero" | "interpolate";
 
+/** Nonnegative shares, or ordinary positive/negative stacks. */
+export type BarStack = boolean | "fill";
+/** Area thickness as shares, or raw values with a stream baseline. */
+export type AreaStack = BarStack | "center" | "wiggle";
+/** Geometric layer order; legend identities and colors stay in input order. */
+export type StackOrder = "input" | "inside-out";
+
 /**
  * Filled areas, along x or (with `orient: "y"`, or a category y) along y.
  * Each series' values are filled to zero (or stacked on the previous series
@@ -762,7 +769,8 @@ export type AreaSpec = AreaStyle &
         /** Values filled to zero (one field or several), or with `orient: "y"` the positions. */
         y: Field | readonly Field[];
         series?: Field;
-        stack?: boolean;
+        stack?: AreaStack;
+        stackOrder?: StackOrder;
         /** With `stack` and `series`: what a series counts as where it has no row. */
         stackGaps?: StackGaps;
         y1?: never;
@@ -781,6 +789,7 @@ export type AreaSpec = AreaStyle &
         x2?: never;
         series?: never;
         stack?: never;
+        stackOrder?: never;
         stackGaps?: never;
       }
     | {
@@ -794,6 +803,7 @@ export type AreaSpec = AreaStyle &
         y2?: never;
         series?: never;
         stack?: never;
+        stackOrder?: never;
         stackGaps?: never;
       }
   );
@@ -902,7 +912,7 @@ export interface BarSpec extends SeriesBase, RowTooltip {
   y: Field | readonly Field[];
   series?: Field;
   /** Stack series instead of placing them side by side. */
-  stack?: boolean;
+  stack?: BarStack;
   fill?: string;
   fillOpacity?: number;
   label?: string;

@@ -106,6 +106,27 @@ function latencyMarks(data: typeof metrics) {
 <Chart title="Search" marks={[line(search, { x: "time", y: "p50" }), rule({ y: 250 })]} />;
 ```
 
+## Normalized stacks and streamgraphs
+
+```tsx
+<Area data={usage} x="time" y={["user", "system"]} stack="wiggle" stackOrder="inside-out" />
+<Bar data={sales} x="region" y={["q1", "q2"]} stack="fill" labels={{ style: "percent" }} />
+```
+
+`Area` accepts `stack={true}`, `"fill"`, `"center"`, and
+`"wiggle"`; `Bar` accepts true or `"fill"`. Fill normalizes nonnegative values
+at each position to shares on a 0–1 value axis; its `format: { style: "percent" }`
+shows percent ticks. Center and wiggle keep raw thickness with shifted baselines
+and raw axis extents. `stackOrder="inside-out"` applies to
+the three nonnegative area modes. Negative values require ordinary `stack: true`.
+Missing values keep their layer's gaps and count as zero. `stackGaps` resolves
+absent rows before offsets. These options also work for areas with `orient="y"`
+and horizontal bars. Tooltips and keyboard text show both share and raw value
+for fill; bar labels show shares. Streams report raw values. Legend toggles,
+facets, subplots, zoom, streaming, and static export use the core engine's stack.
+Wiggle and inside-out recompute over the retained window; inside-out updates
+and areas along y display changed values immediately.
+
 ## Live data
 
 Mark elements do not create one React element per data point, and data

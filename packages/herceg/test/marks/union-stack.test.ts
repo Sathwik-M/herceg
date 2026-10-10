@@ -366,62 +366,67 @@ describe("union stacks", () => {
     expect(after.edges[3]!.top.buffer).toBe(before);
   });
 
-  it("keep indexes of long stacks that agree with scanning", () => {
-    const rows = (from: number, count: number) => {
-      const t = Float64Array.from({ length: count * 2 }, (_, i) => from + Math.floor(i / 2));
-      return {
-        t,
-        v: t.map((x, i) => (x % 9973 === 0 && i % 2 ? Number.NaN : 1 + Math.sin(x / 50 + (i % 2)))),
-        s: Array.from(t, (_, i) => (i % 2 ? "b" : "a")),
+  it.each([true, "fill", "center", "wiggle"] as const)(
+    "keep indexes of long %s stacks that agree with scanning",
+    (offset) => {
+      const rows = (from: number, count: number) => {
+        const t = Float64Array.from({ length: count * 2 }, (_, i) => from + Math.floor(i / 2));
+        return {
+          t,
+          v: t.map((x, i) =>
+            x % 9973 === 0 && i % 2 ? Number.NaN : 1 + Math.sin(x / 50 + (i % 2)),
+          ),
+          s: Array.from(t, (_, i) => (i % 2 ? "b" : "a")),
+        };
       };
-    };
-    const length = INDEXED_POINTS + 1000;
-    const data = table(rows(0, length), { maxRows: 2 * length });
-    const stack = new UnionStack();
-    const out: RangeExtremes = { low: -1, high: -1, gap: false };
-    const verify = () => {
-      const state = stack.update(
-        data,
-        data.numbers("t"),
-        data.numbers("v"),
-        layersOf(data),
-        "zero",
-      );
-      for (const edges of state.edges) {
-        expect(edges!.indexes).toBeDefined();
-        for (const [index, values] of [
-          [edges!.indexes!.top, edges!.top],
-          [edges!.indexes!.bottom, edges!.bottom],
-        ] as const) {
-          if (!index || !values) continue;
-          expect(index.length).toBe(values.length);
-          for (const [from, to] of [
-            [0, values.length],
-            [123, 45_678],
-            [values.length - 500, values.length],
+      const length = INDEXED_POINTS + 1000;
+      const data = table(rows(0, length), { maxRows: 2 * length });
+      const stack = new UnionStack(offset);
+      const out: RangeExtremes = { low: -1, high: -1, gap: false };
+      const verify = () => {
+        const state = stack.update(
+          data,
+          data.numbers("t"),
+          data.numbers("v"),
+          layersOf(data),
+          "zero",
+        );
+        for (const edges of state.edges) {
+          expect(edges!.indexes).toBeDefined();
+          for (const [index, values] of [
+            [edges!.indexes!.top, edges!.top],
+            [edges!.indexes!.bottom, edges!.bottom],
           ] as const) {
-            index.query(values, from, to, out);
-            let min = Number.POSITIVE_INFINITY;
-            let max = Number.NEGATIVE_INFINITY;
-            let gap = false;
-            for (let i = from; i < to; i++) {
-              const v = values[i]!;
-              if (!Number.isFinite(v)) gap = true;
-              else [min, max] = [Math.min(min, v), Math.max(max, v)];
+            if (!index || !values) continue;
+            expect(index.length).toBe(values.length);
+            for (const [from, to] of [
+              [0, values.length],
+              [123, 45_678],
+              [values.length - 500, values.length],
+            ] as const) {
+              index.query(values, from, to, out);
+              let min = Number.POSITIVE_INFINITY;
+              let max = Number.NEGATIVE_INFINITY;
+              let gap = false;
+              for (let i = from; i < to; i++) {
+                const v = values[i]!;
+                if (!Number.isFinite(v)) gap = true;
+                else [min, max] = [Math.min(min, v), Math.max(max, v)];
+              }
+              expect(values[out.low]).toBe(min);
+              expect(values[out.high]).toBe(max);
+              expect(out.gap).toBe(gap);
             }
-            expect(values[out.low]).toBe(min);
-            expect(values[out.high]).toBe(max);
-            expect(out.gap).toBe(gap);
           }
         }
-      }
-    };
-    verify();
-    let next = length;
-    for (const count of [10, 5000, 300_000]) {
-      data.append(rows(next, count));
-      next += count;
+      };
       verify();
-    }
-  });
+      let next = length;
+      for (const count of [10, 5000, 300_000]) {
+        data.append(rows(next, count));
+        next += count;
+        verify();
+      }
+    },
+  );
 });

@@ -45,8 +45,9 @@ benchmark suite.
 
 Done: columnar data model, scales, SVG and Canvas rendering, line and area
 (along x or y, over number, time, or category axes, dodged beside grouped
-bars; areas stacked from several fields or from long data split by a series
-field, zero or interpolated where a series has no row), bar
+bars, including normalized stacks; areas with normalized, centered, or wiggle
+stream offsets and optional inside-out order, stacked from several fields or
+from long data split by a series field, zero or interpolated where a series has no row), bar
 (vertical and horizontal, with value labels), point (with size, color,
 opacity, and shape encoded by fields, and dodged, jittered, or packed in
 beeswarms on category axes), heatmap (cells along number and time
@@ -69,7 +70,8 @@ moved where they would overlap), custom marks drawing
 through the same renderers (with series, legends, and tooltips), derived
 tables (filter, calculate, bin, aggregate, rolling windows, sort) with
 portable expressions, level of detail, streaming updates (stacks of fields and of series
-restacking only what appended and dropped rows touch), a shared
+in input order restacking only what appended and dropped rows touch for
+ordinary, fill, and center stacks; wiggle and inside-out recompute the window), a shared
 scheduler, browser interaction (tooltips, with fields of the rows marks
 draw and content of the application's own, zoom along x, y, or both, range,
 rectangle, and lasso brushing, events, synced cursors, zoom, and

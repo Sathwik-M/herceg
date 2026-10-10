@@ -507,7 +507,7 @@ describe("histogram options", () => {
     expect(model.yScale()!.domain).toEqual([0, 1]);
     // An empty bin draws nothing; a series' empty share neither.
     expect(rectangles(scene).map((m) => m.count)).toEqual([2, 2]);
-    expect(model.inspectPosition(a!.key, 0)!.points[0]!.text).toBe("0 – 1: 0.333");
+    expect(model.inspectPosition(a!.key, 0)!.points[0]!.text).toBe("0 – 1: 0.333 share (1 raw)");
     model.hidden.add(b!.key);
     model.scene(estimateText);
     expect([...model.series()[0]!.y]).toEqual([1, 1, Number.NaN, Number.NaN]);

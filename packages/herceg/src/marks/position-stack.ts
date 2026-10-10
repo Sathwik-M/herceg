@@ -6,6 +6,7 @@
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 import { capacityFor, makeRoom, shrunk } from "./stack.ts";
+import { requireContribution } from "./stack-offset.ts";
 
 /** One series of the stack: its rows (ascending table positions) and whether it is shown. */
 export interface BarLayer {
@@ -19,6 +20,7 @@ export interface Segments {
   /** NaN for rows not drawn: missing values, positions, or series. */
   tops: Float64Array;
   bases: Float64Array;
+  totals?: Float64Array | undefined;
 }
 
 /** What a stack reads of its table: where its rows are, and what changed. */
@@ -41,6 +43,11 @@ const RETAINED = 1 << 16;
  * bands positions are indices of) stacks every row again.
  */
 export class PositionStack {
+  readonly #fill: boolean;
+
+  constructor(fill = false) {
+    this.#fill = fill;
+  }
   #table: Rows | undefined;
   #version = -1;
   #modified = -1;
@@ -84,6 +91,22 @@ export class PositionStack {
     bands: boolean,
     places: object | undefined,
   ): Segments {
+    try {
+      return this.#update(table, positions, values, layers, bands, places);
+    } catch (error) {
+      this.clear();
+      throw error;
+    }
+  }
+
+  #update(
+    table: Rows,
+    positions: ArrayLike<number>,
+    values: NumericArray,
+    layers: readonly BarLayer[],
+    bands: boolean,
+    places: object | undefined,
+  ): Segments {
     const signature = JSON.stringify(layers.map(({ name, shown }) => [name, shown]));
     const same = this.#table === table && this.#signature === signature && this.#places === places;
     const current =
@@ -107,7 +130,11 @@ export class PositionStack {
     this.#offset = table.rowOffset;
     this.#end = table.rowOffset + table.length;
     const view = (buffer: Float64Array) => buffer.subarray(this.#start, this.#start + table.length);
-    return { tops: view(this.#doubles[0]!), bases: view(this.#doubles[1]!) };
+    return {
+      tops: view(this.#doubles[0]!),
+      bases: view(this.#doubles[1]!),
+      totals: this.#fill ? view(this.#doubles[2]!) : undefined,
+    };
   }
 
   /** Bytes the stack holds: its buffers by row and by position, and its sort scratch, not its `Map`. */
@@ -149,7 +176,7 @@ export class PositionStack {
     const capacity = reuse ? (this.#doubles[0]?.length ?? 0) : 0;
     if (capacity < length || capacity > 4 * capacityFor(length)) {
       const size = capacityFor(length);
-      this.#doubles = [new Float64Array(size), new Float64Array(size)];
+      this.#doubles = Array.from({ length: this.#fill ? 3 : 2 }, () => new Float64Array(size));
       this.#ints = [new Int32Array(size), new Int32Array(size), new Int32Array(size)];
     }
     this.#start = 0;
@@ -196,8 +223,9 @@ export class PositionStack {
     const all = [...this.#doubles, ...this.#ints];
     const room = shrunk(all, this.#start, kept, count) ?? makeRoom(all, this.#start, kept, count);
     if (!room) return;
-    this.#doubles = room.slice(0, 2) as Float64Array[];
-    this.#ints = room.slice(2) as Int32Array[];
+    const doubles = this.#fill ? 3 : 2;
+    this.#doubles = room.slice(0, doubles) as Float64Array[];
+    this.#ints = room.slice(doubles) as Int32Array[];
     this.#start = 0;
   }
 
@@ -277,13 +305,29 @@ export class PositionStack {
           for (; j > 0 && keys[j - 1]! > key; j--) keys[j] = keys[j - 1]!;
           keys[j] = key;
         }
+      let total = 0;
+      if (this.#fill) {
+        for (let i = 0; i < count; i++) {
+          const l = Math.floor(keys[i]! / ROW_KEYS);
+          const row = keys[i]! - l * ROW_KEYS;
+          const value = layers[l]!.shown ? values[row]! : 0;
+          requireContribution(value, `bar stack "fill" row ${row}`);
+          if (Number.isFinite(value)) total += value;
+        }
+        if (!Number.isFinite(total))
+          throw new RangeError(
+            'bar stack "fill": total exceeds finite numeric range; rescale the values',
+          );
+      }
       let up = 0;
       let down = 0;
       for (let i = 0; i < count; i++) {
         const l = Math.floor(keys[i]! / ROW_KEYS);
         const row = keys[i]! - l * ROW_KEYS;
-        const value = layers[l]!.shown ? values[row]! : 0;
+        const raw = layers[l]!.shown ? values[row]! : 0;
+        const value = this.#fill && Number.isFinite(raw) ? (total > 0 ? raw / total : 0) : raw;
         const slot = start + row;
+        if (this.#fill) this.#doubles[2]![slot] = total;
         if (!Number.isFinite(value)) {
           tops[slot] = Number.NaN;
           bases[slot] = Number.NaN;

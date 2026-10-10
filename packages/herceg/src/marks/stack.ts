@@ -1,6 +1,7 @@
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 import { MinMaxIndex, type RangeIndex } from "../lod/minmax-index.ts";
+import type { fillLayers } from "./stack-offset.ts";
 import { INDEXED_POINTS } from "./trace.ts";
 
 /**
@@ -17,6 +18,10 @@ export interface StackedLayers {
   tops: Float64Array[];
   /** Bottom of each layer; for "sum" stacks the first has none (zero). */
   bases: (Float64Array | undefined)[];
+  /** Layer indices in geometric order. */
+  order?: readonly number[];
+  /** Visible totals for fill readings, shared across layers. */
+  totals?: Float64Array | undefined;
   /** Min/max indexes of each layer's top and bottom, for stacks long enough to need them. */
   indexes: { top: RangeIndex; bottom: RangeIndex | undefined }[] | undefined;
 }
@@ -106,15 +111,25 @@ export function shrunk<T extends Buffer>(
  */
 export class RowStack {
   readonly #kind: StackKind;
+  readonly #offset:
+    | {
+        resolve: typeof fillLayers;
+        fill?: boolean;
+        global?: boolean;
+      }
+    | undefined;
+  #layerOrder: number[] = [];
   #table: Rows | undefined;
   #version = -1;
   #signature = "";
+  #places: object | undefined;
   /** Table row identity (`rowOffset`) of the first live row. */
-  #offset = 0;
+  #rowOffset = 0;
   #start = 0;
   #length = 0;
   #tops: Float64Array[] = [];
   #bases: Float64Array[] = [];
+  #totals: Float64Array | undefined;
   /** Indexes over the whole buffers, from position 0, once the stack is long. */
   #topIndexes: MinMaxIndex[] | undefined;
   #baseIndexes: MinMaxIndex[] | undefined;
@@ -124,8 +139,19 @@ export class RowStack {
   #down = new Float64Array(0);
 
   /** With `indexed`, long stacks keep min/max indexes of their tops and bases for extents and tracing. */
-  constructor(kind: StackKind, { indexed = false } = {}) {
+  constructor(
+    kind: StackKind,
+    {
+      indexed = false,
+      offset,
+    }: {
+      indexed?: boolean;
+      /** A mark supplies its offset; global offsets rebuild after window changes. */
+      offset?: { resolve: typeof fillLayers; fill?: boolean; global?: boolean };
+    } = {},
+  ) {
     this.#kind = kind;
+    this.#offset = offset;
     this.#indexed = indexed;
   }
 
@@ -138,23 +164,54 @@ export class RowStack {
     table: Rows,
     layers: readonly (NumericArray | undefined)[],
     signature: string,
+    positions?: NumericArray,
+    places?: object,
+  ): StackedLayers {
+    try {
+      return this.#update(table, layers, signature, positions, places);
+    } catch (error) {
+      this.clear();
+      throw error;
+    }
+  }
+
+  #update(
+    table: Rows,
+    layers: readonly (NumericArray | undefined)[],
+    signature: string,
+    positions?: NumericArray,
+    places?: object,
   ): StackedLayers {
     const end = table.rowOffset + table.length;
-    const current = this.#table === table && this.#signature === signature;
-    if (!current || table.modifiedVersion > this.#version || layers.length !== this.#tops.length) {
-      this.#rebuild(table, layers, signature);
+    const current =
+      this.#table === table && this.#signature === signature && this.#places === places;
+    if (
+      !current ||
+      table.modifiedVersion > this.#version ||
+      layers.length !== this.#tops.length ||
+      (table.version !== this.#version && this.#offset?.global)
+    ) {
+      this.#rebuild(table, layers, signature, positions);
     } else if (this.#version !== table.version) {
       // Rows before the table's first are gone; rows past the stack's last are new.
-      const dropped = Math.min(this.#length, Math.max(0, table.rowOffset - this.#offset));
+      const dropped = Math.min(this.#length, Math.max(0, table.rowOffset - this.#rowOffset));
       this.#start += dropped;
       this.#length -= dropped;
-      this.#offset += dropped;
+      this.#rowOffset += dropped;
       if (dropped > 0) this.#shrink();
-      const appended = end - (this.#offset + this.#length);
-      if (this.#offset !== table.rowOffset || appended < 0) this.#rebuild(table, layers, signature);
+      const appended = end - (this.#rowOffset + this.#length);
+      if (this.#rowOffset !== table.rowOffset || appended < 0)
+        this.#rebuild(table, layers, signature, positions);
       else if (appended > 0) {
         this.#reserve(appended);
-        this.#stack(layers, table.length - appended, table.length, this.#start + this.#length);
+        const from = table.length - appended;
+        this.#stack(
+          layers,
+          from,
+          table.length,
+          this.#start + this.#length,
+          positions?.subarray(from),
+        );
         this.#length += appended;
         const end = this.#start + this.#length;
         this.#topIndexes?.forEach((index, l) => {
@@ -166,9 +223,12 @@ export class RowStack {
       }
       this.#version = table.version;
     }
+    this.#places = places;
     const view = (buffer: Float64Array) => buffer.subarray(this.#start, this.#start + this.#length);
-    const first = this.#kind === "sum" ? 0 : -1;
+    const first = this.#kind === "sum" && !this.#offset ? 0 : -1;
     return {
+      order: this.#layerOrder,
+      totals: this.#totals && view(this.#totals),
       tops: this.#tops.map(view),
       bases: this.#bases.map((buffer, i) => (i === first ? undefined : view(buffer))),
       indexes: this.#indexes()
@@ -208,25 +268,45 @@ export class RowStack {
     };
   }
 
-  #rebuild(table: Rows, layers: readonly (NumericArray | undefined)[], signature: string) {
+  #rebuild(
+    table: Rows,
+    layers: readonly (NumericArray | undefined)[],
+    signature: string,
+    positions?: NumericArray,
+  ) {
     const length = table.length;
     const capacity = capacityFor(length);
-    this.#tops = layers.map(() => new Float64Array(capacity));
-    this.#bases = layers.map(() => new Float64Array(capacity));
+    const held = this.#tops[0]?.length ?? 0;
+    const reuse =
+      this.#offset !== undefined &&
+      this.#table === table &&
+      this.#signature === signature &&
+      layers.length === this.#tops.length &&
+      held >= length &&
+      held <= 4 * capacity;
+    if (!reuse) {
+      this.#tops = layers.map(() => new Float64Array(capacity));
+      this.#bases = layers.map(() => new Float64Array(capacity));
+      this.#totals = this.#offset?.fill ? new Float64Array(capacity) : undefined;
+    }
     this.#topIndexes = undefined;
     this.#baseIndexes = undefined;
     this.#table = table;
     this.#signature = signature;
     this.#version = table.version;
-    this.#offset = table.rowOffset;
+    this.#rowOffset = table.rowOffset;
     this.#start = 0;
     this.#length = length;
-    this.#stack(layers, 0, length, 0);
+    this.#stack(layers, 0, length, 0, positions);
   }
 
   /** Moves the live rows into smaller buffers once drops leave them less than a quarter full. */
   #shrink() {
-    const smaller = shrunk([...this.#tops, ...this.#bases], this.#start, this.#length);
+    const smaller = shrunk(
+      [...this.#tops, ...this.#bases, ...(this.#totals ? [this.#totals] : [])],
+      this.#start,
+      this.#length,
+    );
     if (!smaller) return;
     this.#split(smaller);
     this.#start = 0;
@@ -238,7 +318,8 @@ export class RowStack {
   #split(buffers: Float64Array[]) {
     const count = this.#tops.length;
     this.#tops = buffers.slice(0, count);
-    this.#bases = buffers.slice(count);
+    this.#bases = buffers.slice(count, 2 * count);
+    if (this.#totals) this.#totals = buffers[2 * count]!;
   }
 
   /** Lets go of every buffer; the next update stacks every row again. */
@@ -247,6 +328,7 @@ export class RowStack {
     this.#table = undefined;
     this.#tops = [];
     this.#bases = [];
+    this.#totals = undefined;
     this.#topIndexes = undefined;
     this.#baseIndexes = undefined;
     this.#up = new Float64Array(0);
@@ -256,7 +338,12 @@ export class RowStack {
 
   /** Makes room for `count` rows after the live ones. */
   #reserve(count: number) {
-    const room = makeRoom([...this.#tops, ...this.#bases], this.#start, this.#length, count);
+    const room = makeRoom(
+      [...this.#tops, ...this.#bases, ...(this.#totals ? [this.#totals] : [])],
+      this.#start,
+      this.#length,
+      count,
+    );
     if (!room) return;
     // Rows move, so indexes over buffer positions are built again.
     this.#topIndexes = undefined;
@@ -266,8 +353,30 @@ export class RowStack {
   }
 
   /** Stacks table rows `[from, to)` into buffer positions from `at`. */
-  #stack(layers: readonly (NumericArray | undefined)[], from: number, to: number, at: number) {
+  #stack(
+    layers: readonly (NumericArray | undefined)[],
+    from: number,
+    to: number,
+    at: number,
+    positions?: NumericArray,
+  ) {
     const count = to - from;
+    if (this.#offset) {
+      layers.forEach((values, l) => {
+        for (let i = 0; i < count; i++) {
+          const value = values ? values[from + i]! : 0;
+          this.#tops[l]![at + i] = Number.isFinite(value) ? value : Number.NaN;
+        }
+      });
+      const view = (buffer: Float64Array) => buffer.subarray(at, at + count);
+      this.#layerOrder = this.#offset.resolve(
+        this.#tops.map(view),
+        this.#bases.map(view),
+        positions,
+        this.#totals && view(this.#totals),
+      );
+      return;
+    }
     const signed = this.#kind === "signed";
     // Rebuilds of long stacks use scratch as long as the table, which is
     // not kept; streaming ticks reuse a short one.

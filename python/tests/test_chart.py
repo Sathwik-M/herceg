@@ -2194,3 +2194,43 @@ def test_points_swarm_and_refuse_jitter_with_it():
         hg.Chart(MONTHLY).point("month", "sales", swarm=True, jitter=0.5)
     with pytest.raises(ValueError, match="point swarm: needs exactly one category column"):
         hg.Chart(MONTHLY).point("sales", "sales", swarm=True)
+
+
+@pytest.mark.parametrize("stack", ["fill", "center", "wiggle"])
+@pytest.mark.parametrize("horizontal", [False, True])
+def test_area_stack_offsets(stack, horizontal):
+    data = {"t": [0, 1, 2], "a": [2, 4, 0], "b": [6, 4, 0]}
+    xy = {"y": "t", "x": ["a", "b"], "orient": "y"} if horizontal else {"x": "t", "y": ["a", "b"]}
+    for chart in [hg.area(data, **xy, stack=stack), hg.Chart(data).area(**xy, stack=stack)]:
+        assert chart.to_spec()[0]["marks"][0]["stack"] == stack
+        svg = chart.to_svg()
+        assert 'fill-opacity="0.85"' in svg
+        assert "NaN" not in svg
+    inside_out = hg.area(data, **xy, stack=stack, stack_order="inside-out")
+    assert inside_out.to_spec()[0]["marks"][0]["stackOrder"] == "inside-out"
+    assert "<path" in inside_out.to_svg()
+
+
+@pytest.mark.parametrize("horizontal", [False, True])
+def test_bar_fill_stack(horizontal):
+    data = {"band": ["N", "S"], "a": [2, 4], "b": [6, 4]}
+    xy = {"y": "band", "x": ["a", "b"]} if horizontal else {"x": "band", "y": ["a", "b"]}
+    chart = hg.bar(data, **xy, stack="fill", labels={"style": "percent"})
+    assert chart.to_spec()[0]["marks"][0]["stack"] == "fill"
+    assert ">25%</text>" in chart.to_svg()
+    with pytest.raises(ValueError, match="bar stack:.*;.*use an area"):
+        hg.bar(data, **xy, stack="center")
+
+
+@pytest.mark.parametrize("stack", ["fill", "center", "wiggle"])
+def test_nonnegative_stack_validation_and_gaps(stack):
+    signed = {"t": [0, 1], "v": [1, -2], "series": ["a", "b"]}
+    with pytest.raises(ValueError, match="area stack v: negative.*; use stack=True"):
+        hg.area(signed, x="t", y="v", stack=stack)
+    assert hg.area(signed, x="t", y="v", stack=True).to_spec()[0]["marks"][0]["stack"] is True
+    data = {"t": [0, 1, 2], "v": [2, np.nan, 4], "series": ["a", "a", "b"]}
+    chart = hg.area(data, x="t", y="v", series="series", stack=stack, stack_gaps="interpolate")
+    assert chart.to_spec()[0]["marks"][0]["stackGaps"] == "interpolate"
+    assert "NaN" not in chart.to_svg()
+    with pytest.raises(ValueError, match="area stack_order:.*;.*give stack="):
+        hg.area(data, x="t", y="v", stack_order="inside-out")

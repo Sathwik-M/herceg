@@ -484,7 +484,7 @@ export class Splitter {
         keys.map((_, p) => (parts[i] ? parts[i].flatMap((panels) => panels[p] ?? []) : series)),
     );
     base.forEach(({ mark }, i) => {
-      if (parts[i]) mark.stackPanels?.(byPanel[i]!, chart.hidden);
+      if (parts[i]) mark.stackPanels?.(byPanel[i]!, chart.hidden, this);
     });
     // Annotations read each panel's rows of their table; all of them, the
     // rows of every panel (not those without facet values).

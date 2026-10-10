@@ -125,6 +125,27 @@ export const latencyMarks = (data: Table) => [
 <Chart title="Checkout" :marks="latencyMarks(checkout)" />
 ```
 
+## Normalized stacks and streamgraphs
+
+```vue
+<Area :data="usage" x="time" :y="['user', 'system']" stack="wiggle" stack-order="inside-out" />
+<Bar :data="sales" x="region" :y="['q1', 'q2']" stack="fill" :labels="{ style: 'percent' }" />
+```
+
+`Area` accepts `:stack="true"`, `"fill"`, `"center"`, and
+`"wiggle"`; `Bar` accepts true or `"fill"`. Fill normalizes nonnegative values
+at each position to shares on a 0–1 value axis; its `format: { style: "percent" }`
+shows percent ticks. Center and wiggle keep raw thickness with shifted baselines
+and raw axis extents. `stack-order="inside-out"` applies to
+the three nonnegative area modes. Negative values require ordinary `stack: true`.
+Missing values keep their layer's gaps and count as zero. `stackGaps` resolves
+absent rows before offsets. These options also work for areas with `orient="y"`
+and horizontal bars. Tooltips and keyboard text show both share and raw value
+for fill; bar labels show shares. Streams report raw values. Legend toggles,
+facets, subplots, zoom, streaming, and static export use the core engine's stack.
+Wiggle and inside-out recompute over the retained window; inside-out updates
+and areas along y display changed values immediately.
+
 ## Live data
 
 Mark components render nothing and do not create one component per data

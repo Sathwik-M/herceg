@@ -9,11 +9,12 @@ import { headroomDomain } from "../model/axis.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { MOVING_BARS, type RectGeometry, type TextGeometry } from "../scene/scene.ts";
-import type { BarSpec, Frozen } from "../spec/spec.ts";
+import type { BarSpec, BarStack, Frozen } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import { BandShares, STILL } from "./dodge.ts";
 import { definedFields } from "./line.ts";
 import {
+  type AxisFormat,
   type BandContext,
   type BandList,
   type Bands,
@@ -36,6 +37,13 @@ import { PositionStack } from "./position-stack.ts";
 import { rowOf, type Series, TableCache, visibleRange, xExtent, yExtent } from "./series.ts";
 import { Slots } from "./slots.ts";
 import { RowStack, type StackedLayers } from "./stack.ts";
+import {
+  fillLayers,
+  requireContribution,
+  stackError,
+  stackPointText,
+  stackShare,
+} from "./stack-offset.ts";
 import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
@@ -49,7 +57,7 @@ interface BarStyle<S extends Schema> {
   /** Category field: one bar series per value. */
   series?: CategoryField<S>;
   /** Stack series instead of placing them side by side. */
-  stack?: boolean;
+  stack?: BarStack;
   fill?: string;
   fillOpacity?: number;
   label?: string;
@@ -116,6 +124,7 @@ export interface BarPlacement {
 }
 
 interface Stack {
+  totals?: Float64Array | undefined;
   tops: Float64Array[];
   bases: Float64Array[];
 }
@@ -127,6 +136,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
   readonly table: Table<Schema>;
   readonly zero: "x" | "y";
   readonly tooltip: "x" | "y";
+  readonly pointText?: (s: Series, row: number, format: AxisFormat) => string;
   readonly bandPadding = 0.2;
   /** Categories on y, lengths on x. */
   readonly #horizontal: boolean;
@@ -138,9 +148,9 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
   readonly #shares = new BandShares();
   #stacks = new TableCache<Map<string, Stack>>();
   /** Stacks of fields over positions that never repeat, kept current as rows stream. */
-  readonly #rowStack = new RowStack("signed");
+  readonly #rowStack: RowStack;
   /** Stacks of series split by a field, kept current as rows stream. */
-  readonly #positionStack = new PositionStack();
+  readonly #positionStack: PositionStack;
   readonly #increasing = new IncreasingRows();
   /**
    * Each chart's stacks of its panels' bars, by the rows of its first panel
@@ -154,6 +164,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       signature: string;
       rows: (Uint32Array | undefined)[];
       stacks: Map<string, readonly [Float64Array, Float64Array]>;
+      totals: Float64Array | undefined;
     }
   >();
   /** Slots of bars on a number or time position axis. */
@@ -166,6 +177,13 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
+    const problem = stackError(spec.stack, false);
+    if (problem) throw new Error(problem);
+    this.#rowStack = new RowStack(
+      "signed",
+      spec.stack === "fill" ? { offset: { resolve: fillLayers, fill: true } } : {},
+    );
+    this.#positionStack = new PositionStack(spec.stack === "fill");
     const xs = typeof spec.x === "string" ? [spec.x] : spec.x;
     const ys = typeof spec.y === "string" ? [spec.y] : spec.y;
     this.#horizontal = ys.length === 1 && table.has(ys[0]!) && table.kind(ys[0]!) === "category";
@@ -186,6 +204,8 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "bar series");
     this.zero = this.#horizontal ? "x" : "y";
     this.tooltip = this.#horizontal ? "y" : "x";
+    if (spec.stack === "fill")
+      this.pointText = (s, row, format) => stackPointText(s, row, this.tooltip, format);
     this.#categorical = table.kind(this.#position) === "category";
     this.#split = new SeriesSplitter(
       table,
@@ -241,7 +261,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       const rowWise =
         series.every((s) => s.rows === undefined) &&
         this.#increasing.check(table, positions, !this.#categorical);
-      let stack: Pick<StackedLayers, "tops" | "bases">;
+      let stack: Pick<StackedLayers, "tops" | "bases" | "totals">;
       // Only the stack in use keeps its buffers.
       if (rowWise) {
         this.#stacks = new TableCache();
@@ -254,7 +274,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       } else if (spec.series !== undefined) {
         this.#stacks = new TableCache();
         this.#rowStack.clear();
-        const { tops, bases } = this.#positionStack.update(
+        const { tops, bases, totals } = this.#positionStack.update(
           table,
           positions,
           table.numbers(this.#split.yFields[0] as never),
@@ -262,20 +282,21 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
           this.#categorical,
           this.#categorical ? (this.#horizontal ? bands.y : bands.x)?.keys : undefined,
         );
-        stack = { tops: series.map(() => tops), bases: series.map(() => bases) };
+        stack = { tops: series.map(() => tops), bases: series.map(() => bases), totals };
       } else {
         this.#rowStack.clear();
         this.#positionStack.clear();
         const cache = this.#stacks.get(table, () => new Map());
         let byPosition = cache.get(signature);
         if (!byPosition || byPosition.tops[0]?.length !== positions.length) {
-          byPosition = stackBars(series, shown);
+          byPosition = stackBars(series, shown, spec.stack === "fill");
           if (cache.size >= 4) cache.clear();
           cache.set(signature, byPosition);
         }
         stack = byPosition;
       }
       series.forEach((s, i) => {
+        s.stackTotals = stack.totals;
         s.y = stack.tops[i]!;
         s.y0 = stack.bases[i];
       });
@@ -308,13 +329,25 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
       cached.rows.length === rows.length &&
       cached.rows.every((r, i) => r === rows[i]);
     const stacks = kept ? cached.stacks : new Map<string, readonly [Float64Array, Float64Array]>();
-    if (key && !kept)
-      this.#panelStacks.set(key, { version: table.version, signature, rows, stacks });
+    const rowTotals = kept
+      ? cached.totals
+      : this.spec.stack === "fill"
+        ? new Float64Array(table.length)
+        : undefined;
     for (const series of panels) {
+      const totals =
+        this.spec.stack === "fill" && !kept
+          ? positionTotals(
+              series,
+              series.map((s) => !hidden.has(s.key)),
+              horizontal,
+            )
+          : undefined;
       // Positive values stack up and negative ones down, per panel and position.
       const positive = new Map<number, number>();
       const negative = new Map<number, number>();
       for (const s of series) {
+        s.stackTotals = rowTotals;
         const field = s.field ?? s.key;
         let stack = stacks.get(field);
         if (!stack) {
@@ -324,12 +357,18 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         const [top, base] = stack;
         if (!kept) {
           const shown = !hidden.has(s.key);
-          const positions = horizontal ? s.y : s.x;
           for (let k = 0; k < s.length; k++) {
             const row = rowOf(s, k);
-            const value = shown ? s.values[row]! : 0;
+            const raw = shown ? s.values[row]! : 0;
+            const at = (horizontal ? s.y : s.x)[row]!;
+            if (rowTotals) rowTotals[row] = totals?.get(at) ?? 0;
+            const value =
+              totals && Number.isFinite(raw)
+                ? totals.get(at)! > 0
+                  ? raw / totals.get(at)!
+                  : 0
+                : raw;
             if (!Number.isFinite(value)) continue;
-            const at = positions[row]!;
             const sums = value >= 0 ? positive : negative;
             const below = sums.get(at) ?? 0;
             base[row] = below;
@@ -342,9 +381,18 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         else [s.y, s.y0] = [top, base];
       }
     }
+    if (key && !kept)
+      this.#panelStacks.set(key, {
+        version: table.version,
+        signature,
+        rows,
+        stacks,
+        totals: rowTotals,
+      });
   }
 
   xExtent(series: readonly Series[], log: boolean, breaks?: Breaks) {
+    if (this.#horizontal && this.spec.stack === "fill" && !log) return [0, 1] as [number, number];
     if (this.#horizontal) {
       return unionExtent(
         series.flatMap((s) => [
@@ -362,6 +410,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
   yExtent(series: readonly Series[], x0: number, x1: number, log: boolean, breaks?: Breaks) {
     // Horizontal bars put bands on y, which take their categories instead.
     if (this.#horizontal) return undefined;
+    if (this.spec.stack === "fill" && !log) return [0, 1] as [number, number];
     // Rows without a band (missing categories, index -1) are not drawn.
     const lo = this.#categorical ? 0 : x0;
     const hi = this.#categorical ? Number.POSITIVE_INFINITY : x1;
@@ -442,7 +491,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
         count++;
         if (labeled) {
           const middle = center + offset + width / 2;
-          const value = s.values[row]!;
+          const value = this.spec.stack === "fill" ? stackShare(s, row) : s.values[row]!;
           if (this.spec.stack) labeled.inside(value, middle, root, tip, width, s.color, opacity);
           else {
             const cap = rounding
@@ -868,7 +917,34 @@ class IncreasingRows {
  * Positive values stack away from zero in one direction and negative values
  * in the other, each series on top of the previous ones.
  */
-function stackBars(series: readonly Series[], shown: readonly boolean[]): Stack {
+function positionTotals(
+  series: readonly Series[],
+  shown: readonly boolean[],
+  horizontal = false,
+): Map<number, number> {
+  const totals = new Map<number, number>();
+  series.forEach((s, l) => {
+    if (!shown[l]) return;
+    for (let k = 0; k < s.length; k++) {
+      const row = rowOf(s, k);
+      const at = (horizontal ? s.y : s.x)[row]!;
+      const raw = s.values[row]!;
+      requireContribution(raw, `bar stack "fill" row ${row}`);
+      if (Number.isFinite(raw)) {
+        const total = (totals.get(at) ?? 0) + raw;
+        if (!Number.isFinite(total))
+          throw new RangeError(
+            'bar stack "fill": total exceeds finite numeric range; rescale the values',
+          );
+        totals.set(at, total);
+      }
+    }
+  });
+  return totals;
+}
+
+function stackBars(series: readonly Series[], shown: readonly boolean[], fill = false): Stack {
+  const totals = fill ? positionTotals(series, shown) : undefined;
   const positive = new Map<number, number>();
   const negative = new Map<number, number>();
   const tops: Float64Array[] = [];
@@ -882,7 +958,13 @@ function stackBars(series: readonly Series[], shown: readonly boolean[]): Stack 
     const [top, base] = s.rows && shared ? shared : allocate(s.values.length);
     for (let k = 0; k < s.length; k++) {
       const row = rowOf(s, k);
-      const value = shown[i] ? s.values[row]! : 0;
+      const raw = shown[i] ? s.values[row]! : 0;
+      const value =
+        totals && Number.isFinite(raw)
+          ? totals.get(s.x[row]!)! > 0
+            ? raw / totals.get(s.x[row]!)!
+            : 0
+          : raw;
       if (!Number.isFinite(value)) continue;
       const at = s.x[row]!;
       const sums = value >= 0 ? positive : negative;
@@ -894,7 +976,11 @@ function stackBars(series: readonly Series[], shown: readonly boolean[]): Stack 
     tops.push(top);
     bases.push(base);
   });
-  return { tops, bases };
+  return {
+    tops,
+    bases,
+    totals: totals && Float64Array.from(series[0]?.x ?? [], (at) => totals.get(at) ?? 0),
+  };
 }
 
 /** An array of `length` NaNs: stack ends of rows not stacked are not drawn. */
