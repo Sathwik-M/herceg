@@ -597,6 +597,7 @@ export function renderPdf(
   const bold = textFont(page, theme.font, true);
   const size = theme.fontSize;
 
+  page.write("/Artifact BMC\n");
   if (theme.background !== "transparent") {
     const background = new PathBuilder();
     background.rect(0, 0, width, height);
@@ -615,6 +616,8 @@ export function renderPdf(
     }
   }
   paint(page, grid, { stroke: theme.grid, dash: theme.gridDash });
+  // One figure owns the complete chart, including panels, labels, and legends.
+  page.write("EMC\n/Figure << /MCID 0 >> BDC\n");
 
   for (const { plot, marks } of scene.panels) {
     page.write(`q ${num(plot.x)} ${num(plot.y)} ${num(plot.width)} ${num(plot.height)} re W n\n`);
@@ -747,5 +750,6 @@ export function renderPdf(
       text(page, entry.text, entry.x, y, { ...label, baseline: "middle" });
   }
 
+  page.write("EMC\n");
   return page.toBytes(info);
 }

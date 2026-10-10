@@ -134,6 +134,29 @@ def unicode_fonts():
     }
 
 
+@pytest.mark.parametrize("embedded", [False, True])
+def test_pdf_is_tagged_with_the_chart_alternative(embedded):
+    rendered = unicode_chart() if embedded else chart()
+    pdf = (
+        rendered.to_pdf(fonts=unicode_fonts(), fallback=["Symbols"])
+        if embedded
+        else rendered.to_pdf()
+    )
+    assert b"/MarkInfo << /Marked true >>" in pdf
+    assert b"/Type /StructTreeRoot" in pdf
+    assert b"/S /Document" in pdf
+    assert b"/S /Figure" in pdf
+    assert b"/StructParents 0" in pdf
+    assert re.search(rb"/Nums \[0 \[\d+ 0 R\]\]", pdf)
+    alt = re.search(rb"/Alt <FEFF([0-9A-F]*)>", pdf)
+    assert alt is not None
+    text = bytes.fromhex(alt[1].decode()).decode("utf-16-be")
+    assert text.startswith((UNICODE_TEXT if embedded else "Latency") + " Line chart with 1 series.")
+    assert "v: 3 points, from 1 to 3, last 2." in text
+    if not embedded:
+        assert b"/Lang (en-US)" in pdf
+
+
 def test_unicode_pdf_accepts_paths_and_bytes_and_matches_typescript(tmp_path):
     fonts = unicode_fonts()
     pdf = unicode_chart().to_pdf(fonts=fonts, fallback=["Symbols"])

@@ -2610,6 +2610,26 @@ no runtime dependency and are bundled only when `pdfFonts` is used, never
 through the core chart entry or a plain `specToPDF` export.
 The PDF's measured layout may differ from static SVG's estimates.
 
+Both font paths produce tagged PDF. `src/pdf.ts` combines the chart title
+and `describeChart(model)` for the Figure's UTF-16BE `/Alt`, preserving the
+DOM's generated summary even when standard fonts replace visible Unicode
+glyphs. The catalog has `/MarkInfo << /Marked true >>`, `/Lang` from the
+supplied locale, and a `StructTreeRoot` whose `Document` contains one
+`Figure`. The Figure's `/Pg` identifies the page and `/K 0` identifies the
+drawing's `/Figure << /MCID 0 >> BDC` sequence. The page's `/StructParents 0`
+selects the ParentTree's `/Nums [0 [figure-reference]]` entry; its array's
+index 0 maps MCID 0 back to that Figure. Backgrounds and grid lines precede
+the figure in `/Artifact BMC` content. Labels, legends, and annotations stay
+inside the figure, including label halos' existing replacement-text spans.
+Facets and subplots share one Figure because they form one chart with a
+shared title, legends, and description of the panels; splitting them would
+require separate panel alternatives rather than repeating the chart summary.
+This is chart-level tagging, without PDF/UA conformance or separate label
+semantics. The generated summary's prose is English and the Figure is tagged
+with `/Lang (en)` unless it inherits an English locale from the catalog;
+`locale` controls number and date formatting, without translating the summary.
+Python's `to_pdf` receives the same tags through `specToPDF`.
+
 Streams are Flate-compressed by a small built-in deflate (fixed
 Huffman codes with LZ77 matching; zlib's dynamic codes make text streams
 about 30% smaller), since the output must be built
@@ -3562,8 +3582,8 @@ document when `OffscreenCanvas` is unavailable.
   script/block allowlist. Other scripts, unassigned characters, controls,
   CFF outlines, joiners, and variation sequences are refused.
   Without supplied fonts the standard Windows-1252 path replaces uncovered
-  text with "?". Optional shipped fonts and tagged PDF are open work;
-  PDFs are not tagged for assistive technology,
+  text with "?". Optional shipped fonts are open work. Tagged PDFs provide
+  one chart-level Figure alternative, without PDF/UA conformance;
   colors must be hex, `rgb()`, `hsl()`, or names, transparent backgrounds
   show as white paper, and halos of labels are read twice by readers that
   ignore replacement text (macOS Preview).

@@ -1,6 +1,7 @@
 // PDF export, imported as `herceg/pdf`. A separate entry point, so charts
 // that never export PDF neither bundle nor (unbundled) load its code.
 
+import { describeChart } from "./model/describe.ts";
 import { type ChartConfig, ChartModel, STATIC_RASTER_RATIO } from "./model/model.ts";
 import { NO_PAGE } from "./render/fallbacks.ts";
 import { renderPdf } from "./render/pdf.ts";
@@ -32,12 +33,18 @@ export function renderToPDF(options: PdfOptions): Uint8Array {
   const resolver = options.fonts?.createResolver();
   const model = new ChartModel(options, NO_PAGE);
   model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
+  const scene = model.scene(resolver?.measure ?? measurePdfText);
+  const summary = describeChart(model);
   return renderPdf(
-    model.scene(resolver?.measure ?? measurePdfText),
+    scene,
     {
       title: options.title,
       subject: options.description,
       language: options.locale,
+      alt: [options.title, summary].filter(Boolean).join(" "),
+      // The summary's prose is English even when visible text uses another locale.
+      altLanguage:
+        summary && options.locale?.split("-")[0]?.toLowerCase() !== "en" ? "en" : undefined,
     },
     resolver,
   );

@@ -57,8 +57,12 @@ export interface PdfObjectWriter {
 export interface DocumentInfo {
   title?: string | undefined;
   subject?: string | undefined;
-  /** BCP 47 language tag of the text. */
+  /** Text alternative for the chart figure, including its title and summary. */
+  alt?: string | undefined;
+  /** BCP 47 language tag of the visible text. */
   language?: string | undefined;
+  /** Language override for the Figure's alternative text. */
+  altLanguage?: string | undefined;
 }
 
 interface Image {
@@ -149,6 +153,25 @@ export class PdfPage {
     const pages = file.reserve();
     const page = file.reserve();
     const content = file.reserve();
+    const structure = file.reserve();
+    const doc = file.reserve();
+    const figure = file.reserve();
+    const parents = file.reserve();
+
+    file.object(
+      structure,
+      `<< /Type /StructTreeRoot /K ${doc} 0 R /ParentTree ${parents} 0 R /ParentTreeNextKey 1 >>`,
+    );
+    file.object(doc, `<< /Type /StructElem /S /Document /P ${structure} 0 R /K ${figure} 0 R >>`);
+    const figureLanguage =
+      info.altLanguage && /^[A-Za-z0-9-]+$/.test(info.altLanguage)
+        ? ` /Lang ${literal(info.altLanguage)}`
+        : "";
+    file.object(
+      figure,
+      `<< /Type /StructElem /S /Figure /P ${doc} 0 R /Pg ${page} 0 R /K 0 /Alt ${textString(info.alt ?? "")}${figureLanguage} >>`,
+    );
+    file.object(parents, `<< /Nums [0 [${figure} 0 R]] >>`);
 
     let resources = "";
     if (this.#fonts.size > 0) {
@@ -190,10 +213,10 @@ export class PdfPage {
     const box = `[0 0 ${num(this.width * POINTS_PER_PIXEL)} ${num(this.height * POINTS_PER_PIXEL)}]`;
     file.object(
       page,
-      `<< /Type /Page /Parent ${pages} 0 R /MediaBox ${box} /Resources << ${resources}>> /Contents ${content} 0 R >>`,
+      `<< /Type /Page /Parent ${pages} 0 R /MediaBox ${box} /Resources << ${resources}>> /Contents ${content} 0 R /StructParents 0 >>`,
     );
     file.object(pages, `<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`);
-    let catalogEntries = `/Type /Catalog /Pages ${pages} 0 R`;
+    let catalogEntries = `/Type /Catalog /Pages ${pages} 0 R /StructTreeRoot ${structure} 0 R /MarkInfo << /Marked true >>`;
     if (info.language && /^[A-Za-z0-9-]+$/.test(info.language))
       catalogEntries += ` /Lang ${literal(info.language)}`;
     if (info.title) catalogEntries += " /ViewerPreferences << /DisplayDocTitle true >>";
