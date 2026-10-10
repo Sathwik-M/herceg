@@ -677,9 +677,16 @@ start wherever in a frame they are issued (pointer moves from the event), and
 differences smaller than a frame (the idle cadence below) are noise. Compare
 libraries within these tables, not with the Chrome tables above, which
 disable the frame rate limit. Memory is not measured (it needs Chrome's
-DevTools protocol), nor are long frames. Firefox is not included: Playwright's
-Firefox build starts on this machine's macOS only with `MOZ_APP_DATA` set,
-which the browser tests set and the benchmark harness does not yet.
+DevTools protocol), nor are long frames.
+
+Firefox runs with `npm run bench -- --browser firefox` (latency scenarios with
+`layout.frame_rate` 0, paced ingestion and orbit at the default frame rate in
+a separate process), but no Firefox results are committed yet: they need an
+otherwise idle machine (`--out results/browser-firefox.json`, default samples
+and warmups). Firefox has neither `performance.memory` nor Chrome's heap
+measurement, so memory scenarios are omitted (the JSON's `method.memory` says
+why), and it reports no long animation frames, so ingestion results omit
+`longFrames`.
 
 <!-- results:webkit -->
 - Date: 2026-10-09, commit 6eca6ef (uncommitted changes)
