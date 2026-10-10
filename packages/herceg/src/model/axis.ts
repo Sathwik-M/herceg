@@ -211,7 +211,7 @@ export function shiftPlan(plan: AxisPlan, context: AxisContext, offset: number):
 
 /** Formatter for single values on this axis, as shown in tooltips. */
 export function valueFormatter(context: AxisContext, fallback: Formatter): Formatter {
-  const format = context.spec?.format;
+  const format = context.spec?.tooltipFormat ?? context.spec?.format;
   if (!format) return fallback;
   return context.type === "time"
     ? timeFormatter(format as Intl.DateTimeFormatOptions, context.zone, context.locale)

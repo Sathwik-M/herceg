@@ -14,6 +14,7 @@ import {
   valueAt,
   xAt,
 } from "../marks/series.ts";
+import type { FieldReader, InspectedField } from "../marks/tooltip-fields.ts";
 
 /** One point of an inspection: a series' point, or a layout mark's item. */
 export interface InspectedPoint {
@@ -39,6 +40,8 @@ export interface InspectedPoint {
   value: number;
   px: number;
   py: number;
+  /** The fields of `row` its mark's tooltip shows besides its value (the mark's `tooltip.fields`). */
+  fields?: readonly InspectedField[];
 }
 
 /** What a tooltip, hover event, or keyboard cursor is on. */
@@ -117,6 +120,8 @@ export interface DrawnScene {
   formatX: Formatter;
   formatY: Formatter;
   formatValue: Formatter;
+  /** Reads the fields marks' tooltips show of rows, once the chart has loaded what reads them. */
+  fields?: FieldReader | undefined;
 }
 
 interface ReadableMark extends InspectedMark {
@@ -130,6 +135,7 @@ export class Inspector {
   readonly mode: TooltipMode;
   readonly #formatX: Formatter;
   readonly #formatValue: Formatter;
+  readonly #fields: FieldReader | undefined;
   readonly #left: YAxisView;
   readonly #right: DrawnScene["right"];
 
@@ -162,6 +168,7 @@ export class Inspector {
     this.mode = scene.mode;
     this.#formatX = scene.formatX;
     this.#formatValue = scene.formatValue;
+    this.#fields = scene.fields;
     this.#left = { frame: scene.frame, formatY: scene.formatY };
     this.#right = scene.right;
     this.marks = scene.marks.map((entry) => {
@@ -526,13 +533,15 @@ export class Inspector {
     const along = tooltip === "y";
     const formatY = axis.formatY;
     const formatValue = along ? this.#formatX : formatY;
+    // Summarizing marks' series index rows of their summaries.
+    const fields = mark.summarizes ? undefined : this.#fields?.(mark.table, mark.spec.tooltip, row);
     return {
       mark: index,
       markId: mark.spec.id,
       key: s.key,
       label: tooltip === "cell" ? this.#left.formatY(placeAt(s, "y", row)) : s.label,
-      // Summarizing marks' series index rows of their summaries.
       row: mark.summarizes ? undefined : row,
+      ...(fields && { fields }),
       color: mark.pointColor?.(s, row, this.#frame.theme) ?? s.color,
       value,
       text:

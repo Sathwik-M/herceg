@@ -976,6 +976,41 @@ def test_pies_send_their_fields_and_have_their_chart_to_themselves():
         hg.Chart(sales, zoom=True).pie("region")
 
 
+def test_tooltip_fields_decode_with_their_points():
+    from herceg._events import decode_inspection
+
+    point = {"mark": 0, "markId": None, "key": "0:p99", "label": "p99", "row": 1}
+    inspection = decode_inspection(
+        {
+            "axis": "x",
+            "value": 1,
+            "time": False,
+            "label": "1",
+            "points": [
+                {
+                    **point,
+                    "value": 304,
+                    "text": "304",
+                    "fields": [
+                        {"field": "n", "label": "N", "kind": "number", "value": 5, "text": "5"},
+                        {
+                            "field": "at",
+                            "label": "at",
+                            "kind": "time",
+                            "value": 86_400_000,
+                            "text": "Jan 2, 1970",
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    assert inspection is not None
+    n, at = inspection.points[0].fields
+    assert (n.label, n.kind, n.value, n.text) == ("N", "number", 5, "5")
+    assert at.value == dt.datetime(1970, 1, 2)
+
+
 def test_pie_slices_decode_as_item_inspections():
     from herceg._events import decode_inspection
 
@@ -1632,6 +1667,84 @@ def test_option_types_list_every_option():
     assert helper == parameters - {"x", "y", "z"} | {"x_axis", "y_axis", "z_axis"}
 
 
+def test_tooltip_fields_belong_to_marks():
+    data = {"t": [0, 1], "p99": [210.0, 304.0], "requests": [9800, 12480], "host": ["a", "b"]}
+    chart = hg.Chart(data, tooltip=hg.Tooltip(mode="nearest")).line(
+        "t",
+        "p99",
+        tooltip=hg.Tooltip(
+            fields=[
+                hg.TooltipField("requests", label="Requests", format={"notation": "compact"}),
+                "host",
+            ]
+        ),
+    )
+    spec, _ = chart.to_spec()
+    assert spec["tooltip"] == {"mode": "nearest"}
+    # Columns only the tooltip shows travel with the others.
+    (table,) = spec["data"].values()
+    assert set(table["columns"]) == {"t", "p99", "requests", "host"}
+    assert spec["marks"][0]["tooltip"] == {
+        "fields": [
+            {"field": "requests", "label": "Requests", "format": {"notation": "compact"}},
+            "host",
+        ]
+    }
+    # A one-call helper's tooltip is its chart's, and its fields its mark's.
+    spec, _ = hg.line(
+        data, "t", "p99", tooltip=hg.Tooltip(mode="nearest", fields=["requests"])
+    ).to_spec()
+    assert spec["tooltip"] == {"mode": "nearest"}
+    assert spec["marks"][0]["tooltip"] == {"fields": ["requests"]}
+    spec, _ = hg.line(data, "t", "p99", tooltip=hg.Tooltip(fields=["requests"])).to_spec()
+    assert "tooltip" not in spec
+    # Axes write tooltips' values with formats of their own.
+    spec, _ = hg.line(
+        data, "t", "p99", y_axis=hg.Axis(tooltip_format={"style": "unit", "unit": "millisecond"})
+    ).to_spec()
+    assert spec["y"] == {"tooltipFormat": {"style": "unit", "unit": "millisecond"}}
+
+
+def test_tooltip_fields_are_refused_where_they_do_not_belong():
+    data = {"t": [0, 1], "p99": [210.0, 304.0], "host": ["a", "b"]}
+    with pytest.raises(ValueError, match=r"^Chart tooltip fields: belong to the marks"):
+        hg.Chart(data, tooltip=hg.Tooltip(fields=["host"])).line("t", "p99").to_spec()
+    with pytest.raises(ValueError, match=r"^line tooltip mode: is the chart's"):
+        hg.Chart(data).line("t", "p99", tooltip=hg.Tooltip(mode="nearest"))
+    with pytest.raises(KeyError, match=r"^\"line tooltip fields\[0\]: no column 'hots'"):
+        hg.Chart(data).line("t", "p99", tooltip=hg.Tooltip(fields=["hots"]))
+    with pytest.raises(TypeError, match=r"^line tooltip fields\[0\]: expected a column name"):
+        hg.Chart(data).line("t", "p99", tooltip=hg.Tooltip(fields=[3]))  # type: ignore[list-item]
+    with pytest.raises(ValueError, match=r"^line tooltip fields: expected a list of columns"):
+        hg.Chart(data).line("t", "p99", tooltip=hg.Tooltip(fields="host"))
+    with pytest.raises(ValueError, match=r'^TooltipField format: "weekdy" is not an Intl'):
+        hg.TooltipField("t", format={"weekdy": "short"})
+    with pytest.raises(ValueError, match=r"^pie tooltip fields: its points summarize rows"):
+        hg.pie(data, "host", "p99", tooltip=hg.Tooltip(fields=["t"]))
+
+
+def test_helpers_name_themselves_for_options_they_do_not_take():
+    # Python's own error would name Chart.__init__, which helpers pass options to.
+    with pytest.raises(TypeError, match=r"^line: no option 'tittle'; did you mean 'title'\?$"):
+        hg.line(DATA, "t", "p50", tittle="Latency")
+    with pytest.raises(TypeError, match=r"^line: no option 'seris'; did you mean 'series'\?$"):
+        hg.line(DATA, "t", "p50", seris="host")
+    # Other libraries' names point to herceg's.
+    with pytest.raises(
+        TypeError, match=r"^line: no option 'color'; did you mean 'series' or 'stroke'\?$"
+    ):
+        hg.line(DATA, "t", "p50", color="red")
+    with pytest.raises(
+        TypeError, match=r"^bar: no option 'colour'; did you mean 'series' or 'fill'\?$"
+    ):
+        hg.bar(DATA, "t", "p50", colour="red")
+    with pytest.raises(TypeError, match=r"see help\(herceg.scatter\) for the options it takes$"):
+        hg.scatter(DATA, "t", "p50", bogus=1)
+    # The helpers keep their signatures for help() and editors.
+    assert hg.line.__name__ == "line"
+    assert "series" in inspect.signature(hg.line).parameters
+
+
 def test_helpers_take_axes_as_x_axis_and_y_axis():
     spec, _ = hg.line(
         DATA, "t", "p50", x_axis=hg.Axis(title="time"), y_axis={"title": "ms"}
@@ -1691,8 +1804,10 @@ def test_helpers_take_every_keyword_argument_of_their_mark(helper):
         name for name, (_, _, kind) in function.items() if kind == inspect.Parameter.KEYWORD_ONLY
     ]
     # A helper's facet is its chart's (the field splitting panels): its one
-    # mark has no other marks' panels to repeat in.
-    expected = [name for name in method if name not in {"self", "data", "facet", *positional}]
+    # mark has no other marks' panels to repeat in. Its tooltip is the
+    # chart's too, whose fields go to the mark.
+    skipped = {"self", "data", "facet", "tooltip", *positional}
+    expected = [name for name in method if name not in skipped]
     assert keywords == expected
     for name in keywords:
         assert function[name][:2] == method[name][:2], name
@@ -1717,6 +1832,8 @@ def test_helpers_pass_every_keyword_argument_to_their_mark(helper, monkeypatch):
     getattr(hg, helper)(DATA, *positional, **keywords)
     (arguments,) = calls
     del arguments["self"]
+    # Without tooltip fields, the mark has no tooltip of its own.
+    assert arguments.pop("tooltip", None) is None
     # A choropleth joining values to GeoJSON passes its data to the mark.
     if helper == "choropleth":
         values["data"] = DATA

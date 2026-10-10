@@ -4,6 +4,7 @@
 // facets or panels may have. A chart reaches this module through its
 // layout marks (`LayoutMark.views`), so charts without any never load it.
 
+import type { Table } from "../data/table.ts";
 import type { MovedNodes } from "../marks/graph.ts";
 import type {
   LayoutControls,
@@ -13,6 +14,7 @@ import type {
   LayoutResult,
 } from "../marks/layout-mark.ts";
 import type { ChartMark } from "../marks/mark.ts";
+import type { FieldReader } from "../marks/tooltip-fields.ts";
 import type { DrillRoot } from "../marks/tree-data.ts";
 import type { Panel, Rect, Scene } from "../scene/scene.ts";
 import type { ItemInspection } from "./inspect.ts";
@@ -65,6 +67,8 @@ export type Header = Pick<Scene, "title" | "legend" | "colorLegends" | "glyphLeg
 
 /** One chart's record of what its layout marks drew; layout marks give charts the class. */
 export class ItemViews {
+  /** Reads the fields tooltips show of items' rows (`tooltip.fields`); set by the model. */
+  declare fields: FieldReader | undefined;
   /** Optional sink for item changes; model-only consumers keep the returned values. */
   declare changed:
     | ((
@@ -448,9 +452,12 @@ export class ItemViews {
 
   #inspection(view: ItemView, item: LayoutItem | undefined): ItemInspection | undefined {
     if (!item) return undefined;
-    const { key, label, color, text, value, px, py, outline, values } = item;
+    const { key, label, color, text, value, px, py, outline, values, row } = item;
     // A map's or a 3D box's items name their layer among the chart's marks.
     const mark = item.layer ?? view.index;
+    const owner = view.marks[mark] as (ChartMark & { table?: Table }) | undefined;
+    const fields =
+      row === undefined ? undefined : this.fields?.(owner?.table, owner?.spec.tooltip, row);
     return {
       axis: "item",
       key,
@@ -462,12 +469,13 @@ export class ItemViews {
           markId: view.marks[mark]?.spec.id,
           key,
           label,
-          row: item.row,
+          row,
           color,
           text,
           value,
           px,
           py,
+          ...(fields && { fields }),
         },
       ],
       outline,

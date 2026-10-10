@@ -36,6 +36,7 @@ import { PositionStack } from "./position-stack.ts";
 import { rowOf, type Series, TableCache, visibleRange, xExtent, yExtent } from "./series.ts";
 import { Slots } from "./slots.ts";
 import { RowStack, type StackedLayers } from "./stack.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 interface BarStyle<S extends Schema> {
@@ -63,6 +64,8 @@ interface BarStyle<S extends Schema> {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -159,6 +162,7 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
 
   constructor(input: BarSpec, table: Table<Schema>) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "bar");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
@@ -919,6 +923,7 @@ export function bar<S extends Schema>(
     x: fields(options.x),
     y: fields(options.y),
     ...definedFields(options, [
+      "tooltip",
       "series",
       "stack",
       "fill",

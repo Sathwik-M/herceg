@@ -10,7 +10,7 @@ from typing import Any, Literal, TypedDict
 
 import numpy as np
 
-from .._chart import Axis, Chart, HelperOptions
+from .._chart import Axis, Chart, HelperOptions, helper
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
@@ -71,6 +71,7 @@ class KdeOptions(TypedDict, total=False):
     clip: tuple[float | None, float | None]
 
 
+@helper
 def histplot(
     data: Any,
     *,
@@ -301,6 +302,7 @@ def histplot(
     return record(chart, Statistics("histplot", sentence, tables, None, dropped))
 
 
+@helper
 def kdeplot(
     data: Any,
     *,
@@ -421,6 +423,7 @@ def kdeplot(
 _SHARES = {"probability": "share", "percent": "percentage", "count": "count"}
 
 
+@helper
 def ecdfplot(
     data: Any,
     *,
@@ -527,6 +530,7 @@ def ecdfplot(
     return record(chart, Statistics("ecdfplot", sentence, {"ecdf": readable(table)}, None, dropped))
 
 
+@helper
 def rugplot(
     data: Any,
     *,

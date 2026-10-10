@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .._chart import Chart, HelperOptions, Jitter
+from .._chart import Chart, HelperOptions, Jitter, helper
 from .._data import Column
 from . import _swarm
 from ._common import (
@@ -49,6 +49,7 @@ Orient = Literal["v", "h", "x", "y"]
 Whiskers = Literal["tukey", "range"] | float
 
 
+@helper
 def stripplot(
     data: Any,
     *,
@@ -105,6 +106,7 @@ def stripplot(
     )
 
 
+@helper
 def swarmplot(
     data: Any,
     *,
@@ -308,6 +310,7 @@ def _jitter(jitter: bool | float | Jitter, seed: int | None) -> Jitter | None:
     return Jitter(width=float(width), seed=seed_of(seed, "stripplot"))
 
 
+@helper
 def boxplot(
     data: Any,
     *,
@@ -398,6 +401,7 @@ def _whisker_reach(whiskers: Whiskers) -> float:
     return float(whiskers)
 
 
+@helper
 def violinplot(
     data: Any,
     *,

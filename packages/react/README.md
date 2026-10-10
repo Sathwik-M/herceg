@@ -46,7 +46,7 @@ with herceg's functions can also be passed as a `marks` prop.
 The chart fills its container's width and is 320 px tall unless `width`,
 `height`, or `style` says otherwise. A `ref` gives the underlying chart, herceg's
 `Chart`, for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibility`,
-`toSVG`). Chart events are props: `onViewport`, `onSelect`, `onHover`, `onClick`,
+`toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`). Chart events are props: `onViewport`, `onSelect`, `onHover`, `onClick`,
 `onRowSelection` (a channel of the chart's `rowSelection` changed),
 `onCamera`, `onDrill` (a treemap or sunburst drilled into a node), `onItemMove` (a
 network's node moved), `onVisibility` (series hidden or shown), and `onRender` (a frame
@@ -66,6 +66,23 @@ returns plain drags to navigation or node dragging. With `drag: true`,
 nodes move while zoomed and `setItemPosition` still uses layout units.
 When zoom is on, Alt+Shift+arrows moves the node read; Shift+arrows and 0
 navigate the view. The toolbar restores moved nodes.
+
+## Tooltips
+
+Mark elements take `tooltip={{ fields: [...] }}` for more of the row a
+point is, and axes `tooltipFormat` for how tooltips write their values, as
+in herceg (see [Tooltips](../herceg/README.md#tooltips)). For content of
+your own, `renderTooltip` returns React content, which renders, with the
+application's context, in the chart's box: it keeps its placement, the
+crosshair and highlighted points, and the keyboard's announcements. Only
+the content of what the tooltip is at renders, when that changes, never an
+element per data point, and data changes still redraw without React.
+
+```tsx
+<Chart renderTooltip={(inspection) => <LatencyTip point={inspection.points[0]} />}>
+  <Line data={latency} x="time" y="p99" tooltip={{ fields: ["requests"] }} />
+</Chart>
+```
 
 ## Reusing groups of marks
 

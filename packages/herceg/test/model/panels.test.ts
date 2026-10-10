@@ -121,6 +121,19 @@ describe("panels", () => {
         panels: panels([{ id: "latency", y: { type: "log" } }, { id: "traffic" }]),
       }),
     ).toThrow("panels[1].y: shares a y scale with others");
+    // Tooltips write a shared scale's values one way.
+    expect(() =>
+      build({
+        marks,
+        resolve: { y: "shared" },
+        panels: panels([
+          { id: "latency", y: { tooltipFormat: { style: "unit", unit: "second" } } },
+          { id: "traffic", y: { tooltipFormat: { style: "unit", unit: "millisecond" } } },
+        ]),
+      }),
+    ).toThrow(
+      "panels[1].y: shares a y scale with others but differs in type, domain, zero, nice, ticks, format, or tooltipFormat; match them",
+    );
   });
 
   it("refuse marks without a panel or naming an unknown one, and what panels cannot do yet", () => {

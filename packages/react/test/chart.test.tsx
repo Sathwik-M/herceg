@@ -15,7 +15,17 @@ import {
   time,
   timeBreaks,
 } from "herceg";
-import { act, StrictMode, Suspense, startTransition, use, useLayoutEffect, useRef } from "react";
+import {
+  act,
+  createContext,
+  StrictMode,
+  Suspense,
+  startTransition,
+  use,
+  useContext,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -894,6 +904,75 @@ describe("<Chart>", () => {
       ),
     );
     expect(host.querySelectorAll('[role="figure"]')).toHaveLength(1);
+  });
+
+  it("renders tooltip content in the chart's box, with the application's context", async () => {
+    const Unit = createContext("");
+    let renders = 0;
+    function Content({ text }: { text: string }) {
+      renders++;
+      return <b>{`${text} ${useContext(Unit)}`}</b>;
+    }
+    const ref: { current: HercegChart | null } = { current: null };
+    const show = (
+      renderTooltip?: (i: { value: number; points: { text: string }[] }) => React.ReactNode,
+    ) =>
+      act(() =>
+        root.render(
+          <Unit value="ms">
+            <Chart ref={ref} locale="en-US" renderTooltip={renderTooltip}>
+              <Line data={metrics} x="t" y="a" tooltip={{ fields: ["b"] }} />
+            </Chart>
+          </Unit>,
+        ),
+      );
+    show((inspection) =>
+      inspection.value === 0 ? null : <Content text={inspection.points[0]!.text} />,
+    );
+    await ref.current!.loading;
+    const hover = async (x: number) => {
+      const chart = ref.current!;
+      const rect = chart.root.getBoundingClientRect();
+      const { plot } = chart.getPanels()[0]!;
+      await act(async () => {
+        chart.root.dispatchEvent(
+          new PointerEvent("pointermove", {
+            bubbles: true,
+            clientX: rect.left + chart.toPixel(x, { axis: "x" })!,
+            clientY: rect.top + plot.y + plot.height / 2,
+          }),
+        );
+        chart.render();
+      });
+    };
+    const box = () =>
+      [...host.querySelectorAll<HTMLElement>('div[aria-hidden="true"]')].find(
+        (div) => div.style.display === "block",
+      );
+    await hover(1);
+    expect(box()!.textContent).toBe("2 ms");
+    expect(box()!.querySelector("b")).not.toBeNull();
+    // Moving within what the tooltip is at renders nothing again.
+    const before = renders;
+    await hover(1);
+    expect(renders).toBe(before);
+    await hover(2);
+    expect(box()!.textContent).toBe("3 ms");
+    // Null shows the built-in content.
+    await hover(0);
+    expect([...box()!.children].map((row) => row.textContent)).toEqual(["0", "a1", "b4"]);
+    // A new prop that gives content where the last gave none shows it, without a move.
+    show((inspection) => <Content text={`at ${inspection.value}`} />);
+    await act(async () => ref.current!.render());
+    expect(box()!.textContent).toBe("at 0 ms");
+    // And one that gives none shows the built-in content.
+    show((inspection) => (inspection.value === 0 ? null : <Content text="other" />));
+    await act(async () => ref.current!.render());
+    expect([...box()!.children].map((row) => row.textContent)).toEqual(["0", "a1", "b4"]);
+    // Without renderTooltip, the built-in content shows the fields.
+    show(undefined);
+    await hover(3);
+    expect([...box()!.children].map((row) => row.textContent)).toEqual(["3", "a4", "b1"]);
   });
 
   it("rejects children that are not marks", () => {

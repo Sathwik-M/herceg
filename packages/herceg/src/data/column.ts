@@ -17,7 +17,8 @@ export type NumericArray =
 /**
  * How a field is stored and interpreted.
  * - `number`: numeric values; NaN marks a missing value in float columns.
- * - `time`: epoch milliseconds stored like `number`.
+ * - `time`: epoch milliseconds stored like `number`, from numbers, Dates, or
+ *   ISO 8601 strings.
  * - `category`: dictionary-encoded strings; code -1 marks a missing value.
  * - `geometry`: codes into a set of shapes (data/geometry.ts); -1 marks none.
  */
@@ -53,24 +54,36 @@ export interface GeometryColumn {
 
 export type Column = NumberColumn | CategoryColumn | GeometryColumn;
 
-/** Marks a numeric array or Date list as a time column. */
+/** A time as tables take it: epoch milliseconds, a Date, or an ISO 8601 string. */
+export type TimeValue = Date | number | string;
+
+/** Marks a numeric array, or a list of Dates or ISO 8601 strings, as a time column. */
 export interface TimeInput {
   readonly kind: "time";
-  readonly values: ArrayLike<number> | readonly (Date | number | null | undefined)[];
+  readonly values: ArrayLike<number> | readonly (TimeValue | null | undefined)[];
 }
 
+/**
+ * A time column: epoch milliseconds, Dates, or ISO 8601 strings, read as
+ * `Date.parse` reads them (a date alone is UTC midnight; a date and time
+ * without an offset is local time, so give `Z` or an offset).
+ */
 export function time(values: TimeInput["values"]): TimeInput {
   return { kind: "time", values };
 }
 
+/** A category as tables take it: its label, or a number (a year, a code, an id) read as one. */
+export type CategoryValue = string | number;
+
 /**
- * A category column: a string list (tagged, as needed when it may start
- * empty), or dictionary codes with their dictionary.
+ * A category column: labels, or numbers read as labels (tagged, as needed
+ * when it may start empty or holds numbers), or dictionary codes with
+ * their dictionary.
  */
 export type CategoryInput =
   | {
       readonly kind: "category";
-      readonly values: readonly (string | null | undefined)[];
+      readonly values: NumericArray | readonly (CategoryValue | null | undefined)[];
     }
   | {
       readonly kind: "category";
@@ -80,7 +93,14 @@ export type CategoryInput =
       readonly dictionary: readonly string[];
     };
 
-export function category(values: readonly (string | null | undefined)[]): CategoryInput {
+/**
+ * A category column of strings, or of numbers such as years, status codes,
+ * or ids: each distinct value is a category, labeled as `String` writes it
+ * (NaN is missing), in order of first appearance.
+ */
+export function category(
+  values: NumericArray | readonly (CategoryValue | null | undefined)[],
+): CategoryInput {
   return { kind: "category", values };
 }
 
@@ -109,10 +129,28 @@ function isBigIntArray(value: ArrayBufferView): boolean {
   return value instanceof BigInt64Array || value instanceof BigUint64Array;
 }
 
-export function toMilliseconds(value: Date | number | null | undefined): number {
+const getTime = Date.prototype.getTime;
+
+/**
+ * A value of a number or time field as stored: Dates as epoch
+ * milliseconds, and in time fields ISO 8601 strings too; NaN for a missing
+ * value. Throws for others, naming their `row` when given.
+ */
+export function toNumber(value: unknown, row?: number, time?: boolean): number {
   if (value == null) return Number.NaN;
-  return typeof value === "number" ? value : value.getTime();
+  if (typeof value === "number") return value;
+  // Read as Date's own method does, so that what was checked is what is written.
+  if (value instanceof Date) return getTime.call(value);
+  const parsed = time && typeof value === "string" ? Date.parse(value) : Number.NaN;
+  if (!Number.isNaN(parsed)) return parsed;
+  throw new TypeError(
+    `${row === undefined ? "" : `row ${row}: `}expected ${time ? "an ISO 8601 time, a Date, or epoch milliseconds" : "a number"}; received ${JSON.stringify(value)}`,
+  );
 }
+
+/** Epoch milliseconds of a time, as `toNumber` reads values of time fields. */
+export const toMilliseconds = (value: TimeValue | null | undefined, row?: number): number =>
+  toNumber(value, row, true);
 
 function firstPresent(values: ArrayLike<unknown>): unknown {
   for (let i = 0; i < values.length; i++) {
@@ -142,7 +180,9 @@ function createEncodedCategory(codes: Int32Array, dictionary: readonly string[])
   };
 }
 
-export function createCategory(values: ArrayLike<string | null | undefined>): CategoryColumn {
+export function createCategory(
+  values: ArrayLike<CategoryValue | null | undefined>,
+): CategoryColumn {
   const column: CategoryColumn = {
     kind: "category",
     buffer: new Int32Array(values.length),
@@ -154,17 +194,18 @@ export function createCategory(values: ArrayLike<string | null | undefined>): Ca
   return column;
 }
 
-/** Returns the dictionary code for a value, adding it when new. */
-export function encode(column: CategoryColumn, value: string | null | undefined): number {
-  if (value == null) return -1;
+/** Returns the dictionary code for a value, adding it when new; numbers stand for their labels. */
+export function encode(column: CategoryColumn, value: CategoryValue | null | undefined): number {
+  if (value == null || Number.isNaN(value)) return -1;
+  const label = String(value);
   if (!column.codes) {
     column.codes = new Map(column.dictionary.map((entry, code) => [entry, code]));
   }
-  let code = column.codes.get(value);
+  let code = column.codes.get(label);
   if (code === undefined) {
     code = column.dictionary.length;
-    column.dictionary.push(value);
-    column.codes.set(value, code);
+    column.dictionary.push(label);
+    column.codes.set(label, code);
   }
   return code;
 }
@@ -187,7 +228,7 @@ export function createColumn(input: ColumnInput): Column {
     }
     const timed = tagged;
     if (isNumericArray(timed.values)) return { kind: "time", buffer: timed.values, owned: false };
-    const buffer = Float64Array.from(timed.values as ArrayLike<Date | number>, toMilliseconds);
+    const buffer = Float64Array.from(timed.values as ArrayLike<TimeValue>, toMilliseconds);
     return { kind: "time", buffer, owned: true };
   }
   const sample = firstPresent(input);
@@ -208,8 +249,8 @@ export function createColumnOfKind(kind: FieldKind, input: ColumnInput): Column 
   if (kind === "time" && (isNumericArray(input) || Array.isArray(input))) {
     return createColumn({ kind: "time", values: input as TimeInput["values"] });
   }
-  if (kind === "category" && Array.isArray(input)) {
-    return createCategory(input as readonly (string | null)[]);
+  if (kind === "category" && (isNumericArray(input) || Array.isArray(input))) {
+    return createCategory(input as ArrayLike<CategoryValue | null>);
   }
   return createColumn(input);
 }

@@ -30,7 +30,7 @@ import type { ChartSpec } from "../../src/spec/spec.ts";
 
 /** A field's values, missing ones as null. */
 const values = <S extends Schema>(t: Table<S>, field: string) =>
-  Array.from({ length: t.length }, (_, i) => t.value(field as never, i));
+  Array.from({ length: t.length }, (_, i) => (t as unknown as Table).value(field, i));
 
 const readings = table({
   site: ["n", "s", "n", "s", "n", "e"],

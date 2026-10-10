@@ -5,6 +5,9 @@ import { rug } from "../../src/marks/rug.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import { modelOf } from "./helpers.ts";
 
+/** Without a background, the canvas holds what marks paint alone. */
+const CLEAR = { background: "transparent" } as const;
+
 const charts: Chart[] = [];
 const hosts: HTMLElement[] = [];
 afterEach(() => {
@@ -40,6 +43,7 @@ describe("rug renderers", () => {
   ] as const)("renders packed ticks in %s along %s", (renderer, axis) => {
     const t = table({ v: [3, 1, 2, 2] });
     const chart = mount({
+      theme: CLEAR,
       renderer,
       marks: [
         axis === "x"
@@ -85,6 +89,7 @@ describe("rug renderers", () => {
 
   it.each(["svg", "canvas"] as const)("paints no zero-width ticks in %s", (renderer) => {
     const chart = mount({
+      theme: CLEAR,
       renderer,
       marks: [rug(table({ v: [1, 2] }), { x: "v", stroke: "#ff0000", strokeWidth: 0 })],
     });

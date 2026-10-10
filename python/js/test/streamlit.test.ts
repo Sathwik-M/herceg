@@ -666,11 +666,21 @@ describe("Streamlit component", () => {
     other.style.setProperty("--st-background-color", "rgb(14, 17, 23)");
     run(other, lineChart("Dark", []));
     expect(ink(other)).toBe(dark);
-    // A chart's own theme wins.
+    // On the app's own background, which the chart shows through, also
+    // where the app gives no theme.
+    const surface = (root: HTMLElement) =>
+      root.querySelector("svg > rect")?.getAttribute("fill") ?? "none";
+    expect(surface(other)).toBe("none");
+    expect(surface(parent)).toBe("none");
+    const plain = host();
+    run(plain, lineChart("Plain", []));
+    expect(surface(plain)).toBe("none");
+    // A chart's own theme wins, with its own background.
     const own = host();
     own.style.setProperty("--st-background-color", "#0e1117");
     run(own, lineChart("Own", [], { theme: "light" }));
     expect(ink(own)).toBe(light);
+    expect(surface(own)).toBe("#ffffff");
   });
 
   it("throws on a chart it cannot draw, for Streamlit to show", () => {

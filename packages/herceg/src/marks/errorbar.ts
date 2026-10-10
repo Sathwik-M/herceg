@@ -30,6 +30,7 @@ import {
   valueKind,
 } from "./mark.ts";
 import { lowerPosition, rowOf, type Series, TableCache, visibleRange, xExtent } from "./series.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 interface ErrorBarStyle<S extends Schema> {
@@ -56,6 +57,8 @@ interface ErrorBarStyle<S extends Schema> {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -175,6 +178,7 @@ export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
 
   constructor(input: ErrorBarSpec, table: Table<Schema>) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "errorbar");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
@@ -518,6 +522,7 @@ export function errorBar<S extends Schema>(
   const spec = {
     type: "errorbar",
     ...definedFields(options as Partial<Record<keyof ErrorBarSpec, unknown>>, [
+      "tooltip",
       "x",
       "y",
       "x1",

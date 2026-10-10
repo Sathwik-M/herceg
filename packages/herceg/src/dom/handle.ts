@@ -213,8 +213,9 @@ export interface Chart {
   /**
    * Pending while the chart loads code it needs: its GPU painter for large
    * point series, which it draws once loaded, its `animation` of views and
-   * values, without which they change at once, its crosshair labels, or
-   * what turns a 3D chart. Undefined when nothing is pending.
+   * values, without which they change at once, its crosshair labels, what
+   * reads tooltip fields and draws `renderTooltip`'s content, or what turns
+   * a 3D chart. Undefined when nothing is pending.
    */
   readonly loading: Promise<void> | undefined;
   /**
@@ -230,6 +231,13 @@ export interface Chart {
    * listeners may export.
    */
   toSVG(): string;
+  /**
+   * PNG of the current state, as `toSVG` exports it, at `scale` times the
+   * chart's size in CSS pixels (2 by default); a transparent background
+   * stays transparent. Loads its encoder the first time. For a PDF of the
+   * current state, see `renderToPDF` in herceg/pdf.
+   */
+  toPNG(options?: { scale?: number }): Promise<Blob>;
   destroy(): void;
 }
 

@@ -3,12 +3,12 @@
 
 import { type Chart, createChart } from "./dom/chart.ts";
 import type { MeasureText } from "./layout/text.ts";
-import { type PdfOptions, renderToPDF } from "./pdf.ts";
+import { type PdfExportOptions, renderToPDF } from "./pdf.ts";
 import { renderToSVG } from "./render/static.ts";
 import { type LoadedSpec, type LoadOptions, loadSpec, type SpecBuffer } from "./spec/load.ts";
 import type { ChartSpec } from "./spec/spec.ts";
 
-export type { PdfFontOptions, PdfFontSource, PdfFonts } from "./pdf.ts";
+export type { PdfExportOptions, PdfFontOptions, PdfFontSource, PdfFonts } from "./pdf.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
 export { validateSpec } from "./spec/validate.ts";
@@ -50,7 +50,7 @@ export function specToSVG(
 export function specToPDF(
   spec: ChartSpec,
   buffers: readonly SpecBuffer[] = [],
-  options: Pick<PdfOptions, "fonts"> = {},
+  options: PdfExportOptions = {},
 ): Uint8Array {
   const { config } = loadSpec(spec, buffers);
   return renderToPDF({

@@ -399,6 +399,7 @@ function axisChecks(spec: Record<string, unknown>): ChecksOf<AxisSpec> {
     grid: boolean,
     ticks: positive,
     format: format(spec.type),
+    tooltipFormat: format(spec.type),
     show: boolean,
   };
 }
@@ -495,6 +496,25 @@ const side = oneOf("left", "right");
 const repeat = oneOf("repeat");
 const placement = { axis: side, facet: repeat, panel: string };
 
+/** What a mark's tooltips show of its rows: fields, by name or with a label and format. */
+const tooltip: Check = (v, path) => {
+  object(v, path);
+  properties(v as Record<string, unknown>, path, {
+    fields: (list, at) => {
+      if (!Array.isArray(list)) fail(at, "an array of fields", list);
+      list.forEach((entry, i) => {
+        if (typeof entry === "string") return;
+        if (!isRecord(entry)) fail(`${at}[${i}]`, "a field name or an object", entry);
+        checkProperties(entry, `${at}[${i}]`, ["field"], {
+          field,
+          label: string,
+          format: format(undefined),
+        });
+      });
+    },
+  });
+};
+
 /**
  * The properties each mark takes, typed against its spec so that adding a
  * property to a spec without checking it here fails to compile.
@@ -510,6 +530,7 @@ const MARKS: MarkChecks = {
   line: {
     required: ["x", "y"],
     checks: {
+      tooltip,
       ...placement,
       x: fields,
       y: fields,
@@ -527,6 +548,7 @@ const MARKS: MarkChecks = {
   area: {
     required: [],
     checks: {
+      tooltip,
       ...placement,
       x: fields,
       y: fields,
@@ -618,6 +640,7 @@ const MARKS: MarkChecks = {
   bar: {
     required: ["x", "y"],
     checks: {
+      tooltip,
       ...placement,
       x: fields,
       y: fields,
@@ -633,6 +656,7 @@ const MARKS: MarkChecks = {
   point: {
     required: ["x", "y"],
     checks: {
+      tooltip,
       ...placement,
       x: field,
       y: field,
@@ -839,6 +863,7 @@ const MARKS: MarkChecks = {
   candlestick: {
     required: ["x", "open", "high", "low", "close"],
     checks: {
+      tooltip,
       ...placement,
       x: field,
       open: field,
@@ -855,6 +880,7 @@ const MARKS: MarkChecks = {
   rug: {
     required: [],
     checks: {
+      tooltip,
       ...placement,
       x: field,
       y: field,
@@ -870,6 +896,7 @@ const MARKS: MarkChecks = {
   errorbar: {
     required: [],
     checks: {
+      tooltip,
       ...placement,
       x: field,
       y: field,
@@ -891,6 +918,7 @@ const MARKS: MarkChecks = {
   geoshape: {
     required: [],
     checks: {
+      tooltip,
       geometry: field,
       labelField: field,
       color: field,
@@ -907,6 +935,7 @@ const MARKS: MarkChecks = {
   geopoint: {
     required: ["longitude", "latitude"],
     checks: {
+      tooltip,
       longitude: field,
       latitude: field,
       labelField: field,
@@ -928,6 +957,7 @@ const MARKS: MarkChecks = {
   heatmap: {
     required: ["color"],
     checks: {
+      tooltip,
       ...placement,
       x: field,
       y: field,
@@ -949,6 +979,7 @@ const MARKS: MarkChecks = {
   point3d: {
     required: ["x", "y", "z"],
     checks: {
+      tooltip,
       x: field,
       y: field,
       z: field,
@@ -967,6 +998,7 @@ const MARKS: MarkChecks = {
   line3d: {
     required: ["x", "y", "z"],
     checks: {
+      tooltip,
       x: field,
       y: field,
       z: field,

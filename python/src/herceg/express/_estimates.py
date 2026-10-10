@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .._chart import Chart, HelperOptions
+from .._chart import Chart, HelperOptions, helper
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
@@ -63,6 +63,7 @@ _DASHES: dict[str, list[float] | None] = {
 }
 
 
+@helper
 def barplot(
     data: Any,
     *,
@@ -121,6 +122,7 @@ def barplot(
     return record(chart, est.statistics("barplot"))
 
 
+@helper
 def pointplot(
     data: Any,
     *,
@@ -231,6 +233,7 @@ def _line_styles(
     return styles
 
 
+@helper
 def lineplot(
     data: Any,
     *,

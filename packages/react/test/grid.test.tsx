@@ -63,7 +63,7 @@ describe("<Grid>", () => {
     expect(grid().getAttribute("aria-label")).toBe("Latest");
     const surface = () =>
       host.querySelector<HTMLElement>(".herceg-grid")!.style.getPropertyValue("--hg-surface");
-    expect(surface()).toBe("#1b1f28");
+    expect(surface()).toBe("#12151c");
     // A theme no longer passed is the default again.
     act(() => root.render(<Grid model={model} ariaLabel="Latest" style={{ height: 300 }} />));
     expect(surface()).toBe("#ffffff");

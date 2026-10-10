@@ -55,6 +55,7 @@ import {
 } from "./mark.ts";
 import { placeAt, rowOf, type Series, valueAt, visibleRange, xExtent, yExtent } from "./series.ts";
 import { offsetOf, Swarms } from "./swarm.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 /**
@@ -151,6 +152,8 @@ interface PointStyle<S extends Schema> {
    * name share a color, one legend entry, and visibility.
    */
   legendGroup?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -218,6 +221,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
 
   constructor(input: PointSpec, table: Table<Schema>, view?: RowView) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "point");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
@@ -1100,6 +1104,7 @@ export function point<S extends Schema>(
     x: options.x,
     y: options.y,
     ...definedFields(options, [
+      "tooltip",
       "series",
       "animationKey",
       "radius",

@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .._chart import Axis, Chart, HelperOptions, Panel
+from .._chart import Axis, Chart, HelperOptions, Panel, helper
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
@@ -46,6 +46,7 @@ _PAIR_PANEL = 150
 _JOINT_SIZE = 480
 
 
+@helper
 def pairplot(
     data: Any,
     *,
@@ -212,6 +213,7 @@ def pairplot(
     )
 
 
+@helper
 def jointplot(
     data: Any,
     *,
@@ -345,6 +347,7 @@ def jointplot(
 _DENDROGRAM_RATIO = 0.2
 
 
+@helper
 def clustermap(
     data: Any,
     *,

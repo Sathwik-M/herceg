@@ -6,6 +6,8 @@ import {
   type ChartUpdate,
   createChart,
   type Chart as HercegChart,
+  type Inspection,
+  type RenderTooltip,
   tablesOf,
   viewOf,
 } from "herceg";
@@ -19,12 +21,25 @@ import {
   type RefObject,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
+  useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { markBuilder } from "./marks.tsx";
 
 /** Chart options as props: one left out, or `undefined`, takes its default. */
-export interface ChartProps extends Omit<ChartUpdate, "marks"> {
+export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip"> {
+  /**
+   * The tooltip's content, rendered by React (with the application's
+   * context) into the chart's own box, which keeps its placement, the
+   * crosshair, and the keyboard's announcements; null for the built-in
+   * content. Only the content of what the tooltip is at renders, when that
+   * changes: never an element per data point. A function of the
+   * inspection, not a component (it is called once more to see whether it
+   * gives null): components go inside it.
+   */
+  renderTooltip?: ((inspection: Inspection) => ReactNode) | undefined;
   /** Marks built with herceg's functions; mark elements among `children` are added after them. */
   marks?: readonly ChartMark[];
   /** Mark elements: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Line3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
@@ -155,6 +170,71 @@ function sameMark(a: ChartMark, b: ChartMark): boolean {
 
 type Options = Omit<ChartUpdate, "marks">;
 
+/** What the tooltip is at, and the element its content renders in. */
+interface Shown {
+  inspection: Inspection;
+  host: HTMLElement;
+}
+
+/**
+ * The tooltip's content, rendered into the chart's box through a portal.
+ * Its state is its own, so a tooltip that moves re-renders only this.
+ */
+function TooltipContent({
+  shows,
+  render,
+}: {
+  shows: RefObject<((shown: Shown | null) => void) | null>;
+  render: (inspection: Inspection) => ReactNode;
+}) {
+  const [shown, setShown] = useState<Shown | null>(null);
+  useLayoutEffect(() => {
+    shows.current = setShown;
+    return () => {
+      shows.current = null;
+    };
+  }, [shows]);
+  return shown && createPortal(render(shown.inspection), shown.host);
+}
+
+/**
+ * The chart's `renderTooltip` for a `renderTooltip` prop: it hands what the
+ * tooltip is at to `TooltipContent`, and the chart one element to show, or
+ * nothing, for the built-in content, where the prop gives none. `version`
+ * changes when a new prop would answer that differently for what the chart
+ * last asked about, so the chart asks again.
+ */
+function useTooltip(render: ((inspection: Inspection) => ReactNode) | undefined) {
+  const shows = useRef<((shown: Shown | null) => void) | null>(null);
+  const latest = useRef(render);
+  const asked = useRef<{ inspection: Inspection; empty: boolean } | null>(null);
+  const [version, setVersion] = useState(0);
+  useLayoutEffect(() => {
+    latest.current = render;
+    const last = asked.current;
+    if (render && last && (render(last.inspection) == null) !== last.empty)
+      setVersion((version) => version + 1);
+  }, [render]);
+  const rendered = render !== undefined;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new version is a new renderer, which the chart asks again
+  const option = useMemo<RenderTooltip | undefined>(() => {
+    if (!rendered) return undefined;
+    let host: HTMLElement | undefined;
+    return (inspection) => {
+      const empty = latest.current?.(inspection) == null;
+      asked.current = { inspection, empty };
+      if (empty) {
+        shows.current?.(null);
+        return null;
+      }
+      host ??= document.createElement("div");
+      shows.current?.({ inspection, host });
+      return host;
+    };
+  }, [rendered, version]);
+  return { shows, option, version };
+}
+
 interface Applied {
   marks: readonly ChartMark[];
   options: Options;
@@ -189,14 +269,18 @@ export function Chart({
   onItemMove,
   onVisibility,
   onRender,
-  ...options
+  renderTooltip,
+  ...props
 }: ChartProps) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<HercegChart | null>(null);
   /** What the chart shows, to skip updates when a re-render changed nothing. */
   const applied = useRef<Applied | null>(null);
   const marks = [...(markProp ?? []), ...marksFrom(children)];
-  const optionsKey = canonical(options);
+  const tooltip = useTooltip(renderTooltip);
+  const options: Options = tooltip.option ? { ...props, renderTooltip: tooltip.option } : props;
+  // The tooltip's renderer is a function, which canonical JSON leaves out.
+  const optionsKey = `${canonical(options)}${tooltip.option ? ` rendered tooltip ${tooltip.version}` : ""}`;
 
   // The chart is created once; later prop changes go through update().
   // biome-ignore lint/correctness/useExhaustiveDependencies: created once on mount
@@ -256,10 +340,13 @@ export function Chart({
   });
 
   return (
-    <div
-      ref={container}
-      className={className}
-      style={{ width: options.width ?? "100%", height: options.height ?? 320, ...style }}
-    />
+    <>
+      <div
+        ref={container}
+        className={className}
+        style={{ width: options.width ?? "100%", height: options.height ?? 320, ...style }}
+      />
+      {renderTooltip && <TooltipContent shows={tooltip.shows} render={renderTooltip} />}
+    </>
   );
 }

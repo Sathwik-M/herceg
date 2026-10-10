@@ -1,4 +1,4 @@
-import type { Frozen } from "../spec/spec.ts";
+import type { Frozen, MarkTooltipSpec } from "../spec/spec.ts";
 // Custom marks: a JavaScript `draw` function places shapes using the chart's
 // scales. They share axes, viewport, and rendering (SVG, Canvas, static SVG)
 // with built-in marks, but are not portable: a chart spec cannot hold one.
@@ -30,6 +30,7 @@ import {
   valueKind,
 } from "./mark.ts";
 import { type Series, xExtent, yExtent } from "./series.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 /** Style of a shape. Without `fill` or `stroke`, shapes are filled with the theme's text color. */
@@ -93,6 +94,11 @@ export interface CustomSeries {
   readonly rows: ArrayLike<number> | undefined;
   /** How many rows it holds. */
   readonly length: number;
+  /**
+   * The row of its point at `position`, from 0 to `length - 1`: what `x`,
+   * `y`, and the table's columns are indexed by.
+   */
+  rowAt(position: number): number;
 }
 
 /** The draw context of a custom mark over a table. */
@@ -114,6 +120,12 @@ interface CustomBase {
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
+  /**
+   * The axis the mark's shapes are drawn from zero along, such as
+   * lollipops' stems ("y") or horizontal ones' ("x"): its domain includes
+   * zero, as for bars, unless the axis says otherwise (`zero: false`).
+   */
+  zero?: "x" | "y";
   id?: string;
 }
 
@@ -148,6 +160,8 @@ export interface CustomDataOptions<S extends Schema> extends CustomBase {
    * formats values as the chart's x and y axes and other numbers.
    */
   pointText?(row: number, format: AxisFormat, series: CustomSeries): string;
+  /** Fields of the row tooltips show besides the series' values, for marks that show series. */
+  tooltip?: MarkTooltip<S>;
   draw(context: DataDrawContext<S>): void;
 }
 
@@ -159,6 +173,7 @@ export interface CustomSpec {
   type: "custom";
   id?: string;
   axis?: "left" | "right";
+  zero?: "x" | "y";
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
@@ -168,6 +183,12 @@ export interface CustomSpec {
   y?: string | string[];
   series?: string;
   label?: string;
+  tooltip?: MarkTooltipSpec;
+}
+
+/** A series as `draw` and `pointText` see it. */
+function customSeries({ key, label, color, x, y, rows, length }: Series): CustomSeries {
+  return { key, label, color, x, y, rows, length, rowAt: (k) => (rows ? rows[k]! : k) };
 }
 
 /** [min, max] of a field's finite values (cached by the table); positive ones on log axes. */
@@ -194,6 +215,8 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
   readonly spec: Frozen<CustomSpec>;
   readonly table: Table | undefined;
   readonly tooltip = "x";
+  readonly zero: "x" | "y" | undefined;
+  readonly seriesless: boolean;
   readonly #x: readonly string[];
   readonly #y: readonly string[];
   /** Splits the table into series, when the mark shows any. */
@@ -205,8 +228,13 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
   constructor(table: Table | undefined, options: CustomDataOptions<Schema>) {
     const spec: CustomSpec = {
       type: "custom",
-      ...definedFields(options, ["id", "axis", "facet", "panel"]),
+      ...definedFields(options, ["id", "axis", "zero", "facet", "panel"]),
     };
+    if (options.zero !== undefined && options.zero !== "x" && options.zero !== "y")
+      throw new TypeError(
+        `custom zero: expected "x" or "y"; received ${JSON.stringify(options.zero)}`,
+      );
+    this.zero = options.zero;
     this.table = table;
     const list = (fields: string | readonly string[] | undefined) =>
       fields === undefined ? [] : typeof fields === "string" ? [fields] : [...fields];
@@ -231,12 +259,20 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
       spec.y = typeof options.y === "string" ? options.y : [...this.#y];
       if (field !== undefined) spec.series = field;
       if (options.label !== undefined) spec.label = options.label;
-    } else if (field !== undefined || options.label !== undefined || options.pointText) {
+      if (options.tooltip !== undefined) spec.tooltip = options.tooltip as MarkTooltipSpec;
+    } else if (
+      field !== undefined ||
+      options.label !== undefined ||
+      options.pointText ||
+      options.tooltip
+    ) {
       throw new Error(
-        "custom: series, label, and pointText need one x field, y fields, and no series: false",
+        "custom: series, label, pointText, and tooltip need one x field, y fields, and no series: false",
       );
     }
     this.spec = frozen(spec);
+    this.seriesless = !this.#split;
+    checkTooltip(table, this.spec.tooltip, "custom");
     this.#draw = options.draw;
     this.#pointText = options.pointText;
     this.#description = options.description;
@@ -273,7 +309,9 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
 
   /** Tooltip text for a row: the `pointText` option's, or the series' value. */
   pointText(series: Series, row: number, format: AxisFormat): string {
-    return this.#pointText ? this.#pointText(row, format, series) : format.y(series.values[row]!);
+    return this.#pointText
+      ? this.#pointText(row, format, customSeries(series))
+      : format.y(series.values[row]!);
   }
 
   describe(): string | undefined {
@@ -304,7 +342,7 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
     const context: DataDrawContext<Schema> = {
       table: this.table!,
       // Hidden series are not drawn, as with other marks.
-      series: series.filter((s) => !frame.hidden.has(s.key)),
+      series: series.filter((s) => !frame.hidden.has(s.key)).map(customSeries),
       x: (value) => frame.x.map(value),
       y: (value) => frame.y.map(value),
       domain: { x: frame.x.domain, y: frame.y.domain },
@@ -358,10 +396,11 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
  *   x: "time",
  *   y: "cpu",
  *   series: "host",
+ *   zero: "y",
  *   draw({ series, x, y, line, circle }) {
  *     for (const s of series) {
  *       for (let k = 0; k < s.length; k++) {
- *         const row = s.rows ? s.rows[k]! : k;
+ *         const row = s.rowAt(k);
  *         const [px, py] = [x(s.x[row]!), y(s.y[row]!)];
  *         line(px, y(0), px, py, { stroke: s.color });
  *         circle(px, py, 4, { fill: s.color });

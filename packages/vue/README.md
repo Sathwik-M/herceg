@@ -55,7 +55,7 @@ the chart's `rowSelection` changed), and `@click` (the chart's click, with the
 data under the pointer, not the element's). A `:row-selection` binding made again,
 or kept in reactive state, is the same while it binds the same stores and channels. A template ref exposes the underlying chart,
 herceg's `Chart`, as `chart` (null until mounted) for imperative calls (`setViewport`,
-`select`, `toPixel`, `setVisibility`, `toSVG`):
+`select`, `toPixel`, `setVisibility`, `toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`):
 
 ```vue
 <script setup lang="ts">
@@ -84,6 +84,25 @@ returns plain drags to navigation or node dragging. With `drag: true`,
 nodes move while zoomed and `setItemPosition` still uses layout units.
 When zoom is on, Alt+Shift+arrows moves the node read; Shift+arrows and 0
 navigate the view. The toolbar restores moved nodes.
+
+## Tooltips
+
+Mark components take `:tooltip="{ fields: [...] }"` for more of the row a
+point is, and axes `tooltipFormat` for how tooltips write their values, as
+in herceg (see [Tooltips](../herceg/README.md#tooltips)). For content of
+your own, the `renderTooltip` slot renders in the chart's box, which keeps
+its placement, the crosshair and highlighted points, and the keyboard's
+announcements. Only the content of what the tooltip is at renders, when
+that changes, never a node per data point.
+
+```vue
+<Chart>
+  <Line :data="latency" x="time" y="p99" :tooltip="{ fields: ['requests'] }" />
+  <template #renderTooltip="{ inspection }">
+    <LatencyTip :point="inspection.points[0]" />
+  </template>
+</Chart>
+```
 
 ## Reusing groups of marks
 

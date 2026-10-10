@@ -4,6 +4,8 @@ import {
   type ChartOptions,
   createChart,
   type Chart as HercegChart,
+  type Inspection,
+  type RenderTooltip,
   tablesOf,
   viewOf,
 } from "herceg";
@@ -17,15 +19,18 @@ import {
   onMounted,
   onUpdated,
   type PropType,
+  type ShallowRef,
   type SlotsType,
   shallowRef,
+  Teleport,
   Text,
   toRaw,
   type VNode,
 } from "vue";
 import { markBuilder, plain } from "./marks.ts";
 
-type Options = Omit<ChartOptions, "marks">;
+/** Options as props: the tooltip's content of your own is the `renderTooltip` slot. */
+type Options = Omit<ChartOptions, "marks" | "renderTooltip">;
 type Option<K extends keyof Options> = PropType<NonNullable<Options[K]>>;
 
 /**
@@ -168,9 +173,38 @@ function sameMark(a: ChartMark, b: ChartMark): boolean {
 /** What a render describes, and later what the chart shows. */
 interface View {
   marks: readonly ChartMark[];
-  options: Options;
+  options: Options & { renderTooltip?: RenderTooltip };
   key: string;
 }
+
+/** What the tooltip is at, and the element its content renders in. */
+interface Shown {
+  inspection: Inspection;
+  host: HTMLElement;
+}
+
+/**
+ * The `renderTooltip` slot's content, teleported into the chart's tooltip
+ * box. It reads what is shown itself, so a tooltip that moves re-renders
+ * only this.
+ */
+const TooltipContent = defineComponent({
+  props: {
+    shown: { type: Object as PropType<ShallowRef<Shown | null>>, required: true },
+    render: {
+      type: Function as PropType<(props: { inspection: Inspection }) => VNode[]>,
+      required: true,
+    },
+  },
+  setup(props) {
+    return () => {
+      const shown = props.shown.value;
+      return (
+        shown && h(Teleport, { to: shown.host }, props.render({ inspection: shown.inspection }))
+      );
+    };
+  },
+});
 
 const px = (size: number | undefined) => (size === undefined ? undefined : `${size}px`);
 
@@ -197,6 +231,13 @@ export const Chart = defineComponent({
   slots: Object as SlotsType<{
     /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Line3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
     default?: () => VNode[];
+    /**
+     * The tooltip's content, in the chart's own box, which keeps its
+     * placement, the crosshair, and the keyboard's announcements. Only the
+     * content of what the tooltip is at renders, when that changes: never a
+     * node per data point.
+     */
+    renderTooltip?: (props: { inspection: Inspection }) => VNode[];
   }>,
   expose: ["chart"],
   setup(props, { emit, slots }) {
@@ -209,6 +250,15 @@ export const Chart = defineComponent({
     let applied: View | undefined;
     /** An error the last render met building marks or options. */
     let failure: { error: unknown } | undefined;
+    /** What the tooltip is at, for `TooltipContent`. */
+    const shown = shallowRef<Shown | null>(null);
+    let host: HTMLElement | undefined;
+    /** The chart's `renderTooltip` with the slot: it shows one element, which the slot renders in. */
+    const renderTooltip: RenderTooltip = (inspection) => {
+      host ??= document.createElement("div");
+      shown.value = { inspection, host };
+      return host;
+    };
 
     // Called during render, so Vue tracks what the props and the slot read.
     function describe(): View {
@@ -217,10 +267,12 @@ export const Chart = defineComponent({
         if (props[key] !== undefined) options[key] = plain(props[key]);
       }
       const marks = (props.marks ?? []).map((mark) => toRaw(mark));
+      const rendered = slots.renderTooltip !== undefined;
       return {
         marks: collectMarks(slots.default?.(), marks),
-        options: options as Options,
-        key: canonical(options),
+        options: { ...(options as Options), ...(rendered && { renderTooltip }) },
+        // The tooltip's renderer is a function, which canonical JSON leaves out.
+        key: `${canonical(options)}${rendered ? " rendered tooltip" : ""}`,
       };
     }
 
@@ -257,7 +309,7 @@ export const Chart = defineComponent({
       if (sameMarks && next.key === last.key) return;
       // Props are the whole configuration: options no longer passed go back
       // to their defaults rather than keeping their previous values.
-      chart.value.update({ ...UNSET, ...next.options, marks });
+      chart.value.update({ ...UNSET, renderTooltip: undefined, ...next.options, marks });
       applied = { ...next, marks };
     }
 
@@ -283,10 +335,16 @@ export const Chart = defineComponent({
           failure = { error };
         }
         // Class, style, and other attributes fall through onto this element.
-        return h("div", {
-          ref: container,
-          style: { width: px(props.width) ?? "100%", height: px(props.height) ?? "320px" },
-        });
+        // The tooltip's content teleports out of it; the chart is appended after.
+        const content = slots.renderTooltip;
+        return h(
+          "div",
+          {
+            ref: container,
+            style: { width: px(props.width) ?? "100%", height: px(props.height) ?? "320px" },
+          },
+          content ? [h(TooltipContent, { shown, render: content })] : [],
+        );
       },
     };
   },

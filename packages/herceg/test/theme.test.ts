@@ -4,13 +4,24 @@ import { isLightColor } from "../src/scale/color.ts";
 import { resolveTheme, themeReadsPage } from "../src/theme.ts";
 
 describe("resolveTheme", () => {
-  it("gives high-contrast themes surfaces of their own and keeps light and dark transparent", () => {
-    expect(resolveTheme("light").background).toBe("transparent");
-    expect(resolveTheme("dark").background).toBe("transparent");
+  it("gives named themes surfaces of their own and keeps auto transparent", () => {
+    expect(resolveTheme(undefined).background).toBe("#ffffff");
+    expect(resolveTheme("light").background).toBe("#ffffff");
+    expect(resolveTheme("dark").background).toBe("#12151c");
     expect(resolveTheme("high-contrast").background).toBe("#ffffff");
     expect(resolveTheme("high-contrast-dark").background).toBe("#000000");
-    // Without a page, auto is light.
-    expect(resolveTheme("auto")).toEqual(resolveTheme("light"));
+    expect(resolveTheme({ palette: ["#000000"] }).background).toBe("#ffffff");
+    // Without a page, auto is light, on the page's background.
+    expect(resolveTheme("auto")).toEqual({ ...resolveTheme("light"), background: "transparent" });
+    expect(resolveTheme("auto", { dark: true })).toEqual({
+      ...resolveTheme("dark"),
+      background: "transparent",
+    });
+    expect(resolveTheme({ extends: "auto" }).background).toBe("transparent");
+    // Any theme can show the page instead.
+    expect(resolveTheme({ extends: "dark", background: "transparent" }).background).toBe(
+      "transparent",
+    );
   });
 
   it("names the themes there are when given another", () => {

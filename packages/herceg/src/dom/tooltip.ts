@@ -1,6 +1,18 @@
 import type { Inspection } from "../model/model.ts";
 import type { Theme } from "../theme.ts";
 
+/**
+ * The tooltip's content, of your own (JavaScript only): text, or a node to
+ * show in the box; null or undefined for the built-in content. A node's
+ * content may change later, as frameworks render it: the box keeps its
+ * place as its size changes.
+ */
+export type RenderTooltip = (inspection: Inspection) => string | Node | null | undefined;
+
+/**
+ * The tooltip's box. Charts with tooltip fields or `renderTooltip` show it
+ * through the `show` of dom/tooltip-content.ts, which draws them.
+ */
 export class Tooltip {
   readonly element: HTMLDivElement;
 
@@ -63,6 +75,9 @@ export class Tooltip {
 export function describeInspection(inspection: Inspection): string {
   return [
     inspection.label,
-    ...inspection.points.map((point) => `${point.label}: ${point.text}`),
+    ...inspection.points.map(
+      ({ label, text, fields = [] }) =>
+        `${label}: ${[text, ...fields.map((field) => `${field.label}: ${field.text}`)].join(", ")}`,
+    ),
   ].join(". ");
 }

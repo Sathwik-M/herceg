@@ -7,7 +7,6 @@ export function render(container: HTMLElement) {
     title: "Latency by service",
     marks: [line(latency, { x: "time", y: "latency", series: "service" })],
     y: { title: "ms" },
-    // The dark theme is transparent, to take a dark page's background; this page is light.
-    theme: { extends: "dark", background: "#15171c", palette: ["#5b8def", "#f08a4b", "#3fbf8f"] },
+    theme: { extends: "dark", palette: ["#5b8def", "#f08a4b", "#3fbf8f"] },
   });
 }

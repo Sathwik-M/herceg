@@ -30,6 +30,7 @@ import Pies from "./Pies.svelte";
 import Prices from "./Prices.svelte";
 import Solids from "./Solids.svelte";
 import Stray from "./Stray.svelte";
+import Tips from "./Tips.svelte";
 
 // The options each chart was last given, at creation and by `update`, which
 // tests compare with the props that made them.
@@ -551,5 +552,52 @@ describe("<Chart>", () => {
 
   it("rejects mark components outside a chart", () => {
     expect(() => render(Stray, {})).toThrow(/inside a <Chart>/);
+  });
+});
+
+describe("<Chart renderTooltip>", () => {
+  it("renders the snippet in the chart's tooltip box", async () => {
+    const props = $state({ data: metrics, own: true, chart: null as HercegChart | null });
+    render(Tips, props);
+    const chart = props.chart!;
+    await chart.loading;
+    const hover = (x: number) => {
+      const rect = chart.root.getBoundingClientRect();
+      const { plot } = chart.getPanels()[0]!;
+      chart.root.dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          clientX: rect.left + chart.toPixel(x, { axis: "x" })!,
+          clientY: rect.top + plot.y + plot.height / 2,
+        }),
+      );
+      chart.render();
+      flushSync();
+    };
+    const box = () =>
+      [...host.querySelectorAll<HTMLElement>('div[aria-hidden="true"]')].find(
+        (div) => div.style.display === "block",
+      );
+    hover(1);
+    expect(box()!.textContent!.trim()).toBe("2 ms");
+    expect(box()!.querySelector("b")).not.toBeNull();
+    hover(2);
+    expect(box()!.textContent!.trim()).toBe("3 ms");
+    // Without the snippet, the built-in content shows the fields.
+    props.own = false;
+    flushSync();
+    hover(3);
+    expect([...box()!.children].map((row) => row.textContent)).toEqual(["3", "a4", "b1"]);
+    // Given again, it shows nothing outside the tooltip, then what the tooltip is at.
+    hover(2);
+    chart.root.dispatchEvent(new PointerEvent("pointerleave", { bubbles: true }));
+    chart.render();
+    props.own = false;
+    flushSync();
+    props.own = true;
+    flushSync();
+    expect(host.querySelector("b")).toBeNull();
+    hover(2);
+    expect(box()!.textContent!.trim()).toBe("3 ms");
   });
 });

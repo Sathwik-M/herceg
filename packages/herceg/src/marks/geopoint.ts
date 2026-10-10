@@ -43,6 +43,7 @@ import {
   requireField,
 } from "./mark.ts";
 import { rowsByCode } from "./series.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 
 /**
  * A map point's size: a constant `radius`, or a number field `size` sized
@@ -93,6 +94,8 @@ interface GeoPointStyle<S extends Schema> {
   strokeWidth?: number;
   /** Legend and tooltip name of points without `series`. */
   label?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -138,6 +141,7 @@ export class GeoPointMark implements GeoLayer {
 
   constructor(input: GeoPointSpec, table: Table) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "geopoint");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     requireField(table, spec.longitude, ["number"], "geopoint longitude");
@@ -683,6 +687,7 @@ export function geopoint<S extends Schema>(
     longitude: options.longitude,
     latitude: options.latitude,
     ...definedFields(options, [
+      "tooltip",
       "labelField",
       "series",
       "radius",

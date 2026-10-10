@@ -41,6 +41,7 @@ import {
   seriesKey,
 } from "./mark.ts";
 import { type BandPlaces, placeAt, rowOf, type Series, TableCache } from "./series.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 import { unionExtent } from "./trace.ts";
 
 interface HeatmapCommon<S extends Schema> {
@@ -67,6 +68,8 @@ interface HeatmapCommon<S extends Schema> {
   facet?: "repeat";
   /** With the chart's `panels`, the id of the panel to draw in, or "*" for every panel. */
   panel?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -231,6 +234,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
 
   constructor(input: HeatmapSpec, table: Table<Schema>) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "heatmap");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     this.table = table;
@@ -885,6 +889,7 @@ export function heatmap<S extends Schema>(
   options: HeatmapOptions<S>,
 ): ChartMark<Frozen<HeatmapSpec>> {
   const shared = definedFields(options, [
+    "tooltip",
     "label",
     "id",
     "facet",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { time } from "../../src/data/column.ts";
+import { category, time } from "../../src/data/column.ts";
 import { fromRows, lowerBound, type TableChange, table, upperBound } from "../../src/data/table.ts";
 
 describe("table()", () => {
@@ -28,6 +28,41 @@ describe("table()", () => {
   it("marks numeric arrays as time with time()", () => {
     const t = table({ t: time(new Float64Array([0, 1])) });
     expect(t.kind("t")).toBe("time");
+  });
+
+  it("reads ISO 8601 strings, Dates, and epoch milliseconds as times", () => {
+    const t = table({
+      t: time(["2026-01-21", "2026-01-21T09:30:00Z", new Date(1000), 2000, null]),
+    });
+    expect(Array.from(t.numbers("t"))).toEqual([
+      Date.UTC(2026, 0, 21),
+      Date.UTC(2026, 0, 21, 9, 30),
+      1000,
+      2000,
+      Number.NaN,
+    ]);
+    expect(t.value("t", 0)).toBe(Date.UTC(2026, 0, 21));
+    expect(() => table({ t: time(["2026-01-21", "tomorrow"]) })).toThrow(
+      'Column "t": row 1: expected an ISO 8601 time, a Date, or epoch milliseconds; received "tomorrow"',
+    );
+  });
+
+  it("reads numbers as categories with category()", () => {
+    const t = table({
+      year: category([2025, 2024, 2025, Number.NaN, null]),
+      status: category(new Int32Array([200, 404, 200, 200, 404])),
+      v: [1, 2, 3, 4, 5],
+    });
+    expect(t.kind("year")).toBe("category");
+    // In order of first appearance, labeled as String writes them; NaN is missing.
+    expect(t.categories("year").dictionary).toEqual(["2025", "2024"]);
+    expect(Array.from(t.categories("year").codes)).toEqual([0, 1, 0, -1, -1]);
+    expect(t.categories("status").dictionary).toEqual(["200", "404"]);
+    expect(t.value("status", 1)).toBe("404");
+    t.appendRow({ year: 2023, status: "500", v: 6 });
+    t.set("year", 0, 2026);
+    expect(t.categories("year").dictionary).toEqual(["2025", "2024", "2023", "2026"]);
+    expect(t.value("status", 5)).toBe("500");
   });
 
   it("rejects columns of different lengths", () => {
@@ -79,6 +114,52 @@ describe("append", () => {
     const t = table({ x: [1], y: [2] });
     expect(() => t.append({ x: [1] } as never)).toThrow(/all 2 fields/);
     expect(() => t.append({ x: [1, 2], y: [1] })).toThrow(/expected 2/);
+  });
+
+  it("takes times as ISO 8601 strings and Dates", () => {
+    const t = table({ t: time(new Float64Array([0])), v: [1] });
+    t.appendRow({ t: "1970-01-01T00:00:01Z", v: 2 });
+    t.append({ t: [new Date(2000), "1970-01-01T00:00:03.000Z"], v: [3, 4] });
+    t.set("t", 0, "1970-01-01T00:00:00.500Z");
+    expect(Array.from(t.numbers("t"))).toEqual([500, 1000, 2000, 3000]);
+    t.dropBefore("t", "1970-01-01T00:00:02Z");
+    expect(t.length).toBe(2);
+  });
+
+  it("changes nothing when a value is not of its field's kind", () => {
+    const t = table({ t: time([0, 1]), v: [1, 2], c: ["a", "b"] }, { maxRows: 2 });
+    const changes: TableChange[] = [];
+    t.subscribe((change) => changes.push(change));
+    // A batch that would drop rows to make room fails before dropping any.
+    expect(() => t.append({ t: [2, "later"], v: [3, 4], c: ["c", "d"] })).toThrow(
+      'append "t": row 1: expected an ISO 8601 time, a Date, or epoch milliseconds; received "later"',
+    );
+    expect(() => t.append({ t: [2], v: ["3" as never], c: ["c"] })).toThrow(
+      'append "v": row 0: expected a number; received "3"',
+    );
+    expect(() => t.replace("t", 0, ["2026-13-45"])).toThrow(/^replace "t": row 0: expected/);
+    // Categories take strings and numbers only.
+    expect(() => t.append({ t: [2], v: [3], c: [Object.create(null)] })).toThrow(
+      'append "c": row 0: expected a string or number; received {}',
+    );
+    expect(() => t.replace("c", 0, [true as never])).toThrow(
+      /^replace "c": row 0: expected a string/,
+    );
+    expect(t.categories("c").dictionary).toEqual(["a", "b"]);
+    expect(t.length).toBe(2);
+    expect(Array.from(t.numbers("t"))).toEqual([0, 1]);
+    expect(Array.from(t.numbers("v"))).toEqual([1, 2]);
+    expect(changes).toEqual([]);
+    // Dates are read as Date reads them, so what was checked is what is written.
+    class Fickle extends Date {
+      #reads = 0;
+      override getTime(): number {
+        if (this.#reads++ > 0) throw new Error("read twice");
+        return super.getTime();
+      }
+    }
+    t.append({ t: [new Fickle(5)], v: [5], c: ["e"] });
+    expect(t.value("t", 1)).toBe(5);
   });
 
   it("extends category dictionaries", () => {
@@ -178,6 +259,33 @@ describe("fromRows()", () => {
     expect(t.kind("when")).toBe("time");
     expect(Array.from(t.numbers("value"))).toEqual([1, 2]);
     expect(t.categories("host").dictionary).toEqual(["a", "b"]);
+  });
+
+  it("reads properties as the kinds `types` gives them", () => {
+    const rows = [
+      { at: 1_000, iso: "1970-01-01T00:00:02Z", status: 200, value: 1 },
+      { at: 3_000, iso: null, status: 404, value: 2 },
+    ];
+    const t = fromRows(rows, { types: { at: "time", iso: "time", status: "category" } });
+    expect([t.kind("at"), t.kind("iso"), t.kind("status"), t.kind("value")]).toEqual([
+      "time",
+      "time",
+      "category",
+      "number",
+    ]);
+    expect(Array.from(t.numbers("iso"))).toEqual([2000, Number.NaN]);
+    expect(t.categories("status").dictionary).toEqual(["200", "404"]);
+    // Strings stay categories unless typed as times.
+    expect(fromRows(rows).kind("iso")).toBe("category");
+    expect(() => fromRows(rows, { types: { atx: "time" } as never })).toThrow(
+      'fromRows types: no field "atx"; the rows have "at", "iso", "status", "value"',
+    );
+    expect(() => fromRows(rows, { types: { at: "date" } as never })).toThrow(
+      'fromRows types.at: expected "number", "time", or "category"; received "date"',
+    );
+    expect(() => fromRows([{ at: "soon" }], { types: { at: "time" } })).toThrow(
+      'fromRows "at": row 0: expected an ISO 8601 time',
+    );
   });
 });
 

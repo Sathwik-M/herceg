@@ -24,6 +24,7 @@ import {
   usesY,
 } from "../marks/mark.ts";
 import { type Series, samePositions } from "../marks/series.ts";
+import type { FieldReaders } from "../marks/tooltip-fields.ts";
 import { unionExtent } from "../marks/trace.ts";
 import type { TimeBreaks } from "../scale/breaks.ts";
 import type { PositionScale } from "../scale/scale.ts";
@@ -239,6 +240,11 @@ export class ChartModel {
    * layout marks drawing them (maps, trees, networks): set as `highlight` is.
    */
   declare layoutHighlight: ((table: Table) => Uint8Array | undefined) | undefined;
+  /**
+   * Reads the fields marks' tooltips show of rows (`tooltip.fields`) for
+   * inspections: set by a chart once it has loaded what reads them.
+   */
+  declare fields: FieldReaders | undefined;
   /** Visible x ranges by x scale (see `xGroupOf`). */
   readonly #viewports = new Map<string, [number, number]>();
   #yViewport: YViewport = NO_Y_VIEW;
@@ -628,7 +634,7 @@ export class ChartModel {
       parts.flatMap(({ marks, x0, x1, breaks }) =>
         marks.map(({ mark, series, rows }) => {
           const visible = series.filter((s) => !this.hidden.has(s.key));
-          if (mark.zero === "y" && visible.length > 0) stands = true;
+          if (mark.zero === "y" && (visible.length > 0 || mark.seriesless)) stands = true;
           return mark.yExtent(visible, x0, x1, log, breaks, rows);
         }),
       ),
@@ -830,7 +836,9 @@ export class ChartModel {
     const xDrawn = xMarks.map((among) => among.filter(({ series }) => series.length > 0));
     // An x axis measuring bar lengths gets the y axis' defaults: zero, round
     // ends, and grid lines.
-    const xMeasures = xDrawn.map((among) => among.some(({ mark }) => mark.zero === "x"));
+    const xMeasures = xMarks.map((among) =>
+      among.some(({ mark, series }) => mark.zero === "x" && (series.length > 0 || mark.seriesless)),
+    );
 
     // x domains: viewport, explicit domain, or data extent. Log axes only
     // consider positive values. Band axes take their categories instead.
@@ -1463,6 +1471,7 @@ export class ChartModel {
       // A layout mark draws its rows in the panel, which has no axes.
       if (item) {
         this.#items ??= new item.mark.views();
+        this.#items.fields = this.fields?.(locale, zone, numberFormatter(locale));
         const frame = { theme, locale, measure, hidden, color: this.#palette };
         return this.#items.panel({ key, label, plot }, item, config.marks, frame);
       }
@@ -1552,6 +1561,12 @@ export class ChartModel {
         formatX: formatXOf(h, column),
         formatY: formatOf(i),
         formatValue: formatNumbers,
+        fields: this.fields?.(
+          locale,
+          zone,
+          formatNumbers,
+          xContexts[h]!.type === "time" ? formatXOf(h, column) : undefined,
+        ),
       });
       views.push({
         key,
@@ -1660,7 +1675,9 @@ export class ChartModel {
     this.#floats.clear();
     this.#doubles.clear();
     this.#bytes.clear();
-    const scene = this.items!.scene(this, header, mark, marks, {
+    const items = this.items!;
+    items.fields = this.fields?.(locale, this.#config.timeZone ?? "local", numberFormatter(locale));
+    const scene = items.scene(this, header, mark, marks, {
       theme,
       locale,
       measure,

@@ -79,7 +79,16 @@ There are no per-row objects anywhere in the pipeline.
 - **Zero-copy input.** Typed arrays passed to `table()` are used in place.
   The table never writes into them: the first mutation copies them into
   buffers it owns (copy-on-write). Plain arrays, Dates, and strings are
-  converted once.
+  converted once. A field's kind comes from its values or a tag, never from
+  its name or magnitudes: `time()` reads epoch milliseconds, Dates, and ISO
+  8601 strings (as `Date.parse` does, which spec columns share), and
+  `category()` strings or numbers, labeled as `String` writes them.
+- **Writes that fail change nothing.** `append` and `replace` check every
+  value a column keeps (numbers, times that parse, strings or numbers for
+  categories) before any row is dropped or written, so a value of the wrong
+  kind throws with its row and leaves the table as it was; of a batch longer
+  than `maxRows`, only the rows kept are checked. Checking allocates
+  nothing, so streaming one row at a time costs what it did.
 - **Contiguous storage.** Live rows occupy one slice of each buffer. Appends
   write after the slice and drops move its start. When the buffer end is
   reached, live rows move to the front if that leaves a third of the buffer
@@ -2770,8 +2779,13 @@ legend, hiding, tooltips, events, keyboard navigation, facet splits, y
 domains that follow the view, and text summaries all come from the chart's
 own code for series; there is no inspection code for custom marks. `draw`
 receives the series it should draw (hidden ones left out, facet panels'
-row subsets) as read-only views, and an optional `pointText` writes their
-tooltip text. Since the shapes between points are unknown, y extents take
+row subsets) as read-only views made for each draw, with `rowAt(k)` reading
+a point's row through the series' row subset, and an optional `pointText`
+writes their tooltip text. `zero` puts zero in the domain of the axis the
+shapes stand on through the model's `Mark.zero`, as for bars: the model and
+the navigator count it for marks with visible series, and for marks without
+series (`Mark.seriesless`) always, and an axis' own `zero: false` wins.
+Since the shapes between points are unknown, y extents take
 in the points just past the view's edges (as for monotone curves) rather
 than interpolating straight segments. With `series: false` (glyphs from
 several fields of a row, such as ranges), or fields other than one x and y
@@ -3224,6 +3238,14 @@ the PDF writer parse colors. The chart watches the color scheme and attribute
 changes on the page's root and body elements, reads the page again on its
 next frame, and re-renders only if the resolved theme changed. Static rendering has no page: variables take their fallbacks and
 `"auto"` is light, so the output does not depend on where it was rendered.
+The named themes paint backgrounds of their own (light white, dark
+`#12151c`), so a chart reads the same on any page and in every export;
+`"auto"` resolves to light or dark with a transparent background, since it
+is drawn to match the surface under it. The SVG layer, the canvas (when it
+holds the marks), and static SVG and PDF paint the background; PDF pages
+are white, so the PDF writer paints a transparent theme with light text in
+the dark surface `surface(theme)` assumes. Text halos take the background
+where text contrasts with it, else white or black against the text.
 
 ## Interaction
 
@@ -3285,6 +3307,28 @@ position on the other axes (both y axes when there are two) across a dashed
 line. The labels live in `dom/axis-labels.ts`, loaded the first time a
 chart asks for them, which imports no code of its own so that loading it
 moves nothing out of a chart's bundle.
+
+Tooltips write values with their axis' `tooltipFormat`, else its
+`format`, the formatter `formatValue` and the keyboard read too. A mark's
+`tooltip.fields` name more fields of the rows its points are: marks check
+them against their tables when they are made (`marks/tooltip-fields.ts`),
+and inspections carry them, read from each point's row, as `fields` on the
+point, which the tooltip draws under the point's row and the live region
+reads after its value. Reading and writing them (`dom/tooltip-content.ts`)
+loads the first time a chart has fields or `renderTooltip`: the chart sets
+the model's `fields`, which makes a reader per panel for its inspector (and
+the layout marks' item views) in the chart's locale and zone, with the x
+axis' formatter for times on time axes, and replaces the tooltip's `show`
+with one that draws the fields and `renderTooltip`'s content. Like the
+crosshair labels, the module imports only types, writing with `Intl` itself.
+Inspections without the reader (before it loads, and in static rendering)
+have no fields. Content of the application's own is asked for when what the
+tooltip is at changes (compared as JSON, with the theme and the renderer),
+and a resize observer places the box again as it changes size, so the
+adapters' frameworks may render into the node they hand back after the
+call: React through a portal from a component of its own state, Vue
+through a teleport, Svelte into an element of its markup, each rendering
+only the tooltip's content.
 
 Charts emit `viewport`, `select`, `hover`, `click`, `camera`, `drill`,
 `itemMove`, `visibility`, and `render` events. Each reports changes only (hover compares the inspected
@@ -3614,7 +3658,14 @@ pointer handler that reads them costs no frame. `render()` draws pending
 changes when a caller needs them now; `toSVG()` draws only what is pending,
 and reports that frame once its own scene is built, so render listeners may
 export and what they change is drawn on the next frame. The model caches its panel list per
-scene, so mapping many values allocates nothing.
+scene, so mapping many values allocates nothing. Every export of a mounted
+chart goes through one method keyed by a symbol (`render/export-scene.ts`),
+which draws what is pending and hands a scene of the current state (size,
+viewports, hidden series) and the model to a writer: `toSVG` writes SVG,
+`toPNG` draws that SVG on a canvas in a module it loads the first time, and
+`renderToPDF(chart)` in `herceg/pdf` writes a PDF from the same scene, laid
+out with the page's text measures, so the chart's code carries no PDF code
+and the handle no PDF method.
 
 Hiding series has one path: the legend's buttons, `setVisibility`,
 `setHiddenKeys`, and updates that remove marks all change the model's hidden

@@ -49,6 +49,7 @@ import {
   type Placed3D,
   positiveExtent,
 } from "./plot3d.ts";
+import { checkTooltip, type MarkTooltip } from "./tooltip-fields.ts";
 
 export interface Point3DOptions<S extends Schema> {
   /** Number or time fields: each point's position; z is vertical. */
@@ -76,6 +77,8 @@ export interface Point3DOptions<S extends Schema> {
   fillOpacity?: number;
   /** Legend and tooltip name of points without `series`. */
   label?: string;
+  /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
+  tooltip?: MarkTooltip<S>;
   id?: string;
 }
 
@@ -132,6 +135,7 @@ export class Point3DMark implements Layer3D {
 
   constructor(input: Point3DSpec, table: Table) {
     this.spec = frozen(input);
+    checkTooltip(table, this.spec.tooltip, "point3d");
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     for (const axis of ["x", "y", "z"] as const)
@@ -561,6 +565,7 @@ export function point3d<S extends Schema>(
     y: options.y,
     z: options.z,
     ...definedFields(options, [
+      "tooltip",
       "series",
       "labelField",
       "radius",

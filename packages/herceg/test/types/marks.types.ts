@@ -47,6 +47,20 @@ point(readings, { x: "at", y: "cpu", animationKey: "missing" });
 // @ts-expect-error animation keys belong to point marks
 line(readings, { x: "at", y: "cpu", animationKey: "stage" });
 
+// Tooltip fields are fields of the mark's table, of any kind but shapes, and
+// only marks whose points are rows take them.
+line(readings, {
+  x: "at",
+  y: "cpu",
+  tooltip: { fields: ["stage", { field: "cpu", label: "CPU", format: { style: "percent" } }] },
+});
+// @ts-expect-error a tooltip field must be a field of the table
+line(readings, { x: "at", y: "cpu", tooltip: { fields: ["cpuu"] } });
+// @ts-expect-error entries name their field
+bar(readings, { x: "stage", y: "cpu", tooltip: { fields: [{ label: "CPU" }] } });
+// @ts-expect-error histogram bins summarize rows, so they have no fields to show
+histogram(readings, { x: "cpu", tooltip: { fields: ["stage"] } });
+
 // Gauges show, and funnels sum, numbers: not times or categories.
 gauge(readings, { value: "cpu" });
 // @ts-expect-error times are not numbers

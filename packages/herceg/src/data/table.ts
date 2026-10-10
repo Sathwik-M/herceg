@@ -2,8 +2,10 @@ import { MinMaxIndex, type RangeIndex } from "../lod/minmax-index.ts";
 import {
   type CategoryColumn,
   type CategoryInput,
+  type CategoryValue,
   type Column,
   type ColumnInput,
+  category,
   createColumn,
   createColumnOfKind,
   encode,
@@ -12,7 +14,9 @@ import {
   isNumericArray,
   type NumericArray,
   type TimeInput,
+  type TimeValue,
   toMilliseconds,
+  toNumber,
 } from "./column.ts";
 import type { GeometryInput, GeometrySet } from "./geometry.ts";
 
@@ -87,21 +91,32 @@ export type FieldName<S extends Schema> = keyof S & string;
  * codes into the column's set of shapes, -1 for none.
  */
 export type ValueOf<K extends FieldKind> = K extends "category"
-  ? string | null
+  ? CategoryValue | null
   : K extends "time"
-    ? Date | number | null
+    ? TimeValue | null
     : K extends "geometry"
       ? number
       : number | null;
 
 /** Values for one field as accepted by `append` and `replace`. */
 export type ValuesOf<K extends FieldKind> = K extends "category"
-  ? readonly (string | null)[]
+  ? NumericArray | readonly (CategoryValue | null)[]
   : K extends "time"
-    ? NumericArray | readonly (Date | number | null)[]
+    ? NumericArray | readonly (TimeValue | null)[]
     : K extends "geometry"
       ? Int32Array | readonly number[]
       : NumericArray | readonly (number | null)[];
+
+/**
+ * A value as `table.value` reads it: a number (epoch milliseconds for
+ * times), a category's string, null for a missing value, and for geometry
+ * fields the shape's code (-1 for none).
+ */
+export type ReadValue<K extends FieldKind> = K extends "category"
+  ? string | null
+  : K extends "geometry"
+    ? number
+    : number | null;
 
 export type Row<S extends Schema> = { [K in keyof S]: ValueOf<S[K]> };
 export type Batch<S extends Schema> = { [K in keyof S]: ValuesOf<S[K]> };
@@ -290,16 +305,17 @@ export class Table<S extends Schema = Schema> {
   }
 
   /**
-   * One value: number (NaN becomes null), epoch ms for times, a string, or
-   * a geometry's code (-1 for none).
+   * One value, typed by the field's kind: a number (NaN becomes null),
+   * epoch ms for times, a category's string, or a geometry's code (-1 for none).
    */
-  value(field: FieldName<S>, row: number): number | string | null {
+  value<K extends FieldName<S>>(field: K, row: number): ReadValue<S[K]> {
     const column = this.#column(field);
     if (!(Number.isInteger(row) && row >= 0 && row < this.#length))
       throw new RangeError(`Row ${row} out of range`);
     const raw = column.buffer[this.#start + row]!;
-    if (column.kind === "category") return raw < 0 ? null : column.dictionary[raw]!;
-    return Number.isNaN(raw) ? null : raw;
+    if (column.kind === "category")
+      return (raw < 0 ? null : column.dictionary[raw]!) as ReadValue<S[K]>;
+    return (Number.isNaN(raw) ? null : raw) as ReadValue<S[K]>;
   }
 
   /**
@@ -392,12 +408,15 @@ export class Table<S extends Schema = Schema> {
       throw new TypeError(`append() needs all ${this.#columns.size} fields`);
     }
     const count = entries[0]?.[1].length ?? 0;
+    // Batch rows beyond maxRows never enter the table.
+    const skip = Math.max(0, count - this.maxRows);
     for (const [field, values] of entries) {
       const column = this.#column(field);
       if (values.length !== count)
         throw new RangeError(`Field "${field}" has ${values.length} values, expected ${count}`);
-      // Geometry codes are checked before anything changes.
+      // Values are checked before anything changes.
       column.check?.(values);
+      check(column, values, skip, "append", field);
     }
     if (count === 0) return;
     // Inputs that view this table's own storage could be overwritten by
@@ -407,9 +426,8 @@ export class Table<S extends Schema = Schema> {
       if (isNumericArray(values) && this.#ownsBuffer(values.buffer)) entry[1] = values.slice();
     }
 
-    // Batch rows beyond maxRows never enter the table; existing rows that
-    // would be evicted are dropped before compaction so they are not copied.
-    const skip = Math.max(0, count - this.maxRows);
+    // Existing rows that would be evicted are dropped before compaction so
+    // they are not copied.
     const kept = count - skip;
     const dropped = Math.min(Math.max(0, this.#length + kept - this.maxRows), this.#length);
     this.#dropFront(dropped);
@@ -449,7 +467,7 @@ export class Table<S extends Schema = Schema> {
   }
 
   /** Drops leading rows whose `field` value is below `value`. The field must be sorted. */
-  dropBefore(field: NumericField<S>, value: number | Date): void {
+  dropBefore(field: NumericField<S>, value: TimeValue): void {
     if (!this.isSorted(field)) throw new Error(`dropBefore() needs "${field}" to be sorted`);
     this.dropFirst(lowerBound(this.numbers(field), toMilliseconds(value)));
   }
@@ -468,6 +486,7 @@ export class Table<S extends Schema = Schema> {
     if (start + count > this.#length) throw new RangeError("replace() range is out of bounds");
     if (count === 0) return;
     column.check?.(input);
+    check(column, input, 0, "replace", field);
     if (isNumericArray(input) && this.#ownsBuffer(input.buffer)) input = input.slice();
     if (!column.owned) this.#reallocate(this.#capacity);
     writeValues(column, this.#start + start, input, 0);
@@ -700,25 +719,51 @@ export class Table<S extends Schema = Schema> {
   }
 }
 
-function toNumber(value: unknown): number {
-  if (value == null) return Number.NaN;
-  if (typeof value === "number") return value;
-  if (value instanceof Date) return value.getTime();
-  throw new TypeError(`Expected a number or Date, got ${String(value)}`);
+/**
+ * Throws, before anything changes, for a value of a batch that a column
+ * keeps (from `skip` on) that is not of its kind, naming the change
+ * (`method`) and the field.
+ */
+function check(
+  column: Column,
+  values: ArrayLike<unknown>,
+  skip: number,
+  method: string,
+  field: string,
+): void {
+  if (isNumericArray(values)) return;
+  try {
+    for (let i = skip; i < values.length; i++) {
+      const value = values[i];
+      if (typeof value === "number") continue;
+      if (column.kind !== "category") toNumber(value, i, column.kind === "time");
+      else if (value != null && typeof value !== "string")
+        throw new TypeError(
+          `row ${i}: expected a string or number; received ${JSON.stringify(value)}`,
+        );
+    }
+  } catch (error) {
+    throw new TypeError(`${method} "${field}": ${(error as Error).message}`);
+  }
 }
 
+/** Writes values `check` accepted, from `skip` on, at buffer position `at`. */
 function writeValues(column: Column, at: number, values: ArrayLike<unknown>, skip: number) {
   const target = column.buffer;
   if (column.kind === "category") {
     for (let i = skip; i < values.length; i++)
-      target[at + i - skip] = encode(column, values[i] as string | null);
+      target[at + i - skip] = encode(column, values[i] as CategoryValue | null);
     return;
   }
   if (isNumericArray(values)) {
     target.set(skip === 0 ? values : values.subarray(skip), at);
     return;
   }
-  for (let i = skip; i < values.length; i++) target[at + i - skip] = toNumber(values[i]);
+  const time = column.kind === "time";
+  for (let i = skip; i < values.length; i++) {
+    const value = values[i];
+    target[at + i - skip] = typeof value === "number" ? value : toNumber(value, i, time);
+  }
 }
 
 function isAscending(values: NumericArray, start: number, end: number): boolean {
@@ -811,38 +856,71 @@ type RowSchema<R> = {
       : "number";
 };
 
+/** Kinds `fromRows` reads properties as, in place of the kinds of their values. */
+export type RowTypes<R> = { readonly [K in keyof RowSchema<R>]?: "number" | "time" | "category" };
+
+/** The schema of rows read with `types`: those kinds in place of the values'. */
+type TypedRowSchema<R, T> = {
+  [K in keyof RowSchema<R>]: K extends keyof T ? Exclude<T[K], undefined> : RowSchema<R>[K];
+};
+
 /**
  * Converts row objects into a table. Only number, Date, and string properties
- * become fields. Pass `fields` to pick them explicitly.
+ * become fields: numbers, times, and categories. Pass `fields` to pick them,
+ * and `types` to read a property as another kind: "time" for epoch
+ * milliseconds or ISO 8601 strings, "category" for numeric codes.
  */
 export function fromRows<
   R extends object,
   const F extends keyof RowSchema<R> & string = keyof RowSchema<R> & string,
+  const T extends RowTypes<R> = Record<never, never>,
 >(
   rows: readonly R[],
-  options: TableOptions & { fields?: readonly F[] } = {},
-): Table<Pick<RowSchema<R>, F>> {
+  options: TableOptions & { fields?: readonly F[]; types?: T } = {},
+): Table<Pick<TypedRowSchema<R, T>, F>> {
+  const { fields: picked, types = {} as T, ...tableOptions } = options;
   const first = rows[0] as Record<string, unknown> | undefined;
   const fields =
-    (options.fields as readonly string[] | undefined) ??
+    (picked as readonly string[] | undefined) ??
     (first ? Object.keys(first).filter((key) => isColumnValue(first[key])) : []);
+  const kinds = types as Record<string, string | undefined>;
+  for (const [field, kind] of Object.entries(kinds)) {
+    if (!fields.includes(field))
+      throw new TypeError(
+        `fromRows types: no field "${field}"; the rows have "${fields.join('", "')}"`,
+      );
+    if (kind !== "number" && kind !== "time" && kind !== "category")
+      throw new TypeError(
+        `fromRows types.${field}: expected "number", "time", or "category"; received ${JSON.stringify(kind)}`,
+      );
+  }
   const columns: Record<string, ColumnInput> = {};
   for (const field of fields) {
     const sample = rows.find((row) => (row as Record<string, unknown>)[field] != null) as
       | Record<string, unknown>
       | undefined;
     const value = sample?.[field];
-    if (typeof value === "string") {
-      columns[field] = rows.map((row) => (row as Record<string, string | null>)[field] ?? null);
-    } else {
-      const out = new Float64Array(rows.length);
-      for (let i = 0; i < rows.length; i++)
-        out[i] = toNumber((rows[i] as Record<string, unknown>)[field]);
-      columns[field] = value instanceof Date ? { kind: "time", values: out } : out;
+    const kind =
+      kinds[field] ??
+      (typeof value === "string" ? "category" : value instanceof Date ? "time" : "number");
+    if (kind === "category") {
+      columns[field] = category(
+        rows.map((row) => (row as Record<string, CategoryValue | null>)[field] ?? null),
+      );
+      continue;
     }
+    // Numbers and times fill their column directly, row by row.
+    const out = new Float64Array(rows.length);
+    const time = kind === "time";
+    try {
+      for (let i = 0; i < rows.length; i++)
+        out[i] = toNumber((rows[i] as Record<string, unknown>)[field], i, time);
+    } catch (error) {
+      throw new TypeError(`fromRows "${field}": ${(error as Error).message}`);
+    }
+    columns[field] = time ? { kind: "time", values: out } : out;
   }
-  const { fields: _, ...tableOptions } = options;
-  return new Table<Pick<RowSchema<R>, F>>(columns, tableOptions);
+  return new Table<Pick<TypedRowSchema<R, T>, F>>(columns, tableOptions);
 }
 
 function isColumnValue(value: unknown): boolean {

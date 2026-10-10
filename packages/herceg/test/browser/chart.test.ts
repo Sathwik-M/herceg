@@ -25,6 +25,9 @@ import type { ArcGeometry, ShapesGeometry, TextShape } from "../../src/scene/sce
 import { resolveTheme } from "../../src/theme.ts";
 import { bandBox, MOUSE, modelOf } from "./helpers.ts";
 
+/** Without a background, the canvas holds what marks paint alone. */
+const CLEAR = { background: "transparent" } as const;
+
 let host: HTMLDivElement;
 
 beforeEach(() => {
@@ -1378,6 +1381,7 @@ describe("maps", () => {
 
   it("paint regions on a canvas with holes left empty", () => {
     const chart = createChart(host, {
+      theme: CLEAR,
       projection: "equirectangular",
       marks: [geoshape(regions(), { fill: "#ff0000", strokeWidth: 0 })],
       renderer: "canvas",

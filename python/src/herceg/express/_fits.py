@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from .._chart import Chart, HelperOptions
+from .._chart import Chart, HelperOptions, helper
 from . import _numerics as numerics
 from ._common import (
     SERIES_GROUP,
@@ -44,6 +44,7 @@ else:
     from typing_extensions import Unpack
 
 
+@helper
 def regplot(
     data: Any,
     *,
@@ -254,6 +255,7 @@ def fit_band(
     return numerics.band(fits.predictions, ci)
 
 
+@helper
 def residplot(
     data: Any,
     *,
