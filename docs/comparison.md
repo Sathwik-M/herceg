@@ -111,20 +111,20 @@ pivots the same data by a field of four values (`herceg/pivot`, no DOM), and
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-area | 0.0.0 (7dc6d1f) | 131.4 | 49.3 | 44.1 | - | 31.2 |
-| herceg-bar | 0.0.0 (7dc6d1f) | 130.8 | 49.6 | 44.2 | - | 31.2 |
-| herceg-grid-pivot | 0.0.0 (7dc6d1f) | 131.1 | 44.5 | 39.8 | - | - |
-| herceg-grid-remote | 0.0.0 (7dc6d1f) | 87.8 | 30.3 | 27.3 | - | - |
-| herceg-grid | 0.0.0 (7dc6d1f) | 88.0 | 30.6 | 27.4 | - | - |
-| herceg-heatmap | 0.0.0 (7dc6d1f) | 130.1 | 49.8 | 44.3 | - | 28.3 |
-| herceg-line | 0.0.0 (7dc6d1f) | 114.0 | 42.9 | 38.5 | - | 31.2 |
-| herceg-pdf-fonts | 0.0.0 (7dc6d1f) | 126.6 | 49.7 | 44.3 | - | 2.9 |
-| herceg-pdf | 0.0.0 (7dc6d1f) | 107.8 | 42.3 | 37.8 | - | 2.9 |
-| herceg-pivot | 0.0.0 (7dc6d1f) | 59.7 | 19.9 | 18.0 | - | - |
-| herceg-react-line | 0.0.0 (7dc6d1f) | 116.7 | 44.1 | 39.6 | - | 31.2 |
-| herceg-scatter | 0.0.0 (7dc6d1f) | 136.1 | 51.5 | 45.8 | - | 31.2 |
-| herceg-svelte-line | 0.0.0 (7dc6d1f) | 118.2 | 44.7 | 40.1 | - | 31.2 |
-| herceg-vue-line | 0.0.0 (7dc6d1f) | 117.8 | 44.5 | 39.9 | - | 31.2 |
+| herceg-area | 0.0.0 (d4255d3) | 131.1 | 49.2 | 43.9 | - | 31.2 |
+| herceg-bar | 0.0.0 (d4255d3) | 130.5 | 49.5 | 44.1 | - | 31.2 |
+| herceg-grid-pivot | 0.0.0 (d4255d3) | 131.1 | 44.5 | 39.8 | - | - |
+| herceg-grid-remote | 0.0.0 (d4255d3) | 87.8 | 30.3 | 27.3 | - | - |
+| herceg-grid | 0.0.0 (d4255d3) | 88.0 | 30.6 | 27.4 | - | - |
+| herceg-heatmap | 0.0.0 (d4255d3) | 129.9 | 49.7 | 44.4 | - | 28.3 |
+| herceg-line | 0.0.0 (d4255d3) | 113.7 | 42.8 | 38.4 | - | 31.2 |
+| herceg-pdf-fonts | 0.0.0 (d4255d3) | 126.6 | 49.7 | 44.2 | - | 2.9 |
+| herceg-pdf | 0.0.0 (d4255d3) | 107.8 | 42.3 | 37.8 | - | 2.9 |
+| herceg-pivot | 0.0.0 (d4255d3) | 59.7 | 19.9 | 18.0 | - | - |
+| herceg-react-line | 0.0.0 (d4255d3) | 116.4 | 44.0 | 39.5 | - | 31.2 |
+| herceg-scatter | 0.0.0 (d4255d3) | 135.9 | 51.4 | 45.7 | - | 31.2 |
+| herceg-svelte-line | 0.0.0 (d4255d3) | 117.9 | 44.6 | 40.0 | - | 31.2 |
+| herceg-vue-line | 0.0.0 (d4255d3) | 117.5 | 44.4 | 39.9 | - | 31.2 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |
