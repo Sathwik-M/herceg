@@ -627,6 +627,36 @@ Densities are of the values themselves, not of their logarithms: on a log
 axis a violin is the same density drawn on a stretched axis, and the part at
 zero or below is not drawn.
 
+`inner` selects what is drawn inside: `"box"` (the default whisker line,
+quartile box, and median dot), `"quartiles"` (dashed lines at Q1 and Q3 and a
+solid line at the median, reaching the density's edges), or `"none"`.
+
+```ts
+violin(requests, { x: "region", y: "latency", series: "version", split: true, inner: "quartiles" });
+violin(requests, { x: "latency", y: "region", series: "version", split: true, inner: "none" });
+```
+
+`split: true` requires `series` and at most two observed values of that field
+across the mark. Each draws a half at the category's center, the first left
+(or below for horizontal violins), the second right (or above). Order follows
+the legend: the first category with finite observations, then the series
+field's dictionary order. Each half is independently as wide at its densest.
+Sides follow the current whole-table order, recalculated when data changes.
+A category or panel with a missing or hidden partner leaves its half empty;
+colors, legend entries, tooltips, keyboard stops, and summaries stay separate.
+Unused dictionary entries and rows without a category, series, or finite value
+do not count.
+More than two observed values is an error naming the field and count, also
+after data updates. Inner marks draw separately on each half.
+
+Both options work with facets and per-panel category scales, vertically and
+horizontally, in SVG, Canvas, static SVG, and PDF. Constant values retain
+their density fallback line with every `inner` setting. If the density cannot
+be computed, `"box"` still draws its statistics, `"quartiles"` spans the
+available width at each statistic, and `"none"` draws no shape.
+Portable specs need `version: 7` for `split: true` or non-default `inner`;
+omitted options, `split: false`, and `inner: "box"` keep earlier behavior.
+
 Marks are drawn in array order; rules and text always draw above other marks.
 
 ### What each mark supports
@@ -1958,7 +1988,8 @@ Specs say which format `version` they are; one without is version 1. Specs
 using `resolve`, `panels`, or `grid` must say 2 or later, those using
 `resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later, and
 those with a `navigator` 4 or later, those with enabled x axis `seams` 5,
-and raw box plots with notches or nondefault whiskers 6 (`SPEC_VERSION`), so that older readers refuse
+raw box plots with notches or nondefault whiskers 6, and split violins or
+nondefault violin interiors 7 (`SPEC_VERSION`), so that older readers refuse
 what they would draw differently. Loading checks a spec and names the property at
 fault in errors. Properties herceg does not know, misspelled or from a newer
 version, are logged with `console.warn` and otherwise ignored;

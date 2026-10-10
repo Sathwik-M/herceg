@@ -19,6 +19,7 @@ import { rule } from "../../src/marks/rule.ts";
 import { sankey } from "../../src/marks/sankey.ts";
 import { sunburst } from "../../src/marks/sunburst.ts";
 import { treemap } from "../../src/marks/treemap.ts";
+import { violin } from "../../src/marks/violin.ts";
 import type {
   AreaSpec,
   BoxPlotInput,
@@ -27,6 +28,7 @@ import type {
   RegionSpec,
   RuleSpec,
   TreemapSpec,
+  ViolinSpec,
 } from "../../src/spec/spec.ts";
 
 const readings = table({ at: time([0]), cpu: [1], stage: ["a"] });
@@ -237,3 +239,24 @@ void [
   mixedBoxSpec,
   noCountBoxSpec,
 ];
+
+violin(readings, { x: "stage", y: "cpu", series: "stage", split: true, inner: "quartiles" });
+violin(readings, { x: "cpu", y: "stage", inner: "none" });
+// @ts-expect-error split is boolean
+violin(readings, { x: "stage", y: "cpu", split: "true" });
+// @ts-expect-error inner takes only the supported interiors
+violin(readings, { x: "stage", y: "cpu", inner: "points" });
+// @ts-expect-error a series field is categorical
+violin(readings, { x: "stage", y: "cpu", series: "cpu", split: true });
+const splitViolinSpec: ViolinSpec = {
+  type: "violin",
+  x: "g",
+  y: "v",
+  series: "s",
+  split: true,
+  inner: "quartiles",
+};
+// @ts-expect-error inner takes only the supported interiors
+const invalidViolinSpec: ViolinSpec = { type: "violin", x: "g", y: "v", inner: "points" };
+void splitViolinSpec;
+void invalidViolinSpec;

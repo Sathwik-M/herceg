@@ -669,6 +669,8 @@ const MARKS: MarkChecks = {
       x: field,
       y: field,
       series: field,
+      split: boolean,
+      inner: oneOf("box", "quartiles", "none"),
       bandwidth: positive,
       fill: string,
       fillOpacity: fraction,
@@ -1209,6 +1211,19 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
   if (seams !== undefined && seams !== false && declared < 5)
     fail("spec.x.seams", 'a spec with "version": 5, so that older readers refuse it', seams);
   for (const [i, item] of (chart.marks as Record<string, unknown>[]).entries()) {
+    if (item.type === "violin") {
+      if (item.split === true && item.series === undefined)
+        fail(`marks[${i}].split`, "a series field for split violins", item.split);
+      if (
+        (item.split === true || (item.inner !== undefined && item.inner !== "box")) &&
+        declared < 7
+      )
+        fail(
+          `marks[${i}].${item.split === true ? "split" : "inner"}`,
+          'a spec with "version": 7 or later, so that older readers refuse it',
+          item.split === true ? item.split : item.inner,
+        );
+    }
     if (item.type !== "boxplot" || item.median !== undefined) continue;
     if (
       (item.notch === true ||

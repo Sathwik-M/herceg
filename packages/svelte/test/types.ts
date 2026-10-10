@@ -4,7 +4,17 @@
 // here; `Readme.svelte` holds the README's examples.
 import { type Chart as HercegChart, table, time } from "herceg";
 import type { ComponentProps } from "svelte";
-import { Area, BoxPlot, type Chart, Custom, Line, Point, Rule, Text } from "../src/index.js";
+import {
+  Area,
+  BoxPlot,
+  type Chart,
+  Custom,
+  Line,
+  Point,
+  Rule,
+  Text,
+  Violin,
+} from "../src/index.js";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -108,3 +118,19 @@ BoxPlot(internals, { data: boxData, x: "group", ...boxFields, whiskers: "range" 
 BoxPlot(internals, { data: boxData, x: "group", ...boxFields, notch: true });
 // @ts-expect-error statistic fields must be numeric
 BoxPlot(internals, { data: boxData, x: "group", ...boxFields, low: "group" });
+
+Violin(internals, {
+  data: metrics,
+  x: "service",
+  y: "p50",
+  series: "service",
+  split: true,
+  inner: "quartiles",
+});
+Violin(internals, { data: metrics, x: "p50", y: "service", inner: "none" });
+// @ts-expect-error inner takes only the supported interiors
+Violin(internals, { data: metrics, x: "service", y: "p50", inner: "points" });
+// @ts-expect-error split is boolean
+Violin(internals, { data: metrics, x: "service", y: "p50", split: "true" });
+// @ts-expect-error a series field is categorical
+Violin(internals, { data: metrics, x: "service", y: "p50", series: "p50", split: true });

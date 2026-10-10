@@ -3,7 +3,7 @@
 // template by calling it with the props written there, and <Chart> against
 // its `$props`, so these lines check what templates check.
 import { type Chart as HercegChart, table, time } from "herceg";
-import { BoxPlot, type Chart, Custom, Line, Point, Rule, Text } from "../src/index.ts";
+import { BoxPlot, type Chart, Custom, Line, Point, Rule, Text, Violin } from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -92,3 +92,19 @@ BoxPlot({ data: boxData, x: "group", ...boxFields, whiskers: "range" });
 BoxPlot({ data: boxData, x: "group", ...boxFields, notch: true });
 // @ts-expect-error statistic fields must be numeric
 BoxPlot({ data: boxData, x: "group", ...boxFields, low: "group" });
+
+Violin({
+  data: metrics,
+  x: "service",
+  y: "p50",
+  series: "service",
+  split: true,
+  inner: "quartiles",
+});
+Violin({ data: metrics, x: "p50", y: "service", inner: "none" });
+// @ts-expect-error inner takes only the supported interiors
+Violin({ data: metrics, x: "service", y: "p50", inner: "points" });
+// @ts-expect-error split is boolean
+Violin({ data: metrics, x: "service", y: "p50", split: "true" });
+// @ts-expect-error a series field is categorical
+Violin({ data: metrics, x: "service", y: "p50", series: "p50", split: true });
