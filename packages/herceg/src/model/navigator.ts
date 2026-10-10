@@ -34,7 +34,7 @@ import type { NavigatorSpec } from "../spec/spec.ts";
 import { surface, type Theme } from "../theme.ts";
 import { type AxisContext, type AxisPlan, createScale, usableDomain } from "./axis.ts";
 import type { InspectedMark, Inspector, MarkSeries } from "./inspect.ts";
-import type { ChartConfig } from "./model.ts";
+import type { ChartConfig, ChartModel } from "./model.ts";
 import { overviewBars } from "./navigator-bars.ts";
 
 /** The strip's height when the options give none, in CSS pixels. */
@@ -189,6 +189,16 @@ export class Navigator {
   /** The options as a spec holds them; adapters compare and serialize by them. */
   toJSON(): NavigatorSpec {
     return JSON.parse(JSON.stringify(this.#spec));
+  }
+
+  /** The last drawn window, for the chart's text alternative and its refresh key. */
+  describe(model: ChartModel): string | undefined {
+    const state = states.get(model);
+    const strip = state?.of === model.panels() ? state?.drawn : undefined;
+    if (!strip) return undefined;
+    const format = model.formatsOf(undefined, strip.panels[0]).x;
+    const [start, end] = strip.shown;
+    return `A range navigator shows the whole x range, with ${format(start)} to ${format(end)} in view${strip.panels.length > 1 ? "; it controls every panel's x range" : ""}.`;
   }
 
   /**

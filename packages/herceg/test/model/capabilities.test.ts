@@ -46,6 +46,7 @@ import { planAxis } from "../../src/model/axis.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
+import { rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import { brushedRows } from "../../src/model/selected-rows.ts";
@@ -62,6 +63,20 @@ function build(config: ChartConfig) {
   model.setSize(600, 400, 1);
   return { model, scene: model.scene(estimateText) };
 }
+
+it("capabilities: a navigator describes the shared x window of facet panels", () => {
+  const data = table({ x: [0, 1, 2, 3], y: [2, 4, 3, 1], group: ["N", "S", "N", "S"] });
+  const { model } = build({
+    marks: [line(data, { x: "x", y: "y" })],
+    facet: facet("group"),
+    navigator: rangeNavigator(),
+  });
+  model.setViewport([1, 2]);
+  model.scene(estimateText);
+  expect(describeChart(model)).toContain(
+    "A range navigator shows the whole x range, with 1 to 2 in view; it controls every panel's x range.",
+  );
+});
 
 const samples = table({
   x: [0, 1, 2, 3, 4, 5],

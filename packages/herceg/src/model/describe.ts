@@ -106,6 +106,10 @@ export function describeChart(model: ChartModel): string {
     parts.push(`${sentence}.`);
   }
   if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
-  parts.push(...model.legendSummaries(), ...model.annotationSummaries());
+  parts.push(
+    ...model.legendSummaries(),
+    ...model.annotationSummaries(),
+    config.navigator?.describe(model),
+  );
   return parts.filter(Boolean).join(" ");
 }

@@ -681,7 +681,7 @@ export class MountedChart implements Chart {
     const svg = renderSvg(this.#model.scene(measurer(document)), {
       idPrefix: `${this.#id}-export`,
       encodeRaster: (mark) => canvasRasterUrl(mark, document),
-      ...(this.#options.description ? { description: this.#options.description } : {}),
+      description: describeChart(this.#model),
     });
     // Listeners hear of the frame once the export is written: what they
     // change then is drawn on the next frame, as after any other.
@@ -1218,8 +1218,13 @@ export class MountedChart implements Chart {
   }
 
   #describe() {
-    const { config } = this.#model;
-    const key = `${config.marks.flatMap((mark) => tablesOf(mark).map((table) => table.version)).join(",")}|${[...this.#model.hidden].join(",")}`;
+    const model = this.#model;
+    const { config } = model;
+    const key = JSON.stringify([
+      config.marks.flatMap((mark) => tablesOf(mark).map((table) => table.version)),
+      [...model.hidden],
+      config.navigator?.describe(model),
+    ]);
     if (this.#described?.config === config && this.#described.key === key) return;
     // Summaries scan the data, so streaming charts refresh them at most once
     // a second; a trailing refresh picks up the last change.
@@ -1237,8 +1242,8 @@ export class MountedChart implements Chart {
     }
     this.#describedAt = performance.now();
     this.#described = { config, key };
-    const hint = this.#model.controls?.hint;
-    this.#description.textContent = `${describeChart(this.#model)} Focus the chart and use the arrow keys to read values.${hint ? ` ${hint}` : ""}`;
+    const hint = model.controls?.hint;
+    this.#description.textContent = `${describeChart(model)} Focus the chart and use the arrow keys to read values.${hint ? ` ${hint}` : ""}`;
   }
 
   /** The point the pointer or the keyboard is on. */

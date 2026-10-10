@@ -302,6 +302,55 @@ describe("the accessibility tree", () => {
     expect(await accessibilityTree()).toContain('    button "a" (Show a) pressed=false');
   });
 
+  it.each(["svg", "canvas"] as const)(
+    "keeps the navigator's description current in %s without live pan announcements",
+    async (renderer) => {
+      const chart = mount({
+        title: "Latency",
+        marks: [line(metrics, { x: "t", y: "a" })],
+        facet: facet("host"),
+        navigator: rangeNavigator(),
+        renderer,
+        locale: "en-US",
+        timeZone: "UTC",
+      });
+      await chart.loading;
+      chart.root.focus();
+      const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
+      const whole = description.textContent;
+      const initial = await accessibilityTree();
+      expect(initial[0]).toContain("A range navigator shows the whole x range,");
+      expect(initial[0]).toContain("it controls every panel's x range.");
+      expect(initial.filter((line) => line.includes("A range navigator"))).toHaveLength(1);
+      expect(description.closest("[aria-live]")).toBeNull();
+      const live = chart.root.querySelector("[aria-live]")!;
+      const navigator = chart.root.querySelector('[role="group"][aria-label="Range navigator"]')!;
+      const window = navigator.querySelector('[role="slider"][aria-label="Shown range"]')!;
+      const announced = navigator.querySelector("[aria-live]")!.textContent;
+      const range: [number, number] = [start + 6 * 3_600_000, start + 18 * 3_600_000];
+      chart.setViewport(range);
+      chart.render();
+      const panel = chart.getPanels()[0]!.key;
+      const formatted = range
+        .map((value) => chart.formatValue(value, { axis: "x", panel }))
+        .join(" to ");
+      await expect
+        .poll(() => description.textContent, { timeout: 2000 })
+        .toContain(`with ${formatted} in view;`);
+      expect(window.getAttribute("aria-valuetext")).toBe(formatted);
+      expect(live.textContent).toBe("");
+      expect(navigator.querySelector("[aria-live]")!.textContent).toBe(announced);
+      const changed = await accessibilityTree();
+      expect(changed[0]).toContain(`with ${formatted} in view;`);
+      expect(changed.filter((line) => line.includes("A range navigator"))).toHaveLength(1);
+      expect(chart.toSVG()).toContain(`with ${formatted} in view;`);
+
+      chart.setViewport(null);
+      chart.render();
+      await expect.poll(() => description.textContent, { timeout: 2000 }).toBe(whole);
+    },
+  );
+
   it("announces the values the keyboard reaches, and only there", async () => {
     const chart = mount({
       title: "Latency",

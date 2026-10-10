@@ -1324,6 +1324,12 @@ it: a line chart without one bundles a few hooks (room under the axis, the
 strip's panel, the check, and mounting the sliders), about 110 bytes gzip.
 `renderToSVG`, `toSVG`, and PDF export stay synchronous because the strip's
 drawing is the model's, and only the browser's sliders load on demand.
+`Navigator.describe` writes the text alternative's sentence from the last
+drawn window, using its first panel's x tooltip formatter, and says that
+the navigator controls every panel's x when there are several. The DOM
+description's refresh key includes this sentence, so viewport and layout
+changes refresh the summary at most once a second, outside the live
+regions. The wording stays in the optional navigator module.
 
 **Layout.** The model takes the strip's room (its height plus 12 pixels)
 from the height the rows of plots share, after the title, legends, panel
@@ -3459,6 +3465,11 @@ refuses others before changing what it holds.
   since their legends are drawn. It is refreshed at most once a second,
   does not repeat the title, and its element is hidden, so it is read once,
   as the figure's description.
+- A range navigator adds its overview of the whole x range and formatted visible range,
+  and its control of every panel's x in multi-panel charts, to this summary.
+  The window's sentence participates in the refresh key; panning does not
+  write it into a live region. Navigator sliders announce their changes
+  separately through their own polite live region.
 - Arrow keys, Page Up/Down, Home, and End move a cursor through the data; the
   values are announced whole through a polite, atomic live region and shown
   in the tooltip, which is hidden from assistive technology so they are not
@@ -3472,7 +3483,8 @@ refuses others before changing what it holds.
   key press), skipping empty cells and reading the row drawn in each.
 - Legend entries are buttons with `aria-pressed` in a group named "Legend",
   hidden when there are none.
-- Static SVG output has `role="img"`, `<title>`, and `<desc>`.
+- Static SVG output has `role="img"`, `<title>`, and `<desc>` containing the
+  generated summary (the supplied description first), as PDF alt text does.
 - Browser tests audit rendered charts with axe-core (WCAG 2.1 A and AA rules
   and best practices; `test/browser/accessibility.test.ts`): every chart
   family, SVG and Canvas rendering, facets, subplots, the four built-in

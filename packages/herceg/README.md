@@ -1068,6 +1068,9 @@ the notes), — not yet (refused with an error), · not applicable.
   [Drilling into trees](#drilling-into-trees)), in a chart of their own;
   networks' nodes move with `interaction.drag` (see
   [Moving nodes](#moving-nodes)), which no other mark takes.
+- A range navigator on a number or time x axis describes its overview and
+  current window in the chart's text alternative; with facets or subplots,
+  it says that it controls every panel's shared x range.
 - The right axis (see [A second y axis](#a-second-y-axis)) takes values
   along y: horizontal bars, box plots, violins, histograms, and error bars,
   points on category y, and rugs along y stay on the left, and a rule at an
@@ -1895,9 +1898,15 @@ narrow (Left, Down) it about its middle. Keys move values: Right, Up, Page
 Up, and End toward larger ones, which on a reversed axis are leftward.
 Escape takes a drag back to where it started, or shows all of x.
 The sliders' values read as the x axis' tooltips write them, and where the
-window ends up is announced politely. Static SVG, PDF, and PNG show the
-strip and the window, without the sliders. The strip's model code comes with
-`rangeNavigator`; the sliders load the first time a chart has a navigator.
+window ends up is announced politely. The chart's text alternative says
+that the navigator shows the whole x range and gives the range in view,
+formatted as those tooltips are; with several panels, it says that the
+navigator controls every panel's x range. It refreshes at most once a
+second as the view changes, outside the live regions. Static SVG and PDF
+include that sentence in their description and alternative text. SVG,
+PDF, and PNG show the strip and the window, without the sliders. The
+strip's model code comes with `rangeNavigator`; the sliders load the first
+time a chart has a navigator.
 In a spec, `navigator` is
 `true` or `{ height?, marks? }`, with facets and panels as without.
 
@@ -2560,7 +2569,12 @@ as they are drawn, skipping empty cells, or to the nearest cell of the next
 row or column when none is in line (Home and End go to a row's ends, Page
 Up and Page Down to a column's); like the points of other marks, cells out
 of a zoomed view are reached too, without panning to them. The description also says what color
-scales and size and shape keys show. Pies, trees, and other layout
+scales and size and shape keys show. With a range navigator, it describes
+the overview of the whole x range, the current range in x tooltip format,
+and control of every panel's x in multi-panel charts. This text refreshes at
+most once a second without live announcements on each pan; the
+navigator's sliders announce where its window ends up politely.
+Pies, trees, and other layout
 marks step through their items; in facet panels and subplots, Left and
 Right read a panel's items and Up and Down move between panels. Arriving in
 a panel, the cursor names it and reads the annotations that panel alone
@@ -2579,9 +2593,10 @@ of every chart family and of grids, and the accessibility tree each engine
 gives screen readers, read through its own protocol. Screen readers
 themselves have not been tried yet.
 
-PDF exports are tagged with one Figure for the chart, including facets and
-subplots. Its alternative text combines the title and the same generated
-summary used in the DOM. Backgrounds and grid lines are artifacts; text
+Static SVG includes the generated summary in its `desc`, with the supplied
+`description` first. PDF exports are tagged with one Figure for the chart,
+including facets and subplots. Its alternative text combines the title and
+the same generated summary used in the DOM. Backgrounds and grid lines are artifacts; text
 labels remain part of the figure. This does not claim PDF/UA conformance.
 
 ## Export

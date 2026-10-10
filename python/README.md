@@ -298,6 +298,11 @@ zooming does. With facets or panels, one strip goes under all of them,
 draws every panel's marks (each panel's part apart, over that panel's y
 scale), and moves the x range they share, so the panels must share x
 (`resolve_x="shared"`, the default).
+The chart's text alternative, SVG description, and PDF alternative text
+describe the navigator's overview of the whole x range, current range in x tooltip
+format, and control of every panel's x when there are several. Live charts
+refresh this summary at most once a second as the view changes; only the
+navigator's sliders announce their changes politely.
 
 Dense bar strips use pixel-column envelopes in live charts and SVG, PDF,
 and PNG: each sign keeps the extreme bar's series color (ties use series,
