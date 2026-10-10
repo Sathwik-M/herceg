@@ -189,6 +189,11 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     return this.#summaries.get(series.values)!;
   }
 
+  /** Resolved groups eligible for drawing and navigation; by default, every summary row. */
+  protected drawnSeries(series: Series[]): Series[] {
+    return series;
+  }
+
   /** One chart's summary, of every row. */
   #wholeSummary(): Summary<G> {
     const { version } = this.table;
@@ -334,7 +339,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
    * the first category each has values in, as its summary lists them. A
    * pass over the rows per table version, with nothing summarized.
    */
-  #rosterIds(): string[] {
+  protected rosterIds(): readonly string[] {
     const source = this.table;
     if (this.#roster?.version === source.version) return this.#roster.ids;
     let ids = ["median"];
@@ -381,7 +386,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     // Facets summarize each panel's rows (summarizePanels).
     if (split) {
       const label = this.spec.label ?? this.value;
-      return this.#rosterIds().map((name) => {
+      return this.rosterIds().map((name) => {
         const id = seriesKey(key, name);
         const series = this.spec.series === undefined ? label : name;
         return this.#series(
@@ -407,7 +412,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     );
     // Series are built with positions on x; horizontal shapes swap them onto y.
     if (this.horizontal) for (const s of series) [s.x, s.y] = [s.y, s.x];
-    return series;
+    return this.drawnSeries(series);
   }
 
   /**
@@ -423,19 +428,20 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     bands: Bands,
     context: BandContext,
   ): Series[][] {
-    const ids = this.#rosterIds();
+    const ids = this.rosterIds();
     const indices = this.#bands(bands, context);
     return this.#panelSummaries(rows).map((summary) => {
       const positions = this.#placed(summary, indices);
       const median = summary.stats.median;
       const sources = new Map(summary.split.sources().map((source) => [source.id, source]));
-      return roster.map(({ key, label, color }, i) => {
+      const series = roster.map(({ key, label, color }, i) => {
         // Without a series field, the one series has every summary row.
         const found = sources.get(ids[i]!);
         const length = found ? (found.rows?.length ?? median.length) : 0;
         const rows = found ? found.rows : NO_ROWS;
         return this.#series(key, label, color, positions, median, rows, length);
       });
+      return this.drawnSeries(series);
     });
   }
 
@@ -524,7 +530,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
         const row = rowOf(s, k);
         // A panel's own categories are read at their places.
         const position = placeAt(s, horizontal ? "y" : "x", row);
-        if (position < 0 || !Number.isFinite(median[row]!)) continue;
+        if (position < 0 || !this.shows(s, row)) continue;
         const center = along.map(position) + offset;
         const ends = this.span(s, row)
           .map((value) => across.map(value))

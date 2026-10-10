@@ -28,6 +28,7 @@ import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { radar } from "../../src/marks/radar.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { violin } from "../../src/marks/violin.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type PdfOptions, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
@@ -909,4 +910,37 @@ it("exports notched precomputed boxes as closed PDF paths with waist medians", (
     expect(pdf.content).toMatch(/1 0 0 RG 1.5 w[^\n]*\n(?:[^\n]+ m\n[^\n]+ l\n){15}S\n/);
     expect(renderToSVG(config)).toMatch(/fill="#ff0000"/);
   }
+});
+
+it("exports split violin halves, dashed quartiles, and solid medians in facet PDFs", () => {
+  const data = table({
+    g: ["a", "a", "a", "a", "b", "b"],
+    p: ["P", "P", "P", "P", "Q", "Q"],
+    s: ["first", "first", "second", "second", "second", "second"],
+    v: [1, 3, 2, 4, 5, 7],
+  });
+  for (const horizontal of [false, true])
+    for (const inner of ["box", "quartiles", "none"] as const) {
+      const mark = violin(data, {
+        ...(horizontal ? ({ x: "v", y: "g" } as const) : ({ x: "g", y: "v" } as const)),
+        series: "s",
+        split: true,
+        inner,
+      });
+      const config = {
+        width: 600,
+        height: 300,
+        locale: "en-US",
+        marks: [mark],
+        facet: facet("p"),
+        resolve: { [horizontal ? "y" : "x"]: "independent" as const },
+      };
+      const pdf = readPdf(renderToPDF(config));
+      expect(pdf.content.includes("[4 3] 0 d")).toBe(inner === "quartiles");
+      if (inner === "quartiles")
+        expect(pdf.content).toMatch(/1\.5 w 1 J 1 j\n[^\n]+ m\n[^\n]+ l\nS\nQ/);
+      // Three densities: both series in P, only the second in Q.
+      expect(pdf.content.match(/(?:[^\n]+ l\n){20,}h\nf\n/g)).toHaveLength(3);
+      expect(renderToSVG(config).includes('stroke-dasharray="4 3"')).toBe(inner === "quartiles");
+    }
 });

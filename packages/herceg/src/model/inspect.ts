@@ -500,9 +500,11 @@ export class Inspector {
     const value = valueAt(s, row);
     // What a scale cannot place (log axes, missing ends) is not drawn, so not reported.
     if (!this.#placeable(s, row)) return undefined;
-    const px = x.map(placeAt(s, "x", row));
-    const py = y.map(placeAt(s, "y", row));
     const mark = this.#markOf.get(s);
+    const [px, py] = mark?.pointAnchor?.(s, row, this.#axisOf(s).frame) ?? [
+      x.map(placeAt(s, "x", row)),
+      y.map(placeAt(s, "y", row)),
+    ];
     const tooltip = mark?.tooltip;
     // A cell's label is its y category and its value a measure; marks
     // inspected along y (horizontal bars) measure their values on x.

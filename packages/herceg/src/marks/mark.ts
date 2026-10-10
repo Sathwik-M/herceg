@@ -302,6 +302,8 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * of the x axis and of the series' y axis.
    */
   pointText?(series: Series, row: number, format: AxisFormat): string;
+  /** The inspected point's pixels when its drawing is offset from its axis values. */
+  pointAnchor?(series: Series, row: number, frame: Frame): readonly [number, number] | undefined;
   /** The color a row is drawn in, for marks coloring rows by a field rather than by series. */
   pointColor?(series: Series, row: number, theme: Theme): string;
   /**

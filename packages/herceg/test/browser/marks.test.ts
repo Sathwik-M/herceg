@@ -15,6 +15,7 @@ import { region } from "../../src/marks/region.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { sankey } from "../../src/marks/sankey.ts";
 import { text } from "../../src/marks/text.ts";
+import { violin } from "../../src/marks/violin.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { RasterGeometry } from "../../src/scene/scene.ts";
@@ -929,6 +930,72 @@ describe("notched box plots", () => {
       expect(alpha(half * 0.8, 30)).toBe(255);
       expect(alpha(half * 1.1, 30)).toBe(0);
       chart.destroy();
+    },
+  );
+});
+
+describe("split violins", () => {
+  it.each([false, true])(
+    "paints each half in its color and supports every interior (horizontal %s)",
+    (horizontal) => {
+      const data = table({
+        g: Array(10).fill("a") as string[],
+        s: [
+          "first",
+          "first",
+          "first",
+          "first",
+          "first",
+          "second",
+          "second",
+          "second",
+          "second",
+          "second",
+        ],
+        v: [1, 2, 3, 4, 5, 1, 2, 3, 4, 5],
+      });
+      for (const inner of ["box", "quartiles", "none"] as const) {
+        const mark = violin(data, {
+          ...(horizontal ? ({ x: "v", y: "g" } as const) : ({ x: "g", y: "v" } as const)),
+          series: "s",
+          split: true,
+          inner,
+          fillOpacity: 1,
+        });
+        const options = { marks: [mark], theme: { palette: ["#ff0000", "#0000ff"] } };
+        const svg = createChart(host, { ...options, renderer: "svg" });
+        const paths = [...svg.root.querySelectorAll('svg [data-kind="area"]')];
+        expect(paths).toHaveLength(2);
+        for (const path of paths) expect(svg.toSVG()).toContain(`d="${path.getAttribute("d")}"`);
+        expect(svg.root.querySelectorAll('svg [stroke-dasharray="4 3"]').length).toBe(
+          inner === "quartiles" ? 2 : 0,
+        );
+        svg.destroy();
+        const dashes = vi.spyOn(CanvasRenderingContext2D.prototype, "setLineDash");
+        const chart = createChart(host, { ...options, renderer: "canvas" });
+        const model = modelOf(chart);
+        const panel = model.panels()[0]!;
+        const along = horizontal ? panel.y : panel.x;
+        const across = horizontal ? panel.x : panel.y;
+        const center = along.map(0);
+        const context = chart.root.querySelector("canvas")!.getContext("2d")!;
+        const ratio = context.canvas.width / context.canvas.clientWidth;
+        const pixel = (side: number) => {
+          const offset = side * along.bandwidth! * 0.1;
+          const [x, y] = horizontal
+            ? [across.map(3), center + offset]
+            : [center + offset, across.map(3)];
+          return Array.from(
+            context.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data,
+          );
+        };
+        expect(pixel(horizontal ? 1 : -1)).toEqual([255, 0, 0, 255]);
+        expect(pixel(horizontal ? -1 : 1)).toEqual([0, 0, 255, 255]);
+        if (inner === "quartiles") expect(dashes).toHaveBeenCalledWith([4, 3]);
+        expect(chart.toSVG().includes('stroke-dasharray="4 3"')).toBe(inner === "quartiles");
+        chart.destroy();
+        dashes.mockRestore();
+      }
     },
   );
 });

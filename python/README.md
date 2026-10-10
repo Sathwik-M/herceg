@@ -71,6 +71,27 @@ with WebGL2 and depth-tested, up to 1,048,576 grid points a surface; static
 SVG, PNG, and PDF draw on the CPU, back to front, at most 250,000, and show
 the starting camera.
 
+Violins accept `split=True` and `inner="box" | "quartiles" | "none"` in both
+`hg.violin(...)` and `Chart.violin(...)`. The default box is unchanged;
+`"quartiles"` draws dashed Q1/Q3 lines and a solid median, and `"none"`
+omits inner marks. Split requires a category `series` field with at most two
+observed values across the mark: first left (below horizontally), second
+right (above), in the current whole-table legend order. Categories or panels
+with missing or hidden partners leave their half empty, and each keeps its
+color, legend entry, tooltip, keyboard stop, and
+summary. More than two values fails when rendered with an error naming the
+field and count; unused dictionary values and missing/non-finite rows do not
+count. Both options work with facets, per-panel categories, either orientation,
+and SVG, Canvas, static SVG, and PDF output. Specs use version 7 only when
+`split=True` or a non-default `inner` needs it.
+
+```python
+hg.violin(requests, x="region", y="latency", series="version", split=True, inner="quartiles")
+hg.Chart(requests, facet="service", resolve_y="independent").violin(
+    x="latency", y="region", series="version", split=True, inner="none"
+)
+```
+
 Maps read shapes from GeoPandas GeoDataFrames, GeoJSON FeatureCollection
 dicts (properties become columns), or columns of GeoJSON geometries or
 objects with `__geo_interface__` (Shapely), without importing GeoPandas or

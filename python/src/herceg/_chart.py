@@ -1404,6 +1404,8 @@ class Chart:
         data: Any = None,
         series: str | None = None,
         bandwidth: float | None = None,
+        split: bool | None = None,
+        inner: Literal["box", "quartiles", "none"] | None = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
         label: str | None = None,
@@ -1423,7 +1425,10 @@ class Chart:
         deviation in data units for every violin; by default each has its
         own by Silverman's rule of thumb. ``series`` puts a violin per value
         of a category column side by side. ``fill`` gives every violin one
-        color instead of the palette's.
+        color instead of the palette's. ``split=True`` shares the category
+        center between two series (first left, or below horizontally); a
+        missing partner leaves its half empty. ``inner`` selects the default
+        "box", dashed "quartiles" with a solid median, or "none".
         """
         if bandwidth is not None and not (
             isinstance(bandwidth, numbers.Real)
@@ -1432,8 +1437,20 @@ class Chart:
             and bandwidth > 0
         ):
             raise ValueError(f"bandwidth must be a positive number, not {bandwidth!r}")
+        if split is not None and not isinstance(split, bool):
+            raise TypeError("split must be a bool")
+        if split and series is None:
+            raise ValueError("violin split needs a series field")
+        if inner is not None and inner not in ("box", "quartiles", "none"):
+            raise ValueError('inner must be "box", "quartiles", or "none"')
         return self._distribution(
-            {"type": "violin", "bandwidth": bandwidth, "fill": fill},
+            {
+                "type": "violin",
+                "bandwidth": bandwidth,
+                "fill": fill,
+                "split": split,
+                "inner": inner,
+            },
             x,
             y,
             data,
@@ -2796,6 +2813,12 @@ def assemble_spec(
         for mark in marks
     ):
         version = 6
+    if any(
+        mark["type"] == "violin"
+        and (mark.get("split") is True or mark.get("inner") not in (None, "box"))
+        for mark in marks
+    ):
+        version = 7
     spec: dict[str, Any] = {"version": version, **options}
     for key, value in layout.items():
         spec[key] = (
@@ -3730,6 +3753,8 @@ def violin(
     *,
     series: str | None = None,
     bandwidth: float | None = None,
+    split: bool | None = None,
+    inner: Literal["box", "quartiles", "none"] | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
@@ -3745,6 +3770,8 @@ def violin(
         y,
         series=series,
         bandwidth=bandwidth,
+        split=split,
+        inner=inner,
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,

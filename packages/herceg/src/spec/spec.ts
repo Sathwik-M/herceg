@@ -15,9 +15,10 @@ export type { Expression, Operator } from "../data/expression.ts";
  * version adds what an older reader would ignore and draw differently:
  * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
  * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`,
- * version 5 enabled x axis `seams`, version 6 raw box plot notches and non-default whiskers.
+ * version 5 enabled x axis `seams`, version 6 raw box plot notches and non-default whiskers,
+ * version 7 split violins and non-default violin interiors.
  */
-export const SPEC_VERSION = 6;
+export const SPEC_VERSION = 7;
 
 /** Column name in a table. */
 export type Field = string;
@@ -34,10 +35,11 @@ export interface ChartSpec {
    * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
    * `grid` must give 2 or later, those using `resolve.x`, a panel's `x`, or
    * x axis `breaks` 3 or later, those with a `navigator` 4 or later,
-   * those with enabled x axis `seams` 5, and raw box plot notches or non-default whiskers 6, so that
+   * those with enabled x axis `seams` 5, raw box plot notches or non-default whiskers 6,
+   * and split violins or non-default violin interiors 7, so that
    * older readers refuse them rather than draw them differently.
    */
-  version?: 1 | 2 | 3 | 4 | 5 | 6;
+  version?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -943,6 +945,10 @@ export interface ViolinSpec extends MarkBase {
   y: Field;
   /** Category field: a violin per value in each category, side by side. */
   series?: Field;
+  /** Two series share the category center: first left (below horizontally), second right (above). */
+  split?: boolean;
+  /** Inner box (default), dashed quartiles with a solid median, or no inner marks. */
+  inner?: "box" | "quartiles" | "none";
   /**
    * The kernel's standard deviation in data units, the same for every
    * violin; by default each violin's by Silverman's rule of thumb.

@@ -1381,3 +1381,67 @@ def test_boxplot_rejects_invalid_whisker_rules(whiskers):
 def test_boxplot_numpy_whisker_multiples_serialize(whiskers):
     spec, _ = hg.boxplot({"g": ["a"], "v": [1]}, x="g", y="v", whiskers=whiskers).to_spec()
     assert json.loads(json.dumps(spec))["marks"][0]["whiskers"] == float(whiskers)
+
+
+@pytest.mark.parametrize("inner", [None, "box", "quartiles", "none"])
+@pytest.mark.parametrize("split", [None, False, True])
+def test_violin_options_and_spec_versions(inner, split):
+    data = {
+        "g": ["a", "a", "a", "a"],
+        "s": ["first", "first", "second", "second"],
+        "v": [1, 3, 2, 4],
+    }
+    spec, _ = hg.violin(data, x="g", y="v", series="s", split=split, inner=inner).to_spec()
+    mark = spec["marks"][0]
+    assert mark.get("split") is split
+    assert mark.get("inner") == inner
+    assert ("split" in mark) is (split is not None)
+    assert ("inner" in mark) is (inner is not None)
+    assert spec["version"] == (7 if split is True or inner in ("quartiles", "none") else 4)
+    method_spec, _ = hg.Chart(data).violin("g", "v", series="s", split=split, inner=inner).to_spec()
+    assert method_spec == spec
+
+
+def test_violin_option_errors():
+    from py_mini_racer import JSEvalException
+
+    data = {"g": ["a", "a"], "v": [1, 2]}
+    with pytest.raises(ValueError, match="split needs a series field"):
+        hg.violin(data, "g", "v", split=True)
+    for split in (1, "true"):
+        with pytest.raises(TypeError, match="split must be a bool"):
+            hg.Chart(data).violin("g", "v", split=split)
+    for inner in ("points", False, 1):
+        with pytest.raises(ValueError, match="inner must be"):
+            hg.violin(data, "g", "v", inner=inner)
+    many = {"g": ["a", "b", "c"], "s": ["first", "second", "third"], "v": [1, 2, 3]}
+    with pytest.raises(JSEvalException, match='series field "s" has 3 values'):
+        hg.violin(many, "g", "v", series="s", split=True).to_svg()
+
+
+@pytest.mark.parametrize("horizontal", [False, True])
+@pytest.mark.parametrize("inner", ["box", "quartiles", "none"])
+def test_split_violin_exports_and_facets(horizontal, inner):
+    data = {
+        "g": ["a", "a", "a", "a", "b", "b"],
+        "p": ["P", "P", "P", "P", "Q", "Q"],
+        "s": ["first", "first", "second", "second", "second", "second"],
+        "v": [1, 3, 2, 4, 5, 7],
+    }
+    chart = hg.Chart(
+        data, facet="p", **{"resolve_y" if horizontal else "resolve_x": "independent"}
+    ).violin(
+        "v" if horizontal else "g", "g" if horizontal else "v", series="s", split=True, inner=inner
+    )
+    svg = chart.to_svg()
+    assert 'fill-opacity="0.25"' in svg
+    assert ('stroke-dasharray="4 3"' in svg) is (inner == "quartiles")
+    assert ">first</text>" in svg
+    assert ">second</text>" in svg
+    assert chart.to_pdf().startswith(b"%PDF-")
+
+
+def test_violin_version_composes_with_boxplot_options():
+    data = {"g": ["a", "a"], "v": [1, 2], "s": ["first", "second"]}
+    chart = hg.Chart(data).boxplot("g", "v", notch=True).violin("g", "v", inner="none")
+    assert chart.to_spec()[0]["version"] == 7

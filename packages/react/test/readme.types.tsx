@@ -1,7 +1,7 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
 import { table, time } from "herceg";
 import { useEffect, useMemo } from "react";
-import { BoxPlot, Chart, Custom, Line, Point, Region, Rule, Text } from "../src/index.ts";
+import { BoxPlot, Chart, Custom, Line, Point, Region, Rule, Text, Violin } from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -130,6 +130,21 @@ export function Boxes() {
       <BoxPlot data={boxData} x="group" {...boxFields} notch />
       {/* @ts-expect-error statistic fields must be numeric */}
       <BoxPlot data={boxData} x="group" {...boxFields} low="group" />
+    </Chart>
+  );
+}
+
+export function ViolinOptions() {
+  return (
+    <Chart>
+      <Violin data={metrics} x="service" y="p50" series="service" split inner="quartiles" />
+      <Violin data={metrics} x="p50" y="service" inner="none" />
+      {/* @ts-expect-error inner takes only the supported interiors */}
+      <Violin data={metrics} x="service" y="p50" inner="points" />
+      {/* @ts-expect-error split is boolean */}
+      <Violin data={metrics} x="service" y="p50" split="true" />
+      {/* @ts-expect-error a series field is categorical */}
+      <Violin data={metrics} x="service" y="p50" series="p50" split />
     </Chart>
   );
 }

@@ -48,6 +48,7 @@ import {
   Rule,
   Surface,
   Text,
+  Violin,
 } from "../src/index.ts";
 
 // The options each chart was last given, at creation and by `update`, which
@@ -90,6 +91,7 @@ const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => r
 const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
 const components = {
+  Violin,
   Chart,
   BoxPlot,
   Candlestick,
@@ -271,6 +273,34 @@ describe("<Chart>", () => {
       );
     expect(statsBox("notch")).toBe(statsBox(':notch="true"'));
     expect(statsBox("notch")).not.toBe(statsBox(""));
+  });
+
+  it("reads bare split as true and forwards violin interiors", () => {
+    const samples = table({
+      g: ["a", "a", "a", "a"],
+      s: ["first", "first", "second", "second"],
+      v: [1, 3, 2, 4],
+    });
+    const drawn = (attribute: string) => {
+      const { view, chart } = chartRef();
+      mount(
+        `<Chart ref="view" renderer="svg"><Violin :data="samples" x="g" y="v" series="s" inner="quartiles" ${attribute} /></Chart>`,
+        () => ({ samples, view }),
+      );
+      expect(optionsOf(chart()).marks[0]!.spec).toMatchObject({
+        inner: "quartiles",
+        ...(attribute ? { split: true } : {}),
+      });
+      const shapes = [...host.querySelectorAll('svg [data-kind="area"]')].map((path) =>
+        path.getAttribute("d"),
+      );
+      expect(host.querySelectorAll('svg [stroke-dasharray="4 3"]')).toHaveLength(2);
+      app!.unmount();
+      app = undefined;
+      return shapes;
+    };
+    expect(drawn("split")).toEqual(drawn(':split="true"'));
+    expect(drawn("split")).not.toEqual(drawn(""));
   });
 
   it("renders a radar from its component, and reads a bare points attribute as true", () => {

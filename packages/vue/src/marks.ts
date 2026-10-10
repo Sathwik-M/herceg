@@ -215,6 +215,7 @@ export const BoxPlot = /* @__PURE__ */ markComponent(
 export const Violin = /* @__PURE__ */ markComponent(
   "Violin",
   ({ data, ...options }: WithData<ViolinOptions<Schema>, Schema>) => violin(data, options),
+  ["split"],
 ) as unknown as <S extends Schema>(props: WithData<ViolinOptions<S>, S>) => null;
 
 /** A treemap of a tree given by `path` fields, or `node` and `parent`; it has its chart to itself. */
