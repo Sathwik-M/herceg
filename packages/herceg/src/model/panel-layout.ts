@@ -2,10 +2,11 @@
 // values, or subplots, whose marks name their panel. The model reads either
 // through these types; their code loads only with a facet or panels.
 
-import type { BandContext, BandList, Bands, Mark } from "../marks/mark.ts";
+import type { LayoutMark } from "../marks/layout-mark.ts";
+import type { BandContext, BandList, Bands, ChartMark, Mark } from "../marks/mark.ts";
 import { type BandPlaces, rowOf, type Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
-import type { AxisSpec, ChartSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
+import type { AxisSpec, ChartSpec, ResolveSpec, ScaleResolution, XAxisSpec } from "../spec/spec.ts";
 import type { AxisType } from "./axis.ts";
 import type { MarkSeries } from "./inspect.ts";
 
@@ -22,6 +23,14 @@ export interface PanelGrid {
   rowWeights?: readonly number[] | undefined;
   /** Columns' widths relative to each other; equal without them. */
   columnWeights?: readonly number[] | undefined;
+  /**
+   * With panels drawing layout marks, which have no axes, the panels that
+   * show a shared x scale's labels: the lowest with axes of each column.
+   * Without it, the lowest of each column.
+   */
+  lowest?: readonly boolean[] | undefined;
+  /** Whether those labels go between rows, above panels drawing layout marks. */
+  between?: boolean | undefined;
 }
 
 /** The panels of a scene: their keys, each one's marks and series, and every mark's across panels. */
@@ -38,19 +47,33 @@ export interface PanelSplit {
   /** Each mark's series in all panels; marks that repeat, once. */
   all: MarkSeries[];
   /**
+   * Per panel, the layout mark it holds, if any: such a panel draws only
+   * that mark, without axes.
+   */
+  items?: (PanelItem | undefined)[];
+  /**
    * With categories resolved per panel along an axis, each panel's bands on
    * it: its group's (see PanelBands).
    */
   bands?: { x?: readonly BandList[]; y?: readonly BandList[] };
 }
 
+/** A layout mark a panel holds: the mark, its index among the chart's marks, and its rows there. */
+export interface PanelItem {
+  mark: LayoutMark;
+  index: number;
+  /** The rows of the mark's table the panel draws, ascending; all of them when undefined. */
+  rows: Uint32Array | undefined;
+}
+
 /**
  * What preparing panels' series reads of the chart: the series its legend
- * hid, which stacks count as zero, and its `resolve`.
+ * hid, which stacks count as zero, its `resolve`, and its marks, of which
+ * layout marks have panels of their own.
  */
 export interface PanelChart {
   readonly hidden: ReadonlySet<string>;
-  readonly config: Pick<ChartSpec, "resolve">;
+  readonly config: Pick<ChartSpec, "resolve"> & { readonly marks: readonly ChartMark[] };
 }
 
 /** Sees a split's rows and columns of panels, and throws if the chart cannot draw them. */
@@ -58,7 +81,7 @@ export type PanelCheck = (shape: { rows: number; columns: number }, panels: numb
 
 /** The chart options a layout checks; the x axis as panels read it, breaks aside. */
 export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y"> & {
-  x?: AxisSpec | undefined;
+  x?: (AxisSpec & Pick<XAxisSpec, "seams">) | undefined;
   /** Layouts refuse a navigator, which the model then need not check. */
   navigator?: object | boolean | undefined;
 };
@@ -79,8 +102,8 @@ export interface PanelSplitter {
 }
 
 export interface PanelLayout {
-  /** Rejects marks and options the panels cannot draw. */
-  check(marks: readonly Mark[], options: LayoutOptions): void;
+  /** Rejects marks along axes, layout marks, and options the panels cannot draw. */
+  check(marks: readonly Mark[], options: LayoutOptions, layouts?: readonly LayoutMark[]): void;
   /** Whether the panels split the mark's rows (see `Mark.series`), rather than draw it whole. */
   splits(mark: Mark): boolean;
   /** How panels share y when the chart's `resolve` does not say. */
@@ -131,6 +154,11 @@ export interface PanelLayout {
 /** Panels sharing a scale: each panel's group, and each group's marks and name. */
 export interface PanelGroups {
   groupOf: number[];
+  /**
+   * Each group's first panel with axes, whose settings its axis takes (its
+   * first panel when none has, all drawing layout marks).
+   */
+  first: number[];
   drawn: MarkSeries[][];
   /**
    * Its panels' keys, so a group whose panels change is another group; on
@@ -154,12 +182,15 @@ export function groups(
   const groupOf = groupsOf(resolution, split.panels.length, columns);
   const drawn = drawnBy(split, groupOf) as MarkSeries[][];
   const members: (string | number)[][] = drawn.map(() => []);
+  const first = drawn.map(() => -1);
   groupOf.forEach((g, i) => {
     members[g]!.push(split.keys[i]!);
+    if (first[g]! < 0 && !split.items?.[i]) first[g] = i;
   });
   const lists = split.bands?.[axis];
   return {
     groupOf,
+    first: first.map((at, g) => (at < 0 ? groupOf.indexOf(g) : at)),
     drawn,
     keys: members.map((keys, g) =>
       JSON.stringify(lists ? [...keys, numbers.get(lists[groupOf.indexOf(g)]!)!] : keys),
@@ -234,6 +265,51 @@ function drawnBy(split: PanelSplit, groupOf: readonly number[]): (MarkSeries[] |
     });
   });
   return Array.from(drawn, (group) => group?.filter((entry) => entry !== undefined));
+}
+
+/**
+ * The panels of `split`, in rows of `columns`, that label a shared x axis
+ * when panels draw layout marks, which have no axes: the lowest of each
+ * column with axes; and whether such a panel is above a layout mark's.
+ */
+export function lowestWithAxes(
+  split: PanelSplit,
+  columns: number,
+): Pick<PanelGrid, "lowest" | "between"> {
+  const { items } = split;
+  if (!items) return {};
+  const lowest = items.map(() => false);
+  const seen = new Set<number>();
+  let between = false;
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i] || seen.has(i % columns)) continue;
+    seen.add(i % columns);
+    lowest[i] = true;
+    if (i + columns < items.length) between = true;
+  }
+  return { lowest, between };
+}
+
+/** Layout marks that can draw in a panel; maps, networks, and 3D charts have charts to themselves. */
+const IN_PANELS = new Set(["pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey"]);
+
+/** Refuses layout marks panels cannot draw yet. */
+export function checkLayouts(layouts: readonly LayoutMark[]): void {
+  for (const { spec } of layouts)
+    if (!IN_PANELS.has(spec.type))
+      throw new Error(`Charts of a ${spec.type} mark cannot have facets or panels yet`);
+}
+
+/**
+ * Refuses options for an x axis in a chart whose panels all draw layout
+ * marks, the first of `type`: they have no axes.
+ */
+export function refuseAxes(type: string, options: LayoutOptions): void {
+  const { zoom, brush, sync } = options.interaction ?? {};
+  if (zoom || brush || sync || options.x?.seams)
+    throw new Error(
+      `Charts of a ${type} mark have no x axis to zoom, brush, sync, or mark seams on`,
+    );
 }
 
 /** Marks that read their categorical positions through panels' places. */

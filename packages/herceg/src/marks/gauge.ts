@@ -7,6 +7,7 @@ import { shapesDrawing } from "../draw/shapes.ts";
 import { textDrawing } from "../draw/text.ts";
 import { type Formatter, formatNumber, numberFormatter } from "../format/format.ts";
 import { fitText } from "../layout/text.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ArcGeometry, Geometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, GaugeBand, GaugeSpec } from "../spec/spec.ts";
@@ -30,6 +31,8 @@ export interface GaugeOptions<S extends Schema> {
   /** Intl.NumberFormat options for the value and the dial's ends. */
   format?: Intl.NumberFormatOptions;
   id?: string;
+  /** With the chart's `panels`, the id of the panel the gauge has to itself. */
+  panel?: string;
 }
 
 /** The dial turns 240 degrees clockwise from its lower left, over the top: it is open at the bottom. */
@@ -56,6 +59,7 @@ interface Band {
 export class GaugeMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec: Frozen<GaugeSpec>;
   readonly table: Table;
   readonly measure: string;
@@ -93,12 +97,17 @@ export class GaugeMark implements LayoutMark {
     return [];
   }
 
-  /** The row holding the field's last finite value, or -1 when none does. */
-  #row(): number {
+  /**
+   * The row holding the field's last finite value among `rows` (all rows
+   * by default), or -1 when none does.
+   */
+  #row(rows: Uint32Array | undefined): number {
     const values = this.table.numbers(this.spec.value);
-    let row = values.length - 1;
-    while (row >= 0 && !Number.isFinite(values[row]!)) row--;
-    return row;
+    for (let k = (rows ?? values).length - 1; k >= 0; k--) {
+      const row = rows ? rows[k]! : k;
+      if (Number.isFinite(values[row]!)) return row;
+    }
+    return -1;
   }
 
   #bands(theme: Theme): Band[] {
@@ -118,7 +127,7 @@ export class GaugeMark implements LayoutMark {
     const { bounds, theme, measure, locale } = frame;
     const min = this.#min;
     const max = this.#max;
-    const row = this.#row();
+    const row = this.#row(frame.rows);
     const value = row < 0 ? Number.NaN : this.table.numbers(this.spec.value)[row]!;
     const format: Formatter = this.spec.format
       ? numberFormatter(this.spec.format, locale)
@@ -296,6 +305,7 @@ export function gauge<S extends Schema>(
   if (options.label !== undefined) spec.label = options.label;
   if (options.format !== undefined) spec.format = { ...options.format };
   if (options.id !== undefined) spec.id = options.id;
+  if (options.panel !== undefined) spec.panel = options.panel;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new GaugeMark(spec, table as unknown as Table);

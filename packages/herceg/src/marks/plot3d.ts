@@ -31,6 +31,7 @@ import {
   usableDomain,
   valueFormatter,
 } from "../model/axis.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry, LegendPart } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import { TIME_UNIT_MS } from "../scale/time.ts";
@@ -193,6 +194,7 @@ export function joinLayers3D(marks: readonly LayoutMark[], config: ChartConfig):
 export class Plot3D implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec = { type: "plot3d" } as const;
   readonly table = undefined;
   readonly otherTables: readonly Table[];

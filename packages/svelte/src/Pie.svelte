@@ -1,4 +1,4 @@
-<!-- A pie, or with `innerRadius` a donut: `category`, and `value` to sum. It has its chart to itself. -->
+<!-- A pie, or with `innerRadius` a donut: `category`, and `value` to sum. It has its chart, each facet panel, or its `panel` to itself. -->
 <script lang="ts" generics="S extends Schema">
   import { type PieOptions, pie, type Schema } from "herceg";
   import { markAnchor, plain, type WithData } from "./marks.js";

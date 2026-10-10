@@ -7,11 +7,12 @@ import {
   type HierarchyEncoding,
   hierarchy,
   pathOf,
+  pruneHierarchy,
   subtreeValues,
 } from "../data/hierarchy.ts";
 import type { Table } from "../data/table.ts";
 import type { LegendEntry } from "../model/legend.ts";
-import type { LayoutItem, LayoutResult } from "./layout-mark.ts";
+import { type LayoutItem, type LayoutResult, RowsCache } from "./layout-mark.ts";
 import { CATEGORY, requireField } from "./mark.ts";
 
 /** How a spec names a tree: a path of category fields, or node and parent fields. */
@@ -41,13 +42,28 @@ export function treeFormError(
   return undefined;
 }
 
+/**
+ * A tree as a panel draws it: a chart's one panel the table's whole tree,
+ * and a facet panel the part its rows give a value (see `TreeData.view`).
+ */
+export interface TreeView {
+  tree: Hierarchy;
+  /** Each node's total over the panel's rows. */
+  values: Float64Array;
+  /** Each node's top-level ancestor; -1 for the root. */
+  branch: Int32Array;
+  /** The top-level nodes with a value, largest over the whole table first: the legend's order. */
+  tops: readonly { node: number; label: string }[];
+}
+
 export class TreeData {
   readonly table: Table;
   readonly encoding: HierarchyEncoding;
   readonly #value: string | undefined;
-  #built:
-    | { version: number; tree: Hierarchy; values: Float64Array; branch: Int32Array }
-    | undefined;
+  /** The whole table's tree, and the table version it is for. */
+  #whole: { version: number; view: TreeView } | undefined;
+  /** The part of the tree each facet panel's rows give a value. */
+  readonly #parts = new RowsCache<TreeView>();
 
   constructor(table: Table, fields: TreeFields, role: string) {
     const problem = treeFormError(fields, role);
@@ -66,45 +82,55 @@ export class TreeData {
     this.#value = fields.value;
   }
 
-  /** The tree, each node's total, and each node's top-level ancestor, rebuilt when the table changes. */
-  get built() {
-    const table = this.table;
-    if (this.#built?.version === table.version) return this.#built;
-    const tree = hierarchy(table, this.encoding);
-    const values = subtreeValues(
-      tree,
-      this.#value === undefined ? undefined : table.numbers(this.#value),
-    );
-    const branch = new Int32Array(tree.size).fill(-1);
-    for (let at = 1; at < tree.size; at++) {
-      const node = tree.order[at]!;
-      const parent = tree.parent[node]!;
-      branch[node] = parent === 0 ? node : branch[parent]!;
-    }
-    this.#built = { version: table.version, tree, values, branch };
-    return this.#built;
+  #weights() {
+    return this.#value === undefined ? undefined : this.table.numbers(this.#value);
   }
 
-  /** Top-level nodes with a value, largest first. */
-  branches(id: string | number): Branch[] {
-    const { tree, values } = this.built;
-    return Array.from(tree.children.subarray(tree.childStart[0]!, tree.childStart[1]!))
-      .filter((node) => values[node]! > 0)
-      .sort((a, b) => values[b]! - values[a]! || a - b)
-      .map((node) => ({
-        node,
-        key: JSON.stringify([id, tree.names[node]]),
-        label: tree.names[node]!,
-      }));
+  /**
+   * The tree the table describes, each node's total, and each node's
+   * top-level ancestor, rebuilt when the table changes; with `rows` (a facet
+   * panel's), the part of it those rows give a value, as a tree of its own,
+   * so each panel keeps only its own nodes. Nodes keep their names, and so
+   * their keys, in every part.
+   */
+  view(rows?: Uint32Array): TreeView {
+    const table = this.table;
+    if (this.#whole?.version !== table.version) {
+      const tree = hierarchy(table, this.encoding);
+      const values = subtreeValues(tree, this.#weights());
+      const tops = Array.from(tree.children.subarray(tree.childStart[0]!, tree.childStart[1]!))
+        .filter((node) => values[node]! > 0)
+        .sort((a, b) => values[b]! - values[a]! || a - b)
+        .map((node) => ({ node, label: tree.names[node]! }));
+      this.#whole = {
+        version: table.version,
+        view: { tree, values, branch: branchOf(tree), tops },
+      };
+    }
+    const whole = this.#whole.view;
+    if (!rows) return whole;
+    return this.#parts.get(table, rows, () => {
+      const totals = subtreeValues(whole.tree, this.#weights(), rows);
+      const { tree, values, index } = pruneHierarchy(whole.tree, totals);
+      const tops = whole.tops.flatMap(({ node, label }) =>
+        index[node]! > 0 ? [{ node: index[node]!, label }] : [],
+      );
+      return { tree, values, branch: branchOf(tree), tops };
+    });
+  }
+
+  /** The top-level nodes of `view` (the whole tree's by default) with a value, keyed for the mark `id`. */
+  branches(id: string | number, view = this.view()): Branch[] {
+    return view.tops.map(({ node, label }) => ({ node, key: JSON.stringify([id, label]), label }));
   }
 
   legend(id: string | number, color: (key: string) => string): LegendEntry[] {
     return this.branches(id).map(({ key, label }) => ({ key, label, color: color(key) }));
   }
 
-  /** Each node's total, with the branches hidden through the legend counting as nothing. */
-  shown(branches: readonly Branch[], hidden: ReadonlySet<string>): Float64Array {
-    const { tree, values, branch } = this.built;
+  /** Each node's total in `view`, with the `branches` hidden through the legend counting as nothing. */
+  shown(view: TreeView, branches: readonly Branch[], hidden: ReadonlySet<string>): Float64Array {
+    const { tree, values, branch } = view;
     const out = values.slice();
     const hiddenNodes = new Set(branches.filter(({ key }) => hidden.has(key)).map((b) => b.node));
     if (hiddenNodes.size === 0) return out;
@@ -117,19 +143,17 @@ export class TreeData {
   }
 
   /**
-   * An item's key: the mark's id and the node's path, or with node and
-   * parent fields its name, which is unique, so moving a node keeps its key.
+   * An item's key: the mark's id and the node's path in `tree`, or with node
+   * and parent fields its name, which is unique, so moving a node keeps its key.
    */
-  keyOf(id: string | number, node: number): string {
-    const { tree } = this.built;
+  keyOf(id: string | number, tree: Hierarchy, node: number): string {
     return JSON.stringify(
       "path" in this.encoding ? [id, ...pathOf(tree, node)] : [id, tree.names[node]],
     );
   }
 
-  /** The node an item key of the mark `id` names; -1 when none does. */
-  nodeOf(id: string | number, key: string): number {
-    const { tree } = this.built;
+  /** The node of `tree` an item key of the mark `id` names; -1 when none does. */
+  nodeOf(id: string | number, tree: Hierarchy, key: string): number {
     let names: unknown;
     try {
       names = JSON.parse(key);
@@ -153,17 +177,17 @@ export class TreeData {
   }
 
   /**
-   * Keyboard reading of the drawn nodes: depth first, each node's children
-   * largest first. The order is worked out when first asked for, and items
-   * only one at a time.
+   * Keyboard reading of the drawn nodes of `tree`: depth first, each node's
+   * children largest first. The order is worked out when first asked for,
+   * and items only one at a time.
    */
   navigation(
     id: string | number,
+    tree: Hierarchy,
     shown: Float64Array,
     drawn: (node: number) => boolean,
     itemOf: (node: number) => LayoutItem,
   ): Pick<LayoutResult, "count" | "item" | "indexOf"> {
-    const { tree } = this.built;
     let order: Int32Array | undefined;
     let place: Int32Array | undefined;
     const ordered = (): Int32Array => {
@@ -191,7 +215,7 @@ export class TreeData {
       },
       item: (index) => itemOf(ordered()[index]!),
       indexOf: (key) => {
-        const node = this.nodeOf(id, key);
+        const node = this.nodeOf(id, tree, key);
         if (node < 0) return -1;
         if (!place) {
           place = new Int32Array(tree.size).fill(-1);
@@ -204,15 +228,32 @@ export class TreeData {
     };
   }
 
-  /** Leaves with a value, for summaries. */
-  leaves(shown: Float64Array): number {
-    const { tree } = this.built;
+  /** The branches that have a value in `shown`, largest first, for summaries. */
+  largest(branches: readonly Branch[], shown: Float64Array): Branch[] {
+    return branches
+      .filter(({ node }) => shown[node]! > 0)
+      .sort((a, b) => shown[b.node]! - shown[a.node]!);
+  }
+
+  /** Leaves of `tree` with a value in `shown`, for summaries. */
+  leaves(tree: Hierarchy, shown: Float64Array): number {
     let count = 0;
     for (let node = 1; node < tree.size; node++) {
       if (shown[node]! > 0 && tree.childStart[node] === tree.childStart[node + 1]) count++;
     }
     return count;
   }
+}
+
+/** Each node's top-level ancestor (itself at the top level); -1 for the root. */
+function branchOf(tree: Hierarchy): Int32Array {
+  const branch = new Int32Array(tree.size).fill(-1);
+  for (let at = 1; at < tree.size; at++) {
+    const node = tree.order[at]!;
+    const parent = tree.parent[node]!;
+    branch[node] = parent === 0 ? node : branch[parent]!;
+  }
+  return branch;
 }
 
 /** "1 group", "2 groups". */

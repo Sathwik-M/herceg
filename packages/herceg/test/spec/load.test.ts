@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { encodedCategory, time } from "../../src/data/column.ts";
 import { geometry } from "../../src/data/geometry.ts";
 import { type Table, table } from "../../src/data/table.ts";
-import { loadSpec, SPEC_VERSION, specToSVG, validateSpec } from "../../src/from-spec.ts";
+import { loadSpec, SPEC_VERSION, specToPDF, specToSVG, validateSpec } from "../../src/from-spec.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { tablesOf } from "../../src/marks/layout-mark.ts";
 import { line } from "../../src/marks/line.ts";
@@ -635,5 +635,61 @@ describe("3D charts in specs", () => {
     expect(checkSpec({ data, marks, camera: { azimuth: 1, roll: 3 } } as ChartSpec)).toEqual([
       "spec.camera.roll",
     ]);
+  });
+});
+
+describe("layout marks in panels in specs", () => {
+  const data = {
+    sales: {
+      columns: {
+        region: ["N", "N", "S"],
+        product: ["a", "b", "a"],
+        revenue: [1, 2, 3],
+        week: [0, 1, 2],
+      },
+    },
+  };
+  // What older readers refuse (pies there have charts to themselves), so no
+  // version marks these specs.
+  const faceted = {
+    data,
+    facet: { field: "region" },
+    marks: [{ type: "pie", category: "product", value: "revenue" }],
+    width: 400,
+    height: 200,
+  } as ChartSpec;
+
+  it("draw a pie in each facet panel, and one in a subplot beside a line", () => {
+    const svg = specToSVG(faceted, [], { measureText: estimateText });
+    expect(svg).toContain(">N</text>");
+    expect(svg).toContain(">S</text>");
+    // Two slices in N, one in S.
+    expect(svg.match(/<path d="M[^"]*A[^"]*Z" fill="#/g)).toHaveLength(3);
+    expect(new TextDecoder().decode(specToPDF(faceted).subarray(0, 8))).toBe("%PDF-1.4");
+    const subplots = {
+      version: 2,
+      data,
+      panels: [{ id: "trend" }, { id: "share", title: "Share" }],
+      grid: { columns: 2 },
+      marks: [
+        { type: "line", x: "week", y: "revenue", panel: "trend" },
+        { type: "pie", category: "product", panel: "share" },
+      ],
+      width: 400,
+      height: 200,
+    } as ChartSpec;
+    const beside = specToSVG(subplots, [], { measureText: estimateText });
+    expect(beside).toContain(">Share</text>");
+    expect(beside.match(/<path d="M[^"]*A[^"]*Z" fill="#/g)).toHaveLength(2);
+  });
+
+  it("refuse a layout mark repeated in every facet panel", () => {
+    const repeated = {
+      ...faceted,
+      marks: [{ type: "pie", category: "product", facet: "repeat" }],
+    } as unknown as ChartSpec;
+    expect(() => specToSVG(repeated)).toThrow(
+      "splits its rows into facet panels; it cannot repeat",
+    );
   });
 });

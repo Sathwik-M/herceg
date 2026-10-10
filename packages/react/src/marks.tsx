@@ -130,7 +130,7 @@ export const ErrorBar = /* @__PURE__ */ markElement(
   ({ data, ...options }: WithData<ErrorBarOptions<Schema>, Schema>) => errorBar(data, options),
 ) as unknown as <S extends Schema>(props: WithData<ErrorBarOptions<S>, S>) => null;
 
-/** A pie, or with `innerRadius` a donut; it has its chart to itself. */
+/** A pie, or with `innerRadius` a donut; it has its chart, each facet panel, or its `panel` to itself. */
 export const Pie = /* @__PURE__ */ markElement(
   "Pie",
   ({ data, ...options }: WithData<PieOptions<Schema>, Schema>) => pie(data, options),
@@ -148,37 +148,37 @@ export const Violin = /* @__PURE__ */ markElement(
   ({ data, ...options }: WithData<ViolinOptions<Schema>, Schema>) => violin(data, options),
 ) as unknown as <S extends Schema>(props: WithData<ViolinOptions<S>, S>) => null;
 
-/** A treemap of a tree given by `path` fields, or `node` and `parent`; it has its chart to itself. */
+/** A treemap of a tree given by `path` fields, or `node` and `parent`; it has its chart, each facet panel, or its `panel` to itself. */
 export const Treemap = /* @__PURE__ */ markElement(
   "Treemap",
   ({ data, ...options }: WithData<TreemapOptions<Schema>, Schema>) => treemap(data, options),
 ) as unknown as <S extends Schema>(props: WithData<TreemapOptions<S>, S>) => null;
 
-/** A sunburst of a tree given by `path` fields, or `node` and `parent`; it has its chart to itself. */
+/** A sunburst of a tree given by `path` fields, or `node` and `parent`; it has its chart, each facet panel, or its `panel` to itself. */
 export const Sunburst = /* @__PURE__ */ markElement(
   "Sunburst",
   ({ data, ...options }: WithData<SunburstOptions<Schema>, Schema>) => sunburst(data, options),
 ) as unknown as <S extends Schema>(props: WithData<SunburstOptions<S>, S>) => null;
 
-/** A gauge: the last finite value of `value` on a dial; it has its chart to itself. */
+/** A gauge: the last finite value of `value` on a dial; it has its chart, each facet panel, or its `panel` to itself. */
 export const Gauge = /* @__PURE__ */ markElement(
   "Gauge",
   ({ data, ...options }: WithData<GaugeOptions<Schema>, Schema>) => gauge(data, options),
 ) as unknown as <S extends Schema>(props: WithData<GaugeOptions<S>, S>) => null;
 
-/** A funnel: a centered bar per stage of `category`; it has its chart to itself. */
+/** A funnel: a centered bar per stage of `category`; it has its chart, each facet panel, or its `panel` to itself. */
 export const Funnel = /* @__PURE__ */ markElement(
   "Funnel",
   ({ data, ...options }: WithData<FunnelOptions<Schema>, Schema>) => funnel(data, options),
 ) as unknown as <S extends Schema>(props: WithData<FunnelOptions<S>, S>) => null;
 
-/** A radar: `category` and `value`, or a list of `fields`, a spoke each; it has its chart to itself. */
+/** A radar: `category` and `value`, or a list of `fields`, a spoke each; it has its chart, each facet panel, or its `panel` to itself. */
 export const Radar = /* @__PURE__ */ markElement(
   "Radar",
   ({ data, ...options }: WithData<RadarOptions<Schema>, Schema>) => radar(data, options),
 ) as unknown as <S extends Schema>(props: WithData<RadarOptions<S>, S>) => null;
 
-/** A Sankey diagram of flows from `source` to `target` nodes; it has its chart to itself. */
+/** A Sankey diagram of flows from `source` to `target` nodes; it has its chart, each facet panel, or its `panel` to itself. */
 export const Sankey = /* @__PURE__ */ markElement(
   "Sankey",
   ({ data, ...options }: WithData<SankeyOptions<Schema>, Schema>) => sankey(data, options),

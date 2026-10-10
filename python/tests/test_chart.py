@@ -1094,6 +1094,116 @@ def test_panels_draw_the_marks_that_name_them():
         hg.Chart(DATA, panel_column_widths=[1])
 
 
+SALES = {
+    "region": ["N", "N", "N", "S", "S", "E"],
+    "product": ["a", "b", "c", "a", "b", "a"],
+    "revenue": np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
+    "week": np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0]),
+}
+
+
+def test_facets_draw_a_pie_of_each_panels_rows():
+    chart = hg.Chart(SALES, facet="region", width=600, height=300).pie("product", "revenue")
+    spec, _ = chart.to_spec()
+    assert spec["facet"] == {"field": "region"}
+    assert spec["marks"] == [
+        {"type": "pie", "data": "data", "category": "product", "value": "revenue"}
+    ]
+    assert sorted(spec["data"]["data"]["columns"]) == ["product", "region", "revenue"]
+    svg = chart.to_svg()
+    # Three panels, headed by their region: 3, 2, and 1 slices.
+    assert ">N</text>" in svg and ">S</text>" in svg and ">E</text>" in svg
+    assert len(re.findall(r'<path d="M[^"]*A[^"]*Z" fill="#', svg)) == 6
+    helper, _ = hg.pie(SALES, "product", "revenue", facet="region").to_spec()
+    assert helper["facet"] == spec["facet"] and helper["marks"] == spec["marks"]
+    for kind, add in [
+        ("treemap", lambda c: c.treemap(["product"], "revenue")),
+        ("sunburst", lambda c: c.sunburst(["product"], "revenue")),
+        ("gauge", lambda c: c.gauge("revenue")),
+        ("funnel", lambda c: c.funnel("product", "revenue")),
+        ("radar", lambda c: c.radar("product", "revenue")),
+        ("sankey", lambda c: c.sankey("region", "product", "revenue")),
+    ]:
+        faceted, _ = add(hg.Chart(SALES, facet="region")).to_spec()
+        assert faceted["marks"][0]["type"] == kind
+
+
+def test_facets_of_layout_marks_refuse_what_the_browser_refuses():
+    with pytest.raises(ValueError, match="a pie has each facet panel to itself"):
+        hg.Chart(SALES, facet="region").pie("product").line(x="week", y="revenue")
+    with pytest.raises(ValueError, match="a pie has each facet panel to itself"):
+        hg.Chart(SALES, facet="region").line(x="week", y="revenue").pie("product")
+    with pytest.raises(ValueError, match="no x axis to zoom, brush, sync, or mark seams on"):
+        hg.Chart(SALES, facet="region", zoom=True).pie("product")
+    seams = hg.Axis(breaks=[hg.Break(start=4, end=8)], seams=True)
+    with pytest.raises(ValueError, match="mark seams on"):
+        hg.Chart(SALES, facet="region", x=seams).pie("product")
+    with pytest.raises(ValueError, match="mark seams on"):
+        hg.Chart(SALES, panels=["a"], x=seams).pie("product", panel="a").to_spec()
+    with pytest.raises(KeyError, match="facet: no column 'region'"):
+        hg.Chart(SALES, facet="region").pie("product", data={"product": ["a"]})
+    with pytest.raises(ValueError, match="charts of a graph cannot have facets or panels yet"):
+        hg.Chart(SALES, facet="region").graph("region", "product")
+
+
+def test_a_layout_mark_fills_its_own_panel_beside_others():
+    chart = (
+        hg.Chart(SALES, panels=["trend", "share"], panel_columns=2, width=600, height=300)
+        .line(x="week", y="revenue", panel="trend")
+        .pie("product", "revenue", panel="share")
+    )
+    spec, _ = chart.to_spec()
+    assert [mark.get("panel") for mark in spec["marks"]] == ["trend", "share"]
+    svg = chart.to_svg()
+    assert len(re.findall(r'<path d="M[^"]*A[^"]*Z" fill="#', svg)) == 3
+    first, _ = (
+        hg.Chart(SALES, panels=["share", "trend"])
+        .pie("product", "revenue", panel="share")
+        .line(x="week", y="revenue", panel="trend")
+        .to_spec()
+    )
+    assert [mark["type"] for mark in first["marks"]] == ["pie", "line"]
+    zoomed, _ = (
+        hg.Chart(SALES, panels=["trend", "share"], zoom="x")
+        .line(x="week", y="revenue", panel="trend")
+        .gauge("revenue", panel="share")
+        .to_spec()
+    )
+    assert zoomed["interaction"] == {"zoom": "x"}
+    helper, _ = hg.pie(SALES, "product", panels=["share"], panel="share").to_spec()
+    assert helper["marks"][0]["panel"] == "share"
+
+
+def test_a_layout_marks_panel_is_its_own():
+    two = hg.Chart(SALES, panels=["a", "b"])
+    with pytest.raises(ValueError, match="needs panel=: the id of the panel it draws in"):
+        two.pie("product")
+    with pytest.raises(ValueError, match="needs panel=: the id of the panel it draws in"):
+        hg.Chart(SALES, panels=["a", "b"]).pie("product", panel="*")
+    with pytest.raises(ValueError, match="names the panel 'c', which the chart does not have"):
+        hg.Chart(SALES, panels=["a", "b"]).pie("product", panel="c")
+    with pytest.raises(ValueError, match="panel 'b' has two layout marks, a pie and a funnel"):
+        hg.Chart(SALES, panels=["a", "b"]).pie("product", panel="b").funnel("product", panel="b")
+    with pytest.raises(ValueError, match="a line mark names the panel 'b', which a pie has"):
+        hg.Chart(SALES, panels=["a", "b"]).pie("product", panel="b").line(
+            x="week", y="revenue", panel="b"
+        )
+    with pytest.raises(ValueError, match="a line mark names the panel 'b', which a pie has"):
+        hg.Chart(SALES, panels=["a", "b"]).line(x="week", y="revenue", panel="b").pie(
+            "product", panel="b"
+        )
+    with pytest.raises(ValueError, match="panel='\\*' would draw in panel 'b'"):
+        hg.Chart(SALES, panels=["a", "b"]).pie("product", panel="b").rule(y=1, panel="*")
+    with pytest.raises(ValueError, match="panel='\\*' would draw in panel 'b'"):
+        hg.Chart(SALES, panels=["a", "b"]).rule(y=1, panel="*").pie("product", panel="b")
+    with pytest.raises(ValueError, match="has no axes: it takes no x or y settings"):
+        hg.Chart(SALES, panels=["a", hg.Panel("b", y=hg.Axis(label="n"))]).pie("product", panel="b")
+    with pytest.raises(ValueError, match="no x axis to zoom, brush, sync, or mark seams on"):
+        hg.Chart(SALES, panels=["a"], zoom="x").pie("product", panel="a").to_spec()
+    with pytest.raises(ValueError, match="charts of a point3d cannot have facets or panels"):
+        hg.Chart(SALES, panels=["a"]).point3d(x="week", y="revenue", z="revenue")
+
+
 def test_graphs_send_links_and_nodes_with_only_the_columns_they_read():
     talks = {
         "from": ["Ana", "Bo", "Ana", "Cy"],

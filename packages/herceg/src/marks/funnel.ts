@@ -10,11 +10,18 @@ import { shapesDrawing } from "../draw/shapes.ts";
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
 import { fitText } from "../layout/text.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, FunnelSpec } from "../spec/spec.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import {
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+  RowsCache,
+} from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface FunnelOptions<S extends Schema> {
@@ -27,6 +34,8 @@ export interface FunnelOptions<S extends Schema> {
   /** Stage names beside the bars and values on them; true by default. */
   labels?: boolean;
   id?: string;
+  /** With the chart's `panels`, the id of the panel the funnel has to itself. */
+  panel?: string;
 }
 
 /** Space between stages, where the connectors go, in bar heights. */
@@ -48,11 +57,12 @@ interface Stage {
 export class FunnelMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec: Frozen<FunnelSpec>;
   readonly table: Table;
   readonly measure: string;
-  /** Totals and row counts per category code, and the table version they are for. */
-  #totals: { version: number; sums: Float64Array; rows: Uint32Array } | undefined;
+  /** Totals and row counts per category code, of all rows and of each facet panel's. */
+  readonly #totals = new RowsCache<{ sums: Float64Array; rows: Uint32Array }>();
 
   constructor(input: FunnelSpec, table: Table) {
     this.spec = frozen(input);
@@ -65,30 +75,33 @@ export class FunnelMark implements LayoutMark {
   }
 
   /**
-   * The sum of the value (or the row count) per category code, and its row
-   * count; missing, negative, and infinite values count as nothing.
+   * The sum of the value (or the row count) per category code over `of`
+   * (all rows by default), and its row count; missing, negative, and
+   * infinite values count as nothing.
    */
-  #sums(): { sums: Float64Array; rows: Uint32Array } {
+  #sums(of: Uint32Array | undefined): { sums: Float64Array; rows: Uint32Array } {
     const table = this.table;
-    if (this.#totals?.version === table.version) return this.#totals;
-    const { codes, dictionary } = table.categories(this.spec.category);
-    const values = this.spec.value === undefined ? undefined : table.numbers(this.spec.value);
-    const sums = new Float64Array(dictionary.length);
-    const rows = new Uint32Array(dictionary.length);
-    for (let row = 0; row < table.length; row++) {
-      const code = codes[row]!;
-      if (code < 0) continue;
-      rows[code]!++;
-      const value = values ? values[row]! : 1;
-      if (value > 0 && value < Number.POSITIVE_INFINITY) sums[code]! += value;
-    }
-    this.#totals = { version: table.version, sums, rows };
-    return this.#totals;
+    return this.#totals.get(table, of, () => {
+      const { codes, dictionary } = table.categories(this.spec.category);
+      const values = this.spec.value === undefined ? undefined : table.numbers(this.spec.value);
+      const sums = new Float64Array(dictionary.length);
+      const rows = new Uint32Array(dictionary.length);
+      const count = of ? of.length : table.length;
+      for (let k = 0; k < count; k++) {
+        const row = of ? of[k]! : k;
+        const code = codes[row]!;
+        if (code < 0) continue;
+        rows[code]!++;
+        const value = values ? values[row]! : 1;
+        if (value > 0 && value < Number.POSITIVE_INFINITY) sums[code]! += value;
+      }
+      return { sums, rows };
+    });
   }
 
-  /** Every category with rows, in stage order. */
-  #stages(id: string | number): Stage[] {
-    const { sums, rows } = this.#sums();
+  /** Every category with rows among `of` (all rows by default), in stage order. */
+  #stages(id: string | number, of: Uint32Array | undefined): Stage[] {
+    const { sums, rows } = this.#sums(of);
     const { dictionary } = this.table.categories(this.spec.category);
     const stages: Stage[] = [];
     for (let code = 0; code < dictionary.length; code++) {
@@ -107,7 +120,7 @@ export class FunnelMark implements LayoutMark {
 
   draw(frame: LayoutFrame): LayoutResult {
     const { bounds, theme, measure, locale } = frame;
-    const stages = this.#stages(frame.id);
+    const stages = this.#stages(frame.id, frame.rows);
     const count = stages.length;
     const font = `${theme.fontSize}px ${theme.font}`;
     const lineHeight = Math.round(theme.fontSize * 1.25);
@@ -327,6 +340,7 @@ export function funnel<S extends Schema>(
   if (options.sort !== undefined) spec.sort = options.sort;
   if (options.labels !== undefined) spec.labels = options.labels;
   if (options.id !== undefined) spec.id = options.id;
+  if (options.panel !== undefined) spec.panel = options.panel;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new FunnelMark(spec, table as unknown as Table);

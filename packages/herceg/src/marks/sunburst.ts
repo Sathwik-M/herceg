@@ -1,10 +1,11 @@
-import { pathOf } from "../data/hierarchy.ts";
+import { type Hierarchy, pathOf } from "../data/hierarchy.ts";
 import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
 import { ArcPath, arcDrawing, inSector, sectorPaints, traceSector } from "../draw/arc.ts";
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
 import { layoutPartition } from "../layout/partition.ts";
 import { labelFor } from "../layout/text.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { ArcGeometry, Geometry, TextGeometry } from "../scene/scene.ts";
@@ -34,6 +35,8 @@ export type SunburstOptions<S extends Schema> = (
   /** Names inside the sectors that have room for them; true by default. */
   labels?: boolean;
   id?: string;
+  /** With the chart's `panels`, the id of the panel the sunburst has to itself. */
+  panel?: string;
 };
 
 /** Sectors start at the top and go clockwise. */
@@ -58,6 +61,7 @@ const HOLE = 0.18;
 export class SunburstMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec: Frozen<SunburstSpec>;
   readonly table: Table;
   readonly measure: string;
@@ -78,9 +82,11 @@ export class SunburstMark implements LayoutMark {
 
   draw(frame: LayoutFrame): LayoutResult {
     const { bounds, theme, measure, hidden, locale } = frame;
-    const { tree, branch } = this.#data.built;
-    const branches = this.#data.branches(frame.id);
-    const shown = this.#data.shown(branches, hidden);
+    // A facet panel draws the part of the tree its rows give a value.
+    const view = this.#data.view(frame.rows);
+    const { tree, branch } = view;
+    const branches = this.#data.branches(frame.id, view);
+    const shown = this.#data.shown(view, branches, hidden);
     const spans = new Float64Array(tree.size * 2);
     layoutPartition(tree, shown, true, spans);
 
@@ -201,7 +207,7 @@ export class SunburstMark implements LayoutMark {
       traceSector(outline, cx, cy, r0, r1, a0, a1, GAP);
       const mid = (a0 + a1) / 2;
       return {
-        key: this.#data.keyOf(frame.id, node),
+        key: this.#data.keyOf(frame.id, tree, node),
         label: pathOf(tree, node).join(" / "),
         color: colors[colorIndex.get(branch[node]!) ?? 0] ?? theme.muted,
         value: shown[node]!,
@@ -211,7 +217,7 @@ export class SunburstMark implements LayoutMark {
         outline: outline.d,
       };
     };
-    const navigation = this.#data.navigation(frame.id, shown, paints, itemOf);
+    const navigation = this.#data.navigation(frame.id, tree, shown, paints, itemOf);
     return {
       geometry,
       itemAt(px, py) {
@@ -241,14 +247,14 @@ export class SunburstMark implements LayoutMark {
       },
       item: navigation.item,
       indexOf: navigation.indexOf,
-      summary: () => this.#summary(shown, branches, hidden, locale, percent),
+      summary: () => this.#summary(tree, shown, branches, locale, percent),
     };
   }
 
   #summary(
+    tree: Hierarchy,
     shown: Float64Array,
     branches: readonly Branch[],
-    hidden: ReadonlySet<string>,
     locale: string | undefined,
     percent: (value: number) => string,
   ): string {
@@ -256,11 +262,12 @@ export class SunburstMark implements LayoutMark {
     const what = this.spec.value ? `${this.spec.value} by ${fields}` : fields;
     const total = shown[0]!;
     if (!(total > 0)) return `Sunburst of ${what}, with nothing to show.`;
-    const visible = branches.filter(({ key }) => !hidden.has(key));
+    // The branches drawn: shown, and with rows (in a facet panel, its own).
+    const visible = this.#data.largest(branches, shown);
     const largest = visible
       .slice(0, 3)
       .map(({ node, label }) => `${label} ${percent(shown[node]! / total)}`);
-    return `Sunburst of ${what}: ${count(this.#data.leaves(shown), "leaf", "leaves")} in ${count(visible.length, "group", "groups")} totaling ${formatNumber(total, locale)}. Largest: ${largest.join(", ")}.`;
+    return `Sunburst of ${what}: ${count(this.#data.leaves(tree, shown), "leaf", "leaves")} in ${count(visible.length, "group", "groups")} totaling ${formatNumber(total, locale)}. Largest: ${largest.join(", ")}.`;
   }
 }
 
@@ -281,7 +288,7 @@ export function sunburst<S extends Schema>(
   // Every option is kept, so the mark refuses a tree named both ways.
   const spec = {
     type: "sunburst",
-    ...definedFields(options, ["node", "parent", "value", "labels", "id"]),
+    ...definedFields(options, ["node", "parent", "value", "labels", "id", "panel"]),
     ...(path !== undefined && { path: [...path] }),
   } as unknown as SunburstSpec;
   if (table.name !== undefined) spec.data = table.name;

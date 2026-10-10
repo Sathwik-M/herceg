@@ -5,6 +5,7 @@ import { textDrawing } from "../draw/text.ts";
 import { formatNumber } from "../format/format.ts";
 import { fitLayout, layoutForce, separate } from "../layout/force.ts";
 import { labelFor } from "../layout/text.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { isLightColor } from "../scale/color.ts";
 import type { Geometry, PathShape, Rect, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
@@ -120,6 +121,7 @@ interface Placement {
 export class GraphMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec: Frozen<GraphSpec>;
   /** The table of links. */
   readonly table: Table;

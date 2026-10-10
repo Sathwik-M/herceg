@@ -1,4 +1,4 @@
-<!-- A radar: `category` and `value`, or a list of `fields`, a spoke each. It has its chart to itself. -->
+<!-- A radar: `category` and `value`, or a list of `fields`, a spoke each. It has its chart, each facet panel, or its `panel` to itself. -->
 <script lang="ts" generics="S extends Schema">
   import { type RadarOptions, radar, type Schema } from "herceg";
   import { markAnchor, plain, type WithData } from "./marks.js";

@@ -98,6 +98,16 @@ chart = (
     .line(x="time", y=["p50", "p99"])
     .rule(y=250, label="SLO")
 )
+
+# Small multiples: a pie of each region's rows, with one legend for all.
+hg.Chart(sales, facet="region").pie("product", "revenue")
+
+# A dashboard row: a line beside a donut, a panel each.
+(
+    hg.Chart(sales, panels=["trend", "share"], panel_columns=2, zoom="x")
+    .line(x="week", y="revenue", panel="trend")
+    .pie("product", "revenue", inner_radius=0.6, panel="share")
+)
 ```
 
 Chart options: `title`, `description`, `width`, `height`, `x` and `y`
@@ -113,7 +123,10 @@ box plots, or violins, panels that do not share it show only the categories
 their rows hold); histograms, box plots, and violins summarize each panel's
 rows (histograms in bins chosen from the rows of the panels sharing an x
 scale); marks with `repeat=True` draw all their rows in every panel, which
-annotations over a table need; `panels` (ids or
+annotations over a table need; pies, treemaps, sunbursts, gauges, funnels,
+radars, and Sankey diagrams draw each facet panel's rows in it, as a
+faceted chart's only mark, or fill a panel of their own with `panel=` (no
+`"*"`, and no other mark there), whose neighbors keep their axes; `panels` (ids or
 `hg.Panel("latency", title="Latency", x=hg.Axis(label="Time"),
 y=hg.Axis(label="ms"))`), `panel_columns`, and
 `panel_row_heights` and `panel_column_widths` (relative heights of the rows

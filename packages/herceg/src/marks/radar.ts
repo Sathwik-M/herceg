@@ -8,6 +8,7 @@ import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberTickLabels } from "../format/format.ts";
 import { fitTickLabels, placeSpokeLabels, type SpokeLabel } from "../layout/radar-labels.ts";
 import { Polyline } from "../lod/polyline.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { linearTicks, niceDomain } from "../scale/ticks.ts";
 import type {
@@ -19,7 +20,13 @@ import type {
   TextGeometry,
 } from "../scene/scene.ts";
 import type { Frozen, RadarSpec } from "../spec/spec.ts";
-import type { LayoutFrame, LayoutItem, LayoutMark, LayoutResult } from "./layout-mark.ts";
+import {
+  type LayoutFrame,
+  type LayoutItem,
+  type LayoutMark,
+  type LayoutResult,
+  RowsCache,
+} from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export type RadarOptions<S extends Schema> = (
@@ -48,6 +55,8 @@ export type RadarOptions<S extends Schema> = (
   /** Name of the polygon of a radar without `series`, and of its values in tooltips. */
   label?: string;
   id?: string;
+  /** With the chart's `panels`, the id of the panel the radar has to itself. */
+  panel?: string;
 };
 
 /** Spokes start at the top and go clockwise. */
@@ -65,7 +74,6 @@ const REACH = 24;
  * series and spoke pairs they fill.
  */
 interface Values {
-  version: number;
   spokes: string[];
   series: string[];
   /** Series s's values are entries `starts[s]` to `starts[s + 1]`. */
@@ -100,10 +108,14 @@ interface Drawn {
 export class RadarMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec: Frozen<RadarSpec>;
   readonly table: Table;
   readonly measure: string;
-  #read: Values | undefined;
+  /** The series and spokes the table names, every facet panel's, and the table version. */
+  #named: { version: number; series: Used | undefined; spokes: Used | undefined } | undefined;
+  /** The values of all rows and of each facet panel's. */
+  readonly #read = new RowsCache<Values>();
 
   constructor(input: RadarSpec, table: Table) {
     this.spec = frozen(input);
@@ -138,18 +150,34 @@ export class RadarMark implements LayoutMark {
     if (long && table.length > 0) checkSpokes(this.#values().spokes.length, spec.category!);
   }
 
-  /**
-   * The table's values per series and spoke, rebuilt when it changes. A
-   * later row replaces an earlier one's value for the same series and spoke,
-   * since radar values are measurements, not counts: with `fields`, each
-   * series is its last row, and without `series` every row is one series.
-   */
-  #values(): Values {
+  /** The series and spoke categories the table's rows hold, found when it changes. */
+  #names(): { series: Used | undefined; spokes: Used | undefined } {
     const { table, spec } = this;
-    if (this.#read?.version === table.version) return this.#read;
-    const series = spec.series === undefined ? undefined : used(table, spec.series);
+    if (this.#named?.version !== table.version) {
+      const series = spec.series === undefined ? undefined : used(table, spec.series);
+      const spokes = spec.fields ? undefined : used(table, spec.category!);
+      this.#named = { version: table.version, series, spokes };
+    }
+    return this.#named;
+  }
+
+  /**
+   * The values per series and spoke of `rows` (all rows by default), rebuilt
+   * when the table changes. A later row replaces an earlier one's value for
+   * the same series and spoke, since radar values are measurements, not
+   * counts: with `fields`, each series is its last row, and without
+   * `series` every row is one series. The series and spokes are the
+   * table's, so that facet panels share them.
+   */
+  #values(rows?: Uint32Array): Values {
+    return this.#read.get(this.table, rows, () => this.#gather(rows));
+  }
+
+  /** The values of `rows` (all rows without them); see `#values`. */
+  #gather(rows: Uint32Array | undefined): Values {
+    const { table, spec } = this;
+    const { series, spokes: category } = this.#names();
     const names = series ? series.names : table.length > 0 ? [this.measure] : [];
-    const category = spec.fields ? undefined : used(table, spec.category!);
     const spokes = category ? category.names : [...spec.fields!];
     const starts = new Int32Array(names.length + 1);
     const spoke: number[] = [];
@@ -157,7 +185,7 @@ export class RadarMark implements LayoutMark {
     const row: number[] = [];
     // Too many spokes are not drawn, so not read: that would cost time per series and spoke.
     if (spokes.length <= MAX_SPOKES) {
-      const { offsets, order } = rowsBySeries(table.length, names.length, (row) => {
+      const { offsets, order } = rowsBySeries(rows, table.length, names.length, (row) => {
         if (!series) return 0;
         const code = series.codes[row]!;
         return code < 0 ? -1 : series.place[code]!;
@@ -191,8 +219,7 @@ export class RadarMark implements LayoutMark {
         starts[s + 1] = spoke.length;
       }
     }
-    this.#read = {
-      version: table.version,
+    return {
       spokes,
       series: names,
       starts,
@@ -200,7 +227,6 @@ export class RadarMark implements LayoutMark {
       value: Float64Array.from(value),
       row: Uint32Array.from(row),
     };
-    return this.#read;
   }
 
   #key(id: string | number, series: string): string {
@@ -216,7 +242,7 @@ export class RadarMark implements LayoutMark {
 
   draw(frame: LayoutFrame): LayoutResult {
     const { bounds, theme, measure, hidden, locale } = frame;
-    const data = this.#values();
+    const data = this.#values(frame.rows);
     const { spokes, series, spoke, value } = data;
     const count = spokes.length;
     const keys = series.map((name) => this.#key(frame.id, name));
@@ -563,7 +589,9 @@ export class RadarMark implements LayoutMark {
       const owner = series.length > 1 ? `${series[owners[i]!]}'s ` : "";
       return `${owner}${spokes[spoke[e]!]} ${f(value[e]!)}`;
     };
-    const many = series.length > 1 ? `${count(polygons.length, "series", "series")} over ` : "";
+    // The series with values here: in a facet panel, some may have none.
+    const filled = polygons.filter(({ from, to }) => to > from).length;
+    const many = series.length > 1 ? `${count(filled, "series", "series")} over ` : "";
     return `Radar of ${what}: ${many}${count(spokes.length, "spoke", "spokes")}, from ${f(lo)} at the center to ${f(hi)} at the rim. Highest: ${name(highest)}. Lowest: ${name(lowest)}.`;
   }
 }
@@ -580,14 +608,18 @@ function count(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** A category field's values that rows hold, and each code's place among them. */
+interface Used {
+  codes: Int32Array;
+  names: string[];
+  place: Int32Array;
+}
+
 /**
  * The values of a category field that rows hold, in dictionary order, and
  * each code's place among them (-1 for codes no row holds).
  */
-function used(
-  table: Table,
-  field: string,
-): { codes: Int32Array; names: string[]; place: Int32Array } {
+function used(table: Table, field: string): Used {
   const { codes, dictionary } = table.categories(field);
   const held = new Uint8Array(dictionary.length);
   for (let row = 0; row < table.length; row++) if (codes[row]! >= 0) held[codes[row]!] = 1;
@@ -602,24 +634,27 @@ function used(
 }
 
 /**
- * Rows grouped by series, in row order within each: series s's rows are
- * `order[offsets[s]]` to `order[offsets[s + 1] - 1]`. Rows of no series
- * (`seriesOf` -1) are left out.
+ * `rows` (the first `length` rows without them) grouped by series, in row
+ * order within each: series s's rows are `order[offsets[s]]` to
+ * `order[offsets[s + 1] - 1]`. Rows of no series (`seriesOf` -1) are left out.
  */
 function rowsBySeries(
+  rows: Uint32Array | undefined,
   length: number,
   seriesCount: number,
   seriesOf: (row: number) => number,
 ): { offsets: Int32Array; order: Int32Array } {
+  const count = rows ? rows.length : length;
   const offsets = new Int32Array(seriesCount + 1);
-  for (let row = 0; row < length; row++) {
-    const s = seriesOf(row);
+  for (let k = 0; k < count; k++) {
+    const s = seriesOf(rows ? rows[k]! : k);
     if (s >= 0) offsets[s + 1]!++;
   }
   for (let s = 0; s < seriesCount; s++) offsets[s + 1]! += offsets[s]!;
   const order = new Int32Array(offsets[seriesCount]!);
   const next = offsets.slice(0, seriesCount);
-  for (let row = 0; row < length; row++) {
+  for (let k = 0; k < count; k++) {
+    const row = rows ? rows[k]! : k;
     const s = seriesOf(row);
     if (s >= 0) order[next[s]!++] = row;
   }
@@ -653,6 +688,7 @@ export function radar<S extends Schema>(
   if (options.points !== undefined) spec.points = options.points;
   if (options.label !== undefined) spec.label = options.label;
   if (options.id !== undefined) spec.id = options.id;
+  if (options.panel !== undefined) spec.panel = options.panel;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new RadarMark(spec, table as unknown as Table);

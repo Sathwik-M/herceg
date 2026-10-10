@@ -6,6 +6,7 @@ import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
 import { labelFor } from "../layout/text.ts";
 import { layoutTreemap } from "../layout/treemap.ts";
+import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, TextGeometry } from "../scene/scene.ts";
@@ -35,6 +36,8 @@ export type TreemapOptions<S extends Schema> = (
   /** Names inside the rectangles that have room for them; true by default. */
   labels?: boolean;
   id?: string;
+  /** With the chart's `panels`, the id of the panel the treemap has to itself. */
+  panel?: string;
 };
 
 /** Space between neighboring rectangles, in pixels. */
@@ -45,6 +48,7 @@ const INSET = 4;
 export class TreemapMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
+  readonly views = ItemViews;
   readonly spec: Frozen<TreemapSpec>;
   readonly table: Table;
   readonly measure: string;
@@ -65,11 +69,13 @@ export class TreemapMark implements LayoutMark {
 
   draw(frame: LayoutFrame): LayoutResult {
     const { bounds, theme, hidden, locale } = frame;
-    const { tree, branch } = this.#data.built;
-    const branches = this.#data.branches(frame.id);
+    // A facet panel draws the part of the tree its rows give a value.
+    const view = this.#data.view(frame.rows);
+    const { tree, branch } = view;
+    const branches = this.#data.branches(frame.id, view);
     const colorOf = new Map(branches.map(({ node, key }) => [node, frame.color(key)]));
     // Hidden branches take no room.
-    const shown = this.#data.shown(branches, hidden);
+    const shown = this.#data.shown(view, branches, hidden);
 
     const font = `${theme.fontSize}px ${theme.font}`;
     const lineHeight = Math.round(theme.fontSize * 1.25);
@@ -127,7 +133,7 @@ export class TreemapMark implements LayoutMark {
     const itemOf = (node: number): LayoutItem => {
       const [x, y, w, h] = boxes.subarray(node * 4, node * 4 + 4) as unknown as number[];
       return {
-        key: this.#data.keyOf(frame.id, node),
+        key: this.#data.keyOf(frame.id, tree, node),
         label: pathOf(tree, node).join(" / "),
         color: colorOf.get(branch[node]!) ?? theme.muted,
         value: shown[node]!,
@@ -148,6 +154,7 @@ export class TreemapMark implements LayoutMark {
     };
     const navigation = this.#data.navigation(
       frame.id,
+      tree,
       shown,
       (node) => boxes[node * 4 + 2]! > 0 && boxes[node * 4 + 3]! > 0,
       itemOf,
@@ -175,7 +182,7 @@ export class TreemapMark implements LayoutMark {
       },
       item: navigation.item,
       indexOf: navigation.indexOf,
-      summary: () => this.#summary(shown, branches, hidden, locale, percent),
+      summary: () => this.#summary(tree, shown, branches, locale, percent),
     };
   }
 
@@ -226,9 +233,9 @@ export class TreemapMark implements LayoutMark {
   }
 
   #summary(
+    tree: Hierarchy,
     shown: Float64Array,
     branches: readonly Branch[],
-    hidden: ReadonlySet<string>,
     locale: string | undefined,
     percent: (value: number) => string,
   ): string {
@@ -236,8 +243,9 @@ export class TreemapMark implements LayoutMark {
     const what = this.spec.value ? `${this.spec.value} by ${fields}` : fields;
     const total = shown[0]!;
     if (!(total > 0)) return `Treemap of ${what}, with nothing to show.`;
-    const leaves = this.#data.leaves(shown);
-    const visible = branches.filter(({ key }) => !hidden.has(key));
+    const leaves = this.#data.leaves(tree, shown);
+    // The branches drawn: shown, and with rows (in a facet panel, its own).
+    const visible = this.#data.largest(branches, shown);
     const largest = visible
       .slice(0, 3)
       .map(({ node, label }) => `${label} ${percent(shown[node]! / total)}`);
@@ -262,7 +270,7 @@ export function treemap<S extends Schema>(
   // Every option is kept, so the mark refuses a tree named both ways.
   const spec = {
     type: "treemap",
-    ...definedFields(options, ["node", "parent", "value", "labels", "id"]),
+    ...definedFields(options, ["node", "parent", "value", "labels", "id", "panel"]),
     ...(path !== undefined && { path: [...path] }),
   } as unknown as TreemapSpec;
   if (table.name !== undefined) spec.data = table.name;
