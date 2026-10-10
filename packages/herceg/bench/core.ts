@@ -12,6 +12,7 @@ import { estimateText } from "../src/layout/text.ts";
 import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
+import { type BarMark, bar } from "../src/marks/bar.ts";
 import { geoshape } from "../src/marks/geoshape.ts";
 import { graph } from "../src/marks/graph.ts";
 import { line } from "../src/marks/line.ts";
@@ -26,6 +27,7 @@ import { treemap } from "../src/marks/treemap.ts";
 import { UnionStack } from "../src/marks/union-stack.ts";
 import { facet } from "../src/model/facet.ts";
 import { ChartModel } from "../src/model/model.ts";
+import { overviewBars } from "../src/model/navigator-bars.ts";
 import { timeBreaks } from "../src/scale/breaks.ts";
 import { LinearScale } from "../src/scale/scale.ts";
 
@@ -49,6 +51,39 @@ function measure(name: string, run: () => void, { warmup = 20, samples = 50, rep
 }
 
 const N = 1_000_000;
+// Rebuild only the bar overview at fixed scales, with warmed reusable
+// buffers. This isolates the exact fallback on a mostly missing source.
+const sparseBars = bar(
+  table({
+    t: Float64Array.from({ length: N }, (_, i) => i),
+    v: Float64Array.from({ length: N }, (_, i) => (i < 20 ? 1 : Number.NaN)),
+  }),
+  { x: "t", y: "v" },
+) as BarMark;
+let barDrawing: Parameters<BarMark["geometry"]> | undefined;
+const barGeometry = sparseBars.geometry.bind(sparseBars);
+sparseBars.geometry = (...args) => {
+  barDrawing = args;
+  return barGeometry(...args);
+};
+const sparseModel = new ChartModel({ marks: [sparseBars] });
+sparseModel.setSize(600, 300, 1);
+sparseModel.scene(estimateText);
+sparseBars.geometry = barGeometry;
+const [barSeries, sourceFrame] = barDrawing!;
+const barFrame = {
+  ...sourceFrame,
+  x: new LinearScale([0, N], [20, 620]),
+  y: new LinearScale([0, 2], [42, 8]),
+  plot: { x: 20, y: 5, width: 600, height: 40 },
+  theme: { ...sourceFrame.theme, barRadius: 0 },
+  keyed: false,
+};
+measure("bar geometry: 1M rows, 20 usable, 600 px", () => sparseBars.geometry(barSeries, barFrame));
+measure("bar overview exact: 1M rows, 20 usable, 600 px", () =>
+  overviewBars(sparseBars, barSeries, barFrame, 0),
+);
+
 const x = Float64Array.from({ length: N }, (_, i) => 1_767_225_600_000 + i * 1000);
 const y = Float64Array.from({ length: N }, (_, i) => Math.sin(i / 1000) * 100 + ((i * 7919) % 13));
 const yMap = new LinearScale([-120, 120], [400, 0]).mapping();

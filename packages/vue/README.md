@@ -18,6 +18,11 @@ const metrics = table({ time: time(timestamps), p50, p99 });
 </template>
 ```
 
+The `navigator` prop accepts `rangeNavigator()` from `herceg`. Its dense bar
+strip preserves every column intersected by a bar's placed rectangle and
+uses the same color rules as the core and static exports (see
+[Range navigator](../herceg/README.md#range-navigator)).
+
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 slot holds mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,

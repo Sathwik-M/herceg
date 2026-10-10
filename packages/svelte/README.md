@@ -16,6 +16,11 @@ Svelte 5 components for [herceg](../herceg/README.md) charts.
 </Chart>
 ```
 
+The `navigator` prop accepts `rangeNavigator()` from `herceg`. Its dense bar
+strip preserves every column intersected by a bar's placed rectangle and
+uses the same color rules as the core and static exports (see
+[Range navigator](../herceg/README.md#range-navigator)).
+
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 children are mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,

@@ -1861,9 +1861,28 @@ one x range. Wheel zoom and panning in any panel move the window, and its
 changes are one `viewport` event each (without `panels`, as for any change
 to a shared x), synced with other charts by x value whatever their panels.
 For assistive technology, the sliders say they move the x range of every
-panel. Bars are drawn one rectangle each in the strip, as in the plot, so
-a volume panel of many bars costs the strip as much as an unzoomed plot of
-them; naming the other marks in `marks` leaves them out.
+panel.
+
+Dense bars are reduced over every CSS pixel column their placed rectangles
+intersect, including wide bars and clipped edges. Each column draws the
+greatest positive and negative extent from zero (the low end on a log y
+axis), one rectangle for each side present. Each rectangle keeps the
+winning bar's color and fill opacity, including rows colored through
+`series`; ties keep the first series, then its first row. Grouped bars keep
+their placed coverage; only footprints intersecting the same column
+compete. For stacked bars, each side keeps the complete stack at the
+position reaching farthest on that side, with its segment colors; maxima
+from different positions are never added. The positive and negative
+winners may come from different positions. This preserves extremes, but
+fills subpixel gaps and hides shorter bars and their colors; stack
+proportions show the chosen positions rather than every position in the
+column. Dense bar labels are omitted. Below two nonempty rectangles
+intersecting the strip per CSS column on average, the strip keeps the
+original rectangles, dodge, stacks, and labels. Missing, zero-area, and
+wholly clipped bars do not count. Density detection and rectangle
+construction share one source scan, including missing-heavy inputs; dense
+stacks then read their selected segments. The same reduction appears in
+static SVG, PDF, and PNG.
 
 For the keyboard, the window's left edge, the window, and its right edge
 are sliders, in that order in the tab sequence after the legend, named as
@@ -1878,8 +1897,8 @@ Escape takes a drag back to where it started, or shows all of x.
 The sliders' values read as the x axis' tooltips write them, and where the
 window ends up is announced politely. Static SVG, PDF, and PNG show the
 strip and the window, without the sliders. The strip's model code comes with
-`rangeNavigator` (about 4.3 KiB gzip); the sliders load the first time a
-chart has a navigator (about 3.0 KiB gzip). In a spec, `navigator` is
+`rangeNavigator`; the sliders load the first time a chart has a navigator.
+In a spec, `navigator` is
 `true` or `{ height?, marks? }`, with facets and panels as without.
 
 ### Small multiples

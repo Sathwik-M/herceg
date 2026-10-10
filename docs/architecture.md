@@ -1368,16 +1368,42 @@ each panel's own otherwise). A group's scale is the extent of the group's
 drawn marks over the whole rail, or its axis' `domain` (its panels agree on
 the settings), from zero for bars and areas. A mark drawn whole in several
 panels of one group (a facet's repeated mark, a subplot mark in `"*"`) is
-drawn once; facets' stacks stay each panel's own. Lines, areas, bars, and
-candlesticks draw themselves through their `geometry` with a frame of the
+drawn once; facets' stacks stay each panel's own. Lines, areas, and
+candlesticks draw themselves through their `geometry`, and bars through
+`model/navigator-bars.ts`, with a frame of the
 rail, the strip, and buffers of the strip's own, by stage, panel index,
 and series key (so neither the plots' buffers nor another panel's part are
 ever overwritten), their geometry keys given the panel index too, as parts
 of one series in several panels would share keys in the one strip: lines
 and areas are M4-reduced at the strip's pixel
 width, through the same min/max indexes as the plot (the same chart and
-scene count a draw once), and bars and candlesticks are as the plot draws
-them, bars one rectangle each. Unsorted lines are drawn whole, as the plot
+scene count a draw once). Bars below two nonempty rectangles intersecting
+the strip per CSS column on average use their exact geometry, including
+widths, dodge, stacks, and labels. Dense bars cover every CSS column their
+placed rectangles intersect, including clipped edges and wide bars. Each
+occupied column draws a rectangle per side of zero, reaching the most
+extreme bar tip. Each side keeps that bar's series color and fill opacity
+(also for rows colored through the series field), with ties resolved by series order,
+then row order. Grouped bars keep their placed horizontal coverage; colors
+of shorter bars sharing a column disappear, and subpixel gaps are filled.
+Stacks select the position with the most extreme cumulative tip on each side, then draw its actual
+segments with their colors and bases; they never sum separate rows' maxima.
+Each layer emits at most two rectangles per column, merging repeated-position
+segments of that layer. Stack proportions represent the selected positions,
+which may differ for positive and negative sides. Dense labels are omitted.
+A log y axis uses the same low-end baseline as full bars; reversed axes and
+x breaks use the same mappings. The winner buffer holds four doubles per
+side and column; output buffers hold four floats per emitted rectangle, with
+capacity to grow. Stack interval scratch is shared across layers. Density
+and geometry share one source scan, keeping at most twice the strip's
+column count in exact candidate rectangles across all series. Missing,
+zero-area, and wholly clipped rectangles do not count. Sparse candidates
+are emitted directly; labels and corner metadata, when needed, are built
+over only those retained rows. Dense stacks make a second source scan to
+recover selected segments. Dragging reuses the geometry, so drawing
+and retained overview buffers depend on strip width and stack layers rather
+than input rows. Candlesticks retain their exact geometry. Unsorted lines are
+drawn whole, as the plot
 draws them. Points are sampled: the first point in each CSS pixel of the
 strip, drawn as small squares by a drawing of the strip's own (the point
 drawing's symbols would add 5 KiB to charts of lines), so a series holds at
@@ -1451,26 +1477,51 @@ such charts take about 0.9 MiB more with a navigator than without (canvas
 rendering), about half of it with an empty strip (`marks: []`), the sliders
 and the strip's drawing.
 
-Under panels (one-off runs through the browser tests in headless Chrome,
-1000×600 CSS pixels, other work on the machine; JavaScript of each pointer
-move over the window, p50 of 110 moves interleaved with `setViewport` and
-`render()` on a copy without a navigator, to the 0.1 ms the timer gives):
-over 12 facet panels of a 100,000-row line, a move takes about 0.5 to 0.6
-ms against 0.2 to 0.3 ms, the strip drawing its twelve lines each frame;
-over 4 subplots of 100,000 rows (two lines, 100,000 volume bars, an area,
-and a line), about 3.2 to 3.5 ms against 0.9 to 1.0 ms, nearly all of it
-the strip's 100,000 bars drawn each frame, and 1.1 ms with `marks` leaving
-the bars out. A row appended and drawn takes 1.5 ms instead of 0.7 to 0.8
-ms (facets) and 5.3 to 5.9 ms instead of 1.9 to 2.4 ms (subplots; 2.4 to
-2.5 ms without the bars), the overview drawn again. In Node, a moved view
-costs the strip nothing measurable (a scene of 0.24 to 0.28 ms against
-0.23 to 0.26 ms, and 0.49 to 0.54 ms against 0.47 to 0.54 ms), and drawing
-the overview again adds about 0.7 to 0.9 ms for the facets and 1.5 to 1.7
-ms for the subplots (0.6 ms without the bars). The strip's buffers hold
-384 KiB for the facets' twelve lines and 2.5 MiB for the subplots, 256 KiB
-of it without the bars, which take 16 bytes each, with room to grow. A
-single panel's strip over a 1,000,000-point line costs what it did, by
-interleaved runs of the code before.
+Bar overview measurements (one-off, before and after the reduction, baseline
+`f4eb551`; headless Chrome 154.0.8037.99, Darwin 27.0.0, Apple M6,
+Canvas, DPR 1, 1000×600 charts in a 1100×700 viewport, production bundles).
+The four subplots share 100,000 rows: two price lines, volume bars, an area,
+and a line, with independent y scales and one shared numeric x scale. The
+single bar chart has 1,000,000 rows. Both show a 1% x window during dragging.
+Each of three alternating before/after rounds uses a fresh chart, 30 warmup
+moves then 110 measured moves through the navigator's pointer handler, and
+10 warmup table changes then 35 measured overview rebuilds. Timings are
+synchronous JavaScript (not compositor or presented-frame latency), measured
+with the isolated page's 5 µs timer. Rebuild timings cover only construction
+of the overview after a changed volume value, excluding plots and drawing.
+Buffers are retained overview pool capacity, including growth room and
+scratch, not total chart heap or Canvas backing stores.
+
+| Chart | Drag p50 / p95, before → after (ms) | Overview rebuild p50 / p95, before → after (ms) | Retained overview buffers, before → after |
+| --- | --- | --- | --- |
+| Four subplots, 100k rows | 2.550 / 2.820 → 0.340 / 0.445 | 1.225 / 1.360 → 1.700 / 1.800 | 2,514,720 B (2.40 MiB) → 227,880 B (223 KiB) |
+| Single bar chart, 1M rows | 21.970 / 23.090 → 0.420 / 0.475 | 6.930 / 8.135 → 10.650 / 13.895 | 24,000,000 B (22.89 MiB) → 113,040 B (110 KiB) |
+
+Round p50 ranges for dragging were 2.480–2.720 → 0.330–0.350 ms
+(subplots) and 21.800–22.685 → 0.415–0.425 ms (1M bars). Rebuilds
+were 1.150–1.310 → 1.665–1.745 ms and 6.845–6.980 → 10.465–10.750 ms.
+The extra rebuild work checks actual rectangle placement, clipped coverage,
+and every intersected column. This cost preserves wide bars and counts only
+rectangles that paint in the strip; dragging still reuses the bounded
+geometry. Rebuild work grows with intersected columns as well as source
+rows (a wide bar can cover several columns).
+
+A separate missing-heavy exact-path measurement uses 1,000,000 sorted rows,
+20 values of 1 followed by NaN, a 600 CSS-pixel strip, fixed linear scales,
+and reused output buffers (Node 22.23.3, Darwin 27.0.0, Apple M6, minified
+production bundle). Two rounds each use 100 warmups and 250 alternating
+samples of full bar geometry, the previous reducer, and the footprint
+reducer. The previous reducer's two source walks took p50 5.944–6.086 ms;
+the single-walk exact path takes 2.505–2.775 ms. Round p95 was 7.012 →
+2.901 ms and 8.196 → 3.609 ms; full bar geometry p50 was 3.038–3.076 ms.
+These are overview construction timings, excluding table changes, plot
+construction, and drawing. The core benchmark includes this case alongside
+full geometry. Sparse output stores only the usable rectangles.
+
+Initial gzip size is unchanged for 21 of the 22 measured entries, including
+`herceg-line` at 43,981 B. `herceg-bar` grows by 15 B to 50,831 B to prepare
+bar placement for the strip. Navigator comparisons against other libraries
+remain unmeasured.
 
 ## Small multiples
 
@@ -3788,12 +3839,11 @@ mouse input, through Playwright's mouse.
   no x scales per panel, layout marks, or horizontal bars. The strip draws lines, areas,
   points (a sample of one per pixel, in one size and shape), vertical bars,
   and candlesticks, not heatmaps, error bars, histograms, box plots,
-  violins, annotations, or custom marks. Its bars are one rectangle each,
-  points cost a pass over their rows, and unsorted lines are drawn whole,
-  so those overviews cost their data's size whenever data changes, and its
-  bars every frame (a volume subplot of 100,000 bars adds about 2.3 ms a
-  drag move and 2.3 MiB); the strip has no y axis, its y scales differing
-  under panels with scales of their own. Charts
+  violins, annotations, or custom marks. Dense bars use column envelopes
+  with bounded drawing and rectangle buffers; bars and points still scan
+  their source rows whenever data changes, and unsorted lines are drawn
+  whole. The strip reuses its overview while dragging. It has no y axis,
+  its y scales differing under panels with scales of their own. Charts
   with a navigator show changed values at once (`animation.values` moves
   marks only in scenes of one panel), and charts too short
   to leave their plots 30 pixels (and each row of several panels 20) beside

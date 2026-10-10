@@ -14,6 +14,7 @@ import { shapesDrawing } from "../draw/shapes.ts";
 import { textDrawing } from "../draw/text.ts";
 import { mapValue } from "../lod/m4.ts";
 import { Polyline } from "../lod/polyline.ts";
+import type { BarMark } from "../marks/bar.ts";
 import { isLayoutMark, tablesOf, viewOf } from "../marks/layout-mark.ts";
 import type { Frame, Mark } from "../marks/mark.ts";
 import { rowOf, type Series, visibleRange } from "../marks/series.ts";
@@ -34,6 +35,7 @@ import { surface, type Theme } from "../theme.ts";
 import { type AxisContext, type AxisPlan, createScale, usableDomain } from "./axis.ts";
 import type { InspectedMark, Inspector, MarkSeries } from "./inspect.ts";
 import type { ChartConfig } from "./model.ts";
+import { overviewBars } from "./navigator-bars.ts";
 
 /** The strip's height when the options give none, in CSS pixels. */
 const HEIGHT = 40;
@@ -448,8 +450,8 @@ function railPlan(
 
 /**
  * The marks drawn small over the whole x domain into the strip: lines,
- * areas, bars, and candlesticks as they draw themselves (lines and areas
- * reduced to a few points per pixel column), points as a sample of one per
+ * areas, bars, and candlesticks (dense lines, areas, and bars reduced per
+ * pixel column), points as a sample of one per
  * pixel. Each panel's part of a mark is drawn apart, so facets' parts of a
  * series never join, with a y scale per y scale the panels have: one their
  * groups share, or each its own. A mark a panel draws whole that another
@@ -532,7 +534,9 @@ function overview(
     const geometry =
       mark.spec.type === "point"
         ? samplePoints(series, own)
-        : mark.geometry(series, own, mark.spec.id ?? index);
+        : mark.spec.type === "bar"
+          ? overviewBars(mark as BarMark, series, own, mark.spec.id ?? index)
+          : mark.geometry(series, own, mark.spec.id ?? index);
     // A panel's geometry is kept by its key, which parts of one mark in
     // several panels share.
     out.push(...(at ? geometry.map((part) => ({ ...part, key: `${part.key}${tag}` })) : geometry));

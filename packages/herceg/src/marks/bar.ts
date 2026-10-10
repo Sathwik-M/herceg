@@ -487,8 +487,10 @@ export class BarMark implements Mark<Frozen<BarSpec>> {
    * `along`, as geometry last split them: each position gets a slot, which
    * grouped series split (in a legend group, by the group's series) and
    * stacked ones share. Also what selections read of the bars drawn.
+   * With a frame, prepare the visible series' slots before placing them.
    */
-  placement(visible: readonly Series[], along: PositionScale): BarPlacement {
+  placement(visible: readonly Series[], along: PositionScale, frame?: Frame): BarPlacement {
+    if (frame) this.#shares.split(visible, frame, this.spec.legendGroup, !this.spec.stack);
     const slot = this.#slot(along);
     const stack = this.spec.stack;
     const shares = this.#shares;

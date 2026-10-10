@@ -6,6 +6,7 @@ import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
 import { area } from "../../src/marks/area.ts";
+import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import { facet } from "../../src/model/facet.ts";
 import { rangeNavigator } from "../../src/model/navigator.ts";
@@ -887,6 +888,128 @@ describe("a navigator's sliders", () => {
     expect(svg).not.toContain("slider");
     expect(svg.match(/fill-opacity="0\.6"/g)).toHaveLength(2);
   });
+
+  it("draws and exports the same reduced bar strip during a drag", async () => {
+    const data = table({
+      t: Float64Array.from({ length: 5000 }, (_, i) => i),
+      v: Float64Array.from({ length: 5000 }, (_, i) => 10 + (i % 6)),
+    });
+    const chart = await mount({
+      renderer: "canvas",
+      marks: [bar(data, { x: "t", y: "v", fill: "#b91c1c" })],
+      x: { show: false },
+      y: { domain: [0, 20] },
+    });
+    chart.setViewport([1000, 1500]);
+    chart.render();
+    const strip = stripBox(chart);
+    const from = strip.x + strip.width * 0.25;
+    drag(chart, sliders(chart)[1]!, from, from + strip.width * 0.1);
+    expect(chart.getViewport().x![0]).toBeGreaterThan(1000);
+    chart.setViewport(null);
+    chart.render();
+    const svg = chart.toSVG();
+    const exported = new DOMParser().parseFromString(svg, "image/svg+xml");
+    const path = [...exported.querySelectorAll("g[clip-path]")].at(-1)!.querySelector("path")!;
+    expect(path.getAttribute("d")!.match(/M/g)!.length).toBeLessThanOrEqual(Math.ceil(strip.width));
+    expect(path.getAttribute("fill")).toBe("#b91c1c");
+    const canvas = chart.root.querySelector("canvas")!;
+    const ratio = canvas.width / canvas.clientWidth;
+    const px = Math.floor(strip.x + strip.width * 0.6);
+    const py = Math.floor(strip.y + strip.height - 7);
+    const pixel = (c: HTMLCanvasElement, scale: number) =>
+      Array.from(
+        c.getContext("2d")!.getImageData(Math.floor(px * scale), Math.floor(py * scale), 1, 1).data,
+      );
+    const expected = pixel(canvas, ratio);
+    expect(expected).toEqual([185, 28, 28, 255]);
+    // Rasterize static SVG and round-trip the Canvas strip through PNG.
+    for (const url of [
+      `data:image/svg+xml,${encodeURIComponent(svg)}`,
+      canvas.toDataURL("image/png"),
+    ]) {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      const raster = document.createElement("canvas");
+      raster.width = 600;
+      raster.height = 320;
+      raster.getContext("2d")!.drawImage(image, 0, 0, 600, 320);
+      expect(pixel(raster, 1)).toEqual(expected);
+    }
+  });
+
+  it.each([false, true])(
+    "exports both colors of signed stacks with reversed y=%s",
+    async (reversed) => {
+      const data = table({
+        t: Float64Array.from({ length: 5000 }, (_, i) => i),
+        a: Float64Array.from({ length: 5000 }, (_, i) => [6, 1, -4, -8][i % 4]!),
+        b: Float64Array.from({ length: 5000 }, (_, i) => [4, 8, -7, -1][i % 4]!),
+      });
+      const chart = await mount({
+        renderer: "canvas",
+        marks: [bar(data, { x: "t", y: ["a", "b"], stack: true })],
+        x: { show: false },
+        y: { show: false, domain: reversed ? [20, -20] : [-20, 20] },
+        theme: { palette: ["#ff0000", "#0000ff"] },
+        legend: false,
+      });
+      chart.setViewport([1000, 1500]);
+      chart.render();
+      const strip = stripBox(chart);
+      const from = strip.x + strip.width * 0.25;
+      drag(chart, sliders(chart)[1]!, from, from + strip.width * 0.1);
+      chart.setViewport(null);
+      chart.render();
+      const canvas = chart.root.querySelector("canvas")!;
+      const ratio = canvas.width / canvas.clientWidth;
+      const offsets = reversed ? [13, 18, 23, 27] : [13, 17, 21, 26];
+      const colors = [
+        [0, 0, 255, 255],
+        [255, 0, 0, 255],
+        [255, 0, 0, 255],
+        [0, 0, 255, 255],
+      ];
+      const samples = [0.2, 0.5, 0.8].flatMap((fraction) =>
+        offsets.map((offset, i) => ({
+          x: Math.floor(strip.x + strip.width * fraction),
+          y: Math.floor(strip.y + offset),
+          color: colors[i]!,
+        })),
+      );
+      const pixels = (target: HTMLCanvasElement, scale: number) =>
+        samples.map(({ x, y }) =>
+          Array.from(
+            target
+              .getContext("2d")!
+              .getImageData(Math.floor(x * scale), Math.floor(y * scale), 1, 1).data,
+          ),
+        );
+      const expected = samples.map(({ color }) => color);
+      expect(pixels(canvas, ratio)).toEqual(expected);
+      const svg = chart.toSVG();
+      const exported = new DOMParser().parseFromString(svg, "image/svg+xml");
+      const paths = [...exported.querySelectorAll("g[clip-path]")].at(-1)!.querySelectorAll("path");
+      expect([...paths].slice(0, 2).map((path) => path.getAttribute("fill"))).toEqual([
+        "#ff0000",
+        "#0000ff",
+      ]);
+      for (const url of [
+        `data:image/svg+xml,${encodeURIComponent(svg)}`,
+        canvas.toDataURL("image/png"),
+      ]) {
+        const image = new Image();
+        image.src = url;
+        await image.decode();
+        const raster = document.createElement("canvas");
+        raster.width = 600;
+        raster.height = 320;
+        raster.getContext("2d")!.drawImage(image, 0, 0, 600, 320);
+        expect(pixels(raster, 1)).toEqual(expected);
+      }
+    },
+  );
 
   it("go when the navigator does, and come with it", async () => {
     const chart = await mount();
