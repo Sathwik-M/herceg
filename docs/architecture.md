@@ -2842,8 +2842,12 @@ mark), which takes the palette slot, the one legend entry, and the
 visibility. The model maps each grouped series' key to its legend key as
 series resolve (`HiddenKeys`), so a series counts as hidden when its key or
 its group's entry is: everything that reads visibility by series key sees
-the group's state without knowing about groups. A series new to a hidden
-group is resolved again once, since marks stack only visible series.
+the group's state without knowing about groups. The palette callback registers
+membership before marks stack their series, including series with explicit
+colors, which take no palette slot. Scenes retain independent visibility
+snapshots. Marks that dodge prepare and share a roster of visible group names
+on demand, using the original snapshot when selection highlighting splits a
+series.
 
 ## Themes
 

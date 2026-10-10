@@ -188,7 +188,8 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     const sources = split ? this.#present().sources : this.#split.sources();
     const roster = sources.map((source) => {
       const id = seriesKey(key, source.id);
-      return { key: id, label: source.label, color: this.spec.fill ?? palette(id, source.label) };
+      const color = palette(id, source.label, this.spec.fill);
+      return { key: id, label: source.label, color: this.spec.fill ?? color };
     });
     if (split) return roster.map(({ key, label, color }) => withoutBins(key, label, color));
     const { edges, centers, counted } = this.#binsIn(context.zone);

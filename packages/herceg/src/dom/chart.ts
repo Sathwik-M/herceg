@@ -12,7 +12,7 @@ import { canvasMeasurer, type MeasureText } from "../layout/text.ts";
 import { Polyline } from "../lod/polyline.ts";
 import { monotonePolyline } from "../marks/curve.ts";
 import { tablesOf, viewOf } from "../marks/layout-mark.ts";
-import { type AxisFormat, keyOwner, legendGroupOf } from "../marks/mark.ts";
+import { type AxisFormat, keepsKey } from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
 import { planAxis } from "../model/axis.ts";
 import { describeChart } from "../model/describe.ts";
@@ -365,13 +365,8 @@ export class MountedChart implements Chart {
     const marks = this.#options.marks;
     const owners = new Set(marks.map((mark, i) => mark.spec.id ?? i));
     const groups = new Set(marks.map((mark) => mark.spec.legendGroup));
-    const kept = [...this.#model.hidden].filter((key) => {
-      const owner = keyOwner(key);
-      if (owner !== undefined) return owners.has(owner);
-      const group = legendGroupOf(key);
-      return group !== undefined && groups.has(group);
-    });
-    this.#hide(new Set(kept));
+    const kept = [...this.#model.hidden].filter((key) => keepsKey(key, owners, groups));
+    this.#hide(kept);
     // Panels given y scales of their own let go of the y viewport. Which x
     // scales there are now is known once drawn; listeners drawing calls
     // (hover, select) may change the view, which this report then includes.
@@ -612,7 +607,7 @@ export class MountedChart implements Chart {
   }
 
   setHiddenKeys(keys: readonly string[]): void {
-    this.#hide(new Set(keys));
+    this.#hide(keys);
   }
 
   setVisibility(keys: string | readonly string[], visible: boolean): void {
@@ -632,11 +627,12 @@ export class MountedChart implements Chart {
    * visibility methods, and updates that remove marks all hide series and
    * items, reporting once when something changed.
    */
-  #hide(next: ReadonlySet<string>): void {
+  #hide(next: Iterable<string>): void {
     const hidden = this.#model.hidden;
     // A series of a legend group goes with its group's entry.
-    const keys = new Set([...next].map((key) => hidden.groups.get(key) ?? key));
-    if (keys.size === hidden.size && [...keys].every((key) => hidden.stores(key))) return;
+    const keys = new Set<string>();
+    for (const key of next) keys.add(hidden.groups.get(key) ?? key);
+    if (keys.size === hidden.size && [...hidden].every((key) => keys.has(key))) return;
     // Scenes draw with copies of the model's set, made as they are built.
     hidden.clear();
     for (const key of keys) hidden.add(key);

@@ -51,8 +51,6 @@ import {
   type AxisContext,
   type AxisPlan,
   type AxisType,
-  headroomDomain,
-  insetDomain,
   niceAxisDomain,
   planAxis,
   planBandAxis,
@@ -471,7 +469,8 @@ export class ChartModel {
     };
   }
 
-  #palette = (seriesKey: string): string => {
+  #palette: Palette = (seriesKey, _label, color): string => {
+    if (color !== undefined) return color;
     let slot = this.#slots.get(seriesKey);
     if (slot === undefined) {
       slot = this.#slots.size;
@@ -542,20 +541,19 @@ export class ChartModel {
       const palette: Palette =
         group === undefined
           ? this.#palette
-          : (key, label) => this.#palette(legendKey(group, label ?? key));
-      const key = mark.spec.id ?? this.#positions[index]!;
-      const resolve = () => mark.series(key, palette, hidden, bands, context, layout?.splits(mark));
-      let series = resolve();
-      if (group === undefined) return { mark, series };
-      // Series new to their group take its visibility; marks stack only
-      // visible series, so they resolve again if that hides or shows one.
-      let changed = false;
-      for (const s of series) {
-        const before = hidden.has(s.key);
-        hidden.groups.set(s.key, legendKey(group, s.label));
-        changed ||= hidden.has(s.key) !== before;
-      }
-      if (changed) series = resolve();
+          : (key, label, color) => {
+              const entry = legendKey(group, label ?? key);
+              hidden.groups.set(key, entry);
+              return this.#palette(entry, label, color);
+            };
+      const series = mark.series(
+        mark.spec.id ?? this.#positions[index]!,
+        palette,
+        hidden,
+        bands,
+        context,
+        layout?.splits(mark),
+      );
       return { mark, series };
     });
   }
@@ -762,22 +760,37 @@ export class ChartModel {
       );
 
     const drawn = marks.filter(({ series }) => series.length > 0);
-    // Room for glyphs that reach past their data position at the plot edges.
-    const inset = (axis: "x" | "y", among = drawn) =>
-      Math.max(0, ...among.map(({ mark }) => mark.inset?.[axis] ?? 0));
-    // Room past the far ends of value axes for what marks draw there (bar labels).
-    const headroom = (axis: "x" | "y", among = drawn) =>
-      Math.max(
-        0,
-        ...among
-          .filter(({ mark }) => mark.zero === axis && mark.headroom)
-          .map(({ mark, series }) =>
-            mark.headroom!(
+    // Marks carry the formulas for glyph insets and room past bar labels.
+    const padDomain = (
+      axis: "x" | "y",
+      domain: [number, number],
+      pixels: number,
+      type: AxisType,
+      among = drawn,
+    ): [number, number] => {
+      let inset = 0;
+      let room = 0;
+      let insetDomain: Mark["insetDomain"];
+      let headroomDomain: Mark["headroomDomain"];
+      for (const { mark, series } of among) {
+        if (mark.inset) {
+          inset = Math.max(inset, mark.inset[axis]);
+          insetDomain = mark.insetDomain;
+        }
+        if (mark.zero === axis && mark.headroom) {
+          room = Math.max(
+            room,
+            mark.headroom(
               series.filter((s) => !this.hidden.has(s.key)),
               context,
             ),
-          ),
-      );
+          );
+          headroomDomain = mark.headroomDomain;
+        }
+      }
+      const widened = headroomDomain?.(domain, room, pixels, type) ?? domain;
+      return insetDomain?.(widened, inset, pixels, type) ?? widened;
+    };
 
     // Panels fill a grid of `columns`; without facets, one cell.
     const panelCount = split.keys.length;
@@ -968,12 +981,7 @@ export class ChartModel {
         return planAxis(axisContext, base, [plotTop + size, plotTop], count);
       const nice = spec?.nice ?? !sideDrawn.some(({ mark }) => mark.tight);
       const rounded = niceAxisDomain(base, axisContext, count, nice);
-      const domain = insetDomain(
-        headroomDomain(rounded, headroom("y", sideDrawn), size, axisContext.type),
-        inset("y", sideDrawn),
-        size,
-        axisContext.type,
-      );
+      const domain = padDomain("y", rounded, size, axisContext.type, sideDrawn);
       return planAxis(
         axisContext,
         domain,
@@ -1116,15 +1124,9 @@ export class ChartModel {
       );
       const room = labeled.includes(true) ? Math.ceil(widest) + GAP + 2 : 0;
       const title = labeled.some((l, i) => l && panelAxis(i, axis)?.label) ? lineHeight + GAP : 0;
-      // Between columns, with the room kept between the plots, when a panel
-      // away from the side's edge column labels its own (a joint plot's
-      // margins hide theirs).
-      const inner = labeled.some(
-        (l, i) =>
-          l && (right ? i % columns < columns - 1 && i !== panelCount - 1 : i % columns > 0),
-      );
-      const between =
-        side?.own && room && inner ? room + (right ? 0 : 8) + (config.panels ? title : 0) : 0;
+      const between = side?.own
+        ? layout!.columnGap(labeled, right, columns, room, config.panels ? title : 0)
+        : 0;
       return { labeled, labelsOf, room, title, between, first: labeled.indexOf(true) };
     };
     // Panels that all draw layout marks, or marks on the right only, label no left axis.
@@ -1205,12 +1207,7 @@ export class ChartModel {
       const rounded = niceAxisDomain(shown, context, count, nice);
       // Room at the ends is time shown: on axes with breaks, positions.
       const room = (d: [number, number], as: AxisType) =>
-        insetDomain(
-          headroomDomain(d, headroom("x", xDrawn[h]), plotWidth, as),
-          inset("x", xDrawn[h]),
-          plotWidth,
-          as,
-        );
+        padDomain("x", d, plotWidth, as, xDrawn[h]);
       const { breaks } = context;
       const domain = breaks
         ? breaks.inPositions(rounded, (d) => room(d, "linear"))
@@ -1427,8 +1424,9 @@ export class ChartModel {
     const keyed = keyedBy(config);
     // A copy for the frames and inspectors this scene keeps: what they find
     // before the next scene is what was drawn, whatever has been hidden since.
-    const hidden: ReadonlySet<string> = new HiddenKeys(this.hidden, new Map(this.hidden.groups));
-    const legendGroups = rosters(base, hidden);
+    const hidden = this.hidden.snapshot();
+    // Highlight frames change their hidden keys; group placement keeps this scene's original ones.
+    const groupSeries: NonNullable<Frame["groupSeries"]> = [base, hidden];
     const views: PanelView[] = [];
     const headers: SceneText[] = [];
     const all: (ItemPanel & { items: boolean })[] = [];
@@ -1512,7 +1510,7 @@ export class ChartModel {
         theme,
         locale,
         hidden,
-        groups: legendGroups,
+        groupSeries,
         owner: this,
         scene,
         clouds,
@@ -2053,26 +2051,6 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
   }
   config.rowSelection?.check(config, marks, layouts);
   return [marks, layouts, positions];
-}
-
-/**
- * Each legend group's visible series names, in the order of the marks and
- * their series, which the group's marks dodge by; undefined without groups.
- */
-function rosters(
-  base: readonly MarkSeries[],
-  hidden: ReadonlySet<string>,
-): Map<string, string[]> | undefined {
-  let out: Map<string, string[]> | undefined;
-  for (const { mark, series } of base) {
-    const group = mark.spec.legendGroup;
-    if (group === undefined) continue;
-    out ??= new Map();
-    const names = out.get(group) ?? [];
-    out.set(group, names);
-    for (const s of series) if (!hidden.has(s.key) && !names.includes(s.label)) names.push(s.label);
-  }
-  return out;
 }
 
 /** A mark's part of a panel's scene, as it draws it. */

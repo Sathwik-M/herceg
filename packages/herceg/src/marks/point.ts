@@ -11,6 +11,7 @@ import { pointDrawing } from "../draw/point.ts";
 import { SYMBOLS, type SymbolName, symbolPath, symbolReach } from "../draw/symbols.ts";
 import { GridIndex } from "../lod/grid-index.ts";
 import type { Breaks } from "../lod/m4.ts";
+import { insetDomain } from "../model/axis.ts";
 import type { LegendPart } from "../model/legend.ts";
 import {
   checkColorScale,
@@ -153,6 +154,7 @@ const streamKeys = new WeakMap<Table, Map<string, Map<string, object>>>();
 
 export class PointMark implements Mark<Frozen<PointSpec>> {
   declare readonly [MARK]: true;
+  readonly insetDomain = insetDomain;
   readonly spec: Frozen<PointSpec>;
   readonly table: Table<Schema>;
   readonly view: RowView | undefined;

@@ -24,22 +24,17 @@ export type LegendEntry = Omit<LegendItem, "hidden" | "x" | "y">;
  * series to their entries' keys (see `legendKey`).
  */
 export class HiddenKeys extends Set<string> {
-  readonly groups: Map<string, string>;
-
-  constructor(keys?: Iterable<string>, groups = new Map<string, string>()) {
-    super(keys);
-    this.groups = groups;
-  }
+  readonly groups = new Map<string, string>();
 
   override has(key: string): boolean {
-    if (super.has(key)) return true;
-    const entry = this.groups.get(key);
-    return entry !== undefined && super.has(entry);
+    return super.has(key) || super.has(this.groups.get(key) ?? key);
   }
 
-  /** Whether `key` itself is hidden, not through a group. */
-  stores(key: string): boolean {
-    return super.has(key);
+  /** Scene-owned membership, including the series hidden by their group entries. */
+  snapshot(): ReadonlySet<string> {
+    const keys = new Set(this);
+    for (const [key, entry] of this.groups) if (super.has(entry)) keys.add(key);
+    return keys;
   }
 }
 

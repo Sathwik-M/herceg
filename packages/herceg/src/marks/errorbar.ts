@@ -2,6 +2,7 @@ import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumericField, PositionField, Schema, Table } from "../data/table.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import type { Breaks } from "../lod/m4.ts";
+import { insetDomain } from "../model/axis.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { Rect, SegmentGeometry } from "../scene/scene.ts";
 import type { ErrorBarSpec, Frozen } from "../spec/spec.ts";
@@ -157,6 +158,7 @@ type Ends = { low: string; high: string } | { center: string; error: string };
  */
 export class ErrorBarMark implements Mark<Frozen<ErrorBarSpec>> {
   declare readonly [MARK]: true;
+  readonly insetDomain = insetDomain;
   readonly spec: Frozen<ErrorBarSpec>;
   readonly table: Table<Schema>;
   readonly tooltip: "x" | "y";

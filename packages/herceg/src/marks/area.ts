@@ -212,10 +212,11 @@ export class AreaMark implements Mark<Frozen<AreaSpec>> {
       const y2 = table.numbers(spec.y2 as never);
       const id = seriesKey(key, "band");
       const label = spec.label ?? `${spec.y1}–${spec.y2}`;
+      const color = palette(id, label, spec.fill);
       const series: Series = {
         key: id,
         label,
-        color: spec.fill ?? palette(id, label),
+        color: spec.fill ?? color,
         x: table.numbers(spec.x as never),
         y: y2,
         y0: table.numbers(spec.y1 as never),

@@ -225,6 +225,14 @@ export interface PanelLayout {
   ): SceneText[];
   /** What to do when the panels do not fit, for the error saying so. */
   readonly remedy: string;
+  /** Room between columns for y labels and titles inside the grid. */
+  columnGap(
+    labeled: readonly boolean[],
+    right: boolean,
+    columns: number,
+    room: number,
+    title: number,
+  ): number;
   /** See `rowGap`. */
   rowGap(grid: PanelGrid, panels: number, space: RowSpace): number;
   /** See `trackSizes`: the sizes of a grid's rows or columns, refusing panels too small. */
@@ -828,4 +836,19 @@ function same<T>(a: ArrayLike<T>, b: ArrayLike<T>): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
+}
+
+/** Gaps are needed only where a panel labels a y axis inside the grid. */
+export function columnGap(
+  labeled: readonly boolean[],
+  right: boolean,
+  columns: number,
+  room: number,
+  title: number,
+): number {
+  const inner = labeled.some(
+    (shows, i) =>
+      shows && (right ? i % columns < columns - 1 && i !== labeled.length - 1 : i % columns > 0),
+  );
+  return room && inner ? room + (right ? 0 : 8) + title : 0;
 }

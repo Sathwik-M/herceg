@@ -5,6 +5,7 @@ import { textDrawing } from "../draw/text.ts";
 import { type Formatter, numberFormatter } from "../format/format.ts";
 import { estimateText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
+import { headroomDomain } from "../model/axis.ts";
 import { contrastingText } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { MOVING_BARS, type RectGeometry, type TextGeometry } from "../scene/scene.ts";
@@ -118,6 +119,7 @@ interface Stack {
 
 export class BarMark implements Mark<Frozen<BarSpec>> {
   declare readonly [MARK]: true;
+  readonly headroomDomain = headroomDomain;
   readonly spec: Frozen<BarSpec>;
   readonly table: Table<Schema>;
   readonly zero: "x" | "y";
