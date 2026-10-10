@@ -111,20 +111,20 @@ pivots the same data by a field of four values (`herceg/pivot`, no DOM), and
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-area | 0.0.0 (0debf6d) | 131.4 | 49.3 | 44.1 | - | 31.1 |
-| herceg-bar | 0.0.0 (0debf6d) | 130.9 | 49.6 | 44.1 | - | 31.1 |
-| herceg-grid-pivot | 0.0.0 (0debf6d) | 130.9 | 44.5 | 39.8 | - | - |
-| herceg-grid-remote | 0.0.0 (0debf6d) | 87.6 | 30.3 | 27.2 | - | - |
-| herceg-grid | 0.0.0 (0debf6d) | 87.9 | 30.5 | 27.4 | - | - |
-| herceg-heatmap | 0.0.0 (0debf6d) | 130.0 | 49.7 | 44.3 | - | 28.2 |
-| herceg-line | 0.0.0 (0debf6d) | 114.1 | 42.9 | 38.6 | - | 31.1 |
-| herceg-pdf-fonts | 0.0.0 (0debf6d) | 126.6 | 49.7 | 44.3 | - | 2.9 |
-| herceg-pdf | 0.0.0 (0debf6d) | 107.8 | 42.3 | 37.8 | - | 2.9 |
-| herceg-pivot | 0.0.0 (0debf6d) | 59.7 | 19.9 | 18.0 | - | - |
-| herceg-react-line | 0.0.0 (0debf6d) | 116.8 | 44.1 | 39.6 | - | 31.1 |
-| herceg-scatter | 0.0.0 (0debf6d) | 134.1 | 50.8 | 45.2 | - | 31.1 |
-| herceg-svelte-line | 0.0.0 (0debf6d) | 118.3 | 44.7 | 40.1 | - | 31.1 |
-| herceg-vue-line | 0.0.0 (0debf6d) | 117.9 | 44.5 | 40.0 | - | 31.1 |
+| herceg-area | 0.0.0 (7dc6d1f) | 131.4 | 49.3 | 44.1 | - | 31.2 |
+| herceg-bar | 0.0.0 (7dc6d1f) | 130.8 | 49.6 | 44.2 | - | 31.2 |
+| herceg-grid-pivot | 0.0.0 (7dc6d1f) | 131.1 | 44.5 | 39.8 | - | - |
+| herceg-grid-remote | 0.0.0 (7dc6d1f) | 87.8 | 30.3 | 27.3 | - | - |
+| herceg-grid | 0.0.0 (7dc6d1f) | 88.0 | 30.6 | 27.4 | - | - |
+| herceg-heatmap | 0.0.0 (7dc6d1f) | 130.1 | 49.8 | 44.3 | - | 28.3 |
+| herceg-line | 0.0.0 (7dc6d1f) | 114.0 | 42.9 | 38.5 | - | 31.2 |
+| herceg-pdf-fonts | 0.0.0 (7dc6d1f) | 126.6 | 49.7 | 44.3 | - | 2.9 |
+| herceg-pdf | 0.0.0 (7dc6d1f) | 107.8 | 42.3 | 37.8 | - | 2.9 |
+| herceg-pivot | 0.0.0 (7dc6d1f) | 59.7 | 19.9 | 18.0 | - | - |
+| herceg-react-line | 0.0.0 (7dc6d1f) | 116.7 | 44.1 | 39.6 | - | 31.2 |
+| herceg-scatter | 0.0.0 (7dc6d1f) | 136.1 | 51.5 | 45.8 | - | 31.2 |
+| herceg-svelte-line | 0.0.0 (7dc6d1f) | 118.2 | 44.7 | 40.1 | - | 31.2 |
+| herceg-vue-line | 0.0.0 (7dc6d1f) | 117.8 | 44.5 | 39.9 | - | 31.2 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |
@@ -802,12 +802,12 @@ so differences under about 20% are noise.
 
 | Workload | herceg.express | Reference |
 | --- | --- | --- |
-| Bootstrap, 1,000 means of 100,000 values (compute) | ~215 ms, 41 MiB | Seaborn's `bootstrap`: ~280 ms, 2 MiB |
-| Bootstrap, 1,000 medians of 100,000 values (compute) | ~760 ms, 62 MiB | Seaborn's `bootstrap`: ~900 ms, 2 MiB |
-| `barplot`, 100,000 rows, 4 groups, 95% CI (chart) | ~235 ms | — |
-| `pairplot`, 10,000 rows x 5 columns, series (chart; SVG) | ~34 ms; SVG ~49 ms more | — |
+| Bootstrap, 1,000 means of 100,000 values (compute) | ~190 ms, 41 MiB | Seaborn's `bootstrap`: ~280 ms, 2 MiB |
+| Bootstrap, 1,000 medians of 100,000 values (compute) | ~760 ms, 62 MiB | Seaborn's `bootstrap`: ~840 ms, 2 MiB |
+| `barplot`, 100,000 rows, 4 groups, 95% CI (chart) | ~230 ms | — |
+| `pairplot`, 10,000 rows x 5 columns, series (chart; SVG) | ~28 ms; SVG ~49 ms more | — |
 | `clustermap`, 500 x 50 (chart, SciPy's linkage) | ~3 ms | — |
-| Average linkage, 500 x 50, the NumPy fallback (compute) | ~71 ms, 66 MiB | SciPy's `linkage`: well under ~3 ms (inside the chart time above) |
+| Average linkage, 500 x 50, the NumPy fallback (compute) | ~67 ms, 66 MiB | SciPy's `linkage`: well under ~3 ms (inside the chart time above) |
 | Lowess, 10,000 rows, `delta=0` (compute; Seaborn's default) | ~3.1 s | statsmodels: ~1.2 s |
 | Lowess, 10,000 rows, `delta` 1% of the x range (compute) | ~34 ms | statsmodels: ~13 ms |
 
