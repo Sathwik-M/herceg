@@ -6,6 +6,7 @@ import type { TimeZone } from "../format/zone.ts";
 import type { MeasureText } from "../layout/text.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
+import type { MarkSeries } from "../model/inspect.ts";
 import type { LegendPart } from "../model/legend.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { TIME_UNIT_MS, type TimeUnit } from "../scale/time.ts";
@@ -64,13 +65,35 @@ export function legendGroupOf(key: string): string | undefined {
   return (JSON.parse(key) as { legendGroup: string }).legendGroup;
 }
 
+/** Whether an existing series, item, or group key still belongs to the chart's marks. */
+export function keepsKey(
+  key: string,
+  owners: ReadonlySet<MarkKey>,
+  groups: ReadonlySet<string | undefined>,
+): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(key);
+  } catch (error) {
+    // Group keys use the strict parser that visibility previously used.
+    if (key.startsWith('{"legendGroup":')) throw error;
+    return false;
+  }
+  const owner = Array.isArray(parsed) ? parsed[0] : (parsed as { mark?: unknown } | null)?.mark;
+  if (typeof owner === "string" || typeof owner === "number") return owners.has(owner);
+  return (
+    key.startsWith('{"legendGroup":') && groups.has((parsed as { legendGroup: string }).legendGroup)
+  );
+}
+
 /**
  * Color for a series key. A chart assigns each key a palette slot the first
  * time it appears and keeps it, so colors follow series, not their order.
  * Marks pass the series' `label` too, by which marks sharing a legend group
- * share colors.
+ * share colors. An explicit `color` still registers the series but takes
+ * no palette slot.
  */
-export type Palette = (seriesKey: string, label?: string) => string;
+export type Palette = (seriesKey: string, label?: string, color?: string) => string;
 
 /** The band axes' bands, in index order. */
 export interface Bands {
@@ -102,6 +125,8 @@ export interface Frame {
    * marks: marks of a group place their series side by side by these (dodge).
    */
   groups?: ReadonlyMap<string, readonly string[]> | undefined;
+  /** Scene-owned series before panel splits; dodging marks prepare group rosters on demand. */
+  groupSeries?: readonly [series: readonly MarkSeries[], hidden: ReadonlySet<string>] | undefined;
   /** The chart drawing this frame, for caches that count each chart's redraws. */
   owner: object;
   /** The owner's count of scenes drawn; the panels of one scene share it. */
@@ -252,6 +277,13 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * at the plot edges.
    */
   readonly inset?: { readonly x: number; readonly y: number };
+  /** Domain padding for this mark's glyph inset, carried by marks that need it. */
+  insetDomain?(
+    domain: [number, number],
+    inset: number,
+    pixels: number,
+    type: PositionScale["type"],
+  ): [number, number];
   /**
    * Automatic y domains end at the mark's data rather than at round values
    * unless the axis says `nice` (heatmap cells, which would otherwise leave
@@ -442,6 +474,13 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * domains leave that much room.
    */
   headroom?(series: readonly Series[], context: BandContext): number;
+  /** Domain padding used for the mark's headroom, carried by marks that need it. */
+  headroomDomain?(
+    domain: [number, number],
+    pixels: number,
+    plotPixels: number,
+    type: PositionScale["type"],
+  ): [number, number];
   /**
    * How a series appears in the legend: by default, a square of its color.
    * `false` leaves it out, for marks whose series colors mean nothing (heatmaps).
@@ -524,13 +563,13 @@ let split: typeof import("./split.ts") | undefined;
  * with a categorical one) sources are reported unsorted.
  */
 export class SeriesSplitter {
-  readonly table: Table<Schema>;
-  readonly xField: string | undefined;
+  readonly #table: Table<Schema>;
+  readonly #xField: string | undefined;
   readonly yFields: readonly string[];
-  readonly seriesField: string | undefined;
-  readonly label: string | undefined;
+  readonly #seriesField: string | undefined;
+  readonly #label: string | undefined;
   /** The rows to split, when only a view's rows show. */
-  readonly view: RowView | undefined;
+  readonly #view: RowView | undefined;
   #cache = new TableCache<SeriesSource[]>();
   #revision = -1;
   /**
@@ -548,12 +587,12 @@ export class SeriesSplitter {
     label: string | undefined,
     view?: RowView,
   ) {
-    this.table = table;
-    this.view = view;
-    this.xField = xField;
+    this.#table = table;
+    this.#view = view;
+    this.#xField = xField;
     this.yFields = yFields;
-    this.seriesField = seriesField;
-    this.label = label;
+    this.#seriesField = seriesField;
+    this.#label = label;
     if (seriesField !== undefined && yFields.length > 1) {
       throw new Error("Use either several y fields or a series field, not both");
     }
@@ -564,31 +603,31 @@ export class SeriesSplitter {
 
   sources(): SeriesSource[] {
     // A view changes what shows without the table changing.
-    const revision = this.view?.revision ?? -1;
+    const revision = this.#view?.revision ?? -1;
     if (revision !== this.#revision) {
       this.#cache = new TableCache();
       this.#revision = revision;
     }
-    return this.#cache.get(this.table, () => {
-      const xField = this.xField;
-      const field = this.seriesField;
+    return this.#cache.get(this.#table, () => {
+      const xField = this.#xField;
+      const field = this.#seriesField;
       // A copy of a view's positions: the view rewrites its own when anyone
       // reads it after a change, while this scene's series and picks live on.
-      const shown = this.view?.read().indices?.slice();
+      const shown = this.#view?.read().indices?.slice();
       if (field === undefined) {
-        const x = xField === undefined ? undefined : this.table.numbers(xField as never);
+        const x = xField === undefined ? undefined : this.#table.numbers(xField as never);
         const sorted =
           x !== undefined &&
-          (shown ? isSortedSubset(x, shown) : this.table.isSorted(xField as never));
+          (shown ? isSortedSubset(x, shown) : this.#table.isSorted(xField as never));
         return this.yFields.map((y) => ({
           id: y,
-          label: this.yFields.length === 1 ? (this.label ?? y) : y,
+          label: this.yFields.length === 1 ? (this.#label ?? y) : y,
           y,
           rows: shown,
           sorted,
         }));
       }
-      if (!shown && split) this.#groups ??= new split.SplitRows(this.table, field, xField);
+      if (!shown && split) this.#groups ??= new split.SplitRows(this.#table, field, xField);
       if (!shown && this.#groups) {
         return this.#groups.groups().map(({ name, rows, sorted, stream }) => ({
           id: name,
@@ -612,8 +651,8 @@ export class SeriesSplitter {
           () => {},
         );
       }
-      const x = xField === undefined ? undefined : this.table.numbers(xField as never);
-      const { codes, dictionary } = this.table.categories(field as never);
+      const x = xField === undefined ? undefined : this.#table.numbers(xField as never);
+      const { codes, dictionary } = this.#table.categories(field as never);
       const groups = rowsByCode(codes, dictionary.length, shown);
       // Categories with no remaining rows (for example after a rolling
       // window moved past them) produce no series.
@@ -644,10 +683,11 @@ export function buildSeries(
   return sources.map((source) => {
     const y = positions ?? table.numbers(source.y as never);
     const id = seriesKey(key, source.id);
+    const color = palette(id, source.label, stroke);
     return {
       key: id,
       label: source.label,
-      color: stroke ?? palette(id, source.label),
+      color: stroke ?? color,
       x,
       y,
       y0: undefined,

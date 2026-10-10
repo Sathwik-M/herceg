@@ -22,6 +22,7 @@ import {
   checkBands,
   checkFit,
   checkLayouts,
+  columnGap,
   type DescribeAnnotation,
   groups,
   groupsOf,
@@ -78,6 +79,16 @@ export function facet(by: string | FacetGrid, options: FacetOptions = {}): Facet
 const ROWS = new Set(["rule", "region", "text"]);
 
 export class Facet implements PanelLayout {
+  columnGap(
+    labeled: readonly boolean[],
+    right: boolean,
+    columns: number,
+    room: number,
+    title: number,
+  ): number {
+    return columnGap(labeled, right, columns, room, title);
+  }
+
   /** The field whose values wrap into rows of `columns` panels. */
   readonly field: string | undefined;
   readonly columns: number | undefined;

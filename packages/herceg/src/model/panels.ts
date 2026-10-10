@@ -17,6 +17,7 @@ import {
   checkBands,
   checkFit,
   checkLayouts,
+  columnGap,
   type DescribeAnnotation,
   groups,
   type LayoutOptions,
@@ -70,6 +71,16 @@ export function panels(list: readonly PanelSpec[], grid: GridSpec = {}): Panels 
 }
 
 export class Panels implements PanelLayout {
+  columnGap(
+    labeled: readonly boolean[],
+    right: boolean,
+    columns: number,
+    room: number,
+    title: number,
+  ): number {
+    return columnGap(labeled, right, columns, room, title);
+  }
+
   readonly list: readonly PanelSpec[];
   readonly columns: number;
   readonly rowHeights: readonly number[] | undefined;

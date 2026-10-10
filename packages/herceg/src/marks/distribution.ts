@@ -11,6 +11,7 @@ import {
   type Table,
   table,
 } from "../data/table.ts";
+import { insetDomain } from "../model/axis.ts";
 import type { Geometry } from "../scene/scene.ts";
 import type { BoxPlotSpec, Frozen, ViolinSpec } from "../spec/spec.ts";
 import { BandShares } from "./dodge.ts";
@@ -115,6 +116,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   implements Mark<Frozen<T>>
 {
   declare readonly [MARK]: true;
+  readonly insetDomain = insetDomain;
   readonly spec: Frozen<T>;
   readonly table: Table;
   readonly tooltip: "x" | "y";
@@ -397,15 +399,8 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
       return this.rosterIds().map((name) => {
         const id = seriesKey(key, name);
         const series = this.spec.series === undefined ? label : name;
-        return this.#series(
-          id,
-          series,
-          this.spec.fill ?? palette(id, series),
-          NO_ROWS,
-          NO_ROWS,
-          NO_ROWS,
-          0,
-        );
+        const color = palette(id, series, this.spec.fill);
+        return this.#series(id, series, this.spec.fill ?? color, NO_ROWS, NO_ROWS, NO_ROWS, 0);
       });
     }
     const summary = this.#wholeSummary();
