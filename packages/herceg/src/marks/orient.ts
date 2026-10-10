@@ -5,12 +5,12 @@
 
 import type { NumericArray } from "../data/column.ts";
 import type { Schema, Table } from "../data/table.ts";
-import type { Mapping } from "../lod/m4.ts";
 import type { Polyline } from "../lod/polyline.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import type { Orient } from "../spec/spec.ts";
-import { CATEGORY, type Frame, NUMERIC, requireField } from "./mark.ts";
-import { rowOf, type Series, xExtent } from "./series.ts";
+import { CATEGORY, type Frame, NUMERIC, requireField, requireSeriesFields } from "./mark.ts";
+import { type Series, xExtent } from "./series.ts";
+import type { TraceFrame } from "./trace.ts";
 
 /** Fields a line or area takes as positions: numbers, times, and categories. */
 export const POSITION = [...NUMERIC, ...CATEGORY];
@@ -61,11 +61,7 @@ export function rolesOf(
   requireField(table, position, POSITION, `${type} ${along}`);
   const fields = typeof values === "string" ? [values] : values;
   for (const field of fields) requireField(table, field, NUMERIC, `${type} ${across}`);
-  if (series !== undefined && fields.length > 1)
-    throw new Error(`${type} ${across}: several fields or a series field, not both; drop one`);
-  const repeated = fields.find((field, i) => fields.indexOf(field) !== i);
-  if (repeated !== undefined)
-    throw new Error(`${type} ${across}: field "${repeated}" is listed twice; list it once`);
+  requireSeriesFields(fields, series, `${type} ${across}`, true);
   return {
     orient: along,
     position,
@@ -74,41 +70,25 @@ export function rolesOf(
   };
 }
 
-/** What some rows came to. */
-interface Kept {
-  rows: Uint32Array | undefined;
-}
-
-/**
- * Rows of series (see `bandOrder` and `withBands`), held weakly by the
- * band indices and by the rows: a whole table's rows, or a row subset's.
- */
-type RowsBy = WeakMap<NumericArray, { whole?: Kept; parts: WeakMap<Uint32Array, Kept> }>;
+/** Results keyed weakly by the band indices and the row subset (or the indices themselves). */
+type RowsBy = WeakMap<NumericArray, WeakMap<NumericArray, Uint32Array | undefined>>;
 const orders: RowsBy = new WeakMap();
 const banded: RowsBy = new WeakMap();
 
-/** What `rows` came to, worked out once per band indices and rows. */
 function kept(
   cache: RowsBy,
   bands: NumericArray,
   rows: Uint32Array | undefined,
   compute: () => Uint32Array | undefined,
 ): Uint32Array | undefined {
-  let byBands = cache.get(bands);
-  if (!byBands) {
-    byBands = { parts: new WeakMap() };
-    cache.set(bands, byBands);
+  let byRows = cache.get(bands);
+  if (!byRows) {
+    byRows = new WeakMap();
+    cache.set(bands, byRows);
   }
-  if (!rows) {
-    byBands.whole ??= { rows: compute() };
-    return byBands.whole.rows;
-  }
-  let found = byBands.parts.get(rows);
-  if (!found) {
-    found = { rows: compute() };
-    byBands.parts.set(rows, found);
-  }
-  return found.rows;
+  const source = rows ?? bands;
+  if (!byRows.has(source)) byRows.set(source, compute());
+  return byRows.get(source);
 }
 
 /**
@@ -158,17 +138,12 @@ export function bandOrder(
   });
 }
 
-/** A scale moved `by` pixels: a dodged series' place in each band. */
-function shifted(scale: PositionScale, by: number): PositionScale {
-  const mapping: Mapping = scale.mapping();
+/** A positions scale's tracing fields, moved by a dodged series' offset. */
+function shifted(scale: PositionScale, by: number): TraceFrame["x"] {
+  const mapping = scale.mapping();
   return {
     type: scale.type,
     domain: scale.domain,
-    range: scale.range,
-    ...(scale.bandwidth !== undefined && { bandwidth: scale.bandwidth }),
-    map: (value) => scale.map(value) + by,
-    invert: (pixel) => scale.invert(pixel - by),
-    ticks: (count) => scale.ticks(count),
     mapping: () => ({ ...mapping, offset: mapping.offset + by }),
   };
 }
@@ -179,7 +154,7 @@ function shifted(scale: PositionScale, by: number): PositionScale {
  * scale moved `shift` pixels (a dodged series' place). Polylines traced on
  * it are in its coordinates; `untranspose` turns them back.
  */
-export function traceFrame(frame: Frame, orient: Orient, shift: number): Frame {
+export function traceFrame(frame: Frame, orient: Orient, shift: number): TraceFrame {
   const along = orient === "x" ? frame.x : frame.y;
   const positions = shift === 0 ? along : shifted(along, shift);
   if (orient === "x") return shift === 0 ? frame : { ...frame, x: positions };
@@ -205,40 +180,28 @@ export function traceSeries(
   sorted: boolean,
   hides = true,
 ): Series {
-  if (!copiesPoints(s, frame, orient, hides)) {
-    if (orient === "x") return sorted === s.sorted ? s : { ...s, sorted };
-    return { ...s, x: s.y, y: s.x, y0: s.x0, x0: undefined, sorted };
-  }
   const places = s.places?.[orient];
   const breaks = hides && orient === "y" ? frame.x.breaks : undefined;
-  const along = orient === "x";
-  const [positions, values, bases] = along ? [s.x, s.y, s.y0] : [s.y, s.x, s.x0];
-  const n = s.length;
-  const x = frame.doubles(s.key, "placed", n);
-  const y = frame.doubles(s.key, "placed-values", n);
-  const y0 = bases && frame.doubles(s.key, "placed-bases", n);
-  let length = 0;
-  for (let k = 0; k < n; k++) {
-    const row = rowOf(s, k);
-    if (breaks?.hides(values[row]!)) continue;
-    x[length] = places ? places.at(positions[row]!) : positions[row]!;
-    y[length] = values[row]!;
-    if (y0) y0[length] = bases![row]!;
-    length++;
-  }
+  const source =
+    orient === "y"
+      ? { ...s, x: s.y, y: s.x, y0: s.x0, x0: undefined, sorted }
+      : sorted === s.sorted
+        ? s
+        : { ...s, sorted };
+  // Facets and time breaks carry the code that copies their point views.
+  const copied = places
+    ? places.trace(source, frame.doubles, breaks)
+    : breaks?.trace(source, frame.doubles);
+  if (!copied) return source;
   return {
-    ...s,
-    x,
-    y,
-    y0,
+    ...source,
+    ...copied,
     x0: undefined,
-    values: y,
+    values: copied.y,
     field: undefined,
     rows: undefined,
-    length,
     stream: undefined,
     edges: undefined,
-    sorted,
     places: undefined,
   };
 }

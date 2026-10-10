@@ -17,6 +17,11 @@ import {
 import type { Frame } from "./mark.ts";
 import { rowOf, type Series, visibleRange } from "./series.ts";
 
+/** The positions scale only needs these fields while tracing a path. */
+export type TraceFrame = Omit<Frame, "x"> & {
+  x: Pick<Frame["x"], "type" | "domain" | "mapping" | "breaks">;
+};
+
 /** Buffer stages; a series' buffers are keyed by stage and series key. */
 export type Stage = "line" | "upper" | "lower";
 
@@ -89,7 +94,7 @@ function reduce(
   y: NumericArray,
   start: number,
   end: number,
-  frame: Frame,
+  frame: TraceFrame,
   out: Polyline,
   index?: RangeIndex,
 ) {
@@ -107,7 +112,7 @@ function reduce(
 /** Steps a traced edge, when the curve is a step. */
 function stepped(
   path: Polyline,
-  frame: Frame,
+  frame: TraceFrame,
   key: string,
   stage: Stage,
   curve: Curve | undefined,
@@ -123,7 +128,7 @@ function stepped(
  * neighbor past each edge, so it reaches the plot's edges. On an axis with
  * breaks, a neighbor is the nearest shown row, past any hidden ones.
  */
-export function drawnRange(series: Series, frame: Frame): [number, number] {
+export function drawnRange(series: Series, frame: TraceFrame): [number, number] {
   const [start, end] = visibleRange(series, frame.x.domain[0], frame.x.domain[1]);
   const breaks = frame.x.breaks;
   if (!breaks || !series.sorted) return [start, end];
@@ -135,7 +140,7 @@ export function drawnRange(series: Series, frame: Frame): [number, number] {
  * view (when the data has them; on an axis with breaks, of shown rows), so
  * a monotone curve's tangents at the view's edges are those it has unzoomed.
  */
-export function curveRows(series: Series, frame: Frame): [number, number] {
+export function curveRows(series: Series, frame: TraceFrame): [number, number] {
   let [start, end] = drawnRange(series, frame);
   if (!series.sorted) return [start, end];
   const { x, rows, length } = series;
@@ -165,7 +170,7 @@ export function curveRows(series: Series, frame: Frame): [number, number] {
 export function tracePath(
   series: Series,
   y: NumericArray,
-  frame: Frame,
+  frame: TraceFrame,
   stage: Stage,
   curve: Curve | undefined,
   index?: RangeIndex,
@@ -200,7 +205,7 @@ export function traceBand(
   series: Series,
   top: NumericArray,
   bottom: NumericArray,
-  frame: Frame,
+  frame: TraceFrame,
   curve: Curve | undefined,
   indexes?: { top: RangeIndex; bottom: RangeIndex },
 ): { upper: Polyline; lower: Polyline } {
@@ -293,7 +298,7 @@ const RETAINED = 1 << 16;
  */
 export function traceCurvedLayers(
   layers: readonly Layer[],
-  frame: Frame,
+  frame: TraceFrame,
   [start, end]: [number, number],
   stacked: boolean,
 ): { upper: Polyline; lower: Polyline }[] {
@@ -428,7 +433,7 @@ export function curveLayers(
  */
 function keptRows(
   layers: readonly Layer[],
-  frame: Frame,
+  frame: TraceFrame,
   start: number,
   end: number,
   stacked: boolean,

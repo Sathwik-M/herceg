@@ -1,5 +1,6 @@
 import type { NumericArray } from "../data/column.ts";
 import type { RangeExtremes, RangeIndex } from "./minmax-index.ts";
+import type { PositionLookup, TraceBuffers, TraceColumns, TraceSource } from "./point-view.ts";
 import type { Polyline } from "./polyline.ts";
 
 /**
@@ -72,6 +73,8 @@ export interface Breaks {
    * pairs of start and end positions.
    */
   shown(x: NumericArray, start: number, end: number, rows?: Uint32Array): number[];
+  /** Copies a trace without values hidden along its other axis. */
+  trace(s: TraceSource, buffers: TraceBuffers, places?: PositionLookup): TraceColumns;
   /** `m4` over ascending x: hidden points are left out, without breaking the line. */
   m4(
     x: NumericArray,

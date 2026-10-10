@@ -2,6 +2,13 @@
 // values, or subplots, whose marks name their panel. The model reads either
 // through these types; their code loads only with a facet or panels.
 
+import type { Breaks } from "../lod/m4.ts";
+import {
+  copyTrace,
+  type TraceBuffers,
+  type TraceColumns,
+  type TraceSource,
+} from "../lod/point-view.ts";
 import type { LayoutMark } from "../marks/layout-mark.ts";
 import {
   type BandContext,
@@ -856,6 +863,10 @@ class Places implements BandPlaces {
       else hi = mid;
     }
     return held[lo] === band ? lo : -1;
+  }
+
+  trace(s: TraceSource, buffers: TraceBuffers, breaks?: Breaks): TraceColumns {
+    return copyTrace(s, buffers, this, breaks);
   }
 
   band(place: number): number {
