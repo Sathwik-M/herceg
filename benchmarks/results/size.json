@@ -1,8 +1,8 @@
 {
  "schema": 1,
- "date": "2026-10-10T07:58:29.723Z",
+ "date": "2026-10-10T09:07:37.137Z",
  "commit": {
-  "sha": "c3e4049",
+  "sha": "3d7495c",
   "dirty": false
  },
  "method": "esbuild bundle, ESM, es2022, minified, NODE_ENV=production, code splitting; measured is what loads before the chart renders, the entry chunk and the chunks it imports statically, each compressed on its own as browsers fetch them; chunks reached only by dynamic imports and required CSS are reported separately; gzip level 9; brotli quality 11",
@@ -66,11 +66,11 @@
   {
    "entry": "herceg-area",
    "package": "herceg",
-   "version": "0.0.0 (c3e4049)",
-   "raw": 299903,
-   "minified": 133616,
-   "gzip": 49935,
-   "brotli": 44430,
+   "version": "0.0.0 (3d7495c)",
+   "raw": 299968,
+   "minified": 133660,
+   "gzip": 49951,
+   "brotli": 44510,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -81,11 +81,11 @@
   {
    "entry": "herceg-bar",
    "package": "herceg",
-   "version": "0.0.0 (c3e4049)",
-   "raw": 296169,
-   "minified": 131213,
-   "gzip": 49477,
-   "brotli": 44055,
+   "version": "0.0.0 (3d7495c)",
+   "raw": 296234,
+   "minified": 131257,
+   "gzip": 49489,
+   "brotli": 44089,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -96,7 +96,7 @@
   {
    "entry": "herceg-grid-pivot",
    "package": "herceg",
-   "version": "0.0.0 (c3e4049)",
+   "version": "0.0.0 (3d7495c)",
    "raw": 302392,
    "minified": 133933,
    "gzip": 45488,
@@ -108,11 +108,11 @@
   {
    "entry": "herceg-grid-remote",
    "package": "herceg",
-   "version": "0.0.0 (c3e4049)",
-   "raw": 180946,
-   "minified": 89551,
-   "gzip": 30973,
-   "brotli": 27895,
+   "version": "0.0.0 (3d7495c)",
+   "raw": 181136,
+   "minified": 89687,
+   "gzip": 31019,
+   "brotli": 27886,
    "chunks": 1,
    "css": null,
    "lazy": null
@@ -120,7 +120,7 @@
   {
    "entry": "herceg-grid",
    "package": "herceg",
-   "version": "0.0.0 (c3e4049)",
+   "version": "0.0.0 (3d7495c)",
    "raw": 192936,
    "minified": 89861,
    "gzip": 31232,
@@ -132,11 +132,11 @@
   {
    "entry": "herceg-line",
    "package": "herceg",
-   "version": "0.0.0 (c3e4049)",
-   "raw": 257256,
-   "minified": 115855,
-   "gzip": 43423,
-   "brotli": 38879,
+   "version": "0.0.0 (3d7495c)",
+   "raw": 257321,
+   "minified": 115899,
+   "gzip": 43436,
+   "brotli": 39019,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -147,7 +147,7 @@
   {
    "entry": "herceg-pivot",
    "package": "herceg",
-   "version": "0.0.0 (c3e4049)",
+   "version": "0.0.0 (3d7495c)",
    "raw": 148362,
    "minified": 61081,
    "gzip": 20329,
@@ -159,11 +159,11 @@
   {
    "entry": "herceg-react-line",
    "package": "@herceg/react",
-   "version": "0.0.0 (c3e4049)",
-   "raw": 262210,
-   "minified": 118539,
-   "gzip": 44578,
-   "brotli": 40047,
+   "version": "0.0.0 (3d7495c)",
+   "raw": 262275,
+   "minified": 118583,
+   "gzip": 44589,
+   "brotli": 40010,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -174,11 +174,11 @@
   {
    "entry": "herceg-scatter",
    "package": "herceg",
-   "version": "0.0.0 (c3e4049)",
-   "raw": 294997,
-   "minified": 133699,
-   "gzip": 50428,
-   "brotli": 44853,
+   "version": "0.0.0 (3d7495c)",
+   "raw": 295062,
+   "minified": 133743,
+   "gzip": 50441,
+   "brotli": 44832,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -189,11 +189,11 @@
   {
    "entry": "herceg-svelte-line",
    "package": "@herceg/svelte",
-   "version": "0.0.0 (c3e4049)",
-   "raw": 264639,
-   "minified": 120013,
-   "gzip": 45139,
-   "brotli": 40474,
+   "version": "0.0.0 (3d7495c)",
+   "raw": 264704,
+   "minified": 120057,
+   "gzip": 45154,
+   "brotli": 40559,
    "chunks": 3,
    "css": null,
    "lazy": {
@@ -204,11 +204,11 @@
   {
    "entry": "herceg-vue-line",
    "package": "@herceg/vue",
-   "version": "0.0.0 (c3e4049)",
-   "raw": 264938,
-   "minified": 119601,
-   "gzip": 44983,
-   "brotli": 40354,
+   "version": "0.0.0 (3d7495c)",
+   "raw": 265003,
+   "minified": 119645,
+   "gzip": 44996,
+   "brotli": 40392,
    "chunks": 3,
    "css": null,
    "lazy": {
