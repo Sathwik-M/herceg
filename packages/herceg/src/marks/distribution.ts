@@ -66,7 +66,7 @@ export type DistributionOptions<S extends Schema> = (
   id?: string;
 };
 
-const STATS = ["q1", "median", "q3", "low", "high", "count"] as const;
+export const STATS = ["q1", "median", "q3", "low", "high", "count"] as const;
 export type Stat = (typeof STATS)[number];
 
 /**
@@ -143,21 +143,23 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   /** The series one chart's summary has, in its order, as of a table version. */
   #roster: { version: number; ids: string[] } | undefined;
 
-  constructor(input: T, table: Table) {
+  constructor(input: T, table: Table, axes?: { x: string; y: string }) {
     this.spec = frozen(input);
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
     const type = spec.type;
-    if (!table.has(spec.x)) requireField(table, spec.x, CATEGORY, `${type} x`);
-    if (!table.has(spec.y)) requireField(table, spec.y, CATEGORY, `${type} y`);
-    this.horizontal = table.kind(spec.y) === "category" && table.kind(spec.x) !== "category";
-    if (!this.horizontal && table.kind(spec.x) !== "category") {
+    const x = axes?.x ?? spec.x!;
+    const y = axes?.y ?? spec.y!;
+    if (!table.has(x)) requireField(table, x, CATEGORY, `${type} x`);
+    if (!table.has(y)) requireField(table, y, CATEGORY, `${type} y`);
+    this.horizontal = table.kind(y) === "category" && table.kind(x) !== "category";
+    if (!this.horizontal && table.kind(x) !== "category") {
       throw new TypeError(
         `${type} needs a category field on x or y, and a number or time field on the other`,
       );
     }
-    this.category = this.horizontal ? spec.y : spec.x;
-    this.value = this.horizontal ? spec.x : spec.y;
+    this.category = this.horizontal ? y : x;
+    this.value = this.horizontal ? x : y;
     requireField(table, this.value, NUMERIC, `${type} ${this.horizontal ? "x" : "y"}`);
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, `${type} series`);
     this.table = table;
@@ -190,7 +192,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
   /** One chart's summary, of every row. */
   #wholeSummary(): Summary<G> {
     const { version } = this.table;
-    if (this.#whole?.version !== version) this.#whole = { version, summary: this.#summarize() };
+    if (this.#whole?.version !== version) this.#whole = { version, summary: this.summarizeRows() };
     return this.#whole.summary;
   }
 
@@ -198,7 +200,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
    * The statistics of each category's (and series value's) values at
    * `rows` of the table, or at every row.
    */
-  #summarize(rows?: Uint32Array): Summary<G> {
+  protected summarizeRows(rows?: Uint32Array): Summary<G> {
     const source = this.table;
     const categories = source.categories(this.category as never);
     const series =
@@ -229,15 +231,40 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     const groups: G[] = [];
     keys.forEach((key, i) => {
       const sorted = Float64Array.from(lists.get(key)!).sort();
-      const stats = boxStats(sorted);
+      const stats = this.groupStats(sorted);
       for (const stat of STATS) columns[stat]![i] = stats[stat];
       groups.push(this.describeGroup(sorted, stats));
     });
-    // The summary's fields are fixed; the mark reads it on the erased schema.
+    return this.buildSummary(
+      Uint32Array.from(keys, (key) => firsts.get(key)!),
+      columns as Record<Stat, Float64Array>,
+      groups,
+    );
+  }
+
+  /** Raw statistics; box plots may choose a different whisker rule. */
+  protected groupStats(sorted: Float64Array): BoxStats {
+    return boxStats(sorted);
+  }
+
+  /** Builds the shared series and placement representation from summary columns. */
+  protected buildSummary(
+    first: Uint32Array,
+    columns: Record<Stat, Float64Array>,
+    groups: G[],
+  ): Summary<G> {
+    const source = this.table;
+    const categories = source.categories(this.category as never);
+    const series =
+      this.spec.series !== undefined ? source.categories(this.spec.series as never) : undefined;
     const summary = table({
-      category: category(keys.map((key) => categories.dictionary[Math.floor(key / width)]!)),
-      group: category(keys.map((key) => (series ? series.dictionary[key % width]! : ""))),
-      ...(columns as Record<Stat, Float64Array>),
+      category: category(
+        Array.from(first, (row) => categories.dictionary[categories.codes[row]!]!),
+      ),
+      group: category(
+        Array.from(first, (row) => (series ? series.dictionary[series.codes[row]!]! : "")),
+      ),
+      ...columns,
     }) as unknown as Table;
     const built: Summary<G> = {
       table: summary,
@@ -245,7 +272,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
         STATS.map((stat) => [stat, summary.numbers(stat as never) as Float64Array]),
       ) as Record<Stat, Float64Array>,
       groups,
-      first: Uint32Array.from(keys, (key) => firsts.get(key)!),
+      first,
       split: new SeriesSplitter(
         summary,
         undefined,
@@ -272,7 +299,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
       cached.rows.every((r, p) => r === rows[p])
     )
       return cached.summaries;
-    const summaries = rows.map((panel) => this.#summarize(panel));
+    const summaries = rows.map((panel) => this.summarizeRows(panel));
     this.#panels.set(key, { version, rows, summaries });
     return summaries;
   }
@@ -314,12 +341,11 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     if (this.spec.series !== undefined) {
       const categories = source.categories(this.category as never).codes;
       const { codes, dictionary } = source.categories(this.spec.series as never);
-      const values = source.numbers(this.value as never);
       const first = new Float64Array(dictionary.length).fill(Infinity);
       for (let row = 0; row < source.length; row++) {
         const c = categories[row]!;
         const s = codes[row]!;
-        if (c >= 0 && s >= 0 && Number.isFinite(values[row]!) && c < first[s]!) first[s] = c;
+        if (c >= 0 && s >= 0 && this.acceptsRow(row) && c < first[s]!) first[s] = c;
       }
       const order = Array.from(dictionary, (_, s) => s).filter((s) => first[s]! < Infinity);
       ids = order.sort((a, b) => first[a]! - first[b]! || a - b).map((s) => dictionary[s]!);
@@ -328,8 +354,14 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
     return ids;
   }
 
+  protected acceptsRow(row: number): boolean {
+    return Number.isFinite(this.table.numbers(this.value as never)[row]!);
+  }
+
   channelKind(axis: "x" | "y") {
-    return this.table.kind((axis === "x" ? this.spec.x : this.spec.y) as never);
+    return axis === (this.horizontal ? "y" : "x")
+      ? "category"
+      : this.table.kind(this.value as never);
   }
 
   bands(axis: "x" | "y", context: BandContext): BandList | undefined {
@@ -497,11 +529,24 @@ export abstract class DistributionMark<T extends BoxPlotSpec | ViolinSpec, G>
         const ends = this.span(s, row)
           .map((value) => across.map(value))
           .filter(Number.isFinite);
+        let low = Math.min(...ends);
+        let high = Math.max(...ends);
+        if (ends.length < 2) {
+          // A log axis can omit one extreme but still show the rest of a shape.
+          // Bound its drawable values rather than fall back to its median alone.
+          this.drawnValues(this.summaryOf(s), row, (value) => {
+            const pixel = across.map(value);
+            if (!Number.isFinite(pixel)) return;
+            low = Math.min(low, pixel);
+            high = Math.max(high, pixel);
+          });
+        }
         const inside =
           Math.abs(pa - center) <= (share * this.width) / 2 &&
-          ends.length === 2 &&
-          pc >= Math.min(...ends) &&
-          pc <= Math.max(...ends);
+          Number.isFinite(low) &&
+          Number.isFinite(high) &&
+          pc >= low &&
+          pc <= high;
         const distance = inside ? 0 : Math.hypot(pa - center, pc - across.map(median[row]!));
         if (Number.isFinite(distance) && distance < (best?.distance ?? Infinity))
           best = { series: s, position: k, distance };

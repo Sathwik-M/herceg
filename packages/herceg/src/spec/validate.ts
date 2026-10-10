@@ -6,6 +6,7 @@
 // so misspelled ones do not go unnoticed.
 
 import { areaFormError } from "../marks/area.ts";
+import { boxPlotFormError } from "../marks/boxplot-input.ts";
 import { errorBarForm } from "../marks/errorbar.ts";
 import { regionFormError } from "../marks/region.ts";
 import { ruleFormError } from "../marks/rule.ts";
@@ -640,10 +641,22 @@ const MARKS: MarkChecks = {
     },
   },
   boxplot: {
-    required: ["x", "y"],
+    required: [],
     checks: {
       x: field,
       y: field,
+      low: field,
+      q1: field,
+      median: field,
+      q3: field,
+      high: field,
+      count: field,
+      whiskers: (v, path) => {
+        if (v === "tukey" || v === "range") return;
+        if (typeof v !== "number" || !Number.isFinite(v) || v < 0)
+          fail(path, '"tukey", "range", or a finite nonnegative IQR multiple', v);
+      },
+      notch: boolean,
       series: field,
       fill: string,
       fillOpacity: fraction,
@@ -931,6 +944,7 @@ const FORMS: Partial<
   Record<MarkSpec["type"], (spec: Record<string, unknown>) => string | undefined>
 > = {
   area: areaFormError,
+  boxplot: boxPlotFormError,
   rule: ruleFormError,
   region: regionFormError,
   errorbar: (spec) => {
@@ -1194,6 +1208,19 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
   const seams = (chart.x as XAxisSpec | undefined)?.seams;
   if (seams !== undefined && seams !== false && declared < 5)
     fail("spec.x.seams", 'a spec with "version": 5, so that older readers refuse it', seams);
+  for (const [i, item] of (chart.marks as Record<string, unknown>[]).entries()) {
+    if (item.type !== "boxplot" || item.median !== undefined) continue;
+    if (
+      (item.notch === true ||
+        (item.whiskers !== undefined && item.whiskers !== "tukey" && item.whiskers !== 1.5)) &&
+      declared < 6
+    )
+      fail(
+        `marks[${i}].${item.notch === true ? "notch" : "whiskers"}`,
+        'a spec with "version": 6 or later, so that older readers refuse it',
+        item.notch === true ? item.notch : item.whiskers,
+      );
+  }
   // A projection places maps' marks; a chart of other marks has nothing to project.
   if (
     chart.projection !== undefined &&

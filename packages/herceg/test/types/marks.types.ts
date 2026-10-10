@@ -21,6 +21,8 @@ import { sunburst } from "../../src/marks/sunburst.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import type {
   AreaSpec,
+  BoxPlotInput,
+  BoxPlotSpec,
   ErrorBarSpec,
   RegionSpec,
   RuleSpec,
@@ -170,3 +172,68 @@ const drawn = line(readings, { x: "at", y: "cpu", dash: [2, 3] });
 drawn.spec.y = "stage";
 // @ts-expect-error nor can their arrays
 drawn.spec.dash?.push(4);
+
+const boxes = table({
+  group: ["a"],
+  low: [0],
+  q1: [1],
+  median: [2],
+  q3: [3],
+  high: [4],
+  count: [20],
+});
+const boxFields = { low: "low", q1: "q1", median: "median", q3: "q3", high: "high" } as const;
+boxplot(boxes, { x: "group", ...boxFields });
+boxplot(boxes, { y: "group", ...boxFields, count: "count", notch: true });
+boxplot(boxes, { x: "group", y: "median", whiskers: "range", notch: true });
+boxplot(boxes, { x: "group", y: "median", whiskers: 2 });
+// @ts-expect-error even a partial summary excludes a raw value axis
+boxplot(boxes, { x: "group", y: "median", median: "median" });
+// @ts-expect-error median alone is not a complete precomputed box
+boxplot(boxes, { x: "group", median: "median" });
+// @ts-expect-error raw values and statistic fields exclude each other
+boxplot(boxes, { x: "group", y: "median", ...boxFields });
+// @ts-expect-error precomputed whisker ends forbid a whisker rule
+boxplot(boxes, { x: "group", ...boxFields, whiskers: "tukey" });
+// @ts-expect-error precomputed notches need count
+boxplot(boxes, { x: "group", ...boxFields, notch: true });
+// @ts-expect-error statistic fields must be numeric
+boxplot(boxes, { x: "group", ...boxFields, low: "group" });
+// @ts-expect-error all five statistics are required
+boxplot(boxes, { x: "group", low: "low" });
+// @ts-expect-error the category field must be categorical
+boxplot(boxes, { x: "median", ...boxFields });
+// @ts-expect-error horizontal boxes cannot use the right axis
+boxplot(boxes, { y: "group", ...boxFields, axis: "right" });
+const precomputedBoxSpec: BoxPlotSpec = {
+  type: "boxplot",
+  x: "group",
+  ...boxFields,
+  count: "count",
+  notch: true,
+};
+const rawBoxInput: BoxPlotInput = { x: "group", y: "median", notch: true };
+const rawBoxSpec: BoxPlotSpec = { type: "boxplot", ...rawBoxInput };
+// @ts-expect-error a complete summary cannot also name raw y values
+const mixedBoxInput: BoxPlotInput = { x: "group", y: "median", ...boxFields };
+// @ts-expect-error median alone is also a statistic: it excludes raw y values
+const partialMixedBoxInput: BoxPlotInput = { x: "group", y: "median", median: "median" };
+// @ts-expect-error a precomputed box requires all five statistics
+const partialBoxInput: BoxPlotInput = { x: "group", median: "median" };
+// @ts-expect-error precomputed notches require the observation count field
+const noCountBoxInput: BoxPlotInput = { x: "group", ...boxFields, notch: true };
+// @ts-expect-error the portable spec also excludes mixed forms
+const mixedBoxSpec: BoxPlotSpec = { ...precomputedBoxSpec, y: "median" };
+// @ts-expect-error the portable spec requires notch count
+const noCountBoxSpec: BoxPlotSpec = { type: "boxplot", x: "group", ...boxFields, notch: true };
+void [
+  precomputedBoxSpec,
+  rawBoxInput,
+  rawBoxSpec,
+  mixedBoxInput,
+  partialMixedBoxInput,
+  partialBoxInput,
+  noCountBoxInput,
+  mixedBoxSpec,
+  noCountBoxSpec,
+];

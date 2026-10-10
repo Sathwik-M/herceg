@@ -1,7 +1,7 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
 import { table, time } from "herceg";
 import { useEffect, useMemo } from "react";
-import { Chart, Custom, Line, Point, Region, Rule, Text } from "../src/index.ts";
+import { BoxPlot, Chart, Custom, Line, Point, Region, Rule, Text } from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -104,3 +104,32 @@ export function Drawn() {
 // Optional props may be undefined, which takes the default.
 declare const maybeTitle: string | undefined;
 export const untitled = <Chart title={maybeTitle} legend={undefined} />;
+
+const boxData = table({
+  group: ["a"],
+  low: [0],
+  q1: [1],
+  median: [2],
+  q3: [3],
+  high: [4],
+  count: [20],
+});
+const boxFields = { low: "low", q1: "q1", median: "median", q3: "q3", high: "high" } as const;
+export function Boxes() {
+  return (
+    <Chart>
+      <BoxPlot data={boxData} x="group" {...boxFields} />
+      <BoxPlot data={boxData} y="group" {...boxFields} count="count" notch />
+      <BoxPlot data={boxData} x="group" y="median" whiskers="range" notch />
+      <BoxPlot data={boxData} x="group" y="median" whiskers={2} />
+      {/* @ts-expect-error raw and precomputed forms exclude each other */}
+      <BoxPlot data={boxData} x="group" y="median" {...boxFields} />
+      {/* @ts-expect-error precomputed whisker ends forbid whiskers */}
+      <BoxPlot data={boxData} x="group" {...boxFields} whiskers="range" />
+      {/* @ts-expect-error precomputed notches need count */}
+      <BoxPlot data={boxData} x="group" {...boxFields} notch />
+      {/* @ts-expect-error statistic fields must be numeric */}
+      <BoxPlot data={boxData} x="group" {...boxFields} low="group" />
+    </Chart>
+  );
+}

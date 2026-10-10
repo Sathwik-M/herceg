@@ -208,6 +208,7 @@ export const Pie = /* @__PURE__ */ markComponent(
 export const BoxPlot = /* @__PURE__ */ markComponent(
   "BoxPlot",
   ({ data, ...options }: WithData<BoxPlotOptions<Schema>, Schema>) => boxplot(data, options),
+  ["notch"],
 ) as unknown as <S extends Schema>(props: WithData<BoxPlotOptions<S>, S>) => null;
 
 /** Violins: a category field on `x` or `y` and the values on the other. */
