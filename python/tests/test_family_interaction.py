@@ -1,5 +1,5 @@
 """Maps, trees, and networks take the shared interaction options: maps pan,
-zoom, and lasso, trees drill, networks' nodes are dragged, and each selects
+zoom, and lasso, trees drill, networks pan, zoom, lasso and drag nodes, and each selects
 rows; networks draw directed links and link labels."""
 
 import pytest
@@ -107,3 +107,28 @@ def test_directed_networks_count_links_each_way():
         ValueError, match="graph: draws at most .* this network has 150 nodes and 22,350 links"
     ):
         hg.Chart(dense).graph("from", "to", directed=True)
+
+
+def test_networks_share_plane_zoom_and_lasso_options():
+    people = {"name": ["a", "b", "c", "a"]}
+    binding = hg.SelectionBinding("picked", data=people)
+    for zoom in (True, "xy"):
+        for chart in (
+            hg.Chart(TALKS, zoom=zoom, brush="lasso", drag=True, row_selection=binding).graph(
+                "from", "to", nodes=people, node="name"
+            ),
+            hg.graph(
+                TALKS,
+                "from",
+                "to",
+                nodes=people,
+                node="name",
+                zoom=zoom,
+                brush="lasso",
+                drag=True,
+                row_selection=binding,
+            ),
+        ):
+            spec, _ = chart.to_spec()
+            assert spec["interaction"] == {"zoom": zoom, "brush": "lasso", "drag": True}
+            assert spec["rowSelection"]["data"] == spec["marks"][0]["nodes"]

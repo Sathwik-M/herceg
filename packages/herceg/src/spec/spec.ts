@@ -459,7 +459,7 @@ export interface TooltipSpec {
 export interface InteractionSpec {
   /**
    * Wheel zoom and drag pan along x (`true` or "x"), y, or both ("xy");
-   * double-click resets. Category axes do not zoom. Maps zoom and pan both
+   * double-click resets. Category axes do not zoom. Maps and networks zoom and pan both
    * ways (`true` or "xy"), 3D charts magnify their camera, and treemaps and
    * sunbursts drill into nodes (`true`).
    */
@@ -468,7 +468,7 @@ export interface InteractionSpec {
    * Drag to select: a range along x or y, a rectangle ("xy"), or a freehand
    * region ("lasso"), reported as a `select` event; a click clears it. With
    * `zoom` on along the brush's axes, a brush zooms to what it covers
-   * instead (Shift-drag pans); lassos only select. Maps take "lasso".
+   * instead (Shift-drag pans); lassos only select. Maps and networks take "lasso".
    */
   brush?: BrushSpec;
   /** Charts with the same sync name share their cursor, x range, and selection. */

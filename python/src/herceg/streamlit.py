@@ -33,11 +33,13 @@ from ._events import (
     Inspection,
     ItemPositions,
     Selection,
+    Viewport,
     checked,
     decode_drill_root,
     decode_inspection,
     decode_item_positions,
     decode_selection,
+    decode_viewport,
 )
 from ._live import check_live_rows
 from ._rows import RowSelection
@@ -59,6 +61,8 @@ class ChartState:
     #: What is brushed (x and y ranges, a lasso's outline), or None; it stays
     #: until the user changes it.
     selection: Selection | None = None
+    #: Visible ranges, in layout units for networks or projected plane units for maps.
+    viewport: Viewport | None = None
     #: The data under a click, in the run the click started; None otherwise.
     click: Inspection | None = None
     #: What the channel of the chart's row selection holds (see
@@ -80,6 +84,7 @@ def chart(
     on_row_selection: Reaction = "ignore",
     on_drill: Reaction = "ignore",
     on_item_move: Reaction = "ignore",
+    on_viewport: Reaction = "ignore",
 ) -> ChartState:
     """Shows ``chart`` in the app and returns what the user did with it.
 
@@ -89,7 +94,9 @@ def chart(
     function is called first, then the script reruns. ``on_row_selection``
     is what selecting rows does, in a chart with ``row_selection=`` (one
     binding). ``on_drill`` and ``on_item_move`` react to tree navigation and
-    moved network nodes; ``drill_root`` and ``item_positions`` in the result
+    moved network nodes; ``on_viewport`` reacts to pan and zoom, with a
+    ``viewport`` in layout coordinates for networks or projected units for maps.
+    ``drill_root`` and ``item_positions`` in the result
     hold their state. Inside ``st.form``, a selection reaches the script when the
     form is submitted, and clicks cannot react. Charts whose panels have x scales of their own
     (``resolve_x``) cannot report selections. Give the chart a ``key`` to
@@ -103,6 +110,7 @@ def chart(
         "rowSelection": on_row_selection,
         "drill": on_drill,
         "itemMove": on_item_move,
+        "viewport": on_viewport,
     }
     options = {
         "select": "on_select",
@@ -110,6 +118,7 @@ def chart(
         "rowSelection": "on_row_selection",
         "drill": "on_drill",
         "itemMove": "on_item_move",
+        "viewport": "on_viewport",
     }
     for name, reaction in reactions.items():
         if not (callable(reaction) or reaction in ("ignore", "rerun")):
@@ -117,6 +126,11 @@ def chart(
                 f'streamlit.chart {options[name]}: expected "ignore", "rerun", or a function; '
                 f"received {shown(reaction)}"
             )
+    if on_viewport != "ignore" and chart._settings["resolve_x"] not in (None, "shared"):
+        raise ValueError(
+            "streamlit.chart on_viewport: reports one viewport, so the chart's panels must "
+            'share x; give the chart resolve_x="shared"'
+        )
     if on_select != "ignore" and chart._settings["resolve_x"] not in (None, "shared"):
         raise ValueError(
             "streamlit.chart on_select: reports one selection, so the chart's panels must "
@@ -163,6 +177,7 @@ _VALUES = {
     "rowSelection": "rows",
     "drill": "drill_root",
     "itemMove": "item_positions",
+    "viewport": "viewport",
 }
 
 
@@ -241,8 +256,16 @@ def _state(
             moved = decode_item_positions(checked("itemMove", positions.get("positions")))
         except ValueError:
             pass
+    view = result.get("viewport")
+    viewport = None
+    if not isinstance(view, dict) or "epoch" not in view or view.get("epoch") == item_epoch:
+        try:
+            viewport = decode_viewport(checked("viewport", view)) if view is not None else None
+        except ValueError:
+            pass
     return ChartState(
         selection=selection,
+        viewport=viewport,
         click=decode_inspection(result.get("click")),
         row_selection=_rows(result.get("rows"), chart, epoch),
         drill_root=root,

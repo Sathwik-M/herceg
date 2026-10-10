@@ -91,6 +91,8 @@ export interface Chart {
    * Zooms: each axis given (`x`, `y`, `yRight`) shows a range (epoch ms on
    * time axes), or with null its configured domain or its data; axes left
    * out keep their view. A pair is an x range, and null resets every axis.
+   * Maps use projected plane units, networks layout units (y increases downwards);
+   * node radii stay in pixels.
    * In charts whose panels have x scales of their own, an x range needs the
    * `panel` whose scale shows it, and null without one resets every scale;
    * y ranges are the chart's, whatever the panel.
@@ -149,7 +151,8 @@ export interface Chart {
    * Moves a network's node, keyed as its items are, to a place in the
    * network's layout units (as `itemMove` events report them; links settle
    * about 30 units long), or with null back to where the layout puts it.
-   * Nodes stay where they are put until the network's data changes. An
+   * Nodes stay where they are put until the network's data changes, including
+   * outside the current view; navigation does not clamp or change their positions. An
    * `itemMove` event follows when the node moved. Throws for a key of no
    * node drawn, and for other charts.
    */

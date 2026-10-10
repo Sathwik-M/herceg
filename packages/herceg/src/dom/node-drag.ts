@@ -1,7 +1,8 @@
 // Moving a network's nodes with `interaction.drag`: dragging a node moves
 // it, its links following, and it stays where it is dropped (nothing else
 // moves: the layout is not run again); Shift with the arrow keys moves the
-// node the keyboard reads, and 0 and the toolbar's button put moved nodes
+// node the keyboard reads (Alt+Shift when zoom is on); 0 without zoom
+// and the toolbar's button put moved nodes
 // back. A drag draws the node where the pointer is each frame and makes it
 // a move once dropped, reported as an `itemMove` event. Moves are made on
 // what the chart drew, in the layout the user sees: a change of the
@@ -11,8 +12,9 @@ import type { NodeMoves } from "../marks/graph.ts";
 import type { ChartConfig } from "../model/model.ts";
 import type { Scene } from "../scene/scene.ts";
 import { DRAG_THRESHOLD } from "./brushed.ts";
-import type { Controls as ChartControls, ControlsHost } from "./controls.ts";
-import { RESET_GLYPH, Toolbar } from "./toolbar.ts";
+import { type Controls as ChartControls, type ControlsHost, PointerOwnership } from "./controls.ts";
+import { Controls as PlaneControls } from "./map-controls.ts";
+import { RESET_GLYPH } from "./toolbar.ts";
 
 /** Pixels a key press moves a node. */
 const STEP = 10;
@@ -27,7 +29,8 @@ const WAYS: Record<string, [number, number, string]> = {
 export class Controls implements ChartControls {
   readonly #host: ControlsHost;
   readonly #root: HTMLElement;
-  readonly #toolbar: Toolbar;
+  readonly #navigation: PlaneControls;
+  readonly #pointer = new PointerOwnership();
   readonly #stop: (() => void)[] = [];
   #drags = false;
   /** A press on a node: its pointer and key, where the press and the node started. */
@@ -45,30 +48,43 @@ export class Controls implements ChartControls {
     this.#host = host;
     const root = host.chart.root;
     this.#root = root;
-    this.#toolbar = new Toolbar(root, "Network", [
-      { label: "Put moved nodes back", glyph: RESET_GLYPH, act: () => this.#reset() },
-    ]);
+    this.#navigation = new PlaneControls(
+      host,
+      "network",
+      (event) => this.#onNode(event),
+      [
+        {
+          label: "Put moved nodes back",
+          glyph: RESET_GLYPH,
+          act: () => this.#reset(),
+          hidden: () => !this.#drags || (host.model.items?.movedItems.size ?? 0) === 0,
+        },
+      ],
+      () => this.#drags && (host.model.items?.movedItems.size ?? 0) > 0,
+      this.#pointer,
+    );
+    this.#stop.push(host.chart.on("viewport", () => this.#cancel()));
     this.#listen();
   }
 
   get busy(): boolean {
-    return this.#press?.moved ?? false;
+    return this.#navigation.busy || (this.#press?.moved ?? false);
   }
 
   update(config: ChartConfig): void {
     this.#drags = !!config.interaction?.drag;
-    // Touches drag nodes rather than scroll the page.
-    this.#root.style.touchAction = this.#drags ? "none" : "";
+    this.#navigation.update(config);
+    if (this.#drags) this.#root.style.touchAction = "none";
+    if (!this.#drags) this.#cancel();
   }
 
   draw(scene: Scene): void {
-    this.#toolbar.style(scene.theme);
-    this.#toolbar.shown = this.#drags && (this.#host.model.items?.movedItems.size ?? 0) > 0;
+    this.#navigation.draw(scene);
   }
 
   dispose(): void {
     for (const stop of this.#stop.splice(0)) stop();
-    this.#toolbar.dispose();
+    this.#navigation.dispose();
     this.#cancel();
   }
 
@@ -80,6 +96,18 @@ export class Controls implements ChartControls {
   #still(press: { key: string; moves: NodeMoves }): boolean {
     const moves = this.#moves();
     return moves?.layout === press.moves.layout && moves.current() && moves.movable(press.key);
+  }
+
+  #onNode(event: PointerEvent): boolean {
+    if (
+      !this.#drags ||
+      this.#navigation.lassoing ||
+      (event.shiftKey && this.#host.model.config.interaction?.zoom)
+    )
+      return false;
+    const [x, y] = this.#point(event);
+    const inspection = this.#host.model.inspect(x, y);
+    return inspection?.axis === "item" && !!this.#moves()?.movable(inspection.key);
   }
 
   #point(event: MouseEvent): [number, number] {
@@ -103,6 +131,7 @@ export class Controls implements ChartControls {
   /** Ends a drag that did not drop its node: it shows where it was. */
   #cancel(): void {
     if (!this.#press) return;
+    this.#pointer.release(this.#press.pointer);
     this.#press = null;
     this.#host.model.items?.drag(null);
     this.#host.invalidate();
@@ -119,14 +148,15 @@ export class Controls implements ChartControls {
       this.#stop.push(() => root.removeEventListener(type, handler, options));
     };
     on("pointerdown", (event) => {
-      if (!this.#drags || this.#press || event.button !== 0) return;
-      if (this.#toolbar.contains(event.target) || !this.#host.onPlot(event.target)) return;
+      if (this.#press || event.button !== 0 || !this.#onNode(event)) return;
+      if (this.#navigation.contains(event.target) || !this.#host.onPlot(event.target)) return;
       const moves = this.#moves();
       const [x, y] = this.#point(event);
       const inspection = this.#host.model.inspect(x, y);
       const key = inspection?.axis === "item" ? inspection.key : undefined;
       const from = key !== undefined && moves?.movable(key) ? moves.pixelOf(key) : undefined;
       if (!from || !moves) return;
+      if (!this.#pointer.acquire(event.pointerId)) return;
       this.#press = { pointer: event.pointerId, key: key!, x, y, from, moves, moved: false };
       root.setPointerCapture?.(event.pointerId);
     });
@@ -152,6 +182,7 @@ export class Controls implements ChartControls {
     on("pointerup", (event) => {
       const press = this.#press;
       if (!press || event.pointerId !== press.pointer) return;
+      this.#pointer.release(press.pointer);
       this.#press = null;
       if (!press.moved) return;
       if (!this.#still(press)) {
@@ -180,7 +211,8 @@ export class Controls implements ChartControls {
   /** Shift with an arrow key moves the node read; 0 puts every moved node back. */
   #key(event: KeyboardEvent): void {
     if (!this.#drags || event.target !== this.#root) return;
-    const way = event.shiftKey ? WAYS[event.key] : undefined;
+    const zooms = !!this.#host.model.config.interaction?.zoom;
+    const way = event.shiftKey && (!zooms || event.altKey) ? WAYS[event.key] : undefined;
     if (way) {
       const key = this.#host.cursor();
       const moves = this.#moves();
@@ -192,7 +224,7 @@ export class Controls implements ChartControls {
       const [px, py] = pixel;
       this.#moveTo(key!, moves!, moves!.toLayout(key!, px + way[0] * STEP, py + way[1] * STEP));
       this.#host.announce(`Moved ${nameOf(key!)} ${way[2]}.`);
-    } else if (event.key === "0") this.#reset();
+    } else if (event.key === "0" && !zooms) this.#reset();
     else return;
     event.preventDefault();
     event.stopImmediatePropagation();

@@ -41,6 +41,7 @@ import {
   type ViewportPayload,
   viewportPayload,
 } from "./events.ts";
+import { mapPlaneKey } from "./planes.ts";
 import { resetColumns } from "./tables.ts";
 
 /** The parts of an anywidget model this module uses. */
@@ -146,6 +147,7 @@ class Widget {
   #resyncing = false;
   #tables = new Map<string, Table>();
   #config: ChartOptions | undefined;
+  #mapPlane: string | undefined;
   /** The spec's chart options, which option updates change. */
   #options: Record<string, unknown> = {};
   #error: unknown;
@@ -268,6 +270,7 @@ class Widget {
         }),
       );
     }
+    this.#keepMapView();
   }
 
   /** Reports a channel's selection to Python: rows by identity, as Python numbers them. */
@@ -340,9 +343,9 @@ class Widget {
     view.positions = {};
     // Restored before listening, so restoring does not echo back to Python.
     this.#show(view, "viewport", this.#states.viewport);
-    this.#show(view, "select", this.#states.select);
     this.#show(view, "drill", this.#states.drill, true);
     this.#show(view, "itemMove", this.#states.itemMove, true);
+    this.#show(view, "select", this.#states.select);
     chart.on("select", (selection) =>
       this.#report("select", view, selectionPayload(chart, selection)),
     );
@@ -409,7 +412,7 @@ class Widget {
   }
 
   /** A view's interaction state changed: the other views follow, and Python hears of it. */
-  #report<K extends ViewEvent>(event: K, source: View, payload: ViewStates[K]) {
+  #report<K extends ViewEvent>(event: K, source: View | undefined, payload: ViewStates[K]) {
     const same = valuesOf(event, payload) === valuesOf(event, this.#states[event]);
     // The same values, perhaps saying better which axes hold times.
     if (payload || !same) this.#states[event] = payload;
@@ -462,8 +465,9 @@ class Widget {
     chart.setViewport({
       x: restored.x,
       y:
-        this.#config?.marks.some((mark) => ["geoshape", "geopoint"].includes(mark.spec.type)) ||
-        first?.y?.canSetViewport
+        this.#config?.marks.some((mark) =>
+          ["geoshape", "geopoint", "graph"].includes(mark.spec.type),
+        ) || first?.y?.canSetViewport
           ? restored.y
           : null,
       yRight: first?.yRight?.canSetViewport ? restored.yRight : null,
@@ -512,6 +516,7 @@ class Widget {
         this.#cancelItems();
         this.#states.itemMove = {};
         for (const view of this.#views) view.positions = {};
+        this.#keepMapView();
         this.#keepCategorySelection();
         return;
       }
@@ -521,6 +526,7 @@ class Widget {
         this.#cancelItems();
         this.#states.itemMove = {};
         for (const view of this.#views) view.positions = {};
+        this.#keepMapView();
         this.#keepCategorySelection();
         return;
       }
@@ -614,6 +620,18 @@ class Widget {
     const selection = this.#states.select as SelectionPayload | null;
     if (!namesCategories(selection)) return;
     for (const view of this.#views) if (view.chart) this.#show(view, "select", selection);
+  }
+
+  /** Ranges and lassos belong to the resolved projection, which a data update can change. */
+  #keepMapView() {
+    const next = this.#config && mapPlaneKey(this.#config);
+    const previous = this.#mapPlane;
+    this.#mapPlane = next;
+    if (previous === undefined || previous === next) return;
+    this.#outbox.cancel("viewport");
+    this.#outbox.cancel("select");
+    this.#report("viewport", undefined, null);
+    this.#report("select", undefined, null);
   }
 
   #table(name: string): Table {

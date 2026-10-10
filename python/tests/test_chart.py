@@ -1559,8 +1559,15 @@ def test_graphs_check_their_columns_and_size():
         hg.Chart(talks).graph("from", "to", color="team")
     with pytest.raises(ValueError, match="graph: has its chart to itself"):
         hg.Chart(talks).graph("from", "to").pie("from")
-    with pytest.raises(ValueError, match="Chart zoom: a graph has no x axis"):
-        hg.Chart(talks, zoom=True).graph("from", "to")
+    for zoom in (True, "xy"):
+        spec, _ = hg.Chart(talks, zoom=zoom, brush="lasso", drag=True).graph("from", "to").to_spec()
+        assert spec["interaction"]["zoom"] == zoom
+        assert spec["interaction"]["brush"] == "lasso"
+        assert spec["interaction"]["drag"] is True
+    with pytest.raises(ValueError, match="Chart zoom: a graph pans and zooms"):
+        hg.Chart(talks, zoom="x").graph("from", "to")
+    with pytest.raises(ValueError, match="Chart brush: a graph takes"):
+        hg.Chart(talks, brush="xy").graph("from", "to")
     # Counted as the browser counts: rows left out add no nodes.
     many = {
         "from": [f"a{i}" for i in range(2600)],

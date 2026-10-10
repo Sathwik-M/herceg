@@ -2,6 +2,7 @@
 // user, and rows of either table selected and highlighted.
 
 import { describe, expect, it } from "vitest";
+import { category } from "../../src/data/column.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { type SelectionStore, selectionStore, selectRows } from "../../src/data/selection.ts";
 import { type Schema, type Table, table } from "../../src/data/table.ts";
@@ -10,7 +11,7 @@ import { graph } from "../../src/marks/graph.ts";
 import { DIM } from "../../src/marks/mark.ts";
 import { type ChartConfig, ChartModel, type ItemInspection } from "../../src/model/model.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
-import { clickedRows } from "../../src/model/selected-rows.ts";
+import { brushedRows, clickedRows } from "../../src/model/selected-rows.ts";
 import type {
   PointGeometry,
   Scene,
@@ -39,6 +40,26 @@ const follows = () =>
     to: ["b", "a", "c", "d", "d"],
     kind: ["likes", "likes", "knows", "knows", "follows"],
   });
+
+it("picks a link across a fractional bottom plot row with both nodes offscreen", () => {
+  const { model, scene } = build(
+    {
+      marks: [
+        graph(table({ from: ["a"], to: ["b"] }), { source: "from", target: "to", labels: false }),
+      ],
+    },
+    600,
+    400.1,
+  );
+  const plane = model.items!.result()!.plane!;
+  const plot = scene.panels[0]!.plot;
+  const y = plot.y + plot.height - 0.05;
+  model.items!.setItemPosition('[0,"a"]', { x: plane.x.invert(-1000), y: plane.y.invert(y) });
+  model.items!.setItemPosition('[0,"b"]', { x: plane.x.invert(2000), y: plane.y.invert(y) });
+  model.scene(estimateText);
+  const found = model.inspect(300, y);
+  expect(found?.axis === "item" && found.key).toBe('[0,"a","b"]');
+});
 
 describe("directed networks", () => {
   it("keep a link each way, bow a pair's two apart, and point arrowheads at targets", () => {
@@ -232,13 +253,13 @@ describe("network row selection", () => {
       linkStore,
       nodeStore,
     );
-    nodeStore.set("c", selectRows(new RowSet(nodes).add(2)));
+    nodeStore.set("c", selectRows(new RowSet(nodes).add(2).add(3)));
     linkStore.set("c", selectRows(new RowSet(links).add(3)));
     const scene = model.scene(estimateText);
     const points = marksOf<PointGeometry>(scene, "point", "graph-nodes");
     expect(points.map(({ key, count, fillOpacity }) => [key, count, fillOpacity])).toEqual([
-      ["graph-nodes-dimmed", 3, DIM],
-      ["graph-nodes", 1, 1],
+      ["graph-nodes-dimmed", 2, DIM],
+      ["graph-nodes", 2, 1],
     ]);
     const segments = marksOf<SegmentGeometry>(scene, "segments", "graph-links");
     const lit = segments.filter((g) => g.opacity === 0.45);
@@ -462,5 +483,191 @@ describe("moves across charts, groups, and changes", () => {
     model.scene(estimateText);
     expect(at(model, "a")).toEqual(automatic);
     expect(automatic[0]).not.toBeCloseTo(50, 0);
+  });
+});
+
+describe("network navigation and lassos", () => {
+  const half = (range: readonly [number, number]) =>
+    [range[0] + (range[1] - range[0]) / 4, range[1] - (range[1] - range[0]) / 4] as const;
+
+  it("magnifies the separated placement without changing radii, widths, or layout positions", () => {
+    const { model, scene } = build({
+      marks: [graph(ring(), { source: "from", target: "to", labels: false })],
+      interaction: { zoom: "xy", drag: true },
+    });
+    const before = ["a", "b", "c", "d"].map((name) => at(model, name));
+    const base = model.items!.result()!.plane!;
+    const identity = model.items!.result()!.moves!.layout;
+    model.setViewport(half(base.x.domain));
+    model.setYViewport({ y: half(base.y.domain), yRight: null });
+    const zoomed = model.scene(estimateText);
+    const plane = model.items!.result()!.plane!;
+    const { plot } = scene.panels[0]!;
+    for (const [i, name] of ["a", "b", "c", "d"].entries()) {
+      const [x, y] = at(model, name);
+      expect(x).toBeCloseTo(
+        plot.x + plot.width / 2 + (before[i]![0] - plot.x - plot.width / 2) * 2,
+      );
+      expect(y).toBeCloseTo(
+        plot.y + plot.height / 2 + (before[i]![1] - plot.y - plot.height / 2) * 2,
+      );
+    }
+    expect(plane.zoom).toBeCloseTo(2);
+    expect(model.items!.result()!.moves!.layout).toBe(identity);
+    const radii = (s: Scene) =>
+      marksOf<PointGeometry>(s, "point", "graph-nodes").map((g) => Array.from(g.radii!));
+    expect(radii(zoomed)).toEqual(radii(scene));
+    expect(
+      marksOf<SegmentGeometry>(zoomed, "segments", "graph-links").map((g) => g.strokeWidth),
+    ).toEqual(marksOf<SegmentGeometry>(scene, "segments", "graph-links").map((g) => g.strokeWidth));
+    model.setViewport(null);
+    model.setYViewport({ y: null, yRight: null });
+    model.scene(estimateText);
+    expect(["a", "b", "c", "d"].map((name) => at(model, name))).toEqual(before);
+  });
+
+  it("uses layout coordinates for moves while zoomed and lets moved nodes leave the view", () => {
+    const { model } = build({ marks: [graph(ring(), { source: "from", target: "to" })] });
+    const fitted = model.items!.result()!.plane!;
+    const layout = model.items!.result()!.moves!.layout;
+    model.setViewport(half(fitted.x.domain));
+    model.setYViewport({ y: half(fitted.y.domain), yRight: null });
+    model.scene(estimateText);
+    const drawn = model.items!.result()!;
+    const [x, y] = drawn.moves!.toLayout('[0,"a"]', 250, 180);
+    expect(x).toBeCloseTo(drawn.plane!.x.invert(250));
+    expect(y).toBeCloseTo(drawn.plane!.y.invert(180));
+    model.items!.setItemPosition('[0,"a"]', { x, y });
+    model.scene(estimateText);
+    expect(at(model, "a")[0]).toBeCloseTo(250);
+    expect(at(model, "a")[1]).toBeCloseTo(180);
+    // A public move is not clipped to the current view, and comes back when it is reset.
+    model.items!.setItemPosition('[0,"a"]', { x: fitted.x.domain[0] + 1, y });
+    model.scene(estimateText);
+    expect(at(model, "a")[0]).toBeLessThan(0);
+    model.setViewport(null);
+    model.setYViewport({ y: null, yRight: null });
+    model.scene(estimateText);
+    expect(model.items!.result()!.moves!.layout).toBe(layout);
+    expect(at(model, "a")[0]).toBeCloseTo(fitted.x.map(fitted.x.domain[0] + 1));
+  });
+
+  it("selects every row naming a lassoed node, excludes hidden nodes, and dims their links", () => {
+    const links = ring();
+    const nodes = table({ name: ["a", "b", "c", "d", "a"], team: ["x", "x", "y", "y", "x"] });
+    const store = selectionStore(nodes);
+    const model = bound(
+      {
+        marks: [graph(links, { source: "from", target: "to", nodes, node: "name", color: "team" })],
+        interaction: { brush: "lasso" },
+      },
+      selectionStore(links),
+      store,
+    );
+    const plane = model.items!.result()!.plane!;
+    const [ax, ay] = at(model, "a");
+    const polygon = [
+      [ax - 8, ay - 8],
+      [ax + 8, ay - 8],
+      [ax + 8, ay + 8],
+      [ax - 8, ay + 8],
+    ] as const;
+    const selection = {
+      x: null,
+      y: null,
+      lasso: polygon.map(([x, y]) => [plane.x.invert(x), plane.y.invert(y)] as const),
+    };
+    const rows = brushedRows(model, nodes as unknown as Table, selection, null)!;
+    expect(rows.kind === "rows" && [...rows.rows.positions()]).toEqual([0, 4]);
+    expect(brushedRows(model, links as unknown as Table, selection, null)).toBeUndefined();
+    store.set("c", selectRows(new RowSet(nodes).addAll([0, 4])));
+    const scene = model.scene(estimateText);
+    expect(
+      marksOf<PointGeometry>(scene, "point", "graph-nodes").map((g) => [g.count, g.fillOpacity]),
+    ).toEqual([
+      [3, DIM],
+      [1, 1],
+    ]);
+    expect(
+      marksOf<SegmentGeometry>(scene, "segments", "graph-links").every(
+        (g) => (g.opacity ?? 1) < 0.45,
+      ),
+    ).toBe(true);
+    const all = [
+      [0, 0],
+      [600, 0],
+      [600, 400],
+      [0, 400],
+    ] as const;
+    model.hidden.add(scene.legend[0]!.key);
+    model.scene(estimateText);
+    expect(model.items!.result()!.lassoed!(all, nodes as unknown as Table)).toEqual([2, 3]);
+    expect(
+      model.items!.result()!.lassoed!(
+        [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+        ],
+        nodes as unknown as Table,
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps links crossing the view pickable when both nodes are offscreen", () => {
+    const { model } = build({
+      marks: [
+        graph(table({ from: ["a"], to: ["b"] }), { source: "from", target: "to", labels: false }),
+      ],
+    });
+    const plane = model.items!.result()!.plane!;
+    const y = plane.y.invert(200);
+    model.items!.setItemPosition('[0,"a"]', { x: plane.x.invert(-1000), y });
+    model.items!.setItemPosition('[0,"b"]', { x: plane.x.invert(2000), y });
+    model.scene(estimateText);
+    expect((model.inspect(300, 200) as ItemInspection).key).toBe('[0,"a","b"]');
+    expect(model.inspect(300, -1)).toBeUndefined();
+  });
+
+  it("rebuilds picking candidates when groups are hidden or shown", () => {
+    const links = table({ from: ["a", "c"], to: ["b", "d"] });
+    const nodes = table({ name: ["a", "b", "c", "d"], team: ["x", "x", "y", "y"] });
+    const { model, scene } = build({
+      marks: [graph(links, { source: "from", target: "to", nodes, node: "name", color: "team" })],
+    });
+    const a = at(model, "a");
+    const link = model.inspectItem('[0,"a","b"]')!.points[0]!;
+    expect((model.inspect(...a) as ItemInspection).key).toBe('[0,"a"]');
+    expect((model.inspect(link.px, link.py) as ItemInspection).key).toBe('[0,"a","b"]');
+    model.hidden.add(scene.legend[0]!.key);
+    model.scene(estimateText);
+    expect(model.inspect(...a)).toBeUndefined();
+    expect(model.inspect(link.px, link.py)).toBeUndefined();
+    model.hidden.clear();
+    model.scene(estimateText);
+    expect((model.inspect(...a) as ItemInspection).key).toBe('[0,"a"]');
+  });
+
+  it("fits pending views per axis and handles empty or single-node layouts", () => {
+    for (const names of [[], ["a"]]) {
+      const { model } = build({
+        marks: [
+          graph(table({ from: category([]), to: category([]) }), {
+            source: "from",
+            target: "to",
+            nodes: table({ name: category(names) }),
+            node: "name",
+          }),
+        ],
+        interaction: { zoom: true },
+      });
+      const plane = model.items!.result()!.plane!;
+      const view = plane.view({ x: half(plane.x.domain), y: null });
+      expect(view.zoom).toBeCloseTo(2);
+      expect((view.y[0] + view.y[1]) / 2).toBeCloseTo((plane.y.domain[0] + plane.y.domain[1]) / 2);
+      model.setViewport(view.x);
+      model.setYViewport({ y: view.y, yRight: null });
+      expect(() => model.scene(estimateText)).not.toThrow();
+    }
   });
 });

@@ -1,7 +1,7 @@
-// Panning and zooming maps, and lassoing their rows. The map's view is the
-// chart's viewport, in the plane's units (see geo.ts), so every change goes
+// Shared navigation of maps and networks, and lassoing their rows. The view
+// is the chart's viewport in the plane's units, so every change goes
 // through `setViewport` and is reported as a `viewport` event: the wheel
-// zooms at the pointer, a drag pans, double-click and 0 show the whole map,
+// zooms at the pointer, a drag pans, double-click and 0 show the whole view,
 // Shift with the arrow keys pans, plus and minus zoom, and the toolbar's
 // buttons do all of it for people who cannot drag. With a "lasso" brush, a
 // drag lassos instead (Shift-drag, or the toolbar's lasso button turned
@@ -13,22 +13,22 @@ import type { Scene } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 import { Brush, type BrushPanel } from "./brush.ts";
 import { DRAG_THRESHOLD } from "./brushed.ts";
-import type { Controls as ChartControls, ControlsHost } from "./controls.ts";
-import { RESET_GLYPH, Toolbar } from "./toolbar.ts";
+import { type Controls as ChartControls, type ControlsHost, PointerOwnership } from "./controls.ts";
+import { RESET_GLYPH, type ToolButton, Toolbar } from "./toolbar.ts";
 
 /** Magnification per key press or button click. */
 const ZOOM = 1.25;
-/** The share of the map's room a key press or button click pans. */
+/** The share of the room a key press or button click pans. */
 const PAN = 1 / 8;
 /**
- * The wheel, keys, and buttons zoom between the whole map and this many
+ * The wheel, keys, and buttons zoom between the whole view and this many
  * times its scale; a view set beyond either is left there.
  */
 const MAX_ZOOM = 256;
 
 let lassos = 0;
 
-/** The map as last drawn: its plane's scales across the room, and what a viewport would show. */
+/** The layout as last drawn: its plane's scales across the room, and what a viewport would show. */
 type Plane = NonNullable<LayoutResult["plane"]>;
 
 /** A view to change: the plane's ranges across the room and its zoom, and the plane drawn (its room). */
@@ -40,6 +40,10 @@ export class Controls implements ChartControls {
   readonly #host: ControlsHost;
   readonly #root: HTMLElement;
   readonly #toolbar: Toolbar;
+  readonly #family: "map" | "network";
+  readonly #nodePress: ((event: PointerEvent) => boolean) | undefined;
+  readonly #extraShown: () => boolean;
+  readonly #pointer: PointerOwnership;
   readonly #stop: (() => void)[] = [];
   /** Draws a lasso being dragged, and the chart's lasso selection; made for charts that lasso. */
   #brush: Brush | undefined;
@@ -62,12 +66,23 @@ export class Controls implements ChartControls {
     moved: boolean;
   } | null = null;
 
-  constructor(host: ControlsHost) {
+  constructor(
+    host: ControlsHost,
+    family: "map" | "network" = "map",
+    nodePress?: (event: PointerEvent) => boolean,
+    tools: readonly ToolButton[] = [],
+    extraShown: () => boolean = () => false,
+    pointer: PointerOwnership = new PointerOwnership(),
+  ) {
     this.#host = host;
+    this.#family = family;
+    this.#nodePress = nodePress;
+    this.#extraShown = extraShown;
+    this.#pointer = pointer;
     const root = host.chart.root;
     this.#root = root;
     const pan = (dx: number, dy: number, said: string) => () => this.#pan(dx, dy, said);
-    this.#toolbar = new Toolbar(root, "Map", [
+    this.#toolbar = new Toolbar(root, family === "map" ? "Map" : "Network", [
       {
         label: "Lasso",
         glyph: "M8 3c3 0 5 1.4 5 3.2S11 9.5 8 9.5 3 8 3 6.2 5 3 8 3zM5.5 9 4.5 13",
@@ -75,15 +90,18 @@ export class Controls implements ChartControls {
           this.#lassoing = !this.#lassoing;
         },
         pressed: () => this.#lassoing,
-        hidden: () => !this.#lassos,
+        hidden: () => !this.#lassos || !this.#zooms,
       },
-      { label: "Zoom in", glyph: "M8 4v8M4 8h8", act: () => this.#zoomBy(ZOOM) },
-      { label: "Zoom out", glyph: "M4 8h8", act: () => this.#zoomBy(1 / ZOOM) },
-      { label: "Pan left", glyph: "M10 4 6 8l4 4", act: pan(-1, 0, "left") },
-      { label: "Pan right", glyph: "M6 4l4 4-4 4", act: pan(1, 0, "right") },
-      { label: "Pan up", glyph: "M4 10l4-4 4 4", act: pan(0, -1, "up") },
-      { label: "Pan down", glyph: "M4 6l4 4 4-4", act: pan(0, 1, "down") },
-      { label: "Show the whole map", glyph: RESET_GLYPH, act: () => this.#reset(true) },
+      ...[
+        { label: "Zoom in", glyph: "M8 4v8M4 8h8", act: () => this.#zoomBy(ZOOM) },
+        { label: "Zoom out", glyph: "M4 8h8", act: () => this.#zoomBy(1 / ZOOM) },
+        { label: "Pan left", glyph: "M10 4 6 8l4 4", act: pan(-1, 0, "left") },
+        { label: "Pan right", glyph: "M6 4l4 4-4 4", act: pan(1, 0, "right") },
+        { label: "Pan up", glyph: "M4 10l4-4 4 4", act: pan(0, -1, "up") },
+        { label: "Pan down", glyph: "M4 6l4 4 4-4", act: pan(0, 1, "down") },
+        { label: `Show the whole ${family}`, glyph: RESET_GLYPH, act: () => this.#reset(true) },
+      ].map((tool) => ({ ...tool, hidden: () => !this.#zooms })),
+      ...tools,
     ]);
     this.#listen();
     // A change of selection alone draws no new scene, but changes the lasso drawn.
@@ -94,6 +112,15 @@ export class Controls implements ChartControls {
     );
   }
 
+  /** A plain drag currently lassos rather than moving a node or the view. */
+  get lassoing(): boolean {
+    return this.#lassos && (!this.#zooms || this.#lassoing);
+  }
+
+  contains(target: EventTarget | null): boolean {
+    return this.#toolbar.contains(target);
+  }
+
   get busy(): boolean {
     return this.#press?.mode === "pan" && this.#press.moved;
   }
@@ -102,17 +129,23 @@ export class Controls implements ChartControls {
     const { zoom, brush } = config.interaction ?? {};
     this.#zooms = !!zoom;
     this.#lassos = brush === "lasso";
+    if (this.#press && (this.#press.mode === "pan" ? !this.#zooms : !this.#lassos)) {
+      this.#pointer.release(this.#press.pointer);
+      this.#press = null;
+      this.#brush?.cancel();
+      this.#drawLasso();
+    }
     if (this.#lassos && !this.#brush) {
       const group = this.#root.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "g");
       this.#host.overlay.append(group);
-      this.#brush = new Brush(group, `herceg-map-lasso-${++lassos}`);
+      this.#brush = new Brush(group, `herceg-${this.#family}-lasso-${++lassos}`);
       this.#brush.mode = "lasso";
     } else if (!this.#lassos && this.#brush) {
       this.#brush.element.remove();
       this.#brush = undefined;
     }
     // The toolbar pans and zooms; its lasso toggle is there when a drag could do either.
-    this.#toolbar.shown = this.#zooms;
+    this.#toolbar.shown = this.#zooms || this.#extraShown();
     this.#toolbar.refresh();
     this.#root.style.touchAction = this.#zooms || this.#lassos ? "none" : "";
   }
@@ -120,6 +153,8 @@ export class Controls implements ChartControls {
   draw(scene: Scene): void {
     this.#theme = scene.theme;
     this.#toolbar.style(scene.theme);
+    this.#toolbar.shown = this.#zooms || this.#extraShown();
+    this.#toolbar.refresh();
     // The lasso selected stays on the plane as it pans and zooms.
     if (this.#press?.mode !== "lasso") this.#drawLasso();
   }
@@ -128,18 +163,20 @@ export class Controls implements ChartControls {
     for (const stop of this.#stop.splice(0)) stop();
     this.#toolbar.dispose();
     this.#brush?.element.remove();
+    if (this.#press) this.#pointer.release(this.#press.pointer);
     this.#press = null;
   }
 
-  /** The map as last drawn. */
+  /** The layout as last drawn. */
   #plane(): Plane | undefined {
     return this.#host.model.items?.result()?.plane;
   }
 
-  /** The room the map is drawn in, and its plane's scales, as the brush draws in it. */
+  /** The room the layout is drawn in, and its plane's scales, as the brush draws in it. */
   #panel(plane: Plane): BrushPanel {
     const [left, right] = plane.x.range;
-    const [bottom, top] = plane.y.range;
+    const top = Math.min(...plane.y.range);
+    const bottom = Math.max(...plane.y.range);
     return { plot: { x: left, y: top, width: right - left, height: bottom - top }, ...plane };
   }
 
@@ -151,7 +188,7 @@ export class Controls implements ChartControls {
 
   /**
    * The view a command changes: the chart's viewport as set, though not
-   * drawn yet, fitted to the room as the map fits it; so commands before a
+   * drawn yet, fitted to the room as the layout fits it; so commands before a
    * frame add up.
    */
   #view(): View | undefined {
@@ -179,12 +216,12 @@ export class Controls implements ChartControls {
     const [y0, y1] = view.y;
     // The point under the pixel stays there.
     const cx = x0 + (((at?.x ?? (left + right) / 2) - left) / (right - left)) * (x1 - x0);
-    const cy = y1 - (((at?.y ?? (top + bottom) / 2) - top) / (bottom - top)) * (y1 - y0);
+    const cy = y0 + (((at?.y ?? (top + bottom) / 2) - bottom) / (top - bottom)) * (y1 - y0);
     this.#show(
       [cx - (cx - x0) * factor, cx + (x1 - cx) * factor],
       [cy - (cy - y0) * factor, cy + (y1 - cy) * factor],
     );
-    if (announce) this.#say(`Zoom ${Math.round(next * 10) / 10} times the whole map.`);
+    if (announce) this.#say(`Zoom ${Math.round(next * 10) / 10} times the whole ${this.#family}.`);
   }
 
   /** Pans the view a step along x and y (in steps of the room's size), and says which way. */
@@ -196,32 +233,36 @@ export class Controls implements ChartControls {
       [domain[0] + by, domain[1] + by] as const;
     const [x0, x1] = x;
     const [y0, y1] = y;
-    // The view moves the way named: right shows more to the east, up more to the north.
-    this.#show(shift(x, dx * PAN * (x1 - x0)), shift(y, -dy * PAN * (y1 - y0)));
+    // Follow screen directions whether the plane's y increases up (maps) or down (networks).
+    this.#show(
+      shift(x, dx * PAN * (x1 - x0)),
+      shift(y, dy * PAN * (y1 - y0) * Math.sign(view.plane.y.range[1] - view.plane.y.range[0])),
+    );
     this.#say(`Moved ${way}.`);
   }
 
   #reset(announce: boolean): void {
     this.#host.chart.setViewport(null);
-    if (announce) this.#say("Showing the whole map.");
+    if (announce) this.#say(`Showing the whole ${this.#family}.`);
   }
 
   #say(text: string): void {
     this.#host.announce(text);
   }
 
-  /** Whether an event is on the map's drawing: not the legend or the toolbar. */
-  #onMap(event: Event): boolean {
+  /** Whether an event is on the layout's drawing: not the legend or the toolbar. */
+  #onPlot(event: Event): boolean {
     return !this.#toolbar.contains(event.target) && this.#host.onPlot(event.target);
   }
 
-  /** A pointer event's pixel, from the chart's top left corner, if it is in the map's room. */
+  /** A pointer event's pixel, from the chart's top left corner, if it is in the layout's room. */
   #point(event: MouseEvent, plane: Plane): { x: number; y: number } | undefined {
     const rect = this.#root.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const [left, right] = plane.x.range;
-    const [bottom, top] = plane.y.range;
+    const top = Math.min(...plane.y.range);
+    const bottom = Math.max(...plane.y.range);
     return x >= left && x <= right && y >= top && y <= bottom ? { x, y } : undefined;
   }
 
@@ -239,7 +280,7 @@ export class Controls implements ChartControls {
       "wheel",
       (event) => {
         const plane = this.#plane();
-        const at = plane && this.#onMap(event) && this.#point(event, plane);
+        const at = plane && this.#onPlot(event) && this.#point(event, plane);
         if (!this.#zooms || !at) return;
         event.preventDefault();
         this.#zoomBy(Math.exp(-event.deltaY * 0.002), at, false);
@@ -249,12 +290,14 @@ export class Controls implements ChartControls {
     on("pointerdown", (event) => {
       const view = this.#view();
       // A second finger neither pans nor takes over the first one's drag.
-      if (this.#press || event.button !== 0 || !view || !this.#onMap(event)) return;
+      if (this.#press || event.button !== 0 || !view || !this.#onPlot(event)) return;
       const { plane } = view;
       const at = this.#point(event, plane);
       if (!at) return;
       const lasso = this.#lassos && (this.#zooms ? this.#lassoing && !event.shiftKey : true);
       if (!lasso && !this.#zooms) return;
+      if (!lasso && this.#nodePress?.(event)) return;
+      if (!this.#pointer.acquire(event.pointerId)) return;
       const mode = lasso ? "lasso" : "pan";
       this.#press = { pointer: event.pointerId, ...at, mode, plane, view, moved: false };
       root.setPointerCapture?.(event.pointerId);
@@ -273,7 +316,9 @@ export class Controls implements ChartControls {
         const [left, right] = view.plane.x.range;
         const perPixel = (view.x[1] - view.x[0]) / (right - left);
         const dx = (press.x - x) * perPixel;
-        const dy = (y - press.y) * perPixel;
+        const dy =
+          ((press.y - y) * (view.y[1] - view.y[0])) /
+          (view.plane.y.range[1] - view.plane.y.range[0]);
         this.#show([view.x[0] + dx, view.x[1] + dx], [view.y[0] + dy, view.y[1] + dy]);
         return;
       }
@@ -286,6 +331,7 @@ export class Controls implements ChartControls {
     on("pointerup", (event) => {
       const press = this.#press;
       if (!press || event.pointerId !== press.pointer) return;
+      this.#pointer.release(press.pointer);
       this.#press = null;
       if (press.mode !== "lasso" || !this.#brush?.dragging) return;
       const rect = root.getBoundingClientRect();
@@ -299,6 +345,7 @@ export class Controls implements ChartControls {
     });
     const cancel = (event: PointerEvent) => {
       if (event.pointerId !== this.#press?.pointer) return;
+      this.#pointer.release(this.#press.pointer);
       this.#press = null;
       this.#brush?.cancel();
       this.#drawLasso();
@@ -307,7 +354,7 @@ export class Controls implements ChartControls {
     on("lostpointercapture", cancel);
     on("dblclick", (event) => {
       const plane = this.#plane();
-      if (this.#zooms && plane && this.#onMap(event) && this.#point(event, plane))
+      if (this.#zooms && plane && this.#onPlot(event) && this.#point(event, plane))
         this.#reset(false);
     });
     // Ahead of the chart's keys, which read the map's items with the arrows.
@@ -319,7 +366,7 @@ export class Controls implements ChartControls {
     if (event.target !== this.#root) return;
     // Escape clears a lasso, as it clears brushes, and goes on to the chart's keys.
     if (event.key === "Escape" && this.#host.chart.selection) this.#host.chart.select(null);
-    if (!this.#zooms) return;
+    if (!this.#zooms || event.altKey) return;
     const steps: Record<string, [number, number, string]> = {
       ArrowLeft: [-1, 0, "left"],
       ArrowRight: [1, 0, "right"],

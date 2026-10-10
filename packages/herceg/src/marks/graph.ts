@@ -6,6 +6,8 @@ import { shapesDrawing } from "../draw/shapes.ts";
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber } from "../format/format.ts";
 import { fitLayout, type LayoutFit, layoutFit, layoutForce, separate } from "../layout/force.ts";
+import { graphView } from "../layout/graph-view.ts";
+import { HitGrid } from "../layout/hit-grid.ts";
 import { labelFor } from "../layout/text.ts";
 import { ItemViews } from "../model/item-views.ts";
 import type { LegendEntry } from "../model/legend.ts";
@@ -29,6 +31,7 @@ import type {
   LayoutMark,
   LayoutResult,
 } from "./layout-mark.ts";
+import { insidePolygon } from "./layout-mark.ts";
 import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
 export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
@@ -213,10 +216,11 @@ export class GraphMark implements LayoutMark {
   readonly otherTables: readonly Table[];
   readonly measure: string;
   /** Dragging moves nodes with `interaction.drag`, and charts select rows of either table. */
-  readonly interactions = ["drag"] as const;
+  readonly interactions = ["plane", "lasso", "drag"] as const;
   readonly selects = true;
   #network: Network | undefined;
   #placed: Placement | undefined;
+  #picking: { key: string; nodes?: HitGrid; links?: HitGrid } | undefined;
 
   constructor(input: GraphSpec, links: Table, nodes?: Table) {
     this.spec = frozen(input);
@@ -247,7 +251,17 @@ export class GraphMark implements LayoutMark {
   }
 
   controls(config: ChartConfig): LayoutControls | undefined {
-    return config.interaction?.drag ? DRAG : undefined;
+    const { zoom, brush, drag } = config.interaction ?? {};
+    if (!zoom && !brush && !drag) return undefined;
+    return {
+      kind: "drag",
+      hint: zoom
+        ? "Shift with the arrow keys pans it, plus and minus zoom, and 0 shows the whole network." +
+          (drag ? " Alt with Shift and the arrow keys moves the node read." : "")
+        : drag
+          ? DRAG.hint
+          : "",
+    };
   }
 
   /** The key `linkOf` finds the link of nodes `s` and `t` by. */
@@ -472,7 +486,10 @@ export class GraphMark implements LayoutMark {
   draw(frame: LayoutFrame): LayoutResult {
     const network = this.#build();
     const refused = overLimit(network);
-    if (refused) return nothing(refused);
+    if (refused) {
+      this.#picking = undefined;
+      return nothing(refused);
+    }
     const { bounds, theme, hidden, locale } = frame;
     const { names, source, target, value, group, groups } = network;
     const count = names.length;
@@ -507,20 +524,30 @@ export class GraphMark implements LayoutMark {
     // Nodes the chart's user moved are where they were put, in the layout's units.
     const moved =
       frame.moved?.layout === this.#layoutIdentity(network) ? frame.moved?.at : undefined;
-    const at = moved && moved.size > 0 ? placement.at.slice() : placement.at;
+    const plane = graphView(fit, bounds, frame.viewport);
+    const navigating = !!(frame.viewport?.x || frame.viewport?.y);
+    const at = navigating || (moved && moved.size > 0) ? placement.at.slice() : placement.at;
+    if (navigating) {
+      for (let node = 0; node < count; node++) {
+        at[node * 2] = plane.x.map(fit.mx + (placement.at[node * 2]! - fit.cx) / (fit.sx || 1));
+        at[node * 2 + 1] = plane.y.map(
+          fit.my + (placement.at[node * 2 + 1]! - fit.cy) / (fit.sy || 1),
+        );
+      }
+    }
     const clampX = (node: number, x: number) =>
       Math.min(bounds.x + bounds.width - radii[node]!, Math.max(bounds.x + radii[node]!, x));
     const clampY = (node: number, y: number) =>
       Math.min(bounds.y + bounds.height - radii[node]!, Math.max(bounds.y + radii[node]!, y));
-    // A node moved to a place in layout units, drawn inside the room.
-    const pixelAt = (node: number, [lx, ly]: readonly [number, number]): [number, number] => [
-      clampX(node, fit.cx + (lx - fit.mx) * fit.sx),
-      clampY(node, fit.cy + (ly - fit.my) * fit.sy),
+    // Manual positions project without pinning nodes to the current view edge.
+    const pixelAt = ([lx, ly]: readonly [number, number]): [number, number] => [
+      plane.x.map(lx),
+      plane.y.map(ly),
     ];
     for (const [key, place] of moved ?? []) {
       const node = nodeOfKey(network, frame.id, key);
       if (node < 0) continue;
-      [at[node * 2], at[node * 2 + 1]] = pixelAt(node, place);
+      [at[node * 2], at[node * 2 + 1]] = pixelAt(place);
     }
     const x = (node: number) => at[node * 2]!;
     const y = (node: number) => at[node * 2 + 1]!;
@@ -528,6 +555,12 @@ export class GraphMark implements LayoutMark {
     // With a selection highlighted, what none of its rows' selection holds is dimmed.
     const litNodes = this.#litNodes(network, frame.selected);
     const litLinks = this.#litLinks(network, frame.selected);
+    // A node selection leaves bright only links whose two ends it holds.
+    const highlightedLinks = litNodes
+      ? Uint8Array.from(source, (s, link) =>
+          litNodes[s] && litNodes[target[link]!] && (!litLinks || litLinks[link]) ? 1 : 0,
+        )
+      : litLinks;
 
     let heaviest = 0;
     for (const v of value) heaviest = Math.max(heaviest, v);
@@ -558,7 +591,7 @@ export class GraphMark implements LayoutMark {
     for (const link of links) {
       const width = Math.round(widthOf(link) * 4) / 4;
       const color = linkColor(link);
-      const dim = litLinks !== undefined && !litLinks[link];
+      const dim = highlightedLinks !== undefined && !highlightedLinks[link];
       const key = `${width} ${color} ${dim}`;
       let part = parts.get(key);
       if (!part) {
@@ -726,27 +759,52 @@ export class GraphMark implements LayoutMark {
       toLayout: (key, px, py) => {
         const node = nodeOfKey(network, frame.id, key);
         if (node >= 0) [px, py] = [clampX(node, px), clampY(node, py)];
-        return [fit.mx + (px - fit.cx) / (fit.sx || 1), fit.my + (py - fit.cy) / (fit.sy || 1)];
+        return [plane.x.invert(px), plane.y.invert(py)];
       },
       pixelOf: (key, place) => {
         const node = nodeOfKey(network, frame.id, key);
         if (node < 0) return undefined;
-        return place ? pixelAt(node, place) : [x(node), y(node)];
+        return place ? pixelAt(place) : [x(node), y(node)];
       },
     };
+    // Picking candidates depend on positions and widths, not highlight order.
+    const pickKey = JSON.stringify([
+      placement.key,
+      frame.viewport,
+      [...hidden],
+      [...(moved ?? [])],
+    ]);
+    if (this.#picking?.key !== pickKey) this.#picking = { key: pickKey };
+    const picking = this.#picking;
     return {
       geometry,
+      plane,
       itemAt(px, py) {
+        if (
+          !(
+            px >= bounds.x &&
+            px <= bounds.x + bounds.width &&
+            py >= bounds.y &&
+            py <= bounds.y + bounds.height
+          )
+        )
+          return undefined;
+        picking.nodes ??= new HitGrid(bounds, (grid, add) => {
+          for (const node of nodes) {
+            const far = radii[node]! + REACH;
+            grid.box(node, x(node) - far, y(node) - far, x(node) + far, y(node) + far, add);
+          }
+        });
         // The node drawn on top of those under the pointer, else the one
         // whose edge is nearest, within reach.
         let top = -1;
         let best = -1;
         let bestGap = REACH;
-        for (const node of nodes) {
+        for (const node of picking.nodes.at(px, py)) {
           const gap = Math.hypot(px - x(node), py - y(node)) - radii[node]!;
           if (gap <= 0) {
             if (top < 0 || drawnAbove(node, top)) top = node;
-          } else if (gap <= bestGap) {
+          } else if (gap < bestGap || (gap === bestGap && node > best)) {
             best = node;
             bestGap = gap;
           }
@@ -757,14 +815,31 @@ export class GraphMark implements LayoutMark {
         // links as near (those whose stroke it is on), the one drawn on top.
         let nearest = -1;
         let nearestGap = 0;
-        links.forEach((link, i) => {
+        picking.links ??= new HitGrid(bounds, (grid, add) => {
+          links.forEach((link, i) => {
+            const r = route(link);
+            const reach = widthOf(link) / 2 + REACH;
+            let [ax, ay] = [r.x0, r.y0];
+            const pieces = r.bow ? 8 : 1;
+            for (let piece = 1; piece <= pieces; piece++) {
+              const t = piece / pieces,
+                u = 1 - t;
+              const bx = u * u * r.x0 + 2 * u * t * r.cx + t * t * r.x1;
+              const by = u * u * r.y0 + 2 * u * t * r.cy + t * t * r.y1;
+              grid.segment(i, ax, ay, bx, by, reach, add);
+              [ax, ay] = [bx, by];
+            }
+          });
+        });
+        for (const i of picking.links.at(px, py)) {
+          const link = links[i]!;
           const gap = Math.max(0, route(link).distance(px, py) - widthOf(link) / 2);
-          if (gap > REACH) return;
+          if (gap > REACH) continue;
           if (nearest < 0 || gap < nearestGap || (gap === nearestGap && linkAbove(i, nearest))) {
             nearest = i;
             nearestGap = gap;
           }
-        });
+        }
         return nearest >= 0 ? linkItem(nearest) : undefined;
       },
       count: nodes.length + links.length,
@@ -798,6 +873,28 @@ export class GraphMark implements LayoutMark {
         network.linkOfRow.forEach((of, row) => {
           if (of === link) rows.push(row);
         });
+        return rows;
+      },
+      lassoed: (polygon, table) => {
+        if (table !== this.nodes) return undefined;
+        const held = new Uint8Array(count);
+        for (const node of nodes) {
+          const px = x(node),
+            py = y(node);
+          if (
+            px >= bounds.x &&
+            px <= bounds.x + bounds.width &&
+            py >= bounds.y &&
+            py <= bounds.y + bounds.height &&
+            insidePolygon(polygon, px, py)
+          )
+            held[node] = 1;
+        }
+        const { codes, dictionary } = table.categories(this.spec.node!);
+        const nodeOfCode = Int32Array.from(dictionary, (name) => network.nodeOf.get(name) ?? -1);
+        const rows: number[] = [];
+        for (let row = 0; row < codes.length; row++)
+          if (codes[row]! >= 0 && held[nodeOfCode[codes[row]!]!]) rows.push(row);
         return rows;
       },
       moves,
@@ -1007,6 +1104,7 @@ export class GraphMark implements LayoutMark {
     for (const node of candidates) {
       const x = at[node * 2]!;
       const y = at[node * 2 + 1]!;
+      if (x < bounds.x || x > right) continue;
       const top = y - lineHeight / 2;
       const bottom = y + lineHeight / 2;
       if (top < bounds.y || bottom > bounds.y + bounds.height) continue;
