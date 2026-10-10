@@ -4,7 +4,7 @@
 // here; `Readme.svelte` holds the README's examples.
 import { type Chart as HercegChart, table, time } from "herceg";
 import type { ComponentProps } from "svelte";
-import { Area, type Chart, Custom, Line, Point, Rule, Text } from "../src/index.js";
+import { Area, BoxPlot, type Chart, Custom, Line, Point, Rule, Text } from "../src/index.js";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -85,3 +85,26 @@ export const wrongTitle: ChartProps = { title: 3 };
 // @ts-expect-error handlers receive the event's payload
 export const wrongHandler: ChartProps = { onviewport: (domain: number) => domain };
 export const bound: HercegChart | null | undefined = options.chart;
+
+const boxData = table({
+  group: ["a"],
+  low: [0],
+  q1: [1],
+  median: [2],
+  q3: [3],
+  high: [4],
+  count: [20],
+});
+const boxFields = { low: "low", q1: "q1", median: "median", q3: "q3", high: "high" } as const;
+BoxPlot(internals, { data: boxData, x: "group", ...boxFields });
+BoxPlot(internals, { data: boxData, y: "group", ...boxFields, count: "count", notch: true });
+BoxPlot(internals, { data: boxData, x: "group", y: "median", whiskers: "range", notch: true });
+BoxPlot(internals, { data: boxData, x: "group", y: "median", whiskers: 2 });
+// @ts-expect-error raw and precomputed forms exclude each other
+BoxPlot(internals, { data: boxData, x: "group", y: "median", ...boxFields });
+// @ts-expect-error precomputed whisker ends forbid whiskers
+BoxPlot(internals, { data: boxData, x: "group", ...boxFields, whiskers: "range" });
+// @ts-expect-error precomputed notches need count
+BoxPlot(internals, { data: boxData, x: "group", ...boxFields, notch: true });
+// @ts-expect-error statistic fields must be numeric
+BoxPlot(internals, { data: boxData, x: "group", ...boxFields, low: "group" });

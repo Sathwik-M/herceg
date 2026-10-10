@@ -236,6 +236,37 @@ areas, and `fill` gives every box plot or violin one color.
 Column names are checked when the mark is added, with the available columns
 in the error message.
 
+Box plots accept raw category/value columns or precomputed statistic columns:
+
+```python
+hg.boxplot(requests, x="region", y="latency", whiskers="range")
+hg.boxplot(requests, x="region", y="latency", whiskers=2, notch=True)
+hg.boxplot(stats, x="region", low="min", q1="p25", median="p50", q3="p75",
+           high="max", count="n", notch=True)
+hg.Chart(stats).boxplot(y="region", low="min", q1="p25", median="p50",
+                       q3="p75", high="max")  # horizontal, one box per row
+```
+
+Precomputed boxes take exactly one category `x` or `y` and all five numeric
+or time statistic fields, ordered `low ≤ q1 ≤ median ≤ q3 ≤ high`. They
+exclude raw values, have no outliers, and reject `whiskers`; missing or
+non-finite statistics omit the box. `count` names an optional number column
+of positive safe integers, required for `notch=True`.
+
+Raw `whiskers` defaults to `"tukey"` (1.5 × IQR); `"range"` uses minimum and
+maximum with no outliers, and a finite nonnegative number sets the IQR
+multiple. Default whiskers reach the most extreme observations within the
+fences, even inside the quartiles. Custom multipliers keep whiskers at least
+as far out as the quartiles, including when no observations lie within the
+fences. Notches extend 1.57 × IQR / √count from
+the median, using the finite observation count for raw input. They are not
+clamped to the quartiles; small samples can produce a flipped outline. SVG,
+Canvas, static SVG, and PDF draw the same geometry. Tooltips, keyboard
+reading, legends, summaries, and facets work with both input forms; absent
+precomputed counts are omitted from tooltips. Raw notches and nondefault
+whiskers emit spec version 6 so older readers refuse them. Older readers
+already refuse precomputed boxes because they lack a raw value-axis field.
+
 ## Data
 
 Charts accept pandas, Polars, and PyArrow tables, mappings of column names to

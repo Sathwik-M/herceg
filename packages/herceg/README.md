@@ -567,22 +567,55 @@ series, stacks stack within each panel, and a series with no rows in a panel
 has no bars there. Bins are chosen again only when the table changes, never
 on zoom.
 
-Box plots summarize a number or time field per category of the other axis:
-a box from the lower to the upper quartile (linear interpolation between
-ranks, as NumPy and pandas compute them), a line at the median, whiskers to
-the most extreme values within 1.5 interquartile ranges of the box (Tukey's
-rule), and dots for the values beyond. `series` puts a box per value of a
-category field side by side in each category, in its own color. Tooltips
-report a box's median, quartiles, whiskers, count, and outliers. Missing and
-non-finite values are left out. On a log axis, the parts of a box at zero or
-below are not drawn. Statistics are recomputed for every box when the table
-changes, so long streams of observations cost a full pass per frame. Split
-by facets, each panel's boxes summarize its own rows, so a category in two
-panels has two boxes from different values; every series keeps its slot in
-every panel, and `facet: "repeat"` draws all rows' boxes in every panel.
+Box plots accept raw values or precomputed statistics. Raw boxes summarize a
+number or time field per category of the other axis: quartiles use linear
+interpolation between ranks, as NumPy and pandas compute them. Whiskers use
+Tukey's rule (1.5 × IQR) by default; `whiskers: "range"` reaches the minimum
+and maximum with no outliers, and a nonnegative finite number sets the IQR
+multiple. Default whiskers end at the most extreme observations within the
+fences, preserving the observed endpoints even inside the quartiles. Custom
+multipliers keep whiskers at least as far out as the interpolated quartiles,
+including when no observations lie within the fences. Values
+outside the whiskers are dots. Missing and non-finite observations are omitted.
 
-Violins take the same fields and options as box plots and draw each group's
-Gaussian kernel density instead, mirrored about the category's center: every
+```ts
+boxplot(requests, { x: "region", y: "latency", whiskers: "range" });
+boxplot(requests, { x: "region", y: "latency", whiskers: 2, notch: true });
+boxplot(stats, {
+  x: "region", low: "min", q1: "p25", median: "p50", q3: "p75", high: "max",
+  count: "n", notch: true,
+});
+// Horizontal precomputed boxes: only the category y field is needed.
+boxplot(stats, { y: "region", low: "min", q1: "p25", median: "p50", q3: "p75", high: "max" });
+```
+
+For precomputed input, one row is one box. Supply all five numeric or time
+statistic fields and exactly one category field (`x` or `y`); raw value fields
+and statistics exclude each other. Statistics must satisfy
+`low ≤ q1 ≤ median ≤ q3 ≤ high`; a row with a missing or non-finite statistic
+is omitted. Precomputed boxes have no outliers and cannot take `whiskers`,
+since `low` and `high` already give their endpoints. Optional `count` names a
+number field of positive safe integers; tooltips omit the count when absent.
+
+`notch: true` narrows the box at its median, with endpoints at
+median ± 1.57 × IQR / √count. Raw boxes count their finite observations;
+precomputed notches require `count`. Endpoints are not clamped to the
+quartiles, so small samples can produce a flipped outline. Axis extents and
+picking include the notch interval. Notches use the existing area and segment
+geometry in SVG, Canvas, static SVG, and PDF. On log axes, only parts with
+finite mapped coordinates draw; the notch fill is omitted if any vertex
+cannot be placed, while drawable outline segments remain.
+
+`series` puts boxes side by side in each category, in their own colors.
+Tooltips, keyboard reading, and summaries report the supplied statistics as
+they do computed statistics. Statistics refresh when the table changes:
+raw input costs a full pass and sorting each group's observations; precomputed
+input reads columns without expanding counts or building observation objects.
+Facets use each panel's own rows and categories, with every series keeping its
+slot in every panel; `facet: "repeat"` repeats all boxes in every panel.
+
+Violins take raw category/value fields and distribution style options, and draw
+each group's Gaussian kernel density instead, mirrored about the category's center: every
 violin is as wide at its densest, and reaches two bandwidths past the group's
 extreme values (Plotly's default "soft" span). The bandwidth is each group's
 own by Silverman's rule of thumb, 0.9 min(sd, IQR / 1.34) n^-1/5, unless
@@ -1855,8 +1888,8 @@ a mark, build a new one and pass it to `chart.update({ marks })`.
 Specs say which format `version` they are; one without is version 1. Specs
 using `resolve`, `panels`, or `grid` must say 2 or later, those using
 `resolve.x`, a panel's own `x`, or the x axis' `breaks` 3 or later, and
-those with a `navigator` 4 or later, and those with enabled x axis `seams` 5
-(`SPEC_VERSION`, the version this herceg writes), so that older readers refuse
+those with a `navigator` 4 or later, those with enabled x axis `seams` 5,
+and raw box plots with notches or nondefault whiskers 6 (`SPEC_VERSION`), so that older readers refuse
 what they would draw differently. Loading checks a spec and names the property at
 fault in errors. Properties herceg does not know, misspelled or from a newer
 version, are logged with `console.warn` and otherwise ignored;

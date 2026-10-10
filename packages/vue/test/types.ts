@@ -3,7 +3,7 @@
 // template by calling it with the props written there, and <Chart> against
 // its `$props`, so these lines check what templates check.
 import { type Chart as HercegChart, table, time } from "herceg";
-import { type Chart, Custom, Line, Point, Rule, Text } from "../src/index.ts";
+import { BoxPlot, type Chart, Custom, Line, Point, Rule, Text } from "../src/index.ts";
 
 declare const timestamps: Float64Array;
 declare const p50: Float64Array;
@@ -69,3 +69,26 @@ declare const instance: InstanceType<typeof Chart>;
 export const chart: HercegChart | null = instance.chart;
 // @ts-expect-error the render function is internal
 instance.renderChart;
+
+const boxData = table({
+  group: ["a"],
+  low: [0],
+  q1: [1],
+  median: [2],
+  q3: [3],
+  high: [4],
+  count: [20],
+});
+const boxFields = { low: "low", q1: "q1", median: "median", q3: "q3", high: "high" } as const;
+BoxPlot({ data: boxData, x: "group", ...boxFields });
+BoxPlot({ data: boxData, y: "group", ...boxFields, count: "count", notch: true });
+BoxPlot({ data: boxData, x: "group", y: "median", whiskers: "range", notch: true });
+BoxPlot({ data: boxData, x: "group", y: "median", whiskers: 2 });
+// @ts-expect-error raw and precomputed forms exclude each other
+BoxPlot({ data: boxData, x: "group", y: "median", ...boxFields });
+// @ts-expect-error precomputed whisker ends forbid whiskers
+BoxPlot({ data: boxData, x: "group", ...boxFields, whiskers: "range" });
+// @ts-expect-error precomputed notches need count
+BoxPlot({ data: boxData, x: "group", ...boxFields, notch: true });
+// @ts-expect-error statistic fields must be numeric
+BoxPlot({ data: boxData, x: "group", ...boxFields, low: "group" });

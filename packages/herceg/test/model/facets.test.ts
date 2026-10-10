@@ -642,7 +642,7 @@ describe("facet panels with y scales of their own", () => {
     expect(spec(1)).toThrow('spec.resolve: expected a spec with "version": 2 or later');
     expect(spec(undefined)).toThrow('spec.resolve: expected a spec with "version": 2 or later');
     expect(spec(2)).not.toThrow();
-    expect(spec(6)).toThrow("reads versions 1 to 5");
+    expect(spec(7)).toThrow("reads versions 1 to 6");
   });
 });
 

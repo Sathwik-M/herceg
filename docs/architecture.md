@@ -2697,7 +2697,10 @@ A spec says which format version it is written in when it uses a feature an
 older reader would silently ignore and draw something else for: version 2
 adds `resolve` and `panels`, version 3 `resolve.x`, panels' own `x`, and
 the x axis' `breaks`, version 4 `navigator`, and version 5 enabled x axis
-`seams` (`false` needs none for either). The loader reads every version up to
+`seams` (`false` needs none for either), and version 6 raw box plot notches
+and nondefault whiskers. Precomputed box plots need no version gate: earlier
+readers require both raw axis fields and refuse the one-axis statistics form.
+The loader reads every version up to
 its own and refuses later ones. Maps did not
 change the format's version: a reader that predates them refuses their mark
 types and geometry columns with an error rather than drawing something

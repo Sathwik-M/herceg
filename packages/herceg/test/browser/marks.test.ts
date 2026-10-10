@@ -4,6 +4,7 @@ import { createChart } from "../../src/dom/chart.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { boxplot } from "../../src/marks/boxplot.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
@@ -872,4 +873,62 @@ describe("point clouds on the GPU", () => {
     expect(chart.toSVG()).toContain("<path");
     chart.destroy();
   });
+});
+
+describe("notched box plots", () => {
+  it.each([false, true])(
+    "fills the notch waist on Canvas and exports the retained SVG path (horizontal %s)",
+    (horizontal) => {
+      const data = table({
+        group: ["a"],
+        low: [0],
+        q1: [25],
+        median: [50],
+        q3: [75],
+        high: [100],
+        count: [100],
+      });
+      const fields = {
+        low: "low",
+        q1: "q1",
+        median: "median",
+        q3: "q3",
+        high: "high",
+        count: "count",
+        notch: true,
+        fillOpacity: 1,
+        fill: "#f00",
+      } as const;
+      const mark = boxplot(
+        data,
+        horizontal ? { y: "group", ...fields } : { x: "group", ...fields },
+      );
+      const svg = createChart(host, { renderer: "svg", marks: [mark] });
+      const path = svg.root.querySelector('svg [data-kind="area"]')!;
+      expect(path.getAttribute("d")).toMatch(/^M.*Z$/);
+      expect(svg.toSVG()).toContain(`d="${path.getAttribute("d")}"`);
+      svg.destroy();
+      const chart = createChart(host, { renderer: "canvas", marks: [mark] });
+      const model = modelOf(chart);
+      const panel = model.panels()[0]!;
+      const along = horizontal ? panel.y : panel.x;
+      const across = horizontal ? panel.x : panel.y;
+      const center = along.map(0);
+      const half = (along.bandwidth! * 0.7) / 2;
+      const context = chart.root.querySelector("canvas")!.getContext("2d")!;
+      const ratio = context.canvas.width / context.canvas.clientWidth;
+      const alpha = (offset: number, value: number) => {
+        const [x, y] = horizontal
+          ? [across.map(value), center + offset]
+          : [center + offset, across.map(value)];
+        return context.getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data[3]!;
+      };
+      // The median waist is half as wide as the box. Just above q1 the full side fills.
+      expect(alpha(half * 0.3, 50)).toBe(255);
+      expect(alpha(half * 0.8, 50)).toBe(0);
+      expect(alpha(half * 0.8, 30)).toBe(255);
+      expect(alpha(half * 1.1, 30)).toBe(0);
+      chart.destroy();
+    },
+  );
 });

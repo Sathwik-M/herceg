@@ -1300,10 +1300,18 @@ class Chart:
 
     def boxplot(
         self,
-        x: str,
-        y: str,
+        x: str | None = None,
+        y: str | None = None,
         *,
         data: Any = None,
+        low: str | None = None,
+        q1: str | None = None,
+        median: str | None = None,
+        q3: str | None = None,
+        high: str | None = None,
+        count: str | None = None,
+        whiskers: Literal["tukey", "range"] | float | None = None,
+        notch: bool | None = None,
         series: str | None = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
@@ -1321,9 +1329,61 @@ class Chart:
         values within 1.5 interquartile ranges, and values beyond are dots.
         ``series`` puts a box per value of a category column side by side.
         ``fill`` gives every box one color instead of the palette's.
+        Instead of raw values, name ``low``, ``q1``, ``median``, ``q3``, and
+        ``high`` columns with just a category ``x`` or ``y``: one box per row,
+        no outliers. ``count`` is optional unless ``notch=True``. Notches
+        extend 1.57 IQR / sqrt(count) from the median, without clamping.
+        Raw ``whiskers`` are "tukey" (default), "range", or a nonnegative
+        IQR multiple; precomputed boxes already give their whisker ends.
         """
+        statistics = {"low": low, "q1": q1, "median": median, "q3": q3, "high": high}
+        precomputed = any(value is not None for value in statistics.values()) or count is not None
+        if precomputed:
+            if x is not None and y is not None:
+                raise ValueError(
+                    "boxplot cannot take both raw x/y values and precomputed statistics "
+                    "(low, q1, median, q3, high, count)"
+                )
+            if x is None and y is None:
+                raise ValueError("a precomputed boxplot needs exactly one category field: x or y")
+            missing = [name for name, value in statistics.items() if value is None]
+            if missing:
+                raise ValueError(f"a precomputed boxplot needs {', '.join(missing)}")
+            if whiskers is not None:
+                raise ValueError(
+                    "a precomputed boxplot cannot take whiskers: "
+                    "low and high already give its whisker ends"
+                )
+            if notch and count is None:
+                raise ValueError("a precomputed boxplot with notch needs count")
+        elif x is None or y is None:
+            raise ValueError("a raw boxplot needs x and y")
+        if (
+            whiskers is not None
+            and whiskers not in ("tukey", "range")
+            and not (
+                isinstance(whiskers, numbers.Real)
+                and not isinstance(whiskers, bool)
+                and math.isfinite(whiskers)
+                and whiskers >= 0
+            )
+        ):
+            raise ValueError(
+                'whiskers must be "tukey", "range", or a finite nonnegative IQR multiple'
+            )
+        if isinstance(whiskers, numbers.Real):
+            whiskers = float(whiskers)
+        if notch is not None and not isinstance(notch, bool):
+            raise TypeError("notch must be a bool")
         return self._distribution(
-            {"type": "boxplot", "fill": fill},
+            {
+                "type": "boxplot",
+                "fill": fill,
+                **statistics,
+                "count": count,
+                "whiskers": whiskers,
+                "notch": notch,
+            },
             x,
             y,
             data,
@@ -1389,8 +1449,8 @@ class Chart:
     def _distribution(
         self,
         spec: dict[str, Any],
-        x: str,
-        y: str,
+        x: str | None,
+        y: str | None,
         data: Any,
         series: str | None,
         fill_opacity: float | None,
@@ -1403,10 +1463,20 @@ class Chart:
         """Adds a box plot or violin mark: a category column on one axis, values on the other."""
         kind = spec["type"]
         table = self._mark_table(data)
-        horizontal = self._kind(table, y) == "category" and self._kind(table, x) != "category"
+        precomputed = spec.get("median") is not None
+        if precomputed:
+            horizontal = x is None
+        else:
+            assert x is not None and y is not None
+            horizontal = self._kind(table, y) == "category" and self._kind(table, x) != "category"
         category, values = (y, x) if horizontal else (x, y)
         self._require(table, category, ("category",), f"{kind} {'y' if horizontal else 'x'}")
-        self._require(table, values, _NUMERIC, f"{kind} {'x' if horizontal else 'y'}")
+        if precomputed:
+            for name in ("low", "q1", "median", "q3", "high"):
+                self._require(table, spec[name], _NUMERIC, f"boxplot {name}")
+            self._require(table, spec.get("count"), ("number",), "boxplot count")
+        else:
+            self._require(table, values, _NUMERIC, f"{kind} {'x' if horizontal else 'y'}")
         self._require(table, series, ("category",), f"{kind} series")
         if horizontal and axis == "right":
             noun = "box plots" if kind == "boxplot" else "violins"
@@ -2719,6 +2789,13 @@ def assemble_spec(
     buffers: list[bytes] = []
     seams = (options.get("x") or {}).get("seams")
     version = 5 if seams is not None and seams is not False else 4
+    if any(
+        mark["type"] == "boxplot"
+        and mark.get("median") is None
+        and (mark.get("notch") is True or mark.get("whiskers") not in (None, "tukey", 1.5))
+        for mark in marks
+    ):
+        version = 6
     spec: dict[str, Any] = {"version": version, **options}
     for key, value in layout.items():
         spec[key] = (
@@ -2795,6 +2872,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
         *("category", "fields"),
         *("path", "node", "parent", "source", "target"),
         *("open", "high", "low", "close"),
+        *("q1", "median", "q3", "count"),
         *("r", "fillOpacity", "color", "symbol", "animationKey"),
         *("geometry", "name", "longitude", "latitude", "z"),
     ):
@@ -3601,9 +3679,17 @@ def funnel(
 
 def boxplot(
     data: Any,
-    x: str,
-    y: str,
+    x: str | None = None,
+    y: str | None = None,
     *,
+    low: str | None = None,
+    q1: str | None = None,
+    median: str | None = None,
+    q3: str | None = None,
+    high: str | None = None,
+    count: str | None = None,
+    whiskers: Literal["tukey", "range"] | float | None = None,
+    notch: bool | None = None,
     series: str | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
@@ -3618,6 +3704,14 @@ def boxplot(
     return _chart_of(data, options).boxplot(
         x,
         y,
+        low=low,
+        q1=q1,
+        median=median,
+        q3=q3,
+        high=high,
+        count=count,
+        whiskers=whiskers,
+        notch=notch,
         series=series,
         fill=fill,
         fill_opacity=fill_opacity,

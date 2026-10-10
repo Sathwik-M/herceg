@@ -1321,3 +1321,63 @@ def test_none_takes_the_default_of_every_option_at_construction():
     from herceg.widget import ChartWidget
 
     assert "options" in typing.get_type_hints(ChartWidget.update)
+
+
+def test_boxplot_precomputed_statistics_and_notches():
+    data = {"group": ["a"], "lo": [0], "q1": [1], "median": [2], "q3": [3], "hi": [4], "n": [100]}
+    fields = {"low": "lo", "q1": "q1", "median": "median", "q3": "q3", "high": "hi"}
+    for orientation in ({"x": "group"}, {"y": "group"}):
+        spec, _ = hg.boxplot(data, **orientation, **fields).to_spec()
+        assert spec["marks"] == [{"type": "boxplot", "data": "data", **orientation, **fields}]
+        # Earlier readers refuse this form because they require both raw axes.
+        assert spec["version"] == 4
+        chart = hg.Chart(data).boxplot(**orientation, **fields, count="n", notch=True)
+        spec, _ = chart.to_spec()
+        assert spec["marks"][0] == {
+            "type": "boxplot",
+            "data": "data",
+            **orientation,
+            **fields,
+            "count": "n",
+            "notch": True,
+        }
+        assert spec["version"] == 4
+        assert "<path" in chart.to_svg()
+    with pytest.raises(ValueError, match="raw x/y.*precomputed"):
+        hg.boxplot(data, x="group", y="median", **fields)
+    with pytest.raises(ValueError, match="notch needs count"):
+        hg.boxplot(data, x="group", **fields, notch=True)
+    with pytest.raises(ValueError, match="whiskers.*low and high"):
+        hg.boxplot(data, x="group", **fields, whiskers="range")
+    with pytest.raises(ValueError, match="needs low, median, q3, high"):
+        hg.boxplot(data, x="group", q1="q1")
+    with pytest.raises(ValueError, match="exactly one category"):
+        hg.boxplot(data, **fields)
+    with pytest.raises(ValueError, match="horizontal box plots.*right axis"):
+        hg.boxplot(data, y="group", **fields, axis="right")
+    with pytest.raises(TypeError, match="boxplot low.*category"):
+        hg.boxplot(data, x="group", **{**fields, "low": "group"})
+    with pytest.raises(TypeError, match="boxplot count.*category"):
+        hg.boxplot(data, x="group", **fields, count="group")
+
+
+@pytest.mark.parametrize("whiskers", ["tukey", "range", 0, 1.5, 2])
+def test_boxplot_whisker_rules_and_versions(whiskers):
+    data = {"g": ["a", "a", "a"], "v": [1, 2, 10]}
+    spec, _ = hg.boxplot(data, x="g", y="v", whiskers=whiskers).to_spec()
+    assert spec["marks"][0]["whiskers"] == whiskers
+    assert spec["version"] == (4 if whiskers in ("tukey", 1.5) else 6)
+    assert hg.boxplot(data, x="g", y="v", notch=True).to_spec()[0]["version"] == 6
+    assert hg.boxplot(data, x="g", y="v", notch=False).to_spec()[0]["version"] == 4
+
+
+@pytest.mark.parametrize("whiskers", [-1, float("inf"), float("nan"), True, "other"])
+def test_boxplot_rejects_invalid_whisker_rules(whiskers):
+    with pytest.raises(ValueError, match="finite nonnegative"):
+        hg.boxplot({"g": ["a"], "v": [1]}, x="g", y="v", whiskers=whiskers)
+
+
+@pytest.mark.parametrize("whiskers", [np.int64(2), np.float32(0.5), np.float64(1.5)])
+def test_boxplot_numpy_whisker_multiples_serialize(whiskers):
+    spec, _ = hg.boxplot({"g": ["a"], "v": [1]}, x="g", y="v", whiskers=whiskers).to_spec()
+    assert json.loads(json.dumps(spec))["marks"][0]["whiskers"] == float(whiskers)

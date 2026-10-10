@@ -15,6 +15,7 @@ import { estimateText } from "../../src/layout/text.ts";
 import { Polyline } from "../../src/lod/polyline.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { boxplot } from "../../src/marks/boxplot.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { funnel } from "../../src/marks/funnel.ts";
 import { gauge } from "../../src/marks/gauge.ts";
@@ -32,6 +33,7 @@ import { type PdfOptions, renderToPDF } from "../../src/pdf.ts";
 import { cssColor } from "../../src/render/css-color.ts";
 import { cellRepeat, renderPdf } from "../../src/render/pdf.ts";
 import { encodeText, standardFont, textWidth } from "../../src/render/pdf-fonts.ts";
+import { renderToSVG } from "../../src/render/static.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import type {
   Geometry,
@@ -876,4 +878,35 @@ describe("PDF readers", () => {
     const text = execFileSync("pdftotext", [chart, "-"], { encoding: "utf8" });
     for (const label of ["Latency é", "08:00", "SLO", "ms"]) expect(text).toContain(label);
   });
+});
+
+it("exports notched precomputed boxes as closed PDF paths with waist medians", () => {
+  const data = table({
+    group: ["a"],
+    low: [0],
+    q1: [25],
+    median: [50],
+    q3: [75],
+    high: [100],
+    count: [100],
+  });
+  for (const horizontal of [false, true]) {
+    const fields = {
+      low: "low",
+      q1: "q1",
+      median: "median",
+      q3: "q3",
+      high: "high",
+      count: "count",
+      notch: true,
+      fill: "#ff0000",
+    } as const;
+    const mark = boxplot(data, horizontal ? { y: "group", ...fields } : { x: "group", ...fields });
+    const config = { width: 600, height: 300, locale: "en-US", marks: [mark] };
+    const pdf = readPdf(renderToPDF(config));
+    // One closed ten-vertex area, filled red; all fifteen outline/median/whisker segments follow.
+    expect(pdf.content).toMatch(/1 0 0 rg\n[^\n]+ m\n(?:[^\n]+ l\n){9}h\nf\n/);
+    expect(pdf.content).toMatch(/1 0 0 RG 1.5 w[^\n]*\n(?:[^\n]+ m\n[^\n]+ l\n){15}S\n/);
+    expect(renderToSVG(config)).toMatch(/fill="#ff0000"/);
+  }
 });

@@ -31,6 +31,7 @@ import {
 import {
   Area,
   Bar,
+  BoxPlot,
   Candlestick,
   Chart,
   Custom,
@@ -90,6 +91,7 @@ const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
 const components = {
   Chart,
+  BoxPlot,
   Candlestick,
   Line,
   Area,
@@ -242,6 +244,33 @@ describe("<Chart>", () => {
     expect(labelsWith("labels")).toBe(true);
     expect(labelsWith(':labels="true"')).toBe(true);
     expect(labelsWith(':labels="false"')).toBe(false);
+  });
+
+  it("reads a bare notch attribute on <BoxPlot> as true, for raw and precomputed boxes", () => {
+    const raw = table({
+      g: ["a", "a", "a", "a", "a", "b", "b", "b", "b"],
+      v: [1, 2, 3, 4, 9, 2, 3, 5, 6],
+    });
+    const stats = table({ g: ["a"], lo: [1], q1: [2], med: [3], q3: [4], hi: [6], n: [20] });
+    const drawn = (markup: string, data: object) => {
+      mount(`<Chart renderer="svg">${markup}</Chart>`, () => data);
+      // The shapes drawn, without the ids each chart's markup has of its own.
+      const shapes = [...host.querySelectorAll("svg path")].map((path) => path.getAttribute("d"));
+      app!.unmount();
+      app = undefined;
+      return shapes.join("|");
+    };
+    const rawBox = (attribute: string) =>
+      drawn(`<BoxPlot :data="raw" x="g" y="v" ${attribute} />`, { raw });
+    expect(rawBox("notch")).toBe(rawBox(':notch="true"'));
+    expect(rawBox("notch")).not.toBe(rawBox(""));
+    const statsBox = (attribute: string) =>
+      drawn(
+        `<BoxPlot :data="stats" x="g" low="lo" q1="q1" median="med" q3="q3" high="hi" count="n" ${attribute} />`,
+        { stats },
+      );
+    expect(statsBox("notch")).toBe(statsBox(':notch="true"'));
+    expect(statsBox("notch")).not.toBe(statsBox(""));
   });
 
   it("renders a radar from its component, and reads a bare points attribute as true", () => {

@@ -15,9 +15,9 @@ export type { Expression, Operator } from "../data/expression.ts";
  * version adds what an older reader would ignore and draw differently:
  * version 2 `resolve.y`, `panels`, and `grid`, version 3 `resolve.x`,
  * panels' own `x`, and the x axis' `breaks`, version 4 `navigator`,
- * version 5 enabled x axis `seams`.
+ * version 5 enabled x axis `seams`, version 6 raw box plot notches and non-default whiskers.
  */
-export const SPEC_VERSION = 5;
+export const SPEC_VERSION = 6;
 
 /** Column name in a table. */
 export type Field = string;
@@ -34,10 +34,10 @@ export interface ChartSpec {
    * Spec format version; 1 when omitted. Specs using `resolve`, `panels`, or
    * `grid` must give 2 or later, those using `resolve.x`, a panel's `x`, or
    * x axis `breaks` 3 or later, those with a `navigator` 4 or later,
-   * and those with enabled x axis `seams` 5, so that
+   * those with enabled x axis `seams` 5, and raw box plot notches or non-default whiskers 6, so that
    * older readers refuse them rather than draw them differently.
    */
-  version?: 1 | 2 | 3 | 4 | 5;
+  version?: 1 | 2 | 3 | 4 | 5 | 6;
   /** Chart title, also its accessible name. */
   title?: string;
   /** Longer description for assistive technology. */
@@ -871,16 +871,49 @@ export interface PieSpec {
   labels?: boolean;
 }
 
-/**
- * Box plots: per category, a box from the lower to the upper quartile of a
- * number field's values, a line at the median, whiskers to the most extreme
- * values within 1.5 interquartile ranges of the box, and points beyond them.
- * One of `x` and `y` is a category field, the other the values.
- */
-export interface BoxPlotSpec extends MarkBase {
-  type: "boxplot";
+/** Fields naming one box's precomputed statistics per row; no outliers. */
+export interface BoxPlotStatistics {
+  low: Field;
+  q1: Field;
+  median: Field;
+  q3: Field;
+  high: Field;
+}
+
+/** Precomputed notches require a positive integer observation count field. */
+export type BoxPlotNotchInput<Count extends Field = Field> =
+  | { count?: Count; notch?: false }
+  | { count: Count; notch?: boolean };
+
+/** Raw observations: one category axis and one numeric or time axis. */
+export type BoxPlotRawInput = {
   x: Field;
   y: Field;
+  low?: never;
+  q1?: never;
+  median?: never;
+  q3?: never;
+  high?: never;
+  count?: never;
+  /** Tukey's 1.5 IQR (default), the full range, or a nonnegative IQR multiple. */
+  whiskers?: "tukey" | "range" | number;
+  /**
+   * Notch half-width: 1.57 IQR / sqrt(count).
+   * Raw boxes use their finite observation count; precomputed boxes require a count field.
+   */
+  notch?: boolean;
+};
+
+/** One precomputed box per row, on exactly one category axis. */
+export type BoxPlotPrecomputedInput = BoxPlotStatistics &
+  BoxPlotNotchInput &
+  ({ x: Field; y?: never } | { y: Field; x?: never }) & { whiskers?: never };
+
+/** Raw values and precomputed statistics are mutually exclusive. */
+export type BoxPlotInput = BoxPlotRawInput | BoxPlotPrecomputedInput;
+
+/** Appearance shared by raw and precomputed boxes. */
+export type BoxPlotStyle = {
   /** Category field: a box per value in each category, side by side. */
   series?: Field;
   /** Constant color for every shape; colors come from the palette otherwise. */
@@ -888,7 +921,13 @@ export interface BoxPlotSpec extends MarkBase {
   /** Opacity of the boxes' fill; 0.25 by default. */
   fillOpacity?: number;
   label?: string;
-}
+};
+
+/** Box plots from raw values per category, or one precomputed box per row. */
+export type BoxPlotSpec = MarkBase &
+  BoxPlotInput & {
+    type: "boxplot";
+  } & BoxPlotStyle;
 
 /**
  * Violins: per category, the Gaussian kernel density of a number field's
