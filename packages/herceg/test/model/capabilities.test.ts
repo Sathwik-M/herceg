@@ -134,6 +134,19 @@ const cartesian: MarkCase[] = [
     kind: "area",
     animates: true,
   },
+  ...(["fill", "center", "wiggle"] as const).map(
+    (stack): MarkCase => ({
+      name: `area stack ${stack}`,
+      make: (p) => area(samples, { x: "x", y: "y", series: "group", stack, ...p }),
+      kind: "area",
+      animates: true,
+    }),
+  ),
+  {
+    name: "bar fill",
+    make: (p) => bar(samples, { x: "x", y: "y", series: "group", stack: "fill", ...p }),
+    kind: "rect",
+  },
   {
     name: "bar",
     make: (p) => bar(samples, { x: "x", y: "y", series: "group", ...p }),
@@ -591,7 +604,9 @@ describe("capabilities: per-panel scales", () => {
     if (!c.repeats) {
       const [a, b] = model.panels();
       // Heatmap cells are along x, over categories along y.
-      const axis = ["histogram", "rug", "heatmap"].includes(c.name) ? "x" : "y";
+      const axis = ["histogram", "rug", "heatmap", "area stack fill", "bar fill"].includes(c.name)
+        ? "x"
+        : "y";
       expect(a![axis].domain).not.toEqual(b![axis].domain);
     }
   });
@@ -974,6 +989,10 @@ describe("capabilities: row selection", () => {
   // marks draw a channel's rows highlighted (model/highlight.ts).
   const selects = new Set(
     ["line", "area", "bar", "point", "errorbar", "candlestick", "heatmap"].concat([
+      "area stack fill",
+      "area stack center",
+      "area stack wiggle",
+      "bar fill",
       "line along y",
       "area over categories",
       "point swarm",
@@ -984,6 +1003,10 @@ describe("capabilities: row selection", () => {
     ]),
   );
   const highlights = new Set([
+    "area stack fill",
+    "area stack center",
+    "area stack wiggle",
+    "bar fill",
     "line",
     "area",
     "line along y",

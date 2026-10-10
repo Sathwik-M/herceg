@@ -6,9 +6,10 @@
 import type { NumericArray } from "../data/column.ts";
 import { lowerBound, type Table, upperBound } from "../data/table.ts";
 import { MinMaxIndex, type RangeIndex } from "../lod/minmax-index.ts";
-import type { StackGaps } from "../spec/spec.ts";
+import type { AreaStack, StackGaps, StackOrder } from "../spec/spec.ts";
 import type { LayerEdges } from "./series.ts";
 import { capacityFor, makeRoom, shrunk } from "./stack.ts";
+import { offsetLayers } from "./stack-offset.ts";
 import { INDEXED_POINTS } from "./trace.ts";
 
 /** One series of the stack: its rows (ascending table positions) and whether it is shown. */
@@ -26,6 +27,7 @@ export interface UnionLayers {
    */
   tops: Float64Array;
   bases: Float64Array;
+  totals?: Float64Array | undefined;
   /** Each layer's edges, aligned on the shown layers' x; undefined for hidden layers. */
   edges: (LayerEdges | undefined)[];
 }
@@ -59,7 +61,20 @@ export class UnionStack {
   #modified = -1;
   #generation = -1;
   #signature = "";
+  #places: object | undefined;
   #gaps: StackGaps = "zero";
+  readonly #mode: AreaStack;
+  readonly #order: StackOrder;
+  #layerOrder: number[] = [];
+
+  constructor(mode: AreaStack = true, order: StackOrder = "input") {
+    this.#mode = mode;
+    this.#order = order;
+  }
+
+  get #shifted(): boolean {
+    return this.#mode !== true || this.#order !== "input";
+  }
   /** Every shown layer's rows ascend in x, with every x present: changes can restack in part. */
   #direct = false;
   /** Row identities of the live rows at the last update: from `#offset` up to `#end`. */
@@ -69,7 +84,7 @@ export class UnionStack {
   #first = new Float64Array(0);
   #lastX = new Float64Array(0);
 
-  /** Union positions: x, then each shown layer's top, then the bottoms of all but the first. */
+  /** Union x, layer tops, and bases (ordinary stacks omit the first); fill adds totals. */
   #buffers: Float64Array[] = [];
   #shown = 0;
   #start = 0;
@@ -80,6 +95,7 @@ export class UnionStack {
   /** Each row's top and bottom, by row identity: live rows at `[#rowStart, #rowStart + length)`. */
   #rowTops: Float64Array = new Float64Array(0);
   #rowBases: Float64Array = new Float64Array(0);
+  #rowTotals: Float64Array | undefined;
   #rowStart = 0;
 
   /** Merge scratch, per shown layer. */
@@ -97,26 +113,52 @@ export class UnionStack {
     y: NumericArray,
     layers: readonly StackLayer[],
     gaps: StackGaps,
+    places?: object,
+  ): UnionLayers {
+    try {
+      return this.#update(table, x, y, layers, gaps, places);
+    } catch (error) {
+      this.clear();
+      throw error;
+    }
+  }
+
+  #update(
+    table: Rows,
+    x: NumericArray,
+    y: NumericArray,
+    layers: readonly StackLayer[],
+    gaps: StackGaps,
+    places?: object,
   ): UnionLayers {
     const signature = JSON.stringify([gaps, layers.map(({ name, shown }) => [name, shown])]);
     const shown = layers.filter((layer) => layer.shown).map((layer) => layer.rows);
     const current =
       this.#table === table &&
       this.#signature === signature &&
+      this.#places === places &&
       this.#generation === table.generation &&
       this.#modified === table.modifiedVersion;
     // Layers stacked in a sorted order of their own restack whenever rows change.
     if (
       !current ||
-      (this.#version !== table.version && !(this.#direct && this.#follow(table, x, y, shown)))
+      (this.#version !== table.version &&
+        !(
+          this.#direct &&
+          this.#mode !== "wiggle" &&
+          this.#order === "input" &&
+          this.#follow(table, x, y, shown)
+        ))
     )
       this.#rebuild(table, x, y, shown, signature, gaps);
+    this.#places = places;
     return this.#output(table, layers);
   }
 
   /** Bytes the stack's buffers hold: its edges, its rows' tops and bases, and indexes not counted. */
   get byteLength(): number {
-    let bytes = this.#rowTops.byteLength + this.#rowBases.byteLength;
+    let bytes =
+      this.#rowTops.byteLength + this.#rowBases.byteLength + (this.#rowTotals?.byteLength ?? 0);
     for (const buffer of this.#buffers) bytes += buffer.byteLength;
     return bytes;
   }
@@ -128,6 +170,7 @@ export class UnionStack {
     this.#buffers = [];
     this.#rowTops = new Float64Array(0);
     this.#rowBases = new Float64Array(0);
+    this.#rowTotals = undefined;
     this.#topIndexes = undefined;
     this.#bottomIndexes = undefined;
     this.#length = 0;
@@ -156,9 +199,11 @@ export class UnionStack {
     if (!reuse || !fits(this.#rowTops.length, length)) {
       this.#rowTops = new Float64Array(capacityFor(length));
       this.#rowBases = new Float64Array(this.#rowTops.length);
+      this.#rowTotals = this.#mode === "fill" ? new Float64Array(this.#rowTops.length) : undefined;
     }
     this.#rowTops.fill(Number.NaN, 0, length);
     this.#rowBases.fill(Number.NaN, 0, length);
+    this.#rowTotals?.fill(Number.NaN, 0, length);
     this.#rowStart = 0;
     this.#stackAll(x, y, orders, reuse);
     this.#remember(table, x, shown);
@@ -177,11 +222,15 @@ export class UnionStack {
     gaps: StackGaps,
     tops: Float64Array,
     bases: Float64Array,
+    mode: AreaStack = true,
+    order: StackOrder = "input",
+    totals?: Float64Array,
   ): (LayerEdges | undefined)[] {
-    const stack = new UnionStack();
+    const stack = new UnionStack(mode, order);
     stack.#gaps = gaps;
     stack.#rowTops = tops;
     stack.#rowBases = bases;
+    stack.#rowTotals = totals;
     const orders = layers
       .filter((layer) => layer.shown)
       .map(({ rows }) => (ascends(x, rows) ? rows : sortedByX(x, rows)));
@@ -197,7 +246,10 @@ export class UnionStack {
     this.#shown = orders.length;
     // The stack has at least as many positions as its longest layer has rows.
     const longest = Math.max(0, ...orders.map((order) => order.length));
-    const buffers = Math.max(1, 2 * this.#shown);
+    const buffers = Math.max(
+      1,
+      2 * this.#shown + Number(this.#shifted) + Number(this.#mode === "fill"),
+    );
     if (!reuse || this.#buffers.length !== buffers || this.#buffers[0]!.length < longest) {
       const capacity = capacityFor(longest);
       this.#buffers = Array.from({ length: buffers }, () => new Float64Array(capacity));
@@ -250,17 +302,19 @@ export class UnionStack {
   #followRows(dropped: number, length: number) {
     this.#rowStart += dropped;
     const kept = this.#end - this.#offset - dropped;
-    const buffers = [this.#rowTops, this.#rowBases];
+    const buffers = [this.#rowTops, this.#rowBases, ...(this.#rowTotals ? [this.#rowTotals] : [])];
     const room =
       shrunk(buffers, this.#rowStart, kept, length - kept) ??
       makeRoom(buffers, this.#rowStart, kept, length - kept);
     if (room) {
       this.#rowTops = room[0]!;
       this.#rowBases = room[1]!;
+      if (this.#rowTotals) this.#rowTotals = room[2]!;
       this.#rowStart = 0;
     }
     this.#rowTops.fill(Number.NaN, this.#rowStart + kept, this.#rowStart + length);
     this.#rowBases.fill(Number.NaN, this.#rowStart + kept, this.#rowStart + length);
+    this.#rowTotals?.fill(Number.NaN, this.#rowStart + kept, this.#rowStart + length);
   }
 
   /**
@@ -408,12 +462,15 @@ export class UnionStack {
           }
           const base = total;
           let top = Number.NaN;
-          if (Number.isFinite(value)) {
+          if (this.#shifted) {
+            top = Number.isFinite(value) ? value : Number.NaN;
+          } else if (Number.isFinite(value)) {
             total += value;
             top = total;
           }
           buffers[1 + l]![p] = top;
-          if (l > 0) buffers[layers + l]![p] = base;
+          if (this.#shifted) buffers[1 + layers + l]![p] = 0;
+          else if (l > 0) buffers[layers + l]![p] = base;
           if (j < rows) {
             rowTops[rowStart + row] = top;
             rowBases[rowStart + row] = base;
@@ -421,6 +478,36 @@ export class UnionStack {
         }
       }
       for (let l = 0; l < layers; l++) cursor[l]! += count[l]!;
+    }
+    if (this.#shifted && written > 0) {
+      const start = this.#start + this.#length;
+      const view = (buffer: Float64Array) => buffer.subarray(start, start + written);
+      this.#layerOrder = offsetLayers(
+        this.#buffers.slice(1, 1 + layers).map(view),
+        this.#buffers.slice(1 + layers, 1 + 2 * layers).map(view),
+        this.#mode,
+        this.#order,
+        view(this.#buffers[0]!),
+        this.#mode === "fill" ? view(this.#buffers[1 + 2 * layers]!) : undefined,
+      );
+      // Map the aligned boundaries back to observed rows. Synthetic
+      // positions stay in the edges and never become tooltip rows.
+      for (let l = 0; l < layers; l++) {
+        const rows = orders[l]!;
+        let nth = 0;
+        let previous = Number.NaN;
+        for (let k = rowBound(x, rows, lo, false); k < rows.length; k++) {
+          const row = rows[k]!;
+          const at = x[row]!;
+          if (at > hi) break;
+          nth = at === previous ? nth + 1 : 0;
+          previous = at;
+          const p = lowerBound(this.#buffers[0]!, at, start, start + written) + nth;
+          rowTops[rowStart + row] = this.#buffers[1 + l]![p]!;
+          rowBases[rowStart + row] = this.#buffers[1 + layers + l]![p]!;
+          if (this.#rowTotals) this.#rowTotals[rowStart + row] = this.#buffers[1 + 2 * layers]![p]!;
+        }
+      }
     }
     return written;
   }
@@ -437,6 +524,7 @@ export class UnionStack {
     return {
       tops: rows(this.#rowTops),
       bases: rows(this.#rowBases),
+      totals: this.#rowTotals && rows(this.#rowTotals),
       edges: this.#edges(layers, true),
     };
   }
@@ -453,15 +541,20 @@ export class UnionStack {
     return layers.map((layer): LayerEdges | undefined => {
       if (!layer.shown) return undefined;
       const top = this.#buffers[1 + l]!;
-      const bottom = l > 0 ? this.#buffers[shown + l]! : undefined;
+      const bottom = this.#shifted
+        ? this.#buffers[1 + shown + l]!
+        : l > 0
+          ? this.#buffers[shown + l]!
+          : undefined;
       const indexes = indexed
         ? {
             top: this.#view(this.#topIndexes![l]!, top),
-            bottom: bottom && this.#view(this.#bottomIndexes![l - 1]!, bottom),
+            bottom: bottom && this.#view(this.#bottomIndexes![this.#shifted ? l : l - 1]!, bottom),
           }
         : undefined;
+      const order = this.#layerOrder.indexOf(l);
       l++;
-      return { x, top: view(top), bottom: bottom && view(bottom), indexes };
+      return { order, x, top: view(top), bottom: bottom && view(bottom), indexes };
     });
   }
 
@@ -478,7 +571,7 @@ export class UnionStack {
       .slice(1, 1 + shown)
       .map((buffer) => new MinMaxIndex(buffer, end));
     this.#bottomIndexes ??= this.#buffers
-      .slice(1 + shown, 2 * shown)
+      .slice(1 + shown, 2 * shown + Number(this.#shifted))
       .map((buffer) => new MinMaxIndex(buffer, end));
     return true;
   }

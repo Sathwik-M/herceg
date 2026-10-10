@@ -651,11 +651,17 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
 
   /** A bin's range and what its bar measures. */
   pointText(series: Series, row: number, format: AxisFormat): string {
-    const { edges } = this.#binsOf(series);
+    const { edges, counts } = this.#binsOf(series);
     const along = this.#horizontal ? format.y : format.x;
     const across = this.#horizontal ? format.x : format.y;
     const start = this.spec.cumulative ? 0 : row;
-    return `${along(edges[start]!)} – ${along(edges[row + 1]!)}: ${this.spec.cumulative ? "cumulative " : ""}${across(series.values[row]!)}`;
+    let value = across(series.values[row]!);
+    if (this.spec.stack === "fill") {
+      let raw = counts[row]!;
+      if (this.spec.cumulative) for (let b = 0; b < row; b++) raw += counts[b]!;
+      value += ` share (${format.value(raw)} raw)`;
+    }
+    return `${along(edges[start]!)} – ${along(edges[row + 1]!)}: ${this.spec.cumulative ? "cumulative " : ""}${value}`;
   }
 
   /**

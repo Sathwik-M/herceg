@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 TooltipMode = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after", "monotone"]
 StackGaps = Literal["zero", "interpolate"]
+BarStack = bool | Literal["fill"]
+AreaStack = bool | Literal["fill", "center", "wiggle"]
+StackOrder = Literal["input", "inside-out"]
 Orient = Literal["x", "y"]
 HistogramNormalize = Literal["count", "frequency", "probability", "percent", "density"]
 HistogramElement = Literal["bars", "step", "poly"]
@@ -691,6 +694,28 @@ class HelperOptions(_SharedOptions, _LayoutOptions, _BindingOptions, total=False
     z_axis: Axis | dict[str, Any] | None
 
 
+def _check_stack(stack: AreaStack, mark: str) -> None:
+    choices = ("fill", "center", "wiggle") if mark == "area" else ("fill",)
+    if not isinstance(stack, bool) and stack not in choices:
+        correction = (
+            'choose True, False, "fill", "center", or "wiggle"'
+            if mark == "area"
+            else 'choose True, False, or "fill"; use an area for "center" or "wiggle"'
+        )
+        raise ValueError(f"{mark} stack: unsupported stack {shown(stack)}; {correction}")
+
+
+def _check_stack_values(table: _Columns, fields: str | Sequence[str], mark: str) -> None:
+    for field in [fields] if isinstance(fields, str) else fields:
+        values = table.column(field).values
+        if np.any(np.isfinite(values) & (values < 0)):
+            raise ValueError(
+                f"{mark} stack {field}: negative values have no nonnegative share "
+                "or stream thickness; "
+                "use stack=True for signed values"
+            )
+
+
 class Chart:
     """A chart: data, marks drawn in order, and options.
 
@@ -973,7 +998,8 @@ class Chart:
         x2: str | None = None,
         orient: Orient | None = None,
         series: str | None = None,
-        stack: bool = False,
+        stack: AreaStack = False,
+        stack_order: StackOrder | None = None,
         stack_gaps: StackGaps | None = None,
         dodge: bool = False,
         data: Any = None,
@@ -1002,10 +1028,26 @@ class Chart:
         between its rows on either side. On a category axis,
         ``dodge=True`` places unstacked series side by side in each band.
 
+        ``stack="fill"`` shows shares of each position's visible total.
+        ``"center"`` centers raw thickness around zero; ``"wiggle"`` uses
+        the Byron–Wattenberg stream baseline. These modes require nonnegative
+        values. ``stack_order="inside-out"`` reorders their layers geometrically.
+
         A single area has an outline along its top in its own color; stacked
         and band areas have none unless ``line=True``. ``stroke`` and
         ``stroke_width`` set the outline's color and width, and turn it on.
         """
+        _check_stack(stack, "area")
+        if stack_order is not None:
+            if stack_order not in ("input", "inside-out"):
+                raise ValueError(
+                    'area stack_order: expected "input" or "inside-out"; choose a supported order'
+                )
+            if not stack or (stack_order == "inside-out" and not isinstance(stack, str)):
+                raise ValueError(
+                    "area stack_order: needs a nonnegative stack for inside-out order; "
+                    'give stack="fill", "center", or "wiggle", or drop stack_order'
+                )
         if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
             raise ValueError(
                 f"area stroke_width: expected 0 or more pixels; received {shown(stroke_width)}"
@@ -1028,8 +1070,14 @@ class Chart:
             if values is not None:
                 other = "y" if along_x else "x"
                 raise ValueError(f"area {other}: {other}, or {low} and {high}, not both; drop one")
-            if series is not None or stack:
-                option = "series" if series is not None else "stack"
+            if series is not None or stack or stack_order is not None:
+                option = (
+                    "series"
+                    if series is not None
+                    else "stack_order"
+                    if stack_order is not None
+                    else "stack"
+                )
                 raise ValueError(
                     f"area {option}: a band ({low} and {high}) has no series or stack; "
                     f"drop {option}"
@@ -1056,6 +1104,10 @@ class Chart:
             _left_along_y("area", runs, axis)
             self._require(table, series, ("category",), "area series")
             self._single_or_series(y_values if runs == "x" else x_values, series, "area")
+            if isinstance(stack, str):
+                _check_stack_values(
+                    self._tables[table][1], y_values if runs == "x" else x_values, "area"
+                )
             if dodge and stack:
                 raise ValueError(
                     "area dodge: a stack's layers stand on each other; drop dodge or stack"
@@ -1083,6 +1135,7 @@ class Chart:
                 "series": series,
                 "stack": stack or None,
                 "stackGaps": stack_gaps,
+                "stackOrder": stack_order,
                 "dodge": dodge or None,
                 "fill": fill,
                 "fillOpacity": fill_opacity,
@@ -1107,7 +1160,7 @@ class Chart:
         y: str | Sequence[str],
         *,
         series: str | None = None,
-        stack: bool = False,
+        stack: BarStack = False,
         data: Any = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
@@ -1125,7 +1178,10 @@ class Chart:
         A category ``y`` makes the bars horizontal, with lengths in ``x``.
         ``labels=True`` writes each value at its bar's end (inside each segment
         when stacked); a dict of Intl.NumberFormat options formats them.
+        ``stack="fill"`` normalizes nonnegative values per position, and labels
+        show shares. Tooltip and keyboard text also report the raw values.
         """
+        _check_stack(stack, "bar")
         if isinstance(labels, dict):
             _check_format(labels, "bar labels", _NUMBER_FORMAT)
         table = self._mark_table(data)
@@ -1146,6 +1202,12 @@ class Chart:
             ys = self._require_many(table, y, _NUMERIC, "bar y")
             self._single_or_series(ys, series, "bar")
         self._require(table, series, ("category",), "bar series")
+        if stack == "fill":
+            _check_stack_values(
+                self._tables[table][1],
+                xs if isinstance(y, str) and self._kind(table, y) == "category" else ys,
+                "bar",
+            )
         return self._add(
             {
                 "type": "bar",
@@ -4785,7 +4847,8 @@ def area(
     x2: str | None = None,
     orient: Orient | None = None,
     series: str | None = None,
-    stack: bool = False,
+    stack: AreaStack = False,
+    stack_order: StackOrder | None = None,
     stack_gaps: StackGaps | None = None,
     dodge: bool = False,
     fill: str | None = None,
@@ -4801,8 +4864,9 @@ def area(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """An area chart, stacked with ``stack=True``, or the band between ``y1``
-    and ``y2`` (along y, ``x1`` and ``x2``; see ``Chart.area``).
+    """An area chart, stacked with ``True``, ``"fill"``, ``"center"``, or
+    ``"wiggle"``, or the band between ``y1`` and ``y2`` (along y, ``x1``
+    and ``x2``; see ``Chart.area``).
 
     Stacked by a ``series`` column, every series is drawn on every position
     any of them has: ``stack_gaps`` says what a series counts as where it
@@ -4819,6 +4883,7 @@ def area(
         orient=orient,
         series=series,
         stack=stack,
+        stack_order=stack_order,
         stack_gaps=stack_gaps,
         dodge=dodge,
         fill=fill,
@@ -4843,7 +4908,7 @@ def bar(
     y: str | Sequence[str],
     *,
     series: str | None = None,
-    stack: bool = False,
+    stack: BarStack = False,
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,

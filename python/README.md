@@ -537,6 +537,39 @@ counts and ranges. Facets split rows, `facet="repeat"` repeats them, and
 `side="right"` places its ticks at the right edge. There is no one-call
 `hg.rug` helper.
 
+## Normalized stacks and streamgraphs
+
+```python
+hg.area(usage, x="time", y=["user", "system"], stack="fill")
+hg.area(usage, x="time", y=["user", "system"], stack="center")
+hg.area(usage, x="time", y=["user", "system"], stack="wiggle", stack_order="inside-out")
+hg.bar(sales, x="region", y=["q1", "q2"], stack="fill", labels={"style": "percent"})
+```
+
+The same options work on `hg.Chart(...).area(...)` and `.bar(...)`. Fill stacks
+nonnegative values as shares of each position's visible total, on a 0–1 axis;
+use `y={"format": {"style": "percent"}}` (or x for horizontal charts) for percent
+ticks. Center uses a symmetric baseline around zero; wiggle uses the
+Byron–Wattenberg stream baseline, starting at zero at the first retained
+position. Their axes show raw extents; thickness shows the raw value. Center
+requires nonnegative thicknesses, whereas d3's silhouette offset accepts signed inputs
+algebraically. It does not split positive and negative layers like d3's diverging
+offset; use `stack=True` for signed values. Bars refuse stream offsets and suggest using an area. All three modes refuse finite
+negative values, including mixed signs; `stack=True` keeps signed stacking.
+Missing values retain gaps and count as zero in totals; an all-zero position
+has zero thickness. `stack_gaps="interpolate"` on a series-column area resolves
+absent rows between finite bracketing rows before normalization or offsets.
+
+Area `stack_order="inside-out"` is available with fill, center, and wiggle;
+colors and legend order stay fixed. `orient="y"` areas stack across x, and bars
+with a category y are horizontal. Tooltip and keyboard text show share and raw
+value for fill, and raw values for streams. Fill bar labels show shares,
+formatted by `labels`. Legend toggles recalculate the visible stack; facets,
+subplots, HTML, notebooks, and static SVG/PNG/PDF use the same engine semantics.
+`herceg.express.histplot(..., multiple="fill")` keeps the same per-bin share
+meaning, with raw counts or weights in tooltip text. Express barplot estimates
+remain grouped; stream offsets are available through `hg.area` and `Chart.area`.
+
 ## Statistical charts
 
 `herceg.express` makes Seaborn's statistical charts in one call. It

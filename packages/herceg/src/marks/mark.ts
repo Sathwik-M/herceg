@@ -331,9 +331,14 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   /**
    * Stacks each panel's series apart, for series resolved with `split`:
    * `panels` holds the mark's series in each panel (split from those
-   * `series` returned), whose values it stacks in place.
+   * `series` returned), whose values it stacks in place. `scope` is the
+   * facet planner's identity, stable across redraws and table updates.
    */
-  stackPanels?(panels: readonly (readonly Series[])[], hidden: ReadonlySet<string>): void;
+  stackPanels?(
+    panels: readonly (readonly Series[])[],
+    hidden: ReadonlySet<string>,
+    scope?: object,
+  ): void;
   /**
    * For marks whose series summarize rows (histograms, box plots), resolved
    * with `split`: each panel's series, one per series of `roster` (those

@@ -15,6 +15,8 @@ import type { Polyline } from "../lod/polyline.ts";
 export interface Series {
   /** Unique within a chart; used for legend state and geometry identity. */
   key: string;
+  /** Geometric rank in an inside-out stack, independent of legend order. */
+  stackIndex?: number;
   label: string;
   color: string;
   x: NumericArray;
@@ -26,6 +28,8 @@ export interface Series {
   x0?: NumericArray | undefined;
   /** Values reported in tooltips (differs from `y` for stacks). */
   values: NumericArray;
+  /** Visible position totals for normalized readings, shared across layers. */
+  stackTotals?: NumericArray | undefined;
   /**
    * The table field `values` were read from, so indexes of that field can
    * serve `y` while it still is that column.
@@ -71,6 +75,7 @@ export interface Series {
  * until the stack's next update.
  */
 export interface LayerEdges {
+  order?: number;
   /** Positions, ascending; one is repeated for each of the rows a layer has there. */
   x: Float64Array;
   top: Float64Array;

@@ -559,7 +559,16 @@ const MARKS: MarkChecks = {
       orient: oneOf("x", "y"),
       series: field,
       dodge: boolean,
-      stack: boolean,
+      stack: (v, path) => {
+        if (typeof v !== "boolean" && v !== "fill" && v !== "center" && v !== "wiggle")
+          throw new Error(
+            `${path}: expected true, false, "fill", "center", or "wiggle"; choose a supported stack`,
+          );
+      },
+      stackOrder: (v, path) => {
+        if (v !== "input" && v !== "inside-out")
+          throw new Error(`${path}: expected "input" or "inside-out"; choose a supported order`);
+      },
       stackGaps: oneOf("zero", "interpolate"),
       fill: string,
       fillOpacity: fraction,
@@ -645,7 +654,12 @@ const MARKS: MarkChecks = {
       x: fields,
       y: fields,
       series: field,
-      stack: boolean,
+      stack: (v, path) => {
+        if (typeof v !== "boolean" && v !== "fill")
+          throw new Error(
+            `${path}: expected true, false, or "fill"; use an area for "center" or "wiggle"`,
+          );
+      },
       fill: string,
       fillOpacity: fraction,
       label: string,

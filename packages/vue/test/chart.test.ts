@@ -154,6 +154,27 @@ function spyUpdates(chart: HercegChart): (readonly unknown[])[] {
 }
 
 describe("<Chart>", () => {
+  for (const stack of ["fill", "center", "wiggle"] as const) {
+    it(`passes ${stack} and inside-out area options through Vue`, () => {
+      const { view, chart } = chartRef();
+      mount(
+        `<Chart ref="view" renderer="svg"><Area :data="metrics" x="t" :y="['a', 'b']" :stack="stack" stack-order="inside-out" /></Chart>`,
+        () => ({ metrics, view, stack }),
+      );
+      expect(chart().toSVG()).toContain('fill-opacity="0.85"');
+      const before = chart().toSVG();
+      chart().setVisibility(chart().getLegend()[0]!.key, false);
+      chart().render();
+      expect(chart().toSVG()).not.toBe(before);
+    });
+  }
+  it("accepts fill bar options through Vue", () => {
+    mount(
+      `<Chart renderer="svg"><Bar :data="metrics" x="t" :y="['a', 'b']" stack="fill" :labels="{ style: 'percent' }" /></Chart>`,
+      () => ({ metrics }),
+    );
+    expect(host.textContent).toContain("20%");
+  });
   it("draws dendrogram components with summary-only reading", () => {
     const linkage = table({ first: [0], second: [1], height: [2] });
     mount(

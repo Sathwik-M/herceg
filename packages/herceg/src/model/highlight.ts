@@ -208,7 +208,7 @@ export class Highlighter {
     // Stacked areas draw their zeros at a log axis' low end.
     const low =
       type === "area" &&
-      (mark.spec as { stack?: boolean }).stack === true &&
+      Boolean((mark.spec as { stack?: boolean | string }).stack) &&
       frame[along === "x" ? "y" : "x"].type === "log";
     const found = new Map<Series, Runs>();
     const runs = (s: Series) =>

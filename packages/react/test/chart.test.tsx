@@ -29,6 +29,7 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  Area,
   Bar,
   Candlestick,
   Chart,
@@ -80,6 +81,40 @@ const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
 
 describe("<Chart>", () => {
+  for (const stack of ["fill", "center", "wiggle"] as const) {
+    it(`passes ${stack} and inside-out area options through React`, () => {
+      let chart: HercegChart | null = null;
+      act(() =>
+        root.render(
+          <Chart
+            ref={(value) => {
+              chart = value;
+            }}
+            renderer="svg"
+          >
+            <Area data={metrics} x="t" y={["a", "b"]} stack={stack} stackOrder="inside-out" />
+          </Chart>,
+        ),
+      );
+      expect(chart!.toSVG()).toContain('fill-opacity="0.85"');
+      const before = chart!.toSVG();
+      act(() => {
+        chart!.setVisibility(chart!.getLegend()[0]!.key, false);
+        chart!.render();
+      });
+      expect(chart!.toSVG()).not.toBe(before);
+    });
+  }
+  it("accepts fill bar options through React", () => {
+    act(() =>
+      root.render(
+        <Chart renderer="svg">
+          <Bar data={metrics} x="t" y={["a", "b"]} stack="fill" labels={{ style: "percent" }} />
+        </Chart>,
+      ),
+    );
+    expect(host.textContent).toContain("20%");
+  });
   it("draws dendrogram elements with summary-only reading", () => {
     const linkage = table({ first: [0], second: [1], height: [2] });
     act(() =>

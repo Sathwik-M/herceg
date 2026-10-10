@@ -544,6 +544,65 @@ area(casts, { x: "density", y: "depth", orient: "y" }); // filled to x = 0
 area(casts, { y: "depth", x1: "low", x2: "high" }); // a band along y
 ```
 
+### Normalized stacks and streamgraphs
+
+Areas accept `stack: true | false | "fill" | "center" | "wiggle"`; bars accept
+`true | false | "fill"`. Histogram `stack: "fill"` has the same meaning: each
+position's visible layers share its total.
+
+```ts
+area(usage, { x: "time", y: ["user", "system"], stack: "fill" });
+area(usage, { x: "time", y: ["user", "system"], stack: "center" });
+area(usage, { x: "time", y: ["user", "system"], stack: "wiggle", stackOrder: "inside-out" });
+bar(sales, { x: "region", y: ["q1", "q2"], stack: "fill", labels: { style: "percent" } });
+```
+
+`"fill"` divides each finite contribution by the visible total at its position.
+Its automatic value domain is 0–1; set that axis's `format: { style: "percent" }`
+to display percentages. An all-zero total has zero thickness. Finite negative
+contributions are refused, including mixed signs: use `stack: true` for signed
+values, or transform the data explicitly. NaN and infinities draw no segment
+and count as zero in totals. A missing layer keeps its gap; the other finite
+layers still normalize to their own total. Repeated bar positions include all
+rows at that position in the denominator.
+
+`"center"` (silhouette) starts each position at minus half its total, symmetric
+about zero. `"wiggle"` uses the Byron–Wattenberg weighted-slope stream baseline,
+matching d3-shape's wiggle offset, starting at zero at the first retained
+position. Both keep raw thickness, require nonnegative contributions, and use
+the computed raw extent on a linear value axis. A boundary's coordinate is
+an offset, not a measured value. Missing contributions count as zero in the
+wiggle calculation while retaining their own gaps. Center treats contributions
+as nonnegative thicknesses: it rejects signed inputs that d3's silhouette offset
+accepts algebraically. It does not separate positive and negative layers as
+d3's diverging offset does; use `stack: true` for signed values.
+
+The default `stackOrder: "input"` keeps field or legend order. For these three
+nonnegative area modes, `"inside-out"` orders layers by their peak's position
+and balances their totals on either side; legend identities and colors stay
+in input order. Geometric ordering uses the retained data, independent of zoom.
+
+All modes work over number, time, and category positions, along x or with
+`orient: "y"` along y; horizontal bars normalize across x. Series-field areas
+resolve `stackGaps` before totals and offsets: absent rows are zero, or linearly
+interpolated between finite bracketing rows at actual position distances, zero
+beyond the ends. Interpolation does not bridge explicit missing values. Tooltips
+and keyboard readings report observed rows only. For fill, their text shows the
+share and raw value; inspection events keep `value` as the raw source value
+(histograms keep their bin share as `value`, with raw counts or weights in text).
+Stream readings show raw values using the value axis's tooltip format. Bar value
+labels show shares for fill, formatted by `labels`, and raw values for ordinary stacks. Areas have series labels but no
+per-value labels.
+
+Hiding a legend layer renormalizes or reoffsets the visible layers. Facets and
+subplots stack independently; zoom changes the view, not the denominators or
+baselines. SVG, Canvas, and static exports use the same stack. Input-order fill
+and center retain incremental append/drop updates; wiggle and inside-out
+recompute over the retained window when data or visibility changes. Facet field
+stacks compute within each panel and cache their boundaries across unchanged
+redraws. Along-x input-order area stacks animate value changes as ordinary stacks do; inside-out updates display immediately because
+ordering can change, and areas along y retain their existing immediate updates.
+
 Stacks put the first layer at the bottom: fields in the order given, a
 series field's values in the order of its legend. Areas of a series field
 stack on every x any shown series has a row at. At an x where a series has
@@ -1110,7 +1169,7 @@ the notes), — not yet (refused with an error), · not applicable.
 
 | Marks | Facets | Subplots | Panel scales | Right axis | Zoom and pan | Brushes | Synced selection | Selected rows | Highlight | Legend toggle | Tooltip and keyboard | Tooltip fields | Value animation |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| line, area, bar | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
+| line, area, bar (including normalized stacks and area stream offsets) | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
 | point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | · | — |
 | rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | — | ✓ | ✓ | ✓ | — |
@@ -2966,8 +3025,9 @@ breaks are left out without splitting the run.
 `renderer: "auto"` moves charts with many drawn points to Canvas. See
 `docs/architecture.md` in the repository for details.
 
-Stacks follow streaming tables: appended rows and rows a rolling window
-drops restack only what they touch (the rows themselves for fields, the
+Input-order ordinary, fill, and centered stacks follow streaming tables:
+appended rows and rows a rolling window drops restack only what they touch
+(the rows themselves for fields, the
 positions they are at for bars of a series field, and for areas of a series
 field the x positions from the earliest one they change), instead of every
 row. Areas of a series field have an edge for every layer at every x any

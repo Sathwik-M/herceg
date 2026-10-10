@@ -6,6 +6,7 @@ import { type Chart as HercegChart, table, time } from "herceg";
 import type { ComponentProps } from "svelte";
 import {
   Area,
+  Bar,
   BoxPlot,
   type Chart,
   Custom,
@@ -27,6 +28,16 @@ declare const p99: Float64Array;
 declare const internals: never;
 
 const metrics = table({ time: time(timestamps), p50, p99, service: ["api", "db"] });
+Area(internals, {
+  data: metrics,
+  x: "time",
+  y: ["p50", "p99"],
+  stack: "wiggle",
+  stackOrder: "inside-out",
+});
+Bar(internals, { data: metrics, x: "time", y: ["p50", "p99"], stack: "fill" });
+// @ts-expect-error bars refuse stream offsets
+Bar(internals, { data: metrics, x: "time", y: "p50", stack: "wiggle" });
 const deploys = table({ at: time([Date.now()]), version: ["v2"] });
 
 Line(internals, { data: metrics, x: "time", y: ["p50", "p99"] });

@@ -176,7 +176,7 @@ function readingsOf(mark: Mark): Reading[] {
 
 /** Whether the mark stacks its values, so they are drawn at the stack's tops. */
 function stacked(mark: Mark): boolean {
-  return (mark.spec as { stack?: boolean }).stack === true;
+  return Boolean((mark.spec as { stack?: boolean | string }).stack);
 }
 
 /**
