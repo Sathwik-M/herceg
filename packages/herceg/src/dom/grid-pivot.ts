@@ -41,7 +41,7 @@ export function createPivotGrid<S extends Schema>(
 ): PivotGrid<S> {
   const model = options.model as unknown as GridModel;
   const headers = new ValueHeaders(container.ownerDocument, model);
-  const grid = new Grid(container, { ...options, model } as GridOptions, headers);
+  const grid = new Grid(container, { ...options, model } as GridOptions, { headers });
   return grid as unknown as PivotGrid<S>;
 }
 

@@ -30,6 +30,18 @@
       "types": "./dist/grid-pivot.d.ts",
       "import": "./dist/grid-pivot.js"
     },
+    "./grid/remote": {
+      "types": "./dist/grid-remote.d.ts",
+      "import": "./dist/grid-remote.js"
+    },
+    "./grid/memory": {
+      "types": "./dist/grid-memory.d.ts",
+      "import": "./dist/grid-memory.js"
+    },
+    "./grid/conformance": {
+      "types": "./dist/grid-conformance.d.ts",
+      "import": "./dist/grid-conformance.js"
+    },
     "./pivot": {
       "types": "./dist/pivot.d.ts",
       "import": "./dist/pivot.js"

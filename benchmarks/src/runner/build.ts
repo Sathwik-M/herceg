@@ -10,6 +10,8 @@ export const HERCEG_ALIAS = {
   herceg: join(ROOT, "..", "packages", "herceg", "src", "index.ts"),
   "herceg/grid": join(ROOT, "..", "packages", "herceg", "src", "grid.ts"),
   "herceg/grid/pivot": join(ROOT, "..", "packages", "herceg", "src", "grid-pivot.ts"),
+  "herceg/grid/remote": join(ROOT, "..", "packages", "herceg", "src", "grid-remote.ts"),
+  "herceg/grid/memory": join(ROOT, "..", "packages", "herceg", "src", "grid-memory.ts"),
   "herceg/pivot": join(ROOT, "..", "packages", "herceg", "src", "pivot.ts"),
   "@herceg/react": join(ROOT, "..", "packages", "react", "src", "index.ts"),
   "@herceg/react/grid": join(ROOT, "..", "packages", "react", "src", "grid.tsx"),

@@ -3,7 +3,8 @@
 // formatted when a cell is drawn, by one Intl formatter per column; no
 // formatted string is kept.
 
-import type { PositionField, Schema, Table } from "../data/table.ts";
+import type { Fields } from "../data/expression.ts";
+import type { PositionField, Schema } from "../data/table.ts";
 import {
   type Formatter,
   type NumberFormat,
@@ -79,8 +80,8 @@ export interface ColumnContent {
   readonly kind: "number" | "time" | "category";
   readonly title: string;
   readonly align: "start" | "center" | "end";
-  /** The cell text of the table's row at `position`. Bound to the table's current arrays. */
-  text(table: Table, position: number): string;
+  /** The cell text of row `position` of a table (or a remote grid's window of rows). */
+  text(fields: Fields, position: number): string;
   /** A value of the column's field as text: a label, a number, or a time; null for missing. */
   format(value: string | number | null): string;
   readonly aggregate: string | undefined;
@@ -115,9 +116,9 @@ const TIME: TimeFormat = {
   hourCycle: "h23",
 };
 
-/** Checks columns against the table, and says what each shows (hidden ones too), by id. */
+/** Checks columns against a table's fields, and says what each shows (hidden ones too), by id. */
 export function describeColumns(
-  table: Table,
+  table: Pick<Fields, "has" | "kind">,
   columns: readonly GridColumn[],
   settings: FormatSettings,
 ): Map<string, ColumnContent> {
@@ -214,7 +215,7 @@ function reader(
   kind: "number" | "time" | "category",
   format: (value: string | number | null) => string,
   missing: string,
-): (table: Table, position: number) => string {
+): (table: Fields, position: number) => string {
   if (kind === "category") {
     return (table, position) => {
       const { codes, dictionary } = table.categories(field);

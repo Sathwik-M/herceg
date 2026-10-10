@@ -63,12 +63,18 @@ type VisibilityListener = (visible: boolean) => void;
 let observer: IntersectionObserver | undefined;
 const listeners = new Map<Element, VisibilityListener>();
 
+/**
+ * The observer's callback, made outside `observeVisibility`: made in it, it
+ * would keep the first element and listener observed alive with the page.
+ */
+function intersected(entries: IntersectionObserverEntry[]) {
+  for (const entry of entries) listeners.get(entry.target)?.(entry.isIntersecting);
+}
+
 /** Reports when `element` enters or leaves the viewport. Returns a stop function. */
 export function observeVisibility(element: Element, listener: VisibilityListener): () => void {
   if (typeof IntersectionObserver === "undefined") return () => {};
-  observer ??= new IntersectionObserver((entries) => {
-    for (const entry of entries) listeners.get(entry.target)?.(entry.isIntersecting);
-  });
+  observer ??= new IntersectionObserver(intersected);
   listeners.set(element, listener);
   observer.observe(element);
   return () => {
