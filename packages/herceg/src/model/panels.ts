@@ -21,6 +21,7 @@ import {
   type DescribeAnnotation,
   groups,
   type LayoutOptions,
+  leastHeight,
   lowestWithAxes,
   onAxis,
   type PanelAxis,
@@ -141,12 +142,9 @@ export class Panels implements PanelLayout {
   /**
    * Rejects marks that name no panel or an unknown one, marks sharing a
    * panel with a layout mark, which has it to itself, and what panels with
-   * axes of their own cannot do yet: zooming or brushing along y, and a
-   * navigator.
+   * axes of their own cannot do yet: zooming or brushing along y.
    */
   check(marks: readonly Mark[], options: LayoutOptions, layouts: readonly LayoutMark[] = []): void {
-    if (options.navigator)
-      throw new Error("navigator: charts with panels have none yet; drop navigator or panels");
     const ids = new Set(this.list.map(({ id }) => id));
     const unknown = (type: string, panel: string) =>
       new Error(
@@ -301,17 +299,20 @@ export class Panels implements PanelLayout {
   }
 
   grid(split: PanelSplit, lineHeight: number): PanelGrid {
-    const columns = Math.min(this.columns, this.list.length);
+    const { length } = this.list;
+    const columns = Math.min(this.columns, length);
+    const rows = Math.ceil(length / columns);
     const titled = this.list.some(({ title }) => title);
     return {
       ...lowestWithAxes(split, columns),
       columns,
-      rows: Math.ceil(this.list.length / columns),
+      rows,
       header: titled ? lineHeight + 4 : 0,
       columnHeader: 0,
       rowHeader: 0,
       rowWeights: this.rowHeights,
       columnWeights: this.columnWidths,
+      least: leastHeight(rows, this.rowHeights, length),
     };
   }
 

@@ -92,7 +92,7 @@ export type ChartConfig = Omit<
   facet?: Facet | undefined;
   /** Subplots: panels drawing the marks that name them (see `panels`). */
   panels?: Panels | undefined;
-  /** A strip under the plot to see and move the x range by (see `rangeNavigator`). */
+  /** A strip under the plots to see and move the x range by (see `rangeNavigator`). */
   navigator?: Navigator | undefined;
   /** Channels of selection stores the chart writes rows to and highlights (see `rowSelection`). */
   rowSelection?: RowSelection | undefined;
@@ -944,16 +944,17 @@ export class ChartModel {
     const xLabels = TICK + GAP + tickLabelGap(theme.fontSize) - tickLabelGap(0);
     // Each x scale's title goes once, under its lowest labels (see xTitleOf).
     const xTitle = xContexts.some(({ spec }) => spec?.title) ? lineHeight + GAP : 0;
-    // A navigator's strip goes under the x axis, when there is room for it.
-    const navigator = config.navigator;
     const below = showX ? xLabels + lineHeight + xTitle + 2 : 4;
-    const strip = navigator ? navigator.room(height - top - below) : 0;
-    const bottom = below + strip;
     // Rows of panels leave room between them for what goes there (see `PanelLayout.rowGap`).
     const space = { xBetween, ownX: xGroups !== undefined, showX, xLabels, lineHeight, xTitle };
     const rowGap = layout ? layout.rowGap(grid, panelCount, space) : 0;
-    // Rows share the height left for plots equally, or by the grid's weights.
-    const free = height - top - bottom - columnHeader - (rows - 1) * rowGap - rows * header;
+    // Rows share the height left for plots equally, or by the grid's
+    // weights, and a navigator's strip goes under the x axis when they
+    // leave room for it.
+    let free = height - top - below - columnHeader - (rows - 1) * rowGap - rows * header;
+    const navigator = config.navigator;
+    const strip = navigator ? navigator.room(free, grid.least) : 0;
+    free -= strip;
     const heights = layout
       ? layout.tracks(free, rows, grid.rowWeights, panelCount, columns, this)
       : [free];
@@ -1583,9 +1584,7 @@ export class ChartModel {
     this.#namesPanels = layout !== undefined;
     this.#drawn = marks;
     this.#base = base;
-    // Charts with a navigator have one panel.
-    if (strip)
-      panels.push(navigator!.panel(this, views[0]!.inspector, planX, xContexts[0]!, strip));
+    if (strip) panels.push(navigator!.panel(this, views, planX, xContexts[0]!, strip));
 
     let vertices = 0;
     for (const panel of panels) for (const item of panel.marks) vertices += item.draw.size(item);
@@ -2053,14 +2052,12 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
     const named = config.marks.find((mark) => mark.spec.panel !== undefined);
     if (named) throw new Error(`${named.spec.type} panel: the chart has no panels; drop it`);
   }
-  // Facets and panels check their marks, layout marks too, and refuse navigators.
+  // Facets and panels check their marks, layout marks too; without them,
+  // layout marks have the chart to themselves.
   const panelled = config.facet ?? config.panels;
   if (panelled) panelled.check(marks, config, layouts);
-  else {
-    // Without them, layout marks have the chart to themselves.
-    if (layouts[0]) layouts = layouts[0].views.alone(layouts, marks, config);
-    config.navigator?.check(marks, config);
-  }
+  else if (layouts[0]) layouts = layouts[0].views.alone(layouts, marks, config);
+  config.navigator?.check(marks, config);
   config.rowSelection?.check(config, marks, layouts);
   return [marks, layouts, positions];
 }

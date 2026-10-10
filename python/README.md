@@ -286,10 +286,20 @@ with a window over the x range in view, which dragging and the keyboard move
 and resize. `hg.Navigator(height=48, marks=["close"])` sets its height in
 pixels and the `id`s of the marks it draws. It works in static output too
 (drawn as is) and in live charts, where moving it reports the viewport as
-zooming does; charts with facets or panels cannot have one yet.
+zooming does. With facets or panels, one strip goes under all of them,
+draws every panel's marks (each panel's part apart, over that panel's y
+scale), and moves the x range they share, so the panels must share x
+(`resolve_x="shared"`, the default).
 
 ```python
 hg.line(prices, x="time", y="close", id="close", navigator=hg.Navigator(marks=["close"]))
+
+(
+    hg.Chart(prices, panels=["price", "volume"], navigator=hg.Navigator(marks=["close"]))
+    .line("time", "close", id="close", panel="price")
+    .bar("time", "volume", panel="volume")
+)
+hg.line(sales, x="week", y="units", facet="region", navigator=True)
 ```
 
 Mark methods take column names; `series` names a category column that splits

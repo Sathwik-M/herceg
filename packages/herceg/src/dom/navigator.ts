@@ -35,7 +35,16 @@ type Part = "left" | "window" | "right";
 interface Drag {
   pointer: number;
   part: Part | "select";
+  /** Where the pointer was pressed along the chart, which a move must go a few pixels from. */
+  press: number;
+  /**
+   * Where it holds on along the chart, in pixels of `strip`: where it
+   * started, or after the strip moved under it, the pointer's `last` place
+   * (a selection's start, moved with the strip).
+   */
   x: number;
+  /** Where the pointer was when the drag last moved the window. */
+  last: number;
   strip: DrawnStrip;
   /** The viewport when it started, which Escape goes back to, and the last one it set. */
   from: readonly [number, number] | null;
@@ -134,12 +143,25 @@ export class Sliders {
       return;
     }
     const { plot, shown } = strip;
-    // A strip that moved, resized, turned around, or changed its scale's
-    // type or breaks (the chart did) ends a drag over it: its pixels no
-    // longer mean what they did when it started. Data that only widens the
-    // domain does not.
-    const held = this.#drag?.strip;
-    if (held && !sameRail(held, strip)) this.#end();
+    // Under several panels, it says what it moves.
+    const { length } = strip.panels;
+    this.#attribute(
+      this.#group,
+      "aria-description",
+      length > 1 ? `Shows and moves the x range of all ${length} panels` : null,
+    );
+    // A strip that turned around, or changed its scale's type or breaks
+    // (the chart did), ends a drag over it: its pixels no longer mean what
+    // they did when it started. One that moved or resized (labels that
+    // widen a margin, often under several panels, or a chart resized) takes
+    // the drag on from where the window is, and a selection from the value
+    // it started at. Data that only widens the domain does neither.
+    const drag = this.#drag;
+    if (drag && !sameScale(drag.strip.rail, strip.rail)) this.#end();
+    else if (drag && !sameRect(drag.strip.plot, strip.plot)) {
+      drag.x = drag.part === "select" ? strip.rail.map(drag.strip.rail.invert(drag.x)) : drag.last;
+      drag.strip = strip;
+    }
     this.#style(this.#group, "left", `${plot.x}px`);
     this.#style(this.#group, "top", `${plot.y}px`);
     this.#style(this.#group, "width", `${plot.width}px`);
@@ -172,7 +194,7 @@ export class Sliders {
     };
     const bound = (move: Move, side: 0 | 1) =>
       rangeOf(strip, span, move(span))?.[side] ?? shown[side];
-    const format = (value: number) => this.#format(value);
+    const format = (value: number) => this.#format(value, strip);
     at(startEdge, start, bound(startTo(-Infinity), 0), bound(startTo(Infinity), 0), format(start));
     at(endEdge, end, bound(endTo(-Infinity), 1), bound(endTo(Infinity), 1), format(end));
     // The window's value is its start.
@@ -187,15 +209,16 @@ export class Sliders {
     this.#attribute(endEdge, "aria-label", "End of the shown range");
   }
 
-  #format(value: number): string {
-    return this.#chart.formatValue(value, { axis: "x" }) ?? String(value);
+  /** A value as the x axis of the strip's first panel writes it, which every panel shares. */
+  #format(value: number, strip: DrawnStrip): string {
+    return this.#chart.formatValue(value, { axis: "x", panel: strip.panels[0]! }) ?? String(value);
   }
 
   #announce(): void {
     const strip = this.#strip();
     if (!strip) return;
     const [start, end] = strip.shown;
-    this.#live.textContent = `Showing ${this.#format(start)} to ${this.#format(end)}.`;
+    this.#live.textContent = `Showing ${this.#format(start, strip)} to ${this.#format(end, strip)}.`;
   }
 
   /** Announces where the window is once keys stop moving it. */
@@ -253,10 +276,13 @@ export class Sliders {
         (name) => this.#parts[name] === target,
       );
       const from = this.#chart.getViewport().x;
+      const x = local(event);
       this.#drag = {
         pointer: event.pointerId,
         part: part ?? "select",
-        x: local(event),
+        press: x,
+        x,
+        last: x,
         strip,
         from,
         set: from,
@@ -310,7 +336,7 @@ export class Sliders {
    * listener) since the drag's last one ends the drag rather than undo it.
    */
   #dragTo(drag: Drag, x: number): void {
-    drag.moved ||= Math.abs(x - drag.x) >= DRAG_THRESHOLD;
+    drag.moved ||= Math.abs(x - drag.press) >= DRAG_THRESHOLD;
     if (!drag.moved) return;
     if (!sameRange(this.#chart.getViewport().x, drag.set)) {
       this.#end();
@@ -318,6 +344,8 @@ export class Sliders {
     }
     const range = dragged(drag, x);
     if (!range) return;
+    // Before the window is drawn there, which may move the strip.
+    drag.last = x;
     this.#show(range);
     // Listeners may have ended the drag, removed the navigator, or more.
     if (this.#disposed || this.#drag !== drag) return;
@@ -527,15 +555,9 @@ function dragged(drag: Drag, x: number): [number, number] | undefined {
   return rangeOf(strip, span, move(span));
 }
 
-/** Whether a drag over `held` can go on over `strip`, drawn since. */
-function sameRail(held: DrawnStrip, strip: DrawnStrip): boolean {
-  const [a, b] = [held.rail, strip.rail];
-  return (
-    sameRect(held.plot, strip.plot) &&
-    a.type === b.type &&
-    a.breaks === b.breaks &&
-    rising(a) === rising(b)
-  );
+/** Whether a drag over rail `a` can go on over `b`, drawn since. */
+function sameScale(a: DrawnStrip["rail"], b: DrawnStrip["rail"]): boolean {
+  return a.type === b.type && a.breaks === b.breaks && rising(a) === rising(b);
 }
 
 /** Whether a rail's larger values are to the right, as on unreversed axes. */

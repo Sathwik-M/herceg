@@ -76,8 +76,9 @@ export interface ChartSpec {
    * A range navigator: a strip under the plot drawing the chart's marks
    * over the whole x domain, with a window showing the x range in view,
    * which dragging and the keyboard move and resize. `true` uses the
-   * defaults. Needs a number or time x axis, and a chart without facets or
-   * panels.
+   * defaults. Needs a number or time x axis; with facets or panels, one
+   * strip goes under all of them and moves the x range they share, so
+   * `resolve.x` must be "shared".
    */
   navigator?: boolean | NavigatorSpec;
   /**
@@ -503,15 +504,17 @@ export interface RowSelectionSpec {
 /** The range navigator's options. */
 export interface NavigatorSpec {
   /**
-   * The strip's height in CSS pixels, from 16 up: 40 by default, and at most
-   * a third of the height the plot and the strip share. A chart too short to
-   * leave its plot 30 pixels beside the strip has none.
+   * The strip's height in CSS pixels, from 16 up: 40 by default, at most a
+   * third of the height the plots and the strip share, and less where the
+   * plots would keep less than 30 pixels (or a row of several panels less
+   * than 20). A chart too short for a 16-pixel strip beside them has none.
    */
   height?: number;
   /**
-   * The `id`s of the marks the strip draws, in the chart's order; by default
-   * every line, area, point, vertical bar, and candlestick mark. An empty
-   * list draws none: the strip has its axis and window only.
+   * The `id`s of the marks the strip draws, in the chart's order, whichever
+   * panels draw them; by default every line, area, point, vertical bar, and
+   * candlestick mark. An empty list draws none: the strip has its axis and
+   * window only.
    */
   marks?: readonly string[];
 }

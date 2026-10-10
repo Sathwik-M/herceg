@@ -1765,22 +1765,63 @@ reaching past the data widens the strip to hold it. While data streams, an
 x range set with the navigator stays put, as any set x range does, and the
 strip grows with the data; with x not zoomed, the window spans everything.
 A drag holds on to the strip it started on, so the window moves with the
-pointer as data arrives, and lets go if something else changes the view.
+pointer as data arrives, and lets go if something else changes the view;
+if the strip moves or resizes under it (labels that widen a margin, a
+resized chart), the drag goes on from where the window is.
 
 The strip is 40 pixels tall by default (`height`, at least 16 and at most a
-third of the height the plot and the strip share; a chart too short to
-leave its plot 30 pixels beside the strip has none), under the x axis and
-its title, across the
-plot's width, with the strip's own ticks as grid lines and their labels
-inside it. It draws the marks named in `marks` by `id`, or by default every
-line, area, point, vertical bar, and candlestick mark (never annotations):
-lines and areas reduced to a few points per pixel column, as the plot
-reduces them, bars and candlesticks as the plot draws them, and points as a
-sample of one per pixel of the strip, all in their series' colors over the
-data's whole y range (or the y axis' `domain`). It follows the x axis'
-breaks. Charts with facets or panels, layout marks (pies, maps, 3D
-charts), category x axes, or marks placed along y (horizontal bars) cannot
-have one yet.
+third of the height the plots and the strip share, and shorter where that
+would leave the plots less than 30 pixels, or a row of several panels less
+than 20; a chart too short for a 16-pixel strip beside them has none),
+under the x axis and its title, across the plots' width, with the strip's
+own ticks as grid lines and their labels inside it. It draws the marks
+named in `marks` by `id`, or by default every line, area, point, vertical
+bar, and candlestick mark (never annotations): lines and areas reduced to a
+few points per pixel column, as the plot reduces them, bars and
+candlesticks as the plot draws them, and points as a sample of one per
+pixel of the strip, all in their series' colors over the data's whole y
+range (or the y axis' `domain`). It follows the x axis' breaks. Charts with
+layout marks (pies, maps, 3D charts), category x axes, or marks placed
+along y (horizontal bars) cannot have one yet.
+
+With facets or subplots, a chart still has one strip and one window, which
+show and move the x range every panel shares:
+
+```ts
+import { bar, candlestick, createChart, panels, rangeNavigator } from "herceg";
+
+createChart(element, {
+  marks: [
+    candlestick(prices, {
+      x: "time", open: "open", high: "high", low: "low", close: "close", id: "price", panel: "price",
+    }),
+    bar(prices, { x: "time", y: "volume", panel: "volume" }),
+  ],
+  panels: panels([{ id: "price" }, { id: "volume" }], { rowHeights: [3, 1] }),
+  navigator: rangeNavigator({ marks: ["price"] }),
+});
+```
+
+The strip goes under all the panels, below the bottom x labels and the x
+title, from the left edge of the leftmost plot to the right edge of the
+rightmost (across the gaps between columns, whatever their widths, and
+short of right axes and a grid's row headers), with an x axis of its own
+over the panels' unzoomed x domain. It draws the marks of every panel:
+`marks` names them by `id`, wherever they draw. Each panel's part of a mark
+is drawn apart, so a facet's series never join from one panel to the next,
+and over the y scale the panel has: panels that share y (a facet's default)
+stay comparable in the strip, while panels with y scales of their own (a
+price panel over a volume panel) each fill it on their own scale, the right
+axis apart from the left. A mark drawn whole in several panels sharing a y
+scale (`facet: "repeat"`, `panel: "*"`) is drawn once. The panels must
+share x: `resolve.x` other than `"shared"` is refused, as one window shows
+one x range. Wheel zoom and panning in any panel move the window, and its
+changes are one `viewport` event each (without `panels`, as for any change
+to a shared x), synced with other charts by x value whatever their panels.
+For assistive technology, the sliders say they move the x range of every
+panel. Bars are drawn one rectangle each in the strip, as in the plot, so
+a volume panel of many bars costs the strip as much as an unzoomed plot of
+them; naming the other marks in `marks` leaves them out.
 
 For the keyboard, the window's left edge, the window, and its right edge
 are sliders, in that order in the tab sequence after the legend, named as
@@ -1795,9 +1836,9 @@ Escape takes a drag back to where it started, or shows all of x.
 The sliders' values read as the x axis' tooltips write them, and where the
 window ends up is announced politely. Static SVG, PDF, and PNG show the
 strip and the window, without the sliders. The strip's model code comes with
-`rangeNavigator` (about 3.8 KiB gzip); the sliders load the first time a
-chart has a navigator (about 2.9 KiB gzip). In a spec, `navigator` is
-`true` or `{ height?, marks? }`.
+`rangeNavigator` (about 4.3 KiB gzip); the sliders load the first time a
+chart has a navigator (about 3.0 KiB gzip). In a spec, `navigator` is
+`true` or `{ height?, marks? }`, with facets and panels as without.
 
 ### Small multiples
 
@@ -1873,7 +1914,8 @@ panels differ. Charts whose panels have
 y scales of their own cannot zoom along y or take y ranges in
 `setViewport` yet. Pointer, brush, and zoom work in any panel and act on
 its x scale; the arrow keys step through a panel and Up and Down move
-between its series and on to the next panel. Stacked bars and areas stack within each
+between its series and on to the next panel. A range navigator goes under
+all the panels when they share x (see [Range navigator](#range-navigator)). Stacked bars and areas stack within each
 panel (areas of a series field on the x positions of that panel's rows), and each panel's heatmap cell shows the last of that panel's rows
 with a value there; a heatmap's colors follow one scale in every panel,
 over all its table's values. Histograms count, and box plots and violins
@@ -1989,7 +2031,9 @@ createChart(element, {
 Marks keep their place in the chart's list as their identity, so colors,
 the legend, and hidden series do not depend on the panel a mark draws in. Inspections report the `panel`
 id. A panel's `yRight` sets its right axis (see [A second y
-axis](#a-second-y-axis)), and zooming and brushing act on x only.
+axis](#a-second-y-axis)), and zooming and brushing act on x only. A range
+navigator goes under all the panels and moves the x range they share (see
+[Range navigator](#range-navigator)).
 
 ### Layout marks in panels
 
@@ -2110,7 +2154,7 @@ is internal, and charts take only marks the mark functions make.
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
 | `resolve` | `{ x?, y?, yRight? }`, each `"shared" \| "independent" \| "rows" \| "columns"`: which panels share an x, y, or right y scale (`yRight` as `y` unless given; see Small multiples, Subplots, and A second y axis). |
 | `panels` | `panels([{ id, title?, x?, y? }, ...], { columns?, rowHeights?, columnWidths? })`: subplots whose marks name them in `panel` (see Subplots). |
-| `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
+| `navigator` | `rangeNavigator({ height?, marks? })`: a strip under the plot (under every panel, with facets or subplots) over the whole x axis, whose window shows and moves the x range in view (see Range navigator). |
 | `legend` | Shown by default for two or more series; legend entries toggle series. |
 | `tooltip` | `true` (default), `false`, or `{ mode?: "nearest-x" \| "nearest-y" \| "nearest", axisLabels?: true }`; `axisLabels` labels the crosshair on the axes. |
 | `interaction` | `zoom`: `true` or `"x"`, `"y"`, or `"xy"` for wheel zoom and drag pan along those axes (category axes do not zoom); maps pan and zoom both ways (`true` or `"xy"`), and treemaps and sunbursts drill into nodes (`true`). `drag: true` moves a network's nodes. `brush`: `"x"` or `"y"` to select a range by dragging, `"xy"` a rectangle, `"lasso"` a freehand region; along zoomed axes, a brush zooms instead (Shift-drag pans; lassos never zoom), unless it selects rows for `rowSelection`. `sync: "name"` shares cursor, x range, and selection with other charts; selections travel as data values (category indices on category axes), so charts sharing them should have the same axis types and category order. `rotate: false` stops dragging from turning 3D charts, whose `zoom` is `true` or `false`. Maps take a `"lasso"` brush and no other. |

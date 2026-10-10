@@ -5,9 +5,11 @@ import { cdp } from "vitest/browser";
 import { time } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
+import { area } from "../../src/marks/area.ts";
 import { line } from "../../src/marks/line.ts";
 import { facet } from "../../src/model/facet.ts";
 import { rangeNavigator } from "../../src/model/navigator.ts";
+import { panels } from "../../src/model/panels.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import { accessibilityTree as treeUnder } from "./helpers.ts";
 
@@ -614,7 +616,7 @@ describe("a navigator's sliders", () => {
     expect(chart.getViewport().x![0]).toBe(begun);
   });
 
-  it("let go of a drag when the chart resizes under it", async () => {
+  it("take a drag on from where the window is when the strip resizes under it", async () => {
     const chart = await mount();
     chart.setViewport([100, 300]);
     chart.render();
@@ -622,13 +624,50 @@ describe("a navigator's sliders", () => {
     const y = stripBox(chart).y + stripBox(chart).height / 2;
     const target = sliders(chart)[1]!;
     pointer(chart, target, "pointerdown", at(200), y);
-    pointer(chart, target, "pointermove", at(250), y);
-    const held = chart.getViewport().x;
+    const moved = at(250);
+    pointer(chart, target, "pointermove", moved, y);
+    expect(chart.getViewport().x![0]).toBeCloseTo(150, 0);
     chart.update({ width: 400 });
     chart.render();
-    pointer(chart, target, "pointermove", at(400), y);
-    pointer(chart, target, "pointerup", at(400), y);
-    expect(chart.getViewport().x).toEqual(held);
+    // The window moves as far as the pointer does from there, in the
+    // narrower strip's pixels.
+    pointer(chart, target, "pointermove", moved + 40, y);
+    pointer(chart, target, "pointerup", moved + 40, y);
+    const [x0, x1] = chart.getViewport().x!;
+    expect(x0).toBeCloseTo(150 + 40 / perUnit(chart), 0);
+    expect(x1 - x0).toBeCloseTo(200, 0);
+  });
+
+  it("take no stationary press for a drag when the strip resizes under it", async () => {
+    const chart = await mount();
+    chart.setViewport([100, 200]);
+    chart.render();
+    const at = (value: number) => stripBox(chart).x + value * perUnit(chart);
+    const y = stripBox(chart).y + stripBox(chart).height / 2;
+    const press = at(600);
+    pointer(chart, group(chart), "pointerdown", press, y);
+    chart.update({ width: 400 });
+    chart.render();
+    pointer(chart, group(chart), "pointermove", press, y);
+    pointer(chart, group(chart), "pointerup", press, y);
+    expect(chart.getViewport().x).toEqual([100, 200]);
+  });
+
+  it("take a selection on from the value it started at when the strip resizes under it", async () => {
+    const chart = await mount();
+    chart.setViewport([100, 200]);
+    chart.render();
+    const at = (value: number) => stripBox(chart).x + value * perUnit(chart);
+    const y = stripBox(chart).y + stripBox(chart).height / 2;
+    pointer(chart, group(chart), "pointerdown", at(600), y);
+    pointer(chart, group(chart), "pointermove", at(700), y);
+    chart.update({ width: 400 });
+    chart.render();
+    pointer(chart, group(chart), "pointermove", at(800), y);
+    pointer(chart, group(chart), "pointerup", at(800), y);
+    const [x0, x1] = chart.getViewport().x!;
+    expect(x0).toBeCloseTo(600, 0);
+    expect(x1).toBeCloseTo(800, 0);
   });
 
   it("let go of a drag when the axis turns around under it", async () => {
@@ -866,6 +905,135 @@ describe("a navigator's sliders", () => {
     chart.destroy();
     await loading;
     expect(host.children).toHaveLength(0);
+  });
+});
+
+describe("a navigator under panels", () => {
+  /** A price line over a volume area, in two subplots, along x from 0 to 1000. */
+  function prices() {
+    return table({
+      t: Float64Array.from({ length: 1001 }, (_, i) => i),
+      close: Float64Array.from({ length: 1001 }, (_, i) => 100 + Math.sin(i / 20) * 5),
+      volume: Float64Array.from({ length: 1001 }, (_, i) => 1e6 + (i % 7) * 1e5),
+    });
+  }
+  function subplots(options: Partial<ChartOptions> = {}, into = host): Promise<Chart> {
+    const data = prices();
+    return mount(
+      {
+        marks: [
+          line(data, { x: "t", y: "close", panel: "price" }),
+          area(data, { x: "t", y: "volume", panel: "volume" }),
+        ],
+        panels: panels([{ id: "price" }, { id: "volume" }]),
+        ...options,
+      },
+      into,
+    );
+  }
+
+  it("cover the strip under every panel, and move the x range they share, once a move", async () => {
+    const chart = await subplots();
+    const strip = stripBox(chart);
+    const [price, volume] = chart.getPanels();
+    expect(strip.x).toBe(price!.plot.x);
+    expect(strip.width).toBe(price!.plot.width);
+    expect(strip.y).toBeGreaterThan(volume!.plot.y + volume!.plot.height);
+    expect(group(chart).getAttribute("aria-description")).toBe(
+      "Shows and moves the x range of all 2 panels",
+    );
+    chart.setViewport([100, 300]);
+    await frame();
+    const views: object[] = [];
+    chart.on("viewport", (view) => views.push(view));
+    const at = (value: number) => strip.x + value * perUnit(chart);
+    drag(chart, sliders(chart)[1]!, at(200), at(400));
+    // One event a move, for every panel: it names none.
+    expect(views).toHaveLength(2);
+    for (const view of views) expect(view).not.toHaveProperty("panels");
+    chart.render();
+    for (const { x } of chart.getPanels()) {
+      expect(x!.domain[0]).toBeCloseTo(300, 0);
+      expect(x!.domain[1]).toBeCloseTo(500, 0);
+    }
+  });
+
+  it("follow the wheel in any panel", async () => {
+    const chart = await subplots({ interaction: { zoom: true } });
+    const { plot } = chart.getPanels()[1]!;
+    const rect = chart.root.getBoundingClientRect();
+    chart.root.dispatchEvent(
+      new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: -200,
+        clientX: rect.left + plot.x + plot.width / 4,
+        clientY: rect.top + plot.y + plot.height / 2,
+      }),
+    );
+    await frame();
+    const [x0, x1] = chart.getViewport().x!;
+    expect(x1 - x0).toBeLessThan(1000);
+    expect(Number(sliders(chart)[0]!.getAttribute("aria-valuenow"))).toBeCloseTo(x0, 6);
+    expect(Number(sliders(chart)[2]!.getAttribute("aria-valuenow"))).toBeCloseTo(x1, 6);
+  });
+
+  it("sync by x values with a chart of one panel", async () => {
+    const other = document.createElement("div");
+    other.style.cssText = "width:400px;height:320px";
+    document.body.append(other);
+    try {
+      const a = await subplots({ interaction: { sync: "panels" } });
+      const b = await mount({ interaction: { sync: "panels" } }, other);
+      const strip = stripBox(a);
+      const at = (value: number) => strip.x + value * perUnit(a);
+      a.setViewport([100, 300]);
+      await frame();
+      drag(a, sliders(a)[1]!, at(200), at(500));
+      expect(b.getViewport().x![0]).toBeCloseTo(400, 0);
+      expect(b.getViewport().x![1]).toBeCloseTo(600, 0);
+      await frame();
+      expect(Number(sliders(b)[0]!.getAttribute("aria-valuenow"))).toBeCloseTo(400, 0);
+    } finally {
+      other.remove();
+    }
+  });
+
+  it("move every facet panel's x range by the keys, and say so", async () => {
+    const n = 1001;
+    const data = table({
+      t: Float64Array.from({ length: n }, (_, i) => i),
+      v: Float64Array.from({ length: n }, (_, i) => Math.sin(i / 20)),
+      k: Array.from({ length: n }, (_, i) => ["north", "south", "east"][i % 3]!),
+    });
+    const chart = await mount({ marks: [line(data, { x: "t", y: "v" })], facet: facet("k") });
+    const views = chart.getPanels();
+    expect(views).toHaveLength(3);
+    const strip = stripBox(chart);
+    // Two columns, the second row's short of one.
+    expect(strip.x).toBe(views[2]!.plot.x);
+    expect(strip.x + strip.width).toBe(views[1]!.plot.x + views[1]!.plot.width);
+    expect(group(chart).getAttribute("aria-description")).toBe(
+      "Shows and moves the x range of all 3 panels",
+    );
+    chart.setViewport([400, 600]);
+    await frame();
+    key(sliders(chart)[1]!, "PageUp");
+    chart.render();
+    for (const { x } of chart.getPanels()) {
+      expect(x!.domain[0]).toBeCloseTo(500, 0);
+      expect(x!.domain[1]).toBeCloseTo(700, 0);
+    }
+    // One group of three sliders for the chart, as in a chart of one panel.
+    expect(chart.root.querySelectorAll('[aria-label="Range navigator"]')).toHaveLength(1);
+    expect(sliders(chart)).toHaveLength(3);
+  });
+
+  it("refuse panels x scales of their own as the chart updates", async () => {
+    const chart = await subplots();
+    expect(() => chart.update({ resolve: { x: "independent" } })).toThrow(
+      'navigator: needs one x scale shared by every panel, and resolve.x is "independent"',
+    );
   });
 });
 

@@ -39,6 +39,8 @@ export interface PanelGrid {
   lowest?: readonly boolean[] | undefined;
   /** Whether those labels go between rows, above panels drawing layout marks. */
   between?: boolean | undefined;
+  /** The least height the rows share (see `leastHeight`), which a navigator's strip leaves them. */
+  least?: number | undefined;
 }
 
 /** The panels of a scene: their keys, each one's marks and series, and every mark's across panels. */
@@ -153,10 +155,42 @@ export function checkFit(
 }
 
 /**
+ * The shares of `count` rows or columns, equal or by `weights` (scaled to
+ * the largest first, so huge ones cannot overflow), and their sum.
+ */
+function sharesOf(
+  count: number,
+  weights: readonly number[] | undefined,
+): { shares: number[]; total: number } {
+  const largest = weights ? Math.max(...weights) : 1;
+  const shares = Array.from({ length: count }, (_, k) => (weights ? weights[k]! / largest : 1));
+  let total = 0;
+  for (const share of shares) total += share;
+  return { shares, total };
+}
+
+/**
+ * The least whole height `rows` of `panels`, equal or weighted by
+ * `weights`, share without `trackSizes` refusing them: each row of several
+ * panels MIN_PANEL pixels tall at least.
+ */
+export function leastHeight(
+  rows: number,
+  weights: readonly number[] | undefined,
+  panels: number,
+): number {
+  if (panels <= 1) return 0;
+  const { shares, total } = sharesOf(rows, weights);
+  const smallest = Math.min(...shares);
+  const least = Math.ceil((MIN_PANEL * total) / smallest);
+  // A hair more where trackSizes, dividing it again, rounds under.
+  return (least * smallest) / total < MIN_PANEL ? Math.ceil(least * (1 + 1e-9)) : least;
+}
+
+/**
  * `free` pixels shared by `count` rows or columns of `panels` in rows of
- * `columns`, equally or by `weights` (scaled to the largest first, so huge
- * ones cannot overflow); throws when one of several panels would be less
- * than MIN_PANEL pixels a side.
+ * `columns`, equally or by `weights` (see `sharesOf`); throws when one of
+ * several panels would be less than MIN_PANEL pixels a side.
  */
 export function trackSizes(
   free: number,
@@ -167,11 +201,8 @@ export function trackSizes(
   room: PanelRoom,
   remedy: string,
 ): number[] {
-  const largest = weights ? Math.max(...weights) : 1;
-  const share = (k: number) => (weights ? weights[k]! / largest : 1);
-  let total = 0;
-  for (let k = 0; k < count; k++) total += share(k);
-  const sizes = Array.from({ length: count }, (_, k) => (free * share(k)) / total);
+  const { shares, total } = sharesOf(count, weights);
+  const sizes = shares.map((share) => (free * share) / total);
   if (panels > 1 && Math.min(...sizes) < MIN_PANEL) throw tooSmall(panels, columns, room, remedy);
   return sizes;
 }
@@ -179,8 +210,6 @@ export function trackSizes(
 /** The chart options a layout checks; the x axis as panels read it, breaks aside. */
 export type LayoutOptions = Pick<ChartSpec, "resolve" | "interaction" | "y" | "yRight"> & {
   x?: (AxisSpec & Pick<XAxisSpec, "seams">) | undefined;
-  /** Layouts refuse a navigator, which the model then need not check. */
-  navigator?: object | boolean | undefined;
 };
 
 /**
