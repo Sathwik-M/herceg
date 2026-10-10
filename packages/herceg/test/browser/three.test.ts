@@ -9,7 +9,7 @@ import { point3d } from "../../src/marks/point3d.ts";
 import { surface } from "../../src/marks/surface.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { Camera } from "../../src/three/camera.ts";
-import { modelOf } from "./helpers.ts";
+import { MOUSE, modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -56,7 +56,7 @@ function at(chart: Chart, type: string, x: number, y: number, init: PointerEvent
     new PointerEvent(type, {
       bubbles: true,
       button: 0,
-      pointerId: 1,
+      pointerId: MOUSE,
       clientX: rect.left + x,
       clientY: rect.top + y,
       ...init,
@@ -294,16 +294,16 @@ describe("3D charts", () => {
     const start = chart.camera!;
     let clicks = 0;
     chart.on("click", () => clicks++);
-    at(chart, "pointerdown", 250, 200, { pointerId: 1 });
+    at(chart, "pointerdown", 250, 200, { pointerId: MOUSE });
     at(chart, "pointerdown", 100, 100, { pointerId: 2 });
     at(chart, "pointermove", 110, 100, { pointerId: 2 });
     expect(chart.camera).toEqual(start);
-    at(chart, "pointermove", 270, 200, { pointerId: 1 });
+    at(chart, "pointermove", 270, 200, { pointerId: MOUSE });
     expect(chart.camera!.azimuth).toBeCloseTo(start.azimuth - 8);
     // A second pointer pressed and released during the drag clicks nothing.
     at(chart, "pointerdown", 100, 100, { pointerId: 3 });
     at(chart, "pointerup", 100, 100, { pointerId: 3 });
-    at(chart, "pointerup", 270, 200, { pointerId: 1 });
+    at(chart, "pointerup", 270, 200, { pointerId: MOUSE });
     expect(clicks).toBe(0);
     const root = chart.root;
     chart.destroy();
@@ -317,8 +317,8 @@ describe("3D charts", () => {
     const chart = await mount();
     let clicks = 0;
     chart.on("click", () => clicks++);
-    at(chart, "pointerdown", 250, 200, { pointerId: 1 });
-    at(chart, "pointermove", 270, 200, { pointerId: 1 });
+    at(chart, "pointerdown", 250, 200, { pointerId: MOUSE });
+    at(chart, "pointermove", 270, 200, { pointerId: MOUSE });
     at(chart, "pointerdown", 100, 100, { pointerId: 2 });
     at(chart, "pointercancel", 100, 100, { pointerId: 2 });
     at(chart, "pointerdown", 100, 100, { pointerId: 3 });
@@ -327,13 +327,13 @@ describe("3D charts", () => {
     at(chart, "pointerleave", 100, 100, { pointerId: 3 });
     at(chart, "pointerdown", 100, 100, { pointerId: 3 });
     at(chart, "pointerup", 100, 100, { pointerId: 3 });
-    at(chart, "pointerup", 270, 200, { pointerId: 1 });
+    at(chart, "pointerup", 270, 200, { pointerId: MOUSE });
     expect(clicks).toBe(0);
     // A press whose pointer the chart loses ends, and the next one clicks.
-    at(chart, "pointerdown", 250, 200, { pointerId: 1 });
-    at(chart, "lostpointercapture", 250, 200, { pointerId: 1 });
-    at(chart, "pointerdown", 250, 200, { pointerId: 1 });
-    at(chart, "pointerup", 250, 200, { pointerId: 1 });
+    at(chart, "pointerdown", 250, 200, { pointerId: MOUSE });
+    at(chart, "lostpointercapture", 250, 200, { pointerId: MOUSE });
+    at(chart, "pointerdown", 250, 200, { pointerId: MOUSE });
+    at(chart, "pointerup", 250, 200, { pointerId: MOUSE });
     expect(clicks).toBe(1);
     chart.destroy();
   });
@@ -430,7 +430,9 @@ describe("3D charts", () => {
     const pixel = canvas
       .getContext("2d")!
       .getImageData(Math.round(first.px * ratio), Math.round(first.py * ratio), 1, 1).data;
-    expect(pixel[3]).toBe(255);
+    // Painted: where four faces meet, Firefox's antialiasing of their edges
+    // leaves the pixel 254 of 255 covered.
+    expect(pixel[3]).toBeGreaterThanOrEqual(254);
     expect(chart.root.querySelector("svg")!.textContent).toContain("z");
     expect(chart.toSVG()).toContain("<path");
     chart.destroy();

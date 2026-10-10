@@ -2,7 +2,7 @@
 // collapsing by pointer and keyboard, selecting groups' rows, sorting
 // groups, and streaming into groups while scrolled.
 import { afterEach, describe, expect, it } from "vitest";
-import { cdp, userEvent } from "vitest/browser";
+import { userEvent } from "vitest/browser";
 import { category } from "../../src/data/column.ts";
 import { count, max, mean, min } from "../../src/data/derive.ts";
 import { groupRows } from "../../src/data/groups.ts";
@@ -10,6 +10,7 @@ import { rowView } from "../../src/data/row-view.ts";
 import { table } from "../../src/data/table.ts";
 import { createGrid } from "../../src/dom/grid.ts";
 import { createGridModel } from "../../src/grid/model.ts";
+import { collectGarbage } from "./helpers.ts";
 
 const hosts: HTMLElement[] = [];
 const grids: { destroy(): void }[] = [];
@@ -267,9 +268,9 @@ describe("grouped grids", () => {
       return { model, ref: new WeakRef(groups) };
     })();
     await frames();
-    await cdp().send("HeapProfiler.collectGarbage");
+    await collectGarbage();
     await frames();
-    await cdp().send("HeapProfiler.collectGarbage");
+    await collectGarbage();
     expect(made.ref.deref()).toBeUndefined();
     expect(removedWhileSelecting.ref.deref()).toBeUndefined();
     t.append({ g: ["c"], v: [3] });

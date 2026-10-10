@@ -15,7 +15,7 @@ import { point } from "../../src/marks/point.ts";
 import { rule } from "../../src/marks/rule.ts";
 import { facet } from "../../src/model/facet.ts";
 import { panels } from "../../src/model/panels.ts";
-import { bandBox, modelOf } from "./helpers.ts";
+import { bandBox, MOUSE, modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -36,7 +36,7 @@ function pointer(target: Element, type: string, x: number, y: number) {
       bubbles: true,
       clientX: rect.left + x,
       clientY: rect.top + y,
-      pointerId: 1,
+      pointerId: MOUSE,
     }),
   );
 }

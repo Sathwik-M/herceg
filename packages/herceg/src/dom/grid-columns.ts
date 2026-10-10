@@ -61,6 +61,8 @@ type Gesture =
       readonly pointerId: number;
       readonly x: number;
       readonly y: number;
+      /** The columns the drag started over: when they change, it is over. */
+      readonly columns: readonly unknown[];
       started: boolean;
       /** Where the column would go if let go now. */
       drop: Drop | null;
@@ -129,9 +131,15 @@ export class ColumnControls<S extends Schema> {
    * menu held, should go back to the grid's focused cell.
    */
   sync(): boolean {
+    const { model } = this.#host;
+    // Columns changed under a header being moved (replaced, say): the drop
+    // it showed means nothing now, so it ends dropping nothing, however soon
+    // the pointer is let go.
+    const gesture = this.#gesture;
+    if (gesture?.kind === "move" && gesture.columns !== model.columns) this.#endGesture(false);
     const open = this.#menu;
     if (!open) return false;
-    const { model, root } = this.#host;
+    const { root } = this.#host;
     if (model.columnIndex(open.id) < 0) {
       const active = (root.getRootNode() as Document | ShadowRoot).activeElement;
       const held = open.menu.element.contains(active);
@@ -442,7 +450,8 @@ export class ColumnControls<S extends Schema> {
       scroller.setPointerCapture(pointerId);
     } else if (event.pointerType !== "touch") {
       // Touches on headers scroll; touch users move columns with the menu.
-      this.#gesture = { kind: "move", id, pointerId, x, y, started: false, drop: null };
+      const { columns } = model;
+      this.#gesture = { kind: "move", id, pointerId, x, y, columns, started: false, drop: null };
     } else return;
     // The pointer may be let go anywhere, over the grid or not.
     const document = this.#host.root.ownerDocument;
@@ -523,8 +532,10 @@ export class ColumnControls<S extends Schema> {
     if (!gesture.started && commit) return;
     this.#dragEnded = true;
     this.#host.invalidate();
-    // The columns may have been replaced while the pointer was down.
+    // The columns may have been replaced while the pointer was down, after
+    // the last draw (which ends a move then; see `sync`).
     if (!gesture.started || !this.#has(gesture.id)) return;
+    if (gesture.kind === "move" && gesture.columns !== model.columns) return;
     if (gesture.kind === "resize" && commit) {
       model.resizeColumn(gesture.id, gesture.wanted);
       this.#sayWidth(gesture.id);

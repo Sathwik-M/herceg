@@ -2190,7 +2190,7 @@ is internal, and charts take only marks the mark functions make.
 | --- | --- |
 | `marks` | Marks to draw, bottom to top (rules are drawn on top). |
 | `title`, `description` | Accessible name and description; the title is drawn. |
-| `width`, `height` | Fixed size; omitted dimensions follow the container. |
+| `width`, `height` | Fixed size; omitted dimensions follow the container (a block one in Firefox, where a chart in a `<span>` keeps its first width). |
 | `x`, `y` | Scale and axis: `type` (`linear`, `log`, `time`), `domain`, `nice`, `zero`, `title`, `grid`, `ticks`, `format` (Intl options), `show`; on a time x axis, `breaks: timeBreaks([...])` and `seams: true` or `{ minSpacing?: number }` (see Financial charts). |
 | `yRight` | The right y axis for marks with `axis: "right"`, with the same options as `y`. |
 | `facet` | `facet(field, { columns? })`: a panel per value of a category field, wrapped; or `facet({ row?, column? })`: a grid by two fields (see Small multiples). |
@@ -2554,6 +2554,11 @@ turns a 3D chart, pans a map or network, or moves a network's node, plus and min
 zoom, and 0 resets; Enter and Backspace drill into a tree and out, whose
 path is a navigation landmark of buttons. The chart's description names
 these keys, and each change is announced.
+
+Tests check this in Chrome, Firefox, and WebKit: automated audits (axe-core)
+of every chart family and of grids, and the accessibility tree each engine
+gives screen readers, read through its own protocol. Screen readers
+themselves have not been tried yet.
 
 PDF exports are tagged with one Figure for the chart, including facets and
 subplots. Its alternative text combines the title and the same generated
@@ -2956,7 +2961,8 @@ are (`model.selectionState(i)`), and Shift ranges take whole groups whose
 headers they cover. Rows appended to a group later are not selected. When a
 group collapses around the focused cell, the focus goes to its header.
 Grouped grids are WAI tree grids: rows say their level, their place among
-their siblings, and whether they are expanded. Since the focus is always on
+their siblings, and whether they are expanded (except in Firefox, which drops
+levels and places of rows in grids that number their rows, as these must). Since the focus is always on
 a cell, a row's first cell stands for the row, as the pattern's focused rows
 do: there Right expands a group, Left collapses it, and Left on a collapsed
 group or a group's row goes to the group holding it (elsewhere the arrows

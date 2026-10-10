@@ -4,7 +4,7 @@
 
 import axe from "axe-core";
 import { afterEach, describe, expect, it } from "vitest";
-import { cdp, userEvent } from "vitest/browser";
+import { userEvent } from "vitest/browser";
 import { category } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { createRemoteGrid, type RemoteGrid } from "../../src/dom/grid-remote.ts";
@@ -17,6 +17,7 @@ import {
   type RowsRequest,
   type RowsWindow,
 } from "../../src/grid/source.ts";
+import { collectGarbage } from "./helpers.ts";
 
 const COMMAND = navigator.platform.startsWith("Mac") ? "Meta" : "Control";
 const HOSTS = ["web", "api", "db"];
@@ -376,9 +377,11 @@ describe("remote grids in the browser", () => {
       host.remove();
       return { grid: new WeakRef(grid), model: new WeakRef(model) };
     })();
-    for (let i = 0; i < 5 && (refs.grid.deref() || refs.model.deref()); i++) {
+    // Read only after: `deref` keeps what it returns until the page's task
+    // ends, which in Firefox, and in WebKit at times, outlasts a collection.
+    for (let i = 0; i < 3; i++) {
       await frame();
-      await cdp().send("HeapProfiler.collectGarbage");
+      await collectGarbage();
     }
     expect([refs.grid.deref(), refs.model.deref()]).toEqual([undefined, undefined]);
   });
@@ -396,9 +399,10 @@ describe("remote grids in the browser", () => {
       await until(() => model.row(0).kind === "row");
       return new WeakRef(model);
     })();
-    for (let i = 0; i < 5 && ref.deref(); i++) {
+    // Read only after collecting; see the test above.
+    for (let i = 0; i < 3; i++) {
       await frame();
-      await cdp().send("HeapProfiler.collectGarbage");
+      await collectGarbage();
     }
     // The store it listened to stays, and holds it no longer.
     expect(store.revision).toBe(0);

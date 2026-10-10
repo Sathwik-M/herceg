@@ -14,7 +14,7 @@ import { panels } from "../../src/model/panels.ts";
 import { paintCanvas } from "../../src/render/canvas.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import type { SegmentGeometry } from "../../src/scene/scene.ts";
-import { modelOf } from "./helpers.ts";
+import { MOUSE, modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -48,7 +48,7 @@ function pointer(target: Element, type: string, x: number, y: number, shiftKey =
       clientX: rect.left + x,
       clientY: rect.top + y,
       shiftKey,
-      pointerId: 1,
+      pointerId: MOUSE,
     }),
   );
 }

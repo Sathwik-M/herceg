@@ -3,7 +3,7 @@
 // keyboard, layout kept by column id as values stream in, and the notice of
 // a pivot that stopped at a limit.
 import { afterEach, describe, expect, it } from "vitest";
-import { cdp, userEvent } from "vitest/browser";
+import { userEvent } from "vitest/browser";
 import { category } from "../../src/data/column.ts";
 import { count, mean } from "../../src/data/derive.ts";
 import type { NamedAggregate } from "../../src/data/groups.ts";
@@ -12,6 +12,7 @@ import { rowView } from "../../src/data/row-view.ts";
 import { type Table, table } from "../../src/data/table.ts";
 import { createPivotGrid } from "../../src/dom/grid-pivot.ts";
 import { createPivotGridModel } from "../../src/grid/pivot.ts";
+import { collectGarbage } from "./helpers.ts";
 
 const hosts: HTMLElement[] = [];
 const grids: { destroy(): void }[] = [];
@@ -198,10 +199,13 @@ describe("pivot grids", () => {
       grids.splice(grids.indexOf(grid), 1);
       return [new WeakRef(t), new WeakRef(pivot), new WeakRef(model)];
     })();
-    // The view and groups let go of the table from finalizers, which run after a collection.
-    for (let round = 0; round < 5 && made.some((ref) => ref.deref()); round++) {
+    // The view and groups let go of the table from finalizers, which run
+    // after a collection. The refs are read only after: `deref` keeps what
+    // it returns until the page's task ends, which in Firefox, and in WebKit
+    // at times, outlasts a collection.
+    for (let round = 0; round < 4; round++) {
       await frame();
-      await cdp().send("HeapProfiler.collectGarbage");
+      await collectGarbage();
     }
     expect(made.map((ref) => ref.deref() === undefined)).toEqual([true, true, true]);
   });
@@ -233,9 +237,9 @@ describe("pivot grids", () => {
     const old = fields.map((field) => new WeakRef(t.numbers(field).buffer));
     t.reset({ region: [0], key: [0], ...columns(1) } as never);
     pivot.read();
-    for (let round = 0; round < 5 && old.some((ref) => ref.deref()); round++) {
+    for (let round = 0; round < 4; round++) {
       await frame();
-      await cdp().send("HeapProfiler.collectGarbage");
+      await collectGarbage();
     }
     expect(old.map((ref) => ref.deref() === undefined)).toEqual([true, true, true, true]);
     expect(pivot.read().rowCount).toBe(1);

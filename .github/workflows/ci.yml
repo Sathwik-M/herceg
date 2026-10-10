@@ -20,7 +20,10 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      # Browser tests use the Chrome preinstalled on GitHub's Ubuntu runners.
+      - run: npm run test:package
+      # Browser tests use the Chrome preinstalled on GitHub's Ubuntu runners,
+      # and Playwright's Firefox and WebKit builds.
+      - run: npx playwright install --with-deps firefox webkit
       - run: npm run test:browser
       - run: npm run bench:size
 

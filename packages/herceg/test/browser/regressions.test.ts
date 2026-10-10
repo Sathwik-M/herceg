@@ -1,5 +1,6 @@
 // Runtime behavior that earlier versions got wrong.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { server } from "vitest/browser";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { schedule } from "../../src/dom/scheduler.ts";
@@ -29,17 +30,97 @@ describe("runtime regressions", () => {
     chart.destroy();
   });
 
-  it("follows an inline host, which gets no resize notifications", async () => {
-    const data = table({ x: [0, 1], y: [0, 1] });
-    const span = document.createElement("span");
-    host.append(span);
-    const chart = createChart(span, { marks: [line(data, { x: "x", y: "y" })] });
-    await expect.poll(() => modelOf(chart).width).toBe(600);
-    host.style.width = "800px";
-    chart.update({});
-    await expect.poll(() => modelOf(chart).width).toBe(800);
-    chart.destroy();
-  });
+  // Firefox measures an inline element holding a block as that block, not
+  // the box it lies in, so there a chart in one keeps its first width (a
+  // known limit, docs/architecture.md).
+  const inlineMeasured = server.browser !== "firefox";
+
+  it.skipIf(!inlineMeasured)(
+    "follows an inline host, which gets no resize notifications",
+    async () => {
+      const data = table({ x: [0, 1], y: [0, 1] });
+      // As wide as the content of the box it is in, padding left out.
+      host.style.padding = "0 20px";
+      const span = document.createElement("span");
+      host.append(span);
+      const chart = createChart(span, { marks: [line(data, { x: "x", y: "y" })] });
+      await expect.poll(() => modelOf(chart).width).toBe(600);
+      host.style.width = "800px";
+      chart.update({});
+      await expect.poll(() => modelOf(chart).width).toBe(800);
+      chart.destroy();
+    },
+  );
+
+  it.skipIf(!inlineMeasured)(
+    "measures an inline host as the box it is in, whatever the root's own styles",
+    async () => {
+      const data = table({ x: [0, 1], y: [0, 1] });
+      const style = document.createElement("style");
+      // Rules for the host's children, the chart's root among them: the box
+      // the host is in decides.
+      style.textContent = `span > div:last-child { margin: 0 20px; max-width: 200px;
+      transition: width 1s linear; writing-mode: vertical-rl }
+      span > div { width: 300px !important }`;
+      document.head.append(style);
+      const span = document.createElement("span");
+      host.append(span);
+      try {
+        const chart = createChart(span, {
+          height: 300,
+          marks: [line(data, { x: "x", y: "y" })],
+        });
+        for (const wide of [600, 800, 800]) {
+          host.style.width = `${wide}px`;
+          chart.render();
+          expect(chart.toSVG()).toContain(`width="${wide}"`);
+          await frame();
+          expect(modelOf(chart).width).toBe(wide);
+        }
+        expect([...span.children]).toEqual([chart.root]);
+        // A host that stops being inline is measured as any other.
+        span.style.cssText = "display:flex;flex-direction:column;gap:20px";
+        chart.render();
+        await expect.poll(() => [modelOf(chart).width, modelOf(chart).height]).toEqual([800, 300]);
+        chart.destroy();
+      } finally {
+        style.remove();
+      }
+    },
+  );
+
+  it.skipIf(!inlineMeasured)(
+    "follows an inline host in a shadow root, or slotted into one, open or closed",
+    async () => {
+      const data = table({ x: [0, 1], y: [0, 1] });
+      for (const [where, mode] of [
+        ["inside", "open"],
+        ["slotted", "open"],
+        ["slotted", "closed"],
+      ] as const) {
+        const outer = document.createElement("div");
+        host.append(outer);
+        const shadow = outer.attachShadow({ mode });
+        const span = document.createElement("span");
+        // Slotted, the span is laid out in the slot's box: a wrapper narrower
+        // than the page around it.
+        if (where === "slotted") {
+          shadow.innerHTML = '<div style="width:350px"><slot></slot></div>';
+          outer.append(span);
+        } else shadow.append(span);
+        const chart = createChart(span, { marks: [line(data, { x: "x", y: "y" })] });
+        const wide = where === "slotted" ? 350 : 600;
+        await expect.poll(() => modelOf(chart).width).toBe(wide);
+        const box = where === "slotted" ? shadow.querySelector("div")! : host;
+        box.style.width = `${wide + 100}px`;
+        chart.update({});
+        await expect.poll(() => modelOf(chart).width).toBe(wide + 100);
+        host.style.width = "600px";
+        chart.destroy();
+        outer.remove();
+      }
+    },
+  );
 
   it("summarizes the data drawn last, not data changed while offscreen", async () => {
     const data = table({ x: [0, 1, 2], y: [10, 20, 30] });
@@ -182,18 +263,37 @@ describe("runtime regressions", () => {
       y: { format: { minimumFractionDigits: 4 } },
       marks: [line(table({ x: [1000, 2000], y: [10000, 20000] }), { x: "x", y: "y" })],
     });
-    const boxes = (selector: string) =>
-      [...chart.root.querySelectorAll(`svg text[${selector}]`)].map((text) =>
-        (text as SVGGraphicsElement).getBBox(),
-      );
-    const xLabels = boxes('dominant-baseline="hanging"');
-    const yLabels = boxes('text-anchor="end"');
+    // Where each label's glyphs are, which engines agree on: text boxes are
+    // the font's ascent and descent, which they read from different tables
+    // (28 pixels tall in Chrome and WebKit, 30 in Firefox). The box's top is
+    // the ascent above the baseline; the glyphs reach as far as canvas
+    // metrics of the same font say.
+    const context = document.createElement("canvas").getContext("2d")!;
+    const labels = (selector: string) =>
+      [...chart.root.querySelectorAll<SVGTextElement>(`svg text[${selector}]`)].map((text) => {
+        const box = text.getBBox();
+        const style = getComputedStyle(text);
+        context.font = `${style.fontSize} ${style.fontFamily}`;
+        const metrics = context.measureText(text.textContent ?? "");
+        const baseline = box.y + metrics.fontBoundingBoxAscent;
+        const top = baseline - metrics.actualBoundingBoxAscent;
+        const ink = new DOMRect(
+          box.x,
+          top,
+          box.width,
+          baseline + metrics.actualBoundingBoxDescent - top,
+        );
+        return { box, ink };
+      });
+    const xLabels = labels('dominant-baseline="hanging"');
+    const yLabels = labels('text-anchor="end"');
     expect(xLabels.length * yLabels.length).toBeGreaterThan(0);
-    const meet = (p: DOMRect, q: DOMRect) =>
-      p.x < q.x + q.width && q.x < p.x + p.width && p.y < q.y + q.height && q.y < p.y + p.height;
-    expect(xLabels.some((p) => yLabels.some((q) => meet(p, q)))).toBe(false);
+    // Apart by a quarter of the text's size at least, where they would overlap across.
+    const apart = (p: DOMRect, q: DOMRect) =>
+      p.x >= q.x + q.width || q.x >= p.x + p.width || Math.max(p.y - q.bottom, q.y - p.bottom) >= 6;
+    expect(xLabels.every(({ ink: p }) => yLabels.every(({ ink: q }) => apart(p, q)))).toBe(true);
     // The x labels still fit inside the chart.
-    const bottom = Math.max(...xLabels.map((b) => b.y + b.height));
+    const bottom = Math.max(...xLabels.map(({ box }) => box.y + box.height));
     expect(bottom).toBeLessThanOrEqual(host.getBoundingClientRect().height);
     chart.destroy();
   });

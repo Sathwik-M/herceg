@@ -1,5 +1,6 @@
-import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vitest/config";
+import { browsers } from "../../scripts/browser/browsers.ts";
+import { commands } from "../../scripts/browser/commands.ts";
 
 export default defineConfig({
   test: {
@@ -16,12 +17,12 @@ export default defineConfig({
         test: {
           name: "browser",
           include: ["test/browser/**/*.test.ts"],
+          setupFiles: ["../../scripts/browser/setup.ts"],
           browser: {
             enabled: true,
             headless: true,
-            // The locally installed Chrome; no browser download needed.
-            provider: playwright({ launchOptions: { channel: "chrome" } }),
-            instances: [{ browser: "chromium" }],
+            instances: browsers,
+            commands,
           },
         },
       },

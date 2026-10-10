@@ -1,9 +1,20 @@
 // Helpers shared by the browser tests.
 
-import { expect } from "vitest";
-import { cdp } from "vitest/browser";
+import { commands } from "vitest/browser";
+import type { MouseInput } from "../../../../scripts/browser/commands.ts";
+
+export { MOUSE } from "../../../../scripts/browser/mouse.ts";
+
 import { type Chart, MountedChart } from "../../src/dom/chart.ts";
 import type { ChartModel } from "../../src/model/model.ts";
+
+declare module "vitest/browser" {
+  interface BrowserCommands {
+    accessibilityTree(root: string, states: readonly string[]): Promise<string[]>;
+    collectGarbage(): Promise<void>;
+    mouse(input: MouseInput): Promise<void>;
+  }
+}
 
 /** The x and width of a brush outline drawn as a rectangle, "M x0 y0 H x1 V y1 H x0 Z". */
 export function bandBox(outline: Element): { x: number; width: number } {
@@ -11,58 +22,47 @@ export function bandBox(outline: Element): { x: number; width: number } {
   return { x: x0!, width: x1! - x0! };
 }
 
-interface AXNode {
-  nodeId: string;
-  ignored: boolean;
-  role?: { value: string };
-  name?: { value: string };
-  description?: { value: string };
-  childIds?: string[];
-  properties?: { name: string; value: { value: unknown } }[];
+/**
+ * The accessibility tree the engine gives screen readers under the one node
+ * of role `root`, one node a line: `role "name"`, then its description and
+ * the `states` it has, indented by depth (scripts/browser/accessibility.ts).
+ * Nodes assistive technology ignores are left out.
+ */
+export function accessibilityTree(root: string, states: readonly string[]): Promise<string[]> {
+  return commands.accessibilityTree(root, states);
 }
 
 /**
- * The accessibility tree Chrome gives screen readers under the one node of
- * role `root`, one node a line: `role "name"`, then its description and the
- * `states` it has, indented by depth. Nodes assistive technology ignores are
- * left out.
+ * Collects garbage in the page, so that what nothing holds is gone from weak
+ * references; throws if an object nothing holds survives, so that a
+ * collection that did not happen is not taken for a leak.
  */
-export async function accessibilityTree(
-  root: string,
-  states: readonly string[],
-): Promise<string[]> {
-  // Tests run in vitest's frame of the page the session is attached to.
-  const { frameTree } = (await cdp().send("Page.getFrameTree")) as {
-    frameTree: { childFrames?: { frame: { id: string; name?: string } }[] };
-  };
-  const testers = (frameTree.childFrames ?? []).filter(
-    ({ frame }) => frame.name === "vitest-iframe",
-  );
-  expect(testers).toHaveLength(1);
-  const frameId = testers[0]!.frame.id;
-  const { nodes } = (await cdp().send("Accessibility.getFullAXTree", { frameId })) as {
-    nodes: AXNode[];
-  };
-  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
-  const roots = nodes.filter((node) => node.role?.value === root);
-  expect(roots).toHaveLength(1);
-  const lines: string[] = [];
-  const walk = (node: AXNode, depth: number) => {
-    const shown = !node.ignored && node.role?.value !== "InlineTextBox";
-    if (shown) {
-      const found = (node.properties ?? [])
-        .filter(({ name }) => states.includes(name))
-        .map(({ name, value }) => `${name}=${value.value}`);
-      const description = node.description?.value ? [`(${node.description.value})`] : [];
-      lines.push(
-        `${"  ".repeat(depth)}${[node.role?.value, JSON.stringify(node.name?.value ?? ""), ...description, ...found].join(" ")}`,
-      );
-    }
-    for (const id of node.childIds ?? []) walk(byId.get(id)!, shown ? depth + 1 : depth);
-  };
-  walk(roots[0]!, 0);
-  return lines;
+export async function collectGarbage(): Promise<void> {
+  const control = new WeakRef({});
+  await commands.collectGarbage();
+  if (control.deref()) throw new Error("collectGarbage: the engine collected nothing");
 }
+
+/**
+ * Real mouse input, at a point of the page the browser's input lands on
+ * (the test's frame is inside it).
+ */
+export function realMouse(input: MouseInput): Promise<void> {
+  return commands.mouse(input);
+}
+
+/** Where `element` is in the page real input lands on. */
+export function pageOrigin(element: Element): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+  const frame = window.frameElement?.getBoundingClientRect() ?? { left: 0, top: 0 };
+  return { x: frame.left + rect.left, y: frame.top + rect.top };
+}
+
+/**
+ * `text` with dates and times as Chrome's and Firefox's `Intl` write them,
+ * "Jan 1, 2026, 00:00": WebKit's joins them with "at".
+ */
+export const dateTimes = (text: string) => text.replace(/(\d{4}) at (\d)/g, "$1, $2");
 
 /** The model a chart draws from, for what no public method reports. */
 export function modelOf(chart: Chart): ChartModel {

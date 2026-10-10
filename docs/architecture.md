@@ -3427,12 +3427,13 @@ refuses others before changing what it holds.
   family, SVG and Canvas rendering, facets, subplots, the four built-in
   themes, a shown tooltip with the keyboard cursor on a point, and static
   SVG. Automated rules check names, roles, focusable controls, and HTML text
-  contrast. The same tests read the accessibility tree Chrome gives screen
-  readers (through the DevTools protocol): the figure's name and
-  description, the legend's buttons and their states, what the live region
-  says as the keyboard moves, and that nothing else is exposed. That is what
-  a screen reader receives, not how one speaks it; the charts have not been
-  tried with screen readers themselves.
+  contrast. The same tests read the accessibility tree each engine gives
+  screen readers, in Chrome, Firefox, and WebKit (see Browser tests): the
+  figure's name and description, the legend's buttons and their states,
+  what the live region says as the keyboard moves, that nothing else is
+  exposed, and grids' names, headers, rows, levels, and selection. That is
+  what a screen reader receives, not how one speaks it; the charts have not
+  been tried with screen readers themselves.
 
 ## The chart handle
 
@@ -3664,8 +3665,69 @@ and paint canvases through the context they are handed; only raster
 painting reaches the DOM, creating an offscreen canvas in that canvas'
 document when `OffscreenCanvas` is unavailable.
 
+## Browser tests
+
+Every browser suite (the engine's `test/browser`, the three adapters', and
+the Python package's JavaScript in `python/js`) runs headless in three
+engines: the installed Google Chrome (154.0.8037.99 when written), and
+Playwright 1.63's Firefox 155.0 (build 1543) and WebKit 26.6 (build 2359).
+`npm run test:browser` runs all three, about a minute on an Apple M6, where
+Chrome alone takes about 17 s; `HERCEG_BROWSERS=chromium` runs one.
+`scripts/browser/` holds the engines (`browsers.ts`) and the commands tests
+run in Node: accessibility trees and garbage collection, through each
+engine's own protocol where Playwright has nothing for all three, and real
+mouse input, through Playwright's mouse.
+
+- Accessibility trees come from Chrome's DevTools protocol, Firefox's remote
+  debugging protocol (the tree its Accessibility Inspector shows, which the
+  platform's accessibility API serves), and WebKit's inspector protocol (the
+  tree Safari's Web Inspector shows), which Playwright speaks but exposes no
+  session of, so the tests reach it through Playwright's in-process objects;
+  a release that moves them fails the tests rather than checking less. The
+  trees are written alike (`accessibility.ts`): ARIA role names, no text
+  under roles whose children are presentational (buttons, checkboxes,
+  sliders), though links, alerts, and descriptions there stay, no
+  description that repeats the name, and WebKit's rows, cells, and headers
+  named by their content as the other engines name them (VoiceOver reads
+  their children). WebKit's protocol reports no descriptions,
+  `aria-multiselectable`, or `aria-keyshortcuts`, which there come from the
+  DOM, and neither Firefox's nor WebKit's reports value ranges, which the
+  tests read from the sliders. The engines still differ, and the tests say
+  how: WebKit's tables have no row groups, and its rows say `selected` only
+  when they are; Firefox makes every row and cell of a grid selectable, a
+  selected row's cells selected too, and drops the levels of grouped grids'
+  rows (see Known limits).
+- Real mouse input is Playwright's mouse. In Firefox it answers before the
+  page has the event, which then comes one move a frame, so the command
+  waits for each input's event (and fails if none comes); Firefox's pages
+  share one mouse, so its test files run one at a time (about 28 s for the
+  engine's suite, which takes 7 to 9 s in the others). Pointer events tests
+  make up use the engine's mouse id (`MOUSE`): Firefox's mouse is pointer 0,
+  which a page can capture only once the mouse has been over it, so in
+  Firefox it moves over each test file's page first (`setup.ts`). Real
+  multi-finger touch has no Playwright equivalent outside Chrome's DevTools
+  protocol: its two tests run in Chrome only.
+- Garbage collection is Chrome's HeapProfiler, Firefox's memory actor
+  (cycle collection, then garbage), and WebKit's `Heap.gc` after deep calls
+  overwrite stale pointers its conservative stack scan would keep. A
+  collection that leaves an unreferenced object fails. Leak tests read their
+  weak references only after collecting: `deref` keeps its object until the
+  task ends, which in Firefox outlasts a collection.
+- Firefox is given an application data folder of its own (`MOZ_APP_DATA`):
+  it keeps its list of profiles in `~/Library/Application Support/Firefox`
+  even when given a profile, and macOS 27 refuses to create that folder.
+
 ## Known limits
 
+- In Firefox (155), screen readers hear no levels or places among siblings
+  for the rows of grouped grids: Firefox drops rows' `aria-level`,
+  `aria-posinset`, and `aria-setsize` in grids that also number their rows
+  (`aria-rowcount`, `aria-rowindex`), which grids that mount only the rows
+  in view need. Chrome and WebKit expose them.
+- In Firefox, a chart in an inline container (a `<span>`) keeps its first
+  width: Firefox measures an inline element holding a block as that block
+  rather than the box it lies in, so the chart never sees the room it has.
+  Give it a block container or a width.
 - Geometry is stored in single precision (`Float32Array`) pixel
   coordinates. When zooming leaves neighboring points more than about 10^7
   pixels outside the plot (a view of a millionth of the data's range or

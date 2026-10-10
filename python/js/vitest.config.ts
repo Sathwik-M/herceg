@@ -1,5 +1,5 @@
-import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vitest/config";
+import { browsers } from "../../scripts/browser/browsers.ts";
 
 const engine = (file: string) =>
   new URL(`../../packages/herceg/src/${file}`, import.meta.url).pathname;
@@ -15,12 +15,11 @@ export default defineConfig({
   },
   test: {
     include: ["test/**/*.test.ts"],
+    setupFiles: ["../../scripts/browser/setup.ts"],
     browser: {
       enabled: true,
       headless: true,
-      // The locally installed Chrome; no browser download needed.
-      provider: playwright({ launchOptions: { channel: "chrome" } }),
-      instances: [{ browser: "chromium" }],
+      instances: browsers,
     },
   },
 });

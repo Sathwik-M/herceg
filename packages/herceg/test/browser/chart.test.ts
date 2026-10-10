@@ -23,7 +23,7 @@ import { sankey } from "../../src/marks/sankey.ts";
 import { treemap } from "../../src/marks/treemap.ts";
 import type { ArcGeometry, ShapesGeometry, TextShape } from "../../src/scene/scene.ts";
 import { resolveTheme } from "../../src/theme.ts";
-import { bandBox, modelOf } from "./helpers.ts";
+import { bandBox, MOUSE, modelOf } from "./helpers.ts";
 
 let host: HTMLDivElement;
 
@@ -315,7 +315,7 @@ describe("events and brushing", () => {
         clientX: rect.left + x,
         clientY: rect.top + y,
         shiftKey,
-        pointerId: 1,
+        pointerId: MOUSE,
       }),
     );
   }
@@ -1446,7 +1446,7 @@ describe("zooming and brushing in two dimensions", () => {
     chart.root.dispatchEvent(
       type === "wheel"
         ? new WheelEvent("wheel", { ...init, deltaY: -200 })
-        : new PointerEvent(type, { ...init, button: 0, pointerId: 1 }),
+        : new PointerEvent(type, { ...init, button: 0, pointerId: MOUSE }),
     );
   };
   const center = (chart: Chart) => {

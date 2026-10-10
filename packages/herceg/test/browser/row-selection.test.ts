@@ -26,7 +26,7 @@ import { facet } from "../../src/model/facet.ts";
 import { DIM } from "../../src/model/highlight.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import type { PointGeometry } from "../../src/scene/scene.ts";
-import { modelOf } from "./helpers.ts";
+import { MOUSE, modelOf } from "./helpers.ts";
 
 const mounted: { destroy(): void }[] = [];
 const hosts: HTMLElement[] = [];
@@ -73,7 +73,7 @@ function press(target: Element, type: string, x: number, y: number, keys: Pointe
       bubbles: true,
       clientX: rect.left + x,
       clientY: rect.top + y,
-      pointerId: 1,
+      pointerId: MOUSE,
       ...keys,
     }),
   );
