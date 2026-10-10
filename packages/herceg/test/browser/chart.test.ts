@@ -111,9 +111,7 @@ describe("mounting", () => {
   it("re-renders when the container resizes", async () => {
     const chart = createChart(host, { marks: [line(series(10), { x: "t", y: "s0" })] });
     host.style.width = "450px";
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await frame();
-    expect(chart.root.querySelector("svg")!.getAttribute("width")).toBe("450");
+    await expect.poll(() => chart.root.querySelector("svg")!.getAttribute("width")).toBe("450");
     chart.destroy();
   });
 

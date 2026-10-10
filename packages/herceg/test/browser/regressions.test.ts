@@ -23,13 +23,9 @@ describe("runtime regressions", () => {
     const data = table({ x: [0, 1], y: [0, 1] });
     host.style.cssText = "width:600px;height:300px;border:10px solid transparent";
     const chart = createChart(host, { marks: [line(data, { x: "x", y: "y" })] });
-    await frame();
-    await frame();
-    expect([modelOf(chart).width, modelOf(chart).height]).toEqual([620, 320]);
+    await expect.poll(() => [modelOf(chart).width, modelOf(chart).height]).toEqual([620, 320]);
     host.style.cssText = "width:600px;height:300px;writing-mode:vertical-rl";
-    await frame();
-    await frame();
-    expect([modelOf(chart).width, modelOf(chart).height]).toEqual([600, 300]);
+    await expect.poll(() => [modelOf(chart).width, modelOf(chart).height]).toEqual([600, 300]);
     chart.destroy();
   });
 
@@ -38,13 +34,10 @@ describe("runtime regressions", () => {
     const span = document.createElement("span");
     host.append(span);
     const chart = createChart(span, { marks: [line(data, { x: "x", y: "y" })] });
-    await frame();
-    await frame();
-    expect(modelOf(chart).width).toBe(600);
+    await expect.poll(() => modelOf(chart).width).toBe(600);
     host.style.width = "800px";
     chart.update({});
-    await frame();
-    expect(modelOf(chart).width).toBe(800);
+    await expect.poll(() => modelOf(chart).width).toBe(800);
     chart.destroy();
   });
 
@@ -135,9 +128,9 @@ describe("runtime regressions", () => {
     const chart = createChart(host, { marks: [line(data, { x: "x", y: "y" })] });
     data.setColumn("y", [100, 200, 300]);
     chart.render();
-    await new Promise((resolve) => setTimeout(resolve, 1100));
     const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
-    expect(description.textContent).toContain("to 300");
+    // Accessible summaries refresh at most once a second.
+    await expect.poll(() => description.textContent, { timeout: 2000 }).toContain("to 300");
     chart.destroy();
   });
 

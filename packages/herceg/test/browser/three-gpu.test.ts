@@ -401,8 +401,9 @@ describe("3D charts on the GPU", () => {
       marks: [surface(field(520, hills), { x: "x", y: "y", z: "z" })],
     });
     await chart.loading;
+    const painter = cloudPainter()!;
     contexts.at(-1)!.getExtension("WEBGL_lose_context")!.loseContext();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect.poll(() => painter.usable).toBe(false);
     chart.setCamera({ azimuth: 10 });
     expect(() => chart.render()).not.toThrow();
     await chart.loading;
@@ -419,8 +420,7 @@ describe("3D charts on the GPU", () => {
     expect(painter.bytes).toBeGreaterThan(0);
     const lost = contexts.at(-1)!;
     lost.getExtension("WEBGL_lose_context")!.loseContext();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(painter.usable).toBe(false);
+    await expect.poll(() => painter.usable).toBe(false);
     chart.setCamera({ azimuth: 10 });
     chart.render();
     // Meanwhile the CPU draws the cells.
