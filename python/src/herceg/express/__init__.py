@@ -20,7 +20,7 @@ computed per panel), and options such as ``normalize``, ``whiskers``, and
 """
 
 from ._arrangements import clustermap, jointplot, pairplot
-from ._categorical import boxplot, stripplot, violinplot
+from ._categorical import boxplot, stripplot, swarmplot, violinplot
 from ._common import Statistics, statistics
 from ._distributions import KdeOptions, ecdfplot, histplot, kdeplot, rugplot
 from ._estimates import barplot, lineplot, pointplot
@@ -44,5 +44,6 @@ __all__ = [
     "rugplot",
     "statistics",
     "stripplot",
+    "swarmplot",
     "violinplot",
 ]

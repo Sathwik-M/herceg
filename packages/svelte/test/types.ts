@@ -33,8 +33,10 @@ Line(internals, { data: metrics, x: "time", y: ["p50", "p99"] });
 Line(internals, { data: metrics, x: "time", y: "p50", series: "service" });
 // @ts-expect-error fields are checked against the component's data
 Line(internals, { data: metrics, x: "time", y: "missing" });
-// @ts-expect-error a category field is not a numeric encoding
-Line(internals, { data: metrics, x: "time", y: "service" });
+// @ts-expect-error along x, a category field is not a numeric encoding
+Line(internals, { data: metrics, x: "time", y: "service", orient: "x" });
+// A category y lays a line along y, its values on x.
+Line(internals, { data: metrics, x: "p50", y: "service" });
 // A category field places points in its bands; sizes stay numeric.
 Point(internals, { data: metrics, x: "service", y: "p50" });
 // @ts-expect-error point sizes are number fields

@@ -349,7 +349,7 @@ describe("loadSpec", () => {
     );
     // The forms a mark's type allows, as the TypeScript types describe them.
     expect(() => validateSpec({ marks: [{ type: "area", x: "x" }] })).toThrow(
-      /marks\[0\]: area: needs y, or y1 and y2/,
+      /marks\[0\]: area: needs x and y, or a band: y1 and y2 along x, or x1 and x2 along y/,
     );
     expect(() => validateSpec({ marks: [{ type: "rule" }] })).toThrow(
       /marks\[0\]: rule: needs exactly one of x and y/,

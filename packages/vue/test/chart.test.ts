@@ -957,6 +957,25 @@ describe("<Chart>", () => {
   });
 });
 
+it("casts bare dodge and swarm flags of lines, areas, and points", async () => {
+  const data = table({
+    day: ["thu", "fri", "thu", "fri"],
+    v: [1, 2, 3, 4],
+    g: ["a", "a", "b", "b"],
+  });
+  const { view, chart } = chartRef();
+  mount(
+    `<Chart ref="view"><Line :data="data" x="day" y="v" series="g" dodge /><Area :data="data" x="day" y="v" series="g" dodge /><Point :data="data" x="day" y="v" swarm /></Chart>`,
+    () => ({ data, view }),
+  );
+  await nextTick();
+  expect(optionsOf(chart()).marks.map((m) => m.spec)).toMatchObject([
+    { dodge: true },
+    { dodge: true },
+    { swarm: true },
+  ]);
+});
+
 it("casts bare histogram boolean flags and keeps their values in the mark spec", async () => {
   const data = table({ v: [1, 1, 3], g: ["a", "b", "b"] });
   const { view, chart } = chartRef();

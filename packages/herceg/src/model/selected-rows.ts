@@ -8,8 +8,9 @@
 // Rules, per table:
 // - A row is in a brush when its place along each brushed axis is in the
 //   brush's range there: its field's value, or for marks drawing a span
-//   (error bars, bands, candles) the span overlapping the range. Several y
-//   fields of a mark are its series: a row is in when any shown one is.
+//   (error bars, bands, candles) the span overlapping the range. Several
+//   value fields of a mark (y fields, or x fields of lines and areas along
+//   y) are its series: a row is in when any shown one is.
 //   Rows of every mark of the table in the brushed panels are selected.
 // - On category axes the condition lists the brushed categories' values
 //   (labels, or the numbers or times of banded fields), never band indices.
@@ -136,13 +137,17 @@ function readingsOf(mark: Mark): Reading[] {
       ? values.map((name) => ({ id: name, [along]: position, [across]: field(name) }))
       : [{ [along]: position, [across]: field(values[0]!) }];
   switch (mark.spec.type) {
-    case "line":
     case "point":
       return byField(field(spec.x as string), list(spec.y!));
-    case "area":
-      return spec.y1 !== undefined
-        ? [{ x: field(spec.x as string), y: { low: f("y1"), high: f("y2") } }]
-        : byField(field(spec.x as string), list(spec.y!));
+    // Lines and areas run along x, or along y (positions on y, values on x).
+    case "line":
+      return byField(field(spec[along] as string), list(spec[across]!));
+    case "area": {
+      const [low, high] = along === "x" ? ["y1", "y2"] : ["x1", "x2"];
+      return spec[low] !== undefined
+        ? [{ [along]: field(spec[along] as string), [across]: { low: f(low), high: f(high) } }]
+        : byField(field(spec[along] as string), list(spec[across]!));
+    }
     case "bar":
       return byField(field(list(spec[along]!)[0]!), list(spec[across]!));
     case "errorbar": {
@@ -174,15 +179,21 @@ function stacked(mark: Mark): boolean {
   return (mark.spec as { stack?: boolean }).stack === true;
 }
 
-/** Whether a series' zeros are drawn at its log y axis' low end, as stacked areas draw them. */
-function zeroAtLow(d: Drawn): boolean {
-  return d.y.type === "log" && d.mark.spec.type === "area" && stacked(d.mark);
+/**
+ * Whether a series' zeros along `axis` are drawn at its log axis' low end,
+ * as stacked areas draw them on their value axis (y, or x along y).
+ */
+function zeroAtLow(d: Drawn, axis: "x" | "y"): boolean {
+  const { mark } = d;
+  return (
+    d[axis].type === "log" && mark.spec.type === "area" && stacked(mark) && axis === valueAxis(mark)
+  );
 }
 
-/** Where a row's y is drawn: its place, or a stacked area's zero at a log axis' low end. */
-function drawnY(d: Drawn, row: number): number {
-  const y = placeAt(d.series, "y", row);
-  return y === 0 && zeroAtLow(d) ? Math.min(...d.y.domain) : y;
+/** Where a row is drawn along `axis`: its place, or a stacked area's zero at a log axis' low end. */
+function drawnAt(d: Drawn, axis: "x" | "y", row: number): number {
+  const at = placeAt(d.series, axis, row);
+  return at === 0 && zeroAtLow(d, axis) ? Math.min(...d[axis].domain) : at;
 }
 
 /** The axis a mark's values are measured along: y, or x for marks placed along y. */
@@ -372,8 +383,8 @@ function rowsInRanges(parts: readonly Drawn[], selection: Brushed, out: number[]
       if (!drawnRow(d, row)) continue;
       const anchor = cells ? d.mark.pointAnchor!(s, row, frame) : undefined;
       if (cells && !anchor) continue;
-      const at = anchor ? value(d.x, anchor[0]) : placeAt(s, "x", row);
-      const top = anchor ? value(d.y, anchor[1]) : drawnY(d, row);
+      const at = anchor ? value(d.x, anchor[0]) : drawnAt(d, "x", row);
+      const top = anchor ? value(d.y, anchor[1]) : drawnAt(d, "y", row);
       if (
         Number.isFinite(at) &&
         Number.isFinite(top) &&
@@ -480,7 +491,7 @@ function anchorOf(entry: MarkParts, d: Drawn, row: number): readonly [number, nu
   const along = mark.tooltip === "y" ? "y" : "x";
   const low = s.range ? (along === "y" ? s.x0 : s.y0)?.[row] : undefined;
   const middle = (axis: "x" | "y") => {
-    const at = axis === "y" ? drawnY(d, row) : placeAt(s, axis, row);
+    const at = drawnAt(d, axis, row);
     return low !== undefined && axis !== along ? (at + low) / 2 : at;
   };
   const [dx, dy] = mark.displace?.(s, row, entry.frame) ?? STILL;
@@ -505,12 +516,16 @@ function drawnRow(d: Drawn, row: number): boolean {
   // axes, where stacked areas draw their zeros at the low end.
   const placed = (value: number, scale: PositionScale, zero = false) =>
     scale.type === "band" ? value >= 0 : Number.isFinite(scale.map(value)) || (zero && value === 0);
-  const low = zeroAtLow(d);
-  if (!placed(placeAt(s, "x", row), d.x) || !placed(placeAt(s, "y", row), d.y, low)) return false;
+  const [lowX, lowY] = [zeroAtLow(d, "x"), zeroAtLow(d, "y")];
+  if (!placed(placeAt(s, "x", row), d.x, lowX) || !placed(placeAt(s, "y", row), d.y, lowY))
+    return false;
   // Lower ends too, of ranges (error bars, bands) and of stacked areas (bars
   // without a placed base grow from the axis' end).
   const area = s.range || (mark.spec.type === "area" && stacked(mark));
-  if (area && ((s.y0 && !placed(s.y0[row]!, d.y, low)) || (s.x0 && !placed(s.x0[row]!, d.x))))
+  if (
+    area &&
+    ((s.y0 && !placed(s.y0[row]!, d.y, lowY)) || (s.x0 && !placed(s.x0[row]!, d.x, lowX)))
+  )
     return false;
   if (d.x.breaks?.hides(placeAt(s, "x", row))) return false;
   // A heatmap's row without a value colors no cell.
@@ -727,7 +742,7 @@ function barHit(
   return undefined;
 }
 
-/** The histogram bin under a pixel, inside its bar as drawn: the topmost series'. */
+/** The histogram bin under a pixel, inside what its series draws: the topmost series'. */
 function binHit(
   mark: HistogramMark,
   entry: MarkParts,
@@ -738,13 +753,8 @@ function binHit(
   for (let i = entry.series.length - 1; i >= 0; i--) {
     const s = entry.series[i]!;
     if (frame.hidden.has(s.key)) continue;
-    for (let b = 0; b < s.length; b++) {
-      const rect = mark.binRect(s, b, frame);
-      if (!rect) continue;
-      const [x, y, width, height] = rect;
-      if (px >= x && px <= x + width && py >= y && py <= y + height)
-        return { series: s, position: b };
-    }
+    const position = mark.binAt(s, px, py, frame);
+    if (position >= 0) return { series: s, position };
   }
   return undefined;
 }

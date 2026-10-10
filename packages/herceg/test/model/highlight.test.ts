@@ -11,6 +11,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { line } from "../../src/marks/line.ts";
 import type { ChartMark } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
+import { facet } from "../../src/model/facet.ts";
 import { DIM, Highlighter, membership } from "../../src/model/highlight.ts";
 import { ChartModel } from "../../src/model/model.ts";
 import { renderSvg } from "../../src/render/svg.ts";
@@ -182,6 +183,119 @@ describe("highlighting", () => {
     expect(svg).toContain(`opacity="${DIM}"`);
   });
 
+  it("clips a dodged line over categories where it is drawn, off its bands' centers", () => {
+    const source = table({
+      month: ["Jan", "Feb", "Mar", "Jan", "Feb", "Mar"],
+      v: [1, 2, 3, 3, 2, 1],
+      g: ["a", "a", "a", "b", "b", "b"],
+    });
+    const mark = line(source, { x: "month", y: "v", series: "g", dodge: true });
+    const { store, geometry, model } = highlighted(source, [mark]);
+    const [, second] = ofKind<LineGeometry>(geometry(), "line");
+    const first = second!.path.coords[0]!;
+    store.set("focus", selectRows(new RowSet(source).addAll([3, 4])));
+    geometry();
+    const scene = model.scene(estimateText);
+    const svg = renderSvg(scene, {});
+    const [panel] = model.panels();
+    // Series b stands right of the bands' centers: its run starts at its own
+    // first point (over the cap that ends the line) and reaches its second.
+    const cap = scene.theme.lineWidth / 2;
+    const end = second!.path.coords[2]!;
+    expect(first).toBeGreaterThan(panel!.x.map(0));
+    expect(svg).toContain(
+      `<rect x="${first - cap}" y="${panel!.plot.y}" width="${end - first + cap}"`,
+    );
+  });
+
+  it("clips a line along y to its runs of selected rows, along y", () => {
+    const source = table({ depth: [0, 10, 20, 30], t: [20, 15, 10, 8] });
+    const mark = line(source, { x: "t", y: "depth", orient: "y" });
+    const { store, geometry, model } = highlighted(source, [mark]);
+    store.set("focus", selectRows(new RowSet(source).addAll([1, 2])));
+    const [dimmed, selected] = ofKind<LineGeometry>(geometry(), "line");
+    // The line drawn once, dimmed outside the run and as it is inside it.
+    expect(selected!.path).toBe(dimmed!.path);
+    const svg = renderSvg(model.scene(estimateText), {});
+    const [panel] = model.panels();
+    const { plot } = panel!;
+    const [a, b] = [panel!.y.map(10), panel!.y.map(20)];
+    const [top, bottom] = [Math.min(a, b), Math.max(a, b)];
+    expect(svg).toContain(
+      `<rect x="${plot.x}" y="${top}" width="${plot.width}" height="${bottom - top}"`,
+    );
+  });
+
+  it("clips a stack along y of a series field through its own edges", () => {
+    const source = table({ depth: [0, 10, 0, 20], v: [1, 2, 3, 4], g: ["a", "a", "b", "b"] });
+    const mark = area(source, { x: "v", y: "depth", series: "g", stack: true, orient: "y" });
+    const { store, geometry, model } = highlighted(source, [mark]);
+    const plain = ofKind<AreaGeometry>(geometry(), "area");
+    store.set("focus", selectWhere(true));
+    const scene = model.scene(estimateText);
+    const lit = (scene.panels[0]!.marks as AreaGeometry[]).filter((g) => g.fillOpacity === 0.85);
+    const upper = (g: AreaGeometry) => Array.from(g.upper.coords.subarray(0, g.upper.count * 2));
+    // Every row selected: each layer is drawn as it is, over the stack's whole depth.
+    expect(lit.map(upper)).toEqual(plain.map(upper));
+    const [panel] = model.panels();
+    const [a, b] = [panel!.y.map(0), panel!.y.map(20)];
+    const whole = `<rect x="${panel!.plot.x}" y="${Math.min(a, b)}" width="${panel!.plot.width}" height="${Math.abs(b - a)}"`;
+    for (const g of lit)
+      expect(g.draw.svg(g, { theme: scene.theme, encodeRaster: undefined })).toContain(whole);
+  });
+
+  it("clips a stack's sparse layer to its edges in a panel of categories of its own", () => {
+    // The second panel holds d, e, and f; layer A has a row only at e, but
+    // fills the stack's whole depth there, all of it selected.
+    const source = table({
+      cat: ["a", "b", "c", "a", "b", "c", "e", "d", "e", "f"],
+      v: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      g: ["A", "A", "A", "B", "B", "B", "A", "B", "B", "B"],
+      half: ["H1", "H1", "H1", "H1", "H1", "H1", "H2", "H2", "H2", "H2"],
+    });
+    const mark = area(source, { x: "v", y: "cat", series: "g", stack: true });
+    const store = selectionStore(source);
+    const highlighter = new Highlighter([{ table: source, store, channel: "focus" }]);
+    const model = new ChartModel({
+      marks: [mark],
+      facet: facet("half"),
+      resolve: { y: "independent" },
+      locale: "en-US",
+      timeZone: "UTC",
+    });
+    model.setSize(600, 400, 1);
+    model.highlight = (m, series, frame, key) =>
+      highlighter.geometry(m, series, frame, key) ?? m.geometry(series, frame, key);
+    store.set("focus", selectWhere(true));
+    const scene = model.scene(estimateText);
+    const panel = model.panels()[1]!;
+    const lit = (scene.panels[1]!.marks as AreaGeometry[]).find(
+      (g) => g.fillOpacity === 0.85 && g.key.includes('"A"'),
+    )!;
+    const [d, f] = [panel.y.map(0), panel.y.map(2)];
+    const whole = `<rect x="${panel.plot.x}" y="${Math.min(d, f)}" width="${panel.plot.width}" height="${Math.abs(f - d)}"`;
+    expect(lit.draw.svg(lit, { theme: scene.theme, encodeRaster: undefined })).toContain(whole);
+  });
+
+  it("keeps a dodged line's slot when its selected rows are drawn over it", () => {
+    // Two rows of series a at Jan: no span tells their segments apart, so
+    // the selected rows' values are drawn over the line.
+    const source = table({
+      month: ["Jan", "Jan", "Feb", "Jan", "Feb"],
+      v: [1, 2, 3, 3, 2],
+      g: ["a", "a", "a", "b", "b"],
+    });
+    const mark = line(source, { x: "month", y: "v", series: "g", dodge: true });
+    const { store, geometry } = highlighted(source, [mark]);
+    const [a] = ofKind<LineGeometry>(geometry(), "line");
+    const slot = a!.path.coords[0]!;
+    store.set("focus", selectRows(new RowSet(source).addAll([0, 1])));
+    const drawn = ofKind<LineGeometry>(geometry(), "line");
+    const lit = drawn.find((g) => g.path !== a!.path && g.key.includes('"a"'));
+    expect(lit).toBeDefined();
+    expect(lit!.path.coords[0]).toBeCloseTo(slot, 3);
+  });
+
   it("highlights a stack of a series field through its own edges", () => {
     // Layers at x positions of their own: the stack fills each at all four.
     const source = table({ x: [0, 1, 2, 3], y: [1, 2, 3, 4], g: ["a", "b", "a", "b"] });
@@ -347,6 +461,23 @@ describe("highlighting", () => {
     across.store.set("focus", selectRows(new RowSet(times).addAll([0, 1, 5, 6])));
     const scene = across.model.scene(estimateText);
     expect(renderSvg(scene, {})).toContain(rect(across.model, 0, 10, scene.theme.lineWidth / 2));
+  });
+
+  it("joins a line along y across rows a break on x hides", () => {
+    // Rows 2 to 4 hold times inside a break: the line joins depth 1 to 5, both selected.
+    const times = table({ t: time([0, 1, 4, 5, 6, 9, 10]), depth: [0, 1, 2, 3, 4, 5, 6] });
+    const mark = line(times, { x: "t", y: "depth", orient: "y" });
+    const along = highlighted(times, [mark]);
+    along.model.update({ marks: [mark], x: { breaks: timeBreaks([{ from: 3, to: 8 }]) } });
+    along.store.set("focus", selectRows(new RowSet(times).addAll([0, 1, 5, 6])));
+    const scene = along.model.scene(estimateText);
+    const [panel] = along.model.panels();
+    const cap = scene.theme.lineWidth / 2;
+    const [a, b] = [panel!.y.map(0), panel!.y.map(6)];
+    const [top, bottom] = [Math.min(a, b) - cap, Math.max(a, b) + cap];
+    expect(renderSvg(scene, {})).toContain(
+      `<rect x="${panel!.plot.x}" y="${top}" width="${panel!.plot.width}" height="${bottom - top}"`,
+    );
   });
 
   it("draws values over a dimmed series at the opacity that shows the color's own", () => {

@@ -10,6 +10,7 @@ from typing import Any, Literal
 import numpy as np
 
 from .._chart import Chart, HelperOptions
+from .._data import Column
 from . import _numerics as numerics
 from ._common import (
     SERIES_GROUP,
@@ -37,6 +38,7 @@ from ._common import (
     record,
     rows_table,
     seed_of,
+    sharing_fields,
     subset,
     values,
     variables_of,
@@ -49,6 +51,16 @@ else:
 
 Estimator = Literal["mean", "median"]
 Orient = Literal["v", "h", "x", "y"]
+#: Matplotlib's line styles: solid, dashed, dotted, dash-dot, or no line.
+LineStyle = Literal["-", "--", ":", "-.", "none", ""]
+
+#: Matplotlib's line styles as dash patterns in pixels; None is solid.
+_DASHES: dict[str, list[float] | None] = {
+    "-": None,
+    "--": [6, 4],
+    ":": [1.5, 3],
+    "-.": [6, 3, 1.5, 3],
+}
 
 
 def barplot(
@@ -123,15 +135,26 @@ def pointplot(
     n_boot: int = 1000,
     seed: int | None = None,
     dodge: bool = False,
+    linestyles: LineStyle | Sequence[LineStyle] | None = None,
+    linestyle: LineStyle | None = None,
+    join: bool | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Points at an estimate of a number column per category, with error
-    bars, as ``barplot`` computes them; ``dodge=True`` places each
-    ``series`` side by side within each category. Unlike Seaborn's, the points
-    are not joined by lines (lines cannot be drawn along category axes yet).
+    bars, as ``barplot`` computes them, joined by a line per ``series``
+    through the categories in order; ``dodge=True`` places each ``series``
+    side by side within each category. A series without an estimate in a
+    category breaks its line there. ``linestyles`` is Matplotlib's style of
+    the lines (``"-"``, ``"--"``, ``":"``, or ``"-."``), or a list of them,
+    one per series level; ``"none"`` (or ``""``) draws none, and
+    ``linestyle`` gives one style for every line.
     """
     check_axes_differ(x, y, "pointplot")
+    if join is not None:
+        raise ValueError(
+            'pointplot join: Seaborn 0.13 deprecates it; pass linestyle="none" to draw no lines'
+        )
     est = _CategoryEstimates(
         "pointplot",
         data,
@@ -147,15 +170,65 @@ def pointplot(
         seed,
         options,
     )
+    styles = _line_styles(linestyles, linestyle, est.series_labels())
+    # Each style drawn has a line mark, of the levels it styles.
+    drawn = [style for style in dict.fromkeys(styles) if style not in ("none", "")]
+    est.joined_lines = bool(drawn)
     chart = make_chart(
-        est.table, options, sentence=est.sentence("Points"), palette=palette, x_label=x, y_label=y
+        est.table,
+        options,
+        sentence=est.sentence("Points"),
+        palette=palette,
+        x_label=x,
+        y_label=y,
     )
     spread = dodge and series is not None
     label = None if series else est.value
-    est.error_bars(chart, dodge=spread)
     xy = (est.value, est.category) if est.horizontal else (est.category, est.value)
+    # The points come first: their series, in order, give the legend group its
+    # colors and slots, which the lines' marks (one per style) then share.
     chart.point(*xy, series=series, dodge=spread, radius=4, label=label, legend_group=SERIES_GROUP)
+    est.error_bars(chart, dodge=spread)
+    if drawn:
+        resolve = options.get("resolve_y") if est.horizontal else options.get("resolve_x")
+        joined = est.joined(resolve)
+        for style in drawn:
+            levels = [i for i, given in enumerate(styles) if given == style]
+            chart.line(
+                *xy,
+                data=est.of_series(joined, levels),
+                series=series,
+                dodge=spread,
+                dash=_DASHES[style],
+                label=label,
+                legend_group=SERIES_GROUP,
+            )
     return record(chart, est.statistics("pointplot"))
+
+
+def _line_styles(
+    linestyles: LineStyle | Sequence[LineStyle] | None,
+    linestyle: LineStyle | None,
+    levels: Sequence[str],
+) -> list[str]:
+    """Each series level's line style (one level without series), checked."""
+    if linestyles is not None and linestyle is not None:
+        raise ValueError(
+            "pointplot linestyle: give one style for every line as linestyle, or one per "
+            "series level as linestyles, not both"
+        )
+    given = linestyles if linestyles is not None else (linestyle if linestyle is not None else "-")
+    option = "pointplot linestyles" if linestyles is not None else "pointplot linestyle"
+    styles: list[str] = [given] * len(levels) if isinstance(given, str) else list(given)
+    for style in styles:
+        check_choice(style, option, ("-", "--", ":", "-.", "none", ""))
+    if len(styles) != len(levels):
+        raise ValueError(
+            f"pointplot linestyles: expected {len(levels)} "
+            f"{'style' if len(levels) == 1 else 'styles'}, one per series level; "
+            f"received {len(styles)}"
+        )
+    return styles
 
 
 def lineplot(
@@ -320,6 +393,7 @@ class _CategoryEstimates:
         self.horizontal = horizontal
         self.category, self.value = category, value
         self.series = series
+        self.facet_row, self.facet_column = facet_row, facet_column
         self.estimator = estimator
         variables = variables_of(
             source, function, facet_row, facet_column, series, series_order, axes=[category, value]
@@ -351,8 +425,57 @@ class _CategoryEstimates:
             table[self.high] = number_column(highs)
         table[count] = number_column(counts)
         self.table = table
+        self.variables = variables
+        self.categories = cats
+        # Whether lines join the estimates (pointplot's), which descriptions say.
+        self.joined_lines = False
+        self._estimates = (keys, codes, centers)
         self._roles = [x, y, *names]
         self._ordered = order is not None or series_order is not None
+
+    def series_labels(self) -> Sequence[str]:
+        """The series' levels in order, or one name without series."""
+        return self.variables[self.series].labels if self.series else (self.value,)
+
+    def joined(self, resolve: str | None) -> dict[str, Column]:
+        """The estimates with a row for every category of each group (facet
+        panel and series) that its panel's category axis holds, missing where
+        the group has no estimate, so a line through them breaks there, as
+        Seaborn's do. A shared axis holds every category; with ``resolve``
+        "independent", "rows", or "columns", one holds the categories with an
+        estimate in the panels sharing it, so padding adds none to it."""
+        keys, codes, centers = self._estimates
+        groups = list(dict.fromkeys(tuple(key) for key in keys))
+        names = list(self.variables)
+        sharing = sharing_fields(resolve, self.facet_row, self.facet_column)
+        at = [names.index(name) for name in sharing]
+
+        def axis_of(key: tuple[int, ...]) -> tuple[int, ...]:
+            return tuple(key[i] for i in at)
+
+        held: dict[tuple[int, ...], set[int]] = {}
+        for key, code in zip(keys, codes, strict=True):
+            held.setdefault(axis_of(tuple(key)), set()).add(code)
+        found = {
+            (tuple(key), code): center
+            for key, code, center in zip(keys, codes, centers, strict=True)
+        }
+        every = range(len(self.categories))
+        padded = [
+            (group, code)
+            for group in groups
+            for code in (sorted(held[axis_of(group)]) if at else every)
+        ]
+        table = keyed_table(self.variables, [group for group, _ in padded])
+        table[self.category] = category_column([code for _, code in padded], self.categories.labels)
+        table[self.value] = number_column([found.get(row, math.nan) for row in padded])
+        return table
+
+    def of_series(self, table: dict[str, Column], levels: Sequence[int]) -> dict[str, Column]:
+        """The rows of `table` of the given series levels (every row without series)."""
+        if self.series is None:
+            return table
+        return subset(table, np.isin(table[self.series].values, levels))
 
     def error_bars(self, chart: Chart, *, dodge: bool, stroke: str | None = None) -> None:
         """Adds the intervals, if any, on the categories."""
@@ -374,6 +497,8 @@ class _CategoryEstimates:
         interval = self.interval
         text = f"{shapes} show the {self.estimator} of {self.value} for each {self.category}"
         text += by(self.series)
+        if self.joined_lines:
+            text += ", joined by lines"
         if interval:
             text += "; error bars show " + describe_interval(
                 interval[0], interval[1], self.n_boot, self.seed

@@ -54,6 +54,7 @@ import {
   type SummaryContext,
 } from "./mark.ts";
 import { placeAt, rowOf, type Series, valueAt, visibleRange, xExtent, yExtent } from "./series.ts";
+import { offsetOf, Swarms } from "./swarm.ts";
 import { unionExtent } from "./trace.ts";
 
 /**
@@ -137,6 +138,13 @@ interface PointStyle<S extends Schema> {
    * hash of each row and `seed`, so points stay put as data streams.
    */
   jitter?: { width: number; seed?: number };
+  /**
+   * With a category `x` or `y`: pack points across their band (or, with
+   * `dodge`, their series' share of it) without overlap, in order of their
+   * values, as a beeswarm; points that do not fit stand at its edges. It
+   * is laid out again as the chart resizes and zooms.
+   */
+  swarm?: boolean;
   label?: string;
   /**
    * Marks naming the same group share series by name: series of the same
@@ -203,8 +211,10 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
   readonly #ringWidth: number;
   /** How far each of SYMBOLS reaches per unit of radius. */
   readonly #reaches = SYMBOLS.map(symbolReach);
-  /** The banded axis points spread along (dodge, jitter), and their series' shares of its bands. */
+  /** The banded axis points spread along (dodge, jitter, swarm), and their series' shares of its bands. */
   readonly #spread: { axis: "x" | "y"; shares: BandShares } | undefined;
+  /** With `swarm`, the layout of each panel's swarms. */
+  readonly #swarms: Swarms | undefined;
 
   constructor(input: PointSpec, table: Table<Schema>, view?: RowView) {
     this.spec = frozen(input);
@@ -223,9 +233,14 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       x: table.kind(spec.x) === "category",
       y: table.kind(spec.y) === "category",
     };
-    const { dodge, jitter } = spec;
-    if (dodge || jitter) {
-      const option = dodge ? "dodge" : "jitter";
+    const { dodge, jitter, swarm } = spec;
+    if (swarm !== undefined && typeof swarm !== "boolean")
+      throw new TypeError(`point swarm: expected true or false; received ${JSON.stringify(swarm)}`);
+    if (swarm && jitter) throw new Error("point swarm: places points itself; drop jitter or swarm");
+    if (swarm && spec.sampling === "pixel")
+      throw new Error('point sampling: a swarm places every point; drop sampling: "pixel"');
+    if (dodge || jitter || swarm) {
+      const option = dodge ? "dodge" : jitter ? "jitter" : "swarm";
       if (this.#banded.x === this.#banded.y)
         throw new Error(`point ${option}: needs one category position, x or y`);
       if (dodge && spec.series === undefined)
@@ -237,6 +252,7 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
       if (jitter?.seed !== undefined && !Number.isInteger(jitter.seed))
         throw new RangeError(`point jitter.seed: expected a whole number; received ${jitter.seed}`);
       this.#spread = { axis: this.#banded.x ? "x" : "y", shares: new BandShares() };
+      if (swarm) this.#swarms = new Swarms();
     }
     // Points in bands are in no x order.
     const xField = this.#banded.x ? undefined : spec.x;
@@ -407,6 +423,22 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     const keyLabels = keyKind === "category" ? this.table.categories(keyField as never) : undefined;
     const keyNumbers = keyLabels ? undefined : read(keyField);
     this.#spread?.shares.split(series, frame, this.spec.legendGroup, Boolean(this.spec.dodge));
+    // Swarms are laid out for the panel's scales before any point is placed.
+    if (this.#swarms) {
+      const radiusOf = this.#radiusScale();
+      const values = this.table.numbers(
+        (this.#spread!.axis === "x" ? this.spec.y : this.spec.x) as never,
+      );
+      this.#swarms.offsets(
+        series,
+        frame,
+        this.#spread!.axis,
+        this.#spread!.shares,
+        (row) => this.#reach(row, radiusOf),
+        values,
+        this.table.version,
+      );
+    }
     const placeRow = this.#placer();
     for (const s of series) {
       if (frame.hidden.has(s.key)) continue;
@@ -921,6 +953,11 @@ export class PointMark implements Mark<Frozen<PointSpec>> {
     const spread = this.#spread!;
     const band = spread.axis === "x" ? frame.x : frame.y;
     const { center, width } = spread.shares.of(s, band.bandwidth ?? 0);
+    // A swarm's offsets are its panel's last layout, which geometry made.
+    if (this.#swarms) {
+      const layout = this.#swarms.last(frame);
+      return center + (layout ? offsetOf(layout, row) : 0);
+    }
     const jitter = this.spec.jitter;
     if (!jitter) return center;
     const unit = jitterOf(this.table.rowOffset + row, jitter.seed ?? 0);
@@ -1075,6 +1112,7 @@ export function point<S extends Schema>(
       "colorMidpoint",
       "sampling",
       "dodge",
+      "swarm",
       "label",
       "legendGroup",
       "id",

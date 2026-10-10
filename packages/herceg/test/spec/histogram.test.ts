@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import { loadSpec } from "../../src/spec/load.ts";
 import { checkSpec, validateSpec } from "../../src/spec/validate.ts";
 
-const data = { t: { columns: { v: [0, 1, 2], g: ["a", "b", "a"] } } };
+const data = { t: { columns: { v: [0, 1, 2], g: ["a", "b", "a"], w: [1, 2, 0.5] } } };
 const features = [
   { option: "y", mark: { y: "v" } },
+  { option: "weight", mark: { x: "v", weight: "w" } },
+  { option: "frequency", mark: { x: "v", normalize: "frequency" } },
+  { option: "fill", mark: { x: "v", series: "g", stack: "fill" } },
+  { option: "element", mark: { x: "v", element: "poly" } },
   { option: "bins", mark: { x: "v", bins: [0, 1, 2] } },
   { option: "normalize", mark: { x: "v", normalize: "probability" } },
   { option: "commonNorm", mark: { x: "v", commonNorm: true } },
@@ -52,6 +56,14 @@ describe("histogram specs", () => {
     { mark: { x: "v", commonNorm: 1 }, error: /marks\[0\]\.commonNorm/ },
     { mark: { x: "v", cumulative: "yes" }, error: /marks\[0\]\.cumulative/ },
     { mark: { x: "v", dodge: "yes" }, error: /marks\[0\]\.dodge/ },
+    {
+      mark: { x: "v", stack: "full" },
+      error: /marks\[0\]\.stack: expected true, false, or "fill"/,
+    },
+    { mark: { x: "v", stack: "fill", dodge: true }, error: /dodge or stack, not both/ },
+    { mark: { x: "v", element: "line" }, error: /marks\[0\]\.element/ },
+    { mark: { x: "v", dodge: true, element: "step" }, error: /histogram dodge: places bars/ },
+    { mark: { x: "v", weight: 1 }, error: /marks\[0\]\.weight/ },
   ])("refuses invalid histogram form $mark", ({ mark, error }) => {
     expect(() => validateSpec({ marks: [{ type: "histogram", ...mark }] })).toThrow(error);
   });

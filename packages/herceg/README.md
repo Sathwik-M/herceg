@@ -511,6 +511,16 @@ area(metrics, { x: "time", y1: "p50", y2: "p99" }); // band between two fields
 // are not unless `line: true`. `stroke` and `strokeWidth` style the outline and
 // turn it on; `line: false` or a width of 0 turns it off.
 
+// Over categories: points at the bands' centers, on the bars' band scale.
+bar(sales, { x: "month", y: "units" });
+line(sales, { x: "month", y: "target" });
+line(stats, { x: "day", y: "mean", series: "sex", dodge: true }); // beside grouped bars
+// Along y: positions on y, values on x, read by y.
+line(casts, { x: "temperature", y: "depth", orient: "y" });
+line(casts, { x: ["temperature", "salinity"], y: "depth", orient: "y" });
+line(stats, { x: "tip", y: "day" }); // a category y lays a line along y, as bars lie
+area(casts, { x: "density", y: "depth", orient: "y" }); // filled to x = 0
+area(casts, { y: "depth", x1: "low", x2: "high" }); // a band along y
 ```
 
 Stacks put the first layer at the bottom: fields in the order given, a
@@ -529,6 +539,28 @@ rows, the others' rows of the same occurrence); hidden series leave the
 stack, and the x positions only they had. On a log y axis, stacks stand on
 the axis' low end, and layers standing on zero are drawn down to it, in
 stacks of fields too.
+
+Lines and areas run along an axis of positions: x, or with `orient: "y"`
+y, as depth profiles and densities of y do, with their values on x.
+`orient` is inferred from a category `y` with values on `x`, as bars lie
+along a category y; several value fields need it (`x: ["a", "b"]` with
+`orient: "y"`). Positions are numbers, times, or categories; on a category
+axis each row is placed at its band's center, and a series' rows are drawn
+in band order (rows of one band in theirs), whatever their order in the
+table, so a line runs through the months of a bar chart's axis in order.
+Rows without a category are left out; a missing value breaks the line, as
+along a number axis. On a category axis, `dodge: true` with a `series`
+field places each series' line or area through its share of the bands, as
+grouped bars and dodged points stand (by the legend group's series, in a
+group), and tooltips, the keyboard, and highlighted rows find points where
+they are drawn. Areas along y fill across x to zero (or stack along x, or
+fill the band between `x1` and `x2`). Lines and areas along y are traced,
+and reduced to about four points per pixel row, along y; tooltips default
+to "nearest-y", reporting every series at the y nearest the pointer (each
+series scanned, not searched), and the keyboard steps through each
+series' rows in order. They use the left y axis (`axis: "right"` is
+refused, as for horizontal bars), and span their positions whatever x
+shows; zooming along y does not rescale x.
 
 Annotations take constant positions (numbers, or `Date`s on time axes), or
 draw one item per row of a table when a position is a field. `label` is
@@ -586,6 +618,7 @@ point(stations, { x: "lon", y: "lat", color: "temperature", colors: viridis });
 point(cars, { x: "weight", y: "mpg", symbol: "origin" }); // a shape per origin
 point(requests, { x: "region", y: "latency" }); // a category x places points in its bands
 point(tips, { x: "day", y: "tip", series: "sex", dodge: true, jitter: { width: 0.5 } }); // strips
+point(tips, { x: "day", y: "tip", swarm: true }); // a beeswarm: packed without overlap
 errorBar(stats, { x: "group", y1: "low", y2: "high" }); // y, x1, x2 for horizontal ones
 errorBar(stats, { x: "group", y: "mean", yError: "se" }); // mean ± se
 
@@ -602,6 +635,7 @@ candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "
 
 histogram(requests, { x: "latency" }); // counts in round bins
 histogram(requests, { x: "latency", series: "region", bins: { step: 10 }, normalize: "percent" });
+histogram(requests, { x: "latency", series: "region", stack: "fill", element: "step" });
 
 boxplot(requests, { x: "region", y: "latency", series: "version" });
 boxplot(requests, { x: "latency", y: "region" }); // a category y lays boxes along y
@@ -611,8 +645,8 @@ violin(requests, { x: "region", y: "latency" }); // kernel densities, quartiles 
 
 Bar labels go past each bar's end, or for stacks inside each segment in a
 color that contrasts with it; labels that do not fit are left out. A category
-field on `x` or `y` (bars, points) or on `x` and `y` (heatmaps, points) gives a
-band axis. Categories on a y axis run top to bottom; long names are shortened
+field on `x` or `y` (bars, points, lines, areas) or on `x` and `y` (heatmaps,
+points) gives a band axis. Categories on a y axis run top to bottom; long names are shortened
 with an ellipsis. Points on a category axis sit at the centers of its bands
 (strip and dot plots, over bars too), and are drawn on the CPU however many
 there are; on a category y axis, a point's tooltip shows its category and
@@ -632,6 +666,21 @@ resizes, and streams, rows dropped before it included. Both need a category
 `x` or `y` (not both), and `dodge` a series field. Tooltips, the keyboard,
 and the nearest-point search find points and intervals where they are drawn,
 and report their values, not where they were moved to.
+
+`swarm: true` packs points across their band (or, with `dodge`, their
+series' share of it) without overlap instead, as a beeswarm: in order of
+their values, low to high, each point goes to the free place nearest its
+band's center, a clearance of half a pixel from the points placed before
+it. Points that find no place inside the band stand at its nearer edge,
+over others, as Seaborn's do, and leave the room to the points after them;
+a point tests itself against at most 512 placed neighbors, past which it
+stands at an edge too, which keeps the work bounded. The layout depends on
+pixels, so it is made again for each panel as the chart resizes and zooms,
+of the points in view (and a radius past it), with every series of a mark
+sharing each band's swarm (or each series its slot, dodged); appending rows
+can move the points beside them. A swarm takes the place of `jitter`, and
+refuses it and `sampling: "pixel"`. Laying out 10,000 points in one band
+takes about 2 ms, 100,000 about 21 ms (Node, Apple M6).
 
 ```ts
 bar(stats, { x: "day", y: "mean", series: "sex", legendGroup: "sex" });
@@ -784,7 +833,13 @@ coarsening. Time edges are epoch milliseconds. Each bin holds
 as in NumPy. Non-finite values and values outside the edges are left out.
 Values below a fixed `start` are also left out.
 
-`normalize` defaults to `"count"`. `"probability"` divides each bin's count by
+`weight` names a number field each row counts as, in place of 1: counts
+become sums of weights, and probabilities, percents, and densities shares of
+them. Rows missing a weight, or with a negative one, are not counted, and
+summaries say how many were left out.
+
+`normalize` defaults to `"count"`. `"frequency"` divides each bin's count by
+its width (counts per unit of the binned axis). `"probability"` divides each bin's count by
 its series' total count in the bins; `"percent"` multiplies that by 100.
 `"density"` divides probability by that bin's width, so each series has area
 1 (per millisecond for times). `commonNorm: true` additionally multiplies
@@ -796,14 +851,22 @@ not rescale the others. It has no effect with count normalization.
 `cumulative: true` accumulates each series' counts, probabilities, or percents
 through the current bin. Cumulative density integrates each bin's density
 by its width, so the final bar is 1, or the series' share with common
-normalization (0 when there are no values in bins). Accumulation precedes
+normalization (0 when there are no values in bins); cumulative frequency
+integrates to counts, as Seaborn's does. Accumulation precedes
 stacking. Tooltips report a cumulative range from the first edge to the
 current right edge, and summaries identify cumulative bars.
 
-Several series overlay translucently by default. `stack: true` stacks them;
-`dodge: true` places visible series side by side within each bin, in series
-order (or, in a legend group, the group's order), with opaque fills by
-default. Dodge and stack exclude each other in types and at runtime. The
+Several series overlay translucently by default. `stack: true` stacks them,
+and `stack: "fill"` stacks them as shares of each bin, so each bin's visible
+series reach 1 (bins holding nothing hold no shares, and tooltips report
+shares); `dodge: true` places visible series side by side within each bin,
+in series order (or, in a legend group, the group's order), with opaque
+fills by default. Dodge and stack exclude each other in types and at runtime.
+`element: "step"` draws each series as an area whose top steps across its
+bins, and `"poly"` as one through the bins' centers, both outlined along
+their tops, at an opacity of 0.75 (0.25 overlaid) and stacked as bars are;
+they take no `dodge`. Tooltips, brushes, and clicks read their bins as they
+read bars. The
 one-pixel gap between sufficiently wide bins stays; hiding a series gives its
 slot to the others. Tooltips report a bin's center and edges as its data
 position; the pointer finds, and keyboard reading anchors on, each dodged
@@ -1073,8 +1136,8 @@ the notes), — not yet (refused with an error), · not applicable.
   it says that it controls every panel's shared x range.
 - The right axis (see [A second y axis](#a-second-y-axis)) takes values
   along y: horizontal bars, box plots, violins, histograms, and error bars,
-  points on category y, and rugs along y stay on the left, and a rule at an
-  x or a rug along x has no y to place.
+  points on category y, lines and areas along y, and rugs along y stay on
+  the left, and a rule at an x or a rug along x has no y to place.
   In facets and subplots, every panel drawing marks on it has one.
 - Points over a row view and custom marks without series repeat in every
   facet panel instead of splitting.
@@ -1094,8 +1157,9 @@ the notes), — not yet (refused with an error), · not applicable.
   rather than one by one (a facet panel's own as the keyboard arrives
   there); custom marks are read through their series.
 - Value animation moves unstacked, unlabeled bars, points, lines and areas
-  whose rows stay, rules, and pie slices (see [Animation](#animation)), in
-  charts of one panel.
+  along x whose rows stay, rules, and pie slices (see
+  [Animation](#animation)), in charts of one panel; lines and areas along
+  y show their new values at once.
 - Every mark draws in SVG, Canvas, static SVG, and PDF; large point series
   and 3D charts also draw with WebGL. Every mark has a React, Vue, and
   Svelte component, and every mark but custom marks (JavaScript only) a

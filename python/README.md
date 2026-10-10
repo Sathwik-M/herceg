@@ -20,6 +20,7 @@ One call makes a chart of one kind:
 
 ```python
 hg.line(df, x="time", y="latency", series="service")
+hg.line(casts, x="temperature", y="depth", orient="y")  # along y: a depth profile
 hg.area(df, x="time", y=["user", "system"], stack=True)
 hg.area(responses, x="minute", y="count", series="status", stack=True)  # long format
 hg.area(cpu, x="time", y="load", series="host", stack=True, stack_gaps="interpolate")
@@ -32,12 +33,14 @@ hg.scatter(countries, x="gdp", y="life", size="population", series="continent") 
 hg.scatter(stations, x="lon", y="lat", color="anomaly", colors="rdbu", color_midpoint=0)
 hg.scatter(cars, x="weight", y="mpg", symbol="origin")  # a shape per origin
 hg.scatter(requests, x="region", y="latency")  # a category x places points in its bands
+hg.scatter(tips, x="day", y="tip", swarm=True)  # a beeswarm: packed without overlap
 hg.heatmap(load, x="hour", y="host", color="cpu", colors="viridis")  # hours along a time axis
 hg.heatmap(load, x="hour", y="host", color="cpu", x_banded=True)  # a column per distinct hour
 hg.heatmap(commits, date="day", color="count", calendar="months")  # a calendar
 hg.candlestick(prices, x="day", open="open", high="high", low="low", close="close")
 hg.candlestick(prices, "day", "open", "high", "low", "close", variant="ohlc")  # OHLC bars
 hg.histogram(requests, x="latency", series="region", bins={"step": 10})
+hg.histogram(requests, x="latency", series="region", stack="fill", element="step")
 hg.pie(sales, "region", "revenue", inner_radius=0.6)  # a donut; counts rows without a value
 hg.boxplot(requests, x="region", y="latency", series="version")
 hg.violin(requests, x="region", y="latency")  # kernel densities, quartiles inside
@@ -342,20 +345,33 @@ legend entry, and one visibility, so a bar and its error bars hide together.
 Side-by-side marks of a group (grouped bars, box plots, violins, dodged
 histograms, points, and error bars) take the group's slots, so an error bar
 stands on its bar even when one mark lacks some of the group's series.
-On a category axis, `dodge=True` places a point or error bar mark's series
-side by side in each category, as grouped bars are, and `jitter` (a width
-from 0 to 1 of the category's band, or `hg.Jitter(width, seed=...)`) spreads
-points across it by a hash of each row, so they keep their places as the
-chart redraws and streams:
+On a category axis, `dodge=True` places a point, error bar, line, or area
+mark's series side by side in each category, as grouped bars are, and
+`jitter` (a width from 0 to 1 of the category's band, or
+`hg.Jitter(width, seed=...)`) spreads points across it by a hash of each
+row, so they keep their places as the chart redraws and streams;
+`swarm=True` instead packs them across it without overlap, in order of
+value (a beeswarm, laid out again as the chart resizes and zooms, with
+points that do not fit at the band's edges):
 
 ```python
 (
     hg.Chart(stats)
     .bar(x="day", y="mean", series="sex", legend_group="sex")
     .error_bar(x="day", y1="low", y2="high", series="sex", dodge=True, legend_group="sex")
+    .line(x="day", y="mean", series="sex", dodge=True, legend_group="sex")
 )
 hg.scatter(tips, x="day", y="tip", series="sex", dodge=True, jitter=0.5)
 ```
+
+Lines and areas run along x, through their rows in band order on a
+category x, or with `orient="y"` along y, values on x, read by y in
+tooltips and the keyboard (a category `y` with values on `x` lays them
+along y without it, as bars lie). Several value columns along y need it:
+`hg.line(casts, x=["temperature", "salinity"], y="depth", orient="y")`.
+Areas along y fill across x to zero, stack along x, or fill the band
+between `x1` and `x2` (`hg.Chart(casts).area(y="depth", x1="low",
+x2="high")`). Lines and areas along y use the left y axis.
 
 Histograms take exactly one number or time column, `x` (vertical) or `y`
 (horizontal), in both `hg.histogram` and `Chart.histogram`:
@@ -375,9 +391,11 @@ Bins include their left edge and exclude their right edge, except that the last
 bin includes both. Non-finite and outside values are left out; explicit edges
 are shared by all series and panels.
 
-`normalize` is `"count"` by default, `"probability"` (bin count / series count
-in bins), `"percent"` (probability × 100), or `"density"` (probability / bin
-width). `common_norm=True` also weights each normalized series by its share
+`weight` names a number column each row counts as in place of 1; rows
+missing a weight, or with a negative one, are not counted. `normalize` is
+`"count"` by default, `"frequency"` (count / bin width), `"probability"` (bin
+count / series count in bins), `"percent"` (probability × 100), or
+`"density"` (probability / bin width). `common_norm=True` also weights each normalized series by its share
 of finite observations, before dropping values outside bins. Hidden series
 stay in that denominator; count normalization is unchanged. With facets,
 bins follow panels sharing the binned axis (`resolve_x` or `resolve_y`), and
@@ -386,10 +404,13 @@ normalization is local to each panel. Subplots draw whole marks.
 `cumulative=True` accumulates counts, probabilities, or percents through each
 bin; density integrates bin widths to give probability mass. The final bar
 is 1 (or the series' share with common normalization), or 0 for no counted
-values. Accumulation happens before stacking. `dodge=True` places the visible
-series side by side with opaque fills by default, giving hidden series' slots
-to the others. Dodge excludes `stack=True`; horizontal histograms exclude
-`axis="right"`.
+values; cumulative frequency gives counts. Accumulation happens before
+stacking. `stack=True` stacks series, and `stack="fill"` stacks them as
+shares of each bin. `dodge=True` places the visible series side by side with
+opaque fills by default, giving hidden series' slots to the others. Dodge
+excludes stacks and `element="step"` or `"poly"`, which draw each series as
+an area stepping across its bins or running through their centers;
+horizontal histograms exclude `axis="right"`.
 
 Box plots accept raw category/value columns or precomputed statistic columns:
 
@@ -497,20 +518,21 @@ hx.barplot(tips, x="day", y="total_bill", series="sex", seed=1)
 hx.lineplot(fmri, x="timepoint", y="signal", series="event", errorbar=("se", 1))
 hx.regplot(tips, x="total_bill", y="tip", order=2, facet_column="smoker")
 hx.histplot(penguins, x="flipper_length_mm", series="species", kde=True)
+hx.swarmplot(tips, x="day", y="total_bill", series="sex", dodge=True)
 hx.pairplot(penguins, series="species")
 hx.clustermap(flights_wide, z_score=1)
 ```
 
 | Function | Computes (NumPy) | Draws |
 | --- | --- | --- |
-| `barplot`, `pointplot` | an `estimator` ("mean" or "median") per category, and an interval | bars or points, with error bars dodged by `series` |
+| `barplot`, `pointplot` | an `estimator` ("mean" or "median") per category, and an interval | bars, or points joined by lines, with error bars dodged by `series` |
 | `lineplot` | the estimate and interval at each distinct x | lines, with bands (`error_style="band"`) or error bars |
 | `regplot` | least-squares polynomial fits (`order`), or `lowess`, with bootstrap bands | points, fit lines, bands |
 | `residplot` | residuals from a polynomial fit, optionally a lowess line through them | points around a rule at 0 |
-| `histplot` | Seaborn's bin edges; heights, and KDE overlays scaled to them | the histogram mark (counts in the browser), lines |
-| `kdeplot` | Gaussian kernel densities (SciPy's `gaussian_kde`), 1D or 2D | lines or filled areas; a density heatmap for x and y |
-| `ecdfplot` | the empirical distribution | step lines |
-| `rugplot`, `stripplot` | (none) | rug ticks; points jittered by row and seed |
+| `histplot` | Seaborn's bin edges; heights, and KDE overlays scaled to them | the histogram mark (counts in the browser) as bars, steps, or polygons, lines |
+| `kdeplot` | Gaussian kernel densities (SciPy's `gaussian_kde`), 1D or 2D | lines or filled areas, along x or y; a density heatmap for x and y |
+| `ecdfplot` | the empirical distribution | step lines, along x or y |
+| `rugplot`, `stripplot`, `swarmplot` | (none; for swarms, which points fit) | rug ticks; points jittered by row and seed, or packed in swarms |
 | `boxplot`, `violinplot` | quartiles and whiskers (also in `statistics`) | the box plot and violin marks |
 | `pairplot`, `jointplot` | bins, densities, fits | subplots: scatter plots with histograms or densities |
 | `clustermap` | hierarchical clustering of rows and columns | a reordered heatmap with dendrograms in side panels |
@@ -526,15 +548,33 @@ colors), and the chart options of the one-call helpers (`title`, `width`,
 `facet_column` facet the chart, each panel with statistics of its own;
 `facet` and `panels` are refused, and `pairplot`, `jointplot`,
 `clustermap`, and `residplot` take no facets. Options a mark also takes
-mean what they mean there: histplot's `normalize` ("count", "probability",
-"percent", or "density") and `common_norm` (off by default), boxplot's
+mean what they mean there: histplot's `normalize` ("count", "frequency",
+"probability", "percent", or "density"), `weight`, `element` ("bars",
+"step", or "poly"), and `common_norm` (off by default), boxplot's
 `whiskers` ("tukey", 1.5 IQR, by default; "range"; or an IQR multiple) and
 `outliers`, violinplot's `inner` ("box", "quartiles", or "none"), and
 stripplot's `jitter`, the fraction of each category's band (or, with
 `dodge`, of each series' slot) the points spread across: `True` is 0.5,
 and an `hg.Jitter` brings its own seed. Statistical options keep Seaborn's
 names (`estimator`, `errorbar`, `n_boot`, `bw_method`, `bw_adjust`, `ci`,
-...). Axes are labeled with the columns' names unless `x_axis` or `y_axis`
+`multiple`, `linestyles`, `warn_thresh`, ...). Densities and ECDFs of `y`
+alone run along y, as do the KDE overlays of horizontal histograms.
+
+`pointplot` joins each series' estimates with a line through the categories
+in order, broken where the series has no estimate, under its error bars and
+points (dodged with them); `linestyles` takes Matplotlib's styles, one for
+every line or one per series level ("-", "--", ":", "-.", drawn as dash
+patterns), and `linestyle="none"` draws none, as Seaborn 0.13 has it
+(`join` is refused). `swarmplot` packs each category's points without
+overlap in the browser, at the size the chart is drawn; it warns, as
+Seaborn does, when more than `warn_thresh` (5%) of a category's points
+cannot be placed, from the same layout run in Python at the chart's `width`
+and `height` (640 by 320 pixels when not given) with the plot's margins
+estimated, on the value axis its options make (`type`, `domain`, `nice`,
+`ticks`, `zero`) and with facets sharing axes as `resolve_x` and
+`resolve_y` say, drawing only the points inside the plot, so a chart
+drawn larger or smaller than that may fit more or fewer points than the
+warning says. Axes are labeled with the columns' names unless `x_axis` or `y_axis`
 say otherwise. Rows missing a value the chart uses are left out, and the
 chart's description says how many.
 
@@ -578,24 +618,28 @@ whose panels have x scales of their own.
 
 Differences from Seaborn: Seaborn's `hue`, `hue_order`, `row`, and `col`
 are `series`, `series_order`, `facet_row`, and `facet_column`; `stat` is
-`normalize` (its "proportion" is "probability"); boxplot's `whis` and
+`normalize` (its "proportion" is "probability"); histplot's `weights` is
+`weight`; boxplot's `whis` and
 `showfliers` are `whiskers` and `outliers`; kdeplot's `fill` is `filled`;
 `kde_kws`, `err_style`, and `gridsize` are `kde_options`, `error_style`,
-and `grid_size`; strip plots' `jitter` is a fraction of the band, not
+and `grid_size`; swarm plots' `size` (points) is `radius` (pixels); strip
+plots' `jitter` is a fraction of the band, not
 Seaborn's half-width in category spacing, and `common_norm` is off unless
 asked for (pair plots' diagonal densities each integrate to 1).
-`pointplot` draws no lines between its points (lines cannot run along a
-category axis yet); `violinplot` uses herceg's violin mark, each violin as
+`pointplot` dodges with grouped bars' arithmetic, each series in its share
+of the category, not Seaborn's 0.025 of the category per series level, and
+takes no `markers`; swarms leave half a pixel between points where Seaborn's
+candidate places stand 5% farther out, so they pack about as tightly but
+not point for point alike; `violinplot` uses herceg's violin mark, each violin as
 wide as the others at its densest, with Silverman's rule (R's,
 0.9 min(sd, IQR/1.34) n^-1/5) per violin or one `bandwidth` for all, not
 SciPy's Scott factor, and takes `split=True` (a series of at most two
 levels, as halves) and `inner="box"`, `"quartiles"`, or `"none"`, but not
-`"stick"` or `"point"`; `histplot` has no
-`multiple="fill"`, `element="step"`, a "frequency" `normalize`, or weights,
-and draws densities over vertical bars only; `kdeplot` draws bivariate
-densities as a heatmap without contours; `kdeplot` and `ecdfplot` refuse
-`y` alone (a line along y would be read by its x in tooltips and keyboard
-reading, reporting the observation rather than the density or share);
+`"stick"` or `"point"`; `histplot` draws densities over layered series only
+(not stacked, filled, or dodged ones), has no bivariate histograms, and its
+steps and polygons are always filled (Seaborn's `fill=False` outlines have
+no counterpart); `kdeplot` draws bivariate
+densities as a heatmap without contours;
 `jointplot` takes `kind="scatter"` or
 `"reg"`; `pairplot` gives the diagonal's histograms and densities y scales of
 their own and its scatter plots matching y ranges per row, rather than one

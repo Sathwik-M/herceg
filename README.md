@@ -43,14 +43,17 @@ benchmark suite.
 
 ## Roadmap
 
-Done: columnar data model, scales, SVG and Canvas rendering, line, area
-(stacked from several fields or from long data split by a series field,
-zero or interpolated where a series has no row), bar
+Done: columnar data model, scales, SVG and Canvas rendering, line and area
+(along x or y, over number, time, or category axes, dodged beside grouped
+bars; areas stacked from several fields or from long data split by a series
+field, zero or interpolated where a series has no row), bar
 (vertical and horizontal, with value labels), point (with size, color,
-opacity, and shape encoded by fields), heatmap (cells along number and time
+opacity, and shape encoded by fields, and dodged, jittered, or packed in
+beeswarms on category axes), heatmap (cells along number and time
 axes that zoom and pan, or in bands, and calendars by week or by month),
 error bar, candlestick (and
-OHLC bars), histogram, pie (and donut), box plot, violin, treemap, sunburst, gauge,
+OHLC bars), histogram (weighted, stacked as shares of each bin, or drawn as
+steps or polygons), pie (and donut), box plot, violin, treemap, sunburst, gauge,
 funnel, radar, Sankey, network (graph), and map marks (choropleth regions and
 points on Equal Earth, Natural Earth, Mercator, equirectangular, and conic
 equal-area projections, from GeoJSON or packed geometry columns), 3D scatter,

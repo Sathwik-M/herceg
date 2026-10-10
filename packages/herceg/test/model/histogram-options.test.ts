@@ -7,7 +7,7 @@ import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
-import type { RectGeometry } from "../../src/scene/scene.ts";
+import type { AreaGeometry, RectGeometry } from "../../src/scene/scene.ts";
 import type { ScaleResolution } from "../../src/spec/spec.ts";
 import legacy from "./fixtures/histogram-legacy.json";
 
@@ -456,4 +456,108 @@ describe("histogram options", () => {
       expect(values(model)[0]![0]).toBe(5e-309);
     },
   );
+
+  it("measures frequency as counts per unit of the binned axis, cumulatively as counts", () => {
+    const data = table({ v: [0.5, 1.5, 1.6, 3, 9] });
+    const bins = [0, 1, 2, 10];
+    const { model } = build({ marks: [histogram(data, { x: "v", bins, normalize: "frequency" })] });
+    expect(values(model)).toEqual([[1, 2, 2 / 8]]);
+    const cumulative = build({
+      marks: [histogram(data, { x: "v", bins, normalize: "frequency", cumulative: true })],
+    });
+    expect(values(cumulative.model)).toEqual([[1, 3, 5]]);
+  });
+
+  it("counts each row as its weight, leaving out rows without a usable one", () => {
+    const data = table({
+      v: [0.5, 0.5, 1.5, 1.5, 1.5, 2.5],
+      w: [2, 0.5, 1, Number.NaN, -1, 4],
+    });
+    const mark = histogram(data, { x: "v", bins: [0, 1, 2, 3], weight: "w" }) as HistogramMark;
+    const { model } = build({ marks: [mark] });
+    expect(values(model)).toEqual([[2.5, 1, 4]]);
+    const share = build({
+      marks: [
+        histogram(data, { x: "v", bins: [0, 1, 2, 3], weight: "w", normalize: "probability" }),
+      ],
+    });
+    expect(values(share.model)[0]).toEqual([2.5 / 7.5, 1 / 7.5, 4 / 7.5]);
+    expect(describeChart(model)).toContain("4 values, w 7.5 in all, in 3 bins");
+    expect(describeChart(model)).toContain("holds w 4; 2 missing a value or w or outside the bins");
+    // Selecting a bin selects the rows it counted.
+    const counted = mark.summarized(model.series()[0]!, 1);
+    expect([0, 1, 2, 3, 4, 5].filter(counted)).toEqual([2]);
+    expect(() => histogram(table({ v: [1], w: ["a"] }), { x: "v", weight: "w" as never })).toThrow(
+      /histogram weight/,
+    );
+  });
+
+  it("fills stacks as each series' share of its bin, of the series shown", () => {
+    const data = table({
+      v: [0.5, 0.5, 0.5, 1.5, 1.5, 2.5],
+      g: ["a", "b", "b", "a", "a", "b"],
+    });
+    const mark = histogram(data, { x: "v", bins: [0, 1, 2, 3, 4], series: "g", stack: "fill" });
+    const { model, scene } = build({ marks: [mark] });
+    const [a, b] = model.series();
+    expect([...a!.values]).toEqual([1 / 3, 1, 0, Number.NaN]);
+    expect([...a!.y]).toEqual([1 / 3, 1, 0, Number.NaN]);
+    expect([...b!.y0!]).toEqual([1 / 3, 1, 0, Number.NaN]);
+    expect([...b!.y]).toEqual([1, 1, 1, Number.NaN]);
+    expect(model.yScale()!.domain).toEqual([0, 1]);
+    // An empty bin draws nothing; a series' empty share neither.
+    expect(rectangles(scene).map((m) => m.count)).toEqual([2, 2]);
+    expect(model.inspectPosition(a!.key, 0)!.points[0]!.text).toBe("0 – 1: 0.333");
+    model.hidden.add(b!.key);
+    model.scene(estimateText);
+    expect([...model.series()[0]!.y]).toEqual([1, 1, Number.NaN, Number.NaN]);
+  });
+
+  it("draws steps across each bin and polygons through their centers, stacked on the series below", () => {
+    const data = table({ v: [0.5, 1.5, 1.5, 2.5], g: ["a", "a", "b", "b"] });
+    const bins = [0, 1, 2, 3];
+    const areas = (scene: ReturnType<typeof build>["scene"]) =>
+      scene.panels[0]!.marks.filter((m): m is AreaGeometry => m.kind === "area");
+    const points = (line: AreaGeometry["upper"]) =>
+      Array.from({ length: line.count }, (_, i) => [line.coords[i * 2]!, line.coords[i * 2 + 1]!]);
+    const step = build({ marks: [histogram(data, { x: "v", bins, element: "step" })] });
+    const x = step.model.xScale()!;
+    const y = step.model.yScale()!;
+    const [single] = areas(step.scene);
+    expect(points(single!.upper)).toEqual(
+      [0, 1, 1, 2, 2, 3].map((edge, i) => [
+        expect.closeTo(x.map(edge), 3),
+        expect.closeTo(y.map([1, 1, 2, 2, 1, 1][i]!), 3),
+      ]),
+    );
+    expect(points(single!.lower!).every(([, py]) => Math.abs(py! - y.map(0)) < 1e-3)).toBe(true);
+    expect(single!.fillOpacity).toBe(0.75);
+    expect(single!.stroke).toBe(single!.fill);
+    const stacked = build({
+      marks: [histogram(data, { x: "v", bins, series: "g", stack: true, element: "poly" })],
+    });
+    const [, top] = areas(stacked.scene);
+    const sy = stacked.model.yScale()!;
+    expect(points(top!.upper).map(([, py]) => py)).toEqual(
+      [1, 2, 1].map((v) => expect.closeTo(sy.map(v), 3)),
+    );
+    expect(points(top!.lower!).map(([, py]) => py)).toEqual(
+      [1, 1, 0].map((v) => expect.closeTo(sy.map(v), 3)),
+    );
+    const overlaid = build({
+      marks: [histogram(data, { x: "v", bins, series: "g", element: "step" })],
+    });
+    expect(areas(overlaid.scene).map((m) => m.fillOpacity)).toEqual([0.25, 0.25]);
+    // Horizontal steps run along y, their measures along x.
+    const horizontal = build({ marks: [histogram(data, { y: "v", bins, element: "step" })] });
+    const hx = horizontal.model.xScale()!;
+    const hy = horizontal.model.yScale()!;
+    expect(points(areas(horizontal.scene)[0]!.upper)[0]).toEqual([
+      expect.closeTo(hx.map(1), 3),
+      expect.closeTo(hy.map(0), 3),
+    ]);
+    expect(() => histogram(data, { x: "v", series: "g", dodge: true, element: "step" })).toThrow(
+      'histogram dodge: places bars side by side in each bin; drop dodge, or draw element: "bars"',
+    );
+  });
 });

@@ -1,6 +1,11 @@
 """herceg.express: statistical charts in one call, made of herceg's marks."""
 
+import json
 import math
+import re
+import warnings
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -90,8 +95,8 @@ def test_category_order_and_horizontal_bars():
 
 def test_number_series_are_categories_in_ascending_order():
     chart = hx.pointplot(TIPS, x="day", y="tip", series="size", dodge=True, errorbar=("sd", 1))
-    errors, points = marks(chart)
-    assert points["dodge"] is True and errors["dodge"] is True
+    points, errors, lines = marks(chart)
+    assert points["dodge"] is True and errors["dodge"] is True and lines["dodge"] is True
     assert table(chart)["size"]["dictionary"] == ["1", "2", "3", "4"]
     assert "±1 standard deviation" in chart.to_spec()[0]["description"]
 
@@ -416,13 +421,15 @@ def test_histplot_layouts_orientation_and_refusals():
         hx.histplot(PENGUINS, x="flipper", y="mass")
     with pytest.raises(ValueError, match="layered bars only"):
         hx.histplot(PENGUINS, x="flipper", series="species", multiple="stack", kde=True)
-    with pytest.raises(ValueError, match="cannot draw kernel densities over horizontal bars"):
-        hx.histplot(PENGUINS, y="flipper", kde=True)
-    for refused in ("frequency", "proportion", "stat"):
+    # Densities over horizontal bars run along y.
+    horizontal = marks(hx.histplot(PENGUINS, y="flipper", kde=True))
+    assert horizontal[1]["type"] == "line" and horizontal[1]["orient"] == "y"
+    assert horizontal[1]["y"] == "flipper" and horizontal[1]["x"] == "density"
+    for refused in ("proportion", "stat"):
         with pytest.raises(
             ValueError,
-            match=f'histplot normalize: expected "count", "probability", "percent", or "density"; '
-            f'received "{refused}"',
+            match=f'histplot normalize: expected "count", "frequency", "probability", "percent", '
+            f'or "density"; received "{refused}"',
         ):
             hx.histplot(PENGUINS, x="flipper", normalize=refused)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="histplot kde_options: unknown bandwidth"):
@@ -453,9 +460,20 @@ def test_kdeplot_matches_seaborns_curves():
     filled = hx.kdeplot(frame, x="flipper", filled=True)
     assert [mark["type"] for mark in marks(filled)] == ["area"]
     assert [mark["type"] for mark in marks(hx.kdeplot(frame, x="flipper"))] == ["line"]
-    # Lines along y would be read by x: refused rather than misread.
-    with pytest.raises(ValueError, match="kdeplot cannot draw densities along y yet"):
-        hx.kdeplot(frame, y="flipper")
+    # Densities of y run along y, as Seaborn's do.
+    along = hx.kdeplot(frame, y="flipper", series="species", grid_size=50, common_norm=True)
+    assert [(m["type"], m["orient"]) for m in marks(along)] == [("line", "y")]
+    density = hx.statistics(along).tables["density"]
+    ax = sns.kdeplot(frame, y="flipper", hue="species", gridsize=50, common_norm=True)
+    # Seaborn's lines run (density, value): its x is our density.
+    curves = [curve[:, ::-1] for curve in _lines_by_x(ax)]
+    for level in ("Adelie", "Gentoo", "Chinstrap"):
+        rows = density["species"] == level
+        assert _matches(density["flipper"][rows], density["density"][rows], curves), level
+    plt.close("all")
+    spec, _ = along.to_spec()
+    assert spec["x"]["title"] == "Density" and spec["y"]["title"] == "flipper"
+    assert marks(hx.kdeplot(frame, y="flipper", filled=True))[0]["type"] == "area"
 
 
 def test_bivariate_kde_is_a_density_heatmap_per_panel():
@@ -503,8 +521,28 @@ def test_ecdfplot_steps_match_seaborn():
             assert set(ours) == set(heights)
             assert np.allclose([ours[x] for x in heights], list(heights.values()), rtol=1e-12)
         plt.close("all")
-    with pytest.raises(ValueError, match="ecdfplot cannot draw steps along y yet"):
-        hx.ecdfplot(PENGUINS, y="flipper")
+    # Steps of y run along y: each value's share holds up to the next value.
+    along = hx.ecdfplot(PENGUINS, y="flipper", series="species")
+    (steps_y,) = marks(along)
+    assert steps_y["orient"] == "y" and steps_y["curve"] == "step-after"
+    assert steps_y["x"] == "Probability" and steps_y["y"] == "flipper"
+    assert "<path" in along.to_svg()
+    ax = sns.ecdfplot(frame, y="flipper", hue="species")
+    steps = hx.statistics(along).tables["ecdf"]
+    for curve in _lines_by_x(ax):
+        finite = curve[np.isfinite(curve[:, 1])]
+        # Seaborn's lines run (share, value); the last share at each value is its step.
+        heights = {value: share for share, value in finite}
+        level = next(
+            lv
+            for lv in ("Adelie", "Gentoo", "Chinstrap")
+            if len(np.unique(steps["flipper"][steps["species"] == lv])) == len(heights)
+            and np.isclose(steps["flipper"][steps["species"] == lv][-1], finite[-1, 1])
+        )
+        rows = steps["species"] == level
+        ours = dict(zip(steps["flipper"][rows], steps["Probability"][rows], strict=True))
+        assert np.allclose([ours[v] for v in heights], list(heights.values()), rtol=1e-12)
+    plt.close("all")
     # Every point read is an observation's step: [1, 2, 3] reads 1/3 first, a lone value 1.
     for sample, complementary, first in (
         ([1.0, 2.0, 3.0], False, 1 / 3),
@@ -1008,3 +1046,249 @@ def test_common_norm_is_off_unless_asked_as_in_the_histogram_mark():
     assert "weighted by each series' share" in hx.statistics(weighted).description
     pair = hx.pairplot(PENGUINS, vars=["flipper", "mass"], series="species", diag_kind="kde")
     assert np.allclose(areas(pair, "flipper density"), 1, atol=1e-3)
+
+
+# Lines between estimates, swarms, and histogram options --------------------------
+
+
+def test_pointplot_joins_its_estimates_with_lines_that_break_at_missing_categories():
+    data = {
+        "day": ["thu", "thu", "fri", "fri", "sat", "sat", "thu", "fri"],
+        "tip": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+        "sex": ["f", "f", "f", "f", "f", "f", "m", "m"],
+    }
+    chart = hx.pointplot(data, x="day", y="tip", series="sex", errorbar=None, dodge=True)
+    points, lines = marks(chart)
+    assert lines["type"] == "line" and lines["dodge"] is True
+    assert lines["legendGroup"] == points["legendGroup"] == "series"
+    spec, buffers = chart.to_spec()
+    joined = spec["data"][lines["data"]]["columns"]["tip"]
+    # Every series has a row in every category: m has none on sat, so its line breaks.
+    estimates = np.frombuffer(buffers[joined["buffer"]], dtype="<f8")
+    assert len(estimates) == 6 and int(np.isnan(estimates).sum()) == 1
+    assert "joined by lines" in chart.to_spec()[0]["description"]
+    styled = hx.pointplot(data, x="day", y="tip", series="sex", linestyles=["-", "--"])
+    dashed = [m.get("dash") for m in marks(styled) if m["type"] == "line"]
+    assert dashed == [None, [6, 4]]
+    none = hx.pointplot(data, x="day", y="tip", linestyle="none", errorbar=None)
+    assert [m["type"] for m in marks(none)] == ["point"]
+    horizontal = hx.pointplot(data, x="tip", y="day", errorbar=None)
+    assert marks(horizontal)[1]["type"] == "line" and marks(horizontal)[1]["y"] == "day"
+    # Styles per level keep the levels' order, colors, and slots: the points set them.
+    levels = {
+        "day": ["thu"] * 3 + ["fri"] * 3,
+        "tip": [1.0, 2.0, 3.0] * 2,
+        "s": ["A", "B", "C"] * 2,
+    }
+    mixed = hx.pointplot(
+        levels, x="day", y="tip", series="s", linestyles=["-", "--", "-"], dodge=True, errorbar=None
+    )
+    kinds = [(m["type"], m.get("dash")) for m in marks(mixed)]
+    assert kinds == [("point", None), ("line", None), ("line", [6, 4])]
+    import herceg as hg
+
+    legend = mixed.to_svg()
+    assert legend.index(">A<") < legend.index(">B<") < legend.index(">C<")
+    assert isinstance(mixed, hg.Chart)
+    assert "joined by lines" in hx.statistics(mixed).description
+    with pytest.raises(ValueError, match="pointplot linestyle: expected"):
+        hx.pointplot(levels, x="day", y="tip", linestyle="~")  # type: ignore[arg-type]
+    with pytest.raises(
+        ValueError, match='pointplot join: Seaborn 0.13 deprecates it; pass linestyle="none"'
+    ):
+        hx.pointplot(data, x="day", y="tip", join=False)
+    with pytest.raises(
+        ValueError, match="pointplot linestyles: expected 2 styles, one per series level"
+    ):
+        hx.pointplot(data, x="day", y="tip", series="sex", linestyles=["-"])
+    with pytest.raises(ValueError, match="pointplot linestyle: give one style"):
+        hx.pointplot(data, x="day", y="tip", linestyle="-", linestyles="--")
+    assert "<path" in chart.to_svg()
+
+
+def test_pointplot_pads_its_lines_with_the_categories_of_their_panels_axis():
+    # P1 holds days A and B, P2 days C and D; m has no estimate on B or D.
+    data = {
+        "day": ["A", "B", "A", "C", "D", "C"],
+        "tip": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        "sex": ["f", "f", "m", "f", "f", "m"],
+        "p": ["P1", "P1", "P1", "P2", "P2", "P2"],
+    }
+
+    def joined(**options: Any) -> np.ndarray:
+        chart = hx.pointplot(
+            data, x="day", y="tip", series="sex", errorbar=None, facet_column="p", **options
+        )
+        spec, buffers = chart.to_spec()
+        (line,) = [m for m in spec["marks"] if m["type"] == "line"]
+        column = spec["data"][line["data"]]["columns"]["tip"]
+        return np.frombuffer(buffers[column["buffer"]], dtype="<f8")
+
+    # A shared x holds every day: each series has a row on each.
+    shared = joined()
+    assert len(shared) == 16 and int(np.isnan(shared).sum()) == 10
+    # Panels' own x axes hold their own days, where m's lines still break.
+    independent = joined(resolve_x="independent")
+    assert len(independent) == 8 and int(np.isnan(independent).sum()) == 2
+
+
+def test_swarmplot_packs_points_and_warns_as_seaborn_does_when_they_do_not_fit():
+    rng = np.random.default_rng(3)
+    sparse = {"g": np.repeat(["a", "b"], 30), "v": rng.normal(0, 1, 60)}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        chart = hx.swarmplot(sparse, x="g", y="v")
+    (mark,) = marks(chart)
+    assert mark["swarm"] is True and mark["type"] == "point"
+    crowded = {"g": np.repeat(["a", "b"], 2000), "v": rng.normal(0, 1, 4000)}
+    with pytest.warns(UserWarning) as warned:
+        hx.swarmplot(crowded, x="g", y="v")
+    assert [str(w.message).split(" of the points of ")[1][:5] for w in warned] == ["g 'a'", "g 'b'"]
+    assert all(
+        re.match(
+            r"swarmplot: \d+\.\d% of the points of g '[ab]' cannot be placed at 640 by 320",
+            str(w.message),
+        )
+        for w in warned
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        hx.swarmplot(crowded, x="g", y="v", warn_thresh=1)
+    dodged = hx.swarmplot(TIPS, x="day", y="tip", series="sex", dodge=True, radius=2)
+    assert marks(dodged)[0]["dodge"] is True and "<svg" in dodged.to_svg()
+    with pytest.raises(ValueError, match="swarmplot warn_thresh: expected a share from 0 to 1"):
+        hx.swarmplot(sparse, x="g", y="v", warn_thresh=2)
+
+
+def test_swarm_warning_reads_the_value_axis_as_the_chart_draws_it():
+    def quiet(**arguments: Any) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            hx.swarmplot(**arguments)
+
+    # Values a trillion apart crowd near zero on a linear axis, but not on a log one.
+    spread = {"g": np.repeat(["a"], 150), "v": np.geomspace(1, 1e12, 150)}
+    with pytest.warns(UserWarning, match="g 'a'"):
+        hx.swarmplot(spread, x="g", y="v")
+    quiet(data=spread, x="g", y="v", y_axis=hg.Axis(type="log"))
+    # A fixed domain far wider than the values crowds them.
+    rng = np.random.default_rng(5)
+    normal = {"g": np.repeat(["a"], 200), "v": rng.normal(0, 1, 200)}
+    quiet(data=normal, x="g", y="v")
+    with pytest.warns(UserWarning, match="g 'a'"):
+        hx.swarmplot(normal, x="g", y="v", y_axis=hg.Axis(domain=(-1000, 1000)))
+    # Panels of a value axis of their own lay their swarms out on it.
+    panels = {
+        "g": np.repeat(["a"], 200),
+        "p": np.repeat(["low", "high"], 100),
+        "v": np.concatenate([rng.normal(0, 1, 100), rng.normal(1e6, 1, 100)]),
+    }
+    with pytest.warns(UserWarning, match="g 'a'"):
+        hx.swarmplot(panels, x="g", y="v", facet_column="p")
+    quiet(data=panels, x="g", y="v", facet_column="p", resolve_y="independent")
+    # Panels of a band axis of their own hold only their own categories, in wider bands.
+    level = hg.Axis(domain=(-1, 1))
+    bands = {"g": np.repeat(["a", "b"], 25), "p": np.repeat(["P1", "P2"], 25), "v": np.zeros(50)}
+    with pytest.warns(UserWarning) as warned:
+        hx.swarmplot(bands, x="g", y="v", facet_column="p", y_axis=level)
+    assert ["g 'a' (p 'P1')" in str(w.message) for w in warned] == [True, False]
+    quiet(data=bands, x="g", y="v", facet_column="p", y_axis=level, resolve_x="independent")
+    # Band axes hold every category of their rows, drawn or not, and no other.
+    logged = {
+        "g": ["a"] * 25 + ["b", "c"],
+        "p": ["P1"] * 26 + ["P2"],
+        "v": [1.0] * 25 + [-1.0, 1.0],
+    }
+    with pytest.warns(UserWarning, match="g 'a' \\(p 'P1'\\)"):
+        hx.swarmplot(
+            logged,
+            x="g",
+            y="v",
+            facet_column="p",
+            resolve_x="independent",
+            y_axis=hg.Axis(type="log", domain=(0.1, 10)),
+        )
+    alone = {"g": ["a"] * 50, "s": ["A"] * 50, "v": np.zeros(50)}
+    quiet(data=alone, x="g", y="v", order=["a", "b"], y_axis=level)
+    # Dodged series share bands as the chart's rows hold them, not unused levels.
+    quiet(data=alone, x="g", y="v", series="s", series_order=["A", "B"], dodge=True, y_axis=level)
+    # Points outside a fixed domain are not drawn, so not laid out.
+    quiet(
+        data={"g": ["a"] * 200, "v": np.full(200, 1000.0)},
+        x="g",
+        y="v",
+        y_axis=hg.Axis(domain=(0, 1)),
+    )
+
+
+def test_swarm_warning_lays_points_out_as_the_core_does():
+    from herceg.express import _swarm
+
+    fixture = (
+        Path(__file__).resolve().parents[2] / "packages/herceg/test/fixtures/swarm-layout.json"
+    )
+    for case in json.loads(fixture.read_text())["cases"]:
+        edged, offsets = _swarm.pack(np.array(case["pixels"]), case["radius"], case["width"])
+        assert edged == case["edged"]
+        assert np.allclose(offsets, case["offsets"], atol=1e-6)
+
+
+def test_histplot_fills_steps_frequencies_and_weights_follow_seaborn():
+    statistics = pytest.importorskip("seaborn._statistics")
+    flipper = PENGUINS["flipper"]
+    weights = np.abs(PENGUINS["mass"]) / 1000
+    data = {**PENGUINS, "w": weights}
+    chart = hx.histplot(data, x="flipper", weight="w", normalize="frequency", bins=12)
+    (mark,) = marks(chart)
+    assert mark["weight"] == "w" and mark["normalize"] == "frequency"
+    bins = hx.statistics(chart).tables["bins"]
+    hist = statistics.Histogram(stat="frequency", bins=np.asarray(mark["bins"]))
+    heights, _ = hist(flipper, weights=weights)
+    assert np.allclose(bins["height"], heights, rtol=1e-12)
+    with pytest.warns(
+        UserWarning, match='histplot bins: "auto" bins cannot follow weights; using bins=10'
+    ):
+        auto = hx.histplot(data, x="flipper", weight="w")
+    assert len(marks(auto)[0]["bins"]) == 11
+    filled = hx.histplot(PENGUINS, x="flipper", series="species", multiple="fill", element="step")
+    (fill_mark,) = marks(filled)
+    assert fill_mark["stack"] == "fill" and fill_mark["element"] == "step"
+    shares = hx.statistics(filled).tables["bins"]
+    totals: dict[float, float] = {}
+    for left, height in zip(shares["left"], shares["height"], strict=True):
+        if np.isfinite(height):
+            totals[left] = totals.get(left, 0.0) + height
+    assert np.allclose(list(totals.values()), 1)
+    spec, _ = filled.to_spec()
+    assert spec["y"]["title"] == "Share of count"
+    # Seaborn's filled bars hold the same shares, bin by bin.
+    plt = _seaborn_axes()
+    import pandas as pd
+    import seaborn as sns
+
+    ax = sns.histplot(
+        pd.DataFrame(PENGUINS), x="flipper", hue="species", multiple="fill", bins=fill_mark["bins"]
+    )
+    theirs: dict[float, list[float]] = {}
+    for patch in ax.patches:
+        if patch.get_height() > 0:
+            theirs.setdefault(round(patch.get_x(), 6), []).append(patch.get_height())
+    ours: dict[float, list[float]] = {}
+    for left, height in zip(shares["left"], shares["height"], strict=True):
+        if height > 0:
+            ours.setdefault(round(float(left), 6), []).append(float(height))
+    assert set(ours) == set(theirs)
+    for left, heights in ours.items():
+        assert np.allclose(sorted(heights), sorted(theirs[left]), rtol=1e-9)
+    plt.close("all")
+    poly = hx.histplot(PENGUINS, x="flipper", element="poly")
+    assert marks(poly)[0]["element"] == "poly" and "<path" in poly.to_svg()
+    # Densities weigh only rows of positive weight: one such row has none.
+    lone = hx.histplot(
+        {"v": [0.0, 0.0, 1000.0], "w": [1.0, 1.0, 0.0]}, x="v", weight="w", bins=2, kde=True
+    )
+    assert len(hx.statistics(lone).tables["kde"]["density"]) == 0
+    with pytest.raises(ValueError, match="histplot weight: column 'w' holds negative values"):
+        hx.histplot({"v": [1.0, 2.0], "w": [1.0, -1.0]}, x="v", weight="w", bins=2)
+    with pytest.raises(ValueError, match='histplot multiple: "dodge" places bars side by side'):
+        hx.histplot(PENGUINS, x="flipper", series="species", multiple="dodge", element="step")

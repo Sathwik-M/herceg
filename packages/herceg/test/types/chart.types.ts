@@ -34,7 +34,7 @@ chart.flush();
 // @ts-expect-error synced charts reach each other through their sync group
 chart.syncCursor(1);
 const drawn = line(data, { x: "x", y: "y" });
-drawn.spec.x satisfies string;
+drawn.spec.x satisfies string | readonly string[];
 // @ts-expect-error drawing is internal
 drawn.geometry;
 // @ts-expect-error only the mark functions make marks

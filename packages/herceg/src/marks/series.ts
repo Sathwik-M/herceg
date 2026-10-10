@@ -36,6 +36,11 @@ export interface Series {
   length: number;
   /** x is ascending over the series' points, enabling binary search and M4. */
   sorted: boolean;
+  /**
+   * For series of marks along y (lines and areas with `orient: "y"`): y is
+   * ascending over the series' points, which they are traced and reduced by.
+   */
+  ySorted?: boolean | undefined;
   /** For `rows` grouped from a whole table as it streams. */
   stream?: SeriesStream | undefined;
   /**
@@ -59,12 +64,13 @@ export interface Series {
 }
 
 /**
- * A stacked layer's edges at every x position of its stack, which it is
- * drawn through: where the layer has no row, it counts as zero or as
- * interpolated (`StackGaps`). Views valid until the stack's next update.
+ * A stacked layer's edges at every position of its stack (along x, or along
+ * y for areas along y), which it is drawn through: where the layer has no
+ * row, it counts as zero or as interpolated (`StackGaps`). Views valid
+ * until the stack's next update.
  */
 export interface LayerEdges {
-  /** Ascending; an x is repeated for each of the rows a layer has there. */
+  /** Positions, ascending; one is repeated for each of the rows a layer has there. */
   x: Float64Array;
   top: Float64Array;
   /** Undefined for the bottom layer, which stands on zero. */
@@ -189,13 +195,14 @@ export function isSortedSubset(x: NumericArray, rows: Uint32Array): boolean {
   return true;
 }
 
-/** First position whose x is >= value (sorted series only). */
-export function lowerPosition(series: Series, value: number): number {
+/** First position whose x (or y, `axis`) is >= value (series sorted along it only). */
+export function lowerPosition(series: Series, value: number, axis: "x" | "y" = "x"): number {
+  const values = series[axis];
   let lo = 0;
   let hi = series.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (xAt(series, mid) < value) lo = mid + 1;
+    if (values[rowOf(series, mid)]! < value) lo = mid + 1;
     else hi = mid;
   }
   return lo;

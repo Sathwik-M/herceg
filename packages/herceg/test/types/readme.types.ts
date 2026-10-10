@@ -96,8 +96,10 @@ rule({ y: 250, label: "SLO" });
 rule({ x: deployTime });
 // @ts-expect-error series must be a category field
 line(requests, { x: "time", y: "latency", series: "latency" });
-// @ts-expect-error y must be numeric
-line(requests, { x: "time", y: "service" });
+// @ts-expect-error along x, y must be numeric
+line(requests, { x: "time", y: "service", orient: "x" });
+// A category y lays a line along y.
+line(requests, { x: "latency", y: "service" });
 
 // Annotations
 const deploys = table({ at: time([Date.now()]), version: ["v2"], build: [42] });

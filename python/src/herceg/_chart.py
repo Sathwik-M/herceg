@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 TooltipMode = Literal["nearest-x", "nearest-y", "nearest"]
 Curve = Literal["linear", "step", "step-before", "step-after", "monotone"]
 StackGaps = Literal["zero", "interpolate"]
+Orient = Literal["x", "y"]
+HistogramNormalize = Literal["count", "frequency", "probability", "percent", "density"]
+HistogramElement = Literal["bars", "step", "poly"]
 ThemeName = Literal["light", "dark", "high-contrast", "high-contrast-dark", "auto"]
 
 _NUMERIC = ("number", "time")
@@ -821,10 +824,12 @@ class Chart:
 
     def line(
         self,
-        x: str,
+        x: str | Sequence[str],
         y: str | Sequence[str],
         *,
+        orient: Orient | None = None,
         series: str | None = None,
+        dodge: bool = False,
         data: Any = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
@@ -837,18 +842,31 @@ class Chart:
         panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
-        """Lines through x and y fields; several y fields or a series field give several lines."""
+        """Lines through x and y columns; several value columns or a series column give
+        several lines.
+
+        Lines run along x: positions in ``x`` (numbers, times, or categories,
+        at their bands' centers in band order) and values in ``y``. With
+        ``orient="y"``, or a category ``y``, they run along y instead
+        (depth profiles), with values in ``x``, and tooltips and the
+        keyboard read them by y. On a category axis, ``dodge=True`` places
+        the series of a ``series`` column side by side in each band, as
+        grouped bars and dodged points are.
+        """
         table = self._mark_table(data)
-        self._require(table, x, _NUMERIC, "line x")
-        ys = self._require_many(table, y, _NUMERIC, "line y")
+        along, x_spec, y_spec = self._oriented(table, "line", x, y, orient)
+        _left_along_y("line", along, axis)
         self._require(table, series, ("category",), "line series")
-        self._single_or_series(ys, series, "line")
+        self._single_or_series(y_spec if along == "x" else x_spec, series, "line")
+        self._check_dodge(table, "line", dodge, along, x_spec if along == "x" else y_spec, series)
         return self._add(
             {
                 "type": "line",
-                "x": x,
-                "y": ys,
+                "x": x_spec,
+                "y": y_spec,
+                "orient": orient,
                 "series": series,
+                "dodge": dodge or None,
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "dash": list(dash) if dash is not None else None,
@@ -865,14 +883,18 @@ class Chart:
 
     def area(
         self,
-        x: str,
+        x: str | Sequence[str] | None = None,
         y: str | Sequence[str] | None = None,
         *,
         y1: str | None = None,
         y2: str | None = None,
+        x1: str | None = None,
+        x2: str | None = None,
+        orient: Orient | None = None,
         series: str | None = None,
         stack: bool = False,
         stack_gaps: StackGaps | None = None,
+        dodge: bool = False,
         data: Any = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
@@ -889,11 +911,14 @@ class Chart:
     ) -> Chart:
         """Filled areas: down to zero, stacked, or the band between ``y1`` and ``y2``.
 
-        ``stack=True`` stacks several ``y`` columns row by row, or the
-        series of a ``series`` column on every x any of them has. There, a
-        series counts as zero at an x where it has no row, or with
-        ``stack_gaps="interpolate"`` as the straight line between its rows
-        on either side.
+        Areas run along x, as lines do, or with ``orient="y"`` (or a category
+        ``y``) along y, filled across x to zero; along y, ``x1`` and ``x2``
+        give a band. ``stack=True`` stacks several value columns row by row,
+        or the series of a ``series`` column on every position any of them
+        has. There, a series counts as zero at a position where it has no
+        row, or with ``stack_gaps="interpolate"`` as the straight line
+        between its rows on either side. On a category axis,
+        ``dodge=True`` places unstacked series side by side in each band.
 
         A single area has an outline along its top in its own color; stacked
         and band areas have none unless ``line=True``. ``stroke`` and
@@ -904,19 +929,56 @@ class Chart:
                 f"area stroke_width: expected 0 or more pixels; received {shown(stroke_width)}"
             )
         table = self._mark_table(data)
-        self._require(table, x, _NUMERIC, "area x")
-        band = y1 is not None or y2 is not None
-        if band and (y1 is None or y2 is None):
-            raise ValueError(f"area {'y1' if y1 is None else 'y2'}: a band needs both y1 and y2")
-        if band and y is not None:
-            raise ValueError("area y: y, or y1 and y2, not both; drop one")
-        if not band and y is None:
-            raise ValueError("area: needs y, or y1 and y2 for a band")
-        if band and (series is not None or stack):
-            option = "series" if series is not None else "stack"
-            raise ValueError(
-                f"area {option}: a band (y1 and y2) has no series or stack; drop {option}"
-            )
+        along_x = y1 is not None or y2 is not None
+        along_y = x1 is not None or x2 is not None
+        if along_x and along_y:
+            raise ValueError("area: a band along x (y1, y2) or along y (x1, x2), not both")
+        x_spec: str | list[str] | None
+        y_spec: str | list[str] | None
+        runs: Orient
+        if along_x or along_y:
+            low, high, values, position = ("y1", "y2", y, x) if along_x else ("x1", "x2", x, y)
+            runs = "x" if along_x else "y"
+            ends = (y1, y2) if along_x else (x1, x2)
+            if ends[0] is None or ends[1] is None:
+                missing = low if ends[0] is None else high
+                raise ValueError(f"area {missing}: a band needs both {low} and {high}")
+            if values is not None:
+                other = "y" if along_x else "x"
+                raise ValueError(f"area {other}: {other}, or {low} and {high}, not both; drop one")
+            if series is not None or stack:
+                option = "series" if series is not None else "stack"
+                raise ValueError(
+                    f"area {option}: a band ({low} and {high}) has no series or stack; "
+                    f"drop {option}"
+                )
+            if orient is not None and orient != runs:
+                raise ValueError(
+                    f"area orient: a band between {low} and {high} runs along {runs}; drop orient"
+                )
+            if position is None or not isinstance(position, str):
+                raise ValueError(f"area {runs}: a band runs along one {runs} column; give it")
+            self._require(table, position, (*_NUMERIC, "category"), f"area {runs}")
+            self._require(table, ends[0], _NUMERIC, f"area {low}")
+            self._require(table, ends[1], _NUMERIC, f"area {high}")
+            self._check_dodge(table, "area", dodge, runs, position, None)
+            x_spec, y_spec = (position, None) if along_x else (None, position)
+            _left_along_y("area", runs, axis)
+        else:
+            if x is None or y is None:
+                raise ValueError(
+                    "area: needs x and y, or a band: y1 and y2 along x, or x1 and x2 along y"
+                )
+            runs, x_values, y_values = self._oriented(table, "area", x, y, orient)
+            x_spec, y_spec = x_values, y_values
+            _left_along_y("area", runs, axis)
+            self._require(table, series, ("category",), "area series")
+            self._single_or_series(y_values if runs == "x" else x_values, series, "area")
+            if dodge and stack:
+                raise ValueError(
+                    "area dodge: a stack's layers stand on each other; drop dodge or stack"
+                )
+            self._check_dodge(table, "area", dodge, runs, x_spec if runs == "x" else y_spec, series)
         if stack_gaps is not None and not (stack and series is not None):
             raise ValueError(
                 "area stack_gaps: applies to areas stacked by a series column; "
@@ -926,22 +988,20 @@ class Chart:
             raise ValueError(
                 f'area stack_gaps: expected "zero" or "interpolate"; received {shown(stack_gaps)}'
             )
-        ys = self._require_many(table, y, _NUMERIC, "area y") if y is not None else None
-        self._require(table, y1, _NUMERIC, "area y1")
-        self._require(table, y2, _NUMERIC, "area y2")
-        self._require(table, series, ("category",), "area series")
-        if ys is not None:
-            self._single_or_series(ys, series, "area")
         return self._add(
             {
                 "type": "area",
-                "x": x,
-                "y": ys,
+                "x": x_spec,
+                "y": y_spec,
                 "y1": y1,
                 "y2": y2,
+                "x1": x1,
+                "x2": x2,
+                "orient": orient,
                 "series": series,
                 "stack": stack or None,
                 "stackGaps": stack_gaps,
+                "dodge": dodge or None,
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "line": line,
@@ -1226,6 +1286,7 @@ class Chart:
         sampling: Literal["none", "pixel"] | None = None,
         dodge: bool = False,
         jitter: float | Jitter | None = None,
+        swarm: bool = False,
         label: str | None = None,
         legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
@@ -1258,7 +1319,10 @@ class Chart:
         With a category ``x`` or ``y``, ``dodge=True`` places the series of a
         ``series`` column side by side in each category, as grouped bars are,
         and ``jitter`` (a width from 0 to 1 of the band, or ``hg.Jitter``)
-        spreads points across their band, by row and seed. Marks with the same
+        spreads points across their band, by row and seed; ``swarm=True``
+        instead packs them across it without overlap, in order of their
+        values (a beeswarm), laid out again as the chart resizes and zooms,
+        with points that do not fit at the band's edges. Marks with the same
         ``legend_group`` share series by name: one color, legend entry, and
         visibility each.
         """
@@ -1293,8 +1357,14 @@ class Chart:
                 "point jitter: expected a width from 0 to 1 or an hg.Jitter; "
                 f"received {shown(jitter)}"
             )
-        if dodge or spread is not None:
-            option = "dodge" if dodge else "jitter"
+        if not isinstance(swarm, bool):
+            raise TypeError(f"point swarm: expected True or False; received {shown(swarm)}")
+        if swarm and spread is not None:
+            raise ValueError("point swarm: places points itself; drop jitter or swarm")
+        if swarm and sampling == "pixel":
+            raise ValueError('point sampling: a swarm places every point; drop sampling="pixel"')
+        if dodge or spread is not None or swarm:
+            option = "dodge" if dodge else "jitter" if spread is not None else "swarm"
             if (self._kind(table, x) == "category") == (self._kind(table, y) == "category"):
                 raise ValueError(f"point {option}: needs exactly one category column, x or y")
             if dodge and series is None:
@@ -1321,6 +1391,7 @@ class Chart:
                 "sampling": sampling,
                 "dodge": dodge or None,
                 "jitter": spread._spec() if spread is not None else None,
+                "swarm": swarm or None,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "point"),
                 "axis": axis,
@@ -1338,11 +1409,13 @@ class Chart:
         y: str | None = None,
         bins: int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any] | None = None,
         series: str | None = None,
-        normalize: Literal["count", "probability", "percent", "density"] | None = None,
+        weight: str | None = None,
+        normalize: HistogramNormalize | None = None,
         common_norm: bool = False,
         cumulative: bool = False,
         dodge: bool = False,
-        stack: bool = False,
+        stack: bool | Literal["fill"] = False,
+        element: HistogramElement | None = None,
         data: Any = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
@@ -1356,10 +1429,17 @@ class Chart:
         """Counts of exactly one number or time field: x (vertical) or y (horizontal).
 
         Bins are an approximate count, a step/start dict, or exact increasing
-        edges. Probability, percent, and density normalize each series;
-        common_norm weights its share of finite values in the panel (including
-        hidden series and values outside bins). Cumulative density integrates
-        widths. Dodge places visible series side by side and excludes stack.
+        edges. Each row counts as 1, or as its ``weight`` (a number column;
+        rows missing a weight, or with a negative one, are not counted).
+        ``normalize`` measures each series' bins: counts, ``"frequency"``
+        (counts per unit of the binned axis), or ``"probability"``,
+        ``"percent"``, and ``"density"`` of its counts; common_norm weights
+        its share of finite values in the panel (including hidden series and
+        values outside bins). Cumulative density integrates widths. Stack
+        stacks series, and ``stack="fill"`` as shares of each bin; dodge
+        places visible series side by side and excludes stack.
+        ``element="step"`` draws each series as an area stepping across its
+        bins, and ``"poly"`` as one through their centers.
         """
         if (x is None) == (y is None):
             raise ValueError("histogram: needs exactly one of x and y")
@@ -1367,23 +1447,35 @@ class Chart:
             raise ValueError(
                 'histogram axis: a horizontal histogram (y) has no right axis; drop axis="right"'
             )
-        if dodge and stack:
-            raise ValueError("histogram dodge: dodge or stack, not both; drop one")
-        if normalize not in (None, "count", "probability", "percent", "density"):
-            raise ValueError(
-                'histogram normalize: expected "count", "probability", "percent", or "density"; '
-                f"received {shown(normalize)}"
-            )
         for name, flag in (
             ("common_norm", common_norm),
             ("cumulative", cumulative),
             ("dodge", dodge),
-            ("stack", stack),
         ):
             if not isinstance(flag, bool):
                 raise ValueError(
                     f"histogram {name}: expected True or False; received {shown(flag)}"
                 )
+        if not isinstance(stack, bool) and stack != "fill":
+            raise ValueError(
+                f'histogram stack: expected True, False, or "fill"; received {shown(stack)}'
+            )
+        if dodge and stack:
+            raise ValueError("histogram dodge: dodge or stack, not both; drop one")
+        if normalize not in (None, "count", "frequency", "probability", "percent", "density"):
+            raise ValueError(
+                'histogram normalize: expected "count", "frequency", "probability", "percent", '
+                f'or "density"; received {shown(normalize)}'
+            )
+        if element not in (None, "bars", "step", "poly"):
+            raise ValueError(
+                f'histogram element: expected "bars", "step", or "poly"; received {shown(element)}'
+            )
+        if dodge and element not in (None, "bars"):
+            raise ValueError(
+                "histogram dodge: places bars side by side in each bin; drop dodge, or draw "
+                'element="bars"'
+            )
         bins = _histogram_bins(bins)
         table = self._mark_table(data)
         self._require(
@@ -1393,6 +1485,7 @@ class Chart:
             "histogram y" if y is not None else "histogram x",
         )
         self._require(table, series, ("category",), "histogram series")
+        self._require(table, weight, ("number",), "histogram weight")
         return self._add(
             {
                 "type": "histogram",
@@ -1400,11 +1493,13 @@ class Chart:
                 "y": y,
                 "bins": bins,
                 "series": series,
+                "weight": weight,
                 "normalize": normalize,
                 "commonNorm": common_norm or None,
                 "cumulative": cumulative or None,
                 "dodge": dodge or None,
                 "stack": stack or None,
+                "element": element,
                 "fill": fill,
                 "fillOpacity": fill_opacity,
                 "label": label,
@@ -3450,6 +3545,68 @@ class Chart:
                 f"{role} series: several value columns or a series column, not both; drop one"
             )
 
+    def _oriented(
+        self,
+        table: int,
+        mark: str,
+        x: str | Sequence[str],
+        y: str | Sequence[str],
+        orient: Orient | None,
+    ) -> tuple[Orient, str | list[str], str | list[str]]:
+        """Which axis a line or area runs along (``orient``, or y for a
+        category y with values on x, as bars lie along a category y), and its
+        x and y as the spec writes them, checked: positions are one number,
+        time, or category column; values one or several number columns."""
+        if orient not in (None, "x", "y"):
+            raise ValueError(f'{mark} orient: expected "x" or "y"; received {shown(orient)}')
+
+        def kind(field: str | Sequence[str]) -> str | None:
+            return self._kind(table, field) if isinstance(field, str) else None
+
+        along: Orient = orient or ("y" if kind(y) == "category" and kind(x) != "category" else "x")
+        position, values = (x, y) if along == "x" else (y, x)
+        if not isinstance(position, str):
+            if along == "x":
+                raise ValueError(
+                    f"{mark} x: several columns are values along x of a {mark} along y; "
+                    'give orient="y", or one x column'
+                )
+            raise ValueError(
+                f"{mark} y: a {mark} along y has one y column of positions; "
+                'give one y column, or orient="x"'
+            )
+        if orient == "x" and kind(values) == "category":
+            raise ValueError(
+                f'{mark} orient: "x" makes y the values, and {values!r} holds categories; '
+                'give orient="y", or a number column as y'
+            )
+        across = "y" if along == "x" else "x"
+        self._require(table, position, (*_NUMERIC, "category"), f"{mark} {along}")
+        spec_values = self._require_many(table, values, _NUMERIC, f"{mark} {across}")
+        return (along, position, spec_values) if along == "x" else (along, spec_values, position)
+
+    def _check_dodge(
+        self,
+        table: int,
+        mark: str,
+        dodge: bool,
+        along: Orient,
+        position: Any,
+        series: str | None,
+    ) -> None:
+        """Dodged lines and areas need a category position and a series column."""
+        if not isinstance(dodge, bool):
+            raise TypeError(f"{mark} dodge: expected True or False; received {shown(dodge)}")
+        if not dodge:
+            return
+        if self._kind(table, position) != "category":
+            raise ValueError(
+                f"{mark} dodge: places series side by side in the bands of a category {along}; "
+                f"give a category column as {along}, or drop dodge"
+            )
+        if series is None:
+            raise ValueError(f"{mark} dodge: places series side by side; give series")
+
     def _require_many(
         self, table: int, fields: str | Sequence[str], kinds: tuple[str, ...], role: str
     ):
@@ -3874,6 +4031,15 @@ def _convertible(columns: _Columns) -> str:
     ) from errors[0]
 
 
+def _left_along_y(mark: str, along: Orient, axis: str | None) -> None:
+    """Lines and areas along y use the left axis, as horizontal bars do."""
+    if along == "y" and axis == "right":
+        raise ValueError(
+            f"{mark} axis: {mark}s along y use the left axis, as horizontal bars do; "
+            'drop axis="right"'
+        )
+
+
 def _mark_facet(facet: str | None, mark: str) -> str | None:
     """A mark's ``facet``: None, or ``"repeat"`` to draw all its rows in every
     facet panel instead of splitting them by the facet fields."""
@@ -3910,6 +4076,7 @@ def _fields(spec: dict[str, Any]) -> set[str]:
     fields: set[str] = set()
     for key in (
         *("x", "y", "x1", "x2", "y1", "y2", "xError", "yError", "series", "value", "textField"),
+        "weight",
         *("category", "fields", "date"),
         *("path", "node", "parent", "source", "target", "linkLabelField"),
         *("open", "high", "low", "close"),
@@ -4355,10 +4522,12 @@ def _chart_of(data: Any, options: HelperOptions) -> Chart:
 
 def line(
     data: Any,
-    x: str,
+    x: str | Sequence[str],
     y: str | Sequence[str],
     *,
+    orient: Orient | None = None,
     series: str | None = None,
+    dodge: bool = False,
     stroke: str | None = None,
     stroke_width: float | None = None,
     dash: Sequence[float] | None = None,
@@ -4370,11 +4539,14 @@ def line(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A line chart. Remaining keyword arguments are chart options (``HelperOptions``)."""
+    """A line chart, along x, or along y with ``orient="y"`` (see ``Chart.line``).
+    Remaining keyword arguments are chart options (``HelperOptions``)."""
     return _chart_of(data, options).line(
         x,
         y,
+        orient=orient,
         series=series,
+        dodge=dodge,
         stroke=stroke,
         stroke_width=stroke_width,
         dash=dash,
@@ -4389,14 +4561,18 @@ def line(
 
 def area(
     data: Any,
-    x: str,
+    x: str | Sequence[str] | None = None,
     y: str | Sequence[str] | None = None,
     *,
     y1: str | None = None,
     y2: str | None = None,
+    x1: str | None = None,
+    x2: str | None = None,
+    orient: Orient | None = None,
     series: str | None = None,
     stack: bool = False,
     stack_gaps: StackGaps | None = None,
+    dodge: bool = False,
     fill: str | None = None,
     fill_opacity: float | None = None,
     line: bool | None = None,
@@ -4410,20 +4586,25 @@ def area(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """An area chart, stacked with ``stack=True``, or the band between ``y1`` and ``y2``.
+    """An area chart, stacked with ``stack=True``, or the band between ``y1``
+    and ``y2`` (along y, ``x1`` and ``x2``; see ``Chart.area``).
 
-    Stacked by a ``series`` column, every series is drawn on every x any of
-    them has: ``stack_gaps`` says what a series counts as where it has no
-    row, ``"zero"`` (the default) or ``"interpolate"``.
+    Stacked by a ``series`` column, every series is drawn on every position
+    any of them has: ``stack_gaps`` says what a series counts as where it
+    has no row, ``"zero"`` (the default) or ``"interpolate"``.
     """
     return _chart_of(data, options).area(
         x,
         y,
         y1=y1,
         y2=y2,
+        x1=x1,
+        x2=x2,
+        orient=orient,
         series=series,
         stack=stack,
         stack_gaps=stack_gaps,
+        dodge=dodge,
         fill=fill,
         fill_opacity=fill_opacity,
         line=line,
@@ -4494,6 +4675,7 @@ def scatter(
     sampling: Literal["none", "pixel"] | None = None,
     dodge: bool = False,
     jitter: float | Jitter | None = None,
+    swarm: bool = False,
     label: str | None = None,
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
@@ -4523,6 +4705,7 @@ def scatter(
         sampling=sampling,
         dodge=dodge,
         jitter=jitter,
+        swarm=swarm,
         label=label,
         legend_group=legend_group,
         axis=axis,
@@ -4757,11 +4940,13 @@ def histogram(
     y: str | None = None,
     bins: int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any] | None = None,
     series: str | None = None,
-    normalize: Literal["count", "probability", "percent", "density"] | None = None,
+    weight: str | None = None,
+    normalize: HistogramNormalize | None = None,
     common_norm: bool = False,
     cumulative: bool = False,
     dodge: bool = False,
-    stack: bool = False,
+    stack: bool | Literal["fill"] = False,
+    element: HistogramElement | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
@@ -4771,17 +4956,20 @@ def histogram(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A histogram of exactly one of ``x`` or ``y``, with optional exact bin edges."""
+    """A histogram of exactly one of ``x`` or ``y``, with optional exact bin
+    edges (see ``Chart.histogram``)."""
     return _chart_of(data, options).histogram(
         x,
         y=y,
         bins=bins,
         series=series,
+        weight=weight,
         normalize=normalize,
         common_norm=common_norm,
         cumulative=cumulative,
         dodge=dodge,
         stack=stack,
+        element=element,
         fill=fill,
         fill_opacity=fill_opacity,
         label=label,

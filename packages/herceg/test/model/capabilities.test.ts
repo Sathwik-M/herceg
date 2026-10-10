@@ -122,6 +122,18 @@ const cartesian: MarkCase[] = [
     animates: true,
   },
   {
+    name: "line along y",
+    // Placements may ask for the right axis, which lines along y refuse.
+    make: (p) => line(samples, { x: "y", y: "x", series: "group", orient: "y", ...(p as object) }),
+    kind: "line",
+  },
+  {
+    name: "area over categories",
+    make: (p) => area(samples, { x: "category", y: "y", series: "group", dodge: true, ...p }),
+    kind: "area",
+    animates: true,
+  },
+  {
     name: "bar",
     make: (p) => bar(samples, { x: "x", y: "y", series: "group", ...p }),
     kind: "rect",
@@ -130,6 +142,12 @@ const cartesian: MarkCase[] = [
   {
     name: "point",
     make: (p) => point(samples, { x: "x", y: "y", series: "group", ...p }),
+    kind: "point",
+    animates: true,
+  },
+  {
+    name: "point swarm",
+    make: (p) => point(samples, { x: "category", y: "y", series: "group", swarm: true, ...p }),
     kind: "point",
     animates: true,
   },
@@ -651,7 +669,9 @@ describe("capabilities: per-panel scales", () => {
 describe("capabilities: right axis", () => {
   // Marks placing values along y; heatmaps place cells (and take no axis),
   // and a rule at an x and a rug of x values have no y value to place.
-  const valued = cartesian.filter((c) => !["heatmap", "rule", "rug"].includes(c.name));
+  const valued = cartesian.filter(
+    (c) => !["heatmap", "rule", "rug", "line along y"].includes(c.name),
+  );
   const rightOf = (panel: Panel) => panel.axes.find((a) => a.orient === "right");
 
   it.each(valued)("$name draws on a right axis in every facet panel and in its subplot", (c) => {
@@ -674,6 +694,10 @@ describe("capabilities: right axis", () => {
     const sideways = bar(samples, { x: "y", y: "category", axis: "right" as never });
     expect(() => build({ marks: [sideways], facet: facet("group") })).toThrow(
       "bar axis: marks along y cannot use the right axis",
+    );
+    const profile = line(samples, { x: "y", y: "x", orient: "y", axis: "right" as never });
+    expect(() => build({ marks: [profile], facet: facet("group") })).toThrow(
+      "line axis: marks along y cannot use the right axis",
     );
   });
 });
@@ -949,13 +973,24 @@ describe("capabilities: row selection", () => {
   // marks draw a channel's rows highlighted (model/highlight.ts).
   const selects = new Set(
     ["line", "area", "bar", "point", "errorbar", "candlestick", "heatmap"].concat([
+      "line along y",
+      "area over categories",
+      "point swarm",
       "histogram",
       "boxplot",
       "violin",
       "rug",
     ]),
   );
-  const highlights = new Set(["line", "area", "bar", "point"]);
+  const highlights = new Set([
+    "line",
+    "area",
+    "line along y",
+    "area over categories",
+    "bar",
+    "point",
+    "point swarm",
+  ]);
 
   /** A chart of a case bound to a store of `samples`, as a mounted chart binds it. */
   function bound(c: MarkCase) {

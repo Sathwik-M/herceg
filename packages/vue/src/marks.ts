@@ -172,6 +172,7 @@ export function markBuilder(type: unknown): ((props: object | null) => ChartMark
 export const Line = /* @__PURE__ */ markComponent(
   "Line",
   ({ data, ...options }: WithData<LineOptions<Schema>, Schema>) => line(data, options),
+  ["dodge"],
 ) as unknown as <S extends Schema>(props: WithData<LineOptions<S>, S>) => null;
 
 /** Filled areas: to zero, stacked, or a band between two fields. */
@@ -179,7 +180,7 @@ export const Area = /* @__PURE__ */ markComponent(
   "Area",
   ({ data, ...options }: WithData<AreaOptions<Schema>, Schema>) =>
     area(data, options as AreaOptions<Schema>),
-  ["stack", "line"],
+  ["stack", "line", "dodge"],
 ) as unknown as <S extends Schema>(props: WithData<AreaOptions<S>, S>) => null;
 
 /** Bars: vertical, or horizontal when `y` is a category. */
@@ -193,7 +194,7 @@ export const Bar = /* @__PURE__ */ markComponent(
 export const Point = /* @__PURE__ */ markComponent(
   "Point",
   ({ data, ...options }: WithRows<PointOptions<Schema>, Schema>) => point(data, options),
-  ["dodge"],
+  ["dodge", "swarm"],
 ) as unknown as <S extends Schema>(props: WithRows<PointOptions<S>, S>) => null;
 
 /** Individual observations as short ticks at a plot edge. */
