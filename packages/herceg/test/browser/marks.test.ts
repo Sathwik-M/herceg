@@ -836,6 +836,7 @@ describe("point clouds on the GPU", () => {
     chart.destroy();
   });
 
+  // Above the GPU threshold on purpose; CI runners render it with software WebGL, slowly.
   it("follows streaming rows split by a series field by uploading only each series' new ones", async () => {
     const n = 300_000;
     const data = cloudTable(n);
@@ -889,7 +890,7 @@ describe("point clouds on the GPU", () => {
     whole.mockRestore();
     part.mockRestore();
     chart.destroy();
-  });
+  }, 60_000);
 
   it("keeps precision for extreme values and resolves any CSS color", async () => {
     const chart = createChart(host, {

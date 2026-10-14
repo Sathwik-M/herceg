@@ -1378,6 +1378,7 @@ describe("networks", () => {
     expect(chart.root.querySelector("[aria-live]")!.textContent).toBe("Put c back.");
   });
 
+  // A network big enough to need several frames; software rendering on CI runners draws its progress slowly.
   it("lay a large network out over frames, which `loading` waits for", async () => {
     const from: string[] = [];
     const to: string[] = [];
@@ -1404,7 +1405,7 @@ describe("networks", () => {
     whole.scene(estimateText);
     const at = (model: ChartModel) => model.items!.result()!.item(5);
     expect([at(modelOf(chart)).px, at(modelOf(chart)).py]).toEqual([at(whole).px, at(whole).py]);
-  });
+  }, 60_000);
 
   it("move nothing without interaction.drag", async () => {
     const chart = await network({ interaction: {} });
