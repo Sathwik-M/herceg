@@ -6,6 +6,7 @@ import atexit
 import base64
 import html as _html
 import json
+import math
 import tempfile
 import uuid
 import webbrowser
@@ -14,7 +15,7 @@ from functools import cache
 from importlib.resources import files
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from ._data import shown
 
@@ -24,6 +25,8 @@ if TYPE_CHECKING:
 FontData = bytes | str | PathLike[str]
 FontWeight = Literal["normal", "bold"]
 PdfFonts = Mapping[str, FontData | Mapping[FontWeight, FontData]]
+PdfPageSize = Literal["A4", "Letter"]
+PdfOrientation = Literal["portrait", "landscape"]
 _PDF_FONT_LIMIT = 32 * 1024 * 1024
 
 
@@ -128,14 +131,40 @@ def svg(spec: dict[str, Any], buffers: list[bytes]) -> str:
 
 
 def pdf(
-    spec: dict[str, Any],
-    buffers: list[bytes],
+    spec: dict[str, Any] | list[dict[str, Any]],
+    buffers: list[bytes] | list[list[bytes]],
     *,
     fonts: PdfFonts | None = None,
     fallback: Sequence[str] = (),
     missing_glyph: str | None = None,
+    page_size: PdfPageSize | None = None,
+    orientation: PdfOrientation | None = None,
+    margin: float | None = None,
+    title: str | None = None,
+    subject: str | None = None,
+    language: str | None = None,
 ) -> bytes:
-    """One-page vector PDF, rendered by herceg's DOM-free PDF renderer in the same V8."""
+    """Vector PDF, with one chart per page, rendered in embedded V8."""
+    if page_size is not None and page_size not in ("A4", "Letter"):
+        raise ValueError(
+            'to_pdf page_size: expected "A4" or "Letter"; omit it for chart-sized pages'
+        )
+    if orientation is not None and (
+        page_size is None or orientation not in ("portrait", "landscape")
+    ):
+        raise ValueError(
+            'to_pdf orientation: expected "portrait" or "landscape" with page_size; '
+            "supply a named paper size"
+        )
+    if margin is not None and (
+        isinstance(margin, bool)
+        or not isinstance(margin, (int, float))
+        or not math.isfinite(margin)
+        or margin < 0
+    ):
+        raise ValueError(
+            "to_pdf margin: expected finite nonnegative points; supply zero or a positive margin"
+        )
     sources = []
     for family, source in (fonts or {}).items():
         weights = source if isinstance(source, Mapping) else {"normal": source}
@@ -174,7 +203,34 @@ def pdf(
     options: dict[str, Any] = {"fonts": faces, "fallback": list(fallback)}
     if missing_glyph is not None:
         options["missingGlyph"] = missing_glyph
-    encoded = _call("hercegStatic.pdf", json.dumps(spec), _encoded(buffers), json.dumps(options))
+    options.update(
+        {
+            key: value
+            for key, value in {
+                "pageSize": page_size,
+                "orientation": orientation,
+                "margin": margin,
+                "title": title,
+                "subject": subject,
+                "language": language,
+            }.items()
+            if value is not None
+        }
+    )
+    encoded_buffers = (
+        [_encoded(page) for page in cast(list[list[bytes]], buffers)]
+        if isinstance(spec, list)
+        else _encoded(cast(list[bytes], buffers))
+    )
+    try:
+        encoded = _call("hercegStatic.pdf", json.dumps(spec), encoded_buffers, json.dumps(options))
+    except ValueError as error:
+        raise ValueError(
+            str(error)
+            .replace("renderToPDF", "to_pdf")
+            .replace("specToPDF", "to_pdf")
+            .replace("pageSize", "page_size")
+        ) from None
     return base64.b64decode(encoded)
 
 

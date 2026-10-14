@@ -231,6 +231,13 @@ the same data as stacked bars, stacked areas (both split by a series
 field), and points, to track what each mark adds; the other libraries
 have line entries only.
 
+PDF bundle entries measure a single line chart (`herceg-pdf`), the same chart
+with embedded-font support (`herceg-pdf-fonts`, excluding supplied font bytes),
+one buffered portable spec (`herceg-spec-pdf`, including the spec loader), and
+a two-chart report on A4 (`herceg-pdf-document`). The synchronous one-or-list
+PDF exports retain list handling and paper fitting even at single-chart call
+sites. PDF code remains optional for charts that do not export it.
+
 ## Grids
 
 `npm run bench:grid` compares Herceg's grid (`herceg/grid`, and the same grid

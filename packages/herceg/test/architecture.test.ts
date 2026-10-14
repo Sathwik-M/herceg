@@ -49,6 +49,7 @@ describe("architecture", () => {
     const modules = [
       "pdf.ts",
       "pdf-document.ts",
+      "pdf-paper.ts",
       "pdf-fonts.ts",
       "deflate.ts",
       "css-color.ts",

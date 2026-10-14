@@ -116,7 +116,7 @@ def test_pdf_matches_the_typescript_renderer(tmp_path):
         "const { readFileSync } = await import('node:fs');\n"
         "const input = JSON.parse(readFileSync(0, 'utf8'));\n"
         "const buffers = input.buffers.map((b) => Buffer.from(b, 'base64'));\n"
-        "process.stdout.write(specToPDF(input.spec, buffers));\n",
+        "process.stdout.write(specToPDF({spec: input.spec, buffers}));\n",
         encoding="utf-8",
     )
     payload = json.dumps({"spec": spec, "buffers": [base64.b64encode(b).decode() for b in buffers]})
@@ -196,7 +196,8 @@ def test_unicode_pdf_accepts_paths_and_bytes_and_matches_typescript(tmp_path):
         "const decode = b => Buffer.from(b, 'base64');\n"
         "const { fonts, ...options } = input.options;\n"
         "const prepared = pdfFonts(fonts.map(f => ({...f, data: decode(f.data)})), options);\n"
-        "const output = specToPDF(input.spec, input.buffers.map(decode), {fonts: prepared});\n"
+        "const output = specToPDF({spec: input.spec, buffers: input.buffers.map(decode)},\n"
+        "  {fonts: prepared});\n"
         "process.stdout.write(output);\n",
         encoding="utf-8",
     )
@@ -367,6 +368,38 @@ def test_png_export(tmp_path):
         chart().save(str(tmp_path / "chart.gif"))
 
 
+@pytest.mark.parametrize("extension", ["html", "svg", "png", "PDF"])
+def test_module_save_dispatches_single_charts_like_chart_save(tmp_path, extension):
+    item = chart()
+    path = tmp_path / f"module.{extension}"
+    options = {"page_size": "A4", "title": "Report"} if extension == "PDF" else {}
+    hg.save(item, path, scale=3, **options)
+    item.save(tmp_path / f"method.{extension}", scale=3, **options)
+    actual = path.read_bytes()
+    expected = (tmp_path / f"method.{extension}").read_bytes()
+    if extension in ("html", "svg"):
+        # HTML mount IDs and SVG resource IDs are unique for each export.
+        pattern = rb"herceg-[0-9a-f]{12}\b|herceg-svg-\d+"
+        actual = re.sub(pattern, b"id", actual)
+        expected = re.sub(pattern, b"id", expected)
+    assert actual == expected
+    if extension == "png":
+        assert path.read_bytes() == item.to_png(scale=3)
+    assert not hasattr(hg, "save_pdf")
+
+
+@pytest.mark.parametrize("extension", ["html", "svg", "png", "gif", ""])
+@pytest.mark.parametrize("sequence", [list, tuple])
+def test_module_save_requires_pdf_for_chart_sequences(tmp_path, extension, sequence):
+    path = tmp_path / (f"report.{extension}" if extension else "report")
+    with pytest.raises(
+        ValueError,
+        match=r"save path:.*; use a .pdf extension or save each chart separately",
+    ):
+        hg.save(sequence([chart()]), path)
+    assert not path.exists()
+
+
 def test_titles_and_labels_cannot_break_out_of_the_script():
     nasty = "<!--<script></script><img src=x onerror=alert(1)>"
     page = (
@@ -392,3 +425,231 @@ def test_export_does_not_keep_the_interpreter_alive():
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=True
     )
     assert result.stdout.strip() == "True"
+
+
+def test_pdf_document_matches_typescript_with_independent_buffers(tmp_path):
+    charts = [chart(), hg.Chart({"x": [50, 60], "y": [90, 100]}, title="Second").line(x="x", y="y")]
+    options = {"page_size": "Letter", "orientation": "landscape", "margin": 40, "title": "Report"}
+    pdf = hg.to_pdf(charts, **options)
+    assert b"/Count 2" in pdf
+    assert pdf.count(b"/MediaBox [0 0 792 612]") == 2
+    assert pdf.count(b"/S /Document") == 1 and pdf.count(b"/S /Figure") == 2
+    assert b"/StructParents 0" in pdf and b"/StructParents 1" in pdf
+    assert b"/ParentTreeNextKey 2" in pdf and b"/Lang (en)" in pdf
+    assert "Report".encode("utf-16-be").hex().upper().encode() in pdf
+    alternatives = re.findall(rb"/Alt <FEFF([0-9A-F]*)>", pdf)
+    assert "Latency" in bytes.fromhex(alternatives[0].decode()).decode("utf-16-be")
+    assert "Second" in bytes.fromhex(alternatives[1].decode()).decode("utf-16-be")
+    path = tmp_path / "report.PDF"
+    hg.save(charts, path, **options)
+    assert path.read_bytes() == pdf
+    pages = [c.to_spec() for c in charts]
+    payload = {
+        "pages": [
+            {"spec": spec, "buffers": [base64.b64encode(b).decode() for b in buffers]}
+            for spec, buffers in pages
+        ]
+    }
+    loader = (ROOT / "packages/herceg/src/from-spec.ts").as_uri()
+    entry = tmp_path / "document.mts"
+    entry.write_text(
+        f"const {{ specToPDF }} = await import({json.dumps(loader)});\n"
+        "const { readFileSync } = await import('node:fs');\n"
+        "const { pages } = JSON.parse(readFileSync(0, 'utf8'));\n"
+        "const decoded = pages.map(p => ({spec: p.spec,\n"
+        "buffers: p.buffers.map(b => Buffer.from(b, 'base64'))}));\n"
+        "process.stdout.write(specToPDF(decoded, {pageSize: 'Letter', orientation: 'landscape',\n"
+        "margin: 40, title: 'Report'}));\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["node", "--experimental-strip-types", str(entry)],
+        input=json.dumps(payload).encode(),
+        capture_output=True,
+        check=True,
+    )
+    assert result.stdout == pdf
+    assert hg.to_pdf([chart()], title="Latency", language="en-US").startswith(b"%PDF")
+
+
+def test_pdf_document_embeds_each_face_once_and_preserves_later_glyphs(tmp_path):
+    charts = [unicode_chart("é"), unicode_chart("Ω Мир 𝌀")]
+    fonts = unicode_fonts()
+    pdf = hg.to_pdf(charts, fonts=fonts, fallback=["Symbols"], title="Unicode report")
+    assert pdf.count(b"/FontFile2") == 3  # normal, bold, and symbol fallback
+    first = hg.to_pdf(charts, fonts=fonts, fallback=["Symbols"], title="Unicode report")
+    unicode_chart("Other").to_pdf(fonts=fonts)
+    assert hg.to_pdf(charts, fonts=fonts, fallback=["Symbols"], title="Unicode report") == first
+    path = tmp_path / "unicode-report.pdf"
+    hg.save(charts, path, fonts=fonts, fallback=["Symbols"], title="Unicode report")
+    assert path.read_bytes() == pdf
+    if shutil.which("pdftotext"):
+        text = subprocess.run(
+            ["pdftotext", str(path), "-"], capture_output=True, text=True, check=True
+        ).stdout
+        assert "é" in text and "Ω Мир 𝌀" in text and "\f" in text
+
+
+@pytest.mark.parametrize(
+    "options, location",
+    [
+        ({"page_size": "Legal"}, "page_size"),
+        ({"orientation": "landscape"}, "orientation"),
+        ({"margin": -1}, "margin"),
+        ({"margin": float("nan")}, "margin"),
+        ({"margin": float("inf")}, "margin"),
+        ({"page_size": "A4", "margin": 300}, "margin"),
+    ],
+)
+def test_pdf_page_options_validate_in_python(options, location):
+    with pytest.raises(ValueError, match=f"to_pdf {location}:"):
+        hg.to_pdf([chart()], **options)
+    with pytest.raises(ValueError, match=f"to_pdf {location}:"):
+        chart().to_pdf(**options)
+
+
+def test_pdf_document_rejects_empty_and_non_chart_pages(tmp_path):
+    with pytest.raises(ValueError, match="to_pdf charts:.*; supply"):
+        hg.to_pdf([])
+    with pytest.raises(TypeError, match=r"to_pdf charts\[1\]:.*; supply"):
+        hg.to_pdf([chart(), "invalid"])
+    with pytest.raises(ValueError, match="save charts:"):
+        hg.save([], tmp_path / "report.pdf")
+    assert not (tmp_path / "report.pdf").exists()
+    with pytest.raises(ValueError, match="save path:"):
+        hg.save([chart()], tmp_path / "report.svg")
+    with pytest.raises(ValueError, match="save page_size:"):
+        chart().save(tmp_path / "chart.svg", page_size="A4")
+    chart().save(tmp_path / "single.pdf", page_size="A4", title="Report")
+    assert (tmp_path / "single.pdf").read_bytes() == chart().to_pdf(page_size="A4", title="Report")
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"margin": 0},
+        {"page_size": "A4"},
+        {"title": "Report"},
+        {"language": "en-GB"},
+        {"subject": "Report description"},
+    ],
+)
+def test_single_pdf_metadata_matches_module_sequence_and_paper_options(tmp_path, options):
+    item = hg.Chart(
+        {"x": [0, 1], "y": [2, 3]},
+        title="Chart title",
+        description="Chart description",
+        locale="de-DE",
+    ).line(x="x", y="y")
+    pdf = item.to_pdf(**options)
+    assert hg.to_pdf(item, **options) == pdf
+    assert hg.to_pdf([item], **options) == pdf
+    assert hg.to_pdf((item,), **options) == pdf
+    title = options.get("title", "Chart title")
+    subject = options.get("subject", "Chart description")
+    assert b"/Title <FEFF" + title.encode("utf-16-be").hex().upper().encode() + b">" in pdf
+    assert b"/Subject <FEFF" + subject.encode("utf-16-be").hex().upper().encode() + b">" in pdf
+    language = options.get("language", "de-DE")
+    assert f"/Lang ({language})".encode() in pdf
+    hg.save(item, tmp_path / "module.pdf", **options)
+    item.save(tmp_path / "method.pdf", **options)
+    assert (tmp_path / "module.pdf").read_bytes() == pdf
+    assert (tmp_path / "method.pdf").read_bytes() == pdf
+
+
+def test_mixed_pdf_languages_scope_visible_content_and_english_alternatives():
+    import zlib
+
+    charts = [
+        hg.Chart({"x": [0, 1], "y": [2, 3]}, locale=locale).line(x="x", y="y")
+        for locale in ["de-DE", "fr-FR"]
+    ]
+    pdf = hg.to_pdf(charts, language="en-GB")
+    assert b"/Lang (en-GB)" in pdf
+    figures = re.findall(rb"/Type /StructElem /S /Figure .*? >>", pdf)
+    assert len(figures) == 2 and all(b"/Lang" not in figure for figure in figures)
+    streams = [
+        zlib.decompress(data) for data in re.findall(rb"stream\n(.*?)\nendstream", pdf, re.DOTALL)
+    ]
+    for locale in ["de-DE", "fr-FR"]:
+        matching = [
+            content
+            for content in streams
+            if f"/Span << /Lang ({locale}) >> BDC".encode() in content
+        ]
+        assert len(matching) == 1
+        content = matching[0]
+        assert content.index(b"/Figure << /MCID 0 >> BDC") < content.index(b"/Span")
+        assert content.endswith(b"EMC\nEMC\n")
+
+
+@pytest.mark.parametrize("locale, language", [("en-US", "fr-FR"), ("fr-FR", "en-US")])
+@pytest.mark.parametrize("shape", ["single", "list", "tuple", "multiple"])
+@pytest.mark.parametrize("embedded", [False, True])
+def test_pdf_summary_language_uses_catalog_not_chart_locale(
+    tmp_path, locale, language, shape, embedded
+):
+    import zlib
+
+    item = hg.Chart({"x": [0, 1], "y": [2, 3]}, locale=locale, theme={"font": "Fixture"}).line(
+        x="x", y="y"
+    )
+    charts = {
+        "single": item,
+        "list": [item],
+        "tuple": (item,),
+        "multiple": [item, item],
+    }[shape]
+    options = {"language": language}
+    if embedded:
+        options["fonts"] = unicode_fonts()
+    pdf = hg.to_pdf(charts, **options)
+    catalog = re.search(rb"/Type /Catalog [^\n]*", pdf)[0]
+    assert f"/Lang ({language})".encode() in catalog
+    figures = re.findall(rb"/Type /StructElem /S /Figure .*? >>", pdf)
+    assert len(figures) == (2 if shape == "multiple" else 1)
+    for figure in figures:
+        summary = re.search(rb"/Alt <FEFF([0-9A-F]*)>", figure)[1]
+        assert (
+            bytes.fromhex(summary.decode())
+            .decode("utf-16-be")
+            .startswith("Line chart with 1 series.")
+        )
+        if language == "fr-FR":
+            assert b"/Lang (en)" in figure
+        else:
+            assert b"/Lang" not in figure
+    streams = [
+        zlib.decompress(data) for data in re.findall(rb"stream\n(.*?)\nendstream", pdf, re.DOTALL)
+    ]
+    assert sum(f"/Span << /Lang ({locale}) >> BDC".encode() in data for data in streams) == len(
+        figures
+    )
+    hg.save(charts, tmp_path / "module.pdf", **options)
+    assert (tmp_path / "module.pdf").read_bytes() == pdf
+    if shape == "single":
+        assert item.to_pdf(**options) == pdf
+        item.save(tmp_path / "method.pdf", **options)
+        assert (tmp_path / "method.pdf").read_bytes() == pdf
+
+
+def test_pdf_module_validates_chart_sequences_and_reports_fitting_correction(tmp_path):
+    with pytest.raises(TypeError, match="to_pdf charts:.*; supply"):
+        hg.to_pdf(42)
+    with pytest.raises(TypeError, match=r"save charts\[1\]:.*; supply"):
+        hg.save([chart(), "invalid"], tmp_path / "invalid.pdf")
+    assert not (tmp_path / "invalid.pdf").exists()
+    with pytest.raises(TypeError, match="save charts:.*; supply"):
+        hg.save(42, tmp_path / "invalid.pdf")
+    large = hg.Chart(width=1e16, height=320)
+    with pytest.raises(ValueError, match="to_pdf scale:.*; reduce chart dimensions or margins"):
+        hg.to_pdf(large, page_size="A4")
+    with pytest.raises(ValueError, match="save scale:.*; reduce chart dimensions or margins"):
+        large.save(tmp_path / "too-large.pdf", page_size="A4")
+    assert not (tmp_path / "too-large.pdf").exists()
+    with pytest.raises(ValueError, match="save scale:.*; reduce chart dimensions or margins"):
+        hg.save([large], tmp_path / "too-large.pdf", page_size="A4")
+    assert not (tmp_path / "too-large.pdf").exists()
+    with pytest.raises(ValueError, match="save subject:.*; save to a .pdf path or drop subject"):
+        chart().save(tmp_path / "chart.svg", subject="Description")

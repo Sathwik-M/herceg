@@ -35,7 +35,7 @@ import {
 } from "../scene/scene.ts";
 import { surface, type Theme } from "../theme.ts";
 import { cssColor } from "./css-color.ts";
-import { type DocumentInfo, literal, num, PdfPage } from "./pdf-document.ts";
+import { type DocumentInfo, language, literal, num, PdfPage, PdfWriter } from "./pdf-document.ts";
 import type { PdfFontResolver } from "./pdf-font-resolver.ts";
 import { encodeText, type PdfFont, standardFont, textWidth } from "./pdf-fonts.ts";
 import { tracePath } from "./svg-path.ts";
@@ -597,8 +597,18 @@ export function renderPdf(
   info: DocumentInfo = {},
   resolver?: PdfFontResolver,
 ): Uint8Array {
+  const writer = new PdfWriter();
+  writer.add(
+    drawPdfPage(scene, new PdfPage(scene.width, scene.height, resolver), info.language),
+    info,
+  );
+  return writer.toBytes(info);
+}
+
+/** Draws one chart, without finalizing the document's shared font subsets. */
+export function drawPdfPage(scene: Scene, page: PdfPage, locale?: string): PdfPage {
+  const lang = language(locale);
   const { theme, width, height } = scene;
-  const page = new PdfPage(width, height, resolver);
   const regular = textFont(page, theme.font, false);
   const bold = textFont(page, theme.font, true);
   const size = theme.fontSize;
@@ -629,6 +639,8 @@ export function renderPdf(
   paint(page, grid, { stroke: theme.grid, dash: theme.gridDash });
   // One figure owns the complete chart, including panels, labels, and legends.
   page.write("EMC\n/Figure << /MCID 0 >> BDC\n");
+
+  if (lang) page.write(`/Span <<${lang} >> BDC\n`);
 
   for (const { plot, marks } of scene.panels) {
     page.write(`q ${num(plot.x)} ${num(plot.y)} ${num(plot.width)} ${num(plot.height)} re W n\n`);
@@ -768,6 +780,7 @@ export function renderPdf(
       text(page, entry.text, entry.x, y, { ...label, baseline: "middle" });
   }
 
+  if (lang) page.write("EMC\n");
   page.write("EMC\n");
-  return page.toBytes(info);
+  return page;
 }

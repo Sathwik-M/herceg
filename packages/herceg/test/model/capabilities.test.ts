@@ -51,6 +51,7 @@ import { rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
 import { brushedRows } from "../../src/model/selected-rows.ts";
+import { renderToPDF } from "../../src/pdf.ts";
 import type {
   Geometry,
   Panel,
@@ -1706,4 +1707,14 @@ describe("capabilities: dendrogram", () => {
       }),
     ).toThrow("categories of their own");
   });
+});
+
+it("capabilities: every built-in mark exports as a PDF document page", () => {
+  const cases = [...cartesian, ...layouts];
+  const bytes = renderToPDF(
+    cases.map(({ make }) => ({ width: 600, height: 400, marks: [make()] })),
+  );
+  const pdf = new TextDecoder("latin1").decode(bytes);
+  expect(pdf).toContain(`/Count ${cases.length}`);
+  expect(pdf.match(/\/S \/Figure\b/g)).toHaveLength(cases.length);
 });

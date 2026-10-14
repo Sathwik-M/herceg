@@ -11,6 +11,7 @@ import numbers
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from os import PathLike
 from typing import TYPE_CHECKING, Any, Literal, ParamSpec, Protocol, TypedDict, TypeVar
 
 import numpy as np
@@ -3362,27 +3363,57 @@ class Chart:
         fonts: _render.PdfFonts | None = None,
         fallback: Sequence[str] = (),
         missing_glyph: str | None = None,
+        page_size: _render.PdfPageSize | None = None,
+        orientation: _render.PdfOrientation | None = None,
+        margin: float | None = None,
+        title: str | None = None,
+        subject: str | None = None,
+        language: str | None = None,
     ) -> bytes:
-        """One-page vector PDF sized to the chart (requires the ``export`` extra)."""
+        """Vector PDF on chart-sized or named paper (requires the ``export`` extra)."""
         return _render.pdf(
-            *self.to_spec(), fonts=fonts, fallback=fallback, missing_glyph=missing_glyph
+            *self.to_spec(),
+            fonts=fonts,
+            fallback=fallback,
+            missing_glyph=missing_glyph,
+            page_size=page_size,
+            orientation=orientation,
+            margin=margin,
+            title=title,
+            subject=subject,
+            language=language,
         )
 
     def save(
         self,
-        path: str,
+        path: str | PathLike[str],
         *,
         scale: float = 2,
         fonts: _render.PdfFonts | None = None,
         fallback: Sequence[str] = (),
         missing_glyph: str | None = None,
+        page_size: _render.PdfPageSize | None = None,
+        orientation: _render.PdfOrientation | None = None,
+        margin: float | None = None,
+        title: str | None = None,
+        subject: str | None = None,
+        language: str | None = None,
     ) -> None:
         """Writes ``.html``, ``.svg``, ``.png``, or ``.pdf``, chosen by the file extension."""
         lower = str(path).lower()
-        if not lower.endswith(".pdf") and (
-            fonts is not None or fallback or missing_glyph is not None
-        ):
-            option = "fonts" if fonts is not None else "fallback" if fallback else "missing_glyph"
+        pdf_options = {
+            "fonts": fonts,
+            "fallback": fallback or None,
+            "missing_glyph": missing_glyph,
+            "page_size": page_size,
+            "orientation": orientation,
+            "margin": margin,
+            "title": title,
+            "subject": subject,
+            "language": language,
+        }
+        option = next((key for key, value in pdf_options.items() if value is not None), None)
+        if not lower.endswith(".pdf") and option is not None:
             raise ValueError(
                 f"save {option}: an option of PDF export; save to a .pdf path or drop {option}"
             )
@@ -3393,7 +3424,20 @@ class Chart:
         elif lower.endswith(".png"):
             content = self.to_png(scale=scale)
         elif lower.endswith(".pdf"):
-            content = self.to_pdf(fonts=fonts, fallback=fallback, missing_glyph=missing_glyph)
+            try:
+                content = self.to_pdf(
+                    fonts=fonts,
+                    fallback=fallback,
+                    missing_glyph=missing_glyph,
+                    page_size=page_size,
+                    orientation=orientation,
+                    margin=margin,
+                    title=title,
+                    subject=subject,
+                    language=language,
+                )
+            except (ValueError, TypeError) as error:
+                raise type(error)(str(error).replace("to_pdf", "save")) from None
         else:
             raise ValueError(
                 'save path: expected a ".html", ".svg", ".png", or ".pdf" file; '

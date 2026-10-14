@@ -15,7 +15,7 @@ or compose several marks on one chart::
     )
     chart.save("latency.html")
 
-Charts display in notebooks, save as HTML, SVG, or PNG, and serialize to the
+Charts display in notebooks, save as HTML, SVG, PNG, or PDF, and serialize to the
 portable herceg chart spec shared with the TypeScript library.
 ``chart.widget()`` makes a live notebook chart that Python can update and
 observe (the ``notebook`` extra); ``herceg.streamlit.chart(chart)`` shows one
@@ -72,9 +72,12 @@ from ._events import (
     Selection,
     Viewport,
 )
+from ._pdf import save, to_pdf
 from ._rows import RowSelection, SelectionBinding
 
 __all__ = [
+    "save",
+    "to_pdf",
     "SCHEMES",
     "SYMBOLS",
     "Animation",
