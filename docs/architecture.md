@@ -850,7 +850,13 @@ header (Shift with arrows, Alt with arrows) and the column menu
 (`dom/grid-menu.ts`, a WAI menu outside the grid's own roles, of items and
 menu checkboxes with `aria-keyshortcuts` and disabled states, opened by Alt
 and Down, Shift+F10, a right click, or the header's button) call the same
-model commands, each checking again when chosen that it still applies. An
+model commands, each checking again when chosen that it still applies. The
+focus follows the pointer over the menu's items, but while the keys have it
+(since the menu opened, or a key moved it) only once the pointer moves from
+where it stood then: where it opened the menu or was last seen over it, or
+where it is first seen in a menu the keys opened. Browsers send moves where
+the pointer stays (WebKit on Linux does when the items are written again
+under a still pointer), which leave the focus where the keys put it. An
 open menu is written again before a frame in which the columns or the
 grid's width changed, and closes with its column, handing the focus to the
 grid's focused cell; otherwise it gives the focus back to the header when it
@@ -3635,7 +3641,11 @@ theirs, in row order, and left out where they have fewer.
 
 A press on the plot becomes one of three gestures once it moves 3 px: a
 brush (with `interaction.brush`), a pan (with zoom only, or Shift with
-both), or nothing; a press that does not move is a click. A brush selects a
+both), or nothing; a press that does not move is a click. Gestures, these
+and the layout controls' below, capture their pointer at the chart's root,
+which meanwhile cancels the browser's `dragstart`: a page selection spanning
+the drawing pressed is not dragged instead, which in Chrome would cancel
+the pointer and end the gesture. A brush selects a
 range along x or y, a rectangle ("xy"), or a lasso (its outline, thinned
 past 400 points); rectangles and lassos need 3 px each way. A selection is
 kept in data values, so it stays on its data while the chart zooms or
@@ -4302,8 +4312,9 @@ mouse input, through Playwright's mouse.
   selected row's cells selected too, and drops the levels of grouped grids'
   rows (see Known limits).
 - Real mouse input is Playwright's mouse. In Firefox it answers before the
-  page has the event, which then comes one move a frame, so the command
-  waits for each input's event (and fails if none comes); Firefox's pages
+  page has the event, which then comes one move a frame, and in WebKit on
+  Linux it may answer early too, so outside Chrome the command waits for
+  each input's event (and fails if none comes); Firefox's pages
   share one mouse, so its test files run one at a time (about 28 s for the
   engine's suite, which takes 7 to 9 s in the others). Pointer events tests
   make up use the engine's mouse id (`MOUSE`): Firefox's mouse is pointer 0,
@@ -4320,6 +4331,24 @@ mouse input, through Playwright's mouse.
 - Firefox is given an application data folder of its own (`MOZ_APP_DATA`):
   it keeps its list of profiles in `~/Library/Application Support/Firefox`
   even when given a profile, and macOS 27 refuses to create that folder.
+- On Linux (CI's Ubuntu), headless Firefox has WebGL only with an X display,
+  so the browser tests run under `xvfb-run`, where Mesa's software renderer
+  (llvmpipe) draws its WebGL through Mesa's EGL driver (`libegl-mesa0`,
+  which some runner images lack, so CI installs it); Chrome's is
+  SwiftShader's, and WebKit needs no display. Without them, the GPU tests
+  fail in Firefox. With software
+  WebGL, the streaming cloud tests' many draws took forty times as long as
+  on an Apple M6, filling every point's pixels, so they draw small points.
+  WebKit's Linux ports (GTK, WPE)
+  expose text through the element holding it (AT-SPI's text interface)
+  rather than as nodes of its own, which the inspector leaves out; there
+  the trees take the text from the page (`accessibility.ts`): what the
+  composed tree lays out and leaves visible, outside `aria-hidden` and inert
+  elements, under the element that owns it (`aria-owns`). Tests of how the
+  trees are written hold it to what the engines' own trees give. Firefox
+  and WebKit deliver the mouse at whole CSS pixels at a pixel ratio of 1,
+  Chrome at fractions, so tests that read a value from where a press lands
+  read where it did.
 
 ## Known limits
 

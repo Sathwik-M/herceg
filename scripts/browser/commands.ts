@@ -39,10 +39,12 @@ function seen(type: string): number {
 const mouse: BrowserCommand<[MouseInput]> = async (context, input) => {
   const { page } = context;
   // Firefox's protocol answers before the page has the event, and the page
-  // gets one move a frame, the last, as a person's: each input waits until
-  // its event has come, so that it lands before the next, as Chrome's does.
-  // It asks again and again: a page waiting on the protocol gets no input.
-  const frame = context.project.config.browser.name === "firefox" && (await context.frame());
+  // gets one move a frame, the last, as a person's; WebKit's, on Linux, may
+  // answer before the page has the event too. Each input waits until its
+  // event has come, so that it lands before the next and before what the
+  // test does after it, as Chrome's does. It asks again and again: a page
+  // waiting on the protocol gets no input.
+  const frame = context.project.config.browser.name !== "chromium" && (await context.frame());
   const type = EVENTS[input.type];
   const before = frame ? await frame.evaluate(seen, type) : 0;
   if (input.shift) await page.keyboard.down("Shift");

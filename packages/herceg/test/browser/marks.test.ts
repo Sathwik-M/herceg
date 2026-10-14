@@ -795,11 +795,13 @@ describe("point clouds on the GPU", () => {
   it("follows streaming rows by uploading only the new ones", async () => {
     const data = cloudTable(150_000);
     const rolling = table({ x: data.numbers("x"), y: data.numbers("y") }, { maxRows: 150_000 });
+    // Small points: each of the many draws below fills every point's pixels,
+    // which software WebGL (CI's) takes long for.
     const chart = createChart(host, {
       theme: CLEAR,
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
-      marks: [point(rolling, { x: "x", y: "y", radius: 6, fill: "#000000", fillOpacity: 0.5 })],
+      marks: [point(rolling, { x: "x", y: "y", radius: 1, fill: "#000000", fillOpacity: 0.5 })],
     });
     await chart.loading;
     const proto = WebGL2RenderingContext.prototype;
@@ -846,7 +848,8 @@ describe("point clouds on the GPU", () => {
       theme: CLEAR,
       x: { domain: [0, 10], grid: false },
       y: { domain: [0, 10], grid: false },
-      marks: [point(rolling, { x: "x", y: "y", series: "kind", radius: 6, fillOpacity: 0.5 })],
+      // Small points, as above.
+      marks: [point(rolling, { x: "x", y: "y", series: "kind", radius: 1, fillOpacity: 0.5 })],
     });
     await chart.loading;
     // What keeps grouped rows current as the table streams loads after the first scene.

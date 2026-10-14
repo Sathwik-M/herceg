@@ -186,7 +186,9 @@ Next, in order:
 Requires Node.js 22.12 or newer (TypeScript scripts run with
 `--experimental-strip-types`), Google Chrome for browser tests and
 benchmarks, Playwright's Firefox and WebKit builds for browser tests
-(`npx playwright install firefox webkit`), and
+(`npx playwright install firefox webkit`; on Linux, Firefox's WebGL needs a
+display and Mesa's GL, so run them under `xvfb-run` with the packages
+`xvfb libgl1-mesa-dri libglx-mesa0 libegl-mesa0` installed, as CI does), and
 [uv](https://docs.astral.sh/uv/) for the Python package.
 
 ```sh

@@ -1005,6 +1005,36 @@ describe("networks", () => {
     },
   );
 
+  it("keep a node's drag when the page's selection spans the drawing pressed", async () => {
+    const chart = await network({ renderer: "canvas" });
+    const moves = heard(chart, "itemMove");
+    getSelection()!.selectAllChildren(document.body);
+    const [x, y] = where(chart, "a");
+    const rect = chart.root.getBoundingClientRect();
+    const drawing = document.elementFromPoint(rect.left + x, rect.top + y)!;
+    /** Whether the chart stops the browser dragging what is pressed (Chrome does on Linux). */
+    const stopped = () => {
+      const event = new DragEvent("dragstart", { bubbles: true, cancelable: true });
+      drawing.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    await mouse(chart, "mouseMoved", x, y);
+    await mouse(chart, "mousePressed", x, y);
+    expect(stopped()).toBe(true);
+    // A touch elsewhere on the chart meanwhile leaves the mouse's drag guarded.
+    const touch = { bubbles: true, pointerId: 99, pointerType: "touch", isPrimary: false };
+    chart.root.dispatchEvent(new PointerEvent("pointerdown", { ...touch, clientX: rect.left + 5 }));
+    chart.root.dispatchEvent(new PointerEvent("pointerup", { ...touch, clientX: rect.left + 5 }));
+    expect(stopped()).toBe(true);
+    await mouse(chart, "mouseMoved", x + 10, y + 5);
+    await mouse(chart, "mouseMoved", x + 20, y + 10);
+    await mouse(chart, "mouseReleased", x + 20, y + 10);
+    expect(moves).toHaveLength(1);
+    // Without a press the chart drags with, the browser's drags are the page's.
+    expect(stopped()).toBe(false);
+    getSelection()!.removeAllRanges();
+  });
+
   it("move a node dragged, which stays where it is dropped, its links following", async () => {
     const chart = await network();
     const moves = heard(chart, "itemMove");
@@ -1270,8 +1300,11 @@ describe("networks", () => {
     await mouse(chart, "mouseMoved", ax, ay);
     await mouse(chart, "mousePressed", ax, ay);
     await mouse(chart, "mouseMoved", ax + 30, ay);
+    // A frame of the drag, drawn now: the drag's own may be drawn already,
+    // however soon after the move the test goes on.
     reset = true;
-    await frame();
+    chart.render();
+    expect(reset).toBe(false);
     await mouse(chart, "mouseReleased", ax + 30, ay);
     await frame();
     expect(modelOf(chart).items!.movedItems().size).toBe(0);
