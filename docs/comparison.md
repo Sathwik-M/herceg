@@ -162,22 +162,22 @@ initial bundle; the placement providers carry the synchronous copying path.
 | chartjs-line | 4.5.1 | 196.4 | 63.7 | 56.0 | - | - |
 | echarts-full | 6.1.0 | 1107.9 | 370.5 | 302.3 | - | - |
 | echarts-line | 6.1.0 | 490.7 | 166.8 | 142.7 | - | - |
-| herceg-area | 0.0.0 (953b5a00) | 147.3 | 55.0 | 49.0 | - | 34.7 |
-| herceg-bar | 0.0.0 (953b5a00) | 136.4 | 51.6 | 45.9 | - | 34.7 |
-| herceg-grid-pivot | 0.0.0 (953b5a00) | 132.0 | 44.8 | 40.2 | - | - |
-| herceg-grid-remote | 0.0.0 (953b5a00) | 88.1 | 30.5 | 27.4 | - | - |
-| herceg-grid | 0.0.0 (953b5a00) | 89.0 | 30.9 | 27.8 | - | - |
-| herceg-heatmap | 0.0.0 (953b5a00) | 132.2 | 50.5 | 45.2 | - | 31.7 |
-| herceg-line | 0.0.0 (953b5a00) | 121.3 | 45.6 | 40.9 | - | 34.7 |
-| herceg-pdf-document | 0.0.0 (953b5a00) | 117.4 | 45.8 | 40.8 | - | 2.9 |
-| herceg-pdf-fonts | 0.0.0 (953b5a00) | 136.1 | 53.1 | 47.3 | - | 2.9 |
-| herceg-pdf | 0.0.0 (953b5a00) | 117.3 | 45.7 | 40.9 | - | 2.9 |
-| herceg-pivot | 0.0.0 (953b5a00) | 60.4 | 20.1 | 18.3 | - | - |
-| herceg-react-line | 0.0.0 (953b5a00) | 124.8 | 47.1 | 42.3 | - | 34.7 |
-| herceg-scatter | 0.0.0 (953b5a00) | 142.6 | 54.1 | 48.0 | - | 34.7 |
-| herceg-spec-pdf | 0.0.0 (953b5a00) | 595.3 | 223.3 | 185.2 | - | 2.9 |
-| herceg-svelte-line | 0.0.0 (953b5a00) | 126.1 | 47.6 | 42.6 | - | 34.7 |
-| herceg-vue-line | 0.0.0 (953b5a00) | 125.6 | 47.4 | 42.5 | - | 34.7 |
+| herceg-area | 0.0.0 (8777fe28) | 147.3 | 55.0 | 49.0 | - | 34.7 |
+| herceg-bar | 0.0.0 (8777fe28) | 136.4 | 51.6 | 45.9 | - | 34.7 |
+| herceg-grid-pivot | 0.0.0 (8777fe28) | 132.0 | 44.8 | 40.1 | - | - |
+| herceg-grid-remote | 0.0.0 (8777fe28) | 88.1 | 30.5 | 27.4 | - | - |
+| herceg-grid | 0.0.0 (8777fe28) | 89.0 | 30.9 | 27.8 | - | - |
+| herceg-heatmap | 0.0.0 (8777fe28) | 132.2 | 50.5 | 45.2 | - | 31.7 |
+| herceg-line | 0.0.0 (8777fe28) | 121.3 | 45.6 | 40.9 | - | 34.7 |
+| herceg-pdf-document | 0.0.0 (8777fe28) | 117.4 | 45.8 | 40.8 | - | 2.9 |
+| herceg-pdf-fonts | 0.0.0 (8777fe28) | 136.1 | 53.1 | 47.3 | - | 2.9 |
+| herceg-pdf | 0.0.0 (8777fe28) | 117.3 | 45.7 | 40.9 | - | 2.9 |
+| herceg-pivot | 0.0.0 (8777fe28) | 60.4 | 20.1 | 18.3 | - | - |
+| herceg-react-line | 0.0.0 (8777fe28) | 124.8 | 47.1 | 42.2 | - | 34.7 |
+| herceg-scatter | 0.0.0 (8777fe28) | 142.6 | 54.1 | 48.0 | - | 34.7 |
+| herceg-spec-pdf | 0.0.0 (8777fe28) | 601.9 | 226.0 | 187.2 | - | 2.9 |
+| herceg-svelte-line | 0.0.0 (8777fe28) | 126.1 | 47.6 | 42.6 | - | 34.7 |
+| herceg-vue-line | 0.0.0 (8777fe28) | 125.6 | 47.4 | 42.4 | - | 34.7 |
 | plotly-basic | 4.1.2 | 1184.3 | 391.4 | 325.2 | - | - |
 | plotly-full | 4.1.2 | 4699.6 | 1432.7 | 1084.5 | - | - |
 | tanstack-line | 1.0.0 | 125.5 | 44.4 | 39.4 | - | - |
@@ -876,16 +876,16 @@ so differences under about 20% are noise.
 
 | Workload | herceg.express | Reference |
 | --- | --- | --- |
-| Bootstrap, 1,000 means of 100,000 values (compute) | ~190 ms, 3.1 MiB | Seaborn's `bootstrap`: ~280 ms, 2.3 MiB |
-| Bootstrap, 1,000 medians of 100,000 values (compute) | ~760 ms, 4.6 MiB | Seaborn's `bootstrap`: ~840 ms, 2.3 MiB |
+| Bootstrap, 1,000 means of 100,000 values (compute) | ~210 ms, 3.1 MiB | Seaborn's `bootstrap`: ~285 ms, 2.3 MiB |
+| Bootstrap, 1,000 medians of 100,000 values (compute) | ~800 ms, 4.6 MiB | Seaborn's `bootstrap`: ~890 ms, 2.3 MiB |
 | Bootstrap, 1,000 means of 1,000 values in 20 units (compute) | ~11 ms | Seaborn's structured `bootstrap`: ~32 ms |
-| `barplot`, 100,000 rows, 4 groups, 95% CI (chart) | ~240 ms | — |
-| `lineplot`, 1,000 x values of 10 rows, 95% CI (chart; recompute after one more x value) | ~52 ms; ~4 ms | — |
-| Logistic fit and 95% band, 1,000 rows, 1,000 resamples (compute) | ~160 ms | Seaborn with statsmodels' GLM: ~640 ms |
-| Robust fit and 95% band, 1,000 rows, 1,000 resamples (compute) | ~300 ms | Seaborn with statsmodels' RLM: ~1.2 s |
-| `pairplot`, 10,000 rows x 5 columns, series (chart; SVG) | ~28 ms; SVG ~49 ms more | — |
+| `barplot`, 100,000 rows, 4 groups, 95% CI (chart) | ~250 ms | — |
+| `lineplot`, 1,000 x values of 10 rows, 95% CI (chart; recompute after one more x value) | ~56 ms; ~4 ms | — |
+| Logistic fit and 95% band, 1,000 rows, 1,000 resamples (compute) | ~165 ms | Seaborn with statsmodels' GLM: ~645 ms |
+| Robust fit and 95% band, 1,000 rows, 1,000 resamples (compute) | ~320 ms | Seaborn with statsmodels' RLM: ~1.2 s |
+| `pairplot`, 10,000 rows x 5 columns, series (chart; SVG) | ~32 ms; SVG ~58 ms more | — |
 | `clustermap`, 500 x 50 (chart, SciPy's linkage) | ~3 ms | — |
-| Average linkage, 500 x 50, the NumPy fallback (compute) | ~66 ms, 10 MiB | SciPy's `linkage`: well under ~3 ms (inside the chart time above) |
+| Average linkage, 500 x 50, the NumPy fallback (compute) | ~72 ms, 10 MiB | SciPy's `linkage`: well under ~3 ms (inside the chart time above) |
 | Lowess, 10,000 rows, `delta=0` (compute; Seaborn's default) | ~0.8 s | statsmodels: ~1.2 s |
 | Lowess, 10,000 rows, `delta` 1% of the x range (compute) | ~10 ms | statsmodels: ~14 ms |
 
