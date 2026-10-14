@@ -92,7 +92,9 @@ export function sectorGap(gap: number, sweep: number, r1: number): number {
  * from angle a0 to a1 (radians, clockwise from +x on screen). A gap moves
  * the sector's straight sides gap / 2 inward, parallel to themselves, so
  * neighboring sectors are evenly apart; a pie slice's point moves out to
- * where its sides meet. Thin sectors keep a smaller gap (see `sectorGap`).
+ * where its sides meet. Thin sectors keep a smaller gap (see `sectorGap`),
+ * resolved at `rim`, the sector's outer radius unless it is part of a
+ * larger one (see `ArcGeometry.rims`).
  */
 export function traceSector(
   sink: ArcSink,
@@ -103,6 +105,7 @@ export function traceSector(
   a0: number,
   a1: number,
   gap: number,
+  rim = r1,
 ): void {
   const sweep = a1 - a0;
   if (!(sweep > 0 && r1 > r0)) return;
@@ -118,9 +121,8 @@ export function traceSector(
     }
     return;
   }
-  const half = sectorGap(gap, sweep, r1) / 2;
-  // Closer in than this, the moved sides have crossed.
-  const inner = Math.max(r0, half > 0 ? half / Math.sin(Math.min(sweep, Math.PI) / 2) : 0);
+  const half = sectorGap(gap, sweep, rim) / 2;
+  const inner = Math.max(r0, sidesMeet(half, sweep));
   if (!(inner < r1)) return;
   const d1 = Math.asin(half / r1);
   sink.moveTo(cx + r1 * Math.cos(a0 + d1), cy + r1 * Math.sin(a0 + d1));
@@ -132,6 +134,57 @@ export function traceSector(
     sink.lineTo(cx, cy);
   }
   sink.closePath();
+}
+
+/** How far out a sector's sides, moved `half` a gap inward, cross: closer in, it is not drawn. */
+function sidesMeet(half: number, sweep: number): number {
+  return half > 0 ? half / Math.sin(Math.min(sweep, Math.PI) / 2) : 0;
+}
+
+/**
+ * Where a sector from `r0` to `r1` of `sweep` radians is drawn from, its
+ * sides moved in by a gap: `r0`, or farther out where they cross.
+ */
+function sectorInner(r0: number, r1: number, sweep: number, gap: number): number {
+  return sweep >= TAU - 1e-9 ? r0 : Math.max(r0, sidesMeet(sectorGap(gap, sweep, r1) / 2, sweep));
+}
+
+/**
+ * The radius a sector from `r0` to `r1` of `sweep` radians, drawn with
+ * `gap`, is cut at so that its part inside covers `share` of what it
+ * paints, as pies and sunbursts draw a selection's part of each item (the
+ * parts drawn with the whole's rim, see `ArcGeometry.rims`). With its sides
+ * moved in by h, the sector is sweep - 2 asin(h / r) radians wide at
+ * radius r, so the area it paints out to r is, up to a constant,
+ * r² (sweep / 2 - asin(h / r)) - h √(r² - h²), which rises with r and is
+ * solved for by bisection; without a gap, by its square root.
+ */
+export function sectorShareRadius(
+  r0: number,
+  r1: number,
+  sweep: number,
+  gap: number,
+  share: number,
+): number {
+  const inner = sectorInner(r0, r1, sweep, gap);
+  const part = Math.min(1, Math.max(0, share));
+  if (!(r1 > inner) || part === 0) return inner;
+  if (part === 1) return r1;
+  const half = sweep >= TAU - 1e-9 ? 0 : sectorGap(gap, sweep, r1) / 2;
+  if (half === 0) return Math.sqrt(inner * inner + part * (r1 * r1 - inner * inner));
+  const area = (r: number) =>
+    r * r * (sweep / 2 - Math.asin(Math.min(1, half / r))) -
+    half * Math.sqrt(Math.max(0, r * r - half * half));
+  const from = area(inner);
+  const target = from + part * (area(r1) - from);
+  let [lo, hi] = [inner, r1];
+  // Each halving gains a bit: 40 leave well under a millionth of a pixel.
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (area(mid) < target) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
 }
 
 /** The sectors of `mark` by color: the indices of those filled with each of its colors. */
@@ -146,7 +199,18 @@ export function traceArcs(sink: ArcSink, mark: ArcGeometry, sectors: readonly nu
   const a = mark.arcs;
   for (const i of sectors) {
     const at = i * 6;
-    traceSector(sink, a[at]!, a[at + 1]!, a[at + 2]!, a[at + 3]!, a[at + 4]!, a[at + 5]!, mark.gap);
+    const rim = mark.rims?.[i] ?? a[at + 3]!;
+    traceSector(
+      sink,
+      a[at]!,
+      a[at + 1]!,
+      a[at + 2]!,
+      a[at + 3]!,
+      a[at + 4]!,
+      a[at + 5]!,
+      mark.gap,
+      rim,
+    );
   }
 }
 
@@ -185,10 +249,7 @@ export const arcDrawing: Drawing<ArcGeometry> = {
 
 /** Whether `traceSector` draws anything of a sector. */
 export function sectorPaints(r0: number, r1: number, sweep: number, gap: number): boolean {
-  if (!(sweep > 0 && r1 > r0)) return false;
-  if (sweep >= TAU - 1e-9) return true;
-  const half = sectorGap(gap, sweep, r1) / 2;
-  return Math.max(r0, half > 0 ? half / Math.sin(Math.min(sweep, Math.PI) / 2) : 0) < r1;
+  return sweep > 0 && r1 > r0 && sectorInner(r0, r1, sweep, gap) < r1;
 }
 
 /**

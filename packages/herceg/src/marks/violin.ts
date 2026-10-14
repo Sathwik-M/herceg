@@ -1,4 +1,4 @@
-import { type Density, kde, silverman } from "../data/density.ts";
+import { type Density, kde, partDensity, silverman } from "../data/density.ts";
 import type { BoxStats } from "../data/quantile.ts";
 import type { Schema, Table } from "../data/table.ts";
 import { areaDrawing } from "../draw/area.ts";
@@ -124,6 +124,27 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
     };
   }
 
+  /**
+   * A selection's values of a group: their density on the whole's points,
+   * over the whole's count and with its bandwidth, as wide as the whole's
+   * at its peak, so it lies inside the whole's violin.
+   */
+  protected override describeSelected(
+    sorted: Float64Array,
+    stats: BoxStats,
+    whole: Shape,
+    n: number,
+  ): Shape {
+    const count = stats.count;
+    const { density } = whole;
+    return {
+      min: count > 0 ? sorted[0]! : Number.NaN,
+      max: count > 0 ? sorted[count - 1]! : Number.NaN,
+      density: density && count > 0 ? within(density, partDensity(density, n, sorted)) : undefined,
+      peak: whole.peak,
+    };
+  }
+
   #draws(shape: Shape): boolean {
     return !!shape.density || shape.min === shape.max || this.spec.inner !== "none";
   }
@@ -166,11 +187,10 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
     add(max);
     for (const stat of ["low", "q1", "median", "q3", "high"] as const) add(stats[stat][row]!);
     if (!density) return;
-    const { lo, hi, values } = density;
+    const { lo, hi, values, step } = density;
     add(lo);
     add(hi);
     // Where the density turns positive, as the geometry computes its points.
-    const step = (hi - lo) / (values.length - 1);
     for (let i = 0; lo <= 0 && i < values.length; i++) {
       if (lo + i * step <= 0) continue;
       add(lo + i * step);
@@ -230,8 +250,7 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
         const density = shape.density;
         const widthAt = (value: number, c: number): number => {
           if (!density) return half;
-          const { lo, hi, values } = density;
-          const step = (hi - lo) / (values.length - 1);
+          const { lo, values, step } = density;
           const i = Math.max(0, Math.min(values.length - 2, Math.floor((value - lo) / step)));
           const v0 = lo + i * step;
           const p0 = across.map(v0);
@@ -242,8 +261,7 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
           return half * ((values[i]! * (1 - t) + values[i + 1]! * t) / shape.peak);
         };
         if (density) {
-          const { lo, hi, values } = density;
-          const step = (hi - lo) / (values.length - 1);
+          const { lo, values, step } = density;
           upper.break();
           lower.break();
           outline.break();
@@ -413,8 +431,31 @@ export class ViolinMark extends DistributionMark<ViolinSpec, Shape> {
     const stat = (name: Stat) => stats[name][row]!;
     const { min, max } = groups[row]!;
     const n = stat("count");
-    return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, values from ${f(min)} to ${f(max)}, ${n} ${n === 1 ? "value" : "values"}`;
+    return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, values from ${f(min)} to ${f(max)}, ${n} ${n === 1 ? "value" : "values"}${this.selectedText(series, row, f)}`;
   }
+}
+
+/**
+ * A part's density on the points of the whole's, `values`, cut to where it
+ * is positive, so that its violin ends where its values' kernels do rather
+ * than running on along its center.
+ */
+function within(whole: Density, values: Float64Array): Density | undefined {
+  let first = 0;
+  while (first < values.length && !(values[first]! > 0)) first++;
+  let last = values.length - 1;
+  while (last > first && !(values[last]! > 0)) last--;
+  if (first > last) return undefined;
+  // At least two points, between which a violin's width is read.
+  if (first === last) [first, last] = first > 0 ? [first - 1, last] : [first, last + 1];
+  const { lo, step } = whole;
+  return {
+    lo: lo + first * step,
+    hi: lo + last * step,
+    values: values.slice(first, last + 1),
+    step,
+    bandwidth: whole.bandwidth,
+  };
 }
 
 /**

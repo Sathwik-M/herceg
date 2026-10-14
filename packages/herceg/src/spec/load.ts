@@ -6,7 +6,14 @@ import { type ColumnInput, encodedCategory, type NumericArray, time } from "../d
 import { deriveTable } from "../data/derive.ts";
 import { geometry } from "../data/geometry.ts";
 import { fromMatrix } from "../data/matrix.ts";
-import { type SelectionStore, selectionStore } from "../data/selection.ts";
+import { RowSet } from "../data/row-set.ts";
+import {
+  type DataSelection,
+  type SelectionStore,
+  selectionStore,
+  selectRows,
+  selectWhere,
+} from "../data/selection.ts";
 import { type Table, table } from "../data/table.ts";
 import { readsTable } from "../marks/annotation.ts";
 import { AreaMark } from "../marks/area.ts";
@@ -59,6 +66,7 @@ import type {
   Histogram2DSpec,
   MarkSpec,
   RowSelectionSpec,
+  SelectionSpec,
 } from "./spec.ts";
 import { describeUnknown, findUnknown, unknownError } from "./validate.ts";
 
@@ -163,7 +171,7 @@ export function loadSpec(
   } = spec;
   const stores = new Map<string, SelectionStore>();
   const rows =
-    bindings && loadRowSelection(bindings, tables, marks, byName(options.stores), stores);
+    bindings && loadRowSelection(bindings, tables, marks, buffers, byName(options.stores), stores);
   const facet = split && new Facet(split);
   const subplots = panels && new Panels(panels, grid);
   const navigator = strip ? rangeNavigator(strip === true ? {} : strip) : undefined;
@@ -200,13 +208,14 @@ function loadRowSelection(
   spec: RowSelectionSpec | readonly RowSelectionSpec[],
   tables: ReadonlyMap<string, Table>,
   marks: readonly ChartMark[],
+  buffers: readonly SpecBuffer[],
   given: ReadonlyMap<string, SelectionStore> | undefined,
   stores: Map<string, SelectionStore>,
 ): RowSelection {
   const read = [...new Set(marks.flatMap((mark) => tablesOf(mark)))];
   const bindings = (Array.isArray(spec) ? spec : [spec]) as readonly RowSelectionSpec[];
   return rowSelection(
-    ...bindings.map(({ data, channel, events, effect }, i) => {
+    ...bindings.map(({ data, channel, events, effect, selection }, i) => {
       const path = Array.isArray(spec) ? `spec.rowSelection[${i}]` : "spec.rowSelection";
       let name = data;
       if (name === undefined) {
@@ -224,7 +233,20 @@ function loadRowSelection(
         throw new Error(
           `stores.${name}: the store given is of another table; give a store of table "${name}"`,
         );
-      store ??= selectionStore(table);
+      if (!store) {
+        // A store given keeps what it holds; one made here starts with the spec's.
+        store = selectionStore(table);
+        if (selection) {
+          const at = `${path}.selection`;
+          const held = loadSelection(selection, table, buffers, at);
+          try {
+            store.set(channel, held);
+          } catch (error) {
+            // A condition of fields the table lacks, or not true or false.
+            throw new TypeError(`${at}.expression: ${(error as Error).message}`);
+          }
+        }
+      }
       stores.set(name!, store);
       return {
         store,
@@ -234,6 +256,26 @@ function loadRowSelection(
       };
     }),
   );
+}
+
+/** A spec's selection of `table`'s rows: its condition, or its rows by position. */
+function loadSelection(
+  spec: SelectionSpec,
+  table: Table,
+  buffers: readonly SpecBuffer[],
+  path: string,
+): DataSelection {
+  if (spec.kind === "predicate") return selectWhere(spec.expression);
+  const positions =
+    typeof spec.rows === "number" ? binary("uint32", spec.rows, buffers) : spec.rows;
+  for (let i = 0; i < positions.length; i++) {
+    const row = positions[i]!;
+    if (!(Number.isInteger(row) && row >= 0 && row < table.length))
+      throw new RangeError(
+        `${path}.rows[${i}]: expected a position among the table's ${table.length} rows; received ${row}`,
+      );
+  }
+  return selectRows(new RowSet(table).addAll(positions));
 }
 
 /**

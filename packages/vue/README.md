@@ -57,7 +57,8 @@ the chart's `rowSelection` changed), and `@click` (the chart's click, with the
 data under the pointer, not the element's). A `:row-selection` binding made again,
 or kept in reactive state, is the same while it binds the same stores and channels. A template ref exposes the underlying chart,
 herceg's `Chart`, as `chart` (null until mounted) for imperative calls (`setViewport`,
-`select`, `toPixel`, `setVisibility`, `toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`):
+`select`, `toPixel`, `setVisibility`, `toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`,
+which export the chart as it shows, a highlighted row selection included):
 
 ```vue
 <script setup lang="ts">

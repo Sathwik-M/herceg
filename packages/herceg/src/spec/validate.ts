@@ -159,6 +159,17 @@ const numbers: Check = (v, path) => {
   if (!Array.isArray(v)) fail(path, "an array of numbers", v);
   for (const [i, item] of v.entries()) finite(item, `${path}[${i}]`);
 };
+/** Rows by position: a buffer index, or a list of whole numbers from 0. */
+const positions: Check = (v, path) => {
+  if (typeof v === "number") {
+    if (!Number.isInteger(v) || v < 0) fail(path, "a buffer index or a list of row positions", v);
+    return;
+  }
+  if (!Array.isArray(v)) fail(path, "a buffer index or a list of row positions", v);
+  for (const [i, item] of v.entries())
+    if (!Number.isInteger(item) || item < 0)
+      fail(`${path}[${i}]`, "a row position, 0 or more", item);
+};
 const object: Check = (v, path) => {
   if (!isRecord(v)) fail(path, "an object", v);
 };
@@ -1640,6 +1651,23 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
               for (const [k, event] of (e as string[]).entries()) gesture(event, `${where}[${k}]`);
             },
             effect: oneOf("highlight", "none"),
+            selection: (selection, where) => {
+              object(selection, where);
+              const kind = (selection as { kind?: unknown }).kind;
+              const checks: Record<string, Check> | undefined =
+                kind === "rows"
+                  ? { kind: string, rows: positions }
+                  : kind === "predicate"
+                    ? { kind: string, expression }
+                    : undefined;
+              if (!checks) fail(`${where}.kind`, '"predicate" or "rows"', kind);
+              checkProperties(
+                selection as Record<string, unknown>,
+                where,
+                kind === "rows" ? ["rows"] : ["expression"],
+                checks,
+              );
+            },
           } satisfies ChecksOf<RowSelectionSpec>);
         });
       },

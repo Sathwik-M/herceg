@@ -4,29 +4,41 @@
 // stay as drawn without a selection; nothing here is in a chart that binds
 // no store.
 //
-// - Points and bars: unselected rows dimmed, then selected rows on top,
-//   each row drawn once. Their series keep their place in the list, so
-//   grouped bars stay in their slots. Point series the GPU draws stay
-//   clouds: two, of their unselected and selected rows.
+// - Marks drawing a glyph per row (points, bars, error bars, candlesticks,
+//   rugs): unselected rows dimmed, then selected rows on top, each row
+//   drawn once. Their series keep their place in the list, so grouped bars
+//   stay in their slots. Point series the GPU draws stay clouds: two, of
+//   their unselected and selected rows.
 // - Lines and areas: drawn as they are within the x spans of their runs of
 //   selected rows and dimmed outside them, so each pixel is painted once and
 //   the highlighted part is the same curve and stack. A line's selected rows
 //   with no selected neighbor are dots. Lines whose x does not ascend, and
 //   runs of rows at one x, draw whole and dimmed with their selected rows'
 //   values over them instead.
-// - Other marks draw every row as before.
+// - Marks summarizing rows (histograms, box plots, heatmaps) draw their
+//   selected rows against the whole themselves (`Mark.selectedGeometry`),
+//   through the parts and dimming lent here.
+// - Other marks (annotations, custom marks, contours) draw every row as before.
 //
 // Memberships, splits, and masked values depend only on the selection and
 // the data, so charts showing one selection share them.
 
-import { compileExpression } from "../data/expression.ts";
+import { compileExpression, type Expression } from "../data/expression.ts";
 import type { DataSelection, SelectionStore } from "../data/selection.ts";
 import type { Table } from "../data/table.ts";
 import { lineDrawing } from "../draw/line.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { unmappable } from "../lod/m4.ts";
+import { shareSquares } from "../marks/cell-selection.ts";
 import { STILL } from "../marks/dodge.ts";
-import { DIM, type Frame, type Mark, type MarkKey } from "../marks/mark.ts";
+import {
+  DIM,
+  type Frame,
+  type Mark,
+  type MarkKey,
+  type RowParts,
+  type SelectionDrawing,
+} from "../marks/mark.ts";
 import { placeAt, rowOf, type Series } from "../marks/series.ts";
 import {
   type AreaGeometry,
@@ -95,6 +107,9 @@ let clips = 0;
 const ON = "\u0001on";
 const OFF = "\u0001off";
 
+/** Marks drawing a glyph per row, each drawn dimmed or not. */
+const ROWS = new Set(["point", "bar", "errorbar", "rug"]);
+
 /**
  * Which of a table's rows a selection holds, by position. Rows still in the
  * table keep their membership when rows were only appended or dropped
@@ -121,8 +136,12 @@ export function membership(table: Table, selection: DataSelection): Uint8Array {
     const set = selection.rows;
     for (let row = from; row < selected.length; row++) if (set.has(row)) selected[row] = 1;
   } else if (from < selected.length) {
+    // Compiled first in any case, which checks it against the table.
     const { at } = compileExpression(selection.expression, table);
-    for (let row = from; row < selected.length; row++) if (at(row) === true) selected[row] = 1;
+    if (!fill(selection.expression, table, from, selected.subarray(from))) {
+      selected.fill(0, from);
+      for (let row = from; row < selected.length; row++) if (at(row) === true) selected[row] = 1;
+    }
   }
   byTable.set(selection, {
     version: table.version,
@@ -133,6 +152,142 @@ export function membership(table: Table, selection: DataSelection): Uint8Array {
     selected,
   });
   return selected;
+}
+
+/** Comparisons of a number field with a literal, which conditions test a column at a time. */
+const COMPARE = new Set(["==", "!=", "<", "<=", ">", ">="]);
+const FLIP: Record<string, string> = { "<": ">", "<=": ">=", ">": "<", ">=": "<=" };
+
+/** How a test's results go into what is there: in place of it, or and-ed or or-ed with it. */
+type Into = "set" | "and" | "or";
+
+/**
+ * Whether each of rows `from` on (as many as `out` holds) meets condition
+ * `e`, 1 or 0 into `out`: worked out a column at a time, for the
+ * conditions brushes write (number fields compared with numbers, category
+ * fields among labels, and conjunctions, disjunctions, and negations of
+ * them), about ten times faster than testing row by row. False, with `out`
+ * in any state, for any other condition. It gives what the compiled
+ * condition gives: a missing value compares false, though unequal.
+ */
+function fill(
+  e: Expression,
+  table: Table,
+  from: number,
+  out: Uint8Array,
+  into: Into = "set",
+): boolean {
+  const n = out.length;
+  if (typeof e === "boolean") {
+    const bit = e ? 1 : 0;
+    if (into === "set" || (into === "and" && !e) || (into === "or" && e)) out.fill(bit);
+    return true;
+  }
+  if (!Array.isArray(e)) return false;
+  const [op, ...args] = e as readonly [string, ...Expression[]];
+  const name = (arg: Expression | undefined) =>
+    Array.isArray(arg) && arg[0] === "field" && typeof arg[1] === "string" ? arg[1] : undefined;
+  // A field between two numbers, as brushes write ranges: one pass.
+  const range = op === "and" && args.length === 2 && rangeOf(args[0]!, args[1]!, table);
+  if (range) {
+    const [v, lo, hi] = range;
+    // Without branches: a branch on scattered values mispredicts every other row.
+    if (into === "set")
+      for (let i = 0; i < n; i++) out[i] = +(v[from + i]! >= lo) & +(v[from + i]! <= hi);
+    else if (into === "and")
+      for (let i = 0; i < n; i++) out[i]! &= +(v[from + i]! >= lo) & +(v[from + i]! <= hi);
+    else for (let i = 0; i < n; i++) out[i]! |= +(v[from + i]! >= lo) & +(v[from + i]! <= hi);
+    return true;
+  }
+  if ((op === "and" || op === "or") && args.length > 0) {
+    // Each part goes straight into `out` when it combines as the node does.
+    if (into === op || into === "set")
+      return args.every((arg, i) => fill(arg, table, from, out, i === 0 ? into : op));
+    const own = new Uint8Array(n);
+    if (!fill(e, table, from, own)) return false;
+    combine(out, own, into);
+    return true;
+  }
+  if (op === "not" && args.length === 1) {
+    const own = new Uint8Array(n);
+    if (!fill(args[0]!, table, from, own)) return false;
+    for (let i = 0; i < n; i++) own[i]! ^= 1;
+    combine(out, own, into);
+    return true;
+  }
+  if (COMPARE.has(op) && args.length === 2) {
+    const compared = comparisonOf(op, args[0]!, args[1]!, table);
+    if (!compared) return false;
+    const [v, test, c] = compared;
+    const own = into === "set" ? out : new Uint8Array(n);
+    // A loop per comparison, without branches: these run over every row.
+    if (test === "==") for (let i = 0; i < n; i++) own[i] = +(v[from + i] === c);
+    else if (test === "!=") for (let i = 0; i < n; i++) own[i] = +(v[from + i] !== c);
+    else if (test === "<") for (let i = 0; i < n; i++) own[i] = +(v[from + i]! < c);
+    else if (test === "<=") for (let i = 0; i < n; i++) own[i] = +(v[from + i]! <= c);
+    else if (test === ">") for (let i = 0; i < n; i++) own[i] = +(v[from + i]! > c);
+    else for (let i = 0; i < n; i++) own[i] = +(v[from + i]! >= c);
+    if (own !== out) combine(out, own, into);
+    return true;
+  }
+  const field = name(args[0]);
+  if (op !== "in" || field === undefined || table.kind(field) !== "category") return false;
+  const candidates = args.slice(1);
+  if (!candidates.every((v) => typeof v === "string" || v === null)) return false;
+  // Whether each category is a candidate, then each row's.
+  const { codes, dictionary } = table.categories(field as never);
+  const labels = new Set(candidates);
+  const member = Uint8Array.from(dictionary, (label) => (labels.has(label) ? 1 : 0));
+  const missing = labels.has(null) ? 1 : 0;
+  const own = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const code = codes[from + i]!;
+    own[i] = code < 0 ? missing : member[code]!;
+  }
+  combine(out, own, into);
+  return true;
+}
+
+/**
+ * A comparison of a number field with a number, as a test of the field's
+ * values with a literal on the right; undefined for other comparisons.
+ */
+function comparisonOf(
+  op: string,
+  left: Expression,
+  right: Expression,
+  table: Table,
+): [values: ArrayLike<number>, op: string, literal: number] | undefined {
+  // A literal on the left is the same comparison turned around.
+  const flipped = typeof left === "number";
+  const [arg, c] = flipped ? [right, left] : [left, right];
+  const field = Array.isArray(arg) && arg[0] === "field" ? arg[1] : undefined;
+  if (typeof field !== "string" || typeof c !== "number" || table.kind(field) === "category")
+    return undefined;
+  return [table.numbers(field as never), flipped ? (FLIP[op] ?? op) : op, c];
+}
+
+/** A field from one number to another, inclusive (`>=` one and `<=` the other); undefined otherwise. */
+function rangeOf(
+  a: Expression,
+  b: Expression,
+  table: Table,
+): [values: ArrayLike<number>, lo: number, hi: number] | undefined {
+  if (!Array.isArray(a) || !Array.isArray(b)) return undefined;
+  const first = comparisonOf(a[0] as string, a[1]!, a[2]!, table);
+  const second = comparisonOf(b[0] as string, b[1]!, b[2]!, table);
+  if (!first || !second || first[0] !== second[0] || a.length !== 3 || b.length !== 3)
+    return undefined;
+  const low = first[1] === ">=" ? first : second[1] === ">=" ? second : undefined;
+  const high = first[1] === "<=" ? first : second[1] === "<=" ? second : undefined;
+  return low && high && low !== high ? [first[0], low[2], high[2]] : undefined;
+}
+
+/** `own` into `out`, as `into` says. */
+function combine(out: Uint8Array, own: Uint8Array, into: Into): void {
+  if (into === "set") out.set(own);
+  else if (into === "and") for (let i = 0; i < out.length; i++) out[i]! &= own[i]!;
+  else for (let i = 0; i < out.length; i++) out[i]! |= own[i]!;
 }
 
 export class Highlighter {
@@ -148,10 +303,16 @@ export class Highlighter {
    * rows of a table since reset), or no channel is of the table.
    */
   selected(table: Table): Uint8Array | undefined {
+    const selection = this.#selection(table);
+    return selection && membership(table, selection);
+  }
+
+  /** The selection `table`'s channel holds; undefined for none, or rows of a table since reset. */
+  #selection(table: Table): DataSelection | undefined {
     const channel = this.#channels.find((c) => c.table === table);
     const selection = channel?.store.get(channel.channel);
     if (!selection || (selection.kind === "rows" && !selection.rows.current)) return undefined;
-    return membership(table, selection);
+    return selection;
   }
 
   /**
@@ -165,21 +326,36 @@ export class Highlighter {
     series: readonly Series[],
     frame: Frame,
     key: MarkKey,
+    rows?: RowParts,
   ): Geometry[] | undefined {
     const type = mark.spec.type;
-    if (type !== "point" && type !== "bar" && type !== "line" && type !== "area") return undefined;
-    const channel = this.#channels.find(({ table }) => table === mark.table);
-    const selection = channel?.store.get(channel.channel);
-    // Rows selected before the table was reset are gone: nothing is selected.
-    if (!selection || (selection.kind === "rows" && !selection.rows.current)) return undefined;
-    const selected = membership(channel!.table, selection);
+    if (!ROWS.has(type) && type !== "line" && type !== "area" && !mark.selectedGeometry)
+      return undefined;
+    const table = mark.table;
+    const selected = table && this.selected(table);
+    if (!selected) return undefined;
     // Parts of series draw into buffers and keys of their own, hidden as their series are.
     const hidden = (suffix: string) =>
       frame.hidden.size === 0
         ? frame.hidden
         : new Set(series.filter((s) => frame.hidden.has(s.key)).map((s) => s.key + suffix));
     const own = (suffix: string): Frame => ({ ...frame, hidden: hidden(suffix), keyed: false });
-    if (type === "point" || type === "bar") {
+    if (mark.selectedGeometry) {
+      const byKey = new Map(series.map((s) => [s.key, s]));
+      // Each part stands for the drawn series of its key, whose slot it keeps.
+      const parts = (list: readonly Series[], suffix: string) =>
+        list.map((p) => ({ ...p, key: p.key + suffix, whole: p.whole ?? byKey.get(p.key) }));
+      const drawing: SelectionDrawing = {
+        selected,
+        dimmed: (list) => mark.geometry(parts(list, OFF), own(OFF), key, rows).flatMap(dimLayer),
+        lit: (list) => mark.geometry(parts(list, ON), own(ON), key, rows),
+        dim: dimLayer,
+        squares: shareSquares,
+      };
+      return mark.selectedGeometry(series, frame, drawing);
+    }
+    const selection = this.#selection(table)!;
+    if (ROWS.has(type)) {
       const clouds: Geometry[] = [];
       let rest = series;
       if (type === "point" && frame.clouds && series.some((s) => s.length >= CLOUD_POINTS)) {
@@ -187,7 +363,7 @@ export class Highlighter {
         const drawn = (mark.geometry(big, frame, key) as PointGeometry[]).filter((g) => g.cloud);
         for (const g of drawn) {
           const s = big.find(({ key }) => key === g.key)!;
-          clouds.push(...lightClouds(g, split(s, selected), selection, channel!.table));
+          clouds.push(...lightClouds(g, split(s, selected), selection, table));
         }
         const done = new Set(drawn.map((g) => g.key));
         rest = series.filter((s) => !done.has(s.key));
@@ -277,11 +453,17 @@ function split(s: Series, selected: Uint8Array): Split {
   for (let k = 0; k < s.length; k++) count += selected[rowOf(s, k)]!;
   const on = new Uint32Array(count);
   const off = new Uint32Array(s.length - count);
+  // Each row is written to both and kept by the one it belongs to: without
+  // a branch, which scattered selections mispredict. Writes past an array's
+  // end, of rows that belong to the other, are dropped.
   let [i, j] = [0, 0];
   for (let k = 0; k < s.length; k++) {
     const row = rowOf(s, k);
-    if (selected[row]) on[i++] = row;
-    else off[j++] = row;
+    const lit = selected[row]!;
+    on[i] = row;
+    off[j] = row;
+    i += lit;
+    j += lit ^ 1;
   }
   const found = { on, off };
   kept.set(key, found);
@@ -640,6 +822,8 @@ function clipped(
       : [plot.x, spans[i]!, plot.width, spans[i + 1]! - spans[i]!];
   const drawing: Drawing<Geometry> = {
     size: draw.size,
+    opacity: draw.opacity,
+    clip: Array.from({ length: spans.length / 2 }, (_, i) => rect(i * 2)).flat(),
     svg(g, context) {
       let rects = "";
       for (let i = 0; i < spans.length; i += 2) {
@@ -727,9 +911,10 @@ function dim(geometry: Geometry): Geometry {
 }
 
 /**
- * A line's or area's geometry dimmed: an area's fill at a fraction of its
- * opacity, its outline drawn apart as a dimmed line, since areas paint
- * their outline at full opacity.
+ * A geometry dimmed, for any kind: an area's fill at a fraction of its
+ * opacity and its outline drawn apart as a dimmed line, since areas paint
+ * their outline at full opacity (and set the canvas' alpha, which a faded
+ * drawing would multiply).
  */
 function dimLayer(geometry: Geometry): Geometry[] {
   if (geometry.kind !== "area") return [dim(geometry)];
@@ -756,6 +941,7 @@ function faded(draw: Drawing<Geometry>, fraction: number): Drawing<Geometry> {
   const elements = draw.elements;
   const copy = {
     ...draw,
+    opacity: (draw.opacity ?? 1) * fraction,
     svg: (geometry, context) => `<g opacity="${fraction}">${draw.svg(geometry, context)}</g>`,
     elements:
       elements &&

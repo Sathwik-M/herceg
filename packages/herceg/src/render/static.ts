@@ -22,10 +22,15 @@ export interface StaticOptions extends ChartConfig {
 
 let renders = 0;
 
-/** Renders a chart to a standalone SVG string. Needs no DOM. */
+/**
+ * Renders a chart to a standalone SVG string. Needs no DOM. With
+ * `rowSelection`, the selections its stores hold are drawn highlighted.
+ */
 export function renderToSVG(options: StaticOptions): string {
   const model = new ChartModel(options, NO_PAGE);
   model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
+  // What the bound stores hold now is drawn as a mounted chart draws it.
+  options.rowSelection?.highlight(model);
   const scene = model.scene(options.measureText ?? estimateText);
   return renderSvg(scene, {
     idPrefix: options.idPrefix ?? `herceg-svg-${++renders}`,

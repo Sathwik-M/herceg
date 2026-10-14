@@ -42,7 +42,7 @@ from ._events import (
     decode_viewport,
 )
 from ._live import check_live_rows
-from ._rows import RowSelection
+from ._rows import RowSelection, bound_tables
 
 if TYPE_CHECKING:
     from ._chart import Chart
@@ -67,7 +67,8 @@ class ChartState:
     click: Inspection | None = None
     #: What the channel of the chart's row selection holds (see
     #: ``hg.SelectionBinding``): rows by position in the data, or a brush's
-    #: condition; None until the user selects, and once the data changes.
+    #: condition; until the user selects, and once the data changes, the
+    #: binding's ``selection``, or None.
     row_selection: RowSelection | None = None
     #: Item keys from the top level through the root, or None for the whole tree:
     #: of the chart's treemap or sunburst (every facet panel's, which share one).
@@ -160,10 +161,18 @@ def chart(
     spec, buffers = chart.to_spec()
     events = [name for name, reaction in reactions.items() if reaction != "ignore"]
     # Rows are positions in this run's data; the browser says which data they
-    # are of. Runs that change only how the chart looks keep them.
+    # are of. Runs that change only how the chart looks keep them, as do runs
+    # that change only the selection a binding starts with, whose rows come
+    # after the columns' buffers.
     epoch = hashlib.sha256(json.dumps(spec.get("data"), sort_keys=True).encode())
-    for buffer in buffers:
-        epoch.update(buffer)
+    selections = {
+        binding["selection"]["rows"]
+        for binding in bound_tables(spec.get("rowSelection"))
+        if isinstance(binding.get("selection", {}).get("rows"), int)
+    }
+    for index, buffer in enumerate(buffers):
+        if index not in selections:
+            epoch.update(buffer)
     # Streamlit returns an event's value only when the event has a callback;
     # the browser sends only the events listed in the payload.
     callbacks = {
@@ -313,16 +322,19 @@ def _panels(payload: Any) -> dict[str, Any]:
 def _rows(payload: Any, chart: Chart | None, epoch: str) -> RowSelection | None:
     """A row selection from the browser, if it is of this run's data: rows are
     positions in the data the browser drew, which a rerun may have replaced."""
-    if chart is None or not isinstance(payload, dict) or payload.get("epoch") != epoch:
-        return None
-    # The state may be of a binding the chart no longer has: another table, or none.
-    if len(chart._row_selection) != 1:
+    if chart is None or len(chart._row_selection) != 1:
         return None
     (binding,) = chart._row_selection
     table = chart._bound_table(binding)
+    data = next(source for source, name in chart._table_names() if name == table)
+    if not isinstance(payload, dict) or payload.get("epoch") != epoch:
+        # Until the browser reports this run's data, the channel holds what the binding starts with.
+        if binding.selection is None:
+            return None
+        return binding._initial(data, chart._bound_length(binding))
+    # The state may be of a binding the chart no longer has: another table, or none.
     if payload.get("table") != table or payload.get("channel") != binding.channel:
         return None
-    data = next(source for source, name in chart._table_names() if name == table)
     selection = payload.get("selection")
     if selection is None:
         return RowSelection(binding.channel, data)

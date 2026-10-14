@@ -22,15 +22,7 @@ import type {
 } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import { type ChartMark, DIM, frozen, type MARK } from "./mark.ts";
-import {
-  type Branch,
-  count,
-  drillControls,
-  selectedText,
-  TreeData,
-  type TreeView,
-  where,
-} from "./tree-data.ts";
+import { type Branch, count, drillControls, TreeData, type TreeView, where } from "./tree-data.ts";
 
 export type TreemapOptions<S extends Schema> = (
   | {
@@ -118,7 +110,9 @@ export class TreemapMark implements LayoutMark {
     const boxes = new Float64Array(tree.size * 4);
     layoutTreemap(tree, shown, bounds, { inner: GAP, outer: 0, top: header }, boxes);
 
-    // With a selection highlighted, nodes none of whose rows it holds are dimmed.
+    // With a selection highlighted, a leaf's selected share fills it from
+    // its left edge, the rest of it dimmed; groups none of whose rows it
+    // holds are dimmed.
     const selected = frame.selected?.(this.table);
     const counts = selected && this.#data.selectedOf(view, selected);
     // Leaves fill in their branch's color; groups show faintly behind them,
@@ -147,7 +141,19 @@ export class TreemapMark implements LayoutMark {
       for (const leaves of [false, true]) {
         const all = parts.get(top)?.[leaves ? 1 : 0] ?? [];
         const lit = counts ? all.filter((node) => counts.hits[node]! > 0) : all;
-        const dimmed = counts ? all.filter((node) => counts.hits[node] === 0) : [];
+        // The part of a node's box drawn: a leaf's selected share from its
+        // left edge, or the rest; anything else whole.
+        const share = (node: number) =>
+          counts && leaves ? this.#data.shareOf(view, counts, node) : 1;
+        const dimmed = !counts
+          ? []
+          : all.filter((node) => (leaves ? share(node) < 1 : counts.hits[node] === 0));
+        const boxOf = (node: number, dim: boolean): [number, number, number, number] => {
+          const [x, y, w, h] = boxes.subarray(node * 4, node * 4 + 4) as unknown as number[];
+          const part = w! * share(node);
+          if (!counts || !leaves) return [x!, y!, w!, h!];
+          return dim ? [x! + part, y!, w! - part, h!] : [x!, y!, part, h!];
+        };
         for (const [nodes, dim] of [
           [dimmed, true],
           [lit, false],
@@ -155,7 +161,7 @@ export class TreemapMark implements LayoutMark {
           if (nodes.length === 0) continue;
           const rects = new Float32Array(nodes.length * 4);
           nodes.forEach((node, i) => {
-            rects.set(boxes.subarray(node * 4, node * 4 + 4), i * 4);
+            rects.set(boxOf(node, dim), i * 4);
           });
           geometry.push({
             kind: "rect",
@@ -182,7 +188,7 @@ export class TreemapMark implements LayoutMark {
         label: [...view.prefix, ...pathOf(tree, node)].join(" / "),
         color: colorOf.get(branch[node]!) ?? theme.muted,
         value: shown[node]!,
-        text: `${formatNumber(shown[node]!, locale)} (${percent(shown[node]! / total)}${where(view)})${selectedText(counts, node)}`,
+        text: `${formatNumber(shown[node]!, locale)} (${percent(shown[node]! / total)}${where(view)})${this.#data.selectedText(view, counts, node, locale)}`,
         px: x! + w! / 2,
         py: y! + h! / 2,
         outline: `M${n(x!)} ${n(y!)}h${n(w!)}v${n(h!)}h${n(-w!)}Z`,

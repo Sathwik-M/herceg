@@ -12,7 +12,7 @@ import type { Schema, Table } from "../data/table.ts";
 import { type LayoutMark, tablesOf } from "../marks/layout-mark.ts";
 import type { Mark } from "../marks/mark.ts";
 import type { BrushSpec, SelectionGesture } from "../spec/spec.ts";
-import { Highlighter } from "./highlight.ts";
+import { Highlighter, membership } from "./highlight.ts";
 import type { ChartConfig, ChartModel } from "./model.ts";
 import {
   type Brushed,
@@ -126,6 +126,9 @@ export function rowSelection<const S extends readonly Schema[]>(
   return new RowSelection(bindings as unknown as readonly SelectionBinding[]);
 }
 
+/** How many rows each membership holds, counted once: descriptions are read every frame. */
+const counts = new WeakMap<Uint8Array, number>();
+
 /** Identities of stores, which say whether two row selections bind the same ones. */
 const storeIds = new WeakMap<SelectionStore, number>();
 
@@ -170,15 +173,16 @@ export class RowSelection {
 
   /**
    * Refuses charts whose rows cannot be selected yet: layout marks other
-   * than maps, trees, and networks (pies, 3D charts), stores of tables no
-   * mark reads, and brushes along an axis of statistics (a histogram's
-   * counts, a box plot's values) or lassos over them.
+   * than maps, pies, funnels, trees, Sankey diagrams, and networks (gauges,
+   * radars, 3D charts), stores of tables no mark reads, and brushes along an
+   * axis of statistics (a histogram's counts, a box plot's values) or
+   * lassos over them.
    */
   check(config: ChartConfig, marks: readonly Mark[], layouts: readonly LayoutMark[]): void {
     const layout = layouts.find((mark) => !mark.selects);
     if (layout)
       throw new Error(
-        `${layout.spec.type} rowSelection: cannot select rows yet; it needs marks along x and y axes, or maps, treemaps, sunbursts, and networks`,
+        `${layout.spec.type} rowSelection: cannot select rows yet; it needs marks along x and y axes, or maps, pies, funnels, treemaps, sunbursts, Sankey diagrams, and networks`,
       );
     const brush = config.interaction?.brush;
     const read = [...layouts.flatMap(tablesOf), ...marks.map((mark) => mark.table)];
@@ -190,6 +194,53 @@ export class RowSelection {
       if (brush && bound.events.has(brush === "lasso" ? "lasso" : "brush"))
         for (const mark of marks) if (mark.table === bound.table) refuseBrush(mark, brush);
     }
+  }
+
+  /**
+   * Draws `model`'s scenes with the rows the bound channels hold
+   * highlighted, for the bindings whose `effect` is "highlight": a mounted
+   * chart's (see `mount`) and static exports' alike, which read the stores
+   * as they are when drawn. Returns what undoes it.
+   */
+  highlight(model: ChartModel): () => void {
+    const highlighted = this.#bound.filter((b) => b.highlight);
+    if (highlighted.length === 0) return () => {};
+    const highlighter = new Highlighter(highlighted);
+    const draw: NonNullable<ChartModel["highlight"]> = (mark, series, frame, key, rows) =>
+      highlighter.geometry(mark, series, frame, key, rows) ??
+      mark.geometry(series, frame, key, rows);
+    const layout = (table: Table) => highlighter.selected(table);
+    model.highlight = draw;
+    model.layoutHighlight = layout;
+    return () => {
+      if (model.highlight === draw) model.highlight = undefined;
+      if (model.layoutHighlight === layout) model.layoutHighlight = undefined;
+    };
+  }
+
+  /**
+   * What the channels the chart highlights hold, for its text alternative:
+   * "42 of 120 rows selected." (naming each table, for several); undefined
+   * while none holds a selection.
+   */
+  get description(): string | undefined {
+    const shown = this.#bound.filter((b) => b.highlight);
+    const several = shown.length > 1;
+    const held = shown.flatMap(({ store, table, channel }) => {
+      const selection = store.get(channel);
+      // Rows selected before the table was reset are gone: nothing is selected.
+      if (!selection || (selection.kind === "rows" && !selection.rows.current)) return [];
+      const selected = membership(table, selection);
+      let count = counts.get(selected);
+      if (count === undefined) {
+        count = 0;
+        for (let row = 0; row < selected.length; row++) count += selected[row]!;
+        counts.set(selected, count);
+      }
+      const name = several && table.name !== undefined ? ` of ${table.name}` : "";
+      return [`${count} of ${table.length} ${table.length === 1 ? "row" : "rows"}${name}`];
+    });
+    return held.length > 0 ? `${held.join("; ")} selected.` : undefined;
   }
 
   /**
@@ -286,8 +337,6 @@ export class RowLink {
   /** What the chart's brush wrote, which clearing the brush clears while the channel still holds it. */
   readonly #brushed = new Map<Bound, DataSelection>();
   readonly #stops: (() => void)[] = [];
-  readonly #highlight: ChartModel["highlight"];
-  readonly #layoutHighlight: ChartModel["layoutHighlight"];
   /** How deep in writes of the chart's own selections, which leave its brush in place. */
   #writing = 0;
   #disposed = false;
@@ -317,15 +366,7 @@ export class RowLink {
     const keys = (event: KeyPress) => this.#key(event);
     chart.root.addEventListener("keydown", keys);
     this.#stops.push(() => chart.root.removeEventListener("keydown", keys));
-    const highlighted = bound.filter((b) => b.highlight);
-    if (highlighted.length > 0) {
-      const highlighter = new Highlighter(highlighted);
-      this.#highlight = (mark, series, frame, key, rows) =>
-        highlighter.geometry(mark, series, frame, key) ?? mark.geometry(series, frame, key, rows);
-      model.highlight = this.#highlight;
-      this.#layoutHighlight = (table) => highlighter.selected(table);
-      model.layoutHighlight = this.#layoutHighlight;
-    }
+    this.#stops.push(selection.highlight(model));
   }
 
   /**
@@ -433,10 +474,6 @@ export class RowLink {
     this.#disposed = true;
     for (const stop of this.#stops) stop();
     this.#stops.length = 0;
-    if (this.#highlight && this.#model.highlight === this.#highlight)
-      this.#model.highlight = undefined;
-    if (this.#layoutHighlight && this.#model.layoutHighlight === this.#layoutHighlight)
-      this.#model.layoutHighlight = undefined;
     // The channels keep what the chart wrote: other views may be showing it.
     this.#brushed.clear();
     return undefined;

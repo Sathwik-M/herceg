@@ -1,5 +1,5 @@
 import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
-import { ArcPath, arcDrawing, inSector, traceSector } from "../draw/arc.ts";
+import { ArcPath, arcDrawing, inSector, sectorShareRadius, traceSector } from "../draw/arc.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
@@ -16,13 +16,15 @@ import type {
 } from "../scene/scene.ts";
 import type { Frozen, PieSpec } from "../spec/spec.ts";
 import {
+  heldText,
   type LayoutFrame,
   type LayoutItem,
   type LayoutMark,
   type LayoutResult,
   RowsCache,
+  SelectionCache,
 } from "./layout-mark.ts";
-import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
+import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface PieOptions<S extends Schema> {
   /** Category field: a slice per value. */
@@ -46,6 +48,13 @@ const TAU = 2 * Math.PI;
 /** Space between neighboring slices, in pixels. */
 const GAP = 2;
 
+/** What a selection holds of each category, by code: its rows' count and sum, and the rows counted. */
+interface Held {
+  rows: Float64Array;
+  sums: Float64Array;
+  of: Float64Array;
+}
+
 export class PieMark implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
@@ -53,8 +62,12 @@ export class PieMark implements LayoutMark {
   readonly spec: Frozen<PieSpec>;
   readonly table: Table;
   readonly measure: string;
+  /** Clicks select a slice's rows, and a selection of them is drawn as a share of each slice. */
+  readonly selects = true;
   /** Totals per category code, of all rows and of each facet panel's. */
   readonly #totals = new RowsCache<Float64Array>();
+  /** What highlighted selections hold of each category. */
+  readonly #held = new SelectionCache<Held>();
 
   constructor(input: PieSpec, table: Table) {
     this.spec = frozen(input);
@@ -90,6 +103,53 @@ export class PieMark implements LayoutMark {
       }
       return sums;
     });
+  }
+
+  /**
+   * What `selected` holds of each category's rows among `rows` (all rows by
+   * default): how many of them, their sum, and how many rows the category
+   * counts, those its sum counts.
+   */
+  #heldOf(selected: Uint8Array, rows: Uint32Array | undefined): Held {
+    return this.#held.get(selected, rows, () => {
+      const { codes, dictionary } = this.table.categories(this.spec.category);
+      const values =
+        this.spec.value === undefined ? undefined : this.table.numbers(this.spec.value);
+      const held = {
+        rows: new Float64Array(dictionary.length),
+        sums: new Float64Array(dictionary.length),
+        of: new Float64Array(dictionary.length),
+      };
+      this.#eachRow(
+        rows,
+        (row, code, value) => {
+          held.of[code]!++;
+          if (selected[row] !== 1) return;
+          held.rows[code]!++;
+          held.sums[code]! += value;
+        },
+        codes,
+        values,
+      );
+      return held;
+    });
+  }
+
+  /** Calls `each` with every row among `rows` (all rows by default) a slice counts, its code, and its value. */
+  #eachRow(
+    rows: Uint32Array | undefined,
+    each: (row: number, code: number, value: number) => void,
+    codes = this.table.categories(this.spec.category).codes,
+    values = this.spec.value === undefined ? undefined : this.table.numbers(this.spec.value),
+  ): void {
+    const count = rows ? rows.length : this.table.length;
+    for (let k = 0; k < count; k++) {
+      const row = rows ? rows[k]! : k;
+      const code = codes[row]!;
+      if (code < 0) continue;
+      const value = values ? values[row]! : 1;
+      if (value > 0 && value < Number.POSITIVE_INFINITY) each(row, code, value);
+    }
   }
 
   /** Every category with rows among `rows` (all rows by default), in slice order. */
@@ -162,9 +222,33 @@ export class PieMark implements LayoutMark {
       if (!labels) return [sectors];
       return [sectors, ...this.#labels(items, at, cx, cy, radius, frame, font, lineHeight)];
     };
+    // With a selection highlighted, each slice's selected share is drawn out
+    // from its inner edge, covering that share of its area, the rest dimmed.
+    const selected = frame.selected?.(this.table);
+    const held = selected && this.#heldOf(selected, frame.rows);
+    const { dictionary } = this.table.categories(this.spec.category);
+    const codeOf = new Map(dictionary.map((label, code) => [label, code]));
+    const heldShare = (slice: PieSlice) => held!.sums[codeOf.get(slice.label)!]! / slice.value;
     const geometry = draw(slices, ends, r, labeled);
+    if (held) {
+      const [whole] = geometry.splice(0, 1) as [ArcGeometry];
+      const { arcs, gap } = whole;
+      const [lit, dimmed] = [arcs.slice(), arcs.slice()];
+      // The parts keep the whole slice's sides, its gap resolved at its rim.
+      const rims = Float32Array.from(slices, (_, i) => arcs[i * 6 + 3]!);
+      slices.forEach((slice, i) => {
+        const [r0, r1, a0, a1] = arcs.subarray(i * 6 + 2, i * 6 + 6) as unknown as number[];
+        const radius = sectorShareRadius(r0!, r1!, a1! - a0!, gap, heldShare(slice));
+        lit[i * 6 + 3] = radius;
+        dimmed[i * 6 + 2] = radius;
+      });
+      geometry.unshift(
+        { ...whole, key: "pie-dimmed", arcs: dimmed, rims, fillOpacity: DIM },
+        { ...whole, arcs: lit, rims },
+      );
+    }
     // Charts that animate changed values draw frames between two scenes as this one draws.
-    if (frame.keyed)
+    else if (frame.keyed)
       (geometry[0] as ArcGeometry).slices = { items: slices, ends, cx, cy, r, labeled, draw };
 
     const percent = numberFormatter({ style: "percent", maximumFractionDigits: 1 }, locale);
@@ -179,12 +263,25 @@ export class PieMark implements LayoutMark {
       const outline = new ArcPath();
       traceSector(outline, cx, cy, r0, r, a0, a1, gap);
       const mid = (a0 + a1) / 2;
+      const code = codeOf.get(slice.label)!;
+      const measure = this.spec.value;
       items[i] = {
         key: slice.key,
         label: slice.label,
         color: frame.color(slice.key),
         value: slice.value,
-        text: `${formatNumber(slice.value, locale)} (${percent(share(slice.value))})`,
+        text: `${formatNumber(slice.value, locale)} (${percent(share(slice.value))})${
+          held
+            ? heldText(
+                held.rows[code]!,
+                held.of[code]!,
+                measure === undefined
+                  ? undefined
+                  : { field: measure, held: held.sums[code]!, of: slice.value },
+                (value) => formatNumber(value, locale),
+              )
+            : ""
+        }`,
         px: cx + middle * Math.cos(mid),
         py: cy + middle * Math.sin(mid),
         outline: outline.d,
@@ -214,6 +311,16 @@ export class PieMark implements LayoutMark {
       count: slices.length,
       item: itemOf,
       indexOf: (key) => slices.findIndex((slice) => slice.key === key),
+      rowsOf: (key, table) => {
+        const slice = table === this.table ? slices.find((s) => s.key === key) : undefined;
+        if (!slice) return undefined;
+        const code = codeOf.get(slice.label);
+        const rows: number[] = [];
+        this.#eachRow(frame.rows, (row, at) => {
+          if (at === code) rows.push(row);
+        });
+        return rows;
+      },
       summary: () => this.#summary(slices, largest * relative, share, locale, percent),
     };
   }

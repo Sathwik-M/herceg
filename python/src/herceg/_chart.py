@@ -18,8 +18,8 @@ import numpy as np
 
 from . import _geo, _render
 from ._data import Column, Matrix, Table, listed, shown
-from ._derive import BinSpec, Derived, bin_spec
-from ._rows import SelectionBinding, bindings
+from ._derive import BinSpec, Derived, Expr, _fields_of, bin_spec
+from ._rows import RowSelection, SelectionBinding, bindings
 
 # Annotations read at runtime (typing.get_type_hints) need Unpack too.
 if sys.version_info >= (3, 11):
@@ -2655,7 +2655,8 @@ class Chart:
         if self._row_selection and kind not in _SELECTING_LAYOUT_MARKS:
             raise ValueError(
                 f"Chart row_selection: a {kind} cannot select rows yet; marks along x "
-                "and y can, as can maps, treemaps, sunbursts, and networks"
+                "and y can, as can maps, pies, funnels, treemaps, sunbursts, Sankey "
+                "diagrams, and networks"
             )
         if not self._panels:
             _check_alone(self._settings, kind)
@@ -3848,9 +3849,23 @@ class Chart:
         for binding, name in zip(self._row_selection, names, strict=True):
             self._check_brush(binding, name)
         specs = [
-            binding._spec(name) for binding, name in zip(self._row_selection, names, strict=True)
+            binding._spec(
+                name, self._bound_length(binding) if binding.selection is not None else None
+            )
+            for binding, name in zip(self._row_selection, names, strict=True)
         ]
         return {**self._options, "rowSelection": specs[0] if len(specs) == 1 else specs}
+
+    def _bound_length(self, binding: SelectionBinding) -> int | None:
+        """How many rows the table a binding selects has; unknown (None) for a
+        derived table, whose rows are computed in the browser."""
+        index = self._bound_index(binding)
+        if index in self._derived:
+            return None
+        columns = self._tables[index][1]
+        if isinstance(columns, Matrix):
+            return columns.shape[0] * columns.shape[1]
+        return len(columns.column(_convertible(columns))) if columns.names else 0
 
     def _check_brush(self, binding: SelectionBinding, name: str) -> None:
         """Brushes along a summary's statistics (a histogram's counts, a box
@@ -3963,18 +3978,29 @@ class Chart:
                 used.setdefault(node_table, set()).update(
                     spec[key] for key in _NODE_FIELDS if spec.get(key) is not None
                 )
-        # Columns row selections' conditions set from Python test.
+        # Columns row selections' conditions set from Python test, and those
+        # of the conditions bindings start with.
         for binding in self._row_selection:
-            if not binding.fields:
+            condition = binding.selection
+            if isinstance(condition, RowSelection):
+                condition = condition.condition
+            tested = sorted(_fields_of(condition._json)) if isinstance(condition, Expr) else []
+            if not binding.fields and not tested:
                 continue
             index = self._bound_index(binding)
-            names = self._tables[index][1].names if index not in self._derived else ()
+            derived = index in self._derived
+            names = self._tables[index][1].names
             for name in binding.fields:
-                if name not in names:
+                if derived or name not in names:
                     raise ValueError(
                         f"SelectionBinding fields: no column {name!r} in the data it selects"
                     )
-            used.setdefault(index, set()).update(binding.fields)
+            for name in tested:
+                if name not in names:
+                    raise ValueError(
+                        f"SelectionBinding selection: no column {name!r} in the data it selects"
+                    )
+            used.setdefault(index, set()).update([*binding.fields, *tested])
         # Later tables derive from earlier ones, so needs flow back in one pass.
         for table in sorted(self._derived, reverse=True):
             if table not in used:
@@ -4408,7 +4434,7 @@ _LAYOUT_MARKS = (
 )
 
 #: Layout marks whose charts select rows (maps too), in panels as well.
-_SELECTING_LAYOUT_MARKS = ("treemap", "sunburst", "graph")
+_SELECTING_LAYOUT_MARKS = ("pie", "funnel", "treemap", "sunburst", "sankey", "graph")
 
 #: The layers of maps, which share a chart and its projection.
 _MAP_MARKS = ("geoshape", "geopoint")
@@ -4700,8 +4726,25 @@ def assemble_spec(
             for name, columns in tables.items()
         }
         spec["data"].update(derived or {})
+    # After the columns', so that a selection changes no column's buffer index.
+    if "rowSelection" in options:
+        spec["rowSelection"] = _selection_buffers(options["rowSelection"], buffers)
     spec["marks"] = marks
     return spec, buffers
+
+
+def _selection_buffers(rows: Any, buffers: list[bytes]) -> Any:
+    """A spec's row selection with the rows its bindings start with (bytes of
+    uint32 positions) appended to `buffers`, which they then index."""
+
+    def one(binding: dict[str, Any]) -> dict[str, Any]:
+        selection = binding.get("selection")
+        if selection is None or not isinstance(selection.get("rows"), bytes):
+            return binding
+        buffers.append(selection["rows"])
+        return {**binding, "selection": {**selection, "rows": len(buffers) - 1}}
+
+    return [one(binding) for binding in rows] if isinstance(rows, list) else one(rows)
 
 
 def columns_spec(columns: dict[str, Column], buffers: list[bytes]) -> dict[str, Any]:

@@ -7,9 +7,9 @@ import { type Table, table as typed } from "../../src/data/table.ts";
 
 import { estimateText } from "../../src/layout/text.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
+import { gauge } from "../../src/marks/gauge.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
 import { histogram } from "../../src/marks/histogram.ts";
-import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { rug } from "../../src/marks/rug.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
@@ -98,8 +98,8 @@ describe("row selection bindings", () => {
 
   it("refuse charts whose rows cannot be selected yet", () => {
     const bound = rowSelection({ store: selectionStore(trips), channel: "c" });
-    expect(() => drawn({ marks: [pie(trips, { category: "kind" })], rowSelection: bound })).toThrow(
-      "pie rowSelection: cannot select rows yet",
+    expect(() => drawn({ marks: [gauge(trips, { value: "km" })], rowSelection: bound })).toThrow(
+      "gauge rowSelection: cannot select rows yet",
     );
     const other = table({ x: [1] });
     expect(() => drawn({ marks: [point(other, { x: "x", y: "x" })], rowSelection: bound })).toThrow(

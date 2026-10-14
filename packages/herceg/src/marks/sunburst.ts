@@ -1,6 +1,13 @@
 import { pathOf } from "../data/hierarchy.ts";
 import type { CategoryField, NumberField, Schema, Table } from "../data/table.ts";
-import { ArcPath, arcDrawing, inSector, sectorPaints, traceSector } from "../draw/arc.ts";
+import {
+  ArcPath,
+  arcDrawing,
+  inSector,
+  sectorPaints,
+  sectorShareRadius,
+  traceSector,
+} from "../draw/arc.ts";
 import { textDrawing } from "../draw/text.ts";
 import { formatNumber, numberFormatter } from "../format/format.ts";
 import { layoutPartition } from "../layout/partition.ts";
@@ -21,15 +28,7 @@ import type {
 } from "./layout-mark.ts";
 import { definedFields } from "./line.ts";
 import { type ChartMark, DIM, frozen, type MARK } from "./mark.ts";
-import {
-  type Branch,
-  count,
-  drillControls,
-  selectedText,
-  TreeData,
-  type TreeView,
-  where,
-} from "./tree-data.ts";
+import { type Branch, count, drillControls, TreeData, type TreeView, where } from "./tree-data.ts";
 
 export type SunburstOptions<S extends Schema> = (
   | {
@@ -163,25 +162,47 @@ export class SunburstMark implements LayoutMark {
     const centered = root > 0 && hole > GAP && view.values[0]! > 0;
     const centerColor = colors[0] ?? theme.muted;
     if (centered) {
-      const lit = !counts || counts.hits[0]! > 0;
-      geometry.push({
+      // With a selection highlighted, the root's selected share is drawn out
+      // from its middle, as its nodes' are from their inner edges.
+      const outer = hole - GAP / 2;
+      const middle = counts
+        ? sectorShareRadius(0, outer, TAU, 0, this.#data.shareOf(view, counts, 0))
+        : outer;
+      const disc = (key: string, r0: number, r1: number, opacity: number): ArcGeometry => ({
         kind: "arc",
         draw: arcDrawing,
-        key: "sunburst-root",
-        arcs: Float32Array.of(cx, cy, 0, hole - GAP / 2, START, START + TAU),
+        key,
+        arcs: Float32Array.of(cx, cy, r0, r1, START, START + TAU),
         count: 1,
         colors: [centerColor],
         colorIndex: Uint32Array.of(0),
-        fillOpacity: CENTER_OPACITY * (lit ? 1 : DIM),
+        fillOpacity: opacity,
         gap: 0,
-      } as ArcGeometry);
+      });
+      if (middle < outer)
+        geometry.push(disc("sunburst-root-dimmed", middle, outer, CENTER_OPACITY * DIM));
+      if (middle > 0) geometry.push(disc("sunburst-root", 0, middle, CENTER_OPACITY));
     }
+    // With a selection highlighted, a node's selected share is drawn out from
+    // its ring's inner edge, covering that share of its sector, the rest dimmed.
+    const span = (node: number, dim: boolean): readonly [number, number] => {
+      const [r0, r1] = radii(node);
+      if (!counts) return [r0, r1];
+      const [a0, a1] = angles(node);
+      const middle = sectorShareRadius(
+        r0,
+        r1,
+        a1 - a0,
+        GAP,
+        this.#data.shareOf(view, counts, node),
+      );
+      return dim ? [middle, r1] : [r0, middle];
+    };
     for (let depth = 1; depth <= tree.height; depth++) {
       const all = byDepth[depth]!;
-      // With a selection highlighted, nodes none of whose rows it holds are dimmed.
       const parts = counts
         ? [
-            [all.filter((node) => counts.hits[node] === 0), true] as const,
+            [all.filter((node) => this.#data.shareOf(view, counts, node) < 1), true] as const,
             [all.filter((node) => counts.hits[node]! > 0), false] as const,
           ]
         : [[all, false] as const];
@@ -190,7 +211,7 @@ export class SunburstMark implements LayoutMark {
         const arcs = new Float32Array(nodes.length * 6);
         const index = new Uint32Array(nodes.length);
         nodes.forEach((node, i) => {
-          arcs.set([cx, cy, ...radii(node), ...angles(node)], i * 6);
+          arcs.set([cx, cy, ...span(node, dim), ...angles(node)], i * 6);
           index[i] = colorIndex.get(branch[node]!) ?? 0;
         });
         geometry.push({
@@ -203,6 +224,8 @@ export class SunburstMark implements LayoutMark {
           colorIndex: index,
           fillOpacity: opacityAt(depth) * (dim ? DIM : 1),
           gap: GAP,
+          // The parts keep their node's sides, its gap resolved at its rim.
+          rims: counts && Float32Array.from(nodes, (node) => radii(node)[1]),
         } as ArcGeometry);
       }
     }
@@ -277,7 +300,7 @@ export class SunburstMark implements LayoutMark {
       if (node === 0) {
         // The root in the middle: its total, the whole of what is shown.
         traceSector(outline, cx, cy, 0, hole - GAP / 2, START, START + TAU, 0);
-        const text = `${formatNumber(total, locale)}${selectedText(counts, 0)}`;
+        const text = `${formatNumber(total, locale)}${this.#data.selectedText(view, counts, 0, locale)}`;
         return {
           key,
           label,
@@ -298,7 +321,7 @@ export class SunburstMark implements LayoutMark {
         label,
         color: colors[colorIndex.get(branch[node]!) ?? 0] ?? theme.muted,
         value: shown[node]!,
-        text: `${formatNumber(shown[node]!, locale)} (${percent(shown[node]! / total)}${where(view)})${selectedText(counts, node)}`,
+        text: `${formatNumber(shown[node]!, locale)} (${percent(shown[node]! / total)}${where(view)})${this.#data.selectedText(view, counts, node, locale)}`,
         px: cx + ((r0 + r1) / 2) * Math.cos(mid),
         py: cy + ((r0 + r1) / 2) * Math.sin(mid),
         outline: outline.d,

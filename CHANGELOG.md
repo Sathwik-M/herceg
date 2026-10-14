@@ -26,7 +26,7 @@ The first public release. What it contains:
   - keyboard reading;
   - zoom and pan;
   - brushes and lassos;
-  - row selections shared between charts;
+  - row selections shared between charts, which summaries (histograms, box plots, violins, heatmaps, pies, funnels, trees, Sankey diagrams) show as each item's selected part, in exports too;
   - synced cursors and views;
   - drilldown, map and network navigation, and node dragging.
 - **Accessibility:** generated descriptions, keyboard navigation, and accessible legends; tested with axe-core in Chrome, Firefox, and WebKit.

@@ -650,6 +650,23 @@ describe("<Chart>", () => {
     expect(seen).toEqual([rows, rows]);
   });
 
+  it("draws a selection's part of summaries, and exports it", () => {
+    const store = selectionStore(metrics);
+    const ref: { current: HercegChart | null } = { current: null };
+    act(() =>
+      root.render(
+        <Chart ref={ref} rowSelection={rowSelection({ store, channel: "focus" })}>
+          <Histogram data={metrics} x="a" bins={[0, 2, 4, 6]} />
+        </Chart>,
+      ),
+    );
+    expect(ref.current!.toSVG()).not.toContain('fill-opacity="0.25"');
+    act(() => store.set("focus", selectRows(new RowSet(metrics).add(1))));
+    // The bin of 2 and 3 holds one selected row: half of its bar, the rest dimmed.
+    expect(ref.current!.toSVG()).toContain('fill-opacity="0.25"');
+    expect(ref.current!.toSVG()).toContain("1 of 4 rows selected.");
+  });
+
   it("tells onRender of the first frame, with the ref set", () => {
     const panels: number[] = [];
     function App() {

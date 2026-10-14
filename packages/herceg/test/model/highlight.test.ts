@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type ColumnInput, time } from "../../src/data/column.ts";
-import { col } from "../../src/data/expression.ts";
+import { col, compileExpression, type Expression } from "../../src/data/expression.ts";
 import { RowSet } from "../../src/data/row-set.ts";
 import { selectionStore, selectRows, selectWhere } from "../../src/data/selection.ts";
 import { type Table, table as typed } from "../../src/data/table.ts";
@@ -8,12 +8,18 @@ import { type Table, table as typed } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
+import { candlestick } from "../../src/marks/candlestick.ts";
+import { errorBar } from "../../src/marks/errorbar.ts";
 import { line } from "../../src/marks/line.ts";
 import type { ChartMark } from "../../src/marks/mark.ts";
 import { point } from "../../src/marks/point.ts";
+import { rug } from "../../src/marks/rug.ts";
+import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { DIM, Highlighter, membership } from "../../src/model/highlight.ts";
 import { ChartModel } from "../../src/model/model.ts";
+import { rowSelection } from "../../src/model/row-selection.ts";
+import { renderToSVG } from "../../src/render/static.ts";
 import { renderSvg } from "../../src/render/svg.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import type {
@@ -22,6 +28,7 @@ import type {
   LineGeometry,
   PointGeometry,
   RectGeometry,
+  SegmentGeometry,
 } from "../../src/scene/scene.ts";
 
 /** Tables as charts read them, whatever their fields. */
@@ -552,6 +559,170 @@ describe("highlighting", () => {
       y: new Float64Array(n),
     });
     expect(membership(source, selectWhere(col("x").lt(10))).byteLength).toBe(n);
+  });
+});
+
+describe("memberships", () => {
+  const source = table(
+    {
+      x: [1, Number.NaN, 3, 4, Number.NEGATIVE_INFINITY, 6, 3],
+      c: ["a", null, "b", "c", "a", null, "b"],
+    },
+    { maxRows: 7 },
+  );
+  // Brushes' conditions, which are tested a column at a time, and others, row by row.
+  const conditions: Expression[] = [
+    true,
+    false,
+    [">=", ["field", "x"], 3],
+    ["<", 3, ["field", "x"]],
+    ["!=", ["field", "x"], 3],
+    ["==", ["field", "x"], 3],
+    ["and", [">=", ["field", "x"], 1], ["<=", ["field", "x"], 4]],
+    ["and", ["<=", ["field", "x"], 4], [">=", ["field", "x"], 1]],
+    ["or", ["in", ["field", "c"], "a", null], [">", ["field", "x"], 5]],
+    ["and", ["not", ["in", ["field", "c"], "b"]], ["or", true, [">", ["field", "x"], 9]]],
+    ["or", ["and", [">=", ["field", "x"], 1], ["<=", ["field", "x"], 3]], false],
+    ["and", ["in", ["field", "c"], "z"], [">", ["*", ["field", "x"], 2], 2]],
+    ["==", ["field", "c"], "a"],
+  ];
+
+  it.each(conditions.map((condition) => [JSON.stringify(condition), condition]))(
+    "hold the rows %s holds",
+    (_, condition) => {
+      const { at } = compileExpression(condition, source);
+      const expected = Array.from({ length: source.length }, (_, row) =>
+        at(row) === true ? 1 : 0,
+      );
+      expect(Array.from(membership(source, selectWhere(condition)))).toEqual(expected);
+    },
+  );
+
+  it("test only rows appended since, a column at a time too", () => {
+    const streamed = table({ x: [1, 2] }, { maxRows: 4 });
+    const selection = selectWhere(["and", [">=", ["field", "x"], 2], ["<=", ["field", "x"], 3]]);
+    expect(Array.from(membership(streamed, selection))).toEqual([0, 1]);
+    streamed.append({ x: [3, 4, 2] });
+    expect(Array.from(membership(streamed, selection))).toEqual([1, 1, 0, 1]);
+  });
+});
+
+describe("marks drawing a glyph per row", () => {
+  const rows = table({
+    x: [1, 2, 3],
+    y: [2, 4, 3],
+    low: [1, 3, 2],
+    high: [3, 5, 4],
+    open: [1, 3, 2],
+    close: [3, 4, 2.5],
+  });
+  it.each([
+    ["error bars", () => errorBar(rows, { x: "x", y1: "low", y2: "high" })],
+    [
+      "candlesticks",
+      () => candlestick(rows, { x: "x", open: "open", high: "high", low: "low", close: "close" }),
+    ],
+    ["rugs", () => rug(rows, { x: "x" })],
+  ])("dim %s' rows the selection leaves out, drawing each row once", (_, make) => {
+    const { store, geometry } = highlighted(rows, [make()]);
+    const plain = geometry().reduce((sum, g) => sum + ((g as SegmentGeometry).count ?? 0), 0);
+    store.set("focus", selectRows(new RowSet(rows).add(1)));
+    const drawn = geometry();
+    const count = (part: string) =>
+      drawn
+        .filter((g) => g.key.includes(part))
+        .reduce((sum, g) => sum + ((g as SegmentGeometry).count ?? 0), 0);
+    expect(count("\u0001off") + count("\u0001on")).toBe(plain);
+    expect(count("\u0001on")).toBeGreaterThan(0);
+    expect(
+      drawn
+        .filter((g) => g.key.includes("\u0001off"))
+        .every(
+          (g) =>
+            (g.draw as { opacity?: number }).opacity === DIM ||
+            (g as RectGeometry).fillOpacity === DIM,
+        ),
+    ).toBe(true);
+  });
+});
+
+describe("candlesticks and rugs with a selection", () => {
+  const n = 10_000;
+  const dense = table({
+    x: Float64Array.from({ length: n }, (_, i) => i),
+    open: Float64Array.from({ length: n }, (_, i) => 10 - (i % 7)),
+    close: Float64Array.from({ length: n }, (_, i) => 10 - ((i + 3) % 7)),
+    high: Float64Array.from({ length: n }, () => 12),
+    low: Float64Array.from({ length: n }, () => 2),
+  });
+  const coords = (parts: Geometry[]): number[] =>
+    parts.flatMap((g) => {
+      const values =
+        g.kind === "segments" ? (g as SegmentGeometry).coords : (g as RectGeometry).rects;
+      return Array.from(values.subarray(0, (g as SegmentGeometry | RectGeometry).count * 4));
+    });
+  /** Where segments and bodies stand across the plot: the candles' centers and sides. */
+  const across = (parts: Geometry[]) =>
+    new Set(
+      coords(parts)
+        .filter((_, i) => i % 2 === 0)
+        .map((x) => Math.round(x * 1000)),
+    );
+
+  it.each(["candlestick", "ohlc"] as const)(
+    "merge dense %s candles as the whole does: each column dimmed, the selected rows' own candle over it",
+    (variant) => {
+      const mark = candlestick(dense, {
+        x: "x",
+        open: "open",
+        high: "high",
+        low: "low",
+        close: "close",
+        variant,
+      });
+      const { store, geometry } = highlighted(dense, [mark]);
+      const plain = geometry();
+      const [whole, places] = [coords(plain), across(plain)];
+      for (const selection of [
+        selectRows(new RowSet(dense).add(0)),
+        selectWhere(col("x").lt(n / 2)),
+      ]) {
+        store.set("focus", selection);
+        const drawn = geometry();
+        const lit = drawn.filter((g) => g.key.includes("\u0001on"));
+        const rest = drawn.filter((g) => !g.key.includes("\u0001on"));
+        // The whole chart, as it was, dimmed.
+        expect(coords(rest)).toEqual(whole);
+        expect(
+          rest.every(
+            (g) =>
+              (g.draw as { opacity?: number }).opacity === DIM ||
+              (g as RectGeometry).fillOpacity === DIM,
+          ),
+        ).toBe(true);
+        // The selected rows' candles stand in the whole's columns.
+        expect(coords(lit).length).toBeGreaterThan(0);
+        expect([...across(lit)].every((x) => places.has(x))).toBe(true);
+      }
+    },
+  );
+
+  it("describe a log rug's values its scale can show, while drawn with a selection too", () => {
+    const spread = table({ x: [-1, 0, 1, 10] });
+    const store = selectionStore(spread);
+    store.set("focus", selectRows(new RowSet(spread).add(3)));
+    const config = {
+      marks: [rug(spread, { x: "x" })],
+      x: { type: "log" as const },
+      rowSelection: rowSelection({ store, channel: "focus" }),
+      locale: "en-US",
+    };
+    const model = new ChartModel(config);
+    model.setSize(600, 400, 1);
+    config.rowSelection.highlight(model);
+    model.scene(estimateText);
+    expect(describeChart(model)).toContain("2 values, from 1 to 10");
+    expect(renderToSVG({ ...config, width: 600, height: 400 })).toContain("2 values, from 1 to 10");
   });
 });
 

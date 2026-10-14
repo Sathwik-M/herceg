@@ -4,7 +4,13 @@ import { areaDrawing } from "../draw/area.ts";
 import { pointDrawing } from "../draw/point.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { segmentDrawing } from "../draw/segments.ts";
-import type { AreaGeometry, PointGeometry, RectGeometry, SegmentGeometry } from "../scene/scene.ts";
+import type {
+  AreaGeometry,
+  Geometry,
+  PointGeometry,
+  RectGeometry,
+  SegmentGeometry,
+} from "../scene/scene.ts";
 import type { BoxPlotNotchInput, BoxPlotRawInput, BoxPlotSpec, Frozen } from "../spec/spec.ts";
 import { boxPlotFormError } from "./boxplot-input.ts";
 import {
@@ -21,6 +27,7 @@ import {
   type Frame,
   NUMERIC,
   requireField,
+  type SelectionDrawing,
   valueKind,
 } from "./mark.ts";
 import { placeAt, rowOf, type Series } from "./series.ts";
@@ -178,7 +185,33 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
       Uint32Array.from(first),
       columns,
       first.map(() => NO_OUTLIERS),
+      rows,
     );
+  }
+
+  /**
+   * A precomputed box is one row, drawn dimmed unless the selection holds
+   * it; raw boxes show their selected values' own box over the whole's.
+   */
+  override selectedGeometry(
+    series: readonly Series[],
+    frame: Frame,
+    drawing: SelectionDrawing,
+  ): Geometry[] {
+    if (this.spec.median === undefined) return super.selectedGeometry(series, frame, drawing);
+    const [lit, dimmed] = [[], []] as [Series[], Series[]];
+    for (const s of series) {
+      const { first } = this.summaryOf(s);
+      const parts: [number[], number[]] = [[], []];
+      for (let k = 0; k < s.length; k++) {
+        const row = rowOf(s, k);
+        parts[drawing.selected[first[row]!] === 1 ? 0 : 1].push(row);
+      }
+      const [on, off] = parts.map((rows) => Uint32Array.from(rows));
+      lit.push({ ...s, rows: on, length: on!.length });
+      dimmed.push({ ...s, rows: off, length: off!.length });
+    }
+    return [...drawing.dimmed(dimmed), ...drawing.lit(lit)];
   }
 
   protected describeGroup(_sorted: Float64Array, stats: BoxStats): number[] {
@@ -229,7 +262,7 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
       if (s.length === 0) continue;
       const { stats, groups: outliers } = this.summaryOf(s);
       const { q1, median, q3, low, high } = stats;
-      const width = share * BOX;
+      const width = share * BOX * this.partWidth(s);
       // Outliers stay in the summary (tooltips count them) when not drawn.
       const dotted = this.spec.outliers !== false;
       let points = 0;
@@ -398,7 +431,7 @@ export class BoxPlotMark extends DistributionMark<BoxPlotSpec, readonly number[]
     const stat = (name: Stat) => stats[name][row]!;
     const outliers = groups[row]!.length;
     const n = stat("count");
-    return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, whiskers ${f(stat("low"))} to ${f(stat("high"))}${Number.isFinite(n) ? `, ${n} ${n === 1 ? "value" : "values"}` : ""}${outliers ? `, ${outliers} ${outliers === 1 ? "outlier" : "outliers"}` : ""}`;
+    return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, whiskers ${f(stat("low"))} to ${f(stat("high"))}${Number.isFinite(n) ? `, ${n} ${n === 1 ? "value" : "values"}` : ""}${outliers ? `, ${outliers} ${outliers === 1 ? "outlier" : "outliers"}` : ""}${this.selectedText(series, row, f)}`;
   }
 }
 

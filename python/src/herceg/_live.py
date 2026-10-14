@@ -63,8 +63,10 @@ class LiveChart:
             (join.source, table_name(index), join) for index, join in chart._joins.items()
         ]
         rows = chart._spec_options().get("rowSelection")
-        #: The spec's row selection, which updates never change.
-        self._row_selection = rows
+        #: The spec's row selection, which updates never change, without the
+        #: selections bindings start with: widgets send what each channel
+        #: holds now with their state, as positions in the data as it is then.
+        self._row_selection = _unseeded(rows)
         #: The tables row selections bind and their channels, as (name, channel, data).
         self.bound = [
             (spec["data"], spec["channel"], self._source_of(spec["data"]))
@@ -424,6 +426,17 @@ def _check_max_rows(max_rows: int | None) -> None:
             "widget.append max_rows: expected a whole number of at least 1; "
             f"received {shown(max_rows)}"
         )
+
+
+def _unseeded(rows: Any) -> Any:
+    """A spec's row selection without its bindings' starting selections."""
+    if rows is None:
+        return None
+
+    def one(binding: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in binding.items() if key != "selection"}
+
+    return [one(binding) for binding in rows] if isinstance(rows, list) else one(rows)
 
 
 def check_live_rows(chart: Chart) -> None:

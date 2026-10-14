@@ -54,7 +54,8 @@ stores and channels. The chart listens only
 while a handler is given and calls the current one, so passing a new function does not
 resubscribe. `bind:chart` gives the underlying chart, herceg's `Chart` (null until
 mounted), for imperative calls (`setViewport`, `select`, `toPixel`, `setVisibility`,
-`toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`):
+`toSVG`, `toPNG`, and `renderToPDF(chart)` from `herceg/pdf`, which export the chart as
+it shows, a highlighted row selection included):
 
 ```svelte
 <script lang="ts">

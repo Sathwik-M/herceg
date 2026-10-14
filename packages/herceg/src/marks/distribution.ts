@@ -33,6 +33,7 @@ import {
   NUMERIC,
   type Palette,
   requireField,
+  type SelectionDrawing,
   SeriesSplitter,
   type SummaryContext,
   seriesKey,
@@ -91,6 +92,23 @@ export interface Summary<G> {
   first: Uint32Array;
   /** Summary rows by series value. */
   split: SeriesSplitter;
+  /** The table rows it summarizes, ascending (a facet panel's); every row when undefined. */
+  rows: Uint32Array | undefined;
+  /**
+   * For the summary of a selection's rows, drawn over the whole's: the
+   * whole's, whose groups it has, in its order (those the selection holds
+   * no value of with missing statistics).
+   */
+  whole?: Summary<G> | undefined;
+}
+
+/** How wide the shapes of a selection's rows are, as a fraction of the whole's they are drawn over. */
+const PART = 0.6;
+
+/** The rows of a summary's groups, each group's ascending by value, and where each group's start. */
+interface Order {
+  rows: Uint32Array;
+  starts: Int32Array;
 }
 
 /** Where the shapes of one series are drawn across their categories' slots. */
@@ -152,6 +170,12 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
   #roster: { version: number; ids: string[] } | undefined;
   /** Each drawn series' slot in its bands, as geometry last placed it. */
   readonly #shares = new BandShares();
+  /** Each summary's rows in order, made the first time a selection of them is drawn. */
+  readonly #orders = new WeakMap<Summary<G>, Order>();
+  /** The summaries of selections' rows, by membership, then by the whole summary. */
+  readonly #parts = new WeakMap<Uint8Array, WeakMap<Summary<G>, Summary<G>>>();
+  /** The summary of the selection drawn with each series, for its tooltips. */
+  readonly #selected = new WeakMap<Series, Summary<G>>();
 
   constructor(input: T, table: Table, axes?: { x: string; y: string }) {
     this.spec = frozen(input);
@@ -254,6 +278,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
       Uint32Array.from(keys, (key) => firsts.get(key)!),
       columns as Record<Stat, Float64Array>,
       groups,
+      rows,
     );
   }
 
@@ -267,6 +292,7 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
     first: Uint32Array,
     columns: Record<Stat, Float64Array>,
     groups: G[],
+    rows: Uint32Array | undefined,
   ): Summary<G> {
     const source = this.table;
     const categories = source.categories(this.category as never);
@@ -295,9 +321,150 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
         this.spec.series !== undefined ? "group" : undefined,
         this.spec.label ?? this.value,
       ),
+      rows,
     };
     this.#summaries.set(built.stats.median, built);
     return built;
+  }
+
+  /**
+   * The shapes with a selection's rows in them: each group's shape dimmed,
+   * and over it the shape of the group's values the selection holds, in the
+   * whole's place, narrower (violins: inside the whole's outline instead).
+   */
+  selectedGeometry(
+    series: readonly Series[],
+    _frame: Frame,
+    drawing: SelectionDrawing,
+  ): Geometry[] {
+    const parts = series.map((s) => {
+      if (s.length === 0) return s;
+      const part = this.#partOf(this.summaryOf(s), drawing.selected);
+      this.#selected.set(s, part);
+      const median = part.stats.median;
+      return this.horizontal
+        ? { ...s, x: median, values: median }
+        : { ...s, y: median, values: median };
+    });
+    return [...drawing.dimmed(series), ...drawing.lit(parts)];
+  }
+
+  /** What to keep of the selected values of a group, ascending, whose whole is `whole` of `n` values. */
+  protected describeSelected(sorted: Float64Array, stats: BoxStats, _whole: G, _n: number): G {
+    return this.describeGroup(sorted, stats);
+  }
+
+  /** How wide a series' shapes are drawn, as a fraction of their room: narrower for a selection's. */
+  protected partWidth(s: Series): number {
+    return this.summaryOf(s).whole ? PART : 1;
+  }
+
+  /**
+   * The summary of the values of `summary`'s groups that `selected` holds,
+   * group by group as the whole's: a pass over its rows in order, sorting
+   * nothing, kept while the selection and the summary are the same.
+   */
+  #partOf(summary: Summary<G>, selected: Uint8Array): Summary<G> {
+    let byWhole = this.#parts.get(selected);
+    if (!byWhole) {
+      byWhole = new WeakMap();
+      this.#parts.set(selected, byWhole);
+    }
+    const known = byWhole.get(summary);
+    if (known) return known;
+    const { rows, starts } = this.#orderOf(summary);
+    const values = this.table.numbers(this.value as never);
+    const size = summary.first.length;
+    const columns = Object.fromEntries(STATS.map((stat) => [stat, new Float64Array(size)]));
+    const groups: G[] = [];
+    let widest = 0;
+    for (let g = 0; g < size; g++) widest = Math.max(widest, starts[g + 1]! - starts[g]!);
+    const buffer = new Float64Array(widest);
+    for (let g = 0; g < size; g++) {
+      let n = 0;
+      for (let k = starts[g]!; k < starts[g + 1]!; k++) {
+        const row = rows[k]!;
+        if (selected[row] === 1) buffer[n++] = values[row]!;
+      }
+      const sorted = buffer.slice(0, n);
+      const stats = this.groupStats(sorted);
+      for (const stat of STATS) columns[stat]![g] = stats[stat];
+      groups.push(
+        this.describeSelected(sorted, stats, summary.groups[g]!, summary.stats.count[g]!),
+      );
+    }
+    const part = this.buildSummary(
+      summary.first,
+      columns as Record<Stat, Float64Array>,
+      groups,
+      summary.rows,
+    );
+    part.whole = summary;
+    byWhole.set(summary, part);
+    return part;
+  }
+
+  /**
+   * A summary's rows with values, group by group, each group's ascending by
+   * value: made once per summary (a sort of its rows), so the summaries of
+   * selections of them read their values in order.
+   */
+  #orderOf(summary: Summary<G>): Order {
+    const known = this.#orders.get(summary);
+    if (known) return known;
+    const source = this.table;
+    const categories = source.categories(this.category as never);
+    const field = this.spec.series;
+    const series = field === undefined ? undefined : source.categories(field as never);
+    const width = series ? series.dictionary.length : 1;
+    const values = source.numbers(this.value as never);
+    // Each group's summary row, by its category and series codes.
+    const groupOf = new Map<number, number>();
+    summary.first.forEach((row, g) => {
+      groupOf.set(categories.codes[row]! * width + (series ? series.codes[row]! : 0), g);
+    });
+    const group = (row: number) => {
+      const c = categories.codes[row]!;
+      const s = series ? series.codes[row]! : 0;
+      return c < 0 || s < 0 || !Number.isFinite(values[row]!)
+        ? -1
+        : (groupOf.get(c * width + s) ?? -1);
+    };
+    const { rows: shown } = summary;
+    const length = shown ? shown.length : source.length;
+    const starts = new Int32Array(summary.first.length + 1);
+    for (let k = 0; k < length; k++) {
+      const g = group(shown ? shown[k]! : k);
+      if (g >= 0) starts[g + 1]!++;
+    }
+    for (let g = 0; g < summary.first.length; g++) starts[g + 1]! += starts[g]!;
+    const rows = new Uint32Array(starts[summary.first.length]!);
+    const fill = starts.slice(0, -1);
+    for (let k = 0; k < length; k++) {
+      const row = shown ? shown[k]! : k;
+      const g = group(row);
+      if (g >= 0) rows[fill[g]!++] = row;
+    }
+    for (let g = 0; g < summary.first.length; g++)
+      rows.subarray(starts[g]!, starts[g + 1]!).sort((a, b) => values[a]! - values[b]!);
+    const order = { rows, starts };
+    this.#orders.set(summary, order);
+    return order;
+  }
+
+  /**
+   * While a selection is drawn, how many of a group's values it holds, and
+   * their median and quartiles, for tooltips; "" otherwise.
+   */
+  protected selectedText(series: Series, row: number, f: (value: number) => string): string {
+    const part = this.#selected.get(series);
+    if (!part) return "";
+    const { count, median, q1, q3 } = part.stats;
+    const [n, all] = [count[row]!, this.summaryOf(series).stats.count[row]!];
+    const held = `; ${n} of ${all} ${all === 1 ? "value" : "values"} selected`;
+    return n > 0
+      ? `${held}, median ${f(median[row]!)}, quartiles ${f(q1[row]!)} to ${f(q3[row]!)}`
+      : held;
   }
 
   /**
@@ -510,6 +677,8 @@ export abstract class DistributionMark<T extends BoxPlotSpec | BoxenSpec | Violi
    * the series (the visible ones with groups).
    */
   protected placements(series: readonly Series[], frame: Frame): Map<Series, Placement> {
+    // Drawn so, no selection is drawn with the series.
+    for (const s of series) this.#selected.delete(s);
     this.#shares.split(series, frame, this.spec.legendGroup, true);
     const out = new Map<Series, Placement>();
     for (const s of series) if (!frame.hidden.has(s.key)) out.set(s, this.placement(s, frame));

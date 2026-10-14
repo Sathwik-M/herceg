@@ -527,7 +527,23 @@ export interface RowSelectionSpec {
   events?: readonly SelectionGesture[];
   /** "highlight" (the default) dims the rows the channel does not hold; "none" leaves them. */
   effect?: "highlight" | "none";
+  /**
+   * What the channel holds once loaded, in a store `loadSpec` makes (a
+   * store given in its options keeps what it holds), which static exports
+   * of the spec draw: a condition (rows appended later that meet it are
+   * selected too), or rows by position in the table. Left out, nothing is
+   * selected; `{ "kind": "rows", "rows": [] }` selects no row, dimming every one.
+   */
+  selection?: SelectionSpec;
 }
+
+/**
+ * A selection of a table's rows: a condition on its fields, or rows by
+ * position, a uint32 buffer index or a JSON array.
+ */
+export type SelectionSpec =
+  | { kind: "predicate"; expression: Expression }
+  | { kind: "rows"; rows: number | readonly number[] };
 
 /** The range navigator's options. */
 export interface NavigatorSpec {

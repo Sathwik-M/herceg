@@ -278,6 +278,49 @@ export class RowsCache<T> {
 }
 
 /**
+ * What a layout mark works out from a selection of its table's rows (a
+ * pie's selected sums), kept while the selection's membership and the rows
+ * it is of are the same: those a frame gives (or a view of them), or every
+ * row. Memberships are made again whenever the selection or the table
+ * changes, and take what was kept with them.
+ */
+export class SelectionCache<T> {
+  readonly #kept = new WeakMap<Uint8Array, { all?: T; some: WeakMap<object, T> }>();
+
+  /** The value for the rows `selected` holds of `rows`, or of every row, from `compute` unless kept. */
+  get(selected: Uint8Array, rows: object | undefined, compute: () => T): T {
+    let kept = this.#kept.get(selected);
+    if (!kept) {
+      kept = { some: new WeakMap() };
+      this.#kept.set(selected, kept);
+    }
+    const known = rows ? kept.some.get(rows) : kept.all;
+    if (known !== undefined) return known;
+    const value = compute();
+    if (rows) kept.some.set(rows, value);
+    else kept.all = value;
+    return value;
+  }
+}
+
+/**
+ * The text a layout mark's item adds for what a highlighted selection holds
+ * of it: "; 3 of 12 rows selected", with what they measure when the mark
+ * sums a field ("; 3 of 12 rows selected, revenue 80 of 100").
+ */
+export function heldText(
+  rows: number,
+  of: number,
+  measure: { field: string; held: number; of: number } | undefined,
+  format: (value: number) => string,
+): string {
+  const text = `; ${format(rows)} of ${format(of)} ${of === 1 ? "row" : "rows"} selected`;
+  return measure
+    ? `${text}, ${measure.field} ${format(measure.held)} of ${format(measure.of)}`
+    : text;
+}
+
+/**
  * The row view a mark shows the rows of, if it shows a view's rows rather
  * than its table's: what a chart follows besides `tablesOf`.
  */

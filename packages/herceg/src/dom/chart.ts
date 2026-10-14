@@ -1310,6 +1310,7 @@ export class MountedChart implements Chart, ExportsScene {
       config.marks.flatMap((mark) => tablesOf(mark).map((table) => table.version)),
       [...model.hidden],
       config.navigator?.describe(model),
+      config.rowSelection?.description,
       model.items?.summaryKey,
     ]);
     if (this.#described?.config === config && this.#described.key === key) return;

@@ -30,6 +30,10 @@ export interface Density {
   hi: number;
   /** The density at each value, integrating to about 1. */
   values: Float64Array;
+  /** The spacing of the values it is estimated at, as estimated (not from `lo` and `hi`, which round). */
+  step: number;
+  /** The kernel's standard deviation it was estimated with. */
+  bandwidth: number;
 }
 
 /** Spacing of the values a density is estimated at, in bandwidths, unless there would be too many. */
@@ -76,14 +80,53 @@ export function kde(sorted: ArrayLike<number>, bandwidth: number, cut = 2): Dens
   if (!(step > 0 && Number.isFinite(step))) return undefined;
   const lo = sorted[0]! - pad;
   const hi = sorted[n - 1]! + pad;
+  const kernel = kernelOf(step, bandwidth, n, points);
+  // All the values at one point make the highest density possible.
+  if (!Number.isFinite(n * kernel[0]!)) return undefined;
+  return { lo, hi, values: convolve(binned(sorted, n, lo, step, points), kernel), step, bandwidth };
+}
+
+/**
+ * What some of the `n` values a density was estimated from (`part`, of
+ * `count` values, in any order) add to it, at its points: their kernels
+ * over all `n`, so the part's density lies within the whole's everywhere.
+ */
+export function partDensity(
+  whole: Density,
+  n: number,
+  part: ArrayLike<number>,
+  count = part.length,
+): Float64Array {
+  const { lo, step, bandwidth, values } = whole;
+  const kernel = kernelOf(step, bandwidth, n, values.length);
+  return convolve(binned(part, count, lo, step, values.length), kernel);
+}
+
+/** `count` values split between the two points around each, `step` apart from `lo` (linear binning). */
+function binned(
+  values: ArrayLike<number>,
+  count: number,
+  lo: number,
+  step: number,
+  points: number,
+): Float64Array {
   const weights = new Float64Array(points);
-  for (let i = 0; i < n; i++) {
-    const at = (sorted[i]! - lo) / step;
-    const below = Math.min(points - 2, Math.floor(at));
+  for (let i = 0; i < count; i++) {
+    const at = (values[i]! - lo) / step;
+    const below = Math.max(0, Math.min(points - 2, Math.floor(at)));
     const t = at - below;
     weights[below]! += 1 - t;
     weights[below + 1]! += t;
   }
+  return weights;
+}
+
+/**
+ * The kernel at points `step` apart, out to where it is negligible, scaled
+ * for `n` values: its value at each, or where the points are too far apart
+ * for that, its mass within half a step of each per unit of value.
+ */
+function kernelOf(step: number, bandwidth: number, n: number, points: number): Float64Array {
   const reach = Math.min(points - 1, Math.ceil((REACH * bandwidth) / step));
   const kernel = new Float64Array(reach + 1);
   if (step <= bandwidth * STEP) {
@@ -99,8 +142,13 @@ export function kde(sorted: ArrayLike<number>, bandwidth: number, cut = 2): Dens
     for (let j = 1; j <= reach; j++)
       kernel[j] = ((erfc((j - 0.5) * c) - erfc((j + 0.5) * c)) / 2) * scale;
   }
-  // All the values at one point make the highest density possible.
-  if (!Number.isFinite(n * kernel[0]!)) return undefined;
+  return kernel;
+}
+
+/** Binned weights spread by a kernel (symmetric, `kernel[j]` at j points away). */
+function convolve(weights: Float64Array, kernel: Float64Array): Float64Array {
+  const points = weights.length;
+  const reach = kernel.length - 1;
   const values = new Float64Array(points);
   for (let i = 0; i < points; i++) {
     const weight = weights[i]!;
@@ -109,7 +157,7 @@ export function kde(sorted: ArrayLike<number>, bandwidth: number, cut = 2): Dens
     for (let j = Math.max(0, i - reach); j <= last; j++)
       values[j]! += weight * kernel[Math.abs(i - j)]!;
   }
-  return { lo, hi, values };
+  return values;
 }
 
 /**

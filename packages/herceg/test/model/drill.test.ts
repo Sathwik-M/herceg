@@ -260,7 +260,7 @@ describe("tree row selection", () => {
     expect(clickedRows(model, tables, px, py)?.rows).toEqual(Uint32Array.of(0));
   });
 
-  it("dim nodes none of whose rows are selected, saying how many of a node's are", () => {
+  it("draw each node's selected share, dimming the rest, saying how much of a node is selected", () => {
     const store = selectionStore(sales);
     const model = bound({ marks: [tree()] }, store);
     store.set("c", selectRows(new RowSet(sales).add(0)));
@@ -269,7 +269,7 @@ describe("tree row selection", () => {
     expect(dimmed.length).toBeGreaterThan(0);
     expect(dimmed.every((r) => r.fillOpacity < 1 * DIM + 1e-9)).toBe(true);
     const france = items(model).find((item) => item.points[0]!.label === "Europe / France")!;
-    expect(france.points[0]!.text).toBe("50 (33.3%); 1 of 2 rows selected");
+    expect(france.points[0]!.text).toBe("50 (33.3%); 1 of 2 rows selected, revenue 40 of 50");
     const sun = bound(
       { marks: [sunburst(sales, { path: ["region", "country"], value: "revenue" })] },
       store,

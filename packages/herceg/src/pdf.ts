@@ -39,8 +39,10 @@ export interface PdfOptions extends ChartConfig {
 
 /**
  * Vector PDF 1.4 of one chart or a nonempty list, one chart per page.
- * Mounted charts retain their size, zoom, and hidden series. Static options
- * need no DOM. Fonts are subset once across all pages; heatmaps are images.
+ * Mounted charts retain their size, zoom, hidden series, and highlighted
+ * selection; static options need no DOM, and draw the selections their
+ * `rowSelection` stores hold. Fonts are subset once across all pages;
+ * heatmaps are images.
  */
 export function renderToPDF(
   target: Chart | PdfOptions | readonly (Chart | PdfOptions)[],
@@ -98,6 +100,8 @@ export function renderToPDF(
       const page = paperPage(options.width, options.height, settings, resolver);
       const model = new ChartModel(options, NO_PAGE);
       model.setSize(options.width, options.height, 1, STATIC_RASTER_RATIO);
+      // What the bound stores hold now is drawn as a mounted chart draws it.
+      options.rowSelection?.highlight(model);
       const scene = model.scene(resolver?.measure ?? measurePdfText);
       add(scene, model, page);
     }

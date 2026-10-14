@@ -165,7 +165,9 @@ export class RugMark implements Mark<Frozen<RugSpec>> {
     const start = horizontal ? frame.plot.y : frame.plot.x;
     const stop = start + (horizontal ? frame.plot.height : frame.plot.width);
     for (const s of series) {
-      this.#positive.set(s, (this.#positive.get(s) ?? true) && scale.type === "log");
+      // Some of a series' rows (a selection's) count toward the series as drawn.
+      const whole = s.whole ?? s;
+      this.#positive.set(whole, (this.#positive.get(whole) ?? true) && scale.type === "log");
       if (frame.hidden.has(s.key)) continue;
       const coords = frame.floats(s.key, "rug", s.length * 4);
       let count = 0;

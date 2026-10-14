@@ -27,13 +27,15 @@ import type {
 import type { Frozen, SankeySpec } from "../spec/spec.ts";
 import { surface } from "../theme.ts";
 import {
+  heldText,
   type LayoutFrame,
   type LayoutItem,
   type LayoutMark,
   type LayoutResult,
   RowsCache,
+  SelectionCache,
 } from "./layout-mark.ts";
-import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
+import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface SankeyOptions<S extends Schema> {
   /** Category field naming where each row's flow comes from. */
@@ -70,6 +72,25 @@ const LABEL_GAP = 6;
 /** Links thinner than twice this are found this many pixels either side of their middle. */
 const REACH = 2;
 
+/** What a selection holds of each link, by link: its rows' count and sum, and the link's rows. */
+interface Held {
+  rows: Float64Array;
+  sums: Float64Array;
+  of: Float64Array;
+}
+
+/**
+ * What a selection holds of each node, by node, over the links drawn into
+ * and out of it: their rows, how many of them it holds, and what those
+ * bring in and take out.
+ */
+interface HeldNodes {
+  rows: Float64Array;
+  of: Float64Array;
+  into: Float64Array;
+  out: Float64Array;
+}
+
 /** The flows of a table's rows, rebuilt when it changes. */
 interface Flows {
   /** Node names, in the order they first appear. */
@@ -88,8 +109,15 @@ export class SankeyMark implements LayoutMark {
   readonly spec: Frozen<SankeySpec>;
   readonly table: Table;
   readonly measure: string;
+  /**
+   * Clicks select a link's rows or a node's (its links'), and a selection
+   * of them is drawn as a share of each link.
+   */
+  readonly selects = true;
   /** The flows of all rows and of each facet panel's. */
   readonly #flows = new RowsCache<Flows>();
+  /** What highlighted selections hold of each flows' links and nodes. */
+  readonly #held = new SelectionCache<Held>();
   /** Each flows' last layout, and the bounds it is for. */
   readonly #placed = new WeakMap<Flows, { key: string; layout: SankeyLayout }>();
 
@@ -185,6 +213,54 @@ export class SankeyMark implements LayoutMark {
     };
   }
 
+  /**
+   * Calls `each` with every row among `rows` (all rows by default) that is
+   * a flow of `flows`: its link, the link's source and target, and its value.
+   */
+  #eachFlow(
+    flows: Flows,
+    rows: Uint32Array | undefined,
+    each: (row: number, link: number, value: number) => void,
+  ): void {
+    const table = this.table;
+    const from = table.categories(this.spec.source);
+    const to = table.categories(this.spec.target);
+    const values = this.spec.value === undefined ? undefined : table.numbers(this.spec.value);
+    // Each field's codes as nodes, -1 for names no flow has.
+    const nodes = (field: { dictionary: readonly string[] }) =>
+      Int32Array.from(field.dictionary, (name) => flows.nodeOf.get(name) ?? -1);
+    const [sources, targets] = [nodes(from), nodes(to)];
+    const count = rows ? rows.length : table.length;
+    for (let k = 0; k < count; k++) {
+      const row = rows ? rows[k]! : k;
+      const [a, b] = [from.codes[row]!, to.codes[row]!];
+      if (a < 0 || b < 0) continue;
+      const value = values ? values[row]! : 1;
+      if (!(value > 0 && value < Number.POSITIVE_INFINITY)) continue;
+      const link = flows.linkOf.get(sources[a]! * flows.stride + targets[b]!);
+      if (link !== undefined) each(row, link, value);
+    }
+  }
+
+  /** What `selected` holds of the links of `flows`, made of `rows` (all rows by default). */
+  #heldOf(selected: Uint8Array, rows: Uint32Array | undefined, flows: Flows): Held {
+    return this.#held.get(selected, rows, () => {
+      const links = flows.graph.value.length;
+      const held: Held = {
+        rows: new Float64Array(links),
+        sums: new Float64Array(links),
+        of: new Float64Array(links),
+      };
+      this.#eachFlow(flows, rows, (row, link, value) => {
+        held.of[link]!++;
+        if (selected[row] !== 1) return;
+        held.rows[link]!++;
+        held.sums[link]! += value;
+      });
+      return held;
+    });
+  }
+
   #layout(flows: Flows, bounds: Rect): SankeyLayout {
     const key = `${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`;
     const placed = this.#placed.get(flows);
@@ -236,27 +312,75 @@ export class SankeyMark implements LayoutMark {
 
     const font = `${theme.fontSize}px ${theme.font}`;
     const opacity = LINK_OPACITY[isLightColor(surface(theme)) === false ? "dark" : "light"];
-    const geometry: Geometry[] = [
-      {
-        kind: "shapes",
-        draw: shapesDrawing,
-        key: "sankey-links",
-        shapes: links.map(
-          (link, i): PathShape => ({
-            d: bands[i]!,
-            fill: colors[source[link]!]!,
-            stroke: undefined,
-            strokeWidth: 0,
-            opacity,
-            dash: undefined,
-          }),
+    const shape = (d: string, link: number, dim: boolean): PathShape => ({
+      d,
+      fill: colors[source[link]!]!,
+      stroke: undefined,
+      strokeWidth: 0,
+      opacity: opacity * (dim ? DIM : 1),
+      dash: undefined,
+    });
+    const shapes = (key: string, list: PathShape[]): ShapesGeometry => ({
+      kind: "shapes",
+      draw: shapesDrawing,
+      key,
+      shapes: list,
+      font,
+      fontSize: theme.fontSize,
+    });
+    // With a selection highlighted, each link's selected share is a band of
+    // that thickness along its middle, the rest of it dimmed either side;
+    // nodes none of whose links' rows it holds are dimmed.
+    const selected = frame.selected?.(this.table);
+    const held = selected && this.#heldOf(selected, frame.rows, flows);
+    // Nodes count the rows of the links drawn: those closing cycles are left out.
+    const nodes: HeldNodes | undefined = held && {
+      rows: new Float64Array(graph.nodes),
+      of: new Float64Array(graph.nodes),
+      into: new Float64Array(graph.nodes),
+      out: new Float64Array(graph.nodes),
+    };
+    if (held && nodes)
+      for (const link of links)
+        for (const node of [source[link]!, target[link]!]) {
+          nodes.rows[node]! += held.rows[link]!;
+          nodes.of[node]! += held.of[link]!;
+          if (node === source[link]) nodes.out[node]! += held.sums[link]!;
+          else nodes.into[node]! += held.sums[link]!;
+        }
+    const geometry: Geometry[] = [];
+    if (held && nodes) {
+      const [lit, dimmed]: [PathShape[], PathShape[]] = [[], []];
+      for (const link of links) {
+        const [x0, x1] = ends(link);
+        const w = thickness[link]!;
+        const part = w * Math.min(1, held.sums[link]! / graph.value[link]!);
+        const side = (w - part) / 2;
+        const [y0, y1] = [sourceY[link]!, targetY[link]!];
+        if (part > 0) lit.push(shape(bandPath(x0, x1, y0 + side, y1 + side, part), link, false));
+        if (side > 0)
+          dimmed.push(
+            shape(bandPath(x0, x1, y0, y1, side), link, true),
+            shape(bandPath(x0, x1, y0 + side + part, y1 + side + part, side), link, true),
+          );
+      }
+      geometry.push(shapes("sankey-links-dimmed", dimmed), shapes("sankey-links", lit));
+      const shown = order.filter((node) => nodes.rows[node]! > 0);
+      const faint = order.filter((node) => nodes.rows[node] === 0);
+      geometry.push(
+        ...nodeRects(faint, boxes, colors, "-dimmed"),
+        ...nodeRects(shown, boxes, colors),
+      );
+    } else {
+      geometry.push(
+        shapes(
+          "sankey-links",
+          links.map((link, i) => shape(bands[i]!, link, false)),
         ),
-        font,
-        fontSize: theme.fontSize,
-      } as ShapesGeometry,
-    ];
-    // Nodes over the ends of their links.
-    geometry.push(...nodeRects(order, boxes, colors));
+        // Nodes over the ends of their links.
+        ...nodeRects(order, boxes, colors),
+      );
+    }
     if (this.spec.labels ?? true) geometry.push(...sankeyLabels(layout, names, frame));
 
     const nodeItem = (node: number): LayoutItem => {
@@ -266,17 +390,30 @@ export class SankeyMark implements LayoutMark {
       const format = (value: number) => formatNumber(value, locale);
       const outline = new SvgPath();
       outline.rect(x0!, y0!, x1! - x0!, y1! - y0!);
+      const field = this.spec.value;
+      // The selection's rows of the node's links, and what they bring in and take out.
+      const selection = !nodes
+        ? ""
+        : heldText(nodes.rows[node]!, nodes.of[node]!, undefined, format) +
+          (field === undefined
+            ? ""
+            : `, ${field} ${[
+                into > 0 ? `${format(nodes.into[node]!)} of ${format(into)} in` : "",
+                out > 0 ? `${format(nodes.out[node]!)} of ${format(out)} out` : "",
+              ]
+                .filter(Boolean)
+                .join(", ")}`);
       return {
         key: nodeKey(node),
         label: names[node]!,
         color: colors[node]!,
         value: Math.max(into, out),
         text:
-          into > 0 && out > 0
+          (into > 0 && out > 0
             ? `${format(into)} in, ${format(out)} out`
             : into > 0
               ? `${format(into)} in`
-              : `${format(out)} out`,
+              : `${format(out)} out`) + selection,
         px: (x0! + x1!) / 2,
         py: (y0! + y1!) / 2,
         outline: outline.d,
@@ -287,18 +424,47 @@ export class SankeyMark implements LayoutMark {
       const [x0, x1] = ends(link);
       const s = source[link]!;
       const t = target[link]!;
+      const field = this.spec.value;
+      const format = (value: number) => formatNumber(value, locale);
+      const value = graph.value[link]!;
       return {
         key: JSON.stringify([frame.id, names[s], names[t]]),
         label: `${names[s]} → ${names[t]}`,
         color: colors[s]!,
-        value: graph.value[link]!,
-        text: formatNumber(graph.value[link]!, locale),
+        value,
+        text:
+          format(value) +
+          (held
+            ? heldText(
+                held.rows[link]!,
+                held.of[link]!,
+                field === undefined ? undefined : { field, held: held.sums[link]!, of: value },
+                format,
+              )
+            : ""),
         px: (x0 + x1) / 2,
         py: (sourceY[link]! + targetY[link]!) / 2 + thickness[link]! / 2,
         outline: bands[i]!,
       };
     };
     const nodeCount = order.length;
+    // The node or link an item key names: the mark's id and a node's name, or a link's two names.
+    const find = (key: string): { node: number; link?: number } | undefined => {
+      let parts: unknown;
+      try {
+        parts = JSON.parse(key);
+      } catch {
+        return undefined;
+      }
+      if (!Array.isArray(parts) || parts[0] !== frame.id) return undefined;
+      const [, a, b] = parts as [unknown, string, string | undefined];
+      const s = flows.nodeOf.get(a) ?? -1;
+      if (s < 0 || place[s]! < 0) return undefined;
+      if (parts.length === 2) return { node: s };
+      const t = parts.length === 3 ? (flows.nodeOf.get(b!) ?? -1) : -1;
+      const link = t < 0 ? undefined : flows.linkOf.get(s * flows.stride + t);
+      return link === undefined ? undefined : { node: s, link };
+    };
     return {
       geometry,
       itemAt(px, py) {
@@ -327,22 +493,25 @@ export class SankeyMark implements LayoutMark {
       count: nodeCount + links.length,
       item: (index) => (index < nodeCount ? nodeItem(order[index]!) : linkItem(index - nodeCount)),
       indexOf: (key) => {
-        // Keys are the mark's id and a node's name, or a link's two names.
-        let parts: unknown;
-        try {
-          parts = JSON.parse(key);
-        } catch {
-          return -1;
-        }
-        if (!Array.isArray(parts) || parts[0] !== frame.id) return -1;
-        const [, a, b] = parts as [unknown, string, string | undefined];
-        const s = flows.nodeOf.get(a) ?? -1;
-        if (s < 0) return -1;
-        if (parts.length === 2) return place[s]!;
-        const t = parts.length === 3 ? (flows.nodeOf.get(b!) ?? -1) : -1;
-        const link = t < 0 ? undefined : flows.linkOf.get(s * flows.stride + t);
-        const at = link === undefined ? undefined : linkPlace.get(link);
+        const found = find(key);
+        if (!found) return -1;
+        if (found.link === undefined) return place[found.node]!;
+        const at = linkPlace.get(found.link);
         return at === undefined ? -1 : nodeCount + at;
+      },
+      // A link's rows, or a node's: those of the links into and out of it.
+      rowsOf: (key, table) => {
+        const found = table === this.table ? find(key) : undefined;
+        if (!found) return undefined;
+        const { node, link } = found;
+        const rows: number[] = [];
+        this.#eachFlow(flows, frame.rows, (row, at) => {
+          // Of links drawn: those closing cycles are left out.
+          if (status[at] !== DRAWN) return;
+          if (link !== undefined ? at === link : source[at] === node || target[at] === node)
+            rows.push(row);
+        });
+        return rows;
       },
       summary: () => this.#summary(layout, names, graph, links, locale),
     };
@@ -377,11 +546,12 @@ export class SankeyMark implements LayoutMark {
   }
 }
 
-/** Node bars, one geometry per color, as palettes repeat colors. */
+/** Node bars, one geometry per color, as palettes repeat colors; dimmed under keys ending in `dimmed`. */
 function nodeRects(
-  order: Int32Array,
+  order: ArrayLike<number> & Iterable<number>,
   boxes: Float64Array,
   colors: readonly string[],
+  dimmed = "",
 ): RectGeometry[] {
   const byColor = new Map<string, number[]>();
   for (const node of order) {
@@ -398,9 +568,9 @@ function nodeRects(
     return {
       kind: "rect",
       draw: rectDrawing,
-      key: `sankey-nodes-${group}`,
+      key: `sankey-nodes-${group}${dimmed}`,
       fill,
-      fillOpacity: 1,
+      fillOpacity: dimmed ? DIM : 1,
       rects,
       count: nodes.length,
     } as RectGeometry;

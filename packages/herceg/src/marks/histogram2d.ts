@@ -25,7 +25,7 @@ import type { LegendPart } from "../model/legend.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { chooseInterval, niceTimeDomain, timeTicks } from "../scale/time.ts";
-import type { RasterGeometry } from "../scene/scene.ts";
+import type { Geometry, RasterGeometry } from "../scene/scene.ts";
 import type { BinSpec, Frozen, Histogram2DSpec } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { AxisCells, stepCell } from "./heatmap-cells.ts";
@@ -44,6 +44,7 @@ import {
   NUMERIC,
   type Palette,
   requireField,
+  type SelectionDrawing,
   type SummaryContext,
   seriesKey,
 } from "./mark.ts";
@@ -116,11 +117,25 @@ interface Cells {
   total: number;
   size: number;
   inBins: number;
+  /** The rows counted, ascending (a facet panel's); every row when undefined. */
+  of: Uint32Array | undefined;
   /** The cells by column and row, for lookups under the pointer and the keyboard. */
   index: CellIndex;
   /** The fullest cell's measure over every panel counted with these cells: the color scale's top. */
   scale: { max: number };
 }
+
+/** What a selection holds of each cell: its selected rows' count and weight, and the cell's rows. */
+interface Picked {
+  rows: Float64Array;
+  weights: Float64Array;
+  all: Float64Array;
+  /** The cells' values where they hold selected rows, missing elsewhere, for an image of them. */
+  values: Float64Array;
+}
+
+/** What selections hold of each series' cells, by membership, then by the cells. */
+const picks = new WeakMap<Uint8Array, WeakMap<Cells, Picked>>();
 
 /** One chart's cells: bins and counts over the whole table, as of its version and zone. */
 interface Binned {
@@ -169,6 +184,8 @@ export class Histogram2DMark implements Mark<Frozen<Histogram2DSpec>> {
   readonly #cells = new WeakMap<NumericArray, Cells>();
   /** The panels' series counted for a split chart's roster series, which legends read. */
   readonly #rosters = new WeakMap<Series, Series[]>();
+  /** What the selection drawn with each series holds of its cells, for tooltips. */
+  readonly #selected = new WeakMap<Series, Picked>();
 
   constructor(input: Histogram2DSpec, table: Table<Schema>) {
     this.spec = frozen(input);
@@ -372,6 +389,7 @@ export class Histogram2DMark implements Mark<Frozen<Histogram2DSpec>> {
       total,
       size,
       inBins,
+      of: rows,
       index: new CellIndex(columns, lines, values, nx, ny),
       scale,
     };
@@ -449,6 +467,108 @@ export class Histogram2DMark implements Mark<Frozen<Histogram2DSpec>> {
     return this.#cells.get(s.values);
   }
 
+  /**
+   * How many of each cell's rows `selected` holds, and their weight, and
+   * how many rows each cell has: one pass over the rows the cells counted,
+   * kept while the selection and the cells are the same.
+   */
+  #picked(cells: Cells, selected: Uint8Array, values: NumericArray): Picked {
+    let byCells = picks.get(selected);
+    if (!byCells) {
+      byCells = new WeakMap();
+      picks.set(selected, byCells);
+    }
+    const known = byCells.get(cells);
+    if (known) return known;
+    const { xEdges, yEdges, of: rows } = cells;
+    const count = cells.counts.length;
+    const nx = Math.max(0, xEdges.length - 1);
+    const ny = Math.max(0, yEdges.length - 1);
+    // Each bin pair's cell, -1 for those holding nothing.
+    const cellAt = new Int32Array(nx * ny).fill(-1);
+    for (let k = 0; k < count; k++) cellAt[cells.rows[k]! * nx + cells.columns[k]!] = k;
+    const picked = {
+      rows: new Float64Array(count),
+      weights: new Float64Array(count),
+      all: new Float64Array(count),
+      values: new Float64Array(count).fill(Number.NaN),
+    };
+    const xs = this.#numbers("x");
+    const ys = this.#numbers("y");
+    const weights =
+      this.spec.weight === undefined ? undefined : this.table.numbers(this.spec.weight as never);
+    const xStep = this.#explicit.x ? 0 : evenStep(xEdges);
+    const yStep = this.#explicit.y ? 0 : evenStep(yEdges);
+    const length = rows ? rows.length : xs.length;
+    for (let k = 0; k < length && count > 0; k++) {
+      const row = rows ? rows[k]! : k;
+      // As counted: rows without a usable weight are in no cell.
+      const weight = weights ? weights[row]! : 1;
+      if (!(weight >= 0 && weight < Infinity)) continue;
+      const c = xStep > 0 ? evenBinOf(xEdges, xStep, xs[row]!) : binOf(xEdges, xs[row]!);
+      if (c < 0) continue;
+      const r = yStep > 0 ? evenBinOf(yEdges, yStep, ys[row]!) : binOf(yEdges, ys[row]!);
+      const at = r < 0 ? -1 : cellAt[r * nx + c]!;
+      if (at < 0) continue;
+      picked.all[at]!++;
+      if (selected[row] !== 1) continue;
+      picked.rows[at]!++;
+      picked.weights[at]! += weight;
+      picked.values[at] = values[at]!;
+    }
+    byCells.set(cells, picked);
+    return picked;
+  }
+
+  /**
+   * The cells with a selection's rows in them: the image dimmed, and in
+   * each cell holding selected rows a square of its color covering the
+   * share of its weight they are (see cell-selection.ts).
+   */
+  selectedGeometry(series: readonly Series[], frame: Frame, drawing: SelectionDrawing): Geometry[] {
+    const s = series[0];
+    const cells = s && this.#cellsOf(s);
+    if (!s || !cells || s.length === 0 || frame.hidden.has(s.key)) return [];
+    const colors = this.#colorScale(cells, frame.theme);
+    if (!colors) return [];
+    const whole = this.geometry(series, frame).flatMap(drawing.dim);
+    const picked = this.#picked(cells, drawing.selected, s.values);
+    this.#selected.set(s, picked);
+    // Cells whose measure overflowed are left out of the image, and so of the selection's squares.
+    const shown = (k: number) => picked.rows[k]! > 0 && Number.isFinite(s.values[k]!);
+    let held = 0;
+    for (let k = 0; k < s.length; k++) held += shown(k) ? 1 : 0;
+    // An image of no cell draws nothing.
+    if (held === 0) return whole;
+    const { x, y } = frame;
+    const { xEdges, yEdges, columns, rows } = cells;
+    // The narrowest bins along each axis, in pixels.
+    const smallest = (edges: Float64Array, scale: PositionScale) => {
+      let least = Infinity;
+      for (let i = 0; i + 1 < edges.length; i++)
+        least = Math.min(least, Math.abs(scale.map(edges[i + 1]!) - scale.map(edges[i]!)));
+      return least;
+    };
+    const key = `${s.key}|selected`;
+    const squares = drawing.squares(
+      {
+        count: s.length,
+        held,
+        size: [smallest(xEdges, x), smallest(yEdges, y)],
+        box: (k) => [
+          x.map(xEdges[columns[k]!]!),
+          y.map(yEdges[rows[k]!]!),
+          x.map(xEdges[columns[k]! + 1]!),
+          y.map(yEdges[rows[k]! + 1]!),
+        ],
+        share: (k) => (shown(k) ? picked.weights[k]! / cells.counts[k]! : 0),
+        color: (k) => colors.color(s.values[k]!),
+      },
+      key,
+    );
+    return [...whole, ...(squares ?? this.#image(s, frame, cells, colors, picked.values, key))];
+  }
+
   /** The scale coloring cells: over `colorDomain`, or from 0 to the fullest cell. */
   #colorScale(cells: Cells | undefined, theme: Theme): SequentialScale | undefined {
     const domain =
@@ -515,15 +635,32 @@ export class Histogram2DMark implements Mark<Frozen<Histogram2DSpec>> {
 
   geometry(series: readonly Series[], frame: Frame): RasterGeometry[] {
     const s = series[0];
+    // Series are kept between scenes: drawn so, no selection is drawn with it.
+    if (s) this.#selected.delete(s);
     const cells = s && this.#cellsOf(s);
     if (!s || !cells || s.length === 0 || frame.hidden.has(s.key)) return [];
     const colors = this.#colorScale(cells, frame.theme);
     if (!colors) return [];
+    return this.#image(s, frame, cells, colors, s.values, s.key);
+  }
+
+  /**
+   * The image of the cells of `s`, each colored by its value in `values`
+   * (missing values leave a cell out), keyed `key`, as its buffers are.
+   */
+  #image(
+    s: Series,
+    frame: Frame,
+    cells: Cells,
+    colors: SequentialScale,
+    values: NumericArray,
+    key: string,
+  ): RasterGeometry[] {
     const { x, y, plot } = frame;
     if (x.breaks)
       throw new Error("histogram x: 2D histograms cannot leave out time breaks yet; drop x.breaks");
     const inputs = [
-      s.values,
+      values,
       colors.domain[0],
       colors.domain[1],
       frame.theme,
@@ -539,14 +676,14 @@ export class Histogram2DMark implements Mark<Frozen<Histogram2DSpec>> {
     ];
     // An unchanged frame draws the image last painted into the series'
     // buffer again, without placing a cell.
-    let pixels = frame.bytes(s.key, "raster", 0);
+    let pixels = frame.bytes(key, "raster", 0);
     const last = painted.get(pixels.buffer);
     let image =
       last && last.inputs.length === inputs.length && last.inputs.every((v, i) => v === inputs[i])
         ? last.image
         : undefined;
     if (!image) {
-      const buffer = (stage: string, length: number) => frame.doubles(s.key, stage, length);
+      const buffer = (stage: string, length: number) => frame.doubles(key, stage, length);
       const nx = cells.xEdges.length - 1;
       const ny = cells.yEdges.length - 1;
       const axes = rasterAxes(
@@ -559,14 +696,24 @@ export class Histogram2DMark implements Mark<Frozen<Histogram2DSpec>> {
       if (!axes) return [];
       const [across, down] = axes;
       const count = across.size * down.size;
-      pixels = frame.bytes(s.key, "raster", count * 4);
+      pixels = frame.bytes(key, "raster", count * 4);
       const source = {
         x: cells.columns,
         y: cells.rows,
-        values: s.values,
+        values,
         rows: undefined,
         length: s.length,
-        index: () => cells.index,
+        // The cells' own index, or of those `values` keeps.
+        index: () =>
+          values === s.values
+            ? cells.index
+            : new CellIndex(
+                cells.columns,
+                cells.rows,
+                values,
+                cells.xEdges.length - 1,
+                cells.yEdges.length - 1,
+              ),
       };
       paint(source, across, down, colors, "mean", pixels, (stage) => buffer(stage, count));
       image = [across.from, across.to, across.size, down.from, down.to, down.size];
@@ -584,7 +731,7 @@ export class Histogram2DMark implements Mark<Frozen<Histogram2DSpec>> {
       {
         kind: "raster",
         draw: rasterDrawing,
-        key: s.key,
+        key,
         x: x0,
         y: y0,
         width: x1 - x0,
@@ -636,9 +783,15 @@ export class Histogram2DMark implements Mark<Frozen<Histogram2DSpec>> {
     );
   }
 
-  /** What a cell measures. */
+  /** What a cell measures; while a selection is drawn, how much of it is selected. */
   pointText(s: Series, row: number, format: AxisFormat): string {
-    return format.value(s.values[row]!);
+    const text = format.value(s.values[row]!);
+    const picked = this.#selected.get(s);
+    if (!picked) return text;
+    const f = format.value;
+    const all = picked.all[row]!;
+    const weight = this.spec.weight;
+    return `${text}; ${f(picked.rows[row]!)} of ${f(all)} ${all === 1 ? "row" : "rows"} selected${weight === undefined ? "" : `, ${weight} ${f(picked.weights[row]!)} of ${f(this.#cellsOf(s)!.counts[row]!)}`}`;
   }
 
   stepCell(

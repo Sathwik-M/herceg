@@ -16,16 +16,19 @@ import {
 } from "../data/hierarchy.ts";
 import type { Table } from "../data/table.ts";
 import { textDrawing } from "../draw/text.ts";
+import { formatNumber } from "../format/format.ts";
 import { fitText } from "../layout/text.ts";
 import type { LegendEntry } from "../model/legend.ts";
 import type { ChartConfig } from "../model/model.ts";
 import type { Rect, TextGeometry } from "../scene/scene.ts";
 import {
+  heldText,
   type LayoutControls,
   type LayoutFrame,
   type LayoutItem,
   type LayoutResult,
   RowsCache,
+  SelectionCache,
 } from "./layout-mark.ts";
 import { CATEGORY, requireField } from "./mark.ts";
 
@@ -139,10 +142,22 @@ export function drillControls(config: ChartConfig): LayoutControls | undefined {
   return config.interaction?.zoom ? DRILL : undefined;
 }
 
+/**
+ * What a selection holds of each node of a tree view (its own rows and
+ * those under it): how many rows, of how many, and their total.
+ */
+export interface Held {
+  hits: Int32Array;
+  rows: Int32Array;
+  values: Float64Array;
+}
+
 export class TreeData {
   readonly table: Table;
   readonly encoding: HierarchyEncoding;
   readonly #value: string | undefined;
+  /** What highlighted selections hold of each view's nodes, by membership and view. */
+  readonly #held = new SelectionCache<Held>();
   /** The whole table's tree, and the table version it is for. */
   #whole: { version: number; view: TreeView } | undefined;
   /** The part of the tree each facet panel's rows give a value. */
@@ -476,28 +491,69 @@ export class TreeData {
 
   /**
    * For each node of `view`, how many of its rows (its own and under it)
-   * `selected` holds and how many it has: a node is drawn as selected when
-   * any of its rows is.
+   * `selected` holds, how many it has, and the selected rows' total, as
+   * `values` totals the node's: a node is drawn with that share of it
+   * selected, and dimmed when none of its rows is.
    */
-  selectedOf(view: TreeView, selected: Uint8Array): { hits: Int32Array; rows: Int32Array } {
-    const { tree } = this.view();
-    const { nodeOfRow } = tree;
-    const hits = new Int32Array(tree.size);
-    const rows = new Int32Array(tree.size);
-    eachRow(view, nodeOfRow.length, (row) => {
-      const node = nodeOfRow[row]!;
-      if (node < 0) return;
-      rows[node]!++;
-      if (selected[row]) hits[node]!++;
+  selectedOf(view: TreeView, selected: Uint8Array): Held {
+    // Views are kept while what they are of is the same.
+    return this.#held.get(selected, view, () => {
+      const { tree } = this.view();
+      const { nodeOfRow } = tree;
+      const weights = this.#weights();
+      const hits = new Int32Array(tree.size);
+      const rows = new Int32Array(tree.size);
+      const values = new Float64Array(tree.size);
+      eachRow(view, nodeOfRow.length, (row) => {
+        const node = nodeOfRow[row]!;
+        if (node < 0) return;
+        rows[node]!++;
+        if (!selected[row]) return;
+        hits[node]!++;
+        // As totals weigh rows: one without a weight adds nothing.
+        const weight = weights ? weights[row]! : 1;
+        if (!Number.isNaN(weight)) values[node]! += weight;
+      });
+      for (let at = tree.size - 1; at > 0; at--) {
+        const node = tree.order[at]!;
+        const parent = tree.parent[node]!;
+        hits[parent]! += hits[node]!;
+        rows[parent]! += rows[node]!;
+        values[parent]! += values[node]!;
+      }
+      if (!view.nodes) return { hits, rows, values };
+      const nodes = view.nodes;
+      return {
+        hits: Int32Array.from(nodes, (node) => hits[node]!),
+        rows: Int32Array.from(nodes, (node) => rows[node]!),
+        values: Float64Array.from(nodes, (node) => values[node]!),
+      };
     });
-    for (let at = tree.size - 1; at > 0; at--) {
-      const node = tree.order[at]!;
-      hits[tree.parent[node]!]! += hits[node]!;
-      rows[tree.parent[node]!]! += rows[node]!;
-    }
-    if (!view.nodes) return { hits, rows };
-    const map = (counts: Int32Array) => Int32Array.from(view.nodes!, (node) => counts[node]!);
-    return { hits: map(hits), rows: map(rows) };
+  }
+
+  /** The share of a node of `view` that the selection `held` describes holds: of its total. */
+  shareOf(view: TreeView, held: Held, node: number): number {
+    const total = view.values[node]!;
+    return total > 0 ? Math.min(1, held.values[node]! / total) : 0;
+  }
+
+  /** The text an item adds for what a highlighted selection holds of its node. */
+  selectedText(
+    view: TreeView,
+    held: Held | undefined,
+    node: number,
+    locale: string | undefined,
+  ): string {
+    if (!held) return "";
+    const value = this.#value;
+    return heldText(
+      held.hits[node]!,
+      held.rows[node]!,
+      value === undefined
+        ? undefined
+        : { field: value, held: held.values[node]!, of: view.values[node]! },
+      (n) => formatNumber(n, locale),
+    );
   }
 
   /**
@@ -604,16 +660,6 @@ function branchOf(tree: Hierarchy): Int32Array {
 /** A sentence's part naming where a drilled tree is: " in Europe / France"; "" for the whole tree. */
 export function where(view: TreeView): string {
   return view.prefix.length > 0 ? ` in ${view.prefix.join(" / ")}` : "";
-}
-
-/** The text an item adds for how many of its rows a highlighted selection holds. */
-export function selectedText(
-  counts: { hits: Int32Array; rows: Int32Array } | undefined,
-  node: number,
-): string {
-  if (!counts) return "";
-  const rows = counts.rows[node]!;
-  return `; ${counts.hits[node]} of ${rows} ${rows === 1 ? "row" : "rows"} selected`;
 }
 
 /** "1 group", "2 groups". */
