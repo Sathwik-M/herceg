@@ -8,9 +8,10 @@ clicks, drills, and node moves back to Python. Needs the ``notebook`` extra.
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 try:
     import anywidget
@@ -25,6 +26,7 @@ import numpy as np
 
 from . import _render
 from ._chart import Camera, ChartUpdate, Unpack
+from ._data import shown
 from ._derive import Expr, _fields_of
 from ._events import (
     DrillRoot,
@@ -61,9 +63,6 @@ __all__ = [
     "Viewport",
 ]
 
-Event = Literal[
-    "select", "viewport", "hover", "click", "camera", "rowSelection", "drill", "itemMove"
-]
 #: The key of each event's state in messages and the snapshot.
 _STATE_KEYS = {
     "select": "selection",
@@ -71,6 +70,16 @@ _STATE_KEYS = {
     "drill": "drill_root",
     "itemMove": "item_positions",
 }
+#: Events whose state each subplot's tree, network, or map has of its own.
+_PANEL_EVENTS = ("viewport", "drill", "itemMove")
+#: The panel mapping property naming each event's subplot states, for messages.
+_PANEL_NAMES = {
+    "viewport": "panel_viewports",
+    "drill": "panel_drill_roots",
+    "itemMove": "panel_item_positions",
+}
+#: A state's key: its event, and its subplot's id ("" for the chart's own).
+StateKey = tuple[str, str]
 
 
 class ChartWidget(anywidget.AnyWidget):
@@ -105,23 +114,22 @@ class ChartWidget(anywidget.AnyWidget):
         # Counts the changes sent to browsers, so a browser that missed one
         # (it was not open yet, say) asks for the whole chart again.
         self._revision = 0
-        # Interaction state, as last set here or in a browser.
-        self._states: dict[str, dict[str, Any] | None] = {
-            "select": None,
-            "viewport": None,
-            "drill": None,
-            "itemMove": {},
+        # Interaction state, as last set here or in a browser: the chart's own
+        # (panel ""), and each subplot's tree, network, or map's, by panel.
+        keys: list[StateKey] = [("select", ""), ("viewport", "")]
+        for event in _PANEL_EVENTS:
+            keys += [(event, panel) for panel in self._live.state_panels(event)]
+        self._states: dict[StateKey, dict[str, Any] | None] = {
+            key: {} if key[0] == "itemMove" else None for key in keys
         }
         # Who changed each (a browser's origin, None for Python) and at which
         # revision. A browser's report based on an earlier revision than
         # someone else's change was made without seeing it, and is dropped.
-        self._state_changes: dict[str, tuple[str | None, int]] = {
-            event: (None, 0) for event in _STATE_KEYS
+        self._state_changes: dict[StateKey, tuple[str | None, int]] = {
+            key: (None, 0) for key in keys
         }
-        self._callbacks = {
-            event: ipywidgets.CallbackDispatcher()
-            for event in (*_STATE_KEYS, "hover", "click", "camera", "rowSelection")
-        }
+        names: list[str | StateKey] = [*keys, "hover", "click", "camera", "rowSelection"]
+        self._callbacks = {name: ipywidgets.CallbackDispatcher() for name in names}
         # What each bound channel holds, by table name and channel, in Python's
         # terms: rows by position in the data as it is now.
         self._rows: dict[tuple[str, str], RowSelection] = {
@@ -157,8 +165,8 @@ class ChartWidget(anywidget.AnyWidget):
             self._push(message)
             moved = self._invalidate_positions(message)
             self._follow_rows(before)
-        if moved:
-            self._callbacks["itemMove"](self.item_positions)
+        for key in moved:
+            self._callbacks[key](decode_item_positions(self._states[key]))
 
     def replace(self, rows: Any, *, data: Any = None) -> None:
         """Replaces all rows of the chart's data (or of ``data``, as in :meth:`append`)."""
@@ -169,16 +177,23 @@ class ChartWidget(anywidget.AnyWidget):
             self._push(message)
             moved = self._invalidate_positions(message)
             self._follow_rows(before, generations)
-        if moved:
-            self._callbacks["itemMove"](self.item_positions)
+        for key in moved:
+            self._callbacks[key](decode_item_positions(self._states[key]))
 
-    def _invalidate_positions(self, message: Message | None) -> bool:
-        if message is None or not self._live.can_move_items:
-            return False
-        changed = self._change("itemMove", {}, None)
-        # Even an empty mapping must reject moves made before this data change.
-        self._state_changes["itemMove"] = (None, self._revision)
-        return changed
+    def _invalidate_positions(self, message: Message | None) -> list[StateKey]:
+        """Lets go of the moved nodes of the networks reading the table a data
+        change changed, as the browser does; the states that changed. Called
+        with the lock held."""
+        if message is None:
+            return []
+        moved = []
+        for panel in self._live.state_panels("itemMove", message[0]["table"]):
+            key: StateKey = ("itemMove", panel)
+            if self._change(key, {}, None):
+                moved.append(key)
+            # Even an empty mapping must reject moves made before this data change.
+            self._state_changes[key] = (None, self._revision)
+        return moved
 
     def _follow_rows(
         self, dropped: dict[str, int], generations: dict[str, int] | None = None
@@ -204,7 +219,7 @@ class ChartWidget(anywidget.AnyWidget):
             self._push(self._live.update(options))
             # Panels given y scales of their own on a side let go of its
             # viewport, as the browser's chart does.
-            viewport = self._states["viewport"]
+            viewport = self._states[("viewport", "")]
             cleared = False
             if viewport:
                 kept = {
@@ -213,32 +228,39 @@ class ChartWidget(anywidget.AnyWidget):
                     "yRight": viewport["yRight"] if self._live.shares_y_right else None,
                 }
                 if kept != viewport:
-                    cleared = self._change("viewport", kept, None)
+                    cleared = self._change(("viewport", ""), kept, None)
         if cleared:
-            self._callbacks["viewport"](_decoded("viewport", self._states["viewport"]))
+            self._callbacks[("viewport", "")](_decoded("viewport", kept))
 
     @property
     def selection(self) -> Selection | None:
-        """What is brushed (x and y ranges, a lasso's outline), or None. Setting a
-        ``Selection``, or an x range as a ``(start, end)`` pair, brushes the chart;
-        None clears it. In a chart with ``row_selection``, setting it draws the
-        brush only: set ``row_selection`` to select rows."""
-        return decode_selection(self._states["select"])
+        """What is brushed (x and y ranges, a lasso's outline, and the subplot of a
+        map's or network's lasso), or None. Setting a ``Selection``, or an x range
+        as a ``(start, end)`` pair, brushes the chart; None clears it. In a chart
+        with ``row_selection``, setting it draws the brush only: set
+        ``row_selection`` to select rows."""
+        return decode_selection(self._states[("select", "")])
 
     @selection.setter
     def selection(self, value: Selection | Range | None) -> None:
-        self._set("select", encode_selection(value))
+        self._set(("select", ""), encode_selection(value))
 
     @property
     def viewport(self) -> Viewport:
-        """The visible x and y ranges, each None when that axis is not zoomed.
-        Setting a ``Viewport`` zooms the chart to it; an x range as a ``(start,
-        end)`` pair zooms x and resets y; None resets every axis."""
-        return decode_viewport(self._states["viewport"])
+        """The visible x and y ranges, each None when that axis is not zoomed:
+        of the chart's axes, or of its map or network (also of every facet
+        panel's, which share one view). Setting a ``Viewport`` zooms the chart
+        to it; an x range as a ``(start, end)`` pair zooms x and resets y; None
+        resets every axis. Map and network subplots' views are
+        ``panel_viewports``."""
+        return decode_viewport(self._states[("viewport", "")])
 
     @viewport.setter
     def viewport(self, value: Viewport | Range | None) -> None:
-        payload = encode_viewport(value)
+        self._own_view("widget.viewport")
+        # The chart's one map's or network's view is in its plane's units.
+        plane = self._live.plane_view
+        payload = _plane_view(value, "widget.viewport") if plane else encode_viewport(value)
         if (payload["y"] and not self._live.shares_y) or (
             payload["yRight"] and not self._live.shares_y_right
         ):
@@ -246,38 +268,145 @@ class ChartWidget(anywidget.AnyWidget):
                 "widget.viewport: charts whose panels have y scales of their own "
                 "(resolve_y, resolve_y_right, panels) have no one y viewport; set x only"
             )
-        self._set("viewport", payload)
+        self._set(("viewport", ""), payload)
+
+    @property
+    def panel_viewports(self) -> dict[str, Viewport]:
+        """Each map or network subplot's view, by panel id, in its plane's units
+        (``viewport`` is the chart's). Assigning a mapping sets the views it
+        names; a panel left out keeps its view, and None shows its whole plane.
+        The returned mapping is a copy."""
+        return {
+            panel: decode_viewport(self._states[("viewport", panel)])
+            for panel in self._panels("viewport", "widget.panel_viewports")
+        }
+
+    @panel_viewports.setter
+    def panel_viewports(self, value: Mapping[str, Viewport | Range | None]) -> None:
+        self._set_panels(
+            "viewport",
+            "widget.panel_viewports",
+            value,
+            lambda view: _plane_view(view, "widget.panel_viewports"),
+        )
+
+    def _own_view(self, name: str) -> None:
+        """Raises, naming `name`, for a chart with no view of its own: subplots
+        none of which has axes, whose maps and networks have views of their own."""
+        if not self._live.has_view:
+            raise ValueError(
+                f"{name}: no panel of the chart has axes; set the views of its map and "
+                "network subplots with widget.panel_viewports"
+            )
 
     @property
     def drill_root(self) -> DrillRoot | None:
         """Item keys from the top level through the current root, or None for
-        the whole tree. Assign a reported path to drill; None resets it."""
-        return decode_drill_root(self._states["drill"])
+        the whole tree: of the chart's treemap or sunburst (every facet panel's,
+        which share one root). Assign a reported path to drill; None resets it.
+        Subplots' trees drill apart: see ``panel_drill_roots``."""
+        return decode_drill_root(self._states.get(self._own("drill", "widget.drill_root", True)))
 
     @drill_root.setter
     def drill_root(self, value: DrillRoot | None) -> None:
-        if not self._live.can_drill:
-            raise ValueError(
-                "widget.drill_root: only a chart of one treemap or sunburst drills; "
-                "use a tree without facets or panels"
-            )
-        self._set("drill", encode_drill_root(value))
+        self._set(self._own("drill", "widget.drill_root"), encode_drill_root(value))
+
+    @property
+    def panel_drill_roots(self) -> dict[str, DrillRoot | None]:
+        """Each treemap or sunburst subplot's drill root, by panel id. Assigning a
+        mapping drills the panels it names; a panel left out keeps its root.
+        The returned mapping is a copy."""
+        return {
+            panel: decode_drill_root(self._states[("drill", panel)])
+            for panel in self._panels("drill", "widget.panel_drill_roots")
+        }
+
+    @panel_drill_roots.setter
+    def panel_drill_roots(self, value: Mapping[str, DrillRoot | None]) -> None:
+        self._set_panels(
+            "drill",
+            "widget.panel_drill_roots",
+            value,
+            lambda root: encode_drill_root(root, "widget.panel_drill_roots"),
+        )
 
     @property
     def item_positions(self) -> ItemPositions:
         """Manual network-node positions by item key, as (x, y) in layout
-        units. Assignment replaces all overrides; {} resets them. Data
-        changes reset them too. The returned mapping is a copy."""
-        return decode_item_positions(self._states["itemMove"])
+        units: of the chart's network (every facet panel's, which share one
+        layout). Assignment replaces all overrides; {} resets them. Data
+        changes reset them too. The returned mapping is a copy. Subplots'
+        networks move apart: see ``panel_item_positions``."""
+        key = self._own("itemMove", "widget.item_positions", True)
+        return decode_item_positions(self._states.get(key))
 
     @item_positions.setter
     def item_positions(self, value: Mapping[str, tuple[float, float]]) -> None:
-        if not self._live.can_move_items:
-            raise ValueError(
-                "widget.item_positions: only a chart of one network has nodes to move; "
-                "use a graph without facets or panels"
+        key = self._own("itemMove", "widget.item_positions")
+        self._set(key, encode_item_positions(value))
+
+    @property
+    def panel_item_positions(self) -> dict[str, ItemPositions]:
+        """Each network subplot's manual node positions, by panel id, as
+        ``item_positions`` holds the chart's. Assigning a mapping replaces the
+        positions of the panels it names; a panel left out keeps its own.
+        The returned mapping is a copy."""
+        return {
+            panel: decode_item_positions(self._states[("itemMove", panel)])
+            for panel in self._panels("itemMove", "widget.panel_item_positions")
+        }
+
+    @panel_item_positions.setter
+    def panel_item_positions(self, value: Mapping[str, Mapping[str, tuple[float, float]]]) -> None:
+        self._set_panels(
+            "itemMove",
+            "widget.panel_item_positions",
+            value,
+            lambda positions: encode_item_positions(positions, "widget.panel_item_positions"),
+        )
+
+    def _own(self, event: str, name: str, reading: bool = False) -> StateKey:
+        """The key of the chart's own state of `event`; raises, naming the
+        property `name`, for charts whose subplots have theirs, and (unless
+        `reading`, which reads it as empty) for charts without any."""
+        panels = self._live.state_panels(event)
+        if panels == [""] or (reading and not panels):
+            return (event, "")
+        what = {"drill": "treemap or sunburst", "itemMove": "network"}[event]
+        if not panels:
+            does = (
+                "only treemaps and sunbursts drill"
+                if event == "drill"
+                else "only networks' nodes move"
             )
-        self._set("itemMove", encode_item_positions(value))
+            raise ValueError(f"{name}: the chart has no {what}; {does}")
+        mapping = _PANEL_NAMES[event].replace("panel_", "widget.panel_")
+        raise ValueError(f"{name}: the chart's {what} subplots each have their own; use {mapping}")
+
+    def _panels(self, event: str, name: str) -> list[str]:
+        """The subplots with states of `event` of their own; [] for charts without any."""
+        return [panel for panel in self._live.state_panels(event) if panel != ""]
+
+    def _set_panels(
+        self,
+        event: str,
+        name: str,
+        value: Mapping[str, Any],
+        encode_one: Callable[[Any], dict[str, Any] | None],
+    ) -> None:
+        """Sets the subplot states `value` names, all or none: a panel without
+        such a state, or a value of another shape, changes nothing."""
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{name}: expected panel ids mapped to their states")
+        panels = self._panels(event, name)
+        encoded = {}
+        for panel, one in value.items():
+            if panel not in panels:
+                listed = ", ".join(repr(p) for p in panels) or "none"
+                raise ValueError(f"{name}: no panel {panel!r} of its kind; the panels are {listed}")
+            encoded[panel] = encode_one(one)
+        for panel, payload in encoded.items():
+            self._set((event, panel), payload)
 
     @property
     def row_selection(self) -> RowSelection | None:
@@ -333,19 +462,55 @@ class ChartWidget(anywidget.AnyWidget):
 
     def on_select(self, callback: Callable[[Selection | None], Any], remove: bool = False) -> None:
         """Calls ``callback(selection)`` when what is brushed changes."""
-        self._listen("select", callback, remove)
+        self._listen(("select", ""), callback, remove)
 
-    def on_viewport(self, callback: Callable[[Viewport], Any], remove: bool = False) -> None:
-        """Calls ``callback(viewport)`` when the chart zooms, pans, or resets."""
-        self._listen("viewport", callback, remove)
+    def on_viewport(
+        self, callback: Callable[[Viewport], Any], remove: bool = False, *, panel: str | None = None
+    ) -> None:
+        """Calls ``callback(viewport)`` when the chart zooms, pans, or resets; with
+        ``panel``, when that map or network subplot does (see ``panel_viewports``)."""
+        self._listen(self._key("viewport", panel, "widget.on_viewport"), callback, remove)
 
-    def on_drill(self, callback: Callable[[DrillRoot | None], Any], remove: bool = False) -> None:
-        """Calls callback(root) when drilling changes, including Python assignments."""
-        self._listen("drill", callback, remove)
+    def on_drill(
+        self,
+        callback: Callable[[DrillRoot | None], Any],
+        remove: bool = False,
+        *,
+        panel: str | None = None,
+    ) -> None:
+        """Calls callback(root) when drilling changes, including Python
+        assignments; with ``panel``, of that subplot's tree (see
+        ``panel_drill_roots``)."""
+        self._listen(self._key("drill", panel, "widget.on_drill"), callback, remove)
 
-    def on_item_move(self, callback: Callable[[ItemPositions], Any], remove: bool = False) -> None:
-        """Calls callback(positions) with all overrides after a move or reset."""
-        self._listen("itemMove", callback, remove)
+    def on_item_move(
+        self,
+        callback: Callable[[ItemPositions], Any],
+        remove: bool = False,
+        *,
+        panel: str | None = None,
+    ) -> None:
+        """Calls callback(positions) with all overrides after a move or reset;
+        with ``panel``, of that subplot's network (see ``panel_item_positions``)."""
+        self._listen(self._key("itemMove", panel, "widget.on_item_move"), callback, remove)
+
+    def _key(self, event: str, panel: str | None, name: str) -> StateKey:
+        """The key of the state a callback hears of: the chart's own, or the
+        subplot `panel` names; raises, naming `name`, for one of neither."""
+        if panel is None:
+            if event == "viewport":
+                self._own_view(name)
+                return (event, "")
+            what = "drill_root" if event == "drill" else "item_positions"
+            self._own(event, f"widget.{what}")
+            return (event, "")
+        panels = self._panels(event, name)
+        if panel not in panels:
+            listed = ", ".join(repr(p) for p in panels) or "none"
+            raise ValueError(
+                f"{name} panel: no panel {panel!r} of its kind; the panels are {listed}"
+            )
+        return (event, panel)
 
     def on_hover(self, callback: Callable[[Inspection | None], Any], remove: bool = False) -> None:
         """Calls ``callback(inspection)`` when the data under the pointer changes;
@@ -374,14 +539,23 @@ class ChartWidget(anywidget.AnyWidget):
                     selection = {**selection, "rows": len(buffers)}
                     buffers = [*buffers, *extra]
                 held.append({"table": name, "channel": channel, "selection": selection})
+            own = {
+                event: self._states.get((event, ""), {} if event == "itemMove" else None)
+                for event in _STATE_KEYS
+            }
+            panels: dict[str, dict[str, Any]] = {}
+            for (event, panel), state in self._states.items():
+                if panel:
+                    panels.setdefault(event, {})[panel] = state
             return {
                 "revision": self._revision,
                 "spec": spec,
                 "buffers": buffers,
-                "selection": self._states["select"],
-                "viewport": self._states["viewport"],
-                "drill_root": self._states["drill"],
-                "item_positions": self._states["itemMove"],
+                "selection": own["select"],
+                "viewport": own["viewport"],
+                "drill_root": own["drill"],
+                "item_positions": own["itemMove"],
+                "panel_states": panels,
                 # Python numbers a table's rows from its first since it was last
                 # replaced: how many have dropped since, and how many replaces.
                 "rows": {
@@ -405,17 +579,18 @@ class ChartWidget(anywidget.AnyWidget):
         self._revision += 1
         self.send({**content, "revision": self._revision}, buffers)
 
-    def _set(self, event: str, payload: dict[str, Any] | None) -> None:
+    def _set(self, key: StateKey, payload: dict[str, Any] | None) -> None:
         with self._lock:
-            changed = self._change(event, payload, None)
+            changed = self._change(key, payload, None)
         if changed:
-            self._callbacks[event](_decoded(event, payload))
+            self._callbacks[key](_decoded(key[0], payload))
 
-    def _change(self, event: str, payload: dict[str, Any] | None, origin: str | None) -> bool:
+    def _change(self, key: StateKey, payload: dict[str, Any] | None, origin: str | None) -> bool:
         """Records interaction state and sends it to every browser, unless its
         values are unchanged. Called with the lock held; the browser it came from
         (`origin`) ignores it."""
-        stored = self._states[event]
+        event, panel = key
+        stored = self._states[key]
         same = payload == stored if event in ("drill", "itemMove") else same_values(payload, stored)
         if same:
             if event in ("drill", "itemMove"):
@@ -427,17 +602,28 @@ class ChartWidget(anywidget.AnyWidget):
                 kept = (
                     {} if stored is None else {k: v for k, v in stored.items() if k == "categories"}
                 )
-                self._states[event] = {**kept, **payload}
+                self._states[key] = {**kept, **payload}
             return False
-        self._states[event] = payload
-        message = {"type": event, _STATE_KEYS[event]: payload}
+        self._states[key] = payload
+        message = {
+            "type": event,
+            _STATE_KEYS[event]: payload,
+            **({"panel": panel} if panel else {}),
+        }
         self._push(({**message, "origin": origin} if origin else message, []))
-        self._state_changes[event] = (origin, self._revision)
+        self._state_changes[key] = (origin, self._revision)
         return True
 
-    def _listen(self, event: Event, callback: Callable[..., Any], remove: bool) -> None:
-        self._callbacks[event].register_callback(callback, remove=remove)
-        self._listening = [name for name, calls in self._callbacks.items() if calls.callbacks]
+    def _listen(self, name: str | StateKey, callback: Callable[..., Any], remove: bool) -> None:
+        self._callbacks[name].register_callback(callback, remove=remove)
+        # The browser sends the events Python listens for (hover, clicks, the camera).
+        self._listening = list(
+            dict.fromkeys(
+                key[0] if isinstance(key, tuple) else key
+                for key, calls in self._callbacks.items()
+                if calls.callbacks
+            )
+        )
 
     def _receive(self, _widget: Any, content: dict[str, Any], buffers: list[Any]) -> None:
         kind = content.get("type")
@@ -450,6 +636,11 @@ class ChartWidget(anywidget.AnyWidget):
             # A browser that missed an update.
             self.send_state("_chart")
         elif kind in _STATE_KEYS:
+            panel = content.get("panel", "") if kind in _PANEL_EVENTS else ""
+            key = (kind, panel)
+            # A state the chart has (a subplot's tree, network, or map's, say).
+            if key not in self._states:
+                return
             try:
                 payload = checked(kind, content.get(_STATE_KEYS[kind]))
             except ValueError:
@@ -457,11 +648,11 @@ class ChartWidget(anywidget.AnyWidget):
                 return
             origin = content.get("origin")
             with self._lock:
-                changer, revision = self._state_changes[kind]
+                changer, revision = self._state_changes[key]
                 stale = changer != origin and revision > content.get("revision", 0)
-                changed = not stale and self._change(kind, payload, origin)
+                changed = not stale and self._change(key, payload, origin)
             if changed:
-                self._callbacks[kind](_decoded(kind, payload))
+                self._callbacks[key](_decoded(kind, payload))
         elif kind in ("hover", "click"):
             inspection = decode_inspection(content.get("inspection"))
             if kind == "hover" or inspection is not None:
@@ -530,3 +721,31 @@ def _decoded(
     if event == "itemMove":
         return decode_item_positions(payload)
     return decode_selection(payload) if event == "select" else decode_viewport(payload)
+
+
+def _plane_view(value: Viewport | Range | None, name: str) -> dict[str, Any]:
+    """A map's or network's view set from Python (with `name`, as messages
+    name it), as the browser takes it: finite x and y ranges in its plane's
+    units, and no right y."""
+    payload = encode_viewport(value)
+    view = value if value is None or isinstance(value, Viewport) else Viewport(x=value)
+    if view is None:
+        return payload
+    if view.y_right is not None:
+        raise ValueError(f"{name}: a map or network has no right y axis; drop y_right")
+    for axis, ends in (("x", view.x), ("y", view.y)):
+        if ends is not None and not all(_plane_number(end) for end in ends):
+            raise ValueError(
+                f"{name} {axis}: expected finite numbers in the plane's units; "
+                f"received {shown(ends)}"
+            )
+    return payload
+
+
+def _plane_number(value: Any) -> bool:
+    """Whether a view's end is a finite number (not a time, a label, or a bool)."""
+    return (
+        isinstance(value, (int, float, np.integer, np.floating))
+        and not isinstance(value, (bool, np.bool_))
+        and math.isfinite(value)
+    )

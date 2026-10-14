@@ -97,6 +97,13 @@ interface GeoPointStyle<S extends Schema> {
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
   tooltip?: MarkTooltip<S>;
   id?: string;
+  /**
+   * With the chart's `facet`, "repeat" draws all the layer's rows in every
+   * panel (a base map) instead of splitting them by the facet field.
+   */
+  facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel of the map: layers naming one panel are one map. */
+  panel?: string;
 }
 
 const RADIUS = 4;
@@ -196,8 +203,13 @@ export class GeoPointMark implements GeoLayer {
     this.reach = this.#largest + (spec.strokeWidth ?? RING) / 2;
   }
 
-  join(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark {
-    return joinLayers(marks, config.projection);
+  join(
+    marks: readonly LayoutMark[],
+    config: ChartConfig,
+    indices?: readonly number[],
+    panel?: string,
+  ): LayoutMark {
+    return joinLayers(marks, config.projection, indices, panel);
   }
 
   /** Charts draw maps' layers through `join`; drawn alone, a layer takes the default projection. */
@@ -292,10 +304,10 @@ export class GeoPointMark implements GeoLayer {
     return [ramps, keys];
   }
 
-  extent(into: GeoExtent): void {
+  extent(into: GeoExtent, rows?: Uint32Array): void {
     const lon = this.table.numbers(this.spec.longitude as never);
     const lat = this.table.numbers(this.spec.latitude as never);
-    for (let row = 0; row < lon.length; row++) extendExtent(into, lon[row]!, lat[row]!);
+    for (const row of rows ?? lon.keys()) extendExtent(into, lon[row]!, lat[row]!);
   }
 
   /** Plane positions of every row, NaN for rows off the map, and their box. */
@@ -325,8 +337,21 @@ export class GeoPointMark implements GeoLayer {
     return this.#projected;
   }
 
-  box(plan: ProjectionPlan): Float64Array | undefined {
-    return this.#project(plan).box;
+  box(plan: ProjectionPlan, rows?: Uint32Array): Float64Array | undefined {
+    const { xy, box } = this.#project(plan);
+    if (!rows) return box;
+    const of = new Float64Array([Infinity, Infinity, -Infinity, -Infinity]);
+    for (const row of rows) {
+      const x = xy[row * 2]!;
+      const y = xy[row * 2 + 1]!;
+      // Rows off the map have no place.
+      if (Number.isNaN(x)) continue;
+      of[0] = Math.min(of[0]!, x);
+      of[1] = Math.min(of[1]!, y);
+      of[2] = Math.max(of[2]!, x);
+      of[3] = Math.max(of[3]!, y);
+    }
+    return of[0]! <= of[2]! ? of : undefined;
   }
 
   place(frame: MapFrame): LayoutResult {
@@ -357,6 +382,9 @@ export class GeoPointMark implements GeoLayer {
     const fills: string[] = categories ? [...categoryColors(theme)] : [];
     // With a number `color` but no color value at all, no point has one to draw.
     const drawable = this.#toneField === undefined || scale !== undefined;
+    // In a facet panel, its rows only.
+    const inPanel = frame.rows && new Uint8Array(table.length);
+    for (const row of frame.rows ?? []) inPanel![row] = 1;
     for (const group of drawable ? this.#groups() : []) {
       const key = groupKey(id, group.category);
       if (hidden.has(key)) continue;
@@ -368,6 +396,7 @@ export class GeoPointMark implements GeoLayer {
       }
       const all = group.rows ?? Uint32Array.from({ length: table.length }, (_, i) => i);
       for (const row of all) {
+        if (inPanel && !inPanel[row]) continue;
         const x = t.x0 + t.k * xy[row * 2]!;
         const y = t.y0 - t.k * xy[row * 2 + 1]!;
         const r = radiusOf(row);
@@ -700,6 +729,8 @@ export function geopoint<S extends Schema>(
       "strokeWidth",
       "label",
       "id",
+      "facet",
+      "panel",
     ]),
     ...(options.radiusRange && {
       radiusRange: [options.radiusRange[0], options.radiusRange[1]] as const,

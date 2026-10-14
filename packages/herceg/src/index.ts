@@ -85,6 +85,7 @@ export type {
   AxisTarget,
   Chart,
   InspectOptions,
+  ItemPositions,
   LegendEntry,
   PanelInfo,
 } from "./dom/handle.ts";

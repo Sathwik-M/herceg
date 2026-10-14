@@ -60,6 +60,18 @@ export interface Brushed {
   readonly lasso: readonly (readonly [number, number])[] | null;
 }
 
+/**
+ * The panels a selection belongs to: those sharing the x scale `x` names
+ * ("" for one every panel shares), or with `plane`, those of a map's or a
+ * network's lasso, drawn on the plane of the state `x` names (see
+ * `ItemViews`); and their keys.
+ */
+export interface SelectionOwner {
+  readonly x: string;
+  readonly panels: readonly string[];
+  readonly plane?: true;
+}
+
 /** Marks whose rows a chart selects: those drawing rows along x and y, and rugs' ticks. */
 const SELECTS = new Set([
   "line",
@@ -397,25 +409,34 @@ function rowsInRanges(parts: readonly Drawn[], selection: Brushed, out: number[]
 }
 
 /**
- * What a brush (a range, a rectangle, or a lasso) in the panels `keys`
- * selects of `table`'s rows; undefined when no mark of the table is drawn
- * in them, so its selection stays as it is.
+ * What a brush (a range, a rectangle, or a lasso) of `owner` (every
+ * panel's, for null) selects of `table`'s rows; undefined when no mark of
+ * the table is drawn in its panels, so its selection stays as it is.
  */
 export function brushedRows(
   model: ChartModel,
   table: Table,
   selection: Brushed,
-  keys: readonly string[] | null,
+  owner: SelectionOwner | null,
 ): DataSelection | undefined {
-  const layout = layoutOf(model);
-  if (layout) {
-    // A lasso is drawn on the map's plane, whose scales give its pixels.
-    const plane = layout.plane;
-    if (!selection.lasso || !plane) return undefined;
-    const outline = selection.lasso.map(([x, y]) => [plane.x.map(x), plane.y.map(y)] as const);
-    const rows = layout.lassoed?.(outline, table);
-    return rows && selectRows(new RowSet(table).addAll(rows));
+  // A map's or network's lasso is on its plane: the rows each panel draws inside it.
+  const planes = owner?.plane ? owner.panels : !owner && model.layout ? [""] : undefined;
+  if (planes) {
+    if (!selection.lasso) return undefined;
+    const rows = new RowSet(table);
+    let drawn = false;
+    for (const key of planes) {
+      const layout = model.items?.result(key);
+      const plane = layout?.plane;
+      if (!plane) continue;
+      const outline = selection.lasso.map(([x, y]) => [plane.x.map(x), plane.y.map(y)] as const);
+      const found = layout.lassoed?.(outline, table);
+      if (found) rows.addAll(found);
+      drawn ||= found !== undefined;
+    }
+    return drawn ? selectRows(rows) : undefined;
   }
+  const keys = owner?.panels ?? null;
   const panels = model.panels().filter(({ key }) => !keys || keys.includes(key));
   // Summaries' rows are not where their statistics are drawn: lassos, and
   // brushes along their statistics, select none of them (charts refuse
@@ -589,9 +610,13 @@ export interface PointRows {
   rows: Uint32Array;
 }
 
-/** What the layout mark of a chart of one drew, which says what its items stand for. */
-function layoutOf(model: ChartModel): LayoutResult | undefined {
-  return model.layout ? model.items?.result() : undefined;
+/**
+ * What a layout mark drew in the panel holding a pixel (anywhere in a chart
+ * of one), which says what its items stand for.
+ */
+function layoutAt(model: ChartModel, px: number, py: number): LayoutResult | undefined {
+  if (model.layout) return model.items?.result();
+  return model.items?.panels.find(({ plot }) => contains(plot, px, py))?.result;
 }
 
 /** The rows of one of `tables` that a layout mark's item stands for, or null for none of theirs. */
@@ -615,7 +640,7 @@ export function clickedRows(
   px: number,
   py: number,
 ): PointRows | null | undefined {
-  const layout = layoutOf(model);
+  const layout = layoutAt(model, px, py);
   if (layout) {
     const inspection = model.inspect(px, py);
     return inspection?.axis === "item" ? itemRows(layout, tables, inspection.key) : undefined;
@@ -785,7 +810,8 @@ export function cursorRows(
   tables: ReadonlySet<Table>,
   cursor: { panel: string; key: string; position: number },
 ): PointRows | undefined {
-  const layout = layoutOf(model);
+  // A layout mark's panel: its item's rows there.
+  const layout = model.items?.panels.find(({ key }) => key === cursor.panel)?.result;
   if (layout) return itemRows(layout, tables, cursor.key) ?? undefined;
   const panel = model.panels().find(({ key }) => key === cursor.panel);
   const drawn = panel && drawnIn(model, [panel]).find((d) => d.series.key === cursor.key);

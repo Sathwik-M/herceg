@@ -44,6 +44,19 @@ export interface LayoutFrame {
    * the rows with the panel's values. All of them when absent.
    */
   rows?: Uint32Array | undefined;
+  /**
+   * Drawn in a panel of facets or subplots, beside others that may draw the
+   * same data: a map then projects at a scale level, as when zoomed, so that
+   * panels share their projected shapes (see `zoomedTransform`).
+   */
+  inPanel?: boolean | undefined;
+  /** For a mark drawing several layers as one (a map's): each layer's `rows`. */
+  layerRows?: readonly (Uint32Array | undefined)[] | undefined;
+  /**
+   * For a map in facet panels: each layer's rows in any panel (all of them,
+   * for a layer that repeats), which every panel's map is fitted to.
+   */
+  fitRows?: readonly (Uint32Array | undefined)[] | undefined;
   theme: Theme;
   locale: string | undefined;
   measure: MeasureText;
@@ -172,9 +185,22 @@ export interface LayoutMark extends ChartMark {
   /**
    * Marks that can share a chart (maps' layers) give the one mark that draws
    * a chart's layout marks together, with the chart's options (a map's
-   * projection); it throws for marks it cannot draw with.
+   * projection): the chart's marks at `indices` (all of them by default), in
+   * the subplot `panel` names; it throws for marks it cannot draw with.
    */
-  join?(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark;
+  join?(
+    marks: readonly LayoutMark[],
+    config: ChartConfig,
+    indices?: readonly number[],
+    panel?: string,
+  ): LayoutMark;
+  /**
+   * For a mark drawing several of the chart's marks as one (a map's
+   * layers): those marks, each splitting its own table's rows into facet
+   * panels unless it repeats, and each one's index among the chart's marks.
+   */
+  readonly layers?: readonly LayoutMark[];
+  readonly indices?: readonly number[];
   /**
    * Whether a chart of the mark alone selects its rows (`rowSelection`):
    * what its items stand for (`LayoutResult.rowsOf`), and how it draws

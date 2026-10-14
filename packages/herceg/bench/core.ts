@@ -13,6 +13,7 @@ import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
 import { type BarMark, bar } from "../src/marks/bar.ts";
+import { geopoint } from "../src/marks/geopoint.ts";
 import { geoshape } from "../src/marks/geoshape.ts";
 import { graph } from "../src/marks/graph.ts";
 import { line } from "../src/marks/line.ts";
@@ -30,6 +31,7 @@ import { UnionStack } from "../src/marks/union-stack.ts";
 import { facet } from "../src/model/facet.ts";
 import { ChartModel } from "../src/model/model.ts";
 import { overviewBars } from "../src/model/navigator-bars.ts";
+import { panels } from "../src/model/panels.ts";
 import { timeBreaks } from "../src/scale/breaks.ts";
 import { LinearScale } from "../src/scale/scale.ts";
 
@@ -465,8 +467,7 @@ const showMap = (zoom: number, shift: number) => {
   const [y0, y1] = planeY.domain;
   const [cx, cy] = [(x0 + x1) / 2 + (x1 - x0) * shift, (y0 + y1) / 2];
   const [w, h] = [(x1 - x0) / zoom / 2, (y1 - y0) / zoom / 2];
-  map.setViewport([cx - w, cx + w]);
-  map.setYViewport({ y: [cy - h, cy + h], yRight: null });
+  map.items!.setView({ x: [cx - w, cx + w], y: [cy - h, cy + h] }, undefined);
   return map.scene(estimateText);
 };
 let panned = 0;
@@ -506,6 +507,81 @@ measure("treemap: drill into a region and back out, 10,000 leaves", () => {
   tree10k.scene(estimateText);
   tree10k.items!.setDrillRoot(null);
   tree10k.scene(estimateText);
+});
+
+// The same leaves in 12 facet panels by month, which share the drill root:
+// each region has rows in 3 months, so a drill leaves 9 panels empty.
+const monthly = table({
+  month: Array.from({ length: leafRows }, (_, i) => `month ${i % 12}`),
+  region: Array.from({ length: leafRows }, (_, i) => `region ${i % 20}`),
+  country: Array.from({ length: leafRows }, (_, i) => `country ${i % 1000}`),
+  city: Array.from({ length: leafRows }, (_, i) => `city ${i}`),
+  revenue: Float64Array.from({ length: leafRows }, (_, i) => 1 + (i % 13)),
+});
+const facetTrees = new ChartModel({
+  marks: [treemap(monthly, { path: ["region", "country", "city"], value: "revenue" })],
+  facet: facet("month", { columns: 4 }),
+  interaction: { zoom: true },
+});
+facetTrees.setSize(1600, 1200, 1);
+facetTrees.scene(estimateText);
+measure("treemap: drill 12 facet panels of 10,000 leaves", () => {
+  facetTrees.items!.setDrillRoot([`region ${drilled++ % 20}`]);
+  facetTrees.scene(estimateText);
+});
+measure("treemap: redraw 12 facet panels drilled", () => facetTrees.scene(estimateText));
+
+// Six subplots of the 200 regions, one panned while the other five keep their view.
+const sixMaps = new ChartModel({
+  marks: ["a", "b", "c", "d", "e", "f"].map((panel) =>
+    geoshape(regions, { color: "value", panel }),
+  ),
+  panels: panels(
+    ["a", "b", "c", "d", "e", "f"].map((id) => ({ id })),
+    { columns: 3 },
+  ),
+});
+sixMaps.setSize(1800, 900, 1);
+sixMaps.scene(estimateText);
+const sixPlane = sixMaps.items!.result("a")!.plane!;
+let sixPanned = 0;
+measure("maps: pan one of 6 subplots of 200 regions, zoomed 2x", () => {
+  const [x0, x1] = sixPlane.x.domain;
+  const [y0, y1] = sixPlane.y.domain;
+  const shift = ((sixPanned++ % 10) / 100) * (x1 - x0);
+  const [w, h] = [(x1 - x0) / 4, (y1 - y0) / 4];
+  const [cx, cy] = [(x0 + x1) / 2 + shift, (y0 + y1) / 2];
+  sixMaps.items!.setView({ x: [cx - w, cx + w], y: [cy - h, cy + h] }, "a");
+  sixMaps.scene(estimateText);
+});
+// Six facet panels of a base map of the 200 regions, under a city per region
+// split by six values, sharing one view: a pan moves them all.
+const sixFacets = new ChartModel({
+  marks: [
+    geoshape(regions, { color: "value", facet: "repeat" }),
+    geopoint(
+      table({
+        lon: Float64Array.from({ length: 200 }, (_, i) => -171 + (i % 20) * 18),
+        lat: Float64Array.from({ length: 200 }, (_, i) => -54 + Math.floor(i / 20) * 12),
+        group: Array.from({ length: 200 }, (_, i) => `group ${i % 6}`),
+      }),
+      { longitude: "lon", latitude: "lat" },
+    ),
+  ],
+  facet: facet("group", { columns: 3 }),
+});
+sixFacets.setSize(1800, 900, 1);
+sixFacets.scene(estimateText);
+const facetPlane = sixFacets.items!.result("group 0")!.plane!;
+let facetPanned = 0;
+measure("maps: pan 6 facet panels of 200 regions, zoomed 2x", () => {
+  const [x0, x1] = facetPlane.x.domain;
+  const [y0, y1] = facetPlane.y.domain;
+  const shift = ((facetPanned++ % 10) / 100) * (x1 - x0);
+  const [w, h] = [(x1 - x0) / 4, (y1 - y0) / 4];
+  const [cx, cy] = [(x0 + x1) / 2 + shift, (y0 + y1) / 2];
+  sixFacets.items!.setView({ x: [cx - w, cx + w], y: [cy - h, cy + h] }, undefined);
+  sixFacets.scene(estimateText);
 });
 
 let seed = 7;

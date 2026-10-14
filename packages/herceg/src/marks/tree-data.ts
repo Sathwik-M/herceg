@@ -59,7 +59,8 @@ export function treeFormError(
 /**
  * A tree as a panel draws it: a chart's one panel the table's whole tree, a
  * facet panel the part its rows give a value (see `TreeData.view`), and a
- * chart drilled into a node the subtree under it (see `TreeData.drilled`).
+ * chart drilled into a node the subtree under it, of those rows in a facet
+ * panel (see `TreeData.drilled`).
  */
 export interface TreeView {
   tree: Hierarchy;
@@ -76,8 +77,10 @@ export interface TreeView {
   tops: readonly { node: number; label: string; legend: string }[];
   /** In a drilled view, the names of the path to its root, which its items' keys begin with. */
   prefix: readonly string[];
-  /** In a drilled view, each node's node in the whole tree. */
+  /** Each node's node in the whole tree; undefined for the whole tree. */
   nodes?: Int32Array | undefined;
+  /** The rows the view's values are of (a facet panel's), ascending; all of them when undefined. */
+  rows?: Uint32Array | undefined;
 }
 
 /** A node on a drilled tree's path: its item key and its name. */
@@ -131,9 +134,9 @@ const DRILL: LayoutControls = {
   hint: "Enter opens the node read, Backspace goes up a level, and 0 shows the whole tree.",
 };
 
-/** A tree's controls: drilling, in a chart of the tree alone, when `interaction.zoom` is on. */
+/** A tree's controls: drilling, when `interaction.zoom` is on. */
 export function drillControls(config: ChartConfig): LayoutControls | undefined {
-  return config.interaction?.zoom && !config.facet && !config.panels ? DRILL : undefined;
+  return config.interaction?.zoom ? DRILL : undefined;
 }
 
 export class TreeData {
@@ -146,6 +149,11 @@ export class TreeData {
   readonly #parts = new RowsCache<TreeView>();
   /** The subtree last drilled into, for the table version and node of the whole tree. */
   #drilled: { version: number; root: number; view: TreeView } | undefined;
+  /** The subtree each facet panel's rows last drilled into, by the rows. */
+  readonly #drilledParts = new WeakMap<
+    Uint32Array,
+    { version: number; root: number; view: TreeView }
+  >();
 
   constructor(table: Table, fields: TreeFields, role: string) {
     const problem = treeFormError(fields, role);
@@ -193,33 +201,46 @@ export class TreeData {
     if (!rows) return whole;
     return this.#parts.get(table, rows, () => {
       const totals = subtreeValues(whole.tree, this.#weights(), rows);
-      const { tree, values, index } = pruneHierarchy(whole.tree, totals);
+      const { tree, values, index, nodes } = pruneHierarchy(whole.tree, totals);
       const tops = whole.tops.flatMap((top) =>
         index[top.node]! > 0 ? [{ ...top, node: index[top.node]! }] : [],
       );
-      return { tree, values, branch: branchOf(tree), tops, prefix: [] };
+      return { tree, values, branch: branchOf(tree), tops, prefix: [], nodes, rows };
     });
   }
 
   /**
    * The subtree under `root` (a node of the whole tree), laid out as a tree
    * of its own: its nodes keep their keys and the color and legend entry of
-   * the top-level node they are under.
+   * the top-level node they are under. With `rows` (a facet panel's), the
+   * part of it those rows give a value: only its root where they give none.
    */
-  drilled(root: number): TreeView {
+  drilled(root: number, rows?: Uint32Array): TreeView {
     const whole = this.view();
     const version = this.table.version;
-    if (this.#drilled?.version === version && this.#drilled.root === root)
-      return this.#drilled.view;
-    const { tree, values, nodes } = subtreeOf(whole.tree, whole.values, root);
+    const kept = rows ? this.#drilledParts.get(rows) : this.#drilled;
+    if (kept?.version === version && kept.root === root) return kept.view;
+    let { tree, values, nodes } = subtreeOf(
+      whole.tree,
+      rows ? subtreeValues(whole.tree, this.#weights(), rows) : whole.values,
+      root,
+    );
+    if (rows) {
+      const part = pruneHierarchy(tree, values);
+      const under = nodes;
+      ({ tree, values } = part);
+      nodes = Int32Array.from(part.nodes, (node) => under[node]!);
+    }
     const legend = whole.tree.names[whole.branch[root]!]!;
+    // In the order of the whole tree's values, so every panel lists them alike.
     const tops = Array.from(tree.children.subarray(tree.childStart[0]!, tree.childStart[1]!))
       .filter((node) => values[node]! > 0)
-      .sort((a, b) => values[b]! - values[a]! || a - b)
+      .sort((a, b) => whole.values[nodes[b]!]! - whole.values[nodes[a]!]! || a - b)
       .map((node) => ({ node, label: tree.names[node]!, legend }));
     const prefix = pathOf(whole.tree, root);
-    const view = { tree, values, branch: branchOf(tree), tops, prefix, nodes };
-    this.#drilled = { version, root, view };
+    const view = { tree, values, branch: branchOf(tree), tops, prefix, nodes, rows };
+    if (rows) this.#drilledParts.set(rows, { version, root, view });
+    else this.#drilled = { version, root, view };
     return view;
   }
 
@@ -277,7 +298,7 @@ export class TreeData {
     if (!("path" in this.encoding)) {
       if (names.length !== 2) return -1;
       // A drilled view's root is a node too, with its name.
-      return view.nodes && tree.names[0] === names[1] ? 0 : tree.names.indexOf(names[1], 1);
+      return prefix.length > 0 && tree.names[0] === names[1] ? 0 : tree.names.indexOf(names[1], 1);
     }
     // A drilled view's keys go through its root.
     if (names.length <= prefix.length || prefix.some((name, i) => names[i + 1] !== name)) return -1;
@@ -300,10 +321,11 @@ export class TreeData {
   }
 
   /**
-   * What a tree drilled into `root` (0 for none) of the whole tree tells the
-   * chart: its key, its path, and the breadcrumbs `crumbs` drew.
+   * What a tree drilled into `root` (0 for none) of the whole tree, drawn as
+   * `view`, tells the chart: its key, its path, the breadcrumbs `crumbs`
+   * drew, and which nodes open in the view.
    */
-  drill(id: string | number, root: number, crumbs: Breadcrumbs["crumbs"]): Drill {
+  drill(id: string | number, root: number, view: TreeView, crumbs: Breadcrumbs["crumbs"]): Drill {
     const whole = this.view();
     const pathTo = (node: number): DrillStep[] => {
       const steps: DrillStep[] = [];
@@ -325,11 +347,11 @@ export class TreeData {
         return at > 0 ? pathTo(at) : [];
       },
       opens: (key) => {
-        const at = this.nodeOf(id, whole, key);
-        const { childStart, children } = whole.tree;
+        const at = this.nodeOf(id, view, key);
+        const { childStart, children } = view.tree;
         if (at <= 0) return false;
         for (let c = childStart[at]!; c < childStart[at + 1]!; c++)
-          if (whole.values[children[c]!]! > 0) return true;
+          if (view.values[children[c]!]! > 0) return true;
         return false;
       },
     };
@@ -437,7 +459,7 @@ export class TreeData {
 
   /**
    * The rows of the node of `view` keyed `key` stands for: its own and every
-   * node's under it; undefined for a key of no node.
+   * node's under it, of the view's rows; undefined for a key of no node.
    */
   rowsOf(id: string | number, view: TreeView, key: string): number[] | undefined {
     const node = this.nodeOf(id, view, key);
@@ -446,8 +468,9 @@ export class TreeData {
     const under = underNode(whole.tree, view.nodes?.[node] ?? node);
     const { nodeOfRow } = whole.tree;
     const rows: number[] = [];
-    for (let row = 0; row < nodeOfRow.length; row++)
+    eachRow(view, nodeOfRow.length, (row) => {
       if (nodeOfRow[row]! >= 0 && under[nodeOfRow[row]!]) rows.push(row);
+    });
     return rows;
   }
 
@@ -461,12 +484,12 @@ export class TreeData {
     const { nodeOfRow } = tree;
     const hits = new Int32Array(tree.size);
     const rows = new Int32Array(tree.size);
-    for (let row = 0; row < nodeOfRow.length; row++) {
+    eachRow(view, nodeOfRow.length, (row) => {
       const node = nodeOfRow[row]!;
-      if (node < 0) continue;
+      if (node < 0) return;
       rows[node]!++;
       if (selected[row]) hits[node]!++;
-    }
+    });
     for (let at = tree.size - 1; at > 0; at--) {
       const node = tree.order[at]!;
       hits[tree.parent[node]!]! += hits[node]!;
@@ -545,6 +568,12 @@ export class TreeData {
     }
     return count;
   }
+}
+
+/** Calls `each` with every row of the table `view` counts: its rows, or all `length` of them. */
+function eachRow(view: TreeView, length: number, each: (row: number) => void): void {
+  if (view.rows) for (const row of view.rows) each(row);
+  else for (let row = 0; row < length; row++) each(row);
 }
 
 /** The node reached from the root down children named `names`, in order; -1 when one is missing. */

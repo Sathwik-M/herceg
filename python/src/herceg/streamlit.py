@@ -69,10 +69,19 @@ class ChartState:
     #: ``hg.SelectionBinding``): rows by position in the data, or a brush's
     #: condition; None until the user selects, and once the data changes.
     row_selection: RowSelection | None = None
-    #: Item keys from the top level through the root, or None for the whole tree.
+    #: Item keys from the top level through the root, or None for the whole tree:
+    #: of the chart's treemap or sunburst (every facet panel's, which share one).
     drill_root: DrillRoot | None = None
     #: Manual network-node positions in layout units; cleared when its data changes.
+    #: Of the chart's network (every facet panel's, which share one layout).
     item_positions: ItemPositions = field(default_factory=dict)
+    #: Each treemap or sunburst subplot's drill root, by panel id.
+    panel_drill_roots: dict[str, DrillRoot | None] = field(default_factory=dict)
+    #: Each network subplot's manual node positions, by panel id.
+    panel_item_positions: dict[str, ItemPositions] = field(default_factory=dict)
+    #: Each map or network subplot's view, by panel id, in its plane's units
+    #: (``viewport`` is the chart's).
+    panel_viewports: dict[str, Viewport] = field(default_factory=dict)
 
 
 def chart(
@@ -182,16 +191,16 @@ _VALUES = {
 
 
 def _item_epoch(spec: dict[str, Any], epoch: str) -> str | None:
-    """Moves belong to one network's data and layout fields, independent of styles."""
-    marks = spec.get("marks", [])
-    if len(marks) != 1 or marks[0]["type"] != "graph" or "facet" in spec or "panels" in spec:
+    """Moves belong to the networks' data and layout fields (and the facet or
+    panels laying them out), independent of styles; None without networks."""
+    graphs = [mark for mark in spec.get("marks", []) if mark["type"] == "graph"]
+    if not graphs:
         return None
-    mark = marks[0]
-    fields = [
-        mark.get(name) for name in ("id", "data", "nodes", "source", "target", "value", "node")
-    ]
-    fields.append(mark.get("directed", False))
-    return hashlib.sha256(json.dumps([epoch, fields], sort_keys=True).encode()).hexdigest()[:16]
+    names = ("id", "data", "nodes", "source", "target", "value", "node", "panel")
+    fields = [[mark.get(name) for name in names] + [mark.get("directed", False)] for mark in graphs]
+    layout = [spec.get("facet"), [panel["id"] for panel in spec.get("panels", [])]]
+    digest = hashlib.sha256(json.dumps([epoch, fields, layout], sort_keys=True).encode())
+    return digest.hexdigest()[:16]
 
 
 def _payload(
@@ -241,28 +250,38 @@ def _state(
         selection = decode_selection(checked("select", result.get("selection")))
     except ValueError:
         selection = None
-    try:
-        root = decode_drill_root(checked("drill", result.get("drill_root")))
-    except ValueError:
-        root = None
+    drills = result.get("drill_root")
+    drills = drills if isinstance(drills, dict) else {}
+    root = _decoded(decode_drill_root, "drill", drills.get("root"), None)
+    panel_roots = {
+        panel: _decoded(decode_drill_root, "drill", payload, None)
+        for panel, payload in _panels(drills.get("panels")).items()
+    }
     positions = result.get("item_positions")
     moved: ItemPositions = {}
+    panel_moved: dict[str, ItemPositions] = {}
     if (
         isinstance(positions, dict)
         and item_epoch is not None
         and positions.get("epoch") == item_epoch
     ):
-        try:
-            moved = decode_item_positions(checked("itemMove", positions.get("positions")))
-        except ValueError:
-            pass
+        moved = _decoded(decode_item_positions, "itemMove", positions.get("positions"), {})
+        panel_moved = {
+            panel: _decoded(decode_item_positions, "itemMove", payload, {})
+            for panel, payload in _panels(positions.get("panels")).items()
+        }
     view = result.get("viewport")
     viewport = None
+    panel_views: dict[str, Viewport] = {}
     if not isinstance(view, dict) or "epoch" not in view or view.get("epoch") == item_epoch:
-        try:
-            viewport = decode_viewport(checked("viewport", view)) if view is not None else None
-        except ValueError:
-            pass
+        own = view if isinstance(view, dict) and "x" in view else None
+        viewport = _decoded(decode_viewport, "viewport", own, None) if own is not None else None
+        panel_views = {
+            panel: _decoded(decode_viewport, "viewport", payload, Viewport())
+            for panel, payload in _panels(
+                view.get("panels") if isinstance(view, dict) else None
+            ).items()
+        }
     return ChartState(
         selection=selection,
         viewport=viewport,
@@ -270,7 +289,25 @@ def _state(
         row_selection=_rows(result.get("rows"), chart, epoch),
         drill_root=root,
         item_positions=moved,
+        panel_drill_roots=panel_roots,
+        panel_item_positions=panel_moved,
+        panel_viewports=panel_views,
     )
+
+
+def _decoded(decode: Callable[[Any], Any], event: str, payload: Any, default: Any) -> Any:
+    """A state from the browser as Python reads it, or `default` for one of another shape."""
+    try:
+        return decode(checked(event, payload))
+    except ValueError:
+        return default
+
+
+def _panels(payload: Any) -> dict[str, Any]:
+    """Subplots' states from the browser, by panel id; none for another shape."""
+    if not isinstance(payload, dict):
+        return {}
+    return {panel: state for panel, state in payload.items() if isinstance(panel, str)}
 
 
 def _rows(payload: Any, chart: Chart | None, epoch: str) -> RowSelection | None:

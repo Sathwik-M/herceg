@@ -764,6 +764,7 @@ const MARKS: MarkChecks = {
       color: field,
       size: field,
       labels: boolean,
+      panel: string,
     },
   },
   pie: {
@@ -944,6 +945,8 @@ const MARKS: MarkChecks = {
       stroke: string,
       strokeWidth: width,
       label: string,
+      facet: repeat,
+      panel: string,
     },
   },
   geopoint: {
@@ -966,6 +969,8 @@ const MARKS: MarkChecks = {
       stroke: string,
       strokeWidth: width,
       label: string,
+      facet: repeat,
+      panel: string,
     },
   },
   heatmap: {

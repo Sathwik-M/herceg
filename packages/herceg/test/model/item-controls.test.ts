@@ -38,16 +38,16 @@ describe("layout controls lifetime", () => {
   it("keeps the newest request through A → B → A, drawing the latest scene and options", async () => {
     const { model, items } = chart();
     const { mount, requests } = deferredLoads();
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     const first = items.controlsLoading;
     model.update(network());
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     const second = items.controlsLoading;
     model.update(tree());
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     const third = items.controlsLoading;
     model.update({ ...tree(), tooltip: false });
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     const scene = model.scene(estimateText);
     items.drawControls(scene);
     expect(requests.map(({ kind }) => kind)).toEqual(["drill", "drag", "drill"]);
@@ -55,7 +55,7 @@ describe("layout controls lifetime", () => {
     const newest = controls();
     requests[2]!.resolve(newest);
     await third;
-    expect(items.controls).toBe(newest);
+    expect(items.controls("drill")).toBe(newest);
     expect(items.controlsLoading).toBeUndefined();
     expect(newest.update).toHaveBeenCalledWith(model.config);
     expect(newest.draw).toHaveBeenCalledWith(scene);
@@ -64,7 +64,7 @@ describe("layout controls lifetime", () => {
     requests[0]!.resolve(obsolete[0]!);
     requests[1]!.resolve(obsolete[1]!);
     await Promise.all([first, second]);
-    expect(items.controls).toBe(newest);
+    expect(items.controls("drill")).toBe(newest);
     for (const old of obsolete) {
       expect(old.dispose).toHaveBeenCalledOnce();
       expect(old.update).not.toHaveBeenCalled();
@@ -75,18 +75,18 @@ describe("layout controls lifetime", () => {
   it("disposes attached controls on disable, and releases an import that finishes after destruction", async () => {
     const { model, items } = chart();
     const { mount, requests } = deferredLoads();
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     const first = items.controlsLoading;
     const attached = controls();
     requests[0]!.resolve(attached);
     await first;
     model.update({ ...tree(), interaction: { zoom: false } });
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     expect(attached.dispose).toHaveBeenCalledOnce();
-    expect(items.controls).toBeUndefined();
+    expect(items.controls("drill")).toBeUndefined();
 
     model.update(tree());
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     const pending = items.controlsLoading;
     items.changed = vi.fn();
     items.disposeControls();
@@ -96,31 +96,31 @@ describe("layout controls lifetime", () => {
     expect(late.dispose).toHaveBeenCalledOnce();
     expect(late.draw).not.toHaveBeenCalled();
     expect(items.controlsLoading).toBeUndefined();
-    expect(items.controls).toBeUndefined();
+    expect(items.controls("drill")).toBeUndefined();
     expect(items.changed).toBeUndefined();
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     expect(requests).toHaveLength(2);
   });
 
   it("settles a failed import and retries when its family is requested again", async () => {
     const { model, items } = chart();
     const { mount, requests } = deferredLoads();
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     const failed = items.controlsLoading;
     requests[0]!.reject(new Error("Unavailable chunk"));
     await failed;
     expect(items.controlsLoading).toBeUndefined();
-    expect(items.controls).toBeNull();
-    items.updateControls(model, mount);
+    expect(items.controls("drill")).toBeNull();
+    items.updateControls(mount);
     expect(requests).toHaveLength(1);
     model.update({ ...tree(), interaction: { zoom: false } });
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     model.update(tree());
-    items.updateControls(model, mount);
+    items.updateControls(mount);
     const retry = items.controlsLoading;
     requests[1]!.resolve(controls());
     await retry;
     expect(requests).toHaveLength(2);
-    expect(items.controls).not.toBeNull();
+    expect(items.controls("drill")).not.toBeNull();
   });
 });

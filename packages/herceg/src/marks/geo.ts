@@ -5,7 +5,10 @@
 // same transform. Items are read layer by layer; the pointer finds the
 // topmost item, trying layers from the last drawn. A chart's viewport, in
 // the plane's units, zooms and pans the map: wheel, drags, and keys move it
-// through map-controls.ts.
+// through map-controls.ts. In facet panels, every layer splits its rows by
+// the facet field (unless it repeats), and every panel's map is fitted to
+// the rows of all of them, so the same view shows the same place in each;
+// in subplots, the layers naming a panel are its map.
 
 import type { Table } from "../data/table.ts";
 import {
@@ -63,10 +66,10 @@ const LASSO: LayoutControls = { kind: "map", hint: "" };
 /** One layer of a map. */
 export interface GeoLayer extends LayoutMark {
   readonly geo: true;
-  /** Marks where the layer's data lies, for projections that place themselves by it. */
-  extent(into: GeoExtent): void;
-  /** The plane box of what the layer draws, for fitting; undefined when it draws nothing. */
-  box(plan: ProjectionPlan): Float64Array | undefined;
+  /** Marks where the layer's data (its `rows`, or all) lies, for projections that place themselves by it. */
+  extent(into: GeoExtent, rows?: Uint32Array): void;
+  /** The plane box of what the layer draws (of its `rows`, or all), for fitting; undefined when it draws nothing. */
+  box(plan: ProjectionPlan, rows?: Uint32Array): Float64Array | undefined;
   /** Pixels the layer draws past its positions (points' radii), kept inside the room. */
   readonly reach: number;
   /** Draws the layer; `frame.id` is the layer's identity among the map's layers. */
@@ -81,12 +84,15 @@ export function isGeoLayer(mark: LayoutMark): mark is GeoLayer {
 
 /**
  * The map a chart's layout marks draw with the chart's projection, when
- * they are all layers of maps; throws for any other mark among them or for
- * repeated ids.
+ * they are all layers of maps: the chart's marks at `indices` (all of them
+ * by default), in the subplot `panel` names, if any; throws for any other
+ * mark among them or for repeated ids.
  */
 export function joinLayers(
   marks: readonly LayoutMark[],
   projection: ProjectionName | ProjectionSpec | undefined,
+  indices: readonly number[] = marks.map((_, i) => i),
+  panel?: string,
 ): GeoMap {
   const other = marks.find((mark) => !isGeoLayer(mark));
   if (other)
@@ -99,7 +105,7 @@ export function joinLayers(
     if (ids.has(spec.id)) throw new Error(`id: "${spec.id}" names two marks`);
     ids.add(spec.id);
   }
-  return new GeoMap(marks as GeoLayer[], projectionSpec(projection));
+  return new GeoMap(marks as GeoLayer[], projectionSpec(projection), indices, panel);
 }
 
 /** The layers of one map, drawn as one layout mark. */
@@ -107,16 +113,25 @@ export class GeoMap implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
   readonly views = ItemViews;
-  readonly spec = { type: "map" } as const;
+  readonly spec: { readonly type: "map"; readonly panel?: string };
   readonly table = undefined;
   readonly otherTables: readonly Table[];
   readonly measure: string;
   readonly layers: readonly GeoLayer[];
+  /** Each layer's index among the chart's marks. */
+  readonly indices: readonly number[];
   readonly projection: ProjectionSpec;
 
-  constructor(layers: readonly GeoLayer[], projection: ProjectionSpec) {
+  constructor(
+    layers: readonly GeoLayer[],
+    projection: ProjectionSpec,
+    indices: readonly number[],
+    panel?: string,
+  ) {
     this.layers = layers;
     this.projection = projection;
+    this.indices = indices;
+    this.spec = panel === undefined ? { type: "map" } : { type: "map", panel };
     this.otherTables = layers.flatMap((layer) => [
       ...(layer.table ? [layer.table] : []),
       ...(layer.otherTables ?? []),
@@ -124,9 +139,9 @@ export class GeoMap implements LayoutMark {
     this.measure = layers[0]?.measure ?? "";
   }
 
-  /** A layer's identity: its `id`, or its place among the layers. */
+  /** A layer's identity: its `id`, or its index among the chart's marks. */
   #id(index: number): string | number {
-    return this.layers[index]!.spec.id ?? index;
+    return this.layers[index]!.spec.id ?? this.indices[index]!;
   }
 
   /** Charts pan and zoom maps with `interaction.zoom` (true or "xy"), and lasso them with a "lasso" brush. */
@@ -150,17 +165,21 @@ export class GeoMap implements LayoutMark {
     return this.layers.flatMap((layer) => legendParts(...layer.scales(theme, locale)));
   }
 
-  /** The projection with its parameters settled; conic ones read where the data lies. */
-  plan(): ProjectionPlan {
+  /**
+   * The projection with its parameters settled; conic ones read where the
+   * data lies (each layer's `fit` rows, or all).
+   */
+  plan(fit?: LayoutFrame["fitRows"]): ProjectionPlan {
     const spec = this.projection;
     const extent = emptyExtent();
     if (spec.type === "conic-equal-area" && typeof spec.fit !== "object")
-      for (const layer of this.layers) layer.extent(extent);
+      for (const [i, layer] of this.layers.entries()) layer.extent(extent, fit?.[i]);
     return planProjection(spec, extent);
   }
 
   draw(frame: LayoutFrame): LayoutResult {
-    const plan = this.plan();
+    const { fitRows, layerRows } = frame;
+    const plan = this.plan(fitRows);
     const { fit } = this.projection;
     let box: ArrayLike<number> | undefined;
     if (fit === "world") box = worldBox(plan);
@@ -170,8 +189,8 @@ export class GeoMap implements LayoutMark {
       if (!(box[0]! <= box[2]!)) box = worldBox(plan);
     } else {
       const union = [Infinity, Infinity, -Infinity, -Infinity];
-      for (const layer of this.layers) {
-        const b = layer.box(plan);
+      for (const [i, layer] of this.layers.entries()) {
+        const b = layer.box(plan, fitRows?.[i]);
         if (!b) continue;
         union[0] = Math.min(union[0]!, b[0]!);
         union[1] = Math.min(union[1]!, b[1]!);
@@ -186,10 +205,12 @@ export class GeoMap implements LayoutMark {
     const { bounds } = frame;
     const fitted = fitTransform(box, bounds, reach + 1, POINT_SPAN);
     const transform = viewed(fitted, bounds, frame.viewport);
-    // The fitted map projects exactly; a zoomed one at a level near its scale.
-    const projected = transform === fitted ? undefined : zoomedTransform(transform, bounds);
+    // The fitted map projects exactly; a zoomed one at a level near its scale,
+    // as do maps in panels, which so share what they project.
+    const projected =
+      transform === fitted && !frame.inPanel ? undefined : zoomedTransform(transform, bounds);
     const results = this.layers.map((layer, i) =>
-      layer.place({ ...frame, id: this.#id(i), plan, transform, projected }),
+      layer.place({ ...frame, id: this.#id(i), rows: layerRows?.[i], plan, transform, projected }),
     );
     /** The plane's ranges across the room, drawn with `t`. */
     const across = (t: Transform) =>

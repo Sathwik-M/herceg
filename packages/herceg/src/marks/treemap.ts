@@ -94,7 +94,7 @@ export class TreemapMark implements LayoutMark {
     // A facet panel draws the part of the tree its rows give a value; a
     // chart drilled into a node, the subtree under it.
     const root = frame.root?.length ? this.#data.rootOf(frame.id, frame.root) : 0;
-    const view = root > 0 ? this.#data.drilled(root) : this.#data.view(frame.rows);
+    const view = root > 0 ? this.#data.drilled(root, frame.rows) : this.#data.view(frame.rows);
     const { tree, branch } = view;
     // Breadcrumbs take a strip above the tree in charts that drill.
     const path =
@@ -229,7 +229,7 @@ export class TreemapMark implements LayoutMark {
       indexOf: navigation.indexOf,
       summary: () => this.#summary(view, shown, branches, locale, percent),
       rowsOf: (key, of) => (of === this.table ? this.#data.rowsOf(frame.id, view, key) : undefined),
-      drill: this.#data.drill(frame.id, root, path?.crumbs ?? []),
+      drill: this.#data.drill(frame.id, root, view, path?.crumbs ?? []),
     };
   }
 

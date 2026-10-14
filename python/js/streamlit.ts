@@ -23,18 +23,23 @@ import {
 } from "herceg";
 import { type ChartSpec, loadSpec } from "herceg/spec";
 import {
+  DRILLS,
   type DrillPayload,
   drillPayload,
   type ItemPositionsPayload,
   inspectionPayload,
+  MOVES,
+  PLANES,
   positionsValue,
   recordPosition,
   selectionPayload,
   showDrillRoot,
   showItemPositions,
+  statePanels,
+  targetOf,
   viewportPayload,
 } from "./events.ts";
-import { mapPlaneKey } from "./planes.ts";
+import { planeKeys as planeKeysOf } from "./planes.ts";
 
 /** What Streamlit passes the component, as far as it is used here. */
 export interface Component {
@@ -80,9 +85,17 @@ interface Instance {
   brushed: WeakSet<object>;
   /** What the script was last sent of each channel, with its epoch, as JSON, by table and channel. */
   reported: Map<string, string>;
-  positions: ItemPositionsPayload;
+  /** The nodes moved, by panel ("" for the chart's one network or its facet panels'). */
+  positions: Map<string, ItemPositionsPayload>;
   itemEpoch: string | undefined;
+  /** The key of the chart's one map's or network's plane, without subplots (see `planeKeys`). */
   plane: string | undefined;
+  /** The keys of the states subplots' trees, networks, and maps have ("" for the chart's one). */
+  drills: string[];
+  moves: string[];
+  planes: string[];
+  /** Each plane's key, by state, which a rerun's must match for it to keep its view. */
+  planeKeys: Map<string, string>;
   sentDrill: string;
   sentViewport: string;
   sentPositions: string;
@@ -128,23 +141,36 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   if (!previous) component.parentElement.append(element);
   const followsApp = header.spec.theme === undefined;
   const theme = followsApp ? appTheme(element) : undefined;
-  const kept = previous && keptView(previous.chart, previous.plane);
+  const kept = previous && keptView(previous.chart, previous, previous.planeKeys);
   if (previous?.itemFrame !== undefined) cancelAnimationFrame(previous.itemFrame);
   previous?.chart.destroy();
   const chart = createChart(element, followsApp ? { ...config, theme: appColors(theme) } : config);
   const unbrushed = bindings.map(({ store, channel }) => store.get(channel));
-  const positions: ItemPositionsPayload = {};
+  const drills = statePanels(config, DRILLS);
+  const moves = statePanels(config, MOVES);
+  const planes = config.panels ? statePanels(config, PLANES) : [];
+  const positions = new Map<string, ItemPositionsPayload>();
   if (header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch)
-    showItemPositions(chart, previous!.positions, positions, true);
-  const plane =
-    header.spec.marks.length === 1 && header.spec.marks[0]?.type === "graph"
-      ? "graph"
-      : mapPlaneKey(config);
+    for (const panel of moves) {
+      const held: ItemPositionsPayload = {};
+      positions.set(panel, held);
+      showItemPositions(chart, previous!.positions.get(panel) ?? {}, held, true, panel);
+    }
+  const planeKeys = planeKeysOf(config);
+  const plane = planeKeys.get("");
   const compatiblePlane =
     plane === previous?.plane &&
     (plane?.startsWith("map:") ||
       (header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch));
-  if (kept) restore(chart, kept, compatiblePlane ? plane : undefined);
+  if (kept)
+    restore(
+      chart,
+      kept,
+      drills,
+      compatiblePlane ? plane : undefined,
+      planeKeys,
+      header.itemEpoch !== undefined && header.itemEpoch === previous?.itemEpoch,
+    );
   // What the brush wrote as it was restored, before the chart had listeners.
   const brushed = new WeakSet<object>();
   bindings.forEach(({ store, channel }, i) => {
@@ -167,9 +193,16 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     positions,
     itemEpoch: header.itemEpoch,
     plane,
-    sentDrill: previous?.sentDrill ?? "null",
+    drills,
+    moves,
+    planes,
+    planeKeys,
+    // As if nothing were drilled or moved: the script hears of the first change.
+    sentDrill:
+      previous?.sentDrill ??
+      JSON.stringify(Object.fromEntries(drills.map((panel) => [panel, null]))),
     sentViewport: previous?.sentViewport ?? "null",
-    sentPositions: previous?.sentPositions ?? JSON.stringify([header.itemEpoch, "[]"]),
+    sentPositions: previous?.sentPositions ?? movesSent(header.itemEpoch, new Map(), moves),
     itemFrame: undefined,
   };
   // The script hears if the brush could not be kept, or now covers other categories.
@@ -187,8 +220,11 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   reportDrill(instance);
   reportPositions(instance);
   chart.on("drill", () => reportDrill(instance));
-  chart.on("itemMove", ({ key, position }) => {
-    recordPosition(instance.positions, key, position);
+  chart.on("itemMove", ({ key, position, panels }) => {
+    const panel = panels?.[0] ?? "";
+    const held = instance.positions.get(panel) ?? {};
+    instance.positions.set(panel, held);
+    recordPosition(held, key, position);
     instance.itemFrame ??= requestAnimationFrame(() => {
       instance.itemFrame = undefined;
       reportPositions(instance);
@@ -258,15 +294,22 @@ function carryRows(
 /** What the user had: each panel's axes and zoom, and the whole selection, more than the script hears of. */
 interface Kept {
   plane: { key: string; view: Viewport } | undefined;
+  /** Each subplot's map or network's view, and its plane's key (see `planeKeys`). */
+  planes: Map<string, { key: string | undefined; view: Viewport }>;
   panels: (PanelInfo & { view: Viewport })[];
   selection: Chart["selection"];
   selectionPanels: Chart["selectionPanels"];
-  drill: DrillPayload | null;
+  /** Each tree's drill root, by panel ("" for the chart's one). */
+  drills: Map<string, DrillPayload | null>;
 }
 
-function keptView(chart: Chart, plane: string | undefined): Kept {
+function keptView(chart: Chart, instance: Instance, keys: ReadonlyMap<string, string>): Kept {
+  const { plane, drills, planes } = instance;
   return {
     plane: plane ? { key: plane, view: chart.getViewport() } : undefined,
+    planes: new Map(
+      planes.map((panel) => [panel, { key: keys.get(panel), view: chart.getViewport({ panel }) }]),
+    ),
     // Layout planes keep their view separately from panels with axes.
     panels: chart
       .getPanels()
@@ -274,16 +317,41 @@ function keptView(chart: Chart, plane: string | undefined): Kept {
       .map((panel) => ({ ...panel, view: chart.getViewport({ panel: panel.key }) })),
     selection: chart.selection,
     selectionPanels: chart.selectionPanels,
-    drill: drillPayload(chart.drillRoot),
+    drills: new Map(
+      drills.map((panel) => [panel, drillPayload(chart.getDrillRoot(targetOf(panel)))]),
+    ),
   };
 }
 
 /**
  * Restores what the user had in a chart just drawn from new bytes, where its
  * values are still shown. The changes are drawn together, on the next frame.
+ * Trees keep their roots where the state is still a tree's (`drills`, see
+ * `statePanels`); subplots' maps and networks keep their views where the
+ * panel's plane has the same key (`keys`), a network's only in the same
+ * layout (`layouts`).
  */
-function restore(chart: Chart, kept: Kept, plane: string | undefined) {
-  showDrillRoot(chart, kept.drill, true);
+function restore(
+  chart: Chart,
+  kept: Kept,
+  drills: readonly string[],
+  plane: string | undefined,
+  keys: ReadonlyMap<string, string>,
+  layouts: boolean,
+) {
+  for (const [panel, drill] of kept.drills)
+    if (drills.includes(panel)) showDrillRoot(chart, drill, true, panel);
+  let lassoed: string | undefined;
+  for (const [panel, { key, view }] of kept.planes)
+    if (key !== undefined && keys.get(panel) === key && (key !== "graph" || layouts)) {
+      chart.setViewport(view, { panel });
+      if (kept.selectionPanels?.includes(panel)) lassoed = panel;
+    }
+  // A lasso on a subplot's plane stays there, drawn over its view and positions.
+  if (lassoed !== undefined) {
+    chart.render();
+    chart.select(kept.selection, { panel: lassoed });
+  }
   if (plane && kept.plane?.key === plane) {
     chart.setViewport(kept.plane.view);
     // Positions and viewport must be drawn before replaying a lasso's row selection.
@@ -312,7 +380,8 @@ function restore(chart: Chart, kept: Kept, plane: string | undefined) {
   if (now?.y?.canSetViewport) y.y = carry(first?.view.y ?? null, first?.y, now.y);
   if (now?.yRight?.canSetViewport)
     y.yRight = carry(first?.view.yRight ?? null, first?.yRight, now.yRight);
-  chart.setViewport(y);
+  // Without axes, a change names no plane of the subplots'.
+  if (Object.keys(y).length > 0) chart.setViewport(y);
   // The selection carries to a panel it was in, through its scales, or to
   // the scale every panel shares.
   const { selection, selectionPanels } = kept;
@@ -367,31 +436,68 @@ function sameCategories(from: AxisInfo | undefined, to: AxisInfo | undefined): b
 /** Sends the chart's selection to the script, unless the script has it already. */
 function reportSelection(instance: Instance) {
   if (!instance.events.includes("select")) return;
-  const payload = selectionPayload(instance.chart, instance.chart.selection);
+  const { chart } = instance;
+  const payload = selectionPayload(chart, chart.selection, selectionPanels(instance));
   const sent = JSON.stringify(payload);
   if (sent === instance.sent) return;
   instance.sent = sent;
   instance.component.setStateValue("selection", payload);
 }
 
-function reportDrill(instance: Instance) {
-  if (!instance.events.includes("drill")) return;
-  const payload = drillPayload(instance.chart.drillRoot);
-  const sent = JSON.stringify(payload);
-  if (sent === instance.sentDrill) return;
-  instance.sentDrill = sent;
-  instance.component.setStateValue("drill_root", payload);
+/**
+ * The panels a selection names, as its event does: a subplot's lasso's, or
+ * those whose x scale it is on when other panels have others.
+ */
+function selectionPanels({ chart, planes }: Instance): readonly string[] | undefined {
+  const panels = chart.selectionPanels ?? [];
+  const [first] = panels;
+  if (first === undefined) return undefined;
+  const x = chart.getPanels().find(({ key }) => key === first)?.x;
+  return (x ? x.group !== "" : planes.includes(first)) ? panels : undefined;
 }
 
+/** The chart's one tree's drill root, and each subplot tree's, by panel. */
+function reportDrill(instance: Instance) {
+  if (!instance.events.includes("drill")) return;
+  const { chart } = instance;
+  const roots = Object.fromEntries(
+    instance.drills.map((panel) => [panel, drillPayload(chart.getDrillRoot(targetOf(panel)))]),
+  );
+  const sent = JSON.stringify(roots);
+  if (sent === instance.sentDrill) return;
+  instance.sentDrill = sent;
+  instance.component.setStateValue("drill_root", {
+    root: roots[""] ?? null,
+    panels: Object.fromEntries(Object.entries(roots).filter(([panel]) => panel !== "")),
+  });
+}
+
+/** The nodes moved of the chart's one network, and of each subplot's, by panel. */
 function reportPositions(instance: Instance) {
   if (!instance.events.includes("itemMove")) return;
-  const sent = JSON.stringify([instance.itemEpoch, positionsValue(instance.positions)]);
+  const positions = Object.fromEntries(
+    instance.moves.map((panel) => [panel, { ...instance.positions.get(panel) }]),
+  );
+  const sent = movesSent(instance.itemEpoch, instance.positions, instance.moves);
   if (sent === instance.sentPositions) return;
   instance.sentPositions = sent;
   instance.component.setStateValue("item_positions", {
     epoch: instance.itemEpoch,
-    positions: { ...instance.positions },
+    positions: positions[""] ?? {},
+    panels: Object.fromEntries(Object.entries(positions).filter(([panel]) => panel !== "")),
   });
+}
+
+/** What reporting moved nodes sends, as JSON: their layouts' epoch, and each network's moves. */
+function movesSent(
+  epoch: string | undefined,
+  positions: ReadonlyMap<string, ItemPositionsPayload>,
+  moves: readonly string[],
+): string {
+  return JSON.stringify([
+    epoch,
+    moves.map((panel) => [panel, positionsValue(positions.get(panel) ?? {})]),
+  ]);
 }
 
 /** Keeps a chart without a theme of its own in the app's theme, which may have changed. */
@@ -459,16 +565,31 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-/** Report the current view only when it changes; graph views belong to their layout. */
+/**
+ * Report the current view only when it changes, with each subplot map's or
+ * network's; graph views belong to their layout.
+ */
 function reportViewport(instance: Instance): void {
   if (!instance.events.includes("viewport")) return;
-  const view = viewportPayload(instance.chart, instance.chart.getViewport());
-  const payload = { ...view, ...(instance.plane === "graph" && { epoch: instance.itemEpoch }) };
+  const { chart } = instance;
+  // A chart whose panels are all maps or networks has no view but theirs.
+  const own = instance.planes.length === 0 || chart.getPanels().some(({ x }) => x);
+  const view = own ? viewportPayload(chart, chart.getViewport()) : null;
+  const panels = Object.fromEntries(
+    instance.planes.map((panel) => [
+      panel,
+      viewportPayload(chart, chart.getViewport({ panel }), true),
+    ]),
+  );
+  const zoomed = view && (view.x || view.y || view.yRight);
+  const planes = Object.values(panels).some(({ x, y }) => x || y);
+  const payload = {
+    ...view,
+    ...((instance.plane === "graph" || instance.moves.length > 0) && { epoch: instance.itemEpoch }),
+    ...(instance.planes.length > 0 && { panels }),
+  };
   const encoded = JSON.stringify(payload);
-  if (
-    encoded === instance.sentViewport ||
-    (instance.sentViewport === "null" && !view.x && !view.y && !view.yRight)
-  )
+  if (encoded === instance.sentViewport || (instance.sentViewport === "null" && !zoomed && !planes))
     return;
   instance.sentViewport = encoded;
   instance.component.setStateValue("viewport", payload);

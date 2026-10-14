@@ -4,7 +4,7 @@
 // in the chart's one list of marks, so their identity, colors, and legend
 // state do not depend on the panel they draw in.
 
-import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
+import type { LayoutMark } from "../marks/layout-mark.ts";
 import type { BandContext, Bands, Mark } from "../marks/mark.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
 import type { AxisSpec, GridSpec, PanelSpec, ResolveSpec, ScaleResolution } from "../spec/spec.ts";
@@ -20,7 +20,7 @@ import {
   columnGap,
   type DescribeAnnotation,
   groups,
-  type LayoutOptions,
+  type LayoutConfig,
   leastHeight,
   lowestWithAxes,
   onAxis,
@@ -33,7 +33,6 @@ import {
   type PanelSplit,
   type PanelSplitter,
   type RowSpace,
-  refuseAxes,
   resolutionOf,
   rowGap,
   type ScaleGroups,
@@ -141,16 +140,25 @@ export class Panels implements PanelLayout {
 
   /**
    * Rejects marks that name no panel or an unknown one, marks sharing a
-   * panel with a layout mark, which has it to itself, and what panels with
-   * axes of their own cannot do yet: zooming or brushing along y.
+   * panel with a layout mark, which has it to itself (a map's layers are
+   * one mark), and what panels with axes of their own cannot do yet:
+   * zooming or brushing along y. Returns the layout marks drawn.
    */
-  check(marks: readonly Mark[], options: LayoutOptions, layouts: readonly LayoutMark[] = []): void {
+  check(
+    marks: readonly Mark[],
+    options: LayoutConfig,
+    given: readonly LayoutMark[] = [],
+  ): LayoutMark[] {
     const ids = new Set(this.list.map(({ id }) => id));
     const unknown = (type: string, panel: string) =>
       new Error(
         `${type} panel: no panel "${panel}"; name one of ${[...ids].map((id) => `"${id}"`).join(", ")}`,
       );
-    checkLayouts(layouts);
+    checkLayouts(given);
+    for (const { spec } of given)
+      if (spec.panel !== undefined && spec.panel !== EVERY_PANEL && !ids.has(spec.panel))
+        throw unknown(spec.type, spec.panel);
+    const layouts = given[0] ? given[0].views.inPanels(given, options, true) : [];
     // The panels layout marks have to themselves.
     const held = new Map<string, string>();
     for (const { spec } of layouts) {
@@ -167,7 +175,13 @@ export class Panels implements PanelLayout {
         );
       held.set(panel, type);
     }
-    if (held.size === this.list.length) refuseAxes(layouts[0]!.spec.type, options);
+    if (layouts[0])
+      layouts[0].views.interactions(
+        layouts,
+        options,
+        held.size < this.list.length,
+        given[0]!.spec.type,
+      );
     for (const [i, { id, x, y, yRight }] of this.list.entries())
       if (held.has(id) && (x || y || yRight))
         throw new Error(
@@ -189,11 +203,13 @@ export class Panels implements PanelLayout {
         );
     }
     const { zoom, brush } = options.interaction ?? {};
+    // Panels with axes zoom and brush along x; maps and networks with panels to themselves, their plane.
     if (
-      (typeof zoom === "string" && zoom.includes("y")) ||
-      brush === "y" ||
-      brush === "xy" ||
-      brush === "lasso"
+      held.size < this.list.length &&
+      ((typeof zoom === "string" && zoom.includes("y")) ||
+        brush === "y" ||
+        brush === "xy" ||
+        brush === "lasso")
     )
       throw new Error('chart interaction: charts with panels zoom and brush along x only; use "x"');
     const { resolve } = options;
@@ -207,6 +223,7 @@ export class Panels implements PanelLayout {
       held,
     );
     checkBands(marks, options, this.yDefault);
+    return layouts;
   }
 
   /** Panels draw their marks whole. */
@@ -298,9 +315,8 @@ export class Panels implements PanelLayout {
     };
     const { marks } = chart.config;
     const items = this.list.map(({ id }) => {
-      const index = marks.findIndex((mark) => isLayoutMark(mark) && mark.spec.panel === id);
-      const mark = marks[index] as LayoutMark | undefined;
-      return mark && { mark, index, rows: undefined };
+      const mark = chart.layouts.find(({ spec }) => spec.panel === id);
+      return mark && { mark, index: mark.indices?.[0] ?? marks.indexOf(mark), rows: undefined };
     });
     if (items.some(Boolean)) split.items = items;
     placed.place(split, columns, bands, chart.config.resolve, this.yDefault, context);

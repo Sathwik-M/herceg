@@ -1179,11 +1179,11 @@ the notes), — not yet (refused with an error), · not applicable.
 | rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | · | ◐ |
 | custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | ◐ | — |
 | pie | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | ✓ |
-| treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ◐ | ◐ | ✓ | ✓ | · | — |
+| treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ✓ | ✓ | ✓ | ✓ | · | — |
 | radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | — |
 | gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | · | — |
-| graph | — | — | — | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — | — |
-| geoshape, geopoint | — | — | — | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| graph | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — | — |
+| geoshape, geopoint | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | point3d, line3d | — | — | — | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
 | surface | — | — | — | · | turning | — | — | — | — | · | ✓ | · | — |
 
@@ -1195,22 +1195,26 @@ the notes), — not yet (refused with an error), · not applicable.
   number or time axis, the cells whose values the brush covers; in a
   calendar, those whose centers it covers), or lassoed (at their centers),
   and lassos select none of the summaries' rows yet; these marks, error bars,
-  and candlesticks draw every row undimmed. A map, treemap, sunburst, or
-  network with a chart of its own takes a binding too: clicks select a
-  region's or point's row, a tree node's rows (its own and those under
-  it), a network node's rows of its nodes table, or a link's of its links
-  table, and lassos a map's regions and points or a network's node centers; trees in facet panels, the
-  other layout marks, and 3D charts refuse one. Brushes and synced
-  selections themselves are ranges and outlines in data values (a map's
-  lasso, in its plane).
+  and candlesticks draw every row undimmed. Maps, treemaps, sunbursts, and
+  networks take a binding too, in a chart of their own or in panels: clicks
+  select a region's or point's row, a tree node's rows (its own and those
+  under it, of its panel's rows), a network node's rows of its nodes table,
+  or a link's of its links table (of its panel's rows), and lassos a map's
+  regions and points or a network's node centers; the other layout marks
+  and 3D charts refuse one. Brushes and synced selections themselves are
+  ranges and outlines in data values (a map's lasso, in its plane).
 - Zoom, pan, and brushes work on number and time axes; subplots zoom and
   brush along x only, and facets with y scales of their own, on either
   side, do not zoom along y. Maps and networks zoom and pan their plane both ways
   (`interaction.zoom` true or "xy") and take a "lasso" brush; treemaps and
   sunbursts drill into nodes with `interaction.zoom: true` (see
-  [Drilling into trees](#drilling-into-trees)), in a chart of their own;
-  networks' nodes move with `interaction.drag` (see
-  [Moving nodes](#moving-nodes)), which no other mark takes.
+  [Drilling into trees](#drilling-into-trees)); networks' nodes move with
+  `interaction.drag` (see [Moving nodes](#moving-nodes)), which no other
+  mark takes. All of them do so in panels too: facet panels share one view,
+  drill root, and set of moved nodes, and each subplot has its own (see
+  [Layout marks in panels](#layout-marks-in-panels)); beside panels with
+  axes, which zoom and brush along x only, maps and networks pan and zoom
+  with `zoom: true` and take no lasso.
 - A range navigator on a number or time x axis describes its overview and
   current window in the chart's text alternative; with facets or subplots,
   it says that it controls every panel's shared x range.
@@ -1226,12 +1230,14 @@ the notes), — not yet (refused with an error), · not applicable.
   as it zooms.
 - Heatmaps zoom and pan their number and time axes; banded axes (category
   fields, or `xBanded` / `yBanded`) do not zoom, as for other marks.
-- Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams
-  draw each facet panel's rows in it, or fill a subplot of their own beside
-  panels with axes (see [Layout marks in panels](#layout-marks-in-panels)).
-  Their panels have no axes, so they neither zoom, pan, brush, nor sync,
-  nor (yet) drill or select rows; panels with axes beside them do.
-  Networks, maps, and 3D charts have charts to themselves.
+- Layout marks but 3D charts draw each facet panel's rows in it (a map's
+  layers each split their rows or repeat, and a network's panels share one
+  layout), or fill a subplot of their own beside panels with axes (see
+  [Layout marks in panels](#layout-marks-in-panels)). Their panels have no
+  axes, so they neither zoom along axes, brush ranges, sync, nor resolve
+  scales (`resolve` other than "shared"); trees
+  drill, maps and networks pan, zoom, and lasso, and networks move nodes
+  there as in a chart of their own. 3D charts have charts to themselves.
 - Box plots and violins on log axes have no keyboard stop for groups whose
   median is not positive; annotations are read in the chart's summary
   rather than one by one (a facet panel's own as the keyboard arrives
@@ -1308,7 +1314,7 @@ const chart = createChart(element, {
 });
 chart.on("drill", ({ key, path }) => console.log(key, path.map((step) => step.label)));
 chart.setDrillRoot(["Europe", "France"]); // by names from the top, or by item key
-chart.drillRoot; // { key: '[0,"Europe","France"]', path: [{ key, label: "Europe" }, ...] }
+chart.getDrillRoot(); // { key: '[0,"Europe","France"]', path: [{ key, label: "Europe" }, ...] }
 chart.setDrillRoot(null); // the whole tree
 ```
 
@@ -1327,8 +1333,10 @@ takes clicks, a click selects the node's rows instead, and Enter still
 drills. `setDrillRoot` drills with or without `interaction.zoom` and is
 followed by a `drill` event (`{ key, path }`, null and `[]` for the whole
 tree), which also says when the data no longer has the node drilled into
-and the tree shows its nearest ancestor that remains instead. Drilling is for a chart of one tree: trees in facet panels
-and subplots do not drill yet.
+and the tree shows its nearest ancestor that remains instead;
+`getDrillRoot()` gives the root set. Trees in facet panels share one root,
+and each subplot's tree has its own (see
+[Layout marks in panels](#layout-marks-in-panels)).
 
 ### Gauges and funnels
 
@@ -1537,6 +1545,7 @@ const chart = createChart(element, {
 chart.on("itemMove", ({ key, position }) => save(key, position));
 chart.setItemPosition('[0,"Ana"]', { x: 40, y: -12 }); // layout units
 chart.setItemPosition('[0,"Ana"]', null); // back where the layout puts it
+chart.getItemPositions(); // { '[0,"Ana"]': { x: 40, y: -12 } } of the nodes moved
 ```
 
 With `interaction.drag: true`, dragging a node moves it, its links
@@ -1559,6 +1568,8 @@ Dragging stops at the view edge; `setItemPosition` keeps the given layout
 position even outside the view, so panning can bring it back. A row selection of the nodes table selects a node's
 rows when it is clicked, and one of the links table a link's rows; a node
 only links name stands for no row, and a click on it changes nothing.
+Networks in facet panels share one layout, so a node moved in one moves in
+every panel; each subplot's network has moves of its own.
 
 ### Maps
 
@@ -1680,7 +1691,12 @@ stays on the map as it moves; with `rowSelection`, it selects the regions
 whose anchor (a point inside each, the same at any zoom) and the points
 whose center lies inside it, a click selects the region or point under it,
 and the regions and points the selection leaves out are dimmed. Layers of
-one table share its binding.
+one table share its binding. Maps in facet panels share one view; a map in a
+subplot has its own, which `setViewport(view, { panel })` sets (see
+[Layout marks in panels](#layout-marks-in-panels)). The view and the lasso
+are in the projection's units: an update of `projection` keeps them, so
+reset them (`setViewport(null)`, `select(null)`) along with it; the Python
+widget and Streamlit do so themselves.
 
 A zoomed or panned map reuses the shapes it projected: they are projected
 at a scale level (four per doubling, the next one up from the scale shown)
@@ -2255,10 +2271,11 @@ navigator goes under all the panels and moves the x range they share (see
 
 ### Layout marks in panels
 
-Pies, treemaps, sunbursts, gauges, funnels, radars, and Sankey diagrams draw
-in panels too: with a facet, a layout mark is the chart's only mark and
-draws each panel's rows there, as marks along axes do; with subplots, it has
-the panel it names to itself, beside panels with axes.
+Pies, treemaps, sunbursts, gauges, funnels, radars, Sankey diagrams, maps,
+and networks draw in panels too: with a facet, a layout mark is the chart's
+only mark and draws each panel's rows there, as marks along axes do; with
+subplots, it has the panel it names to itself, beside panels with axes.
+3D charts have charts to themselves.
 
 ```ts
 // Small multiples: a pie of each region's sales, with one legend for all.
@@ -2300,8 +2317,65 @@ and the chart's description names each panel before what it shows (up to
 which takes no `x` or `y` settings, and marks with `panel: "*"` are
 refused there, since they would draw in it. Panels with axes keep zooming,
 brushing, and syncing; a chart whose panels all draw layout marks has no x
-axis for those. Values animate only in a chart of one layout mark. Networks,
-maps, and 3D charts have charts to themselves.
+axis for those. Values animate only in a chart of one layout mark.
+
+A map's layers are one mark: in facets, each layer splits its rows by the
+facet field, unless `facet: "repeat"` draws it whole in every panel (a base
+map under the points that split), and every panel's map is fitted to the
+rows of all of them, so a place is at the same pixels of each panel; in
+subplots, the layers naming a panel are its map. A network's facet panels
+share one layout of the whole network: each draws its rows' links, sized
+and labeled by those rows alone, and the nodes they join, where the layout
+puts them; nodes without links there are not drawn (the nodes table colors
+and sizes nodes, it does not place them in panels).
+
+```ts
+// A map per year, over one base map; zooming one zooms them all.
+createChart(element, {
+  marks: [
+    geoshape(countries, { facet: "repeat" }),
+    geopoint(stores, { longitude: "lon", latitude: "lat", size: "sales" }),
+  ],
+  facet: facet("year"),
+  interaction: { zoom: true, brush: "lasso" },
+});
+
+// Two trees side by side, each drilled on its own.
+const chart = createChart(element, {
+  marks: [
+    treemap(budget, { path: ["unit", "team"], value: "cost", panel: "cost" }),
+    treemap(budget, { path: ["unit", "team"], value: "staff", panel: "staff" }),
+  ],
+  panels: panels([{ id: "cost" }, { id: "staff" }], { columns: 2 }),
+  interaction: { zoom: true },
+});
+chart.on("drill", ({ key, panels }) => console.log(panels, key)); // ["staff"], '[1,"R&D"]'
+chart.setDrillRoot(["R&D"], { panel: "cost" });
+```
+
+Navigation and selection work the same in panels. Facet panels show one
+mark's rows split by a field, and compare like with like, so they share
+one state, as panels share a scale: one drill root (a panel with nothing
+under it shows the path, and nothing), one view of a map's or network's
+plane, and one set of moved nodes; drilling, zooming, or moving a node in
+one panel does it in all of them, with one event that names no panel. Each
+subplot's tree, map, or network has its own, set with its `panel`
+(`setDrillRoot(node, { panel })`, `setViewport(view, { panel })`,
+`setItemPosition(key, position, { panel })`, and the getters), which a
+chart of several such subplots needs, and reported with `panels: [id]`
+in `drill`, `viewport`, `itemMove`, and `select` events. Without a panel,
+`getViewport` and `setViewport` are the axes' when the chart has panels
+with axes. A subplot's state goes when the subplot does. The pointer acts in
+the panel it presses (a drag stays there) and the keyboard in the panel the
+cursor reads; facet panels have one toolbar, in the chart's corner, and
+the first panel's path takes the Tab key (the others' take the pointer),
+while each subplot has its toolbar and path. A lasso on facet panels'
+shared plane is drawn in each and selects every panel's rows inside it; a
+subplot's is its own; a chart has one selection either way. With
+`rowSelection`, a click selects what an item stands for in its panel: a
+tree node's rows there, a region's or point's row, a link's rows there, or a
+node's rows of the nodes table, which every panel shares. Exports draw each
+panel as it is.
 
 ### Custom marks
 
@@ -2394,9 +2468,10 @@ The returned `Chart` has `root` (its element), `update(options)`,
 `setViewport(view | [from, to] | null, { panel? })` and `getViewport({ panel?
 })`, `select(selection | [from, to] | null, { panel? })` (a pair is shorthand
 for an x range), `selection` and `selectionPanels` (see Small multiples for
-`panel`), `camera` and `setCamera(camera | null)` (3D charts), `drillRoot` and
-`setDrillRoot(node | null)` (treemaps and sunbursts), `setItemPosition(key,
-position | null)` (networks), `getPanels()`,
+`panel`), `camera` and `setCamera(camera | null)` (3D charts),
+`getDrillRoot({ panel? })` and `setDrillRoot(node | null, { panel? })`
+(treemaps and sunbursts), `getItemPositions({ panel? })` and
+`setItemPosition(key, position | null, { panel? })` (networks), `getPanels()`,
 `toPixel`, `fromPixel`, `formatValue`, and `inspect` (see Panels and pixels),
 `getLegend()`, `getHiddenKeys()`, `setHiddenKeys(keys)`, and
 `setVisibility(keys, visible)` (see Hiding series), `on(event, listener)`,
@@ -2654,6 +2729,7 @@ chart.on("rowSelection", ({ table, channel, selection }) => count(selection)); /
 chart.on("camera", ({ camera }) => saveView(camera)); // a 3D chart turned
 chart.on("drill", ({ key, path }) => saveDrill(key)); // a treemap or sunburst drilled into a node
 chart.on("itemMove", ({ key, position }) => savePlace(key, position)); // a network's node moved
+chart.on("drill", ({ key, panels }) => saveDrill(panels?.[0], key)); // a subplot's tree
 chart.on("visibility", ({ hiddenKeys }) => saveHidden(hiddenKeys)); // legend, setVisibility
 chart.on("render", () => placeOverlay(chart.getPanels())); // a frame of the data was drawn
 ```
@@ -2661,7 +2737,10 @@ chart.on("render", () => placeOverlay(chart.getPanels())); // a frame of the dat
 Events report changes only: a re-inspected point or an unchanged view does
 not repeat them. A `viewport` event reports a change of several axes (an xy
 wheel zoom, a brushed rectangle zoomed to) once, with every axis' range; a
-map's are its plane's x and y ranges. `drill` and `itemMove` events follow
+map's are its plane's x and y ranges. `panels` names the panels a change
+belongs to when they are only some: those of an x scale of their own, or a
+subplot's map, network, or tree (`viewport`, `select`, `drill`, and
+`itemMove` events). `drill` and `itemMove` events follow
 `setDrillRoot` and `setItemPosition` too, as `camera` events follow
 `setCamera`. An
 inspection's `axis` says what it is on: `"x"` or `"y"` for a position along

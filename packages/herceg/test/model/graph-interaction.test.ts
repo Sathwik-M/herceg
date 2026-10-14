@@ -181,7 +181,7 @@ describe("moved nodes", () => {
     expect(after.toLayout('[0,"c"]', ...at(model, "c"))[0]).toBeCloseTo(x, 6);
     links.append({ from: ["d"], to: ["e"], w: [1] });
     model.scene(estimateText);
-    expect(model.items!.movedItems.size).toBe(0);
+    expect(model.items!.movedItems().size).toBe(0);
   });
 });
 
@@ -406,7 +406,7 @@ describe("network moves and rows, kept apart from what changes", () => {
     model.items!.setItemPosition('[0,"a"]', { x, y });
     model.update({ marks: [graph(links, { source: "from", target: "to", labels: false })] });
     model.scene(estimateText);
-    expect(model.items!.movedItems.size).toBe(1);
+    expect(model.items!.movedItems().size).toBe(1);
     expect(at(model, "a")[0]).toBeCloseTo(90, 6);
   });
 
@@ -436,7 +436,7 @@ describe("moves across charts, groups, and changes", () => {
       a.scene(estimateText);
       b.scene(estimateText);
     }
-    expect(a.items!.movedItems.size).toBe(1);
+    expect(a.items!.movedItems().size).toBe(1);
     expect(at(a, "a")[0]).toBeCloseTo(70, 6);
   });
 
@@ -467,7 +467,7 @@ describe("moves across charts, groups, and changes", () => {
     model.items!.setItemPosition('[0,"b"]', { x, y });
     model.update({ marks: marks("net") });
     model.scene(estimateText);
-    expect(model.items!.movedItems.size).toBe(0);
+    expect(model.items!.movedItems().size).toBe(0);
   });
 
   it("leave a drag's place behind when the network changes under it", () => {
@@ -498,8 +498,7 @@ describe("network navigation and lassos", () => {
     const before = ["a", "b", "c", "d"].map((name) => at(model, name));
     const base = model.items!.result()!.plane!;
     const identity = model.items!.result()!.moves!.layout;
-    model.setViewport(half(base.x.domain));
-    model.setYViewport({ y: half(base.y.domain), yRight: null });
+    model.items!.setView({ x: half(base.x.domain), y: half(base.y.domain) }, undefined);
     const zoomed = model.scene(estimateText);
     const plane = model.items!.result()!.plane!;
     const { plot } = scene.panels[0]!;
@@ -520,8 +519,7 @@ describe("network navigation and lassos", () => {
     expect(
       marksOf<SegmentGeometry>(zoomed, "segments", "graph-links").map((g) => g.strokeWidth),
     ).toEqual(marksOf<SegmentGeometry>(scene, "segments", "graph-links").map((g) => g.strokeWidth));
-    model.setViewport(null);
-    model.setYViewport({ y: null, yRight: null });
+    model.items!.setView(null, undefined);
     model.scene(estimateText);
     expect(["a", "b", "c", "d"].map((name) => at(model, name))).toEqual(before);
   });
@@ -530,8 +528,7 @@ describe("network navigation and lassos", () => {
     const { model } = build({ marks: [graph(ring(), { source: "from", target: "to" })] });
     const fitted = model.items!.result()!.plane!;
     const layout = model.items!.result()!.moves!.layout;
-    model.setViewport(half(fitted.x.domain));
-    model.setYViewport({ y: half(fitted.y.domain), yRight: null });
+    model.items!.setView({ x: half(fitted.x.domain), y: half(fitted.y.domain) }, undefined);
     model.scene(estimateText);
     const drawn = model.items!.result()!;
     const [x, y] = drawn.moves!.toLayout('[0,"a"]', 250, 180);
@@ -545,8 +542,7 @@ describe("network navigation and lassos", () => {
     model.items!.setItemPosition('[0,"a"]', { x: fitted.x.domain[0] + 1, y });
     model.scene(estimateText);
     expect(at(model, "a")[0]).toBeLessThan(0);
-    model.setViewport(null);
-    model.setYViewport({ y: null, yRight: null });
+    model.items!.setView(null, undefined);
     model.scene(estimateText);
     expect(model.items!.result()!.moves!.layout).toBe(layout);
     expect(at(model, "a")[0]).toBeCloseTo(fitted.x.map(fitted.x.domain[0] + 1));
@@ -665,8 +661,7 @@ describe("network navigation and lassos", () => {
       const view = plane.view({ x: half(plane.x.domain), y: null });
       expect(view.zoom).toBeCloseTo(2);
       expect((view.y[0] + view.y[1]) / 2).toBeCloseTo((plane.y.domain[0] + plane.y.domain[1]) / 2);
-      model.setViewport(view.x);
-      model.setYViewport({ y: view.y, yRight: null });
+      model.items!.setView({ x: view.x, y: view.y }, undefined);
       expect(() => model.scene(estimateText)).not.toThrow();
     }
   });

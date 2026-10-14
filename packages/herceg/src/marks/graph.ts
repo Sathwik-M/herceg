@@ -54,6 +54,8 @@ export type GraphOptions<S extends Schema, N extends Schema = Schema> = {
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
   labels?: boolean;
   id?: string;
+  /** With the chart's `panels`, the id of the panel the network has to itself. */
+  panel?: string;
 } & (
   | { nodes?: undefined; node?: undefined; color?: undefined; size?: undefined }
   | {
@@ -79,6 +81,18 @@ export const MAX_NODES = 5000;
  * seconds, so more are refused too.
  */
 export const MAX_LINKS = 20_000;
+/** Ids for lists of rows, so caches can tell one facet panel's from another's. */
+const rowIds = new WeakMap<Uint32Array, number>();
+let rowCount = 0;
+function idOf(rows: Uint32Array): number {
+  let id = rowIds.get(rows);
+  if (id === undefined) {
+    id = ++rowCount;
+    rowIds.set(rows, id);
+  }
+  return id;
+}
+
 /** Radius of nodes, in pixels, in a room with space for them. */
 const RADIUS = 5;
 /** Radii of the smallest and largest `size` values, in a room with space for them. */
@@ -167,6 +181,7 @@ interface Network {
 interface Placement {
   /** The table versions and room it is for. */
   key: string;
+  versions: string;
   /** x, y per node, in pixels. */
   at: Float64Array;
   radii: Float64Array;
@@ -219,8 +234,12 @@ export class GraphMark implements LayoutMark {
   readonly interactions = ["plane", "lasso", "drag"] as const;
   readonly selects = true;
   #network: Network | undefined;
-  #placed: Placement | undefined;
-  #picking: { key: string; nodes?: HitGrid; links?: HitGrid } | undefined;
+  /** Each facet panel's part of the network, by its rows (see `#part`). */
+  readonly #parts = new WeakMap<Uint32Array, Network>();
+  /** Placements by the size of the room, at its top left corner (see `#place`). */
+  readonly #placed = new Map<string, Placement>();
+  /** Pointer lookups of the panels last drawn, by what they depend on. */
+  #picking = new Map<string, { nodes?: HitGrid; links?: HitGrid }>();
 
   constructor(input: GraphSpec, links: Table, nodes?: Table) {
     this.spec = frozen(input);
@@ -441,8 +460,24 @@ export class GraphMark implements LayoutMark {
    * nothing.
    */
   #place(network: Network, bounds: Rect, margin: number): Placement {
-    const key = `${network.versions} ${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height} ${margin}`;
-    if (this.#placed?.key === key) return this.#placed;
+    // Laid out in a room of the size at its corner, then moved to the room:
+    // facet panels of one size share the work, and draw nodes alike.
+    const size = `${network.versions} ${bounds.width} ${bounds.height} ${margin}`;
+    let placed = this.#placed.get(size);
+    if (!placed) {
+      if (this.#placed.size > 8 || [...this.#placed.values()][0]?.versions !== network.versions)
+        this.#placed.clear();
+      placed = this.#placeAt(network, { ...bounds, x: 0, y: 0 }, margin);
+      this.#placed.set(size, placed);
+    }
+    if (bounds.x === 0 && bounds.y === 0) return placed;
+    const at = placed.at.map((v, i) => v + (i % 2 === 0 ? bounds.x : bounds.y));
+    const fit = { ...placed.fit, cx: placed.fit.cx + bounds.x, cy: placed.fit.cy + bounds.y };
+    return { ...placed, key: `${size} ${bounds.x} ${bounds.y}`, at, fit };
+  }
+
+  #placeAt(network: Network, bounds: Rect, margin: number): Placement {
+    const key = `${network.versions} ${bounds.width} ${bounds.height} ${margin} 0 0`;
     const count = network.names.length;
     // Nodes shrink in rooms crowded with them, so they stay apart.
     const room = Math.max(1, bounds.width * bounds.height);
@@ -465,8 +500,35 @@ export class GraphMark implements LayoutMark {
     };
     separate(at, radii, inside, RING + 1);
     const fit = layoutFit(positions, bounds, options);
-    this.#placed = { key, at, radii, crowding, fit };
-    return this.#placed;
+    return { key, versions: network.versions, at, radii, crowding, fit };
+  }
+
+  /**
+   * The part of the network a facet panel's rows of the links table give:
+   * the same nodes and links, each link's total over those rows (0 for
+   * links without), and the label they name it by; kept per rows.
+   */
+  #part(network: Network, rows: Uint32Array): Network {
+    const kept = this.#parts.get(rows);
+    if (kept?.versions === network.versions) return kept;
+    const { table: links, spec } = this;
+    const values = spec.value === undefined ? undefined : links.numbers(spec.value);
+    const named =
+      spec.linkLabelField === undefined ? undefined : links.categories(spec.linkLabelField);
+    const value = new Float64Array(network.value.length);
+    // -3 for links none of the rows names yet.
+    const label = named && new Int32Array(network.value.length).fill(-3);
+    for (const row of rows) {
+      const link = network.linkOfRow[row]!;
+      if (link < 0) continue;
+      value[link]! += values ? values[row]! : 1;
+      if (!label) continue;
+      const code = named!.codes[row]!;
+      label[link] = label[link] === -3 || label[link] === code ? code : -2;
+    }
+    const part = { ...network, value, label };
+    this.#parts.set(rows, part);
+    return part;
   }
 
   /** Why the network is too large to lay out, or undefined when it is not. */
@@ -484,13 +546,16 @@ export class GraphMark implements LayoutMark {
   }
 
   draw(frame: LayoutFrame): LayoutResult {
-    const network = this.#build();
-    const refused = overLimit(network);
+    const whole = this.#build();
+    const refused = overLimit(whole);
     if (refused) {
-      this.#picking = undefined;
+      this.#picking.clear();
       return nothing(refused);
     }
-    const { bounds, theme, hidden, locale } = frame;
+    const { bounds, theme, hidden, locale, rows } = frame;
+    // A facet panel draws its rows' links, with their totals there, and the
+    // nodes they join, where the whole network's layout puts them.
+    const network = rows ? this.#part(whole, rows) : whole;
     const { names, source, target, value, group, groups } = network;
     const count = names.length;
     const directed = this.spec.directed === true;
@@ -501,11 +566,15 @@ export class GraphMark implements LayoutMark {
     const colorOf = (node: number) => (group[node]! >= 0 ? groupColors[group[node]!]! : plain);
     const shown = (node: number) =>
       group[node]! < 0 || !hidden.has(groupKey(frame.id, groups[group[node]!]!));
+    const joined = rows && new Uint8Array(count);
+    for (let link = 0; joined && link < source.length; link++)
+      if (value[link]! > 0) joined[source[link]!] = joined[target[link]!] = 1;
     const nodes: number[] = [];
-    for (let node = 0; node < count; node++) if (shown(node)) nodes.push(node);
+    for (let node = 0; node < count; node++)
+      if (shown(node) && (!joined || joined[node])) nodes.push(node);
     const links: number[] = [];
     for (let link = 0; link < source.length; link++)
-      if (shown(source[link]!) && shown(target[link]!)) links.push(link);
+      if (shown(source[link]!) && shown(target[link]!) && value[link]! > 0) links.push(link);
     // Each node's drawn links and the sum of their values: links into hidden groups do not count.
     const degree = new Int32Array(count);
     const weight = new Float64Array(count);
@@ -519,11 +588,10 @@ export class GraphMark implements LayoutMark {
     const labeled = this.spec.labels ?? true;
     // Room for half a line of text above and below, so labels at the edges fit.
     const margin = labeled ? Math.round(theme.fontSize * 1.25) / 2 : 0;
-    const placement = this.#place(network, bounds, margin);
+    const placement = this.#place(whole, bounds, margin);
     const { radii, crowding, fit } = placement;
     // Nodes the chart's user moved are where they were put, in the layout's units.
-    const moved =
-      frame.moved?.layout === this.#layoutIdentity(network) ? frame.moved?.at : undefined;
+    const moved = frame.moved?.layout === this.#layoutIdentity(whole) ? frame.moved?.at : undefined;
     const plane = graphView(fit, bounds, frame.viewport);
     const navigating = !!(frame.viewport?.x || frame.viewport?.y);
     const at = navigating || (moved && moved.size > 0) ? placement.at.slice() : placement.at;
@@ -554,7 +622,7 @@ export class GraphMark implements LayoutMark {
 
     // With a selection highlighted, what none of its rows' selection holds is dimmed.
     const litNodes = this.#litNodes(network, frame.selected);
-    const litLinks = this.#litLinks(network, frame.selected);
+    const litLinks = this.#litLinks(network, frame.selected, rows);
     // A node selection leaves bright only links whose two ends it holds.
     const highlightedLinks = litNodes
       ? Uint8Array.from(source, (s, link) =>
@@ -749,7 +817,7 @@ export class GraphMark implements LayoutMark {
       return radii[a] !== radii[b] ? radii[a]! < radii[b]! : a > b;
     };
     const moves: NodeMoves = {
-      layout: this.#layoutIdentity(network),
+      layout: this.#layoutIdentity(whole),
       current: () => this.#versions() === network.versions,
       owns: (key) => keyParts(key)?.length === 2,
       movable: (key) => {
@@ -767,15 +835,21 @@ export class GraphMark implements LayoutMark {
         return place ? pixelAt(place) : [x(node), y(node)];
       },
     };
-    // Picking candidates depend on positions and widths, not highlight order.
+    // Picking candidates depend on positions and widths, not highlight order;
+    // each facet panel's on its links.
     const pickKey = JSON.stringify([
       placement.key,
+      rows && idOf(rows),
       frame.viewport,
       [...hidden],
       [...(moved ?? [])],
     ]);
-    if (this.#picking?.key !== pickKey) this.#picking = { key: pickKey };
-    const picking = this.#picking;
+    let picking = this.#picking.get(pickKey);
+    if (!picking) {
+      if (this.#picking.size > 64) this.#picking.clear();
+      picking = {};
+      this.#picking.set(pickKey, picking);
+    }
     return {
       geometry,
       plane,
@@ -869,11 +943,11 @@ export class GraphMark implements LayoutMark {
         }
         const link = linkOfKey(parts);
         if (link < 0 || table !== this.table) return undefined;
-        const rows: number[] = [];
-        network.linkOfRow.forEach((of, row) => {
-          if (of === link) rows.push(row);
-        });
-        return rows;
+        // In a facet panel, its rows only.
+        const out: number[] = [];
+        for (const row of rows ?? network.linkOfRow.keys())
+          if (network.linkOfRow[row] === link) out.push(row);
+        return out;
       },
       lassoed: (polygon, table) => {
         if (table !== this.nodes) return undefined;
@@ -955,14 +1029,19 @@ export class GraphMark implements LayoutMark {
     return lit;
   }
 
-  /** Per link, whether any of its rows the highlighted selection holds. */
-  #litLinks(network: Network, selected: LayoutFrame["selected"]): Uint8Array | undefined {
+  /** Per link, whether any of its rows (of `rows`, in a facet panel) the highlighted selection holds. */
+  #litLinks(
+    network: Network,
+    selected: LayoutFrame["selected"],
+    rows: Uint32Array | undefined,
+  ): Uint8Array | undefined {
     const membership = selected?.(this.table);
     if (!membership) return undefined;
     const lit = new Uint8Array(network.source.length);
-    network.linkOfRow.forEach((link, row) => {
+    for (const row of rows ?? network.linkOfRow.keys()) {
+      const link = network.linkOfRow[row]!;
       if (link >= 0 && membership[row]) lit[link] = 1;
-    });
+    }
     return lit;
   }
 
@@ -1446,6 +1525,7 @@ export function graph<S extends Schema, N extends Schema = Schema>(
   }
   if (options.labels !== undefined) spec.labels = options.labels;
   if (options.id !== undefined) spec.id = options.id;
+  if (options.panel !== undefined) spec.panel = options.panel;
   if (links.name !== undefined) spec.data = links.name;
   // Field names were checked against S and N above; marks work on the erased schemas.
   const mark = new GraphMark(spec, links as unknown as Table, options.nodes as unknown as Table);

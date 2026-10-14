@@ -27,6 +27,7 @@ import {
 } from "../model/model.ts";
 import type { NavigatorControls } from "../model/navigator.ts";
 import type { RowLink, RowSelectionChange } from "../model/row-selection.ts";
+import type { SelectionOwner } from "../model/selected-rows.ts";
 import { canvasRasterUrl, paintCanvas } from "../render/canvas.ts";
 import { EXPORT_SCENE, type ExportsScene } from "../render/export-scene.ts";
 import { renderSvg } from "../render/svg.ts";
@@ -50,6 +51,7 @@ import {
   type AxisTarget,
   type Chart,
   type InspectOptions,
+  type ItemPositions,
   type LegendEntry,
   type PanelInfo,
   panelInfo,
@@ -252,7 +254,7 @@ export class MountedChart implements Chart, ExportsScene {
    * The panels the selection belongs to: the x scale they share ("" for
    * one every panel shares) and their keys; null without a selection.
    */
-  #owner: { x: string; panels: readonly string[] } | null = null;
+  #owner: SelectionOwner | null = null;
   /** Writes the rows gestures select to the stores `rowSelection` binds, and highlights theirs. */
   #rows: RowLink | undefined;
   /** Where a keyboard selection (Shift + arrows) started: a value along the cursor's axis and its label. */
@@ -396,6 +398,8 @@ export class MountedChart implements Chart, ExportsScene {
     target: PanelTarget = {},
   ): void {
     const { panel } = target;
+    // Maps' and networks' planes keep views of their own; null resets them too.
+    if (this.#plane()?.setView(view, panel, true)) return;
     this.#current(panel);
     const change: Partial<Viewport> = Array.isArray(view)
       ? { x: view as readonly [number, number] }
@@ -418,6 +422,8 @@ export class MountedChart implements Chart, ExportsScene {
   }
 
   getViewport(target: PanelTarget = {}): Viewport {
+    const plane = this.#plane()?.view(target.panel, true);
+    if (plane) return plane;
     this.#current(target.panel);
     return this.#viewOf(target.panel);
   }
@@ -451,33 +457,50 @@ export class MountedChart implements Chart, ExportsScene {
   }
 
   get selectionPanels(): readonly string[] | null {
-    return this.#owner && this.#keysOf(this.#owner.x);
+    const owner = this.#owner;
+    return owner && (owner.plane ? owner.panels : this.#keysOf(owner.x));
   }
 
   select(
     selection: Selection | readonly [number, number] | null,
     target: PanelTarget & { rows?: boolean } = {},
   ): void {
-    this.#selectIn(selection, this.#current(target.panel), target.rows);
+    // A map's or network's lasso belongs to its plane; clearing names one only to check it.
+    const plane =
+      selection || target.panel !== undefined ? this.#plane()?.select(target.panel) : undefined;
+    this.#selectIn(selection, plane ? undefined : this.#current(target.panel), target.rows, plane);
   }
 
-  /** Selects in a panel of the last scene (writing its rows), and shares the selection with synced charts. */
+  /**
+   * Selects in a panel of the last scene, or on a map's or network's
+   * `plane` (writing its rows), and shares a selection of the axes with synced charts.
+   */
   #selectIn(
     selection: Selection | readonly [number, number] | null,
     panel?: DrawnPanel,
     rows = true,
+    plane?: SelectionOwner | null,
   ) {
-    this.#select(selection, panel, rows);
+    this.#select(selection, panel, rows, plane);
     const sync = this.#options.interaction?.sync;
-    if (sync && this.#model.sharesX) broadcastSelection(sync, this.#member, this.#selection);
+    if (sync && this.#model.sharesX && !plane)
+      broadcastSelection(sync, this.#member, this.#selection);
   }
 
-  /** Sets the selection; one of the chart's own (`local`), not a synced chart's, writes its rows. */
-  #select(selection: Selection | readonly [number, number] | null, at?: DrawnPanel, local = false) {
+  /**
+   * Sets the selection, in panel `at` or on a `plane`; one of the chart's
+   * own (`local`), not a synced chart's, writes its rows.
+   */
+  #select(
+    selection: Selection | readonly [number, number] | null,
+    at?: DrawnPanel,
+    local = false,
+    plane?: SelectionOwner | null,
+  ) {
     const given = Array.isArray(selection)
       ? { x: selection as readonly [number, number], y: null, lasso: null }
       : (selection as Selection | null);
-    const panel = at ?? this.#model.panels()[0];
+    const panel = plane ? undefined : (at ?? this.#model.panels()[0]);
     const fit = (range: readonly [number, number] | null, scale: PositionScale | undefined) =>
       range && (scale ? normalize(scale, range[0], range[1]) : ascending(...range));
     const next =
@@ -485,7 +508,7 @@ export class MountedChart implements Chart, ExportsScene {
         ? { x: fit(given.x, panel?.x), y: fit(given.y, panel?.y), lasso: given.lasso }
         : null;
     // A selection belongs to the panels sharing the x scale of the panel it is in.
-    const x = next ? (at?.xGroup ?? this.#model.xGroupOf()) : undefined;
+    const x = next ? (plane?.x ?? at?.xGroup ?? this.#model.xGroupOf()) : undefined;
     if (!next) this.#brushAnchor = null;
     // A selection is drawn by the brush.
     else this.#loadBrush();
@@ -496,10 +519,7 @@ export class MountedChart implements Chart, ExportsScene {
       return;
     }
     this.#selection = next;
-    this.#owner = next && {
-      x: x!,
-      panels: this.#keysOf(x!),
-    };
+    this.#owner = next && (plane ?? { x: x!, panels: this.#keysOf(x!) });
     schedule(this.#scheduled);
     const written = this.#rows?.brushed(next, this.#owner, local);
     // A listener may have changed the selection as its rows were written: that change reported itself.
@@ -512,7 +532,7 @@ export class MountedChart implements Chart, ExportsScene {
    */
   #emitSelection(
     selection: Selection | null,
-    owner: { x: string; panels: readonly string[] } | null,
+    owner: SelectionOwner | null,
     written?: { rows: readonly RowSelectionChange[] } | false,
   ) {
     this.#events.emit("select", {
@@ -546,16 +566,24 @@ export class MountedChart implements Chart, ExportsScene {
     this.#invalidate(false);
   }
 
-  get drillRoot(): DrillRoot | undefined {
-    return this.#model.items?.drillRoot();
+  getDrillRoot(target?: PanelTarget): DrillRoot | undefined {
+    return this.#model.items?.drillRoot(target?.panel);
   }
 
-  setDrillRoot(node: string | readonly string[] | null): void {
-    this.#items().setDrillRoot(node);
+  setDrillRoot(node: string | readonly string[] | null, target?: PanelTarget): void {
+    this.#items().setDrillRoot(node, target?.panel);
   }
 
-  setItemPosition(key: string, position: { x: number; y: number } | null): void {
-    this.#items().setItemPosition(key, position);
+  getItemPositions(target?: PanelTarget): ItemPositions {
+    return this.#model.items?.positions(target?.panel) ?? {};
+  }
+
+  setItemPosition(
+    key: string,
+    position: { x: number; y: number } | null,
+    target?: PanelTarget,
+  ): void {
+    this.#items().setItemPosition(key, position, target?.panel);
   }
 
   /**
@@ -563,14 +591,15 @@ export class MountedChart implements Chart, ExportsScene {
    * pending changes of options or data drawn first; throws for charts without any.
    */
   #items() {
-    if (this.#panelsChanged) this.#flush();
-    const items = this.#model.items;
+    const items = this.#plane();
     if (!items) throw new Error("chart: no items to drill or move");
-    items.changed ??= (type, change) => {
-      this.#invalidate(false);
-      this.#events.emit(type, change);
-    };
     return items;
+  }
+
+  /** As `#items`, or undefined for charts without layout marks, whose views are all the axes'. */
+  #plane() {
+    if (this.#model.items && this.#panelsChanged) this.#flush();
+    return this.#model.items;
   }
 
   getPanels(): readonly PanelInfo[] {
@@ -1156,19 +1185,24 @@ export class MountedChart implements Chart, ExportsScene {
    * another kind go.
    */
   #loadControls(): void {
-    this.#model.items?.updateControls(this.#model, (kind) =>
-      import("./layout-controls.ts").then(({ mountControls }) =>
-        mountControls(kind, {
-          chart: this,
-          model: this.#model,
-          overlay: this.#svg.overlay,
-          live: this.#live,
-          legend: this.#legend.element,
-          events: this.#events,
-          invalidate: () => this.#invalidate(false),
-          cursor: () => this.#keyboard?.key,
-        }),
-      ),
+    this.#model.items?.updateControls(
+      (kind) =>
+        import("./layout-controls.ts").then(({ mountControls }) =>
+          mountControls(kind, {
+            chart: this,
+            model: this.#model,
+            overlay: this.#svg.overlay,
+            live: this.#live,
+            legend: this.#legend.element,
+            invalidate: () => this.#invalidate(false),
+            cursor: () => this.#keyboard ?? undefined,
+          }),
+        ),
+      // Drills, moves, and views of maps and networks report themselves.
+      (type, change) => {
+        this.#invalidate(false);
+        this.#events.emit(type, change);
+      },
     );
   }
 
@@ -1276,6 +1310,7 @@ export class MountedChart implements Chart, ExportsScene {
       config.marks.flatMap((mark) => tablesOf(mark).map((table) => table.version)),
       [...model.hidden],
       config.navigator?.describe(model),
+      model.items?.summaryKey,
     ]);
     if (this.#described?.config === config && this.#described.key === key) return;
     // Summaries scan the data, so streaming charts refresh them at most once
@@ -1294,7 +1329,7 @@ export class MountedChart implements Chart, ExportsScene {
     }
     this.#describedAt = performance.now();
     this.#described = { config, key };
-    const hint = model.controls?.hint;
+    const hint = model.items?.hint;
     this.#description.textContent = `${describeChart(model)} Focus the chart and use the arrow keys to read values.${hint ? ` ${hint}` : ""}`;
   }
 
@@ -1302,7 +1337,7 @@ export class MountedChart implements Chart, ExportsScene {
   #inspection(): Inspection | undefined {
     if (!this.#scene) return undefined;
     // A chart being turned, panned, or dragged shows no tooltip.
-    if (this.#model.items?.controls?.busy) return undefined;
+    if (this.#model.items?.busy) return undefined;
     // The model applies the configured tooltip mode.
     if (this.#pointer) return this.#model.inspect(this.#pointer.x, this.#pointer.y);
     const keyboard = this.#keyboard;
@@ -1344,8 +1379,11 @@ export class MountedChart implements Chart, ExportsScene {
     // A selection whose panels are gone (their facet values, or a change of
     // how they share scales) goes too.
     const owner = this.#owner;
-    // A map's lasso is on its plane, which has no panels.
-    if (owner && !this.#model.layout && !panels.some(({ xGroup }) => xGroup === owner.x)) {
+    // A map's lasso is on its plane's panels.
+    if (
+      owner &&
+      !(owner.plane ? owner.panels.length : panels.some(({ xGroup }) => xGroup === owner.x))
+    ) {
       this.#selection = null;
       this.#owner = null;
       this.#brushAnchor = null;
@@ -1778,10 +1816,6 @@ export class MountedChart implements Chart, ExportsScene {
     this.#showValues();
     if (this.#dirty) this.#flush();
     this.#values?.settle();
-    if (this.#model.layout) {
-      this.#itemKey(event);
-      return;
-    }
     const panels = this.#model.panels();
     const vertical = event.key === "ArrowUp" || event.key === "ArrowDown";
     const brush = this.#options.interaction?.brush;
@@ -1835,7 +1869,8 @@ export class MountedChart implements Chart, ExportsScene {
       );
     const start = stops[at];
     if (!start) return;
-    if (!start.series && !vertical) {
+    // A layout mark's items: every arrow key reads them in a chart of one.
+    if (!start.series && (!vertical || stops.length < 2)) {
       this.#itemKey(event, start.panel);
       return;
     }
@@ -1958,33 +1993,20 @@ export class MountedChart implements Chart, ExportsScene {
    * facet panel or subplot, the cursor names it. Escape leaves a chart of
    * one layout mark's items.
    */
-  #itemKey(event: KeyboardEvent, panel = "", enters = false) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      this.#keyboard = null;
-      this.#live.textContent = "";
-      schedule(this.#scheduled);
-      return;
-    }
-    const step = enters ? 1 : ITEM_STEPS[event.key];
-    if (step === undefined) return;
-    event.preventDefault();
+  #itemKey(event: KeyboardEvent, panel: string, enters = false) {
+    const items = this.#model.items!;
     const from = this.#keyboard;
-    const arrives = from?.panel !== panel;
-    // Steps go from the item the cursor is on; arriving, or when that item
-    // went (hidden, or the panel drawn anew), from the panel's first or last.
-    const on = !arrives && this.#model.inspectItem(from!.key, panel) !== undefined;
-    const key = this.#model.stepItem(on ? from!.key : undefined, step, panel);
-    // A panel with nothing to read is still a stop, which says so.
-    this.#keyboard = { panel, key: key ?? "", position: 0 };
+    const to = items.step(event.key, from, panel, enters);
+    if (to === undefined) return;
+    event.preventDefault();
+    this.#keyboard = to;
     this.#pointer = null;
     this.#brushAnchor = null;
     this.#finishFrame(false);
     const inspection = this.#inspection();
-    const text = inspection ? describeInspection(inspection) : this.#model.layoutSummary(panel);
-    // Arriving in a facet panel or subplot, the cursor names it.
-    const name = this.#model.allPanels().find(({ key }) => key === panel)?.label;
-    this.#live.textContent = arrives && name ? `${name}: ${text}` : (text ?? "");
+    this.#live.textContent = to
+      ? items.said(inspection && describeInspection(inspection), panel, from?.panel !== panel)
+      : "";
   }
 }
 
@@ -2012,18 +2034,6 @@ const CELL_STEPS: Record<string, readonly [number, number]> = {
   End: [Number.POSITIVE_INFINITY, 0],
   PageUp: [0, Number.POSITIVE_INFINITY],
   PageDown: [0, Number.NEGATIVE_INFINITY],
-};
-
-/** Steps for the keys that move through the items of a layout mark. */
-const ITEM_STEPS: Record<string, number> = {
-  ArrowRight: 1,
-  ArrowDown: 1,
-  ArrowLeft: -1,
-  ArrowUp: -1,
-  PageDown: 5,
-  PageUp: -5,
-  Home: -Infinity,
-  End: Infinity,
 };
 
 /**

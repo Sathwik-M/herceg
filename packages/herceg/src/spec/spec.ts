@@ -1338,6 +1338,8 @@ export interface GraphSpec {
   size?: Field;
   /** Names beside the most connected (or largest) nodes that have room; true by default. */
   labels?: boolean;
+  /** With the chart's `panels`, the id of the panel the network has to itself. */
+  panel?: string;
 }
 
 /**
@@ -1372,6 +1374,13 @@ export interface GeoShapeSpec extends RowTooltip {
   strokeWidth?: number;
   /** What the regions are, in the legend and tooltips without `color`. */
   label?: string;
+  /**
+   * With the chart's `facet`, "repeat" draws all the regions in every
+   * panel (a base map) instead of splitting them by the facet field.
+   */
+  facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel of the map: layers naming one panel are one map. */
+  panel?: string;
 }
 
 /**
@@ -1416,6 +1425,13 @@ interface GeoPointStyleSpec extends RowTooltip {
   strokeWidth?: number;
   /** Legend and tooltip name of points without `series`. */
   label?: string;
+  /**
+   * With the chart's `facet`, "repeat" draws all the points in every panel
+   * instead of splitting them by the facet field.
+   */
+  facet?: "repeat";
+  /** With the chart's `panels`, the id of the panel of the map: layers naming one panel are one map. */
+  panel?: string;
 }
 
 /**

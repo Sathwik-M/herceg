@@ -201,6 +201,42 @@ describe("notebook widget", () => {
     },
   );
 
+  it("fits facet panels' map key to the rows the panels draw, as they do", async () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const { rowSelection: _rows, ...spec } = mapSpec();
+    const year = { type: "category" as const, codes: 2, dictionary: ["2023", "2024"] };
+    const faceted: Snapshot = {
+      ...snapshot(),
+      spec: {
+        ...spec,
+        facet: { field: "year" },
+        data: { data: { columns: { lon: number(0), lat: number(1), year } } },
+      } as Snapshot["spec"],
+      // The last row has no year: it is in no panel, and no panel's map fits it.
+      buffers: [
+        new Float64Array([-100, -90, 0]),
+        new Float64Array([30, 40, 70]),
+        new Int32Array([0, 1, -1]),
+      ],
+    };
+    const model = new MockModel({ _chart: faceted, _listening: [] });
+    mount(model);
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setViewport({ x: [0, 0.1], y: [0, 0.1] });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    model.receive(
+      {
+        type: "replace",
+        revision: 1,
+        table: "data",
+        columns: { lon: number(0), lat: number(1), year: { ...year, codes: 2 } },
+      },
+      [new Float64Array([-100, -90]), new Float64Array([30, 40]), new Int32Array([0, 1])],
+    );
+    chart.render();
+    expect(chart.getViewport().x).toEqual([0, 0.1]);
+  });
+
   it.each(["inferred", "explicit"] as const)(
     "keeps map ranges and lasso when %s parameters stay equal",
     (kind) => {
@@ -344,6 +380,52 @@ describe("notebook widget", () => {
     expect(figure(host!).getAttribute("aria-label")).toBe("Chart");
   });
 
+  it("updates options of maps with a projection and networks that drag", () => {
+    const maps = new MockModel({
+      _chart: {
+        ...snapshot(),
+        spec: mapSpec(),
+        buffers: [new Float64Array([-100, -90]), new Float64Array([30, 40])],
+      },
+      _listening: [],
+    });
+    const [map] = mount(maps);
+    maps.receive({ type: "options", revision: 1, options: { title: "Renamed" } });
+    expect(map!.querySelector('[role="alert"]')).toBeNull();
+    expect(figure(map!).getAttribute("aria-label")).toBe("Renamed");
+    const networks = new MockModel({
+      _chart: { ...snapshot(), ...itemChart("graph") },
+      _listening: [],
+    });
+    const [network] = mount(networks);
+    networks.receive({ type: "options", revision: 1, options: { title: "Renamed" } });
+    expect(network!.querySelector('[role="alert"]')).toBeNull();
+    expect(figure(network!).getAttribute("aria-label")).toBe("Renamed");
+  });
+
+  it("lets go of a map's view and lasso when an option changes its projection", async () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const model = new MockModel({
+      _chart: {
+        ...snapshot(),
+        spec: mapSpec(),
+        buffers: [new Float64Array([-100, -90]), new Float64Array([30, 40])],
+      },
+      _listening: [],
+    });
+    mount(model);
+    const chart = listener.mock.instances[0] as MountedChart;
+    focusMap(chart);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    model.receive({ type: "options", revision: 1, options: { projection: "equal-earth" } });
+    chart.render();
+    expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: null });
+    expect(chart.selection).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("viewport").at(-1)).toMatchObject({ viewport: null, revision: 1 });
+    expect(model.messages("select").at(-1)).toMatchObject({ selection: null, revision: 1 });
+  });
+
   it("draws a navigator, and adds and removes one with options", async () => {
     const model = new MockModel({
       _chart: snapshot({ navigator: true }),
@@ -367,6 +449,47 @@ describe("notebook widget", () => {
     const [host] = mount(model);
     model.receive({ type: "options", revision: 1, options: { title: "After" } });
     expect(figure(host!).getAttribute("aria-label")).toBe("After");
+  });
+
+  it("keeps the view of a network subplot too large to draw", () => {
+    const names = Array.from({ length: 5001 }, (_, i) => `n${i}`);
+    const graph = (panel: string, nodes?: string) => ({
+      type: "graph" as const,
+      data: "links",
+      source: "from",
+      target: "to",
+      ...(nodes && { nodes, node: "id" }),
+      panel,
+    });
+    const view: ViewportPayload = { x: [0, 1], y: [0, 1], yRight: null, time: [] };
+    const model = new MockModel({
+      _chart: {
+        ...snapshot(),
+        spec: {
+          width: 400,
+          height: 200,
+          renderer: "svg",
+          interaction: { zoom: true },
+          panels: [{ id: "a" }, { id: "b" }],
+          data: {
+            links: {
+              columns: {
+                from: { type: "category", codes: 0, dictionary: ["n0"] },
+                to: { type: "category", codes: 1, dictionary: ["n1"] },
+              },
+            },
+            nodes: { columns: { id: { type: "category", codes: 2, dictionary: names } } },
+          },
+          marks: [graph("a", "nodes"), graph("b")],
+        },
+        buffers: [new Int32Array([0]), new Int32Array([0]), Int32Array.from(names, (_, i) => i)],
+        panel_states: { viewport: { a: view, b: view } },
+      } as Snapshot,
+      _listening: [],
+    });
+    const [host] = mount(model);
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+    expect(host!.textContent).toContain("too many to lay out");
   });
 
   it("loads a network grown past its limit, and draws it once updates bring it back", async () => {
@@ -1149,6 +1272,226 @@ describe("widget item interaction", () => {
       expect(model.messages("drill").at(-1)!.drill_root).toEqual(root);
     },
   );
+
+  it("keeps each subplot tree's root, from Python and from the browser", async () => {
+    const fixture = itemChart("treemap");
+    const [mark] = fixture.spec.marks;
+    const spec = {
+      ...fixture.spec,
+      width: 400,
+      panels: [{ id: "a" }, { id: "b" }],
+      grid: { columns: 2 },
+      marks: [
+        { ...mark!, panel: "a" },
+        { ...mark!, panel: "b", id: "second" },
+      ],
+    } as Snapshot["spec"];
+    const model = new MockModel({
+      _chart: {
+        ...snapshot(),
+        ...fixture,
+        spec,
+        panel_states: { drill: { b: { path: ['["second","West"]'] } } },
+      },
+      _listening: [],
+    });
+    const [host] = mount(model);
+    await vi.dynamicImportSettled();
+    await frame();
+    const navs = [...host!.querySelectorAll("nav nav")].map((nav) => nav.textContent);
+    expect(navs[1]).toContain("West");
+    expect(navs[0]).not.toContain("West");
+    model.receive({ type: "drill", drill_root: { path: ['[0,"East"]'] }, panel: "a", revision: 1 });
+    await frame();
+    expect(host!.querySelectorAll("nav nav")[0]!.textContent).toContain("East");
+    // The browser goes back up in panel b, and Python hears of panel b's root.
+    host!
+      .querySelectorAll<HTMLButtonElement>('[role="toolbar"]')[1]!
+      .querySelector("button")!
+      .click();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("drill").at(-1)).toMatchObject({ drill_root: null, panel: "b" });
+  });
+
+  it("keeps each map subplot's view, letting go of one whose projection new data changes", async () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const { rowSelection: _rows, ...spec } = mapSpec();
+    const [place] = spec.marks;
+    const subplots: Snapshot = {
+      ...snapshot(),
+      spec: {
+        ...spec,
+        panels: [{ id: "a" }, { id: "b" }],
+        grid: { columns: 2 },
+        data: {
+          ...spec.data,
+          other: { columns: { lon: number(2), lat: number(3) } },
+        },
+        marks: [
+          { ...place!, panel: "a" },
+          { ...place!, data: "other", panel: "b" },
+        ],
+      } as Snapshot["spec"],
+      buffers: [-100, -90, -100, -90].map((lon, i) =>
+        i % 2 ? new Float64Array([30, 40]) : new Float64Array([lon, lon + 10]),
+      ),
+      panel_states: { viewport: { b: { x: [0, 0.1], y: [0, 0.1], yRight: null, time: [] } } },
+    };
+    const model = new MockModel({ _chart: subplots, _listening: [] });
+    const [host] = mount(model);
+    const chart = listener.mock.instances[0] as MountedChart;
+    // No axes: only the subplots' planes have views to restore.
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+    expect(chart.getViewport({ panel: "b" })).toEqual({ x: [0, 0.1], y: [0, 0.1], yRight: null });
+    chart.setViewport({ x: [0, 0.2], y: [0, 0.2] }, { panel: "a" });
+    const lasso: [number, number][] = [
+      [0, 0],
+      [1, 0],
+      [1, 1],
+    ];
+    chart.select({ x: null, y: null, lasso }, { panel: "b" });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("select").at(-1)!.selection).toMatchObject({ panels: ["b"], lasso });
+    // Points far north change panel a's inferred projection, and only its view goes.
+    model.receive(
+      { type: "replace", revision: 1, table: "data", columns: { lon: number(0), lat: number(1) } },
+      [new Float64Array([0, 10]), new Float64Array([60, 70])],
+    );
+    chart.render();
+    expect(chart.getViewport({ panel: "a" }).x).toBeNull();
+    expect(chart.getViewport({ panel: "b" }).x).toEqual([0, 0.1]);
+    expect(chart.selectionPanels).toEqual(["b"]);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("viewport").at(-1)).toMatchObject({
+      viewport: null,
+      panel: "a",
+      revision: 1,
+    });
+    expect(model.messages("select").at(-1)!.selection).not.toBeNull();
+  });
+
+  it("reads a map subplot's selection in its plane's numbers beside a category axis", async () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const { rowSelection: _rows, interaction: _interaction, ...spec } = mapSpec();
+    const region = { type: "category" as const, codes: 2, dictionary: ["A", "B"] };
+    const beside: Snapshot = {
+      ...snapshot(),
+      spec: {
+        ...spec,
+        panels: [{ id: "bars" }, { id: "map" }],
+        grid: { columns: 2 },
+        data: { data: { columns: { lon: number(0), lat: number(1), region } } },
+        marks: [
+          { type: "bar", data: "data", x: "region", y: "lat", panel: "bars" },
+          { ...spec.marks[0]!, panel: "map" },
+        ],
+      } as Snapshot["spec"],
+      buffers: [new Float64Array([-100, -90]), new Float64Array([30, 40]), new Int32Array([0, 1])],
+    };
+    const model = new MockModel({ _chart: beside, _listening: [] });
+    mount(model);
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.select({ x: [0.01, 0.15], y: [0.2, 0.3], lasso: null }, { panel: "map" });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("select").at(-1)!.selection).toEqual({
+      panels: ["map"],
+      x: [0.01, 0.15],
+      y: [0.2, 0.3],
+      lasso: null,
+      time: [],
+    });
+    model.receive({
+      type: "select",
+      revision: 1,
+      selection: { panels: ["map"], x: [0.4, 0.5], y: null, lasso: null, time: [] },
+    });
+    expect(chart.selection).toEqual({ x: [0.4, 0.5], y: null, lasso: null });
+    expect(chart.selectionPanels).toEqual(["map"]);
+  });
+
+  it("keeps each network subplot's moves through the other's moves and data", async () => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const fixture = itemChart("graph");
+    const [network] = fixture.spec.marks;
+    const names = ["East", "West", "A", "B", "C"];
+    const spec = {
+      ...fixture.spec,
+      width: 400,
+      panels: [{ id: "a" }, { id: "b" }],
+      grid: { columns: 2 },
+      data: {
+        ...fixture.spec.data,
+        other: fixture.spec.data!.data!,
+        nodes: { columns: { name: { type: "category", codes: 3, dictionary: names } } },
+      },
+      marks: [
+        { ...network!, panel: "a" },
+        { ...network!, data: "other", nodes: "nodes", node: "name", panel: "b" },
+      ],
+    } as Snapshot["spec"];
+    const buffers = [...fixture.buffers, new Int32Array([0, 1, 2, 3, 4])];
+    const model = new MockModel({
+      _chart: { ...snapshot(), spec, buffers },
+      _listening: [],
+    });
+    mount(model);
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setItemPosition('[1,"East"]', { x: 1, y: 2 }, { panel: "b" });
+    // Python's moves of panel a, before panel b's are reported, leave them be.
+    model.receive({ type: "itemMove", revision: 1, item_positions: {}, panel: "a" });
+    await frame();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove").at(-1)).toMatchObject({
+      item_positions: { '[1,"East"]': [1, 2] },
+      panel: "b",
+    });
+    // New data for panel a's network lays it out again; panel b's keeps its moves.
+    const sent = model.messages("itemMove").length;
+    model.receive(
+      {
+        type: "replace",
+        revision: 2,
+        table: "data",
+        columns: {
+          region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+          city: { type: "category", codes: 1, dictionary: ["A", "B", "C"] },
+          value: number(2),
+        },
+      },
+      fixture.buffers,
+    );
+    await frame();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(chart.getItemPositions({ panel: "b" })).toEqual({ '[1,"East"]': { x: 1, y: 2 } });
+    expect(model.messages("itemMove")).toHaveLength(sent);
+    // Its next move reports both.
+    chart.setItemPosition('[1,"West"]', { x: 3, y: 4 }, { panel: "b" });
+    await frame();
+    expect(model.messages("itemMove").at(-1)).toMatchObject({
+      item_positions: { '[1,"East"]': [1, 2], '[1,"West"]': [3, 4] },
+      panel: "b",
+    });
+    // New nodes lay panel b's network out again, dropping its moves.
+    model.receive(
+      {
+        type: "replace",
+        revision: 3,
+        table: "nodes",
+        columns: { name: { type: "category", codes: 0, dictionary: names } },
+      },
+      [new Int32Array([0, 1, 2, 3, 4])],
+    );
+    await frame();
+    expect(chart.getItemPositions({ panel: "b" })).toEqual({});
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    chart.setItemPosition('[1,"A"]', { x: 5, y: 6 }, { panel: "b" });
+    await frame();
+    expect(model.messages("itemMove").at(-1)).toMatchObject({
+      item_positions: { '[1,"A"]': [5, 6] },
+      panel: "b",
+    });
+  });
 
   it("reports a browser drill and rejects an invalid explicit key visibly", async () => {
     const model = new MockModel({ _chart: items("treemap"), _listening: [] });

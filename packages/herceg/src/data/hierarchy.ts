@@ -188,12 +188,13 @@ export function subtreeValues(
  * value is positive (so are its ancestors', values being subtree totals),
  * as a tree of its own, its nodes and their children in `tree`'s order,
  * with their values; `index` gives each node of `tree` its node there, or
- * -1. The part maps no rows (`nodeOfRow` is empty).
+ * -1, and `nodes` each node there its node of `tree`. The part maps no
+ * rows (`nodeOfRow` is empty).
  */
 export function pruneHierarchy(
   tree: Hierarchy,
   values: Float64Array,
-): { tree: Hierarchy; values: Float64Array; index: Int32Array } {
+): { tree: Hierarchy; values: Float64Array; index: Int32Array; nodes: Int32Array } {
   const index = new Int32Array(tree.size).fill(-1);
   const kept = [0];
   index[0] = 0;
@@ -208,6 +209,7 @@ export function pruneHierarchy(
     tree: link(parent, names, new Int32Array(0)),
     values: Float64Array.from(kept, (node) => values[node]!),
     index,
+    nodes: Int32Array.from(kept),
   };
 }
 

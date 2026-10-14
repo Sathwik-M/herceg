@@ -16,6 +16,7 @@ import {
   selectRows,
   selectWhere,
   type Table,
+  type Viewport,
 } from "herceg";
 import {
   type ChartSpec,
@@ -27,21 +28,26 @@ import {
 import {
   chartSelection,
   chartViewport,
+  DRILLS,
   type DrillPayload,
   drillPayload,
   type ItemPositionsPayload,
   inspectionPayload,
+  MOVES,
   namesCategories,
+  PLANES,
   positionsValue,
   recordPosition,
   type SelectionPayload,
   selectionPayload,
   showDrillRoot,
   showItemPositions,
+  statePanels,
+  targetOf,
   type ViewportPayload,
   viewportPayload,
 } from "./events.ts";
-import { mapPlaneKey } from "./planes.ts";
+import { planeKeys } from "./planes.ts";
 import { resetColumns } from "./tables.ts";
 
 /** The parts of an anywidget model this module uses. */
@@ -66,6 +72,16 @@ const stateKeys = {
   drill: "drill_root",
   itemMove: "item_positions",
 } as const;
+/** Events whose state each map or network subplot (or tree subplot) has of its own. */
+type PanelEvent = "viewport" | "drill" | "itemMove";
+
+/**
+ * Where a state is kept: the event's name for the chart's, "event:panel"
+ * for a subplot's (see `targetOf`); also the outbox's kind of its reports.
+ */
+function stateKey(event: ViewEvent, panel = ""): string {
+  return panel === "" ? event : `${event}:${panel}`;
+}
 
 /**
  * A channel's selection between Python and the browser: a condition, or
@@ -93,6 +109,8 @@ export interface Snapshot {
   viewport: ViewportPayload | null;
   drill_root: DrillPayload | null;
   item_positions: ItemPositionsPayload;
+  /** The states of subplots' maps, networks, and trees, by event and panel. */
+  panel_states?: Partial<Record<PanelEvent, Record<string, ViewState>>>;
   /**
    * Per table a row selection binds, how Python numbers its rows: the rows
    * dropped from its front since it was last replaced, and how many times
@@ -114,9 +132,9 @@ export type Update = { revision: number } & (
   | { type: "replace"; table: string; columns: Columns }
   | { type: "options"; options: Record<string, unknown> }
   | { type: "select"; selection: SelectionPayload | null; origin?: string }
-  | { type: "viewport"; viewport: ViewportPayload | null; origin?: string }
-  | { type: "drill"; drill_root: DrillPayload | null; origin?: string }
-  | { type: "itemMove"; item_positions: ItemPositionsPayload; origin?: string }
+  | { type: "viewport"; viewport: ViewportPayload | null; panel?: string; origin?: string }
+  | { type: "drill"; drill_root: DrillPayload | null; panel?: string; origin?: string }
+  | { type: "itemMove"; item_positions: ItemPositionsPayload; panel?: string; origin?: string }
   | { type: "rows"; table: string; channel: string; selection: RowsPayload | null; origin?: string }
 );
 
@@ -124,7 +142,8 @@ interface View {
   host: HTMLElement;
   element: HTMLDivElement;
   chart: Chart | undefined;
-  positions: ItemPositionsPayload;
+  /** The nodes this view's chart has moved, by panel ("" for the chart's one network). */
+  positions: Map<string, ItemPositionsPayload>;
   /** The last error shown above the chart. */
   error: HTMLElement | undefined;
 }
@@ -147,12 +166,17 @@ class Widget {
   #resyncing = false;
   #tables = new Map<string, Table>();
   #config: ChartOptions | undefined;
-  #mapPlane: string | undefined;
+  /** The coordinate system of each map's or network's view, by state (see `planeKeys`). */
+  #planeKeys: Map<string, string> | undefined;
+  /** The tables each network reads, with those they derive from, by state (see `networkTables`). */
+  #networkTables = new Map<string, Set<string>>();
   /** The spec's chart options, which option updates change. */
   #options: Record<string, unknown> = {};
+  /** The rest of the spec: its tables, marks, and panels, which updates never change. */
+  #structure: Record<string, unknown> = {};
   #error: unknown;
-  /** Interaction state Python and the browser last agreed on, to drop echoes. */
-  #states: ViewStates = { select: null, viewport: null, drill: null, itemMove: {} };
+  /** Interaction state Python and the browser last agreed on, to drop echoes, by `stateKey`. */
+  #states = new Map<string, ViewState>();
   /** The stores the views' row selections bind, by table name, which the views share. */
   #stores = new Map<string, SelectionStore>();
   /** Python's numbering of each bound table's rows, as of the snapshot (see `Snapshot.rows`). */
@@ -161,7 +185,8 @@ class Widget {
   /** Applying a row selection from Python, which goes back to no one. */
   #applying = false;
   #itemsFrame: number | undefined;
-  #pendingPositions: ItemPositionsPayload | undefined;
+  /** Moves not reported yet, by panel, and the view they come from. */
+  #pendingPositions = new Map<string, ItemPositionsPayload>();
   #itemSource: View | undefined;
 
   constructor(model: Model) {
@@ -189,7 +214,13 @@ class Widget {
 
   render(host: HTMLElement): () => void {
     const element = host.ownerDocument.createElement("div");
-    const view: View = { host, element, chart: undefined, positions: {}, error: undefined };
+    const view: View = {
+      host,
+      element,
+      chart: undefined,
+      positions: new Map(),
+      error: undefined,
+    };
     host.append(element);
     this.#views.add(view);
     this.#mount(view);
@@ -212,27 +243,22 @@ class Widget {
     this.#resyncing = false;
     // Views and rows waiting to be reported predate the snapshot's.
     this.#outbox.cancel("select");
-    this.#outbox.cancel("viewport");
-    this.#outbox.cancel("drill");
+    this.#outbox.cancelAll("viewport");
+    this.#outbox.cancelAll("drill");
     this.#cancelItems();
     this.#outbox.cancelAll("rows:");
-    this.#states = {
-      select: snapshot.selection,
-      viewport: snapshot.viewport,
-      drill: snapshot.drill_root,
-      itemMove: snapshot.item_positions,
-    };
+    this.#states = new Map<string, ViewState>([
+      ["select", snapshot.selection],
+      ["viewport", snapshot.viewport],
+      ["drill", snapshot.drill_root],
+      ["itemMove", snapshot.item_positions],
+    ]);
+    for (const [event, states] of Object.entries(snapshot.panel_states ?? {}))
+      for (const [panel, state] of Object.entries(states))
+        this.#states.set(stateKey(event as PanelEvent, panel), state);
     // Option updates never change the row selection: it binds the tables loaded here.
-    const {
-      data: _data,
-      marks: _marks,
-      version: _version,
-      facet: _facet,
-      panels: _panels,
-      grid: _grid,
-      rowSelection: _rowSelection,
-      ...options
-    } = snapshot.spec;
+    const { data, marks, version, facet, panels, grid, rowSelection, ...options } = snapshot.spec;
+    this.#structure = { data, marks, version, facet, panels, grid, rowSelection };
     this.#options = options;
     for (const stop of this.#unsubscribe) stop();
     this.#unsubscribe = [];
@@ -240,11 +266,13 @@ class Widget {
       const loaded = loadSpec(snapshot.spec, snapshot.buffers);
       this.#tables = loaded.tables;
       this.#config = loaded.config;
+      this.#networkTables = networkTables(snapshot.spec);
       this.#stores = loaded.stores;
       this.#error = undefined;
     } catch (error) {
       this.#tables = new Map();
       this.#config = undefined;
+      this.#networkTables = new Map();
       this.#stores = new Map();
       this.#error = error;
     }
@@ -340,42 +368,62 @@ class Widget {
       return;
     }
     view.chart = chart;
-    view.positions = {};
+    view.positions = new Map();
+    const config = this.#config;
+    // Each subplot's map, network, or tree has a state of its own.
+    const planes = config.panels ? statePanels(config, PLANES) : [];
+    const drills = statePanels(config, DRILLS);
+    const moves = statePanels(config, MOVES);
     // Restored before listening, so restoring does not echo back to Python.
-    this.#show(view, "viewport", this.#states.viewport);
-    this.#show(view, "drill", this.#states.drill, true);
-    this.#show(view, "itemMove", this.#states.itemMove, true);
-    this.#show(view, "select", this.#states.select);
+    // Without axes, only the subplots' planes have views.
+    if (planes.length === 0 || chart.getPanels().some(({ x }) => x))
+      this.#show(view, "viewport", this.#state("viewport"));
+    for (const panel of planes)
+      this.#show(view, "viewport", this.#state("viewport", panel), false, panel);
+    for (const panel of drills) this.#show(view, "drill", this.#state("drill", panel), true, panel);
+    for (const panel of moves) this.#show(view, "itemMove", this.#positions(panel), true, panel);
+    this.#show(view, "select", this.#state("select"));
     chart.on("select", (selection) =>
-      this.#report("select", view, selectionPayload(chart, selection)),
+      this.#report("select", view, selectionPayload(chart, selection, selection.panels)),
     );
-    chart.on("viewport", (viewport) =>
-      this.#report("viewport", view, viewportPayload(chart, viewport)),
-    );
-    chart.on("drill", (root) => {
-      if (!this.#applying) this.#report("drill", view, drillPayload(root));
+    // A subplot's map or network names its panel.
+    chart.on("viewport", (viewport) => {
+      const panel = viewport.panels?.[0] ?? "";
+      this.#report("viewport", view, viewportPayload(chart, viewport, panel !== ""), panel);
     });
-    chart.on("itemMove", ({ key, position }) => {
+    chart.on("drill", (root) => {
+      if (!this.#applying) this.#report("drill", view, drillPayload(root), root.panels?.[0] ?? "");
+    });
+    chart.on("itemMove", ({ key, position, panels }) => {
       if (this.#applying) return;
-      recordPosition(view.positions, key, position);
-      this.#pendingPositions ??= { ...this.#states.itemMove };
-      recordPosition(this.#pendingPositions, key, position);
+      const panel = panels?.[0] ?? "";
+      const own = view.positions.get(panel) ?? {};
+      view.positions.set(panel, own);
+      recordPosition(own, key, position);
+      const pending = this.#pendingPositions.get(panel) ?? { ...this.#positions(panel) };
+      this.#pendingPositions.set(panel, pending);
+      recordPosition(pending, key, position);
       this.#itemSource = view;
       this.#itemsFrame ??= requestAnimationFrame(() => {
         this.#itemsFrame = undefined;
-        const positions = this.#pendingPositions!;
         const source = this.#itemSource!;
-        this.#pendingPositions = undefined;
+        const reports = [...this.#pendingPositions];
+        this.#pendingPositions.clear();
         this.#itemSource = undefined;
-        this.#report("itemMove", source, positions);
+        for (const [at, positions] of reports) this.#report("itemMove", source, positions, at);
       });
     });
-    chart.on("visibility", () => this.#show(view, "itemMove", this.#states.itemMove, true));
-    this.#report("drill", view, drillPayload(chart.drillRoot));
-    if (!chart.getHiddenKeys().length) this.#report("itemMove", view, { ...view.positions });
+    chart.on("visibility", () => {
+      for (const panel of moves) this.#show(view, "itemMove", this.#positions(panel), true, panel);
+    });
+    for (const panel of drills)
+      this.#report("drill", view, drillPayload(chart.getDrillRoot(targetOf(panel))), panel);
+    if (!chart.getHiddenKeys().length)
+      for (const panel of moves)
+        this.#report("itemMove", view, { ...view.positions.get(panel) }, panel);
     // A selection whose categories are gone, or moved under its lasso, goes,
     // and Python hears so.
-    if (this.#states.select && !chart.selection) this.#report("select", view, null);
+    if (this.#state("select") && !chart.selection) this.#report("select", view, null);
     chart.on("hover", ({ inspection }) => {
       if (!this.#listening("hover")) return;
       this.#outbox.post("hover", {
@@ -403,32 +451,77 @@ class Widget {
     return ((this.#model.get("_listening") as string[] | undefined) ?? []).includes(event);
   }
 
-  #cancelItems() {
+  /** Drops moves not reported yet: of the networks of states `panels`, or every network's. */
+  #cancelItems(panels?: readonly string[]) {
+    if (panels) {
+      for (const panel of panels) {
+        this.#pendingPositions.delete(panel);
+        this.#outbox.cancel(stateKey("itemMove", panel));
+      }
+    } else {
+      this.#pendingPositions.clear();
+      this.#outbox.cancelAll("itemMove");
+    }
+    if (this.#pendingPositions.size > 0) return;
     if (this.#itemsFrame !== undefined) cancelAnimationFrame(this.#itemsFrame);
     this.#itemsFrame = undefined;
-    this.#pendingPositions = undefined;
     this.#itemSource = undefined;
-    this.#outbox.cancel("itemMove");
   }
 
-  /** A view's interaction state changed: the other views follow, and Python hears of it. */
-  #report<K extends ViewEvent>(event: K, source: View | undefined, payload: ViewStates[K]) {
-    const same = valuesOf(event, payload) === valuesOf(event, this.#states[event]);
+  /** The state of `event` of panel `panel` ("" for the chart's one) as last agreed on. */
+  #state<K extends ViewEvent>(event: K, panel = ""): ViewStates[K] {
+    // No nodes moved, as Python starts.
+    const none = event === "itemMove" ? {} : null;
+    return (this.#states.get(stateKey(event, panel)) ?? none) as ViewStates[K];
+  }
+
+  /** The moved nodes of panel `panel`'s network. */
+  #positions(panel: string): ItemPositionsPayload {
+    return this.#state("itemMove", panel);
+  }
+
+  /**
+   * Lets go of the moved nodes of the networks reading table `table`, as a
+   * change of their data lays them out again; others keep theirs.
+   */
+  #dropPositions(table: string) {
+    const panels = [...this.#networkTables]
+      .filter(([, tables]) => tables.has(table))
+      .map(([panel]) => panel);
+    this.#cancelItems(panels);
+    for (const panel of panels) {
+      this.#states.set(stateKey("itemMove", panel), {});
+      for (const view of this.#views) view.positions.delete(panel);
+    }
+  }
+
+  /**
+   * A view's interaction state changed (of panel `panel`, "" for the
+   * chart's one): the other views follow, and Python hears of it.
+   */
+  #report<K extends ViewEvent>(
+    event: K,
+    source: View | undefined,
+    payload: ViewStates[K],
+    panel = "",
+  ) {
+    const key = stateKey(event, panel);
+    const same = valuesOf(event, payload) === valuesOf(event, this.#state(event, panel));
     // The same values, perhaps saying better which axes hold times.
-    if (payload || !same) this.#states[event] = payload;
+    if (payload || !same) this.#states.set(key, payload);
     if (same) return;
     for (const view of this.#views) {
       if (!view.chart || (view === source && event !== "itemMove")) continue;
       try {
-        this.#show(view, event, payload, event === "itemMove");
+        this.#show(view, event, payload, event === "itemMove", panel);
       } catch (error) {
         showError(view, error);
       }
     }
     // The revision tells Python which of its changes this one was made after.
-    const value = { [stateKeys[event]]: payload };
+    const value = { [stateKeys[event]]: payload, ...(panel && { panel }) };
     const report = { type: event, ...value, origin: this.#origin, revision: this.#revision };
-    this.#outbox.post(event, report);
+    this.#outbox.post(key, report);
   }
 
   /**
@@ -437,13 +530,17 @@ class Widget {
    * changes it has not drawn yet. A selection shown here writes no rows:
    * the view brushed wrote them to the stores every view shares.
    */
-  #show(view: View, event: ViewEvent, payload: ViewState, restore = false) {
+  #show(view: View, event: ViewEvent, payload: ViewState, restore = false, panel = "") {
     const chart = view.chart!;
     if (event === "drill" || event === "itemMove") {
       this.#applying = true;
       try {
-        if (event === "drill") showDrillRoot(chart, payload as DrillPayload | null, restore);
-        else showItemPositions(chart, payload as ItemPositionsPayload, view.positions, restore);
+        if (event === "drill") showDrillRoot(chart, payload as DrillPayload | null, restore, panel);
+        else {
+          const held = view.positions.get(panel) ?? {};
+          view.positions.set(panel, held);
+          showItemPositions(chart, payload as ItemPositionsPayload, held, restore, panel);
+        }
       } finally {
         this.#applying = false;
       }
@@ -452,22 +549,32 @@ class Widget {
     if (event === "select") {
       const selection = payload as SelectionPayload | null;
       if (namesCategories(selection) || selection?.lasso) chart.render();
-      chart.select(chartSelection(chart, selection), { rows: false });
+      // A subplot's map or network's lasso is its panel's.
+      const target = selection?.panels?.[0];
+      chart.select(chartSelection(chart, selection), {
+        rows: false,
+        ...(target !== undefined && { panel: target }),
+      });
       if (selection?.lasso && !selection.categories) this.#learnCategories(chart, selection);
       return;
     }
     const viewport = payload as ViewportPayload | null;
+    if (panel !== "") {
+      // A subplot's plane: numbers in its units.
+      chart.setViewport({ x: viewport?.x ?? null, y: viewport?.y ?? null } as Viewport, { panel });
+      return;
+    }
     const labels = [viewport?.x, viewport?.y].some((ends) => typeof ends?.[0] === "string");
     if (labels) chart.render();
     const restored = chartViewport(chart, viewport);
     // Charts whose panels have y scales of their own have no y viewport.
-    const [first] = chart.getPanels();
+    const first = chart.getPanels().find(({ x }) => x);
     chart.setViewport({
       x: restored.x,
       y:
-        this.#config?.marks.some((mark) =>
-          ["geoshape", "geopoint", "graph"].includes(mark.spec.type),
-        ) || first?.y?.canSetViewport
+        (!this.#config?.panels &&
+          this.#config?.marks.some((mark) => PLANES.includes(mark.spec.type))) ||
+        first?.y?.canSetViewport
           ? restored.y
           : null,
       yRight: first?.yRight?.canSetViewport ? restored.yRight : null,
@@ -483,7 +590,7 @@ class Widget {
     const categories = selectionPayload(chart, chart.selection)?.categories;
     if (!categories) return;
     const known = { ...selection, categories };
-    this.#states.select = known;
+    this.#states.set("select", known);
     const report = { type: "select", selection: known, origin: this.#origin };
     this.#outbox.post("select", { ...report, revision: this.#revision });
   }
@@ -513,9 +620,7 @@ class Widget {
         table.append(appendBatch(table, decode(message.columns, buffers)));
         const excess = message.maxRows === undefined ? 0 : table.length - message.maxRows;
         if (excess > 0) table.dropFirst(excess);
-        this.#cancelItems();
-        this.#states.itemMove = {};
-        for (const view of this.#views) view.positions = {};
+        this.#dropPositions(message.table);
         this.#keepMapView();
         this.#keepCategorySelection();
         return;
@@ -523,9 +628,7 @@ class Widget {
       case "replace": {
         const table = this.#table(message.table);
         table.reset(resetColumns(table, decode(message.columns, buffers)));
-        this.#cancelItems();
-        this.#states.itemMove = {};
-        for (const view of this.#views) view.positions = {};
+        this.#dropPositions(message.table);
         this.#keepMapView();
         this.#keepCategorySelection();
         return;
@@ -546,17 +649,18 @@ class Widget {
         return;
       case "itemMove": {
         if (message.origin === this.#origin) return;
-        this.#cancelItems();
-        const known = this.#states.itemMove;
+        const panel = message.panel ?? "";
+        this.#cancelItems([panel]);
+        const known = this.#positions(panel);
         const next = message.item_positions;
-        this.#states.itemMove = next;
+        this.#states.set(stateKey("itemMove", panel), next);
         const applied = new Set<string>();
         for (const view of this.#views) {
           if (!view.chart) continue;
           // Another display may have hidden a node. Keep its desired override
           // and apply it when that display shows the node again.
-          this.#show(view, "itemMove", next, true);
-          for (const key of Object.keys(view.positions)) applied.add(key);
+          this.#show(view, "itemMove", next, true, panel);
+          for (const key of Object.keys(view.positions.get(panel) ?? {})) applied.add(key);
         }
         const unknown = Object.keys(next).filter(
           (key) => !applied.has(key) && !Object.hasOwn(known, key),
@@ -567,7 +671,7 @@ class Widget {
           const kept = Object.fromEntries(
             Object.entries(next).filter(([key]) => !invalid.has(key)),
           );
-          this.#report("itemMove", source, kept);
+          this.#report("itemMove", source, kept, panel);
           throw new Error(
             `widget.item_positions: no displayed node for ${JSON.stringify(unknown[0])}; use a reported item key`,
           );
@@ -580,30 +684,33 @@ class Widget {
         // This browser's own view, back from Python: it is already drawn,
         // and newer ones may be on their way.
         if (message.origin === this.#origin) return;
+        const panel = message.type === "select" ? "" : (message.panel ?? "");
+        const key = stateKey(message.type, panel);
         // A view from Python or another browser replaces any not yet reported.
-        this.#outbox.cancel(message.type);
+        this.#outbox.cancel(key);
         const payload =
           message.type === "select"
             ? message.selection
             : message.type === "viewport"
               ? message.viewport
               : message.drill_root;
-        Object.assign(this.#states, { [message.type]: payload });
+        this.#states.set(key, payload);
         // Rows travel apart ("rows"): the browser whose view was brushed wrote
         // them, and Python sets them with `row_selection`.
+        const name = panel ? "widget.panel_drill_roots" : "widget.drill_root";
         for (const view of this.#views) {
           if (!view.chart) continue;
+          const root = () => drillPayload(view.chart!.getDrillRoot(targetOf(panel)));
           try {
-            this.#show(view, message.type, payload);
+            this.#show(view, message.type, payload, false, panel);
           } catch (error) {
             if (message.type !== "drill") throw error;
-            this.#report("drill", view, drillPayload(view.chart.drillRoot));
+            this.#report("drill", view, root(), panel);
             throw new Error(
-              `widget.drill_root: ${error instanceof Error ? error.message : String(error)}; use a reported item key`,
+              `${name}: ${error instanceof Error ? error.message : String(error)}; use a reported item key`,
             );
           }
-          if (message.type === "drill")
-            this.#report("drill", view, drillPayload(view.chart.drillRoot));
+          if (message.type === "drill") this.#report("drill", view, root(), panel);
         }
         return;
       }
@@ -617,21 +724,27 @@ class Widget {
    * the categories change.
    */
   #keepCategorySelection() {
-    const selection = this.#states.select as SelectionPayload | null;
+    const selection = this.#state("select");
     if (!namesCategories(selection)) return;
     for (const view of this.#views) if (view.chart) this.#show(view, "select", selection);
   }
 
-  /** Ranges and lassos belong to the resolved projection, which a data update can change. */
+  /**
+   * A map's view and lasso belong to its resolved projection, which a data
+   * update can change: they go where it did, each subplot's on its own.
+   */
   #keepMapView() {
-    const next = this.#config && mapPlaneKey(this.#config);
-    const previous = this.#mapPlane;
-    this.#mapPlane = next;
-    if (previous === undefined || previous === next) return;
-    this.#outbox.cancel("viewport");
-    this.#outbox.cancel("select");
-    this.#report("viewport", undefined, null);
-    this.#report("select", undefined, null);
+    const next = this.#config ? planeKeys(this.#config) : new Map<string, string>();
+    const previous = this.#planeKeys;
+    this.#planeKeys = next;
+    for (const [panel, key] of previous ?? []) {
+      if (!key.startsWith("map:") || next.get(panel) === key) continue;
+      this.#outbox.cancel(stateKey("viewport", panel));
+      this.#report("viewport", undefined, null, panel);
+      if (panel !== "" && !this.#state("select")?.panels?.includes(panel)) continue;
+      this.#outbox.cancel("select");
+      this.#report("select", undefined, null);
+    }
   }
 
   #table(name: string): Table {
@@ -648,8 +761,12 @@ class Widget {
       else next[key] = value;
     }
     if (!this.#config) throw new Error("the chart did not load");
-    // Checked as loadSpec checks a whole spec, with the same errors.
-    const { config } = loadSpec({ ...next, marks: [] } as ChartSpec);
+    // Checked as loadSpec checks a whole spec, with the same errors, against
+    // the chart's marks (a projection needs maps) over the tables it has.
+    const { config } = loadSpec({ ...this.#structure, ...next } as unknown as ChartSpec, [], {
+      tables: this.#tables,
+      stores: this.#stores,
+    });
     const update = Object.fromEntries(
       Object.keys(changes).map((key) => [key, (config as Record<string, unknown>)[key]]),
     ) as Partial<ChartOptions>;
@@ -662,6 +779,8 @@ class Widget {
       // which options such as `resolve` change.
       view.chart?.render();
     }
+    // A new projection moves maps' planes.
+    this.#keepMapView();
   }
 }
 
@@ -677,6 +796,28 @@ function view(buffer: SpecBuffer): Uint32Array {
 /** Columns of an update, read like a spec's table: checked, and viewed without copying. */
 function decode(columns: Columns, buffers: readonly DataView[]): Table {
   return loadSpec({ data: { rows: { columns } }, marks: [] }, buffers).tables.get("rows")!;
+}
+
+/**
+ * The tables each network of a spec reads (its links' and its nodes'),
+ * with the tables they derive from, by state: each subplot's, or "" for
+ * the chart's one.
+ */
+function networkTables(spec: ChartSpec): Map<string, Set<string>> {
+  const tables = new Map<string, Set<string>>();
+  for (const mark of spec.marks) {
+    if (mark.type !== "graph") continue;
+    const panel = (spec.panels && mark.panel) || "";
+    const read = tables.get(panel) ?? new Set<string>();
+    tables.set(panel, read);
+    for (let name of [mark.data, mark.nodes])
+      while (name !== undefined && !read.has(name)) {
+        read.add(name);
+        const entry = spec.data?.[name];
+        name = entry && "source" in entry ? entry.source : undefined;
+      }
+  }
+  return tables;
 }
 
 /**
@@ -714,7 +855,8 @@ function valuesOf(event: ViewEvent, state: ViewState): string {
   const { x = null, y = null } = ranges ?? {};
   const yRight = ranges && "yRight" in ranges ? ranges.yRight : null;
   const lasso = ranges && "lasso" in ranges ? ranges.lasso : null;
-  return JSON.stringify([x, y, yRight, lasso]);
+  const panels = ranges && "panels" in ranges ? ranges.panels : undefined;
+  return JSON.stringify([x, y, yRight, lasso, panels]);
 }
 
 function showError(view: View, error: unknown) {

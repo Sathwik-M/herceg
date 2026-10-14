@@ -67,8 +67,7 @@ function itemKeys(model: ChartModel): string[] {
 /** Shows the plane box around a longitude and latitude, `span` degrees wide, as the map's controls do. */
 function zoomTo(model: ChartModel, lon: number, lat: number, span: number) {
   const [x, y, half] = [lon * radians, lat * radians, (span / 2) * radians];
-  model.setViewport([x - half, x + half]);
-  model.setYViewport({ y: [y - half / 2, y + half / 2], yRight: null });
+  model.items!.setView({ x: [x - half, x + half], y: [y - half / 2, y + half / 2] }, undefined);
   return model.scene(estimateText);
 }
 
@@ -85,7 +84,7 @@ describe("map viewports", () => {
     // The room's middle is the plane's: the row of countries is centered on 50° E, 0° N.
     expect((x.domain[0] + x.domain[1]) / 2).toBeCloseTo(50 * radians, 6);
     expect((y.domain[0] + y.domain[1]) / 2).toBeCloseTo(0, 6);
-    expect(model.viewport).toBeNull();
+    expect(model.items!.view()).toEqual({ x: null, y: null, yRight: null });
   });
 
   it("zoom and pan by the plane's ranges, projecting at a level and moving the pixels", () => {
@@ -151,7 +150,7 @@ describe("map viewports", () => {
   it("show a range along one axis about the fitted map's middle along the other", () => {
     const { model } = build({ marks: [geoshape(fromGeoJSON(row()))] });
     const fitted = plane(model);
-    model.setViewport([20 * radians, 40 * radians]);
+    model.items!.setView([20 * radians, 40 * radians], undefined);
     model.scene(estimateText);
     const { x, y } = plane(model);
     expect(x.domain[0]).toBeCloseTo(20 * radians, 9);
@@ -161,13 +160,13 @@ describe("map viewports", () => {
       9,
     );
     // Both ranges are contained, centered: the wider of the two shows whole.
-    model.setYViewport({ y: [-60 * radians, 60 * radians], yRight: null });
+    model.items!.setView({ y: [-60 * radians, 60 * radians] }, undefined);
     model.scene(estimateText);
     const both = plane(model);
     expect(both.y.domain[0]).toBeCloseTo(-60 * radians, 9);
     expect(both.x.domain[1] - both.x.domain[0]).toBeGreaterThan(20 * radians);
     // The viewport given is what the chart reports, so setting it again changes nothing.
-    expect(model.viewport).toEqual([20 * radians, 40 * radians]);
+    expect(model.items!.view()!.x).toEqual([20 * radians, 40 * radians]);
   });
 
   it("draw points at the zoomed scale, and leave out those outside the room", () => {
@@ -201,10 +200,10 @@ describe("map viewports", () => {
     expect(() =>
       build({ marks: [geoshape(fromGeoJSON(row()))], interaction: { brush: "xy" } }),
     ).toThrow('geoshape brush: expected interaction.brush "lasso"; received "xy"');
-    for (const interaction of [{ zoom: true }, { zoom: "xy" }, { brush: "lasso" }] as const)
-      expect(
-        build({ marks: [geoshape(fromGeoJSON(row()))], interaction }).model.controls?.kind,
-      ).toBe("map");
+    for (const interaction of [{ zoom: true }, { zoom: "xy" }, { brush: "lasso" }] as const) {
+      const { model } = build({ marks: [geoshape(fromGeoJSON(row()))], interaction });
+      expect(model.items!.asked()[0]?.kind).toBe("map");
+    }
   });
 });
 
@@ -441,8 +440,10 @@ describe("zoomed maps", () => {
       const width = (fitted.x[1] - fitted.x[0]) / 256;
       const height = (fitted.y[1] - fitted.y[0]) / 256;
       const top = (dip + end) / 2;
-      model.setViewport([dx - width / 2, dx + width / 2]);
-      model.setYViewport({ y: [top - height, top], yRight: null });
+      model.items!.setView(
+        { x: [dx - width / 2, dx + width / 2], y: [top - height, top] },
+        undefined,
+      );
       const scene = model.scene(estimateText);
       const { plot } = scene.panels[0]!;
       // The sliver of the region shown is pixels deep.
@@ -539,8 +540,7 @@ describe("zoomed maps", () => {
       ],
     };
     const { model } = build({ marks: [geoshape(fromGeoJSON(frame), { labelField: "name" })] });
-    model.setViewport([0, 2 * radians]);
-    model.setYViewport({ y: [8.01 * radians, 9.01 * radians], yRight: null });
+    model.items!.setView({ x: [0, 2 * radians], y: [8.01 * radians, 9.01 * radians] }, undefined);
     const { plot } = model.scene(estimateText).panels[0]!;
     expect(itemKeys(model)).toEqual(["[0,0]"]);
     const { px, py } = model.inspectItem("[0,0]")!.points[0]!;

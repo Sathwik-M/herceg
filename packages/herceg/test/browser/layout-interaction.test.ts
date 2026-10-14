@@ -569,7 +569,7 @@ describe("treemaps and sunbursts", () => {
     expect(drills).toEqual([
       { key: '[0,"Europe"]', path: [{ key: '[0,"Europe"]', label: "Europe" }] },
     ]);
-    expect(chart.drillRoot?.key).toBe('[0,"Europe"]');
+    expect(chart.getDrillRoot()?.key).toBe('[0,"Europe"]');
     const live = chart.root.querySelector("[aria-live]")!;
     expect(live.textContent).toMatch(
       /^Europe\. Treemap of revenue by region \/ country \/ city in Europe:/,
@@ -695,7 +695,7 @@ describe("treemaps and sunbursts", () => {
     await frame();
     await frame();
     expect(drills).toEqual(['[0,"Europe"]', '[0,"Asia"]']);
-    expect(chart.drillRoot?.key).toBe('[0,"Asia"]');
+    expect(chart.getDrillRoot()?.key).toBe('[0,"Asia"]');
   });
 
   it("reports programmatic drills before controls load and reconciles with gestures disabled", async () => {
@@ -710,7 +710,7 @@ describe("treemaps and sunbursts", () => {
     chart.setDrillRoot(["Europe", "Spain"]);
     chart.setDrillRoot(["Europe", "Spain"]);
     expect(roots).toEqual(['[0,"Europe","Spain"]']);
-    expect(chart.drillRoot?.key).toBe('[0,"Europe","Spain"]');
+    expect(chart.getDrillRoot()?.key).toBe('[0,"Europe","Spain"]');
     chart.update({ interaction: { zoom: false } });
     chart.render();
     data.reset({
@@ -725,7 +725,7 @@ describe("treemaps and sunbursts", () => {
     chart.render();
     expect(roots).toEqual(['[0,"Europe","Spain"]', '[0,"Europe"]']);
     expect(order).toEqual(["drill", "render"]);
-    expect(chart.drillRoot?.key).toBe('[0,"Europe"]');
+    expect(chart.getDrillRoot()?.key).toBe('[0,"Europe"]');
     await loading;
     expect(chart.root.querySelector("[role=toolbar]")).toBeNull();
   });
@@ -734,7 +734,7 @@ describe("treemaps and sunbursts", () => {
     const chart = mountNow({
       marks: [line(table({ x: [0, 1], y: [1, 2] }), { x: "x", y: "y" })],
     });
-    expect(chart.drillRoot).toBeUndefined();
+    expect(chart.getDrillRoot()).toBeUndefined();
     expect(() => chart.setDrillRoot(null)).toThrow("chart: no items to drill or move");
     expect(() => chart.setItemPosition("a", null)).toThrow("chart: no items to drill or move");
     chart.update({
@@ -769,7 +769,7 @@ describe("treemaps and sunbursts", () => {
     press(chart, "Backspace");
     chart.root.querySelector<HTMLElement>("[aria-label='Up one level']")!.click();
     await frame();
-    expect(chart.drillRoot?.key).toBeNull();
+    expect(chart.getDrillRoot()?.key).toBeNull();
   });
 
   it("go up from a root set but not drawn yet", async () => {
@@ -786,7 +786,7 @@ describe("treemaps and sunbursts", () => {
     chart.setDrillRoot(["CEO", "CTO"]);
     press(chart, "Backspace");
     await frame();
-    expect(chart.drillRoot?.path.map(({ label }) => label)).toEqual(["CEO"]);
+    expect(chart.getDrillRoot()?.path.map(({ label }) => label)).toEqual(["CEO"]);
   });
 
   it("fold a deep path, its folded steps still buttons, the nearest on top", async () => {
@@ -909,12 +909,12 @@ describe("networks", () => {
     press(chart, "0");
     await frame();
     expect(chart.getViewport()).toEqual({ x: null, y: null, yRight: null });
-    expect(modelOf(chart).items!.movedItems.size).toBe(1);
+    expect(modelOf(chart).items!.movedItems().size).toBe(1);
     await userEvent.click(
       chart.root.querySelector<HTMLElement>("[aria-label='Put moved nodes back']")!,
     );
     await frame();
-    expect(modelOf(chart).items!.movedItems.size).toBe(0);
+    expect(modelOf(chart).items!.movedItems().size).toBe(0);
     await userEvent.click(chart.root.querySelector<HTMLElement>("[aria-label='Zoom in']")!);
     await frame();
     expect(plane(chart).zoom).toBeCloseTo(1.25);
@@ -1231,7 +1231,7 @@ describe("networks", () => {
     press(chart, "0");
     chart.root.querySelector<HTMLElement>("[aria-label='Put moved nodes back']")!.click();
     await frame();
-    expect(modelOf(chart).items!.movedItems.size).toBe(0);
+    expect(modelOf(chart).items!.movedItems().size).toBe(0);
   });
 
   it("stop a node the keys move at the room's edge, and turn it back at once", async () => {
@@ -1274,7 +1274,7 @@ describe("networks", () => {
     await frame();
     await mouse(chart, "mouseReleased", ax + 30, ay);
     await frame();
-    expect(modelOf(chart).items!.movedItems.size).toBe(0);
+    expect(modelOf(chart).items!.movedItems().size).toBe(0);
   });
 
   it("drag the node drawn on top where nodes overlap", async () => {

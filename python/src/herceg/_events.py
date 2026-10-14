@@ -47,11 +47,13 @@ class Selection:
     """What is brushed: the ``x`` and ``y`` ranges (None along an axis the brush
     leaves alone; a lasso's extent) and a ``lasso``'s outline as ``(x, y)``
     points. The outline's points are numbers or datetimes; on a category axis
-    they are band positions, the first category at 0."""
+    they are band positions, the first category at 0. ``panels`` names the
+    subplot of a map's or network's lasso; None for the chart's own."""
 
     x: Range | None = None
     y: Range | None = None
     lasso: tuple[tuple[float | _dt.datetime, float | _dt.datetime], ...] | None = None
+    panels: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -137,13 +139,14 @@ def decode_drill_root(payload: dict[str, Any] | None) -> DrillRoot | None:
     return tuple(payload["path"]) if payload else None
 
 
-def encode_drill_root(value: DrillRoot | None) -> dict[str, Any] | None:
+def encode_drill_root(
+    value: DrillRoot | None, name: str = "widget.drill_root"
+) -> dict[str, Any] | None:
     if value is None:
         return None
     if not isinstance(value, tuple) or not all(isinstance(key, str) for key in value):
         raise ValueError(
-            "widget.drill_root: expected a tuple of item keys or None; "
-            "use the path reported by on_drill"
+            f"{name}: expected a tuple of item keys or None; use the path reported by on_drill"
         )
     return {"path": list(value)} if value else None
 
@@ -152,17 +155,15 @@ def decode_item_positions(payload: dict[str, Any] | None) -> ItemPositions:
     return {key: (float(x), float(y)) for key, (x, y) in (payload or {}).items()}
 
 
-def encode_item_positions(value: Mapping[str, tuple[float, float]]) -> dict[str, Any]:
+def encode_item_positions(
+    value: Mapping[str, tuple[float, float]], name: str = "widget.item_positions"
+) -> dict[str, Any]:
     if not isinstance(value, Mapping):
-        raise ValueError(
-            "widget.item_positions: expected item keys mapped to (x, y) pairs; use {} to reset"
-        )
+        raise ValueError(f"{name}: expected item keys mapped to (x, y) pairs; use {{}} to reset")
     out: dict[str, Any] = {}
     for key, pair in value.items():
         if not isinstance(key, str):
-            raise ValueError(
-                "widget.item_positions: item keys must be strings; use inspection keys"
-            )
+            raise ValueError(f"{name}: item keys must be strings; use inspection keys")
         valid = (
             isinstance(pair, (tuple, list))
             and len(pair) == 2
@@ -173,9 +174,7 @@ def encode_item_positions(value: Mapping[str, tuple[float, float]]) -> dict[str,
         except OverflowError:
             coordinates = []
         if not coordinates or not all(math.isfinite(v) for v in coordinates):
-            raise ValueError(
-                "widget.item_positions: expected two finite coordinates per key; use (x, y) pairs"
-            )
+            raise ValueError(f"{name}: expected two finite coordinates per key; use (x, y) pairs")
         out[key] = coordinates
     return out
 
@@ -202,12 +201,14 @@ def decode_selection(payload: Any) -> Selection | None:
         return None
     time = payload.get("time", ())
     lasso = payload.get("lasso")
+    panels = payload.get("panels")
     return Selection(
         x=_range(payload.get("x"), "x" in time),
         y=_range(payload.get("y"), "y" in time),
         lasso=None
         if lasso is None
         else tuple((_time(x, "x" in time), _time(y, "y" in time)) for x, y in lasso),
+        panels=None if panels is None else tuple(panels),
     )
 
 
@@ -231,7 +232,21 @@ def encode_selection(value: Any) -> dict[str, Any] | None:
     if x is None and y is None and lasso is None:
         return None
     time = [axis for axis, flag in (("x", x_time), ("y", y_time)) if flag]
-    return {"x": x, "y": y, "lasso": lasso, "time": time}
+    panels = value.panels
+    if panels is not None and not (
+        isinstance(panels, tuple) and panels and all(isinstance(p, str) for p in panels)
+    ):
+        raise ValueError(
+            "Selection panels: expected a tuple of panel ids, or None for the chart's own; "
+            f"received {shown(panels)}"
+        )
+    return {
+        "x": x,
+        "y": y,
+        "lasso": lasso,
+        "time": time,
+        **({"panels": list(panels)} if panels else {}),
+    }
 
 
 #: The axes each kind of state has ranges on.
@@ -266,6 +281,11 @@ def checked(event: str, payload: Any) -> dict[str, Any] | None:
         # Which categories a lasso's band positions refer to, kept for browsers.
         if payload.get("categories") is not None:
             out["categories"] = payload["categories"]
+        panels = payload.get("panels")
+        if panels is not None:
+            if not (isinstance(panels, list) and all(isinstance(p, str) for p in panels)):
+                raise ValueError(f"panels are panel ids, not {panels!r}")
+            out["panels"] = panels
     out["time"] = time
     return out
 
@@ -300,7 +320,7 @@ def same_values(a: dict[str, Any] | None, b: dict[str, Any] | None) -> bool:
     axes hold times: a no-zoom viewport is no viewport."""
 
     def values(payload: dict[str, Any] | None) -> list[Any]:
-        return [(payload or {}).get(key) for key in ("x", "y", "yRight", "lasso")]
+        return [(payload or {}).get(key) for key in ("x", "y", "yRight", "lasso", "panels")]
 
     return values(a) == values(b)
 

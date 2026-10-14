@@ -7,7 +7,7 @@ import type { Table } from "../data/table.ts";
 import { type Formatter, formatNumber, timeValueFormatter } from "../format/format.ts";
 import { fitText, type MeasureText } from "../layout/text.ts";
 import { Polyline } from "../lod/polyline.ts";
-import { isLayoutMark, type LayoutControls, type LayoutMark } from "../marks/layout-mark.ts";
+import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
 import {
   type AxisFormat,
   type BandContext,
@@ -302,6 +302,11 @@ export class ChartModel {
     return this.#config;
   }
 
+  /** The layout marks the chart draws: a map's layers joined into one. */
+  get layouts(): readonly LayoutMark[] {
+    return this.#layouts;
+  }
+
   get theme(): Theme {
     return this.#theme;
   }
@@ -338,11 +343,6 @@ export class ChartModel {
     if (kept.y !== y || kept.yRight !== yRight) this.#yViewport = kept;
     this.#theme = resolveTheme(config.theme, page);
     this.#layoutKey = "";
-  }
-
-  /** The controls the chart's layout marks load for its options (see `LayoutMark.controls`). */
-  get controls(): LayoutControls | undefined {
-    return this.#layouts[0]?.controls?.(this.#config);
   }
 
   /** The camera of a 3D chart (a copy), which the pointer and keyboard turn; undefined for other charts. */
@@ -910,11 +910,13 @@ export class ChartModel {
     // One legend per distinct scale or key: marks sharing a scale share one.
     const legends = config.legend ?? true;
     const format = (value: number) => formatNumber(value, locale);
-    const parts = new Map<string, LegendPart>();
+    // Layout marks' color scales (a choropleth's) first, as a chart of one draws them.
+    const parts = new Map<string, LegendPart>(this.items?.legends());
     for (const { mark, series } of legends ? base : []) {
       for (const part of mark.legends?.(series, theme, format) ?? [])
         if (!parts.has(part.key)) parts.set(part.key, part);
     }
+
     // Entries in the order of the chart's marks: series, and layout marks'
     // items; a legend group's series of one name share the first one's entry.
     const listed = new Set<string>();
@@ -1470,10 +1472,10 @@ export class ChartModel {
       all.push({ key, label, plot, items: !!item });
       // A layout mark draws its rows in the panel, which has no axes.
       if (item) {
-        this.#items ??= new item.mark.views();
+        this.#items ??= new item.mark.views(this);
         this.#items.fields = this.fields?.(locale, zone, numberFormatter(locale));
         const frame = { theme, locale, measure, hidden, color: this.#palette };
-        return this.#items.panel({ key, label, plot }, item, config.marks, frame);
+        return this.#items.panel({ key, label, plot }, item, frame);
       }
       const axes: AxisGeometry[] = [];
       if (labelsX(i)) {
@@ -1677,7 +1679,7 @@ export class ChartModel {
     this.#bytes.clear();
     const items = this.items!;
     items.fields = this.fields?.(locale, this.#config.timeZone ?? "local", numberFormatter(locale));
-    const scene = items.scene(this, header, mark, marks, {
+    const scene = items.scene(header, mark, marks, {
       theme,
       locale,
       measure,
@@ -1914,7 +1916,7 @@ export class ChartModel {
 
   /** Layout items and their state, available before the first scene so controls can start loading. */
   get items(): ItemViews | undefined {
-    this.#items ??= this.#layouts[0] && new this.#layouts[0].views();
+    this.#items ??= this.#layouts[0] && new this.#layouts[0].views(this);
     return this.#items;
   }
 
@@ -2072,7 +2074,7 @@ function validate(config: ChartConfig): [Mark[], LayoutMark[], number[]] {
   // Facets and panels check their marks, layout marks too; without them,
   // layout marks have the chart to themselves.
   const panelled = config.facet ?? config.panels;
-  if (panelled) panelled.check(marks, config, layouts);
+  if (panelled) layouts = panelled.check(marks, config, layouts);
   else if (layouts[0]) layouts = layouts[0].views.alone(layouts, marks, config);
   config.navigator?.check(marks, config);
   config.rowSelection?.check(config, marks, layouts);

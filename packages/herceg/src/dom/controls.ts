@@ -26,8 +26,8 @@ export interface ControlsHost {
   invalidate(): void;
   /** Whether an event's target is the chart's drawing, not its legend. */
   onPlot(target: EventTarget | null): boolean;
-  /** The key of the item the keyboard cursor is on, if it is on one. */
-  cursor(): string | undefined;
+  /** Where the keyboard cursor is: its panel's key, and the item's if it is on one. */
+  cursor(): { panel: string; key: string | undefined } | undefined;
 }
 
 export type { Controls };

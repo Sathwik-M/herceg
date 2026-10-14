@@ -823,14 +823,8 @@ class Chart:
         )
         if panel_list and (facet is not None or facet_row is not None or facet_column is not None):
             raise ValueError("Chart panels: facets or panels, not both; drop one")
-        if panel_list and zoom in ("y", "xy"):
-            raise ValueError(
-                f"Chart zoom: charts with panels zoom along x only; received {shown(zoom)}"
-            )
-        if panel_list and brush in ("y", "xy", "lasso"):
-            raise ValueError(
-                f"Chart brush: charts with panels brush along x only; received {shown(brush)}"
-            )
+        if panel_list:
+            _check_subplot_ranges({"zoom": zoom, "brush": brush})
         for name, resolution in (
             ("resolve_x", resolve_x),
             ("resolve_y", resolve_y),
@@ -2340,6 +2334,7 @@ class Chart:
         labels: bool | None = None,
         directed: bool | None = None,
         link_label_field: str | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A network: a row per link between the nodes named in ``source`` and
@@ -2356,8 +2351,10 @@ class Chart:
         column, which adds nodes without links and colors nodes by the
         category column ``color`` (with a legend) or sizes them by ``size``;
         nodes only links name have no color of their own. A network draws at
-        most 5,000 nodes and 20,000 links and has its chart to itself;
-        ``Chart(drag=True)`` lets its nodes be dragged.
+        most 5,000 nodes and 20,000 links. It has its chart to itself, each
+        facet panel (drawing the panel's links, and the nodes they join, where
+        one layout of the whole network puts them), or the panel ``panel``
+        names; ``Chart(drag=True)`` lets its nodes be dragged.
         """
         self._layout_place("graph")
         table = self._mark_table(data)
@@ -2400,6 +2397,7 @@ class Chart:
                 "labels": labels,
                 "directed": directed,
                 "linkLabelField": link_label_field,
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -2458,61 +2456,17 @@ class Chart:
         """Layout marks (pies, treemaps, sunbursts, gauges, funnels, radars, Sankey
         diagrams, graphs) have no axes to zoom: they have their chart to
         themselves, or a facet panel each, or a panel of their own (see ``_add``).
-        Networks have no facets or panels yet. A treemap or sunburst of a chart
-        of its own drills with ``zoom=True``; a network pans and zooms its
-        layout plane, lassos nodes, moves them with ``drag=True``, and selects rows."""
-        panelled = bool(self._facets or self._panels)
-        if panelled and kind not in _PANEL_LAYOUT_MARKS:
-            raise ValueError(f"{kind}: has no facets or panels yet; draw it in a chart of its own")
-        if self._row_selection and (panelled or kind not in _SELECTING_LAYOUT_MARKS):
+        A treemap or sunburst drills with ``zoom=True``; a network pans and
+        zooms its layout plane, lassos nodes, moves them with ``drag=True``,
+        and selects rows. With panels, which options panels with axes take is
+        checked once every mark is added (see ``to_spec``)."""
+        if self._row_selection and kind not in _SELECTING_LAYOUT_MARKS:
             raise ValueError(
-                f"Chart row_selection: a {kind} cannot select rows here yet; marks along x "
-                "and y can, as can a map, treemap, sunburst, or network in a chart of its own"
+                f"Chart row_selection: a {kind} cannot select rows yet; marks along x "
+                "and y can, as can maps, treemaps, sunbursts, and networks"
             )
-        if self._settings.get("drag") and kind != "graph":
-            raise ValueError(
-                f"Chart drag: moves a network's nodes, and a {kind} has none; drop drag"
-            )
-        settings = self._settings
-        drills = kind in ("treemap", "sunburst") and not panelled
-        if drills and settings.get("zoom") not in (True, False, None):
-            raise ValueError(
-                f"Chart zoom: a {kind} drills with zoom=True, not along an axis; "
-                f"received {shown(settings.get('zoom'))}"
-            )
-        if kind == "graph":
-            if settings.get("zoom") not in (True, False, None, "xy"):
-                raise ValueError(
-                    "Chart zoom: a graph pans and zooms both ways, "
-                    f"received {shown(settings.get('zoom'))}; "
-                    "use zoom=True or zoom='xy'"
-                )
-            if settings.get("brush") not in (None, "lasso"):
-                raise ValueError(
-                    "Chart brush: a graph takes only a lasso, "
-                    f"received {shown(settings.get('brush'))}; "
-                    "use brush='lasso'"
-                )
-        # A chart with panels may zoom those with axes; `to_spec` checks it has some.
-        used = self._x_option(
-            ("sync",)
-            if kind == "graph"
-            else ("brush", "sync")
-            if drills
-            else ("zoom", "brush", "sync")
-        )
-        if not self._panels and used is not None:
-            raise ValueError(
-                f"Chart {used}: a {kind} has no x axis to act on; drop {_dropped(used)}"
-            )
-
-    def _x_option(self, options: Sequence[str] = ("zoom", "brush", "sync")) -> str | None:
-        """The first of the chart's `options` that is set, or else "x seams" when the
-        x axis marks seams: what acts on an x axis, as messages name it."""
-        settings = self._settings
-        used = next((name for name in options if settings.get(name)), None)
-        seams = (self._options.get("x") or {}).get("seams")
-        return used or ("x seams" if seams not in (None, False) else None)
+        if not self._panels:
+            _check_alone(self._settings, kind)
 
     def geoshape(
         self,
@@ -2532,6 +2486,8 @@ class Chart:
         geojson: Any = None,
         locations: str | None = None,
         feature_id_key: str = "id",
+        facet: Literal["repeat"] | None = None,
+        panel: str | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -2553,9 +2509,11 @@ class Chart:
         ``label_field`` names a category column labeling regions in tooltips,
         keyboard reading, and the summary.
         Geoshape and geopoint marks share a chart, projected by its
-        ``projection``.
+        ``projection``: with facets, every layer splits its rows by the facet
+        column unless ``facet="repeat"`` draws it whole in each panel (a base
+        map); with panels, the layers naming a ``panel`` are its map.
         """
-        self._map_alone("geoshape")
+        self._map_place("geoshape")
         if geojson is not None:
             if locations is None:
                 raise ValueError(
@@ -2624,6 +2582,8 @@ class Chart:
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "label": label,
+                "facet": _mark_facet(facet, "geoshape"),
+                "panel": panel,
                 "tooltip": self._mark_tooltip(table, tooltip, "geoshape"),
                 "id": id,
             },
@@ -2650,6 +2610,8 @@ class Chart:
         stroke: str | None = None,
         stroke_width: float | None = None,
         label: str | None = None,
+        facet: Literal["repeat"] | None = None,
+        panel: str | None = None,
         tooltip: Tooltip | None = None,
         id: str | None = None,
     ) -> Chart:
@@ -2662,9 +2624,10 @@ class Chart:
         value, as ``Chart.point``'s). Points are drawn largest first, each ringed
         in the background color (``stroke``, ``stroke_width``). For a
         GeoDataFrame of points, add the columns first:
-        ``gdf.assign(lon=gdf.geometry.x, lat=gdf.geometry.y)``.
+        ``gdf.assign(lon=gdf.geometry.x, lat=gdf.geometry.y)``. Layers share a
+        map as ``Chart.geoshape`` says, also in facets and panels.
         """
-        self._map_alone("geopoint")
+        self._map_place("geopoint")
         table = self._mark_table(data)
         self._require(table, longitude, ("number",), "geopoint longitude")
         self._require(table, latitude, ("number",), "geopoint latitude")
@@ -2702,34 +2665,20 @@ class Chart:
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
                 "label": label,
+                "facet": _mark_facet(facet, "geopoint"),
+                "panel": panel,
                 "tooltip": self._mark_tooltip(table, tooltip, "geopoint"),
                 "id": id,
             },
             table,
         )
 
-    def _map_alone(self, kind: str) -> None:
-        """Maps have no facets or panels; they zoom and pan both ways
-        (``zoom=True`` or ``"xy"``), take a ``"lasso"`` brush, select rows, and
-        sync nothing."""
-        if self._facets or self._panels:
-            raise ValueError(f"{kind}: has no facets or panels yet; draw it in a chart of its own")
-        settings = self._settings
-        if settings.get("zoom") in ("x", "y"):
-            raise ValueError(
-                'Chart zoom: expected True or "xy", as maps zoom both ways; '
-                f"received {shown(settings['zoom'])}"
-            )
-        if settings.get("brush") not in (None, "lasso"):
-            raise ValueError(
-                f'Chart brush: expected "lasso" for maps; received {shown(settings["brush"])}'
-            )
-        if settings.get("sync"):
-            raise ValueError(f"Chart sync: a {kind} has no x axis to act on; drop sync")
-        if settings.get("drag"):
-            raise ValueError(
-                f"Chart drag: moves a network's nodes, and a {kind} has none; drop drag"
-            )
+    def _map_place(self, kind: str) -> None:
+        """Maps zoom and pan both ways (``zoom=True`` or ``"xy"``), take a
+        ``"lasso"`` brush, select rows, and sync nothing; with panels, which
+        options panels with axes take is checked once every mark is added."""
+        if not self._panels:
+            _check_alone(self._settings, kind)
 
     def point_3d(
         self,
@@ -3345,19 +3294,29 @@ class Chart:
 
     def to_spec(self) -> tuple[dict[str, Any], list[bytes]]:
         """The portable chart spec and the binary buffers its columns reference."""
-        layouts = [mark["type"] for mark, _ in self._marks if mark["type"] in _LAYOUT_MARKS]
-        # Layout marks have a panel each, so when they have every one, no panel has axes.
-        used = self._x_option()
-        if self._panels and len(layouts) == len(self._panels) and used is not None:
+        self._check_spec()
+        return assemble_spec(
+            self._spec_options(),
+            self._layout_spec(),
+            self._used_columns(),
+            self._mark_specs(),
+            self._derived_specs(),
+        )
+
+    def _layouts(self) -> list[dict[str, Any]]:
+        """The specs of the chart's layout marks, in order."""
+        return [mark for mark, _ in self._marks if mark["type"] in _LAYOUT_MARKS]
+
+    def _check_spec(self) -> None:
+        """What the browser checks of the whole chart once every mark is added,
+        before a spec of it is made or a live chart shows it."""
+        layouts = self._layouts()
+        check_layout_options(self._settings, layouts, len(self._panels))
+        maps = [mark for mark in layouts if mark["type"] in _MAP_MARKS]
+        if self._facets and maps and all(mark.get("facet") == "repeat" for mark in maps):
             raise ValueError(
-                f"Chart {used}: every panel draws a {_method(layouts[0])} or another mark "
-                f"without axes, so no panel has an x axis; drop {_dropped(used)}"
-            )
-        if self._settings.get("drag") and not any(
-            mark["type"] == "graph" for mark, _ in self._marks
-        ):
-            raise ValueError(
-                "Chart drag: moves a network's nodes, and the chart has no graph; drop drag"
+                f"{maps[0]['type']} facet: every layer of the map repeats, so none splits into "
+                'facet panels; drop facet="repeat" from one'
             )
         if self._settings.get("projection") is not None and not any(
             mark["type"] in _MAP_MARKS for mark, _ in self._marks
@@ -3373,13 +3332,6 @@ class Chart:
                     f"Chart {name}: an option of 3D charts, and the chart has no point_3d, "
                     f"line_3d, or surface marks; drop {name}"
                 )
-        return assemble_spec(
-            self._spec_options(),
-            self._layout_spec(),
-            self._used_columns(),
-            self._mark_specs(),
-            self._derived_specs(),
-        )
 
     def widget(self) -> ChartWidget:
         """A live notebook widget of this chart: Python can update it after display,
@@ -3933,6 +3885,8 @@ class Chart:
             for mark, _ in self._marks
             if mark["type"] in _LAYOUT_MARKS
         }
+        # The layers naming a panel are its map.
+        layer = kind in _MAP_MARKS and held.get(panel) in _MAP_MARKS
         if kind not in _LAYOUT_MARKS:
             if panel == "*" and held:
                 first = next(iter(held))
@@ -3950,7 +3904,7 @@ class Chart:
             raise ValueError(
                 f"{method} panel: expected the id of the panel it draws in; received {shown(panel)}"
             )
-        if panel in held:
+        if panel in held and not layer:
             raise ValueError(
                 f"{method} panel: a {held[panel]} has panel {shown(panel)} to itself; "
                 f"give the {method} a panel of its own"
@@ -3963,7 +3917,7 @@ class Chart:
                     f"too, and a {method} has its panel to itself; give the {other} the id of "
                     "a panel with axes"
                 )
-            if mark.get("panel") == panel:
+            if mark.get("panel") == panel and not layer:
                 raise ValueError(
                     f"{method} panel: a {other} draws in panel {shown(panel)}, and a {method} "
                     "has its panel to itself; give one of them another panel"
@@ -4016,9 +3970,7 @@ _LAYOUT_MARKS = (
     *("geoshape", "geopoint", "point3d", "line3d", "surface"),
 )
 
-#: Layout marks that draw in each facet panel or in a panel of their own.
-_PANEL_LAYOUT_MARKS = ("pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey")
-#: Layout marks whose charts select rows, of a chart of their own (maps too).
+#: Layout marks whose charts select rows (maps too), in panels as well.
 _SELECTING_LAYOUT_MARKS = ("treemap", "sunburst", "graph")
 
 #: The layers of maps, which share a chart and its projection.
@@ -4037,7 +3989,7 @@ def _method(kind: str) -> str:
 
 
 def _dropped(option: str) -> str:
-    """The keyword to drop for an option as `Chart._x_option` names it."""
+    """The keyword to drop for an option as `_x_option` names it."""
     return "seams" if option == "x seams" else option
 
 
@@ -4068,6 +4020,145 @@ def on_right_axis(spec: Mapping[str, Any]) -> bool:
     return spec["type"] not in ("rule", "region") or any(
         spec.get(key) is not None for key in ("y", "y1", "y2")
     )
+
+
+def check_layout_options(
+    settings: Mapping[str, Any],
+    layouts: Sequence[Mapping[str, Any]],
+    subplots: int,
+) -> None:
+    """Checks what a chart's layout marks (``layouts``, their specs) take of its
+    interaction options, as the browser does: in a chart of their own or facet
+    panels, each kind its own; among ``subplots`` subplots, what panels with
+    axes take beside them, or what they take when no panel has axes. Panels
+    without axes have no scales to resolve."""
+    if settings.get("drag") and not any(mark["type"] == "graph" for mark in layouts):
+        raise ValueError(
+            "Chart drag: moves a network's nodes, and the chart has no graph; drop drag"
+        )
+    if subplots:
+        _check_subplot_ranges(settings)
+    # 3D charts check their options as they are added; they have charts to themselves.
+    layouts = [mark for mark in layouts if mark["type"] not in _MARKS_3D]
+    if not subplots:
+        for kind in dict.fromkeys(mark["type"] for mark in layouts):
+            _check_alone(settings, kind)
+        if not layouts:
+            return
+    elif len({mark["panel"] for mark in layouts}) < subplots:
+        # Panels with axes zoom and brush along x; maps and networks beside them pan and zoom.
+        zoom, brush = settings.get("zoom"), settings.get("brush")
+        if zoom == "xy" or brush == "lasso":
+            option = "zoom" if zoom == "xy" else "brush"
+            raise ValueError(
+                f"Chart {option}: panels with axes {option} along x only; "
+                f"received {shown(settings[option])}"
+            )
+        return
+    else:
+        _check_subplots(settings, layouts)
+    # Layout marks have a subplot each, and facet panels draw the same marks.
+    resolved = next(
+        (
+            name
+            for name in ("resolve_x", "resolve_y", "resolve_y_right")
+            if settings.get(name) not in (None, "shared")
+        ),
+        None,
+    )
+    if resolved is not None:
+        raise ValueError(
+            f"Chart {resolved}: every panel draws a {_method(layouts[0]['type'])} or another "
+            f"mark without axes, so the panels have no scales to resolve; drop {resolved}"
+        )
+
+
+def _check_subplot_ranges(settings: Mapping[str, Any]) -> None:
+    """Subplots zoom and brush along x (maps and networks with every panel
+    pan and zoom both ways, and lasso: see `check_layout_options`)."""
+    zoom, brush = settings.get("zoom"), settings.get("brush")
+    if zoom == "y":
+        raise ValueError(
+            f"Chart zoom: charts with panels zoom along x only; received {shown(zoom)}"
+        )
+    if brush in ("y", "xy"):
+        raise ValueError(
+            f"Chart brush: charts with panels brush along x only; received {shown(brush)}"
+        )
+
+
+def _check_alone(settings: Mapping[str, Any], kind: str) -> None:
+    """What a layout mark takes in a chart of its own or its facet panels: a
+    treemap or sunburst drills with ``zoom=True``; maps and networks pan and
+    zoom both ways (``zoom=True`` or ``"xy"``) and take a ``"lasso"`` brush;
+    only a network's nodes drag; nothing syncs or has x seams."""
+    zoom, brush = settings.get("zoom"), settings.get("brush")
+    if kind in _MAP_MARKS:
+        if zoom in ("x", "y"):
+            raise ValueError(
+                f'Chart zoom: expected True or "xy", as maps zoom both ways; received {shown(zoom)}'
+            )
+        if brush not in (None, "lasso"):
+            raise ValueError(f'Chart brush: expected "lasso" for maps; received {shown(brush)}')
+    if settings.get("drag") and kind != "graph":
+        raise ValueError(f"Chart drag: moves a network's nodes, and a {kind} has none; drop drag")
+    drills = kind in ("treemap", "sunburst")
+    if drills and zoom not in (True, False, None):
+        raise ValueError(
+            f"Chart zoom: a {kind} drills with zoom=True, not along an axis; received {shown(zoom)}"
+        )
+    if kind == "graph":
+        if zoom not in (True, False, None, "xy"):
+            raise ValueError(
+                f"Chart zoom: a graph pans and zooms both ways, received {shown(zoom)}; "
+                "use zoom=True or zoom='xy'"
+            )
+        if brush not in (None, "lasso"):
+            raise ValueError(
+                f"Chart brush: a graph takes only a lasso, received {shown(brush)}; "
+                "use brush='lasso'"
+            )
+    used = _x_option(
+        settings,
+        ("sync",)
+        if kind == "graph" or kind in _MAP_MARKS
+        else ("brush", "sync")
+        if drills
+        else ("zoom", "brush", "sync"),
+    )
+    if used is not None:
+        raise ValueError(f"Chart {used}: a {kind} has no x axis to act on; drop {_dropped(used)}")
+
+
+def _check_subplots(settings: Mapping[str, Any], layouts: Sequence[Mapping[str, Any]]) -> None:
+    """What subplots that all draw layout marks, so that no panel has axes,
+    take: trees drill with ``zoom=True``; maps and networks pan and zoom both
+    ways and take lassos."""
+    zoom, brush = settings.get("zoom"), settings.get("brush")
+    kinds = {mark["type"] for mark in layouts}
+    planes = kinds & {"graph", *_MAP_MARKS}
+    takes = {
+        "zoom": zoom is True
+        and bool(planes or kinds & {"treemap", "sunburst"})
+        or (zoom == "xy" and bool(planes)),
+        "brush": brush == "lasso" and bool(planes),
+    }
+    used = _x_option(
+        settings, tuple(name for name in ("zoom", "brush", "sync") if not takes.get(name, False))
+    )
+    if used is not None:
+        raise ValueError(
+            f"Chart {used}: every panel draws a {_method(layouts[0]['type'])} or another mark "
+            f"without axes, so no panel has an x axis; drop {_dropped(used)}"
+        )
+
+
+def _x_option(settings: Mapping[str, Any], options: Sequence[str]) -> str | None:
+    """The first of a chart's `options` that is set, or else "x seams" when the x
+    axis marks seams: what acts on an x axis, as messages name it."""
+    used = next((name for name in options if settings.get(name)), None)
+    seams = (spec_options(dict(settings)).get("x") or {}).get("seams")
+    return used or ("x seams" if seams not in (None, False) else None)
 
 
 def check_y_zoom(settings: Mapping[str, Any], *, right: bool) -> None:
@@ -5560,6 +5651,7 @@ def graph(
     labels: bool | None = None,
     directed: bool | None = None,
     link_label_field: str | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5575,6 +5667,7 @@ def graph(
         labels=labels,
         directed=directed,
         link_label_field=link_label_field,
+        panel=panel,
         id=id,
     )
 
@@ -5597,6 +5690,7 @@ def choropleth(
     geojson: Any = None,
     locations: str | None = None,
     feature_id_key: str = "id",
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5622,6 +5716,7 @@ def choropleth(
         geojson=geojson,
         locations=locations,
         feature_id_key=feature_id_key,
+        panel=panel,
         tooltip=tooltip,
         id=id,
     )
@@ -5647,6 +5742,7 @@ def scatter_geo(
     stroke: str | None = None,
     stroke_width: float | None = None,
     label: str | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5669,6 +5765,7 @@ def scatter_geo(
         stroke=stroke,
         stroke_width=stroke_width,
         label=label,
+        panel=panel,
         tooltip=tooltip,
         id=id,
     )

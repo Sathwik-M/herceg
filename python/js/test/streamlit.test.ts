@@ -867,7 +867,7 @@ describe("Streamlit item interaction", () => {
       await vi.dynamicImportSettled();
       key(parent, "ArrowRight");
       key(parent, "Enter");
-      expect(first.state).toEqual([["drill_root", { path: ['[0,"East"]'] }]]);
+      expect(first.state).toEqual([["drill_root", { root: { path: ['[0,"East"]'] }, panels: {} }]]);
       const same = run(parent, items(type, "First", ["drill"]));
       expect(same.state).toEqual([]);
       const styled = run(parent, items(type, "Styled", ["drill"]));
@@ -876,7 +876,7 @@ describe("Streamlit item interaction", () => {
       expect(parent.querySelector("nav")!.textContent).toContain("East");
       expect(styled.state).toEqual([]);
       key(parent, "0");
-      expect(styled.state).toEqual([["drill_root", null]]);
+      expect(styled.state).toEqual([["drill_root", { root: null, panels: {} }]]);
       styled.cleanup();
     },
   );
@@ -902,7 +902,9 @@ describe("Streamlit item interaction", () => {
     expect(geometry()).toBe(before);
     expect(styled.state).toEqual([]);
     const changed = run(parent, items("graph", "Styled", ["itemMove"], "new-layout"));
-    expect(changed.state).toEqual([["item_positions", { epoch: "new-layout", positions: {} }]]);
+    expect(changed.state).toEqual([
+      ["item_positions", { epoch: "new-layout", positions: {}, panels: {} }],
+    ]);
     const again = run(parent, items("graph", "Styled", ["itemMove"], "new-layout"));
     expect(again.state).toEqual([]);
     again.cleanup();
@@ -925,6 +927,210 @@ describe("Streamlit item interaction", () => {
   });
 });
 
+it("reports and keeps each subplot tree's root and map's view across reruns", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const fixture = itemChart("treemap");
+    const [tree] = fixture.spec.marks;
+    const spec = {
+      ...fixture.spec,
+      height: 300,
+      interaction: { zoom: true },
+      projection: "equirectangular",
+      panels: [{ id: "tree" }, { id: "map" }],
+      grid: { columns: 2 },
+      data: {
+        ...fixture.spec.data,
+        places: {
+          columns: {
+            lon: { type: "number", dtype: "float64", buffer: 3 },
+            lat: { type: "number", dtype: "float64", buffer: 4 },
+          },
+        },
+      },
+      marks: [
+        { ...tree!, panel: "tree" },
+        { type: "geopoint", data: "places", longitude: "lon", latitude: "lat", panel: "map" },
+      ],
+    } as Header["spec"];
+    const buffers = [...fixture.buffers, new Float64Array([0, 10]), new Float64Array([0, 10])];
+    const first = run(parent, payload(spec, buffers, ["drill", "viewport"]));
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setDrillRoot(["East"], { panel: "tree" });
+    chart.setViewport({ x: [0, 0.1], y: [0, 0.1] }, { panel: "map" });
+    expect(first.state.find(([name]) => name === "drill_root")).toEqual([
+      "drill_root",
+      { root: null, panels: { tree: { path: ['[0,"East"]'] } } },
+    ]);
+    const view = first.state.findLast(([name]) => name === "viewport")![1] as {
+      panels: Record<string, { x: unknown }>;
+    };
+    expect(view.panels.map!.x).toEqual([0, 0.1]);
+    // A rerun that only restyles keeps both.
+    const next = run(parent, payload({ ...spec, title: "Styled" }, buffers, ["drill", "viewport"]));
+    const restored = listener.mock.instances.at(-1) as MountedChart;
+    expect(restored.getDrillRoot({ panel: "tree" })?.key).toBe('[0,"East"]');
+    expect(restored.getViewport({ panel: "map" }).x).toEqual([0, 0.1]);
+    expect(next.state).toEqual([]);
+    next.cleanup();
+  } finally {
+    listener.mockRestore();
+  }
+});
+
+it("keeps two map subplots' views and a lasso in one, naming its panel, across reruns", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const place = (panel: string) => ({
+      type: "geopoint",
+      data: "places",
+      longitude: "lon",
+      latitude: "lat",
+      panel,
+    });
+    const spec = {
+      width: 400,
+      height: 300,
+      renderer: "svg",
+      projection: "equirectangular",
+      interaction: { zoom: true, brush: "lasso" },
+      panels: [{ id: "a" }, { id: "b" }],
+      grid: { columns: 2 },
+      data: {
+        places: {
+          columns: {
+            lon: { type: "number", dtype: "float64", buffer: 0 },
+            lat: { type: "number", dtype: "float64", buffer: 1 },
+          },
+        },
+      },
+      marks: [place("a"), place("b")],
+    } as Header["spec"];
+    const buffers = [new Float64Array([0, 10]), new Float64Array([0, 10])];
+    const events: Header["events"] = ["select", "viewport"];
+    const first = run(parent, payload(spec, buffers, events));
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setViewport({ x: [0, 0.1], y: [0, 0.1] }, { panel: "b" });
+    const lasso: [number, number][] = [
+      [0, 0],
+      [1, 0],
+      [1, 1],
+    ];
+    chart.select({ x: null, y: null, lasso }, { panel: "b" });
+    expect(first.state.findLast(([name]) => name === "selection")![1]).toMatchObject({
+      panels: ["b"],
+      lasso,
+    });
+    // A rerun that only restyles keeps both, and the script hears nothing new.
+    const next = run(parent, payload({ ...spec, title: "Styled" }, buffers, events));
+    const restored = listener.mock.instances.at(-1) as MountedChart;
+    expect(restored).not.toBe(chart);
+    expect(restored.getViewport({ panel: "b" }).x).toEqual([0, 0.1]);
+    expect(restored.getViewport({ panel: "a" }).x).toBeNull();
+    expect(restored.selection?.lasso).toEqual(lasso);
+    expect(restored.selectionPanels).toEqual(["b"]);
+    expect(next.state).toEqual([]);
+    next.cleanup();
+  } finally {
+    listener.mockRestore();
+  }
+});
+
+it("keeps the trees still drawn when a rerun draws another mark in a tree's subplot", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const fixture = itemChart("treemap");
+    const [tree] = fixture.spec.marks;
+    const spec = {
+      ...fixture.spec,
+      height: 300,
+      panels: [{ id: "a" }, { id: "b" }],
+      grid: { columns: 2 },
+      marks: [
+        { ...tree!, panel: "a" },
+        { ...tree!, panel: "b" },
+      ],
+    } as Header["spec"];
+    const first = run(parent, payload(spec, fixture.buffers, ["drill"]));
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setDrillRoot(["East"], { panel: "b" });
+    // Panel a now draws a pie.
+    const pie = {
+      type: "pie" as const,
+      data: "data",
+      category: "region",
+      value: "value",
+      panel: "a",
+    };
+    const next = run(
+      parent,
+      payload({ ...spec, marks: [pie, spec.marks[1]!] }, fixture.buffers, ["drill"]),
+    );
+    const restored = listener.mock.instances.at(-1) as MountedChart;
+    expect(restored).not.toBe(chart);
+    expect(restored.getDrillRoot({ panel: "b" })?.key).toBe('[1,"East"]');
+    first.cleanup();
+    next.cleanup();
+  } finally {
+    listener.mockRestore();
+  }
+});
+
+it("redraws a network subplot too large to draw, keeping the other's view", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const names = Array.from({ length: 5001 }, (_, i) => `n${i}`);
+    const graph = (panel: string, nodes?: string) => ({
+      type: "graph" as const,
+      data: "links",
+      source: "from",
+      target: "to",
+      ...(nodes && { nodes, node: "id" }),
+      panel,
+    });
+    const spec = {
+      width: 400,
+      height: 200,
+      renderer: "svg",
+      interaction: { zoom: true },
+      panels: [{ id: "a" }, { id: "b" }],
+      data: {
+        links: {
+          columns: {
+            from: { type: "category", codes: 0, dictionary: ["n0"] },
+            to: { type: "category", codes: 1, dictionary: ["n1"] },
+          },
+        },
+        nodes: { columns: { id: { type: "category", codes: 2, dictionary: names } } },
+      },
+      marks: [graph("a", "nodes"), graph("b")],
+    } as Header["spec"];
+    const buffers = [new Int32Array([0]), new Int32Array([0]), Int32Array.from(names, (_, i) => i)];
+    const first = run(parent, payload(spec, buffers, ["viewport"], 3, "data", "layout"));
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setViewport({ x: [0, 1], y: [0, 1] }, { panel: "b" });
+    const next = run(
+      parent,
+      payload({ ...spec, title: "Styled" }, buffers, ["viewport"], 3, "data", "layout"),
+    );
+    const restored = listener.mock.instances.at(-1) as MountedChart;
+    expect(restored).not.toBe(chart);
+    expect(restored.getViewport({ panel: "b" }).x).toEqual([0, 1]);
+    first.cleanup();
+    next.cleanup();
+  } finally {
+    listener.mockRestore();
+  }
+});
+
 it("coalesces network resets into one final Streamlit state value", async () => {
   const listener = vi.spyOn(MountedChart.prototype, "on");
   try {
@@ -944,7 +1150,9 @@ it("coalesces network resets into one final Streamlit state value", async () => 
     runState.state.length = 0;
     key(parent, "0");
     await frame();
-    expect(runState.state).toEqual([["item_positions", { epoch: "layout", positions: {} }]]);
+    expect(runState.state).toEqual([
+      ["item_positions", { epoch: "layout", positions: {}, panels: {} }],
+    ]);
     runState.cleanup();
   } finally {
     listener.mockRestore();
@@ -1057,10 +1265,12 @@ it("keeps map plane ranges and lassos through Streamlit redraws", async () => {
         [0, 0.02],
       ],
     });
+    // As the user left them, before the chart the rerun replaces goes.
+    const [view, selection] = [chart.getViewport(), chart.selection];
     const next = run(parent, payload({ ...spec, title: "Styled" }, buffers, ["viewport"]));
     const restored = listener.mock.instances.at(-1) as MountedChart;
-    expect(restored.getViewport()).toEqual(chart.getViewport());
-    expect(restored.selection).toEqual(chart.selection);
+    expect(restored.getViewport()).toEqual(view);
+    expect(restored.selection).toEqual(selection);
     next.cleanup();
   } finally {
     listener.mockRestore();

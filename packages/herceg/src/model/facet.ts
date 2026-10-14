@@ -8,7 +8,7 @@
 import type { NumericArray } from "../data/column.ts";
 import type { Table } from "../data/table.ts";
 import type { CustomSpec } from "../marks/custom.ts";
-import { isLayoutMark, type LayoutMark } from "../marks/layout-mark.ts";
+import type { LayoutMark } from "../marks/layout-mark.ts";
 import { type BandContext, type Bands, type Mark, usesY } from "../marks/mark.ts";
 import type { Series } from "../marks/series.ts";
 import type { Rect, SceneText } from "../scene/scene.ts";
@@ -26,7 +26,7 @@ import {
   type DescribeAnnotation,
   groups,
   groupsOf,
-  type LayoutOptions,
+  type LayoutConfig,
   leastHeight,
   type PanelAxis,
   PanelBands,
@@ -36,7 +36,6 @@ import {
   type PanelRoom,
   type PanelSplit,
   type RowSpace,
-  refuseAxes,
   resolutionOf,
   rowGap,
   type ScaleGroups,
@@ -132,25 +131,42 @@ export class Facet implements PanelLayout {
   /**
    * Rejects marks that cannot be split by the fields, panels cannot draw
    * yet, and a y zoom over panels with y scales of their own. A layout mark
-   * has every panel to itself, splitting its rows.
+   * has every panel to itself, splitting its rows; a map's layers are one
+   * mark, each splitting its table's rows unless it repeats. Returns the
+   * layout marks drawn.
    */
   check(
     marks: readonly Mark[],
-    options: LayoutOptions = {},
+    options: LayoutConfig = { marks: [] },
     layouts: readonly LayoutMark[] = [],
-  ): void {
-    const [layout] = layouts;
-    if (layout) {
-      const { type, facet } = layout.spec;
+  ): LayoutMark[] {
+    let drawn: LayoutMark[] = [];
+    if (layouts[0]) {
+      const { type } = layouts[0].spec;
       checkLayouts(layouts);
-      refuseAxes(type, options);
-      if (layouts.length > 1 || marks.length > 0)
+      drawn = layouts[0].views.inPanels(layouts, options, false);
+      const [layout] = drawn as [LayoutMark];
+      layout.views.interactions(drawn, options, false, type);
+      if (drawn.length > 1 || marks.length > 0)
         throw new Error(
           `${type}: has each facet panel to itself; draw other marks in another chart`,
         );
-      if (facet !== undefined)
-        throw new Error(`${type} facet: the mark splits its rows into facet panels; drop facet`);
-      this.#splitting(type, layout.table!, "");
+      const parts = layout.layers ?? [layout];
+      // A layer of a map may repeat instead (a base map).
+      const remedy = layout.layers
+        ? `; give it facet: "repeat" to draw it whole in every panel`
+        : "";
+      for (const { spec, table } of parts) {
+        if (spec.facet === undefined) this.#splitting(spec.type, table!, remedy);
+        else if (!layout.layers)
+          throw new Error(
+            `${spec.type} facet: the mark splits its rows into facet panels; drop facet`,
+          );
+      }
+      if (parts.every(({ spec }) => spec.facet !== undefined))
+        throw new Error(
+          `${type} facet: every layer of the map repeats, so none splits into facet panels; drop facet from one`,
+        );
     }
     checkBands(marks, options, this.yDefault);
     // A y zoom moves both y scales through the same pixels, so every panel must share each.
@@ -181,6 +197,7 @@ export class Facet implements PanelLayout {
       if (type === "custom" && (mark.spec as CustomSpec).y === undefined)
         throw new Error(`custom facet: without series, it cannot split into panels; ${repeat}`);
     }
+    return drawn;
   }
 
   /** Refuses a table a `type` mark reads that the fields cannot split; `remedy` ends the message. */
@@ -405,6 +422,8 @@ export class Splitter {
     Table,
     { version: number; panels: readonly PanelValues[]; rows: Uint32Array[] }
   >();
+  /** The rows of every panel together, for each list of panels' rows. */
+  readonly #unions = new WeakMap<Uint32Array[], Uint32Array>();
   readonly #bands = new PanelBands();
 
   constructor(
@@ -436,9 +455,10 @@ export class Splitter {
     const splits = (mark: Mark) => this.#facet.splits(mark);
     const tables = new Set(base.filter(({ mark }) => splits(mark)).map(({ mark }) => mark.table!));
     const { marks } = chart.config;
-    const at = marks.findIndex(isLayoutMark);
-    const layout = marks[at] as LayoutMark | undefined;
-    if (layout) tables.add(layout.table!);
+    const [layout] = chart.layouts;
+    // A map's layers each split their rows, unless they repeat.
+    const layers = layout ? (layout.layers ?? [layout]) : [];
+    for (const layer of layers) if (layer.spec.facet === undefined) tables.add(layer.table!);
     this.#update(tables, chart);
     const empty = this.#panels.length === 0;
     const keys = empty ? [""] : this.#panels.map(({ key }) => key);
@@ -506,8 +526,23 @@ export class Splitter {
     }));
     const split: PanelSplit = { keys, values, dimensions, panels, all };
     if (layout) {
-      const rows = this.#tableRows(layout.table!);
-      split.items = keys.map((_, p) => ({ mark: layout, index: at, rows: rows[p] }));
+      const index = layout.indices?.[0] ?? marks.indexOf(layout);
+      const byPart = layers.map((layer) =>
+        layer.spec.facet === undefined ? this.#tableRows(layer.table!) : undefined,
+      );
+      // Every panel's map is fitted to the rows of all of them.
+      const fitRows = layout.layers && byPart.map((rows) => rows && this.#union(rows));
+      split.items = keys.map((_, p) =>
+        fitRows
+          ? {
+              mark: layout,
+              index,
+              rows: undefined,
+              layerRows: byPart.map((rows) => rows?.[p]),
+              fitRows,
+            }
+          : { mark: layout, index, rows: byPart[0]![p] },
+      );
     }
     this.#bands.place(split, columns, bands, chart.config.resolve, this.#facet.yDefault, context);
     return split;
@@ -617,6 +652,21 @@ export class Splitter {
    * rows read, whatever series their rows are in. Kept while the table and
    * the panels are unchanged.
    */
+  /** The rows of every panel of a table's (see `#tableRows`), kept while they are. */
+  #union(rows: Uint32Array[]): Uint32Array {
+    let union = this.#unions.get(rows);
+    if (!union) {
+      union = new Uint32Array(rows.reduce((length, panel) => length + panel.length, 0));
+      let at = 0;
+      for (const panel of rows) {
+        union.set(panel, at);
+        at += panel.length;
+      }
+      this.#unions.set(rows, union);
+    }
+    return union;
+  }
+
   #tableRows(table: Table): Uint32Array[] {
     const cached = this.#rows.get(table);
     if (cached?.version === table.version && cached.panels === this.#panels) return cached.rows;

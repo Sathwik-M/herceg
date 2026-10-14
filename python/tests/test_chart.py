@@ -1375,9 +1375,9 @@ def test_panels_draw_the_marks_that_name_them():
     with pytest.raises(ValueError, match="Chart panels: facets or panels, not both"):
         hg.Chart(DATA, panels=["a"], facet="host")
     with pytest.raises(
-        ValueError, match='Chart zoom: charts with panels zoom along x only; received "xy"'
+        ValueError, match='Chart zoom: panels with axes zoom along x only; received "xy"'
     ):
-        hg.Chart(DATA, panels=["a"], zoom="xy")
+        hg.Chart(DATA, panels=["a"], zoom="xy").line(x="t", y="p50", panel="a").to_spec()
     with pytest.raises(
         ValueError, match="Chart panel_columns: lays out panels, and the chart has none"
     ):
@@ -1463,8 +1463,13 @@ def test_facets_of_layout_marks_refuse_what_the_browser_refuses():
         hg.Chart(SALES, panels=["a"], x=seams).pie("product", panel="a").to_spec()
     with pytest.raises(KeyError, match="Chart facet: no column 'region'"):
         hg.Chart(SALES, facet="region").pie("product", data={"product": ["a"]})
-    with pytest.raises(ValueError, match="graph: has no facets or panels yet"):
-        hg.Chart(SALES, facet="region").graph("region", "product")
+    # Maps and networks draw in facet panels too; 3D charts have charts to themselves.
+    network, _ = hg.Chart(SALES, facet="region").graph("region", "product").to_spec()
+    assert network["marks"][0]["type"] == "graph"
+    with pytest.raises(ValueError, match="point_3d: has no facets or panels yet"):
+        hg.Chart({"x": [1.0], "y": [1.0], "z": [1.0], "g": ["a"]}, facet="g").point_3d(
+            "x", "y", "z"
+        )
 
 
 def test_a_layout_mark_fills_its_own_panel_beside_others():

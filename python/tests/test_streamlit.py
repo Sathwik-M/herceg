@@ -186,14 +186,14 @@ def test_the_example_app_runs():
 
 def test_drills_and_moves_have_typed_values_and_independent_defaults():
     result = {
-        "drill_root": {"path": ['[0,"East"]', '[0,"East","City"]']},
+        "drill_root": {"root": {"path": ['[0,"East"]', '[0,"East","City"]']}},
         "item_positions": {"epoch": "layout", "positions": {'[0,"a"]': [1, 2]}},
     }
     state = hst._state(result, item_epoch="layout")
     assert state.drill_root == ('[0,"East"]', '[0,"East","City"]')
     assert state.item_positions == {'[0,"a"]': (1.0, 2.0)}
     assert hst._state(result, item_epoch="other").item_positions == {}
-    assert hst._state({"drill_root": {"path": [2]}}).drill_root is None
+    assert hst._state({"drill_root": {"root": {"path": [2]}}}).drill_root is None
     result["item_positions"]["positions"] = {"a": [True, 2]}
     assert hst._state(result, item_epoch="layout").item_positions == {}
     first = hst.ChartState()
@@ -208,7 +208,7 @@ def test_new_reactions_use_one_payload_and_state_callbacks(monkeypatch):
         calls.append(kwargs)
         header, _, _ = read(kwargs["data"])
         return {
-            "drill_root": {"path": ['[0,"a"]']},
+            "drill_root": {"root": {"path": ['[0,"a"]']}},
             "item_positions": {"epoch": header["itemEpoch"], "positions": {'[0,"a"]': [1, 2]}},
         }
 
@@ -256,7 +256,7 @@ def test_drill_and_move_state_reach_the_script_in_forms():
     components = [element.proto for element in at.get("bidi_component")]
     assert len(components) == 2
     graph_header = read(components[1].bytes)[0]
-    at.session_state["tree"] = {"drill_root": {"path": ['[0,"East"]']}}
+    at.session_state["tree"] = {"drill_root": {"root": {"path": ['[0,"East"]']}}}
     at.session_state["graph"] = {
         "item_positions": {"epoch": graph_header["itemEpoch"], "positions": {'[0,"a"]': [3, 4]}}
     }

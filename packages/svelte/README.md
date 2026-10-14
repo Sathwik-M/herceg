@@ -45,7 +45,9 @@ The chart fills its container's width and is 320 px tall unless `width`,
 element. Chart events are callback props: `onviewport`, `onselect`,
 `onhover`, `onclick`, `onrowselection` (a channel of the chart's `rowSelection` changed),
 `oncamera` (a 3D chart turned), `ondrill` (a treemap or sunburst drilled into a node),
-`onitemmove` (a network's node moved), `onvisibility` (series hidden or
+`onitemmove` (a network's node moved; with subplots, these and `onviewport` and
+`onselect` events of a subplot's tree, map, or network name it in `panels`),
+`onvisibility` (series hidden or
 shown), and `onrender` (a frame of the data drawn, for overlays, the first one as the
 chart mounts). A `rowSelection` binding made again is the same while it binds the same
 stores and channels. The chart listens only

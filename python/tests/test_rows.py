@@ -62,7 +62,7 @@ def test_bindings_refuse_what_cannot_select_rows():
     ):
         hg.Chart(trips(), row_selection="focus")  # type: ignore[arg-type]
     binding = SelectionBinding("c")
-    with pytest.raises(ValueError, match="Chart row_selection: a pie cannot select rows here yet"):
+    with pytest.raises(ValueError, match="Chart row_selection: a pie cannot select rows yet"):
         hg.Chart(trips(), row_selection=binding).pie(category="kind")
     two = hg.Chart(row_selection=binding).point(x="km", y="fare", data=trips())
     two.line(x="km", y="fare", data=trips())
