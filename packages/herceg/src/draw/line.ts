@@ -46,6 +46,9 @@ export function traceRun(
   }
 }
 
+/** WebKit omits zero-length Canvas strokes; this stays below output precision. */
+export const DOT_LENGTH = 0.001;
+
 /** Adds a polyline's runs to `sink`, one subpath each. */
 export function traceLine(sink: PathSink, path: Polyline): void {
   const c = path.coords;
@@ -54,8 +57,15 @@ export function traceLine(sink: PathSink, path: Polyline): void {
     const end = path.runEnd(run);
     if (end - start < 1) continue;
     sink.moveTo(c[start * 2]!, c[start * 2 + 1]!);
+    // Round caps paint a stroke-sized dot; a lone move paints nothing.
+    if (end === start + 1) sink.lineTo(c[start * 2]! + DOT_LENGTH, c[start * 2 + 1]!);
     traceRun(sink, path, start, end, true);
   }
+}
+
+/** Whether any run has just one point, needing a round cap to be visible. */
+export function hasIsolated(path: Polyline): boolean {
+  return path.starts.some((start, run) => path.runEnd(run) === start + 1);
 }
 
 /** Path data for a polyline, one subpath per run. */

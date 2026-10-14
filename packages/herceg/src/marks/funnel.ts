@@ -25,6 +25,8 @@ import {
 import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface FunnelOptions<S extends Schema> {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   /** Category field: a stage per value, in the field's order unless `sort` says otherwise. */
   category: CategoryField<S>;
   /** Number field summed per stage; without it, stages count rows. */
@@ -294,7 +296,7 @@ export class FunnelMark implements LayoutMark {
                 key: `funnel-${part}`,
                 fill: color,
                 anchor,
-                halo,
+                halo: halo && this.spec.halo !== false,
                 coords: Float32Array.from(coords),
                 labels,
                 count: labels.length,
@@ -339,6 +341,7 @@ export function funnel<S extends Schema>(
   if (options.value !== undefined) spec.value = options.value;
   if (options.sort !== undefined) spec.sort = options.sort;
   if (options.labels !== undefined) spec.labels = options.labels;
+  if (options.halo !== undefined) spec.halo = options.halo;
   if (options.id !== undefined) spec.id = options.id;
   if (options.panel !== undefined) spec.panel = options.panel;
   if (table.name !== undefined) spec.data = table.name;

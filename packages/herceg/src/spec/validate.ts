@@ -637,6 +637,7 @@ const MARKS: MarkChecks = {
   region: {
     required: [],
     checks: {
+      halo: boolean,
       ...placement,
       x1: position,
       x2: position,
@@ -651,6 +652,7 @@ const MARKS: MarkChecks = {
   text: {
     required: ["x", "y"],
     checks: {
+      halo: boolean,
       ...placement,
       x: position,
       y: position,
@@ -666,6 +668,7 @@ const MARKS: MarkChecks = {
   bar: {
     required: ["x", "y"],
     checks: {
+      halo: boolean,
       tooltip,
       ...placement,
       x: fields,
@@ -757,6 +760,7 @@ const MARKS: MarkChecks = {
   sankey: {
     required: ["source", "target"],
     checks: {
+      halo: boolean,
       panel: string,
       source: field,
       target: field,
@@ -769,6 +773,7 @@ const MARKS: MarkChecks = {
   graph: {
     required: ["source", "target"],
     checks: {
+      halo: boolean,
       source: field,
       target: field,
       value: field,
@@ -825,6 +830,7 @@ const MARKS: MarkChecks = {
   funnel: {
     required: ["category"],
     checks: {
+      halo: boolean,
       panel: string,
       category: field,
       value: field,
@@ -835,6 +841,7 @@ const MARKS: MarkChecks = {
   radar: {
     required: [],
     checks: {
+      halo: boolean,
       panel: string,
       category: field,
       value: field,
@@ -1609,6 +1616,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
               if (ids.indexOf(id) !== i) fail(`${at}[${i}]`, "a mark id not listed before", id);
             });
           },
+          halo: boolean,
         } satisfies ChecksOf<NavigatorSpec>);
       },
       animation: (a, path) => {

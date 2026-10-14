@@ -520,6 +520,7 @@ class Navigator:
 
     height: float | None = None
     marks: Sequence[str] | None = None
+    halo: bool | None = None
 
     def _spec(self) -> dict[str, Any]:
         spec: dict[str, Any] = {}
@@ -541,6 +542,8 @@ class Navigator:
                     f"Navigator marks: {shown(repeated)} is listed twice; list each mark once"
                 )
             spec["marks"] = ids
+        if self.halo is not None:
+            spec["halo"] = _halo(self.halo, "Navigator")
         return spec
 
 
@@ -1177,6 +1180,7 @@ class Chart:
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
         tooltip: Tooltip | None = None,
+        halo: bool | None = None,
         id: str | None = None,
     ) -> Chart:
         """Bars: one band per category of x, or bars centered on number or time x.
@@ -1217,6 +1221,7 @@ class Chart:
         return self._add(
             {
                 "type": "bar",
+                "halo": _halo(halo, "bar"),
                 "x": xs,
                 "y": ys,
                 "series": series,
@@ -1916,6 +1921,7 @@ class Chart:
         sort: Literal["input", "value"] | None = None,
         labels: bool | None = None,
         panel: str | None = None,
+        halo: bool | None = None,
         id: str | None = None,
     ) -> Chart:
         """A funnel: a centered bar per value of ``category``, top to bottom,
@@ -1936,6 +1942,7 @@ class Chart:
         return self._add(
             {
                 "type": "funnel",
+                "halo": _halo(halo, "funnel"),
                 "category": category,
                 "value": value,
                 "sort": sort,
@@ -2381,6 +2388,7 @@ class Chart:
         points: bool | None = None,
         label: str | None = None,
         panel: str | None = None,
+        halo: bool | None = None,
         id: str | None = None,
     ) -> Chart:
         """A radar: spokes from a center, clockwise from the top, and a polygon
@@ -2441,6 +2449,7 @@ class Chart:
         return self._add(
             {
                 "type": "radar",
+                "halo": _halo(halo, "radar"),
                 "category": category,
                 "value": value,
                 "fields": list(fields) if fields is not None else None,
@@ -2466,6 +2475,7 @@ class Chart:
         node_width: float | None = None,
         sort: Literal["input", "value"] | None = None,
         panel: str | None = None,
+        halo: bool | None = None,
         id: str | None = None,
     ) -> Chart:
         """A Sankey diagram: a row per flow, from the node named in ``source``
@@ -2500,6 +2510,7 @@ class Chart:
         return self._add(
             {
                 "type": "sankey",
+                "halo": _halo(halo, "sankey"),
                 "source": source,
                 "target": target,
                 "value": value,
@@ -2527,6 +2538,7 @@ class Chart:
         directed: bool | None = None,
         link_label_field: str | None = None,
         panel: str | None = None,
+        halo: bool | None = None,
         id: str | None = None,
     ) -> Chart:
         """A network: a row per link between the nodes named in ``source`` and
@@ -2580,6 +2592,7 @@ class Chart:
         self._add(
             {
                 "type": "graph",
+                "halo": _halo(halo, "graph"),
                 "source": source,
                 "target": target,
                 "value": value,
@@ -3575,6 +3588,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        halo: bool | None = None,
         id: str | None = None,
     ) -> Chart:
         """Shaded regions: from ``x1`` to ``x2``, from ``y1`` to ``y2``, or both.
@@ -3595,6 +3609,7 @@ class Chart:
         return self._add(
             {
                 "type": "region",
+                "halo": _halo(halo, "region"),
                 "x1": _position(x1, "region x1"),
                 "x2": _position(x2, "region x2"),
                 "y1": _position(y1, "region y1"),
@@ -3627,6 +3642,7 @@ class Chart:
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
+        halo: bool | None = None,
         id: str | None = None,
     ) -> Chart:
         """Text at ``(x, y)``: ``label`` for constant text, or ``text_field`` naming a column.
@@ -3648,6 +3664,7 @@ class Chart:
         return self._add(
             {
                 "type": "text",
+                "halo": _halo(halo, "text"),
                 "x": _position(x, "text x"),
                 "y": _position(y, "text y"),
                 "label": label,
@@ -5478,6 +5495,7 @@ def bar(
     labels: bool | dict[str, Any] = False,
     axis: Literal["left", "right"] | None = None,
     panel: str | None = None,
+    halo: bool | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5496,6 +5514,7 @@ def bar(
         axis=axis,
         panel=panel,
         tooltip=tooltip,
+        halo=halo,
         id=id,
     )
 
@@ -5972,6 +5991,7 @@ def funnel(
     sort: Literal["input", "value"] | None = None,
     labels: bool | None = None,
     panel: str | None = None,
+    halo: bool | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5982,6 +6002,7 @@ def funnel(
         sort=sort,
         labels=labels,
         panel=panel,
+        halo=halo,
         id=id,
     )
 
@@ -6176,6 +6197,7 @@ def radar(
     points: bool | None = None,
     label: str | None = None,
     panel: str | None = None,
+    halo: bool | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6190,6 +6212,7 @@ def radar(
         points=points,
         label=label,
         panel=panel,
+        halo=halo,
         id=id,
     )
 
@@ -6205,6 +6228,7 @@ def sankey(
     node_width: float | None = None,
     sort: Literal["input", "value"] | None = None,
     panel: str | None = None,
+    halo: bool | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6217,6 +6241,7 @@ def sankey(
         node_width=node_width,
         sort=sort,
         panel=panel,
+        halo=halo,
         id=id,
     )
 
@@ -6236,6 +6261,7 @@ def graph(
     directed: bool | None = None,
     link_label_field: str | None = None,
     panel: str | None = None,
+    halo: bool | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -6252,6 +6278,7 @@ def graph(
         directed=directed,
         link_label_field=link_label_field,
         panel=panel,
+        halo=halo,
         id=id,
     )
 
@@ -6393,3 +6420,9 @@ def candlestick(
         tooltip=tooltip,
         id=id,
     )
+
+
+def _halo(value: bool | None, location: str) -> bool | None:
+    if value is not None and not isinstance(value, bool):
+        raise ValueError(f"{location} halo: expected a boolean; use False to disable halos")
+    return value

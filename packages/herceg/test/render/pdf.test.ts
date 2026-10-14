@@ -31,6 +31,7 @@ import { point } from "../../src/marks/point.ts";
 import { radar } from "../../src/marks/radar.ts";
 import { rug } from "../../src/marks/rug.ts";
 import { rule } from "../../src/marks/rule.ts";
+import { text } from "../../src/marks/text.ts";
 import { violin } from "../../src/marks/violin.ts";
 import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
@@ -38,7 +39,6 @@ import { ChartModel, STATIC_RASTER_RATIO } from "../../src/model/model.ts";
 import { rangeNavigator } from "../../src/model/navigator.ts";
 import { panels } from "../../src/model/panels.ts";
 import { type PdfOptions, pdfFonts, renderToPDF } from "../../src/pdf.ts";
-import { cssColor } from "../../src/render/css-color.ts";
 import { NO_PAGE } from "../../src/render/fallbacks.ts";
 import { cellRepeat, renderPdf } from "../../src/render/pdf.ts";
 import { num } from "../../src/render/pdf-document.ts";
@@ -49,6 +49,7 @@ import { encodeText, measurePdfText, standardFont, textWidth } from "../../src/r
 import { parseTrueType } from "../../src/render/pdf-truetype.ts";
 import { renderToSVG } from "../../src/render/static.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
+import { cssColor } from "../../src/scale/css-color.ts";
 import type {
   Geometry,
   LineGeometry,
@@ -527,6 +528,8 @@ describe("renderPdf", () => {
         "10 40 m",
         "50 10 l",
         "90 30 l",
+        "60 60 m",
+        "60 60 l",
         "S",
         "Q",
         "q /GS1 gs 0 0 1 rg",
@@ -2812,4 +2815,39 @@ describe("PDF documents", () => {
     for (const width of [0, -1, Infinity, NaN])
       expect(() => renderToPDF({ ...chart, width })).toThrow(/renderToPDF size:/);
   });
+});
+
+it("paints isolated line and area rows with stroke-sized round caps in PDF", () => {
+  const data = table({ x: [0, 1, 2, 3, 4], y: [1, NaN, 3, NaN, 5] });
+  for (const mark of [
+    line(data, { x: "x", y: "y", stroke: "#c02040", strokeWidth: 4 }),
+    area(data, { x: "x", y: "y", stroke: "#c02040", strokeWidth: 4 }),
+    area(data, { x: "x", y: "y", fill: "#c02040", strokeWidth: 4, line: false }),
+    line(data, {
+      x: "x",
+      y: "y",
+      orient: "y",
+      stroke: "#c02040",
+      strokeWidth: 4,
+      curve: "step-after",
+    }),
+  ]) {
+    const { content } = readPdf(renderToPDF({ marks: [mark], width: 300, height: 150 }));
+    expect(content).toMatch(/4 w/);
+    expect(content).toMatch(/1 J/);
+    expect(content.match(/([\d.-]+ [\d.-]+) m\n\1 l/g)).toHaveLength(3);
+  }
+});
+
+it("uses the surface for saturated text halos in PDF and honors halo:false", () => {
+  const data = table({ x: [1], y: [1] });
+  for (const halo of [true, false]) {
+    const mark = text({ x: 1, y: 1, label: "contrast", fill: "#e06600", halo });
+    const config = { marks: [line(data, { x: "x", y: "y" }), mark], width: 300, height: 150 };
+    const { content } = readPdf(renderToPDF(config));
+    expect(content.includes("/ActualText ()")).toBe(halo);
+    if (halo) expect(content).toMatch(/1 1 1 RG 3 w 1 j/);
+    const svg = renderToSVG(config);
+    expect(svg.includes('stroke="#ffffff" stroke-opacity="1"')).toBe(halo);
+  }
 });

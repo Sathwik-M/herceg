@@ -3,6 +3,8 @@
 // diverging ramp maps a midpoint to its middle color, and each side of the
 // midpoint onto its own half of the ramp.
 
+import { cssColor } from "./css-color.ts";
+
 /** Odd, so one entry is the ramp's exact middle, and below 256, so an index fits a byte. */
 const LUT_SIZE = 255;
 
@@ -81,6 +83,17 @@ export function isOpaqueColor(color: string): boolean {
 export function isLightColor(color: string): boolean | undefined {
   const rgba = parseColor(color.trim().toLowerCase());
   return rgba && luminance([rgba[0], rgba[1], rgba[2]]) > 0.179;
+}
+
+/** WCAG contrast of a color over an opaque surface; undefined for unreadable colors. */
+export function colorContrast(fill: string, backdrop: string): number | undefined {
+  const top = cssColor(fill);
+  const bottom = cssColor(backdrop);
+  if (!top || !bottom || bottom[3] < 1) return undefined;
+  const mixed = top.slice(0, 3).map((c, i) => c * top[3] + bottom[i]! * (1 - top[3]));
+  const a = luminance(mixed as [number, number, number]) + 0.05;
+  const b = luminance([bottom[0], bottom[1], bottom[2]]) + 0.05;
+  return Math.max(a, b) / Math.min(a, b);
 }
 
 /**

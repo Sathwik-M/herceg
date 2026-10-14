@@ -178,21 +178,42 @@ export function planAxis(
 ): AxisPlan {
   const scale = createScale(context, domain, range);
   const ticker = within === domain ? scale : createScale(context, within, range);
-  const ticks = ticker.ticks(count);
   const format = context.spec?.format;
+  let ticks = ticker.ticks(count);
   let labels: string[];
-  if (format) {
-    const formatter =
-      context.type === "time"
-        ? timeFormatter(format as Intl.DateTimeFormatOptions, context.zone, context.locale)
-        : numberFormatter(format as Intl.NumberFormatOptions, context.locale);
-    labels = ticks.map(formatter);
-  } else if (ticker.type === "time") {
+  if (ticker.type === "time") {
     const time = ticker as CalendarScale;
-    const contexts = time.tickContexts?.(ticks);
-    labels = timeTickLabels(ticks, time.interval(count), context.zone, context.locale, contexts);
+    const formatter =
+      format && timeFormatter(format as Intl.DateTimeFormatOptions, context.zone, context.locale);
+    labels = formatter
+      ? ticks.map(formatter)
+      : timeTickLabels(
+          ticks,
+          time.interval(count),
+          context.zone,
+          context.locale,
+          time.tickContexts?.(ticks),
+        );
+    let unique = new Set(labels);
+    if (formatter && unique.size < labels.length) {
+      // Prefer a coarser calendar interval the format can distinguish.
+      // Keep the useful candidates if that interval has no boundary in view.
+      const coarser = ticker.ticks((count * unique.size) / labels.length);
+      if (coarser.length) {
+        ticks = coarser;
+        labels = ticks.map(formatter);
+        unique = new Set(labels);
+      }
+    }
+    if (unique.size < labels.length) {
+      const distinct = [...unique];
+      ticks = ticks.filter((_, i) => unique.delete(labels[i]!));
+      labels = distinct;
+    }
   } else {
-    labels = numberTickLabels(ticks, context.locale);
+    labels = format
+      ? ticks.map(numberFormatter(format as Intl.NumberFormatOptions, context.locale))
+      : numberTickLabels(ticks, context.locale);
   }
   return { scale, ticks, labels, within, context, count };
 }

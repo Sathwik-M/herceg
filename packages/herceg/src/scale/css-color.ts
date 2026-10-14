@@ -1,9 +1,8 @@
 // CSS colors as numbers, for output formats that cannot pass a CSS color
-// through to a browser (PDF). Mark colors may be any color a browser reads;
+// through to a browser (PDF), and for text halo contrast. Mark colors may be any color a browser reads;
 // this covers hex (with or without alpha), rgb(), hsl(), and the named
-// colors. It is separate from scale/color.ts, whose lenient reading only
-// decides between light and dark, so that charts not exporting PDF do not
-// carry it.
+// colors. It is separate from the lenient light/dark color reader so that
+// charts without text halos or PDF output do not carry its parser and names.
 
 const NAMES =
   "aliceblue f0f8ff antiquewhite faebd7 aqua 00ffff aquamarine 7fffd4 azure f0ffff " +

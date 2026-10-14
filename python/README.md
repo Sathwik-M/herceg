@@ -672,6 +672,26 @@ subplots, HTML, notebooks, and static SVG/PNG/PDF use the same engine semantics.
 meaning, with raw counts or weights in tooltip text. Express barplot estimates
 remain grouped; stream offsets are available through `hg.area` and `Chart.area`.
 
+Finite line rows between gaps draw round dots with diameter `stroke_width`
+(or the theme's line width). Areas show them on the upper edge. Step curves,
+`orient="y"`, reduced data, and SVG/PNG/PDF exports follow the same rule.
+For `hg.bar(df, x="zone", y="gain", series="zone", labels=True)`, each bar
+uses its full category band; category colors and legend entries are retained.
+Horizontal bars behave the same when `series` names their category y.
+
+`Chart.text`, `Chart.region`, and the bar, funnel, radar, Sankey, and graph
+methods and helpers accept `halo=False` to disable text outlines (both node
+and link labels for graphs). `hg.Navigator(halo=False)` disables navigator
+label outlines. Halos use the background at full opacity at 3:1 text contrast
+or higher, falling back to the light/dark choice otherwise. The option is
+serialized as `halo` in the portable spec and works in every renderer and
+static export. Express charts are ordinary `Chart` objects: annotations
+added with `.text(..., halo=False)` use the same option.
+
+Time axes choose coarser intervals for coarse `format` options and drop
+remaining duplicate labels. `hg.Axis(tooltip_format=...)` formats tooltip,
+keyboard, and crosshair values independently, without changing tick labels.
+
 ## Statistical charts
 
 `herceg.express` makes Seaborn's statistical charts in one call. It

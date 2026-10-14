@@ -1761,3 +1761,43 @@ it("capabilities: every built-in mark exports as a PDF document page", () => {
   expect(pdf).toContain(`/Count ${cases.length}`);
   expect(pdf.match(/\/S \/Figure\b/g)).toHaveLength(cases.length);
 });
+
+describe("category-colored bars", () => {
+  it.each([false, true])(
+    "use full bands with labels and category legends (horizontal: %s)",
+    (horizontal) => {
+      const data = table({ category: ["A", "B", "C"], value: [10, 20, 30] });
+      const mark = bar(data, {
+        ...(horizontal ? { x: "value", y: "category" } : { x: "category", y: "value" }),
+        series: "category",
+        labels: true,
+      });
+      const { model, scene } = build({ marks: [mark] });
+      const band = (horizontal ? model.yScale() : model.xScale())!;
+      const panel = scene.panels[0]!;
+      const rects = panel.marks.filter((g): g is RectGeometry => g.kind === "rect");
+      const labels = panel.marks.filter((g): g is TextGeometry => g.kind === "text");
+      expect(rects).toHaveLength(3);
+      expect(labels.flatMap((g) => g.labels)).toEqual(["10", "20", "30"]);
+      expect(new Set(rects.map((g) => g.fill)).size).toBe(3);
+      rects.forEach((g, i) => {
+        const offset = horizontal ? 1 : 0;
+        expect(g.rects[offset + 2]).toBeCloseTo(band.bandwidth!, 3);
+        expect(g.rects[offset]! + g.rects[offset + 2]! / 2).toBeCloseTo(band.map(i), 3);
+        const s = model.series()[i]!;
+        expect(model.inspectPosition(s.key, 0)!.points[0]!.label).toBe(s.label);
+      });
+      expect(scene.legend.map((entry) => entry.label)).toEqual(["A", "B", "C"]);
+      expect(scene.legend.map((entry) => ("color" in entry ? entry.color : undefined))).toEqual(
+        rects.map((g) => g.fill),
+      );
+      model.hidden.add(model.series()[1]!.key);
+      const remaining = model
+        .scene(estimateText)
+        .panels[0]!.marks.filter((g): g is RectGeometry => g.kind === "rect");
+      expect(remaining).toHaveLength(2);
+      for (const g of remaining)
+        expect(g.rects[horizontal ? 3 : 2]).toBeCloseTo(band.bandwidth!, 3);
+    },
+  );
+});

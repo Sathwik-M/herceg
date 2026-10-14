@@ -11,7 +11,10 @@ applications. Today it provides:
   flow, network, map, and 3D (scatter, line, and surface) charts;
 - SVG and Canvas rendering, chosen per chart by how much it draws, and WebGL
   for large point series and large 3D charts, loaded only when a chart needs it;
-- level-of-detail reduction for large line and area series;
+- level-of-detail reduction for large line and area series, preserving
+  isolated finite rows as stroke-sized dots across SVG, Canvas, and PDF;
+- unique formatted time ticks, optional text halos, and full-band bars when
+  category and series name the same field;
 - keyboard navigation, generated data summaries, and static SVG and PDF
   export;
 - React, Vue, and Svelte components (`@herceg/react`, `@herceg/vue`,

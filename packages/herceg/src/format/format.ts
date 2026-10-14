@@ -2,7 +2,7 @@
 // they serialize unchanged between TypeScript, JSON specs, and Python.
 
 import { stepDecimals } from "../scale/ticks.ts";
-import { TIME_UNIT_MS, type TickContext, type TimeInterval, type TimeUnit } from "../scale/time.ts";
+import type { TickContext, TimeInterval, TimeUnit } from "../scale/time.ts";
 import { type TimeZone, toWall } from "./zone.ts";
 
 export type NumberFormat = Intl.NumberFormatOptions;
@@ -22,27 +22,21 @@ function cached<T>(cache: Map<string, T>, key: string, create: () => T): T {
 }
 
 export function numberFormatter(options: NumberFormat, locale?: string): Formatter {
-  const format = cached(
+  return cached(
     numberFormats,
     `${locale}|${JSON.stringify(options)}`,
     // Values that round to zero, and -0 itself, print without a minus sign.
     () => new Intl.NumberFormat(locale, { signDisplay: "negative", ...options }),
-  );
-  return (value) => format.format(value);
-}
-
-function intlZone(zone: TimeZone): string | undefined {
-  return zone === "local" ? undefined : zone;
+  ).format;
 }
 
 export function timeFormatter(options: TimeFormat, zone: TimeZone, locale?: string): Formatter {
-  const full = { timeZone: intlZone(zone), ...options };
-  const format = cached(
+  const full = { timeZone: zone === "local" ? undefined : zone, ...options };
+  return cached(
     timeFormats,
     `${locale}|${JSON.stringify(full)}`,
     () => new Intl.DateTimeFormat(locale, full),
-  );
-  return (value) => format.format(value);
+  ).format;
 }
 
 /**
@@ -93,30 +87,38 @@ export function formatNumber(value: number, locale?: string): string {
   return numberFormatter(options, locale)(value);
 }
 
-const FORMATS: Record<"fraction" | "second" | "minute" | "day" | "month" | "year", TimeFormat> = {
-  fraction: {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    fractionalSecondDigits: 3,
-    hourCycle: "h23",
-  },
-  second: { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" },
-  minute: { hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
-  day: { month: "short", day: "numeric" },
-  month: { month: "short" },
-  year: { year: "numeric" },
+const MINUTE_FORMAT: TimeFormat = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+const SECOND_FORMAT: TimeFormat = { ...MINUTE_FORMAT, second: "2-digit" };
+
+// Resolutions: fractional seconds, seconds, minutes, dates, months, years.
+const FORMATS: TimeFormat[] = [
+  { ...SECOND_FORMAT, fractionalSecondDigits: 3 },
+  SECOND_FORMAT,
+  MINUTE_FORMAT,
+  { month: "short", day: "numeric" },
+  { month: "short" },
+  { year: "numeric" },
+];
+
+const RESOLUTION: Record<TimeUnit, number> = {
+  millisecond: 0,
+  second: 1,
+  minute: 2,
+  hour: 2,
+  day: 3,
+  week: 3,
+  month: 4,
+  year: 5,
 };
 
 /** Which label granularity a wall time is aligned to, coarsest first. */
-function alignment(wall: number): keyof typeof FORMATS {
+function alignment(wall: number): number {
+  if (wall % 1000) return 0;
+  if (wall % 60_000) return 1;
+  if (wall % 86_400_000) return 2;
   const date = new Date(wall);
-  if (date.getUTCMilliseconds() !== 0) return "fraction";
-  if (date.getUTCSeconds() !== 0) return "second";
-  if (date.getUTCMinutes() !== 0 || date.getUTCHours() !== 0) return "minute";
-  if (date.getUTCDate() !== 1) return "day";
-  if (date.getUTCMonth() !== 0) return "month";
-  return "year";
+  if (date.getUTCDate() !== 1) return 3;
+  return date.getUTCMonth() ? 4 : 5;
 }
 
 /**
@@ -133,39 +135,27 @@ export function timeTickLabels(
   locale?: string,
   contexts?: readonly (TickContext | undefined)[],
 ): string[] {
-  const finest: keyof typeof FORMATS =
-    interval.unit === "millisecond"
-      ? "fraction"
-      : interval.unit === "second"
-        ? "second"
-        : interval.unit === "minute" || interval.unit === "hour"
-          ? "minute"
-          : interval.unit === "day" || interval.unit === "week"
-            ? "day"
-            : interval.unit === "month"
-              ? "month"
-              : "year";
-  const order = Object.keys(FORMATS) as (keyof typeof FORMATS)[];
-  const coarser = (a: keyof typeof FORMATS, b: keyof typeof FORMATS) =>
-    order.indexOf(a) < order.indexOf(b) ? b : a;
   return ticks.map((t, i) => {
-    const aligned = coarser(alignment(toWall(zone, t)), contexts?.[i] ?? "fraction");
-    // Never print finer than the interval resolution.
-    const key = coarser(aligned, finest);
-    return timeFormatter(FORMATS[key], zone, locale)(t);
+    // Never print finer than the interval or a moved tick's context.
+    const resolution = Math.max(
+      RESOLUTION[interval.unit],
+      alignment(toWall(zone, t)),
+      RESOLUTION[contexts?.[i] ?? "millisecond"],
+    );
+    return timeFormatter(FORMATS[resolution]!, zone, locale)(t);
   });
 }
 
 /** Full timestamp format for tooltips, precise to `unit`. */
 export function timeValueFormatter(unit: TimeUnit, zone: TimeZone, locale?: string): Formatter {
-  const date: TimeFormat = { year: "numeric", month: "short", day: "numeric" };
-  const precise =
-    TIME_UNIT_MS[unit] >= TIME_UNIT_MS.day
-      ? date
-      : unit === "millisecond"
-        ? { ...date, ...FORMATS.fraction }
-        : unit === "second"
-          ? { ...date, ...FORMATS.second }
-          : { ...date, ...FORMATS.minute };
-  return timeFormatter(precise, zone, locale);
+  const resolution = RESOLUTION[unit];
+  return timeFormatter(
+    {
+      ...FORMATS[3],
+      year: "numeric",
+      ...(resolution < 3 && FORMATS[resolution]),
+    },
+    zone,
+    locale,
+  );
 }

@@ -1,5 +1,5 @@
 import type { AreaGeometry, Drawing, SvgElement } from "../scene/scene.ts";
-import { linePath, traceLine, traceRun } from "./line.ts";
+import { DOT_LENGTH, hasIsolated, traceLine, traceRun } from "./line.ts";
 import { markupOf, type PathSink, SvgPath } from "./markup.ts";
 
 /** Adds an area's outline to `sink`: per run, the top edge, then the bottom edge back. */
@@ -9,7 +9,7 @@ export function traceArea(sink: PathSink, area: AreaGeometry): void {
   for (let run = 0; run < upper.starts.length; run++) {
     const start = upper.starts[run]!;
     const end = upper.runEnd(run);
-    if (end - start < 1) continue;
+    if (end - start < 2) continue;
     sink.moveTo(u[start * 2]!, u[start * 2 + 1]!);
     traceRun(sink, upper, start, end, true);
     if (lower && run < lower.starts.length) {
@@ -33,6 +33,23 @@ export function areaPath(area: AreaGeometry): string {
   return svg.d;
 }
 
+/** The top edge, or just its isolated dots when the area has no outline. */
+export function traceAreaOutline(sink: PathSink, area: AreaGeometry): void {
+  if (area.stroke) {
+    traceLine(sink, area.upper);
+    return;
+  }
+  const { upper } = area;
+  for (let run = 0; run < upper.starts.length; run++) {
+    const start = upper.starts[run]!;
+    if (upper.runEnd(run) !== start + 1) continue;
+    const x = upper.coords[start * 2]!;
+    const y = upper.coords[start * 2 + 1]!;
+    sink.moveTo(x, y);
+    sink.lineTo(x + DOT_LENGTH, y);
+  }
+}
+
 /** The fill, then the outline of the top edge when the area has one. */
 function areaElements(area: AreaGeometry): SvgElement[] {
   const out: SvgElement[] = [
@@ -46,15 +63,19 @@ function areaElements(area: AreaGeometry): SvgElement[] {
       },
     },
   ];
-  if (area.stroke) {
+  const isolated = hasIsolated(area.upper);
+  if (area.strokeWidth > 0 && (area.stroke || isolated)) {
+    const outline = new SvgPath();
+    traceAreaOutline(outline, area);
     out.push({
       tag: "path",
       attributes: {
-        d: linePath(area.upper),
+        d: outline.d,
         fill: "none",
-        stroke: area.stroke,
+        stroke: area.stroke ?? area.fill,
         "stroke-width": String(area.strokeWidth),
         "stroke-linejoin": "round",
+        ...(isolated && { "stroke-linecap": "round" }),
       },
     });
   }
@@ -72,12 +93,11 @@ export const areaDrawing: Drawing<AreaGeometry> = {
     context.fillStyle = area.fill;
     context.fill();
     context.globalAlpha = 1;
-    if (area.stroke) {
-      context.beginPath();
-      traceLine(context, area.upper);
-      context.strokeStyle = area.stroke;
-      context.lineWidth = area.strokeWidth;
-      context.stroke();
-    }
+    if (area.strokeWidth === 0) return;
+    context.beginPath();
+    traceAreaOutline(context, area);
+    context.strokeStyle = area.stroke ?? area.fill;
+    context.lineWidth = area.strokeWidth;
+    context.stroke();
   },
 };

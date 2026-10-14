@@ -2,7 +2,17 @@
 
 This page compares Herceg with Apache ECharts, TanStack Charts, Chart.js, and
 Plotly. uPlot is included in the measurements as a reference point for fast
-time-series rendering. Each entry is one of:
+time-series rendering.
+
+Herceg preserves isolated finite line and area rows as stroke-sized dots
+across SVG, Canvas, and PDF, and bars colored by their own category retain
+full bands and value labels. Time axes remove repeated formatted tick
+labels. Text halos choose the surface at 3:1 contrast or higher and accept
+`halo: false` on every halo-drawing mark and the navigator. These are
+correctness guarantees; equivalent competitor behavior has not been measured
+in the performance scenarios below.
+
+Each entry is one of:
 
 - **Measured** — produced by the benchmark suite in `benchmarks/`; raw data is
   in `benchmarks/results/*.json`. Methodology: `benchmarks/README.md`.

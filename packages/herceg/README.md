@@ -676,6 +676,11 @@ series' rows in order. They use the left y axis (`axis: "right"` is
 refused, as for horizontal bars), and span their positions whatever x
 shows; zooming along y does not rescale x.
 
+A finite line row with no finite neighbor is a round dot whose diameter is
+its stroke width. Areas show the dot on their upper edge, in the outline
+color when present and otherwise the fill color. This applies to step and
+smooth curves, either orientation, reduced data, and SVG, Canvas, and PDF.
+
 Annotations take constant positions (numbers, or `Date`s on time axes), or
 draw one item per row of a table when a position is a field. `label` is
 constant text; `textField` names a category or number field with each item's text.
@@ -697,8 +702,14 @@ Annotation positions count toward the axis domains, so thresholds and events
 stay in view; on a category axis, a constant position is a band index (0 is
 the first band, -0.5 its edge). Regions are drawn in mark order (list them first to shade
 underneath the data); rules and text are drawn above the data, as SVG even
-when the data is on a canvas, and with a halo so text stays readable over
-lines. Annotations outside the view are left out. Text labels that would
+when the data is on a canvas. Text and region labels have halos to stay
+readable over lines. A halo uses the background at full opacity when its
+contrast with the text is at least 3:1; otherwise it uses the existing
+light/dark fallback. `halo: false` disables it on `text`, `region`, `bar`,
+`funnel`, `radar`, `sankey`, and `graph` (both node and link labels), and on
+`rangeNavigator({ halo: false })`. Marks that choose halos only where needed
+keep that choice by default. These rules also apply to static SVG and PDF.
+Annotations outside the view are left out. Text labels that would
 cover an earlier label of the same mark, in row order, are drawn anyway by
 default. With `overlap: "hide"` they are left out. With `overlap: "move"`,
 a label goes where `anchor`, `dx`, and `dy` put it if that is free and in
@@ -716,6 +727,11 @@ few hundred points, not every point of a large series. In charts with
 facets, annotations over a table draw each row in its own row's panel, and
 labels keep off the labels of their own panel only (see [Small
 multiples](#small-multiples)).
+
+When a bar's `series` is its category position field (`x` for vertical bars,
+`y` for horizontal bars), categories retain their colors and legend entries
+and each bar occupies the full band. Value labels use that full band's room;
+series of another field still stand side by side.
 
 Bars, points, error bars, heatmaps, contours, candlesticks, histograms, box plots, letter-value (boxen) plots, and violins:
 
@@ -1369,6 +1385,10 @@ the notes), — not yet (refused with an error), · not applicable.
 | point3d, line3d | — | — | — | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
 | surface | — | — | — | · | turning | — | — | — | — | · | ✓ | · | — |
 
+- Line and area gaps preserve isolated finite rows as stroke-sized dots on
+  every renderer and export. Bars colored by their own category keep full
+  bands, labels, and category legends. Text halos can be disabled on every
+  mark that draws them; time tick labels are unique in their axis format.
 - Every built-in mark exports through `renderToPDF`; each chart is one page and
   one Figure, including its facets or subplots.
 - Selected rows and Highlight are what charts bound to a selection store do
@@ -2652,6 +2672,14 @@ is internal, and charts take only marks the mark functions make.
 | `locale`, `timeZone` | Label locale and time zone (`"local"`, `"UTC"`, or an IANA name). |
 | `projection` | How maps are projected: a projection's name or `{ type, centralMeridian?, parallels?, fit? }` (see Maps). |
 | `z`, `camera`, `boxAspect` | 3D charts' vertical axis (options as for `x` and `y`), where they are seen from at first (`{ azimuth?, elevation?, zoom?, perspective? }`), and their box's side lengths (see 3D charts). |
+
+Time axes try coarser calendar tick intervals when `format` repeats labels,
+then drop any remaining duplicates, including nonadjacent ones. A date-only
+format therefore uses day ticks rather than repeated hour labels. The
+default date/time formats stay unchanged where they distinguish ticks.
+`tooltipFormat` formats tooltip, keyboard, and crosshair values independently;
+it does not change the axis ticks. Pass the same Intl options there when
+those values should use the same precision.
 
 The returned `Chart` has `root` (its element), `update(options)`,
 `setViewport(view | [from, to] | null, { panel? })` and `getViewport({ panel?

@@ -36,6 +36,8 @@ import {
 import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface SankeyOptions<S extends Schema> {
+  /** Set false to leave text without its readability outline. */
+  halo?: boolean;
   /** Category field naming where each row's flow comes from. */
   source: CategoryField<S>;
   /** Category field naming where it goes; a name in both fields is one node. */
@@ -257,7 +259,8 @@ export class SankeyMark implements LayoutMark {
     ];
     // Nodes over the ends of their links.
     geometry.push(...nodeRects(order, boxes, colors));
-    if (this.spec.labels ?? true) geometry.push(...sankeyLabels(layout, names, frame));
+    if (this.spec.labels ?? true)
+      geometry.push(...sankeyLabels(layout, names, frame, this.spec.halo !== false));
 
     const nodeItem = (node: number): LayoutItem => {
       const [x0, y0, x1, y1] = boxes.subarray(node * 4, node * 4 + 4) as unknown as number[];
@@ -451,6 +454,7 @@ function sankeyLabels(
   layout: SankeyLayout,
   names: readonly string[],
   frame: LayoutFrame,
+  halo: boolean,
 ): Geometry[] {
   const { bounds, theme, measure, locale } = frame;
   const { columns, columnX, nodeWidth, column, boxes, order } = layout;
@@ -516,7 +520,7 @@ function sankeyLabels(
           fill: theme.text,
           anchor,
           // Labels lie over links; the halo keeps them readable.
-          halo: true,
+          halo,
           coords: Float32Array.from(sides[anchor].coords),
           labels: sides[anchor].labels,
           count: sides[anchor].labels.length,
@@ -547,6 +551,7 @@ export function sankey<S extends Schema>(
   if (options.labels !== undefined) spec.labels = options.labels;
   if (options.nodeWidth !== undefined) spec.nodeWidth = options.nodeWidth;
   if (options.sort !== undefined) spec.sort = options.sort;
+  if (options.halo !== undefined) spec.halo = options.halo;
   if (options.id !== undefined) spec.id = options.id;
   if (options.panel !== undefined) spec.panel = options.panel;
   if (table.name !== undefined) spec.data = table.name;
