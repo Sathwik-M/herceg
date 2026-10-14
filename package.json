@@ -26,6 +26,7 @@
     "lint:python": "cd python && uv run --extra dev ruff check src tests examples && uv run --extra dev ruff format --check src tests examples && uv run --extra dev mypy",
     "test:package": "node scripts/test-package.mjs",
     "test:python-package": "node scripts/test-python-package.mjs",
+    "test:release": "node --test scripts/release.test.mjs",
     "version:set": "node scripts/set-version.mjs"
   },
   "engines": {

@@ -1,6 +1,6 @@
 # @herceg/react
 
-React components for [herceg](../herceg/README.md) charts.
+React components for [herceg](https://github.com/op55-org/herceg/blob/main/packages/herceg/README.md) charts.
 
 ```tsx
 import { Chart, Line, Rule } from "@herceg/react";
@@ -21,7 +21,7 @@ export function Latency() {
 The `navigator` prop accepts `rangeNavigator()` from `herceg`. Its dense bar
 strip preserves every column intersected by a bar's placed rectangle and
 uses the same color rules as the core and static exports (see
-[Range navigator](../herceg/README.md#range-navigator)).
+[Range navigator](https://github.com/op55-org/herceg/blob/main/packages/herceg/README.md#range-navigator)).
 The chart's text alternative describes its overview and current x range,
 and its control of every panel's x when there are several.
 
@@ -72,7 +72,7 @@ navigate the view. The toolbar restores moved nodes.
 
 Mark elements take `tooltip={{ fields: [...] }}` for more of the row a
 point is, and axes `tooltipFormat` for how tooltips write their values, as
-in herceg (see [Tooltips](../herceg/README.md#tooltips)). For content of
+in herceg (see [Tooltips](https://github.com/op55-org/herceg/blob/main/packages/herceg/README.md#tooltips)). For content of
 your own, `renderTooltip` returns React content, which renders, with the
 application's context, in the chart's box: it keeps its placement, the
 crosshair and highlighted points, and the keyboard's announcements. Only

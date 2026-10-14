@@ -21,22 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: version
-        # The tag, every npm package, and the Python package must agree.
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          for p in herceg react vue svelte; do
-            v=$(node -p "require('./packages/$p/package.json').version")
-            [ "$v" = "$tag" ] || { echo "packages/$p is $v, the tag is $tag"; exit 1; }
-          done
-          v=$(sed -n 's/^version = "\(.*\)"/\1/p' python/pyproject.toml)
-          [ "$v" = "$tag" ] || { echo "python/pyproject.toml is $v, the tag is $tag"; exit 1; }
-          echo "version=$tag" >> "$GITHUB_OUTPUT"
+        run: node scripts/check-release.mjs "$GITHUB_REF_NAME"
 
   pypi:
     needs: check
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -48,14 +40,23 @@ jobs:
       - run: npm ci
       - run: npm run test:python-package
       - run: rm -rf python/dist && cd python && uv build
+      - run: node scripts/check-pypi.mjs "$RELEASE_VERSION"
+        env:
+          RELEASE_VERSION: ${{ needs.check.outputs.version }}
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: python/dist
+          skip-existing: true
+      # Also verify after uploading: a racing upload must never hide a mismatch.
+      - run: node scripts/check-pypi.mjs "$RELEASE_VERSION" --require-all
+        env:
+          RELEASE_VERSION: ${{ needs.check.outputs.version }}
 
   npm:
     needs: check
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -69,8 +70,5 @@ jobs:
       - run: npm run test:package
       # Publishing through a trusted publisher needs npm 11.5.1 or later.
       - run: npm install --global npm@11
-      # The engine first, so the adapters never point at a version that is not out.
-      - run: |
-          for w in herceg @herceg/react @herceg/vue @herceg/svelte; do
-            npm publish --workspace "$w" --access public
-          done
+      # Verify exact tarball integrity on reruns, including the manual bootstrap.
+      - run: node scripts/publish-npm.mjs --publish

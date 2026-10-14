@@ -56,6 +56,7 @@ npm run bench:express    # herceg.express timings in Python (-- --out results/ex
 npm run build:python     # bundle herceg's JavaScript into the Python package
 npm run test:python      # build:python, then pytest (uv environment in python/)
 npm run test:python-package # build, inspect, install, and smoke-test the Python wheel
+npm run test:release     # release version, registry recovery, and publish guard tests (offline)
 npm run lint:python      # ruff check, format check, and mypy type check of the Python package
 npm run version:set -- X.Y.Z # set one version on every published package (see Releasing)
 ```
@@ -66,17 +67,72 @@ are added.
 ### Releasing
 
 Every published package (`herceg`, `@herceg/react`, `@herceg/vue`,
-`@herceg/svelte`, and the Python `herceg`) shares one version. To release:
-1. Set it with `npm run version:set -- X.Y.Z`.
-2. Move CHANGELOG.md's "Unreleased" entries under that version.
-3. Commit, and wait for CI to pass.
-4. Publish a GitHub release tagged `vX.Y.Z`. `.github/workflows/release.yml`
-   then publishes to PyPI and npm through their trusted publishers, without
-   stored tokens.
+`@herceg/svelte`, and Python `herceg`) shares a stable `X.Y.Z` version.
+Prereleases and leading zeros are not supported.
 
-npm lets a package trust a workflow only once the package exists, so the
-first version of each npm package is published by hand
-(`npm publish --workspace <name> --access public`, engine first).
+1. Run `npm run version:set -- X.Y.Z`, move CHANGELOG.md's "Unreleased"
+   entries under that version, and run `node scripts/check-release.mjs vX.Y.Z`
+   and `(cd python && uv lock --check)`. Commit and wait for CI to pass.
+2. Before the first release, create the GitHub **`pypi`** environment. Allow
+   release tags with a selected-tag rule such as `v*`; required reviewers are
+   optional. Configure PyPI's publisher for project `herceg`, owner `op55-org`,
+   repository `herceg`, workflow `release.yml`, environment `pypi`. A pending
+   PyPI publisher does **not** reserve the project name.
+3. Bootstrap all four npm packages by hand as below, then configure their
+   trusted publishers. Publish a GitHub release tagged exactly `vX.Y.Z` to run
+   `.github/workflows/release.yml`, which publishes both registries through
+   OIDC without stored tokens. For later releases, prepare the version as in
+   step 1, then publish the GitHub release.
+
+For the first manual npm publication, use a clean checkout of the CI-tested
+commit, Node 22.14 or newer, and npm 11 (at least 11.5.1). Set the chosen version
+(for example `export HERCEG_RELEASE_VERSION=0.1.0`), then prepare and inspect:
+
+```sh
+set -euo pipefail
+test -z "$(git status --porcelain)"
+node --version
+npm --version
+npm ci
+npm run build
+npm run test:package
+node scripts/check-release.mjs "v$HERCEG_RELEASE_VERSION"
+for w in herceg @herceg/react @herceg/vue @herceg/svelte; do
+  npm pack --dry-run --workspace "$w"
+done
+node scripts/publish-npm.mjs --check
+```
+
+Check every listing for `dist`, declarations, README, and LICENSE. The check
+requires each exact registry version to be absent or its published tarball to
+match the local pack; registry errors and mismatches fail. Then authenticate,
+confirm `@herceg` publish rights, and publish:
+
+```sh
+npm login --auth-type=web --registry=https://registry.npmjs.org
+npm whoami --registry=https://registry.npmjs.org
+npm org ls herceg --registry=https://registry.npmjs.org
+node scripts/publish-npm.mjs --publish
+npm view "@herceg/svelte@$HERCEG_RELEASE_VERSION" exports --json
+```
+
+The script publishes the engine first, then React, Vue, and Svelte, verifying
+registry tarball integrity after each publish. It uses public access and the
+`latest` tag; local manual publication omits `--provenance`. Each package's
+`prepublishOnly` guard rejects missing exports targets; it does not build.
+
+After the packages exist, configure an npm trusted publisher on **each** with
+owner **`op55-org`**, repository **`herceg`**, workflow filename **`release.yml`**,
+permission for direct **`npm publish`**, and no environment. Configure them
+within two days before the first automated publication of a new version; a
+new configuration expires if its first successful automated publish does not
+happen within two days, so recreate it if needed.
+[Trusted publisher setup](https://docs.npmjs.com/trusted-publishers/).
+
+Both jobs can be rerun after a partial publication. npm skips only identical
+tarballs, including the manual bootstrap version. PyPI checks existing file
+SHA256 hashes before `skip-existing` upload and verifies all files afterward.
+A mismatch fails and requires a new version.
 
 ### Codex reviews and design advice
 

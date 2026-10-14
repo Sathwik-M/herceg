@@ -23,6 +23,7 @@
     "src"
   ],
   "scripts": {
+    "prepublishOnly": "node ../../scripts/check-publish.mjs",
     "build": "svelte-package --input src --output dist",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings --output human",
     "test:browser": "vitest run"

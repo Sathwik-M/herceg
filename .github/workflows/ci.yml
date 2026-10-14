@@ -19,6 +19,7 @@ jobs:
       - run: npm ci
       - run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools poppler-utils
       - run: npm run lint
+      - run: npm run test:release
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
