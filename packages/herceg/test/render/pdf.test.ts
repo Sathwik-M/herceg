@@ -2172,7 +2172,13 @@ describe("PDF readers", () => {
         encoding: "utf8",
       });
       expect(result.status).toBe(0);
-      expect(result.stderr).not.toMatch(/warning|error/i);
+      // Some distributions build MuPDF without ICC color management and say so on every file.
+      const problems = result.stderr
+        .split("\n")
+        .filter(
+          (line) => /warning|error/i.test(line) && !/ICC support is not available/.test(line),
+        );
+      expect(problems).toEqual([]);
     }
   });
 
@@ -2187,15 +2193,19 @@ describe("PDF readers", () => {
     expect(pages[2]).toContain("Heatmap");
   });
 
-  it.skipIf(!installed("pdfinfo"))("exposes the structure and alternative text to Poppler", () => {
+  // Poppler prints each structure element's marked text, not its /Alt (which
+  // figureAlt checks): a Figure holding the page's text shows that the parent
+  // tree and the marked content link up.
+  it.skipIf(!installed("pdfinfo"))("exposes the structure and marked text to Poppler", () => {
     for (const file of [chart, cells, unicode, report]) {
       const dump = execFileSync("pdfinfo", ["-struct-text", file], { encoding: "utf8" });
-      expect(dump).toMatch(/Document\b/);
-      expect(dump).toMatch(/Figure\b/);
+      expect(dump).toMatch(/^Document\b/m);
       const parsed = readPdf(readFileSync(file));
-      for (let i = 0; i < parsed.pages.length; i++) expect(dump).toContain(figureAlt(parsed, i));
-      expect(dump.match(/Figure\b/g)).toHaveLength(parsed.pages.length);
+      expect(dump.match(/^\s+Figure\b/gm)).toHaveLength(parsed.pages.length);
+      expect(dump).toMatch(/^\s+Figure\b.*\n\s+"[^"]*\S[^"]*"/m);
     }
+    const chartDump = execFileSync("pdfinfo", ["-struct-text", chart], { encoding: "utf8" });
+    for (const label of ["SLO", "Latency é"]) expect(chartDump).toContain(label);
   });
 
   it.skipIf(!installed("mutool"))("renders composite subsets identically to the full font", () => {

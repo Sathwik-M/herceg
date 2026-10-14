@@ -38,6 +38,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools poppler-utils
       - run: npm ci
+      # Installing the package for linting needs its bundled JavaScript.
+      - run: npm run build:python
       - run: npm run lint:python
       - run: npm run test:python
       # The built wheel must carry the JavaScript bundles and work outside the checkout.
