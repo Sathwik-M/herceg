@@ -3799,11 +3799,12 @@ A chart's `rowSelection` binds it to channels of selection stores, one per
 table its marks read (`model/row-selection.ts`). The binding is an object
 made by `rowSelection()`, as facets and navigators are, so the code comes
 only with charts that import it: a line chart that binds no store carries
-the hooks that call it (about 150 B gzip). The model calls the binding's
-`check` as it validates (layout marks other than maps, trees, and
-networks refuse one, alone or in panels, as do 3D marks; so do
-stores of tables no mark reads, and brushes or lassos over summaries'
-statistics), and the mounted chart calls `mount`, which gives it a
+the hooks that call it (about 180 B gzip, the text alternative's sentence
+of what the channels it highlights hold among them, "42 of 120 rows
+selected.", which `description` writes). The model calls the binding's
+`check` as it validates (gauges, radars, and 3D marks refuse one, alone or
+in panels; so do stores of tables no mark reads, and brushes or lassos
+over summaries' statistics), and the mounted chart calls `mount`, which gives it a
 `RowLink`: the store subscriptions, what the chart's gestures wrote, and the
 model's `highlight` hook (and `layoutHighlight`, which gives layout marks a
 table's membership). The chart calls the link where its gestures end: a
@@ -3864,22 +3865,37 @@ channel changes.
 
 Highlighting (`model/highlight.ts`) replaces a mark's geometry through the
 model's hook while the mark's table's channel holds a selection (a row set
-of an earlier generation is none), and only for points, bars, lines, and
-areas. Membership is a byte per table row, kept per table and selection
+of an earlier generation is none). `RowSelection.highlight(model)` sets the
+hook (and `layoutHighlight`), which the mounted chart's link does and the
+static exports (`renderToSVG`, `renderToPDF` from options, so the spec
+exports too) do for the scene they draw, reading the stores as they are
+then. Membership is a byte per table row, kept per table and selection
 object (in weak maps, so charts showing one selection share it) while the
 table's version and, for row sets, the set's own `version` are the same;
 when the table only appended or dropped rows (`modifiedVersion` and
 generation unchanged), kept rows keep their bytes and only appended rows are
-tested, so a live condition over a rolling window costs the new rows. What
-is made from a membership (series' rows split by it, values masked by it)
-is kept in weak maps keyed by the membership first, so it goes with it.
-Points and bars draw twice through the mark's own geometry, once for each series cut
+tested, so a live condition over a rolling window costs the new rows. The
+conditions brushes write (number fields against numbers, category fields
+among labels, ranges, and their conjunctions, disjunctions, and negations)
+are tested a column at a time into the membership (a range in one pass,
+without branches, which scattered values mispredict), others row by row
+through the compiled condition, which is compiled either way to check it;
+both give the same bytes. What
+is made from a membership (series' rows split by it, values masked by it,
+summaries' selected parts) is kept in weak maps keyed by the membership
+first, so it goes with it.
+Marks drawing a glyph per row (points, bars, error bars, candlesticks, rugs)
+draw twice through the mark's own geometry, once for each series cut
 down to its unselected rows (dimmed: `fillOpacity` times 0.25, translucent
 so overlaps darken as other translucent points do) and once to its selected
 rows, under keys of their own (`\u0001off`, `\u0001on`) so they draw into
 buffers of their own; the list keeps every series, so grouped bars keep
 their slots, and frames say `keyed: false`, so value transitions do not
-take the parts for new items. Lines and areas draw whole and dimmed (a line
+take the parts for new items. Candlesticks do so while they draw a candle
+per row (`CandlestickMark.selectedGeometry`); merged into pixel columns,
+which summarize rows, they draw the whole dimmed and the selected rows'
+candles merged on the same columns (parts merge when their `whole` does).
+Lines and areas draw whole and dimmed (a line
 through a wrapper of its drawing that multiplies the canvas' global alpha
 and adds an SVG `opacity`, an area's fill at a fraction of its opacity and
 its outline as a dimmed line, since areas paint the outline opaque), clipped
@@ -3917,28 +3933,83 @@ the selection, the generation, or values changed in place), since under one
 selection a part only loses rows from its front and gains them at its end,
 and the painter appends to its upload; parts are kept in weak maps by
 selection, then by their cloud's stream key, so a selection's parts go with
-it. Dimmed points' rings dim too. Highlights belong to the mounted chart:
-static exports from options draw every row.
+it. Dimmed points' rings dim too.
 
-In a chart of one map, tree, or network (`LayoutMark.selects`), what a
-gesture selects is the mark's to say: its drawing (`LayoutResult`) gives
-the rows of a table an item stands for (`rowsOf`: a region's or a point's
-row; a tree node's, by a pass over the rows testing their node against the
-node's subtree, marked once per click; a network node's rows of the nodes
-table, and a link's rows of the links table, by a per-row link index the
-network keeps), and a lasso's rows (`lassoed`, an outline in pixels, from
-the selection's plane coordinates through the map's scales), resolved by
-`selected-rows.ts` for the item under the pointer or the keyboard. An item
-standing for no row of the bound tables (a map layer of another table)
+Marks summarizing rows draw a selection themselves (`Mark.selectedGeometry`),
+through what the highlighter lends them (`SelectionDrawing`): the
+membership, their own geometry of parts of their series drawn dimmed or as
+they are under keys of their own (hidden as their series are, in their
+series' slots through `Series.whole`), the dimming of geometry they make,
+and for cells, squares (`marks/cell-selection.ts`). The code that finds a
+selected part is the mark's, so it comes with the mark (a heatmap chart
+carries about 0.9 KiB gzip of it), and what draws it comes with
+`rowSelection()`. Each records what it found per series it drew, which its
+`pointText` reads for tooltips and the keyboard ("12 of 42 rows selected").
+Histograms bin the selected rows of what each series counted (`Counted.rows`
+and its series code: a facet panel's rows, or a split source's) and draw the
+part of each bar the bin's selected share of its (cumulative) weight
+covers, from the bar's own base, since every normalization (`normalize`,
+`commonNorm`, a filled stack's share) is linear in a bin's weight, and the
+rest of the bar as a dimmed part above it, each pixel painted once; steps
+and polygons, which join bins, draw both parts as areas outlined (as lines
+of their own) only where they have height.
+Distribution marks summarize the selected values of each group into a
+summary of the whole's groups in its order (`Summary.whole`; missing
+statistics where none is selected), drawn 0.6 as wide (`partWidth`) or, for
+violins, as a density on the whole's points, bandwidth, and count
+(`partDensity`, cut to where it is positive) at the whole's peak width,
+from the whole's rows ordered by group and value once per summary; a
+precomputed box is a row, split as points are. Heatmaps count each cell's
+selected rows over its uncombined index, 2D histograms each cell's
+selected weight over the rows they counted; both draw their image dimmed and
+lend the cells' boxes, shares, and colors to the squares, or with cells
+under 4 pixels or more than 20,000 holding selected rows, paint a second
+image of the cells holding any. Cells without a finite value, which the
+image leaves out, draw nothing of a selection either, and a heatmap's
+tooltip finds its cell's count by a binary search of the cells in the
+index's order. Contours draw as they are.
+
+Static exports and PDF read what highlighting draws from geometry: dimmed
+and clipped drawings carry their opacity and clip rectangles
+(`Drawing.opacity`, `Drawing.clip`), which the PDF painter applies (a fade
+multiplying the alpha of what it paints, and a clip path), as SVG and
+canvas apply the drawings' own wrappers. A spec's binding carries a
+`selection` (a condition, or rows by position as JSON or a uint32 buffer),
+which `loadSpec` puts in the stores it makes (a store given keeps what it
+holds); Python's `SelectionBinding(selection=...)` writes it, and its
+widgets start from it.
+
+In a chart of one map, pie, funnel, tree, Sankey diagram, or network
+(`LayoutMark.selects`), what a gesture selects is the mark's to say: its
+drawing (`LayoutResult`) gives the rows of a table an item stands for
+(`rowsOf`: a region's or a point's row; a slice's or a stage's rows, those
+its sum counts, of the panel's rows; a tree node's, by a pass over the rows
+testing their node against the node's subtree, marked once per click; a
+Sankey link's rows, or a node's links' rows; a network node's rows of the
+nodes table, and a link's rows of the links table, by a per-row link index
+the network keeps), and a lasso's rows (`lassoed`, an outline in pixels,
+from the selection's plane coordinates through the map's scales), resolved
+by `selected-rows.ts` for the item under the pointer or the keyboard. An
+item standing for no row of the bound tables (a map layer of another table)
 makes a click change nothing, the chart's brush or lasso included, rather
-than clear them as a click off the data does. Layout marks
-highlight through their frame (`LayoutFrame.selected`, the table's
-membership byte per row), drawing what the selection leaves out dimmed
-below the rest as separate geometries: regions and points, tree nodes none
-of whose rows (counted per node, its own and its subtree's) are selected,
-with "n of m rows selected" in their items' text, and network nodes and
-links. Where items overlap (a map's), the pointer finds the one drawn on
-top, the selected one; the keyboard reads them in row order all the same.
+than clear them as a click off the data does. Layout marks highlight
+through their frame (`LayoutFrame.selected`, the table's membership byte per
+row): maps and networks draw what the selection leaves out dimmed below
+the rest as separate geometries (regions and points, network nodes and
+links); pies, funnels, trees, and Sankey links draw each item's selected
+share of what it sums (counted with the item's rows, its own and its
+subtree's for a tree node, kept per membership and rows or view,
+`SelectionCache`), a slice's or a sunburst node's out from its inner
+radius to the radius that covers that share of the area it paints between
+the gaps around it (`sectorShareRadius` in `draw/arc.ts`, which inverts the
+area of a sector with sides moved in by the gap), a treemap leaf's
+from its left edge, a stage's in its bar's middle, a link's along its
+middle, the rest of each dimmed beside it, so each pixel is painted once;
+treemap groups and Sankey nodes with none of their rows selected are
+dimmed. Their items' text says how much: "n of m rows selected", and with a
+value field, its selected and whole sums. Where items overlap (a map's), the
+pointer finds the one drawn on top, the selected one; the keyboard reads
+them in row order all the same.
 
 Payloads: `select` and `click` events carry what the gesture wrote, and
 `rowSelection` events every change of a bound channel, from any writer
@@ -4404,18 +4475,29 @@ mouse input, through Playwright's mouse.
   million-point line with ten years of sessions takes about 1.2 ms a scene
   instead of 0.6 ms. A calendar keeps every span it resolved for as long as
   its `TimeBreaks` lives (24 bytes per interval).
-- Row selections cover marks along axes and maps, treemaps, sunbursts, and
-  networks, alone or in facet panels and subplots: other layout marks and
-  3D marks refuse a binding, and custom marks and annotations neither write
-  nor dim. A map's lasso selects a region by its anchor, not
-  by overlap; a network's lasso selects node centers and requires a nodes table.
-  Contours select no rows (a region is of the field, not of rows).
-  Histograms, box plots, violins, error bars, candlesticks, and heatmaps
-  write rows but draw every row undimmed (a bin with some rows selected is
-  not shown as such), and lassos and brushes along a summary's statistics
-  select none of their rows. A brush selects whole rows of every mark of
-  its table drawn in its panels; marks over several tables never join
-  them. Streaming 1,000 rows a frame into a 100,000-row window with a live
+- Row selections cover marks along axes and maps, pies, funnels, treemaps,
+  sunbursts, Sankey diagrams, and networks, alone or in facet panels and
+  subplots: gauges, radars, and 3D marks refuse a binding, and custom marks
+  and annotations neither write nor dim. A map's lasso selects a region by
+  its anchor, not by overlap; a network's lasso selects node centers and
+  requires a nodes table. Contours select no rows and draw as they are (a
+  region is of the field, not of rows). Lassos and brushes along a
+  summary's statistics select none of its rows. A brush selects whole rows
+  of every mark of its table drawn in its panels; marks over several tables
+  never join them, and a table derived by aggregating another
+  (`derive(...).aggregate(...)`) is not linked to it: its rows are its
+  groups, and a chart of them shows no selection of its source's rows (that
+  needs each source row's group kept with the derived table, and selected
+  aggregates per group, which for means, quantiles, and lines over groups
+  raise questions of their own). Summaries' selected parts are found from
+  the membership in a pass over their rows: histograms bin the selected
+  rows, box plots and boxen marks walk an order of their groups' rows
+  sorted once per table version (4 bytes a row; about 200 ms for a million
+  rows, the first time a selection is drawn), violins bin the selected
+  values on their own points; none of it follows a brush's moves
+  incrementally. Heatmap and 2D histogram cells smaller than 4 pixels show
+  any selected row as a whole cell, not its share. Sankey nodes are dimmed
+  or not, not split by share. Streaming 1,000 rows a frame into a 100,000-row window with a live
   condition, highlighting costs about 0.5 ms of JavaScript a frame for
   points drawn by the GPU (0.5 to 1.0 ms instead of 0.2 to 0.4) and 1.5 ms
   for a line (1.7 ms instead of 0.2: a pass over its rows' bytes, its runs'
@@ -4429,8 +4511,12 @@ mouse input, through Playwright's mouse.
   showing a selection share a byte per row of its table, and points and
   bars split their rows at 4 bytes per row (lines whose x does not ascend
   copy their values, 8 bytes per row and field), made again as rows stream
-  in. Brushes Python sets on a widget draw without selecting rows. PDF and
-  static SVG export from options do not highlight.
+  in. Brushes Python sets on a widget draw without selecting rows. A brush's
+  condition over a million rows takes about 1.7 ms (column by column,
+  without branches; 21 ms row by row), and with a scatter, a histogram, and
+  a box plot following, about 10 ms a step in Node; a step over a million
+  candles merged into pixel columns takes about 32 ms (19 ms to draw them
+  without a selection), and over a 1000 by 1000 heatmap about 9 ms.
 - Range navigators need a number or time x axis that every panel shares:
   no x scales per panel, layout marks, or horizontal bars. The strip draws lines, areas,
   points (a sample of one per pixel, in one size and shape), vertical bars,

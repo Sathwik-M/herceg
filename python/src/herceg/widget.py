@@ -143,8 +143,12 @@ class ChartWidget(anywidget.AnyWidget):
         self._callbacks = {name: ipywidgets.CallbackDispatcher() for name in names}
         # What each bound channel holds, by table name and channel, in Python's
         # terms: rows by position in the data as it is now.
+        # Python numbers rows as the data holds them: a binding's selection starts there.
         self._rows: dict[tuple[str, str], RowSelection] = {
-            (name, channel): RowSelection(channel, data) for name, channel, data in self._live.bound
+            (name, channel): binding._initial(data, self._live.length(name))
+            for (name, channel, data), binding in zip(
+                self._live.bound, chart._row_selection, strict=True
+            )
         }
         # Who last changed each channel (a browser's origin, None for Python) and
         # at which revision: a browser's report made before another's change is

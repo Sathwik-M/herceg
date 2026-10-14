@@ -1374,12 +1374,30 @@ clears; Space selects the point under the keyboard cursor), and the chart
 dims the rows the channel does not hold. A brush selects the rows whose
 values are in its ranges, as a condition rows streamed in later meet too; a
 click on a histogram bin selects the rows it counts, on a box plot the
-group's. `events=["click"]` chooses the gestures that select (`[]` for a
-chart that only shows what others select), `effect="none"` selects without
-dimming, `data=` names the table (by default the chart's data), and
-`fields=["kind"]` sends columns the marks do not read, for conditions set
-from Python to test (a widget refuses a condition on a column it does not
-send); a list binds several tables, one binding each.
+group's, on a pie slice, funnel stage, tree node, or Sankey link its rows.
+Summaries draw the selected rows against the whole: a bin's selected part
+of its bar, the selected values' own box over each box plot's (their density
+inside each violin), a heatmap cell's selected share as a square in it, and
+each slice's, stage's, node's, and link's selected share; tooltips say how
+much ("12 of 42 rows selected"). `events=["click"]` chooses the gestures
+that select (`[]` for a chart that only shows what others select),
+`effect="none"` selects without dimming, `data=` names the table (by default
+the chart's data), and `fields=["kind"]` sends columns the marks do not
+read, for conditions set from Python to test (a widget refuses a condition
+on a column it does not send); a list binds several tables, one binding
+each.
+
+`selection=` is what the channel holds when the chart is drawn: a
+condition (`hg.col("fare") > 20`), rows by position in the data (whole
+numbers, or a boolean mask), or a widget's `row_selection`. Static output
+(`to_svg`, `to_png`, `to_pdf`, `hg.save`) draws it highlighted, so a widget's
+selection exports through a chart made with it, and a widget or Streamlit
+chart starts with it:
+
+```python
+picked = hg.SelectionBinding("focus", selection=hg.col("fare") > 20)
+hg.Chart(trips, row_selection=picked).histogram(x="distance").to_svg()
+```
 
 ```python
 live = (
@@ -1402,7 +1420,8 @@ selected before an `append` or a drop still name the same records, and rows
 selected before a `replace` are gone. Setting `live.selection` draws a brush
 without selecting rows; set `row_selection` for that. Every output of a widget shows one
 row selection. Static output (HTML, a cell's value) highlights in the
-browser and reports nothing.
+browser and reports nothing; SVG, PNG, and PDF draw the bindings'
+`selection`.
 
 ## Streamlit
 

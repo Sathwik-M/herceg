@@ -63,7 +63,9 @@ export class BoxenMark extends DistributionMark<BoxenSpec, Letters> {
     const { depth = "tukey", outlierProportion = PROPORTION, trustAlpha = ALPHA } = this.spec;
     const n = sorted.length;
     const k = n > 0 ? letterDepth(n, depth as LetterDepth, outlierProportion, trustAlpha) : 1;
-    const values = n > 0 ? letterValues(sorted, k, depth === "full") : new Float64Array(2 * k);
+    // No values (a group a selection holds none of) have no letter values.
+    const values =
+      n > 0 ? letterValues(sorted, k, depth === "full") : new Float64Array(2 * k).fill(Number.NaN);
     const low = values[0]!;
     const high = values[2 * k - 1]!;
     const outliers: number[] = [];
@@ -163,7 +165,7 @@ export class BoxenMark extends DistributionMark<BoxenSpec, Letters> {
         if (horizontal) lines.set([c0, a0, c1, a1], at);
         else lines.set([a0, c0, a1, c1], at);
       };
-      const full = share * WIDTH;
+      const full = share * WIDTH * this.partWidth(s);
       for (let k = 0; k < s.length; k++) {
         const row = rowOf(s, k);
         // A panel's own categories are read at their places.
@@ -259,7 +261,7 @@ export class BoxenMark extends DistributionMark<BoxenSpec, Letters> {
     const stat = (name: Stat) => stats[name][row]!;
     const { k, outliers } = groups[row]!;
     const n = stat("count");
-    return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, ${k} ${k === 1 ? "level" : "levels"} from ${f(stat("low"))} to ${f(stat("high"))}, ${n} ${n === 1 ? "value" : "values"}${outliers.length ? `, ${outliers.length} ${outliers.length === 1 ? "outlier" : "outliers"}` : ""}`;
+    return `median ${f(stat("median"))}, quartiles ${f(stat("q1"))} to ${f(stat("q3"))}, ${k} ${k === 1 ? "level" : "levels"} from ${f(stat("low"))} to ${f(stat("high"))}, ${n} ${n === 1 ? "value" : "values"}${outliers.length ? `, ${outliers.length} ${outliers.length === 1 ? "outlier" : "outliers"}` : ""}${this.selectedText(series, row, f)}`;
   }
 }
 

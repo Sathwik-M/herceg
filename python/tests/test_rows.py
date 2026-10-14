@@ -62,8 +62,11 @@ def test_bindings_refuse_what_cannot_select_rows():
     ):
         hg.Chart(trips(), row_selection="focus")  # type: ignore[arg-type]
     binding = SelectionBinding("c")
-    with pytest.raises(ValueError, match="Chart row_selection: a pie cannot select rows yet"):
-        hg.Chart(trips(), row_selection=binding).pie(category="kind")
+    with pytest.raises(ValueError, match="Chart row_selection: a gauge cannot select rows yet"):
+        hg.Chart(trips(), row_selection=binding).gauge("km")
+    # Pies, funnels, and Sankey diagrams select the rows of their items.
+    hg.Chart(trips(), row_selection=binding).pie(category="kind").to_spec()
+    hg.Chart(trips(), row_selection=binding).funnel(category="kind").to_spec()
     two = hg.Chart(row_selection=binding).point(x="km", y="fare", data=trips())
     two.line(x="km", y="fare", data=trips())
     with pytest.raises(ValueError, match="SelectionBinding data: the chart has no data of its own"):
@@ -123,6 +126,69 @@ def test_bindings_refuse_what_cannot_select_rows():
     # Without the gesture among its events, nothing is refused.
     quiet = SelectionBinding("c", events=["click"])
     hg.Chart(trips(), brush="xy", row_selection=quiet).histogram(x="km").to_spec()
+
+
+def test_a_binding_starts_with_its_selection_which_static_output_draws():
+    def chart(selection):
+        binding = SelectionBinding("focus", selection=selection)
+        return hg.Chart(trips(), row_selection=binding).point(x="km", y="fare")
+
+    spec, buffers = chart([3, 1]).to_spec()
+    held = spec["rowSelection"]["selection"]
+    # After the columns' buffers, whose indices a selection leaves as they are.
+    assert held == {"kind": "rows", "rows": len(buffers) - 1}
+    assert np.frombuffer(buffers[-1], dtype="<u4").tolist() == [1, 3]
+    plain, _ = (
+        hg.Chart(trips(), row_selection=SelectionBinding("focus")).point(x="km", y="fare").to_spec()
+    )
+    assert spec["data"] == plain["data"]
+    mask, _ = chart(np.array([True, False, True, False])).to_spec()
+    assert mask["rowSelection"]["selection"]["kind"] == "rows"
+    condition, _ = chart(hg.col("kind") == "a").to_spec()
+    assert condition["rowSelection"]["selection"] == {
+        "kind": "predicate",
+        "expression": ["==", ["field", "kind"], "a"],
+    }
+    # A condition's columns go with the chart, which its marks need not read.
+    assert "kind" in condition["data"]["data"]["columns"]
+    with pytest.raises(
+        ValueError,
+        match="SelectionBinding selection: expected positions among the data's 4 rows; received 7",
+    ):
+        chart([7]).to_spec()
+    with pytest.raises(
+        ValueError, match=r"SelectionBinding selection: expected a mask of 4 values"
+    ):
+        chart([True, False]).to_spec()
+    with pytest.raises(
+        ValueError, match="SelectionBinding selection: no column 'cost' in the data it selects"
+    ):
+        chart(hg.col("cost") > 1).to_spec()
+    with pytest.raises(TypeError, match="SelectionBinding selection: expected a condition"):
+        SelectionBinding("c", selection="kind")
+    with pytest.raises(
+        ValueError, match="SelectionBinding selection: expected positions of rows, 0 or more"
+    ):
+        SelectionBinding("c", selection=[-1])
+    with pytest.raises(
+        ValueError, match=r"SelectionBinding selection: expected a mask of a value, one per row"
+    ):
+        SelectionBinding("c", selection=[[True, False], [False, True]])
+
+
+def test_static_output_draws_the_selection_highlighted():
+    pytest.importorskip("py_mini_racer")
+
+    def svg(selection):
+        binding = SelectionBinding("focus", selection=selection)
+        return hg.Chart(trips(), row_selection=binding).point(x="km", y="fare").to_svg()
+
+    plain = svg(None)
+    assert 'fill-opacity="0.25"' not in plain
+    drawn = svg([0])
+    assert 'fill-opacity="0.25"' in drawn
+    assert "1 of 4 rows selected." in drawn
+    assert "2 of 4 rows selected." in svg(hg.col("fare") > 10)
 
 
 pytest.importorskip("anywidget")
@@ -283,6 +349,31 @@ def test_conditions_set_from_python_test_columns_the_browser_has():
         SelectionBinding("c", fields="kind")
 
 
+def test_widgets_start_with_their_bindings_selections():
+    binding = SelectionBinding("focus", selection=[2, 0])
+    widget = hg.Chart(trips(), row_selection=binding).point(x="km", y="fare").widget()
+    assert widget.row_selection.rows.tolist() == [0, 2]
+    state = widget.get_state()["_chart"]
+    (held,) = state["rowSelections"]
+    assert np.frombuffer(state["buffers"][held["selection"]["rows"]], dtype="<u4").tolist() == [
+        0,
+        2,
+    ]
+    condition = SelectionBinding("focus", selection=hg.col("fare") > 10)
+    chart = hg.Chart(trips(), row_selection=condition).point(x="km", y="fare")
+    assert chart.widget().row_selection.condition is not None
+    # The state, not the spec, carries what the channel holds: after rows
+    # streamed out, the spec selects no row the data no longer has.
+    rolling = hg.Chart(trips(), row_selection=SelectionBinding("focus", selection=[3]))
+    streamed = rolling.point(x="km", y="fare").widget()
+    streamed.append({"km": [5.0], "fare": [30.0], "kind": ["a"]}, max_rows=2)
+    assert streamed.row_selection.rows.tolist() == [0]
+    state = streamed.get_state()["_chart"]
+    assert "selection" not in state["spec"]["rowSelection"]
+    (held,) = state["rowSelections"]
+    assert np.frombuffer(state["buffers"][held["selection"]["rows"]], dtype="<u4").tolist() == [0]
+
+
 def test_widgets_without_one_binding_have_no_one_row_selection():
     plain = hg.Chart(trips()).point(x="km", y="fare").widget()
     assert plain.row_selection is None
@@ -326,6 +417,18 @@ def test_streamlit_reads_rows_of_its_own_run_only():
         match="streamlit.chart on_row_selection: reports one row selection, and the chart binds 0",
     ):
         hst.chart(hg.Chart(trips()).point(x="km", y="fare"), on_row_selection="rerun")
+    # Until the browser reports this run's data, the channel holds the binding's selection.
+    started = hg.Chart(trips(), row_selection=SelectionBinding("focus", selection=[1])).point(
+        x="km", y="fare"
+    )
+    assert hst._state({}, started, "e1").row_selection.rows.tolist() == [1]
+
+    assert hst._state({"rows": payload}, started, "e2").row_selection.rows.tolist() == [1]
+    assert hst._state({"rows": payload}, started, "e1").row_selection.rows.tolist() == [0, 2]
+    # Of a derived table, whose rows the browser computes, positions go as given.
+    derived = hg.derive(trips()).filter(hg.col("km") > 1)
+    shown = hg.Chart(derived, row_selection=SelectionBinding("focus", selection=[0]))
+    assert hst._state({}, shown.point(x="km", y="fare"), "e1").row_selection.rows.tolist() == [0]
 
 
 def test_streamlit_names_the_data_not_how_it_is_drawn():

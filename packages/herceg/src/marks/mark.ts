@@ -114,6 +114,44 @@ export interface BandContext {
   theme: Theme;
 }
 
+/**
+ * What a chart highlighting a selection lends a mark drawing it (see
+ * `Mark.selectedGeometry`): which rows are selected, and the mark's own
+ * geometry of parts of its series, drawn dimmed or as they are under keys
+ * of their own, hidden as their series are and in their series' slots.
+ */
+export interface SelectionDrawing {
+  /** Which of the mark's table's rows the selection holds, 1 each, by position. */
+  readonly selected: Uint8Array;
+  /** The mark's geometry of `parts` (each standing for the drawn series of its key) dimmed. */
+  dimmed(parts: readonly Series[]): Geometry[];
+  /** The mark's geometry of `parts`, as drawn, for over the dimmed. */
+  lit(parts: readonly Series[]): Geometry[];
+  /** A geometry dimmed, for geometry the mark makes itself: one or two (an area's fill and outline). */
+  dim(geometry: Geometry): Geometry[];
+  /**
+   * For marks of cells (heatmaps, 2D histograms): a square in each of
+   * `cells` covering its share of the cell, in its color, keyed from `key`;
+   * undefined when the cells are too small or too many hold selected rows
+   * for squares, for the mark to draw an image of those cells instead.
+   */
+  squares(cells: CellShares, key: string): Geometry[] | undefined;
+}
+
+/** A mark's cells as `SelectionDrawing.squares` draws a selection's share of each. */
+export interface CellShares {
+  /** How many cells there are, and how many of them hold selected rows. */
+  count: number;
+  held: number;
+  /** The fewest pixels any cell spans across and down. */
+  size: readonly [number, number];
+  /** A cell's corners in pixels: x0, y0, x1, y1. */
+  box(cell: number): readonly [number, number, number, number];
+  /** The share of a cell its selected rows are, from 0 to 1. */
+  share(cell: number): number;
+  color(cell: number): string;
+}
+
 /** Everything a mark needs to produce geometry for one frame. */
 export interface Frame {
   x: PositionScale;
@@ -405,6 +443,14 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
    * when given (a facet panel's).
    */
   geometry(series: readonly Series[], frame: Frame, key: MarkKey, rows?: RowParts): Geometry[];
+  /**
+   * For marks whose points summarize rows (histogram bins, box plot
+   * groups, heatmap cells): the mark's part of the scene while a chart
+   * highlights a selection of its table's rows, showing each point's
+   * selected rows against the whole (a bin's selected count, the selected
+   * rows' own box), drawn through `drawing`. Tooltips read what it found.
+   */
+  selectedGeometry?(series: readonly Series[], frame: Frame, drawing: SelectionDrawing): Geometry[];
   /**
    * Pixel anchor for a row whose drawing uses only one data axis. Undefined
    * means the row cannot be drawn; the other coordinate comes from the plot.

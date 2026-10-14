@@ -4,7 +4,7 @@ import { rectDrawing } from "../draw/rect.ts";
 import { segmentDrawing } from "../draw/segments.ts";
 import type { Breaks } from "../lod/m4.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { RectGeometry, SegmentGeometry } from "../scene/scene.ts";
+import type { Geometry, RectGeometry, SegmentGeometry } from "../scene/scene.ts";
 import type { CandlestickSpec, Frozen } from "../spec/spec.ts";
 import { definedFields } from "./line.ts";
 import {
@@ -25,6 +25,7 @@ import {
   NUMERIC,
   type Palette,
   requireField,
+  type SelectionDrawing,
   SeriesSplitter,
   type SummaryContext,
   valueKind,
@@ -201,6 +202,66 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
     return min <= max ? ([min, max] as const) : undefined;
   }
 
+  /**
+   * The candles with a selection's rows in them. Candles drawn one by one
+   * are rows, dimmed unless selected, as points are; candles merged into
+   * pixel columns summarize rows, so the whole column's candle is dimmed
+   * and the selected rows' own candle, merged on the same columns, drawn
+   * over it.
+   */
+  selectedGeometry(series: readonly Series[], frame: Frame, drawing: SelectionDrawing): Geometry[] {
+    const { selected } = drawing;
+    const { x } = frame;
+    const columns = Math.max(1, Math.ceil(frame.plot.width));
+    // The rows in view a selection holds (1) or leaves out (0).
+    const rowsOf = (s: Series, lit: number): Series => {
+      const [start, end] = this.#categorical
+        ? [0, s.length]
+        : visibleRange(s, x.domain[0], x.domain[1]);
+      let count = 0;
+      for (let k = start; k < end; k++) count += selected[rowOf(s, k)] === lit ? 1 : 0;
+      const rows = new Uint32Array(count);
+      for (let k = start, i = 0; k < end; k++)
+        if (selected[rowOf(s, k)] === lit) rows[i++] = rowOf(s, k);
+      return { ...s, rows, length: count, stream: undefined };
+    };
+    const merged = series.filter((s) => this.#inView(s, frame, columns) > columns);
+    const single = series.filter((s) => !merged.includes(s));
+    return [
+      ...this.geometry(merged, frame).flatMap(drawing.dim),
+      ...drawing.dimmed(single.map((s) => rowsOf(s, 0))),
+      ...drawing.lit(series.map((s) => rowsOf(s, 1))),
+    ];
+  }
+
+  /**
+   * How many of a series' candles reach the plot, counted up to one more
+   * than `most`: candles merge into pixel columns when there are more of
+   * them than columns.
+   */
+  #inView(s: Series, frame: Frame, most: number): number {
+    const { x, plot } = frame;
+    const prices = this.#prices();
+    const log = frame.y.type === "log";
+    const candle = this.#candle;
+    const breaks = x.breaks;
+    const [start, end] = this.#categorical
+      ? [0, s.length]
+      : visibleRange(s, x.domain[0], x.domain[1]);
+    const width = this.#categorical ? Math.abs(x.bandwidth ?? 0) : this.#slots!.width(x);
+    const places = s.places?.x;
+    let count = 0;
+    for (let k = start; k < end && count <= most; k++) {
+      const row = rowOf(s, k);
+      const at = s.x[row]!;
+      if ((this.#categorical && at < 0) || breaks?.hides(at)) continue;
+      const center = x.map(places ? places.at(at) : at);
+      const reaches = center >= plot.x - width / 2 && center <= plot.x + plot.width + width / 2;
+      if (reaches && candleOf(prices, row, log, candle)) count++;
+    }
+    return count;
+  }
+
   geometry(series: readonly Series[], frame: Frame): (SegmentGeometry | RectGeometry)[] {
     const out: (SegmentGeometry | RectGeometry)[] = [];
     const { x, y, plot } = frame;
@@ -225,16 +286,10 @@ export class CandlestickMark implements Mark<Frozen<CandlestickSpec>> {
         center >= plot.x - width / 2 && center <= plot.x + plot.width + width / 2;
       // Candles merge when there are more of them than pixel columns; either
       // way there are at most as many as columns, so buffers stay bounded.
+      // Some of a series' rows (a selection's) merge as the series does.
       const columns = Math.max(1, Math.ceil(plot.width));
-      let count = 0;
-      for (let k = start; k < end && count <= columns; k++) {
-        const row = rowOf(s, k);
-        const at = s.x[row]!;
-        if ((this.#categorical && at < 0) || breaks?.hides(at)) continue;
-        if (reaches(x.map(places ? places.at(at) : at)) && candleOf(prices, row, log, candle))
-          count++;
-      }
-      const merged = count > columns;
+      const count = this.#inView(s, frame, columns);
+      const merged = (s.whole ? this.#inView(s.whole, frame, columns) : count) > columns;
       const capacity = merged ? columns : count;
       const rising = frame.floats(s.key, "rise", capacity * SEGMENTS * 4);
       // A falling candle draws one wick beside its body; a falling bar, all its segments.

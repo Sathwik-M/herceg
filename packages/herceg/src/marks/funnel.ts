@@ -16,13 +16,15 @@ import { contrastingText } from "../scale/color.ts";
 import type { Geometry, RectGeometry, ShapesGeometry, TextGeometry } from "../scene/scene.ts";
 import type { Frozen, FunnelSpec } from "../spec/spec.ts";
 import {
+  heldText,
   type LayoutFrame,
   type LayoutItem,
   type LayoutMark,
   type LayoutResult,
   RowsCache,
+  SelectionCache,
 } from "./layout-mark.ts";
-import { CATEGORY, type ChartMark, frozen, type MARK, requireField } from "./mark.ts";
+import { CATEGORY, type ChartMark, DIM, frozen, type MARK, requireField } from "./mark.ts";
 
 export interface FunnelOptions<S extends Schema> {
   /** Set false to leave text without its readability outline. */
@@ -54,6 +56,14 @@ interface Stage {
   key: string;
   label: string;
   value: number;
+  code: number;
+}
+
+/** What a selection holds of each stage, by code: its rows' count and sum, and the stage's rows. */
+interface Held {
+  rows: Float64Array;
+  sums: Float64Array;
+  of: Float64Array;
 }
 
 export class FunnelMark implements LayoutMark {
@@ -63,8 +73,12 @@ export class FunnelMark implements LayoutMark {
   readonly spec: Frozen<FunnelSpec>;
   readonly table: Table;
   readonly measure: string;
+  /** Clicks select a stage's rows, and a selection of them is drawn as a share of each bar. */
+  readonly selects = true;
   /** Totals and row counts per category code, of all rows and of each facet panel's. */
   readonly #totals = new RowsCache<{ sums: Float64Array; rows: Uint32Array }>();
+  /** What highlighted selections hold of each stage. */
+  readonly #held = new SelectionCache<Held>();
 
   constructor(input: FunnelSpec, table: Table) {
     this.spec = frozen(input);
@@ -101,6 +115,42 @@ export class FunnelMark implements LayoutMark {
     });
   }
 
+  /** Calls `each` with every row among `of` (all rows by default) of a stage, its code, and what it adds to its sum. */
+  #eachRow(
+    of: Uint32Array | undefined,
+    each: (row: number, code: number, value: number) => void,
+  ): void {
+    const { codes } = this.table.categories(this.spec.category);
+    const values = this.spec.value === undefined ? undefined : this.table.numbers(this.spec.value);
+    const count = of ? of.length : this.table.length;
+    for (let k = 0; k < count; k++) {
+      const row = of ? of[k]! : k;
+      const code = codes[row]!;
+      if (code < 0) continue;
+      const value = values ? values[row]! : 1;
+      each(row, code, value > 0 && value < Number.POSITIVE_INFINITY ? value : 0);
+    }
+  }
+
+  /** What `selected` holds of each stage's rows among `of` (all rows by default). */
+  #heldOf(selected: Uint8Array, of: Uint32Array | undefined): Held {
+    return this.#held.get(selected, of, () => {
+      const size = this.table.categories(this.spec.category).dictionary.length;
+      const held = {
+        rows: new Float64Array(size),
+        sums: new Float64Array(size),
+        of: new Float64Array(size),
+      };
+      this.#eachRow(of, (row, code, value) => {
+        held.of[code]!++;
+        if (selected[row] !== 1) return;
+        held.rows[code]!++;
+        held.sums[code]! += value;
+      });
+      return held;
+    });
+  }
+
   /** Every category with rows among `of` (all rows by default), in stage order. */
   #stages(id: string | number, of: Uint32Array | undefined): Stage[] {
     const { sums, rows } = this.#sums(of);
@@ -110,7 +160,7 @@ export class FunnelMark implements LayoutMark {
       // A category whose sum overflows a double has no width to draw.
       if (rows[code] === 0 || !(sums[code]! < Number.POSITIVE_INFINITY)) continue;
       const label = dictionary[code]!;
-      stages.push({ key: JSON.stringify([id, label]), label, value: sums[code]! });
+      stages.push({ key: JSON.stringify([id, label]), label, value: sums[code]!, code });
     }
     if (this.spec.sort === "value") stages.sort((a, b) => b.value - a.value);
     return stages;
@@ -178,13 +228,38 @@ export class FunnelMark implements LayoutMark {
         fontSize: theme.fontSize,
       } as ShapesGeometry);
     }
+    // With a selection highlighted, each bar's selected share is a bar of
+    // that width in its middle, the rest of it dimmed either side.
+    const selected = frame.selected?.(this.table);
+    const held = selected && this.#heldOf(selected, frame.rows);
+    let lit = rects;
+    if (held) {
+      lit = rects.slice();
+      const sides = new Float32Array(count * 8);
+      stages.forEach(({ value, code }, i) => {
+        const [x, y, w, h] = box(i);
+        const part = w! * Math.min(1, value > 0 ? held.sums[code]! / value : 0);
+        const side = (w! - part) / 2;
+        lit.set([x! + side, y!, part, h!], i * 4);
+        sides.set([x!, y!, side, h!, x! + side + part, y!, side, h!], i * 8);
+      });
+      geometry.push({
+        kind: "rect",
+        draw: rectDrawing,
+        key: "funnel-bars-dimmed",
+        fill,
+        fillOpacity: DIM,
+        rects: sides,
+        count: count * 2,
+      } as RectGeometry);
+    }
     geometry.push({
       kind: "rect",
       draw: rectDrawing,
       key: "funnel-bars",
       fill,
       fillOpacity: 1,
-      rects,
+      rects: lit,
       count,
     } as RectGeometry);
 
@@ -193,12 +268,21 @@ export class FunnelMark implements LayoutMark {
     if (labeled) geometry.push(...this.#labels(stages, box, nameRoom, fill, frame, percent));
 
     const itemOf = (i: number): LayoutItem => {
-      const { key, label, value } = stages[i]!;
+      const { key, label, value, code } = stages[i]!;
       const [x, y, w, h] = box(i);
       const previous = stages[i - 1]?.value ?? 0;
-      let text = formatNumber(value, locale);
+      const f = (value: number) => formatNumber(value, locale);
+      let text = f(value);
       if (i > 0 && first > 0) text += `, ${percent(value / first)} of the first stage`;
       if (i > 1 && previous > 0) text += `, ${percent(value / previous)} of the previous`;
+      const field = this.spec.value;
+      if (held)
+        text += heldText(
+          held.rows[code]!,
+          held.of[code]!,
+          field === undefined ? undefined : { field, held: held.sums[code]!, of: value },
+          f,
+        );
       return {
         key,
         label,
@@ -222,6 +306,15 @@ export class FunnelMark implements LayoutMark {
       count,
       item: itemOf,
       indexOf: (key) => stages.findIndex((stage) => stage.key === key),
+      rowsOf: (key, table) => {
+        const stage = table === this.table ? stages.find((s) => s.key === key) : undefined;
+        if (!stage) return undefined;
+        const rows: number[] = [];
+        this.#eachRow(frame.rows, (row, code) => {
+          if (code === stage.code) rows.push(row);
+        });
+        return rows;
+      },
       summary: () => this.#summary(stages, locale, percent),
     };
   }

@@ -2,11 +2,13 @@
 //   npm run bench -w herceg
 // Reports the median and median absolute deviation over repeated runs.
 
+import { category } from "../src/data/column.ts";
 import { count, derive, mean } from "../src/data/derive.ts";
 import { col } from "../src/data/expression.ts";
 import { fromGeoJSON } from "../src/data/geojson.ts";
 import { fromMatrix } from "../src/data/matrix.ts";
 import { type RowQuery, rowView } from "../src/data/row-view.ts";
+import { selectionStore, selectWhere } from "../src/data/selection.ts";
 import { type Table, table } from "../src/data/table.ts";
 import { fromWall } from "../src/format/zone.ts";
 import { estimateText } from "../src/layout/text.ts";
@@ -14,6 +16,7 @@ import { m4 } from "../src/lod/m4.ts";
 import { MinMaxIndex } from "../src/lod/minmax-index.ts";
 import { Polyline } from "../src/lod/polyline.ts";
 import { type BarMark, bar } from "../src/marks/bar.ts";
+import { boxplot } from "../src/marks/boxplot.ts";
 import { contour } from "../src/marks/contour.ts";
 import { GridTracer } from "../src/marks/contour-trace.ts";
 import { geopoint } from "../src/marks/geopoint.ts";
@@ -33,9 +36,11 @@ import { text } from "../src/marks/text.ts";
 import { treemap } from "../src/marks/treemap.ts";
 import { UnionStack } from "../src/marks/union-stack.ts";
 import { facet } from "../src/model/facet.ts";
+import { membership } from "../src/model/highlight.ts";
 import { ChartModel } from "../src/model/model.ts";
 import { overviewBars } from "../src/model/navigator-bars.ts";
 import { panels } from "../src/model/panels.ts";
+import { rowSelection } from "../src/model/row-selection.ts";
 import { timeBreaks } from "../src/scale/breaks.ts";
 import { LinearScale } from "../src/scale/scale.ts";
 
@@ -754,4 +759,58 @@ measure(
     chart.scene(estimateText);
   },
   { warmup: 1, samples: 5 },
+);
+
+// Brushing a scatter of a million rows, with a histogram and a box plot
+// following it through one selection store: each step moves the brush (a
+// condition on x and y), and every chart draws its next scene. The steps
+// cycle through 20 places, so each one tests the condition again; the box
+// plot's rows are ordered by value once, the first time a selection is drawn.
+const brushed = table({
+  x: Float64Array.from({ length: N }, () => Math.random() * 100),
+  y: Float64Array.from({ length: N }, () => Math.random() * 100),
+  g: category(Array.from({ length: N }, (_, i) => `g${i % 5}`)),
+});
+const focus = selectionStore(brushed);
+const linked = [
+  point(brushed, { x: "x", y: "y" }),
+  histogram(brushed, { x: "y" }),
+  boxplot(brushed, { x: "g", y: "y" }),
+].map((mark) => {
+  const selection = rowSelection({ store: focus, channel: "brush" });
+  const chart = new ChartModel({ marks: [mark], rowSelection: selection });
+  chart.setSize(600, 400, 1);
+  selection.highlight(chart);
+  return chart;
+});
+let place = 0;
+const moveBrush = () => {
+  const a = 10 + (place++ % 20);
+  focus.set(
+    "brush",
+    selectWhere(
+      col("x")
+        .ge(a)
+        .and(col("x").le(a + 30))
+        .and(col("y").ge(20).and(col("y").le(60))),
+    ),
+  );
+};
+moveBrush();
+for (const chart of linked) chart.scene(estimateText, true);
+measure(
+  "row selection: brush 1M points, scatter, histogram, box plot follow",
+  () => {
+    moveBrush();
+    for (const chart of linked) chart.scene(estimateText, true);
+  },
+  { warmup: 5, samples: 30 },
+);
+measure(
+  "row selection: brush 1M points, membership alone",
+  () => {
+    moveBrush();
+    membership(brushed as never, focus.get("brush") as never);
+  },
+  { warmup: 5, samples: 30 },
 );

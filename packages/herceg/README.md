@@ -313,42 +313,103 @@ chart's own brush go (what it wrote stays in the channel). Histograms are
 brushed along their bins and box plots and violins along their categories,
 and lassos select no rows of them yet: the chart refuses those gestures in
 its bindings (and a selection set through `select` selects none of their
-rows).
+rows). Tables a derived table summarizes (`derive(...).aggregate(...)`) are
+not linked to it: a chart of the aggregates binds the derived table's own
+store, whose rows are its groups.
 
 Highlighting dims the rows the channel does not hold to a quarter of their
-opacity: points and bars draw each row once, dimmed or not, in the place it
-has without a selection (point series large enough for WebGL stay on the
-GPU, as two clouds whose uploads follow streamed rows); lines and areas draw
-as they are within the x spans of their runs of selected rows and dimmed
-outside them, so each pixel is painted once and the highlighted part is the
-same curve and stack (spans reach over a line's round caps where it ends,
-and runs end at their outermost rows the mark draws, so rows it cannot
-place, such as nonpositive values on a log axis, are left out; a line's
-runs of one row drawn are dots; lines whose x does not ascend, and rows at
-one x that spans cannot tell apart, selected together or in part, draw
-their selected rows' values over the dimmed line instead). An empty selection dims every row. Other marks
-(histograms, box plots, violins, error bars, candlesticks, heatmaps, rugs,
-annotations, custom marks) draw every row as before. Charts showing one
-selection share a byte per row of its table, tested again only for appended
-rows while the selection stays the same (a row set changed in place is read
-again). Highlights are a mounted chart's: its `toSVG()`
-shows them, while `renderToSVG`, `renderToPDF`, and the spec exports draw
-every row undimmed.
+opacity. Marks drawing a glyph per row (points, bars, error bars,
+candlesticks, rugs) draw each row once, dimmed or not, in the place it has
+without a selection (point series large enough for WebGL stay on the GPU, as
+two clouds whose uploads follow streamed rows; candles merged into pixel
+columns, more of them than the plot has pixels, draw each column's candle
+dimmed and the selected rows' own candle in the column over it); lines and
+areas draw as they are within the x spans of their runs of selected rows and
+dimmed outside them, so each pixel is painted once and the highlighted part
+is the same curve and stack (spans reach over a line's round caps where it
+ends, and runs end at their outermost rows the mark draws, so rows it cannot
+place, such as nonpositive values on a log axis, are left out; a line's runs
+of one row drawn are dots; lines whose x does not ascend, and rows at one x
+that spans cannot tell apart, selected together or in part, draw their
+selected rows' values over the dimmed line instead). An empty selection dims
+every row.
 
-A map, treemap, sunburst, or network with a chart of its own selects rows
-too. A click selects what is under the pointer: a region's or point's row, a
-tree node's rows (its own and every node's under it), a network node's rows
-of its nodes table or a link's rows (every row either way, for undirected
-links) of its links table; an item that stands for no row of a bound table
-(a network node only links name) changes nothing. A map's lasso selects the
-regions whose anchor, a point inside each that stays the same at any zoom,
-is inside it (a region it crosses but whose anchor is outside stays out),
-and the points whose center is. Highlighting dims the regions, points,
-nodes, and links none of whose rows are selected; a tree node with some of
-its rows selected is drawn as selected, and its tooltip says how many ("3
-of 12 rows selected"). Other layout marks, trees in facet panels or
-subplots, and 3D charts cannot select rows yet and refuse a binding, as
-charts with a layout mark in a panel of its own do.
+Marks summarizing rows draw the selected rows against the whole, each in
+its place, on the same scales, bins, slots, and stacks:
+
+- **Histograms** draw each bin's selected part from where its bar starts, the
+  rest of the bar dimmed above it: the bar the selected rows would make,
+  measured with the whole bar's normalization (`normalize`, `commonNorm`,
+  and a filled stack's share of its bin), so it lies inside the bar; a
+  cumulative bin's part is its share of the weight up to it. Steps and
+  polygons split into a selected area and a dimmed one the same way.
+- **Box plots and boxen marks** draw each group's whole shape dimmed and over
+  it, 0.6 as wide, the shape of the group's selected values (their own
+  quartiles, whiskers, letter values, and outliers); a group the selection
+  holds no value of draws none. Precomputed boxes, one row each, are dimmed
+  unless the selection holds their row.
+- **Violins** draw the selected values' density inside the whole violin: on
+  its points, with its bandwidth, over its count, and as wide as it at its
+  peak, so it nests in the outline, with the selection's inner box or
+  quartiles.
+- **Heatmaps and 2D histograms** draw their image dimmed and, in each cell
+  holding selected rows, a square of the cell's color covering the share of
+  the cell's rows (a 2D histogram's: of its weight) the selection holds, so a
+  wholly selected cell shows whole. Cells smaller than 4 pixels, or more than
+  20,000 holding selected rows, show instead each cell holding any selected
+  row in its color.
+- **Contours** draw a field sampled on a grid, not rows: their lines and
+  bands stay as they are (and gestures over them select nothing).
+
+Tooltips and the keyboard say how much of a point is selected: "10 – 20: 42;
+12 of 42 rows selected" for a bin (with a `weight`, ", weight 30 of 80"), "…;
+4 of 5 values selected, median 2.5, quartiles 1.75 to 3.25" for a box,
+boxen, or violin, "8; 1 of 2 rows selected" for a cell. While a channel holds a
+selection, the chart's text alternative says so: "42 of 120 rows selected."
+(naming each table for several bindings), also for an empty one.
+
+Charts showing one selection share a byte per row of its table, tested again
+only for appended rows while the selection stays the same (a row set changed
+in place is read again). A brush's condition is tested a column at a time,
+about ten times faster than row by row; summaries then find their selected
+parts in a pass over their rows, sorting nothing and keeping their bins:
+histograms bin the selected rows into their bins, box plots walk their
+groups' rows in an order sorted once per table version (4 bytes a row, made
+the first time a selection of them is drawn, about 0.2 s for a million
+rows), violins bin the selected values on their own points. Brushing a
+scatter of a million rows with a histogram and a box plot following takes
+about 10 ms a step in Node, under 2 of them testing the condition
+(`npm run bench:core`).
+
+Exports draw what the chart shows: a mounted chart's `toSVG()`, `toPNG()`,
+and `renderToPDF(chart)`, and also `renderToSVG(options)`,
+`renderToPDF(options)`, and the spec exports, which draw the selections the
+`rowSelection` stores hold when they are called. To start a chart with a
+selection, set its store's channel before drawing it,
+`store.set("focus", selectWhere(col("fare").gt(20)))`, or in a spec give the
+binding a `selection` (see [Charts from specs](#charts-from-specs)).
+
+A map, pie, funnel, treemap, sunburst, Sankey diagram, or network selects
+rows too, in a chart of its own or in panels. A click selects what is under
+the pointer: a region's or point's row, a slice's or a stage's rows, a tree
+node's rows (its own and every node's under it), a Sankey link's rows or a
+node's (those of the links into and out of it), a network node's rows of its
+nodes table or a link's rows (every row either way, for undirected links) of
+its links table, of the panel's rows; an item that stands for no row of a
+bound table (a network node only links name) changes nothing. A map's lasso
+selects the regions whose anchor, a point inside each that stays the same at
+any zoom, is inside it (a region it crosses but whose anchor is outside
+stays out), and the points whose center is. Highlighting dims the regions,
+points, network nodes, and links none of whose rows are selected; pies,
+funnels, trees, and Sankey links draw each item's selected share (of what it
+sums, its value field's or its rows' count): a slice's or a sunburst node's
+out from its inner edge, covering that share of its area, a treemap leaf's
+from its left edge, a funnel stage's as a bar in its middle, and a Sankey
+link's along its middle, the rest of each dimmed (treemap groups and Sankey
+nodes are dimmed when none of their rows is selected). Their tooltips say how
+much: "40 (40%); 1 of 2 rows selected, revenue 30 of 40". Gauges, radars, and
+3D charts cannot select rows yet and refuse a binding, as charts with one of
+them in a panel of its own do.
 
 ### Row groups
 
@@ -1377,19 +1438,20 @@ the notes), — not yet (refused with an error), · not applicable.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | line, area, bar (including normalized stacks and area stream offsets) | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
 | point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| histogram, boxplot, boxen, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | · | — |
-| rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | — | ✓ | ✓ | ✓ | — |
-| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | — |
+| histogram, boxplot, boxen, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ◐ | · | — |
+| rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — |
+| errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | — |
-| heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | — | · | ✓ | ✓ | — |
-| 2D histogram | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | — | · | ✓ | · | — |
+| heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | ✓ | ✓ | — |
+| 2D histogram | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | ✓ | · | ✓ | · | — |
 | contour | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | · | · | · | ✓ | · | — |
 | rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | · | ◐ |
 | custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | ◐ | — |
-| pie | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | ✓ |
+| pie | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | ✓ | ✓ | · | ✓ |
 | treemap, sunburst | ✓ | ✓ | · | · | drilling | — | — | ✓ | ✓ | ✓ | ✓ | · | — |
 | radar | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | — |
-| gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | · | — |
+| funnel, sankey | ✓ | ✓ | · | · | — | — | — | ✓ | ✓ | · | ✓ | · | — |
+| gauge | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | · | — |
 | graph | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — | — |
 | geoshape, geopoint | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | point3d, line3d | — | ✓ | · | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
@@ -1411,17 +1473,23 @@ the notes), — not yet (refused with an error), · not applicable.
   cells are clicked, brushed (along a number or time axis, the cells whose
   values the brush covers, or between edges, the cells the brush
   overlaps; in a calendar, those whose centers it covers), or lassoed (at
-  their centers), and lassos select none of the summaries' rows yet; these
-  marks, error bars, and candlesticks draw every row undimmed. Contours'
-  regions and lines are not rows: gestures over them select nothing. Maps,
-  treemaps, sunbursts, and networks take a binding too, in a chart of their
-  own or in panels: clicks select a region's or point's row, a tree node's
-  rows (its own and those under it, of its panel's rows), a network node's
-  rows of its nodes table, or a link's of its links table (of its panel's
-  rows), and lassos a map's regions and points or a network's node centers;
-  the other layout marks and 3D charts refuse one. Brushes and synced
-  selections themselves are ranges and outlines in data values (a map's
-  lasso, in its plane).
+  their centers), and lassos select none of the summaries' rows yet. Summary
+  marks highlight the selected rows against the whole: a bin's selected
+  part of its bar, the selected values' own box or density over the whole
+  one, a cell's selected share as a square in it. Contours' regions and
+  lines are not rows: gestures over them select nothing, and a selection
+  leaves them as they are. Maps, pies, funnels, treemaps, sunbursts, Sankey
+  diagrams, and networks take a binding too, in a chart of their own or in
+  panels: clicks select a region's or point's row, a slice's or stage's
+  rows, a tree node's rows (its own and those under it), a Sankey link's
+  rows or a node's links' rows, a network node's rows of its nodes table,
+  or a link's of its links table (all of their panel's rows), and lassos a
+  map's regions and points or a network's node centers; pies, funnels,
+  trees, and Sankey links draw each item's selected share. Gauges, radars,
+  and 3D charts refuse one. Brushes and synced selections themselves are
+  ranges and outlines in data values (a map's lasso, in its plane). Exports
+  (`toSVG`, `toPNG`, `renderToSVG`, `renderToPDF`, specs) draw the
+  highlight as the chart shows it.
 - Zoom, pan, and brushes work on number and time axes; subplots zoom and
   brush along x only, and facets with y scales of their own, on either
   side, do not zoom along y. Maps and networks zoom and pan their plane both ways
@@ -1497,7 +1565,9 @@ Tooltips, hover and click events, and the arrow keys report a slice's value
 and its share of the slices shown. A pie has its chart to itself, or with
 facets a panel each, or a subplot of its own (see [Layout marks in
 panels](#layout-marks-in-panels)): it shares no panel with other marks, and
-does not zoom, brush, or sync.
+does not zoom, brush, or sync. With `rowSelection`, a click selects a
+slice's rows, and each slice draws the share of its sum the selection holds
+(see [Selected rows](#selected-rows)).
 
 ### Treemaps and sunbursts
 
@@ -1595,7 +1665,9 @@ narrow (`labels: false` leaves both out). Tooltips, events, and the arrow
 keys report a stage's value, share of the first stage, and share of the
 previous one. All stages take the palette's first color, and there is no
 legend. Like a pie, a gauge or a funnel has its chart, each facet panel, or
-its subplot to itself.
+its subplot to itself. With `rowSelection`, a click selects a stage's rows,
+and each bar draws the share of its value the selection holds in its middle
+(see [Selected rows](#selected-rows)); gauges take no row selection.
 
 ### Radars
 
@@ -1670,7 +1742,9 @@ node's inflow and outflow or a link's value, nodes first (column by column,
 top to bottom), then links (by source, then target). The layout is computed
 again whenever the table changes, so streamed rows redraw the whole diagram.
 Like a pie, a Sankey diagram has its chart, each facet panel, or its subplot
-to itself.
+to itself. With `rowSelection`, a click selects a link's rows, or a node's
+links' rows, and each link draws the share of its value the selection holds
+along its middle (see [Selected rows](#selected-rows)).
 
 ### Networks
 
@@ -2639,9 +2713,10 @@ while each subplot has its toolbar and path. A lasso on facet panels'
 shared plane is drawn in each and selects every panel's rows inside it; a
 subplot's is its own; a chart has one selection either way. With
 `rowSelection`, a click selects what an item stands for in its panel: a
-tree node's rows there, a region's or point's row, a link's rows there, or a
-node's rows of the nodes table, which every panel shares. Exports draw each
-panel as it is.
+slice's, stage's, or tree node's rows there, a region's or point's row, a
+link's rows there, or a network node's rows of the nodes table, which every
+panel shares; each panel draws its own items' selected shares. Exports draw
+each panel as it is.
 
 ### Custom marks
 
@@ -3173,8 +3248,8 @@ labels remain part of the figure. This does not claim PDF/UA conformance.
 
 ## Export
 
-A mounted chart exports what it shows now, at its size, zoomed and with
-series hidden as they are: `chart.toSVG()` a standalone SVG document,
+A mounted chart exports what it shows now, at its size, zoomed, with series
+hidden and a row selection highlighted as they are: `chart.toSVG()` a standalone SVG document,
 `chart.toPNG({ scale })` a PNG `Blob` at `scale` times its size in CSS
 pixels (2 by default; drawn from the SVG export, whose transparent
 background stays transparent; its encoder loads the first time), and
@@ -3190,7 +3265,9 @@ const pdf = renderToPDF(chart, { fonts }); // Uint8Array; fonts as below, option
 ```
 
 `renderToSVG` and `renderToPDF` take chart options too, and then need no
-DOM, so they run on servers, in workers, and in build scripts:
+DOM, so they run on servers, in workers, and in build scripts; with
+`rowSelection`, they draw what its stores hold highlighted, as a mounted
+chart would:
 
 ```ts
 import { renderToSVG } from "herceg";
@@ -3392,7 +3469,13 @@ out when the marks read one table): `{ "data": "trips", "channel": "focus",
 makes one per bound table, returned in `stores`, or takes them in its
 options, `loadSpec(spec, buffers, { tables, stores })`, with tables to use
 instead of making them from the spec's columns, so that charts of several
-specs share rows and selections; `chartFromSpec` takes the same options.
+specs share rows and selections; `chartFromSpec` takes the same options. A
+binding's `selection` is what the channel of a store `loadSpec` makes holds
+to start with, which `specToSVG` and `specToPDF` draw: a condition,
+`{ "kind": "predicate", "expression": [">", ["field", "fare"], 20] }`, or rows
+by position, `{ "kind": "rows", "rows": [0, 4, 9] }` (or a uint32 buffer's
+index); `"rows": []` selects none, dimming every row. A store given in the
+options keeps what it holds.
 
 Specs say which format `version` they are: 1 (`SPEC_VERSION`), the only one
 so far, also when left out. Loading refuses specs of later versions. Loading

@@ -13,7 +13,7 @@ import type { Breaks } from "../lod/m4.ts";
 import type { LegendPart } from "../model/legend.ts";
 import { checkColorScale, checkRamp, rampOf, SequentialScale } from "../scale/color.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import type { RasterGeometry } from "../scene/scene.ts";
+import type { Geometry, RasterGeometry } from "../scene/scene.ts";
 import type { CellReduce, Frozen, HeatmapSpec, Weekday } from "../spec/spec.ts";
 import type { Theme } from "../theme.ts";
 import { type Calendar, type CalendarLayout, placeCalendar } from "./heatmap-calendar.ts";
@@ -46,6 +46,7 @@ import {
   NUMERIC,
   type Palette,
   requireField,
+  type SelectionDrawing,
   type SummaryContext,
   seriesKey,
 } from "./mark.ts";
@@ -322,6 +323,10 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
   readonly #byDays = new WeakMap<NumericArray, Calendar>();
   /** A calendar's band indices, by the chart's band keys they were remapped to. */
   readonly #remapped = new WeakMap<readonly string[], { own: Int32Array; indices: Int32Array }>();
+  /** What the selection drawn with each series (and its copies read for tooltips) holds of its cells. */
+  readonly #selected = new WeakMap<Series, HeldCells>();
+  /** Each index's cells with values, as selections are counted in them. */
+  readonly #runs = new WeakMap<CellIndex, CellRuns>();
 
   constructor(input: HeatmapSpec, table: Table<Schema>) {
     this.spec = frozen(input);
@@ -796,13 +801,182 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
 
   geometry(series: readonly Series[], frame: Frame): RasterGeometry[] {
     const s = series[0];
+    // Drawn so, no selection is drawn with the series.
+    if (s) this.#selected.delete(s);
     const colors = s && this.#colorScale(frame.theme, s);
     if (!s || s.length === 0 || frame.hidden.has(s.key) || !colors) return [];
+    return this.#image(s, frame, colors, s.key);
+  }
+
+  /**
+   * The cells with a selection's rows in them: the image dimmed, and in
+   * each cell holding selected rows a square of its color covering the
+   * share of its rows they are (see cell-selection.ts).
+   */
+  selectedGeometry(series: readonly Series[], frame: Frame, drawing: SelectionDrawing): Geometry[] {
+    const s = series[0];
+    const colors = s && this.#colorScale(frame.theme, s);
+    if (!s || s.length === 0 || frame.hidden.has(s.key) || !colors) return [];
+    const whole = this.geometry(series, frame).flatMap(drawing.dim);
+    const across = this.#resolve(s, "x", frame.x);
+    const down = this.#resolve(s, "y", frame.y);
+    // Every row of each cell, which combining its values leaves one of.
+    const { values } = this.#cellsOf(s, across, down);
+    const runs = this.#runsOf(this.#indexOf(s, across, down), values);
+    const held = this.#heldOf(runs, drawing.selected);
+    this.#selected.set(s, held);
+    // An image of no cell draws nothing.
+    if (held.lit.length === 0) return whole;
+    const { columns, lines, last, sizes } = runs;
+    const key = `${s.key}|selected`;
+    const squares = drawing.squares(
+      {
+        count: last.length,
+        held: held.lit.length,
+        size: [this.#smallest(across, frame.x), this.#smallest(down, frame.y)],
+        box: (k) => {
+          const [x0, x1] = this.#edges(across, frame.x, columns[k]!);
+          const [y0, y1] = this.#edges(down, frame.y, lines[k]!);
+          return [x0, y0, x1, y1];
+        },
+        share: (k) => held.selected[k]! / sizes[k]!,
+        color: (k) => colors.color(values[last[k]!]!),
+      },
+      key,
+    );
+    return [...whole, ...(squares ?? this.#image(s, frame, colors, key, held))];
+  }
+
+  /** The pixels a cell spans along an axis: its band, or between its edges. */
+  #edges(
+    { cells, places }: ResolvedAxis,
+    scale: PositionScale,
+    cell: number,
+  ): readonly [number, number] {
+    if (!cells) {
+      const center = scale.map(places ? places.at(cell) : cell);
+      const half = Math.abs(scale.bandwidth ?? 0) / 2;
+      return [center - half, center + half];
+    }
+    return [scale.map(cells.value(cells.lower[cell]!)), scale.map(cells.value(cells.upper[cell]!))];
+  }
+
+  /** The fewest pixels any cell spans along an axis: a band, or the narrowest between its edges. */
+  #smallest({ cells }: ResolvedAxis, scale: PositionScale): number {
+    if (!cells) return Math.abs(scale.bandwidth ?? 0);
+    let least = Infinity;
+    for (let c = 0; c < cells.length; c++) {
+      const [a, b] = [
+        scale.map(cells.value(cells.lower[c]!)),
+        scale.map(cells.value(cells.upper[c]!)),
+      ];
+      least = Math.min(least, Math.abs(b - a));
+    }
+    return least;
+  }
+
+  /**
+   * The cells of `index` (all of each cell's rows) drawn with `values`:
+   * each one's column and row of the grid, how many rows it has, and the
+   * row its value is at; kept with the index, whatever the selection. A
+   * cell whose value is missing (a sum past the largest double) is drawn
+   * by none, and is left out.
+   */
+  #runsOf(index: CellIndex, values: NumericArray): CellRuns {
+    const known = this.#runs.get(index);
+    if (known?.values === values) return known;
+    // At most a cell per position: cut to the cells found.
+    const most = index.length;
+    const [columns, lines] = [new Uint32Array(most), new Uint32Array(most)];
+    const [sizes, last] = [new Uint32Array(most), new Uint32Array(most)];
+    let count = 0;
+    index.forEachRun((c, r, from, to) => {
+      const row = index.rowOf(index.positionAt(to - 1));
+      if (!Number.isFinite(values[row]!)) return;
+      columns[count] = c;
+      lines[count] = r;
+      sizes[count] = to - from;
+      last[count++] = row;
+    });
+    const cut = (array: Uint32Array) => (count < most ? array.slice(0, count) : array);
+    const runs: CellRuns = {
+      index,
+      values,
+      columns: cut(columns),
+      lines: cut(lines),
+      sizes: cut(sizes),
+      last: cut(last),
+    };
+    this.#runs.set(index, runs);
+    return runs;
+  }
+
+  /**
+   * How many of each cell's rows `selected` holds, and the rows the values
+   * of the cells holding any are at, for an image of them: one pass over the
+   * cells' rows, kept while the selection and the cells are the same.
+   */
+  #heldOf(runs: CellRuns, selected: Uint8Array): HeldCells {
+    let byRuns = helds.get(selected);
+    if (!byRuns) {
+      byRuns = new WeakMap();
+      helds.set(selected, byRuns);
+    }
+    const known = byRuns.get(runs);
+    if (known) return known;
+    const { index, last } = runs;
+    const counts = new Uint32Array(last.length);
+    const lit: number[] = [];
+    let k = 0;
+    index.forEachRun((_c, _r, from, to) => {
+      // Cells without a value are not among the runs: their last row tells them apart.
+      if (k >= last.length || index.rowOf(index.positionAt(to - 1)) !== last[k]) return;
+      let count = 0;
+      for (let i = from; i < to; i++) count += selected[index.rowOf(index.positionAt(i))]!;
+      counts[k] = count;
+      if (count > 0) lit.push(last[k]!);
+      k++;
+    });
+    const held: HeldCells = { runs, selected: counts, lit: Uint32Array.from(lit) };
+    byRuns.set(runs, held);
+    return held;
+  }
+
+  /**
+   * The cell of `runs` whose value is at `row`, or -1: a binary search for
+   * the row's cell among the runs, which are in cell order (by row, then
+   * column), as the index is.
+   */
+  #cellAtRow(runs: CellRuns, row: number): number {
+    const { index, columns, lines, last } = runs;
+    const c = index.x[row]!;
+    const r = index.y[row]!;
+    let [lo, hi] = [0, last.length];
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (lines[mid]! < r || (lines[mid] === r && columns[mid]! < c)) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo < last.length && last[lo] === row ? lo : -1;
+  }
+
+  /**
+   * The image of the cells of `s`, keyed `key`, as its buffers are: every
+   * cell, or with `held`, those holding selected rows.
+   */
+  #image(
+    s: Series,
+    frame: Frame,
+    colors: SequentialScale,
+    key: string,
+    held?: HeldCells,
+  ): RasterGeometry[] {
     const { x, y, plot } = frame;
     const acrossAxis = this.#resolve(s, "x", x);
     const downAxis = this.#resolve(s, "y", y);
     const inputs = [
       this,
+      held?.lit,
       this.table.version,
       acrossAxis.ordinals,
       downAxis.ordinals,
@@ -824,11 +998,11 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     ];
     // An unchanged frame draws the image last painted into the series'
     // buffer again, without placing a cell.
-    let pixels = frame.bytes(s.key, "raster", 0);
+    let pixels = frame.bytes(key, "raster", 0);
     const last = painted.get(pixels.buffer);
     let image = last && sameInputs(last.inputs, inputs) ? last.image : undefined;
     if (!image) {
-      const buffer = (stage: string, length: number) => frame.doubles(s.key, stage, length);
+      const buffer = (stage: string, length: number) => frame.doubles(key, stage, length);
       const axes = rasterAxes(
         { ...acrossAxis, scale: x },
         { ...downAxis, scale: y },
@@ -839,17 +1013,21 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
       if (!axes) return [];
       const [across, down] = axes;
       const count = across.size * down.size;
-      pixels = frame.bytes(s.key, "raster", count * 4);
+      pixels = frame.bytes(key, "raster", count * 4);
       const { index, values } = this.#cellsOf(s, acrossAxis, downAxis);
+      // With `held`, only the rows of the cells holding selected rows are painted.
+      const rows = held ? held.lit : s.rows;
       const source = {
         ...{
           x: acrossAxis.ordinals,
           y: downAxis.ordinals,
           values,
-          rows: s.rows,
-          length: s.length,
+          rows,
+          length: rows ? rows.length : s.length,
         },
-        index: () => index,
+        // The cells' index, or one of those holding selected rows.
+        index: () =>
+          held ? new CellIndex(index.x, index.y, values, index.columns, index.lines, rows) : index,
       };
       const sampling = this.spec.sampling?.reduce ?? "mean";
       paint(source, across, down, colors, sampling, pixels, (stage) => buffer(stage, count));
@@ -861,7 +1039,7 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
       {
         kind: "raster",
         draw: rasterDrawing,
-        key: s.key,
+        key,
         x: x0,
         y: y0,
         width: x1 - x0,
@@ -900,13 +1078,24 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     return high === undefined ? y : `${y} – ${format.y(this.table.numbers(high as never)[row]!)}`;
   }
 
-  /** A cell's value, after its x edges for a cell between them. */
+  /**
+   * A cell's value, after its x edges for a cell between them; while a
+   * selection is drawn, how many of its rows it holds.
+   */
   pointText(series: Series, row: number, format: AxisFormat): string {
     const value = format.value(series.values[row]!);
     const high = this.spec.x2;
-    if (high === undefined) return value;
-    const end = this.table.numbers(high as never)[row]!;
-    return `${format.x(series.x[row]!)} – ${format.x(end)}: ${value}`;
+    const text =
+      high === undefined
+        ? value
+        : `${format.x(series.x[row]!)} – ${format.x(this.table.numbers(high as never)[row]!)}: ${value}`;
+    // A cell is read at the row its value is at.
+    const held = this.#selected.get(series);
+    const k = held ? this.#cellAtRow(held.runs, row) : -1;
+    if (k < 0) return text;
+    const [count, all] = [held!.selected[k]!, held!.runs.sizes[k]!];
+    const f = format.value;
+    return `${text}; ${f(count)} of ${f(all)} ${all === 1 ? "row" : "rows"} selected`;
   }
 
   /**
@@ -938,7 +1127,12 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
         this.#resolve(s, "x", frame.x),
         this.#resolve(s, "y", frame.y),
       );
-      return values === s.values ? s : { ...s, values };
+      if (values === s.values) return s;
+      const read = { ...s, values };
+      // Tooltips of the copy say what the selection drawn with it holds.
+      const selected = this.#selected.get(s);
+      if (selected) this.#selected.set(read, selected);
+      return read;
     });
   }
 
@@ -1015,6 +1209,31 @@ export class HeatmapMark implements Mark<Frozen<HeatmapSpec>> {
     return index;
   }
 }
+
+/**
+ * A series' cells with values (see `HeatmapMark.#runsOf`), in the order of
+ * the index they were found in: each one's column and row of the grid, how
+ * many rows it has, and the row its value is at.
+ */
+interface CellRuns {
+  index: CellIndex;
+  /** The cells' values these were found with. */
+  values: NumericArray;
+  columns: Uint32Array;
+  lines: Uint32Array;
+  sizes: Uint32Array;
+  last: Uint32Array;
+}
+
+/** What a selection holds of a series' cells: how many rows of each, and the rows the values of those holding any are at. */
+interface HeldCells {
+  runs: CellRuns;
+  selected: Uint32Array;
+  lit: Uint32Array;
+}
+
+/** What selections hold of cells, by membership, then by the cells. */
+const helds = new WeakMap<Uint8Array, WeakMap<CellRuns, HeldCells>>();
 
 /** A series' cells: their values by table row (none at rows a cell shares), and their index. */
 interface CombinedCells {

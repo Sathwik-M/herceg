@@ -1,6 +1,7 @@
 import { scanExtent } from "../data/table.ts";
 import { formatNumber } from "../format/format.ts";
 import { isLayoutMark } from "../marks/layout-mark.ts";
+import type { Mark } from "../marks/mark.ts";
 import { rowOf, type Series } from "../marks/series.ts";
 import type { ChartModel } from "./model.ts";
 
@@ -61,55 +62,57 @@ export function describeChart(model: ChartModel): string {
   const { config } = model;
   // Layout marks say what they drew: in panels, each after its panel's name.
   const items = model.layoutSummary(undefined, MAX_SERIES);
-  if (model.layout) {
-    return [config.description, items, ...model.legendSummaries()].filter(Boolean).join(" ");
-  }
-  const series = model.series();
-  // Annotations and layout marks describe themselves; the chart kind names the data marks.
-  const kinds = [
-    ...new Set(
-      config.marks
-        .filter((mark) => !("describe" in mark && mark.describe) && !isLayoutMark(mark))
-        .map((mark) => mark.spec.type),
-    ),
-  ].join(" and ");
   // The title is the chart's name, which is read before its description.
-  const parts = [config.description, config.x?.breaks?.description];
-  if (kinds) {
-    parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
+  const parts = [config.description];
+  if (model.layout) parts.push(items);
+  else {
+    const series = model.series();
+    // Annotations and layout marks describe themselves; the chart kind names the data marks.
+    const kinds = [
+      ...new Set(
+        config.marks
+          .filter((mark) => !isLayoutMark(mark) && !(mark as Mark).describe)
+          .map((mark) => mark.spec.type),
+      ),
+    ].join(" and ");
+    parts.push(config.x?.breaks?.description);
+    if (kinds) {
+      parts.push(`${kinds[0]!.toUpperCase()}${kinds.slice(1)} chart with ${series.length} series.`);
+    }
+    const panelLayout = config.facet ?? config.panels;
+    if (panelLayout) {
+      const panels = model.allPanels().map(({ label }) => label);
+      parts.push(panelLayout.describe(panels, MAX_SERIES), items);
+    }
+    // With series on both y axes, each one's name says which it is on.
+    const sides = new Set(series.map((s) => model.onRight(s))).size > 1;
+    const name = (s: Series) => {
+      if (!sides) return s.label;
+      const onRight = model.onRight(s);
+      const unit = (onRight ? config.yRight : config.y)?.title;
+      return `${s.label} (${onRight ? "right" : "left"} axis${unit ? `, ${unit}` : ""})`;
+    };
+    for (const s of series.slice(0, MAX_SERIES)) {
+      const drawn = model.parts(s);
+      const mark = model.markOf(s);
+      const y = mark && model.yScaleOf(mark);
+      const sentence =
+        mark?.summarize?.(drawn, name(s), {
+          format: model.formatsOf(mark),
+          locale: config.locale,
+          log: y?.type === "log",
+          bands: model.bands,
+        }) ?? summarize(drawn, name(s), config.locale);
+      parts.push(`${sentence}.`);
+    }
+    if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
   }
-  const panelLayout = config.facet ?? config.panels;
-  if (panelLayout) {
-    const panels = model.allPanels().map(({ label }) => label);
-    parts.push(panelLayout.describe(panels, MAX_SERIES), items);
-  }
-  // With series on both y axes, each one's name says which it is on.
-  const right = series.filter((s) => model.onRight(s));
-  const sides = right.length > 0 && right.length < series.length;
-  const name = (s: Series) => {
-    if (!sides) return s.label;
-    const onRight = right.includes(s);
-    const unit = (onRight ? config.yRight : config.y)?.title;
-    return `${s.label} (${onRight ? "right" : "left"} axis${unit ? `, ${unit}` : ""})`;
-  };
-  for (const s of series.slice(0, MAX_SERIES)) {
-    const drawn = model.parts(s);
-    const mark = model.markOf(s);
-    const y = mark && model.yScaleOf(mark);
-    const sentence =
-      mark?.summarize?.(drawn, name(s), {
-        format: model.formatsOf(mark),
-        locale: config.locale,
-        log: y?.type === "log",
-        bands: model.bands,
-      }) ?? summarize(drawn, name(s), config.locale);
-    parts.push(`${sentence}.`);
-  }
-  if (series.length > MAX_SERIES) parts.push(`${series.length - MAX_SERIES} more series.`);
+  // Charts of layout marks have no annotations or navigator.
   parts.push(
     ...model.legendSummaries(),
     ...model.annotationSummaries(),
     config.navigator?.describe(model),
+    config.rowSelection?.description,
   );
   return parts.filter(Boolean).join(" ");
 }

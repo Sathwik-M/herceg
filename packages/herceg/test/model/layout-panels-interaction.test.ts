@@ -151,8 +151,8 @@ describe("trees in facet panels", () => {
     ).toEqual(Uint32Array.of(0));
     store.set("c", selectRows(new RowSet(sales).add(0)));
     model.scene(estimateText);
-    expect(france("2023").points[0]!.text).toMatch(/1 of 1 row selected$/);
-    expect(france("2024").points[0]!.text).toMatch(/0 of 1 row selected$/);
+    expect(france("2023").points[0]!.text).toMatch(/1 of 1 row selected, revenue 40 of 40$/);
+    expect(france("2024").points[0]!.text).toMatch(/0 of 1 row selected, revenue 0 of 20$/);
   });
 });
 

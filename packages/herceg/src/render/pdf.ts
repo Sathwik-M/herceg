@@ -146,6 +146,12 @@ class PathBuilder {
   }
 }
 
+/**
+ * The fraction of their opacity what is painted now is drawn at: below 1
+ * while a faded drawing's geometry (a highlight's dimmed rows) is painted.
+ */
+let fade = 1;
+
 /** Channels from 0 to 1 and alpha times `opacity`; undefined when nothing would show. */
 function color(css: string, opacity = 1): [number, number, number, number] | undefined {
   if (css === "none") return undefined;
@@ -155,7 +161,7 @@ function color(css: string, opacity = 1): [number, number, number, number] | und
       `PDF export cannot read the color ${JSON.stringify(css)}; use hex, rgb(), hsl(), or a CSS color name`,
     );
   }
-  const alpha = Math.min(1, Math.max(0, rgba[3] * opacity));
+  const alpha = Math.min(1, Math.max(0, rgba[3] * opacity * fade));
   if (!(alpha > 0)) return undefined;
   const channel = (value: number) => Math.min(1, Math.max(0, value / 255));
   return [channel(rgba[0]), channel(rgba[1]), channel(rgba[2]), alpha];
@@ -363,7 +369,10 @@ function paintEncoded(page: PdfPage, mark: PointGeometry): void {
 
 /** The paint style of a points' ring, if they have one. */
 function ringStyle(mark: PointGeometry): PaintStyle {
-  return mark.ring ? { stroke: mark.ring.color, strokeWidth: mark.ring.width, join: "round" } : {};
+  const { ring } = mark;
+  return ring
+    ? { stroke: ring.color, strokeWidth: ring.width, strokeOpacity: ring.opacity, join: "round" }
+    : {};
 }
 
 function paintPoints(page: PdfPage, mark: PointGeometry): void {
@@ -428,7 +437,31 @@ function paintGeometry(
   theme: Theme,
   font: TextStyle["font"],
 ): void {
-  const mark = geometry as MarkGeometry;
+  // Highlights draw some geometry faded, or within rectangles, through drawings of their own.
+  const { opacity = 1, clip } = geometry.draw;
+  if (clip) {
+    let rects = "";
+    for (let i = 0; i + 3 < clip.length; i += 4)
+      rects += `${num(clip[i]!)} ${num(clip[i + 1]!)} ${num(clip[i + 2]!)} ${num(clip[i + 3]!)} re `;
+    page.write(`q ${rects}W n\n`);
+  }
+  const before = fade;
+  fade *= opacity;
+  try {
+    paintMark(page, geometry as MarkGeometry, plot, theme, font);
+  } finally {
+    fade = before;
+    if (clip) page.write("Q\n");
+  }
+}
+
+function paintMark(
+  page: PdfPage,
+  mark: MarkGeometry,
+  plot: Rect,
+  theme: Theme,
+  font: TextStyle["font"],
+): void {
   const path = new PathBuilder();
   switch (mark.kind) {
     case "line":
@@ -493,9 +526,10 @@ function paintGeometry(
       if (mark.columns * mark.rows === 0 || !(mark.width > 0 && mark.height > 0)) return;
       const repeat = cellRepeat(mark.width, mark.height, mark.columns, mark.rows);
       const image = page.image(mark.columns, mark.rows, mark.pixels, repeat);
+      const faded = fade < 1 ? ` /${page.opacity(fade, fade)} gs` : "";
       // Images fill the unit square with their first row at the top (y = 1).
       page.write(
-        `q ${num(mark.width)} 0 0 ${num(-mark.height)} ${num(mark.x)} ${num(mark.y + mark.height)} cm /${image} Do Q\n`,
+        `q${faded} ${num(mark.width)} 0 0 ${num(-mark.height)} ${num(mark.x)} ${num(mark.y + mark.height)} cm /${image} Do Q\n`,
       );
       return;
     }

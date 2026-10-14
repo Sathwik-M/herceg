@@ -334,6 +334,7 @@ const layouts: MarkCase[] = [
     kind: "arc",
     facets: true,
     animates: true,
+    selects: true,
   },
   {
     name: "treemap",
@@ -357,6 +358,7 @@ const layouts: MarkCase[] = [
     make: (p) => funnel(samples, { category: "category", value: "y", ...p }),
     kind: "shapes",
     facets: true,
+    selects: true,
   },
   {
     name: "radar",
@@ -369,6 +371,7 @@ const layouts: MarkCase[] = [
     make: (p) => sankey(links, { source: "source", target: "target", value: "value", ...p }),
     kind: "rect",
     facets: true,
+    selects: true,
   },
   {
     name: "graph",
@@ -1143,6 +1146,15 @@ describe("capabilities: row selection", () => {
     "bar",
     "point",
     "point swarm",
+    "errorbar",
+    "candlestick",
+    "rug",
+    "histogram",
+    "histogram 2d",
+    "boxplot",
+    "boxen",
+    "violin",
+    "heatmap",
   ]);
 
   /** A chart of a case bound to a store of `samples`, as a mounted chart binds it. */

@@ -40,6 +40,10 @@ class SelectionBinding:
     ``fields`` are more of its columns to send with the chart than its
     marks read, so that conditions set from Python (``widget.row_selection
     = hg.col("fare") > 20``, or another widget's brush) can test them.
+    ``selection`` is what the channel holds when the chart is drawn, which
+    static output (``to_svg``, ``to_png``, ``to_pdf``) shows highlighted: a
+    condition (``hg.col("fare") > 20``), rows by position in the data
+    (whole numbers, or a boolean mask), or a widget's ``row_selection``.
     """
 
     channel: str
@@ -47,6 +51,7 @@ class SelectionBinding:
     effect: Literal["highlight", "none"] = "highlight"
     data: Any = field(default=None, repr=False)
     fields: Sequence[str] = ()
+    selection: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.channel, str) or not self.channel:
@@ -74,8 +79,14 @@ class SelectionBinding:
                 'SelectionBinding fields: expected a list of column names, such as ["fare"]; '
                 f"received {shown(self.fields)}"
             )
+        if self.selection is not None:
+            # Positions are checked against the data once the chart knows it.
+            encode(self.selection, None, "SelectionBinding selection")
 
-    def _spec(self, table: str | None) -> dict[str, Any]:
+    def _spec(self, table: str | None, length: int | None = None) -> dict[str, Any]:
+        """The binding as a spec's, of `table`; rows of a selection by position
+        among the table's `length` rows (unknown for a derived table's), as the
+        bytes of uint32 positions, which the spec's buffers take."""
         spec: dict[str, Any] = {"channel": self.channel}
         if table is not None:
             spec["data"] = table
@@ -83,7 +94,22 @@ class SelectionBinding:
             spec["events"] = list(self.events)
         if self.effect != "highlight":
             spec["effect"] = self.effect
+        if self.selection is not None:
+            selection, buffers = encode(self.selection, length, "SelectionBinding selection")
+            if selection is not None:
+                spec["selection"] = {**selection, "rows": buffers[0]} if buffers else selection
         return spec
+
+    def _initial(self, data: Any, length: int | None) -> RowSelection:
+        """What the channel holds before a browser selects anything, in Python's
+        terms: rows by position among the data's `length` rows, when known."""
+        selection, buffers = encode(self.selection, length, "SelectionBinding selection")
+        if selection is None:
+            return RowSelection(self.channel, data)
+        if selection["kind"] == "predicate":
+            return RowSelection(self.channel, data, condition=Expr(selection["expression"]))
+        rows = np.frombuffer(buffers[0], dtype="<u4").astype(np.int64)
+        return RowSelection(self.channel, data, rows=rows)
 
 
 def bindings(value: Any) -> tuple[SelectionBinding, ...]:
@@ -164,10 +190,14 @@ def decode(
     return RowSelection(channel, data, rows=positions[(positions >= 0) & (positions < length)])
 
 
-def encode(value: Any, length: int) -> tuple[dict[str, Any] | None, list[bytes]]:
+def encode(
+    value: Any, length: int | None, name: str = "widget.row_selection"
+) -> tuple[dict[str, Any] | None, list[bytes]]:
     """A selection set from Python, as the browser takes it: None, a
     condition (``hg.col("fare") > 20``), or rows by position in the data
-    (any sequence of whole numbers, or a boolean mask of the data's length)."""
+    (any sequence of whole numbers, or a boolean mask of the data's length),
+    checked against the data's `length` rows when it is known. Errors begin
+    with `name`, what the caller set."""
     if value is None:
         return None, []
     if isinstance(value, RowSelection):
@@ -179,23 +209,30 @@ def encode(value: Any, length: int) -> tuple[dict[str, Any] | None, list[bytes]]
             value = value.rows
     if isinstance(value, Expr):
         return {"kind": "predicate", "expression": value._json}, []
+    if isinstance(value, (str, bytes)):
+        raise TypeError(
+            f"{name}: expected a condition, positions of rows (whole numbers), or a boolean "
+            f"mask; received {shown(value)}"
+        )
     rows = np.asarray(value)
     if rows.dtype == bool:
-        if rows.shape != (length,):
+        if rows.ndim != 1 or (length is not None and rows.shape != (length,)):
+            many = "a value" if length is None else f"{length} values"
             raise ValueError(
-                f"widget.row_selection: expected a mask of {length} values, one per row; "
-                f"received shape {rows.shape}"
+                f"{name}: expected a mask of {many}, one per row; received shape {rows.shape}"
             )
         rows = np.flatnonzero(rows)
     if rows.ndim != 1 or (rows.size and not np.issubdtype(rows.dtype, np.integer)):
         raise TypeError(
-            "widget.row_selection: expected positions of rows (whole numbers) or a boolean mask; "
+            f"{name}: expected positions of rows (whole numbers) or a boolean mask; "
             f"received {rows.dtype} values of shape {rows.shape}"
         )
-    if rows.size and (rows.min() < 0 or rows.max() >= length):
-        outside = int(rows[(rows < 0) | (rows >= length)][0])
+    limit = np.iinfo(np.uint32).max if length is None else length
+    if rows.size and (rows.min() < 0 or rows.max() >= limit):
+        outside = int(rows[(rows < 0) | (rows >= limit)][0])
         raise ValueError(
-            f"widget.row_selection: expected positions among the data's {length} rows; "
-            f"received {outside}"
+            f"{name}: expected positions among the data's {length} rows; received {outside}"
+            if length is not None
+            else f"{name}: expected positions of rows, 0 or more; received {outside}"
         )
     return {"kind": "rows"}, [np.unique(rows).astype("<u4").tobytes()]

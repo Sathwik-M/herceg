@@ -268,6 +268,23 @@ def test_drill_and_move_state_reach_the_script_in_forms():
     }
 
 
+def test_a_starting_selection_is_not_data(monkeypatch):
+    epochs = []
+
+    def component(**kwargs):
+        header, _, _ = read(kwargs["data"])
+        epochs.append(header["epoch"])
+        return {}
+
+    monkeypatch.setattr(hst, "_component", lambda: component)
+    data = {"km": [1.0, 2.0, 3.0], "fare": [4.0, 8.0, 12.0]}
+    for selection in ([0], [1], None):
+        binding = hg.SelectionBinding("focus", selection=selection)
+        hst.chart(hg.Chart(data, row_selection=binding).point(x="km", y="fare"))
+    # Changing only the rows a binding starts with keeps the run's data epoch.
+    assert len(set(epochs)) == 1
+
+
 def test_viewport_state_and_reaction(monkeypatch):
     calls = []
 

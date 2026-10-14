@@ -13,12 +13,13 @@ import {
 import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumberField, NumericField, Schema, Table } from "../data/table.ts";
 import { areaDrawing } from "../draw/area.ts";
+import { lineDrawing } from "../draw/line.ts";
 import { rectDrawing } from "../draw/rect.ts";
 import { formatNumber } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
 import type { PositionScale } from "../scale/scale.ts";
 import { chooseInterval, niceTimeDomain, timeTicks } from "../scale/time.ts";
-import type { AreaGeometry, RectGeometry } from "../scene/scene.ts";
+import type { AreaGeometry, Geometry, LineGeometry, RectGeometry } from "../scene/scene.ts";
 import type {
   BinSpec,
   Frozen,
@@ -43,6 +44,7 @@ import {
   NUMERIC,
   type Palette,
   requireField,
+  type SelectionDrawing,
   SeriesSplitter,
   type SummaryContext,
   seriesKey,
@@ -110,6 +112,17 @@ export type Histogram1DOptions<S extends Schema> = HistogramStyle<S> &
 /** Pixels left between neighboring bars when bins are wide enough. */
 const GAP = 1;
 
+/** What a series without rows counted. */
+const NOTHING: Counted = {
+  counts: NO_BINS,
+  total: 0,
+  size: 0,
+  inBins: 0,
+  finite: 0,
+  rows: new Uint32Array(0),
+  code: -1,
+};
+
 /**
  * What one series counted: per bin and in all (weights, with a `weight`
  * field), how many rows it has and how many of them the bins hold, and
@@ -121,7 +134,20 @@ interface Counted {
   size: number;
   inBins: number;
   finite: number;
+  /** The rows it counted (every row of the table when undefined) of its series code (any, -1). */
+  rows: Uint32Array | undefined;
+  code: number;
 }
+
+/** What a series' rows in each bin hold of a selection: their count and weight, and every row's count. */
+interface Picked {
+  rows: Float64Array;
+  weights: Float64Array;
+  all: Float64Array | NumericArray;
+}
+
+/** Each series' counts of a selection's rows, by membership, then by the series' counts. */
+const picks = new WeakMap<Uint8Array, WeakMap<Float64Array, Picked>>();
 
 /** The edges a series was counted in, and what it counted. */
 interface Bins extends Counted {
@@ -185,6 +211,16 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
    * summary, by its values, which only it holds.
    */
   readonly #bins = new WeakMap<NumericArray, Bins>();
+  /** What each series drawn highlighted holds of the selection, for its tooltips. */
+  readonly #selected = new WeakMap<Series, Picked>();
+  /** How many rows each bin of a weighted series has, by the series' counts. */
+  readonly #rows = new WeakMap<NumericArray, NumericArray>();
+  /**
+   * For parts of steps and polygons (a selection's, and the rest of the
+   * bars), by their tops: the bins where they have no height, which their
+   * outline leaves out.
+   */
+  readonly #flats = new WeakMap<NumericArray, Uint8Array>();
 
   constructor(input: Histogram1DSpec, table: Table<Schema>) {
     this.spec = frozen(input);
@@ -284,14 +320,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
       const measured = measures[i];
       if (!found || !measured) {
         const empty = withoutBins(entry.key, entry.label, entry.color);
-        this.#bins.set(empty.values, {
-          edges,
-          counts: NO_BINS,
-          total: 0,
-          size: 0,
-          inBins: 0,
-          finite: 0,
-        });
+        this.#bins.set(empty.values, { edges, ...NOTHING });
         return empty;
       }
       // Filled stacks measure each series' share of its bin; bins of nothing hold no share.
@@ -414,7 +443,12 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
     return min <= max ? ([min, max] as const) : undefined;
   }
 
-  geometry(series: readonly Series[], frame: Frame): (RectGeometry | AreaGeometry)[] {
+  geometry(
+    series: readonly Series[],
+    frame: Frame,
+  ): (RectGeometry | AreaGeometry | LineGeometry)[] {
+    // Drawn so, no selection is drawn with the series.
+    for (const s of series) this.#selected.delete(s);
     // Dodged series keep their room in panels where they have no rows, as grouped bars do.
     const visible = series.filter((s) => !frame.hidden.has(s.key));
     // Overlaid series show through each other.
@@ -422,7 +456,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
     const element = this.spec.element ?? "bars";
     if (element !== "bars") {
       const opacity = this.spec.fillOpacity ?? (overlaid ? 0.25 : 0.75);
-      return visible.map((s) => this.#outline(s, frame, element === "step", opacity));
+      return visible.flatMap((s) => this.#outline(s, frame, element === "step", opacity));
     }
     const opacity = this.spec.fillOpacity ?? (overlaid ? 0.5 : 1);
     const out: RectGeometry[] = [];
@@ -449,12 +483,134 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
   }
 
   /**
+   * The bars with a selection's rows in them: each bin's bar measured to
+   * the share of its weight (cumulative bins: of the weight up to them) the
+   * selected rows hold, as drawn, from where the bar starts (its stack's
+   * base), and dimmed above that up to the bar's top. Bins, stacks, slots,
+   * and normalization stay the whole's, so the selected part is the bar
+   * the selected rows would make, inside the bar of all of them.
+   */
+  selectedGeometry(
+    series: readonly Series[],
+    _frame: Frame,
+    drawing: SelectionDrawing,
+  ): Geometry[] {
+    const horizontal = this.#horizontal;
+    const bars = (this.spec.element ?? "bars") === "bars";
+    const lit: Series[] = [];
+    const dimmed: Series[] = [];
+    for (const s of series) {
+      const bins = this.#binsOf(s);
+      const picked = this.#picked(bins, drawing.selected);
+      this.#selected.set(s, picked);
+      const values = s.values;
+      const [tops, bases] = horizontal ? [s.x, s.x0] : [s.y, s.y0];
+      // Where each bar's selected part ends: its share of what the bar
+      // measures. A bin none of whose weight is selected has no selected
+      // part, one all of whose weight is selected no dimmed part, and an
+      // empty bin neither: bars of no height are left out, and steps and
+      // polygons, which join bins, are not outlined there.
+      const middle = new Float64Array(s.length);
+      const top = Float64Array.from(tops);
+      const none = new Uint8Array(s.length);
+      const whole = new Uint8Array(s.length);
+      let selected = 0;
+      let all = 0;
+      for (let b = 0; b < s.length; b++) {
+        selected = (this.spec.cumulative ? selected : 0) + picked.weights[b]!;
+        all = (this.spec.cumulative ? all : 0) + bins.counts[b]!;
+        const share = all > 0 ? selected / all : 0;
+        middle[b] = (bases ? bases[b]! : 0) + values[b]! * share;
+        const empty = values[b] === 0;
+        none[b] = share > 0 && !empty ? 0 : 1;
+        whole[b] = share >= 1 || empty ? 1 : 0;
+      }
+      const base = middle.slice();
+      if (bars)
+        for (let b = 0; b < s.length; b++) {
+          if (none[b]) middle[b] = Number.NaN;
+          if (whole[b]) top[b] = Number.NaN;
+        }
+      else {
+        this.#flats.set(middle, none);
+        this.#flats.set(top, whole);
+      }
+      lit.push(horizontal ? { ...s, x: middle } : { ...s, y: middle });
+      dimmed.push(horizontal ? { ...s, x: top, x0: base } : { ...s, y: top, y0: base });
+    }
+    return [...drawing.dimmed(dimmed), ...drawing.lit(lit)];
+  }
+
+  /**
+   * How many of a series' rows in each bin `selected` holds, and their
+   * weight, and how many rows each bin has: a pass over the rows it
+   * counted, binning the selected ones, kept while the selection and the
+   * counts are the same.
+   */
+  #picked(bins: Bins, selected: Uint8Array): Picked {
+    let byCounts = picks.get(selected);
+    if (!byCounts) {
+      byCounts = new WeakMap();
+      picks.set(selected, byCounts);
+    }
+    // A series' counts are its own, kept as long as what it counted.
+    const known = byCounts.get(bins.counts);
+    if (known) return known;
+    const weights = this.#weights();
+    // Without weights, a bin's count is its rows; with them, its rows are counted once.
+    let all = weights ? this.#rows.get(bins.counts) : bins.counts;
+    if (!all) {
+      all = this.#inBins(bins, undefined, weights).rows;
+      this.#rows.set(bins.counts, all);
+    }
+    const picked = { ...this.#inBins(bins, selected, weights), all };
+    byCounts.set(bins.counts, picked);
+    return picked;
+  }
+
+  /**
+   * How many of a series' rows are in each bin, and their weight: those
+   * `selected` holds, or every row the series counted.
+   */
+  #inBins(
+    { edges, rows, code }: Bins,
+    selected: Uint8Array | undefined,
+    weights: NumericArray | undefined,
+  ): { rows: Float64Array; weights: Float64Array } {
+    const count = Math.max(0, edges.length - 1);
+    const [held, weighed] = [new Float64Array(count), new Float64Array(count)];
+    if (count === 0) return { rows: held, weights: weighed };
+    const values = this.table.numbers(this.#field as never);
+    const codes = code < 0 ? undefined : this.table.categories(this.spec.series as never).codes;
+    const step = this.#explicit ? 0 : evenStep(edges);
+    const length = rows ? rows.length : values.length;
+    for (let k = 0; k < length; k++) {
+      const row = rows ? rows[k]! : k;
+      if ((selected && selected[row] !== 1) || (codes && codes[row] !== code)) continue;
+      // As counted: rows without a usable weight are in no bin.
+      const weight = weights ? weights[row]! : 1;
+      if (!(weight >= 0 && weight < Infinity)) continue;
+      const value = values[row]!;
+      const at = step > 0 ? evenBinOf(edges, step, value) : binOf(edges, value);
+      if (at < 0) continue;
+      held[at]!++;
+      weighed[at]! += weight;
+    }
+    return { rows: held, weights: weighed };
+  }
+
+  /**
    * A series' bins as an area: its top stepping across each bin (`step`),
    * or through the bins' centers, down to zero or the series below it,
    * outlined along its top. Bins without a measure (a filled stack's empty
    * bins) or an edge the binned axis can place break it.
    */
-  #outline(s: Series, frame: Frame, step: boolean, fillOpacity: number): AreaGeometry {
+  #outline(
+    s: Series,
+    frame: Frame,
+    step: boolean,
+    fillOpacity: number,
+  ): (AreaGeometry | LineGeometry)[] {
     const horizontal = this.#horizontal;
     const along = horizontal ? frame.y : frame.x;
     const across = horizontal ? frame.x : frame.y;
@@ -471,15 +627,36 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
     const lower = frame.polyline(s.key, "lower");
     upper.reset();
     lower.reset();
-    const add = (position: number, top: number, base: number) => {
-      if (horizontal) {
-        upper.push(at(top), position);
-        lower.push(at(base), position);
-      } else {
-        upper.push(position, at(top));
-        lower.push(position, at(base));
+    // A part of the bars (a selection's) is outlined where it has height
+    // only, as a line of its own: along a bin's top, and from it to the
+    // next unless neither has height.
+    const flat = this.#flats.get(tops);
+    const outline = flat && frame.polyline(s.key, "outline");
+    outline?.reset();
+    let pen = false;
+    const point = (position: number, top: number) =>
+      horizontal ? ([at(top), position] as const) : ([position, at(top)] as const);
+    const draw = (
+      from: readonly [number, number],
+      to: readonly [number, number],
+      drawn: boolean,
+    ) => {
+      if (!outline) return;
+      if (!drawn) pen = false;
+      else {
+        if (!pen) {
+          outline.break();
+          outline.push(...from);
+        }
+        outline.push(...to);
+        pen = true;
       }
     };
+    const add = (position: number, top: number, base: number) => {
+      upper.push(...point(position, top));
+      lower.push(...point(position, base));
+    };
+    let last: { at: readonly [number, number]; flat: boolean } | undefined;
     for (let b = 0; b < s.length; b++) {
       const top = tops[b]!;
       const base = bases ? bases[b]! : 0;
@@ -488,12 +665,17 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
       if (!(Number.isFinite(top) && Number.isFinite(base) && Number.isFinite(from + to))) {
         upper.break();
         lower.break();
+        [pen, last] = [false, undefined];
         continue;
       }
       add(from, top, base);
       if (step) add(to, top, base);
+      const bin = { start: point(from, top), end: point(to, top), flat: flat?.[b] === 1 };
+      if (last) draw(last.at, bin.start, !(last.flat && bin.flat));
+      if (step) draw(bin.start, bin.end, !bin.flat);
+      last = { at: bin.end, flat: bin.flat };
     }
-    return {
+    const area: AreaGeometry = {
       kind: "area",
       draw: areaDrawing,
       key: s.key,
@@ -502,9 +684,20 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
       upper,
       lower,
       baseline: low,
-      stroke: s.color,
+      stroke: outline ? null : s.color,
       strokeWidth: frame.theme.lineWidth,
     };
+    if (!outline) return [area];
+    const line: LineGeometry = {
+      kind: "line",
+      draw: lineDrawing,
+      key: `${s.key}|outline`,
+      stroke: s.color,
+      strokeWidth: frame.theme.lineWidth,
+      dash: undefined,
+      path: outline,
+    };
+    return [area, line];
   }
 
   /**
@@ -657,7 +850,10 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
     };
   }
 
-  /** A bin's range and what its bar measures. */
+  /**
+   * A bin's range and what its bar measures; while a selection is drawn,
+   * how many of its rows (and how much of its weight) are selected.
+   */
   pointText(series: Series, row: number, format: AxisFormat): string {
     const { edges, counts } = this.#binsOf(series);
     const along = this.#horizontal ? format.y : format.x;
@@ -669,7 +865,19 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
       if (this.spec.cumulative) for (let b = 0; b < row; b++) raw += counts[b]!;
       value += ` share (${format.value(raw)} raw)`;
     }
-    return `${along(edges[start]!)} – ${along(edges[row + 1]!)}: ${this.spec.cumulative ? "cumulative " : ""}${value}`;
+    const text = `${along(edges[start]!)} – ${along(edges[row + 1]!)}: ${this.spec.cumulative ? "cumulative " : ""}${value}`;
+    const picked = this.#selected.get(series);
+    if (!picked) return text;
+    let [rows, all, selected, weight] = [0, 0, 0, 0];
+    for (let b = start; b <= row; b++) {
+      rows += picked.rows[b]!;
+      all += picked.all[b]!;
+      selected += picked.weights[b]!;
+      weight += counts[b]!;
+    }
+    const f = format.value;
+    const field = this.spec.weight;
+    return `${text}; ${f(rows)} of ${f(all)} ${all === 1 ? "row" : "rows"} selected${field === undefined ? "" : `, ${field} ${f(selected)} of ${f(weight)}`}`;
   }
 
   /**
@@ -727,16 +935,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
 
   /** The bins a series of this mark was counted in. */
   #binsOf(series: Series): Bins {
-    return (
-      this.#bins.get(series.values) ?? {
-        edges: NO_BINS,
-        counts: NO_BINS,
-        total: 0,
-        size: 0,
-        inBins: 0,
-        finite: 0,
-      }
-    );
+    return this.#bins.get(series.values) ?? { edges: NO_BINS, ...NOTHING };
   }
 
   /** The `weight` field's values, when rows count as their weights. */
@@ -862,7 +1061,7 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
         total += weight;
         inBins++;
       }
-      counted.push({ counts, total, size: length, inBins, finite });
+      counted.push({ counts, total, size: length, inBins, finite, rows, code: -1 });
     }
     return counted;
   }
@@ -925,6 +1124,8 @@ export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
             size: buffer[base]!,
             finite: buffer[base + 2]!,
             inBins: buffer[base + 3]!,
+            rows,
+            code: field === undefined ? -1 : code,
           },
         ];
       }),

@@ -93,7 +93,8 @@ export const areaDrawing: Drawing<AreaGeometry> = {
     context.fillStyle = area.fill;
     context.fill();
     context.globalAlpha = 1;
-    if (area.strokeWidth === 0) return;
+    // As in SVG: an outline when the area has one, else only dots for isolated points.
+    if (area.strokeWidth === 0 || (!area.stroke && !hasIsolated(area.upper))) return;
     context.beginPath();
     traceAreaOutline(context, area);
     context.strokeStyle = area.stroke ?? area.fill;

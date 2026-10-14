@@ -19,12 +19,16 @@ import type { ChartEvents } from "../../src/dom/events.ts";
 import { createGrid, type Grid } from "../../src/dom/grid.ts";
 import { createGridModel } from "../../src/grid/model.ts";
 import { area } from "../../src/marks/area.ts";
+import { boxplot } from "../../src/marks/boxplot.ts";
+import { histogram } from "../../src/marks/histogram.ts";
 import { line } from "../../src/marks/line.ts";
 import type { ChartMark } from "../../src/marks/mark.ts";
+import { pie } from "../../src/marks/pie.ts";
 import { point } from "../../src/marks/point.ts";
 import { facet } from "../../src/model/facet.ts";
 import { DIM } from "../../src/model/highlight.ts";
 import { rowSelection } from "../../src/model/row-selection.ts";
+import { renderToPDF } from "../../src/pdf.ts";
 import type { PointGeometry } from "../../src/scene/scene.ts";
 import { MOUSE, modelOf } from "./helpers.ts";
 
@@ -464,5 +468,79 @@ describe("row selection across charts and grids", () => {
     a.destroy();
     store.set("focus", selectWhere(col("x").lt(5)));
     expect(changes).toHaveLength(1);
+  });
+
+  it("show a brushed scatter's rows in a histogram and a box plot following it, and say so", async () => {
+    const source = table({
+      x: Float64Array.from({ length: 40 }, (_, i) => i),
+      y: Float64Array.from({ length: 40 }, (_, i) => (i * 7) % 40),
+      g: Array.from({ length: 40 }, (_, i) => (i % 2 ? "odd" : "even")),
+    }) as unknown as Table;
+    const store = selectionStore(source);
+    const scatter = chart({
+      marks: [point(source, { x: "x", y: "y" })],
+      interaction: { brush: "x" },
+      rowSelection: rowSelection({ store, channel: "focus" }),
+    });
+    const counts = chart({
+      marks: [histogram(source, { x: "x", bins: [0, 10, 20, 30, 40] })],
+      rowSelection: rowSelection({ store, channel: "focus", events: [] }),
+    });
+    const boxes = chart({
+      marks: [boxplot(source, { x: "g", y: "y" })],
+      rowSelection: rowSelection({ store, channel: "focus", events: [] }),
+    });
+    await scatter.loading;
+    brush(scatter, 4.5, 14.5);
+    await frames();
+    // Bins 0-10 and 10-20 hold 5 brushed rows each: half their bars, the rest dimmed.
+    const svg = counts.toSVG();
+    expect(svg).toContain(`fill-opacity="${DIM}"`);
+    expect(counts.root.querySelector(`svg [fill-opacity="${DIM}"]`)).not.toBeNull();
+    const [panel] = modelOf(counts).panels();
+    const inspection = modelOf(counts).inspect(
+      panel!.x.map(5),
+      panel!.plot.y + panel!.plot.height - 2,
+    );
+    expect(inspection?.points[0]?.text).toBe("0 – 10: 10; 5 of 10 rows selected");
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const description = (target: Chart) =>
+      document.getElementById(target.root.getAttribute("aria-describedby")!.split(" ")[0]!)
+        ?.textContent ?? target.root.textContent;
+    expect(description(boxes)).toContain("10 of 40 rows selected.");
+    // Box plots draw the brushed rows' own boxes over the whole ones, dimmed.
+    const geometry = modelOf(boxes).scene(() => 0).panels[0]!.marks;
+    expect(geometry.some((g) => g.key.includes("\u0001on|box"))).toBe(true);
+    // Exports draw what the chart shows.
+    const pdf = new TextDecoder("latin1").decode(renderToPDF(counts));
+    expect(pdf).toMatch(/\/ca 0\.25/);
+    const png = await counts.toPNG();
+    expect(png.size).toBeGreaterThan(0);
+  });
+
+  it("select a pie slice's rows by clicking it, and draw each slice's selected share", async () => {
+    const source = table({
+      kind: ["a", "a", "b", "b", "b"],
+      amount: [1, 2, 3, 4, 5],
+    }) as unknown as Table;
+    const store = selectionStore(source);
+    const slices = chart({
+      marks: [pie(source, { category: "kind", value: "amount", labels: false })],
+      rowSelection: rowSelection({ store, channel: "focus" }),
+    });
+    await slices.loading;
+    const item = modelOf(slices).items!.result()!.item(1);
+    press(slices.root, "pointerdown", item.px, item.py);
+    press(slices.root, "pointerup", item.px, item.py);
+    expect(rowsOf(store.get("focus"), source)).toEqual([0, 1]);
+    await frames();
+    const arcs = modelOf(slices)
+      .scene(() => 0)
+      .panels[0]!.marks.filter((g) => g.kind === "arc")
+      .map((g) => g.key);
+    expect(arcs).toEqual(["pie-dimmed", "pie"]);
+    expect(modelOf(slices).items!.result()!.item(1).text).toBe(
+      "3 (20%); 2 of 2 rows selected, amount 3 of 3",
+    );
   });
 });

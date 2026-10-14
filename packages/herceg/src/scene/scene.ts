@@ -50,6 +50,14 @@ interface DrawingBase<G extends Geometry> {
    * more. Drawings of many elements (one circle per point) leave it out.
    */
   readonly elements?: (geometry: G, context: SvgContext) => SvgElement[] | undefined;
+  /**
+   * For a drawing of the geometry's own drawing faded or clipped (a
+   * highlight's): the fraction of its opacity it is drawn at, and the
+   * rectangles (x, y, width, height each) it is drawn within, for
+   * renderers that draw geometry from its fields (PDF).
+   */
+  readonly opacity?: number | undefined;
+  readonly clip?: readonly number[] | undefined;
 }
 
 /** Data, drawn with the other marks in SVG or on a canvas, clipped to the plot. */
@@ -422,6 +430,12 @@ export interface ArcGeometry extends Geometry {
   fillOpacity: number;
   /** Space between neighboring sectors, in pixels. */
   gap: number;
+  /**
+   * For sectors that are parts of others along their radius (a selection's
+   * share of a slice): each one's whole's outer radius, which its gap is
+   * resolved at, so that the parts keep the whole's sides.
+   */
+  rims?: Float32Array | undefined;
   /** A pie's slices in scenes of charts that animate changed values. */
   slices?: PieSlices | undefined;
 }
