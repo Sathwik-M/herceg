@@ -96,18 +96,26 @@ export async function accessibilityTree(
     await (await context.frame()).evaluate(
       () => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve))),
     );
-  const top =
-    engine === "chromium"
-      ? await chromeTree(context)
-      : engine === "firefox"
-        ? await firefoxTree(context)
-        : await webkitTree(context);
   const found: Node[] = [];
   const find = (node: Node) => {
     if (node.role === root) found.push(node);
     node.children.forEach(find);
   };
-  top.forEach(find);
+  // WebKit can still have an empty accessibility tree after the page's next
+  // animation frame. Wait for the requested root, with a bound for missing
+  // roles; duplicate roots and protocol errors still fail immediately.
+  const deadline = Date.now() + 1_000;
+  for (;;) {
+    const top =
+      engine === "chromium"
+        ? await chromeTree(context)
+        : engine === "firefox"
+          ? await firefoxTree(context)
+          : await webkitTree(context);
+    top.forEach(find);
+    if (found.length > 0 || engine !== "webkit" || Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
   if (found.length !== 1)
     throw new Error(`accessibilityTree: ${found.length} nodes of role ${root} in ${engine}`);
   const lines: string[] = [];

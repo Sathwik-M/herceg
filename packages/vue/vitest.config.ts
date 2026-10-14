@@ -2,6 +2,8 @@ import { defineConfig } from "vitest/config";
 import { browsers } from "../../scripts/browser/browsers.ts";
 
 export default defineConfig({
+  // Discovering dependencies mid-test can reload the page and lose module mocks.
+  optimizeDeps: { include: ["vue"] },
   resolve: {
     alias: [
       { find: "herceg", replacement: new URL("../herceg/src/index.ts", import.meta.url).pathname },

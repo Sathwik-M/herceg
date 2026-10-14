@@ -4,6 +4,9 @@ import { browsers } from "../../scripts/browser/browsers.ts";
 const engine = (file: string) => new URL(`../herceg/src/${file}`, import.meta.url).pathname;
 
 export default defineConfig({
+  // Prebundle every entry used by the tests, including the JSX transform.
+  // Discovering dependencies mid-test can reload the page and lose module mocks.
+  optimizeDeps: { include: ["react", "react/jsx-runtime", "react-dom", "react-dom/client"] },
   resolve: {
     // Exact matches, so "herceg" does not also rewrite "herceg/grid".
     alias: [
