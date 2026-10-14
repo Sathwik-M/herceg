@@ -403,8 +403,7 @@ describe("histogram options", () => {
   it("refuses untyped invalid orientation and layout forms at construction", () => {
     const data = table({ v: [1] });
     for (const [spec, error] of [
-      [{ type: "histogram" }, /histogram: needs exactly one of x and y/],
-      [{ type: "histogram", x: "v", y: "v" }, /histogram: needs exactly one of x and y/],
+      [{ type: "histogram" }, /histogram: needs x, y, or both/],
       [{ type: "histogram", y: "v", axis: "right" }, /histogram axis: .*no right axis/],
       [{ type: "histogram", x: "v", dodge: true, stack: true }, /dodge or stack, not both/],
       [{ type: "histogram", x: "v", commonNorm: 1 }, /commonNorm: expected true or false/],

@@ -21,7 +21,7 @@ export interface ChartProps extends Omit<ChartUpdate, "marks" | "renderTooltip">
   renderTooltip?: Snippet<[Inspection]> | undefined;
   /** Marks built with herceg's functions; mark components among the children are added after them. */
   marks?: readonly ChartMark[] | undefined;
-  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Boxen>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Line3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
+  /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <Contour>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Boxen>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Line3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
   children?: Snippet | undefined;
   class?: ClassValue | undefined;
   /** Style of the container. Without a `height` prop or style height, the chart is 320 px tall. */
@@ -60,44 +60,14 @@ export function canonical(value: unknown): string {
 }
 
 /**
- * Mark types whose spec and table describe them completely. Custom marks,
+ * Same mark when the spec and the tables are unchanged, so caches survive
+ * updates: every built-in mark's spec and tables describe it. Custom marks,
  * whose `draw` may close over new values, are only the same mark as
  * themselves.
  */
-const PORTABLE = new Set([
-  "line",
-  "area",
-  "bar",
-  "point",
-  "heatmap",
-  "errorbar",
-  "candlestick",
-  "histogram",
-  "pie",
-  "boxplot",
-  "boxen",
-  "violin",
-  "treemap",
-  "sunburst",
-  "gauge",
-  "funnel",
-  "radar",
-  "sankey",
-  "graph",
-  "geoshape",
-  "geopoint",
-  "point3d",
-  "line3d",
-  "surface",
-  "rule",
-  "region",
-  "text",
-]);
-
-/** Same mark when the spec and the tables are unchanged, so caches survive updates. */
 export function sameMark(a: ChartMark, b: ChartMark): boolean {
   if (a === b) return true;
-  if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
+  if (a.spec.type === "custom" || a.constructor !== b.constructor) return false;
   const [tables, others] = [tablesOf(a), tablesOf(b)];
   return (
     tables.length === others.length &&

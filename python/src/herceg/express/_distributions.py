@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import math
+import numbers
 import sys
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypedDict
 
 import numpy as np
 
+from .. import _data as hg_data
 from .._chart import Axis, Chart, HelperOptions
 from .._data import Column
 from . import _numerics as numerics
@@ -94,10 +96,12 @@ def histplot(
     element: Element = "bars",
     kde: bool = False,
     kde_options: KdeOptions | None = None,
+    colors: str | Sequence[str] | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A histogram of ``x`` (or, horizontal, of ``y``), per ``series``.
+    """A histogram of ``x`` (or, horizontal, of ``y``), per ``series``; with
+    both, a 2D histogram's cells.
 
     Bins are Seaborn's, chosen from all the rows: ``numpy.histogram_bin_edges``
     with ``bins`` (a count, a NumPy rule such as ``"auto"``, or edges),
@@ -114,7 +118,45 @@ def histplot(
     their centers. ``kde=True`` adds each series' kernel density (see
     ``kdeplot``; ``kde_options`` takes its options, with ``cut`` 0), scaled
     to its bins, for layered series, along y for horizontal histograms.
+
+    With ``x`` and ``y`` both, cells count the rows in a bin of each, colored
+    by ``colors`` from 0 to the fullest cell, as Seaborn's bivariate
+    histograms: each axis' edges from its own values, with ``bins``,
+    ``binwidth``, ``binrange``, and ``discrete`` for both axes or, as pairs,
+    for each (two bins are a pair: give a pair of edges for edges of two).
+    Cells holding nothing are empty. ``normalize`` measures counts per unit
+    of bin area for ``"frequency"`` and ``"density"``. It takes no series
+    (facet instead), cumulative counts, multiples, elements, or kde.
     """
+    if x is not None and y is not None:
+        unused = {
+            "series": series is not None,
+            "cumulative": cumulative,
+            "kde": kde,
+            "multiple": multiple != "layer",
+            "element": element != "bars",
+            "common_norm": common_norm,
+        }
+        given = next((name for name, on in unused.items() if on), None)
+        if given == "series":
+            raise ValueError(
+                "histplot series: a bivariate histplot counts one distribution per panel; "
+                "facet by facet_row or facet_column instead"
+            )
+        if given is not None:
+            raise ValueError(
+                f"histplot {given}: for histograms of x or y alone; a bivariate histplot takes "
+                "none, so drop it"
+            )
+        check_choice(normalize, "histplot normalize", tuple(_MEASURES))
+        return _histplot_2d(
+            data, x, y, weight, normalize, bins, binwidth, binrange, discrete, colors, options
+        )
+    if colors is not None:
+        raise ValueError(
+            "histplot colors: colors the cells of a bivariate histplot, of x and y; "
+            "bars take palette"
+        )
     axis, name = _one_axis(x, y, "histplot")
     check_choice(normalize, "histplot normalize", tuple(_MEASURES))
     check_choice(multiple, "histplot multiple", ("layer", "stack", "dodge", "fill"))
@@ -322,14 +364,27 @@ def kdeplot(
     filled: bool = False,
     common_norm: bool = False,
     cumulative: bool = False,
+    levels: int | Sequence[float] | None = None,
+    thresh: float | None = None,
     colors: str | Sequence[str] | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """Gaussian kernel density estimates of ``x`` per ``series`` (of ``y``
     alone, along y, read by y in tooltips and the keyboard); with both
-    ``x`` and ``y``, a bivariate density drawn as a heatmap over a
-    ``grid_size`` by ``grid_size`` grid.
+    ``x`` and ``y``, a bivariate density on a ``grid_size`` by
+    ``grid_size`` grid, drawn as contour lines (``filled=True``: bands) at
+    Seaborn's levels.
+
+    Bivariate levels are iso-proportions of the density's mass, as
+    Seaborn's are: ``levels`` of them from ``thresh`` (0.05) to 1 (10 by
+    default), or the proportions themselves, from 0 to 1. Each is drawn at
+    the density bounding the region of highest density that holds 1 - p of
+    the mass, so the lowest of the default levels encloses 95% of it. The
+    densities are resolved in NumPy, and ``hx.statistics(chart)`` records
+    both. With facets, each panel's density is on one grid, and the levels
+    are resolved over every panel's together, so a contour is the same
+    density in each.
 
     Densities are SciPy's ``gaussian_kde``'s: the kernel's covariance is the
     sample's times the square of ``bw_method``'s factor (Scott's rule
@@ -355,11 +410,19 @@ def kdeplot(
             clip,
             cumulative,
             colors,
+            10 if levels is None else levels,
+            0.05 if thresh is None else thresh,
+            filled,
             facet_row,
             facet_column,
             options,
             weight,
         )
+    for name, given in (("levels", levels), ("thresh", thresh)):
+        if given is not None:
+            raise ValueError(
+                f"kdeplot {name}: sets the contours of a bivariate density, of x and y; drop it"
+            )
     axis, name = _one_axis(x, y, "kdeplot")
     source = Source(data)
     column = source.column(name, f"kdeplot {axis}", ("number", "time"))
@@ -614,6 +677,141 @@ def rugplot(
 # Shared --------------------------------------------------------------------------
 
 
+def _histplot_2d(
+    data: Any,
+    x: str,
+    y: str,
+    weight: str | None,
+    normalize: Normalize,
+    bins: Any,
+    binwidth: Any,
+    binrange: Any,
+    discrete: Any,
+    colors: str | Sequence[str] | None,
+    options: HelperOptions,
+) -> Chart:
+    """histplot of two columns: cells counting pairs in each axis' bins."""
+    facet_row, facet_column = facets(options, "histplot")
+    source = Source(data)
+    xc = source.column(x, "histplot x", ("number", "time"))
+    yc = source.column(y, "histplot y", ("number", "time"))
+    weights_column = (
+        source.column(weight, "histplot weight", ("number",)) if weight is not None else None
+    )
+    variables = variables_of(
+        source,
+        "histplot",
+        facet_row,
+        facet_column,
+        None,
+        axes=[x, y, *([weight] if weight is not None else [])],
+    )
+    rows = complete(len(xc), xc, yc, weights_column, levels_of=list(variables.values()))
+    dropped = len(xc) - len(rows)
+    xv, yv = values(xc), values(yc)
+    w = values(weights_column) if weights_column is not None else None
+    if w is not None and np.any(w[rows] < 0):
+        raise ValueError(
+            f"histplot weight: column {weight!r} holds negative values; "
+            "weights count rows, from 0 up"
+        )
+
+    def per_axis(option: Any, i: int, scalar: Callable[[Any], bool]) -> Any:
+        """Seaborn's bivariate bin parameters: one for both axes, or a pair, one each."""
+        if scalar(option):
+            return option
+        return option[i]
+
+    edges = []
+    warned = False
+    for i, v in enumerate((xv, yv)):
+        axis_bins = (
+            bins[i] if isinstance(bins, (list, tuple, np.ndarray)) and len(bins) == 2 else bins
+        )
+        axis_width = per_axis(binwidth, i, lambda o: o is None or isinstance(o, numbers.Real))
+        axis_range = per_axis(binrange, i, lambda o: o is None or isinstance(o[0], numbers.Real))
+        axis_discrete = per_axis(discrete, i, lambda o: isinstance(o, bool))
+        if (
+            w is not None
+            and isinstance(axis_bins, str)
+            and axis_bins == "auto"
+            and axis_width is None
+            and not axis_discrete
+        ):
+            # NumPy estimates no bin count for weighted data, as for one variable.
+            if not warned:
+                warnings.warn(
+                    'histplot bins: "auto" bins cannot follow weights; using bins=10, '
+                    "which you will likely want to adjust",
+                    UserWarning,
+                    stacklevel=3,
+                )
+                warned = True
+            axis_bins = 10
+        if isinstance(axis_bins, (list, tuple, np.ndarray)):
+            edges.append(np.asarray(axis_bins, dtype=float))
+        elif len(rows):
+            edges.append(
+                numerics.bin_edges(
+                    v[rows],
+                    None if w is None else w[rows],
+                    axis_bins,
+                    axis_width,
+                    axis_range,
+                    axis_discrete,
+                )
+            )
+        else:
+            edges.append(np.array([0.0, 1.0]))
+        # Cells are counted for every pair of bins: refused past the mark's limit first.
+        if len(edges[-1]) - 1 > numerics.MAX_BINS:
+            raise ValueError(
+                f"histplot bins: {len(edges[-1]) - 1} bins along {'xy'[i]}, past the "
+                f"{numerics.MAX_BINS} a histogram takes along each axis; give fewer"
+            )
+    x_edges, y_edges = edges
+    table = rows_table(variables, rows)
+    table[x] = number_column(xv[rows], xc.kind)
+    table[y] = number_column(yv[rows], yc.kind)
+    if weight is not None and w is not None:
+        table[weight] = number_column(w[rows])
+    counts, _, _ = np.histogram2d(
+        xv[rows], yv[rows], bins=[x_edges, y_edges], weights=None if w is None else w[rows]
+    )
+    measured = _MEASURES[normalize]
+    sentence = (
+        f"Cells measure the {normalize} of rows by {x} and {y}"
+        + (f", each weighted by {weight}," if weight is not None else "")
+        + f" in {len(x_edges) - 1} by {len(y_edges) - 1} bins from {_number(x_edges[0])} to "
+        f"{_number(x_edges[-1])} and {_number(y_edges[0])} to {_number(y_edges[-1])}."
+        + dropped_sentence(dropped, [x, y, *variables])
+    )
+    chart = make_chart(table, options, sentence=sentence, x_label=x, y_label=y)
+    chart.histogram(
+        x,
+        y=y,
+        bins={"x": [float(e) for e in x_edges], "y": [float(e) for e in y_edges]},
+        weight=weight,
+        normalize=normalize,
+        colors=colors,
+        label=measured,
+    )
+    filled = np.argwhere(counts > 0)
+    cells = {
+        f"{x} from": x_edges[filled[:, 0]],
+        f"{x} to": x_edges[filled[:, 0] + 1],
+        f"{y} from": y_edges[filled[:, 1]],
+        f"{y} to": y_edges[filled[:, 1] + 1],
+        "count": counts[filled[:, 0], filled[:, 1]],
+    }
+    tables: dict[str, Mapping[str, np.ndarray]] = {
+        "x edges": {"edges": x_edges},
+        "y edges": {"edges": y_edges},
+        "cells": cells,
+    }
+    return record(chart, Statistics("histplot", sentence, tables, None, dropped))
+
+
 def _one_axis(x: str | None, y: str | None, function: str) -> tuple[str, str]:
     if (x is None) == (y is None):
         raise ValueError(f"{function} needs exactly one of x and y")
@@ -836,6 +1034,139 @@ def densities(
     return table, note, column
 
 
+class Bivariate(TypedDict):
+    """A bivariate density on one grid, per panel, and the contours to draw."""
+
+    xs: np.ndarray
+    ys: np.ndarray
+    #: Per panel with a density: its key among the variables, and its grid indexed [y, x].
+    panels: list[tuple[tuple[int, ...], np.ndarray]]
+    #: The iso-proportions asked for, and the densities they resolve to.
+    proportions: np.ndarray
+    thresholds: np.ndarray
+    sentence: str
+
+
+def bivariate(
+    xv: np.ndarray,
+    yv: np.ndarray,
+    variables: Mapping[str, Levels],
+    rows: np.ndarray,
+    x: str,
+    y: str,
+    *,
+    w: np.ndarray | None = None,
+    bw_method: BandwidthMethod,
+    bw_adjust: float,
+    cut: float,
+    grid_size: int,
+    clip: tuple[float | None, float | None] | None,
+    levels: int | Sequence[float],
+    thresh: float,
+    filled: bool,
+    role: str,
+) -> Bivariate:
+    """The bivariate kernel density of each panel's rows on one grid (SciPy's
+    gaussian_kde, as Seaborn's, rows weighted by ``w``), and Seaborn's contour
+    levels of it: the iso-proportions, and the densities they bound over
+    every panel's."""
+    if not (bw_adjust > 0):
+        raise ValueError(
+            f"{role} bw_adjust: expected a positive number; received {shown(bw_adjust)}"
+        )
+    check_grid_size(grid_size, f"{role} grid_size")
+    if isinstance(levels, bool) or not isinstance(levels, (int, Sequence, np.ndarray)):
+        raise ValueError(
+            f"{role} levels: expected a count or iso-proportions from 0 to 1; "
+            f"received {shown(levels)}"
+        )
+    if isinstance(levels, int):
+        if levels < 1:
+            raise ValueError(
+                f"{role} levels: expected a count of at least 1; received {shown(levels)}"
+            )
+        if not (isinstance(thresh, (int, float)) and 0 <= thresh <= 1):
+            raise ValueError(
+                f"{role} thresh: expected a proportion from 0 to 1; received {shown(thresh)}"
+            )
+        proportions = np.linspace(thresh, 1, levels)
+    else:
+        proportions = np.sort(np.asarray(levels, dtype=np.float64))
+        if len(proportions) == 0 or not (
+            np.all(np.isfinite(proportions)) and proportions[0] >= 0 and proportions[-1] <= 1
+        ):
+            raise ValueError(
+                f"{role} levels: expected iso-proportions from 0 to 1; received {shown(levels)}"
+            )
+    if len(rows) < 3:
+        raise ValueError(f"a bivariate {role} needs at least three complete rows")
+    whole = np.vstack([xv[rows], yv[rows]])
+    spread = numerics.kernel_covariance(whole, None, bw_method, bw_adjust)
+    limits = clip or (None, None)
+    xs = numerics.support(whole[0], math.sqrt(spread[0, 0]), cut, limits, grid_size)
+    ys = numerics.support(whole[1], math.sqrt(spread[1, 1]), cut, limits, grid_size)
+    panels: list[tuple[tuple[int, ...], np.ndarray]] = []
+    for key, members in group(list(variables.values()), rows):
+        # Rows of no weight carry no density.
+        if w is not None:
+            members = members[w[members] > 0]
+        if len(members) < 3:
+            continue
+        pair = np.vstack([xv[members], yv[members]])
+        mass = None if w is None else w[members]
+        covariance = numerics.kernel_covariance(pair, mass, bw_method, bw_adjust)
+        if not np.isfinite(covariance).all() or np.linalg.det(covariance) <= 0:
+            continue
+        try:
+            grid = numerics.density_2d(pair[0], pair[1], mass, covariance, xs, ys)
+        except np.linalg.LinAlgError:
+            # A covariance rounding leaves short of positive definite: singular too.
+            continue
+        panels.append((key, grid))
+    pooled = np.concatenate([grid.ravel() for _, grid in panels]) if panels else np.zeros(0)
+    thresholds = (
+        numerics.mass_levels(pooled, proportions) if len(pooled) else np.zeros(len(proportions))
+    )
+    effective = np.unique(thresholds)
+    # Without a density (every panel's rows too few or too alike), there is nothing to band.
+    if panels and filled and len(effective) < 2:
+        raise ValueError(
+            f"{role} levels: filled contours need two levels or more, a band between each two; "
+            f"these resolve to {len(effective)}"
+        )
+    rule = (
+        "Scott's rule"
+        if bw_method == "scott"
+        else "Silverman's rule"
+        if bw_method == "silverman"
+        else f"factor {bw_method:g}"
+    )
+    held = [f"{(1 - p) * 100:.0f}%" for p in proportions]
+    span = held[0] if len(held) == 1 else f"{held[0]} down to {held[-1]}"
+    sentence = (
+        f"{'Bands' if filled else 'Lines'} show the bivariate Gaussian kernel density of {x} and "
+        f"{y} (SciPy's gaussian_kde, {rule}{f' × {bw_adjust:g}' if bw_adjust != 1 else ''}) on a "
+        f"{grid_size} by {grid_size} grid, at {len(proportions)} "
+        f"{'level' if len(proportions) == 1 else 'levels'} bounding the regions of highest "
+        f"density holding {span} of its mass"
+        + (", resolved over every panel's density" if len(panels) > 1 else "")
+        + (
+            f"; {len(proportions) - len(effective)} of them coincide"
+            if len(effective) < len(proportions)
+            else ""
+        )
+        + "."
+    )
+    return {
+        "xs": xs,
+        "ys": ys,
+        "panels": panels,
+        "proportions": proportions,
+        "thresholds": thresholds,
+        "sentence": sentence,
+    }
+
+
 def _bivariate(
     data: Any,
     x: str,
@@ -848,12 +1179,15 @@ def _bivariate(
     clip: tuple[float | None, float | None] | None,
     cumulative: bool,
     colors: str | Sequence[str] | None,
+    levels: int | Sequence[float],
+    thresh: float,
+    filled: bool,
     facet_row: str | None,
     facet_column: str | None,
     options: HelperOptions,
     weight: str | None,
 ) -> Chart:
-    """kdeplot of two columns: a density heatmap per facet panel, on one grid."""
+    """kdeplot of two columns: contours of the density of each facet panel, on one grid."""
     if series is not None:
         raise ValueError(
             "kdeplot series: a bivariate kdeplot draws one density per panel; "
@@ -861,11 +1195,6 @@ def _bivariate(
         )
     if cumulative:
         raise ValueError("kdeplot cumulative: a bivariate density cannot be cumulative; drop it")
-    if not (bw_adjust > 0):
-        raise ValueError(
-            f"kdeplot bw_adjust: expected a positive number; received {shown(bw_adjust)}"
-        )
-    check_grid_size(grid_size, "kdeplot grid_size")
     source = Source(data)
     xc = source.column(x, "kdeplot x", ("number",))
     yc = source.column(y, "kdeplot y", ("number",))
@@ -881,65 +1210,68 @@ def _bivariate(
     rows = complete(len(xc), xc, yc, weight_values, levels_of=list(variables.values()))
     w = weights_of(weight_values, rows, weight, "kdeplot")
     dropped = len(xc) - len(rows)
-    xv, yv = values(xc), values(yc)
-    if len(rows) < 3:
-        raise ValueError("a bivariate kdeplot needs at least three complete rows")
-    whole = np.vstack([xv[rows], yv[rows]])
-    spread = numerics.kernel_covariance(whole, None, bw_method, bw_adjust)
-    limits = clip or (None, None)
-    xs = numerics.support(whole[0], math.sqrt(spread[0, 0]), cut, limits, grid_size)
-    ys = numerics.support(whole[1], math.sqrt(spread[1, 1]), cut, limits, grid_size)
-    keys: list[np.ndarray] = []
-    cells_x: list[np.ndarray] = []
-    cells_y: list[np.ndarray] = []
-    cells: list[np.ndarray] = []
-    for key, members in group(list(variables.values()), rows):
-        # Rows of no weight carry no density.
-        if w is not None:
-            members = members[w[members] > 0]
-        pair = np.vstack([xv[members], yv[members]])
-        mass = None if w is None else w[members]
-        if len(members) < 3:
-            continue
-        covariance = numerics.kernel_covariance(pair, mass, bw_method, bw_adjust)
-        if not np.isfinite(covariance).all() or np.linalg.det(covariance) <= 0:
-            continue
-        try:
-            grid = numerics.density_2d(pair[0], pair[1], mass, covariance, xs, ys)
-        except np.linalg.LinAlgError:
-            # A covariance rounding leaves short of positive definite: singular too.
-            continue
-        # Kernels' tails below a billionth of the peak are rounding, not density.
-        grid[grid < grid.max() * 1e-9] = 0
-        gx, gy = np.meshgrid(xs, ys)
-        keys.append(np.tile(np.asarray(key, dtype=np.int64), (grid.size, 1)))
-        cells_x.append(gx.ravel())
-        cells_y.append(gy.ravel())
-        cells.append(grid.ravel())
-    table = keyed_table(variables, _stack(keys, len(variables)))
-    table[x] = number_column(np.concatenate(cells_x) if cells_x else [])
-    table[y] = number_column(np.concatenate(cells_y) if cells_y else [])
+    found = bivariate(
+        values(xc),
+        values(yc),
+        variables,
+        rows,
+        x,
+        y,
+        w=w,
+        bw_method=bw_method,
+        bw_adjust=bw_adjust,
+        cut=cut,
+        grid_size=grid_size,
+        clip=clip,
+        levels=levels,
+        thresh=thresh,
+        filled=filled,
+        role="kdeplot",
+    )
+    xs, ys, panels = found["xs"], found["ys"], found["panels"]
     (density,) = fresh(["density"], {x, y, *variables})
-    table[density] = number_column(np.concatenate(cells) if cells else [])
-    rule = (
-        "Scott's rule"
-        if bw_method == "scott"
-        else "Silverman's rule"
-        if bw_method == "silverman"
-        else f"factor {bw_method:g}"
+    # The density's grid points, a row each, as statistics report them.
+    gx, gy = np.meshgrid(xs, ys)
+    keys = [np.tile(np.asarray(key, dtype=np.int64), (gx.size, 1)) for key, _ in panels]
+    table = keyed_table(variables, _stack(keys, len(variables)))
+    table[x] = number_column(np.tile(gx.ravel(), len(panels)))
+    table[y] = number_column(np.tile(gy.ravel(), len(panels)))
+    table[density] = number_column(
+        np.concatenate([grid.ravel() for _, grid in panels]) if panels else []
     )
     sentence = (
-        f"Cells show the bivariate Gaussian kernel density of {x} and {y} (SciPy's gaussian_kde, "
-        f"{rule}{f' × {bw_adjust:g}' if bw_adjust != 1 else ''}) "
-        f"on a {grid_size} by {grid_size} grid"
-        + (f", each row weighted by {weight}" if weight is not None else "")
-        + "."
+        found["sentence"]
+        + (f" Each row is weighted by {weight}." if weight is not None else "")
         + dropped_sentence(dropped, [x, y, weight, *variables])
     )
-    chart = make_chart(table, options, sentence=sentence, x_label=x, y_label=y)
-    chart.heatmap(x, y, density, colors=colors, label="density")
+    # One panel's grid travels as a matrix: its coordinates once each.
+    drawn: Any = (
+        hg_data.Matrix({x: xs, y: ys, density: panels[0][1]}, x, y)
+        if not variables and panels
+        else table
+    )
+    chart = make_chart(drawn, options, sentence=sentence, x_label=x, y_label=y)
+    thresholds = np.unique(found["thresholds"])
+    if panels:
+        chart.contour(
+            x,
+            y,
+            density,
+            thresholds=[float(t) for t in thresholds],
+            variant="bands" if filled else None,
+            colors=colors,
+            label="density",
+        )
+    levels_table = {"proportion": found["proportions"], "density": found["thresholds"]}
     return record(
-        chart, Statistics("kdeplot", sentence, {"density": readable(table)}, None, dropped)
+        chart,
+        Statistics(
+            "kdeplot",
+            sentence,
+            {"density": readable(table), "levels": levels_table},
+            None,
+            dropped,
+        ),
     )
 
 

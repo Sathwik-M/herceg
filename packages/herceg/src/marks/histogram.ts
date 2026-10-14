@@ -1,3 +1,15 @@
+import {
+  type BinRange,
+  binEdges,
+  binOf,
+  centersOf,
+  checkBins,
+  evenBinOf,
+  evenStep,
+  finiteRange,
+  NO_BINS,
+  NO_RANGE,
+} from "../data/bins.ts";
 import type { NumericArray } from "../data/column.ts";
 import type { CategoryField, NumberField, NumericField, Schema, Table } from "../data/table.ts";
 import { areaDrawing } from "../draw/area.ts";
@@ -5,12 +17,18 @@ import { rectDrawing } from "../draw/rect.ts";
 import { formatNumber } from "../format/format.ts";
 import type { TimeZone } from "../format/zone.ts";
 import type { PositionScale } from "../scale/scale.ts";
-import { niceDomain, tickStep } from "../scale/ticks.ts";
 import { chooseInterval, niceTimeDomain, timeTicks } from "../scale/time.ts";
 import type { AreaGeometry, RectGeometry } from "../scene/scene.ts";
-import type { Frozen, HistogramSpec } from "../spec/spec.ts";
+import type {
+  BinSpec,
+  Frozen,
+  Histogram1DSpec,
+  Histogram2DSpec,
+  HistogramSpec,
+} from "../spec/spec.ts";
 import { BandShares, STILL } from "./dodge.ts";
-import { histogramFormError, MAX_BINS, requireHistogramEdges } from "./histogram-input.ts";
+import { histogramFormError } from "./histogram-input.ts";
+import { Histogram2DMark, type Histogram2DOptions } from "./histogram2d.ts";
 import { definedFields } from "./line.ts";
 import {
   type AxisFormat,
@@ -33,7 +51,7 @@ import type { Series } from "./series.ts";
 
 interface HistogramStyle<S extends Schema> {
   /** Approximate bin count, fixed width/start, or exact finite increasing edges (2–1001). */
-  bins?: number | { step: number; start?: number } | readonly number[];
+  bins?: BinSpec;
   /** Category field: one histogram per value. */
   series?: CategoryField<S>;
   /** A number field each row counts as, in place of 1; rows missing a weight, or with a negative one, are not counted. */
@@ -69,10 +87,19 @@ interface HistogramStyle<S extends Schema> {
    */
   legendGroup?: string;
   id?: string;
+  colors?: never;
+  colorDomain?: never;
+  colorMidpoint?: never;
 }
 
+/**
+ * One number or time field, `x` for vertical bars or `y` for horizontal
+ * bars; or both, for a 2D histogram's cells.
+ */
+export type HistogramOptions<S extends Schema> = Histogram1DOptions<S> | Histogram2DOptions<S>;
+
 /** Exactly one number or time field: x for vertical bars, y for horizontal bars. */
-export type HistogramOptions<S extends Schema> = HistogramStyle<S> &
+export type Histogram1DOptions<S extends Schema> = HistogramStyle<S> &
   (
     | { x: NumericField<S>; y?: never; axis?: "left" | "right" }
     | { y: NumericField<S>; x?: never; axis?: "left" }
@@ -122,7 +149,6 @@ interface PanelCounts {
   counted: Map<number, Counted>[];
 }
 
-const NO_BINS = new Float64Array(0);
 /**
  * Bars counting how many values fall in each bin of x or y. Bins are shared by
  * every series and computed from all of the field's values: round edges
@@ -133,9 +159,9 @@ const NO_BINS = new Float64Array(0);
  * panel counts its own rows, in bins chosen from the rows of the panels
  * sharing its binned axis scale.
  */
-export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
+export class HistogramMark implements Mark<Frozen<Histogram1DSpec>> {
   declare readonly [MARK]: true;
-  readonly spec: Frozen<HistogramSpec>;
+  readonly spec: Frozen<Histogram1DSpec>;
   readonly table: Table<Schema>;
   readonly tooltip: "x" | "y";
   readonly summarizes = true;
@@ -160,7 +186,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
    */
   readonly #bins = new WeakMap<NumericArray, Bins>();
 
-  constructor(input: HistogramSpec, table: Table<Schema>) {
+  constructor(input: Histogram1DSpec, table: Table<Schema>) {
     this.spec = frozen(input);
     // Read from the copy: the caller may change what it passed.
     const spec = this.spec;
@@ -175,26 +201,8 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     if (spec.series !== undefined) requireField(table, spec.series, CATEGORY, "histogram series");
     if (spec.weight !== undefined) requireField(table, spec.weight, ["number"], "histogram weight");
     const { bins } = spec;
-    if (typeof bins === "number" && !(Number.isInteger(bins) && bins >= 1))
-      throw new RangeError(
-        `histogram bins: expected a whole number of at least 1; received ${bins}`,
-      );
-    if (Array.isArray(bins)) {
-      requireHistogramEdges(bins);
-      this.#explicit = Float64Array.from(bins);
-    }
-    const fixed =
-      typeof bins === "object" && !Array.isArray(bins)
-        ? (bins as { step: number; start?: number })
-        : undefined;
-    if (fixed && !(fixed.step > 0 && Number.isFinite(fixed.step)))
-      throw new RangeError(
-        `histogram bins.step: expected a positive number; received ${fixed.step}`,
-      );
-    if (fixed && fixed.start !== undefined && !Number.isFinite(fixed.start))
-      throw new RangeError(
-        `histogram bins.start: expected a finite number; received ${fixed.start}`,
-      );
+    if (bins !== undefined) checkBins(bins, "histogram bins");
+    if (Array.isArray(bins)) this.#explicit = Float64Array.from(bins);
     this.#split = new SeriesSplitter(table, undefined, [this.#field], spec.series, spec.label);
     if (spec.dodge) this.#shares = new BandShares();
   }
@@ -773,7 +781,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     const cached = this.#binned.get(zone);
     if (cached?.table === table && cached.version === table.version) return cached;
     const values = table.numbers(this.#field as never);
-    const edges = this.#edges(finiteRange(values, undefined, RANGE), zone);
+    const edges = this.#edges(finiteRange(values, undefined), zone);
     const binned = { edges, centers: centersOf(edges), counted: this.#countSources(edges) };
     this.#binned.set(zone, { ...binned, table, version: table.version });
     return binned;
@@ -799,14 +807,10 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     )
       return cached;
     const values = table.numbers(this.#field as never);
-    const ranges: { min: number; max: number; finite: number }[] = [];
+    const ranges: BinRange[] = [];
     rows.forEach((panel, p) => {
       const g = groupOf[p]!;
-      ranges[g] = finiteRange(
-        values,
-        panel,
-        ranges[g] ?? { min: Infinity, max: -Infinity, finite: 0 },
-      );
+      ranges[g] = finiteRange(values, panel, ranges[g] ?? NO_RANGE);
     });
     const bins = Array.from(ranges, (range) => {
       const edges = range ? this.#edges(range, zone) : NO_BINS;
@@ -834,8 +838,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   #countSources(edges: Float64Array): Counted[] {
     const values = this.table.numbers(this.#field as never);
     const bins = Math.max(0, edges.length - 1);
-    const step = bins > 0 ? (edges[bins]! - edges[0]!) / bins : 0;
-    const even = !this.#explicit && evenlySpaced(edges, step);
+    const step = this.#explicit ? 0 : evenStep(edges);
     // A loop, not a callback: values a callback reads from outside it cost
     // the counting loop about a tenth more time.
     const weights = this.#weights();
@@ -853,7 +856,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
         const weight = weights ? weights[row]! : 1;
         if (!(weight >= 0 && weight < Infinity)) continue;
         if (Number.isFinite(value)) finite += weight;
-        const at = even ? evenBinOf(edges, step, value) : binOf(edges, value);
+        const at = step > 0 ? evenBinOf(edges, step, value) : binOf(edges, value);
         if (at < 0) continue;
         counts[at]! += weight;
         total += weight;
@@ -875,8 +878,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
     const categories = field === undefined ? undefined : this.table.categories(field as never);
     const codes = categories?.codes;
     const bins = Math.max(0, edges.length - 1);
-    const step = bins > 0 ? (edges[bins]! - edges[0]!) / bins : 0;
-    const even = !this.#explicit && evenlySpaced(edges, step);
+    const step = this.#explicit ? 0 : evenStep(edges);
     const weights = this.#weights();
     // Per code found, in one buffer: row size, in-bin total, finite total,
     // rows in bins, then bin counts.
@@ -904,7 +906,7 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
       if (!(weight >= 0 && weight < Infinity)) continue;
       const value = values[row]!;
       if (Number.isFinite(value)) buffer[base + 2]! += weight;
-      const at = even ? evenBinOf(edges, step, value) : binOf(edges, value);
+      const at = step > 0 ? evenBinOf(edges, step, value) : binOf(edges, value);
       if (at < 0) continue;
       buffer[base + 1]! += weight;
       buffer[base + 3]!++;
@@ -932,34 +934,18 @@ export class HistogramMark implements Mark<Frozen<HistogramSpec>> {
   /**
    * Bin edges covering the `range` of values (from the start, with an
    * explicit one): round values, or calendar boundaries in `zone` for
-   * times; evenly spaced edges when round ones cannot be represented. None
-   * for no values.
+   * times, about log2(n) + 1 of them (Sturges' rule) unless a count is
+   * given. None for no values.
    */
-  #edges({ min, max, finite }: { min: number; max: number; finite: number }, zone: TimeZone) {
+  #edges(range: BinRange, zone: TimeZone): Float64Array {
     if (this.#explicit) return this.#explicit;
-    if (finite === 0) return NO_BINS;
-    const { bins } = this.spec;
     const time = this.table.kind(this.#field as never) === "time";
-    if (typeof bins === "object" && !Array.isArray(bins))
-      return Float64Array.from(fixedEdges(min, max, bins as { step: number; start?: number }));
-    // One value, or values all alike: one bin around them.
-    if (min === max) return Float64Array.from(around(min, time ? 1_800_000 : 0.5));
-    // Sturges' rule unless a count is given; coarser when round edges overflow the limit.
-    const target = Math.min(
-      MAX_BINS,
-      (typeof bins === "number" ? bins : undefined) ??
-        Math.min(50, Math.ceil(Math.log2(finite)) + 1),
-    );
-    for (let count = target; count >= 1; count = Math.floor(count / 2)) {
-      const edges = time ? calendarEdges(min, max, count, zone) : roundEdges(min, max, count);
-      if (valid(edges, min, max)) return Float64Array.from(edges);
-    }
-    return Float64Array.from(evenEdges(min, max, target));
+    const calendar = time
+      ? (min: number, max: number, count: number) => calendarEdges(min, max, count, zone)
+      : undefined;
+    return binEdges(this.spec.bins, range, sturges(range.finite), calendar);
   }
 }
-
-/** A range of no values, to start from. */
-const RANGE = { min: Infinity, max: -Infinity, finite: 0 } as const;
 
 /** A series of no bars (yet), with its own empty values, which name its bins. */
 function withoutBins(key: string, label: string, color: string): Series {
@@ -980,56 +966,9 @@ function withoutBins(key: string, label: string, color: string): Series {
   };
 }
 
-/** The center of each bin; halves first, so centers of edges near the number range's ends stay finite. */
-function centersOf(edges: Float64Array): Float64Array {
-  const bins = Math.max(0, edges.length - 1);
-  const centers = new Float64Array(bins);
-  for (let i = 0; i < bins; i++) centers[i] = edges[i]! / 2 + edges[i + 1]! / 2;
-  return centers;
-}
-
-/**
- * Whether `edges` are `step` apart (all but calendar bins), so that a
- * value's bin is found by division, not search. Counting loops call the two
- * lookups directly rather than through a closure choosing one, which costs
- * them about a tenth more time.
- */
-function evenlySpaced(edges: Float64Array, step: number): boolean {
-  return (
-    edges.length > 1 &&
-    edges.every((edge, i) => Math.abs(edge - (edges[0]! + i * step)) <= step * 1e-9)
-  );
-}
-
-/**
- * `range` widened by the finite values at `rows` (every row without them):
- * the least, the greatest, and how many there are.
- */
-function finiteRange(
-  values: NumericArray,
-  rows: Uint32Array | undefined,
-  range: { readonly min: number; readonly max: number; readonly finite: number },
-): { min: number; max: number; finite: number } {
-  let { min, max, finite } = range;
-  // A whole column, the one chart's case, in a loop of its own.
-  if (!rows) {
-    for (let row = 0; row < values.length; row++) {
-      const value = values[row]!;
-      if (!Number.isFinite(value)) continue;
-      finite++;
-      if (value < min) min = value;
-      if (value > max) max = value;
-    }
-    return { min, max, finite };
-  }
-  for (let k = 0; k < rows.length; k++) {
-    const value = values[rows[k]!]!;
-    if (!Number.isFinite(value)) continue;
-    finite++;
-    if (value < min) min = value;
-    if (value > max) max = value;
-  }
-  return { min, max, finite };
+/** Sturges' rule for `count` values, at most 50 bins. */
+export function sturges(count: number): number {
+  return Math.min(50, Math.ceil(Math.log2(Math.max(1, count))) + 1);
 }
 
 /** Calendar boundaries in `zone`, about `count` bins covering [min, max]. */
@@ -1041,155 +980,45 @@ function calendarEdges(min: number, max: number, count: number, zone: TimeZone):
   return edges;
 }
 
-/** Edges usable for counting: finite, increasing, at most MAX_BINS bins, and covering [min, max]. */
-function valid(edges: readonly number[], min: number, max: number): boolean {
-  if (edges.length < 2 || edges.length - 1 > MAX_BINS) return false;
-  if (!(edges[0]! <= min && edges[edges.length - 1]! >= max)) return false;
-  for (let i = 0; i < edges.length; i++) {
-    if (!Number.isFinite(edges[i]!) || (i > 0 && !(edges[i]! > edges[i - 1]!))) return false;
-  }
-  return true;
-}
-
-/** About `count` bins on multiples of a round step (1, 2, or 5 times a power of ten). */
-function roundEdges(min: number, max: number, count: number): number[] {
-  const [lo, hi] = niceDomain(min, max, count);
-  const step = tickStep(lo, hi, count);
-  const bins = Math.round((hi - lo) / step);
-  return bins >= 1 && bins <= MAX_BINS ? multiples(Math.round(lo / step), step, bins) : [];
-}
-
 /**
- * Edges of fixed width `step` from `start`, or by default from the multiple
- * of `step` at or below the minimum, through the maximum. Values below an
- * explicit start fall outside the bins.
- */
-function fixedEdges(min: number, max: number, bins: { step: number; start?: number }): number[] {
-  const first = Math.floor(min / bins.step);
-  // A start too far out for multiples of the step begins at the minimum.
-  const aligned = bins.start === undefined && Number.isFinite(first * bins.step);
-  const start = bins.start ?? (aligned ? first * bins.step : min);
-  const from = Math.max(min, start);
-  const span = max - start;
-  // Steps too fine for the range widen to keep the bin count bounded.
-  const step = Number.isFinite(span) ? Math.max(bins.step, span / (MAX_BINS - 1)) : bins.step;
-  const count = Number.isFinite(span) ? Math.ceil(span / step - 1e-9) : MAX_BINS;
-  const bounded = Math.min(MAX_BINS - 1, Math.max(1, count));
-  // The last edge must reach the maximum; it may land exactly on it.
-  const build = (n: number) =>
-    aligned && step === bins.step ? multiples(first, step, n) : offsets(start, step, n);
-  let edges = build(bounded);
-  if (edges[edges.length - 1]! < max) edges = build(bounded + 1);
-  if (valid(edges, from, max)) return edges;
-  if (from > max) return [start, start + bins.step];
-  const even = evenEdges(from, max, bounded);
-  return valid(even, from, max) ? even : around(from, 0.5);
-}
-
-/**
- * The edges `index * step` for `count` bins from `first`. On a decimal step
- * (few decimals) they are integers divided by a power of ten, so the edge
- * at 0.3 is exactly 0.3 and the value 0.3 falls in the bin it starts.
- */
-function multiples(first: number, step: number, count: number): number[] {
-  const digits = decimals(step);
-  if (digits > 0 && digits <= 15) {
-    const scale = 10 ** digits;
-    const unit = Math.round(step * scale);
-    if (Number.isSafeInteger(first * unit) && Number.isSafeInteger((first + count) * unit)) {
-      return Array.from({ length: count + 1 }, (_, i) => ((first + i) * unit) / scale);
-    }
-  }
-  return Array.from({ length: count + 1 }, (_, i) => (first + i) * step);
-}
-
-/**
- * `start + i * step` for `count` bins; on a decimal grid (start and step
- * with few decimals), integers divided by a power of ten as in `multiples`.
- */
-function offsets(start: number, step: number, count: number): number[] {
-  const digits = Math.max(decimals(start), decimals(step));
-  if (digits <= 15) {
-    const scale = 10 ** digits;
-    const first = Math.round(start * scale);
-    const unit = Math.round(step * scale);
-    if (unit > 0 && Number.isSafeInteger(first) && Number.isSafeInteger(first + count * unit)) {
-      return Array.from({ length: count + 1 }, (_, i) => (first + i * unit) / scale);
-    }
-  }
-  return Array.from({ length: count + 1 }, (_, i) => start + i * step);
-}
-
-/** Decimal places in a number's shortest representation. */
-function decimals(value: number): number {
-  const [mantissa, exponent] = String(Math.abs(value)).split("e");
-  const places = mantissa!.split(".")[1]?.length ?? 0;
-  return Math.max(0, places - Number(exponent ?? 0));
-}
-
-/**
- * `count` equal bins from `min` to `max` by interpolation, which neither
- * overflows nor accumulates error; neighbors closer than the precision of
- * the values merge.
- */
-function evenEdges(min: number, max: number, count: number): number[] {
-  const edges: number[] = [min];
-  for (let i = 1; i <= count; i++) {
-    const t = i / count;
-    const edge = i === count ? max : min * (1 - t) + max * t;
-    if (edge > edges[edges.length - 1]!) edges.push(edge);
-  }
-  return edges.length >= 2 ? edges : around(min, 0.5);
-}
-
-/** One bin around `value`, at least `half` to each side and wide enough to represent. */
-function around(value: number, half: number): number[] {
-  const width = Math.max(half, Math.abs(value) * 2 ** -40);
-  const lo = value - width;
-  const hi = value + width;
-  // At the ends of the number range the bin keeps the value as its edge.
-  return [Number.isFinite(lo) ? lo : value, Number.isFinite(hi) ? hi : value];
-}
-
-/** `binOf` for edges a `step` apart: the bin by division, corrected for rounding at edges. */
-function evenBinOf(edges: Float64Array, step: number, value: number): number {
-  const bins = edges.length - 1;
-  if (!(value >= edges[0]! && value <= edges[bins]!)) return -1;
-  let bin = Math.min(bins - 1, Math.floor((value - edges[0]!) / step));
-  if (value < edges[bin]!) bin--;
-  else if (bin < bins - 1 && value >= edges[bin + 1]!) bin++;
-  return bin;
-}
-
-/**
- * The bin holding `value`: the last edge at or below it, with the final
- * bin also holding its right edge; -1 outside the edges or for a missing value.
- */
-function binOf(edges: Float64Array, value: number): number {
-  const bins = edges.length - 1;
-  if (!(value >= edges[0]! && value <= edges[bins]!)) return -1;
-  let lo = 0;
-  let hi = bins;
-  while (hi - lo > 1) {
-    const middle = (lo + hi) >> 1;
-    if (value >= edges[middle]!) lo = middle;
-    else hi = middle;
-  }
-  return lo;
-}
-
-/**
- * Bars counting the values of a field in round bins: a histogram.
+ * A histogram: bars counting the values of a field in round bins, or with
+ * `x` and `y` both, cells counting pairs of values in rectangular bins.
  *
  * ```ts
  * histogram(requests, { x: "latency" })
  * histogram(requests, { x: "latency", series: "region", bins: { step: 10 } })
+ * histogram(penguins, { x: "flipper", y: "mass", bins: { x: 30, y: 20 } })
  * ```
  */
 export function histogram<S extends Schema>(
   table: Table<S>,
   options: HistogramOptions<S>,
 ): ChartMark<Frozen<HistogramSpec>> {
+  if (options.x !== undefined && options.y !== undefined) {
+    // Options the spec leaves out are refused rather than dropped.
+    const problem = histogramFormError(options as unknown as Record<string, unknown>);
+    if (problem) throw new TypeError(problem);
+    const spec = {
+      type: "histogram",
+      ...definedFields(options as Histogram2DOptions<S>, [
+        "x",
+        "y",
+        "bins",
+        "weight",
+        "normalize",
+        "colorMidpoint",
+        "label",
+        "facet",
+        "panel",
+        "id",
+      ]),
+    } as Histogram2DSpec;
+    const { colors, colorDomain } = options as Histogram2DOptions<S>;
+    if (colors) spec.colors = [...colors];
+    if (colorDomain) spec.colorDomain = [...colorDomain];
+    if (table.name !== undefined) spec.data = table.name;
+    return new Histogram2DMark(spec, table as unknown as Table);
+  }
   const spec = {
     type: "histogram",
     ...definedFields(options, [
@@ -1213,7 +1042,7 @@ export function histogram<S extends Schema>(
       "panel",
       "id",
     ]),
-  } as unknown as HistogramSpec;
+  } as unknown as Histogram1DSpec;
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.
   return new HistogramMark(spec, table as unknown as Table);

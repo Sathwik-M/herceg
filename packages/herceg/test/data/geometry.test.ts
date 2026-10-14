@@ -106,7 +106,7 @@ describe("geometry columns", () => {
     const source = table({ value: [3, 1], shape: geometry(squares(), Int32Array.from([0, 1])) });
     expect(() =>
       derive(source)
-        .bin("shape" as never, { step: 1 })
+        .bin("shape" as never, { bins: { step: 1 } })
         .table(),
     ).toThrow(/field "shape" holds geometry values/);
     expect(() =>

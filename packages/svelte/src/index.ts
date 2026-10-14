@@ -6,6 +6,7 @@ export { default as Boxen } from "./Boxen.svelte";
 export { default as BoxPlot } from "./BoxPlot.svelte";
 export { default as Candlestick } from "./Candlestick.svelte";
 export { default as Chart } from "./Chart.svelte";
+export { default as Contour } from "./Contour.svelte";
 export { default as Custom } from "./Custom.svelte";
 export type { ChartProps } from "./chart.js";
 export { default as Dendrogram } from "./Dendrogram.svelte";

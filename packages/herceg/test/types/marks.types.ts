@@ -28,6 +28,7 @@ import type {
   BoxPlotInput,
   BoxPlotSpec,
   ErrorBarSpec,
+  HeatmapSpec,
   HistogramSpec,
   RegionSpec,
   RugSpec,
@@ -190,8 +191,26 @@ const areaBoth: AreaSpec = { type: "area", x: "x", y: "a", y1: "a", y2: "b" };
 const errorBoth: ErrorBarSpec = { type: "errorbar", x: "x", y1: "a", y2: "b", x1: "a" };
 // @ts-expect-error a tree spec is named one way
 const treeBoth: TreemapSpec = { type: "treemap", path: ["a"], node: "b", parent: "c" };
+const cellsBetween: HeatmapSpec = { type: "heatmap", x1: "a", x2: "b", y: "c", color: "v" };
+// @ts-expect-error a heatmap spec places cells along each axis
+const cellsNowhere: HeatmapSpec = { type: "heatmap", color: "v" };
+// @ts-expect-error cells between edges need both of them
+const cellsHalf: HeatmapSpec = { type: "heatmap", x1: "a", y: "c", color: "v" };
+// @ts-expect-error cells sit at values or between edges along an axis, not both
+const cellsBoth: HeatmapSpec = { type: "heatmap", x: "a", x1: "a", x2: "b", y: "c", color: "v" };
 
-export { areaBoth, errorBoth, regionHalf, ruleSpec, ruleWithout, treeBoth };
+export {
+  areaBoth,
+  cellsBetween,
+  cellsBoth,
+  cellsHalf,
+  cellsNowhere,
+  errorBoth,
+  regionHalf,
+  ruleSpec,
+  ruleWithout,
+  treeBoth,
+};
 
 // A mark's spec is readonly all the way down: give the chart new marks instead.
 const drawn = line(readings, { x: "at", y: "cpu", dash: [2, 3] });
@@ -310,8 +329,14 @@ histogram(readings, {
   cumulative: true,
   dodge: true,
 });
-// @ts-expect-error exactly one binned axis
-histogram(readings, { x: "at", y: "cpu" });
+// With x and y both, a 2D histogram's cells, binned along each axis.
+histogram(readings, { x: "at", y: "cpu", bins: { x: 20, y: [0, 50, 100] }, normalize: "density" });
+// @ts-expect-error 2D histograms count one distribution: no series, stacks, or dodges
+histogram(readings, { x: "at", y: "cpu", stack: true });
+// @ts-expect-error per-axis bins are for 2D histograms
+histogram(readings, { x: "at", bins: { x: 10 } });
+// @ts-expect-error color ramps color 2D histograms' cells; bars take fill
+histogram(readings, { x: "at", colors: ["#000000", "#ffffff"] });
 // @ts-expect-error the binned axis is required
 histogram(readings, { bins: 10 });
 // @ts-expect-error binned fields must be numeric or time
@@ -337,8 +362,14 @@ histogram(usage, { x: "cpu", series: "host", stack: "fill", dodge: true });
 histogram(usage, { x: "cpu", element: "line" });
 
 export const horizontalHistogramSpec: HistogramSpec = { type: "histogram", y: "v", dodge: true };
-// @ts-expect-error the spec also requires exactly one binned field
-export const invalidHistogramSpec: HistogramSpec = { type: "histogram", x: "v", y: "v" };
+export const cellHistogramSpec: HistogramSpec = { type: "histogram", x: "v", y: "w", bins: 30 };
+export const invalidHistogramSpec: HistogramSpec = {
+  type: "histogram",
+  x: "v",
+  y: "v",
+  // @ts-expect-error the spec's 2D form takes no series
+  series: "s",
+};
 // @ts-expect-error the spec excludes stack with dodge
 export const stackedDodgeSpec: HistogramSpec = {
   type: "histogram",

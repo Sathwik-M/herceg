@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fromMatrix } from "../../src/data/matrix.ts";
 import { table } from "../../src/data/table.ts";
 import { createChart } from "../../src/dom/chart.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
+import { contour } from "../../src/marks/contour.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { graph } from "../../src/marks/graph.ts";
 import { heatmap } from "../../src/marks/heatmap.ts";
@@ -151,7 +153,7 @@ describe("new marks in the browser", () => {
             x: "c",
             y: "r",
             color: "v",
-            reduce: "max",
+            sampling: { reduce: "max" },
             colors: ["#000000", "#ff0000"],
             colorDomain: [0, 1],
           }),
@@ -358,6 +360,41 @@ describe("new marks in the browser", () => {
     await frame();
     expect(chart.root.querySelector("[aria-live]")!.textContent).toContain("Feb");
     chart.destroy();
+  });
+
+  it("draws contour bands on a canvas and in SVG, follows the pointer, and reads them by key", async () => {
+    const n = 41;
+    const xs = Float64Array.from({ length: n }, (_, i) => (i / (n - 1)) * 2 - 1);
+    const z = Float64Array.from({ length: n * n }, (_, k) => {
+      const [u, v] = [xs[k % n]!, xs[Math.floor(k / n)]!];
+      return 10 * (1 - Math.min(1, Math.hypot(u, v)));
+    });
+    const field = fromMatrix({ x: xs, y: xs, z }, { x: "x", y: "y" });
+    for (const renderer of ["canvas", "svg"] as const) {
+      const chart = createChart(host, {
+        renderer,
+        marks: [
+          contour(field, { x: "x", y: "y", color: "z", thresholds: [2, 5, 8], variant: "bands" }),
+        ],
+      });
+      await frame();
+      if (renderer === "svg")
+        expect(chart.root.querySelectorAll('path[fill-rule="evenodd"]')).toHaveLength(2);
+      else expect(chart.root.querySelector("canvas")).not.toBeNull();
+      const model = modelOf(chart);
+      const [x, y] = [model.xScale()!, model.yScale()!];
+      hover(chart.root, x.map(0.2), y.map(0.3));
+      await frame();
+      expect(tooltipOf(chart.root).textContent).toContain("z5 – 8");
+      chart.root.focus();
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      await frame();
+      expect(chart.root.querySelector("[aria-live]")!.textContent).toContain("z: 2 – 5");
+      chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      await frame();
+      expect(chart.root.querySelector("[aria-live]")!.textContent).toContain("z: 5 – 8");
+      chart.destroy();
+    }
   });
 
   it("follows the pointer along y over a line along y", async () => {

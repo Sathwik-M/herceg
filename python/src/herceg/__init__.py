@@ -45,6 +45,7 @@ from ._chart import (
     boxplot,
     candlestick,
     choropleth,
+    contour,
     funnel,
     gauge,
     graph,
@@ -52,6 +53,7 @@ from ._chart import (
     histogram,
     line,
     line_3d,
+    matrix,
     pie,
     radar,
     sankey,
@@ -63,6 +65,7 @@ from ._chart import (
     treemap,
     violin,
 )
+from ._data import Matrix
 from ._derive import Derived, Expr, col, derive, when
 from ._events import (
     DrillRoot,
@@ -106,6 +109,7 @@ __all__ = [
     "InspectedPoint",
     "Inspection",
     "ItemPositions",
+    "Matrix",
     "area",
     "bar",
     "boxen",
@@ -113,6 +117,7 @@ __all__ = [
     "candlestick",
     "choropleth",
     "col",
+    "contour",
     "derive",
     "funnel",
     "gauge",
@@ -121,6 +126,7 @@ __all__ = [
     "histogram",
     "line",
     "line_3d",
+    "matrix",
     "pie",
     "radar",
     "sankey",

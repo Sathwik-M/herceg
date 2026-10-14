@@ -455,6 +455,17 @@ def density_2d(
     return (out / norm).reshape(len(ys), len(xs))
 
 
+def mass_levels(density: np.ndarray, proportions: np.ndarray) -> np.ndarray:
+    """Seaborn's contour levels of a density sampled on a grid: for each
+    iso-proportion p, the density bounding the region of highest density
+    that holds 1 - p of the samples' mass, so that p = 0.05 encloses 95% of
+    it and p = 1 marks the peak."""
+    values = np.ravel(density)
+    ordered = np.sort(values)[::-1]
+    held = np.cumsum(ordered) / values.sum()
+    return np.take(ordered, np.searchsorted(held, 1 - np.asarray(proportions)), mode="clip")
+
+
 def normal_cdf(z: np.ndarray) -> np.ndarray:
     """The standard normal distribution function, to about 1e-7.
 
@@ -518,6 +529,10 @@ def ecdf(
     return distinct, heights
 
 
+#: Most bins along an axis, as the histogram mark takes them.
+MAX_BINS = 1000
+
+
 def bin_edges(
     values: np.ndarray,
     weights: np.ndarray | None,
@@ -525,20 +540,45 @@ def bin_edges(
     binwidth: float | None,
     binrange: tuple[float, float] | None,
     discrete: bool,
+    role: str = "histplot",
 ) -> np.ndarray:
     """Bin edges as Seaborn chooses them: a bin per integer when ``discrete``,
-    steps of ``binwidth``, or ``numpy.histogram_bin_edges``."""
+    steps of ``binwidth``, or ``numpy.histogram_bin_edges``; refused, before
+    they are made where that can be known, past ``MAX_BINS`` bins. ``role``
+    names the function in errors."""
     start, stop = (float(values.min()), float(values.max())) if binrange is None else binrange
     if discrete:
+        if stop - start + 1 > MAX_BINS:
+            raise ValueError(
+                f"{role} discrete: a bin per whole number from {start:g} to {stop:g} makes "
+                f"{stop - start + 1:.0f} bins, past the {MAX_BINS} a histogram takes; "
+                "drop discrete or give bins"
+            )
         return np.arange(start - 0.5, stop + 1.5)
     if binwidth is not None:
+        if (stop - start) / binwidth > MAX_BINS:
+            raise ValueError(
+                f"{role} binwidth: steps of {binwidth:g} from {start:g} to {stop:g} make "
+                f"about {(stop - start) / binwidth:.0f} bins, past the {MAX_BINS} a histogram "
+                "takes; give a wider binwidth"
+            )
         edges = np.arange(start, stop + binwidth, binwidth)
         if float(np.max(edges)) < stop or len(edges) < 2:
             edges = np.append(edges, float(np.max(edges)) + binwidth)
         return edges
     if isinstance(bins, np.ndarray):
         return bins
-    return np.histogram_bin_edges(values, bins, binrange, weights)
+    if isinstance(bins, (int, np.integer)) and bins > MAX_BINS:
+        raise ValueError(
+            f"{role} bins: expected at most {MAX_BINS} bins, as a histogram takes; received {bins}"
+        )
+    edges = np.histogram_bin_edges(values, bins, binrange, weights)
+    if len(edges) - 1 > MAX_BINS:
+        raise ValueError(
+            f"{role} bins: the {bins!r} rule makes {len(edges) - 1} bins, past the {MAX_BINS} "
+            "a histogram takes; give a count or a binwidth"
+        )
+    return edges
 
 
 Normalize = Literal["count", "frequency", "probability", "percent", "density"]

@@ -78,13 +78,14 @@ def test_surface_from_columns_and_from_a_matrix():
     }
     heights = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
     spec, buffers = hg.surface(z=heights, x=[10, 20, 30], y=[0.5, 1.5], title="Matrix").to_spec()
-    # Row i, column j is the height at y[i], x[j].
-    assert list(column(spec, buffers, "x")) == [10, 20, 30, 10, 20, 30]
-    assert list(column(spec, buffers, "y")) == [0.5, 0.5, 0.5, 1.5, 1.5, 1.5]
+    # A matrix: row i, column j is the height at y[i], x[j], its coordinates sent once each.
+    assert spec["data"]["data"]["matrix"] == {"x": "x", "y": "y"}
+    assert list(column(spec, buffers, "x")) == [10, 20, 30]
+    assert list(column(spec, buffers, "y")) == [0.5, 1.5]
     assert list(column(spec, buffers, "z")) == [1, 2, 3, 4, 5, 6]
     spec, buffers = hg.surface(z=heights).to_spec()
     # Positions 0, 1, 2, ... by default.
-    assert list(column(spec, buffers, "y")) == [0, 0, 0, 1, 1, 1]
+    assert list(column(spec, buffers, "y")) == [0, 1]
 
 
 def test_line_3d_emits_its_fields_and_takes_chart_options():
@@ -155,9 +156,7 @@ def test_3d_options_and_fields_are_checked():
         hg.Chart(points(), box_aspect=(1, 0, 1)).point_3d("x", "y", "z").to_spec()
     with pytest.raises(TypeError, match="point_3d z: column 'kind' holds category values"):
         hg.Chart(points()).point_3d("x", "y", "kind")
-    with pytest.raises(
-        ValueError, match=r"surface z: expected a 2D matrix of heights; received shape \(3,\)"
-    ):
+    with pytest.raises(ValueError, match=r"surface z: expected a 2D matrix; received shape \(3,\)"):
         hg.surface(z=[1, 2, 3])
     with pytest.raises(
         ValueError, match="surface x: expected 3 values, one per matrix column; received 2"

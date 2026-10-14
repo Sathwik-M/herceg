@@ -33,6 +33,7 @@ const ENTRY_PACKAGES: Record<string, string> = {
   "herceg-area": "herceg",
   "herceg-scatter": "herceg",
   "herceg-heatmap": "herceg",
+  "herceg-contour": "herceg",
   "herceg-react-line": "@herceg/react",
   "herceg-vue-line": "@herceg/vue",
   "herceg-svelte-line": "@herceg/svelte",

@@ -3,6 +3,7 @@ import {
   custom,
   type DrawContext,
   facet,
+  fromMatrix,
   geometry,
   type Chart as HercegChart,
   line,
@@ -20,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Annotations from "./Annotations.svelte";
 import Dendrograms from "./Dendrograms.svelte";
 import Faulty from "./Faulty.svelte";
+import Fields from "./Fields.svelte";
 import Gauges from "./Gauges.svelte";
 import Lines from "./Lines.svelte";
 import Lollipops from "./Lollipops.svelte";
@@ -209,6 +211,16 @@ describe("<Chart>", () => {
     expect(filled).toHaveLength(2);
     // The point, ringed in the background color.
     expect(host.querySelectorAll('svg g[clip-path] g[stroke-width="1"] circle')).toHaveLength(1);
+  });
+
+  it("draws contours of a matrix and 2D histograms from their components", () => {
+    const field = fromMatrix(
+      { x: [0, 1, 2], y: [0, 1, 2], z: [0, 1, 0, 1, 3, 1, 0, 1, 0] },
+      { x: "x", y: "y" },
+    );
+    render(Fields, { field, pairs: table({ a: [0, 1, 1, 2], b: [0, 1, 1, 2] }) });
+    expect(host.textContent).toContain("z 0.5 – 2: 1 region");
+    expect(host.textContent).toContain("Count: 4 values in 2 cells");
   });
 
   it("draws 3D marks from their components, with camera props and events", async () => {

@@ -285,7 +285,7 @@ describe("calendar heatmap specs", () => {
       "heatmap x: a calendar places its date itself; drop x",
     );
     expect(() => validateSpec(spec({ x: "day" }))).toThrow(
-      "heatmap: needs x and y, or a date to lay out as a calendar",
+      "heatmap: needs x and y (or x1 and x2, y1 and y2), or a date to lay out as a calendar",
     );
     expect(() => validateSpec(spec({ x: "day", y: "n", calendar: "weeks" }))).toThrow(
       "heatmap: calendar and weekStart are for heatmaps of a date",

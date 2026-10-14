@@ -92,6 +92,83 @@ class Table:
         return column
 
 
+class Matrix:
+    """A matrix data source (``hg.matrix``): coordinates along x and y, and
+    values at every pair. It reads as a table of a row per pair, in rows of
+    x, without a value of x and y per row: those travel as they are."""
+
+    def __init__(self, columns: Mapping[str, Any], x: str, y: str) -> None:
+        if not isinstance(columns, Mapping):
+            raise TypeError(
+                "matrix columns: expected a mapping of column names to arrays; "
+                f"received {type(columns).__name__}"
+            )
+        names = list(columns)
+        if not all(isinstance(name, str) for name in names):
+            raise TypeError("matrix columns: expected column names as strings")
+        for axis, name in (("x", x), ("y", y)):
+            if name not in names:
+                raise KeyError(
+                    f"matrix {axis}: no column {name!r}; the columns are "
+                    + ", ".join(map(repr, names))
+                )
+        if x == y:
+            raise ValueError(
+                f"matrix y: {y!r} also holds x; give the rows' coordinates a column of their own"
+            )
+        self.x = x
+        self.y = y
+        self.names: tuple[str, ...] = tuple(names)
+        self._columns: dict[str, Column] = {}
+        coordinates = {}
+        for axis, name in (("x", x), ("y", y)):
+            values = columns[name]
+            if isinstance(values, np.ndarray) and values.ndim != 1:
+                raise ValueError(
+                    f"matrix {axis}: expected a 1-D array of coordinates; received shape "
+                    f"{values.shape}"
+                )
+            try:
+                column = convert(values)
+            except (TypeError, ValueError) as error:
+                raise type(error)(f"matrix {axis}: column {name!r}: {error}") from None
+            if column.kind == "geometry":
+                raise TypeError(f"matrix {axis}: column {name!r} holds shapes; give coordinates")
+            coordinates[axis] = column
+            self._columns[name] = column
+        self.shape = (len(coordinates["y"]), len(coordinates["x"]))
+        for name in self.names:
+            if name in (x, y):
+                continue
+            values = columns[name]
+            array = values if isinstance(values, np.ndarray) else None
+            if array is None and not isinstance(values, Column):
+                candidate = np.asarray(values)
+                array = candidate if candidate.ndim == 2 else None
+            if array is not None and array.ndim == 2:
+                if array.shape != self.shape:
+                    raise ValueError(
+                        f"matrix column {name!r}: expected shape {self.shape}, a row per y and "
+                        f"a column per x; received {array.shape}"
+                    )
+                values = array.reshape(-1)
+            try:
+                column = convert(values)
+            except (TypeError, ValueError) as error:
+                raise type(error)(f"matrix column {name!r}: {error}") from None
+            if len(column) != self.shape[0] * self.shape[1]:
+                raise ValueError(
+                    f"matrix column {name!r}: expected {self.shape[0] * self.shape[1]} values, "
+                    f"{self.shape[1]} x by {self.shape[0]} y; received {len(column)}"
+                )
+            self._columns[name] = column
+
+    def column(self, name: str) -> Column:
+        """The converted column; KeyError for unknown names. Coordinates hold
+        one value per column (x) or row (y) of the matrix."""
+        return self._columns[name]
+
+
 def to_columns(data: Any) -> dict[str, Column]:
     """Converts every column of a supported data source."""
     table = Table(data)

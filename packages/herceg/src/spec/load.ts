@@ -5,6 +5,7 @@
 import { type ColumnInput, encodedCategory, type NumericArray, time } from "../data/column.ts";
 import { deriveTable } from "../data/derive.ts";
 import { geometry } from "../data/geometry.ts";
+import { fromMatrix } from "../data/matrix.ts";
 import { type SelectionStore, selectionStore } from "../data/selection.ts";
 import { type Table, table } from "../data/table.ts";
 import { readsTable } from "../marks/annotation.ts";
@@ -13,6 +14,7 @@ import { BarMark } from "../marks/bar.ts";
 import { BoxenMark } from "../marks/boxen.ts";
 import { BoxPlotMark } from "../marks/boxplot.ts";
 import { CandlestickMark } from "../marks/candlestick.ts";
+import { ContourMark } from "../marks/contour.ts";
 import { DendrogramMark } from "../marks/dendrogram.ts";
 import { ErrorBarMark } from "../marks/errorbar.ts";
 import { FunnelMark } from "../marks/funnel.ts";
@@ -22,6 +24,7 @@ import { GeoShapeMark } from "../marks/geoshape.ts";
 import { GraphMark } from "../marks/graph.ts";
 import { HeatmapMark } from "../marks/heatmap.ts";
 import { HistogramMark } from "../marks/histogram.ts";
+import { Histogram2DMark } from "../marks/histogram2d.ts";
 import { type LayoutMark, tablesOf } from "../marks/layout-mark.ts";
 import { LineMark } from "../marks/line.ts";
 import { Line3DMark } from "../marks/line3d.ts";
@@ -52,6 +55,8 @@ import type {
   ColumnSpec,
   ColumnsSpec,
   DataSpec,
+  Histogram1DSpec,
+  Histogram2DSpec,
   MarkSpec,
   RowSelectionSpec,
 } from "./spec.ts";
@@ -289,7 +294,9 @@ function loadTable(name: string, data: ColumnsSpec, buffers: readonly SpecBuffer
     }
   }
   try {
-    return table(columns, { name });
+    return data.matrix
+      ? fromMatrix(columns, { x: data.matrix.x, y: data.matrix.y }, { name })
+      : table(columns, { name });
   } catch (error) {
     throw within(`spec.data.${name}`, error);
   }
@@ -485,6 +492,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new DendrogramMark(spec, source);
       case "heatmap":
         return new HeatmapMark(withScheme(spec), source);
+      case "contour":
+        return new ContourMark(withScheme(spec), source);
       case "rug":
         return new RugMark(spec, source);
       case "errorbar":
@@ -492,7 +501,9 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
       case "candlestick":
         return new CandlestickMark(spec, source);
       case "histogram":
-        return new HistogramMark(spec, source);
+        return spec.x !== undefined && spec.y !== undefined
+          ? new Histogram2DMark(withScheme(spec as Histogram2DSpec), source)
+          : new HistogramMark(spec as Histogram1DSpec, source);
       case "pie":
         return new PieMark(spec, source);
       case "boxplot":

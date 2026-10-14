@@ -83,7 +83,7 @@ function reduced(
   data: Grid,
   across: number,
   down: number,
-  options: Pick<HeatmapOptions<Schema>, "reduce"> = {},
+  options: Pick<HeatmapOptions<Schema>, "reduce" | "sampling"> = {},
 ) {
   const config: ChartConfig = {
     x: { show: false },
@@ -165,12 +165,15 @@ describe("reduced heatmaps", () => {
     const data = grid(7, 5, cellValue);
     const values = (cs: number[], rs: number[]) =>
       cs.flatMap((c) => rs.map((r) => cellValue(c, r)));
-    const max = reduced(data, 3, 2, { reduce: "max" }).raster;
-    const min = reduced(data, 3, 2, { reduce: "min" }).raster;
+    const max = reduced(data, 3, 2, { sampling: { reduce: "max" } }).raster;
+    const min = reduced(data, 3, 2, { sampling: { reduce: "min" } }).raster;
     expect(pixel(max, 1, 1)).toEqual(gray(Math.max(...values([3, 4], [3, 4]))));
     expect(pixel(min, 2, 0)).toEqual(gray(Math.min(...values([5, 6], [0, 1, 2]))));
+    expect(() =>
+      heatmap(data, { x: "x", y: "y", color: "v", sampling: { reduce: "median" as "mean" } }),
+    ).toThrow(/heatmap sampling\.reduce: expected "mean", "max", or "min"; received "median"/);
     expect(() => heatmap(data, { x: "x", y: "y", color: "v", reduce: "median" as "mean" })).toThrow(
-      /heatmap reduce: expected "mean", "max", or "min"; received "median"/,
+      /heatmap reduce: expected "last", "mean", "sum", "min", or "max"; received "median"/,
     );
   });
 
@@ -368,19 +371,29 @@ describe("reduced heatmaps", () => {
     expect(pdf).toContain(`/Subtype /Image /Width ${pdfWidth} /Height`);
   });
 
-  it("takes reduce from specs", () => {
+  it("takes reduce and sampling from specs", () => {
     const data = { t: { columns: { x: [0, 1, 2, 3], y: [0, 0, 0, 0], v: [1, 9, 2, 8] } } };
     const { config } = loadSpec({
       data,
-      marks: [{ type: "heatmap", x: "x", y: "y", color: "v", reduce: "max" }],
+      marks: [
+        { type: "heatmap", x: "x", y: "y", color: "v", reduce: "sum", sampling: { reduce: "max" } },
+      ],
     });
-    expect(config.marks[0]!.spec).toMatchObject({ reduce: "max" });
+    expect(config.marks[0]!.spec).toMatchObject({ reduce: "sum", sampling: { reduce: "max" } });
     expect(() =>
       loadSpec({
         data,
-        marks: [{ type: "heatmap", x: "x", y: "y", color: "v", reduce: "sum" as "max" }],
+        marks: [{ type: "heatmap", x: "x", y: "y", color: "v", reduce: "median" as "max" }],
       }),
     ).toThrow(/reduce/);
+    expect(() =>
+      loadSpec({
+        data,
+        marks: [
+          { type: "heatmap", x: "x", y: "y", color: "v", sampling: { reduce: "sum" as "max" } },
+        ],
+      }),
+    ).toThrow(/sampling\.reduce/);
   });
 });
 

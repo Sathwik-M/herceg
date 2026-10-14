@@ -37,10 +37,15 @@ hg.scatter(tips, x="day", y="tip", swarm=True)  # a beeswarm: packed without ove
 hg.heatmap(load, x="hour", y="host", color="cpu", colors="viridis")  # hours along a time axis
 hg.heatmap(load, x="hour", y="host", color="cpu", x_banded=True)  # a column per distinct hour
 hg.heatmap(commits, date="day", color="count", calendar="months")  # a calendar
+hg.heatmap(events, date="day", color="count", reduce="sum")  # a day's rows summed in its cell
+hg.heatmap(color=grid, x=xs, y=ys)  # a 2D array: row i, column j at y[i], x[j]
+hg.contour(field, x="x", y="y", color="density", variant="bands", colors="viridis")
+hg.contour(color=grid, x=xs, y=ys, thresholds=[0.1, 0.5, 0.9])  # lines of a 2D array
 hg.candlestick(prices, x="day", open="open", high="high", low="low", close="close")
 hg.candlestick(prices, "day", "open", "high", "low", "close", variant="ohlc")  # OHLC bars
 hg.histogram(requests, x="latency", series="region", bins={"step": 10})
 hg.histogram(requests, x="latency", series="region", stack="fill", element="step")
+hg.histogram(penguins, x="flipper", y="mass", bins={"x": 30, "y": 20})  # a 2D histogram
 hg.pie(sales, "region", "revenue", inner_radius=0.6)  # a donut; counts rows without a value
 hg.boxplot(requests, x="region", y="latency", series="version")
 hg.boxen(requests, x="region", y="latency")  # letter values: nested boxes out to the tails
@@ -70,8 +75,8 @@ elevation=25, zoom=1, perspective=False)` (or a dict of those) and turned by
 dragging (`rotate=False` stops that), the wheel with `zoom=True`, the
 keyboard, and buttons in the chart's corner. `z=hg.Axis(...)` sets the
 vertical axis, `box_aspect=(2, 2, 1)` the box's proportions. A surface from a
-matrix travels as three columns with a row per grid point; rows not on a
-grid must be binned or aggregated first. In the browser, large 3D charts
+matrix travels as a matrix (`hg.matrix`), its coordinates once each; rows
+not on a grid must be binned or aggregated first. In the browser, large 3D charts
 (20,000 points, 10,000 surface cells, or 20,000 line segments) are drawn
 with WebGL2 and depth-tested, up to 1,048,576 grid points a surface; static
 SVG, PNG, and PDF draw on the CPU, back to front, at most 250,000, and show
@@ -431,8 +436,9 @@ Areas along y fill across x to zero, stack along x, or fill the band
 between `x1` and `x2` (`hg.Chart(casts).area(y="depth", x1="low",
 x2="high")`). Lines and areas along y use the left y axis.
 
-Histograms take exactly one number or time column, `x` (vertical) or `y`
-(horizontal), in both `hg.histogram` and `Chart.histogram`:
+Histograms take a number or time column, `x` (vertical) or `y`
+(horizontal), or both for a 2D histogram, in both `hg.histogram` and
+`Chart.histogram`:
 
 ```python
 hg.histogram(requests, y="latency", bins=[0, 10, 25, 100])
@@ -469,6 +475,55 @@ opaque fills by default, giving hidden series' slots to the others. Dodge
 excludes stacks and `element="step"` or `"poly"`, which draw each series as
 an area stepping across its bins or running through their centers;
 horizontal histograms exclude `axis="right"`.
+
+With `x` and `y` both, cells count the rows whose x and y fall in a bin of
+each, colored by `colors` from 0 to the fullest cell (or over
+`color_domain`); cells holding nothing are left empty. `bins` takes one bin
+definition for both axes, or a dict of them, `{"x": ..., "y": ...}`;
+`normalize` measures `"frequency"` and `"density"` per unit of bin area. A
+2D histogram counts one distribution: it takes no `series` (facet instead),
+stacks, dodges, `cumulative`, or `element`. Counts match NumPy's
+`histogram2d`, the last bin along each axis holding its right edge.
+
+```python
+hg.Chart(penguins).histogram("flipper", y="mass", bins={"x": 30, "y": [2500, 3500, 6500]},
+                             normalize="density", colors="viridis")
+```
+
+Contours draw a field sampled on a grid: `Chart.contour(x, y, color)` with
+columns of a table whose rows are grid points (every distinct x with every
+distinct y), or of an `hg.matrix`, or with a 2D array `color` (as in
+`go.Contour(z=...)`) and optional positions `x` and `y`. `variant="lines"`
+(the default) draws a line where the field crosses each threshold;
+`variant="bands"` fills the regions from each up to the next. `thresholds`
+is about how many round values (10 by default), or the values, increasing.
+Lines take `stroke` (one color for all) and `stroke_width`, bands
+`fill_opacity`; `colors`, `color_domain`, and `color_midpoint` color both
+by the field's values. Values are interpolated linearly between grid points
+(the bilinear saddle decides cells whose corners alternate); grid points
+without a value leave holes, and contours end where the grid does.
+Tooltips name the field and a band's range or a line's level; the legend
+keys each band.
+
+```python
+field = hg.matrix({"x": xs, "y": ys, "density": grid}, x="x", y="y")
+hg.Chart(field).contour("x", "y", "density", thresholds=[0.01, 0.05, 0.1], variant="bands")
+```
+
+`hg.matrix(columns, x=..., y=...)` makes a matrix data source: the columns
+named by `x` and `y` hold its coordinates (one per column and one per row),
+and every other column a value at each pair, as a 2D array of shape
+(len(y), len(x)) or flattened in that order. It reads as a table of a row
+per pair and sends its coordinates once each, rather than once per row.
+Heatmaps, surfaces, and other marks draw it too; a live widget's `append`
+and `replace` refuse it, since its rows are its coordinates' pairs.
+
+Heatmaps combine the rows sharing a cell into its value with `reduce`:
+`"last"` (the default), `"mean"`, `"sum"`, `"min"`, or `"max"`, the same at
+every zoom; `sampling={"reduce": "max"}` colors a pixel showing several
+cells by the greatest (or `"min"`, or `"mean"`, the default) of their
+values. `x1` and `x2` (or `y1` and `y2`) place each row's cell between two
+edges, as the bins of `hg.derive(...).bin(..., end=...)` give them.
 
 Box plots accept raw category/value columns or precomputed statistic columns:
 
@@ -634,6 +689,8 @@ hx.pointplot(fmri, x="timepoint", y="signal", units="subject")  # repeated measu
 hx.regplot(tips, x="total_bill", y="tip", order=2, facet_column="smoker")
 hx.regplot(titanic, x="age", y="survived", logistic=True)
 hx.histplot(penguins, x="flipper_length_mm", series="species", kde=True)
+hx.kdeplot(geyser, x="waiting", y="duration", levels=5, thresh=0.1, filled=True)
+hx.jointplot(penguins, x="bill_length_mm", y="bill_depth_mm", kind="hist")
 hx.swarmplot(tips, x="day", y="total_bill", series="sex", dodge=True)
 hx.boxenplot(diamonds, x="clarity", y="carat")
 hx.pairplot(penguins, series="species")
@@ -646,12 +703,12 @@ hx.clustermap(flights_wide, z_score=1)
 | `lineplot` | the estimate and interval at each distinct x, or a line per unit | lines, with bands (`error_style="band"`) or error bars |
 | `regplot` | polynomial (`order`), logistic, robust, log-x, or lowess fits, with bootstrap bands; estimates per x or bin | points (or estimates with error bars), fit lines, bands |
 | `residplot` | residuals from a polynomial or robust fit, optionally a lowess line through them | points around a rule at 0 |
-| `histplot` | Seaborn's bin edges; heights, and KDE overlays scaled to them | the histogram mark (counts in the browser) as bars, steps, or polygons, lines |
-| `kdeplot` | Gaussian kernel densities (SciPy's `gaussian_kde`), 1D or 2D | lines or filled areas, along x or y; a density heatmap for x and y |
+| `histplot` | Seaborn's bin edges; heights, and KDE overlays scaled to them | the histogram mark (counts in the browser) as bars, steps, or polygons, lines; cells for x and y |
+| `kdeplot` | Gaussian kernel densities (SciPy's `gaussian_kde`), 1D or 2D; Seaborn's contour levels | lines or filled areas, along x or y; contour lines or bands for x and y |
 | `ecdfplot` | the empirical distribution | step lines, along x or y |
 | `rugplot`, `stripplot`, `swarmplot` | (none; for swarms, which points fit) | rug ticks; points jittered by row and seed, or packed in swarms |
 | `boxplot`, `boxenplot`, `violinplot` | quartiles and whiskers, letter values (also in `statistics`) | the box plot, boxen, and violin marks |
-| `pairplot`, `jointplot` | bins, densities, fits | subplots: scatter plots with histograms or densities |
+| `pairplot`, `jointplot` | bins, densities, fits | subplots: scatter plots, density contours, or 2D histograms, with histograms or densities |
 | `clustermap` | hierarchical clustering of rows and columns | a reordered heatmap with dendrograms in side panels |
 
 Arguments are keyword-only after the data, and what express shares with
@@ -683,6 +740,16 @@ and an `hg.Jitter` brings its own seed. Statistical options keep Seaborn's
 names (`estimator`, `errorbar`, `n_boot`, `bw_method`, `bw_adjust`, `ci`,
 `multiple`, `linestyles`, `warn_thresh`, ...). Densities and ECDFs of `y`
 alone run along y, as do the KDE overlays of horizontal histograms.
+
+A `kdeplot` of `x` and `y` draws the density's contours (bands with
+`filled=True`) at Seaborn's levels: `levels` is how many (10) or the
+probability masses below each, from `thresh` (0.05) up, each contour
+enclosing all but that share of the density. NumPy resolves the levels to
+densities, sent as the contour's thresholds, so the browser draws what
+Seaborn would. A `histplot` of both counts 2D cells (Seaborn's bins along
+each axis, `bins` and `binwidth` per axis as pairs), colored by `colors`;
+`jointplot`'s `kind="kde"` and `kind="hist"` draw those in the joint panel
+and the marginal densities or histograms beside it.
 
 `pointplot` joins each series' estimates with a line through the categories
 in order, broken where the series has no estimate, under its error bars and
@@ -847,12 +914,14 @@ wide as the others at its densest, with Silverman's rule (R's,
 SciPy's Scott factor, and takes `split=True` (a series of at most two
 levels, as halves) and `inner="box"`, `"quartiles"`, or `"none"`, but not
 `"stick"` or `"point"`; `histplot` draws densities over layered series only
-(not stacked, filled, or dodged ones), has no bivariate histograms, and its
-steps and polygons are always filled (Seaborn's `fill=False` outlines have
-no counterpart); `kdeplot` draws bivariate
-densities as a heatmap without contours;
-`jointplot` takes `kind="scatter"` or
-`"reg"`; `pairplot` gives the diagonal's histograms and densities y scales of
+(not stacked, filled, or dodged ones), its bivariate histograms take no
+`series`, `thresh`, `pthresh`, `pmax`, or `cbar`, and its steps and
+polygons are always filled (Seaborn's `fill=False` outlines have no
+counterpart); bivariate `kdeplot`s take no `series`, and with facets
+resolve their levels over every panel's density together (Seaborn resolves
+each facet's own), so a contour is the same density in each panel;
+`jointplot` takes `kind="scatter"`, `"reg"`, `"kde"`, or `"hist"`, but
+not `"hex"`, and kde and hist kinds no `series`; `pairplot` gives the diagonal's histograms and densities y scales of
 their own and its scatter plots matching y ranges per row, rather than one
 shared y axis per row.
 
@@ -889,7 +958,7 @@ hourly = (
     hg.derive(df)
     .filter((hg.col("temp") > -40) & (hg.col("site") != "test"))
     .calculate("f", hg.col("temp") * 1.8 + 32)
-    .bin("time", step=3_600_000, name="hour")
+    .bin("time", bins={"step": 3_600_000}, name="hour")
     .aggregate(by=["hour", "site"], mean=("f", "mean"), n="count")
 )
 hg.line(hourly, x="hour", y="mean", series="site")

@@ -9,7 +9,7 @@ from typing import Any, Literal
 import numpy as np
 
 from .._chart import Axis, Chart, HelperOptions, Panel
-from .._data import Column
+from .._data import Column, Matrix
 from . import _numerics as numerics
 from . import _regression as regression
 from ._common import (
@@ -36,7 +36,7 @@ from ._common import (
     values,
     variables_of,
 )
-from ._distributions import densities
+from ._distributions import bivariate, densities
 from ._fits import BandFailures, check_ci, fit_band
 
 if sys.version_info >= (3, 11):
@@ -227,24 +227,37 @@ def jointplot(
     series: str | None = None,
     series_order: Sequence[Any] | None = None,
     palette: Sequence[str] | None = None,
-    kind: Literal["scatter", "reg"] = "scatter",
+    kind: Literal["scatter", "reg", "kde", "hist"] = "scatter",
     bins: int | str = "auto",
     ratio: float = 5,
     ci: float | None = 95,
     n_boot: int = 1000,
     seed: int | None = 0,
+    filled: bool = False,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A scatter plot of ``y`` against ``x`` with each variable's histogram
     in a strip along its axis: above the plot for ``x``, and to its right,
     horizontal, for ``y``, sharing the scatter plot's scales. ``ratio`` is
     how many times the strips the plot is wide and tall. ``kind="reg"`` adds
-    a linear fit with its ``ci`` bootstrap band (see ``regplot``). Rows
-    missing ``x`` or ``y`` are left out of every part, so all three show the
-    same rows.
+    a linear fit with its ``ci`` bootstrap band (see ``regplot``).
+    ``kind="kde"`` draws the bivariate density's contours at Seaborn's
+    levels (see ``kdeplot``; ``filled=True`` fills them) and each variable's
+    density in the strips; ``kind="hist"`` a 2D histogram whose bins the
+    strips' histograms share. Rows missing ``x`` or ``y`` are left out of
+    every part, so all three show the same rows.
     """
-    if kind not in ("scatter", "reg"):
-        raise ValueError(f'jointplot kind: expected "scatter" or "reg"; received {shown(kind)}')
+    if kind not in ("scatter", "reg", "kde", "hist"):
+        raise ValueError(
+            f'jointplot kind: expected "scatter", "reg", "kde", or "hist"; received {shown(kind)}'
+        )
+    if filled and kind != "kde":
+        raise ValueError('jointplot filled: fills kind="kde"\'s contours; drop it')
+    if series is not None and kind in ("kde", "hist"):
+        raise ValueError(
+            f'jointplot series: kind="{kind}" draws one distribution; '
+            'give kind="scatter" or "reg" for series'
+        )
     if not (ratio > 0):
         raise ValueError(f"jointplot ratio: expected a positive number; received {shown(ratio)}")
     check_ci(ci, "jointplot")
@@ -261,8 +274,12 @@ def jointplot(
     table[x] = number_column(xv)
     table[y] = number_column(yv)
     empty = np.array([0.0, 1.0])
-    x_edges = numerics.bin_edges(xv, None, bins, None, None, False) if len(rows) else empty
-    y_edges = numerics.bin_edges(yv, None, bins, None, None, False) if len(rows) else empty
+    x_edges = (
+        numerics.bin_edges(xv, None, bins, None, None, False, "jointplot") if len(rows) else empty
+    )
+    y_edges = (
+        numerics.bin_edges(yv, None, bins, None, None, False, "jointplot") if len(rows) else empty
+    )
     hidden = Axis(show=False, grid=False)
     settings: dict[str, Any] = dict(options)
     settings.setdefault("width", _JOINT_SIZE)
@@ -308,6 +325,10 @@ def jointplot(
         sentence += f" Too few distinct {x} values for a linear fit."
     sentence += failures.sentence(x)
     sentence += dropped_sentence(dropped, [x, y, *variables], series_order is not None)
+    if kind in ("kde", "hist"):
+        return _joint_density(
+            kind, table, x, y, xv, yv, x_edges, y_edges, filled, settings, dropped
+        )
     chart = make_chart(table, settings, sentence=sentence, palette=palette)
     label = None if series else y
     chart.point(x, y, series=series, panel="joint", label=label, legend_group=SERIES_GROUP)
@@ -346,6 +367,116 @@ def jointplot(
         legend_group=SERIES_GROUP,
     )
     return record(chart, Statistics("jointplot", sentence, tables, used_seed, dropped))
+
+
+def _joint_density(
+    kind: Literal["kde", "hist"],
+    table: dict[str, Column],
+    x: str,
+    y: str,
+    xv: np.ndarray,
+    yv: np.ndarray,
+    x_edges: np.ndarray,
+    y_edges: np.ndarray,
+    filled: bool,
+    settings: dict[str, Any],
+    dropped: int,
+) -> Chart:
+    """A jointplot of a distribution: contours of the density with each
+    variable's in the strips, or a 2D histogram with histograms of the same
+    bins in them."""
+    tables: dict[str, Mapping[str, np.ndarray]] = {}
+    if kind == "hist":
+        sentence = (
+            f"Cells count rows by {x} and {y} in {len(x_edges) - 1} by {len(y_edges) - 1} bins, "
+            f"with histograms of {x} above and of {y} beside them in the same bins."
+        )
+        chart = make_chart(table, settings, sentence=sentence + dropped_sentence(dropped, [x, y]))
+        chart.histogram(
+            x,
+            y=y,
+            bins={"x": [float(e) for e in x_edges], "y": [float(e) for e in y_edges]},
+            panel="joint",
+            label="Count",
+        )
+        tables.update({"x edges": {"edges": x_edges}, "y edges": {"edges": y_edges}})
+        chart.histogram(x, bins=[float(e) for e in x_edges], panel="x", label=x)
+        chart.histogram(y=y, bins=[float(e) for e in y_edges], panel="y", label=y)
+        return record(chart, Statistics("jointplot", sentence, tables, None, dropped))
+    # The complete rows' values, by position.
+    everyone = np.arange(len(xv))
+    found = bivariate(
+        xv,
+        yv,
+        {},
+        everyone,
+        x,
+        y,
+        bw_method="scott",
+        bw_adjust=1.0,
+        cut=3.0,
+        grid_size=200,
+        clip=None,
+        levels=10,
+        thresh=0.05,
+        filled=filled,
+        role="jointplot",
+    )
+    marginals = {
+        name: densities(
+            v,
+            {},
+            everyone,
+            name,
+            None,
+            bw_method="scott",
+            bw_adjust=1.0,
+            cut=3.0,
+            grid_size=200,
+            clip=(None, None),
+            common_norm=False,
+            cumulative=False,
+            scale=None,
+            value_kind="number",
+            role="jointplot",
+        )
+        for name, v in ((x, xv), (y, yv))
+    }
+    sentence = found["sentence"] + f" Lines above and beside show the density of {x} and of {y}."
+    chart = make_chart(table, settings, sentence=sentence + dropped_sentence(dropped, [x, y]))
+    density_name = fresh(["density"], {x, y})[0]
+    if found["panels"]:
+        grid = Matrix({x: found["xs"], y: found["ys"], density_name: found["panels"][0][1]}, x, y)
+        chart.contour(
+            x,
+            y,
+            density_name,
+            data=grid,
+            thresholds=[float(t) for t in np.unique(found["thresholds"])],
+            variant="bands" if filled else None,
+            label="density",
+            panel="joint",
+        )
+    for name, (marginal, _, column) in marginals.items():
+        along = name == x
+        position, value = (name, column) if along else (column, name)
+        orient: Literal["x", "y"] = "x" if along else "y"
+        panel = "x" if along else "y"
+        if filled:
+            chart.area(
+                position,
+                value,
+                data=marginal,
+                orient=orient,
+                panel=panel,
+                label=name,
+                fill_opacity=0.25,
+            )
+        else:
+            chart.line(position, value, data=marginal, orient=orient, panel=panel, label=name)
+        tables[f"{name} density"] = readable(marginal)
+    tables["levels"] = {"proportion": found["proportions"], "density": found["thresholds"]}
+    return record(chart, Statistics("jointplot", sentence, tables, None, dropped))
 
 
 #: The clustermap's share of its width and height its dendrograms take, as Seaborn's.
