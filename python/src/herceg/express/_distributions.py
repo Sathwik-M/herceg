@@ -10,7 +10,7 @@ from typing import Any, Literal, TypedDict
 
 import numpy as np
 
-from .._chart import Axis, Chart, HelperOptions, helper
+from .._chart import Axis, Chart, HelperOptions
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
@@ -23,6 +23,7 @@ from ._common import (
     check_grid_size,
     complete,
     dropped_sentence,
+    express,
     facets,
     fresh,
     group,
@@ -35,6 +36,8 @@ from ._common import (
     shown,
     values,
     variables_of,
+    weight_column,
+    weights_of,
 )
 from ._numerics import Normalize
 
@@ -71,7 +74,7 @@ class KdeOptions(TypedDict, total=False):
     clip: tuple[float | None, float | None]
 
 
-@helper
+@express
 def histplot(
     data: Any,
     *,
@@ -302,7 +305,7 @@ def histplot(
     return record(chart, Statistics("histplot", sentence, tables, None, dropped))
 
 
-@helper
+@express
 def kdeplot(
     data: Any,
     *,
@@ -310,6 +313,7 @@ def kdeplot(
     y: str | None = None,
     series: str | None = None,
     series_order: Sequence[Any] | None = None,
+    weight: str | None = None,
     bw_method: BandwidthMethod = "scott",
     bw_adjust: float = 1.0,
     cut: float = 3.0,
@@ -354,14 +358,23 @@ def kdeplot(
             facet_row,
             facet_column,
             options,
+            weight,
         )
     axis, name = _one_axis(x, y, "kdeplot")
     source = Source(data)
     column = source.column(name, f"kdeplot {axis}", ("number", "time"))
     variables = variables_of(
-        source, "kdeplot", facet_row, facet_column, series, series_order, axes=[name]
+        source,
+        "kdeplot",
+        facet_row,
+        facet_column,
+        series,
+        series_order,
+        axes=[name, *([weight] if weight is not None else [])],
     )
-    rows = complete(len(column), column, levels_of=list(variables.values()))
+    weight_values = weight_column(source, weight, "kdeplot", [name])
+    rows = complete(len(column), column, weight_values, levels_of=list(variables.values()))
+    w = weights_of(weight_values, rows, weight, "kdeplot")
     dropped = len(column) - len(rows)
     v = values(column)
     grouped = series is not None
@@ -381,14 +394,16 @@ def kdeplot(
         scale=None,
         value_kind=column.kind,
         role="kdeplot",
+        weights=w,
     )
     measured = "Cumulative probability" if cumulative else "Density"
     sentence = (
         "Lines show "
         + note
+        + (f", each row weighted by {weight}" if weight is not None else "")
         + by(series)
         + "."
-        + dropped_sentence(dropped, [name, *variables], series_order is not None)
+        + dropped_sentence(dropped, [name, weight, *variables], series_order is not None)
     )
     is_x = axis == "x"
     chart = make_chart(
@@ -423,7 +438,7 @@ def kdeplot(
 _SHARES = {"probability": "share", "percent": "percentage", "count": "count"}
 
 
-@helper
+@express
 def ecdfplot(
     data: Any,
     *,
@@ -431,6 +446,7 @@ def ecdfplot(
     y: str | None = None,
     series: str | None = None,
     series_order: Sequence[Any] | None = None,
+    weight: str | None = None,
     normalize: Literal["probability", "percent", "count"] = "probability",
     complementary: bool = False,
     palette: Sequence[str] | None = None,
@@ -448,9 +464,17 @@ def ecdfplot(
     source = Source(data)
     column = source.column(name, f"ecdfplot {axis}", ("number", "time"))
     variables = variables_of(
-        source, "ecdfplot", facet_row, facet_column, series, series_order, axes=[name]
+        source,
+        "ecdfplot",
+        facet_row,
+        facet_column,
+        series,
+        series_order,
+        axes=[name, *([weight] if weight is not None else [])],
     )
-    rows = complete(len(column), column, levels_of=list(variables.values()))
+    weight_values = weight_column(source, weight, "ecdfplot", [name])
+    rows = complete(len(column), column, weight_values, levels_of=list(variables.values()))
+    w = weights_of(weight_values, rows, weight, "ecdfplot")
     dropped = len(column) - len(rows)
     v = values(column)
     (share,) = fresh([normalize.capitalize()], {name, *variables})
@@ -461,7 +485,9 @@ def ecdfplot(
         # A point per distinct value, which tooltips and the keyboard read:
         # no riser from 0 (or the whole) before the first, which would read
         # as an observation.
-        distinct, steps = numerics.ecdf(v[members], None, normalize, complementary)
+        distinct, steps = numerics.ecdf(
+            v[members], None if w is None else w[members], normalize, complementary
+        )
         positions.append(distinct)
         heights.append(steps)
         keys.append(np.tile(np.asarray(key, dtype=np.int64), (len(distinct), 1)))
@@ -481,10 +507,12 @@ def ecdfplot(
     # A group of one distinct value has no step to draw: it shows as a point.
     single = [len(p) == 1 for p in positions]
     side = "above" if complementary else "at or below"
+    weighted = f", each row weighted by {weight}," if weight is not None else ""
     sentence = (
-        f"Steps show the {_SHARES[normalize]} of {name} values {side} each value{by(series)}."
+        f"Steps show the {_SHARES[normalize]} of {name} values{weighted} {side} each "
+        f"value{by(series)}."
         + (" A group of one distinct value shows as a point." if any(single) else "")
-        + dropped_sentence(dropped, [name, *variables], series_order is not None)
+        + dropped_sentence(dropped, [name, weight, *variables], series_order is not None)
     )
     is_x = axis == "x"
     chart = make_chart(
@@ -530,7 +558,7 @@ def ecdfplot(
     return record(chart, Statistics("ecdfplot", sentence, {"ecdf": readable(table)}, None, dropped))
 
 
-@helper
+@express
 def rugplot(
     data: Any,
     *,
@@ -724,30 +752,36 @@ def densities(
         totals[key[: len(panels)]] = totals.get(key[: len(panels)], 0) + weighed(members)
         members_of.setdefault(key[: len(panels)], []).append(members)
 
-    def deviation_of(members: np.ndarray) -> float:
-        """The kernel's deviation over the members that weigh (positive
-        weights only), or NaN where they are too few or do not vary."""
-        if weights is not None:
+    def deviation_of(members: np.ndarray, weighed: bool = True) -> float:
+        """The kernel's deviation over the members, weighted by their weights
+        (those of positive weight only), or NaN where they are too few or do
+        not vary."""
+        if weighed and weights is not None:
             members = members[weights[members] > 0]
         sample = v[members]
         if len(sample) < 2 or not np.ptp(sample) > 0:
             return math.nan
-        mass = None if weights is None else weights[members]
+        mass = None if not weighed or weights is None else weights[members]
         variance = float(numerics.kernel_covariance(sample, mass, bw_method, bw_adjust)[0, 0])
         return math.sqrt(variance) if variance > 0 and math.isfinite(variance) else math.nan
 
-    def grid_of(members: np.ndarray, deviation: float) -> np.ndarray:
+    def grid_of(members: np.ndarray, deviation: float) -> np.ndarray | None:
+        """The members' grid, as Seaborn's: over all their values, by the
+        kernel's deviation without their weights (`deviation`, the members'
+        own, when they have none); None without one."""
         if weights is not None:
-            members = members[weights[members] > 0]
+            deviation = deviation_of(members, weighed=False)
+        if not math.isfinite(deviation):
+            return None
         return numerics.support(v[members], deviation, cut, clip, grid_size)
 
     shared: dict[tuple[int, ...], np.ndarray] = {}
     if common_grid:
         for panel, parts in members_of.items():
             whole = np.concatenate(parts)
-            spread = deviation_of(whole)
-            if math.isfinite(spread):
-                shared[panel] = grid_of(whole, spread)
+            grid = grid_of(whole, deviation_of(whole))
+            if grid is not None:
+                shared[panel] = grid
     keys: list[np.ndarray] = []
     grids: list[np.ndarray] = []
     densities: list[np.ndarray] = []
@@ -762,6 +796,9 @@ def densities(
         sample = v[kept]
         mass = None if weights is None else weights[kept]
         grid = shared[panel] if common_grid else grid_of(members, deviation)
+        if grid is None:
+            singular += 1
+            continue
         if cumulative:
             density = numerics.cumulative_density(sample, mass, deviation, grid)
         else:
@@ -814,6 +851,7 @@ def _bivariate(
     facet_row: str | None,
     facet_column: str | None,
     options: HelperOptions,
+    weight: str | None,
 ) -> Chart:
     """kdeplot of two columns: a density heatmap per facet panel, on one grid."""
     if series is not None:
@@ -831,8 +869,17 @@ def _bivariate(
     source = Source(data)
     xc = source.column(x, "kdeplot x", ("number",))
     yc = source.column(y, "kdeplot y", ("number",))
-    variables = variables_of(source, "kdeplot", facet_row, facet_column, None, axes=[x, y])
-    rows = complete(len(xc), xc, yc, levels_of=list(variables.values()))
+    variables = variables_of(
+        source,
+        "kdeplot",
+        facet_row,
+        facet_column,
+        None,
+        axes=[x, y, *([weight] if weight is not None else [])],
+    )
+    weight_values = weight_column(source, weight, "kdeplot", [x, y])
+    rows = complete(len(xc), xc, yc, weight_values, levels_of=list(variables.values()))
+    w = weights_of(weight_values, rows, weight, "kdeplot")
     dropped = len(xc) - len(rows)
     xv, yv = values(xc), values(yc)
     if len(rows) < 3:
@@ -847,11 +894,21 @@ def _bivariate(
     cells_y: list[np.ndarray] = []
     cells: list[np.ndarray] = []
     for key, members in group(list(variables.values()), rows):
+        # Rows of no weight carry no density.
+        if w is not None:
+            members = members[w[members] > 0]
         pair = np.vstack([xv[members], yv[members]])
-        covariance = numerics.kernel_covariance(pair, None, bw_method, bw_adjust)
-        if len(members) < 3 or np.linalg.det(covariance) <= 0:
+        mass = None if w is None else w[members]
+        if len(members) < 3:
             continue
-        grid = numerics.density_2d(pair[0], pair[1], None, covariance, xs, ys)
+        covariance = numerics.kernel_covariance(pair, mass, bw_method, bw_adjust)
+        if not np.isfinite(covariance).all() or np.linalg.det(covariance) <= 0:
+            continue
+        try:
+            grid = numerics.density_2d(pair[0], pair[1], mass, covariance, xs, ys)
+        except np.linalg.LinAlgError:
+            # A covariance rounding leaves short of positive definite: singular too.
+            continue
         # Kernels' tails below a billionth of the peak are rounding, not density.
         grid[grid < grid.max() * 1e-9] = 0
         gx, gy = np.meshgrid(xs, ys)
@@ -874,7 +931,10 @@ def _bivariate(
     sentence = (
         f"Cells show the bivariate Gaussian kernel density of {x} and {y} (SciPy's gaussian_kde, "
         f"{rule}{f' × {bw_adjust:g}' if bw_adjust != 1 else ''}) "
-        f"on a {grid_size} by {grid_size} grid." + dropped_sentence(dropped, [x, y, *variables])
+        f"on a {grid_size} by {grid_size} grid"
+        + (f", each row weighted by {weight}" if weight is not None else "")
+        + "."
+        + dropped_sentence(dropped, [x, y, weight, *variables])
     )
     chart = make_chart(table, options, sentence=sentence, x_label=x, y_label=y)
     chart.heatmap(x, y, density, colors=colors, label="density")

@@ -9,6 +9,8 @@ Python memory (tracemalloc) from one more run. Boundaries:
 
 - "compute": the numerical routine alone (no chart);
 - "chart": the express function and `to_spec()` (statistics, chart, columns as bytes);
+- "recompute": `hx.recompute(chart, data)` and `to_spec()` of a chart made from
+  the data before one more x value's rows were appended;
 - "svg": `to_svg()` of a chart already built (herceg's static renderer in V8).
 """
 
@@ -22,6 +24,7 @@ import subprocess
 import sys
 import time
 import tracemalloc
+import warnings
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -30,6 +33,7 @@ import numpy as np
 
 import herceg.express as hx
 from herceg.express import _numerics as numerics
+from herceg.express import _regression as regression
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -48,6 +52,7 @@ def measure(make, repeat: int) -> dict:
     return {
         "samples_ms": samples,
         "median_ms": statistics.median(samples),
+        "stdev_ms": statistics.stdev(samples) if len(samples) > 1 else 0.0,
         "min_ms": min(samples),
         "max_ms": max(samples),
         "peak_python_mib": peak / 2**20,
@@ -101,15 +106,69 @@ def workloads():
         3,
         lambda: hx.barplot(groups, x="g", y="v", seed=0).to_spec(),
     )
-    yield "lowess 10,000, delta 0", "compute", 3, lambda: numerics.lowess(x, y)
+    yield "lowess 10,000, delta 0", "compute", 3, lambda: regression.lowess(x, y)
     yield (
         "lowess 10,000, delta 1% of range",
         "compute",
         5,
-        lambda: numerics.lowess(x, y, delta=delta),
+        lambda: regression.lowess(x, y, delta=delta),
+    )
+    # A lineplot of 1,000 timepoints of 10 rows, and one more timepoint.
+    series = {"t": np.repeat(np.arange(1000.0), 10), "v": rng.normal(0, 1, 10_000)}
+    longer = {
+        "t": np.r_[series["t"], np.full(10, 1000.0)],
+        "v": np.r_[series["v"], rng.normal(0, 1, 10)],
+    }
+    lines = hx.lineplot(series, x="t", y="v")
+    yield (
+        "lineplot 1,000 x values x 10 rows, CI",
+        "chart",
+        3,
+        lambda: hx.lineplot(longer, x="t", y="v").to_spec(),
+    )
+    yield (
+        "lineplot 1,000 x values x 10 rows, CI",
+        "recompute",
+        5,
+        lambda: hx.recompute(lines, longer).to_spec(),
+    )
+    units = rng.choice(np.arange(20), 1000)
+    unit_values = rng.gamma(2.0, 2.0, 1000) + units * 0.1
+    unit_ranks = np.unique(units, return_inverse=True)[1]
+    yield (
+        "bootstrap 1,000 means of 1,000 in 20 units",
+        "compute",
+        5,
+        lambda: numerics.bootstrap_estimates(
+            unit_values, "mean", 1000, 0, units=numerics.units_of(unit_ranks)
+        ),
+    )
+    fx = rng.uniform(0, 10, 1000)
+    outcome = (rng.uniform(size=1000) < 1 / (1 + np.exp(-(fx - 5)))).astype(float)
+    noisy = 1 + 2 * fx + rng.standard_t(2, 1000)
+    grid = np.linspace(0, 10, 100)
+
+    def fit_and_band(y_values, model):
+        """The fit at the grid and its 95% band, as Seaborn's fit_regression returns them."""
+        fitted = regression.fit(fx, y_values, model)(grid)
+        boots = regression.bootstrap(fx, y_values, grid, 1000, 0, model=model)
+        return fitted, regression.band(boots.predictions, 95)
+
+    yield (
+        "logistic fit and band 1,000 rows, 1,000 resamples",
+        "compute",
+        5,
+        lambda: fit_and_band(outcome, "logistic"),
+    )
+    yield (
+        "robust fit and band 1,000 rows, 1,000 resamples",
+        "compute",
+        5,
+        lambda: fit_and_band(noisy, "robust"),
     )
     try:
         from seaborn import algorithms
+        from seaborn import regression as seaborn_regression
         from statsmodels.nonparametric.smoothers_lowess import lowess
     except ImportError:
         return
@@ -132,9 +191,34 @@ def workloads():
         5,
         lambda: lowess(y, x, delta=delta),
     )
+    yield (
+        "Seaborn bootstrap 1,000 means of 1,000 in 20 units",
+        "compute",
+        5,
+        lambda: algorithms.bootstrap(unit_values, func="mean", n_boot=1000, units=units, seed=0),
+    )
+
+    def seaborn_band(y_values, **model):
+        plotter = seaborn_regression._RegressionPlotter(fx, y_values, n_boot=1000, seed=0, **model)
+        return plotter.fit_regression(grid=grid)
+
+    yield (
+        "Seaborn logistic fit and band 1,000 rows, 1,000 resamples (statsmodels GLM)",
+        "compute",
+        3,
+        lambda: seaborn_band(outcome, logistic=True),
+    )
+    yield (
+        "Seaborn robust fit and band 1,000 rows, 1,000 resamples (statsmodels RLM)",
+        "compute",
+        3,
+        lambda: seaborn_band(noisy, robust=True),
+    )
 
 
 def main() -> None:
+    # statsmodels warns of resamples that do not converge, in the references.
+    warnings.simplefilter("ignore")
     parser = argparse.ArgumentParser()
     parser.add_argument("--out")
     args = parser.parse_args()

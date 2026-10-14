@@ -100,6 +100,7 @@ export {
   type HorizontalBarOptions,
   type VerticalBarOptions,
 } from "./marks/bar.ts";
+export { type BoxenOptions, boxen } from "./marks/boxen.ts";
 export { type BoxPlotOptions, boxplot } from "./marks/boxplot.ts";
 export {
   type CandlestickOptions,

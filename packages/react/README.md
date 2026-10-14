@@ -29,7 +29,7 @@ and its control of every panel's x when there are several.
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 children are mark elements: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
 `<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`,
-`<BoxPlot>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`,
+`<BoxPlot>`, `<Boxen>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`,
 `<Radar>`, `<Sankey>`, `<Graph>`, `<GeoShape>`, `<GeoPoint>`, `<Point3D>`,
 `<Line3D>`, `<Surface>`, `<Rule>`, `<Region>`, `<Text>`, and `<Custom>`.
 Each mark element takes the table it reads as `data`, so field names are checked against that table's

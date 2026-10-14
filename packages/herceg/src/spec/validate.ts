@@ -144,6 +144,10 @@ const width: Check = (v, path) => {
 const fraction: Check = (v, path) => {
   if (typeof v !== "number" || !(v >= 0 && v <= 1)) fail(path, "a number from 0 to 1", v);
 };
+/** A number strictly between 0 and 1. */
+const share: Check = (v, path) => {
+  if (typeof v !== "number" || !(v > 0 && v < 1)) fail(path, "a number between 0 and 1", v);
+};
 const strings: Check = (v, path) => {
   if (!Array.isArray(v)) fail(path, "an array of strings", v);
   for (const [i, item] of v.entries()) string(item, `${path}[${i}]`);
@@ -852,7 +856,30 @@ const MARKS: MarkChecks = {
           fail(path, '"tukey", "range", or a finite nonnegative IQR multiple', v);
       },
       notch: boolean,
+      outliers: boolean,
       series: field,
+      fill: string,
+      fillOpacity: fraction,
+      label: string,
+      legendGroup: group,
+    },
+  },
+  boxen: {
+    required: ["x", "y"],
+    checks: {
+      ...placement,
+      x: field,
+      y: field,
+      series: field,
+      depth: (v, path) => {
+        if (["tukey", "proportion", "trustworthy", "full"].includes(v as string)) return;
+        if (typeof v !== "number" || !Number.isInteger(v) || v < 1)
+          fail(path, '"tukey", "proportion", "trustworthy", "full", or a whole number from 1', v);
+      },
+      outlierProportion: share,
+      trustAlpha: share,
+      widthMethod: oneOf("exponential", "linear", "area"),
+      outliers: boolean,
       fill: string,
       fillOpacity: fraction,
       label: string,

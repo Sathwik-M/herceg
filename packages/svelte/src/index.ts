@@ -2,6 +2,7 @@
 
 export { default as Area } from "./Area.svelte";
 export { default as Bar } from "./Bar.svelte";
+export { default as Boxen } from "./Boxen.svelte";
 export { default as BoxPlot } from "./BoxPlot.svelte";
 export { default as Candlestick } from "./Candlestick.svelte";
 export { default as Chart } from "./Chart.svelte";

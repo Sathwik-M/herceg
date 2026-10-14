@@ -1,24 +1,33 @@
 """What the express functions share: reading columns from any table herceg
 reads, leaving out incomplete rows, ordering categories, grouping rows,
-building the tables their charts draw, and making those charts with a
-description of what was computed."""
+building the tables their charts draw, making those charts with a
+description of what was computed, and remembering each call, so that
+``recompute`` can make its chart again from other data."""
 
 from __future__ import annotations
 
+import copy
+import dataclasses
+import functools
+import hashlib
+import inspect
 import math
 import numbers
 import weakref
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import numpy as np
 
-from .._chart import Axis, Chart, _chart_of
+from .._chart import Axis, Chart, _chart_of, helper
 from .._data import Column, Table, listed, shown
+from .._rows import SelectionBinding
+from ._numerics import ErrorFunction, Estimator
 
 ErrorMethod = Literal["ci", "pi", "se", "sd"]
-ErrorBar = tuple[ErrorMethod, float] | ErrorMethod | None
+ErrorBar = tuple[ErrorMethod, float] | ErrorMethod | ErrorFunction | None
 
 #: The level each error method takes when only its name is given, as in Seaborn.
 _LEVELS: dict[str, float] = {"ci": 95, "pi": 95, "se": 1, "sd": 1}
@@ -62,11 +71,192 @@ def record(chart: Chart, stats: Statistics) -> Chart:
     return chart
 
 
+# Calls ---------------------------------------------------------------------------
+
+
+@dataclass
+class _Making:
+    """What an express function records while it makes a chart: bootstrap
+    results by the digest of their inputs (taken from `previous`, those of
+    the chart being recomputed, where the inputs are the same), arguments
+    it resolved for itself (a seed drawn), and the columns it read."""
+
+    previous: Mapping[bytes, Any]
+    reuse: dict[bytes, Any] = field(default_factory=dict)
+    resolved: dict[str, Any] = field(default_factory=dict)
+    read: set[str] = field(default_factory=set)
+
+
+#: The call making a chart now, if any.
+_MAKING: ContextVar[_Making | None] = ContextVar("herceg_express_making", default=None)
+#: The bootstrap results of the chart a recompute makes again.
+_PREVIOUS: ContextVar[Mapping[bytes, Any] | None] = ContextVar(
+    "herceg_express_previous", default=None
+)
+
+
+@dataclass(frozen=True)
+class Call:
+    """How an express chart was made: its function, the arguments other than
+    the data (their containers copied, with a seed drawn for ``seed=None``),
+    the data given (a reference), the columns read from it, the marks the
+    function drew (marks after them were added to the chart), and its
+    bootstrap results."""
+
+    function: Callable[..., Chart]
+    arguments: Mapping[str, Any]
+    data: Any
+    read: frozenset[str]
+    marks: int
+    reuse: Mapping[bytes, Any]
+
+
+_CALLS: weakref.WeakKeyDictionary[Chart, Call] = weakref.WeakKeyDictionary()
+
+_F = TypeVar("_F", bound=Callable[..., Chart])
+_T = TypeVar("_T")
+
+
+def express(function: _F) -> _F:
+    """Makes an express function: it refuses options it does not take (see
+    ``helper``) and remembers each call with the chart it makes."""
+    checked = helper(function)
+    signature = inspect.signature(function)
+
+    @functools.wraps(function)
+    def make(*args: Any, **kwargs: Any) -> Chart:
+        bound = signature.bind(*args, **kwargs)
+        making = _Making(_PREVIOUS.get() or {})
+        token = _MAKING.set(making)
+        try:
+            chart = checked(*args, **kwargs)
+        finally:
+            _MAKING.reset(token)
+        arguments = dict(bound.arguments)
+        data = arguments.pop("data", None)
+        arguments.update(arguments.pop("options", {}))
+        arguments.update(making.resolved)
+        _CALLS[chart] = Call(
+            make,
+            {name: _copied(value) for name, value in arguments.items()},
+            data,
+            frozenset(making.read),
+            len(chart._marks),
+            making.reuse,
+        )
+        return chart
+
+    return make  # type: ignore[return-value]
+
+
+def _copied(value: Any) -> Any:
+    """`value` with its lists, tuples, sets, dicts, arrays, and option
+    objects (``hg.Axis``, ``hg.Jitter``, ...) copied, so the caller changing
+    one later (a palette list, an axis title) leaves the call as it was;
+    functions, and the table a ``SelectionBinding`` names, are the same
+    objects."""
+    if type(value) is dict:
+        return {key: _copied(item) for key, item in value.items()}
+    if type(value) in (list, tuple, set):
+        return type(value)(_copied(item) for item in value)
+    if isinstance(value, np.ndarray):
+        return value.copy()
+    if dataclasses.is_dataclass(value) and not isinstance(value, type) and not callable(value):
+        out = copy.copy(value)
+        for item in dataclasses.fields(value):
+            if not (isinstance(value, SelectionBinding) and item.name == "data"):
+                object.__setattr__(out, item.name, _copied(getattr(value, item.name)))
+        return out
+    return value
+
+
+def call_of(chart: Chart) -> Call | None:
+    """How an express chart was made; None for other charts."""
+    return _CALLS.get(chart)
+
+
+def recompute(chart: Chart, data: Any) -> Chart:
+    """A new chart made as ``chart`` was, by the same express function with
+    the same arguments and seed, from ``data``: its estimates, fits, and
+    densities are computed again, and marks added to ``chart`` after the
+    function made it are added again, reading the new chart's table where
+    they read the old one's.
+
+    Groups whose values are the same as in ``chart`` reuse their bootstrap
+    results, which a seed makes the same, rather than resampling again.
+    """
+    call = _CALLS.get(chart)
+    if call is None:
+        raise ValueError(
+            "hx.recompute: the chart was not made by a herceg.express function; "
+            "make the chart again from the new data"
+        )
+    return remake(chart, call, data)
+
+
+def remake(chart: Chart, call: Call, data: Any) -> Chart:
+    """`call` made again from `data`, with `chart`'s added marks."""
+    token = _PREVIOUS.set(call.reuse)
+    try:
+        made = call.function(data, **call.arguments)
+    finally:
+        _PREVIOUS.reset(token)
+    # Marks added after the function made the chart: those reading its table
+    # read the new chart's, which the same arguments give the same columns.
+    for spec, table in chart._marks[call.marks :]:
+        if table is None:
+            target = None
+        elif table == chart._default:
+            target = made._default
+        else:
+            target = made._table(chart._tables[table][0])
+        made._add(copy.deepcopy(spec), target)
+    return made
+
+
+def resolved(name: str, value: Any) -> None:
+    """Records an argument the function resolved for itself (the columns
+    ``vars=None`` pairs), so that a recompute resolves it the same way
+    whatever columns the new data has."""
+    making = _MAKING.get()
+    if making is not None:
+        making.resolved[name] = value
+
+
+def reused(parts: Sequence[Any], compute: Callable[[], _T]) -> _T:
+    """``compute()``, unless the call being made, or the chart it makes
+    again, computed it from the same `parts` (arrays and plain values)."""
+    making = _MAKING.get()
+    if making is None:
+        return compute()
+    key = _digest(parts)
+    if key in making.reuse:
+        return making.reuse[key]
+    value = making.previous[key] if key in making.previous else compute()
+    making.reuse[key] = value
+    return value
+
+
+def _digest(parts: Sequence[Any]) -> bytes:
+    """A strong digest of arrays' contents and plain values."""
+    digest = hashlib.blake2b(digest_size=16)
+    for part in parts:
+        if isinstance(part, np.ndarray):
+            array = np.ascontiguousarray(part)
+            digest.update(f"{array.dtype.str}{array.shape}".encode())
+            digest.update(array.tobytes())
+        else:
+            digest.update(repr(part).encode())
+        digest.update(b"|")
+    return digest.digest()
+
+
 # Reading columns ----------------------------------------------------------------
 
 
 class Source:
-    """A table's columns, converted on first use as charts convert them."""
+    """A table's columns, converted on first use as charts convert them; the
+    call being made records the columns read."""
 
     def __init__(self, data: Any) -> None:
         if data is None:
@@ -81,6 +271,9 @@ class Source:
         if not isinstance(name, str) or name not in self._table.names:
             available = ", ".join(repr(n) for n in self._table.names)
             raise KeyError(f"{role}: no column {name!r}; the data has {available}")
+        making = _MAKING.get()
+        if making is not None:
+            making.read.add(name)
         column = self._table.column(name)
         if kinds is not None and column.kind not in kinds:
             raise TypeError(
@@ -274,8 +467,7 @@ def variables_of(
 
 
 def check_axes_differ(x: str, y: str, function: str) -> None:
-    """Refuses one column on both axes where one is categories and the
-    other values: the chart's table holds a column once."""
+    """Refuses one column on both axes: the chart's table holds a column once."""
     if x == y:
         raise ValueError(
             f"{function} x and y name the same column {x!r}; pass a copy of it under another name"
@@ -296,6 +488,63 @@ def complete(n: int, *columns: Column | None, levels_of: Sequence[Levels] = ()) 
     for variable in levels_of:
         mask &= variable.codes >= 0
     return np.flatnonzero(mask)
+
+
+def weight_column(
+    source: Source, weight: str | None, function: str, taken: Sequence[str | None]
+) -> Column | None:
+    """The ``weight`` column, refusing one the chart already uses (None without one)."""
+    if weight is None:
+        return None
+    if weight in taken:
+        raise ValueError(
+            f"{function} weight: column {weight!r} is plotted or groups the chart too; "
+            "weigh rows by another column"
+        )
+    return source.column(weight, f"{function} weight", ("number",))
+
+
+def weights_of(
+    column: Column | None, rows: np.ndarray, weight: str | None, function: str
+) -> np.ndarray | None:
+    """The weights of the data's rows, refusing negative ones among the
+    complete `rows` (None without weights)."""
+    if column is None:
+        return None
+    w = values(column)
+    if np.any(w[rows] < 0):
+        raise ValueError(
+            f"{function} weight: column {weight!r} holds negative values; "
+            "weights count rows, from 0 up"
+        )
+    return w
+
+
+def unit_ranks(
+    source: Source, units: str | None, function: str, taken: Sequence[str | None]
+) -> tuple[np.ndarray, Column] | None:
+    """Each row's unit as its rank among the units' values in ascending order
+    (labels for categories), as Seaborn's bootstrap orders units, and the
+    column (None without units)."""
+    if units is None:
+        return None
+    if units in taken:
+        raise ValueError(
+            f"{function} units: column {units!r} is plotted or groups the chart too; "
+            "give the sampling units' own column"
+        )
+    column = source.column(units, f"{function} units", ("category", "number", "time"))
+    if column.kind == "category":
+        order = sorted(range(len(column.dictionary)), key=lambda code: column.dictionary[code])
+        rank = np.empty(len(column.dictionary) + 1, dtype=np.int64)
+        rank[order] = np.arange(len(order))
+        rank[-1] = -1
+        return rank[column.values], column
+    v = values(column)
+    ranks = np.full(len(v), -1, dtype=np.int64)
+    finite = np.isfinite(v)
+    ranks[finite] = np.unique(v[finite], return_inverse=True)[1].reshape(-1)
+    return ranks, column
 
 
 # Tables charts draw --------------------------------------------------------------
@@ -372,9 +621,14 @@ def readable(table: Mapping[str, Column]) -> dict[str, np.ndarray]:
 
 
 def seed_of(seed: int | None, function: str) -> int:
-    """The seed resampling uses: the one given, or one drawn now and recorded."""
+    """The seed resampling uses: the one given, or for None one drawn now,
+    which the call records, so that a recompute draws as this call did."""
     if seed is None:
-        return int(np.random.SeedSequence().entropy % 2**32)  # type: ignore[operator]
+        drawn = int(np.random.SeedSequence().entropy % 2**32)  # type: ignore[operator]
+        making = _MAKING.get()
+        if making is not None:
+            making.resolved["seed"] = drawn
+        return drawn
     if isinstance(seed, bool) or not isinstance(seed, numbers.Integral) or seed < 0:
         raise ValueError(
             f"{function} seed: expected a whole number of at least 0; received {shown(seed)}"
@@ -382,10 +636,13 @@ def seed_of(seed: int | None, function: str) -> int:
     return int(seed)
 
 
-def error_method(errorbar: ErrorBar, function: str) -> tuple[ErrorMethod, float] | None:
-    """An ``errorbar`` argument as a method and its level."""
-    if errorbar is None:
-        return None
+def error_method(
+    errorbar: ErrorBar, function: str
+) -> tuple[ErrorMethod, float] | ErrorFunction | None:
+    """An ``errorbar`` argument as a method and its level, or a function of
+    a group's values giving its interval."""
+    if errorbar is None or (callable(errorbar) and not isinstance(errorbar, str)):
+        return errorbar
     if isinstance(errorbar, str):
         method, level = errorbar, _LEVELS.get(errorbar)
     else:
@@ -394,7 +651,7 @@ def error_method(errorbar: ErrorBar, function: str) -> tuple[ErrorMethod, float]
         except (TypeError, ValueError):
             raise ValueError(
                 f'{function} errorbar: expected ("ci", 95), ("pi", 50), ("se", 1), ("sd", 1), '
-                f"a method name, or None; received {shown(errorbar)}"
+                f"a method name, a function of the values, or None; received {shown(errorbar)}"
             ) from None
     if method not in _LEVELS:
         raise ValueError(
@@ -411,12 +668,97 @@ def error_method(errorbar: ErrorBar, function: str) -> tuple[ErrorMethod, float]
     return method, float(level)
 
 
-def describe_interval(method: ErrorMethod, level: float, n_boot: int, seed: int | None) -> str:
+#: The estimators express names.
+ESTIMATORS = ("mean", "median", "sum", "min", "max")
+
+
+def check_estimator(estimator: Any, role: str, *, none: bool = False) -> Estimator | None:
+    """Refuses, at `role` (the function and option), an estimator other than
+    a named one or a function (or, with `none`, None)."""
+    if (none and estimator is None) or estimator in ESTIMATORS:
+        return estimator
+    if callable(estimator) and not isinstance(estimator, str):
+        return estimator
+    named = ", ".join(f'"{name}"' for name in ESTIMATORS)
+    raise ValueError(
+        f"{role}: expected {named}, a function of the values"
+        + (", or None" if none else "")
+        + f"; received {shown(estimator)}"
+    )
+
+
+def checked_estimate(value: Any, role: str, where: str) -> float:
+    """What an estimator function returned for a group (`where`), refused at
+    `role` unless it is one finite number."""
+    number = math.nan
+    if isinstance(value, numbers.Real) and not isinstance(value, bool | np.bool_ | np.timedelta64):
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            number = math.nan
+    if math.isfinite(number):
+        return number
+    raise ValueError(f"{role}: returned {shown(value)} for {where}; return one finite number")
+
+
+def checking(
+    estimator: Estimator, role: str, sample: np.ndarray, where: Callable[[], str]
+) -> Estimator:
+    """`estimator`, a function's results checked (see `checked_estimate`)
+    each time it is called, on a group's values `sample` (`where` names
+    the group) or a resample of them; a named estimator as it is."""
+    if not callable(estimator):
+        return estimator
+    given = estimator
+
+    def checked(values: np.ndarray) -> float:
+        group = where() if values is sample else f"a resample of {where()}"
+        return checked_estimate(given(values), role, group)
+
+    return checked
+
+
+def checked_ends(value: Any, role: str, where: str) -> tuple[float, float]:
+    """What an interval function returned for a group (`where`), refused at
+    `role` unless it is two finite numbers, low first."""
+    try:
+        low, high = (checked_estimate(end, role, where) for end in value)
+    except (TypeError, ValueError):
+        low = high = math.nan
+    if not low <= high:
+        raise ValueError(
+            f"{role}: returned {shown(value)} for {where}; return the interval's two finite "
+            "ends, low first"
+        )
+    return low, high
+
+
+def function_name(function: Callable[..., Any], noun: str) -> str:
+    """How a description names a function the caller gave: by its name, or
+    as `noun` for lambdas."""
+    name = getattr(function, "__name__", "")
+    return name if name and name != "<lambda>" else noun
+
+
+def describe_interval(
+    method: ErrorMethod | ErrorFunction,
+    level: float,
+    n_boot: int,
+    seed: int | None,
+    units: str | None = None,
+) -> str:
     """How an interval was computed, in words."""
+    if callable(method):
+        return f"intervals from {function_name(method, 'a function')} of the values"
     amount = f"{level:g}"
     if method == "ci":
+        resampled = (
+            f"{n_boot:,} resamples of the units of {units} and the rows within them"
+            if units
+            else f"{n_boot:,} resamples"
+        )
         return (
-            f"{amount}% bootstrap confidence intervals ({n_boot:,} resamples, seed {seed}, "
+            f"{amount}% bootstrap confidence intervals ({resampled}, seed {seed}, "
             "percentile method)"
         )
     if method == "pi":
@@ -425,7 +767,7 @@ def describe_interval(method: ErrorMethod, level: float, n_boot: int, seed: int 
     return f"±{amount} {noun}{'' if level == 1 else 's'}"
 
 
-def dropped_sentence(dropped: int, roles: Sequence[str], ordered: bool = False) -> str:
+def dropped_sentence(dropped: int, roles: Sequence[str | None], ordered: bool = False) -> str:
     """Says how many rows were left out, missing a value of the columns
     `roles` names or, `ordered`, with a level not in the order given."""
     if dropped == 0:

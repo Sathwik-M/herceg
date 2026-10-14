@@ -370,6 +370,131 @@ describe("notebook widget", () => {
     expect(vertices(host!)).toBe(2);
   });
 
+  it("replaces several tables and options at once, as express charts computed again send them", async () => {
+    const model = new MockModel({ _chart: snapshot(), _listening: [] });
+    const [host] = mount(model);
+    const fresh = rows([0, 1, 2, 3], [4, 3, 2, 1], ["a", "a", "b", "b"]);
+    model.receive(
+      {
+        type: "tables",
+        revision: 1,
+        tables: { data: fresh.columns },
+        options: { title: "Again" },
+      },
+      fresh.buffers,
+    );
+    await frame();
+    expect(vertices(host!)).toBe(4);
+    expect(figure(host!).getAttribute("aria-label")).toBe("Again");
+    // A table that cannot be read changes none of them.
+    const broken = rows([9], [9], ["z"]);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    model.receive(
+      {
+        type: "tables",
+        revision: 2,
+        tables: { data: fresh.columns, missing: broken.columns },
+        options: {},
+      },
+      fresh.buffers,
+    );
+    await frame();
+    expect(vertices(host!)).toBe(4);
+  });
+
+  it("keeps legend groups' hidden series and the focus when the whole chart is sent again", async () => {
+    // An express chart whose marks changed: a mark more, of the same legend group.
+    const grouped = (revision: number, bands: number): Snapshot => ({
+      ...snapshot(),
+      revision,
+      spec: {
+        ...snapshot().spec,
+        legend: true,
+        marks: [
+          { type: "line", x: "t", y: "v", series: "host", data: "data", legendGroup: "series" },
+          ...Array.from({ length: bands }, () => ({
+            type: "point" as const,
+            x: "t",
+            y: "v",
+            data: "data",
+            label: "a",
+            legendGroup: "series",
+          })),
+        ],
+      },
+      buffers: [
+        new DataView(new Float64Array([0, 1, 2, 3]).buffer),
+        new DataView(new Float64Array([1, 3, 2, 4]).buffer),
+        new DataView(new Int32Array([0, 0, 1, 1]).buffer),
+      ],
+    });
+    const twoHosts = (shot: Snapshot): Snapshot => {
+      const data = shot.spec.data as Record<string, { columns: Record<string, unknown> }>;
+      data.data!.columns.host = { type: "category", codes: 2, dictionary: ["a", "b"] };
+      return shot;
+    };
+    const model = new MockModel({ _chart: twoHosts(grouped(0, 0)), _listening: [] });
+    const [host] = mount(model);
+    const button = (label: string) =>
+      [...host!.querySelectorAll("button")].find((b) => b.textContent === label)!;
+    button("a").click();
+    await frame();
+    expect(button("a").getAttribute("aria-pressed")).toBe("false");
+    host!.querySelector<HTMLElement>("[tabindex]")!.focus();
+    model.set("_chart", twoHosts(grouped(1, 1)));
+    await frame();
+    expect(button("a").getAttribute("aria-pressed")).toBe("false");
+    expect(button("b").getAttribute("aria-pressed")).toBe("true");
+    expect(document.activeElement).toBe(host!.querySelector("[tabindex]"));
+  });
+
+  it("draws a chart sent again with other marks, keeping zoom not yet reported to Python", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const model = new MockModel({
+      _chart: snapshot({ interaction: { zoom: true } }),
+      _listening: [],
+    });
+    const [host] = mount(model);
+    const wheel = () => {
+      const rect = figure(host!).getBoundingClientRect();
+      figure(host!).dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          deltaY: -100,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+        }),
+      );
+    };
+    wheel();
+    await frame();
+    wheel();
+    // The first zoom is reported at once, the second waits for the throttle.
+    expect(model.messages("viewport")).toHaveLength(1);
+    const { spec, buffers } = snapshot({ interaction: { zoom: true }, title: "Again" });
+    model.receive(
+      {
+        type: "chart",
+        revision: 1,
+        spec: { ...spec, marks: [...spec.marks, { type: "point", x: "t", y: "v", data: "data" }] },
+        rows: {},
+      },
+      buffers as DataView[],
+    );
+    expect(figure(host!).getAttribute("aria-label")).toBe("Again");
+    vi.advanceTimersByTime(200);
+    const reports = model.messages("viewport") as { viewport: { x: [number, number] } }[];
+    expect(reports).toHaveLength(2);
+    const [start, end] = reports[1]!.viewport.x;
+    const shown = host!.querySelector("svg g[clip-path] path");
+    expect(shown).not.toBeNull();
+    expect(end - start).toBeLessThan(2);
+  });
+
   it("changes options in place and removes those set to null", () => {
     const model = new MockModel({ _chart: snapshot(), _listening: [] });
     const [host] = mount(model);
@@ -1551,6 +1676,24 @@ describe("widget item interaction", () => {
     await frame();
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(model.messages("itemMove").at(-1)!.item_positions).toEqual({});
+  });
+
+  it("drops queued moves when a chart of new data is sent", async () => {
+    const model = new MockModel({ _chart: items("graph"), _listening: [] });
+    const [host] = mount(model);
+    await vi.dynamicImportSettled();
+    key(host!, "ArrowRight");
+    key(host!, "ArrowRight", true);
+    await frame();
+    expect(model.messages("itemMove")).toHaveLength(1);
+    // A move queued for the next frame, then a chart of other data.
+    key(host!, "ArrowRight", true);
+    const { spec, buffers } = itemChart("graph", "Again");
+    model.receive({ type: "chart", revision: 1, spec, rows: {} }, buffers);
+    await frame();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove")).toHaveLength(1);
+    expect(figure(host!).getAttribute("aria-label")).toBe("Again");
   });
 
   it("cancels pending moves when Python resets positions or replaces data", async () => {

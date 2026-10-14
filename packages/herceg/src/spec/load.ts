@@ -10,6 +10,7 @@ import { type Table, table } from "../data/table.ts";
 import { readsTable } from "../marks/annotation.ts";
 import { AreaMark } from "../marks/area.ts";
 import { BarMark } from "../marks/bar.ts";
+import { BoxenMark } from "../marks/boxen.ts";
 import { BoxPlotMark } from "../marks/boxplot.ts";
 import { CandlestickMark } from "../marks/candlestick.ts";
 import { DendrogramMark } from "../marks/dendrogram.ts";
@@ -496,6 +497,8 @@ function loadMark(spec: MarkSpec, index: number, tables: Map<string, Table>): Ma
         return new PieMark(spec, source);
       case "boxplot":
         return new BoxPlotMark(spec, source);
+      case "boxen":
+        return new BoxenMark(spec, source);
       case "violin":
         return new ViolinMark(spec, source);
       case "treemap":

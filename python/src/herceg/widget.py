@@ -47,8 +47,9 @@ from ._events import (
     encode_viewport,
     same_values,
 )
-from ._live import LiveChart, Message
+from ._live import ExpressData, LiveChart, Message
 from ._rows import RowSelection, decode, encode
+from .express._common import call_of
 
 if TYPE_CHECKING:
     from ._chart import Chart
@@ -97,6 +98,11 @@ class ChartWidget(anywidget.AnyWidget):
         live.update(title="CPU, live")
         live.on_select(lambda selection: print(selection and selection.x))
 
+    The data of a ``herceg.express`` chart is the data its function was
+    given: ``append`` and ``replace`` change those rows, and the function
+    computes the chart again from them, keeping its arguments, its seed, and
+    what ``update`` changed.
+
     Several outputs of one widget show the same chart and stay in step.
     """
 
@@ -111,6 +117,9 @@ class ChartWidget(anywidget.AnyWidget):
 
     def __init__(self, chart: Chart) -> None:
         self._live = LiveChart(chart)
+        call = call_of(chart)
+        # An express chart's rows, which updates change and compute again from.
+        self._express = ExpressData(chart, call) if call is not None else None
         # Counts the changes sent to browsers, so a browser that missed one
         # (it was not open yet, say) asks for the whole chart again.
         self._revision = 0
@@ -157,8 +166,19 @@ class ChartWidget(anywidget.AnyWidget):
         column names to values. It needs every column the chart reads, with
         the same kinds of values. ``max_rows`` keeps a rolling window: the
         oldest rows are dropped beyond it. ``data`` chooses the table: the
-        object a mark read with ``data=``; by default, the chart's data.
+        object a mark read with ``data=``; by default, the chart's data. For
+        an express chart, the rows join its function's data, and the chart's
+        statistics are computed again.
         """
+        if self._express is not None:
+            self._refuse_data(data, "widget.append")
+            # The rows join the current ones under the lock, so appends
+            # from several threads all take part.
+            with self._lock:
+                moved = self._recompute(self._express.appended(rows, max_rows))
+            for key in moved:
+                self._callbacks[key](decode_item_positions(self._states[key]))
+            return
         with self._lock:
             before = dict(self._live.dropped)
             message = self._live.append(rows, data, max_rows)
@@ -169,7 +189,15 @@ class ChartWidget(anywidget.AnyWidget):
             self._callbacks[key](decode_item_positions(self._states[key]))
 
     def replace(self, rows: Any, *, data: Any = None) -> None:
-        """Replaces all rows of the chart's data (or of ``data``, as in :meth:`append`)."""
+        """Replaces all rows of the chart's data (or of ``data``, as in
+        :meth:`append`); an express chart's statistics are computed again."""
+        if self._express is not None:
+            self._refuse_data(data, "widget.replace")
+            with self._lock:
+                moved = self._recompute(self._express.replaced(rows))
+            for key in moved:
+                self._callbacks[key](decode_item_positions(self._states[key]))
+            return
         with self._lock:
             before = dict(self._live.dropped)
             generations = dict(self._live.generation)
@@ -180,15 +208,70 @@ class ChartWidget(anywidget.AnyWidget):
         for key in moved:
             self._callbacks[key](decode_item_positions(self._states[key]))
 
+    def _refuse_data(self, data: Any, method: str) -> None:
+        if data is not None:
+            assert self._express is not None
+            raise ValueError(
+                f"{method} data: the {self._express.call.function.__name__} chart is computed "
+                "from its function's data, which rows change; drop data="
+            )
+
+    def _recompute(self, columns: dict[str, Any]) -> list[StateKey]:
+        """Makes the express chart again from `columns` and shows it: its new
+        tables replace the old ones at once where its marks are the same, and
+        otherwise the whole chart is sent, every display keeping its zoom,
+        selection, and legend. Nothing changes if the chart cannot be made.
+        Moved network nodes reading tables that changed go, as after any
+        data change; the states that changed are returned. Called with the
+        lock held, since `columns` were made from the rows it holds."""
+        assert self._express is not None
+        chart = self._express.make(columns)
+        live = LiveChart(chart, self._live.overrides)
+        self._express.keep(columns, chart)
+        if not self._live.drawn_alike(live):
+            self._replace_live(live)
+            return self._release_moves(None)
+        before = dict(self._live.dropped)
+        generations = dict(self._live.generation)
+        message = self._live.adopt(live)
+        self._push(message)
+        self._follow_rows(before, generations)
+        return self._release_moves(list(message[0]["tables"])) if message else []
+
+    def _replace_live(self, live: LiveChart) -> None:
+        """Shows another chart in place of this one, sent whole in one message
+        that leaves interaction state as it is (a browser's zoom and brush,
+        and reports on their way); rows selected in its tables go, as its
+        tables are new. Called with the lock held."""
+        self._live = live
+        self._rows = {
+            (name, channel): RowSelection(channel, data) for name, channel, data in live.bound
+        }
+        self._row_changes = {key: (None, self._revision + 1) for key in self._rows}
+        spec, buffers = live.to_spec()
+        # Python numbers the new tables' rows from their first.
+        rows = {name: [0, 0] for name, _, _ in live.bound}
+        self._push(({"type": "chart", "spec": spec, "rows": rows}, buffers))
+
     def _invalidate_positions(self, message: Message | None) -> list[StateKey]:
         """Lets go of the moved nodes of the networks reading the table a data
         change changed, as the browser does; the states that changed. Called
         with the lock held."""
         if message is None:
             return []
+        return self._release_moves([message[0]["table"]])
+
+    def _release_moves(self, tables: list[str] | None) -> list[StateKey]:
+        """Lets go of the moved nodes of the networks reading `tables` (every
+        network's, for None); the states that changed. Called with the lock
+        held."""
+        if tables is None:
+            keys = [key for key in self._states if key[0] == "itemMove"]
+        else:
+            panels = [panel for t in tables for panel in self._live.state_panels("itemMove", t)]
+            keys = [("itemMove", panel) for panel in dict.fromkeys(panels)]
         moved = []
-        for panel in self._live.state_panels("itemMove", message[0]["table"]):
-            key: StateKey = ("itemMove", panel)
+        for key in keys:
             if self._change(key, {}, None):
                 moved.append(key)
             # Even an empty mapping must reject moves made before this data change.

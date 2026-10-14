@@ -1907,6 +1907,45 @@ def test_boxplot_precomputed_statistics_and_notches():
         hg.boxplot(data, x="group", **fields, count="group")
 
 
+def test_boxplot_outliers_and_boxen_marks_serialize():
+    data = {"g": ["a"] * 20, "v": [float(i) for i in range(19)] + [100.0]}
+    spec, _ = hg.boxplot(data, x="g", y="v", outliers=False).to_spec()
+    assert spec["marks"][0]["outliers"] is False
+    fields = {"low": "v", "q1": "v", "median": "v", "q3": "v", "high": "v"}
+    with pytest.raises(ValueError, match="boxplot outliers: precomputed boxes have none to draw"):
+        hg.boxplot(data, x="g", **fields, outliers=False)
+    with pytest.raises(TypeError, match="boxplot outliers: expected True or False"):
+        hg.boxplot(data, x="g", y="v", outliers="no")  # type: ignore[arg-type]
+    chart = hg.boxen(
+        data, "g", "v", depth="proportion", outlier_proportion=0.1, width_method="linear"
+    )
+    spec, _ = chart.to_spec()
+    assert spec["marks"] == [
+        {
+            "type": "boxen",
+            "data": "data",
+            "x": "g",
+            "y": "v",
+            "depth": "proportion",
+            "outlierProportion": 0.1,
+            "widthMethod": "linear",
+        }
+    ]
+    assert 'fill-opacity="0.7"' in chart.to_svg()
+    horizontal = hg.Chart(data).boxen("v", "g", depth=2, trust_alpha=0.1, outliers=False)
+    assert horizontal.to_spec()[0]["marks"][0]["outliers"] is False
+    for option, value, message in (
+        ("depth", 0, "boxen depth: expected"),
+        ("depth", "quartiles", "boxen depth: expected"),
+        ("outlier_proportion", 1, "boxen outlier_proportion: expected a number between 0 and 1"),
+        ("width_method", "square", 'boxen width_method: expected "exponential"'),
+    ):
+        with pytest.raises(ValueError, match=message):
+            hg.boxen(data, "g", "v", **{option: value})
+    with pytest.raises(ValueError, match="boxen axis: horizontal boxen plots have no right axis"):
+        hg.boxen(data, "v", "g", axis="right")
+
+
 @pytest.mark.parametrize("whiskers", ["tukey", "range", 0, 1.5, 2])
 def test_boxplot_whisker_rules_serialize(whiskers):
     data = {"g": ["a", "a", "a"], "v": [1, 2, 10]}

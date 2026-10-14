@@ -2,6 +2,7 @@
 import { table, time } from "herceg";
 import { useEffect, useMemo } from "react";
 import {
+  Boxen,
   BoxPlot,
   Chart,
   Custom,
@@ -230,6 +231,21 @@ Rug({ data: metrics, x: "service" });
 Rug({ data: metrics, x: "time", side: "left" });
 // @ts-expect-error y rugs cannot use the right value axis
 Rug({ data: metrics, y: "p50", axis: "right" });
+
+export function BoxenOptions() {
+  return (
+    <Chart>
+      <Boxen data={metrics} x="service" y="p50" series="service" depth="trustworthy" />
+      <Boxen data={metrics} x="p50" y="service" depth={4} widthMethod="area" outliers={false} />
+      {/* @ts-expect-error widthMethod takes the supported rules */}
+      <Boxen data={metrics} x="service" y="p50" widthMethod="square" />
+      {/* @ts-expect-error depth is a rule or a number of levels */}
+      <Boxen data={metrics} x="service" y="p50" depth="quartiles" />
+      {/* @ts-expect-error boxen takes no whiskers */}
+      <Boxen data={metrics} x="service" y="p50" whiskers="tukey" />
+    </Chart>
+  );
+}
 
 export function ViolinOptions() {
   return (

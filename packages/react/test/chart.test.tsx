@@ -32,6 +32,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   Area,
   Bar,
+  Boxen,
   Candlestick,
   Chart,
   Custom,
@@ -224,6 +225,21 @@ describe("<Chart>", () => {
     const slices = [...paths()].filter((path) => /A/.test(path.getAttribute("d") ?? ""));
     expect(slices).toHaveLength(3);
     expect(host.textContent).toContain("Shares");
+  });
+
+  it("renders letter-value plots from their element", () => {
+    const requests = table({ region: ["n", "n", "n", "s", "s", "s"], ms: [1, 2, 4, 3, 5, 9] });
+    act(() =>
+      root.render(
+        <Chart>
+          <Boxen data={requests} x="region" y="ms" depth={1} />
+        </Chart>,
+      ),
+    );
+    // One level: each group's quartile box, filled at the default 0.7.
+    const fills = [...paths()].filter((path) => path.getAttribute("fill-opacity") === "0.7");
+    expect(fills).toHaveLength(1);
+    expect(fills[0]!.getAttribute("d")!.match(/M/g)).toHaveLength(2);
   });
 
   it("renders violins from their element", () => {

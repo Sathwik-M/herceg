@@ -1,65 +1,62 @@
-"""The statistics express charts draw, in NumPy.
+"""The statistics express charts draw, in NumPy (regression fits are in
+``_regression``).
 
 Each function follows the definition Seaborn uses (and SciPy or statsmodels
 behind it), so that results can be checked against those libraries:
 
 - intervals: Seaborn's ``EstimateAggregator`` (bootstrap percentile
   intervals, standard errors and deviations with ``ddof=1``, percentile
-  intervals of the data);
+  intervals of the data) and, for weights, its ``WeightedAggregator``
+  (weighted means, resampling rows with their weights);
 - resampling: ``numpy.random.default_rng(seed)``, drawing each resample's
   indices as Seaborn's ``bootstrap`` does, so a seed gives Seaborn's
-  resamples;
-- polynomial fits: least squares (``numpy.linalg.lstsq``) in the predictor
-  scaled to mean 0 and standard deviation 1, so predictors far from zero
-  (epoch milliseconds) fit exactly; Seaborn's ``pinv`` and ``polyfit``
-  give the same fits on well-conditioned data;
-- lowess: statsmodels' ``lowess`` (tricube weights, ``it`` robustifying
-  passes with bisquare weights, ``delta`` interpolation);
+  resamples; with units, as its structured bootstrap draws them (units,
+  then the rows of each unit drawn);
+- letter values: Seaborn's ``LetterValues`` (its depth rules, and
+  ``numpy.percentile``);
 - kernel densities: ``scipy.stats.gaussian_kde`` (Scott's and Silverman's
   factors on the weighted sample covariance) on Seaborn's support grid;
 - hierarchical clustering: ``scipy.cluster.hierarchy.linkage`` row layout and
   ``dendrogram`` leaf order.
 
 Work over resamples, kernels, windows, and distances is done in chunks whose
-arrays together take at most about ``_BUDGET`` bytes, so memory stays
-bounded for large inputs.
+arrays together take about ``_WORKSPACE`` bytes, or one resample (kernel,
+window, row) when that alone takes more: small inputs use little memory,
+and large ones run a unit at a time, which costs no speed once a unit's
+arrays are that large.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from statistics import NormalDist
 from typing import Literal, get_args
 
 import numpy as np
 
-#: Bytes the arrays of one chunk of resamples, kernels, or windows take together.
-_BUDGET = 64 << 20
+#: Bytes the arrays of one chunk of resamples, kernels, or windows take
+#: together: enough elements per NumPy call that its overhead is lost in the
+#: work (measured: chunks of 64 MiB are no faster, of 4 MiB up to 15% slower).
+_WORKSPACE = 8 << 20
 
-Estimator = Literal["mean", "median"]
+#: Estimators computed for many resamples at once.
+NamedEstimator = Literal["mean", "median", "sum", "min", "max"]
+#: A named estimator, or a function of a group's values returning one number.
+Estimator = NamedEstimator | Callable[[np.ndarray], float]
 ErrorMethod = Literal["ci", "pi", "se", "sd"]
+#: A function of a group's values returning the ends of its interval.
+ErrorFunction = Callable[[np.ndarray], tuple[float, float]]
 
 
 def _per_chunk(item_bytes: int, items: int) -> int:
-    """How many units of `items` elements fit in the budget, each element
+    """How many units of `items` elements fit in the workspace, each element
     taking `item_bytes` across the arrays a chunk holds at once; at least 1."""
-    return max(1, _BUDGET // max(item_bytes * items, 1))
+    return max(1, _WORKSPACE // max(item_bytes * items, 1))
 
 
-# Estimates and intervals -------------------------------------------------------
-
-
-def estimate(values: np.ndarray, estimator: Estimator) -> float:
-    """The mean or median of finite values; NaN when there are none."""
-    if len(values) == 0:
-        return math.nan
-    return float(np.mean(values) if estimator == "mean" else np.median(values))
-
-
-def _reduce(samples: np.ndarray, estimator: Estimator) -> np.ndarray:
-    """The estimator over each row of a (resamples, n) array."""
-    return np.mean(samples, axis=1) if estimator == "mean" else np.median(samples, axis=1)
+# Resampling --------------------------------------------------------------------
 
 
 def resamples(
@@ -79,15 +76,156 @@ def resamples(
         done += count
 
 
+@dataclass(frozen=True)
+class Units:
+    """A group's rows by sampling unit, as Seaborn's structured bootstrap
+    holds them: units in ascending order of their values, each unit's rows
+    in order."""
+
+    #: The rows, unit after unit.
+    order: np.ndarray
+    #: Where each unit's rows start in `order`, and how many it has.
+    starts: np.ndarray
+    lengths: np.ndarray
+
+
+def units_of(ranks: np.ndarray) -> Units:
+    """The units of a group's rows, from each row's unit's rank among the
+    units' values in ascending order."""
+    order = np.argsort(ranks, kind="stable")
+    _, starts, lengths = np.unique(ranks[order], return_index=True, return_counts=True)
+    return Units(order, starts.astype(np.intp), lengths.astype(np.intp))
+
+
+def flat_resamples(
+    n: int,
+    n_boot: int,
+    rng: np.random.Generator,
+    item_bytes: int,
+    units: Units | None = None,
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    """``n_boot`` resamples of ``n`` rows, a chunk at a time: the chunk's
+    row indices, resample after resample, and where each resample starts.
+
+    Without `units`, each resample draws ``rng.integers(0, n, n)``. With
+    them, as Seaborn's structured bootstrap: each draws as many units as
+    there are, then for each unit drawn as many of its rows as it has, so
+    a resample's size varies.
+    """
+    if units is None:
+        for rows in resamples(n, n_boot, rng, item_bytes):
+            yield rows.ravel(), np.arange(len(rows), dtype=np.intp) * n
+        return
+    count = len(units.lengths)
+    budget = max(1, _WORKSPACE // item_bytes)
+    parts: list[np.ndarray] = []
+    sizes: list[int] = []
+    held = 0
+    for _ in range(n_boot):
+        chosen = rng.integers(0, count, count, dtype=np.intp)
+        lengths = units.lengths[chosen]
+        # One draw per row with each its unit's size as the bound: the same
+        # stream as Seaborn's draw per unit.
+        inner = rng.integers(0, np.repeat(lengths, lengths), dtype=np.intp)
+        parts.append(units.order[np.repeat(units.starts[chosen], lengths) + inner])
+        sizes.append(len(inner))
+        held += len(inner)
+        if held >= budget:
+            yield _flat(parts, sizes)
+            parts, sizes, held = [], [], 0
+    if parts:
+        yield _flat(parts, sizes)
+
+
+def _flat(parts: list[np.ndarray], sizes: list[int]) -> tuple[np.ndarray, np.ndarray]:
+    return np.concatenate(parts), np.r_[0, np.cumsum(sizes[:-1])].astype(np.intp)
+
+
+def segment_medians(values: np.ndarray, starts: np.ndarray) -> np.ndarray:
+    """The median of each segment of `values` (segments start at `starts`;
+    none is empty), as ``numpy.median`` takes it."""
+    lengths = np.diff(np.r_[starts, len(values)])
+    if len(lengths) and (lengths == lengths[0]).all():
+        return np.median(values.reshape(len(lengths), lengths[0]), axis=1)
+    segment = np.repeat(np.arange(len(starts)), lengths)
+    ordered = values[np.lexsort((values, segment))]
+    return (ordered[starts + (lengths - 1) // 2] + ordered[starts + lengths // 2]) / 2
+
+
+# Estimates and intervals -------------------------------------------------------
+
+
+def estimate(values: np.ndarray, estimator: Estimator, weights: np.ndarray | None = None) -> float:
+    """The estimator over finite values (NaN when there are none); with
+    `weights`, the weighted mean."""
+    if len(values) == 0:
+        return math.nan
+    if weights is not None:
+        total = float(weights.sum())
+        return float((values * weights).sum() / total) if total > 0 else math.nan
+    if callable(estimator):
+        return float(estimator(values))
+    return float(_REDUCERS[estimator](values))
+
+
+_REDUCERS: dict[str, Callable[..., np.ndarray]] = {
+    "mean": np.mean,
+    "median": np.median,
+    "sum": np.sum,
+    "min": np.min,
+    "max": np.max,
+}
+
+_SEGMENT_REDUCERS: dict[str, Callable[[np.ndarray, np.ndarray], np.ndarray]] = {
+    "sum": np.add.reduceat,
+    "min": np.minimum.reduceat,
+    "max": np.maximum.reduceat,
+    "median": segment_medians,
+}
+
+
 def bootstrap_estimates(
-    values: np.ndarray, estimator: Estimator, n_boot: int, seed: int
+    values: np.ndarray,
+    estimator: Estimator,
+    n_boot: int,
+    seed: int,
+    *,
+    weights: np.ndarray | None = None,
+    units: Units | None = None,
 ) -> np.ndarray:
-    """The estimator over ``n_boot`` resamples of ``values``."""
+    """The estimator over ``n_boot`` resamples of ``values`` (and of their
+    `weights`, for weighted means), or of their `units`.
+
+    Named estimators reduce a chunk of resamples at a time; a function is
+    called once per resample, with its values, as Seaborn calls it.
+    """
     rng = np.random.default_rng(seed)
-    # An index, its value, and the median's partitioned copy per resampled row.
-    chunks = resamples(len(values), n_boot, rng, item_bytes=24)
-    parts = [_reduce(values[rows], estimator) for rows in chunks]
-    return np.concatenate(parts) if parts else np.empty(0)
+    out = np.empty(n_boot)
+    done = 0
+    if units is None and not callable(estimator):
+        # An index, its value (and weight), and a partitioned copy per resampled row.
+        for rows in resamples(len(values), n_boot, rng, item_bytes=32):
+            if weights is not None:
+                w = weights[rows]
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    part = (values[rows] * w).sum(axis=1) / w.sum(axis=1)
+            else:
+                part = _REDUCERS[estimator](values[rows], axis=1)
+            out[done : done + len(rows)] = part
+            done += len(rows)
+        return out
+    for rows, starts in flat_resamples(len(values), n_boot, rng, 24, units):
+        sample = values[rows]
+        if callable(estimator):
+            ends = np.r_[starts[1:], len(rows)]
+            part = np.array([estimator(sample[a:b]) for a, b in zip(starts, ends, strict=True)])
+        elif estimator == "mean":
+            part = np.add.reduceat(sample, starts) / np.diff(np.r_[starts, len(rows)])
+        else:
+            part = _SEGMENT_REDUCERS[estimator](sample, starts)
+        out[done : done + len(starts)] = part
+        done += len(starts)
+    return out
 
 
 def percentile_interval(values: np.ndarray, level: float) -> tuple[float, float]:
@@ -102,18 +240,27 @@ def percentile_interval(values: np.ndarray, level: float) -> tuple[float, float]
 def interval(
     values: np.ndarray,
     estimator: Estimator,
-    method: ErrorMethod,
+    method: ErrorMethod | ErrorFunction,
     level: float,
     n_boot: int,
     seed: int,
+    *,
+    weights: np.ndarray | None = None,
+    units: Units | None = None,
 ) -> tuple[float, float, float]:
-    """A group's estimate and the ends of its error interval.
+    """A group's estimate and the ends of its error interval: the bootstrap
+    ("ci"), the values' ("pi") percentile interval, `level` standard errors
+    ("se") or deviations ("sd") about the estimate, or what a function of
+    the values returns.
 
     The interval is NaN for groups of fewer than two values, as in Seaborn.
     """
-    center = estimate(values, estimator)
+    center = estimate(values, estimator, weights)
     if len(values) <= 1:
         return center, math.nan, math.nan
+    if callable(method):
+        low, high = method(values)
+        return center, float(low), float(high)
     if method == "sd":
         half = float(np.std(values, ddof=1)) * level
         return center, center - half, center + half
@@ -122,250 +269,50 @@ def interval(
         return center, center - half, center + half
     if method == "pi":
         return (center, *percentile_interval(values, level))
-    boots = bootstrap_estimates(values, estimator, n_boot, seed)
+    boots = bootstrap_estimates(values, estimator, n_boot, seed, weights=weights, units=units)
     return (center, *percentile_interval(boots, level))
 
 
-# Fits ----------------------------------------------------------------------------
+# Letter values -----------------------------------------------------------------
+
+#: The smallest positive double.
+_TINY = float(np.nextafter(0.0, 1.0))
+
+#: How a letter-value plot chooses its depth: a rule, or a number of levels.
+Depth = Literal["tukey", "proportion", "trustworthy", "full"] | int
 
 
-def _design(z: np.ndarray, order: int) -> np.ndarray:
-    """Columns 1, z, z**2, ... z**order along the last axis."""
-    return np.stack([z**power for power in range(order + 1)], axis=-1)
+def letter_depth(n: int, depth: Depth, outlier_proportion: float, trust_alpha: float) -> int:
+    """How many letter values each side (levels of boxes) Seaborn draws for
+    `n` values: Tukey's rule leaves 5 to 8 values in each tail, "proportion"
+    about `outlier_proportion` of them, "trustworthy" stops where a letter
+    value's confidence interval at `trust_alpha` would overlap the next,
+    and "full" reaches every value; at least 1."""
+    if depth == "full":
+        k = int(np.log2(n)) + 1
+    elif depth == "tukey":
+        k = int(np.log2(n)) - 3
+    elif depth == "proportion":
+        k = int(np.log2(n)) - int(np.log2(n * outlier_proportion)) + 1
+    elif depth == "trustworthy":
+        # The upper quantile from the lower tail, which tiny alphas do not round
+        # away (nor, halved, underflow to 0).
+        point = 2 * NormalDist().inv_cdf(max(trust_alpha / 2, _TINY)) ** 2
+        k = int(np.log2(n / point)) + 1
+    else:
+        k = int(depth)
+    return max(k, 1)
 
 
-@dataclass(frozen=True)
-class Polynomial:
-    """A least-squares polynomial in the predictor scaled to ``(x - center) /
-    scale``. ``coefficients`` run from the constant term up; stacked (one row
-    per resample) they are several polynomials."""
-
-    center: float
-    scale: float
-    coefficients: np.ndarray
-
-    def __call__(self, x: np.ndarray) -> np.ndarray:
-        """The polynomial's values at `x` (each one's, stacked)."""
-        z = (np.asarray(x, dtype=float) - self.center) / self.scale
-        return self.coefficients @ _design(z, self.coefficients.shape[-1] - 1).T
-
-    def in_x(self) -> np.ndarray:
-        """The coefficients of powers of x itself, constant first, for reports."""
-        out = np.zeros(len(self.coefficients))
-        # c (x - m)^j / s^j = c / s^j * sum_i C(j, i) x^i (-m)^(j - i)
-        for j, c in enumerate(self.coefficients):
-            for i in range(j + 1):
-                out[i] += c * math.comb(j, i) * (-self.center) ** (j - i) / self.scale**j
-        return out
-
-
-def _scaling(x: np.ndarray) -> tuple[float, float]:
-    center = float(np.mean(x))
-    scale = float(np.std(x))
-    return center, scale if scale > 0 else 1.0
-
-
-def polynomial_fit(x: np.ndarray, y: np.ndarray, order: int) -> Polynomial:
-    """The least-squares polynomial of `order` through (x, y)."""
-    center, scale = _scaling(x)
-    coefficients, *_ = np.linalg.lstsq(_design((x - center) / scale, order), y, rcond=None)
-    return Polynomial(center, scale, coefficients)
-
-
-@dataclass(frozen=True)
-class BootstrapFits:
-    """A fit's predictions at a grid for each resample of the rows (NaN for
-    a resample that could not be fit), and why resamples could not."""
-
-    predictions: np.ndarray
-    #: Resamples of too few distinct x values to determine the polynomial.
-    too_few: int
-    #: Resamples whose normal equations were too ill-conditioned to solve.
-    unstable: int
-
-    @property
-    def usable(self) -> int:
-        return len(self.predictions) - self.too_few - self.unstable
-
-
-def bootstrap_fits(
-    x: np.ndarray, y: np.ndarray, grid: np.ndarray, order: int, n_boot: int, seed: int
-) -> BootstrapFits:
-    """The fit's predictions at `grid` for each of `n_boot` resamples of the rows.
-
-    Each resample solves its normal equations, from power sums, in its own
-    centered and scaled predictor (as `polynomial_fit` fits the sample), so
-    no design matrix per resample is held and a resample is judged by its
-    own spread, not the sample's.
-    """
-    rng = np.random.default_rng(seed)
-    x = np.asarray(x, dtype=float)
-    terms = order + 1
-    pairs = np.add.outer(np.arange(terms), np.arange(terms))
-    grid = np.asarray(grid, dtype=float)
-    out: list[np.ndarray] = []
-    too_few = unstable = 0
-    # An index, its x and y, a power of x, and a product per resampled row.
-    for rows in resamples(len(x), n_boot, rng, item_bytes=40):
-        zs, ys = x[rows], y[rows]
-        center = zs.mean(axis=1)
-        scale = zs.std(axis=1)
-        scale[scale == 0] = 1
-        zs -= center[:, None]
-        zs /= scale[:, None]
-        sums = np.empty((len(rows), 2 * order + 1))
-        moments = np.empty((len(rows), terms))
-        power = np.ones_like(zs)
-        for p in range(2 * order + 1):
-            sums[:, p] = power.sum(axis=1)
-            if p < terms:
-                moments[:, p] = (power * ys).sum(axis=1)
-            power *= zs
-        del power, zs, ys
-        gram = sums[:, pairs]
-        usable = 1 / np.linalg.cond(gram) > 1e-12
-        coefficients = np.full((len(rows), terms), np.nan)
-        if usable.any():
-            coefficients[usable] = _solve(gram[usable], moments[usable])
-        failed = np.flatnonzero(~usable)
-        if len(failed):
-            ordered = np.sort(x[rows[failed]], axis=1)
-            distinct = 1 + np.count_nonzero(np.diff(ordered, axis=1), axis=1)
-            few = int(np.count_nonzero(distinct <= order))
-            too_few += few
-            unstable += len(failed) - few
-        # Horner's rule at the grid, in each resample's own scaled predictor.
-        at = (grid[None, :] - center[:, None]) / scale[:, None]
-        predictions = np.repeat(coefficients[:, -1:], len(grid), axis=1)
-        for j in range(order - 1, -1, -1):
-            predictions *= at
-            predictions += coefficients[:, j : j + 1]
-        out.append(predictions)
-    predictions = np.concatenate(out) if out else np.empty((0, len(grid)))
-    return BootstrapFits(predictions, too_few, unstable)
-
-
-def _solve(gram: np.ndarray, moments: np.ndarray) -> np.ndarray:
-    """Stacked small linear systems, one by one by least squares when a stack fails."""
-    try:
-        return np.linalg.solve(gram, moments[..., None])[..., 0]
-    except np.linalg.LinAlgError:
-        return np.stack(
-            [np.linalg.lstsq(g, m, rcond=None)[0] for g, m in zip(gram, moments, strict=True)]
-        )
-
-
-def band(predictions: np.ndarray, level: float) -> tuple[np.ndarray, np.ndarray]:
-    """The central ``level`` percent of resampled predictions at each grid point."""
-    edge = (100 - level) / 2
-    low, high = np.nanpercentile(predictions, [edge, 100 - edge], axis=0)
-    return low, high
-
-
-def lowess(
-    x: np.ndarray, y: np.ndarray, frac: float = 2 / 3, it: int = 3, delta: float = 0.0
-) -> tuple[np.ndarray, np.ndarray]:
-    """Locally weighted linear regression, as statsmodels' ``lowess(y, x)``.
-
-    Returns x sorted ascending and the fitted value at each. Each fit uses
-    the ``frac`` share of rows nearest its x (at least 2) with tricube
-    weights; ``it`` further passes downweight rows with large residuals.
-    Within ``delta`` of a fitted x, values are interpolated instead.
-    """
-    order = np.argsort(x)
-    x, y = np.ascontiguousarray(x[order], float), np.ascontiguousarray(y[order], float)
-    n = len(x)
-    if n == 0:
-        return x, y
-    # Distances from the smallest x, so that x far from zero keeps its
-    # precision; ties are told apart in x itself.
-    z = x - x[0]
-    k = min(max(int(frac * n + 1e-10), 2), n)
-    targets = _lowess_targets(x, z, delta)
-    # Each target's window of k rows: the first whose middle is at or past it.
-    middles = (z[: n - k] + z[k:]) / 2
-    lefts = np.minimum(np.searchsorted(middles, z[targets], side="left"), n - k)
-    robustness = np.ones(n)
-    fitted = np.empty(n)
-    for _ in range(it + 1):
-        at = _lowess_fits(z, y, targets, lefts, k, robustness)
-        fitted = _lowess_fill(x, z, targets, at, delta)
-        robustness = _bisquare_weights(y, fitted)
-    return x, fitted
-
-
-def _lowess_targets(x: np.ndarray, z: np.ndarray, delta: float) -> np.ndarray:
-    """The rows statsmodels fits at: the first of each run of equal x, and
-    with ``delta``, after each fit, the last row within ``delta`` of it
-    (those between are interpolated); `z` is x from its smallest."""
-    if delta <= 0:
-        return np.flatnonzero(np.r_[True, x[1:] != x[:-1]])
-    targets = []
-    i, n = 0, len(x)
-    while True:
-        targets.append(i)
-        # Rows tied with the fit share it.
-        last = k = i
-        for k in range(i + 1, n):
-            if z[k] > z[i] + delta:
-                break
-            if x[k] == x[last]:
-                last = k
-        if last >= n - 1:
-            break
-        i = max(k - 1, last + 1)
-    return np.asarray(targets, dtype=np.intp)
-
-
-def _lowess_fits(
-    x: np.ndarray,
-    y: np.ndarray,
-    targets: np.ndarray,
-    lefts: np.ndarray,
-    k: int,
-    robustness: np.ndarray,
-) -> np.ndarray:
-    """The weighted linear fit at each target row, in chunks of windows."""
-    out = np.empty(len(targets))
-    span = np.arange(k)
-    # Indexes, x, y, weights, robustness, and temporaries per window element.
-    per_chunk = _per_chunk(80, k)
-    for start in range(0, len(targets), per_chunk):
-        rows = targets[start : start + per_chunk]
-        window = lefts[start : start + per_chunk, None] + span
-        # Each window's x from its target's.
-        d = x[window] - x[rows][:, None]
-        ys = y[window]
-        radius = np.maximum(-d[:, 0], d[:, -1])[:, None]
-        with np.errstate(divide="ignore", invalid="ignore"):
-            weights = (1 - (np.abs(d) / radius) ** 3) ** 3 * robustness[window]
-            usable = np.count_nonzero(weights > 1e-12, axis=1) >= 2
-            weights = weights / weights.sum(axis=1, keepdims=True)
-            mean = (weights * d).sum(axis=1, keepdims=True)
-            spread = np.maximum((weights * (d - mean) ** 2).sum(axis=1, keepdims=True), 1e-12)
-            fit = (weights * (1 - mean * (d - mean) / spread) * ys).sum(axis=1)
-        out[start : start + len(rows)] = np.where(usable, fit, y[rows])
-    return out
-
-
-def _lowess_fill(
-    x: np.ndarray, z: np.ndarray, targets: np.ndarray, at: np.ndarray, delta: float
-) -> np.ndarray:
-    """Every row's fit: equal x share a fit, and rows between fits
-    interpolate (in `z`, x from its smallest)."""
-    if delta <= 0:
-        # Each run of equal x takes its first row's fit.
-        return at[np.cumsum(np.r_[True, x[1:] != x[:-1]]) - 1]
-    fitted = np.interp(z, z[targets], at)
-    fitted[targets] = at
-    return fitted
-
-
-def _bisquare_weights(y: np.ndarray, fitted: np.ndarray) -> np.ndarray:
-    residuals = np.abs(y - fitted)
-    median = float(np.median(residuals))
-    scaled = (residuals > 0).astype(float) if median == 0 else residuals / (6 * median)
-    return (1 - np.minimum(scaled, 1) ** 2) ** 2
+def letter_values(sorted_values: np.ndarray, k: int, full: bool) -> np.ndarray:
+    """The 2k letter values of ascending values, lowest first: the
+    percentiles 100 / 2^(k+1) up to 1/4 and 3/4 up to 1 - 1 / 2^(k+1)
+    (with ``full``, the extremes at 0 and 100), as Seaborn takes them."""
+    lower = 0.5 ** np.arange(k + 1, 1, -1)
+    percentiles = 100 * np.concatenate([lower, 1 - lower[::-1]])
+    if full:
+        percentiles[0], percentiles[-1] = 0, 100
+    return np.percentile(sorted_values, percentiles)
 
 
 # Kernel densities -----------------------------------------------------------------
@@ -443,9 +390,15 @@ def _chunks(
     step = max(1, buffer.shape[1])
     for start in range(0, len(values), step):
         part = values[start : start + step]
-        z = buffer[:, : len(part)]
+        z = _leading(buffer, len(part))
         np.subtract(grid[:, None], part[None, :], out=z)
         yield start, z
+
+
+def _leading(buffer: np.ndarray, columns: int) -> np.ndarray:
+    """The start of a 2-D buffer as a contiguous array of `columns` columns
+    (a last chunk narrower than the buffer), not a strided slice of it."""
+    return buffer.reshape(-1)[: len(buffer) * columns].reshape(len(buffer), columns)
 
 
 def cumulative_density(
@@ -490,7 +443,7 @@ def density_2d(
     first = np.empty((grid.shape[1], per_chunk))
     second = np.empty_like(first)
     for start, z in _chunks(grid[0], points[0], first):
-        u = second[:, : z.shape[1]]
+        u = _leading(second, z.shape[1])
         np.subtract(grid[1][:, None], points[1][None, start : start + z.shape[1]], out=u)
         np.square(z, out=z)
         np.square(u, out=u)

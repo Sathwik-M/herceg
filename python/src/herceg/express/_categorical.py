@@ -11,8 +11,9 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .._chart import Chart, HelperOptions, Jitter, helper
+from .._chart import Chart, HelperOptions, Jitter
 from .._data import Column
+from . import _numerics as numerics
 from . import _swarm
 from ._common import (
     SERIES_GROUP,
@@ -24,6 +25,7 @@ from ._common import (
     check_choice,
     complete,
     dropped_sentence,
+    express,
     facets,
     fresh,
     group,
@@ -49,7 +51,7 @@ Orient = Literal["v", "h", "x", "y"]
 Whiskers = Literal["tukey", "range"] | float
 
 
-@helper
+@express
 def stripplot(
     data: Any,
     *,
@@ -61,7 +63,7 @@ def stripplot(
     orient: Orient | None = None,
     jitter: bool | float | Jitter = True,
     dodge: bool = False,
-    seed: int | None = None,
+    seed: int | None = 0,
     radius: float | None = None,
     palette: Sequence[str] | None = None,
     **options: Unpack[HelperOptions],
@@ -72,8 +74,9 @@ def stripplot(
     their series' slot in it. ``True`` is 0.5, a number that width, and
     ``False`` or 0 no spread; an ``hg.Jitter`` is taken as it is, seed and
     all. Points keep their places as the chart redraws: each is moved by a
-    hash of its row and the seed (``seed``, drawn and recorded when not
-    given), not by a random draw. ``radius`` is the points' radius in pixels.
+    hash of its row and the seed (``seed``, 0 as the point mark's; None
+    draws one and records it), not by a random draw. ``radius`` is the
+    points' radius in pixels.
     """
     spread = _jitter(jitter, seed)
     layout = _Categories(data, x, y, series, order, series_order, orient, options, "stripplot")
@@ -106,7 +109,7 @@ def stripplot(
     )
 
 
-@helper
+@express
 def swarmplot(
     data: Any,
     *,
@@ -288,7 +291,7 @@ def _jitter(jitter: bool | float | Jitter, seed: int | None) -> Jitter | None:
     """``stripplot``'s ``jitter`` as the point mark's, None for no spread: a
     width takes ``seed`` (or one drawn now), a ``Jitter`` its own."""
     if isinstance(jitter, Jitter):
-        if seed is not None:
+        if seed != 0:
             raise ValueError(
                 "stripplot seed: the Jitter given as jitter has its own seed; "
                 "give the seed in one place"
@@ -310,7 +313,7 @@ def _jitter(jitter: bool | float | Jitter, seed: int | None) -> Jitter | None:
     return Jitter(width=float(width), seed=seed_of(seed, "stripplot"))
 
 
-@helper
+@express
 def boxplot(
     data: Any,
     *,
@@ -338,7 +341,7 @@ def boxplot(
     if not isinstance(outliers, bool):
         raise TypeError(f"boxplot outliers: expected True or False; received {shown(outliers)}")
     layout = _Categories(data, x, y, series, order, series_order, orient, options, "boxplot")
-    boxes, names = _box_statistics(layout, reach, precomputed=not outliers)
+    boxes, _ = _box_statistics(layout, reach)
     within = "the whole range" if math.isinf(reach) else f"{reach:g} IQR of the box"
     sentence = (
         f"Boxes show the quartiles and median of {layout.value} for each "
@@ -349,38 +352,152 @@ def boxplot(
         + "."
         + dropped_sentence(layout.dropped, layout.roles, layout.ordered)
     )
-    label = None if series else layout.value
-    if outliers:
-        chart = make_chart(
-            layout.table, options, sentence=sentence, palette=palette, x_label=x, y_label=y
-        )
-        chart.boxplot(
-            *layout.xy,
-            series=series,
-            whiskers=None if whiskers == "tukey" else whiskers,
-            notch=notch or None,
-            label=label,
-            legend_group=SERIES_GROUP,
-        )
-    else:
-        chart = make_chart(boxes, options, sentence=sentence, palette=palette, x_label=x, y_label=y)
-        chart.boxplot(
-            None if layout.horizontal else layout.category,
-            layout.category if layout.horizontal else None,
-            low=names["low"],
-            q1=names["q1"],
-            median=names["median"],
-            q3=names["q3"],
-            high=names["high"],
-            count=names["n"],
-            notch=notch or None,
-            series=series,
-            label=label,
-            legend_group=SERIES_GROUP,
-        )
+    chart = make_chart(
+        layout.table, options, sentence=sentence, palette=palette, x_label=x, y_label=y
+    )
+    chart.boxplot(
+        *layout.xy,
+        series=series,
+        whiskers=None if whiskers == "tukey" else whiskers,
+        notch=notch or None,
+        outliers=None if outliers else False,
+        label=None if series else layout.value,
+        legend_group=SERIES_GROUP,
+    )
     return record(
         chart, Statistics("boxplot", sentence, {"boxes": readable(boxes)}, None, layout.dropped)
     )
+
+
+@express
+def boxenplot(
+    data: Any,
+    *,
+    x: str,
+    y: str,
+    series: str | None = None,
+    order: Sequence[Any] | None = None,
+    series_order: Sequence[Any] | None = None,
+    orient: Orient | None = None,
+    depth: numerics.Depth = "tukey",
+    outlier_proportion: float = 0.007,
+    trust_alpha: float = 0.05,
+    width_method: Literal["exponential", "linear", "area"] = "exponential",
+    outliers: bool = True,
+    palette: Sequence[str] | None = None,
+    **options: Unpack[HelperOptions],
+) -> Chart:
+    """Letter-value ("boxen") plots of a number column per category (and
+    ``series``, side by side), as herceg's boxen mark draws them: nested
+    boxes between each group's letter values (quartiles, eighths,
+    sixteenths, ... out from the median), each level narrower and lighter
+    than the one inside it, with the values beyond the outermost boxes as
+    points unless ``outliers=False``. ``depth`` is Seaborn's ``k_depth``:
+    "tukey" leaves 5 to 8 values in each tail, "proportion" about
+    ``outlier_proportion`` of them, "trustworthy" stops where a letter
+    value's confidence interval at ``trust_alpha`` would overlap the next,
+    "full" reaches every value, or a number of levels. ``width_method``
+    narrows levels by half ("exponential"), by equal steps ("linear"), or
+    to their share of values over their height ("area")."""
+    check_choice(width_method, "boxenplot width_method", ("exponential", "linear", "area"))
+    if depth not in ("tukey", "proportion", "trustworthy", "full") and not (
+        isinstance(depth, numbers.Integral) and not isinstance(depth, bool) and depth >= 1
+    ):
+        raise ValueError(
+            'boxenplot depth: expected "tukey", "proportion", "trustworthy", "full", or a '
+            f"whole number of levels from 1; received {shown(depth)}"
+        )
+    if isinstance(depth, numbers.Integral):
+        depth = int(depth)
+    for name, value in (("outlier_proportion", outlier_proportion), ("trust_alpha", trust_alpha)):
+        if isinstance(value, bool) or not (isinstance(value, numbers.Real) and 0 < value < 1):
+            raise ValueError(
+                f"boxenplot {name}: expected a number between 0 and 1; received {shown(value)}"
+            )
+    if not isinstance(outliers, bool):
+        raise TypeError(f"boxenplot outliers: expected True or False; received {shown(outliers)}")
+    layout = _Categories(data, x, y, series, order, series_order, orient, options, "boxenplot")
+    letters = _letter_statistics(layout, depth, float(outlier_proportion), float(trust_alpha))
+    rule = (
+        f"{depth} levels"
+        if not isinstance(depth, str)
+        else {
+            "tukey": "Tukey's depth rule",
+            "proportion": f"levels leaving about {outlier_proportion:g} of the values beyond them",
+            "trustworthy": f"trustworthy levels at alpha {trust_alpha:g}",
+            "full": "levels reaching every value",
+        }[depth]
+    )
+    sentence = (
+        f"Boxes show the letter values of {layout.value} for each {layout.category}{by(series)}, "
+        f"out from the median ({rule}, widths {width_method})"
+        + (", and points beyond them" if outliers and depth != "full" else "")
+        + "."
+        + dropped_sentence(layout.dropped, layout.roles, layout.ordered)
+    )
+    chart = make_chart(
+        layout.table, options, sentence=sentence, palette=palette, x_label=x, y_label=y
+    )
+    chart.boxen(
+        *layout.xy,
+        series=series,
+        depth=None if depth == "tukey" else depth,
+        outlier_proportion=None if outlier_proportion == 0.007 else outlier_proportion,
+        trust_alpha=None if trust_alpha == 0.05 else trust_alpha,
+        width_method=None if width_method == "exponential" else width_method,
+        outliers=None if outliers else False,
+        label=None if series else layout.value,
+        legend_group=SERIES_GROUP,
+    )
+    return record(chart, Statistics("boxenplot", sentence, letters, None, layout.dropped))
+
+
+def _letter_statistics(
+    layout: _Categories, depth: numerics.Depth, proportion: float, alpha: float
+) -> dict[str, Mapping[str, np.ndarray]]:
+    """Each group's letter values, as the boxen mark computes them: a table
+    of boxes (``level`` 1 the quartiles' box, up to the group's levels out)
+    and one of groups (median, values, levels, and outliers)."""
+    variables = [*layout.variables.values(), layout.categories]
+    columns = [*layout.variables, layout.category]
+    taken = {*columns, layout.value}
+    level_name, low, high, median, n, levels_name, beyond = fresh(
+        ["level", "low", "high", "median", "n", "levels", "outliers"], taken
+    )
+    box_keys: list[tuple[int, ...]] = []
+    group_keys: list[tuple[int, ...]] = []
+    box: dict[str, list[float]] = {level_name: [], low: [], high: []}
+    groups: dict[str, list[float]] = {median: [], n: [], levels_name: [], beyond: []}
+    for key, members in group(variables, layout.rows):
+        sample = np.sort(layout.values[members])
+        k = numerics.letter_depth(len(sample), depth, proportion, alpha)
+        values = numerics.letter_values(sample, k, depth == "full")
+        for i in range(2 * k - 1):
+            box_keys.append(key)
+            box[level_name].append(float(k - min(i, 2 * k - 2 - i)))
+            box[low].append(float(values[i]))
+            box[high].append(float(values[i + 1]))
+        group_keys.append(key)
+        groups[median].append(float(np.percentile(sample, 50)))
+        groups[n].append(float(len(sample)))
+        groups[levels_name].append(float(k))
+        groups[beyond].append(
+            float(np.count_nonzero((sample < values.min()) | (sample > values.max())))
+        )
+
+    def table_of(keys: list[tuple[int, ...]], stats: dict[str, list[float]]) -> dict[str, Column]:
+        out: dict[str, Column] = {
+            name: category_column([k[i] for k in keys], variable.labels)
+            for i, (name, variable) in enumerate(zip(columns, variables, strict=True))
+        }
+        for name, column in stats.items():
+            out[name] = number_column(column)
+        return out
+
+    return {
+        "boxes": readable(table_of(box_keys, box)),
+        "groups": readable(table_of(group_keys, groups)),
+    }
 
 
 def _whisker_reach(whiskers: Whiskers) -> float:
@@ -401,7 +518,7 @@ def _whisker_reach(whiskers: Whiskers) -> float:
     return float(whiskers)
 
 
-@helper
+@express
 def violinplot(
     data: Any,
     *,
@@ -542,14 +659,13 @@ _STATISTICS = ("low", "q1", "median", "q3", "high", "n", "outliers")
 
 
 def _box_statistics(
-    layout: _Categories, multiple: float, precomputed: bool = False
+    layout: _Categories, multiple: float
 ) -> tuple[dict[str, Column], dict[str, str]]:
     """Each box's statistics, as the box plot mark computes them from raw
     values (data/quantile.ts `boxStats`): linear quartiles, and whiskers at
     the most extreme values within ``multiple`` IQR of the box (with other than
-    the default 1.5, or for boxes drawn from these statistics, never inside
-    the quartiles). Also the statistics' column names, kept apart from the
-    data's."""
+    the default 1.5, never inside the quartiles). Also the statistics' column
+    names, kept apart from the data's."""
     variables = [*layout.variables.values(), layout.categories]
     taken = {*layout.variables, layout.category, layout.value}
     names = dict(zip(_STATISTICS, fresh(_STATISTICS, taken), strict=True))
@@ -564,7 +680,7 @@ def _box_statistics(
             reach = 0.0 if multiple == 0 else multiple * (q3 - q1)
             first = int(np.searchsorted(sample, q1 - reach, side="left"))
             last = int(np.searchsorted(sample, q3 + reach, side="right")) - 1
-        if (multiple == 1.5 and not precomputed) or math.isinf(multiple):
+        if multiple == 1.5 or math.isinf(multiple):
             low, high = float(sample[first]), float(sample[last])
         else:
             low = min(q1, float(sample[first])) if first < len(sample) else q1

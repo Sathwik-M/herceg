@@ -8,9 +8,10 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .._chart import Axis, Chart, HelperOptions, Panel, helper
+from .._chart import Axis, Chart, HelperOptions, Panel
 from .._data import Column
 from . import _numerics as numerics
+from . import _regression as regression
 from ._common import (
     SERIES_GROUP,
     Source,
@@ -20,6 +21,7 @@ from ._common import (
     check_n_boot,
     complete,
     dropped_sentence,
+    express,
     fresh,
     level_label,
     make_chart,
@@ -27,6 +29,7 @@ from ._common import (
     readable,
     record,
     refuse_facets,
+    resolved,
     rows_table,
     seed_of,
     shown,
@@ -46,7 +49,7 @@ _PAIR_PANEL = 150
 _JOINT_SIZE = 480
 
 
-@helper
+@express
 def pairplot(
     data: Any,
     *,
@@ -91,6 +94,8 @@ def pairplot(
         raise ValueError(
             f"pairplot vars: expected distinct number columns to pair; received {names!r}"
         )
+    if vars is None:
+        resolved("vars", names)
     columns = {name: source.column(name, "pairplot vars", ("number",)) for name in names}
     variables = variables_of(source, "pairplot", None, None, series, series_order, axes=names)
     kept = complete(len(next(iter(columns.values()))), levels_of=list(variables.values()))
@@ -213,7 +218,7 @@ def pairplot(
     )
 
 
-@helper
+@express
 def jointplot(
     data: Any,
     *,
@@ -227,7 +232,7 @@ def jointplot(
     ratio: float = 5,
     ci: float | None = 95,
     n_boot: int = 1000,
-    seed: int | None = None,
+    seed: int | None = 0,
     **options: Unpack[HelperOptions],
 ) -> Chart:
     """A scatter plot of ``y`` against ``x`` with each variable's histogram
@@ -282,7 +287,7 @@ def jointplot(
     low_name, high_name = fresh(["low", "high"], {x, y})
     if fits:
         grid = np.linspace(float(xv.min()), float(xv.max()), 100)
-        fit = numerics.polynomial_fit(xv, yv, 1)(grid)
+        fit = regression.fit(xv, yv)(grid)
         fit_table = {x: number_column(grid), y: number_column(fit)}
         if used_seed is not None and ci is not None:
             low, high = fit_band(xv, yv, grid, 1, n_boot, used_seed, ci, failures)
@@ -347,7 +352,7 @@ def jointplot(
 _DENDROGRAM_RATIO = 0.2
 
 
-@helper
+@express
 def clustermap(
     data: Any,
     *,
@@ -553,6 +558,8 @@ def _matrix(
         ]
     if not names:
         raise ValueError("clustermap needs number columns to cluster")
+    if columns is None:
+        resolved("columns", names)
     matrix = np.column_stack(
         [values(source.column(name, "clustermap columns", ("number",))) for name in names]
     )

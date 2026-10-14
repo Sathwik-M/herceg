@@ -683,7 +683,7 @@ facets, annotations over a table draw each row in its own row's panel, and
 labels keep off the labels of their own panel only (see [Small
 multiples](#small-multiples)).
 
-Bars, points, error bars, heatmaps, candlesticks, histograms, box plots, and violins:
+Bars, points, error bars, heatmaps, candlesticks, histograms, box plots, letter-value (boxen) plots, and violins:
 
 ```ts
 const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
@@ -719,8 +719,9 @@ histogram(requests, { x: "latency", series: "region", stack: "fill", element: "s
 
 boxplot(requests, { x: "region", y: "latency", series: "version" });
 boxplot(requests, { x: "latency", y: "region" }); // a category y lays boxes along y
+boxen(requests, { x: "region", y: "latency" }); // nested boxes out to the tails' letter values
 violin(requests, { x: "region", y: "latency" }); // kernel densities, quartiles inside
-// `fill` gives every box or violin one color; `fillOpacity` is 0.25 by default.
+// `fill` gives every box or violin one color; `fillOpacity` is 0.25 by default (boxen 0.7).
 ```
 
 Bar labels go past each bar's end, or for stacks inside each segment in a
@@ -970,7 +971,10 @@ multiple. Default whiskers end at the most extreme observations within the
 fences, preserving the observed endpoints even inside the quartiles. Custom
 multipliers keep whiskers at least as far out as the interpolated quartiles,
 including when no observations lie within the fences. Values
-outside the whiskers are dots. Missing and non-finite observations are omitted.
+outside the whiskers are dots, unless `outliers: false`: hidden outliers are
+neither drawn nor part of the value axis' extent or a box's span for
+picking, and tooltips still count them. Missing and non-finite observations
+are omitted.
 
 ```ts
 boxplot(requests, { x: "region", y: "latency", whiskers: "range" });
@@ -987,8 +991,8 @@ For precomputed input, one row is one box. Supply all five numeric or time
 statistic fields and exactly one category field (`x` or `y`); raw value fields
 and statistics exclude each other. Statistics must satisfy
 `low ≤ q1 ≤ median ≤ q3 ≤ high`; a row with a missing or non-finite statistic
-is omitted. Precomputed boxes have no outliers and cannot take `whiskers`,
-since `low` and `high` already give their endpoints. Optional `count` names a
+is omitted. Precomputed boxes have no outliers and cannot take `whiskers` or
+`outliers`, since `low` and `high` already give their endpoints. Optional `count` names a
 number field of positive safe integers; tooltips omit the count when absent.
 
 `notch: true` narrows the box at its median, with endpoints at
@@ -1007,6 +1011,33 @@ raw input costs a full pass and sorting each group's observations; precomputed
 input reads columns without expanding counts or building observation objects.
 Facets use each panel's own rows and categories, with every series keeping its
 slot in every panel; `facet: "repeat"` repeats all boxes in every panel.
+
+Letter-value plots (`boxen`, Hofmann, Wickham, and Kafadar's, as Seaborn's
+`boxenplot` draws them) take raw category/value fields like box plots, and
+draw each group's letter values: the quartiles' box, then a box out to each
+eighth, sixteenth, and so on, every level narrower and lighter than the one
+inside it (its fill opacity `fillOpacity` × 2^((level + 1 − k) / 3), the
+quartile box at `fillOpacity`, 0.7 by default), a line at the median, and dots
+at the values beyond the outermost boxes (`outliers: false` hides them as
+box plots do). `depth` chooses the k levels: `"tukey"` (the default, about 5
+to 8 values left in each tail), `"proportion"` (about `outlierProportion` of
+the values beyond the boxes, 0.007 by default), `"trustworthy"` (stopping
+where a letter value's confidence interval at `trustAlpha`, 0.05, would
+overlap the next), `"full"` (out to the extremes, no outliers), or a whole
+number of levels from 1. `widthMethod` narrows each level by half
+(`"exponential"`, the default), by equal steps (`"linear"`), or makes each
+box's area proportional to the share of values it holds (`"area"`; a box
+without height has no width). Quantiles interpolate linearly, as NumPy's
+percentiles do, and depths cut logarithms toward zero, as Seaborn's do.
+Tooltips report the median, quartiles, levels and their extent, count, and
+outliers; facets, `series`, legends, keyboard reading, and row selections
+work as for box plots. The mark is its own module, out of bundles that do
+not import it.
+
+```ts
+boxen(requests, { x: "region", y: "latency", series: "version", depth: "trustworthy" });
+boxen(requests, { x: "latency", y: "region", depth: 4, widthMethod: "area", outliers: false });
+```
 
 Violins take raw category/value fields and distribution style options, and draw
 each group's Gaussian kernel density instead, mirrored about the category's center: every
@@ -1171,7 +1202,7 @@ the notes), — not yet (refused with an error), · not applicable.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | line, area, bar (including normalized stacks and area stream offsets) | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ |
 | point | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| histogram, boxplot, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | · | — |
+| histogram, boxplot, boxen, violin | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ◐ | — | ✓ | ◐ | · | — |
 | rug | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ◐ | — | ✓ | ✓ | ✓ | — |
 | errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | — |
 | dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | — |
@@ -1221,7 +1252,7 @@ the notes), — not yet (refused with an error), · not applicable.
   current window in the chart's text alternative; with facets or subplots,
   it says that it controls every panel's shared x range.
 - The right axis (see [A second y axis](#a-second-y-axis)) takes values
-  along y: horizontal bars, box plots, violins, histograms, and error bars,
+  along y: horizontal bars, box plots, boxen plots, violins, histograms, and error bars,
   points on category y, lines and areas along y, and rugs along y stay on
   the left, and a rule at an x or a rug along x has no y to place.
   In facets and subplots, every panel drawing marks on it has one.
@@ -1240,7 +1271,7 @@ the notes), — not yet (refused with an error), · not applicable.
   scales (`resolve` other than "shared"); trees
   drill, maps and networks pan, zoom, and lasso, and networks move nodes
   there as in a chart of their own. 3D charts have charts to themselves.
-- Box plots and violins on log axes have no keyboard stop for groups whose
+- Box plots, boxen plots, and violins on log axes have no keyboard stop for groups whose
   median is not positive; annotations are read in the chart's summary
   rather than one by one (a facet panel's own as the keyboard arrives
   there); custom marks are read through their series.
