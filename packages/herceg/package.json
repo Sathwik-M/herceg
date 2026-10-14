@@ -3,6 +3,13 @@
   "version": "0.0.0",
   "description": "Framework-independent charting engine with columnar data, streaming updates, and SVG/Canvas rendering.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sathwik-M/herceg.git",
+    "directory": "packages/herceg"
+  },
+  "homepage": "https://github.com/Sathwik-M/herceg/tree/main/packages/herceg#readme",
+  "bugs": "https://github.com/Sathwik-M/herceg/issues",
   "type": "module",
   "sideEffects": false,
   "exports": {

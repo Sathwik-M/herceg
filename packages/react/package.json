@@ -3,6 +3,13 @@
   "version": "0.0.0",
   "description": "React components for herceg charts.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sathwik-M/herceg.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/Sathwik-M/herceg/tree/main/packages/react#readme",
+  "bugs": "https://github.com/Sathwik-M/herceg/issues",
   "type": "module",
   "sideEffects": false,
   "exports": {
