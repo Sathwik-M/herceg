@@ -65,10 +65,18 @@ import herceg as hg
 hg.line(df, x="time", y="p50", title="Request latency")  # a pandas, Polars, or PyArrow table
 ```
 
-The packages are not on npm or PyPI yet. To use them from a checkout, run
-`npm install` and `npm run build` (the engine and adapters are then in
-`packages/*/dist`), and for Python `npm run build:python` followed by
-`pip install ./python`.
+Install the engine and the adapter your application uses from npm, or the
+Python package from PyPI:
+
+```sh
+npm install herceg
+npm install @herceg/react  # or @herceg/vue or @herceg/svelte
+pip install herceg
+```
+
+To use a checkout, run `npm ci` and `npm run build` (the engine and adapters
+are then in `packages/*/dist`), and for Python `npm run build:python` followed
+by `pip install ./python`.
 
 ## Roadmap
 
@@ -210,8 +218,9 @@ its dependencies are available in npm's offline cache; otherwise it prints a
 skip note. Run `build` first.
 
 `test:python-package` builds the JavaScript bundles, sdist, and wheel, checks
-the wheel's JavaScript files, then installs it and renders HTML in a fresh
-virtual environment. It preserves uv cache and interpreter settings while removing
+the wheel's JavaScript files and both distributions' licenses against the root
+LICENSE, then installs the wheel and renders HTML in a fresh virtual environment.
+It preserves uv cache and interpreter settings while removing
 registry and source overrides, and tries uv offline first with a PyPI-only fallback.
 Python must already be installed. Both checks remove their temporary projects;
 pass `-- --keep-on-failure` to keep a failed project for inspection.

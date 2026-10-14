@@ -1,6 +1,6 @@
 # @herceg/svelte
 
-Svelte 5 components for [herceg](../herceg/README.md) charts.
+Svelte 5 components for [herceg](https://github.com/op55-org/herceg/blob/main/packages/herceg/README.md) charts.
 
 ```svelte
 <script lang="ts">
@@ -19,7 +19,7 @@ Svelte 5 components for [herceg](../herceg/README.md) charts.
 The `navigator` prop accepts `rangeNavigator()` from `herceg`. Its dense bar
 strip preserves every column intersected by a bar's placed rectangle and
 uses the same color rules as the core and static exports (see
-[Range navigator](../herceg/README.md#range-navigator)).
+[Range navigator](https://github.com/op55-org/herceg/blob/main/packages/herceg/README.md#range-navigator)).
 The chart's text alternative describes its overview and current x range,
 and its control of every panel's x when there are several.
 
@@ -95,7 +95,7 @@ alternatives retain their English language.
 
 Mark components take `tooltip={{ fields: [...] }}` for more of the row a
 point is, and axes `tooltipFormat` for how tooltips write their values, as
-in herceg (see [Tooltips](../herceg/README.md#tooltips)). For content of
+in herceg (see [Tooltips](https://github.com/op55-org/herceg/blob/main/packages/herceg/README.md#tooltips)). For content of
 your own, a `renderTooltip` snippet renders in the chart's box, which keeps
 its placement, the crosshair and highlighted points, and the keyboard's
 announcements. Only the content of what the tooltip is at renders, when

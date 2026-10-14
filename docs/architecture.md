@@ -4057,6 +4057,14 @@ differ. One package avoids version skew between engine pieces. PDF export
 is a subpath, `herceg/pdf`, so that unbundled imports of `herceg` (from a
 CDN or in Node) do not load it either.
 
+The engine, adapters, and Python package share a stable `X.Y.Z` release
+version, checked against their metadata, exact engine dependencies, and
+workspace lockfiles. npm publishing refuses missing exports targets. All
+distributions include the root MIT license text; package tests check its
+contents. The release workflow verifies existing registry artifact hashes
+before resuming a partial publication. The release procedure is in
+[AGENTS.md](../AGENTS.md#releasing).
+
 Grids are the subpaths `herceg/grid` (the DOM grid and its model) and
 `herceg/grid/model` (the model alone, without a DOM), so applications that
 draw charts load none of it; a line chart's bundle contains no grid module.

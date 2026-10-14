@@ -1,7 +1,7 @@
 # herceg for Python
 
 Charts for pandas, Polars, PyArrow, and NumPy data, rendered by the
-[herceg](../README.md) engine: the same charts, tooltips, zooming, and
+[herceg](https://github.com/op55-org/herceg/blob/main/README.md) engine: the same charts, tooltips, zooming, and
 large-data handling as the TypeScript library.
 
 > Early development. Line, area, bar, scatter, heatmap, dendrogram, error bar,
@@ -1079,7 +1079,7 @@ replaces an uncovered grapheme cluster with one covered standalone scalar.
 Embedded text admits Latin, Greek, Cyrillic, Armenian, Georgian, Han, hiragana,
 katakana, precomposed Hangul syllables, and selected Common/Inherited symbols,
 punctuation, digits, and composable accents, subject to Script_Extensions checks.
-See [the exact allowlist](../docs/architecture.md). Other scripts, unassigned and
+See [the exact allowlist](https://github.com/op55-org/herceg/blob/main/docs/architecture.md). Other scripts, unassigned and
 private-use characters, controls, and default-ignorable characters are refused
 with their code point before coverage or replacement. Static TrueType
 `glyf` outlines are supported; CFF, WOFF, collections, variable fonts, joiners,
@@ -1360,7 +1360,7 @@ the chart in the same container, restoring its zoom and brush where the
 brushed values or category labels still are. Points with `animation_key`
 show at once on remount; keyed replacements animate in notebook widgets and
 JavaScript apps. Charts without a theme follow the app's light or dark
-theme, also when it changes. [examples/streamlit_app.py](examples/streamlit_app.py)
+theme, also when it changes. [examples/streamlit_app.py](https://github.com/op55-org/herceg/blob/main/python/examples/streamlit_app.py)
 is a complete app.
 
 ## Development

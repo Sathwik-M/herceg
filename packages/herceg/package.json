@@ -69,6 +69,7 @@
     "src"
   ],
   "scripts": {
+    "prepublishOnly": "node ../../scripts/check-publish.mjs",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --project unit",
     "test:browser": "vitest run --project browser",

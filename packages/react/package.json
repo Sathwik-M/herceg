@@ -29,6 +29,7 @@
     "src"
   ],
   "scripts": {
+    "prepublishOnly": "node ../../scripts/check-publish.mjs",
     "build": "tsc -p tsconfig.build.json",
     "test:browser": "vitest run"
   },

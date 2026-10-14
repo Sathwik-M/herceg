@@ -35,10 +35,10 @@ axis to read times as plain numbers.
 Common tasks (a basic line, several series, a custom tooltip, annotations,
 synced charts, streaming, 100,000 points, a custom mark, a theme, export, a
 Python notebook chart, bars with a target over categories) are written out in
-[benchmarks/src/ease](../../benchmarks/src/ease), one directory per task,
+[benchmarks/src/ease](https://github.com/op55-org/herceg/blob/main/benchmarks/src/ease), one directory per task,
 beside the same task in ECharts, TanStack Charts, Chart.js, and Plotly; a
 browser test keeps every sample drawing, and
-[the comparison](../../docs/comparison.md#common-tasks) sets them side by
+[the comparison](https://github.com/op55-org/herceg/blob/main/docs/comparison.md#common-tasks) sets them side by
 side.
 
 ## Data
@@ -3246,7 +3246,7 @@ incorrect checksums; generated subsets receive fresh checksums.
   hiragana, katakana, precomposed Hangul syllables, and selected Common/Inherited
   punctuation, digits, symbols, and composable accents. Shared characters must
   also pass Script_Extensions checks; see the exact ranges in
-  [the architecture](../../docs/architecture.md). Other scripts, unassigned and
+  [the architecture](https://github.com/op55-org/herceg/blob/main/docs/architecture.md). Other scripts, unassigned and
   private-use characters, controls, and default-ignorable characters throw an
   error naming the code point before fallback or replacement. Emoji modifier,
   flag, tag, and ZWJ sequences are refused before fallback or replacement.
