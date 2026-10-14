@@ -10,6 +10,7 @@ import {
 } from "herceg/pdf";
 import { type ChartSpec, type PdfSpec, specToPDF, specToSVG } from "herceg/spec";
 import { decodeBase64, encodeBase64 } from "./buffers.ts";
+import { rasterFont } from "./raster-font.ts";
 
 /**
  * Runs an export. What herceg refuses (a spec it does not accept, a font it
@@ -26,8 +27,41 @@ function exported(run: () => string): string | { error: string } {
 }
 
 (globalThis as { hercegStatic?: unknown }).hercegStatic = {
-  svg(spec: string, buffers: string[]): string | { error: string } {
-    return exported(() => specToSVG(JSON.parse(spec) as ChartSpec, buffers.map(decodeBase64)));
+  svg(spec: string, buffers: string[], options = "[]", raster = false): string | { error: string } {
+    return exported(() => {
+      const sources = (
+        JSON.parse(options) as (Omit<PdfFontSource, "data"> & { data: string })[]
+      ).map((font) => ({ ...font, data: decodeBase64(font.data) }));
+      const withFonts = <T>(run: () => T): T => {
+        try {
+          return run();
+        } catch (error) {
+          const problem = (error instanceof Error ? error.message : String(error))
+            .replace(
+              "; supply a covering font and fallback family, or set missingGlyph to a covered replacement",
+              "",
+            )
+            .replace("; match theme.font or add an explicit fallback family", "");
+          throw new Error(
+            `fonts: ${problem}; supply supported TrueType fonts covering the text and matching theme["font"]`,
+          );
+        }
+      };
+      const resolver = sources.length
+        ? withFonts(() => pdfFonts(sources).createResolver())
+        : undefined;
+      const svg = specToSVG(JSON.parse(spec) as ChartSpec, buffers.map(decodeBase64), {
+        ...(resolver && {
+          measureText: (text, font) => withFonts(() => resolver.measure(text, font)),
+        }),
+      });
+      return raster
+        ? JSON.stringify({
+            svg,
+            fonts: withFonts(() => sources.map((source, i) => encodeBase64(rasterFont(source, i)))),
+          })
+        : svg;
+    });
   },
   pdf(spec: string, buffers: string[] | string[][], options = "{}"): string | { error: string } {
     const supplied = JSON.parse(options) as PdfFontOptions &

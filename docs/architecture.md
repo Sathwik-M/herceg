@@ -3252,7 +3252,19 @@ fallback/replacement options; this adds temporary byte/base64 copies.
 Parsing and subsetting add
 no runtime dependency and are bundled only when `pdfFonts` is used, never
 through the core chart entry or a plain `specToPDF` export.
-The PDF's measured layout may differ from static SVG's estimates.
+Python's `to_svg(fonts=...)` and `to_png(fonts=...)`, and `save` for those
+extensions, use this resolver's measurer too. Supplied-font layouts therefore
+match PDF's horizontal advances; without fonts, static SVG retains its estimates.
+SVG references the theme's families without embedding fonts or URLs. PNG
+loads export-local font files into resvg, preserving all glyphs and changing
+sfnt names and weight metadata to match the mapping's family aliases and weights.
+The existing sfnt writer computes the temporary files' checksums; files are
+removed even if rasterization fails. Supplied-font PNG exports disable system
+font discovery, so the rasterizer uses the same supplied faces as measurement.
+Resvg can shape text differently from PDF's unkerned glyph runs. SVG viewers
+must provide the referenced fonts. Fallback and replacement remain PDF-only;
+SVG/PNG use the theme's CSS family list. These changes are confined to the
+Python static bundle; the core and framework adapter APIs are unchanged.
 
 Both font paths produce tagged PDF. `src/pdf.ts` combines the chart title
 and `describeChart(model)` for the Figure's UTF-16BE `/Alt`, preserving the

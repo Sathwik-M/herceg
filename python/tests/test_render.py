@@ -5,6 +5,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from io import BytesIO
 from pathlib import Path
 
@@ -274,14 +275,15 @@ def test_unicode_pdf_segmentation_with_and_without_intl():
         )
 
 
-def test_unicode_pdf_rejects_malformed_fonts_and_non_pdf_font_options(tmp_path):
+def test_unicode_pdf_rejects_malformed_fonts_and_html_font_options(tmp_path):
     with pytest.raises(Exception, match="Malformed PDF font"):
         chart().to_pdf(fonts={"Fixture": b"bad"}, fallback=["Fixture"])
-    with pytest.raises(ValueError, match="save fonts: an option of PDF export"):
-        chart().save(str(tmp_path / "chart.svg"), fonts=unicode_fonts())
+    with pytest.raises(ValueError, match="save fonts: an option of SVG, PNG, or PDF export"):
+        chart().save(str(tmp_path / "chart.html"), fonts=unicode_fonts())
 
 
-def test_pdf_counts_weighted_faces_before_reading_or_encoding(monkeypatch):
+@pytest.mark.parametrize("method", ["to_pdf", "to_svg", "to_png"])
+def test_static_export_counts_weighted_faces_before_reading_or_encoding(monkeypatch, method):
     def unexpected(*args, **kwargs):
         pytest.fail("font transport started before the face count was checked")
 
@@ -289,11 +291,12 @@ def test_pdf_counts_weighted_faces_before_reading_or_encoding(monkeypatch):
     monkeypatch.setattr(_render.base64, "b64encode", unexpected)
     monkeypatch.setattr(_render, "_engine", unexpected)
     fonts = {f"Font {i}": {"normal": "missing.ttf", "bold": "missing.ttf"} for i in range(33)}
-    with pytest.raises(ValueError, match="to_pdf fonts: a PDF embeds at most 64 font faces"):
-        chart().to_pdf(fonts=fonts)
+    with pytest.raises(ValueError, match=f"{method} fonts: export supports at most 64 font faces"):
+        getattr(chart(), method)(fonts=fonts)
 
 
-def test_pdf_checks_all_byte_lengths_before_reading_or_encoding(monkeypatch):
+@pytest.mark.parametrize("method", ["to_pdf", "to_svg", "to_png"])
+def test_static_export_checks_all_byte_lengths_before_reading_or_encoding(monkeypatch, method):
     def unexpected(*args, **kwargs):
         pytest.fail("font transport started before byte lengths were checked")
 
@@ -301,12 +304,15 @@ def test_pdf_checks_all_byte_lengths_before_reading_or_encoding(monkeypatch):
     monkeypatch.setattr(_render.base64, "b64encode", unexpected)
     monkeypatch.setattr(_render, "_engine", unexpected)
     with pytest.raises(
-        ValueError, match='to_pdf fonts: the "Large" normal face exceeds the 32 MiB limit'
+        ValueError, match=f'{method} fonts: the "Large" normal face exceeds the 32 MiB limit'
     ):
-        chart().to_pdf(fonts={"Path": "missing.ttf", "Large": bytes(32 * 1024 * 1024 + 1)})
+        getattr(chart(), method)(
+            fonts={"Path": "missing.ttf", "Large": bytes(32 * 1024 * 1024 + 1)}
+        )
 
 
-def test_pdf_bounds_path_reads_before_encoding(monkeypatch):
+@pytest.mark.parametrize("method", ["to_pdf", "to_svg", "to_png"])
+def test_static_export_bounds_path_reads_before_encoding(monkeypatch, method):
     limit = 32 * 1024 * 1024
     reads = []
 
@@ -323,9 +329,9 @@ def test_pdf_bounds_path_reads_before_encoding(monkeypatch):
     monkeypatch.setattr(_render.base64, "b64encode", unexpected)
     monkeypatch.setattr(_render, "_engine", unexpected)
     with pytest.raises(
-        ValueError, match='to_pdf fonts: the "Large" normal face exceeds the 32 MiB limit'
+        ValueError, match=f'{method} fonts: the "Large" normal face exceeds the 32 MiB limit'
     ):
-        chart().to_pdf(fonts={"Large": "large.ttf"})
+        getattr(chart(), method)(fonts={"Large": "large.ttf"})
     assert reads == [limit + 1]
 
 
@@ -366,6 +372,134 @@ def test_png_export(tmp_path):
         ValueError, match='save path: expected a ".html", ".svg", ".png", or ".pdf" file'
     ):
         chart().save(str(tmp_path / "chart.gif"))
+
+
+def font_collision_chart():
+    labels = [f"{'t' * 20}{i}" for i in range(8)]
+    return hg.Chart(
+        {"x": labels, "y": range(8)}, width=280, height=200, theme={"font": "Fixture"}
+    ).bar(x="x", y="y")
+
+
+def test_svg_font_metrics_prevent_label_collisions_and_match_pdf(tmp_path):
+    import zlib
+
+    rendered = font_collision_chart()
+    fonts = {"Fixture": FONT_FIXTURES / "sans.ttf"}
+    svg = rendered.to_svg(fonts=fonts)
+    root = ET.fromstring(svg)
+    assert root.get("font-family") == "Fixture"
+    assert "@font-face" not in svg and "data:font" not in svg
+
+    def positions(svg):
+        return [
+            float(text.get("x"))
+            for text in ET.fromstring(svg).iter("{http://www.w3.org/2000/svg}text")
+            if text.text and text.text.startswith("t" * 20)
+        ]
+
+    # Noto's t is 0.361 em, versus Helvetica's 0.278 em; digits are 0.572 em.
+    # Check widths independently of the measurer used by the export bridge.
+    width = (20 * 0.361 + 0.572) * float(root.get("font-size"))
+    estimated = positions(rendered.to_svg())
+    measured = positions(svg)
+    assert len(measured) >= 2 and len(measured) < len(estimated)
+    assert any(right - left < width for left, right in zip(estimated, estimated[1:], strict=False))
+    assert all(
+        right - left >= width + 4 for left, right in zip(measured, measured[1:], strict=False)
+    )
+    pdf = rendered.to_pdf(fonts=fonts)
+    # The labels selected by SVG measurement are exactly those drawn in PDF.
+    content = zlib.decompress(re.search(rb"stream\n(.*?)\nendstream", pdf, re.DOTALL)[1])
+    assert content.count(b" Tj") == len(list(root.iter("{http://www.w3.org/2000/svg}text")))
+    pdf_positions = [
+        float(x) + width / 2
+        for x, codes in re.findall(rb"1 0 0 -1 (\S+) \S+ Tm <([0-9A-F]+)> Tj", content)
+        if len(codes) == 21 * 4
+    ]
+    assert pdf_positions == pytest.approx(measured, abs=0.1)
+
+    hg.save(rendered, tmp_path / "font.svg", fonts=fonts)
+    saved = (tmp_path / "font.svg").read_text()
+    assert re.sub(r"herceg-svg-\d+", "id", saved) == re.sub(r"herceg-svg-\d+", "id", svg)
+
+
+@pytest.mark.parametrize("weighted", [False, True])
+@pytest.mark.parametrize("family", ["Fixture", "serif"])
+def test_png_renders_supplied_font_pixels_with_paths_bytes_and_aliases(tmp_path, weighted, family):
+    import resvg_py
+
+    image = pytest.importorskip("PIL.Image")
+    rendered = hg.Chart(
+        DATA, title="tttttttt latency", width=400, height=200, theme={"font": family}
+    ).line(x="t", y="v")
+    fonts = (
+        {family: unicode_fonts()["Fixture"]}
+        if weighted
+        else {family: str(FONT_FIXTURES / "sans.ttf")}
+    )
+    svg = rendered.to_svg(fonts=fonts)
+    actual = rendered.to_png(fonts=fonts, scale=1)
+    # Independent reference: original files selected by their native family,
+    # rather than the mapping's alias. This also checks the bold title face.
+    native_svg = svg.replace(f'font-family="{family}"', 'font-family="Noto Sans"')
+    paths = [str(FONT_FIXTURES / "sans.ttf")]
+    if weighted:
+        paths.append(str(FONT_FIXTURES / "sans-bold.ttf"))
+    expected = resvg_py.svg_to_bytes(
+        svg_string=native_svg, zoom=1, font_files=paths, skip_system_fonts=True
+    )
+    fallback = resvg_py.svg_to_bytes(svg_string=svg, zoom=1)
+    pixels = np.asarray(image.open(BytesIO(actual)))
+    assert pixels.shape == (200, 400, 4)
+    assert np.array_equal(pixels, np.asarray(image.open(BytesIO(expected))))
+    assert np.count_nonzero(pixels != np.asarray(image.open(BytesIO(fallback)))) > 100
+    path = tmp_path / "font.PNG"
+    hg.save(rendered, path, fonts=fonts, scale=1)
+    assert path.read_bytes() == actual
+    assert rendered.to_png(fonts=fonts, scale=1) == actual
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_png_removes_temporary_font_files_even_when_rasterization_fails(monkeypatch, fails):
+    import resvg_py
+
+    paths = []
+
+    def rasterize(**options):
+        paths.extend(Path(path) for path in options["font_files"])
+        assert paths and all(path.is_file() for path in paths)
+        for path in paths:
+            data = path.read_bytes()
+            padded = data + bytes(-len(data) % 4)
+            assert sum(word[0] for word in struct.iter_unpack(">I", padded)) % 2**32 == 0xB1B0AFBA
+        if fails:
+            raise ValueError("rasterization failed")
+        return b"png"
+
+    monkeypatch.setattr(resvg_py, "svg_to_bytes", rasterize)
+    options = {"fonts": {"Fixture": (FONT_FIXTURES / "sans.ttf").read_bytes()}}
+    if fails:
+        with pytest.raises(ValueError, match="rasterization failed"):
+            unicode_chart("Font").to_png(**options)
+    else:
+        assert unicode_chart("Font").to_png(**options) == b"png"
+    assert all(not path.parent.exists() for path in paths)
+
+
+@pytest.mark.parametrize("method", ["to_svg", "to_png"])
+def test_svg_and_png_validate_fonts_in_the_callers_spelling(method, tmp_path):
+    export = getattr(unicode_chart("Font"), method)
+    with pytest.raises(ValueError, match=f"{method} fonts:.*Malformed PDF font"):
+        export(fonts={"Fixture": b"bad"})
+    with pytest.raises(ValueError, match=f'{method} fonts: expected weights "normal" or "bold"'):
+        export(fonts={"Fixture": {"regular": b"bad"}})
+    with pytest.raises(ValueError, match=f"{method} fonts:.*is not registered"):
+        export(fonts={"Other": FONT_FIXTURES / "sans.ttf"})
+    suffix = ".svg" if method == "to_svg" else ".png"
+    with pytest.raises(ValueError, match="save fonts:.*Malformed PDF font"):
+        hg.save(unicode_chart("Font"), tmp_path / f"bad{suffix}", fonts={"Fixture": b"bad"})
+    assert not (tmp_path / f"bad{suffix}").exists()
 
 
 @pytest.mark.parametrize("extension", ["html", "svg", "png", "PDF"])

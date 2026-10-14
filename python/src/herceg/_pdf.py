@@ -19,7 +19,7 @@ def to_pdf(
     title: str | None = None,
     subject: str | None = None,
     language: str | None = None,
-    fonts: _render.PdfFonts | None = None,
+    fonts: _render.Fonts | None = None,
     fallback: Sequence[str] = (),
     missing_glyph: str | None = None,
 ) -> bytes:
@@ -66,7 +66,7 @@ def save(
     title: str | None = None,
     subject: str | None = None,
     language: str | None = None,
-    fonts: _render.PdfFonts | None = None,
+    fonts: _render.Fonts | None = None,
     fallback: Sequence[str] = (),
     missing_glyph: str | None = None,
 ) -> None:

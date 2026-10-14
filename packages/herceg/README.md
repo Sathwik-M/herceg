@@ -3244,6 +3244,11 @@ prepared object can be reused: every export parses its own faces and owns
 its glyph usage and subsets. Font descriptors and fallback lists are copied;
 font byte buffers are borrowed read-only for the duration of each export.
 
+The [Python package](../../python/README.md) accepts a family-to-path/bytes
+`fonts=` mapping for SVG, PNG, and PDF. All three use this resolver for text
+measurement. PNG loads the supplied faces into resvg; SVG references the
+families and requires the viewer to provide their fonts.
+
 `weight` is `"normal"` (default) or `"bold"`. A missing weight uses the other
 registered face of that family, without synthetic bold. Families are matched
 case-insensitively, including quoted CSS names and explicitly registered

@@ -130,7 +130,9 @@ for multiple pages, A4/Letter paper, and shared font subsets), React, Vue,
 and Svelte adapters, min/max indexes for zooming
 and streaming large line
 series (whole columns or split by a series field), WebGL drawing of large
-point series, chart specs with binary columns, a Python package, a second
+point series, chart specs with binary columns, a Python package with a shared
+`fonts=` mapping for SVG/PNG/PDF export (TrueType label measurement and PNG
+font rendering; SVG references font families), a second
 y axis (in facets and subplots too, shared or per panel), small multiples
 (wrapped or by row and column, with shared or per-panel x and y scales,
 histograms, box plots, boxen plots, and violins summarizing each panel's rows,
