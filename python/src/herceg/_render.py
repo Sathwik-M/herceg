@@ -24,10 +24,10 @@ if TYPE_CHECKING:
 
 FontData = bytes | str | PathLike[str]
 FontWeight = Literal["normal", "bold"]
-PdfFonts = Mapping[str, FontData | Mapping[FontWeight, FontData]]
+Fonts = Mapping[str, FontData | Mapping[FontWeight, FontData]]
 PdfPageSize = Literal["A4", "Letter"]
 PdfOrientation = Literal["portrait", "landscape"]
-_PDF_FONT_LIMIT = 32 * 1024 * 1024
+_FONT_LIMIT = 32 * 1024 * 1024
 
 
 def asset_path(name: str) -> Path:
@@ -125,16 +125,73 @@ def _call(function: str, *args: Any) -> str:
     raise ValueError(result["error"])
 
 
-def svg(spec: dict[str, Any], buffers: list[bytes]) -> str:
+def svg(spec: dict[str, Any], buffers: list[bytes], *, fonts: Fonts | None = None) -> str:
     """Standalone SVG, rendered by herceg's DOM-free renderer in an embedded V8."""
-    return _call("hercegStatic.svg", json.dumps(spec), _encoded(buffers))
+    return _svg(spec, buffers, _font_faces(fonts, "to_svg"), location="to_svg")
+
+
+def _svg(
+    spec: dict[str, Any],
+    buffers: list[bytes],
+    faces: list[dict[str, str]],
+    *,
+    location: str,
+    raster: bool = False,
+) -> str:
+    try:
+        return _call(
+            "hercegStatic.svg", json.dumps(spec), _encoded(buffers), json.dumps(faces), raster
+        )
+    except ValueError as error:
+        message = str(error)
+        if message.startswith("fonts:"):
+            message = f"{location} {message}"
+        raise ValueError(message) from None
+
+
+def _font_faces(fonts: Fonts | None, location: str) -> list[dict[str, str]]:
+    """Validate and read the same font mapping for every static export."""
+    sources = []
+    for family, source in (fonts or {}).items():
+        weights = source if isinstance(source, Mapping) else {"normal": source}
+        for weight, data in weights.items():
+            if weight not in ("normal", "bold"):
+                raise ValueError(
+                    f'{location} fonts: expected weights "normal" or "bold"; '
+                    f"received {shown(weight)}"
+                )
+            sources.append((family, weight, data))
+            if len(sources) > 64:
+                raise ValueError(
+                    f"{location} fonts: export supports at most 64 font faces; give fewer"
+                )
+    for family, weight, data in sources:
+        if isinstance(data, bytes) and len(data) > _FONT_LIMIT:
+            raise ValueError(
+                f"{location} fonts: the {shown(family)} {weight} face exceeds the 32 MiB limit"
+            )
+    faces = []
+    for family, weight, data in sources:
+        if isinstance(data, bytes):
+            raw = data
+        else:
+            with Path(data).open("rb") as font_file:
+                raw = font_file.read(_FONT_LIMIT + 1)
+            if len(raw) > _FONT_LIMIT:
+                raise ValueError(
+                    f"{location} fonts: the {shown(family)} {weight} face exceeds the 32 MiB limit"
+                )
+        faces.append(
+            {"family": family, "weight": weight, "data": base64.b64encode(raw).decode("ascii")}
+        )
+    return faces
 
 
 def pdf(
     spec: dict[str, Any] | list[dict[str, Any]],
     buffers: list[bytes] | list[list[bytes]],
     *,
-    fonts: PdfFonts | None = None,
+    fonts: Fonts | None = None,
     fallback: Sequence[str] = (),
     missing_glyph: str | None = None,
     page_size: PdfPageSize | None = None,
@@ -165,36 +222,7 @@ def pdf(
         raise ValueError(
             "to_pdf margin: expected finite nonnegative points; supply zero or a positive margin"
         )
-    sources = []
-    for family, source in (fonts or {}).items():
-        weights = source if isinstance(source, Mapping) else {"normal": source}
-        for weight, data in weights.items():
-            if weight not in ("normal", "bold"):
-                raise ValueError(
-                    f'to_pdf fonts: expected weights "normal" or "bold"; received {shown(weight)}'
-                )
-            sources.append((family, weight, data))
-            if len(sources) > 64:
-                raise ValueError("to_pdf fonts: a PDF embeds at most 64 font faces; give fewer")
-    for family, weight, data in sources:
-        if isinstance(data, bytes) and len(data) > _PDF_FONT_LIMIT:
-            raise ValueError(
-                f"to_pdf fonts: the {shown(family)} {weight} face exceeds the 32 MiB limit"
-            )
-    faces = []
-    for family, weight, data in sources:
-        if isinstance(data, bytes):
-            raw = data
-        else:
-            with Path(data).open("rb") as font_file:
-                raw = font_file.read(_PDF_FONT_LIMIT + 1)
-            if len(raw) > _PDF_FONT_LIMIT:
-                raise ValueError(
-                    f"to_pdf fonts: the {shown(family)} {weight} face exceeds the 32 MiB limit"
-                )
-        faces.append(
-            {"family": family, "weight": weight, "data": base64.b64encode(raw).decode("ascii")}
-        )
+    faces = _font_faces(fonts, "to_pdf")
     if not faces and (fallback or missing_glyph is not None):
         raise ValueError(
             "to_pdf fallback and missing_glyph: choose among embedded fonts; "
@@ -234,14 +262,46 @@ def pdf(
     return base64.b64decode(encoded)
 
 
-def png(svg_text: str, *, scale: float) -> bytes:
+def png(
+    spec: dict[str, Any], buffers: list[bytes], *, scale: float, fonts: Fonts | None = None
+) -> bytes:
     try:
         import resvg_py
     except ImportError as error:
         raise ImportError(
             "PNG export needs the `export` extra: pip install 'herceg[export]'"
         ) from error
-    return bytes(resvg_py.svg_to_bytes(svg_string=svg_text, zoom=scale))
+    faces = _font_faces(fonts, "to_png")
+    if not faces:
+        return bytes(
+            resvg_py.svg_to_bytes(svg_string=_svg(spec, buffers, [], location="to_png"), zoom=scale)
+        )
+    rendered = json.loads(_svg(spec, buffers, faces, location="to_png", raster=True))
+    families = {}
+    for face in faces:
+        family = face["family"].strip().strip("\"'").strip()
+        families[family.lower()] = family
+    # resvg takes filenames, including for byte inputs. These renamed copies
+    # are local to this export and removed on success or failure.
+    with tempfile.TemporaryDirectory(prefix="herceg-fonts-") as directory:
+        paths = []
+        for index, encoded in enumerate(rendered["fonts"]):
+            path = Path(directory) / f"{index}.ttf"
+            path.write_bytes(base64.b64decode(encoded))
+            paths.append(str(path))
+        return bytes(
+            resvg_py.svg_to_bytes(
+                svg_string=rendered["svg"],
+                zoom=scale,
+                font_files=paths,
+                skip_system_fonts=True,
+                sans_serif_family=families.get("sans-serif"),
+                serif_family=families.get("serif"),
+                monospace_family=families.get("monospace"),
+                cursive_family=families.get("cursive"),
+                fantasy_family=families.get("fantasy"),
+            )
+        )
 
 
 def show(chart: Chart) -> None:

@@ -3724,18 +3724,21 @@ class Chart:
         """Self-contained HTML that renders the chart, with herceg and the data embedded."""
         return _render.html(*self.to_spec(), full_page=full_page)
 
-    def to_svg(self) -> str:
-        """Standalone SVG, rendered without a browser (requires the ``export`` extra)."""
-        return _render.svg(*self.to_spec())
+    def to_svg(self, *, fonts: _render.Fonts | None = None) -> str:
+        """Standalone SVG, measured with supplied fonts and referencing their families.
 
-    def to_png(self, *, scale: float = 2) -> bytes:
+        Requires the ``export`` extra. Font files are not embedded in the SVG.
+        """
+        return _render.svg(*self.to_spec(), fonts=fonts)
+
+    def to_png(self, *, scale: float = 2, fonts: _render.Fonts | None = None) -> bytes:
         """PNG at ``scale`` times the chart size (requires the ``export`` extra)."""
-        return _render.png(self.to_svg(), scale=scale)
+        return _render.png(*self.to_spec(), scale=scale, fonts=fonts)
 
     def to_pdf(
         self,
         *,
-        fonts: _render.PdfFonts | None = None,
+        fonts: _render.Fonts | None = None,
         fallback: Sequence[str] = (),
         missing_glyph: str | None = None,
         page_size: _render.PdfPageSize | None = None,
@@ -3764,7 +3767,7 @@ class Chart:
         path: str | PathLike[str],
         *,
         scale: float = 2,
-        fonts: _render.PdfFonts | None = None,
+        fonts: _render.Fonts | None = None,
         fallback: Sequence[str] = (),
         missing_glyph: str | None = None,
         page_size: _render.PdfPageSize | None = None,
@@ -3777,7 +3780,6 @@ class Chart:
         """Writes ``.html``, ``.svg``, ``.png``, or ``.pdf``, chosen by the file extension."""
         lower = str(path).lower()
         pdf_options = {
-            "fonts": fonts,
             "fallback": fallback or None,
             "missing_glyph": missing_glyph,
             "page_size": page_size,
@@ -3792,12 +3794,23 @@ class Chart:
             raise ValueError(
                 f"save {option}: an option of PDF export; save to a .pdf path or drop {option}"
             )
+        if fonts is not None and lower.endswith(".html"):
+            raise ValueError(
+                "save fonts: an option of SVG, PNG, or PDF export; "
+                "save to a .svg, .png, or .pdf path or drop fonts"
+            )
         if lower.endswith(".html"):
             content: str | bytes = self.to_html()
         elif lower.endswith(".svg"):
-            content = self.to_svg()
+            try:
+                content = self.to_svg(fonts=fonts)
+            except (ValueError, TypeError) as error:
+                raise type(error)(str(error).replace("to_svg", "save")) from None
         elif lower.endswith(".png"):
-            content = self.to_png(scale=scale)
+            try:
+                content = self.to_png(scale=scale, fonts=fonts)
+            except (ValueError, TypeError) as error:
+                raise type(error)(str(error).replace("to_png", "save")) from None
         elif lower.endswith(".pdf"):
             try:
                 content = self.to_pdf(

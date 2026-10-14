@@ -1029,14 +1029,16 @@ locale, while English summaries keep their English alternative scope.
 SVG, PNG, and PDF export need the `export` extra (`pip install
 'herceg[export]'`): SVG is rendered by the same DOM-free renderer as herceg's
 `renderToSVG`, run in an embedded V8 engine (`mini-racer`), so it matches the
-browser's chart except for text measurement, which uses fixed Helvetica
-metrics. PNG is rasterized from that SVG by `resvg`. PDF comes from herceg's
-`renderToPDF` in the same engine, with the SVG's layout: vector marks, axes,
+browser's chart except for text measurement. Without supplied fonts, SVG
+uses fixed Helvetica estimates. PNG is rasterized from that SVG by `resvg`,
+using system fonts by default. PDF comes from herceg's
+`renderToPDF` in the same engine: vector marks, axes,
 and legends, heatmaps as images, and selectable text. What the renderer
 refuses, such as an option the spec does not accept (`theme="drak"`) or a
 font it cannot embed, raises `ValueError` with herceg's message. Without supplied fonts,
 PDF uses the standard fonts and Windows-1252 encoding (other characters
-print as "?"). For Unicode, fonts are export options, separate from the spec:
+print as "?"). Custom fonts are export options, separate from the spec,
+with the same `fonts=` mapping for SVG, PNG, and PDF:
 
 ```python
 from pathlib import Path
@@ -1047,23 +1049,40 @@ fonts = {
     "Symbols": Path("Symbols.ttf").read_bytes(),
 }
 pdf_bytes = chart.to_pdf(fonts=fonts, fallback=["Symbols"])
+png_bytes = chart.to_png(fonts=fonts, scale=2)
+svg_text = chart.to_svg(fonts=fonts)
+chart.save("chart.png", fonts=fonts)
+hg.save(chart, "chart.svg", fonts=fonts)
 hg.save([latency, throughput], "unicode-report.pdf", fonts=fonts, fallback=["Symbols"])
 chart.save("chart.pdf", fonts=fonts, fallback=["Symbols"])
 # A family with one face can also be supplied as {"Inter": "Inter-Regular.ttf"}.
 ```
 
 Python keeps these font arguments: its JavaScript bridge prepares them with
-`pdfFonts` before export. TypeScript callers use `fonts: pdfFonts(sources,
+`pdfFonts` before export. SVG and PNG use the PDF resolver's TrueType text
+measurement in embedded V8, so all three formats lay out labels with the
+supplied faces' horizontal advances, without kerning. PNG also loads those
+faces into resvg, including byte inputs and families registered under an
+alias. It uses temporary local font files, removed after each export, and
+does not load system fonts when `fonts` is nonempty. Resvg handles the final
+rasterization; its text shaping can differ from PDF's unkerned glyph runs.
+SVG references families by name and embeds neither font files nor font URLs;
+its viewer must provide the same fonts to reproduce the measured layout.
+`fallback` and `missing_glyph` remain PDF-only options. For SVG and PNG,
+put covering families in `theme["font"]`, for example `"Inter, Symbols"`.
+`hg.save` forwards `fonts` for single charts; lists still require a PDF path.
+
+TypeScript callers use `fonts: pdfFonts(sources,
 { fallback, missingGlyph })`; plain JavaScript PDF exports omit this helper
 and bundle no TrueType parser or subsetter.
 
 Each font is bytes or a filesystem path (`str` or `PathLike`). Nested family
 mappings accept `"normal"` and `"bold"`; a missing weight uses the available
 face without synthetic bold. Match `theme["font"]` to the registered families.
-CSS family lists are tried first, then `fallback`, with each grapheme cluster
+CSS family lists are tried first, then PDF's `fallback`, with each grapheme cluster
 kept in one face. Simple accents use an NFC precomposed glyph with the
 original sequence preserved for extraction; sequences needing mark positioning
-are refused. The same resolver measures and draws: exact horizontal
+are refused. PDF uses the same resolver to measure and draw: exact horizontal
 advances, no kerning, Unicode copy/search maps (including supplementary
 characters), and deterministic per-document subsets with composite dependencies.
 OS/2 embedding restrictions are enforced, including whole embedding when
@@ -1084,7 +1103,9 @@ private-use characters, controls, and default-ignorable characters are refused
 with their code point before coverage or replacement. Static TrueType
 `glyf` outlines are supported; CFF, WOFF, collections, variable fonts, joiners,
 and variation sequences are refused. Emoji modifier, flag, tag, and ZWJ sequences
-are refused before fallback or replacement. These font options apply only to PDF.
+are refused before fallback or replacement. The same font format, coverage,
+and simple-text restrictions apply when supplying fonts for SVG or PNG
+measurement. SVG and PNG exported without `fonts` retain their default text behavior.
 Clusters use `Intl.Segmenter` when available (verified in MiniRacer 0.14.1).
 Without it, conservative grouping joins combining marks, Grapheme_Extend
 characters (including halfwidth kana voiced marks), emoji modifiers, and ZWJ
