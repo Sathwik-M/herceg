@@ -68,6 +68,10 @@ hg.Chart({"first": [0], "second": [1], "height": [2]}).dendrogram(
     "first", "second", "height", leaves=["a", "b"], side="right", stroke_width=2
 )
 
+links = {"a": ["x", "y"], "b": ["y", "z"]}
+hg.graph(links, "a", "b", layout="layered")
+hg.graph(links, "a", "b", layout={"type": "circular", "sort": "name"})
+hg.graph(links, "a", "b", layout="tree")  # type: ignore[arg-type]
 
 # Dash strings are typed on every Python surface that takes dash.
 dash_style: hg.Dash = "-."

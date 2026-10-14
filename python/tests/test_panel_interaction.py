@@ -207,8 +207,10 @@ def test_widgets_keep_each_subplot_networks_moves_and_views():
     assert widget.panel_viewports["b"] == hg.Viewport(x=(0.0, 10.0), y=(0.0, 5.0))
     assert widget.viewport == hg.Viewport()
     assert views == [hg.Viewport(x=(0.0, 10.0), y=(0.0, 5.0))]
-    # New data lays the networks out again: their moves go.
+    # New data keeps the moves of nodes it still has, and lets the others go.
     widget.replace(LINKS, data=None)
+    assert widget.panel_item_positions == {"a": {'[0,"a"]': (1.0, 2.0)}, "b": {}}
+    widget.replace({"source": ["b"], "target": ["c"]}, data=None)
     assert widget.panel_item_positions == {"a": {}, "b": {}}
 
 
@@ -228,13 +230,14 @@ def test_widgets_keep_moves_of_networks_whose_data_did_not_change():
     # New places for the map leave the network be.
     widget.append({"lon": [1.0], "lat": [2.0]})
     assert widget.panel_item_positions == {"net": moved}
-    # New links, or new nodes, lay it out again.
+    # New links, or new nodes, keep the moves of the nodes they still have.
     widget.replace(LINKS, data=LINKS)
+    assert widget.panel_item_positions == {"net": moved}
+    widget.replace({"name": ["b", "c"], "team": ["x", "y"]}, data=nodes)
+    assert widget.panel_item_positions == {"net": moved}
+    widget.replace({"source": ["b"], "target": ["c"]}, data=LINKS)
     assert widget.panel_item_positions == {"net": {}}
-    widget.panel_item_positions = {"net": moved}
-    widget.replace(nodes, data=nodes)
-    assert widget.panel_item_positions == {"net": {}}
-    assert heard == [moved, {}, moved, {}]
+    assert heard == [moved, {}]
 
 
 def test_widgets_check_layout_marks_options_when_made_and_updated():

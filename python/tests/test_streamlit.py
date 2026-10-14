@@ -225,11 +225,13 @@ def test_new_reactions_use_one_payload_and_state_callbacks(monkeypatch):
     assert calls[0]["on_item_positions_change"] is callback
     assert callable(calls[0]["on_drill_root_change"])
     spec, _ = graph.to_spec()
-    epoch = hst._item_epoch(spec, "data")
-    assert hst._item_epoch({**spec, "title": "Styled"}, "data") == epoch
-    assert hst._item_epoch(spec, "new-data") != epoch
+    # Moves and node places belong to the network's mark and panels, whatever its data or styles.
+    epoch = hst._item_epoch(spec)
+    assert hst._item_epoch({**spec, "title": "Styled"}) == epoch
     changed = {**spec, "marks": [{**spec["marks"][0], "directed": True}]}
-    assert hst._item_epoch(changed, "data") != epoch
+    assert hst._item_epoch(changed) == epoch
+    assert hst._item_epoch({**spec, "marks": [{**spec["marks"][0], "id": "net"}]}) != epoch
+    assert hst._item_epoch({**spec, "marks": []}) is None
     for name in ("on_drill", "on_item_move"):
         with pytest.raises(ValueError, match=f"streamlit.chart {name}: expected"):
             hst.chart(graph, **{name: "always"})

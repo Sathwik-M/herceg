@@ -14,6 +14,9 @@ const PIVOTS = 50;
 /** Power iterations per eigenvector; the k-by-k matrix makes them cheap. */
 const ITERATIONS = 100;
 
+/** Steps between which a placement may pause: about this many operations each. */
+const STEP = 1 << 18;
+
 /**
  * x, y per node: each component centered on (0, 0), scaled so its links
  * average `linkLength`. Components overlap until they are packed.
@@ -25,18 +28,32 @@ export function pivotMds(
   linkLength: number,
 ): Float64Array {
   const positions = new Float64Array(nodes * 2);
-  const local = new Int32Array(nodes).fill(-1);
+  for (const _ of pivotMdsSteps(adjacency, components, linkLength, positions));
+  return positions;
+}
+
+/**
+ * `pivotMds` in steps, writing x, y per node of `components` into
+ * `positions`: it yields between steps of about the same work, so a large
+ * network's placement can spread over animation frames.
+ */
+export function* pivotMdsSteps(
+  adjacency: Adjacency,
+  components: readonly Int32Array[],
+  linkLength: number,
+  positions: Float64Array,
+): Generator<void, void> {
+  const local = new Int32Array(positions.length / 2).fill(-1);
   for (const members of components) {
     members.forEach((node, i) => {
       local[node] = i;
     });
-    const placed = placeComponent(members, local, adjacency, linkLength);
+    const placed = yield* placeComponent(members, local, adjacency, linkLength);
     members.forEach((node, i) => {
       positions[node * 2] = placed[i * 2]!;
       positions[node * 2 + 1] = placed[i * 2 + 1]!;
     });
   }
-  return positions;
 }
 
 /** Breadth-first hop counts from `from` to each member, by local index. */
@@ -65,12 +82,12 @@ function hops(
 }
 
 /** One component's x, y per member (by local index), centered on (0, 0). */
-function placeComponent(
+function* placeComponent(
   members: Int32Array,
   local: Int32Array,
   adjacency: Adjacency,
   linkLength: number,
-): Float64Array {
+): Generator<void, Float64Array> {
   const size = members.length;
   const placed = new Float64Array(size * 2);
   if (size < 3) {
@@ -88,8 +105,20 @@ function placeComponent(
   const distances = new Float64Array(size);
   const queue = new Int32Array(size);
   let pivot = members[0]!;
+  // Work done since the last pause, in operations.
+  let work = 0;
+  const pause = (done: number) => {
+    work += done;
+    if (work < STEP) return false;
+    work = 0;
+    return true;
+  };
+  // A breadth-first search visits each member and each of its links once.
+  let search = size;
+  for (const node of members) search += adjacency.starts[node + 1]! - adjacency.starts[node]!;
   for (let j = 0; j < k; j++) {
     hops(pivot, local, adjacency, distances, queue);
+    if (pause(search)) yield;
     let farthest = 0;
     for (let i = 0; i < size; i++) {
       const d = distances[i]!;
@@ -114,6 +143,7 @@ function placeComponent(
   for (let i = 0; i < size; i++)
     for (let j = 0; j < k; j++)
       squared[i * k + j] = -0.5 * (squared[i * k + j]! - rows[i]! - columns[j]! + grand);
+  if (pause(2 * size * k)) yield;
   const c = squared;
   // The k-by-k matrix C^T C, whose top eigenvectors give the coordinates.
   const product = new Float64Array(k * k);
@@ -124,6 +154,7 @@ function placeComponent(
       product[a * k + b] = sum;
       product[b * k + a] = sum;
     }
+    if (pause(size * (k - a))) yield;
   }
   const first = topEigenvector(product, k, undefined);
   const second = topEigenvector(product, k, first);

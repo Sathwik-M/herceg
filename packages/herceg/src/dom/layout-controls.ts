@@ -26,6 +26,8 @@ function load(kind: LayoutControls["kind"]): Promise<ControlsModule> {
       return import("./drill.ts");
     case "drag":
       return import("./node-drag.ts");
+    case "layout":
+      return import("./layout-frames.ts");
   }
 }
 

@@ -82,6 +82,14 @@ nodes move while zoomed and `setItemPosition` still uses layout units.
 When zoom is on, Alt+Shift+arrows moves the node read; Shift+arrows and 0
 navigate the view. The toolbar restores moved nodes.
 
+`layout` places a network's nodes: `"force"` (the default; in it, the nodes
+near a moved one settle around it once it is dropped, unless `{ type:
+"force", settle: false }`), `"circular"`, or `"layered"` (for trees and
+directed acyclic networks), as in the core (see
+[Networks](../herceg/README.md#networks)). Nodes keep their places, and
+moved nodes stay, while the data changes, and while the component renders
+again with a new mark over the same or new tables: `<Graph data={reports} source="manager" target="report" layout="layered" />`.
+
 Several chart handles can be exported together with
 `renderToPDF([chart1, chart2], { pageSize: "A4", title: "Report" })`
 from `herceg/pdf`. Each chart retains its current zoom and visibility and

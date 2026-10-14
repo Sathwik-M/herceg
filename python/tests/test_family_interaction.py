@@ -97,13 +97,13 @@ def test_networks_drag_nodes_draw_directed_links_and_link_labels():
 
 
 def test_directed_networks_count_links_each_way():
-    # Every ordered pair of 150 nodes: twice the links of an undirected network.
-    names = [f"n{i}" for i in range(150)]
+    # Every ordered pair of 500 nodes: twice the links of an undirected network.
+    names = [f"n{i}" for i in range(500)]
     pairs = [(a, b) for a in names for b in names if a != b]
     dense = {"from": [a for a, _ in pairs], "to": [b for _, b in pairs]}
     hg.Chart(dense).graph("from", "to")
     with pytest.raises(
-        ValueError, match="graph: draws at most .* this network has 150 nodes and 22,350 links"
+        ValueError, match="graph: draws at most .* this network has 500 nodes and 249,500 links"
     ):
         hg.Chart(dense).graph("from", "to", directed=True)
 
@@ -131,3 +131,43 @@ def test_networks_share_plane_zoom_and_lasso_options():
             spec, _ = chart.to_spec()
             assert spec["interaction"] == {"zoom": zoom, "brush": "lasso", "drag": True}
             assert spec["rowSelection"]["data"] == spec["marks"][0]["nodes"]
+
+
+def test_networks_take_a_layout_by_name_or_with_its_options():
+    def layout(value):
+        spec, _ = hg.Chart(TALKS).graph("from", "to", layout=value).to_spec()
+        return spec["marks"][0].get("layout")
+
+    assert layout(None) is None
+    assert layout("circular") == "circular"
+    assert layout({"type": "force", "settle": False}) == {"type": "force", "settle": False}
+    assert layout({"settle": False}) == {"type": "force", "settle": False}
+    assert layout({"type": "layered", "direction": "right"}) == {
+        "type": "layered",
+        "direction": "right",
+    }
+    assert (
+        hg.graph(TALKS, "from", "to", layout="layered").to_spec()[0]["marks"][0]["layout"]
+        == "layered"
+    )
+    with pytest.raises(
+        ValueError, match='graph layout: expected "force", "circular", or "layered"'
+    ):
+        layout("tree")
+    with pytest.raises(
+        ValueError,
+        match=r'graph layout\["settle"\]: only a force layout takes it; drop it, or use "type"',
+    ):
+        layout({"type": "circular", "settle": True})
+    with pytest.raises(ValueError, match=r'graph layout\["direction"\]: expected "down", "right"'):
+        layout({"type": "layered", "direction": "sideways"})
+    with pytest.raises(ValueError, match=r'graph layout\["speed"\]: not an option'):
+        layout({"type": "force", "speed": 2})
+    with pytest.raises(ValueError, match=r'graph layout\["settle"\]: expected True or False'):
+        layout({"type": "force", "settle": "no"})
+
+
+def test_networks_of_every_layout_export_without_a_browser():
+    for layout in ("force", "circular", {"type": "layered", "direction": "up"}):
+        svg = hg.Chart(TALKS).graph("from", "to", directed=True, layout=layout).to_svg()
+        assert svg.startswith("<svg") and "Network of 3 nodes" in svg

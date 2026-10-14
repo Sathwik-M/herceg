@@ -784,24 +784,73 @@ def test_invalid_positions_do_not_change_state(value):
     assert widget.item_positions == {}
 
 
-def test_network_data_changes_clear_moves_and_fence_delayed_reports_without_a_display():
+def test_network_data_changes_keep_moves_of_nodes_that_remain_and_rebase_delayed_reports():
     widget = network()
     browser = Browser(widget)
     widget.append({"source": [], "target": []})
     assert not browser.messages
     widget.replace({"source": ["b"], "target": ["c"]})
+    sent = len(browser.messages)
     browser.reply(
-        {"type": "itemMove", "item_positions": {'[0,"a"]': [1, 2]}, "origin": "old", "revision": 0}
+        {
+            "type": "itemMove",
+            "item_positions": {'[0,"a"]': [0, 0], '[0,"b"]': [1, 2]},
+            "origin": "old",
+            "revision": 0,
+        }
     )
-    assert widget.item_positions == {}
-    widget.item_positions = {'[0,"b"]': (3, 4)}
+    # A report made on the data before its change is taken without the nodes
+    # the change took, as the browser that made it lets go of them too.
+    assert widget.item_positions == {'[0,"b"]': (1.0, 2.0)}
+    (taken,) = (content for content, _ in browser.messages[sent:])
+    assert taken["type"] == "itemMove" and taken["origin"] == "old"
+    # A later report of that browser's, made before the change too, still counts.
+    browser.reply(
+        {"type": "itemMove", "item_positions": {'[0,"b"]': [3, 3]}, "origin": "old", "revision": 0}
+    )
+    assert widget.item_positions == {'[0,"b"]': (3.0, 3.0)}
+    widget.item_positions = {'[0,"b"]': (3, 4), '[0,"c"]': (5, 6)}
+    # One made before Python's own assignment is dropped.
+    browser.reply(
+        {"type": "itemMove", "item_positions": {'[0,"b"]': [9, 9]}, "origin": "old", "revision": 1}
+    )
+    assert widget.item_positions == {'[0,"b"]': (3.0, 4.0), '[0,"c"]': (5.0, 6.0)}
     moves = []
     widget.on_item_move(moves.append)
     widget.update(title="Still moved")
-    assert widget.item_positions == {'[0,"b"]': (3, 4)}
     widget.append({"source": ["c"], "target": ["d"]})
-    assert widget.item_positions == {} and moves == [{}]
-    assert widget.get_state()["_chart"]["item_positions"] == {}
+    # Nodes that remain stay moved; Python hears of nothing.
+    assert widget.item_positions == {'[0,"b"]': (3, 4), '[0,"c"]': (5, 6)} and moves == []
+    sent = len(browser.messages)
+    widget.replace({"source": ["c"], "target": ["d"]})
+    # b is gone: its move goes, and listeners hear so. Browsers let it go
+    # as they draw the change: only the data is sent.
+    assert widget.item_positions == {'[0,"c"]': (5, 6)}
+    assert moves == [{'[0,"c"]': (5.0, 6.0)}]
+    assert [content["type"] for content, _ in browser.messages[sent:]] == ["replace"]
+    assert widget.get_state()["_chart"]["item_positions"] == {'[0,"c"]': [5.0, 6.0]}
+    # A browser's report of a move it had not sent, made on the new data, is taken.
+    revision = browser.messages[-1][0]["revision"]
+    browser.reply(
+        {
+            "type": "itemMove",
+            "item_positions": {'[0,"c"]': [5, 6], '[0,"d"]': [7, 8]},
+            "origin": "view",
+            "revision": revision,
+        }
+    )
+    assert widget.item_positions == {'[0,"c"]': (5.0, 6.0), '[0,"d"]': (7.0, 8.0)}
+
+
+def test_rows_a_rolling_window_drops_take_their_nodes_moves():
+    widget = network()
+    Browser(widget)
+    widget.item_positions = {'[0,"a"]': (1, 2), '[0,"b"]': (3, 4)}
+    # Rows added take no node away; a's only row leaving the window does.
+    widget.append({"source": ["c"], "target": ["d"]})
+    assert set(widget.item_positions) == {'[0,"a"]', '[0,"b"]'}
+    widget.append({"source": ["d"], "target": ["e"]}, max_rows=3)
+    assert widget.item_positions == {'[0,"b"]': (3.0, 4.0)}
 
 
 def test_item_state_setters_refuse_charts_without_the_controls():
@@ -832,6 +881,70 @@ def test_delayed_moves_from_another_browser_lose_to_a_python_assignment():
         {"type": "itemMove", "item_positions": {'[0,"b"]': [3, 4]}, "origin": "new", "revision": 1}
     )
     assert widget.item_positions == {'[0,"b"]': (3.0, 4.0)}
+
+
+def test_networks_of_derived_tables_keep_moves_until_a_browser_says_which_went():
+    links = {"source": ["a", "b"], "target": ["b", "c"], "w": [1.0, 2.0]}
+    kept = hg.derive(links).filter(hg.col("w") > 0)
+    widget = hg.Chart(kept, drag=True).graph("source", "target").widget()
+    browser = Browser(widget)
+    widget.item_positions = {'[0,"a"]': (1, 2), '[0,"b"]': (3, 4)}
+    # Python cannot tell which nodes a derived table keeps: the moves stay.
+    widget.replace({"source": ["b"], "target": ["c"], "w": [1.0]}, data=links)
+    assert widget.item_positions == {'[0,"a"]': (1.0, 2.0), '[0,"b"]': (3.0, 4.0)}
+    # The browser, having drawn the change, reports the one its network let go of.
+    revision = browser.messages[-1][0]["revision"]
+    browser.reply(
+        {
+            "type": "itemMove",
+            "item_positions": {'[0,"b"]': [3, 4]},
+            "origin": "view",
+            "revision": revision,
+        }
+    )
+    assert widget.item_positions == {'[0,"b"]': (3.0, 4.0)}
+
+
+def test_a_derived_networks_report_is_fenced_by_the_data_change_not_another_panels():
+    links = {"source": ["a", "b"], "target": ["b", "c"], "w": [1.0, 2.0]}
+    kept = hg.derive(links).filter(hg.col("w") > 0)
+    widget = (
+        hg.Chart(links, panels=["raw", "derived"], drag=True)
+        .graph("source", "target", panel="raw")
+        .graph("source", "target", data=kept, panel="derived")
+        .widget()
+    )
+    browser = Browser(widget)
+    widget.panel_item_positions = {
+        "raw": {'[0,"a"]': (1, 2)},
+        "derived": {'[1,"a"]': (3, 4), '[1,"b"]': (5, 6)},
+    }
+    sent = len(browser.messages)
+    widget.replace({"source": ["b"], "target": ["c"], "w": [1.0]}, data=links)
+    # The raw network lost a; the browser lets go of it too as it draws the change.
+    (replaced,) = (content for content, _ in browser.messages[sent:])
+    assert replaced["type"] == "replace"
+    assert widget.panel_item_positions["raw"] == {}
+    # The browser drew the change and says which moves the derived network kept.
+    browser.reply(
+        {
+            "type": "itemMove",
+            "item_positions": {'[1,"b"]': [5, 6]},
+            "panel": "derived",
+            "origin": "view",
+            "revision": replaced["revision"],
+        }
+    )
+    assert widget.panel_item_positions["derived"] == {'[1,"b"]': (5.0, 6.0)}
+
+
+def test_moves_under_keys_of_another_shape_go_with_a_data_change():
+    widget = network()
+    Browser(widget)
+    widget.item_positions = {'[[0], "a"]': (1, 2), "not json": (3, 4), '[0,"a"]': (5, 6)}
+    # Such keys name no node: a data change lets them go, as the browser does.
+    widget.replace({"source": ["a", "c"], "target": ["b", "d"]})
+    assert widget.item_positions == {'[0,"a"]': (5.0, 6.0)}
 
 
 def test_camera_state_is_per_panel_and_rejects_invalid_or_stale_reports():

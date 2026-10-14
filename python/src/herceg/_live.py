@@ -26,6 +26,7 @@ from ._chart import (
     check_y_zoom,
     columns_spec,
     on_right_axis,
+    remaining_moves,
     spec_options,
     table_name,
 )
@@ -97,6 +98,11 @@ class LiveChart:
         if "panels" not in self._layout:
             return [""] if marks and event != "viewport" else []
         return list(dict.fromkeys(mark["panel"] for mark in marks))
+
+    def remaining_moves(self, positions: dict[str, Any]) -> dict[str, Any]:
+        """A network state's moved nodes without those its data no longer has
+        (see `remaining_moves`)."""
+        return remaining_moves(positions, self._marks, self._tables, self._derived, self._default)
 
     def _reads(self, name: str, table: str) -> bool:
         """Whether table ``name`` is ``table`` or derived from it."""

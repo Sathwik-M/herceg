@@ -13,7 +13,7 @@ import { fieldReader } from "../../src/dom/tooltip-content.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { geopoint } from "../../src/marks/geopoint.ts";
 import { geoshape } from "../../src/marks/geoshape.ts";
-import { graph } from "../../src/marks/graph.ts";
+import { graph, MAX_NODES } from "../../src/marks/graph.ts";
 import { line } from "../../src/marks/line.ts";
 import { pie } from "../../src/marks/pie.ts";
 import { point3d } from "../../src/marks/point3d.ts";
@@ -472,9 +472,7 @@ describe("networks in facet panels", () => {
   it("move a node only a later panel draws, there or without naming a panel", () => {
     const { model } = build({ marks: [network()], facet: facet("year") });
     const changes = heard(model);
-    const { layout } = model.items!.result("2024")!.moves!;
-    // A drag's move, made in the layout the panel drew.
-    expect(model.items!.setItemPosition('[0,"d"]', { x: 1, y: 2 }, "2024", layout)).toEqual({
+    expect(model.items!.setItemPosition('[0,"d"]', { x: 1, y: 2 }, "2024")).toEqual({
       key: '[0,"d"]',
       position: { x: 1, y: 2 },
     });
@@ -526,7 +524,7 @@ describe("networks too large to lay out in subplots", () => {
       panels: panels([{ id: "a" }, { id: "b" }]),
     });
     // Grown past what a network draws.
-    const names = Array.from({ length: 5000 }, (_, i) => `n${i + 1}`);
+    const names = Array.from({ length: MAX_NODES }, (_, i) => `n${i + 1}`);
     growing.append({ from: names, to: names.map(() => "hub") });
     model.scene(estimateText);
     expect(model.items!.result("a")!.plane).toBeUndefined();

@@ -578,7 +578,7 @@ describe("notebook widget", () => {
   });
 
   it("keeps the view of a network subplot too large to draw", () => {
-    const names = Array.from({ length: 5001 }, (_, i) => `n${i}`);
+    const names = Array.from({ length: 50_001 }, (_, i) => `n${i}`);
     const graph = (panel: string, nodes?: string) => ({
       type: "graph" as const,
       data: "links",
@@ -619,8 +619,8 @@ describe("notebook widget", () => {
   });
 
   it("loads a network grown past its limit, and draws it once updates bring it back", async () => {
-    // A snapshot after Python streamed nodes in: 5,001 of them, one link.
-    const names = Array.from({ length: 5001 }, (_, i) => `n${i}`);
+    // A snapshot after Python streamed nodes in: 50,001 of them, one link.
+    const names = Array.from({ length: 50_001 }, (_, i) => `n${i}`);
     const model = new MockModel({
       _chart: {
         revision: 4,
@@ -1599,7 +1599,7 @@ describe("widget item interaction", () => {
       item_positions: { '[1,"East"]': [1, 2], '[1,"West"]': [3, 4] },
       panel: "b",
     });
-    // New nodes lay panel b's network out again, dropping its moves.
+    // New nodes keep the moves of panel b's nodes that remain; Python lets go of the others.
     model.receive(
       {
         type: "replace",
@@ -1610,12 +1610,15 @@ describe("widget item interaction", () => {
       [new Int32Array([0, 1, 2, 3, 4])],
     );
     await frame();
-    expect(chart.getItemPositions({ panel: "b" })).toEqual({});
+    expect(chart.getItemPositions({ panel: "b" })).toEqual({
+      '[1,"East"]': { x: 1, y: 2 },
+      '[1,"West"]': { x: 3, y: 4 },
+    });
     await new Promise((resolve) => setTimeout(resolve, 120));
     chart.setItemPosition('[1,"A"]', { x: 5, y: 6 }, { panel: "b" });
     await frame();
     expect(model.messages("itemMove").at(-1)).toMatchObject({
-      item_positions: { '[1,"A"]': [5, 6] },
+      item_positions: { '[1,"East"]': [1, 2], '[1,"West"]': [3, 4], '[1,"A"]': [5, 6] },
       panel: "b",
     });
   });
@@ -1667,10 +1670,12 @@ describe("widget item interaction", () => {
       origin: report.origin as string,
     });
     expect(model.messages("itemMove")).toHaveLength(1);
+    // Let go, the nodes ease back where the layout puts them, in both views.
     model.receive({ type: "itemMove", revision: 3, item_positions: {} });
+    await new Promise((resolve) => setTimeout(resolve, 500));
     await frame();
     expect(geometry(first!)).toBe(geometry(automatic!));
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(geometry(second!)).toBe(geometry(automatic!));
     expect(model.messages("itemMove")).toHaveLength(1);
     model.set("_chart", items("graph", { revision: 4, item_positions: moved }));
     await vi.dynamicImportSettled();
@@ -1698,7 +1703,7 @@ describe("widget item interaction", () => {
     expect(figure(host!).getAttribute("aria-label")).toBe("Again");
   });
 
-  it("cancels pending moves when Python resets positions or replaces data", async () => {
+  it("cancels pending moves when Python resets positions, not when data keeps their nodes", async () => {
     const model = new MockModel({ _chart: items("graph"), _listening: [] });
     const [host] = mount(model);
     await vi.dynamicImportSettled();
@@ -1731,7 +1736,253 @@ describe("widget item interaction", () => {
     );
     await frame();
     await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(model.messages("itemMove")).toHaveLength(2);
+    // The data keeps the node: the move held back is sent, at its revision.
+    expect(model.messages("itemMove")).toHaveLength(3);
+    expect(model.messages("itemMove").at(-1)).toMatchObject({ revision: 2 });
+  });
+
+  it("reports a move not reported yet that data arriving keeps, at the data's revision", async () => {
+    const model = new MockModel({ _chart: items("graph"), _listening: [] });
+    const [first, second] = mount(model, 2);
+    await vi.dynamicImportSettled();
+    await frame();
+    const geometry = (host: ParentNode) =>
+      host.querySelector('[data-kind="point"]')!.getAttribute("d");
+    key(first!, "ArrowRight");
+    key(first!, "ArrowRight", true);
+    // The same rows again, before the move is reported.
+    model.receive(
+      {
+        type: "replace",
+        revision: 1,
+        table: "data",
+        columns: {
+          region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+          city: { type: "category", codes: 1, dictionary: ["A", "B", "C"] },
+          value: number(2),
+        },
+      },
+      itemChart("graph").buffers,
+    );
+    await frame();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const reports = model.messages("itemMove");
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ revision: 1 });
+    expect(Object.keys(reports[0]!.item_positions as object)).toHaveLength(1);
+    await frame();
+    expect(geometry(second!)).toBe(geometry(first!));
+  });
+
+  it("sends a move the throttle held back when data arrives, at the data's revision", async () => {
+    const model = new MockModel({ _chart: items("graph"), _listening: [] });
+    const [first] = mount(model, 2);
+    await vi.dynamicImportSettled();
+    await frame();
+    key(first!, "ArrowRight");
+    key(first!, "ArrowRight", true);
+    await frame();
+    // The second move waits out the throttle when the data comes.
+    key(first!, "ArrowRight", true);
+    await frame();
+    expect(model.messages("itemMove")).toHaveLength(1);
+    model.receive(
+      {
+        type: "replace",
+        revision: 1,
+        table: "data",
+        columns: {
+          region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+          city: { type: "category", codes: 1, dictionary: ["A", "B", "C"] },
+          value: number(2),
+        },
+      },
+      itemChart("graph").buffers,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const [sent, held] = model.messages("itemMove");
+    expect(held).toMatchObject({ revision: 1 });
+    expect(held!.item_positions).not.toEqual(sent!.item_positions);
+  });
+
+  it("follows a network over a derived table through rows appended that take its nodes", async () => {
+    const fixture = itemChart("graph");
+    // Links summed by pair: a negative row appended takes West and C's link, and them.
+    const spec = {
+      ...fixture.spec,
+      data: {
+        ...fixture.spec.data,
+        totals: {
+          source: "data",
+          transform: [
+            { aggregate: [{ op: "sum", field: "value", as: "total" }], by: ["region", "city"] },
+          ],
+        },
+      },
+      marks: [{ ...fixture.spec.marks[0]!, data: "totals", value: "total" }],
+    } as Snapshot["spec"];
+    const model = new MockModel({
+      _chart: {
+        ...snapshot(),
+        spec,
+        buffers: fixture.buffers,
+        item_positions: { '[0,"West"]': [1, 2], '[0,"A"]': [3, 4] },
+      } as Snapshot,
+      _listening: [],
+    });
+    mount(model);
+    await vi.dynamicImportSettled();
+    await frame();
+    const sent = model.messages("itemMove").length;
+    model.receive(
+      {
+        type: "append",
+        revision: 1,
+        table: "data",
+        columns: {
+          region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+          city: { type: "category", codes: 1, dictionary: ["A", "B", "C"] },
+          value: number(2),
+        },
+      },
+      [new Int32Array([1]), new Int32Array([2]), new Float64Array([-10])],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove").slice(sent).at(-1)).toMatchObject({
+      item_positions: { '[0,"A"]': [3, 4] },
+      revision: 1,
+    });
+  });
+
+  it("lets go of the moves of nodes data takes while no output shows the chart", async () => {
+    const fixture = itemChart("graph");
+    const model = new MockModel({
+      _chart: {
+        ...snapshot(),
+        ...fixture,
+        item_positions: { '[0,"West"]': [1, 2], '[0,"A"]': [3, 4] },
+      },
+      _listening: [],
+    });
+    const widget = widgetModule();
+    cleanups.push(widget.initialize({ model }));
+    const output = () => {
+      const host = document.createElement("div");
+      host.style.width = "400px";
+      document.body.append(host);
+      hosts.push(host);
+      return widget.render({ model, el: host });
+    };
+    const unmount = output();
+    await vi.dynamicImportSettled();
+    await frame();
+    unmount();
+    const columns = {
+      region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+      city: { type: "category", codes: 1, dictionary: ["A", "B", "C"] },
+      value: number(2),
+    } as const;
+    const buffers = (region: number[], city: number[]) => [
+      new Int32Array(region),
+      new Int32Array(city),
+      new Float64Array(region.map(() => 1)),
+    ];
+    // West goes, then comes back, unmoved, while no output is open.
+    model.receive(
+      { type: "replace", revision: 1, table: "data", columns },
+      buffers([0, 0], [0, 1]),
+    );
+    model.receive({ type: "append", revision: 2, table: "data", columns }, buffers([1], [2]));
+    cleanups.push(output());
+    await frame();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove").at(-1)!.item_positions).toEqual({ '[0,"A"]': [3, 4] });
+  });
+
+  it("keeps a move whose output closed before reporting it when data keeps its node", async () => {
+    const fixture = itemChart("graph");
+    const model = new MockModel({
+      _chart: { ...snapshot(), ...fixture, item_positions: { '[0,"West"]': [1, 2] } },
+      _listening: [],
+    });
+    const widget = widgetModule();
+    cleanups.push(widget.initialize({ model }));
+    const output = () => {
+      const host = document.createElement("div");
+      host.style.width = "400px";
+      document.body.append(host);
+      hosts.push(host);
+      return [host, widget.render({ model, el: host })] as const;
+    };
+    const [host, unmount] = output();
+    await vi.dynamicImportSettled();
+    await frame();
+    key(host, "ArrowRight");
+    key(host, "ArrowRight", true);
+    // Closed before the move's frame, then the same rows again.
+    unmount();
+    model.receive(
+      {
+        type: "replace",
+        revision: 1,
+        table: "data",
+        columns: {
+          region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+          city: { type: "category", codes: 1, dictionary: ["A", "B", "C"] },
+          value: number(2),
+        },
+      },
+      itemChart("graph").buffers,
+    );
+    cleanups.push(output()[1]);
+    await frame();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const moved = model.messages("itemMove").at(-1)!.item_positions as Record<string, unknown>;
+    expect(Object.keys(moved)).toHaveLength(2);
+    expect(moved['[0,"West"]']).toEqual([1, 2]);
+  });
+
+  it("says which moves of a network over a derived table its data took", async () => {
+    const fixture = itemChart("graph");
+    // The network reads every row of a derived table, of its links.
+    const spec = {
+      ...fixture.spec,
+      data: { ...fixture.spec.data, kept: { source: "data", transform: [{ filter: true }] } },
+      marks: [{ ...fixture.spec.marks[0]!, data: "kept" }],
+    } as Snapshot["spec"];
+    const model = new MockModel({
+      _chart: {
+        ...snapshot(),
+        spec,
+        buffers: fixture.buffers,
+        item_positions: { '[0,"East"]': [1, 2], '[0,"C"]': [3, 4] },
+      } as Snapshot,
+      _listening: [],
+    });
+    mount(model);
+    await vi.dynamicImportSettled();
+    await frame();
+    const sent = model.messages("itemMove").length;
+    // Rows without C: its move goes, and Python hears so, at this revision.
+    model.receive(
+      {
+        type: "replace",
+        revision: 1,
+        table: "data",
+        columns: {
+          region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+          city: { type: "category", codes: 1, dictionary: ["A", "B"] },
+          value: number(2),
+        },
+      },
+      [new Int32Array([0, 1]), new Int32Array([0, 1]), new Float64Array([5, 2])],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const reports = model.messages("itemMove").slice(sent);
+    expect(reports.at(-1)).toMatchObject({
+      item_positions: { '[0,"East"]': [1, 2] },
+      revision: 1,
+    });
   });
 
   it("reconciles positions whose nodes are absent from a restored snapshot", () => {
@@ -1756,9 +2007,10 @@ describe("widget item interaction", () => {
     await frame();
   });
 
-  it("reports moves when a peer hides the node, then applies them when it is shown", async () => {
+  /** The item chart's network with a nodes table: East, A, and B North, West and C South. */
+  const groupedNetwork = (): Snapshot => {
     const fixture = itemChart("graph");
-    const chart: Snapshot = {
+    return {
       ...snapshot(),
       ...fixture,
       spec: {
@@ -1790,7 +2042,10 @@ describe("widget item interaction", () => {
         new Int32Array([0, 1, 0, 0, 1]),
       ],
     };
-    const model = new MockModel({ _chart: chart, _listening: [] });
+  };
+
+  it("reports moves when a peer hides the node, then applies them when it is shown", async () => {
+    const model = new MockModel({ _chart: groupedNetwork(), _listening: [] });
     const [first, second] = mount(model, 2);
     await vi.dynamicImportSettled();
     const toggle = second!.querySelector<HTMLButtonElement>(
@@ -1816,6 +2071,52 @@ describe("widget item interaction", () => {
     expect(geometry(first!)).toBe(geometry(second!));
     expect(second!.querySelector('[role="alert"]')).toBeNull();
     expect(model.messages("itemMove")).toHaveLength(1);
+  });
+
+  it("lets go of a move a display hides once the data loses its node, as one that drew it says", async () => {
+    const model = new MockModel({ _chart: groupedNetwork(), _listening: [] });
+    const [first] = mount(model, 2);
+    await vi.dynamicImportSettled();
+    first!
+      .querySelector<HTMLButtonElement>('[aria-label="Legend"] button[title="Hide North"]')!
+      .click();
+    await frame();
+    model.receive({
+      type: "itemMove",
+      revision: 1,
+      item_positions: { '[0,"East"]': [10, 20], '[0,"A"]': [1, 2] },
+    });
+    // East goes from the links, then from the nodes.
+    model.receive(
+      {
+        type: "replace",
+        revision: 2,
+        table: "data",
+        columns: {
+          region: { type: "category", codes: 0, dictionary: ["East", "West"] },
+          city: { type: "category", codes: 1, dictionary: ["A", "B", "C"] },
+          value: number(2),
+        },
+      },
+      [new Int32Array([1, 1]), new Int32Array([0, 1]), new Float64Array([5, 2])],
+    );
+    model.receive(
+      {
+        type: "replace",
+        revision: 3,
+        table: "nodes",
+        columns: {
+          name: { type: "category", codes: 0, dictionary: ["East", "West", "A", "B", "C"] },
+          group: { type: "category", codes: 1, dictionary: ["North", "South"] },
+        },
+      },
+      [new Int32Array([1, 2, 3, 4]), new Int32Array([1, 0, 0, 1])],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(model.messages("itemMove").at(-1)).toMatchObject({
+      item_positions: { '[0,"A"]': [1, 2] },
+      revision: 3,
+    });
   });
 
   it("coalesces a many-node reset and applies only changed positions to peers", async () => {

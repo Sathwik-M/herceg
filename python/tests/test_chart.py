@@ -1669,25 +1669,25 @@ def test_graphs_check_their_columns_and_size():
         hg.Chart(talks, brush="xy").graph("from", "to")
     # Counted as the browser counts: rows left out add no nodes.
     many = {
-        "from": [f"a{i}" for i in range(2600)],
-        "to": [f"b{i}" for i in range(2600)],
-        "n": [1.0] * 2400 + [0.0] * 200,
+        "from": [f"a{i}" for i in range(26_000)],
+        "to": [f"b{i}" for i in range(26_000)],
+        "n": [1.0] * 24_000 + [0.0] * 2_000,
     }
     hg.Chart(many).graph("from", "to", "n")
     with pytest.raises(
         ValueError,
-        match="graph: draws at most 5,000 nodes .*; this network has 5,200 nodes and 2,600 links",
+        match="graph: draws at most 50,000 nodes .*; this network has 52,000 nodes and 26,000",
     ):
         hg.Chart(many).graph("from", "to")
     # Dense networks are refused by their links; rows either way are one link.
-    names = [f"n{i}" for i in range(201)]
+    names = [f"n{i}" for i in range(633)]
     pairs = [(a, b) for i, a in enumerate(names) for b in names[i + 1 :]]
     dense = {"from": [a for a, _ in pairs] + ["n1"], "to": [b for _, b in pairs] + ["n0"]}
     with pytest.raises(
-        ValueError, match="graph: draws at most 5,000 nodes and 20,000 links; .* 20,100 links"
+        ValueError, match="graph: draws at most 50,000 nodes and 200,000 links; .* 200,028 links"
     ):
         hg.Chart(dense).graph("from", "to")
-    hg.Chart({"from": dense["from"][:20000], "to": dense["to"][:20000]}).graph("from", "to")
+    hg.Chart({"from": dense["from"][:200_000], "to": dense["to"][:200_000]}).graph("from", "to")
     # Pairs whose values overflow are left out before counting, as in the browser.
     overflowing = {
         "from": dense["from"][:-1] * 2,

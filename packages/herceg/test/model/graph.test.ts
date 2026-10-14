@@ -366,19 +366,20 @@ describe("graph", () => {
         from: Array.from({ length: n }, (_, i) => `a${i}`),
         to: Array.from({ length: n }, (_, i) => `b${i}`),
       });
-    const limits = `(a network draws at most ${MAX_NODES} nodes and ${MAX_LINKS} links)`;
+    const count = (n: number) => n.toLocaleString("en-US");
+    const limits = `(a network draws at most ${count(MAX_NODES)} nodes and ${count(MAX_LINKS)} links)`;
     expect(() => graph(many(MAX_NODES / 2 + 1), { source: "from", target: "to" })).toThrow(
-      `Network of ${MAX_NODES + 2} nodes and ${MAX_NODES / 2 + 1} links: too many to lay out ${limits}`,
+      `graph: Network of ${count(MAX_NODES + 2)} nodes and ${count(MAX_NODES / 2 + 1)} links: too many to lay out ${limits}; filter or aggregate the links first`,
     );
-    // A dense network of few nodes is refused too: its springs would take seconds.
+    // A dense network of few nodes is refused too: its springs and routes would cost more than its nodes.
     const clique = { from: [] as string[], to: [] as string[] };
-    for (let i = 0; i < 201; i++)
-      for (let j = i + 1; j < 201; j++) {
+    for (let i = 0; i < 633; i++)
+      for (let j = i + 1; j < 633; j++) {
         clique.from.push(`n${i}`);
         clique.to.push(`n${j}`);
       }
     expect(() => graph(table(clique), { source: "from", target: "to" })).toThrow(
-      `Network of 201 nodes and 20100 links: too many to lay out ${limits}`,
+      `Network of 633 nodes and ${count(200_028)} links: too many to lay out ${limits}`,
     );
     // Rows streamed in later draw nothing, and say why.
     const grows = many(1);
@@ -391,7 +392,7 @@ describe("graph", () => {
     expect(scene.panels[0]!.marks).toEqual([]);
     expect(scene.legend).toEqual([]);
     expect(model.layoutSummary()).toBe(
-      `Network of ${MAX_NODES + 2} nodes and ${MAX_NODES / 2 + 1} links: too many to lay out ${limits}.`,
+      `Network of ${count(MAX_NODES + 2)} nodes and ${count(MAX_NODES / 2 + 1)} links: too many to lay out ${limits}.`,
     );
     // So do specs, such as a live chart's snapshot after rows streamed in,
     // which later changes can bring back.
@@ -423,7 +424,7 @@ describe("graph", () => {
       [],
     );
     const loaded = build(config);
-    expect(loaded.model.layoutSummary()).toMatch(/^Network of 5,?001 nodes and 1 link: too many/);
+    expect(loaded.model.layoutSummary()).toMatch(/^Network of 50,001 nodes and 1 link: too many/);
     tables.get("people")!.reset({ id: category(["n0", "n1", "n2"]) });
     loaded.model.scene(estimateText);
     expect(loaded.model.layoutSummary()).toMatch(/^Network of 3 nodes and 1 link;/);

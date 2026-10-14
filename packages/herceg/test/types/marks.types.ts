@@ -92,6 +92,17 @@ graph(talks, { source: "from", target: "to", nodes: people, node: "name", size: 
 graph(talks, { source: "from", target: "to", color: "from" });
 // @ts-expect-error a nodes table needs the field naming its nodes
 graph(talks, { source: "from", target: "to", nodes: people });
+// Layouts by name, or with their own options.
+graph(talks, { source: "from", target: "to", layout: "circular" });
+graph(talks, { source: "from", target: "to", layout: { type: "force", settle: false } });
+graph(talks, { source: "from", target: "to", layout: { type: "circular", sort: "name" } });
+graph(talks, { source: "from", target: "to", layout: { type: "layered", direction: "right" } });
+// @ts-expect-error a circle does not settle
+graph(talks, { source: "from", target: "to", layout: { type: "circular", settle: true } });
+// @ts-expect-error layers go down, right, up, or left
+graph(talks, { source: "from", target: "to", layout: { type: "layered", direction: "around" } });
+// @ts-expect-error no such layout
+graph(talks, { source: "from", target: "to", layout: "tree" });
 
 // Forms of a mark that exclude each other cannot be mixed.
 const band = table({ x: [0], low: [1], high: [2] });

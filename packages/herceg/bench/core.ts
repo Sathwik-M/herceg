@@ -622,6 +622,38 @@ measure("graph: drag a node of 5,000 nodes and 20,000 links", () => {
   network.scene(estimateText);
 });
 
+// A move dropped in that network: the nodes near it settle (the scene that
+// works the settle out, and the one after, eased, at once without a clock).
+let settled = 0;
+measure(
+  "graph: settle a move in 5,000 nodes and 20,000 links",
+  () => {
+    const step = settled++ % 40;
+    const [x, y] = moves.toLayout('[0,"n0"]', hubX + step, hubY);
+    network.items!.setItemPosition('[0,"n0"]', { x, y });
+    network.scene(estimateText);
+  },
+  { warmup: 5, samples: 20 },
+);
+network.items!.setItemPosition('[0,"n0"]', null);
+// Layouts of 50,000 nodes from scratch: a circle, and layers of a tree.
+const bigFrom = Array.from({ length: 49_999 }, (_, i) => `t${Math.floor(i / 4)}`);
+const bigTo = Array.from({ length: 49_999 }, (_, i) => `t${i + 1}`);
+for (const layout of ["circular", "layered"] as const) {
+  const big = table({ from: bigFrom, to: bigTo });
+  measure(
+    `graph: ${layout} layout of 50,000 nodes`,
+    () => {
+      const model = new ChartModel({
+        marks: [graph(big, { source: "from", target: "to", layout, labels: false })],
+      });
+      model.setSize(1200, 900, 1);
+      model.scene(estimateText);
+    },
+    { warmup: 2, samples: 8 },
+  );
+}
+
 // Swarm layout: normally distributed values in one band 80 pixels wide over
 // a 300-pixel plot, points of radius 2.5, laid out from scratch; and a
 // chart's scene of a swarm over four bands, as zooming lays it out again.

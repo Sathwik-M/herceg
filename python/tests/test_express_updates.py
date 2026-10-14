@@ -280,9 +280,9 @@ def test_a_recomputed_chart_with_other_marks_is_sent_whole():
     assert browser.resent == [] and live._snapshot()["spec"] == content["spec"]
 
 
-def test_a_recompute_lets_go_of_moved_nodes_reading_its_new_tables():
+def test_a_recompute_keeps_moves_of_the_nodes_its_new_tables_still_have():
     # Express functions draw no networks; a stand-in function making one
-    # shows that both ways of sending a recomputed chart let them go.
+    # shows how both ways of sending a recomputed chart treat moved nodes.
     links = {"source": ["a", "b"], "target": ["b", "c"]}
     live = hg.graph(links, "source", "target", drag=True).widget()
 
@@ -304,19 +304,19 @@ def test_a_recompute_lets_go_of_moved_nodes_reading_its_new_tables():
 
     live._express = Remade(live)
     browser = Browser(live)
-    # New links (their table replaced in place), then a chart whose mark
-    # differs (sent whole).
-    for rows, sent in (
-        ({"source": ["a", "c"], "target": ["c", "b"]}, "tables"),
-        ({**links, "directed": True}, "chart"),
+    # New links (their table replaced in place: b's move goes, a's stays),
+    # then a chart whose mark differs (sent whole: every move goes).
+    for rows, sent, kept in (
+        ({"source": ["a"], "target": ["c"]}, "tables", {'[0,"a"]': (1.0, 2.0)}),
+        ({**links, "directed": True}, "chart", {}),
     ):
-        live.item_positions = {"node": (1.0, 2.0)}
+        live.item_positions = {'[0,"a"]': (1.0, 2.0), '[0,"b"]': (3.0, 4.0)}
         reported = []
         live.on_item_move(reported.append)
         live.replace(rows)
         live.on_item_move(reported.append, remove=True)
         assert sent in [content["type"] for content, _ in browser.messages]
-        assert dict(live.item_positions) == {} and len(reported) == 1
+        assert dict(live.item_positions) == kept and len(reported) == 1
 
 
 def test_express_widgets_refuse_tables_by_data_and_change_nothing_on_failure():

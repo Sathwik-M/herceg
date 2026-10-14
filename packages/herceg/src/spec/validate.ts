@@ -788,6 +788,19 @@ const MARKS: MarkChecks = {
       color: field,
       size: field,
       labels: boolean,
+      layout: (v, path) => {
+        const types = oneOf("force", "circular", "layered");
+        if (typeof v === "string") return types(v, path);
+        object(v, path);
+        const layout = v as Record<string, unknown>;
+        types(layout.type, `${path}.type`);
+        checkProperties(layout, path, ["type"], {
+          type: string,
+          ...(layout.type === "force" && { settle: boolean }),
+          ...(layout.type === "circular" && { sort: oneOf("degree", "input", "name") }),
+          ...(layout.type === "layered" && { direction: oneOf("down", "right", "up", "left") }),
+        });
+      },
       panel: string,
     },
   },

@@ -181,6 +181,8 @@ class Widget {
   #planeKeys: Map<string, string> | undefined;
   /** The tables each network reads, with those they derive from, by state (see `networkTables`). */
   #networkTables = new Map<string, Set<string>>();
+  /** The states of networks reading a derived table, whose nodes added rows can take away. */
+  #derivedNetworks = new Set<string>();
   /** The spec's chart options, which option updates change. */
   #options: Record<string, unknown> = {};
   /** The rest of the spec: its tables, marks, and panels, which updates never change. */
@@ -298,12 +300,14 @@ class Widget {
       this.#tables = loaded.tables;
       this.#config = loaded.config;
       this.#networkTables = networkTables(spec);
+      this.#derivedNetworks = derivedNetworks(spec, this.#networkTables);
       this.#stores = loaded.stores;
       this.#error = undefined;
     } catch (error) {
       this.#tables = new Map();
       this.#config = undefined;
       this.#networkTables = new Map();
+      this.#derivedNetworks = new Set();
       this.#stores = new Map();
       this.#error = error;
     }
@@ -525,18 +529,56 @@ class Widget {
   }
 
   /**
-   * Lets go of the moved nodes of the networks reading table `table`, as a
-   * change of their data lays them out again; others keep theirs.
+   * Follows a change of tables `tables` in the moves of the networks
+   * reading them. Moved nodes the data still has stay moved; the others go,
+   * here as in Python, which lets go of the same ones (but for networks of
+   * derived tables, whose rows it lacks). Moves not sent yet were made on
+   * the data before: waiting for their frame or held back by the throttle,
+   * those the data keeps are sent at the change's revision.
    */
-  #dropPositions(table: string) {
+  #followPositions(tables: readonly string[], derivedOnly = false) {
     const panels = [...this.#networkTables]
-      .filter(([, tables]) => tables.has(table))
+      .filter(([panel]) => !derivedOnly || this.#derivedNetworks.has(panel))
+      .filter(([, read]) => tables.some((table) => read.has(table)))
       .map(([panel]) => panel);
-    this.#cancelItems(panels);
+    if (panels.length === 0) return;
+    const source = this.#itemSource;
+    const unsent = new Map<string, { moves: ItemPositionsPayload; view: View | undefined }>();
     for (const panel of panels) {
-      this.#states.set(stateKey("itemMove", panel), {});
-      for (const view of this.#views) view.positions.delete(panel);
+      const waiting = this.#pendingPositions.get(panel);
+      const held = this.#outbox.cancel(stateKey("itemMove", panel));
+      if (waiting) unsent.set(panel, { moves: waiting, view: source });
+      else if (held) unsent.set(panel, { moves: this.#positions(panel), view: undefined });
     }
+    this.#cancelItems(panels);
+    const views = [...this.#views].filter(({ chart }) => chart);
+    for (const panel of panels) {
+      const waiting = unsent.get(panel);
+      const state = waiting?.moves ?? this.#positions(panel);
+      // Nothing moved and nothing to send: no frame drawn before its time.
+      if (!waiting && Object.keys(state).length === 0) continue;
+      // A move waiting for its frame is drawn only in the display it came
+      // from; every display holds the others, of hidden nodes too. Without
+      // one (closed since), the networks' tables say which nodes remain.
+      const source = waiting?.view;
+      const view = source ? (this.#views.has(source) ? source : undefined) : views[0];
+      let keeps = (key: string) => this.#ownsNode(key);
+      if (view) {
+        view.chart!.render();
+        const kept = view.chart!.getItemPositions(targetOf(panel));
+        keeps = (key) => Object.hasOwn(kept, key);
+      }
+      const remaining = Object.fromEntries(Object.entries(state).filter(([key]) => keeps(key)));
+      this.#report("itemMove", view, remaining, panel, waiting !== undefined);
+    }
+  }
+
+  /** Whether a network of the chart, as its tables are now, has the node keyed `key`. */
+  #ownsNode(key: string): boolean {
+    return (this.#config?.marks ?? []).some((mark, index) => {
+      const owns = (mark as { ownsNode?: (key: string, id: string | number) => boolean }).ownsNode;
+      return owns?.call(mark, key, mark.spec.id ?? index) === true;
+    });
   }
 
   /**
@@ -548,13 +590,16 @@ class Widget {
     source: View | undefined,
     payload: ViewStates[K],
     panel = "",
+    resend = false,
   ) {
     const key = stateKey(event, panel);
     const same = valuesOf(event, payload) === valuesOf(event, this.#state(event, panel));
     // The same values, perhaps saying better which axes hold times.
     if (payload || !same) this.#states.set(key, payload);
-    if (same) return;
-    for (const view of this.#views) {
+    // Sent again only when Python may not have heard of them.
+    if (same && !resend) return;
+    const shown = same ? [] : this.#views;
+    for (const view of shown) {
       if (!view.chart || (view === source && event !== "itemMove")) continue;
       try {
         this.#show(view, event, payload, event === "itemMove", panel);
@@ -668,7 +713,9 @@ class Widget {
         table.append(appendBatch(table, decode(message.columns, buffers)));
         const excess = message.maxRows === undefined ? 0 : table.length - message.maxRows;
         if (excess > 0) table.dropFirst(excess);
-        this.#dropPositions(message.table);
+        // Rows added take no node from a network, but may from one over a
+        // derived table (a sum turning negative); rows dropped may from any.
+        this.#followPositions([message.table], excess <= 0);
         this.#keepMapView();
         this.#keepCategorySelection();
         return;
@@ -676,7 +723,7 @@ class Widget {
       case "replace": {
         const table = this.#table(message.table);
         table.reset(resetColumns(table, decode(message.columns, buffers)));
-        this.#dropPositions(message.table);
+        this.#followPositions([message.table]);
         this.#keepMapView();
         this.#keepCategorySelection();
         return;
@@ -689,7 +736,7 @@ class Widget {
           return [table, resetColumns(table, decode(columns, buffers))] as const;
         });
         for (const [table, columns] of tables) table.reset(columns);
-        for (const name of Object.keys(message.tables)) this.#dropPositions(name);
+        this.#followPositions(Object.keys(message.tables));
         this.#keepMapView();
         this.#keepCategorySelection();
         if (Object.keys(message.options).length) this.#updateOptions(message.options);
@@ -735,8 +782,7 @@ class Widget {
         const applied = new Set<string>();
         for (const view of this.#views) {
           if (!view.chart) continue;
-          // Another display may have hidden a node. Keep its desired override
-          // and apply it when that display shows the node again.
+          // A display that hides a node takes its override too, and draws it once shown.
           this.#show(view, "itemMove", next, true, panel);
           for (const key of Object.keys(view.positions.get(panel) ?? {})) applied.add(key);
         }
@@ -907,6 +953,17 @@ function decode(columns: Columns, buffers: readonly DataView[]): Table {
   return loadSpec({ data: { rows: { columns } }, marks: [] }, buffers).tables.get("rows")!;
 }
 
+/** The states (see `networkTables`) of networks that read a derived table. */
+function derivedNetworks(spec: ChartSpec, tables: Map<string, Set<string>>): Set<string> {
+  const derived = new Set<string>();
+  for (const [panel, read] of tables)
+    for (const name of read) {
+      const entry = spec.data?.[name];
+      if (entry && "source" in entry) derived.add(panel);
+    }
+  return derived;
+}
+
 /**
  * The tables each network of a spec reads (its links' and its nodes'),
  * with the tables they derive from, by state: each subplot's, or "" for
@@ -1005,9 +1062,9 @@ class Throttle {
     );
   }
 
-  /** Drops a message of this kind still waiting to be sent. */
-  cancel(kind: string) {
-    this.#pending.delete(kind);
+  /** Drops a message of this kind still waiting to be sent; whether there was one. */
+  cancel(kind: string): boolean {
+    return this.#pending.delete(kind);
   }
 
   /** Drops the messages of every kind starting with `prefix` still waiting to be sent. */

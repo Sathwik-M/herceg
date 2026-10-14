@@ -159,18 +159,32 @@ selected. Lasso writes no link rows. With lasso and zoom, plain drag lassos
 and Shift-drag pans; the Lasso toolbar toggle switches plain drags back.
 
 `zoom=True` drills into treemaps and sunbursts (click or Enter, Backspace and
-breadcrumbs to go back). `drag=True` moves network nodes without running
-the layout again, also while zoomed. Shift+arrows moves the node read when
-zoom is off; Alt+Shift+arrows does so when zoom is on, leaving Shift+arrows
-and 0 for the view. The toolbar restores moved nodes. Widgets keep
-`item_positions` in layout coordinates, including positions outside the
-current view. `.graph(..., directed=True)` draws arrows from source to
+breadcrumbs to go back). `drag=True` moves network nodes, also while zoomed;
+in a force layout the nodes near a moved one settle around it once it is
+dropped (`layout={"type": "force", "settle": False}` moves only the node),
+and Escape during a drag puts the node back. Shift+arrows moves the node
+read when zoom is off; Alt+Shift+arrows does so when zoom is on, leaving
+Shift+arrows and 0 for the view. The toolbar restores moved nodes. Widgets
+keep `item_positions` in layout coordinates, including positions outside
+the current view. `.graph(..., directed=True)` draws arrows from source to
 target, and `link_label_field="kind"` writes names along links with room.
+
+`layout` places a network's nodes: `"force"` (the default), `"circular"`
+(one circle by group, then by `{"type": "circular", "sort": ...}`:
+`"degree"`, `"input"`, or `"name"`), or `"layered"` (layers from each link's
+source to its target, for trees and directed acyclic networks, with
+`{"type": "layered", "direction": ...}`: `"down"`, `"right"`, `"up"`, or
+`"left"`). Nodes keep their places as the data changes, in widgets and in
+Streamlit: those that remain stay near where they were, and new ones enter
+beside their neighbors. A network draws at most 50,000 nodes and 200,000
+links; large layouts are worked out over animation frames, so the page
+stays responsive (about 12 s for a force layout at the limit).
 
 ```python
 hg.Chart(countries, zoom=True, brush="lasso", row_selection=hg.SelectionBinding("picked")).geoshape(color="gdp")
 hg.Chart(sales, zoom=True).treemap(path=["region", "country"], value="revenue")
 hg.Chart(talks, zoom=True, drag=True).graph("from", "to", directed=True, link_label_field="kind")
+hg.graph(reports, "manager", "employee", layout={"type": "layered", "direction": "right"})
 ```
 
 Maps and networks draw in facets and panels too, and every tree, map, and
@@ -1288,8 +1302,13 @@ to `(x, y)` pairs in the network's layout units, rather than pixels. It holds
 only manually moved nodes. Assigning replaces the whole mapping: omitting a
 key puts that node back in its computed position, and `{}` resets every node.
 The getter and callbacks return copies; edit a copy and assign it to apply it.
-A change of a network's data (its links or its nodes) clears its overrides,
-while title, theme, resize, and other tables' changes keep them. A display that hides a node keeps its override and applies it when
+A change of a network's data (its links or its nodes) keeps the overrides of
+the nodes it still has and lets the others go, as the browser does (the
+callback hears of it when some go). For a network of a derived table
+(`hg.derive`), whose rows Python does not have, a display that has drawn the
+change says which went. A move a display had not sent yet when the data
+changed is sent once it has drawn the change, if its node remains.
+Title, theme, resize, and other tables' changes keep them all. A display that hides a node keeps its override and draws it when
 the node is shown again. Moves and multi-node resets are combined per frame. Item keys and drill targets are checked by the browser; an unknown key
 shows an error above the chart and reconciles the state to what was applied.
 
@@ -1442,8 +1461,9 @@ its data changes, and to show several charts with the same content.
 
 `state.viewport` is an `hg.Viewport`, in projected plane units for maps and
 layout units for networks. Compatible redraws preserve both ranges and
-lassos after restoring node positions; changed network data or layout
-fields clear the network view and positions. Use `on_viewport="rerun"` to
+lassos after restoring node positions; a network keeps its view, its node
+places, and its moved nodes across reruns that change its data or styles,
+while its mark (by id) and the chart's panels stay the same. Use `on_viewport="rerun"` to
 report view changes to Python, or leave it ignored to navigate in the browser.
 
 Maps preserve their viewport and lasso only while the resolved projection
@@ -1458,9 +1478,9 @@ keys and dictionary of layout-coordinate pairs as notebook widgets, and
 are persistent state, including inside forms, and reach Python when their
 reaction is enabled. Reaction functions take no arguments, like the other
 Streamlit callbacks. A compatible redraw keeps the drill root (or its nearest
-surviving ancestor) and keeps positions when only styles change; changes to
-network data or layout fields clear positions. Results from an obsolete
-network layout are discarded in Python.
+surviving ancestor) and keeps positions as the data or styles change, but
+for those of nodes the data no longer has. Results reported for another
+network (another mark id, or other panels) are discarded in Python.
 
 ```python
 tree = hg.treemap(sales, path=["region", "country"], value="revenue", zoom=True)

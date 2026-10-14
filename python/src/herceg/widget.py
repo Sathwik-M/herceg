@@ -139,6 +139,9 @@ class ChartWidget(anywidget.AnyWidget):
         self._state_changes: dict[StateKey, tuple[str | None, int]] = {
             key: (None, 0) for key in keys
         }
+        # The revision of the last data change that may have taken nodes from
+        # each network state: moves reported before it are taken without them.
+        self._moves_data: dict[StateKey, int] = {}
         names: list[str | StateKey] = [*keys, "hover", "click", "rowSelection"]
         self._callbacks = {name: ipywidgets.CallbackDispatcher() for name in names}
         # What each bound channel holds, by table name and channel, in Python's
@@ -185,7 +188,11 @@ class ChartWidget(anywidget.AnyWidget):
             before = dict(self._live.dropped)
             message = self._live.append(rows, data, max_rows)
             self._push(message)
-            moved = self._invalidate_positions(message)
+            # Rows added take no node from a network; rows dropped may.
+            shrank = message is not None and self._live.dropped[message[0]["table"]] > before.get(
+                message[0]["table"], 0
+            )
+            moved = self._follow_positions(message) if shrank else []
             self._follow_rows(before)
         for key in moved:
             self._callbacks[key](decode_item_positions(self._states[key]))
@@ -205,7 +212,7 @@ class ChartWidget(anywidget.AnyWidget):
             generations = dict(self._live.generation)
             message = self._live.replace(rows, data)
             self._push(message)
-            moved = self._invalidate_positions(message)
+            moved = self._follow_positions(message)
             self._follow_rows(before, generations)
         for key in moved:
             self._callbacks[key](decode_item_positions(self._states[key]))
@@ -223,8 +230,8 @@ class ChartWidget(anywidget.AnyWidget):
         tables replace the old ones at once where its marks are the same, and
         otherwise the whole chart is sent, every display keeping its zoom,
         selection, and legend. Nothing changes if the chart cannot be made.
-        Moved network nodes reading tables that changed go, as after any
-        data change; changed camera defaults reset their views. The states
+        Moved network nodes reading tables that changed follow them, as
+        after any data change; changed camera defaults reset their views. The states
         that changed are returned. Called with the
         lock held, since `columns` were made from the rows it holds."""
         assert self._express is not None
@@ -280,18 +287,23 @@ class ChartWidget(anywidget.AnyWidget):
             self._state_changes.pop(key, None)
         return changed
 
-    def _invalidate_positions(self, message: Message | None) -> list[StateKey]:
-        """Lets go of the moved nodes of the networks reading the table a data
-        change changed, as the browser does; the states that changed. Called
-        with the lock held."""
+    def _follow_positions(self, message: Message | None) -> list[StateKey]:
+        """Follows a data change in the moves of the networks reading the
+        table it changed (see `_release_moves`); the states that changed.
+        Called with the lock held."""
         if message is None:
             return []
         return self._release_moves([message[0]["table"]])
 
     def _release_moves(self, tables: list[str] | None) -> list[StateKey]:
-        """Lets go of the moved nodes of the networks reading `tables` (every
-        network's, for None); the states that changed. Called with the lock
-        held."""
+        """Lets go of the moved nodes that the networks reading `tables` no
+        longer have, and keeps the rest; for None (a chart made again, with
+        new marks), of every network's. The browsers let go of the same
+        moves as they draw the change, so nothing is sent; they report moves
+        Python has not heard of (not sent before the change, or of networks
+        of derived tables, whose rows Python lacks) at the change's revision,
+        and reports made before it are taken without the nodes it took. The
+        states that changed. Called with the lock held."""
         if tables is None:
             keys = [key for key in self._states if key[0] == "itemMove"]
         else:
@@ -299,10 +311,16 @@ class ChartWidget(anywidget.AnyWidget):
             keys = [("itemMove", panel) for panel in dict.fromkeys(panels)]
         moved = []
         for key in keys:
-            if self._change(key, {}, None):
+            positions = self._states[key] or {}
+            remaining = {} if tables is None else self._live.remaining_moves(positions)
+            if remaining != positions:
+                self._states[key] = remaining
                 moved.append(key)
-            # Even an empty mapping must reject moves made before this data change.
-            self._state_changes[key] = (None, self._revision)
+            if tables is None:
+                # Reports made before were made on other marks.
+                self._state_changes[key] = (None, self._revision)
+            else:
+                self._moves_data[key] = self._revision
         return moved
 
     def _follow_rows(
@@ -803,7 +821,12 @@ class ChartWidget(anywidget.AnyWidget):
             origin = content.get("origin")
             with self._lock:
                 changer, revision = self._state_changes[key]
-                stale = changer != origin and revision > content.get("revision", 0)
+                made = content.get("revision", 0)
+                stale = changer != origin and revision > made
+                if not stale and kind == "itemMove" and self._moves_data.get(key, 0) > made:
+                    # Moves made before a data change, without the nodes it took,
+                    # as the browser that made them lets go of them drawing it.
+                    payload = self._live.remaining_moves(payload or {})
                 changed = not stale and self._change(key, payload, origin)
             if changed:
                 self._callbacks[key](_decoded(kind, payload))

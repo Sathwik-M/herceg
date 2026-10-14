@@ -101,6 +101,8 @@ const field = table({
 type Placement = { panel?: string; facet?: "repeat"; axis?: "right" };
 type MarkCase = {
   name: string;
+  /** The mark's type, where the case's name says more (a network's layout). */
+  type?: string;
   make: (placement?: Placement) => ChartMark;
   /** The table the mark reads, when not `samples`. */
   table?: Table;
@@ -121,6 +123,9 @@ type MarkCase = {
   /** Layers of a map, which share a map with the other layers of its chart or panel. */
   layer?: true;
 };
+
+/** The type a case's mark has: its name, unless it names one. */
+const typeOf = (c: MarkCase) => c.type ?? c.name;
 
 // These cases have axes; annotations of constants repeat in every panel.
 const cartesian: MarkCase[] = [
@@ -370,23 +375,27 @@ const layouts: MarkCase[] = [
     kind: "rect",
     facets: true,
   },
-  {
-    name: "graph",
-    make: (p) =>
-      graph(links, {
-        source: "source",
-        target: "target",
-        nodes,
-        node: "node",
-        color: "group",
-        ...(p?.panel !== undefined && { panel: p.panel }),
-      }),
-    kind: "point",
-    facets: true,
-    selects: true,
-    drags: true,
-    navigates: "plane",
-  },
+  ...(["force", "circular", "layered"] as const).map(
+    (layout): MarkCase => ({
+      name: layout === "force" ? "graph" : `graph (${layout})`,
+      type: "graph",
+      make: (p) =>
+        graph(links, {
+          source: "source",
+          target: "target",
+          nodes,
+          node: "node",
+          color: "group",
+          layout,
+          ...(p?.panel !== undefined && { panel: p.panel }),
+        }),
+      kind: "point",
+      facets: true,
+      selects: true,
+      drags: true,
+      navigates: "plane",
+    }),
+  ),
   {
     name: "geoshape",
     make: (p) => geoshape(world, { color: "group", ...p }),
@@ -634,7 +643,7 @@ describe("capabilities: subplots", () => {
 
   it.each(paneled)("$name has its subplot to itself", (c) => {
     // A map's layers are one mark.
-    const type = c.layer ? "map" : c.name;
+    const type = c.layer ? "map" : typeOf(c);
     expect(() => build({ marks: [c.make()], panels: subplot })).toThrow(
       "panel: expected the id of the panel it draws in",
     );
@@ -646,7 +655,7 @@ describe("capabilities: subplots", () => {
     else
       expect(() =>
         build({ marks: [c.make({ panel: "b" }), c.make({ panel: "b" })], panels: subplot }),
-      ).toThrow(`${c.name} panel: a ${c.name} mark has panel "b" too`);
+      ).toThrow(`${typeOf(c)} panel: a ${typeOf(c)} mark has panel "b" too`);
     expect(() =>
       build({
         marks: [c.make({ panel: "b" }), line(samples, { x: "x", y: "y", panel: "b" })],
@@ -694,7 +703,7 @@ describe("capabilities: per-panel scales", () => {
           ]),
         }),
       ),
-    ).toThrow(`panels[1]: the ${c.layer ? "map" : c.name} mark it draws has no axes`);
+    ).toThrow(`panels[1]: the ${c.layer ? "map" : typeOf(c)} mark it draws has no axes`);
   });
 
   const financial = [
@@ -829,7 +838,7 @@ describe("capabilities: zoom and pan", () => {
 
   it.each(layouts.filter((c) => !c.turns && !c.navigates))("$name refuses zoom", (c) => {
     expect(() => build({ marks: [c.make()], interaction: { zoom: true } })).toThrow(
-      `${c.name} zoom: no axes to zoom; drop interaction.zoom`,
+      `${typeOf(c)} zoom: no axes to zoom; drop interaction.zoom`,
     );
   });
 
@@ -852,7 +861,7 @@ describe("capabilities: zoom and pan", () => {
         if (after) expect([after.px, after.py]).not.toEqual([before.px, before.py]);
       }
       expect(() => build({ marks: [c.make()], interaction: { zoom: "x" } })).toThrow(
-        `${c.name} zoom: expected interaction.zoom true or "xy"; received "x"`,
+        `${typeOf(c)} zoom: expected interaction.zoom true or "xy"; received "x"`,
       );
     },
   );
@@ -867,7 +876,7 @@ describe("capabilities: zoom and pan", () => {
       const keys = itemKeys(model);
       expect(keys.every((key) => key.startsWith('[0,"N"'))).toBe(true);
       expect(() => build({ marks: [c.make()], interaction: { zoom: "x" } })).toThrow(
-        `${c.name} zoom: expected interaction.zoom true; received "x"`,
+        `${typeOf(c)} zoom: expected interaction.zoom true; received "x"`,
       );
     },
   );
@@ -918,7 +927,7 @@ describe("capabilities: zoom and pan", () => {
       }
       expect(() =>
         build({ marks: [c.make()], facet: facet("group"), interaction: { zoom: "x" } }),
-      ).toThrow(`${c.name} zoom: expected interaction.zoom true`);
+      ).toThrow(`${typeOf(c)} zoom: expected interaction.zoom true`);
     },
   );
 
@@ -927,11 +936,11 @@ describe("capabilities: zoom and pan", () => {
     (c) => {
       const interaction = { zoom: "x" } as const;
       expect(() => build({ marks: [c.make()], facet: facet("group"), interaction })).toThrow(
-        `${c.name} zoom: no axes to zoom`,
+        `${typeOf(c)} zoom: no axes to zoom`,
       );
       expect(() =>
         build({ marks: [c.make({ panel: "a" })], panels: panels([{ id: "a" }]), interaction }),
-      ).toThrow(`${c.name} zoom: no axes to zoom`);
+      ).toThrow(`${typeOf(c)} zoom: no axes to zoom`);
       const { model } = build(besideLine(c, { interaction }));
       model.setViewport([1, 2], "a");
       model.scene(estimateText);
@@ -987,8 +996,8 @@ describe("capabilities: brushes", () => {
   it.each(layouts)("$name refuses brushes but plane lassos", (c) => {
     expect(() => build({ marks: [c.make()], interaction: { brush: "x" } })).toThrow(
       c.navigates === "plane"
-        ? `${c.name} brush: expected interaction.brush "lasso"; received "x"`
-        : `${c.name} brush: no axes to brush; drop interaction.brush`,
+        ? `${typeOf(c)} brush: expected interaction.brush "lasso"; received "x"`
+        : `${typeOf(c)} brush: no axes to brush; drop interaction.brush`,
     );
     if (c.navigates === "plane") build({ marks: [c.make()], interaction: { brush: "lasso" } });
   });
@@ -996,7 +1005,7 @@ describe("capabilities: brushes", () => {
   it.each(layouts)("$name takes interaction.drag only if it moves items", (c) => {
     const config = { marks: [c.make()], interaction: { drag: true } };
     if (c.drags) expect(kindOf(build(config).model)).toBe("drag");
-    else expect(() => build(config)).toThrow(`${c.name} drag: no nodes to drag`);
+    else expect(() => build(config)).toThrow(`${typeOf(c)} drag: no nodes to drag`);
   });
 
   it.each(paneled)("$name beside a line accepts an x brush for the line's panel", (c) => {
@@ -1006,8 +1015,8 @@ describe("capabilities: brushes", () => {
       build({ marks: [c.make()], facet: facet("group"), interaction: { brush: "x" } }),
     ).toThrow(
       c.navigates === "plane"
-        ? `${c.name} brush: expected interaction.brush "lasso"`
-        : `${c.name} brush: no axes to brush`,
+        ? `${typeOf(c)} brush: expected interaction.brush "lasso"`
+        : `${typeOf(c)} brush: no axes to brush`,
     );
   });
 
@@ -1077,14 +1086,14 @@ describe("capabilities: synced selection", () => {
   it.each(layouts)("$name refuses synced selection", (c) => {
     expect(() =>
       build({ marks: [c.make()], interaction: { sync: "capability-contract" } }),
-    ).toThrow(`${c.name} sync: no axes to sync; drop interaction.sync`);
+    ).toThrow(`${typeOf(c)} sync: no axes to sync; drop interaction.sync`);
   });
 
   it.each(paneled)("$name beside a line accepts a sync group for the line's panel", (c) => {
     const interaction = { sync: "capability-contract" };
     expectGeometry(build(besideLine(c, { interaction })).scene.panels[1]!, c.kind);
     expect(() => build({ marks: [c.make()], facet: facet("group"), interaction })).toThrow(
-      `${c.name} sync: no axes to sync`,
+      `${typeOf(c)} sync: no axes to sync`,
     );
   });
 
@@ -1179,11 +1188,11 @@ describe("capabilities: row selection", () => {
     const brush = { x: [0, 2] as const, y: null, lasso: null };
     // Annotations and custom marks select no rows; the others do.
     const rows = brushedRows(model, c.table ?? (samples as unknown as Table), brush, null);
-    expect(rows !== undefined).toBe(selects.has(c.name) || c.repeats === true);
+    expect(rows !== undefined).toBe(selects.has(typeOf(c)) || c.repeats === true);
     const plain = drawn(model, c);
     store.set("c", selectRows(new RowSet(c.table ?? (samples as unknown as Table)).add(0)));
     const lit = drawn(model, c);
-    expect(lit.join("") !== plain.join("")).toBe(highlights.has(c.name));
+    expect(lit.join("") !== plain.join("")).toBe(highlights.has(typeOf(c)));
   });
 
   it.each(layouts.filter((c) => !c.selects))("$name refuses a row selection", (c) => {
@@ -1254,7 +1263,7 @@ describe("capabilities: row selection", () => {
       const [n, s] = [found("N"), found("S")];
       expect(n).toBeDefined();
       // The rows an item of one panel stands for are none of another's (a node's of the nodes table aside).
-      if (c.name !== "graph")
+      if (typeOf(c) !== "graph")
         expect(Array.from(n!).some((row) => Array.from(s ?? []).includes(row))).toBe(false);
       store.set("c", selectRows(new RowSet(table).add(n![0]!)));
       const lit = model
@@ -1301,13 +1310,13 @@ describe("capabilities: legend toggle", () => {
   // Gauges, funnels, and Sankey diagrams have no legend; a surface's is its color scale.
   const noToggle = new Set(["gauge", "funnel", "sankey", "surface"]);
 
-  it.each(layouts.filter((c) => noToggle.has(c.name)))("$name has no series toggle", (c) => {
+  it.each(layouts.filter((c) => noToggle.has(typeOf(c))))("$name has no series toggle", (c) => {
     const { scene } = build({ marks: [c.make()], legend: true });
     expect(scene.legend).toEqual([]);
     if (c.name === "surface") expect(scene.colorLegends).toHaveLength(1);
   });
 
-  it.each(layouts.filter((c) => !noToggle.has(c.name)))(
+  it.each(layouts.filter((c) => !noToggle.has(typeOf(c))))(
     "$name offers the documented legend toggle",
     (c) => {
       const { model, scene } = build({ marks: [c.make()], legend: true });
@@ -1328,7 +1337,7 @@ describe("capabilities: legend toggle", () => {
     },
   );
 
-  it.each(paneled.filter((c) => !noToggle.has(c.name)))(
+  it.each(paneled.filter((c) => !noToggle.has(typeOf(c))))(
     "$name toggles an item in every facet panel at once",
     (c) => {
       const { model, scene } = build({ marks: [c.make()], facet: facet("group"), legend: true });
@@ -1399,7 +1408,7 @@ describe("capabilities: tooltip and keyboard reading", () => {
     expect(model.keyboardStops("")).toEqual([]);
     expect(model.inspectPosition("missing", 0)).toBeUndefined();
     expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(2))).toBeUndefined();
-    expect(describeChart(model)).toContain(`Contract ${c.name}`);
+    expect(describeChart(model)).toContain(`Contract ${typeOf(c)}`);
   });
 
   it.each(layouts)("$name exposes an item in keyboard order and inspection", (c) => {

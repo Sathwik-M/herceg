@@ -22,7 +22,7 @@ import {
   type ThemeSpec,
   type Viewport,
 } from "herceg";
-import { type ChartSpec, loadSpec } from "herceg/spec";
+import { type ChartSpec, carryNodePositions, loadSpec } from "herceg/spec";
 import {
   CAMERAS,
   DRILLS,
@@ -148,8 +148,11 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   const theme = followsApp ? appTheme(element) : undefined;
   const kept = previous && keptView(previous.chart, previous, previous.planeKeys);
   if (previous?.itemFrame !== undefined) cancelAnimationFrame(previous.itemFrame);
-  previous?.chart.destroy();
   const chart = createChart(element, followsApp ? { ...config, theme: appColors(theme) } : config);
+  // Networks of the same marks keep their nodes' places, whatever their data now.
+  if (previous && header.itemEpoch !== undefined && header.itemEpoch === previous.itemEpoch)
+    carryNodePositions(previous.chart, chart);
+  previous?.chart.destroy();
   const unbrushed = bindings.map(({ store, channel }) => store.get(channel));
   const cameras = statePanels(config, CAMERAS);
   const cameraDefaults = new Map(
