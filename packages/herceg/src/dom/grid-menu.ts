@@ -21,6 +21,12 @@ export interface MenuGroup {
   readonly items: readonly MenuItem[];
 }
 
+/** A point of the viewport, as pointer events give it. */
+interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
 /** Keys as `aria-keyshortcuts` names them, as people read them. */
 const KEY_NAMES: Record<string, string> = { ArrowLeft: "←", ArrowRight: "→", ArrowDown: "↓" };
 
@@ -34,16 +40,27 @@ export class ColumnMenu {
   #open = true;
   /** Set while items are written anew, which takes the focus out of the menu for a moment. */
   #writing = false;
+  /** Whether the keys have the focus: since the menu opened, or a key moved it. */
+  #keys = true;
+  /** Where the pointer was last seen: over the menu, or where it opened the menu. */
+  #pointer: Point | null;
+  /** Where the pointer stood when the keys took the focus, or was first seen since. */
+  #stood: Point | null;
   readonly #closed: (refocus: boolean) => void;
 
-  /** `closed` hears the menu closed, with whether the focus should go back to the header. */
+  /**
+   * `closed` hears the menu closed, with whether the focus should go back to
+   * the header; `pointer` is where the pointer opened it (a click's point).
+   */
   constructor(
     document: Document,
     label: string,
     groups: readonly MenuGroup[],
     closed: (refocus: boolean) => void,
+    pointer?: Point,
   ) {
     this.#closed = closed;
+    this.#pointer = this.#stood = pointer ?? null;
     const element = document.createElement("div");
     element.className = "hg-menu";
     element.setAttribute("role", "menu");
@@ -173,6 +190,8 @@ export class ColumnMenu {
       this.close(true);
       return;
     } else return;
+    this.#keys = true;
+    this.#stood = this.#pointer;
     event.preventDefault();
     event.stopPropagation();
   };
@@ -183,6 +202,16 @@ export class ColumnMenu {
   };
 
   #onPointerMove = (event: PointerEvent) => {
+    const at = { x: event.clientX, y: event.clientY };
+    this.#pointer = at;
+    if (this.#keys) {
+      // The focus follows the pointer once it moves from where it stood:
+      // browsers send moves where it stays (WebKit on Linux does as the
+      // items are written anew under a still pointer).
+      this.#stood ??= at;
+      if (this.#stood.x === at.x && this.#stood.y === at.y) return;
+      this.#keys = false;
+    }
     const item = (event.target as Element).closest<HTMLElement>("[role^=menuitem]");
     if (item && item !== this.#active()) item.focus();
   };

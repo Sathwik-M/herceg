@@ -23,6 +23,8 @@
 // - What WebKit's protocol does not report, descriptions, `multiselectable`,
 //   and `keyshortcuts`, comes from the element's ARIA attributes: what the
 //   page declares, rather than what WebKit exposes.
+// - WebKit on Linux has no nodes for text; the lines take the text shown
+//   from the page, where WebKit on macOS has them (`TEXT_LEFT_OUT`).
 //
 // Other differences remain, for tests to know: Firefox and WebKit report no
 // value ranges (`valuemin`, `valuemax`); WebKit's tables have no row groups,
@@ -266,6 +268,14 @@ function fromGecko(node: GeckoNode): Node[] {
 
 // WebKit ---------------------------------------------------------------------
 
+/**
+ * WebKit's Linux ports (GTK and WPE, which Playwright runs there) expose an
+ * element's text through the element, as AT-SPI's text interface does, and
+ * not as nodes of its own, which the inspector leaves out. There the lines
+ * write the text shown, outside `aria-hidden`, as WebKit on macOS does.
+ */
+const TEXT_LEFT_OUT = process.platform === "linux";
+
 interface WebKitProperties {
   exists: boolean;
   ignored?: boolean;
@@ -286,13 +296,111 @@ interface WebKitProperties {
   disabled?: boolean;
 }
 
-/** What WebKit's inspector leaves out, from the element's ARIA attributes. */
-function declared(this: Element) {
+/**
+ * What WebKit's inspector leaves out, from the element's ARIA attributes;
+ * with `textLeftOut`, also the text the element shows that none of its
+ * accessible `children` holds, among them where the document has it.
+ * Children keep WebKit's order: one the document has before a child
+ * earlier in that order comes after it. What the element owns
+ * (`aria-owns`) comes after all else, as WebKit puts it.
+ */
+function declared(this: Element, textLeftOut: boolean, ...children: ChildNode[]) {
   if (this.nodeType !== 1) return { text: this.textContent ?? "" };
   // Ids name elements of the element's own tree: its document, or its shadow root.
   const scope = this.getRootNode() as Document | ShadowRoot;
   const ids = this.getAttribute("aria-describedby")?.split(/\s+/) ?? [];
   const described = ids.map((id) => scope.getElementById(id)?.textContent ?? "");
+  let order: (number | string)[] | undefined;
+  if (textLeftOut) {
+    const items: (number | string)[] = [];
+    let next = 0;
+    const reached = new Set<number>();
+    const place = (child: number) => {
+      reached.add(child);
+      while (reached.delete(next)) items.push(next++);
+    };
+    // Text the page lays out and leaves visible. It takes its style from its
+    // parent in the composed tree: the slot it is assigned to, or the host
+    // of a shadow root it lies in directly.
+    const shown = (text: Text) => {
+      const range = this.ownerDocument.createRange();
+      range.selectNodeContents(text);
+      const parent =
+        text.assignedSlot ?? text.parentElement ?? (text.parentNode as ShadowRoot).host;
+      return range.getClientRects().length > 0 && getComputedStyle(parent).visibility === "visible";
+    };
+    // An element's parent in the composed tree: the slot it is assigned to,
+    // its parent, or the host of the shadow root it lies in directly.
+    const up = (element: Element) =>
+      element.assignedSlot ??
+      element.parentElement ??
+      (element.parentNode as ShadowRoot | null)?.host ??
+      null;
+    // Inert is what lies in an `inert` element, or outside an open modal
+    // dialog, which leaves inert elements around it.
+    const modal = this.ownerDocument.querySelector(":modal");
+    const inertAt = (element: Element | null): boolean => {
+      for (let at = element; at; at = up(at)) {
+        if (at === modal) return false;
+        if (at.hasAttribute("inert")) return true;
+      }
+      return modal !== null;
+    };
+    const hiddenAt = (element: Element | null): boolean => {
+      for (let at = element; at; at = up(at))
+        if (/^true$/i.test(at.getAttribute("aria-hidden") ?? "")) return true;
+      return false;
+    };
+    // Elements that an element in the tree owns (`aria-owns`) are under it,
+    // after its own content, rather than where the document has them. Ids
+    // name elements of their own tree: their document, or their shadow root.
+    const owners = new Map<Document | ShadowRoot, Set<string>>();
+    const owned = (element: Element) => {
+      if (element.id === "") return false;
+      const root = element.getRootNode() as Document | ShadowRoot;
+      let ids = owners.get(root);
+      if (!ids) {
+        const named = [...root.querySelectorAll("[aria-owns]")]
+          .filter((owner) => !inertAt(owner) && !hiddenAt(owner))
+          .flatMap((owner) => owner.getAttribute("aria-owns")!.split(/\s+/));
+        ids = new Set(named);
+        owners.set(root, ids);
+      }
+      return ids.has(element.id);
+    };
+    const visit = (node: ChildNode, inert: boolean) => {
+      const child = children.indexOf(node);
+      if (child >= 0) place(child);
+      else if (node.nodeType === 3) {
+        const text = node as Text;
+        if (!inert && text.data.trim() && shown(text)) items.push(text.data);
+      } else if (node.nodeType === 1) {
+        const element = node as Element;
+        // Hidden from assistive technology, all of it but what it owns away.
+        if (/^true$/i.test(element.getAttribute("aria-hidden") ?? "")) return;
+        const within = element !== modal && (inert || element.hasAttribute("inert"));
+        // The composed tree: an open shadow root's nodes rather than the
+        // host's, and the nodes assigned to a slot, or its own without any.
+        const assigned =
+          element instanceof HTMLSlotElement ? (element.assignedNodes() as ChildNode[]) : [];
+        walk(assigned.length > 0 ? assigned : (element.shadowRoot ?? element).childNodes, within);
+      }
+    };
+    const walk = (nodes: Iterable<ChildNode>, inert: boolean) => {
+      for (const node of nodes)
+        if (node.nodeType !== 1 || !owned(node as Element)) visit(node, inert);
+    };
+    walk((this.shadowRoot ?? this).childNodes, inertAt(this));
+    // What the element owns is in its tree, out of an aria-hidden element
+    // too, but stays inert inside an inert one.
+    for (const id of this.getAttribute("aria-owns")?.split(/\s+/) ?? []) {
+      const element = scope.getElementById(id);
+      if (element) visit(element, inertAt(up(element)));
+    }
+    // Children the walk did not reach come last.
+    for (let i = next; i < children.length; i++) items.push(i);
+    order = items;
+  }
   return {
     // In the order accessible descriptions are computed: the title counts when it is not the name.
     description:
@@ -302,6 +410,7 @@ function declared(this: Element) {
       "",
     multiselectable: this.getAttribute("aria-multiselectable") ?? undefined,
     keyshortcuts: this.getAttribute("aria-keyshortcuts") ?? undefined,
+    order,
   };
 }
 
@@ -315,18 +424,17 @@ async function webkitTree(context: BrowserCommandContext): Promise<Node[]> {
         properties: WebKitProperties;
       }
     ).properties;
-  const convert = async (node: WebKitProperties): Promise<Node[]> => {
-    if (!node.exists) return [];
+  /** The lines' nodes for a node of WebKit's tree, and the remote object of its DOM node. */
+  const convert = async (node: WebKitProperties): Promise<{ nodes: Node[]; objectId?: string }> => {
+    if (!node.exists) return { nodes: [] };
     // An ignored node's children name its parent as theirs; a table's cells
     // are its rows' children and also its columns', which have no element of
     // their own: each node is written under the parent it names.
-    const children: Node[] = [];
+    const kids: { nodes: Node[]; objectId?: string }[] = [];
     for (const id of node.childNodeIds ?? []) {
       const child = await properties(id);
-      if (node.ignored || child.parentNodeId === node.nodeId)
-        children.push(...(await convert(child)));
+      if (node.ignored || child.parentNodeId === node.nodeId) kids.push(await convert(child));
     }
-    if (node.ignored) return children;
     const { object } = (await session.send("DOM.resolveNode", {
       nodeId: node.nodeId,
       objectGroup: group,
@@ -334,9 +442,23 @@ async function webkitTree(context: BrowserCommandContext): Promise<Node[]> {
     const { result } = (await session.send("Runtime.callFunctionOn", {
       objectId: object.objectId,
       functionDeclaration: declared.toString(),
+      arguments: [
+        { value: TEXT_LEFT_OUT },
+        ...kids.map(({ objectId }) => (objectId ? { objectId } : { value: null })),
+      ],
       returnByValue: true,
     })) as { result: { value: ReturnType<typeof declared> } };
-    return [fromWebKit(node, result.value, children)];
+    const dom = result.value;
+    const children =
+      "order" in dom && dom.order
+        ? dom.order.flatMap((item) =>
+            typeof item === "number"
+              ? kids[item]!.nodes
+              : [{ role: "StaticText", name: item, states: {}, children: [] }],
+          )
+        : kids.flatMap(({ nodes }) => nodes);
+    if (node.ignored) return { nodes: children, objectId: object.objectId };
+    return { nodes: [fromWebKit(node, dom, children)], objectId: object.objectId };
   };
   const body = await (await context.frame()).evaluateHandle(() => document.body);
   try {
@@ -344,7 +466,7 @@ async function webkitTree(context: BrowserCommandContext): Promise<Node[]> {
     const { nodeId } = (await session.send("DOM.requestNode", {
       objectId: objectId(body, context.page),
     })) as { nodeId: number };
-    return await convert(await properties(nodeId));
+    return (await convert(await properties(nodeId))).nodes;
   } finally {
     await body.dispose();
     await session.send("Runtime.releaseObjectGroup", { objectGroup: group });

@@ -37,6 +37,8 @@ const DRAG_THRESHOLD = 4;
 /** How much the keys and the menu resize a column by, in CSS pixels. */
 const RESIZE_STEP = 16;
 
+const pointOf = (event: MouseEvent) => ({ x: event.clientX, y: event.clientY });
+
 /**
  * A header pressed: dragged past `DRAG_THRESHOLD`, its edge resizes the
  * column and the rest of it moves the column. Escape puts things back.
@@ -188,7 +190,8 @@ export class ColumnControls<S extends Schema> {
     const button = clicked.closest(".hg-menu-button");
     if (button) {
       const target = this.#host.cellOf(button.closest("[role=columnheader]"));
-      if (target) this.#openMenu(target.column);
+      // A click the keys made has no point.
+      if (target) this.#openMenu(target.column, event.detail > 0 ? pointOf(event) : undefined);
       return true;
     }
     // A click on a header's edge is a resize that did not start.
@@ -283,8 +286,11 @@ export class ColumnControls<S extends Schema> {
 
   // The menu
 
-  /** Opens the menu of the column `id` under its header, focusing its first item. */
-  #openMenu(id: string) {
+  /**
+   * Opens the menu of the column `id` under its header, focusing its first
+   * item; `pointer` is where a click or right click opening it was.
+   */
+  #openMenu(id: string, pointer?: { x: number; y: number }) {
     this.#menu?.menu.close(false);
     const { model, root } = this.#host;
     if (model.columnIndex(id) < 0) return;
@@ -301,6 +307,7 @@ export class ColumnControls<S extends Schema> {
         if (this.#menu?.menu === menu) this.#menu = null;
         if (refocus) this.#host.render(true);
       },
+      pointer,
     );
     this.#menu = { id, menu, seen: this.#seen() };
     const element = menu.element;
@@ -413,7 +420,7 @@ export class ColumnControls<S extends Schema> {
     const target = this.#host.cellOf((event.target as Element).closest("[role=columnheader]"));
     if (!target) return;
     event.preventDefault();
-    this.#openMenu(target.column);
+    this.#openMenu(target.column, pointOf(event));
   };
 
   // Dragging

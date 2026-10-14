@@ -133,12 +133,12 @@ describe("runtime regressions", () => {
     await frame();
     data.appendRow({ x: 4, y: 50 });
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    host.style.cssText = "width:600px;height:300px";
-    await frame();
-    await frame();
-    await frame();
     const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
-    expect(description.textContent).toContain("5 points");
+    expect(description.textContent).not.toContain("5 points");
+    host.style.cssText = "width:600px;height:300px";
+    // The chart draws on the frame after its visibility observer reports it
+    // back, which Firefox may do frames later.
+    await expect.poll(() => description.textContent).toContain("5 points");
     expect(description.textContent).toContain("last 50");
     chart.destroy();
   });

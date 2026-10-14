@@ -1651,6 +1651,23 @@ export class MountedChart implements Chart, ExportsScene {
         this.#live.textContent = describeSelection(selected, format);
       }
     });
+    // A drag the chart makes of a press (a brush, pan, lasso, node move, or
+    // turn) captures its pointer at the root. The browser must not drag the
+    // page's selection instead, which would end the press: Chrome does when
+    // the selection spans the drawing pressed.
+    // -1 is no pointer's id: it marks events no pointing device made. A
+    // second pointer (a touch beside the mouse) leaves the first one's.
+    let pressed = -1;
+    on(
+      "pointerdown",
+      (event) => {
+        if (!root.hasPointerCapture?.(pressed)) pressed = event.pointerId;
+      },
+      { capture: true },
+    );
+    on("dragstart", (event) => {
+      if (root.hasPointerCapture?.(pressed)) event.preventDefault();
+    });
     // The browser took the pointer (a touch turned into scrolling, say).
     // A tap ends only with its own pointer.
     const cancel = (event: PointerEvent) => {

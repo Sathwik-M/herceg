@@ -11,13 +11,17 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools poppler-utils
+      # PDF tools for the export tests; Xvfb and Mesa's software GL for
+      # Firefox's WebGL, which runner images do not always carry.
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools poppler-utils
+          xvfb libgl1-mesa-dri libglx-mesa0 libegl-mesa0
       - run: npm run lint
       - run: npm run test:release
       - run: npm run typecheck
@@ -25,20 +29,35 @@ jobs:
       - run: npm run build
       - run: npm run test:package
       # Browser tests use the Chrome preinstalled on GitHub's Ubuntu runners,
-      # and Playwright's Firefox and WebKit builds.
+      # and Playwright's Firefox and WebKit builds. Those are cached by what
+      # picks them: Playwright's version and the runner's Ubuntu release.
+      - id: playwright
+        run: |
+          echo "version=$(node -p 'require("playwright/package.json").version')" >> "$GITHUB_OUTPUT"
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ steps.playwright.outputs.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+      # Downloads only builds missing from the cache; the system packages
+      # they need are installed every run.
       - run: npx playwright install --with-deps firefox webkit
-      - run: npm run test:browser
+      # Firefox has WebGL only with a display: Xvfb's, drawn by Mesa's
+      # software renderer (llvmpipe), as Chrome draws with SwiftShader.
+      - run: xvfb-run --auto-servernum npm run test:browser
       - run: npm run bench:size
 
   python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          cache-dependency-glob: python/uv.lock
       - run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools poppler-utils
       - run: npm ci
       # Installing the package for linting needs its bundled JavaScript.

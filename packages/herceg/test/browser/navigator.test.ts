@@ -539,9 +539,20 @@ describe("a navigator's sliders", () => {
     const strip = stripBox(chart);
     const at = (value: number) => strip.x + value * perUnit(chart);
     const y = strip.y + strip.height / 2;
+    // Firefox and WebKit put the mouse on whole pixels (at a pixel ratio of
+    // 1): the selection starts at the value where the press landed.
+    let pressed = Number.NaN;
+    chart.root.addEventListener(
+      "pointerdown",
+      (event) => {
+        pressed = event.clientX - chart.root.getBoundingClientRect().left;
+      },
+      { capture: true, once: true },
+    );
     await mouse(chart, "mousePressed", at(600), y);
     await mouse(chart, "mouseMoved", at(700), y);
-    expect(chart.getViewport().x![0]).toBeCloseTo(600, 0);
+    expect(Math.abs(pressed - at(600))).toBeLessThan(1);
+    expect(chart.getViewport().x![0]).toBeCloseTo((pressed - strip.x) / perUnit(chart), 0);
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Shown range");
     document.activeElement!.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),

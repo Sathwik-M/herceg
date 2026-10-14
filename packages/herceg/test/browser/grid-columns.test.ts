@@ -528,6 +528,49 @@ describe("column menus", () => {
     expect(menu(grid)).toBeNull();
   });
 
+  it("follow the pointer moving over their items, not one standing still", async () => {
+    const grid = mount(COLUMNS);
+    const focused = () => document.activeElement?.firstChild?.textContent;
+    /** The middle of an item, on whole pixels, where every engine's mouse lands exactly. */
+    const middle = (label: string) => {
+      const box = item(grid, label).getBoundingClientRect();
+      return [Math.round(box.left + 10), Math.round(box.top + box.height / 2)] as const;
+    };
+    // WebKit on Linux sends moves where a still pointer stands, as the items
+    // are written anew: they leave the focus where the keys put it.
+    const standing = (x: number, y: number) =>
+      item(grid, "Wider").dispatchEvent(
+        new PointerEvent("pointermove", {
+          bubbles: true,
+          pointerId: MOUSE,
+          clientX: x,
+          clientY: y,
+        }),
+      );
+    // Opened by the keys, with the pointer not yet seen.
+    grid.focusCell(-1, "id");
+    await userEvent.keyboard("{Alt>}{ArrowDown}{/Alt}{End}");
+    expect(focused()).toBe("host");
+    standing(1, 1);
+    standing(1, 1);
+    expect(focused()).toBe("host");
+    await userEvent.keyboard("{Escape}");
+    // Opened by the header's button, a first move takes the focus.
+    const latency = header(grid, "Latency");
+    await userEvent.hover(latency);
+    await userEvent.click(latency.querySelector(".hg-menu-button")!);
+    expect(focused()).not.toBe("Wider");
+    const wider = middle("Wider");
+    await mouse.send("move", ...wider);
+    expect(focused()).toBe("Wider");
+    // After a key, so does a first move elsewhere; where it stands, none.
+    await userEvent.keyboard("{End}");
+    standing(...wider);
+    expect(focused()).toBe("host");
+    await mouse.send("move", ...middle("at"));
+    expect(focused()).toBe("at");
+  });
+
   it("keep the focus on their items in a shadow root as checks change", async () => {
     const outer = document.createElement("div");
     document.body.append(outer);

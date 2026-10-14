@@ -375,6 +375,114 @@ describe("the accessibility tree", () => {
     );
   });
 
+  it("writes the text a page shows, in order, and none it hides", async () => {
+    // Checks of how the trees are written: WebKit on Linux has no nodes for
+    // text, which there come from the page (scripts/browser/accessibility.ts).
+    const host = document.createElement("div");
+    host.innerHTML = `<div role="figure" aria-label="Fixture">
+      <p>one <b>two</b></p>
+      <div inert>inert</div>
+      <details><summary>three</summary>closed</details>
+      <div aria-hidden="true">hidden</div>
+      <div style="display:contents">four</div>
+      <div style="visibility:hidden">invisible <span style="visibility:visible">five</span></div>
+      <div id="shadowed">unassigned</div>
+      <div id="slotted">veiled<span slot="shown">seven</span></div>
+    </div>`;
+    host.querySelector("#shadowed")!.attachShadow({ mode: "open" }).innerHTML = "<span>six</span>";
+    host.querySelector("#slotted")!.attachShadow({ mode: "open" }).innerHTML =
+      '<slot style="visibility:hidden"></slot><slot name="shown"></slot><b>eight</b>';
+    document.body.append(host);
+    try {
+      const texts = (await treeUnder("figure", []))
+        .map((line) => line.match(/^ *StaticText "(.*)"$/)?.[1]?.trim())
+        .filter(Boolean);
+      expect(texts).toEqual(["one", "two", "three", "four", "five", "six", "seven", "eight"]);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it("writes the text an element owns under it, after its own", async () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<div role="figure" aria-label="Fixture">
+      <div role="group" aria-label="inside" aria-owns="later">one <span id="later">three</span> two</div>
+      <div role="group" aria-label="outside" aria-owns="away inert hushed">four</div>
+      <span id="away">five</span>
+      <div inert><span id="inert">inert</span></div>
+      <div aria-hidden="true"><span id="hushed">hushed</span></div>
+      <div role="group" aria-label="inert" aria-owns="kept" inert></div>
+      <span id="kept">kept</span>
+      <p>six</p>
+    </div>`;
+    document.body.append(host);
+    try {
+      const tree = await treeUnder("figure", []);
+      const depth = (line: string) => line.search(/\S/);
+      const text = (line: string) => line.match(/^ *StaticText "(.*)"$/)?.[1]?.trim();
+      /** The text under the group named `name`, in order. */
+      const under = (name: string) => {
+        const at = tree.findIndex((line) => line.trim() === `group "${name}"`);
+        const below = tree.slice(at + 1);
+        const end = below.findIndex((line) => depth(line) <= depth(tree[at]!));
+        return (end < 0 ? below : below.slice(0, end)).map(text).filter(Boolean);
+      };
+      expect(under("inside")).toEqual(["one", "two", "three"]);
+      // Owned out of an inert element, text stays hidden; out of an
+      // aria-hidden one, it shows, aria-hidden following the tree it is in.
+      expect(under("outside")).toEqual(["four", "five", "hushed"]);
+      expect(tree.map(text).filter(Boolean)).toEqual([
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "hushed",
+        "kept",
+        "six",
+      ]);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it("writes a modal dialog's text, inside an inert element too", async () => {
+    const host = document.createElement("div");
+    host.innerHTML = `<p>outside</p><div inert><dialog aria-label="Fixture">
+      <div role="group" aria-label="owner" aria-owns="owned">one</div><span id="owned">two</span>
+    </dialog></div>`;
+    document.body.append(host);
+    const dialog = host.querySelector("dialog")!;
+    dialog.showModal();
+    try {
+      const tree = (await treeUnder("dialog", [])).map((line) => line.trim());
+      expect(tree.filter((line) => line.startsWith("StaticText"))).toEqual([
+        'StaticText "one"',
+        'StaticText "two"',
+      ]);
+    } finally {
+      dialog.close();
+      host.remove();
+    }
+  });
+
+  // Firefox's remote debugging protocol fails to report text lying in a
+  // shadow root itself.
+  it.skipIf(server.browser === "firefox")("writes text lying in a shadow root itself", async () => {
+    const host = document.createElement("div");
+    host.innerHTML = '<div role="figure" aria-label="Fixture"><div>light</div></div>';
+    host.querySelector("div div")!.attachShadow({ mode: "open" }).textContent = "shadow";
+    document.body.append(host);
+    try {
+      const lines = (await treeUnder("figure", [])).map((line) => line.trim());
+      expect(lines.filter((line) => line.startsWith("StaticText"))).toEqual([
+        'StaticText "shadow"',
+      ]);
+    } finally {
+      host.remove();
+    }
+  });
+
   it("keeps what a button holds beyond its text, where the engine exposes it", async () => {
     // Checks of how the trees are written: text under a button is its name,
     // but a link, an alert, or a description there is the page's.
