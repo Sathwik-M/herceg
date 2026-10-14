@@ -55,6 +55,7 @@ class LiveChart:
         # Current columns by table name: only those marks read, as in the spec.
         self._tables = chart._used_columns()
         self._derived = chart._derived_specs()
+        self._matrices = chart._matrices()
         self._sources = chart._table_names()
         self._default = self._sources[chart._default][1] if chart._default is not None else None
         # Joined maps: replacing their rows joins the new rows to the features again.
@@ -133,15 +134,21 @@ class LiveChart:
         options = self._options
         if self._row_selection is not None:
             options = {**options, "rowSelection": self._row_selection}
-        return assemble_spec(options, self._layout, self._tables, self._marks, self._derived)
+        return assemble_spec(
+            options, self._layout, self._tables, self._marks, self._derived, self._matrices
+        )
 
     def columns(self, name: str) -> set[str]:
         """The columns a table sends to the browser."""
         return set(self._tables[name])
 
     def length(self, name: str) -> int:
-        """How many rows a table has now."""
-        return _length(self._tables[name]) if self._tables[name] else 0
+        """How many rows a table has now: a matrix's, one per pair of its coordinates."""
+        columns = self._tables[name]
+        if name in self._matrices:
+            matrix = self._matrices[name]
+            return len(columns[matrix["x"]]) * len(columns[matrix["y"]])
+        return _length(columns) if columns else 0
 
     def append(self, rows: Any, data: Any = None, max_rows: int | None = None) -> Message | None:
         """Adds rows to a table, keeping at most `max_rows` of them; None when there are none."""
@@ -235,9 +242,12 @@ class LiveChart:
     def drawn_alike(self, other: LiveChart) -> bool:
         """Whether `other`, the same chart made again from other data, has
         this chart's marks, layout, and tables' columns, so that its tables
-        can replace these in place (see `adopt`)."""
+        can replace these in place (see `adopt`). Matrices are sent whole:
+        replacing a table's rows in place would leave its coordinates' pairs."""
         return (
-            self._layout == other._layout
+            not self._matrices
+            and not other._matrices
+            and self._layout == other._layout
             and self._marks == other._marks
             and self._derived == other._derived
             and self._row_selection == other._row_selection
@@ -268,6 +278,17 @@ class LiveChart:
         return {"type": "tables", "tables": tables, "options": changed}, buffers
 
     def _table_name(self, data: Any, method: str) -> str:
+        """The table `data` names, for `method` (as messages name it): not a
+        matrix, whose rows are its coordinates' pairs."""
+        name = self._named(data, method)
+        if name in self._matrices:
+            raise ValueError(
+                f"{method} data: a matrix (hg.matrix) changes whole; make a new chart with "
+                "its new values"
+            )
+        return name
+
+    def _named(self, data: Any, method: str) -> str:
         """The table `data` names, for `method` (as messages name it)."""
         if data is None:
             if self._default is None:

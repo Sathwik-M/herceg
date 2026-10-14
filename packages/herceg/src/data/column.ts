@@ -30,6 +30,7 @@ export interface NumberColumn {
   /** False while the buffer is a caller's typed array; it is copied before any write. */
   owned: boolean;
   readonly check?: undefined;
+  readonly deferred?: Deferred | undefined;
 }
 
 export interface CategoryColumn {
@@ -40,6 +41,17 @@ export interface CategoryColumn {
   /** Code lookup for the dictionary; built lazily on first append. */
   codes: Map<string, number> | undefined;
   readonly check?: undefined;
+  readonly deferred?: Deferred | undefined;
+}
+
+/**
+ * What a column whose buffer is made when first read holds until then, such
+ * as a matrix table's coordinates (data/matrix.ts), which hold a value per
+ * row only then: its rows and the bytes it takes. Undefined once made.
+ */
+export interface Deferred {
+  readonly length: number;
+  readonly byteLength: number;
 }
 
 export interface GeometryColumn {
@@ -50,6 +62,7 @@ export interface GeometryColumn {
   readonly set: GeometrySet;
   /** Throws unless values are codes of the set, before a table writes them. */
   readonly check: (values: ArrayLike<unknown>) => void;
+  readonly deferred?: undefined;
 }
 
 export type Column = NumberColumn | CategoryColumn | GeometryColumn;

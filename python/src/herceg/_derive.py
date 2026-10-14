@@ -8,8 +8,9 @@ rows the chart computes in the browser, where they follow streamed updates.
 from __future__ import annotations
 
 import datetime as _dt
+import math
 import numbers
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -330,11 +331,64 @@ def _value_kind(json: Any, kinds: _Kinds) -> str:
     return "category" if _type(json, kinds) == "string" else "number"
 
 
-def _real(value: Any) -> bool:
-    """Whether a value is a finite number, and not True or False."""
-    return (
-        isinstance(value, numbers.Real) and not isinstance(value, bool) and bool(np.isfinite(value))
-    )
+#: A bin definition as functions take it: a count, a step/start dict, or edges.
+BinSpec = int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any]
+
+
+def _finite(value: Any) -> bool:
+    """Whether a value is a finite real number (NumPy's included), not a bool."""
+    if not isinstance(value, numbers.Real) or isinstance(value, (bool, np.bool_)):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (OverflowError, ValueError):
+        return False
+
+
+def bin_spec(bins: Any, role: str) -> int | dict[str, float] | list[float]:
+    """Bins along one axis as the spec takes them, as histograms and the bin
+    transform do: about how many round bins (a whole number), a
+    ``{"step", "start"}`` dict, or 2 to 1,001 finite, increasing edges. ``role``
+    names them in errors."""
+    if isinstance(bins, Mapping):
+        unknown = set(bins) - {"step", "start"}
+        if unknown:
+            given = ", ".join(map(repr, sorted(unknown)))
+            raise ValueError(f"{role}: a step/start dict takes step and start; received {given}")
+        step = bins.get("step")
+        if step is None or not _finite(step) or step <= 0:
+            raise ValueError(f"{role} step: expected a positive number; received {shown(step)}")
+        start = bins.get("start")
+        if start is not None and not _finite(start):
+            raise ValueError(f"{role} start: expected a finite number; received {shown(start)}")
+        return {"step": float(step), **({"start": float(start)} if start is not None else {})}
+    if isinstance(bins, numbers.Real) and not isinstance(bins, (bool, np.bool_)):
+        if not _finite(bins) or float(bins) < 1 or not float(bins).is_integer():
+            raise ValueError(
+                f"{role}: expected a whole number of at least 1; received {shown(bins)}"
+            )
+        return int(float(bins))
+    if isinstance(bins, np.ndarray) and bins.ndim != 1:
+        raise ValueError(f"{role}: expected a 1-D array of edges; received shape {bins.shape}")
+    if not isinstance(bins, (Sequence, np.ndarray)) or isinstance(bins, (str, bytes)):
+        raise ValueError(
+            f"{role}: expected a whole number, a step/start dict, or a sequence of edges; "
+            f"received {shown(bins)}"
+        )
+    if len(bins) < 2 or len(bins) > 1001:
+        raise ValueError(f"{role}: expected 2 to 1001 edges; received {len(bins)}")
+    edges: list[float] = []
+    for i, edge in enumerate(bins):
+        if not _finite(edge):
+            raise ValueError(f"{role}[{i}]: expected a finite number; received {shown(edge)}")
+        value = float(edge)
+        if edges and not value > edges[-1]:
+            raise ValueError(
+                f"{role}[{i}]: expected an edge above the one before; "
+                f"received {value:g} after {edges[-1]:g}"
+            )
+        edges.append(value)
+    return edges
 
 
 class Derived:
@@ -399,28 +453,24 @@ class Derived:
         self,
         column: str,
         *,
-        step: float | None = None,
-        count: int | None = None,
-        start: float | None = None,
+        bins: BinSpec | None = None,
         name: str | None = None,
+        end: str | None = None,
     ) -> Derived:
-        """Replaces a number or time column (or adds ``name``) with the start of its bin:
-        ``step`` wide from ``start``, or about ``count`` round bins (default 10)."""
+        """Replaces a number or time column (or adds ``name``) with the start of
+        its bin, and with ``end`` adds a column of the bin's end. ``bins`` takes
+        bins as ``Chart.histogram`` does: about how many round bins (10 by
+        default), ``{"step": ..., "start": ...}``, or edges. Values in no bin
+        (missing, below a start, or outside the edges) have none."""
         self._require(column, "bin", ("number", "time"))
-        if step is not None and not (_real(step) and step > 0):
-            raise ValueError(f"bin step: expected a positive number; received {shown(step)}")
-        if count is not None and not (
-            isinstance(count, int) and not isinstance(count, bool) and count >= 1
-        ):
+        spec_bins = None if bins is None else bin_spec(bins, "bin bins")
+        if end is not None and end == (name or column):
             raise ValueError(
-                f"bin count: expected a whole number of at least 1; received {shown(count)}"
+                f"bin end: {end!r} also names the bins' starts; give the ends another name"
             )
-        if start is not None and not _real(start):
-            raise ValueError(f"bin start: expected a finite number; received {shown(start)}")
-        # NumPy numbers as JSON numbers.
-        step, start = _literal(step), _literal(start)
-        spec = {"bin": column, "as": name, "step": step, "count": count, "start": start}
-        kinds = self._kinds.adding({name or column: self._kinds[column]})
+        spec = {"bin": column, "bins": spec_bins, "as": name, "end": end}
+        kind = self._kinds[column]
+        kinds = self._kinds.adding({name or column: kind, **({end: kind} if end else {})})
         return self._then({k: v for k, v in spec.items() if v is not None}, kinds)
 
     def aggregate(self, by: str | Sequence[str] | None = None, **operations: Any) -> Derived:
@@ -519,7 +569,7 @@ def _writes(step: dict[str, Any]) -> set[str]:
     if "calculate" in step:
         return {step["as"]}
     if "bin" in step:
-        return {step.get("as", step["bin"])}
+        return {step.get("as", step["bin"]), *([step["end"]] if "end" in step else [])}
     if "aggregate" in step:
         return {*step.get("by", []), *(operation["as"] for operation in step["aggregate"])}
     return {operation["as"] for operation in step.get("rolling", [])}

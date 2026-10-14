@@ -242,9 +242,10 @@ errorBar(stats, { x: "group", y: "low", yError: "high" });
 const hostLoad = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(hostLoad, { x: "hour", y: "host", color: "cpu" });
 const spectrum = table({ time: time(hours), frequency: cpuValues, power: cpuValues });
-heatmap(spectrum, { x: "time", y: "frequency", color: "power", reduce: "max" });
-// @ts-expect-error reduce takes "mean", "max", or "min"
+heatmap(spectrum, { x: "time", y: "frequency", color: "power", sampling: { reduce: "max" } });
 heatmap(spectrum, { x: "time", y: "frequency", color: "power", reduce: "sum" });
+// @ts-expect-error reduce takes "last", "mean", "sum", "min", or "max"
+heatmap(spectrum, { x: "time", y: "frequency", color: "power", reduce: "median" });
 
 // Custom marks
 custom({ draw: ({ circle, plot }) => circle(plot.x, plot.y, 3) });

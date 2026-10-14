@@ -3,6 +3,7 @@
 // keyboard, panels, and specs over them.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { time } from "../../src/data/column.ts";
+import { count, derive } from "../../src/data/derive.ts";
 import { table } from "../../src/data/table.ts";
 import { estimateText } from "../../src/layout/text.ts";
 import { type HeatmapOptions, heatmap } from "../../src/marks/heatmap.ts";
@@ -12,6 +13,7 @@ import { describeChart } from "../../src/model/describe.ts";
 import { facet } from "../../src/model/facet.ts";
 import { type ChartConfig, ChartModel } from "../../src/model/model.ts";
 import { panels } from "../../src/model/panels.ts";
+import { clickedRows } from "../../src/model/selected-rows.ts";
 import { timeBreaks } from "../../src/scale/breaks.ts";
 import { SequentialScale } from "../../src/scale/color.ts";
 import type { RasterGeometry } from "../../src/scene/scene.ts";
@@ -251,25 +253,48 @@ describe("heatmap cells along number and time axes", () => {
     expect(pixel(raster, 1)).toEqual(gray(20));
     expect(pixel(raster, 2)).toEqual(gray((20 * 0.25 + 30 * 0.875) / 1.125));
     expect(pixel(raster, 3)).toEqual(gray(30));
-    // The hottest and coldest cells a pixel holds any of, with reduce.
-    const max = rasterOf(across(strip([0, 1, 3], [10, 20, 30], { reduce: "max" }), 4).model);
-    const min = rasterOf(across(strip([0, 1, 3], [10, 20, 30], { reduce: "min" }), 4).model);
+    // The hottest and coldest cells a pixel holds any of, with sampling.
+    const sampled = (reduce: "max" | "min") =>
+      rasterOf(across(strip([0, 1, 3], [10, 20, 30], { sampling: { reduce } }), 4).model);
+    const [max, min] = [sampled("max"), sampled("min")];
     expect([pixel(max, 0), pixel(max, 2)]).toEqual([gray(20), gray(30)]);
     expect([pixel(min, 0), pixel(min, 2)]).toEqual([gray(10), gray(20)]);
   });
 
-  it("show a cell's last row where it is alone in a pixel, and count every row across cells", () => {
+  it("combine the rows sharing a cell into one value, the same at every zoom", () => {
     // Cell 1 has rows of 20 and then 40; a row without a value erases nothing.
-    const config = strip([0, 1, 1, 1, 3], [10, 20, 40, Number.NaN, 30]);
-    const raster = rasterOf(across(config, 4).model);
+    const x = [0, 1, 1, 1, 3];
+    const v = [10, 20, 40, Number.NaN, 30];
+    const raster = rasterOf(across(strip(x, v), 4).model);
     expect(pixel(raster, 1)).toEqual(gray(40));
-    expect(pixel(raster, 0)).toEqual(gray((10 + 20 * 0.125 + 40 * 0.125) / 1.25));
-    const wide = rasterOf(across(config, 450).model);
+    // In a pixel shared with another cell, the cell counts once, by its value.
+    expect(pixel(raster, 0)).toEqual(gray((10 + 40 * 0.125) / 1.125));
+    const wide = rasterOf(across(strip(x, v), 450).model);
     expect([pixel(wide, 100), pixel(wide, 249)]).toEqual([gray(40), gray(40)]);
-    const { model } = across(config, 450);
-    expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(0))!.points[0]!.value).toBe(
-      40,
+    for (const [reduce, value] of [
+      ["last", 40],
+      ["mean", 30],
+      ["sum", 60],
+      ["min", 20],
+      ["max", 40],
+    ] as const) {
+      const config = strip(x, v, { reduce });
+      const { model } = across(config, 450);
+      const point = model.inspect(model.xScale()!.map(1), model.yScale()!.map(0))!.points[0]!;
+      expect(point.value).toBe(value);
+      // Its last row with a value is the cell's.
+      expect(point.row).toBe(2);
+      expect(pixel(rasterOf(model), 249)).toEqual(gray(value));
+      expect(pixel(rasterOf(across(config, 4).model), 0)).toEqual(
+        gray((10 + value * 0.125) / 1.125),
+      );
+    }
+    // Sums widen the color scale to the fullest cell.
+    const { scene } = across(
+      strip(x, v, { reduce: "sum", colorDomain: undefined as never }, { legend: true }),
+      450,
     );
+    expect(scene.colorLegends[0]!.high.text).toBe("60");
   });
 
   it("reduce shared pixels the same whatever order the cells' rows come in", () => {
@@ -281,15 +306,20 @@ describe("heatmap cells along number and time axes", () => {
     ];
     for (const reduce of ["mean", "max", "min"] as const) {
       const rasters = orders.map(({ x, v }) =>
-        Array.from(rasterOf(across(strip(x, v, { reduce }), 4).model).pixels),
+        Array.from(rasterOf(across(strip(x, v, { sampling: { reduce } }), 4).model).pixels),
       );
       expect(rasters[1]).toEqual(rasters[0]);
       expect(rasters[2]).toEqual(rasters[0]);
     }
-    // The hottest row counts in a shared pixel, though a later row of its cell is cooler.
-    const max = rasterOf(across(strip([0, 1, 1, 3], [10, 90, 20, 30], { reduce: "max" }), 4).model);
-    expect(pixel(max, 0)).toEqual(gray(90));
-    expect(pixel(max, 1)).toEqual(gray(20));
+    // A shared pixel reads the cell's value, its last row, though an earlier row is hotter;
+    // reduce: "max" makes the hottest row the cell's.
+    const x = [0, 1, 1, 3];
+    const v = [10, 90, 20, 30];
+    const last = rasterOf(across(strip(x, v, { sampling: { reduce: "max" } }), 4).model);
+    expect([pixel(last, 0), pixel(last, 1)]).toEqual([gray(20), gray(20)]);
+    const hottest = strip(x, v, { reduce: "max", sampling: { reduce: "max" } });
+    const max = rasterOf(across(hottest, 4).model);
+    expect([pixel(max, 0), pixel(max, 1)]).toEqual([gray(90), gray(90)]);
   });
 
   it("color shared pixels of values at the largest doubles", () => {
@@ -654,6 +684,48 @@ describe("heatmaps on number axes in panels", () => {
     expect(at(1, 2, 1)).toBeUndefined();
   });
 
+  it("sum each panel's rows in its cells, on one ramp over every panel's sums", () => {
+    // Both panels have a cell at hour 0 of host p: 1 + 2 in one, 9 + 1 in the other.
+    const shared = table({
+      region: ["N", "N", "S", "S", "S"],
+      hour: [0, 0, 0, 1, 0],
+      host: ["p", "p", "p", "p", "p"],
+      cpu: [1, 2, 9, 4, 1],
+    });
+    const { model, scene } = build({
+      marks: [heatmap(shared, { x: "hour", y: "host", color: "cpu", reduce: "sum" })],
+      facet: facet("region"),
+      legend: true,
+    });
+    expect([scene.colorLegends[0]!.low.text, scene.colorLegends[0]!.high.text]).toEqual([
+      "3",
+      "10",
+    ]);
+    const at = (panel: number, hour: number) => {
+      const { x, y, key } = model.panels()[panel]!;
+      return model.inspect(x.map(hour), y.map(0), undefined, key)?.points[0]?.value;
+    };
+    // The panels combine their cells into one buffer, each at its own rows.
+    expect([at(0, 0), at(1, 0), at(1, 1), at(0, 0)]).toEqual([3, 10, 4, 3]);
+    const rasters = scene.panels.map((p) => p.marks[0] as RasterGeometry);
+    expect(Array.from(rasters[1]!.pixels.subarray(0, 4))).not.toEqual(
+      Array.from(rasters[0]!.pixels.subarray(0, 4)),
+    );
+    // Means of values near the largest doubles stay finite.
+    const meanOf = (v: number[]) => {
+      const huge = table({ x: v.map(() => 0), y: v.map(() => 0), v });
+      const { model } = build({
+        marks: [heatmap(huge, { x: "x", y: "y", color: "v", reduce: "mean" })],
+      });
+      return model.inspect(300, 150)?.points[0]?.value;
+    };
+    const max = Number.MAX_VALUE;
+    expect(meanOf([1e308, 1e308])).toBe(1e308);
+    expect(meanOf([max, max, max])).toBe(max);
+    expect(meanOf(Array.from({ length: 11 }, () => -max))).toBe(-max);
+    expect(meanOf([max, max, -max])! / (max / 3)).toBeCloseTo(1, 12);
+  });
+
   it("share cells across panels sharing x, each drawing only its rows", () => {
     const { model } = build({
       marks: [heatmap(load, { x: "hour", y: "host", color: "cpu" })],
@@ -713,5 +785,98 @@ describe("heatmap specs", () => {
     );
     // Categories are banded, asked or not.
     expect(() => heatmap(cells, { x: "c", y: "n", color: "v", xBanded: true })).not.toThrow();
+  });
+});
+
+describe("heatmap cells between edges", () => {
+  // Bins of x by unequal edges and of y by a width, counted: what a 2D
+  // histogram draws, built from transforms.
+  const points = table({
+    x: [0.5, 1, 1.5, 4, 9, 9.5, 2],
+    y: [0, 1, 2, 8, 9, 9, 3],
+  });
+  const binned = derive(points)
+    .bin("x", { bins: [0, 2, 10], as: "x0", end: "x1" })
+    .bin("y", { bins: { step: 5 }, as: "y0", end: "y1" })
+    .aggregate({ by: ["x0", "x1", "y0", "y1"], ops: { n: count() } })
+    .table();
+
+  it("span their edges, as bins do, and say them in tooltips", () => {
+    const { model, scene } = build({
+      marks: [heatmap(binned, { x1: "x0", x2: "x1", y1: "y0", y2: "y1", color: "n" })],
+    });
+    expect(model.xScale()!.domain).toEqual([0, 10]);
+    expect(model.yScale()!.domain).toEqual([0, 10]);
+    const raster = scene.panels[0]!.marks.find((m) => m.kind === "raster") as RasterGeometry;
+    // Unequal cells are painted at the plot's resolution.
+    expect(raster.columns).toBe(Math.floor(scene.panels[0]!.plot.width));
+    const point = model.inspect(model.xScale()!.map(5), model.yScale()!.map(9))!.points[0]!;
+    expect(point).toMatchObject({ label: "5 – 10", text: "2 – 10: 3", value: 3 });
+    // Between the cells: nothing.
+    expect(model.inspect(model.xScale()!.map(1), model.yScale()!.map(8))).toBeUndefined();
+  });
+
+  it("leave rows without a usable pair of edges out of cells, clicks, and sums", () => {
+    // Row 1 has no right edge: it is in no cell, though it starts where row 0's does.
+    const edges = table({ a: [0, 0, 1], b: [1, Number.NaN, 2], y: [0, 0, 0], v: [1, 2, 3] });
+    const { model, scene } = build({
+      marks: [heatmap(edges, { x1: "a", x2: "b", y: "y", color: "v", reduce: "sum" })],
+      legend: true,
+    });
+    const [px, py] = [model.xScale()!.map(0.5), model.yScale()!.map(0)];
+    expect(model.inspect(px, py)!.points[0]!.value).toBe(1);
+    expect(Array.from(clickedRows(model, new Set([edges as never]), px, py)!.rows)).toEqual([0]);
+    expect([scene.colorLegends[0]!.low.text, scene.colorLegends[0]!.high.text]).toEqual(["1", "3"]);
+    // A row of no category has no band, so it adds to no sum either.
+    const named = table({ x: ["a", null, "c"], y: ["b", "b", "b"], v: [1, 100, 3] });
+    const banded = build({
+      marks: [heatmap(named, { x: "x", y: "y", color: "v", reduce: "sum" })],
+      legend: true,
+    }).scene.colorLegends[0]!;
+    expect([banded.low.text, banded.high.text]).toEqual(["1", "3"]);
+  });
+
+  it("lie on a lattice when they are one width apart", () => {
+    const even = table({ a: [0, 10, 30], b: [10, 20, 40], y: [0, 0, 0], v: [1, 2, 3] });
+    const { scene } = build({ marks: [heatmap(even, { x1: "a", x2: "b", y: "y", color: "v" })] });
+    const raster = scene.panels[0]!.marks.find((m) => m.kind === "raster") as RasterGeometry;
+    // One pixel per slot of the lattice: four, the third empty.
+    expect(raster.columns).toBe(4);
+  });
+
+  it("refuse cells that overlap, starts with two ends, and other placements of the axis", () => {
+    const cells = table({ a: [0, 1, 0], b: [2, 3, 5], y: [0, 0, 1], v: [1, 2, 3] });
+    const draw = (options: Partial<HeatmapOptions<never>>) => () =>
+      build({ marks: [heatmap(cells, { y: "y", color: "v", ...(options as object) } as never)] });
+    expect(draw({ x1: "a", x2: "b" } as never)).toThrow(
+      /heatmap x1: rows from 0 end at 2 and at 5; give each cell one x2/,
+    );
+    const overlapping = table({ a: [0, 1], b: [2, 3], y: [0, 0], v: [1, 2] });
+    expect(() =>
+      build({ marks: [heatmap(overlapping, { x1: "a", x2: "b", y: "y", color: "v" })] }),
+    ).toThrow(/heatmap x1: the cells from 0 to 2 and from 1 to 3 overlap/);
+    expect(() => heatmap(cells, { x: "a", x1: "a", x2: "b", y: "y", color: "v" } as never)).toThrow(
+      /heatmap x1: x places cells at values, x1 and x2 between edges; give one form/,
+    );
+    expect(() => heatmap(cells, { x1: "a", y: "y", color: "v" } as never)).toThrow(
+      /heatmap x2: missing; cells between edges need x1 and x2/,
+    );
+    expect(() =>
+      heatmap(cells, { x1: "a", x2: "b", xStep: 1, y: "y", color: "v" } as never),
+    ).toThrow(/heatmap xStep: cells between x1 and x2 take their edges from them; drop xStep/);
+    const mixed = table({ a: [0], b: time([1]), y: [0], v: [1] });
+    expect(() => heatmap(mixed, { x1: "a", x2: "b", y: "y", color: "v" })).toThrow(
+      /heatmap x2: field "b" holds time values and x1's "a" number values; give edges of one kind/,
+    );
+  });
+
+  it("load from specs", () => {
+    const spec: ChartSpec = {
+      data: { t: { columns: { a: [0, 2], b: [2, 10], c: [0, 0], d: [1, 1], v: [3, 4] } } },
+      marks: [{ type: "heatmap", x1: "a", x2: "b", y1: "c", y2: "d", color: "v" }],
+    };
+    expect(() => validateSpec(spec)).not.toThrow();
+    const { model } = build(loadSpec(spec).config);
+    expect(model.xScale()!.domain).toEqual([0, 10]);
   });
 });

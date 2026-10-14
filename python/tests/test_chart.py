@@ -737,14 +737,49 @@ def test_heatmaps_take_schemes_and_midpoints():
     assert "reduce" not in spec["marks"][0]
 
 
-def test_heatmaps_take_a_reduction_for_large_grids():
+def test_heatmaps_combine_rows_sharing_cells_and_sample_large_grids():
     values = {"c": np.arange(4.0), "r": np.zeros(4), "v": np.array([1.0, 9.0, 2.0, 8.0])}
-    spec, _ = hg.heatmap(values, "c", "r", "v", reduce="max").to_spec()
-    assert spec["marks"][0]["reduce"] == "max"
+    spec, _ = hg.heatmap(values, "c", "r", "v", reduce="sum", sampling={"reduce": "max"}).to_spec()
+    assert spec["marks"][0]["reduce"] == "sum"
+    assert spec["marks"][0]["sampling"] == {"reduce": "max"}
     with pytest.raises(
-        ValueError, match='heatmap reduce: expected "mean", "max", or "min"; received "sum"'
+        ValueError,
+        match='heatmap reduce: expected "last", "mean", "sum", "min", or "max"; received "median"',
     ):
-        hg.Chart(values).heatmap("c", "r", "v", reduce="sum")
+        hg.Chart(values).heatmap("c", "r", "v", reduce="median")  # type: ignore[arg-type]
+    with pytest.raises(
+        ValueError,
+        match='heatmap sampling reduce: expected "mean", "max", or "min"; received "sum"',
+    ):
+        hg.Chart(values).heatmap("c", "r", "v", sampling={"reduce": "sum"})  # type: ignore[typeddict-item]
+    with pytest.raises(ValueError, match="heatmap sampling: expected"):
+        hg.Chart(values).heatmap("c", "r", "v", sampling="max")  # type: ignore[arg-type]
+
+
+def test_heatmaps_place_cells_between_edges():
+    binned = (
+        hg.derive({"x": np.array([0.5, 1.5, 4.0, 9.0]), "y": np.array([0.0, 1.0, 8.0, 9.0])})
+        .bin("x", bins=[0, 2, 10], name="x0", end="x1")
+        .bin("y", bins={"step": 5}, name="y0", end="y1")
+        .aggregate(by=["x0", "x1", "y0", "y1"], n="count")
+    )
+    chart = hg.Chart(binned).heatmap(x1="x0", x2="x1", y1="y0", y2="y1", color="n")
+    spec, _ = chart.to_spec()
+    assert {k: spec["marks"][0][k] for k in ("x1", "x2", "y1", "y2")} == {
+        "x1": "x0",
+        "x2": "x1",
+        "y1": "y0",
+        "y2": "y1",
+    }
+    assert chart.to_svg().count("<image ") == 1
+    with pytest.raises(ValueError, match="heatmap x1: x places cells at values, x1 and x2"):
+        hg.Chart(binned).heatmap("x0", x1="x0", x2="x1", y1="y0", y2="y1", color="n")
+    with pytest.raises(ValueError, match="heatmap y2: missing; cells between edges need y1 and y2"):
+        hg.Chart(binned).heatmap(x1="x0", x2="x1", y1="y0", color="n")
+    with pytest.raises(
+        ValueError, match="heatmap x_step: cells between x1 and x2 take their edges"
+    ):
+        hg.Chart(binned).heatmap(x1="x0", x2="x1", y1="y0", y2="y1", color="n", x_step=1)
 
 
 def test_heatmaps_place_numbers_and_times_along_axes():
@@ -824,7 +859,9 @@ def test_calendar_heatmaps_lay_out_days():
     assert ">Feb 2024</text>" in months and ">Mar 2024</text>" in months
     with pytest.raises(ValueError, match=r"heatmap x: a calendar \(date\) places its days itself"):
         hg.heatmap(days, "day", date="day", color="commits")
-    with pytest.raises(ValueError, match="heatmap: needs x and y, or a date"):
+    with pytest.raises(
+        ValueError, match=r"heatmap: needs x and y \(or x1 and x2, y1 and y2\), or a date"
+    ):
         hg.heatmap(days, "day", color="commits")
     with pytest.raises(ValueError, match="heatmap week_start: applies to calendars of weeks"):
         hg.heatmap(days, date="day", color="commits", calendar="months", week_start="sun")
@@ -1764,6 +1801,7 @@ HELPERS = {
     "bar": "bar",
     "scatter": "point",
     "heatmap": "heatmap",
+    "contour": "contour",
     "histogram": "histogram",
     "pie": "pie",
     "gauge": "gauge",

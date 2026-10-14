@@ -220,30 +220,60 @@ describe("transforms", () => {
     expect(values(warm, "label")).toEqual(["warm", "hot", "warm"]);
   });
 
-  it("bins numbers and times by step, count, and start", () => {
+  it("bins numbers and times by step, count, start, and edges", () => {
     const t = table({
       v: [0.1, 0.25, 0.3, 0.95, Number.NaN],
       at: time([0, 59_999, 60_000, 125_000, 180_000]),
     });
-    expect(values(derive(t).bin("v", { step: 0.1 }).table(), "v")).toEqual([
-      0.1,
-      0.2,
-      0.3,
-      0.9,
-      null,
-    ]);
-    expect(values(derive(t).bin("v", { step: 0.5, start: -0.25, as: "b" }).table(), "b")).toEqual([
-      -0.25,
-      0.25,
-      0.25,
-      0.75,
-      null,
-    ]);
+    expect(
+      values(
+        derive(t)
+          .bin("v", { bins: { step: 0.1 } })
+          .table(),
+        "v",
+      ),
+    ).toEqual([0.1, 0.2, 0.3, 0.9, null]);
+    expect(
+      values(
+        derive(t)
+          .bin("v", { bins: { step: 0.5, start: -0.25 }, as: "b" })
+          .table(),
+        "b",
+      ),
+    ).toEqual([-0.25, 0.25, 0.25, 0.75, null]);
     // About 10 round bins over the extent by default.
     expect(values(derive(t).bin("v").table(), "v")).toEqual([0.1, 0.2, 0.3, 0.9, null]);
-    const minutes = derive(t).bin("at", { step: 60_000 }).table();
+    const minutes = derive(t)
+      .bin("at", { bins: { step: 60_000 } })
+      .table();
     expect(minutes.kind("at")).toBe("time");
     expect(values(minutes, "at")).toEqual([0, 0, 60_000, 120_000, 180_000]);
+    // Edges as histograms take them, the last bin holding its right edge;
+    // values outside them, or below an explicit start, are in no bin.
+    const edges = derive(t)
+      .bin("v", { bins: [0, 0.25, 1], end: "to" })
+      .table();
+    expect(values(edges, "v")).toEqual([0, 0.25, 0.25, 0.25, null]);
+    expect(values(edges, "to")).toEqual([0.25, 1, 1, 1, null]);
+    const narrow = derive(t)
+      .bin("v", { bins: [0.2, 0.3], as: "b", end: "e" })
+      .table();
+    expect(values(narrow, "b")).toEqual([null, 0.2, 0.2, null, null]);
+    expect(values(narrow, "v")).toEqual([0.1, 0.25, 0.3, 0.95, null]);
+    const started = derive(t)
+      .bin("v", { bins: { step: 0.5, start: 0.2 }, end: "to" })
+      .table();
+    expect(values(started, "v")).toEqual([null, 0.2, 0.2, 0.7, null]);
+    expect(values(started, "to")).toEqual([null, 0.7, 0.7, 1.2, null]);
+  });
+
+  it("bins with the edges a histogram of the values has", () => {
+    const t = table({ v: Float64Array.from({ length: 200 }, (_, i) => Math.sin(i) * 37 + 50) });
+    const binned = derive(t).bin("v", { bins: 12, end: "to" }).table();
+    const starts = new Set(values(binned, "v"));
+    // Round edges covering every value: none is left out.
+    expect(values(binned, "v").every((v) => v !== null)).toBe(true);
+    expect([...starts].every((v) => Number.isInteger((v as number) / 5))).toBe(true);
   });
 
   it("aggregates groups with every operation", () => {
@@ -373,23 +403,38 @@ describe("transforms", () => {
 describe("edge cases", () => {
   it("bins from fractional starts and by tiny steps", () => {
     const offset = table({ v: [1000000000.25, 1000000001.25, 1000000001.75] });
-    expect(values(derive(offset).bin("v", { step: 1, start: 1000000000.25 }).table(), "v")).toEqual(
-      [1000000000.25, 1000000001.25, 1000000001.25],
-    );
+    expect(
+      values(
+        derive(offset)
+          .bin("v", { bins: { step: 1, start: 1000000000.25 } })
+          .table(),
+        "v",
+      ),
+    ).toEqual([1000000000.25, 1000000001.25, 1000000001.25]);
     const tiny = table({ v: [1e-16, 2e-16, 3e-16, 3.5e-16] });
-    expect(values(derive(tiny).bin("v", { step: 1e-16 }).table(), "v")).toEqual([
-      1e-16, 2e-16, 3e-16, 3e-16,
-    ]);
+    expect(
+      values(
+        derive(tiny)
+          .bin("v", { bins: { step: 1e-16 } })
+          .table(),
+        "v",
+      ),
+    ).toEqual([1e-16, 2e-16, 3e-16, 3e-16]);
     const tinier = table({ v: [1e-300, 2.5e-300] });
-    expect(values(derive(tinier).bin("v", { step: 1e-300 }).table(), "v")).toEqual([
-      1e-300, 2e-300,
-    ]);
+    expect(
+      values(
+        derive(tinier)
+          .bin("v", { bins: { step: 1e-300 } })
+          .table(),
+        "v",
+      ),
+    ).toEqual([1e-300, 2e-300]);
     // Steps that are not short decimals keep their own edges.
     const thirds = table({ v: [0.5, 1, 1.5] });
     expect(
       values(
         derive(thirds)
-          .bin("v", { step: 1 / 3 })
+          .bin("v", { bins: { step: 1 / 3 } })
           .table(),
         "v",
       ),
@@ -400,43 +445,67 @@ describe("edge cases", () => {
     // None of these starts counts in safe decimal units; each still starts a bin.
     for (const start of [0.12345678901234566, 1000000000000.0005, 1e15 + 0.25]) {
       const t = table({ v: [start, start + 1, start + 1.5] });
-      expect(values(derive(t).bin("v", { step: 1, start }).table(), "v")).toEqual([
-        start,
-        start + 1,
-        start + 1,
-      ]);
+      expect(
+        values(
+          derive(t)
+            .bin("v", { bins: { step: 1, start } })
+            .table(),
+          "v",
+        ),
+      ).toEqual([start, start + 1, start + 1]);
     }
-    // Round steps for small values are exact (0.0001, not 0.00009999999999999999).
+    // Round steps for small values are exact (0.0001, not 0.00009999999999999999);
+    // the last bin holds the greatest value.
     const small = table({ v: [0.0001, 0.00035, 0.0009] });
-    expect(values(derive(small).bin("v").table(), "v")).toEqual([0.0001, 0.0003, 0.0009]);
+    expect(values(derive(small).bin("v").table(), "v")).toEqual([0.0001, 0.0003, 0.0008]);
     // More bins from the start than doubles count exactly: each value starts its own.
     const far = table({ v: [-1, 1] });
-    expect(values(derive(far).bin("v", { step: 1e-300 }).table(), "v")).toEqual([-1, 1]);
+    expect(
+      values(
+        derive(far)
+          .bin("v", { bins: { step: 1e-300 } })
+          .table(),
+        "v",
+      ),
+    ).toEqual([-1, 1]);
   });
 
   it("rejects bin options the spec loader rejects", () => {
     const t = table({ v: [1, 2, 3] });
-    const binned = (options: { step?: number; count?: number; start?: number }) => () =>
-      derive(t).bin("v", options).table();
-    expect(binned({ count: 0 })).toThrow(
-      /\(bin\): count: expected a whole number of at least 1; received 0/,
-    );
-    expect(binned({ count: 2.5 })).toThrow(/count: .*received 2\.5/);
-    expect(binned({ step: 0 })).toThrow(/step: expected a positive number; received 0/);
+    const binned = (bins: unknown, end?: string) => () =>
+      derive(t)
+        .bin("v", { bins: bins as number, ...(end && { end }) })
+        .table();
+    expect(binned(0)).toThrow(/\(bin\): bins: expected a whole number of at least 1; received 0/);
+    expect(binned(2.5)).toThrow(/bins: .*received 2\.5/);
+    expect(binned({ step: 0 })).toThrow(/bins\.step: expected a positive number; received 0/);
     expect(binned({ step: Number.POSITIVE_INFINITY })).toThrow(/step: .*received Infinity/);
-    expect(binned({ start: Number.NaN })).toThrow(/start: expected a finite number; received NaN/);
-    expect(binned({ start: Number.POSITIVE_INFINITY })).toThrow(/start: .*received Infinity/);
+    expect(binned({ step: 1, start: Number.NaN })).toThrow(
+      /bins\.start: expected a finite number; received NaN/,
+    );
+    expect(binned([1, 1])).toThrow(/bins\[1\]: expected a number above 1/);
+    expect(binned(3, "v")).toThrow(/end: "v" also names the bins' starts/);
   });
 
   it("bins exact integers and constant data", () => {
     const stamps = table({ at: time([1767225600001, 1767225600006, 1767225600011]) });
-    expect(values(derive(stamps).bin("at", { step: 1 }).table(), "at")).toEqual([
-      1767225600001, 1767225600006, 1767225600011,
-    ]);
-    expect(values(derive(stamps).bin("at", { step: 5 }).table(), "at")).toEqual([
-      1767225600000, 1767225600005, 1767225600010,
-    ]);
-    // One value, or none: bins 1 wide.
+    expect(
+      values(
+        derive(stamps)
+          .bin("at", { bins: { step: 1 } })
+          .table(),
+        "at",
+      ),
+    ).toEqual([1767225600001, 1767225600006, 1767225600011]);
+    expect(
+      values(
+        derive(stamps)
+          .bin("at", { bins: { step: 5 } })
+          .table(),
+        "at",
+      ),
+    ).toEqual([1767225600000, 1767225600005, 1767225600010]);
+    // One value: a bin 1 wide around it, as a histogram's.
     expect(
       values(
         derive(table({ x: [5.5] }))
@@ -448,7 +517,7 @@ describe("edge cases", () => {
     const empty = table({ x: new Float64Array(0) });
     const binned = derive(empty).bin("x").table();
     empty.append({ x: [3.2] });
-    expect(values(binned, "x")).toEqual([3]);
+    expect(values(binned, "x")).toEqual([2.7]);
   });
 
   it("rolls huge and nearly equal values without cancellation", () => {
@@ -624,7 +693,9 @@ export function typeChecks() {
     .table()
     .numbers("avg");
   // @ts-expect-error "wind" is not a field of readings.
-  derive(readings).bin("wind", { step: 1 });
+  derive(readings).bin("wind", { bins: { step: 1 } });
+  // The bins' ends keep their field's kind.
+  derive(readings).bin("temp", { bins: 5, as: "from", end: "to" }).table().numbers("to");
   // @ts-expect-error aggregates read number fields only.
   derive(readings).aggregate({ ops: { m: mean("site") } });
   // Text makes a category field, which is not a number.

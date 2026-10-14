@@ -16,6 +16,7 @@ import { bar } from "../../src/marks/bar.ts";
 import { boxen } from "../../src/marks/boxen.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
+import { contour } from "../../src/marks/contour.ts";
 import { monotonePolyline } from "../../src/marks/curve.ts";
 import { custom } from "../../src/marks/custom.ts";
 import { dendrogram } from "../../src/marks/dendrogram.ts";
@@ -90,10 +91,19 @@ const samples = table({
   group: ["N", "N", "N", "S", "S", "S"],
   note: ["one", "two", "three", "four", "five", "six"],
 });
+/** A field sampled on a grid per group, each group's grid apart. */
+const field = table({
+  x: [0, 1, 2, 0, 1, 2, 0, 1, 2, 4, 5, 6, 4, 5, 6, 4, 5, 6],
+  y: [0, 0, 0, 1, 1, 1, 2, 2, 2, 10, 10, 10, 11, 11, 11, 12, 12, 12],
+  z: [0, 1, 0, 1, 3, 1, 0, 1, 0, 0, 1, 0, 1, 3, 1, 0, 1, 0],
+  group: ["N", "N", "N", "N", "N", "N", "N", "N", "N", "S", "S", "S", "S", "S", "S", "S", "S", "S"],
+});
 type Placement = { panel?: string; facet?: "repeat"; axis?: "right" };
 type MarkCase = {
   name: string;
   make: (placement?: Placement) => ChartMark;
+  /** The table the mark reads, when not `samples`. */
+  table?: Table;
   kind: Geometry["kind"];
   /** Layout marks that draw in facet panels and subplots. */
   panels?: true;
@@ -210,6 +220,27 @@ const cartesian: MarkCase[] = [
     make: (p) => heatmap(samples, { x: "x", y: "category", color: "y", ...p }),
     kind: "raster",
     noLegend: true,
+  },
+  {
+    name: "histogram 2d",
+    make: (p) => histogram(samples, { x: "x", y: "y", bins: 2, ...(p as object) }),
+    kind: "raster",
+    noLegend: true,
+  },
+  {
+    name: "contour",
+    make: (p) =>
+      contour(field, {
+        x: "x",
+        y: "y",
+        color: "z",
+        thresholds: [0.5, 2],
+        variant: "bands",
+        ...(p as object),
+      }),
+    kind: "polygons",
+    noLegend: true,
+    table: field as unknown as Table,
   },
   {
     name: "rule",
@@ -727,10 +758,11 @@ describe("capabilities: per-panel scales", () => {
 });
 
 describe("capabilities: right axis", () => {
-  // Marks placing values along y; heatmaps place cells (and take no axis),
+  // Marks placing values along y; heatmaps, 2D histograms, and contours place cells
+  // and regions (and take no axis),
   // and a rule at an x and a rug of x values have no y value to place.
   const valued = cartesian.filter(
-    (c) => !["heatmap", "rule", "rug", "line along y"].includes(c.name),
+    (c) => !["heatmap", "histogram 2d", "contour", "rule", "rug", "line along y"].includes(c.name),
   );
   const rightOf = (panel: Panel) => panel.axes.find((a) => a.orient === "right");
 
@@ -1111,6 +1143,7 @@ describe("capabilities: row selection", () => {
       "area over categories",
       "point swarm",
       "histogram",
+      "histogram 2d",
       "boxplot",
       "boxen",
       "violin",
@@ -1133,7 +1166,7 @@ describe("capabilities: row selection", () => {
 
   /** A chart of a case bound to a store of `samples`, as a mounted chart binds it. */
   function bound(c: MarkCase) {
-    const store = selectionStore(samples);
+    const store = selectionStore(c.table ?? (samples as unknown as Table));
     const marks = c.repeats ? [line(samples, { x: "x", y: "y" }), c.make()] : [c.make()];
     const selection = rowSelection({ store, channel: "c" });
     const { model } = build({ marks, rowSelection: selection });
@@ -1164,10 +1197,10 @@ describe("capabilities: row selection", () => {
     const { model, store } = bound(c);
     const brush = { x: [0, 2] as const, y: null, lasso: null };
     // Annotations and custom marks select no rows; the others do.
-    const rows = brushedRows(model, samples as unknown as Table, brush, null);
+    const rows = brushedRows(model, c.table ?? (samples as unknown as Table), brush, null);
     expect(rows !== undefined).toBe(selects.has(c.name) || c.repeats === true);
     const plain = drawn(model, c);
-    store.set("c", selectRows(new RowSet(samples).add(0)));
+    store.set("c", selectRows(new RowSet(c.table ?? (samples as unknown as Table)).add(0)));
     const lit = drawn(model, c);
     expect(lit.join("") !== plain.join("")).toBe(highlights.has(c.name));
   });

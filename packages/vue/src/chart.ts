@@ -124,44 +124,14 @@ function canonical(value: unknown): string {
 }
 
 /**
- * Mark types whose spec and table describe them completely. Custom marks,
- * whose `draw` may close over new props, are only the same mark as
+ * Same mark when the spec and the tables are unchanged, so caches survive
+ * re-renders: every built-in mark's spec and tables describe it. Custom
+ * marks, whose `draw` may close over new props, are only the same mark as
  * themselves.
  */
-const PORTABLE = new Set([
-  "line",
-  "area",
-  "bar",
-  "point",
-  "heatmap",
-  "errorbar",
-  "candlestick",
-  "histogram",
-  "pie",
-  "boxplot",
-  "boxen",
-  "violin",
-  "treemap",
-  "sunburst",
-  "gauge",
-  "funnel",
-  "radar",
-  "sankey",
-  "graph",
-  "geoshape",
-  "geopoint",
-  "point3d",
-  "line3d",
-  "surface",
-  "rule",
-  "region",
-  "text",
-]);
-
-/** Same mark when the spec and the tables are unchanged, so caches survive re-renders. */
 function sameMark(a: ChartMark, b: ChartMark): boolean {
   if (a === b) return true;
-  if (!PORTABLE.has(a.spec.type) || a.constructor !== b.constructor) return false;
+  if (a.spec.type === "custom" || a.constructor !== b.constructor) return false;
   const [tables, others] = [tablesOf(a), tablesOf(b)];
   return (
     tables.length === others.length &&
@@ -230,7 +200,7 @@ export const Chart = defineComponent({
   },
   emits,
   slots: Object as SlotsType<{
-    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Boxen>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Line3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
+    /** Mark components: <Line>, <Area>, <Bar>, <Point>, <Heatmap>, <Contour>, <ErrorBar>, <Candlestick>, <Histogram>, <Pie>, <BoxPlot>, <Boxen>, <Violin>, <Treemap>, <Sunburst>, <Gauge>, <Funnel>, <Radar>, <Sankey>, <Graph>, <GeoShape>, <GeoPoint>, <Point3D>, <Line3D>, <Surface>, <Rule>, <Region>, <Text>, <Custom>. */
     default?: () => VNode[];
     /**
      * The tooltip's content, in the chart's own box, which keeps its

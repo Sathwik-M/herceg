@@ -436,8 +436,8 @@ def test_histplot_layouts_orientation_and_refusals():
     assert spec["x"]["title"] == "Count" and spec["y"]["title"] == "flipper"
     discrete = hx.histplot({"n": [1, 2, 2, 5]}, x="n", discrete=True)
     assert marks(discrete)[0]["bins"] == [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
-    with pytest.raises(ValueError, match="exactly one of x and y"):
-        hx.histplot(PENGUINS, x="flipper", y="mass")
+    with pytest.raises(ValueError, match="histplot needs exactly one of x and y"):
+        hx.histplot(PENGUINS)
     with pytest.raises(ValueError, match="layered bars only"):
         hx.histplot(PENGUINS, x="flipper", series="species", multiple="stack", kde=True)
     # Densities over horizontal bars run along y.
@@ -495,20 +495,99 @@ def test_kdeplot_matches_seaborns_curves():
     assert marks(hx.kdeplot(frame, y="flipper", filled=True))[0]["type"] == "area"
 
 
-def test_bivariate_kde_is_a_density_heatmap_per_panel():
+def test_bivariate_kde_draws_contours_at_seaborns_levels():
     stats = pytest.importorskip("scipy.stats")
     chart = hx.kdeplot(PENGUINS, x="flipper", y="mass", grid_size=30)
-    (heatmap,) = marks(chart)
-    assert heatmap["type"] == "heatmap" and heatmap["color"] == "density"
+    (contours,) = marks(chart)
+    assert contours["type"] == "contour" and contours["color"] == "density"
+    assert "variant" not in contours
     density = hx.statistics(chart).tables["density"]
     kde = stats.gaussian_kde(np.vstack([PENGUINS["flipper"], PENGUINS["mass"]]))
     expected = kde(np.vstack([density["flipper"], density["mass"]]))
-    expected[expected < expected.max() * 1e-9] = 0
     assert np.allclose(density["density"], expected, rtol=1e-9, atol=1e-15)
+    # One panel's grid travels as a matrix.
+    spec, buffers = chart.to_spec()
+    assert spec["data"]["data"]["matrix"] == {"x": "flipper", "y": "mass"}
+    assert sorted(len(b) for b in buffers) == [30 * 8, 30 * 8, 900 * 8]
+    filled = hx.kdeplot(PENGUINS, x="flipper", y="mass", grid_size=30, filled=True, levels=4)
+    (bands,) = marks(filled)
+    assert bands["variant"] == "bands" and len(bands["thresholds"]) == 4
+    assert "Bands show the bivariate Gaussian kernel density" in filled.to_spec()[0]["description"]
     faceted = hx.kdeplot(PENGUINS, x="flipper", y="mass", facet_column="sex", grid_size=20)
     assert faceted.to_spec()[0]["facet"] == {"column": "sex"}
+    assert "resolved over every panel's density" in faceted.to_spec()[0]["description"]
     with pytest.raises(ValueError, match="facet by facet_row or facet_column instead"):
         hx.kdeplot(PENGUINS, x="flipper", y="mass", series="species")
+    with pytest.raises(ValueError, match="kdeplot levels: expected iso-proportions from 0 to 1"):
+        hx.kdeplot(PENGUINS, x="flipper", y="mass", levels=[0.5, 1.5])
+    with pytest.raises(ValueError, match="kdeplot thresh: expected a proportion from 0 to 1"):
+        hx.kdeplot(PENGUINS, x="flipper", y="mass", thresh=2)
+    with pytest.raises(ValueError, match="kdeplot levels: sets the contours of a bivariate"):
+        hx.kdeplot(PENGUINS, x="flipper", levels=5)
+    with pytest.raises(ValueError, match="kdeplot levels: filled contours need two levels"):
+        hx.kdeplot(PENGUINS, x="flipper", y="mass", levels=1, filled=True)
+
+
+def test_bivariate_kde_levels_match_seaborns():
+    pytest.importorskip("seaborn")
+    from seaborn._statistics import KDE
+    from seaborn.distributions import _DistributionPlotter
+
+    rng = np.random.default_rng(11)
+    x = rng.normal(size=400)
+    y = 0.6 * x + rng.gamma(2.0, size=400)
+    for levels, thresh in ((10, 0.05), (5, 0.2), ([0.1, 0.5, 0.9], 0.05)):
+        chart = hx.kdeplot({"x": x, "y": y}, x="x", y="y", levels=levels, thresh=thresh)
+        found = hx.statistics(chart).tables
+        density, (xs, ys) = KDE(gridsize=200, cut=3)(x, y)
+        assert np.allclose(found["density"]["x"][:200], xs, rtol=1e-12)
+        assert np.allclose(found["density"]["density"], density.ravel(), rtol=1e-9, atol=1e-15)
+        proportions = np.linspace(thresh, 1, levels) if isinstance(levels, int) else levels
+        expected = _DistributionPlotter._quantile_to_level(None, density, proportions)
+        assert np.allclose(found["levels"]["density"], expected, rtol=1e-9, atol=1e-15)
+        (contours,) = marks(chart)
+        assert contours["thresholds"] == sorted(set(found["levels"]["density"].tolist()))
+
+
+def test_bivariate_histplot_counts_as_numpy_does():
+    rng = np.random.default_rng(5)
+    x = rng.normal(size=600)
+    y = 2 * x + rng.normal(size=600)
+    w = rng.uniform(0, 2, size=600)
+    chart = hx.histplot({"x": x, "y": y, "w": w}, x="x", y="y", weight="w", bins=(12, 8))
+    tables = hx.statistics(chart).tables
+    counts, x_edges, y_edges = np.histogram2d(
+        x,
+        y,
+        bins=[np.histogram_bin_edges(x, 12, weights=w), np.histogram_bin_edges(y, 8, weights=w)],
+        weights=w,
+    )
+    assert np.allclose(tables["x edges"]["edges"], x_edges)
+    assert np.allclose(tables["y edges"]["edges"], y_edges)
+    filled = counts > 0
+    assert np.allclose(np.sort(tables["cells"]["count"]), np.sort(counts[filled]))
+    (cells,) = marks(chart)
+    assert cells["type"] == "histogram" and cells["x"] == "x" and cells["y"] == "y"
+    assert cells["bins"]["x"] == [float(e) for e in x_edges]
+    assert cells["weight"] == "w"
+    # Weights leave NumPy no "auto" bin count: ten bins each way, with Seaborn's warning.
+    with pytest.warns(UserWarning, match='"auto" bins cannot follow weights'):
+        weighted = hx.histplot({"x": x, "y": y, "w": w}, x="x", y="y", weight="w")
+    edges = hx.statistics(weighted).tables
+    assert len(edges["x edges"]["edges"]) == len(edges["y edges"]["edges"]) == 11
+    one = hx.histplot({"x": x, "y": y}, x="x", y="y", binwidth=(0.5, 1), normalize="density")
+    assert marks(one)[0]["normalize"] == "density"
+    # Bins past the mark's limit are refused before cells are counted.
+    with pytest.raises(ValueError, match="histplot bins: expected at most 1000 bins"):
+        hx.histplot({"x": x, "y": y}, x="x", y="y", bins=(10_000, 10_000))
+    with pytest.raises(ValueError, match="histplot binwidth: steps of 1e-06 from"):
+        hx.histplot({"x": x, "y": y}, x="x", y="y", binwidth=(1e-6, 1))
+    with pytest.raises(ValueError, match="histplot series: a bivariate histplot counts one"):
+        hx.histplot(PENGUINS, x="flipper", y="mass", series="species")
+    with pytest.raises(ValueError, match="histplot kde: for histograms of x or y alone"):
+        hx.histplot(PENGUINS, x="flipper", y="mass", kde=True)
+    with pytest.raises(ValueError, match="histplot colors: colors the cells of a bivariate"):
+        hx.histplot(PENGUINS, x="flipper", colors="viridis")
 
 
 def test_ecdfplot_steps_match_seaborn():
@@ -748,6 +827,31 @@ def test_pairplot_keeps_series_colors_when_a_diagonal_density_lacks_a_level():
     ).to_svg()
     assert svg.index(">a</text>") < svg.index(">b</text>")
     assert "#ff0000" in svg.split(">a</text>")[0][-160:]
+
+
+def test_jointplots_of_densities_and_2d_histograms():
+    pytest.importorskip("scipy.stats")
+    kde = hx.jointplot(PENGUINS, x="flipper", y="mass", kind="kde")
+    spec, _ = kde.to_spec()
+    kinds = [(mark["type"], mark["panel"]) for mark in spec["marks"]]
+    assert kinds == [("contour", "joint"), ("line", "x"), ("line", "y")]
+    assert spec["marks"][2]["orient"] == "y"
+    filled = hx.jointplot(PENGUINS, x="flipper", y="mass", kind="kde", filled=True)
+    assert [mark["type"] for mark in filled.to_spec()[0]["marks"]] == ["contour", "area", "area"]
+    hist = hx.jointplot(PENGUINS, x="flipper", y="mass", kind="hist", bins=12)
+    marks_ = hist.to_spec()[0]["marks"]
+    assert [(mark["type"], mark["panel"]) for mark in marks_] == [
+        ("histogram", "joint"),
+        ("histogram", "x"),
+        ("histogram", "y"),
+    ]
+    # The strips' histograms share the cells' bins.
+    assert marks_[0]["bins"]["x"] == marks_[1]["bins"]
+    assert marks_[0]["bins"]["y"] == marks_[2]["bins"]
+    with pytest.raises(ValueError, match='jointplot series: kind="kde" draws one distribution'):
+        hx.jointplot(PENGUINS, x="flipper", y="mass", kind="kde", series="species")
+    with pytest.raises(ValueError, match='jointplot filled: fills kind="kde"'):
+        hx.jointplot(PENGUINS, x="flipper", y="mass", filled=True)
 
 
 def test_jointplot_shares_the_scatter_plots_scales_with_its_margins():

@@ -45,8 +45,12 @@ describe("histogram specs", () => {
   });
 
   it.each([
-    { mark: {}, error: /marks\[0\]: histogram: needs exactly one of x and y/ },
-    { mark: { x: "v", y: "v" }, error: /histogram: needs exactly one of x and y/ },
+    { mark: {}, error: /marks\[0\]: histogram: needs x, y, or both/ },
+    { mark: { x: "v", y: "v", series: "v" }, error: /histogram series: a 2D histogram/ },
+    { mark: { x: "v", y: "v", stack: true }, error: /histogram stack: for bars of x or y/ },
+    { mark: { x: "v", colors: "viridis" }, error: /histogram colors: colors the cells of 2D/ },
+    { mark: { x: "v", bins: { x: 3 } }, error: /histogram bins: \{ x, y \} bins both axes/ },
+    { mark: { x: "v", y: "v", bins: { x: 3, z: 1 } }, error: /bins\.z/ },
     {
       mark: { y: "v", axis: "right" },
       error: /histogram axis: horizontal histograms have no right/,

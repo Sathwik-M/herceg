@@ -12,9 +12,12 @@ One name per concept, used the same way in code and docs.
 | **Table** | Columnar data: named columns of equal length (`Table`). |
 | **Field** | The name of a column in a table. Encodings refer to fields. |
 | **Column** | The typed storage behind a field: numbers, times (epoch ms), dictionary-encoded categories, or geometries (codes into a shared set of shapes). |
+| **Matrix table** | A table of values at every x crossed with every y (`fromMatrix`): its coordinates are kept as given, one value per column of the matrix and one per row, and a column of each row's x or y is made only for a reader that asks for one. |
+| **Bins** | How histograms and the `bin` transform cut a number or time axis into intervals (`BinSpec`): about a count of round bins, a step from a start, or the edges themselves. |
+| **Threshold** | A value a contour is drawn at: a line runs where the field crosses it, and bands fill from one threshold up to the next. |
 | **Encoding** | A mark option naming a field whose values a visual property follows: `size` (point area, within `radiusRange`), `color` (a number or time field on a continuous scale, or a category field with a palette color per value), `fillOpacity`, and `symbol`. Constant counterparts name what they set: `radius` in pixels, `fill` and `stroke` for paint. |
 | **Text roles** | `label` is constant text (a series' or mark's name, every annotation's text); `labelField` and `textField` name fields with each record's or annotation's text; `title` heads a chart, a panel, or an axis; `labels` turns drawn labels on or off. Python spells every option in snake_case (`radius_range`, `label_field`, `facet_column`), and `herceg.express` takes the same names as the marks (`series`, `series_order`, `facet_row`, `facet_column`, `whiskers`, `normalize`). |
-| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `rug`, `dendrogram`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `boxen`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
+| **Mark** | One visual layer of a chart (`line`, `area`, `bar`, `point`, `heatmap`, `contour`, `rug`, `dendrogram`, `errorbar`, `candlestick`, `histogram`, `boxplot`, `boxen`, `violin`, the annotations `rule`, `region`, `text`, and JavaScript-only `custom` marks). A mark pairs a spec with the table it reads; a network (`graph`) also reads a table of nodes. Layout marks (`pie`, `treemap`, `sunburst`, `gauge`, `funnel`, `radar`, `sankey`, `graph`, the map layers `geoshape` and `geopoint`, and the 3D layers `point3d` and `surface`) place their own geometry instead of using x and y scales. |
 | **Item** | One thing a layout mark draws, such as a pie slice, a tree's node, a gauge's dial, a funnel's stage, a radar's value on one spoke, a Sankey diagram's or network's node or link, a map's region or point, or a 3D chart's point or surface grid point: what its tooltips and the keyboard visit. |
 | **Projection** | Maps longitudes and latitudes to the plane a map is drawn in (`projection`, a chart option): Equal Earth, Natural Earth, Mercator, equirectangular, or conic equal-area. |
 | **Camera** | Where a 3D chart is seen from: an azimuth about the vertical axis, an elevation above the floor, a zoom, and orthographic or perspective projection (`camera`, a chart option for the first view; then chart state the pointer and keyboard change). |
@@ -30,7 +33,7 @@ One name per concept, used the same way in code and docs.
 | **Scene** | The render plan for one frame: panels, title, and legend in CSS pixels, with no data references. |
 | **Panel** | A plotting area of a scene: its plot rectangle, grid, axes, and geometry. Data is clipped to the plot; guides (rules, text) are not. A chart has one, or one per facet value or subplot, and with a navigator, the strip under them is a panel of the scene too, though not one the chart inspects or zooms. |
 | **Navigator** | A strip under the plot (under every panel, with facets or subplots) drawing a chart's marks over its whole x axis, with a window over the x range in view (the viewport) that the pointer and keyboard move and resize (`navigator`, a chart option made by `rangeNavigator`). |
-| **Geometry** | A mark's part of the scene: packed polylines (lines, areas), rectangles (bars, regions), segments (rugs, error bars, candle wicks, dendrogram links, network links and arrowheads), points (network nodes too), a raster (heatmaps), arcs (pie slices, gauge dials), polygons (a map's regions), rules, text, shapes (custom marks, a gauge's value, funnel connectors, a directed network's bowed links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
+| **Geometry** | A mark's part of the scene: packed polylines (lines, areas, contour lines), rectangles (bars, regions), segments (rugs, error bars, candle wicks, dendrogram links, network links and arrowheads), points (network nodes too), a raster (heatmaps, 2D histograms), arcs (pie slices, gauge dials), polygons (a map's regions, contour bands), rules, text, shapes (custom marks, a gauge's value, funnel connectors, a directed network's bowed links), or faces (a 3D chart's surface cells and points, in drawing order). Geometry columns of tables are shapes in longitude and latitude, not scene geometry. |
 | **Renderer** | Turns a scene into pixels or markup: SVG markup, retained SVG DOM, Canvas 2D, PDF. |
 | **Chart** | A mounted, interactive chart in the browser (`createChart`), and the handle applications hold to it (`Chart`). |
 | **Row view** | A table's rows filtered, restricted to a row set, and sorted, as positions into the table (`RowView`); no column is copied. |
@@ -124,6 +127,18 @@ There are no per-row objects anywhere in the pipeline.
   geometry fields through and refuse them as values (expressions, bins,
   sorts, groups). Tables do not depend on the geometry module: a geometry
   input builds its own column, so line charts do not bundle it.
+- **Matrix tables.** A field sampled on a grid is `nx` × `ny` values over
+  two short coordinate arrays (`data/matrix.ts`). `fromMatrix` keeps the
+  arrays as given and gives the table's coordinate fields deferred columns:
+  their buffers (a value per row, `nx` × `ny` each) are made the first time
+  something reads them, and until then `byteLength` counts the arrays they
+  come from (`Column.deferred`). Contours read the matrix itself
+  (`matrixOf`), so a contour of a million grid points holds its values and
+  two arrays of a thousand. The matrix is kept in a `WeakMap` by table, not
+  in the table, and forgotten when rows are appended, dropped, or reset or
+  the coordinates replaced (a subscription), after which the table is an
+  ordinary one; tables do not import the module, so line charts do not
+  bundle it.
 
 Memory amplification over the source data is therefore: reserved capacity
 for tables that grow (about 0.5x the live rows right after growth; at most
@@ -294,7 +309,7 @@ once per evaluation against the rows' columns into closures, comparing a
 category field with a string literal by dictionary code. Steps run over
 columns, not row objects: filters and sorts gather rows into new typed
 arrays, calculations add columns, bins replace values with their bin's
-start, aggregates group by field values (codes for categories) in order of
+start (and with `end`, add a field of its end), aggregates group by field values (codes for categories) in order of
 appearance, and rolling windows keep a two-stack sliding window of partial
 aggregates (count, mean, squared deviations, minimum, maximum) combined
 with Chan's pairwise update, O(1) amortized per row and without the
@@ -303,7 +318,8 @@ end, so the derived table never shares a buffer the source may overwrite.
 
 A derived table is an ordinary `Table`, which charts and marks use as any
 other. It follows its source through `subscribe`: when every step works row
-by row (filters, calculations, bins with a fixed step), appended source rows
+by row (filters, calculations, and bins of a step or of given edges, not
+a count over the values the table holds), appended source rows
 run through the steps on their own and are appended, and each derived row
 remembers its source row's identity (`rowOffset + index`) so drops remove
 exactly the rows they produced; any other change or pipeline recomputes the
@@ -1312,6 +1328,26 @@ formatting, overlays, brushes, and events read data values; the mark keeps
 each row's cell (4 bytes per row and axis) for the cell index, painting, and
 the keyboard.
 
+With `x1` and `x2` (or `y1` and `y2`), cells lie between each row's two
+edges, as a `bin` transform with `end` gives them (`boundedCells`): a cell
+per distinct lower edge, reaching to the upper edge its rows share, and a
+lattice when they are evenly spaced and one width. Rows of one lower edge
+and two upper ones, and cells that overlap, are refused rather than drawn
+over each other; rows without a usable pair of edges are in no cell, and
+neither drawn, clicked, nor summed. Series place rows at their lower edges;
+tooltips name the span.
+
+Rows sharing a cell combine into its value as `reduce` says (`"last"`, the
+default, or their `"mean"`, `"sum"`, `"min"`, or `"max"`): through the cell
+index (below), whose runs are a cell's rows, each cell's value is written
+at its last row with a value and the others read as missing, in a copy of
+the values (8 bytes per row) made only when some cell has several rows. So
+painting at every zoom, tooltips, the keyboard, and summaries see one value
+per cell, and a click still selects all of the cell's rows. Sums color over
+the extent of the cells' sums; with facets, each panel sums its own rows,
+and the panels share one ramp over all of their sums, which the facet split
+hands the mark once it has split every panel (`Mark.splitPanels`).
+
 Extents are the edges of the first and last cells the rows hold (a facet
 panel's own, cached by its rows). The y extent of what an x range shows
 covers the y cells of the columns the range overlaps, read from each x
@@ -1344,6 +1380,105 @@ several zones share keeps a placement per zone and locale. No field holds a
 row's weekday or month, so brushes select a calendar's rows by their
 cells' centers, as a row set, as they select a stack's; lassos find any
 heatmap's cells at their centers too, which a cell's value need not be.
+
+## Contours
+
+A contour mark (`marks/contour.ts`) draws a field sampled on a rectilinear
+grid: a table whose rows are grid points, every distinct x with every
+distinct y (found as heatmap cells find their values, with a grid of under a
+quarter of its points refused as scattered data), or a matrix table, read as
+it is. Tracing (`marks/contour-trace.ts`) is marching squares in grid units,
+a column index and a fraction by a row index and a fraction, so uneven
+spacing interpolates by distance and projection to pixels comes later:
+
+- **Cells.** A cell with four finite corners is traced; others are left
+  out, so missing values leave holes rather than invented boundaries. A
+  cell whose corners alternate above and below a threshold (a saddle)
+  joins its high corners when the bilinear interpolant's value at the
+  saddle is at or above it (the asymptotic decider), so the topology
+  follows the field rather than a fixed rule. Values at a threshold count
+  as above it.
+- **Rings and lines.** Lines are the segments where the field crosses a
+  threshold, stitched into polylines through a node id per grid point and
+  edge, so neighboring cells meet on the same crossing without comparing
+  coordinates; they are oriented with higher values on the left and open
+  where the grid or its values end. Bands trace rings around the region at
+  or above each threshold (the last strictly above, so the top band holds
+  its upper threshold), closed along the grid's ends and holes. A band is
+  the rings of its lower threshold with those of its upper one, filled
+  even-odd: disjoint polygons with holes that cover each point of the
+  field once, whichever band it is in, without clipping polygons against
+  each other. Where the field is above both thresholds up to the grid's
+  ends or a hole, both sets close their rings along the same sides of
+  cells, and there the band has no boundary: rings of either set that run
+  along a grid line are taken apart (`bandRings`) into chains of crossings
+  and stretches of grid lines (the upper set's reversed, so the band is on
+  the left of each), the stretches cancelled where both cover a line in
+  opposite directions, and the rest joined again into the band's own rings,
+  one around each piece of it. The fill is unchanged; the pieces, as
+  regions, are counted, anchored, and summarized apart. Rings along no grid
+  line, nearly all of a smooth field's, are kept as they are.
+- **Skipping.** Blocks of 16 by 16 cells keep their least and greatest
+  value and whether the field ends inside them, so a threshold outside a
+  block's values skips it (unless a ring must close along an end there),
+  and tracing costs what the contours cross rather than the whole grid.
+- **Storage.** Each threshold's set holds Float32 points in grid units,
+  ring and line starts, signed areas, boxes, and whether each line closes:
+  8 bytes per point and 29 per ring or line. Rings of no area (a lone
+  sample at a threshold) and lines of no length are left out.
+- **Numbers.** Saddles are decided from the corners' differences from the
+  threshold, scaled to the largest, so shifting or scaling a field changes
+  no topology; differences that overflow (values a whole range of doubles
+  apart) are taken of halves of the values instead, for saddles and
+  crossings alike, and only then, since halving loses the tiniest doubles.
+  Automatic thresholds are round values where the doubles hold them, and
+  even steps between the field's ends where its span overflows.
+
+Thresholds are given, or about `thresholds` round values (10) over the
+field's values: inside them for lines, and covering them for bands. The
+traces are kept per grid (a facet panel's rows, or the table) and
+thresholds until the table changes, so recoloring, zooming, and panning
+only project points: each band's or level's projected points are cached
+with the scales they were projected on, rings and lines whose boxes are out
+of view are left out, and a redraw with the same scales (a color change, a
+legend toggle) projects nothing. Each band and each level is a series, its
+regions or lines its points, each region anchored on a cell edge its
+boundary crosses, halfway to the other threshold's crossing there (or to
+the edge's end), where the band surely is (by the grid's ends and holes, a
+little way into the cell, where the pointer's lookup finds it; a region it
+finds nowhere, a sliver below single precision, is left out), and each
+line at its middle point; tooltips follow the pointer (`Hit.at`), naming the field and
+the band's range or line's level, through an index of 16 by 16 blocks of
+grid units listing the rings and lines crossing each: a region test is
+even-odd over the band's rings in the pointer's block, and the nearest line
+is searched in the blocks within reach. The keyboard visits regions and
+lines series by series. Opaque bands are outlined half a pixel in their own
+color to cover the seams antialiasing leaves between neighbors. Contours
+draw on linear and time axes; log axes and time breaks are refused. With
+facets, each panel traces its own rows' grid at the thresholds of all.
+Contours select no rows: a region is of the field, not of rows.
+
+## 2D histograms
+
+A histogram of `x` and `y` both (`marks/histogram2d.ts`) counts the rows
+whose x and y fall in a bin of each, with the bins of one-dimensional
+histograms along each axis (`data/bins.ts`: given edges as they are, a step
+from a start, or about a count of round bins over the rows whose x and y
+are both values; Sturges' rule by default; calendar bins for times), and
+the last bin along each axis holding its right edge, as NumPy's
+`histogram2d` does. One pass over the rows finds each one's bins (by
+arithmetic when the edges are even, by binary search otherwise) and adds 1
+or its weight to a dense count per cell, a Float64 per cell of the bins'
+grid (at most 1,000 bins per axis); the cells holding something become the
+series, in row-major order, with their centers as positions and their
+measure (count, frequency or density per unit of bin area, probability, or
+percent) as values. They are painted through the heatmap's raster code
+(each axis' bins as `AxisCells`, a lattice when even) and found under the
+pointer and by the keyboard through a `CellIndex`, so a 2D histogram has a
+heatmap's drawing, tooltips, and stepping without a row per cell. The color
+scale runs from 0 to the fullest cell of every panel, so facets compare.
+Clicks select a cell's rows, found by their bins. Log axes and time breaks
+are refused for now.
 
 ## Two y axes
 
@@ -1702,8 +1837,8 @@ same. Areas stacked by a series field do the same, each panel's layers on
 the x positions of that panel's rows, with edges of their own. Heatmaps split like row-aligned marks: each panel's raster and cell
 index read only its rows, so a cell takes the last row with a value among
 them, and equal cells of other panels never meet (see Points and rasters).
-Marks whose series summarize rows (histograms, box plots, boxen marks, violins) are
-split before they combine them: with `split`, their `series` lists only
+Marks whose series summarize rows (histograms, box plots, boxen marks,
+violins, contours) are split before they combine them: with `split`, their `series` lists only
 their series' keys, labels, and colors (the legend's, `model.series()`'s),
 and the splitter hands them each panel's rows of their table
 (`Mark.summarizePanels`: one partition per table version and panel list, 4
@@ -1714,6 +1849,10 @@ rows without a series value do, as in one chart), then counts each panel's
 rows by series code in one pass; percent and density are over a panel
 series' own counts, stacks are of the visible series within a panel, and a
 series without rows in a panel has no bars there rather than empty bins.
+A 2D histogram chooses bins per axis from the rows of the panels sharing
+each scale and colors every panel on one ramp, up to the fullest cell of
+any; contours trace each panel's rows as a grid of its own, at thresholds
+over the whole table's values, so a band is the same range in every panel.
 Box plots, boxen marks, and violins summarize each panel's rows as one chart summarizes
 all of them, and list series in one chart's order (each series value by
 the first category it has values in: a pass over the rows, nothing
@@ -1977,13 +2116,14 @@ or table row):
   axis separately: slot `s` of `n` lands in pixel `floor(s * pixels / n)`,
   the pixel its leading edge falls in, and one pass over the rows
   accumulates each pixel's sum and count of finite values (or its greatest
-  or least value, with `reduce: "max"` or `"min"`). Sums are Float64; a
+  or least value, with `sampling: { reduce: "max" }` or `"min"`). Sums are Float64; a
   block whose sum overflows (values near the largest doubles) is summed
   again in a second pass with every value divided by 2^64, and its mean
   multiplied back. Each pixel's four bytes hold its count until it is
   colored. The sums are a frame buffer kept while the image is repainted (8
-  bytes per pixel besides the 4 of the image). Rows that repeat a cell each
-  count toward a mean.
+  bytes per pixel besides the 4 of the image). Rows sharing a cell have
+  been combined into one value already (see Heatmap cells), so each cell
+  counts once.
 - **Spans.** When either axis is not a lattice (unevenly spaced values), or
   a lattice's slots in view would reach more than two plot lengths past the
   plot (deep in a zoom), both axes become spans: the image covers the plot
@@ -2001,8 +2141,8 @@ or table row):
   also keeps the last row of the first cell reaching it, NaN once a second
   cell does: a pixel within one cell shows that cell's last row with a
   value, as tooltips report, and one holding parts of several shows the
-  area-weighted mean of all their rows (or with `reduce`, the greatest or
-  least row of any cell in it). Overflowing sums are summed again scaled,
+  area-weighted mean of all their cells (or with `sampling.reduce`, the
+  greatest or least cell in it). Overflowing sums are summed again scaled,
   as for blocks. The image, sums, and last values take 20 bytes per pixel,
   of the plot's device pixels at most.
 
@@ -3400,16 +3540,18 @@ Tooltips use the model's `inspect()`: for sorted series the nearest x is
 found by binary search (O(log n) per series); "nearest-x" reports every
 visible series at that x, "nearest" the closest point on screen (searching
 outward from the nearest x until points are farther away horizontally than
-the best match). Points and heatmaps answer "nearest" queries with their own
-index. "nearest-x" only snaps to points inside the visible x range, since
+the best match). Points, heatmaps, 2D histograms, and contours answer
+"nearest" queries with their own index. "nearest-x" only snaps to points inside the visible x range, since
 clipped points are not drawn. "nearest-y" does the same along y for
 horizontal bars, scanning each series (bars on a band axis are few) and
 reporting only bars with some part inside the x domain. Marks
 only choose the default mode: "nearest-x" when every mark is drawn along x
 (lines, areas, vertical bars), "nearest-y" when every mark is drawn along y
 (horizontal bars), and "nearest" otherwise.
-An explicit mode applies to every mark except heatmaps, which always report
-the cell under the pointer; when cells overlap, the mark drawn last wins.
+An explicit mode applies to every mark except heatmaps and 2D histograms,
+which always report the cell under the pointer, and contours, which report
+the band region under it or the line nearest it, at the pointer; when cells
+overlap, the mark drawn last wins.
 With zoom enabled along x (`true` or "x"), y ("y"), or both ("xy"), the
 wheel zooms those axes around the pointer, dragging pans them, and
 double-click resets both; all work in pixel space through the scales, so
@@ -3891,7 +4033,8 @@ little-endian typed buffers (`{ type, dtype, buffer }`, where `buffer`
 indexes the buffers delivered next to the JSON), categories as int32
 dictionary codes, and geometries as a float64 buffer of coordinates and
 int32 buffers of offsets (and of codes, when rows do not hold geometry i in
-row i). Binary columns become typed-array views of the delivered
+row i). A table with `matrix: { x, y }` is a matrix table, its coordinate
+columns sent once each rather than once per grid point. Binary columns become typed-array views of the delivered
 bytes, copied only when misaligned, so large data never passes through JSON
 number lists. `chartFromSpec`, `specToSVG`, and `specToPDF` render a loaded spec.
 A spec's bindings name tables, not stores: `loadSpec` makes a store per
@@ -4118,7 +4261,7 @@ mouse input, through Playwright's mouse.
   coordinates. When zooming leaves neighboring points more than about 10^7
   pixels outside the plot (a view of a millionth of the data's range or
   less), lines and curves between them can be visibly displaced.
-- Mark types: line, area, bar, point, heatmap, error bar, candlestick, histogram, the rule, region,
+- Mark types: line, area, bar, point, heatmap, contour, error bar, candlestick, histogram, the rule, region,
   and text annotations, and custom marks. Horizontal bars need a category y;
   bars along a number or time y are not supported. Lines and areas along y
   are read by scanning their series (no index along y), take no right
@@ -4132,7 +4275,8 @@ mouse input, through Playwright's mouse.
   band indices); text can hide or move labels that would overlap, but has
   no leader lines and does not avoid other marks' geometry. Bar value
   labels estimate text widths from the font size to decide what fits.
-- Continuous color for heatmaps, points, and map regions and points only.
+- Continuous color for heatmaps, 2D histograms, contours, points, and map
+  regions and points only.
 - One x axis per panel and at most two y axes per chart; category values
   and marks placed along y (horizontal bars and error bars) only on the
   left.
@@ -4151,6 +4295,7 @@ mouse input, through Playwright's mouse.
   3D marks refuse a binding, and custom marks and annotations neither write
   nor dim. A map's lasso selects a region by its anchor, not
   by overlap; a network's lasso selects node centers and requires a nodes table.
+  Contours select no rows (a region is of the field, not of rows).
   Histograms, box plots, violins, error bars, candlesticks, and heatmaps
   write rows but draw every row undimmed (a bin with some rows selected is
   not shown as such), and lassos and brushes along a summary's statistics
@@ -4175,7 +4320,7 @@ mouse input, through Playwright's mouse.
 - Range navigators need a number or time x axis that every panel shares:
   no x scales per panel, layout marks, or horizontal bars. The strip draws lines, areas,
   points (a sample of one per pixel, in one size and shape), vertical bars,
-  and candlesticks, not heatmaps, error bars, histograms, box plots,
+  and candlesticks, not heatmaps, contours, error bars, histograms, box plots,
   violins, annotations, or custom marks. Dense bars use column envelopes
   with bounded drawing and rectangle buffers; bars and points still scan
   their source rows whenever data changes, and unsorted lines are drawn
@@ -4200,8 +4345,10 @@ mouse input, through Playwright's mouse.
   index. A category whose rows all lack a facet value still gets an (empty)
   band. Panels smaller than 20 pixels a side are refused with an error
   rather than drawn.
-- Heatmaps have no binning of their own (a derived table's `bin` and
-  `aggregate` steps make the grid) and one band per distinct value. A grid
+- Heatmaps have no binning of their own (2D histograms count rows in bins;
+  for other aggregates, a derived table's `bin` and `aggregate` steps make
+  the grid) and one band per distinct value. A heatmap of a matrix table
+  makes its rows' x and y values when first drawn. A grid
   larger than the plot's device pixels is drawn reduced, with a pixel per
   block of cells: a block with any value is painted, so a sparse grid looks
   denser than it is, and static SVG and PDF hold the reduced image, so
@@ -4211,6 +4358,20 @@ mouse input, through Playwright's mouse.
   about 0.3 s and 0.1 s in Chrome on the benchmark machine. Band indices and
   the cell index take up to 12 bytes per row (4 more per axis shared with
   other marks).
+- Contours trace on the main thread, a pass over the grid per threshold,
+  whenever the table or the thresholds change: about 14 ms for ten
+  thresholds of a smooth 1,000 by 1,000 grid (40,000 points, 0.3 MiB), and
+  about half a second for uniform noise, whose 7.6 million points in
+  850,000 rings take 81 MiB (bands' rings rebuilt along the grid's ends
+  about 7 MiB more), and as much again for their projected points
+  (Node, Apple M6). Traced contours have no simplification or level of
+  detail, so zooming such a field projects every ring in view (about 75 ms
+  a scene), and exports hold every point (bands of the smooth grid: about
+  1 MB of SVG or PDF); there are no labels on lines or smoothing. Grids are rectilinear:
+  curvilinear grids and scattered points (which need a density estimate or a
+  2D histogram first) are not traced. Contours and 2D histograms refuse log
+  axes and time breaks, and 2D histograms count every row again when their
+  table changes, at most 1,000 bins per axis. There are no hexagonal bins.
 - Animation moves the axes of single-panel charts between views and, with
   `values`, bars, pie slices, points, and lines and areas traced whole to
   changed values, with the axes their domains move, when the plot and
@@ -4324,8 +4485,8 @@ mouse input, through Playwright's mouse.
   low end, which costs a copy of each edge per frame.
 - Renderer thresholds are not tuned.
 - Rules and text are always drawn above other marks, regardless of mark order.
-- The GPU draws only large point series; lines, areas, bars, and heatmaps use
-  Canvas or SVG. Streaming uploads only new points for whole columns and
+- The GPU draws only large point series; lines, areas, bars, heatmaps, and
+  contours use Canvas or SVG. Streaming uploads only new points for whole columns and
   for series split by a field on linear or log axes; series of a row view
   and values replaced in place upload again.
 - PDF Unicode text requires supplied static TrueType fonts and a conservative

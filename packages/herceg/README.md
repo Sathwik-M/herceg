@@ -92,6 +92,23 @@ codes (-1 for missing) and the dictionary. Shapes for maps are geometry
 fields, from `fromGeoJSON(collection)` or `geometry(set, codes?)` (see Maps);
 `table.geometries(field)` gives each row's code and the shapes.
 
+A field sampled on a grid (a density estimate, a simulation's output, an
+image) is a matrix: values at every x crossed with every y. `fromMatrix`
+makes a table of one, without a column of x and y values per grid point:
+the fields `x` and `y` name hold its coordinates, one per column of the
+matrix and one per row, and every other field a value at each pair, in
+rows of x (the i-th x and j-th y at j × the number of x values + i, as a
+NumPy array of shape (y, x) flattens). The table's rows are the pairs in
+that order; contours read the matrix as it is, and other readers (a
+heatmap, a surface) get a value of x and y per row, made when first read.
+Appending, dropping, or resetting rows, or replacing coordinates, leaves an
+ordinary table; replacing values keeps the matrix.
+
+```ts
+const density = fromMatrix({ x: xs, y: ys, density: values }, { x: "x", y: "y" });
+contour(density, { x: "x", y: "y", color: "density", variant: "bands" });
+```
+
 Tables are mutable and charts that read them re-render on the next animation
 frame, once per frame however many changes arrive:
 
@@ -117,19 +134,36 @@ import { col, count, derive, mean, when } from "herceg";
 const hourly = derive(readings)
   .filter(col("temp").gt(-40).and(col("site").ne("test")))
   .calculate("f", col("temp").mul(1.8).add(32))
-  .bin("time", { step: 3_600_000, as: "hour" })
+  .bin("time", { bins: { step: 3_600_000 }, as: "hour" })
   .aggregate({ by: ["hour", "site"], ops: { mean: mean("f"), n: count() } })
   .table();
 line(hourly, { x: "hour", y: "mean", series: "site" });
 
 derive(prices).rolling({ size: 20, ops: { ma: { op: "mean", field: "close" } } }).table();
+
+// Rows counted in bins of x and y: a 2D histogram's cells, drawn as a heatmap of them.
+const cells = derive(points)
+  .bin("x", { bins: [0, 1, 2, 5, 10], as: "x0", end: "x1" })
+  .bin("y", { bins: 20, as: "y0", end: "y1" })
+  .aggregate({ by: ["x0", "x1", "y0", "y1"], ops: { n: count() } })
+  .table();
+heatmap(cells, { x1: "x0", x2: "x1", y1: "y0", y2: "y1", color: "n" });
 ```
 
+`bin` takes bins as histograms do (one definition, `BinSpec`, for both):
+about how many round bins (10 by default), `{ step, start }`, or edges. It
+replaces the field (or adds `as`) with the start of each value's bin and,
+with `end`, adds the bin's end; a value in no bin (missing, below an
+explicit start, outside the edges) has none. Bins of a width run on from
+multiples of the step (or the start) without end, so rows appended later
+take the bins earlier rows did; a count bins the values the table holds,
+and the last bin holds the greatest value, as a histogram's does.
+
 The result is an ordinary table that follows its source. Appends to the
-source go through filters, calculations, and fixed-step bins on their own,
-and rows dropped from the source (a rolling window) drop the rows they gave;
-other changes, and pipelines with aggregates, rolling windows, sorting, or
-bins without a step, recompute the table. A derived table keeps its source
+source go through filters, calculations, and bins of a width or of edges on
+their own, and rows dropped from the source (a rolling window) drop the rows
+they gave; other changes, and pipelines with aggregates, rolling windows,
+sorting, or bins of a count, recompute the table. A derived table keeps its source
 alive; the source holds it weakly, so one no longer referenced stops
 following once it is collected. Treat derived tables as read-only: changes
 to them are replaced when the source changes. Expressions
@@ -683,7 +717,7 @@ facets, annotations over a table draw each row in its own row's panel, and
 labels keep off the labels of their own panel only (see [Small
 multiples](#small-multiples)).
 
-Bars, points, error bars, heatmaps, candlesticks, histograms, box plots, letter-value (boxen) plots, and violins:
+Bars, points, error bars, heatmaps, contours, candlesticks, histograms, box plots, letter-value (boxen) plots, and violins:
 
 ```ts
 const sales = table({ region: regions, q1: q1Sales, q2: q2Sales });
@@ -706,9 +740,14 @@ const load = table({ hour: time(hours), host: hostNames, cpu: cpuValues });
 heatmap(load, { x: "hour", y: "host", color: "cpu" }); // cells along a time axis, a row per host
 heatmap(load, { x: "hour", y: "host", color: "cpu", xStep: 3_600_000 }); // an hour wide; gaps where hours are missing
 heatmap(load, { x: "hour", y: "host", color: "cpu", xBanded: true }); // a column per distinct hour
-heatmap(spectrum, { x: "time", y: "frequency", color: "power", reduce: "max" }); // grids larger than the plot
+heatmap(spectrum, { x: "time", y: "frequency", color: "power", sampling: { reduce: "max" } }); // grids larger than the plot
+heatmap(events, { date: "day", color: "count", reduce: "sum" }); // rows of one day summed in its cell
 heatmap(commits, { date: "day", color: "count" }); // a calendar: weeks along time, a row per weekday
 heatmap(commits, { date: "day", color: "count", calendar: "months" }); // a row per month, a column per day
+heatmap(cells, { x1: "x0", x2: "x1", y1: "y0", y2: "y1", color: "n" }); // cells between edges, as bins give them
+
+contour(field, { x: "x", y: "y", color: "density" }); // lines at about 10 round values
+contour(field, { x: "x", y: "y", color: "density", thresholds: [0.01, 0.05, 0.1, 0.2], variant: "bands", colors: viridis });
 
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close" });
 candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "close", variant: "ohlc" });
@@ -716,6 +755,7 @@ candlestick(prices, { x: "day", open: "open", high: "high", low: "low", close: "
 histogram(requests, { x: "latency" }); // counts in round bins
 histogram(requests, { x: "latency", series: "region", bins: { step: 10 }, normalize: "percent" });
 histogram(requests, { x: "latency", series: "region", stack: "fill", element: "step" });
+histogram(penguins, { x: "flipper", y: "mass", bins: { x: 30, y: 20 } }); // a 2D histogram's cells
 
 boxplot(requests, { x: "region", y: "latency", series: "version" });
 boxplot(requests, { x: "latency", y: "region" }); // a category y lays boxes along y
@@ -814,26 +854,43 @@ without rows, and dates a month lacks, are empty; rows sharing a day share
 its cell. Calendars take no `x`, `y`, steps, or bands, and refuse time
 breaks; weeks brush and zoom by time, a week column at a time.
 
+Rows sharing a cell (the same x and y, or a calendar's day) combine into
+its value by `reduce`: `"last"` (the default), the last of them with a
+value, or their `"mean"`, `"sum"`, `"min"`, or `"max"`. A cell keeps its
+value at every zoom, and tooltips, the keyboard, and the summary read it;
+its row (in events) is the last of its rows with a value, clicks and
+brushes select every one of them, and with `"sum"` the color scale runs
+over the cells' sums. Combining costs a sort of the rows by cell, once per
+table version, and a value per row only for tables with cells that rows
+share.
+
+`x1` and `x2` (or `y1` and `y2`), number or time fields, place each row's
+cell between two edges instead, as the bins of `bin(..., { end })` give
+them: one cell per distinct first edge, reaching to its rows' second, so
+cells of unequal widths stay exact. Rows of one first edge must have one
+second edge, and cells must not overlap; either is refused with an error.
+These cells take no `xStep` or `xBanded`, nor time breaks yet; tooltips say
+their edges.
+
 A heatmap draws one pixel per cell while its cells are evenly spaced (bands,
 or values one step apart, with or without gaps) and fit the plot's device
 pixels. A grid with more columns (or rows) than that, such as 4,000 x 4,000
 cells on a plot 1,500 device pixels wide, is drawn at the plot's resolution
 instead: each pixel shows the block of cells whose left (or top) edges fall
-in it, colored by the mean of their values, or with `reduce: "max"` or
-`"min"`, by the greatest or least, which keeps single hot cells visible.
-Unevenly spaced cells are drawn at the plot's resolution too, each pixel
-colored by the cells it holds parts of: within one cell, by that cell's
-last row with a value, as tooltips report; across several, by the mean of
-their rows weighted by the area of each cell in the pixel, or the greatest
-or least of them with `reduce`. Missing and NaN values are left out, pixels
-without values are transparent, and rows that repeat a cell each count in a
-pixel of several cells, where a cell drawn in pixels of its own shows its
-last row. Tooltips still report the single cell under the pointer, or
-nothing when that cell has no value. Static SVG and PDF output, which are
-zoomed and printed, reduce only past two pixels per CSS pixel. Drawing costs
-one pass over the table's rows (each zoom or pan draws again), and memory
-follows the rows and the plot's pixels, not the number of cells, so there is
-no cell limit.
+in it, colored by the mean of their values, or with
+`sampling: { reduce: "max" }` or `"min"`, by the greatest or least, which
+keeps single hot cells visible. Unevenly spaced cells are drawn at the
+plot's resolution too, each pixel colored by the cells it holds parts of:
+within one cell, by that cell's value; across several, by the mean of their
+values weighted by the area of each cell in the pixel, or the greatest or
+least of them with `sampling`. Each cell counts once, by its value, however
+many rows share it. Missing and NaN values are left out, and pixels without
+values are transparent. Tooltips still report the single cell under the
+pointer, or nothing when that cell has no value. Static SVG and PDF output,
+which are zoomed and printed, reduce only past two pixels per CSS pixel.
+Drawing costs one pass over the table's rows (each zoom or pan draws
+again), and memory follows the rows and the plot's pixels, not the number
+of cells, so there is no cell limit.
 
 Points encode fields as well as positions. `radius` is every point's radius
 in pixels (2.5 by default); `size` instead names a number field sizing points
@@ -891,9 +948,10 @@ thin to show hollow bodies, so there direction is shown by color only.
 ticked to its left and the close to its right, in `rise` or `fall`, so the
 order of the ticks shows direction too.
 
-Histograms take exactly one number or time field: `x` for vertical bars,
-`y` for horizontal bars, whose lengths run from x = 0. Horizontal histograms
-use the left y axis and refuse `axis: "right"`.
+Histograms take a number or time field: `x` for vertical bars, `y` for
+horizontal bars, whose lengths run from x = 0, or both for a 2D histogram
+(below). Horizontal histograms use the left y axis and refuse
+`axis: "right"`.
 
 ```ts
 histogram(requests, { y: "latency", bins: [0, 10, 25, 100] });
@@ -961,6 +1019,97 @@ are local to each panel, and a series absent from a panel has no bars there
 but keeps its dodge slot, so a series stands in the same place in every
 panel. Subplots draw their marks whole, with their own bins. Bins are
 chosen again only when data changes, never on zoom.
+
+With `x` and `y` both, a histogram counts pairs: each row whose x and y are
+both values counts (as 1, or its `weight`) in the cell of its bin of each,
+the last bin along each axis holding its right edge, as NumPy's
+`histogram2d` does. `bins` bins both axes alike, or each with `{ x, y }`;
+by default each axis gets about log2(n) + 1 round bins over the pairs.
+Cells are colored on a continuous scale from 0 to the fullest cell
+(`colors`, `colorDomain`, and `colorMidpoint` as for heatmaps), with a ramp
+in the legend; `normalize` measures them as for bars, `"frequency"` and
+`"density"` per unit of bin area, so densities integrate to 1 over it.
+Cells holding nothing are not drawn and have no tooltip, as Seaborn leaves
+them. Tooltips name a cell's two bins and what it measures (a cell is no
+one row, so they take no `tooltip.fields`), the keyboard
+steps cell by cell as in heatmaps, clicks select the rows a cell counts,
+and brushes the rows whose x and y they cover. With facets, each panel
+counts its own rows in bins chosen from the panels sharing its x scale
+along x and its y scale along y, on one color scale. A 2D histogram counts
+one distribution: it takes no `series` (facet instead), stacks, dodges,
+cumulative counts, or elements, and refuses log axes and time breaks for
+now.
+
+```ts
+histogram(penguins, { x: "flipper", y: "mass", bins: { x: 30, y: [2500, 3500, 4500, 6500] },
+  normalize: "density", colors: viridis });
+```
+
+Bins are drawn as one image, as heatmap cells are; counting a million pairs
+in 50 × 50 bins and drawing them takes about 12 ms (Node, Apple M6), and
+static SVG holds the image, about 18 KB for those bins and 220 KB for
+200 × 200 (26 KB gzipped).
+
+### Contours
+
+`contour` draws a field sampled on a grid: each row the field's value
+(`color`, a number field) at an `x` and a `y` (number or time fields) of a
+rectilinear grid, the distinct x values crossed with the distinct y values,
+evenly spaced or not; a matrix table (`fromMatrix`) holds such a grid as it
+is. `variant: "lines"` (the default) draws a line where the field crosses
+each threshold; `"bands"` fills the regions from each threshold up to the
+next, the last holding its upper threshold too, and leaves values outside
+the thresholds unfilled. `thresholds` is about how many round values across
+the field's values (10 by default; for bands, round edges covering them), or
+the values themselves, increasing; they are the same in every facet panel.
+
+```ts
+const field = fromMatrix({ x: xs, y: ys, density: values }, { x: "x", y: "y" });
+contour(field, { x: "x", y: "y", color: "density", thresholds: [0.01, 0.05, 0.1, 0.2],
+  variant: "bands", colors: viridis });
+contour(field, { x: "x", y: "y", color: "density", stroke: "#334155", strokeWidth: 1 });
+```
+
+Contours are traced by marching squares, with values interpolated linearly
+along the grid's edges at its own coordinates. A cell whose corners
+alternate above and below a threshold joins its high corners through its
+middle when the bilinear interpolant's value at its saddle is at or above
+the threshold (the asymptotic decider), so contours never cross, and
+neighboring cells find a crossing by the edge it is on, so rings always
+close. A grid point without a value (NaN, or a pair no row gives) leaves out
+the four cells around it, as a hole; contours end where the grid does. A
+value exactly at a threshold counts as at or above it. Bands are disjoint
+polygons with holes: a band's rings are its lower threshold's and its upper
+one's, filled by the even-odd rule, so neighboring bands share their
+boundary, and a band the field passes over (above both of its thresholds)
+has no region. Rows scattered rather than on a grid (values at fewer than a
+quarter of the grid's points) are refused: bin them with a 2D histogram, or
+estimate a density.
+
+Each band (or line) is a series, in order, and its regions (or lines) its
+points: tooltips name the field and the band's range or the line's level,
+at the pointer, inside a region or within a few pixels of a line; the
+keyboard reads the bands in order, Up and Down between them and Left and
+Right through a band's regions, each at a point inside it. The legend keys
+each band's color and range (each line's color and level; none with one
+`stroke`). Colors are the field's values on the ramp (a band at its middle
+value), over `colorDomain` or the field's extent, as a heatmap of the field
+would color it. Regions and lines are not rows, so clicks and brushes select
+none of them, and tooltips show no `tooltip.fields`. With facets, each
+panel's rows are a grid of their own.
+
+Tracing runs once per grid and thresholds: changing colors redraws what was
+traced, and zooming and panning project it again, leaving out rings wholly
+out of view. A 1,000 × 1,000 grid of a smooth field traces ten thresholds
+in about 14 ms; one of uniform noise, whose cells each cross six of the ten
+on average, in about 550 ms, making 7.6 million points in 850,000 rings
+(81 MiB), which a zoom projects again in about 75 ms (Node, Apple M6).
+Contours are drawn as polygons and lines on a canvas or in SVG, and as
+vectors in static SVG and PDF, every traced point kept: ten bands of a
+smooth 200 × 200 grid export as about 200 KB of SVG (41 KB gzipped) or
+170 KB of PDF, and of a 1,000 × 1,000 one about 1 MB of either. Contours
+refuse log axes and time breaks for now, and have no labels along their
+lines yet.
 
 Box plots accept raw values or precomputed statistics. Raw boxes summarize a
 number or time field per category of the other axis: quartiles use linear
@@ -1207,6 +1356,8 @@ the notes), — not yet (refused with an error), · not applicable.
 | errorbar, candlestick | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | — |
 | dendrogram | ◐ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | — |
 | heatmap | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | — | · | ✓ | ✓ | — |
+| 2D histogram | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ◐ | — | · | ✓ | · | — |
+| contour | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | · | · | · | ✓ | · | — |
 | rule, region, text | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ◐ | · | ◐ |
 | custom | ◐ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ◐ | ◐ | ◐ | — |
 | pie | ✓ | ✓ | · | · | — | — | — | — | — | ✓ | ✓ | · | ✓ |
@@ -1223,19 +1374,22 @@ the notes), — not yet (refused with an error), · not applicable.
 - Selected rows and Highlight are what charts bound to a selection store do
   (`rowSelection`, see [Selected rows](#selected-rows)): brushes, lassos, and
   clicks write rows to its channel, and the chart highlights what the channel
-  holds. Histograms are brushed along their bins and box plots and violins
-  along their categories, heatmaps' cells are clicked, brushed (along a
-  number or time axis, the cells whose values the brush covers; in a
-  calendar, those whose centers it covers), or lassoed (at their centers),
-  and lassos select none of the summaries' rows yet; these marks, error bars,
-  and candlesticks draw every row undimmed. Maps, treemaps, sunbursts, and
-  networks take a binding too, in a chart of their own or in panels: clicks
-  select a region's or point's row, a tree node's rows (its own and those
-  under it, of its panel's rows), a network node's rows of its nodes table,
-  or a link's of its links table (of its panel's rows), and lassos a map's
-  regions and points or a network's node centers; the other layout marks
-  and 3D charts refuse one. Brushes and synced selections themselves are
-  ranges and outlines in data values (a map's lasso, in its plane).
+  holds. Histograms are brushed along their bins (2D histograms along x, y,
+  or both) and box plots and violins along their categories, heatmaps'
+  cells are clicked, brushed (along a number or time axis, the cells whose
+  values the brush covers, or between edges, the cells the brush
+  overlaps; in a calendar, those whose centers it covers), or lassoed (at
+  their centers), and lassos select none of the summaries' rows yet; these
+  marks, error bars, and candlesticks draw every row undimmed. Contours'
+  regions and lines are not rows: gestures over them select nothing. Maps,
+  treemaps, sunbursts, and networks take a binding too, in a chart of their
+  own or in panels: clicks select a region's or point's row, a tree node's
+  rows (its own and those under it, of its panel's rows), a network node's
+  rows of its nodes table, or a link's of its links table (of its panel's
+  rows), and lassos a map's regions and points or a network's node centers;
+  the other layout marks and 3D charts refuse one. Brushes and synced
+  selections themselves are ranges and outlines in data values (a map's
+  lasso, in its plane).
 - Zoom, pan, and brushes work on number and time axes; subplots zoom and
   brush along x only, and facets with y scales of their own, on either
   side, do not zoom along y. Maps and networks zoom and pan their plane both ways
@@ -1262,7 +1416,9 @@ the notes), — not yet (refused with an error), · not applicable.
   no inspection of their own, and their heights stay fixed within the plot
   as it zooms.
 - Heatmaps zoom and pan their number and time axes; banded axes (category
-  fields, or `xBanded` / `yBanded`) do not zoom, as for other marks.
+  fields, or `xBanded` / `yBanded`) do not zoom, as for other marks. 2D
+  histograms and contours place cells and regions on number and time axes,
+  which zoom and pan, and take no right axis, log axes, or time breaks.
 - Layout marks but 3D charts draw each facet panel's rows in it (a map's
   layers each split their rows or repeat, and a network's panels share one
   layout), or fill a subplot of their own beside panels with axes (see
@@ -3020,7 +3176,7 @@ plain PDF exports bundle none of them. The `herceg-pdf` and
 `herceg-pdf-fonts` size benchmarks include scene compilation and a line
 mark, without and with embedded-font support respectively (about 46 and
 53 KiB gzip, excluding supplied font bytes). The page is the chart's size
-at 0.75 points per CSS pixel. Marks, axes, and legends are vectors, heatmaps are compressed images,
+at 0.75 points per CSS pixel. Marks (contours included), axes, and legends are vectors, heatmaps and 2D histograms are compressed images,
 and text is selectable. For a single chart, title and description default to document metadata.
 Both font paths also emit one `Document` containing a `Figure` per chart, with each
 chart's title and generated summary as `/Alt`, drawing linked through marked
@@ -3130,7 +3286,10 @@ dictionary-encoded categories (`{ type: "category", codes, dictionary }`), or
 geometries (`{ type: "geometry", coordinates, ringOffsets, polygonOffsets,
 geometryOffsets, codes? }`: float64 longitude, latitude pairs and int32
 offsets, each a buffer index or a JSON array, and int32 codes per row,
-row i holding geometry i without them).
+row i holding geometry i without them). A table with `"matrix": { "x":
+"lon", "y": "lat" }` is a matrix (`fromMatrix`): the columns it names hold
+the coordinates, and the others a value at each pair, so a grid's
+coordinates travel once each.
 Marks are the same objects as a TypeScript mark's `spec`, with `data` naming
 their table. A mark's `spec` is frozen, readonly all the way down: to change
 a mark, build a new one and pass it to `chart.update({ marks })`.
@@ -3178,8 +3337,10 @@ axis with breaks are placed on the CPU). So are 3D charts of 20,000 points,
 whose centers land on the same device pixel are drawn once (above 4,096
 points per series), which is faster for dense scatter plots but can drop
 subpixel edge coverage. Tooltips find the nearest point through a spatial
-grid index. Heatmaps are drawn as one image of at most the plot's device
-pixels, whatever their number of cells.
+grid index. Heatmaps and 2D histograms are drawn as one image of at most
+the plot's device pixels, whatever their number of cells. Contours of large
+grids are traced once and projected again as the view moves (see
+Contours).
 
 Lines and areas over sorted x are reduced before drawing (M4): within each
 device-pixel column, only the first, lowest, highest, and last points of an

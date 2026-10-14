@@ -92,8 +92,11 @@ def test_histogram_refuses_invalid_edges(bins, message):
 @pytest.mark.parametrize(
     "options, message",
     [
-        ({}, "histogram: needs exactly one of x and y"),
-        ({"x": "v", "y": "v"}, "histogram: needs exactly one of x and y"),
+        ({}, "histogram: needs x, y, or both"),
+        ({"x": "v", "y": "v", "series": "g"}, "histogram series: a 2D histogram of x and y"),
+        ({"x": "v", "y": "v", "dodge": True}, "histogram dodge: for bars of x or y"),
+        ({"x": "v", "colors": "viridis"}, "histogram colors: colors the cells of 2D"),
+        ({"x": "v", "bins": {"x": 3}}, "histogram bins: .* bins both axes of a 2D histogram"),
         ({"y": "v", "axis": "right"}, r"histogram axis: a horizontal histogram \(y\) has no right"),
         ({"x": "v", "stack": True, "dodge": True}, "histogram dodge: dodge or stack, not both"),
         ({"x": "v", "normalize": "fraction"}, 'histogram normalize: .*; received "fraction"'),

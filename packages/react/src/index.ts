@@ -7,6 +7,7 @@ export {
   Boxen,
   BoxPlot,
   Candlestick,
+  Contour,
   Custom,
   Dendrogram,
   ErrorBar,

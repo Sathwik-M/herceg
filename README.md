@@ -6,8 +6,8 @@ applications. Today it provides:
 - a framework-independent engine whose core runs without a DOM;
 - a serializable chart specification (`ChartSpec`);
 - columnar, typed-array tables with streaming updates and rolling windows;
-- line, area, bar, scatter, and heatmap marks, plus rule, region, and text
-  annotations, that compose in one chart, and part-to-whole, hierarchy,
+- line, area, bar, scatter, heatmap, and contour marks, plus rule, region,
+  and text annotations, that compose in one chart, and part-to-whole, hierarchy,
   flow, network, map, and 3D (scatter, line, and surface) charts;
 - SVG and Canvas rendering, chosen per chart by how much it draws, and WebGL
   for large point series and large 3D charts, loaded only when a chart needs it;
@@ -80,10 +80,11 @@ from long data split by a series field, zero or interpolated where a series has 
 (vertical and horizontal, with value labels), point (with size, color,
 opacity, and shape encoded by fields, and dodged, jittered, or packed in
 beeswarms on category axes), heatmap (cells along number and time
-axes that zoom and pan, or in bands, and calendars by week or by month),
-error bar, candlestick (and
+axes that zoom and pan, or in bands, or between binned edges, and calendars
+by week or by month), contour (lines, or disjoint bands with holes, of a
+field on a grid or a matrix table), error bar, candlestick (and
 OHLC bars), histogram (weighted, stacked as shares of each bin, or drawn as
-steps or polygons), pie (and donut), box plot (outliers shown or hidden),
+steps or polygons, and 2D histograms of two fields), pie (and donut), box plot (outliers shown or hidden),
 letter-value (boxen) plot, violin, treemap, sunburst, gauge,
 funnel, radar, Sankey, network (graph), and map marks (choropleth regions and
 points on Equal Earth, Natural Earth, Mercator, equirectangular, and conic
@@ -163,8 +164,9 @@ Next, in order:
    and later bidirectional ordering/shaping and CFF fonts.
 7. Screen-reader verification, benchmarks in Firefox and on other machines
    (WebKit and Chrome are measured), and an API review before a first release.
-8. Heatmaps on log axes, calendar month labels aligned to week columns, and
-   2D binning (density heatmaps from raw points).
+8. Heatmaps, contours, and 2D histograms on log axes; hexagonal bins;
+   labels along contour lines; and calendar month labels aligned to week
+   columns.
 
 ## Development
 

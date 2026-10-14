@@ -247,7 +247,8 @@ function refuseBrush(mark: Mark, brush: BrushSpec) {
         `rug brush: its ticks have no ${other} value; brush along ${mark.tooltip} only`,
       );
   }
-  if (!mark.summarizes) return;
+  // Cells of a 2D histogram place their rows along x and y both.
+  if (!mark.summarizes || mark.tooltip === "cell") return;
   // A summary's values axis holds statistics: a histogram's counts, a box plot's quartiles.
   const values = mark.tooltip === "y" ? "x" : "y";
   if (brush === values || brush === "xy")

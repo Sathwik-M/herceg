@@ -4,8 +4,11 @@
 
 import type { NumericArray } from "../data/column.ts";
 import { lowerBound, upperBound } from "../data/table.ts";
+import type { CellIndex } from "../lod/cell-index.ts";
 import type { Breaks } from "../lod/m4.ts";
 import { usableDomain } from "../model/axis.ts";
+import type { PositionScale } from "../scale/scale.ts";
+import type { BandPlaces } from "./series.ts";
 
 /** How far, in cells, values may stray from a lattice and still be drawn on it. */
 const TOLERANCE = 1e-6;
@@ -150,6 +153,80 @@ export function placeCells(
         : `${name}Step: ${step} is too small for values near ${values[wrong]}; give a larger step`,
     );
   return new AxisCells(values, edges[0], edges[1], cells, lattice, breaks);
+}
+
+/**
+ * The cells between each row's `lower` and `upper` edge (the bins of a
+ * `bin` transform with `end`, say): one per distinct lower edge, ascending,
+ * reaching to the upper edge its rows share. Rows without both edges, or
+ * with an upper edge not above the lower, have no cell. Cells of one lower
+ * edge and two upper ones, or that overlap, are refused (in errors that
+ * `name` the axis). Evenly spaced cells of one width lie on a lattice.
+ */
+export function boundedCells(lower: NumericArray, upper: NumericArray, name: string): AxisCells {
+  const [starts, cells] = distinct(lower);
+  const ends = new Float64Array(starts.length).fill(Number.NaN);
+  for (let row = 0; row < cells.length; row++) {
+    const c = cells[row]!;
+    if (c < 0) continue;
+    const end = upper[row]!;
+    if (!(end > lower[row]! && Number.isFinite(end))) {
+      cells[row] = -1;
+      continue;
+    }
+    if (Number.isNaN(ends[c]!)) ends[c] = end;
+    else if (ends[c] !== end)
+      throw new RangeError(
+        `${name}1: rows from ${starts[c]} end at ${ends[c]} and at ${end}; give each cell one ${name.slice(-1)}2`,
+      );
+  }
+  // Starts whose rows have no usable end make no cell.
+  const kept = new Int32Array(starts.length);
+  let n = 0;
+  for (let c = 0; c < starts.length; c++) kept[c] = Number.isNaN(ends[c]!) ? -1 : n++;
+  const lowerEdges = new Float64Array(n);
+  const upperEdges = new Float64Array(n);
+  for (let c = 0; c < starts.length; c++) {
+    if (kept[c]! < 0) continue;
+    lowerEdges[kept[c]!] = starts[c]!;
+    upperEdges[kept[c]!] = ends[c]!;
+  }
+  if (n < starts.length)
+    for (let row = 0; row < cells.length; row++)
+      if (cells[row]! >= 0) cells[row] = kept[cells[row]!]!;
+  for (let i = 1; i < n; i++)
+    if (upperEdges[i - 1]! > lowerEdges[i]!)
+      throw new RangeError(
+        `${name}1: the cells from ${lowerEdges[i - 1]} to ${upperEdges[i - 1]} and from ${lowerEdges[i]} to ${upperEdges[i]} overlap; give cells that do not`,
+      );
+  return new AxisCells(
+    lowerEdges,
+    lowerEdges,
+    upperEdges,
+    cells,
+    boundedLattice(lowerEdges, upperEdges),
+  );
+}
+
+/** The lattice cells between edges lie on, if they are all one width, a whole number of widths apart. */
+function boundedLattice(lower: Float64Array, upper: Float64Array): Lattice | undefined {
+  const n = lower.length;
+  if (n === 0) return undefined;
+  const start = lower[0]!;
+  const width = upper[0]! - start;
+  if (!(width > 0 && Number.isFinite(width))) return undefined;
+  const slots = new Int32Array(n);
+  let previous = -1;
+  for (let i = 0; i < n; i++) {
+    const slot = Math.round((lower[i]! - start) / width);
+    if (!(slot > previous && slot < MAX_SLOTS)) return undefined;
+    if (Math.abs(lower[i]! - (start + slot * width)) > width * TOLERANCE) return undefined;
+    if (Math.abs(upper[i]! - lower[i]! - width) > width * TOLERANCE) return undefined;
+    slots[i] = slot;
+    previous = slot;
+  }
+  const dense = previous === n - 1;
+  return { start, width, slots: dense ? undefined : slots, size: previous + 1 };
 }
 
 /**
@@ -312,4 +389,95 @@ export function heldCells(
     if (c > last) last = c;
   }
   return first <= last ? [first, last] : undefined;
+}
+
+/** Rows a vertical step looks up one at a time before it scans the cells. */
+const LOOKUPS = 32;
+
+/**
+ * For marks read cell by cell (heatmaps, 2D histograms): the position in
+ * `index` of the cell `columns` to the right and `rows` up from the one at
+ * `position`, as `frame` draws them, or undefined when there is none; a
+ * negative position asks for the top left cell. Infinite steps jump to the
+ * row's (or column's) far end. On band axes holding only some of the
+ * chart's bands, `places` say where the index's bands are drawn.
+ */
+export function stepCell(
+  index: CellIndex,
+  position: number,
+  columns: number,
+  rows: number,
+  frame: { x: PositionScale; y: PositionScale },
+  places: { x?: BandPlaces | undefined; y?: BandPlaces | undefined } = {},
+): number | undefined {
+  const { x: xPlaces, y: yPlaces } = places;
+  const xs = index.x;
+  const ys = index.y;
+  // Which way cells run on screen: rows of categories run down the plot,
+  // rows of numbers up it, and reversed domains run back.
+  const right = direction(frame.x) < 0 ? -1 : 1;
+  const up = direction(frame.y) < 0 ? 1 : -1;
+  // The best cell so far, by a rank compared key by key (lowest first).
+  let best = -1;
+  let [ra, rb, rc] = [Number.POSITIVE_INFINITY, 0, 0];
+  const consider = (position: number, a: number, b = 0, c = 0) => {
+    if (a < ra || (a === ra && (b < rb || (b === rb && c < rc)))) {
+      best = position;
+      [ra, rb, rc] = [a, b, c];
+    }
+  };
+  if (position < 0) {
+    // Entering the grid: its top left cell, which places, kept in the
+    // chart's order, leave where the index has it.
+    const cell = index.corner(up > 0, right < 0);
+    return cell < 0 ? undefined : cell;
+  }
+  const along = columns !== 0;
+  const steps = Math.abs(along ? columns : rows);
+  const ahead = Math.sign(along ? columns * right : rows * up);
+  const row = index.rowOf(position);
+  const [column, line] = [placeOf(xPlaces, xs[row]!), placeOf(yPlaces, ys[row]!)];
+  // A step finds the next cell in its row (or column) by binary search
+  // while there is one near; jumps and steps off the end scan the cells.
+  if (steps !== Number.POSITIVE_INFINITY) {
+    if (along) {
+      const near = index.beside(xs[row]!, ys[row]!, ahead > 0);
+      if (near >= 0) return near;
+    } else {
+      for (let j = 1; j <= LOOKUPS && line + j * ahead >= 0; j++) {
+        const band = bandOf(yPlaces, line + j * ahead);
+        if (band < 0) break;
+        const near = index.find(xs[row]!, band);
+        if (near >= 0) return near;
+      }
+    }
+  }
+  index.forEachCell((cb, rb, k) => {
+    const c = placeOf(xPlaces, cb);
+    const r = placeOf(yPlaces, rb);
+    const offset = (along ? c - column : r - line) * ahead;
+    if (offset <= 0) return;
+    const across = Math.abs(along ? r - line : c - column);
+    // The next cell in the same row (or column), else the nearest ahead in
+    // another, so no cell is out of reach; the furthest for jumps.
+    if (steps === Number.POSITIVE_INFINITY) {
+      if (across === 0) consider(k, -offset);
+    } else consider(k, across === 0 ? 0 : 1, offset, across);
+  });
+  return best < 0 ? undefined : best;
+}
+
+/** Which way a scale's values run on screen: positive rightward or downward. */
+function direction(scale: PositionScale): number {
+  return Math.sign((scale.range[1] - scale.range[0]) * (scale.domain[1] - scale.domain[0]));
+}
+
+/** The place of chart band `band` in a panel placing bands at `places`. */
+function placeOf(places: BandPlaces | undefined, band: number): number {
+  return places ? places.at(band) : band;
+}
+
+/** The chart band at place `place` in a panel placing bands at `places`. */
+export function bandOf(places: BandPlaces | undefined, place: number): number {
+  return places ? places.band(place) : place;
 }

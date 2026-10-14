@@ -47,16 +47,17 @@ def test_derivations_check_columns_and_track_kinds():
         .filter(hg.col("temp") > 0)
         .calculate("f", hg.col("temp") * 1.8 + 32)
         .calculate("label", hg.when(hg.col("temp") > 15, "warm", "cool"))
-        .bin("temp", step=10, name="band")
+        .bin("temp", bins={"step": 10}, name="band", end="top")
     )
     assert daily.columns["f"] == "number"
+    assert daily.columns["top"] == "number"
     assert daily.columns["label"] == "category"
     summary = daily.aggregate(by="site", n="count", mean=("temp", "mean"))
     assert summary.columns == {"site": "category", "n": "number", "mean": "number"}
     with pytest.raises(KeyError, match="filter: no column 'wind'"):
         hg.derive(READINGS).filter(hg.col("wind") > 0)
     with pytest.raises(TypeError, match="bin: column 'site' holds category"):
-        hg.derive(READINGS).bin("site", step=1)
+        hg.derive(READINGS).bin("site", bins={"step": 1})
     with pytest.raises(
         ValueError, match='aggregate m: unknown operation "avg"; name one of "count"'
     ):
@@ -130,8 +131,12 @@ def test_review_fixes_hold():
         hg.derive(READINGS).filter(hg.col("site") > 1)
     labels = hg.derive(READINGS).calculate("hot", hg.when(hg.col("temp") > 15, "hot", None))
     assert labels.columns["hot"] == "category"
-    with pytest.raises(ValueError, match="bin count"):
-        hg.derive(READINGS).bin("temp", count=0)
+    with pytest.raises(ValueError, match="bin bins: expected a whole number of at least 1"):
+        hg.derive(READINGS).bin("temp", bins=0)
+    with pytest.raises(ValueError, match=r"bin bins\[1\]: expected an edge above the one before"):
+        hg.derive(READINGS).bin("temp", bins=[1, 1])
+    with pytest.raises(ValueError, match="bin end: 'temp' also names the bins' starts"):
+        hg.derive(READINGS).bin("temp", end="temp")
 
 
 def _labelled(derived: hg.Derived, column: str) -> str:
@@ -222,11 +227,19 @@ def test_membership_needs_literal_candidates():
 
 
 def test_bin_options_are_numbers_not_booleans():
-    with pytest.raises(ValueError, match="bin step: expected a positive number; received True"):
-        hg.derive(READINGS).bin("temp", step=True)
-    with pytest.raises(ValueError, match="bin start: expected a finite number; received True"):
-        hg.derive(READINGS).bin("temp", step=5, start=True)
+    with pytest.raises(
+        ValueError, match="bin bins step: expected a positive number; received True"
+    ):
+        hg.derive(READINGS).bin("temp", bins={"step": True})
+    with pytest.raises(ValueError, match="bin bins start: expected a finite number; received True"):
+        hg.derive(READINGS).bin("temp", bins={"step": 5, "start": True})
+    with pytest.raises(ValueError, match="bin bins: expected a whole number, a step/start dict"):
+        hg.derive(READINGS).bin("temp", bins=True)
     # NumPy numbers become JSON numbers.
-    binned = hg.derive(READINGS).bin("temp", step=np.int64(5), start=np.float32(2.5))
-    assert binned.steps[-1] == {"bin": "temp", "step": 5, "start": 2.5}
+    binned = hg.derive(READINGS).bin(
+        "temp", bins={"step": np.int64(5), "start": np.float32(2.5)}, end="to"
+    )
+    assert binned.steps[-1] == {"bin": "temp", "bins": {"step": 5, "start": 2.5}, "end": "to"}
     json.dumps(binned.steps[-1])
+    edges = hg.derive(READINGS).bin("temp", bins=np.array([0, 10, 20]))
+    assert edges.steps[-1] == {"bin": "temp", "bins": [0.0, 10.0, 20.0]}

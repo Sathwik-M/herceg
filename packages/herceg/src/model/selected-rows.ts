@@ -36,6 +36,7 @@
 //   point's row, a node's subtree's, a link's. Lassos select by the items'
 //   anchors on a map's plane (`LayoutResult.lassoed`); brushes nothing.
 
+import type { NumericArray } from "../data/column.ts";
 import { compileExpression, Expr, type Expression } from "../data/expression.ts";
 import { RowSet } from "../data/row-set.ts";
 import { type DataSelection, selectRows, selectWhere } from "../data/selection.ts";
@@ -149,6 +150,11 @@ function readingsOf(mark: Mark): Reading[] {
     spec.series === undefined && values.length > 1
       ? values.map((name) => ({ id: name, [along]: position, [across]: field(name) }))
       : [{ [along]: position, [across]: field(values[0]!) }];
+  // A heatmap's cell: at its field's value, or the span between its edges.
+  const cellPlace = (axis: "x" | "y"): Place =>
+    spec[`${axis}1`] !== undefined
+      ? { low: f(`${axis}1`), high: f(`${axis}2`) }
+      : field(spec[axis] as string);
   switch (mark.spec.type) {
     case "point":
       return byField(field(spec.x as string), list(spec.y!));
@@ -176,16 +182,28 @@ function readingsOf(mark: Mark): Reading[] {
     case "candlestick":
       return [{ x: field(spec.x as string), y: { low: f("low"), high: f("high") } }];
     case "histogram":
+      // A 2D histogram's cells count rows by their x and y both.
+      if (spec.x !== undefined && spec.y !== undefined)
+        return [{ x: field(spec.x as string), y: field(spec.y as string) }];
+      return [{ [along]: field(spec[along] as string) }];
     case "boxplot":
     case "boxen":
     case "violin":
     case "rug":
       return [{ [along]: field(spec[along] as string) }];
     case "heatmap":
-      return [{ x: field(spec.x as string), y: field(spec.y as string) }];
+      return [{ x: cellPlace("x"), y: cellPlace("y") }];
     default:
       return [];
   }
+}
+
+/**
+ * A heatmap's values by row, as its table holds them: the series it reads
+ * hold each cell's value at its last row only, as rows sharing a cell combine.
+ */
+function cellValues(mark: Mark): NumericArray {
+  return mark.table!.numbers((mark.spec as unknown as { color: string }).color as never);
 }
 
 /** Whether the mark stacks its values, so they are drawn at the stack's tops. */
@@ -444,7 +462,10 @@ export function brushedRows(
   // brushes along their statistics, select none of them (charts refuse
   // such gestures; a selection set through `select` may still be one).
   const drawn = drawnIn(model, panels, table).filter(
-    ({ mark }) => !mark.summarizes || (!selection.lasso && !selection[valueAxis(mark)]),
+    ({ mark }) =>
+      !mark.summarizes ||
+      // A 2D histogram's cells place their rows along x and y both.
+      (!selection.lasso && (mark.tooltip === "cell" || !selection[valueAxis(mark)])),
   );
   if (drawn.length === 0) return undefined;
   if (selection.lasso) return selectRows(lassoed(model, drawn, selection.lasso, table));
@@ -552,7 +573,8 @@ function drawnRow(d: Drawn, row: number): boolean {
     return false;
   if (d.x.breaks?.hides(placeAt(s, "x", row))) return false;
   // A heatmap's row without a value colors no cell.
-  if (mark.tooltip === "cell" && !Number.isFinite(s.values[row]!)) return false;
+  if (mark.tooltip === "cell" && !mark.summarizes && !Number.isFinite(cellValues(mark)[row]!))
+    return false;
   return mark.shows?.(s, row, d.y, d.x) ?? true;
 }
 
@@ -840,12 +862,19 @@ function rowsOf(
   const row = rowOf(series, position);
   if (!mark.summarizes && mark.tooltip !== "cell") return { table, rows: Uint32Array.of(row) };
   const found: number[] = [];
-  if (mark.tooltip === "cell") {
-    // Every row drawn in the cell (with a value), not only the one it shows.
+  if (mark.tooltip === "cell" && !mark.summarizes) {
+    // Every row drawn in the cell (with a value), not only the one whose value it shows.
     const [x, y] = [series.x[row]!, series.y[row]!];
+    const values = cellValues(mark);
+    const scale = panel.y ?? panel.yRight!;
     for (let k = 0; k < series.length; k++) {
       const other = rowOf(series, k);
-      if (series.x[other] === x && series.y[other] === y && Number.isFinite(series.values[other]!))
+      if (
+        series.x[other] === x &&
+        series.y[other] === y &&
+        Number.isFinite(values[other]!) &&
+        (mark.shows?.(series, other, scale, panel.x) ?? true)
+      )
         found.push(other);
     }
     return { table, rows: Uint32Array.from(found) };

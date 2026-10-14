@@ -96,6 +96,9 @@ def test_bindings_refuse_what_cannot_select_rows():
         match="Chart brush: a histogram's x axis holds statistics, so its rows are brushed along y",
     ):
         hg.Chart(trips(), brush="x", row_selection=binding).histogram(y="km").to_spec()
+    # A 2D histogram's cells place their rows along x and y both.
+    for brush in ("x", "y", "xy"):
+        hg.Chart(trips(), brush=brush, row_selection=binding).histogram("km", y="fare").to_spec()
     boxes = hg.Chart(trips(), brush="lasso", row_selection=binding).boxplot(x="kind", y="fare")
     with pytest.raises(
         ValueError,

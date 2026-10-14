@@ -221,12 +221,7 @@ export class Table<S extends Schema = Schema> {
         const Kind = error instanceof RangeError ? RangeError : TypeError;
         throw new Kind(`Column "${field}": ${(error as Error).message}`);
       }
-      if (length !== undefined && column.buffer.length !== length) {
-        throw new RangeError(
-          `Column "${field}" has ${column.buffer.length} rows, expected ${length}`,
-        );
-      }
-      length = column.buffer.length;
+      length = rowsOf(field, column, length);
       this.#columns.set(field, column);
     }
     this.#length = length ?? 0;
@@ -261,7 +256,8 @@ export class Table<S extends Schema = Schema> {
   /** Bytes reserved by column buffers, including unused capacity. */
   get byteLength(): number {
     let bytes = 0;
-    for (const column of this.#columns.values()) bytes += column.buffer.byteLength;
+    for (const column of this.#columns.values())
+      bytes += (column.deferred ?? column.buffer).byteLength;
     return bytes;
   }
 
@@ -415,16 +411,10 @@ export class Table<S extends Schema = Schema> {
       if (values.length !== count)
         throw new RangeError(`Field "${field}" has ${values.length} values, expected ${count}`);
       // Values are checked before anything changes.
-      column.check?.(values);
       check(column, values, skip, "append", field);
     }
     if (count === 0) return;
-    // Inputs that view this table's own storage could be overwritten by
-    // compaction before they are read.
-    for (const entry of entries) {
-      const values = entry[1];
-      if (isNumericArray(values) && this.#ownsBuffer(values.buffer)) entry[1] = values.slice();
-    }
+    for (const entry of entries) entry[1] = this.#apart(entry[1]);
 
     // Existing rows that would be evicted are dropped before compaction so
     // they are not copied.
@@ -485,10 +475,9 @@ export class Table<S extends Schema = Schema> {
     requireCount(start, "replace() start");
     if (start + count > this.#length) throw new RangeError("replace() range is out of bounds");
     if (count === 0) return;
-    column.check?.(input);
     check(column, input, 0, "replace", field);
-    if (isNumericArray(input) && this.#ownsBuffer(input.buffer)) input = input.slice();
-    if (!column.owned) this.#reallocate(this.#capacity);
+    input = this.#apart(input);
+    if (!column.owned) own(column);
     writeValues(column, this.#start + start, input, 0);
     // Updating an index costs as much as rebuilding it for large ranges, and
     // data replaced in bulk is often replaced again before it pays off.
@@ -537,12 +526,7 @@ export class Table<S extends Schema = Schema> {
       const column = createColumnOfKind(existing.kind, input);
       if (column.kind !== existing.kind)
         throw new TypeError(`reset() must keep field "${field}" as ${existing.kind}`);
-      if (length !== undefined && column.buffer.length !== length) {
-        throw new RangeError(
-          `Column "${field}" has ${column.buffer.length} rows, expected ${length}`,
-        );
-      }
-      length = column.buffer.length;
+      length = rowsOf(field, column, length);
       next.set(field, column);
     }
     this.#columns = next;
@@ -572,9 +556,16 @@ export class Table<S extends Schema = Schema> {
     return column;
   }
 
-  #ownsBuffer(buffer: ArrayBufferLike): boolean {
-    for (const column of this.#columns.values()) if (column.buffer.buffer === buffer) return true;
-    return false;
+  /**
+   * `values`, copied when they view this table's own storage, which
+   * compaction could overwrite before they are read (a buffer not made yet
+   * is no one's).
+   */
+  #apart(values: ArrayLike<unknown>): ArrayLike<unknown> {
+    if (isNumericArray(values))
+      for (const column of this.#columns.values())
+        if (!column.deferred && column.buffer.buffer === values.buffer) return values.slice();
+    return values;
   }
 
   #view(field: string, buffer: NumericArray): NumericArray {
@@ -618,7 +609,7 @@ export class Table<S extends Schema = Schema> {
     if (column.dictionary.length <= 2 * this.#length + 64) return;
     // Codes borrowed from the caller (encodedCategory) are copied before
     // they are renumbered.
-    if (!column.owned) this.#reallocate(this.#capacity);
+    if (!column.owned) own(column);
     const end = this.#start + this.#length;
     const remap = new Int32Array(column.dictionary.length).fill(-1);
     for (let i = this.#start; i < end; i++) {
@@ -719,10 +710,28 @@ export class Table<S extends Schema = Schema> {
   }
 }
 
+/** A column's rows, which must be the other columns' (`length`, when there are others). */
+function rowsOf(field: string, column: Column, length: number | undefined): number {
+  const rows = (column.deferred ?? column.buffer).length;
+  if (length !== undefined && rows !== length)
+    throw new RangeError(`Column "${field}" has ${rows} rows, expected ${length}`);
+  return rows;
+}
+
+/**
+ * Copies a column's borrowed buffer before it is written, its rows where
+ * they were; the other columns keep theirs (a matrix table's coordinates
+ * stay unmade).
+ */
+function own(column: Column): void {
+  column.buffer = column.buffer.slice() as never;
+  column.owned = true;
+}
+
 /**
  * Throws, before anything changes, for a value of a batch that a column
- * keeps (from `skip` on) that is not of its kind, naming the change
- * (`method`) and the field.
+ * keeps (from `skip` on) that is not of its kind (for geometry, not a code
+ * of its shapes), naming the change (`method`) and the field.
  */
 function check(
   column: Column,
@@ -731,6 +740,8 @@ function check(
   method: string,
   field: string,
 ): void {
+  // Geometry codes are checked by their column.
+  column.check?.(values);
   if (isNumericArray(values)) return;
   try {
     for (let i = skip; i < values.length; i++) {

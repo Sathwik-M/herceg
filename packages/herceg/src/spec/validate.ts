@@ -6,12 +6,14 @@
 // Properties the format does not have are refused by default, naming the
 // property meant where one is close, so misspellings do not go unnoticed.
 
+import { checkBins } from "../data/bins.ts";
 import { areaFormError } from "../marks/area.ts";
 import { boxPlotFormError } from "../marks/boxplot-input.ts";
+import { contourFormError } from "../marks/contour-input.ts";
 import { checkLeaves, checkLinkage } from "../marks/dendrogram-data.ts";
 import { errorBarForm } from "../marks/errorbar.ts";
 import { heatmapFormError } from "../marks/heatmap.ts";
-import { histogramFormError, requireHistogramEdges } from "../marks/histogram-input.ts";
+import { histogramFormError, perAxisBins } from "../marks/histogram-input.ts";
 import { regionFormError } from "../marks/region.ts";
 import { ruleFormError } from "../marks/rule.ts";
 import { treeFormError } from "../marks/tree-data.ts";
@@ -23,6 +25,7 @@ import {
   type CameraSpec,
   type CategoryColumnSpec,
   type ChartSpec,
+  type ColumnsSpec,
   type DerivedSpec,
   type GeometryColumnSpec,
   type GridFacetSpec,
@@ -274,13 +277,23 @@ function operations(ops: readonly string[], needsField: boolean): Check {
   };
 }
 
+/** Bins along one axis: a count, `{ step, start }`, or edges. */
+const binSpec: Check = (v, path) => {
+  if (typeof v === "number" || Array.isArray(v)) {
+    checkBins(v, path);
+    return;
+  }
+  if (!isRecord(v)) fail(path, "a bin count, { step, start }, or a list of edges", v);
+  checkProperties(v, path, ["step"], { step: positive, start: finite });
+};
+
 /** The keys a transform of each kind takes. */
 const TRANSFORMS: Record<string, { required: string[]; checks: Record<string, Check> }> = {
   filter: { required: [], checks: { filter: expression } },
   calculate: { required: ["as"], checks: { calculate: expression, as: field } },
   bin: {
     required: [],
-    checks: { bin: field, as: field, step: positive, count, start: finite },
+    checks: { bin: field, bins: binSpec, as: field, end: field },
   },
   aggregate: {
     required: [],
@@ -717,13 +730,8 @@ const MARKS: MarkChecks = {
       x: field,
       y: field,
       bins: (v, path) => {
-        if (typeof v === "number") return count(v, path);
-        if (Array.isArray(v)) return requireHistogramEdges(v, path);
-        object(v, path);
-        checkProperties(v as Record<string, unknown>, path, ["step"], {
-          step: positive,
-          start: finite,
-        });
+        if (!perAxisBins(v)) return binSpec(v, path);
+        properties(v as Record<string, unknown>, path, { x: binSpec, y: binSpec });
       },
       series: field,
       weight: field,
@@ -737,6 +745,9 @@ const MARKS: MarkChecks = {
       element: oneOf("bars", "step", "poly"),
       fill: string,
       fillOpacity: fraction,
+      colors: ramp,
+      colorDomain: range,
+      colorMidpoint: finite,
       label: string,
       legendGroup: group,
     },
@@ -1007,6 +1018,10 @@ const MARKS: MarkChecks = {
       ...placement,
       x: field,
       y: field,
+      x1: field,
+      x2: field,
+      y1: field,
+      y2: field,
       date: field,
       calendar: oneOf("weeks", "months"),
       weekStart: oneOf("sun", "mon", "tue", "wed", "thu", "fri", "sat"),
@@ -1018,7 +1033,36 @@ const MARKS: MarkChecks = {
       colors: ramp,
       colorDomain: range,
       colorMidpoint: finite,
-      reduce: oneOf("mean", "max", "min"),
+      reduce: oneOf("last", "mean", "sum", "min", "max"),
+      sampling: (v, path) => {
+        object(v, path);
+        properties(v as Record<string, unknown>, path, { reduce: oneOf("mean", "max", "min") });
+      },
+      label: string,
+    },
+  },
+  contour: {
+    required: ["x", "y", "color"],
+    checks: {
+      ...placement,
+      x: field,
+      y: field,
+      color: field,
+      thresholds: (v, path) => {
+        if (typeof v === "number") return count(v, path);
+        numbers(v, path);
+        const list = v as number[];
+        for (let i = 1; i < list.length; i++)
+          if (!(list[i]! > list[i - 1]!))
+            fail(`${path}[${i}]`, `a value above ${list[i - 1]}, the one before`, list[i]);
+      },
+      variant: oneOf("lines", "bands"),
+      colors: ramp,
+      colorDomain: range,
+      colorMidpoint: finite,
+      stroke: string,
+      strokeWidth: width,
+      fillOpacity: fraction,
       label: string,
     },
   },
@@ -1226,6 +1270,7 @@ const FORMS: Partial<
   area: areaFormError,
   heatmap: heatmapFormError,
   boxplot: boxPlotFormError,
+  contour: contourFormError,
   histogram: histogramFormError,
   rule: ruleFormError,
   region: regionFormError,
@@ -1439,9 +1484,28 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
               transform: transforms,
             } satisfies ChecksOf<DerivedSpec>);
           } else {
-            required(entry, at, ["columns"], ["columns"]);
+            required(entry, at, ["columns"], ["columns", "matrix"]);
             object(entry.columns, `${at}.columns`);
-            properties(entry, at, {}, ["columns"]);
+            const fields = Object.keys(entry.columns as object);
+            properties(entry, at, {
+              columns: () => {},
+              matrix: (m, where) => {
+                object(m, where);
+                const coordinate: Check = (v, path) => {
+                  field(v, path);
+                  if (!fields.includes(v as string))
+                    fail(
+                      path,
+                      `a column of the table (${fields.map((f) => `"${f}"`).join(", ")})`,
+                      v,
+                    );
+                };
+                checkProperties(m as Record<string, unknown>, where, ["x", "y"], {
+                  x: coordinate,
+                  y: coordinate,
+                });
+              },
+            } satisfies ChecksOf<ColumnsSpec>);
             for (const [name, values] of Object.entries(entry.columns as object))
               column(values, `${at}.columns.${name}`);
           }

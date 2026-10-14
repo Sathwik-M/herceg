@@ -206,14 +206,15 @@ export class Inspector {
     if (requested === "nearest" || series.length === 0) {
       const hit = this.#nearest(px, py);
       if (!hit) return undefined;
-      const point = this.#point(hit.series, hit.position);
+      const point = this.#point(hit.series, hit.position, hit.at);
       if (!point) return undefined;
       // The heading names where the point is placed: its x, or its y
-      // category for marks along y.
+      // category for marks along y; for a line or region, where it was found.
       const axis = this.#ownerOf.get(hit.series)!.mark.tooltip === "y" ? "y" : "x";
-      return this.#inspection(axis, placeAt(hit.series, axis, rowOf(hit.series, hit.position)), [
-        point,
-      ]);
+      const value = hit.at
+        ? this.#frame[axis].invert(hit.at[axis === "x" ? 0 : 1])
+        : placeAt(hit.series, axis, rowOf(hit.series, hit.position));
+      return this.#inspection(axis, value, [point]);
     }
     // Snap to the data value nearest the pointer across every visible
     // series, among points drawn in view. Values along y compare within one
@@ -519,42 +520,36 @@ export class Inspector {
     };
   }
 
-  #point(s: Series, position: number): InspectedPoint | undefined {
+  #point(s: Series, position: number, at?: readonly [number, number]): InspectedPoint | undefined {
     const row = rowOf(s, position);
     const value = valueAt(s, row);
     // What a scale cannot place (log axes, missing ends) is not drawn, so not reported.
-    const pixels = this.#pixels(s, row);
+    const pixels = at ?? this.#pixels(s, row);
     if (!pixels) return undefined;
     const [px, py] = pixels;
     const { mark, index, axis } = this.#ownerOf.get(s)!;
-    const tooltip = mark.tooltip;
-    // A cell's label is its y category and its value a measure; marks
-    // inspected along y (horizontal bars) measure their values on x.
-    const along = tooltip === "y";
+    // Marks inspected along y (horizontal bars) measure their values on x;
+    // marks of cells name and measure their points themselves.
+    const along = mark.tooltip === "y";
     const formatY = axis.formatY;
     const formatValue = along ? this.#formatX : formatY;
+    const format = { x: this.#formatX, y: formatY, value: this.#formatValue };
     // Summarizing marks' series index rows of their summaries.
     const fields = mark.summarizes ? undefined : this.#fields?.(mark.table, mark.spec.tooltip, row);
     return {
       mark: index,
       markId: mark.spec.id,
       key: s.key,
-      label: tooltip === "cell" ? this.#left.formatY(placeAt(s, "y", row)) : s.label,
+      label: mark.pointLabel?.(s, row, format) ?? s.label,
       row: mark.summarizes ? undefined : row,
       ...(fields && { fields }),
       color: mark.pointColor?.(s, row, this.#frame.theme) ?? s.color,
       value,
       text:
-        mark.pointText?.(s, row, {
-          x: this.#formatX,
-          y: formatY,
-          value: this.#formatValue,
-        }) ??
+        mark.pointText?.(s, row, format) ??
         (s.range
           ? `${formatValue((along ? s.x0 : s.y0)![row]!)} – ${formatValue(value)}`
-          : tooltip === "cell"
-            ? this.#formatValue(value)
-            : formatValue(value)),
+          : formatValue(value)),
       px,
       py,
     };

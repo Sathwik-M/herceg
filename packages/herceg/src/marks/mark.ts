@@ -191,6 +191,11 @@ export interface Hit {
   series: Series;
   position: number;
   distance: number;
+  /**
+   * Where the pointer found it, for points that are lines or regions (a
+   * contour's): its inspection is there, rather than at the point's anchor.
+   */
+  at?: readonly [number, number] | undefined;
 }
 
 /** A continuous color scale a mark uses, for the chart's color legend. */
@@ -340,6 +345,13 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
     scope?: object,
   ): void;
   /**
+   * For marks facets split (not summaries), once they are split: `panels`
+   * holds the mark's series in each panel, split from `series`, for what
+   * depends on every panel together, such as the color domain of a
+   * heatmap's summed cells.
+   */
+  splitPanels?(series: readonly Series[], panels: readonly (readonly Series[])[]): void;
+  /**
    * For marks whose series summarize rows (histograms, box plots), resolved
    * with `split`: each panel's series, one per series of `roster` (those
    * `series` returned, whose keys, labels, and colors they keep), from the
@@ -436,9 +448,15 @@ export interface Mark<S extends MarkIdentity = MarkIdentity> extends ChartMark<S
   /**
    * Tooltip text for a row of a series, for marks that show more than one
    * value per point (candlesticks, histogram bins); `format` formats values
-   * of the x axis and of the series' y axis.
+   * of the x axis and of the series' y axis. Undefined leaves the chart's.
    */
-  pointText?(series: Series, row: number, format: AxisFormat): string;
+  pointText?(series: Series, row: number, format: AxisFormat): string | undefined;
+  /**
+   * What a tooltip names a row's point by, for marks naming it other than
+   * by its series (a heatmap's cell by its row, a 2D histogram's by its
+   * bins, a contour's band by its field). Undefined leaves the series' name.
+   */
+  pointLabel?(series: Series, row: number, format: AxisFormat): string | undefined;
   /**
    * The inspected point's pixels for marks that draw a row away from its
    * values altogether (a heatmap cell, at its center); marks that move rows

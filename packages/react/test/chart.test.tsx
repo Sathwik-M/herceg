@@ -2,6 +2,7 @@ import {
   col,
   custom,
   facet,
+  fromMatrix,
   geometry,
   type Chart as HercegChart,
   line,
@@ -35,6 +36,7 @@ import {
   Boxen,
   Candlestick,
   Chart,
+  Contour,
   Custom,
   Dendrogram,
   Funnel,
@@ -42,6 +44,7 @@ import {
   GeoPoint,
   GeoShape,
   Graph,
+  Histogram,
   Line,
   Line3D,
   Pie,
@@ -403,6 +406,24 @@ describe("<Chart>", () => {
     act(() => root.render(map("equirectangular")));
     expect(seen).toHaveLength(1);
     await frame();
+  });
+
+  it("draws contours of a matrix and 2D histograms from their elements", () => {
+    const field = fromMatrix(
+      { x: [0, 1, 2], y: [0, 1, 2], z: [0, 1, 0, 1, 3, 1, 0, 1, 0] },
+      { x: "x", y: "y" },
+    );
+    const pairs = table({ a: [0, 1, 1, 2], b: [0, 1, 1, 2] });
+    act(() =>
+      root.render(
+        <Chart locale="en-US">
+          <Contour data={field} x="x" y="y" color="z" thresholds={[0.5, 2]} variant="bands" />
+          <Histogram data={pairs} x="a" y="b" bins={2} />
+        </Chart>,
+      ),
+    );
+    expect(host.textContent).toContain("z 0.5 – 2: 1 region");
+    expect(host.textContent).toContain("Count: 4 values in 2 cells");
   });
 
   it("draws 3D marks from their elements, keeping a turned view until the camera prop changes", async () => {

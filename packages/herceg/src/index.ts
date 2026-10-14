@@ -49,6 +49,7 @@ export {
   type NamedAggregate,
   RowGroups,
 } from "./data/groups.ts";
+export { fromMatrix } from "./data/matrix.ts";
 export type { SortKey } from "./data/order.ts";
 export { RowSet } from "./data/row-set.ts";
 export { type RowQuery, type RowSnapshot, RowView, rowView } from "./data/row-view.ts";
@@ -106,6 +107,7 @@ export {
   type CandlestickOptions,
   candlestick,
 } from "./marks/candlestick.ts";
+export { type ContourOptions, contour } from "./marks/contour.ts";
 export {
   type CustomDataOptions,
   type CustomOptions,

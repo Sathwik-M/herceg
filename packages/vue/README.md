@@ -28,7 +28,7 @@ and its control of every panel's x when there are several.
 `<Chart>` accepts every chart option as a prop (`title`, `x`, `y`, `legend`,
 `tooltip`, `interaction`, `renderer`, `theme`, `width`, `height`, ...). Its
 slot holds mark components: `<Line>`, `<Area>`, `<Bar>`, `<Point>`,
-`<Heatmap>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`,
+`<Heatmap>`, `<Contour>`, `<ErrorBar>`, `<Candlestick>`, `<Histogram>`, `<Pie>`,
 `<BoxPlot>`, `<Boxen>`, `<Violin>`, `<Treemap>`, `<Sunburst>`, `<Gauge>`, `<Funnel>`,
 `<Radar>`, `<Sankey>`, `<Graph>`, `<GeoShape>`, `<GeoPoint>`, `<Point3D>`,
 `<Line3D>`, `<Surface>`, `<Rule>`, `<Region>`, `<Text>`, and `<Custom>`, also from `v-if` and `v-for`, drawn in

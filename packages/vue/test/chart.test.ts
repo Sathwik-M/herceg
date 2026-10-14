@@ -6,6 +6,7 @@ import {
   type DataDrawContext,
   type DrawContext,
   facet,
+  fromMatrix,
   geometry,
   type Chart as HercegChart,
   line,
@@ -38,6 +39,7 @@ import {
   BoxPlot,
   Candlestick,
   Chart,
+  Contour,
   Custom,
   Dendrogram,
   ErrorBar,
@@ -101,6 +103,7 @@ const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => r
 const metrics = table({ t: [0, 1, 2, 3], a: [1, 2, 3, 4], b: [4, 3, 2, 1] });
 const paths = () => host.querySelectorAll("svg g[clip-path] path");
 const components = {
+  Contour,
   Graph,
   Treemap,
   Violin,
@@ -397,6 +400,23 @@ describe("<Chart>", () => {
     };
     expect(dots("points")).toBe(2);
     expect(dots(':points="false"')).toBe(0);
+  });
+
+  it("draws contours of a matrix and 2D histograms from their components", () => {
+    const field = fromMatrix(
+      { x: [0, 1, 2], y: [0, 1, 2], z: [0, 1, 0, 1, 3, 1, 0, 1, 0] },
+      { x: "x", y: "y" },
+    );
+    const pairs = table({ a: [0, 1, 1, 2], b: [0, 1, 1, 2] });
+    mount(
+      `<Chart locale="en-US">
+        <Contour :data="field" x="x" y="y" color="z" :thresholds="[0.5, 2]" variant="bands" />
+        <Histogram :data="pairs" x="a" y="b" :bins="2" />
+      </Chart>`,
+      () => ({ field, pairs }),
+    );
+    expect(host.textContent).toContain("z 0.5 – 2: 1 region");
+    expect(host.textContent).toContain("Count: 4 values in 2 cells");
   });
 
   it("draws 3D marks from their components, with camera props and events", async () => {

@@ -1,5 +1,5 @@
 // The README examples, compiled by `npm run typecheck` so the docs stay true.
-import { table, time } from "herceg";
+import { table, time, viridis } from "herceg";
 import { useEffect, useMemo } from "react";
 import {
   Boxen,
@@ -174,8 +174,10 @@ export function HistogramOptions() {
         dodge
       />
       <Histogram data={metrics} x="time" axis="right" stack cumulative />
-      {/* @ts-expect-error exactly one binned axis */}
-      <Histogram data={metrics} x="time" y="p50" />
+      {/* With x and y both, a 2D histogram's cells. */}
+      <Histogram data={metrics} x="time" y="p50" bins={{ x: 20, y: 10 }} colors={viridis} />
+      {/* @ts-expect-error 2D histograms take no stacks */}
+      <Histogram data={metrics} x="time" y="p50" stack />
       {/* @ts-expect-error binned axis required */}
       <Histogram data={metrics} bins={10} />
       {/* @ts-expect-error binned fields are numeric or time */}

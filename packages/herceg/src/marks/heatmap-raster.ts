@@ -165,13 +165,15 @@ export interface PaintSource {
 
 /**
  * Paints the image (`pixels`, RGBA, `x.size` by `y.size`) from `source`'s
- * rows with finite values, accumulating in `buffer`'s stages, a value per
- * image pixel. Lattices drawn whole show each cell's last row; blocks of
- * slots show the mean of their rows (or with `reduce`, the greatest or
- * least). Spans show, in a pixel within one cell, that cell's last row, and
- * in a pixel holding parts of several, the mean of their rows weighted by
- * the area of each cell in it (or the greatest or least of them), read
- * cell by cell from `source.index`. Pixels without values stay transparent.
+ * rows with finite values (a cell's rows combined into one already, for
+ * heatmaps), accumulating in `buffer`'s stages, a value per image pixel.
+ * Lattices drawn whole show each cell's last row; blocks of slots show the
+ * mean of their rows (or with `reduce`, a heatmap's `sampling.reduce`, the
+ * greatest or least). Spans show, in a pixel within one cell, that cell's
+ * last row, and in a pixel holding parts of several, the mean of their rows
+ * weighted by the area of each cell in it (or the greatest or least of
+ * them), read cell by cell from `source.index`. Pixels without values stay
+ * transparent.
  */
 export function paint(
   source: PaintSource,

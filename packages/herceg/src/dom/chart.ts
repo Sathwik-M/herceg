@@ -1875,9 +1875,9 @@ export class MountedChart implements Chart, ExportsScene {
       return;
     }
     // Heatmaps step cell by cell, in rows and columns as drawn; Up and Down
-    // leave the grid at its edges.
+    // leave the grid at its edges. Contours' regions and lines are read as points are.
     const cells = ({ series }: { series?: Series }) =>
-      series !== undefined && this.#model.markOf(series)?.tooltip === "cell";
+      series !== undefined && this.#model.markOf(series)?.stepCell !== undefined;
     let cell: number | undefined;
     if (cells(start) && current >= 0) {
       const [columns, rows] = CELL_STEPS[event.key] ?? [0, 0];

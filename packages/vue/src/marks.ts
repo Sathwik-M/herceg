@@ -12,9 +12,11 @@ import {
   boxplot,
   type CandlestickOptions,
   type ChartMark,
+  type ContourOptions,
   type CustomDataOptions,
   type CustomOptions,
   candlestick,
+  contour,
   custom,
   type DendrogramOptions,
   dendrogram,
@@ -340,7 +342,7 @@ export const Candlestick = /* @__PURE__ */ markComponent(
     candlestick(data, options),
 ) as unknown as <S extends Schema>(props: WithData<CandlestickOptions<S>, S>) => null;
 
-/** Counts of exactly one number or time field, `x` or `y`, with shared bins. */
+/** Counts of a number or time field, `x` or `y`, in shared bins; of both, a 2D histogram's cells. */
 export const Histogram = /* @__PURE__ */ markComponent(
   "Histogram",
   ({ data, ...options }: WithData<HistogramOptions<Schema>, Schema>) => histogram(data, options),
@@ -352,6 +354,12 @@ export const Dendrogram = /* @__PURE__ */ markComponent(
   "Dendrogram",
   ({ data, ...options }: WithData<DendrogramOptions<Schema>, Schema>) => dendrogram(data, options),
 ) as unknown as <S extends Schema>(props: WithData<DendrogramOptions<S>, S>) => null;
+
+/** Contours of a field sampled on a grid: lines at thresholds, or bands between them. */
+export const Contour = /* @__PURE__ */ markComponent(
+  "Contour",
+  ({ data, ...options }: WithData<ContourOptions<Schema>, Schema>) => contour(data, options),
+) as unknown as <S extends Schema>(props: WithData<ContourOptions<S>, S>) => null;
 
 /** A grid of colored cells. */
 export const Heatmap = /* @__PURE__ */ markComponent(

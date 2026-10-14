@@ -128,8 +128,11 @@ Histogram({
 
 Histogram({ data: metrics, x: "time", axis: "right", stack: true, cumulative: true });
 
-// @ts-expect-error exactly one binned axis
-Histogram({ data: metrics, x: "time", y: "p50" });
+// With x and y both, a 2D histogram's cells.
+Histogram({ data: metrics, x: "time", y: "p50", bins: { x: 20, y: 10 } });
+
+// @ts-expect-error 2D histograms take no stacks
+Histogram({ data: metrics, x: "time", y: "p50", stack: true });
 
 // @ts-expect-error binned axis required
 Histogram({ data: metrics, bins: 10 });

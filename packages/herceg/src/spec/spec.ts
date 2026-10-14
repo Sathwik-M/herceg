@@ -250,6 +250,13 @@ export type DataSpec = ColumnsSpec | DerivedSpec;
 
 export interface ColumnsSpec {
   columns: Record<Field, ColumnSpec>;
+  /**
+   * The table is a matrix (`fromMatrix`): the columns `x` and `y` name hold
+   * its coordinates, one value per column of the matrix and one per row,
+   * and every other column a value at each pair, in rows of x (the i-th x
+   * and j-th y at j × number of x values + i).
+   */
+  matrix?: { x: Field; y: Field };
 }
 
 /**
@@ -266,7 +273,8 @@ export interface DerivedSpec {
  * - `filter`: keeps rows where the expression is true.
  * - `calculate`: adds (or replaces) the field `as` with the expression's value.
  * - `bin`: replaces a number or time field (or adds `as`) with the start of
- *   its bin: `step` wide from `start`, or about `count` round bins.
+ *   its bin (`bins`: about how many round bins, 10 by default, a width and
+ *   where bins start, or edges), and with `end` adds the bin's end.
  * - `aggregate`: one row per group of `by` values (one row without),
  *   with the group's fields and each operation's result.
  * - `rolling`: adds each operation over the trailing `size` rows (within
@@ -276,10 +284,20 @@ export interface DerivedSpec {
 export type TransformSpec =
   | { filter: Expression }
   | { calculate: Expression; as: Field }
-  | { bin: Field; as?: Field; step?: number; count?: number; start?: number }
+  | { bin: Field; bins?: BinSpec; as?: Field; end?: Field }
   | { aggregate: readonly AggregateSpec[]; by?: readonly Field[] }
   | { rolling: readonly RollingSpec[]; size: number; by?: readonly Field[] }
   | { sort: Field; order?: "ascending" | "descending" };
+
+/**
+ * Bins along one axis, as histograms and the `bin` transform take them:
+ * about how many round bins (a count), a width and where bins start
+ * (`{ step, start }`, by default at a multiple of the step; values below an
+ * explicit start are in no bin), or the bins' edges (2 to 1,001, finite and
+ * increasing, used exactly as given). A bin holds values from its left edge
+ * up to its right one; the last holds its right edge too.
+ */
+export type BinSpec = number | { step: number; start?: number } | readonly number[];
 
 /** An aggregate: its operation, the number field it reads (none for count), and its name. */
 export interface AggregateSpec {
@@ -597,6 +615,7 @@ export type MarkSpec =
   | BarSpec
   | PointSpec
   | HeatmapSpec
+  | ContourSpec
   | RugSpec
   | ErrorBarSpec
   | CandlestickSpec
@@ -1484,19 +1503,22 @@ interface GeoPointStyleSpec extends RowTooltip {
 }
 
 /**
+ * A histogram: with `x` or `y`, bars counting the values of a number or
+ * time field in bins; with both, cells counting pairs of values in
+ * rectangular bins, colored by what they measure.
+ */
+export type HistogramSpec = Histogram1DSpec | Histogram2DSpec;
+
+/**
  * Bars counting how many values of a number or time field fall in each bin:
  * `x` for vertical bars, or `y` for horizontal ones (on the left axis). Bins
  * are shared by every series: round edges covering the field's values, or
  * edges given.
  */
-export type HistogramSpec = SeriesBase & {
+export type Histogram1DSpec = SeriesBase & {
   type: "histogram";
-  /**
-   * About how many bins, a bin width and where bins start, or the bins'
-   * edges (2 to 1,001, finite, increasing, used exactly as given); by
-   * default from the data size.
-   */
-  bins?: number | { step: number; start?: number } | readonly number[];
+  /** About how many bins, a bin width and where bins start, or the bins' edges; by default from the data size. */
+  bins?: BinSpec;
   /** Category field: one histogram per value, overlaid, stacked, or dodged. */
   series?: Field;
   /**
@@ -1528,6 +1550,38 @@ export type HistogramSpec = SeriesBase & {
 } & ({ x: Field; y?: never; axis?: "left" | "right" } | { y: Field; x?: never; axis?: "left" }) &
   // Stacked (with "fill", as shares of each bin), or with `dodge` side by side within each bin.
   ({ stack?: boolean | "fill"; dodge?: false } | { stack?: false; dodge?: boolean });
+
+/**
+ * A 2D histogram: cells counting the rows whose `x` and `y` (number or time
+ * fields) both fall in a bin of each, colored on a continuous scale from 0
+ * by what they measure. Bins holding nothing are left empty.
+ */
+export interface Histogram2DSpec extends MarkBase {
+  type: "histogram";
+  x: Field;
+  y: Field;
+  /**
+   * Bins along both axes (`BinSpec`), or along each: `{ x, y }`, either
+   * left out for the default, about log2(n) + 1 round bins.
+   */
+  bins?: BinSpec | { x?: BinSpec; y?: BinSpec };
+  /** A number field each row counts as, in place of 1, as for bars. */
+  weight?: Field;
+  /**
+   * What cells measure: "count" (default), "frequency" (the count per unit
+   * of bin area), "probability" or "percent" of the counted rows, or
+   * "density" (probability per unit of bin area).
+   */
+  normalize?: "count" | "frequency" | "probability" | "percent" | "density";
+  /** Color ramp from low to high, or a scheme name; the theme's by default. */
+  colors?: readonly string[] | string;
+  /** The values at the ends of the ramp; from 0 to the fullest cell's by default. */
+  colorDomain?: readonly [number, number];
+  /** The value at the ramp's middle, for diverging schemes. */
+  colorMidpoint?: number;
+  /** What cells measure, in the legend and tooltips; the measure's name by default. */
+  label?: string;
+}
 
 /** Points at (x, y): scatter plots. */
 /** Points: `PointStyleSpec` with a radius of 2.5 pixels, or sizes from 2 to 12 pixels, by default. */
@@ -1585,8 +1639,8 @@ interface PointStyleSpec extends SeriesBase, RowTooltip {
 }
 
 /**
- * A grid of cells colored by `color`: cells at `x` and `y`, or the days of
- * a `date` laid out as a calendar. Category fields give one column (or
+ * A grid of cells colored by `color`: cells at `x` and `y` (or between
+ * `x1` and `x2`, `y1` and `y2`), or the days of a `date` laid out as a calendar. Category fields give one column (or
  * row) per category. Number and time fields place a cell at each distinct
  * value along a number or time axis, reaching halfway to the values beside
  * it (or `xStep` / `yStep` wide); with `xBanded` / `yBanded`, they give one
@@ -1606,37 +1660,119 @@ interface HeatmapBase extends MarkBase, RowTooltip {
   /** The value at the ramp's middle, for diverging schemes such as "rdbu". */
   colorMidpoint?: number;
   /**
-   * How a pixel showing several cells (a grid with more columns or rows than
-   * the plot has device pixels) colors them: by the "mean" of their values
-   * (the default), the "max", or the "min".
+   * How rows sharing a cell combine into its value: "last" (the default),
+   * the last of them with a value, or their "mean", "sum", "min", or
+   * "max". Cells keep their values at every zoom.
    */
-  reduce?: "mean" | "max" | "min";
+  reduce?: CellReduce;
+  /**
+   * How a pixel showing several cells (a grid with more columns or rows
+   * than the plot has device pixels) colors them: by the "mean" of the
+   * cells' values (the default), the "max", or the "min".
+   */
+  sampling?: { reduce?: "mean" | "max" | "min" };
   label?: string;
 }
 
-/** A heatmap of cells at `x` and `y`. */
-export interface HeatmapGridSpec extends HeatmapBase {
+/** How rows sharing a heatmap's cell combine into its value. */
+export type CellReduce = "last" | "mean" | "sum" | "min" | "max";
+
+/**
+ * Contours of a field sampled on a grid: each row the field's `color` at
+ * an `x` and a `y` of a rectilinear grid (the distinct x values crossed with
+ * the distinct y values; a matrix table holds one as it is), with lines
+ * where the field crosses each threshold, or bands filled from one
+ * threshold up to the next. Values are interpolated linearly between grid
+ * points; points without a value leave holes. Contours end where the grid
+ * does.
+ */
+export interface ContourSpec extends MarkBase {
+  type: "contour";
+  /** Number or time field: each grid point's x. */
   x: Field;
+  /** Number or time field: each grid point's y. */
   y: Field;
+  /** Number field: the field's value at each grid point. */
+  color: Field;
   /**
-   * Each cell's width along a number or time x (milliseconds for times),
-   * centered on its value but never past halfway to a closer neighbor, so
-   * values further apart leave gaps. Not with `xBanded`.
+   * About how many round thresholds across the field's values (10 by
+   * default; for bands, round edges covering them), or the thresholds,
+   * finite and increasing (for bands, at least two).
    */
-  xStep?: number;
-  /** Each cell's height along a number or time y, as `xStep`. */
-  yStep?: number;
-  /**
-   * One column per distinct value of a number or time x, in ascending
-   * order, instead of cells along a number or time axis.
-   */
-  xBanded?: boolean;
-  /** One row per distinct value of a number or time y, rising, as `xBanded`. */
-  yBanded?: boolean;
-  date?: never;
-  calendar?: never;
-  weekStart?: never;
+  thresholds?: number | readonly number[];
+  /** "lines" (the default) at each threshold, or "bands" filled between neighboring ones. */
+  variant?: "lines" | "bands";
+  /** Color ramp from low to high values, or a scheme name; the theme's by default. */
+  colors?: readonly string[] | string;
+  /** The values at the ends of the ramp; the field's extent by default. */
+  colorDomain?: readonly [number, number];
+  /** The value at the ramp's middle, for diverging schemes. */
+  colorMidpoint?: number;
+  /** One color for every line, instead of its value's on the ramp. Lines only. */
+  stroke?: string;
+  /** Line width in pixels; the theme's by default. Lines only. */
+  strokeWidth?: number;
+  /** Opacity of the bands' fill; 1 by default. Bands only. */
+  fillOpacity?: number;
+  /** What the field is, in the legend and tooltips; the `color` field's name by default. */
+  label?: string;
 }
+
+/**
+ * A heatmap of cells at `x` and `y`, or along an axis from `x1` to `x2`
+ * (`y1` to `y2`): number or time fields giving each row's cell's edges,
+ * as bins do.
+ */
+export type HeatmapGridSpec = HeatmapBase &
+  HeatmapXSpec &
+  HeatmapYSpec & { date?: never; calendar?: never; weekStart?: never };
+
+/** Where a heatmap's cells sit along x: at the values of `x`, or between each row's `x1` and `x2`. */
+type HeatmapXSpec =
+  | {
+      x: Field;
+      /**
+       * Each cell's width along a number or time x (milliseconds for times),
+       * centered on its value but never past halfway to a closer neighbor, so
+       * values further apart leave gaps. Not with `xBanded`.
+       */
+      xStep?: number;
+      /**
+       * One column per distinct value of a number or time x, in ascending
+       * order, instead of cells along a number or time axis.
+       */
+      xBanded?: boolean;
+      x1?: never;
+      x2?: never;
+    }
+  | {
+      /** Each row's cell's left edge along a number or time x, with `x2` its right. */
+      x1: Field;
+      x2: Field;
+      x?: never;
+      xStep?: never;
+      xBanded?: never;
+    };
+
+/** Where a heatmap's cells sit along y, as `HeatmapXSpec` says along x. */
+type HeatmapYSpec =
+  | {
+      y: Field;
+      /** Each cell's height along a number or time y, as `xStep`. */
+      yStep?: number;
+      /** One row per distinct value of a number or time y, rising, as `xBanded`. */
+      yBanded?: boolean;
+      y1?: never;
+      y2?: never;
+    }
+  | {
+      /** Each row's cell's bottom edge, with `y2` its top. */
+      y1: Field;
+      y2: Field;
+      y?: never;
+      yStep?: never;
+      yBanded?: never;
+    };
 
 /**
  * A calendar heatmap: the days of a time field `date`, in the chart's
@@ -1651,6 +1787,10 @@ export interface HeatmapCalendarSpec extends HeatmapBase {
   weekStart?: Weekday;
   x?: never;
   y?: never;
+  x1?: never;
+  x2?: never;
+  y1?: never;
+  y2?: never;
   xStep?: never;
   yStep?: never;
   xBanded?: never;

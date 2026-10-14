@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING, Any, Literal, ParamSpec, Protocol, TypedDict, 
 import numpy as np
 
 from . import _geo, _render
-from ._data import Column, Table, listed, shown
-from ._derive import Derived
+from ._data import Column, Matrix, Table, listed, shown
+from ._derive import BinSpec, Derived, bin_spec
 from ._rows import SelectionBinding, bindings
 
 # Annotations read at runtime (typing.get_type_hints) need Unpack too.
@@ -39,6 +39,17 @@ StackOrder = Literal["input", "inside-out"]
 Orient = Literal["x", "y"]
 HistogramNormalize = Literal["count", "frequency", "probability", "percent", "density"]
 HistogramElement = Literal["bars", "step", "poly"]
+#: How rows sharing a heatmap's cell combine into its value.
+CellReduce = Literal["last", "mean", "sum", "min", "max"]
+
+
+class HeatmapSampling(TypedDict, total=False):
+    """How a pixel showing several heatmap cells colors them: by their
+    ``"mean"``, ``"max"``, or ``"min"``."""
+
+    reduce: Literal["mean", "max", "min"]
+
+
 ThemeName = Literal["light", "dark", "high-contrast", "high-contrast-dark", "auto"]
 
 _NUMERIC = ("number", "time")
@@ -1555,7 +1566,7 @@ class Chart:
         x: str | None = None,
         *,
         y: str | None = None,
-        bins: int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any] | None = None,
+        bins: BinSpec | Mapping[str, BinSpec] | None = None,
         series: str | None = None,
         weight: str | None = None,
         normalize: HistogramNormalize | None = None,
@@ -1567,6 +1578,9 @@ class Chart:
         data: Any = None,
         fill: str | None = None,
         fill_opacity: float | None = None,
+        colors: str | Sequence[str] | None = None,
+        color_domain: tuple[float, float] | None = None,
+        color_midpoint: float | None = None,
         label: str | None = None,
         legend_group: str | None = None,
         axis: Literal["left", "right"] | None = None,
@@ -1574,23 +1588,103 @@ class Chart:
         panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
-        """Counts of exactly one number or time field: x (vertical) or y (horizontal).
+        """Counts of a number or time field in bins: of ``x`` (vertical bars) or
+        of ``y`` (horizontal bars), or of both, a 2D histogram's cells.
 
         Bins are an approximate count, a step/start dict, or exact increasing
-        edges. Each row counts as 1, or as its ``weight`` (a number column;
-        rows missing a weight, or with a negative one, are not counted).
-        ``normalize`` measures each series' bins: counts, ``"frequency"``
-        (counts per unit of the binned axis), or ``"probability"``,
-        ``"percent"``, and ``"density"`` of its counts; common_norm weights
-        its share of finite values in the panel (including hidden series and
-        values outside bins). Cumulative density integrates widths. Stack
-        stacks series, and ``stack="fill"`` as shares of each bin; dodge
-        places visible series side by side and excludes stack.
-        ``element="step"`` draws each series as an area stepping across its
-        bins, and ``"poly"`` as one through their centers.
+        edges; a 2D histogram takes those for both axes, or a dict of them
+        for each, ``{"x": ..., "y": ...}``. Each row counts as 1, or as its
+        ``weight`` (a number column; rows missing a weight, or with a
+        negative one, are not counted). ``normalize`` measures each series'
+        bins: counts, ``"frequency"`` (counts per unit of the binned axis,
+        or of bin area in 2D), or ``"probability"``, ``"percent"``, and
+        ``"density"`` of its counts; common_norm weights its share of finite
+        values in the panel (including hidden series and values outside
+        bins). Cumulative density integrates widths. Stack stacks series,
+        and ``stack="fill"`` as shares of each bin; dodge places visible
+        series side by side and excludes stack. ``element="step"`` draws
+        each series as an area stepping across its bins, and ``"poly"`` as
+        one through their centers.
+
+        A 2D histogram counts the rows whose ``x`` and ``y`` both fall in a
+        bin of each, colored by ``colors`` (a scheme name or hex colors)
+        from 0 to the fullest cell, or over ``color_domain``; cells holding
+        nothing are left empty. It takes no series (facet instead), stacks,
+        dodges, cumulative counts, or elements.
         """
-        if (x is None) == (y is None):
-            raise ValueError("histogram: needs exactly one of x and y")
+        if x is None and y is None:
+            raise ValueError("histogram: needs x, y, or both")
+        if normalize not in (None, "count", "frequency", "probability", "percent", "density"):
+            raise ValueError(
+                'histogram normalize: expected "count", "frequency", "probability", "percent", '
+                f'or "density"; received {shown(normalize)}'
+            )
+        table = self._mark_table(data)
+        self._require(table, weight, ("number",), "histogram weight")
+        if x is not None and y is not None:
+            bars = {
+                "series": series,
+                "common_norm": common_norm or None,
+                "cumulative": cumulative or None,
+                "dodge": dodge or None,
+                "stack": stack or None,
+                "element": element,
+                "fill": fill,
+                "fill_opacity": fill_opacity,
+                "legend_group": legend_group,
+            }
+            given = next((name for name, value in bars.items() if value is not None), None)
+            if given == "series":
+                raise ValueError(
+                    "histogram series: a 2D histogram of x and y counts one distribution; "
+                    "facet by the column instead"
+                )
+            if given is not None:
+                raise ValueError(
+                    f"histogram {given}: for bars of x or y; a 2D histogram of both takes none, "
+                    "so drop it"
+                )
+            if axis == "right":
+                raise ValueError(
+                    "histogram axis: a 2D histogram places cells, on no right axis; "
+                    'drop axis="right"'
+                )
+            self._require(table, x, _NUMERIC, "histogram x")
+            self._require(table, y, _NUMERIC, "histogram y")
+            return self._add(
+                {
+                    "type": "histogram",
+                    "x": x,
+                    "y": y,
+                    "bins": _bins_2d(bins),
+                    "weight": weight,
+                    "normalize": normalize,
+                    "colors": _colors(colors, "histogram colors"),
+                    "colorDomain": _range(color_domain, "histogram color_domain"),
+                    "colorMidpoint": _midpoint(color_midpoint, color_domain, "histogram"),
+                    "label": label,
+                    "facet": _mark_facet(facet, "histogram"),
+                    "panel": panel,
+                    "id": id,
+                },
+                table,
+            )
+        cells = next(
+            (
+                name
+                for name, value in (
+                    ("colors", colors),
+                    ("color_domain", color_domain),
+                    ("color_midpoint", color_midpoint),
+                )
+                if value is not None
+            ),
+            None,
+        )
+        if cells is not None:
+            raise ValueError(
+                f"histogram {cells}: colors the cells of 2D histograms of x and y; bars take fill"
+            )
         if y is not None and axis == "right":
             raise ValueError(
                 'histogram axis: a horizontal histogram (y) has no right axis; drop axis="right"'
@@ -1610,11 +1704,6 @@ class Chart:
             )
         if dodge and stack:
             raise ValueError("histogram dodge: dodge or stack, not both; drop one")
-        if normalize not in (None, "count", "frequency", "probability", "percent", "density"):
-            raise ValueError(
-                'histogram normalize: expected "count", "frequency", "probability", "percent", '
-                f'or "density"; received {shown(normalize)}'
-            )
         if element not in (None, "bars", "step", "poly"):
             raise ValueError(
                 f'histogram element: expected "bars", "step", or "poly"; received {shown(element)}'
@@ -1624,8 +1713,12 @@ class Chart:
                 "histogram dodge: places bars side by side in each bin; drop dodge, or draw "
                 'element="bars"'
             )
-        bins = _histogram_bins(bins)
-        table = self._mark_table(data)
+        if isinstance(bins, Mapping) and ("x" in bins or "y" in bins):
+            raise ValueError(
+                'histogram bins: {"x": ..., "y": ...} bins both axes of a 2D histogram; '
+                f"give one bin definition for {'x' if x is not None else 'y'}"
+            )
+        spec_bins = None if bins is None else bin_spec(bins, "histogram bins")
         self._require(
             table,
             y if y is not None else x,
@@ -1633,13 +1726,12 @@ class Chart:
             "histogram y" if y is not None else "histogram x",
         )
         self._require(table, series, ("category",), "histogram series")
-        self._require(table, weight, ("number",), "histogram weight")
         return self._add(
             {
                 "type": "histogram",
                 "x": x,
                 "y": y,
-                "bins": bins,
+                "bins": spec_bins,
                 "series": series,
                 "weight": weight,
                 "normalize": normalize,
@@ -2919,9 +3011,8 @@ class Chart:
         points without a value leave holes. With a 2D array ``z`` (as in
         ``go.Surface(z=...)``), row ``i`` and column ``j`` is the height at
         ``y[i]`` and ``x[j]``, where ``x`` and ``y`` are optional sequences
-        (positions 0, 1, 2, ... by default). The matrix is sent as three
-        columns with a row per grid point, so its x and y positions take as
-        much room as its heights.
+        (positions 0, 1, 2, ... by default), sent as a matrix (``hg.matrix``)
+        of columns ``"x"``, ``"y"``, and ``"z"``.
 
         The surface is colored by height, or by a numeric ``color`` column,
         and shaded by how it faces a light (``shading=False`` keeps colors as
@@ -2938,7 +3029,7 @@ class Chart:
                 raise ValueError(
                     f"surface {option}: a z matrix takes no data or color column; drop {option}"
                 )
-            data = _grid_columns(z, x, y)
+            data = _matrix_of(z, x, y, "z", "surface")
             x, y, z = "x", "y", "z"
         elif not (isinstance(x, str) and isinstance(y, str)):
             axis, value = ("x", x) if not isinstance(x, str) else ("y", y)
@@ -2994,10 +3085,14 @@ class Chart:
 
     def heatmap(
         self,
-        x: str | None = None,
-        y: str | None = None,
-        color: str | None = None,
+        x: Any = None,
+        y: Any = None,
+        color: Any = None,
         *,
+        x1: str | None = None,
+        x2: str | None = None,
+        y1: str | None = None,
+        y2: str | None = None,
         date: str | None = None,
         calendar: Literal["weeks", "months"] | None = None,
         week_start: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None,
@@ -3005,7 +3100,8 @@ class Chart:
         colors: str | Sequence[str] | None = None,
         color_domain: tuple[float, float] | None = None,
         color_midpoint: float | None = None,
-        reduce: Literal["mean", "max", "min"] | None = None,
+        reduce: CellReduce | None = None,
+        sampling: HeatmapSampling | None = None,
         x_step: float | None = None,
         y_step: float | None = None,
         x_banded: bool = False,
@@ -3017,7 +3113,9 @@ class Chart:
         id: str | None = None,
     ) -> Chart:
         """A grid of cells colored by the numeric column ``color``: cells at ``x`` and ``y``, or the
-        days of a time column ``date`` laid out as a calendar.
+        days of a time column ``date`` laid out as a calendar. With a 2D array ``color`` (as in
+        ``go.Heatmap(z=...)``), row ``i`` and column ``j`` is the cell at ``y[i]`` and ``x[j]``
+        (positions 0, 1, 2, ... without them), sent as a matrix (``hg.matrix``).
 
         Category columns give one column (or row) per category. Number and
         time columns place a cell at each distinct value along a number or
@@ -3035,19 +3133,45 @@ class Chart:
         the first day's month to the last's, and a column per day of the
         month. Days without rows are empty; rows sharing a day share a cell.
 
+        ``x1`` and ``x2`` (or ``y1`` and ``y2``), number or time columns,
+        place each row's cell between two edges instead, as the bins of
+        ``hg.derive(...).bin(..., end=...)`` give them; cells of one first
+        edge have one second edge, and must not overlap.
+
         ``colors`` is a scheme name such as ``"viridis"`` or a list of hex
         colors, low to high; with ``color_midpoint``, the theme's diverging
-        ramp is the default and the midpoint takes its middle color. Grids
+        ramp is the default and the midpoint takes its middle color. Rows
+        sharing a cell combine into its value by ``reduce``: ``"last"`` (the
+        default), the last of them with a value, or their ``"mean"``,
+        ``"sum"``, ``"min"``, or ``"max"``, the same at every zoom. Grids
         with more columns or rows than the plot has pixels draw each pixel
-        from a block of cells, colored by the ``reduce`` of their values:
-        ``"mean"`` (the default), ``"max"``, or ``"min"``.
+        from a block of cells, colored by ``sampling={"reduce": ...}`` of
+        their values: ``"mean"`` (the default), ``"max"``, or ``"min"``.
         """
-        if reduce not in (None, "mean", "max", "min"):
+        if reduce not in (None, "last", "mean", "sum", "min", "max"):
             raise ValueError(
-                f'heatmap reduce: expected "mean", "max", or "min"; received {shown(reduce)}'
+                'heatmap reduce: expected "last", "mean", "sum", "min", or "max"; '
+                f"received {shown(reduce)}"
             )
+        sampled = _sampling(sampling)
         if color is None:
             raise ValueError("heatmap color: needs the numeric column that colors the cells")
+        if not isinstance(color, str):
+            placed = next(
+                (
+                    name
+                    for name, value in (("data", data), ("date", date), ("x1", x1), ("y1", y1))
+                    if value is not None
+                ),
+                None,
+            )
+            if placed is not None:
+                raise ValueError(
+                    f"heatmap {placed}: a color matrix places its cells itself; drop {placed}, or "
+                    "name columns"
+                )
+            data = _matrix_of(color, x, y, "value", "heatmap")
+            x, y, color = "x", "y", "value"
         table = self._mark_table(data)
         self._require(table, color, _NUMERIC, "heatmap color")
         shared = {
@@ -3057,6 +3181,7 @@ class Chart:
             "colorDomain": _range(color_domain, "heatmap color_domain"),
             "colorMidpoint": _midpoint(color_midpoint, color_domain, "heatmap"),
             "reduce": reduce,
+            "sampling": sampled,
             "label": label,
             "facet": _mark_facet(facet, "heatmap"),
             "panel": panel,
@@ -3064,7 +3189,16 @@ class Chart:
             "id": id,
         }
         if date is not None:
-            grid = {"x": x, "y": y, "x_step": x_step, "y_step": y_step}
+            grid = {
+                "x": x,
+                "y": y,
+                "x1": x1,
+                "x2": x2,
+                "y1": y1,
+                "y2": y2,
+                "x_step": x_step,
+                "y_step": y_step,
+            }
             given = [name for name, option in grid.items() if option is not None]
             given += [name for name, on in (("x_banded", x_banded), ("y_banded", y_banded)) if on]
             if given:
@@ -3089,8 +3223,41 @@ class Chart:
             return self._add(
                 {**shared, "date": date, "calendar": calendar, "weekStart": week_start}, table
             )
-        if x is None or y is None:
-            raise ValueError("heatmap: needs x and y, or a date to lay out as a calendar")
+        edges: dict[str, Any] = {}
+        for axis, one, low, high, step, bands in (
+            ("x", x, x1, x2, x_step, x_banded),
+            ("y", y, y1, y2, y_step, y_banded),
+        ):
+            if one is not None and (low is not None or high is not None):
+                raise ValueError(
+                    f"heatmap {axis}1: {axis} places cells at values, {axis}1 and {axis}2 "
+                    "between edges; give one form"
+                )
+            if (low is None) != (high is None):
+                missing = f"{axis}1" if low is None else f"{axis}2"
+                raise ValueError(
+                    f"heatmap {missing}: missing; cells between edges need {axis}1 and {axis}2"
+                )
+            if one is None and low is None:
+                raise ValueError(
+                    "heatmap: needs x and y (or x1 and x2, y1 and y2), or a date to lay out "
+                    "as a calendar"
+                )
+            if low is not None and high is not None:
+                option = f"{axis}_step" if step is not None else f"{axis}_banded" if bands else None
+                if option is not None:
+                    raise ValueError(
+                        f"heatmap {option}: cells between {axis}1 and {axis}2 take their edges "
+                        f"from them; drop {option}"
+                    )
+                self._require(table, low, _NUMERIC, f"heatmap {axis}1")
+                self._require(table, high, _NUMERIC, f"heatmap {axis}2")
+                if self._kind(table, low) != self._kind(table, high):
+                    raise ValueError(
+                        f"heatmap {axis}2: {high!r} holds {self._kind(table, high)} values and "
+                        f"{axis}1's {low!r} {self._kind(table, low)} values; give edges of one kind"
+                    )
+                edges[f"{axis}1"], edges[f"{axis}2"] = low, high
         if calendar is not None or week_start is not None:
             option = "calendar" if calendar is not None else "week_start"
             raise ValueError(
@@ -3100,14 +3267,14 @@ class Chart:
         self._require(table, y, ("number", "time", "category"), "heatmap y")
 
         def placement(
-            axis: str, field: str, step: float | None, bands: bool
+            axis: str, field: str | None, step: float | None, bands: bool
         ) -> tuple[float | None, bool | None]:
             """The spec's step and banded option along one axis."""
             if not isinstance(bands, bool):
                 raise ValueError(
                     f"heatmap {axis}_banded: expected True or False; received {shown(bands)}"
                 )
-            category = self._kind(table, field) == "category"
+            category = field is not None and self._kind(table, field) == "category"
             if step is not None:
                 if not (_finite(step) and step > 0):
                     raise ValueError(
@@ -3136,6 +3303,114 @@ class Chart:
                 "yStep": y_step,
                 "xBanded": x_bands,
                 "yBanded": y_bands,
+                **edges,
+            },
+            table,
+        )
+
+    def contour(
+        self,
+        x: Any = None,
+        y: Any = None,
+        color: Any = None,
+        *,
+        data: Any = None,
+        thresholds: int | Sequence[float] | np.ndarray[Any, Any] | None = None,
+        variant: Literal["lines", "bands"] | None = None,
+        colors: str | Sequence[str] | None = None,
+        color_domain: tuple[float, float] | None = None,
+        color_midpoint: float | None = None,
+        stroke: str | None = None,
+        stroke_width: float | None = None,
+        fill_opacity: float | None = None,
+        label: str | None = None,
+        facet: Literal["repeat"] | None = None,
+        panel: str | None = None,
+        id: str | None = None,
+    ) -> Chart:
+        """Contours of a field sampled on a grid: lines where it crosses each
+        threshold, or with ``variant="bands"``, bands filled from each up to
+        the next, colored on the ``colors`` ramp.
+
+        With column names, each row is a grid point: number or time columns
+        ``x`` and ``y`` place it on a rectilinear grid (every distinct x with
+        every distinct y), and the number column ``color`` is the field's
+        value there; an ``hg.matrix`` holds such a grid as it is. With a 2D
+        array ``color`` (as in ``go.Contour(z=...)``), row ``i`` and column
+        ``j`` is the value at ``y[i]`` and ``x[j]`` (positions 0, 1, 2, ...
+        without them), sent as a matrix. Values are interpolated linearly
+        between grid points; points without a value leave holes, and contours
+        end where the grid does.
+
+        ``thresholds`` is about how many round values across the field (10
+        by default; for bands, round edges covering it), or the values,
+        increasing (at least two for bands). Lines take ``stroke`` (one color
+        for all) and ``stroke_width``; bands ``fill_opacity``.
+        """
+        if variant not in (None, "lines", "bands"):
+            raise ValueError(
+                f'contour variant: expected "lines" or "bands"; received {shown(variant)}'
+            )
+        bands = variant == "bands"
+        if color is None:
+            raise ValueError("contour color: needs the number column, or a 2D array, of the field")
+        if not isinstance(color, str):
+            if data is not None:
+                raise ValueError(
+                    "contour data: a color matrix holds the field itself; drop data, or name "
+                    "columns of it"
+                )
+            data = _matrix_of(color, x, y, "value", "contour")
+            x, y, color = "x", "y", "value"
+        elif not (isinstance(x, str) and isinstance(y, str)):
+            axis, value = ("x", x) if not isinstance(x, str) else ("y", y)
+            raise TypeError(
+                f"contour {axis}: expected a column name, as color names a column; "
+                f"received {shown(value)}"
+            )
+        given = ("stroke", stroke) if stroke is not None else ("stroke_width", stroke_width)
+        if bands and given[1] is not None:
+            raise ValueError(
+                f"contour {given[0]}: draws lines; bands take colors and fill_opacity, so drop "
+                f'{given[0]} or use variant="lines"'
+            )
+        if not bands and fill_opacity is not None:
+            raise ValueError(
+                "contour fill_opacity: fills bands; lines take stroke and stroke_width, so drop "
+                'it or use variant="bands"'
+            )
+        if stroke_width is not None and not (_finite(stroke_width) and stroke_width >= 0):
+            raise ValueError(
+                "contour stroke_width: expected a number of at least 0; "
+                f"received {shown(stroke_width)}"
+            )
+        if fill_opacity is not None and not (_finite(fill_opacity) and 0 <= fill_opacity <= 1):
+            raise ValueError(
+                "contour fill_opacity: expected a number from 0 to 1; "
+                f"received {shown(fill_opacity)}"
+            )
+        table = self._mark_table(data)
+        self._require(table, x, _NUMERIC, "contour x")
+        self._require(table, y, _NUMERIC, "contour y")
+        self._require(table, color, ("number",), "contour color")
+        return self._add(
+            {
+                "type": "contour",
+                "x": x,
+                "y": y,
+                "color": color,
+                "thresholds": _thresholds(thresholds, bands),
+                "variant": variant,
+                "colors": _colors(colors, "contour colors"),
+                "colorDomain": _range(color_domain, "contour color_domain"),
+                "colorMidpoint": _midpoint(color_midpoint, color_domain, "contour"),
+                "stroke": stroke,
+                "strokeWidth": None if stroke_width is None else float(stroke_width),
+                "fillOpacity": None if fill_opacity is None else float(fill_opacity),
+                "label": label,
+                "facet": _mark_facet(facet, "contour"),
+                "panel": panel,
+                "id": id,
             },
             table,
         )
@@ -3401,6 +3676,7 @@ class Chart:
             self._used_columns(),
             self._mark_specs(),
             self._derived_specs(),
+            self._matrices(),
         )
 
     def _layouts(self) -> list[dict[str, Any]]:
@@ -3603,6 +3879,9 @@ class Chart:
                 continue
             if kind not in ("histogram", "boxplot", "boxen", "violin"):
                 continue
+            # A 2D histogram's cells place their rows along x and y both.
+            if kind == "histogram" and mark.get("x") is not None and mark.get("y") is not None:
+                continue
             # A summary's value axis holds statistics: a histogram's counts,
             # across its binned axis, and box plots' values, which may lie along x.
             y = mark.get("y")
@@ -3711,7 +3990,12 @@ class Chart:
         return used
 
     def _used_columns(self) -> dict[str, dict[str, Column]]:
-        """The columns sent, by spec table name; other columns are never sent."""
+        """The columns sent, by spec table name; other columns are never sent,
+        but a matrix's coordinates always are: they say its shape."""
+        used = self._used_fields()
+        for table, (source, _) in enumerate(self._tables):
+            if isinstance(source, Matrix) and table in used:
+                used[table] |= {source.x, source.y}
         return {
             table_name(table): {
                 # A point's symbol may name a shape rather than a column.
@@ -3719,8 +4003,16 @@ class Chart:
                 for field in sorted(fields)
                 if field in self._tables[table][1].names
             }
-            for table, fields in self._used_fields().items()
+            for table, fields in used.items()
             if table not in self._derived
+        }
+
+    def _matrices(self) -> dict[str, dict[str, str]]:
+        """The coordinates of the matrix tables sent, by spec table name."""
+        return {
+            table_name(table): {"x": source.x, "y": source.y}
+            for table, (source, _) in enumerate(self._tables)
+            if isinstance(source, Matrix)
         }
 
     def _derived_specs(self) -> dict[str, dict[str, Any]]:
@@ -3761,6 +4053,8 @@ class Chart:
             source = self._table(data.source, data._table)
             self._tables.append((data, _DerivedColumns(data)))
             self._derived[len(self._tables) - 1] = source
+        elif isinstance(data, Matrix):
+            self._tables.append((data, data))
         else:
             self._tables.append((data, converted or Table(data)))
         return len(self._tables) - 1
@@ -4387,9 +4681,10 @@ def assemble_spec(
     tables: dict[str, dict[str, Column]],
     marks: list[dict[str, Any]],
     derived: dict[str, dict[str, Any]] | None = None,
+    matrices: dict[str, dict[str, str]] | None = None,
 ) -> tuple[dict[str, Any], list[bytes]]:
     """A spec and its buffers from chart options, columns by table name, mark
-    specs, and derived tables by name."""
+    specs, derived tables by name, and the coordinates of matrix tables."""
     buffers: list[bytes] = []
     spec: dict[str, Any] = {"version": _SPEC_VERSION, **options}
     for key, value in layout.items():
@@ -4398,7 +4693,11 @@ def assemble_spec(
         )
     if tables or derived:
         spec["data"] = {
-            name: {"columns": columns_spec(columns, buffers)} for name, columns in tables.items()
+            name: {
+                "columns": columns_spec(columns, buffers),
+                **({"matrix": matrices[name]} if matrices and name in matrices else {}),
+            }
+            for name, columns in tables.items()
         }
         spec["data"].update(derived or {})
     spec["marks"] = marks
@@ -4638,36 +4937,54 @@ def _box_aspect(aspect: Any) -> list[float] | None:
     return sides
 
 
-def _grid_columns(z: Any, x: Any, y: Any) -> dict[str, np.ndarray]:
-    """A matrix of heights as columns of one row per grid point: row i, column j
-    at ``y[i]``, ``x[j]``. Without ``x`` or ``y``, positions are 0, 1, 2, ..."""
-    heights = np.asarray(z, dtype=np.float64)
-    if heights.ndim != 2:
-        raise ValueError(
-            f"surface z: expected a 2D matrix of heights; received shape {heights.shape}"
-        )
-    rows, columns = heights.shape
+def _matrix_of(values: Any, x: Any, y: Any, name: str, mark: str) -> Matrix:
+    """A 2D array of values as a matrix: row i, column j at ``y[i]``, ``x[j]``
+    (positions 0, 1, 2, ... without them), in columns "x", "y", and `name`."""
+    grid = np.asarray(values, dtype=np.float64)
+    if grid.ndim != 2:
+        raise ValueError(f"{mark} {name}: expected a 2D matrix; received shape {grid.shape}")
+    rows, columns = grid.shape
 
-    def positions(values: Any, count: int, name: str) -> np.ndarray:
-        if values is None:
+    def positions(given: Any, count: int, axis: str) -> Any:
+        if given is None:
             return np.arange(count, dtype=np.float64)
-        if isinstance(values, str):
+        if isinstance(given, str):
             raise TypeError(
-                f"surface {name}: expected positions along the z matrix; "
-                f"received the column name {shown(values)}"
+                f"{mark} {axis}: expected positions along the {name} matrix; "
+                f"received the column name {shown(given)}"
             )
-        array = np.asarray(values)
+        array = np.asarray(given)
         if array.ndim != 1 or len(array) != count:
-            side = "column" if name == "x" else "row"
-            given = len(array) if array.ndim == 1 else f"an array of shape {array.shape}"
+            side = "column" if axis == "x" else "row"
+            received = len(array) if array.ndim == 1 else f"an array of shape {array.shape}"
             raise ValueError(
-                f"surface {name}: expected {count} values, one per matrix {side}; received {given}"
+                f"{mark} {axis}: expected {count} values, one per matrix {side}; "
+                f"received {received}"
             )
-        return array
+        return given
 
-    xs = positions(x, columns, "x")
-    ys = positions(y, rows, "y")
-    return {"x": np.tile(xs, rows), "y": np.repeat(ys, columns), "z": heights.reshape(-1)}
+    return Matrix(
+        {"x": positions(x, columns, "x"), "y": positions(y, rows, "y"), name: grid},
+        x="x",
+        y="y",
+    )
+
+
+def matrix(columns: Mapping[str, Any], *, x: str, y: str) -> Matrix:
+    """A matrix data source: values at every ``x`` crossed with every ``y``.
+
+    ``columns`` maps names to arrays, as ``hg.Chart`` takes them: the
+    columns named by ``x`` and ``y`` hold the coordinates (one per column of
+    the matrix, and one per row), and every other column a value at each
+    pair, as a 2D array of shape (len(y), len(x)), row ``i`` and column
+    ``j`` at ``y[i]`` and ``x[j]``, or flattened in that order. It reads as
+    a table of a row per pair; contours and heatmaps draw it, and its
+    coordinates travel once each rather than once per row::
+
+        density = hg.matrix({"x": xs, "y": ys, "density": grid}, x="x", y="y")
+        hg.Chart(density).contour("x", "y", "density", variant="bands")
+    """
+    return Matrix(columns, x, y)
 
 
 def _geometry_column(source: Any, columns: Any) -> str:
@@ -5367,18 +5684,23 @@ def surface(
 
 @helper
 def heatmap(
-    data: Any,
-    x: str | None = None,
-    y: str | None = None,
-    color: str | None = None,
+    data: Any = None,
+    x: Any = None,
+    y: Any = None,
+    color: Any = None,
     *,
+    x1: str | None = None,
+    x2: str | None = None,
+    y1: str | None = None,
+    y2: str | None = None,
     date: str | None = None,
     calendar: Literal["weeks", "months"] | None = None,
     week_start: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"] | None = None,
     colors: str | Sequence[str] | None = None,
     color_domain: tuple[float, float] | None = None,
     color_midpoint: float | None = None,
-    reduce: Literal["mean", "max", "min"] | None = None,
+    reduce: CellReduce | None = None,
+    sampling: HeatmapSampling | None = None,
     x_step: float | None = None,
     y_step: float | None = None,
     x_banded: bool = False,
@@ -5388,7 +5710,8 @@ def heatmap(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A heatmap; ``colors`` is a scheme name or a list of hex colors (see ``Chart.heatmap``)."""
+    """A heatmap of columns of ``data``, or with a 2D array ``color``, of the matrix (see
+    ``Chart.heatmap``); ``colors`` is a scheme name or a list of hex colors."""
     chart, tooltip = _rows_chart_of(data, options)
     return chart.heatmap(
         x,
@@ -5401,6 +5724,11 @@ def heatmap(
         color_domain=color_domain,
         color_midpoint=color_midpoint,
         reduce=reduce,
+        sampling=sampling,
+        x1=x1,
+        x2=x2,
+        y1=y1,
+        y2=y2,
         x_step=x_step,
         y_step=y_step,
         x_banded=x_banded,
@@ -5412,68 +5740,121 @@ def heatmap(
     )
 
 
-def _histogram_finite(value: Any) -> bool:
-    if not isinstance(value, numbers.Real) or isinstance(value, (bool, np.bool_)):
-        return False
-    try:
-        return math.isfinite(float(value))
-    except (OverflowError, ValueError):
-        return False
+@helper
+def contour(
+    data: Any = None,
+    x: Any = None,
+    y: Any = None,
+    color: Any = None,
+    *,
+    thresholds: int | Sequence[float] | np.ndarray[Any, Any] | None = None,
+    variant: Literal["lines", "bands"] | None = None,
+    colors: str | Sequence[str] | None = None,
+    color_domain: tuple[float, float] | None = None,
+    color_midpoint: float | None = None,
+    stroke: str | None = None,
+    stroke_width: float | None = None,
+    fill_opacity: float | None = None,
+    label: str | None = None,
+    panel: str | None = None,
+    id: str | None = None,
+    **options: Unpack[HelperOptions],
+) -> Chart:
+    """Contours of a field on a grid (see ``Chart.contour``): of columns of
+    ``data``, or with a 2D array ``color``, of the matrix, at ``x`` and ``y``."""
+    return _chart_of(data, options).contour(
+        x,
+        y,
+        color,
+        thresholds=thresholds,
+        variant=variant,
+        colors=colors,
+        color_domain=color_domain,
+        color_midpoint=color_midpoint,
+        stroke=stroke,
+        stroke_width=stroke_width,
+        fill_opacity=fill_opacity,
+        label=label,
+        panel=panel,
+        id=id,
+    )
 
 
-def _histogram_bins(
-    bins: int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any] | None,
-) -> int | dict[str, float] | list[float] | None:
+def _thresholds(thresholds: Any, bands: bool) -> int | list[float] | None:
+    """A contour's thresholds as the spec takes them: a count, or increasing values."""
+    if thresholds is None:
+        return None
+    if isinstance(thresholds, numbers.Real) and not isinstance(thresholds, (bool, np.bool_)):
+        count = float(thresholds) if _finite(thresholds) else math.nan
+        if not (count.is_integer() and 1 <= count <= 1000):
+            raise ValueError(
+                "contour thresholds: expected a whole number from 1 to 1000, or values; "
+                f"received {shown(thresholds)}"
+            )
+        return int(count)
+    if not isinstance(thresholds, (Sequence, np.ndarray)) or isinstance(thresholds, (str, bytes)):
+        raise ValueError(
+            "contour thresholds: expected a count or a list of values; "
+            f"received {shown(thresholds)}"
+        )
+    least = 2 if bands else 1
+    if not least <= len(thresholds) <= 1000:
+        raise ValueError(
+            f"contour thresholds: expected {least} to 1000 values"
+            + (", a band between each two" if bands else "")
+            + f"; received {len(thresholds)}"
+        )
+    values: list[float] = []
+    for i, value in enumerate(thresholds):
+        if not _finite(value):
+            raise ValueError(
+                f"contour thresholds[{i}]: expected a finite number; received {shown(value)}"
+            )
+        if values and not float(value) > values[-1]:
+            raise ValueError(
+                f"contour thresholds[{i}]: expected a value above {values[-1]:g}, the one "
+                f"before; received {float(value):g}"
+            )
+        values.append(float(value))
+    return values
+
+
+def _sampling(sampling: Any) -> dict[str, str] | None:
+    """A heatmap's sampling as the spec takes it: ``{"reduce": "mean" | "max" | "min"}``."""
+    if sampling is None:
+        return None
+    if not isinstance(sampling, Mapping) or set(sampling) - {"reduce"}:
+        raise ValueError(
+            'heatmap sampling: expected {"reduce": "mean", "max", or "min"}; '
+            f"received {shown(sampling)}"
+        )
+    reduce = sampling.get("reduce")
+    if reduce not in (None, "mean", "max", "min"):
+        raise ValueError(
+            f'heatmap sampling reduce: expected "mean", "max", or "min"; received {shown(reduce)}'
+        )
+    return {"reduce": reduce} if reduce is not None else {}
+
+
+def _bins_2d(bins: Any) -> Any:
+    """A 2D histogram's bins: one definition for both axes, or ``{"x": ..., "y": ...}``."""
     if bins is None:
         return None
-    if isinstance(bins, dict):
-        step = bins.get("step")
-        if step is None or not _histogram_finite(step) or step <= 0:
+    if isinstance(bins, Mapping) and "step" not in bins:
+        unknown = set(bins) - {"x", "y"}
+        if unknown:
             raise ValueError(
-                f"histogram bins step: expected a positive number; received {shown(step)}"
+                "histogram bins: a 2D histogram's bins are one definition or "
+                f'{{"x": ..., "y": ...}}; received {", ".join(map(repr, sorted(unknown)))}'
             )
-        start = bins.get("start")
-        if start is not None and not _histogram_finite(start):
-            raise ValueError(
-                f"histogram bins start: expected a finite number; received {shown(start)}"
-            )
-        return {"step": float(step), **({"start": float(start)} if start is not None else {})}
-    if isinstance(bins, numbers.Real) and not isinstance(bins, (bool, np.bool_)):
-        if not _histogram_finite(bins):
-            raise ValueError(
-                f"histogram bins: expected a whole number of at least 1; received {shown(bins)}"
-            )
-        value = float(bins)
-        if value < 1 or not value.is_integer():
-            raise ValueError(
-                f"histogram bins: expected a whole number of at least 1; received {shown(bins)}"
-            )
-        return int(value)
-    if isinstance(bins, np.ndarray) and bins.ndim != 1:
-        raise ValueError(
-            f"histogram bins: expected a 1-D array of edges; received shape {bins.shape}"
-        )
-    if not isinstance(bins, (Sequence, np.ndarray)) or isinstance(bins, (str, bytes)):
-        raise ValueError(
-            "histogram bins: expected a whole number, a step/start dict, or a sequence of "
-            f"edges; received {shown(bins)}"
-        )
-    if len(bins) < 2 or len(bins) > 1001:
-        raise ValueError(f"histogram bins: expected 2 to 1001 edges; received {len(bins)}")
-    edges: list[float] = []
-    for i, edge in enumerate(bins):
-        if not _histogram_finite(edge):
-            raise ValueError(
-                f"histogram bins[{i}]: expected a finite number; received {shown(edge)}"
-            )
-        value = float(edge)
-        if edges and not value > edges[-1]:
-            raise ValueError(
-                f"histogram bins[{i}]: expected an edge above the one before; "
-                f"received {value:g} after {edges[-1]:g}"
-            )
-        edges.append(value)
-    return edges
+        # Axes left out take their default bins; with neither, so do both.
+        each = {
+            axis: bin_spec(bins[axis], f"histogram bins[{axis!r}]")
+            for axis in ("x", "y")
+            if bins.get(axis) is not None
+        }
+        return each or None
+    return bin_spec(bins, "histogram bins")
 
 
 @helper
@@ -5482,7 +5863,7 @@ def histogram(
     x: str | None = None,
     *,
     y: str | None = None,
-    bins: int | dict[str, float] | Sequence[float] | np.ndarray[Any, Any] | None = None,
+    bins: BinSpec | Mapping[str, BinSpec] | None = None,
     series: str | None = None,
     weight: str | None = None,
     normalize: HistogramNormalize | None = None,
@@ -5493,6 +5874,9 @@ def histogram(
     element: HistogramElement | None = None,
     fill: str | None = None,
     fill_opacity: float | None = None,
+    colors: str | Sequence[str] | None = None,
+    color_domain: tuple[float, float] | None = None,
+    color_midpoint: float | None = None,
     label: str | None = None,
     legend_group: str | None = None,
     axis: Literal["left", "right"] | None = None,
@@ -5500,8 +5884,8 @@ def histogram(
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
-    """A histogram of exactly one of ``x`` or ``y``, with optional exact bin
-    edges (see ``Chart.histogram``)."""
+    """A histogram of ``x`` or ``y``, or with both a 2D histogram's cells (see
+    ``Chart.histogram``)."""
     return _chart_of(data, options).histogram(
         x,
         y=y,
@@ -5516,6 +5900,9 @@ def histogram(
         element=element,
         fill=fill,
         fill_opacity=fill_opacity,
+        colors=colors,
+        color_domain=color_domain,
+        color_midpoint=color_midpoint,
         label=label,
         legend_group=legend_group,
         axis=axis,

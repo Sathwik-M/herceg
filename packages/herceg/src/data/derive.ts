@@ -5,14 +5,15 @@
 // own, and drops remove the rows they produced; any other change, or any
 // other pipeline, recomputes the table.
 
-import { tickStep } from "../scale/ticks.ts";
 import type {
   AggregateOp,
   AggregateSpec,
+  BinSpec,
   RollingOp,
   RollingSpec,
   TransformSpec,
 } from "../spec/spec.ts";
+import { binEdges, binOf, checkBins, evenBinOf, evenStep, finiteRange } from "./bins.ts";
 import {
   type ColumnInput,
   encodedCategory,
@@ -36,7 +37,6 @@ import {
   type FieldName,
   type NumericField,
   type Schema,
-  scanExtent,
   type Table,
   type TableChange,
   table,
@@ -157,7 +157,10 @@ function rowsOf(source: Table, from = 0): Rows {
 
 /** Whether a step maps each row to at most one row, in order, on its own. */
 function rowwise(step: TransformSpec): boolean {
-  return "filter" in step || "calculate" in step || ("bin" in step && step.step !== undefined);
+  // Bins of a width or of edges hold the same values whatever other rows there are.
+  return (
+    "filter" in step || "calculate" in step || ("bin" in step && typeof step.bins === "object")
+  );
 }
 
 function apply(rows: Rows, step: TransformSpec): Rows {
@@ -212,59 +215,72 @@ function calculate(
   return rows.with(as, { kind: "number", values, owned: true });
 }
 
-/** The default number of bins when neither a step nor a count is given. */
+/** The default number of bins when `bins` gives neither a width nor edges. */
 const BINS = 10;
 
-function bin(
-  rows: Rows,
-  step: { bin: string; as?: string; step?: number; count?: number; start?: number },
-): Rows {
+/**
+ * Replaces a field (or adds `as`) with the start of each value's bin, and
+ * adds `end` with its end. Bins of a width run from multiples of the step
+ * (or from `start`) without end, so appended rows take the bins earlier rows
+ * did; a count bins the values the table holds. Values in no bin (missing,
+ * below an explicit start, or outside explicit edges) have none.
+ */
+function bin(rows: Rows, step: { bin: string; bins?: BinSpec; as?: string; end?: string }): Rows {
   const kind = rows.kind(step.bin);
   if (kind === "category" || kind === "geometry")
     throw new TypeError(`field "${step.bin}" holds ${kind} values; expected number or time`);
-  if (step.count !== undefined && !(Number.isInteger(step.count) && step.count >= 1))
-    throw new RangeError(`count: expected a whole number of at least 1; received ${step.count}`);
-  if (step.step !== undefined && !(step.step > 0 && Number.isFinite(step.step)))
-    throw new RangeError(`step: expected a positive number; received ${step.step}`);
-  if (step.start !== undefined && !Number.isFinite(step.start))
-    throw new RangeError(`start: expected a finite number; received ${step.start}`);
+  const { bins } = step;
+  if (bins !== undefined) checkBins(bins, "bins");
+  const name = step.as ?? step.bin;
+  if (step.end !== undefined && step.end === name)
+    throw new TypeError(
+      `end: "${step.end}" also names the bins' starts; give the ends another name`,
+    );
   const values = rows.numbers(step.bin);
-  const extent = scanExtent(values, 0, values.length);
-  // Without a spread of values (none, or one), bins are 1 wide. Round steps
-  // have one significant digit; reading them back from it undoes the
-  // rounding of powers of ten (0.00009999999999999999 for 0.0001).
-  const automatic =
-    extent && extent[1] > extent[0]
-      ? Number(tickStep(extent[0], extent[1], step.count ?? BINS).toPrecision(1))
-      : 1;
-  const width = step.step ?? automatic;
-  if (!(width > 0 && Number.isFinite(width)))
-    throw new RangeError(`step: none fits values from ${extent![0]} to ${extent![1]}; give one`);
-  // Without a start, edges are multiples of the step, the same for every
-  // batch of appended rows.
-  const edge = binEdges(step.start ?? 0, width);
-  const start = edge(0);
-  const out = new Float64Array(rows.length);
-  for (let i = 0; i < rows.length; i++) {
-    const value = values[i]!;
-    let k = Math.floor((value - start) / width);
-    if (!Number.isFinite(k)) {
-      out[i] = Number.NaN;
-      continue;
+  const n = rows.length;
+  const starts = new Float64Array(n);
+  const ends = step.end === undefined ? undefined : new Float64Array(n);
+  if (typeof bins === "object" && !Array.isArray(bins)) {
+    const { step: width, start } = bins as { step: number; start?: number };
+    // Without a start, edges are multiples of the step, the same for every
+    // batch of appended rows.
+    const edge = binEdgesOf(start ?? 0, width);
+    const first = edge(0);
+    for (let i = 0; i < n; i++) {
+      const value = values[i]!;
+      let k = Math.floor((value - first) / width);
+      if (!Number.isFinite(k) || (start !== undefined && value < start)) {
+        starts[i] = Number.NaN;
+        if (ends) ends[i] = Number.NaN;
+        continue;
+      }
+      // Past 2 ** 53 bins from the start, bin numbers are not exact: each value
+      // starts its own bin, so no bin starts above its values.
+      if (!Number.isSafeInteger(k)) {
+        starts[i] = value;
+        if (ends) ends[i] = value + width;
+        continue;
+      }
+      // A value belongs to the bin whose edges hold it; division can put one
+      // just below an edge it is on (0.3 / 0.1 is 2.999…).
+      if (edge(k + 1) <= value) k++;
+      else if (edge(k) > value) k--;
+      starts[i] = edge(k);
+      if (ends) ends[i] = edge(k + 1);
     }
-    // Past 2 ** 53 bins from the start, bin numbers are not exact: each value
-    // starts its own bin, so no bin starts above its values.
-    if (!Number.isSafeInteger(k)) {
-      out[i] = value;
-      continue;
+  } else {
+    const edges = binEdges(bins, finiteRange(values, undefined), BINS);
+    const even = Array.isArray(bins) ? 0 : evenStep(edges);
+    for (let i = 0; i < n; i++) {
+      const value = values[i]!;
+      const at =
+        edges.length < 2 ? -1 : even > 0 ? evenBinOf(edges, even, value) : binOf(edges, value);
+      starts[i] = at < 0 ? Number.NaN : edges[at]!;
+      if (ends) ends[i] = at < 0 ? Number.NaN : edges[at + 1]!;
     }
-    // A value belongs to the bin whose edges hold it; division can put one
-    // just below an edge it is on (0.3 / 0.1 is 2.999…).
-    if (edge(k + 1) <= value) k++;
-    else if (edge(k) > value) k--;
-    out[i] = edge(k);
   }
-  return rows.with(step.as ?? step.bin, { kind, values: out, owned: true });
+  const binned = rows.with(name, { kind, values: starts, owned: true });
+  return ends ? binned.with(step.end!, { kind, values: ends, owned: true }) : binned;
 }
 
 /**
@@ -274,7 +290,7 @@ function bin(
  * bins; otherwise (1/3, 1e-300, 0.12345678901234566) they are computed
  * directly.
  */
-function binEdges(start: number, width: number): (k: number) => number {
+function binEdgesOf(start: number, width: number): (k: number) => number {
   const direct = (k: number) => start + k * width;
   const decimals = Math.max(decimalsOf(start), decimalsOf(width));
   if (decimals === Number.POSITIVE_INFINITY) return direct;
@@ -784,7 +800,7 @@ type ResultKind<S extends Schema, A> = A extends { op: KeepsKind; field: infer F
  * ```ts
  * const hourly = derive(readings)
  *   .filter(col("temp").gt(-40))
- *   .bin("time", { step: 3_600_000, as: "hour" })
+ *   .bin("time", { bins: { step: 3_600_000 }, as: "hour" })
  *   .aggregate({ by: ["hour", "site"], ops: { mean: mean("temp"), n: count() } })
  *   .table();
  * ```
@@ -815,11 +831,15 @@ export class Derivation<S extends Schema> {
     return this.#then({ calculate: expressionOf(value), as });
   }
 
-  /** Replaces a number or time field (or adds `as`) with the start of its bin. */
-  bin<F extends NumericField<S>, A extends string = F>(
+  /**
+   * Replaces a number or time field (or adds `as`) with the start of its
+   * bin, and with `end` adds the bin's end: `bins` is about how many round
+   * bins (10 by default), `{ step, start }`, or edges, as histograms take them.
+   */
+  bin<F extends NumericField<S>, A extends string = F, E extends string = never>(
     field: F,
-    options: { step?: number; count?: number; start?: number; as?: A } = {},
-  ): Derivation<Omit<S, A> & { [P in A]: S[F] }> {
+    options: { bins?: BinSpec; as?: A; end?: E } = {},
+  ): Derivation<Omit<S, A | E> & { [P in A | E]: S[F] }> {
     return this.#then({ bin: field, ...options });
   }
 
