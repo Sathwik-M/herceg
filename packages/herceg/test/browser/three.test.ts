@@ -13,6 +13,9 @@ import { renderToPDF } from "../../src/pdf.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { Camera } from "../../src/three/camera.ts";
 import { MOUSE, modelOf } from "./helpers.ts";
+import { hasWebGL2 } from "./webgl.ts";
+
+const gpu = it.skipIf(!hasWebGL2());
 
 let host: HTMLDivElement;
 
@@ -245,7 +248,7 @@ describe("3D charts", () => {
     chart.destroy();
   });
 
-  it("draw large point clouds on the GPU, and find their points on the CPU", async () => {
+  gpu("draw large point clouds on the GPU, and find their points on the CPU", async () => {
     const n = 30_000;
     const big = table({
       x: Float64Array.from({ length: n }, (_, i) => Math.sin(i)),
@@ -276,53 +279,59 @@ describe("3D charts", () => {
     expect(cloudPainter()!.bytes).toBe(before);
   });
 
-  it("wait in `loading` for the 3D painter a chart turned 3D needs, after the 2D one", async () => {
-    const before = cloudPainter()!.bytes;
-    const flat = table({
-      x: Float64Array.from({ length: 150_000 }, (_, i) => i % 1000),
-      y: Float64Array.from({ length: 150_000 }, (_, i) => i % 7),
-    });
-    const chart = createChart(host, { marks: [point(flat, { x: "x", y: "y" })] });
-    // The chart turns 3D before the 2D painter has loaded.
-    chart.update({ marks: [point3d(cloud, { x: "x", y: "y", z: "z" })] });
-    await chart.loading;
-    expect(chart.loading).toBeUndefined();
-    expect(cloudPainter()!.bytes - before).toBe(cloud.length * 13);
-    chart.destroy();
-    expect(cloudPainter()!.bytes).toBe(before);
-  });
-
-  it("place GPU points precisely whatever values lie outside the box, at any magnitude", async () => {
-    // Far outliers first, which an upload measured from them would lose the rest to.
-    const n = 25_000;
-    for (const scale of [1, 1e40, 1e-40]) {
-      const x = Float64Array.from({ length: n }, (_, i) =>
-        i === 0 ? 1e12 * scale : (0.25 + (i % 7) * 1e-3) * scale,
-      );
-      const y = Float64Array.from({ length: n }, (_, i) => (i % 2) / 2);
-      const z = Float64Array.from({ length: n }, (_, i) => (i % 3) / 3);
-      const chart = createChart(host, {
-        x: { domain: [0, scale] },
-        marks: [point3d(table({ x, y, z }), { x: "x", y: "y", z: "z", fill: "#ff0000" })],
+  gpu(
+    "wait in `loading` for the 3D painter a chart turned 3D needs, after the 2D one",
+    async () => {
+      const before = cloudPainter()!.bytes;
+      const flat = table({
+        x: Float64Array.from({ length: 150_000 }, (_, i) => i % 1000),
+        y: Float64Array.from({ length: 150_000 }, (_, i) => i % 7),
       });
+      const chart = createChart(host, { marks: [point(flat, { x: "x", y: "y" })] });
+      // The chart turns 3D before the 2D painter has loaded.
+      chart.update({ marks: [point3d(cloud, { x: "x", y: "y", z: "z" })] });
       await chart.loading;
-      const canvas = chart.root.querySelector("canvas")!;
-      const ratio = canvas.width / chart.root.clientWidth;
-      const context = canvas.getContext("2d")!;
-      for (const step of [1, 2, 3]) {
-        const { px, py } = modelOf(chart).inspectItem(modelOf(chart).stepItem(undefined, step)!)!
-          .points[0]!;
-        const [r, , , a] = context.getImageData(
-          Math.round(px * ratio),
-          Math.round(py * ratio),
-          1,
-          1,
-        ).data;
-        expect([scale, r, a]).toEqual([scale, 255, 255]);
-      }
+      expect(chart.loading).toBeUndefined();
+      expect(cloudPainter()!.bytes - before).toBe(cloud.length * 13);
       chart.destroy();
-    }
-  });
+      expect(cloudPainter()!.bytes).toBe(before);
+    },
+  );
+
+  gpu(
+    "place GPU points precisely whatever values lie outside the box, at any magnitude",
+    async () => {
+      // Far outliers first, which an upload measured from them would lose the rest to.
+      const n = 25_000;
+      for (const scale of [1, 1e40, 1e-40]) {
+        const x = Float64Array.from({ length: n }, (_, i) =>
+          i === 0 ? 1e12 * scale : (0.25 + (i % 7) * 1e-3) * scale,
+        );
+        const y = Float64Array.from({ length: n }, (_, i) => (i % 2) / 2);
+        const z = Float64Array.from({ length: n }, (_, i) => (i % 3) / 3);
+        const chart = createChart(host, {
+          x: { domain: [0, scale] },
+          marks: [point3d(table({ x, y, z }), { x: "x", y: "y", z: "z", fill: "#ff0000" })],
+        });
+        await chart.loading;
+        const canvas = chart.root.querySelector("canvas")!;
+        const ratio = canvas.width / chart.root.clientWidth;
+        const context = canvas.getContext("2d")!;
+        for (const step of [1, 2, 3]) {
+          const { px, py } = modelOf(chart).inspectItem(modelOf(chart).stepItem(undefined, step)!)!
+            .points[0]!;
+          const [r, , , a] = context.getImageData(
+            Math.round(px * ratio),
+            Math.round(py * ratio),
+            1,
+            1,
+          ).data;
+          expect([scale, r, a]).toEqual([scale, 255, 255]);
+        }
+        chart.destroy();
+      }
+    },
+  );
 
   it("stop listening once destroyed, and follow only the pointer that began a drag", async () => {
     const chart = await mount();

@@ -9,6 +9,7 @@ import { cloudPainter } from "../../src/render/webgl.ts";
 import type { FaceGeometry, Rect } from "../../src/scene/scene.ts";
 import { FaceIndex } from "../../src/three/faces.ts";
 import { modelOf } from "./helpers.ts";
+import { hasWebGL2 } from "./webgl.ts";
 
 // The page's WebGL contexts, so a test can lose one.
 const contexts: WebGL2RenderingContext[] = [];
@@ -70,7 +71,7 @@ function pixel(chart: Chart, x: number, y: number): number[] {
   return [...data];
 }
 
-describe("3D charts on the GPU", () => {
+describe.skipIf(!hasWebGL2())("3D charts on the GPU", () => {
   it("draw large surfaces with the CPU's colors and shading", async () => {
     host.style.cssText = "width:1000px;height:900px";
     const before = cloudPainter()!.bytes;

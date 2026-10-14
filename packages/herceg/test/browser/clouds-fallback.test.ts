@@ -4,6 +4,9 @@ import { createChart } from "../../src/dom/chart.ts";
 import { point } from "../../src/marks/point.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
+import { hasWebGL2 } from "./webgl.ts";
+
+const gpu = it.skipIf(!hasWebGL2());
 
 // The 3D painter fails, as a module that does not load would.
 vi.mock("../../src/render/webgl3d.ts", () => ({
@@ -41,7 +44,7 @@ const deep = point3d(
   { x: "x", y: "y", z: "z" },
 );
 
-it("keeps drawing 2D clouds on the GPU when the 3D painter fails to load", async () => {
+gpu("keeps drawing 2D clouds on the GPU when the 3D painter fails to load", async () => {
   const painter = cloudPainter()!;
   const before = painter.bytes;
   const chart = createChart(host, { marks: [flat] });
@@ -60,7 +63,7 @@ it("keeps drawing 2D clouds on the GPU when the 3D painter fails to load", async
   expect(painter.bytes).toBe(before);
 });
 
-it("draws 2D clouds on the GPU after a 3D chart's painter failed to load", async () => {
+gpu("draws 2D clouds on the GPU after a 3D chart's painter failed to load", async () => {
   const painter = cloudPainter()!;
   const before = painter.bytes;
   const chart = createChart(host, { marks: [deep] });
