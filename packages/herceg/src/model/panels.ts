@@ -154,7 +154,7 @@ export class Panels implements PanelLayout {
       new Error(
         `${type} panel: no panel "${panel}"; name one of ${[...ids].map((id) => `"${id}"`).join(", ")}`,
       );
-    checkLayouts(given);
+    checkLayouts(given, true);
     for (const { spec } of given)
       if (spec.panel !== undefined && spec.panel !== EVERY_PANEL && !ids.has(spec.panel))
         throw unknown(spec.type, spec.panel);
@@ -186,6 +186,11 @@ export class Panels implements PanelLayout {
       if (held.has(id) && (x || y || yRight))
         throw new Error(
           `panels[${i}]: the ${held.get(id)} mark it draws has no axes; drop its x, y, and yRight`,
+        );
+    for (const [i, panel] of this.list.entries())
+      if (panel.camera && !layouts.some((mark) => mark.spec.panel === panel.id && mark.camera))
+        throw new Error(
+          `panels[${i}].camera: panel "${panel.id}" has no 3D marks; drop camera or add a 3D mark`,
         );
     const [first] = held;
     for (const mark of marks) {

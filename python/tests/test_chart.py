@@ -1503,7 +1503,7 @@ def test_facets_of_layout_marks_refuse_what_the_browser_refuses():
     # Maps and networks draw in facet panels too; 3D charts have charts to themselves.
     network, _ = hg.Chart(SALES, facet="region").graph("region", "product").to_spec()
     assert network["marks"][0]["type"] == "graph"
-    with pytest.raises(ValueError, match="point_3d: has no facets or panels yet"):
+    with pytest.raises(ValueError, match="point_3d facet: 3D marks cannot split into facets"):
         hg.Chart({"x": [1.0], "y": [1.0], "z": [1.0], "g": ["a"]}, facet="g").point_3d(
             "x", "y", "z"
         )
@@ -1574,7 +1574,7 @@ def test_a_layout_marks_panel_is_its_own():
             hg.Chart(SALES, panels=["a", hg.Panel("b", **own)]).pie("product", panel="b")
     with pytest.raises(ValueError, match="Chart zoom: every panel draws a pie"):
         hg.Chart(SALES, panels=["a"], zoom="x").pie("product", panel="a").to_spec()
-    with pytest.raises(ValueError, match="point_3d: has no facets or panels yet"):
+    with pytest.raises(ValueError, match="point_3d panel: expected the id of the panel"):
         hg.Chart(SALES, panels=["a"]).point_3d(x="week", y="revenue", z="revenue")
 
 

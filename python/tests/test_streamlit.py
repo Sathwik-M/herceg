@@ -288,3 +288,15 @@ def test_viewport_state_and_reaction(monkeypatch):
     assert hst._state({"viewport": {"x": [1]}}).viewport is None
     with pytest.raises(ValueError, match="streamlit.chart on_viewport: expected"):
         hst.chart(graph, on_viewport="always")
+
+
+def test_camera_state_decodes_each_subplot_and_standalone():
+    result = {
+        "camera": {
+            "camera": {"azimuth": 10},
+            "panels": {"a": {"azimuth": 30}, "b": {"azimuth": 90}, "bad": {"elevation": 200}},
+        }
+    }
+    state = hst._state(result)
+    assert state.camera == hg.Camera(azimuth=10)
+    assert state.panel_cameras == {"a": hg.Camera(azimuth=30), "b": hg.Camera(azimuth=90)}

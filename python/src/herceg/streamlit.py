@@ -26,6 +26,7 @@ except ImportError as error:  # pragma: no cover - depends on the environment
     ) from error
 
 from . import _render
+from ._chart import Camera
 from ._data import shown
 from ._derive import Expr
 from ._events import (
@@ -82,6 +83,9 @@ class ChartState:
     #: Each map or network subplot's view, by panel id, in its plane's units
     #: (``viewport`` is the chart's).
     panel_viewports: dict[str, Viewport] = field(default_factory=dict)
+    #: Current standalone 3D camera, or each subplot's by panel id.
+    camera: Camera | None = None
+    panel_cameras: dict[str, Camera] = field(default_factory=dict)
 
 
 def chart(
@@ -94,6 +98,7 @@ def chart(
     on_drill: Reaction = "ignore",
     on_item_move: Reaction = "ignore",
     on_viewport: Reaction = "ignore",
+    on_camera: Reaction = "ignore",
 ) -> ChartState:
     """Shows ``chart`` in the app and returns what the user did with it.
 
@@ -120,6 +125,7 @@ def chart(
         "drill": on_drill,
         "itemMove": on_item_move,
         "viewport": on_viewport,
+        "camera": on_camera,
     }
     options = {
         "select": "on_select",
@@ -128,6 +134,7 @@ def chart(
         "drill": "on_drill",
         "itemMove": "on_item_move",
         "viewport": "on_viewport",
+        "camera": "on_camera",
     }
     for name, reaction in reactions.items():
         if not (callable(reaction) or reaction in ("ignore", "rerun")):
@@ -187,6 +194,7 @@ _VALUES = {
     "drill": "drill_root",
     "itemMove": "item_positions",
     "viewport": "viewport",
+    "camera": "camera",
 }
 
 
@@ -282,7 +290,21 @@ def _state(
                 view.get("panels") if isinstance(view, dict) else None
             ).items()
         }
+    cameras = result.get("camera")
+    cameras = cameras if isinstance(cameras, dict) else {}
+    camera = _decoded(
+        lambda value: Camera(**value) if value else None, "camera", cameras.get("camera"), None
+    )
+    panel_cameras = {}
+    for panel, payload in _panels(cameras.get("panels")).items():
+        decoded = _decoded(
+            lambda value: Camera(**value) if value else None, "camera", payload, None
+        )
+        if decoded is not None:
+            panel_cameras[panel] = decoded
     return ChartState(
+        camera=camera,
+        panel_cameras=panel_cameras,
         selection=selection,
         viewport=viewport,
         click=decode_inspection(result.get("click")),

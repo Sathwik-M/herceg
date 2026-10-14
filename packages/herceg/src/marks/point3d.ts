@@ -79,6 +79,8 @@ export interface Point3DOptions<S extends Schema> {
   label?: string;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
   tooltip?: MarkTooltip<S>;
+  /** The subplot whose 3D box this layer shares. */
+  panel?: string;
   id?: string;
 }
 
@@ -171,8 +173,13 @@ export class Point3DMark implements Layer3D {
     this.measure = spec.label ?? "Points";
   }
 
-  join(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark {
-    return joinLayers3D(marks, config);
+  join(
+    marks: readonly LayoutMark[],
+    config: ChartConfig,
+    indices?: readonly number[],
+    panel?: string,
+  ): LayoutMark {
+    return joinLayers3D(marks, config, indices, panel);
   }
 
   /** Charts draw 3D layers through `join`; drawn alone, a layer takes the default options. */
@@ -574,6 +581,7 @@ export function point3d<S extends Schema>(
       "fill",
       "fillOpacity",
       "label",
+      "panel",
       "id",
     ]),
   };

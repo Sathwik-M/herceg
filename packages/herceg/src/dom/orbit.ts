@@ -9,7 +9,7 @@ import type { ChartConfig } from "../model/model.ts";
 import type { Scene } from "../scene/scene.ts";
 import type { CameraSpec } from "../spec/spec.ts";
 import { type Camera, MAX_ZOOM, MIN_ZOOM } from "../three/camera.ts";
-import type { Controls as ChartControls, ControlsHost } from "./controls.ts";
+import { type Controls as ChartControls, type ControlsHost, touchAction } from "./controls.ts";
 import { RESET_GLYPH, Toolbar } from "./toolbar.ts";
 
 /**
@@ -53,10 +53,17 @@ function magnify(camera: Camera, by: number): number {
 export class Controls implements ChartControls {
   readonly #root: HTMLElement;
   readonly #host: ControlsHost;
-  readonly #toolbar: Toolbar;
+  readonly #toolbars = new Map<string, Toolbar>();
   readonly #stop: (() => void)[] = [];
   /** A press that may become a drag: its pointer, where it started, and the camera then. */
-  #press: { pointer: number; x: number; y: number; from: Camera; moved: boolean } | null = null;
+  #press: {
+    pointer: number;
+    x: number;
+    y: number;
+    from: Camera;
+    panel: string;
+    moved: boolean;
+  } | null = null;
   #rotates = true;
   #zooms = false;
 
@@ -64,18 +71,6 @@ export class Controls implements ChartControls {
     const root = host.chart.root;
     this.#root = root;
     this.#host = host;
-    this.#toolbar = new Toolbar(
-      root,
-      "View",
-      BUTTONS.map(({ label, glyph, act }) => ({
-        label,
-        glyph,
-        act: () => {
-          const camera = host.chart.camera;
-          if (camera) this.#turn(act(camera), true);
-        },
-      })),
-    );
     this.#listen();
   }
 
@@ -89,34 +84,88 @@ export class Controls implements ChartControls {
     const rotate = config.interaction?.rotate !== false;
     this.#rotates = rotate;
     this.#zooms = !!config.interaction?.zoom;
+    if (this.#press && (!rotate || !this.#panels().some(({ key }) => key === this.#press!.panel)))
+      this.#press = null;
     // Touches turn the chart sideways and leave vertical drags to scroll the page.
-    this.#root.style.touchAction = rotate ? "pan-y" : "";
+    touchAction(this.#host);
   }
 
-  draw({ theme }: Scene): void {
-    this.#toolbar.style(theme);
+  #panels() {
+    return this.#host.model.items?.panels.filter((panel) => panel.camera) ?? [];
+  }
+
+  #at(event: MouseEvent): string | undefined {
+    if (!this.#onPlot(event.target)) return undefined;
+    const rect = this.#root.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) * this.#host.model.width) / rect.width;
+    const y = ((event.clientY - rect.top) * this.#host.model.height) / rect.height;
+    return this.#panels().find(
+      ({ plot }) =>
+        this.#host.model.items?.alone ||
+        (x >= plot.x && x <= plot.x + plot.width && y >= plot.y && y <= plot.y + plot.height),
+    )?.key;
+  }
+
+  draw(scene: Scene): void {
+    const panels = this.#panels();
+    if (this.#press && !panels.some(({ key }) => key === this.#press!.panel)) this.#press = null;
+    for (const [state, toolbar] of this.#toolbars)
+      if (!panels.some((panel) => panel.state === state)) {
+        toolbar.dispose();
+        this.#toolbars.delete(state);
+      }
+    for (const { key, state, label, plot } of panels) {
+      const name = state === "" ? "View" : `View, ${label || key}`;
+      let toolbar = this.#toolbars.get(state);
+      if (!toolbar) {
+        toolbar = new Toolbar(
+          this.#root,
+          name,
+          BUTTONS.map(({ label, glyph, act }) => ({
+            label,
+            glyph,
+            act: () => {
+              if (!this.#panels().some((panel) => panel.key === key)) return;
+              const camera = this.#host.chart.getCamera({ panel: key });
+              if (camera) this.#turn(act(camera), true, key);
+            },
+          })),
+        );
+        this.#toolbars.set(state, toolbar);
+      }
+      toolbar.element.setAttribute("aria-label", name);
+      if (state !== "") toolbar.place(plot, scene.width, scene.height);
+      toolbar.style(scene.theme);
+    }
   }
 
   /** Stops listening and removes the buttons, for a chart no longer 3D or destroyed. */
   dispose(): void {
     for (const stop of this.#stop.splice(0)) stop();
-    this.#toolbar.dispose();
+    for (const toolbar of this.#toolbars.values()) toolbar.dispose();
+    this.#toolbars.clear();
     this.#press = null;
   }
 
   /** Whether an event's target is the chart's drawing, not its legend or these buttons. */
   #onPlot(target: EventTarget | null): boolean {
-    return !this.#toolbar.contains(target) && this.#host.onPlot(target);
+    return (
+      ![...this.#toolbars.values()].some((toolbar) => toolbar.contains(target)) &&
+      this.#host.onPlot(target) &&
+      !(target as Element | null)?.closest?.("[role=toolbar]")
+    );
   }
 
   /** Moves the camera (null: back to the configured one); `announce` reads the new view aloud. */
-  #turn(camera: CameraSpec | null, announce: boolean): void {
+  #turn(camera: CameraSpec | null, announce: boolean, panel: string): void {
     const chart = this.#host.chart;
-    const before = chart.camera;
-    chart.setCamera(camera);
-    const after = chart.camera;
+    const before = chart.getCamera({ panel });
+    chart.setCamera(camera, { panel });
+    const after = chart.getCamera({ panel });
     if (announce && after && JSON.stringify(after) !== JSON.stringify(before))
-      this.#host.announce(this.#describe(after));
+      this.#host.announce(
+        `${panel ? `${this.#panels().find((p) => p.key === panel)?.label || panel}. ` : ""}${this.#describe(after)}`,
+      );
   }
 
   /** A sentence saying where `camera` looks from, for the live region. */
@@ -136,7 +185,8 @@ export class Controls implements ChartControls {
       this.#stop.push(() => root.removeEventListener(type, handler, options));
     };
     on("pointerdown", (event) => {
-      const from = this.#host.chart.camera;
+      const panel = this.#at(event);
+      const from = panel === undefined ? undefined : this.#host.chart.getCamera({ panel });
       // A second finger neither turns nor takes over the first one's drag.
       if (this.#press || event.button !== 0 || !from || !this.#rotates) return;
       if (!this.#onPlot(event.target)) return;
@@ -145,6 +195,7 @@ export class Controls implements ChartControls {
         x: event.clientX,
         y: event.clientY,
         from,
+        panel: panel!,
         moved: false,
       };
       root.setPointerCapture?.(event.pointerId);
@@ -159,6 +210,7 @@ export class Controls implements ChartControls {
       this.#turn(
         { azimuth: press.from.azimuth - dx * DRAGGED, elevation: tilt(press.from, dy * DRAGGED) },
         false,
+        press.panel,
       );
     });
     const end = (event: PointerEvent) => {
@@ -170,15 +222,17 @@ export class Controls implements ChartControls {
     on(
       "wheel",
       (event) => {
-        const camera = this.#host.chart.camera;
+        const panel = this.#at(event);
+        const camera = panel === undefined ? undefined : this.#host.chart.getCamera({ panel });
         if (!camera || !this.#zooms) return;
         event.preventDefault();
-        this.#turn({ zoom: magnify(camera, Math.exp(-event.deltaY * 0.002)) }, false);
+        this.#turn({ zoom: magnify(camera, Math.exp(-event.deltaY * 0.002)) }, false, panel!);
       },
       { passive: false },
     );
     on("dblclick", (event) => {
-      if (this.#onPlot(event.target)) this.#turn(null, false);
+      const panel = this.#at(event);
+      if (panel !== undefined) this.#turn(null, false, panel);
     });
     // Ahead of the chart's keys, which step through points with the arrows.
     on("keydown", (event) => this.#key(event), { capture: true });
@@ -186,7 +240,11 @@ export class Controls implements ChartControls {
 
   /** Shift with an arrow key turns the camera, plus and minus zoom. */
   #key(event: KeyboardEvent): void {
-    const camera = this.#host.chart.camera;
+    const panel = this.#host.cursor()?.panel ?? (this.#host.model.items?.alone ? "" : undefined);
+    const camera =
+      panel === undefined || !this.#panels().some((p) => p.key === panel)
+        ? undefined
+        : this.#host.chart.getCamera({ panel });
     if (!camera || event.target !== this.#root) return;
     const shift = event.shiftKey;
     let next: CameraSpec | undefined;
@@ -199,6 +257,6 @@ export class Controls implements ChartControls {
     if (!next) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    this.#turn(next, true);
+    this.#turn(next, true, panel!);
   }
 }

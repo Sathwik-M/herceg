@@ -7,6 +7,7 @@ import { MOUSE } from "../../../scripts/browser/mouse.ts";
 import herceg, { type Component, type Header } from "../streamlit.ts";
 import { itemChart, key } from "./items.ts";
 import { focusMap, mapSpec } from "./maps.ts";
+import { threeSpec } from "./three.ts";
 
 /**
  * A payload as Python builds it, placed `offset` bytes into a larger buffer
@@ -1358,3 +1359,43 @@ it.each([
     }
   },
 );
+
+it("keeps cameras across Streamlit reruns and resets only changed defaults", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  try {
+    const parent = host();
+    const spec = threeSpec();
+    const first = run(parent, payload(spec, [], ["camera"]));
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances[0] as MountedChart;
+    chart.setCamera({ azimuth: 40 }, { panel: "a" });
+    chart.setCamera({ azimuth: 70 }, { panel: "b" });
+    await frame();
+    expect(first.state.at(-1)).toMatchObject([
+      "camera",
+      { panels: { a: { azimuth: 40 }, b: { azimuth: 70 } } },
+    ]);
+    const second = run(
+      parent,
+      payload(
+        {
+          ...spec,
+          title: "Styled",
+          panels: [
+            { id: "a", camera: { azimuth: 20 } },
+            { id: "b", camera: { azimuth: 80 } },
+          ],
+        },
+        [],
+        ["camera"],
+      ),
+    );
+    const restored = listener.mock.instances.at(-1) as MountedChart;
+    expect(restored.getCamera({ panel: "a" })!.azimuth).toBe(40);
+    expect(restored.getCamera({ panel: "b" })!.azimuth).toBe(80);
+    first.cleanup();
+    second.cleanup();
+  } finally {
+    listener.mockRestore();
+  }
+});

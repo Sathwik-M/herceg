@@ -200,3 +200,16 @@ function Requests({ data }: { data: typeof requests }) {
   return <Grid model={model} ariaLabel="Requests" style={{ height: 400 }} />;
 }
 ```
+
+`<Point3D>`, `<Line3D>`, and `<Surface>` accept `panel` to share a 3D
+subplot beside panels with other marks. Pass `panels(...)` from `herceg`
+to the chart, with a `camera` on each panel to override chart defaults.
+Each 3D subplot has its own camera, toolbar, orbit gestures, and keyboard
+turning; the description and exports show each panel's view. The chart
+handle's `getCamera({ panel: "cloud" })` and
+`setCamera({ azimuth: 40 }, { panel: "cloud" })` target it; a null camera
+resets that panel. `onCamera` receives `{ camera, panels: [id] }` for a
+subplot, or `{ camera }` for a standalone chart. Re-rendering with the
+same configured cameras preserves user turns. Subplots use CPU rendering
+with cached geometry and Canvas pixels; standalone charts retain WebGL
+points, lines, and surfaces. 3D facets are refused.

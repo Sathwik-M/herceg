@@ -451,12 +451,34 @@ describe("<Chart>", () => {
     await frame();
     expect(cameras).toEqual([10]);
     act(() => root.render(view(10)));
-    expect(chart.camera).toMatchObject({ azimuth: 10, elevation: 50 });
+    expect(chart.getCamera()).toMatchObject({ azimuth: 10, elevation: 50 });
     // A changed prop shows its camera; the application set it, so no event says so.
     act(() => root.render(view(30)));
-    expect(chart.camera).toMatchObject({ azimuth: 30, elevation: 25 });
+    expect(chart.getCamera()).toMatchObject({ azimuth: 30, elevation: 25 });
     await frame();
     expect(cameras).toEqual([10]);
+  });
+
+  it("reports the camera panel from compositional 3D marks", async () => {
+    const data = table({ x: [0, 1], y: [1, 0], z: [0, 1] });
+    const ref: { current: HercegChart | null } = { current: null };
+    const events: (readonly string[] | undefined)[] = [];
+    act(() =>
+      root.render(
+        <Chart
+          ref={ref}
+          panels={panels([{ id: "a" }, { id: "b" }])}
+          onCamera={({ panels }) => events.push(panels)}
+        >
+          <Point3D data={data} x="x" y="y" z="z" panel="a" />
+          <Line3D data={data} x="x" y="y" z="z" panel="b" />
+        </Chart>,
+      ),
+    );
+    ref.current!.setCamera({ azimuth: 40 }, { panel: "b" });
+    await frame();
+    expect(events).toEqual([["b"]]);
+    expect(ref.current!.getCamera({ panel: "a" })!.azimuth).toBe(-60);
   });
 
   it("reports drilling into a tree and moving a network's nodes", () => {

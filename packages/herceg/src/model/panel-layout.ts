@@ -577,17 +577,22 @@ export function lowestWithAxes(
   return { lowest, between };
 }
 
-/** Layout marks that can draw in a panel; 3D charts have charts to themselves. */
+/** Layout marks that can split rows into facet panels. */
 const IN_PANELS = new Set([
   ...["pie", "treemap", "sunburst", "gauge", "funnel", "radar", "sankey"],
   ...["graph", "geoshape", "geopoint"],
 ]);
 
 /** Refuses layout marks panels cannot draw yet. */
-export function checkLayouts(layouts: readonly LayoutMark[]): void {
+export function checkLayouts(layouts: readonly LayoutMark[], subplots = false): void {
   for (const { spec } of layouts)
-    if (!IN_PANELS.has(spec.type))
-      throw new Error(`${spec.type}: no facets or panels yet; draw it in a chart of its own`);
+    if (
+      !IN_PANELS.has(spec.type) &&
+      !(subplots && ["point3d", "line3d", "surface"].includes(spec.type))
+    )
+      throw new Error(
+        `${spec.type} facet: 3D marks cannot split into facets; use separate marks in subplots`,
+      );
 }
 
 /**

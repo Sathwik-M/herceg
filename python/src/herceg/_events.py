@@ -262,6 +262,13 @@ def checked(event: str, payload: Any) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         raise ValueError(f"expected an object, not {payload!r}")
+    if event == "camera":
+        from ._chart import Camera
+
+        try:
+            return Camera(**payload)._spec()
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"camera: invalid settings; {error}") from error
     if event == "drill":
         path = payload.get("path")
         if not isinstance(path, list) or not all(isinstance(key, str) for key in path):

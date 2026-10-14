@@ -47,6 +47,7 @@ export function statePanels(
 }
 
 /** Marks with drill roots, moved nodes, and views of planes of their own, by state. */
+export const CAMERAS = ["point3d", "line3d", "surface"];
 export const DRILLS = ["treemap", "sunburst"];
 export const MOVES = ["graph"];
 export const PLANES = ["geoshape", "geopoint", "graph"];

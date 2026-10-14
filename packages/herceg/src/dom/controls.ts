@@ -51,3 +51,24 @@ export class PointerOwnership {
 export interface ControlsModule {
   Controls: new (host: ControlsHost) => Controls;
 }
+
+/** All loaded control families use the same touch policy, regardless of import order. */
+export function touchAction(host: ControlsHost): void {
+  const { zoom, brush, drag, rotate = true } = host.model.config.interaction ?? {};
+  const kinds = new Set(host.model.items?.asked().map(({ kind }) => kind));
+  const plane = kinds.has("map") || kinds.has("drag");
+  const axes = host.model.config.marks.some((mark) => !("layout" in mark && mark.layout === true));
+  const along = !axes
+    ? ""
+    : `${zoom === true ? "x" : zoom || ""}${brush === "lasso" ? "xy" : (brush ?? "")}`;
+  host.chart.root.style.touchAction =
+    (plane && (zoom || brush === "lasso")) || (kinds.has("drag") && drag)
+      ? "none"
+      : along.includes("x") && along.includes("y")
+        ? "none"
+        : along.includes("x") || (kinds.has("orbit") && rotate)
+          ? "pan-y"
+          : along.includes("y")
+            ? "pan-x"
+            : "";
+}

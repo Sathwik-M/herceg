@@ -7,6 +7,7 @@
 // view redraws from the same data.
 
 import {
+  type Camera,
   type Chart,
   type ChartOptions,
   createChart,
@@ -25,7 +26,9 @@ import {
   loadSpec,
   type SpecBuffer,
 } from "herceg/spec";
+import { resolveCamera, sameCamera } from "../../packages/herceg/src/three/camera.ts";
 import {
+  CAMERAS,
   chartSelection,
   chartViewport,
   DRILLS,
@@ -59,6 +62,7 @@ export interface Model {
 
 /** Interaction state shared by Python and every display. */
 interface ViewStates {
+  camera: Camera | null;
   select: SelectionPayload | null;
   viewport: ViewportPayload | null;
   drill: DrillPayload | null;
@@ -67,13 +71,14 @@ interface ViewStates {
 type ViewEvent = keyof ViewStates;
 type ViewState = ViewStates[ViewEvent];
 const stateKeys = {
+  camera: "camera",
   select: "selection",
   viewport: "viewport",
   drill: "drill_root",
   itemMove: "item_positions",
 } as const;
 /** Events whose state each map or network subplot (or tree subplot) has of its own. */
-type PanelEvent = "viewport" | "drill" | "itemMove";
+type PanelEvent = "viewport" | "drill" | "itemMove" | "camera";
 
 /**
  * Where a state is kept: the event's name for the chart's, "event:panel"
@@ -103,6 +108,7 @@ export interface HeldRows {
 export interface Snapshot {
   /** Counts the changes Python sent; every update carries the next number. */
   revision: number;
+  camera?: Camera | null;
   spec: ChartSpec;
   buffers: SpecBuffer[];
   selection: SelectionPayload | null;
@@ -134,6 +140,7 @@ export type Update = { revision: number } & (
   | { type: "chart"; spec: ChartSpec; rows: Record<string, [number, number]> }
   | { type: "options"; options: Record<string, unknown> }
   | { type: "select"; selection: SelectionPayload | null; origin?: string }
+  | { type: "camera"; camera: Camera | null; panel?: string; origin?: string }
   | { type: "viewport"; viewport: ViewportPayload | null; panel?: string; origin?: string }
   | { type: "drill"; drill_root: DrillPayload | null; panel?: string; origin?: string }
   | { type: "itemMove"; item_positions: ItemPositionsPayload; panel?: string; origin?: string }
@@ -168,6 +175,8 @@ class Widget {
   #resyncing = false;
   #tables = new Map<string, Table>();
   #config: ChartOptions | undefined;
+  /** Effective defaults by camera owner, including while no display is mounted. */
+  #configuredCameras = new Map<string, Camera>();
   /** The coordinate system of each map's or network's view, by state (see `planeKeys`). */
   #planeKeys: Map<string, string> | undefined;
   /** The tables each network reads, with those they derive from, by state (see `networkTables`). */
@@ -245,11 +254,13 @@ class Widget {
     this.#resyncing = false;
     // Views and rows waiting to be reported predate the snapshot's.
     this.#outbox.cancel("select");
+    this.#outbox.cancelAll("camera");
     this.#outbox.cancelAll("viewport");
     this.#outbox.cancelAll("drill");
     this.#cancelItems();
     this.#outbox.cancelAll("rows:");
     this.#states = new Map<string, ViewState>([
+      ["camera", snapshot.camera ?? null],
       ["select", snapshot.selection],
       ["viewport", snapshot.viewport],
       ["drill", snapshot.drill_root],
@@ -258,7 +269,7 @@ class Widget {
     for (const [event, states] of Object.entries(snapshot.panel_states ?? {}))
       for (const [panel, state] of Object.entries(states))
         this.#states.set(stateKey(event as PanelEvent, panel), state);
-    this.#loadChart(snapshot.spec, snapshot.buffers, snapshot.rows ?? {});
+    this.#loadChart(snapshot.spec, snapshot.buffers, snapshot.rows ?? {}, true);
     for (const { table, channel, selection } of snapshot.rowSelections ?? []) {
       const rows = selection?.kind === "rows" ? snapshot.buffers[selection.rows!] : undefined;
       this.#setRows(table, channel, selection, rows && view(rows));
@@ -274,6 +285,7 @@ class Widget {
     spec: ChartSpec,
     buffers: readonly SpecBuffer[],
     numbering: Record<string, [number, number]>,
+    restored = false,
   ) {
     // Option updates never change the row selection: it binds the tables loaded here.
     const { data, marks, version, facet, panels, grid, rowSelection, ...options } = spec;
@@ -296,6 +308,7 @@ class Widget {
       this.#error = error;
     }
     this.#numbering = numbering;
+    this.#reconcileCameras(restored);
     // Changes of the channels by any view go to Python, as Python numbers rows.
     for (const [name, store] of this.#stores) {
       const channels = (this.#config?.rowSelection?.bindings ?? [])
@@ -398,6 +411,7 @@ class Widget {
     const config = this.#config;
     // Each subplot's map, network, or tree has a state of its own.
     const planes = config.panels ? statePanels(config, PLANES) : [];
+    const cameras = statePanels(config, CAMERAS);
     const drills = statePanels(config, DRILLS);
     const moves = statePanels(config, MOVES);
     // Restored before listening, so restoring does not echo back to Python.
@@ -406,6 +420,8 @@ class Widget {
       this.#show(view, "viewport", this.#state("viewport"));
     for (const panel of planes)
       this.#show(view, "viewport", this.#state("viewport", panel), false, panel);
+    for (const panel of cameras)
+      this.#show(view, "camera", this.#state("camera", panel), true, panel);
     for (const panel of drills) this.#show(view, "drill", this.#state("drill", panel), true, panel);
     for (const panel of moves) this.#show(view, "itemMove", this.#positions(panel), true, panel);
     this.#show(view, "select", this.#state("select"));
@@ -462,9 +478,11 @@ class Widget {
       this.#model.send({ type: "click", inspection: inspectionPayload(chart, inspection) });
     });
     // A drag turns the camera every frame: Python hears of it at most once a throttle interval.
-    chart.on("camera", ({ camera }) => {
-      if (this.#listening("camera")) this.#outbox.post("camera", { type: "camera", camera });
-    });
+    chart.on("camera", ({ camera, panels }) =>
+      this.#report("camera", view, camera, panels?.[0] ?? ""),
+    );
+    for (const panel of cameras)
+      this.#report("camera", view, chart.getCamera(targetOf(panel)) ?? null, panel);
   }
 
   #size({ element }: View) {
@@ -558,6 +576,10 @@ class Widget {
    */
   #show(view: View, event: ViewEvent, payload: ViewState, restore = false, panel = "") {
     const chart = view.chart!;
+    if (event === "camera") {
+      chart.setCamera(payload as Camera | null, targetOf(panel));
+      return;
+    }
     if (event === "drill" || event === "itemMove") {
       this.#applying = true;
       try {
@@ -734,6 +756,7 @@ class Widget {
         }
         return;
       }
+      case "camera":
       case "select":
       case "viewport":
       case "drill": {
@@ -745,11 +768,13 @@ class Widget {
         // A view from Python or another browser replaces any not yet reported.
         this.#outbox.cancel(key);
         const payload =
-          message.type === "select"
-            ? message.selection
-            : message.type === "viewport"
-              ? message.viewport
-              : message.drill_root;
+          message.type === "camera"
+            ? message.camera
+            : message.type === "select"
+              ? message.selection
+              : message.type === "viewport"
+                ? message.viewport
+                : message.drill_root;
         this.#states.set(key, payload);
         // Rows travel apart ("rows"): the browser whose view was brushed wrote
         // them, and Python sets them with `row_selection`.
@@ -835,8 +860,36 @@ class Widget {
       // which options such as `resolve` change.
       view.chart?.render();
     }
+    // Reconcile even with no mounted display; unchanged effective defaults keep turned views.
+    this.#reconcileCameras();
+    for (const [panel, configured] of this.#configuredCameras)
+      if (this.#state("camera", panel) === null)
+        this.#report("camera", undefined, configured, panel);
     // A new projection moves maps' planes.
     this.#keepMapView();
+  }
+
+  /** Snapshots supply authoritative state; replacements retain only unchanged-default cameras. */
+  #reconcileCameras(restored = false) {
+    const next = new Map<string, Camera>();
+    const config = this.#config;
+    if (config)
+      for (const panel of statePanels(config, CAMERAS)) {
+        const override = config.panels?.list.find(({ id }) => id === panel)?.camera;
+        const camera = resolveCamera({ ...config.camera, ...override });
+        next.set(panel, camera);
+        const previous = this.#configuredCameras.get(panel);
+        if (!restored && previous && !sameCamera(previous, camera)) {
+          this.#outbox.cancel(stateKey("camera", panel));
+          this.#states.set(stateKey("camera", panel), null);
+        }
+      }
+    for (const panel of this.#configuredCameras.keys())
+      if (!next.has(panel)) {
+        this.#outbox.cancel(stateKey("camera", panel));
+        this.#states.delete(stateKey("camera", panel));
+      }
+    this.#configuredCameras = next;
   }
 }
 
@@ -905,7 +958,7 @@ function appendBatch(table: Table, rows: Table): Parameters<Table["append"]>[0] 
  * an echo of the same state. A viewport of no zoom is no viewport.
  */
 function valuesOf(event: ViewEvent, state: ViewState): string {
-  if (event === "drill") return JSON.stringify(state);
+  if (event === "drill" || event === "camera") return JSON.stringify(state);
   if (event === "itemMove") return positionsValue(state as ItemPositionsPayload);
   const ranges = state as SelectionPayload | ViewportPayload | null;
   const { x = null, y = null } = ranges ?? {};

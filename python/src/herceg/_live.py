@@ -20,6 +20,7 @@ import numpy as np
 from . import _geo
 from ._chart import (
     OPTIONS,
+    Camera,
     assemble_spec,
     check_layout_options,
     check_y_zoom,
@@ -102,6 +103,18 @@ class LiveChart:
         while name != table and name in self._derived:
             name = self._derived[name]["source"]
         return name == table
+
+    def configured_cameras(self) -> dict[str, dict[str, Any]]:
+        """Effective camera defaults per owner, in the engine's resolved form."""
+        panels = {panel["id"]: panel.get("camera", {}) for panel in self._layout.get("panels", [])}
+        cameras = {}
+        for panel in self.state_panels("camera"):
+            camera = Camera(**{**(self._options.get("camera") or {}), **panels.get(panel, {})})
+            camera.azimuth = (camera.azimuth + 180) % 360 - 180
+            if camera.azimuth == -180:
+                camera.azimuth = 180
+            cameras[panel] = camera._spec()
+        return cameras
 
     @property
     def has_view(self) -> bool:
@@ -440,6 +453,7 @@ def check_live_rows(chart: Chart) -> None:
 
 #: The marks whose states `LiveChart.state_panels` lists, by event.
 _STATE_MARKS = {
+    "camera": ("point3d", "line3d", "surface"),
     "drill": ("treemap", "sunburst"),
     "itemMove": ("graph",),
     "viewport": ("geoshape", "geopoint", "graph"),

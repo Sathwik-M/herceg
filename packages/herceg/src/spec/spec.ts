@@ -162,6 +162,8 @@ export interface ResolveSpec {
 
 /** One of a chart's `panels`. */
 export interface PanelSpec {
+  /** The initial camera of a 3D subplot; omitted settings use the chart camera. */
+  camera?: CameraSpec;
   /** Unique among the panels; marks name it in their `panel`. */
   id: string;
   /** Drawn above the panel. */
@@ -1819,6 +1821,8 @@ export interface HeatmapCalendarSpec extends HeatmapBase {
  */
 export interface Point3DSpec extends RowTooltip {
   type: "point3d";
+  /** The subplot whose 3D box this layer shares. */
+  panel?: string;
   data?: string;
   id?: string;
   x: Field;
@@ -1851,6 +1855,8 @@ export interface Point3DSpec extends RowTooltip {
  */
 export interface Line3DSpec extends RowTooltip {
   type: "line3d";
+  /** The subplot whose 3D box this layer shares. */
+  panel?: string;
   data?: string;
   id?: string;
   x: Field;
@@ -1874,6 +1880,8 @@ export interface Line3DSpec extends RowTooltip {
  */
 export interface SurfaceSpec {
   type: "surface";
+  /** The subplot whose 3D box this layer shares. */
+  panel?: string;
   data?: string;
   id?: string;
   x: Field;

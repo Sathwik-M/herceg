@@ -19,8 +19,8 @@ The first public release. What it contains:
   - rule, region, and text annotations;
   - pie, treemap, sunburst, gauge, funnel, radar, Sankey, network, maps (shapes and points), and 3D points, lines, and surfaces;
   - custom marks.
-- **Composition:** marks compose in one chart, in facets, and in subplots, with shared or independent scales, right axes, and range navigators.
-- **Rendering:** SVG or Canvas chosen per chart, WebGL for large point clouds and 3D, and level-of-detail reduction for large lines and areas.
+- **Composition:** marks compose in one chart, in facets, and in subplots, with shared or independent scales, right axes, and range navigators; 3D layers share CPU-rendered subplots with independent cameras and controls (3D facets are refused).
+- **Rendering:** SVG or Canvas chosen per chart, WebGL for large point clouds and standalone 3D charts, and level-of-detail reduction for large lines and areas.
 - **Interaction:**
   - tooltips with configurable fields;
   - keyboard reading;
@@ -28,7 +28,8 @@ The first public release. What it contains:
   - brushes and lassos;
   - row selections shared between charts;
   - synced cursors and views;
-  - drilldown, map and network navigation, and node dragging.
+  - drilldown, map and network navigation, and node dragging;
+  - per-panel 3D cameras through `getCamera({ panel })`, `setCamera(camera, { panel })`, and scoped camera events.
 - **Accessibility:** generated descriptions, keyboard navigation, and accessible legends; tested with axe-core in Chrome, Firefox, and WebKit.
 - **Export:** static SVG, PNG, and tagged multi-page PDF, without a DOM where possible.
 - **Analytical grid (`herceg/grid`):** sorting, filtering, grouping, pivots, remote data, and row selection.
@@ -38,5 +39,5 @@ The first public release. What it contains:
 **Python (`herceg`)**
 - `hg.*` charts from pandas, Polars, PyArrow, and NumPy data, sent as binary columns;
 - output to notebooks, HTML, SVG, PNG, and PDF;
-- live notebook widgets and a Streamlit component;
+- live notebook widgets and a Streamlit component, with camera state per 3D panel;
 - `herceg.express`: Seaborn-style statistical charts with recompute on new data.

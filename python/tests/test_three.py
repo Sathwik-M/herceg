@@ -1,8 +1,81 @@
+import shutil
+import subprocess
+from io import BytesIO
+from xml.etree import ElementTree
+
 import numpy as np
 import pandas as pd
 import pytest
 
 import herceg as hg
+
+
+@pytest.mark.parametrize("format", ["png", "pdf"])
+def test_subplot_export_pixels_follow_each_configured_camera(tmp_path, format):
+    from PIL import Image
+
+    if format == "pdf" and shutil.which("pdftoppm") is None:
+        pytest.skip("Poppler is not installed")
+
+    def chart(azimuth):
+        return (
+            hg.Chart(
+                {"x": [0.7], "y": [0.4], "z": [0.8]},
+                width=800,
+                height=350,
+                legend=False,
+                x=hg.Axis(domain=(-1, 1)),
+                y=hg.Axis(domain=(-1, 1)),
+                z=hg.Axis(domain=(-1, 1)),
+                panels=[
+                    hg.Panel("a", camera={"azimuth": azimuth}),
+                    hg.Panel("b", camera={"azimuth": 90}),
+                ],
+                panel_columns=2,
+            )
+            .point_3d("x", "y", "z", fill="#ff0000", radius=8, panel="a")
+            .point_3d("x", "y", "z", fill="#ff0000", radius=8, panel="b")
+        )
+
+    def pixels(azimuth):
+        item = chart(azimuth)
+        if format == "png":
+            image = Image.open(BytesIO(item.to_png(scale=1)))
+        else:
+            pdf = tmp_path / f"camera-{azimuth}.pdf"
+            pdf.write_bytes(item.to_pdf())
+            subprocess.run(
+                ["pdftoppm", "-r", "96", "-singlefile", "-png", str(pdf), str(pdf.with_suffix(""))],
+                check=True,
+                capture_output=True,
+            )
+            image = Image.open(pdf.with_suffix(".png"))
+        assert image.size == (800, 350)
+        return np.array(image.convert("RGB"))
+
+    # Normalize by each panel's actual plot center, including the outer insets and grid gap.
+    clips = ElementTree.fromstring(chart(90).to_svg()).findall(
+        ".//{http://www.w3.org/2000/svg}clipPath/{http://www.w3.org/2000/svg}rect"
+    )
+    plot_centers = [float(rect.attrib["x"]) + float(rect.attrib["width"]) / 2 for rect in clips]
+    assert len(plot_centers) == 2
+
+    def red_centers(image):
+        centers = []
+        for index, half in enumerate([image[:, :400], image[:, 400:]]):
+            mask = (half[:, :, 0] > 250) & (half[:, :, 1] < 5) & (half[:, :, 2] < 5)
+            y, x = np.nonzero(mask)
+            assert len(x) > 100
+            centers.append(np.array([x.mean() + index * 400 - plot_centers[index], y.mean()]))
+        return centers
+
+    before = pixels(20)
+    after = pixels(90)
+    assert np.array_equal(before[:, 400:], after[:, 400:])
+    original, neighbor = red_centers(before)
+    turned, same_neighbor = red_centers(after)
+    assert np.linalg.norm(original - neighbor) > 20
+    assert np.linalg.norm(turned - same_neighbor) < 0.5
 
 
 def points():
@@ -173,3 +246,39 @@ def test_3d_charts_export_to_svg_and_pdf():
     surface = hg.surface(z=np.outer(np.arange(5.0), np.arange(5.0)), width=400, height=300)
     assert "<path" in surface.to_svg()
     assert surface.to_pdf().startswith(b"%PDF-1.4\n")
+
+
+def test_3d_subplots_compose_layers_and_export_each_camera():
+    chart = (
+        hg.Chart(
+            points(),
+            panels=[
+                "trend",
+                hg.Panel("a", title="Cloud", camera={"azimuth": 20}),
+                hg.Panel("b", title="Fit", camera=hg.Camera(azimuth=90)),
+            ],
+            panel_columns=3,
+            camera=hg.Camera(elevation=35),
+            zoom=True,
+        )
+        .line("x", "z", panel="trend")
+        .point_3d("x", "y", "z", panel="a")
+        .line_3d("x", "y", "z", panel="a")
+        .surface(z=[[0.0, 1.0], [2.0, 3.0]], panel="b")
+    )
+    spec, _ = chart.to_spec()
+    assert [m["panel"] for m in spec["marks"]] == ["trend", "a", "a", "b"]
+    assert spec["panels"][1]["camera"] == {"azimuth": 20.0}
+    svg = chart.to_svg()
+    assert "azimuth 20°, elevation 35°" in svg
+    assert "azimuth 90°, elevation 25°" in svg
+    assert "Cloud" in svg and "Fit" in svg
+    assert chart.to_pdf().startswith(b"%PDF")
+    with pytest.raises(ValueError, match="Panel camera:.*has no 3D marks"):
+        hg.Chart(points(), panels=[hg.Panel("a", camera=hg.Camera())]).line(
+            "x", "y", panel="a"
+        ).to_spec()
+    with pytest.raises(ValueError, match="point_3d panel: a line draws in panel"):
+        hg.Chart(points(), panels=["a"]).line("x", "y", panel="a").point_3d(
+            "x", "y", "z", panel="a"
+        )

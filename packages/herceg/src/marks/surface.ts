@@ -69,6 +69,8 @@ export interface SurfaceOptions<S extends Schema> {
   wireframe?: boolean;
   /** What the surface is, in tooltips; "Surface" by default. */
   label?: string;
+  /** The subplot whose 3D box this layer shares. */
+  panel?: string;
   id?: string;
 }
 
@@ -190,8 +192,13 @@ export class SurfaceMark implements Layer3D {
     if (table.length > 0) this.#build();
   }
 
-  join(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark {
-    return joinLayers3D(marks, config);
+  join(
+    marks: readonly LayoutMark[],
+    config: ChartConfig,
+    indices?: readonly number[],
+    panel?: string,
+  ): LayoutMark {
+    return joinLayers3D(marks, config, indices, panel);
   }
 
   draw(frame: LayoutFrame): LayoutResult {
@@ -1118,6 +1125,7 @@ export function surface<S extends Schema>(
       "shading",
       "wireframe",
       "label",
+      "panel",
       "id",
     ]),
   };

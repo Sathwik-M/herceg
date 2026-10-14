@@ -10,6 +10,7 @@
 
 import {
   type AxisInfo,
+  type Camera,
   type Chart,
   createChart,
   type PanelInfo,
@@ -23,6 +24,7 @@ import {
 } from "herceg";
 import { type ChartSpec, loadSpec } from "herceg/spec";
 import {
+  CAMERAS,
   DRILLS,
   type DrillPayload,
   drillPayload,
@@ -49,7 +51,7 @@ export interface Component {
   setTriggerValue(name: string, value: unknown): void;
 }
 
-type Event = "select" | "click" | "rowSelection" | "drill" | "itemMove" | "viewport";
+type Event = "camera" | "select" | "click" | "rowSelection" | "drill" | "itemMove" | "viewport";
 
 /** The payload's JSON header. */
 export interface Header {
@@ -91,6 +93,9 @@ interface Instance {
   /** The key of the chart's one map's or network's plane, without subplots (see `planeKeys`). */
   plane: string | undefined;
   /** The keys of the states subplots' trees, networks, and maps have ("" for the chart's one). */
+  cameras: string[];
+  cameraDefaults: Map<string, string>;
+  sentCamera: string;
   drills: string[];
   moves: string[];
   planes: string[];
@@ -146,6 +151,14 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
   previous?.chart.destroy();
   const chart = createChart(element, followsApp ? { ...config, theme: appColors(theme) } : config);
   const unbrushed = bindings.map(({ store, channel }) => store.get(channel));
+  const cameras = statePanels(config, CAMERAS);
+  const cameraDefaults = new Map(
+    cameras.map((panel) => [panel, JSON.stringify(chart.getCamera(targetOf(panel)))]),
+  );
+  if (kept)
+    for (const [panel, camera] of kept.cameras)
+      if (cameraDefaults.get(panel) === previous?.cameraDefaults.get(panel))
+        chart.setCamera(camera, targetOf(panel));
   const drills = statePanels(config, DRILLS);
   const moves = statePanels(config, MOVES);
   const planes = config.panels ? statePanels(config, PLANES) : [];
@@ -193,6 +206,9 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     positions,
     itemEpoch: header.itemEpoch,
     plane,
+    cameras,
+    cameraDefaults,
+    sentCamera: previous?.sentCamera ?? "null",
     drills,
     moves,
     planes,
@@ -215,6 +231,8 @@ function mount(component: Component, data: Uint8Array, previous: Instance | unde
     if (!inspection || !instance.events.includes("click")) return;
     instance.component.setTriggerValue("click", inspectionPayload(chart, inspection));
   });
+  reportCamera(instance);
+  chart.on("camera", () => reportCamera(instance));
   reportViewport(instance);
   chart.on("viewport", () => reportViewport(instance));
   reportDrill(instance);
@@ -299,6 +317,8 @@ interface Kept {
   panels: (PanelInfo & { view: Viewport })[];
   selection: Chart["selection"];
   selectionPanels: Chart["selectionPanels"];
+  /** Current cameras by state, kept across reruns with unchanged configured defaults. */
+  cameras: Map<string, Camera>;
   /** Each tree's drill root, by panel ("" for the chart's one). */
   drills: Map<string, DrillPayload | null>;
 }
@@ -306,6 +326,7 @@ interface Kept {
 function keptView(chart: Chart, instance: Instance, keys: ReadonlyMap<string, string>): Kept {
   const { plane, drills, planes } = instance;
   return {
+    cameras: new Map(instance.cameras.map((panel) => [panel, chart.getCamera(targetOf(panel))!])),
     plane: plane ? { key: plane, view: chart.getViewport() } : undefined,
     planes: new Map(
       planes.map((panel) => [panel, { key: keys.get(panel), view: chart.getViewport({ panel }) }]),
@@ -593,4 +614,20 @@ function reportViewport(instance: Instance): void {
     return;
   instance.sentViewport = encoded;
   instance.component.setStateValue("viewport", payload);
+}
+
+/** Current cameras, independent of data epochs; one or a mapping of subplot states. */
+function reportCamera(instance: Instance): void {
+  if (!instance.events.includes("camera")) return;
+  const cameras = Object.fromEntries(
+    instance.cameras.map((panel) => [panel, instance.chart.getCamera(targetOf(panel))]),
+  );
+  const payload = {
+    camera: cameras[""],
+    panels: Object.fromEntries(Object.entries(cameras).filter(([panel]) => panel !== "")),
+  };
+  const sent = JSON.stringify(payload);
+  if (sent === instance.sentCamera) return;
+  instance.sentCamera = sent;
+  instance.component.setStateValue("camera", payload);
 }
