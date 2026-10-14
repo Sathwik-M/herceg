@@ -159,6 +159,10 @@ const numbers: Check = (v, path) => {
   if (!Array.isArray(v)) fail(path, "an array of numbers", v);
   for (const [i, item] of v.entries()) finite(item, `${path}[${i}]`);
 };
+const dash: Check = (v, path) => {
+  if (typeof v === "string") oneOf("-", "--", ":", "-.")(v, path);
+  else numbers(v, path);
+};
 const object: Check = (v, path) => {
   if (!isRecord(v)) fail(path, "an object", v);
 };
@@ -556,7 +560,7 @@ const MARKS: MarkChecks = {
       dodge: boolean,
       stroke: string,
       strokeWidth: width,
-      dash: numbers,
+      dash,
       curve,
       label: string,
       legendGroup: group,
@@ -629,7 +633,7 @@ const MARKS: MarkChecks = {
       y: position,
       stroke: string,
       strokeWidth: width,
-      dash: numbers,
+      dash,
       label: string,
       textField: field,
     },

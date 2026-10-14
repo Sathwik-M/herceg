@@ -1211,7 +1211,7 @@ def test_pointplot_joins_its_estimates_with_lines_that_break_at_missing_categori
     assert "joined by lines" in chart.to_spec()[0]["description"]
     styled = hx.pointplot(data, x="day", y="tip", series="sex", linestyles=["-", "--"])
     dashed = [m.get("dash") for m in marks(styled) if m["type"] == "line"]
-    assert dashed == [None, [6, 4]]
+    assert dashed == ["-", "--"]
     none = hx.pointplot(data, x="day", y="tip", linestyle="none", errorbar=None)
     assert [m["type"] for m in marks(none)] == ["point"]
     horizontal = hx.pointplot(data, x="tip", y="day", errorbar=None)
@@ -1226,7 +1226,7 @@ def test_pointplot_joins_its_estimates_with_lines_that_break_at_missing_categori
         levels, x="day", y="tip", series="s", linestyles=["-", "--", "-"], dodge=True, errorbar=None
     )
     kinds = [(m["type"], m.get("dash")) for m in marks(mixed)]
-    assert kinds == [("point", None), ("line", None), ("line", [6, 4])]
+    assert kinds == [("point", None), ("line", "-"), ("line", "--")]
     import herceg as hg
 
     legend = mixed.to_svg()

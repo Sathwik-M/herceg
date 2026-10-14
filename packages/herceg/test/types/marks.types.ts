@@ -6,6 +6,7 @@ import { area } from "../../src/marks/area.ts";
 import { bar } from "../../src/marks/bar.ts";
 import { boxplot } from "../../src/marks/boxplot.ts";
 import { candlestick } from "../../src/marks/candlestick.ts";
+import { custom } from "../../src/marks/custom.ts";
 import { dendrogram } from "../../src/marks/dendrogram.ts";
 import { errorBar } from "../../src/marks/errorbar.ts";
 import { funnel } from "../../src/marks/funnel.ts";
@@ -27,9 +28,11 @@ import type {
   AreaSpec,
   BoxPlotInput,
   BoxPlotSpec,
+  Dash,
   ErrorBarSpec,
   HeatmapSpec,
   HistogramSpec,
+  LineSpec,
   RegionSpec,
   RugSpec,
   RuleSpec,
@@ -178,6 +181,22 @@ boxplot(readings, { x: "cpu", y: "stage", axis: "right" });
 const dashed = [2, 3] as const;
 line(readings, { x: "at", y: "cpu", dash: dashed });
 rule({ y: 1, dash: dashed });
+
+for (const dash of ["-", "--", ":", "-."] as const) {
+  line(readings, { x: "at", y: "cpu", dash });
+  rule({ y: 1, dash });
+  custom({
+    draw({ path }) {
+      path("M0 0L1 1", { dash });
+    },
+  });
+  const lineStyle: LineSpec = { type: "line", x: "at", y: "cpu", dash };
+  const ruleStyle: RuleSpec = { type: "rule", y: 1, dash };
+  void [lineStyle, ruleStyle];
+}
+// @ts-expect-error a dash string must be one of the four styles
+const unsupportedDash: Dash = "dashed";
+void unsupportedDash;
 
 // Portable specs keep the same forms apart.
 const ruleSpec: RuleSpec = { type: "rule", y: 1 };

@@ -1782,3 +1782,15 @@ describe("category-colored bars", () => {
     },
   );
 });
+
+it("capabilities: line styles reach line and rule geometry as width-scaled dashes", () => {
+  const { scene } = build({
+    marks: [
+      line(samples, { x: "x", y: "y", dash: "--", strokeWidth: 2 }),
+      rule({ y: 4, dash: "-.", strokeWidth: 2 }),
+    ],
+  });
+  const [trace, guide] = scene.panels[0]!.marks;
+  expect(trace).toMatchObject({ dash: [7.4, 3.2] });
+  expect(guide).toMatchObject({ dash: [12.8, 3.2, 2, 3.2] });
+});

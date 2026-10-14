@@ -84,7 +84,7 @@ function lineElements(line: LineGeometry): SvgElement[] {
     "stroke-linejoin": "round",
     "stroke-linecap": "round",
   };
-  if (line.dash && line.dash.length > 0) attributes["stroke-dasharray"] = line.dash.join(" ");
+  if (line.dash?.length) attributes["stroke-dasharray"] = line.dash.join(" ");
   return [{ tag: "path", attributes }];
 }
 
@@ -95,7 +95,8 @@ export const lineDrawing: Drawing<LineGeometry> = {
   canvas(context, line) {
     context.beginPath();
     traceLine(context, line.path);
-    context.setLineDash(line.dash ? [...line.dash] : []);
+    // Canvas copies its input; the geometry's readonly array can be passed directly.
+    context.setLineDash((line.dash ?? []) as number[]);
     context.strokeStyle = line.stroke;
     context.lineWidth = line.strokeWidth;
     context.stroke();

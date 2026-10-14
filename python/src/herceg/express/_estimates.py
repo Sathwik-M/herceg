@@ -5,11 +5,11 @@ from __future__ import annotations
 import math
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 
-from .._chart import Chart, HelperOptions
+from .._chart import Chart, Dash, HelperOptions
 from .._data import Column
 from . import _numerics as numerics
 from ._common import (
@@ -65,14 +65,6 @@ else:
 Orient = Literal["v", "h", "x", "y"]
 #: Matplotlib's line styles: solid, dashed, dotted, dash-dot, or no line.
 LineStyle = Literal["-", "--", ":", "-.", "none", ""]
-
-#: Matplotlib's line styles as dash patterns in pixels; None is solid.
-_DASHES: dict[str, list[float] | None] = {
-    "-": None,
-    "--": [6, 4],
-    ":": [1.5, 3],
-    "-.": [6, 3, 1.5, 3],
-}
 
 
 @express
@@ -218,7 +210,7 @@ def pointplot(
                 data=est.of_series(joined, levels),
                 series=series,
                 dodge=spread,
-                dash=_DASHES[style],
+                dash=cast(Dash, style),
                 label=label,
                 legend_group=SERIES_GROUP,
             )

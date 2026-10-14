@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from .widget import ChartWidget
 
 TooltipMode = Literal["nearest-x", "nearest-y", "nearest"]
+Dash = Sequence[float] | Literal["-", "--", ":", "-."]
 Curve = Literal["linear", "step", "step-before", "step-after", "monotone"]
 StackGaps = Literal["zero", "interpolate"]
 BarStack = bool | Literal["fill"]
@@ -711,6 +712,45 @@ class HelperOptions(_SharedOptions, _LayoutOptions, _BindingOptions, total=False
     z_axis: Axis | dict[str, Any] | None
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _own_options(function: Callable[..., Any]) -> set[str]:
+    return {
+        name
+        for name, parameter in inspect.signature(function).parameters.items()
+        if name != "self" and parameter.kind is not parameter.VAR_KEYWORD
+    }
+
+
+def _check_method_options(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Keep method signatures while reporting unknown options like helpers do."""
+    known = _own_options(function)
+
+    @functools.wraps(function)
+    def checked(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        for name in kwargs:
+            if name not in known:
+                raise TypeError(_unknown_option(function, name, known))
+        return function(*args, **kwargs)
+
+    return checked
+
+
+def _dash(value: Dash | None, mark: str) -> str | list[float] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value not in ("-", "--", ":", "-."):
+            raise ValueError(
+                f'{mark} dash: expected an array or "-", "--", ":", or "-."; '
+                f"received {shown(value)}"
+            )
+        return value
+    return list(value)
+
+
 def _check_stack(stack: AreaStack, mark: str) -> None:
     choices = ("fill", "center", "wiggle") if mark == "area" else ("fill",)
     if not isinstance(stack, bool) and stack not in choices:
@@ -749,6 +789,7 @@ class Chart:
     unless they pass their own ``data``.
     """
 
+    @_check_method_options
     def __init__(
         self,
         data: Any = None,
@@ -937,6 +978,7 @@ class Chart:
 
     # Marks -----------------------------------------------------------------
 
+    @_check_method_options
     def line(
         self,
         x: str | Sequence[str],
@@ -948,7 +990,7 @@ class Chart:
         data: Any = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
-        dash: Sequence[float] | None = None,
+        dash: Dash | None = None,
         curve: Curve | None = None,
         label: str | None = None,
         legend_group: str | None = None,
@@ -985,7 +1027,7 @@ class Chart:
                 "dodge": dodge or None,
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
-                "dash": list(dash) if dash is not None else None,
+                "dash": _dash(dash, "line"),
                 "curve": curve,
                 "label": label,
                 "legendGroup": _legend_group(legend_group, "line"),
@@ -998,6 +1040,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def area(
         self,
         x: str | Sequence[str] | None = None,
@@ -1165,6 +1208,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def bar(
         self,
         x: str | Sequence[str],
@@ -1242,6 +1286,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def rug(
         self,
         x: str | None = None,
@@ -1313,6 +1358,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def error_bar(
         self,
         *,
@@ -1427,6 +1473,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def point(
         self,
         x: str,
@@ -1568,6 +1615,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def histogram(
         self,
         x: str | None = None,
@@ -1759,6 +1807,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def candlestick(
         self,
         x: str,
@@ -1816,6 +1865,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def pie(
         self,
         category: str,
@@ -1863,6 +1913,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def gauge(
         self,
         value: str,
@@ -1914,6 +1965,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def funnel(
         self,
         category: str,
@@ -1955,6 +2007,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def boxplot(
         self,
         x: str | None = None,
@@ -2069,6 +2122,7 @@ class Chart:
             id,
         )
 
+    @_check_method_options
     def boxen(
         self,
         x: str,
@@ -2157,6 +2211,7 @@ class Chart:
             id,
         )
 
+    @_check_method_options
     def violin(
         self,
         x: str,
@@ -2294,6 +2349,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def treemap(
         self,
         path: Sequence[str] | None = None,
@@ -2317,6 +2373,7 @@ class Chart:
         """
         return self._tree("treemap", path, value, node, parent, data, labels, panel, id)
 
+    @_check_method_options
     def sunburst(
         self,
         path: Sequence[str] | None = None,
@@ -2377,6 +2434,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def radar(
         self,
         category: str | None = None,
@@ -2466,6 +2524,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def sankey(
         self,
         source: str,
@@ -2525,6 +2584,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def graph(
         self,
         source: str,
@@ -2675,6 +2735,7 @@ class Chart:
         if not self._panels:
             _check_alone(self._settings, kind)
 
+    @_check_method_options
     def geoshape(
         self,
         geometry: str | None = None,
@@ -2797,6 +2858,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def geopoint(
         self,
         longitude: str,
@@ -2887,6 +2949,7 @@ class Chart:
         if not self._panels:
             _check_alone(self._settings, kind)
 
+    @_check_method_options
     def point_3d(
         self,
         x: str,
@@ -2955,6 +3018,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def line_3d(
         self,
         x: str,
@@ -3006,6 +3070,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def surface(
         self,
         x: Any = None,
@@ -3108,6 +3173,7 @@ class Chart:
                 f"received {shown(self._settings['zoom'])}"
             )
 
+    @_check_method_options
     def heatmap(
         self,
         x: Any = None,
@@ -3333,6 +3399,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def contour(
         self,
         x: Any = None,
@@ -3440,6 +3507,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def dendrogram(
         self,
         first: str,
@@ -3542,6 +3610,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def rule(
         self,
         *,
@@ -3552,7 +3621,7 @@ class Chart:
         data: Any = None,
         stroke: str | None = None,
         stroke_width: float | None = None,
-        dash: Sequence[float] | None = None,
+        dash: Dash | None = None,
         axis: Literal["left", "right"] | None = None,
         facet: Literal["repeat"] | None = None,
         panel: str | None = None,
@@ -3574,7 +3643,7 @@ class Chart:
                 "y": _position(y, "rule y"),
                 "stroke": stroke,
                 "strokeWidth": stroke_width,
-                "dash": list(dash) if dash is not None else None,
+                "dash": _dash(dash, "rule"),
                 "label": label,
                 "textField": text_field,
                 "axis": axis,
@@ -3585,6 +3654,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def region(
         self,
         *,
@@ -3638,6 +3708,7 @@ class Chart:
             table,
         )
 
+    @_check_method_options
     def text(
         self,
         *,
@@ -5307,12 +5378,24 @@ def _position(value: Any, role: str) -> str | float | None:
 
 # Express-style helpers: one call, one chart -----------------------------------
 
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
-
 #: Names other libraries give options herceg names otherwise (Plotly
-#: Express, Seaborn), and the options a helper may take instead.
+#: Express, Seaborn, matplotlib), and the options a helper may take instead.
 _ELSEWHERE: dict[str, tuple[str, ...]] = {
+    "alpha": ("fill_opacity",),
+    "linewidth": ("stroke_width",),
+    "lw": ("stroke_width",),
+    "linestyle": ("dash",),
+    "ls": ("dash",),
+    "marker": ("symbol",),
+    "markersize": ("radius", "size"),
+    "ms": ("radius", "size"),
+    "c": ("color", "stroke", "fill"),
+    "edgecolor": ("stroke",),
+    "facecolor": ("fill",),
+    "label": ("name",),
+    "cmap": ("colors",),
+    "vmin": ("color_domain",),
+    "vmax": ("color_domain",),
     "color": ("series", "stroke", "fill"),
     "colour": ("series", "stroke", "fill"),
     "hue": ("series",),
@@ -5343,12 +5426,7 @@ def helper(function: Callable[_P, _R]) -> Callable[_P, _R]:
     keyword arguments it does not take by its own name, suggesting those it
     does: otherwise Python's error would name ``Chart.__init__``, which the
     helper passes its chart options to."""
-    own = [
-        name
-        for name, parameter in inspect.signature(function).parameters.items()
-        if parameter.kind is not parameter.VAR_KEYWORD
-    ]
-    known = {*own, *HelperOptions.__optional_keys__}
+    known = _own_options(function) | HelperOptions.__optional_keys__
     express = function.__module__.startswith("herceg.express")
     rows = not express and function.__name__ in _ROW_HELPERS
 
@@ -5382,15 +5460,35 @@ _ROW_HELPERS = frozenset(
 
 
 def _unknown_option(function: Callable[..., Any], name: str, known: set[str]) -> str:
-    suggested = [option for option in _ELSEWHERE.get(name, ()) if option in known]
-    suggested += difflib.get_close_matches(name, sorted(known - set(suggested)), n=1, cutoff=0.7)
+    method = function.__qualname__.startswith("Chart.")
+    constructor = method and function.__name__ == "__init__"
+    location = "Chart" if constructor else function.__name__
     where = "herceg.express" if function.__module__.startswith("herceg.express") else "herceg"
+    help_name = "Chart" if constructor else function.__qualname__ if method else location
+    suggested = [option for option in _ELSEWHERE.get(name, ()) if option in known]
+    if name in ("markersize", "ms") and "radius" in suggested:
+        suggested = ["radius"]
+    # A known foreign option with no equivalent must not get an unrelated fuzzy match.
+    if name not in _ELSEWHERE:
+        suggested += difflib.get_close_matches(name, sorted(known), n=1, cutoff=0.7)
     hint = (
         f"did you mean {' or '.join(repr(option) for option in suggested)}?"
         if suggested
-        else f"see help({where}.{function.__name__}) for the options it takes"
+        else f"see help({where}.{help_name}) for the options it takes"
     )
-    return f"{function.__name__}: no option {name!r}; {hint}"
+    if name == "zorder":
+        hint = "marks draw in the order given; add the mark later to draw it on top"
+    elif name == "density" and "normalize" in known:
+        hint = 'did you mean normalize="density"?'
+    elif name in ("xlim", "ylim"):
+        axis = name[0]
+        if constructor:
+            hint = f"did you mean {axis}=hg.Axis(domain=...)?"
+        elif f"{axis}_axis" in known:
+            hint = f"did you mean {axis}_axis=hg.Axis(domain=...)?"
+        elif method:
+            hint = f"set the chart's domain with hg.Chart({axis}=hg.Axis(domain=...))"
+    return f"{location}: no option {name!r}; {hint}"
 
 
 def _rows_chart_of(data: Any, options: HelperOptions) -> tuple[Chart, Tooltip | None]:
@@ -5427,7 +5525,7 @@ def line(
     dodge: bool = False,
     stroke: str | None = None,
     stroke_width: float | None = None,
-    dash: Sequence[float] | None = None,
+    dash: Dash | None = None,
     curve: Curve | None = None,
     label: str | None = None,
     legend_group: str | None = None,

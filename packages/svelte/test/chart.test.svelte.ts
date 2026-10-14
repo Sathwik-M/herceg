@@ -649,3 +649,21 @@ describe("<Chart renderTooltip>", () => {
     expect(box()!.textContent!.trim()).toBe("3 ms");
   });
 });
+
+it.each([
+  ["-", ""],
+  ["--", "7.4 3.2"],
+  [":", "2 3.3"],
+  ["-.", "12.8 3.2 2 3.2"],
+] as const)("passes dash %s through Svelte marks", (dash, expected) => {
+  lines({
+    dash,
+    strokeWidth: 2,
+    limit: 2,
+    options: { renderer: "svg" },
+    draw: ({ path }) => path("M0 0L10 10", { stroke: "red", strokeWidth: 2, dash }),
+  });
+  const strokes = host.querySelectorAll('[stroke-dasharray]:not([stroke-dasharray=""])');
+  expect(strokes).toHaveLength(expected ? 3 : 0);
+  for (const stroke of strokes) expect(stroke.getAttribute("stroke-dasharray")).toBe(expected);
+});

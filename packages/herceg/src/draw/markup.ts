@@ -13,7 +13,7 @@ export function escapeXml(text: string): string {
 
 /** A `stroke-dasharray` attribute, or nothing for solid strokes. */
 export function dashAttribute(value: readonly number[] | undefined): string {
-  return value && value.length > 0 ? ` stroke-dasharray="${value.join(" ")}"` : "";
+  return value?.length ? ` stroke-dasharray="${value.join(" ")}"` : "";
 }
 
 /** Markup of elements, for drawings that describe their output as elements. */

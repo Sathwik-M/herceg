@@ -1,4 +1,4 @@
-import type { Frozen, MarkTooltipSpec } from "../spec/spec.ts";
+import type { Dash, Frozen, MarkTooltipSpec } from "../spec/spec.ts";
 // Custom marks: a JavaScript `draw` function places shapes using the chart's
 // scales. They share axes, viewport, and rendering (SVG, Canvas, static SVG)
 // with built-in marks, but are not portable: a chart spec cannot hold one.
@@ -11,7 +11,7 @@ import { n } from "../draw/markup.ts";
 import { shapesDrawing } from "../draw/shapes.ts";
 import type { PathShape, PlotRect, ShapesGeometry, TextShape } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
-import { definedFields } from "./line.ts";
+import { dashPattern, definedFields } from "./line.ts";
 import {
   type AxisFormat,
   buildSeries,
@@ -41,8 +41,8 @@ export interface ShapeStyle {
   strokeWidth?: number;
   /** From 0 to 1. Default 1. */
   opacity?: number;
-  /** SVG-style dash pattern in pixels. */
-  dash?: readonly number[];
+  /** Pixel dash array, or a matplotlib style scaled by strokeWidth. */
+  dash?: Dash;
 }
 
 export interface TextShapeStyle {
@@ -335,7 +335,7 @@ export class CustomMark implements Mark<Frozen<CustomSpec>> {
         stroke,
         strokeWidth: stroke === undefined ? 0 : width,
         opacity: opacity >= 0 && opacity <= 1 ? opacity : opacity > 1 ? 1 : 0,
-        dash: style.dash,
+        dash: dashPattern(style.dash, width),
       });
     };
     // Without a table, `table` is undefined; the table-free context's type has none.
