@@ -541,7 +541,7 @@ describe("layout marks in panels refuse", () => {
     const spatial = table({ x: [0, 1], y: [0, 1], z: [0, 1], year: ["a", "b"] });
     expect(() =>
       build({ marks: [point3d(spatial, { x: "x", y: "y", z: "z" })], facet: facet("year") }),
-    ).toThrow("point3d: no facets or panels yet; draw it in a chart of its own");
+    ).toThrow("point3d facet: 3D marks cannot split into facets; use separate marks in subplots");
     const shares = pie(sales, { category: "region", value: "revenue" });
     expect(() =>
       build({ marks: [shares], facet: facet("year"), interaction: { drag: true } }),

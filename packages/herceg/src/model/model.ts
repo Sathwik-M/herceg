@@ -285,17 +285,11 @@ export class ChartModel {
   /** Palette slot per series key, assigned on first appearance and kept. */
   #slots = new Map<string, number>();
 
-  /** A 3D chart's camera, and the configured one it starts from; undefined for other charts. */
-  #camera: Camera | undefined;
-  #configured: Camera | undefined;
-
   /** `page` resolves themes that follow the page: "auto" and CSS variables. */
   constructor(config: ChartConfig, page?: ThemeEnvironment) {
     [this.#marks, this.#layouts, this.#positions] = validate(config);
     this.#config = config;
     this.#theme = resolveTheme(config.theme, page);
-    this.#configured = this.#layouts[0]?.camera?.(config.camera);
-    this.#camera = this.#configured;
   }
 
   get config(): ChartConfig {
@@ -322,15 +316,6 @@ export class ChartModel {
 
   update(config: ChartConfig, page?: ThemeEnvironment): void {
     [this.#marks, this.#layouts, this.#positions] = validate(config);
-    // A camera configured differently is shown; the same one keeps the view turned.
-    const configured = this.#layouts[0]?.camera?.(config.camera);
-    if (
-      !this.#camera ||
-      !configured ||
-      JSON.stringify(configured) !== JSON.stringify(this.#configured)
-    )
-      this.#camera = configured;
-    this.#configured = configured;
     this.#config = config;
     // Series join their legend groups again as they are resolved.
     this.hidden.groups.clear();
@@ -345,22 +330,15 @@ export class ChartModel {
     this.#layoutKey = "";
   }
 
-  /** The camera of a 3D chart (a copy), which the pointer and keyboard turn; undefined for other charts. */
-  get camera(): Camera | undefined {
-    return this.#camera && { ...this.#camera };
+  /** A copy of the camera of the targeted 3D state; multiple cameras require a panel. */
+  getCamera(panel?: string): Camera | undefined {
+    return this.items?.camera(panel);
   }
 
-  /**
-   * Moves a 3D chart's camera: settings given replace the current ones; null
-   * goes back to the configured camera. Whether the camera changed.
-   */
-  setCamera(camera: CameraSpec | null): boolean {
-    const resolve = this.#layouts[0]?.camera;
-    if (!resolve || !this.#camera) throw new Error("setCamera: only 3D charts have a camera");
-    const next = camera ? resolve.call(this.#layouts[0], camera, this.#camera) : this.#configured!;
-    if (JSON.stringify(next) === JSON.stringify(this.#camera)) return false;
-    this.#camera = next;
-    return true;
+  setCamera(camera: CameraSpec | null, panel?: string): boolean {
+    const items = this.items;
+    if (!items) throw new Error("setCamera: no 3D camera; add a 3D mark");
+    return items.setCamera(camera, panel);
   }
 
   /**
@@ -1686,7 +1664,6 @@ export class ChartModel {
       // A copy, which items found before the next scene still read.
       hidden: new Set(this.hidden),
       color: this.#palette,
-      camera: this.#camera,
       clouds,
       keyed: keyedBy(this.#config),
     });

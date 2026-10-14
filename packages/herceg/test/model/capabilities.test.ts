@@ -105,8 +105,8 @@ type MarkCase = {
   /** The table the mark reads, when not `samples`. */
   table?: Table;
   kind: Geometry["kind"];
-  /** Layout marks that draw in facet panels and subplots. */
-  panels?: true;
+  /** Layout marks that split rows into facet panels; every layout mark supports subplots. */
+  facets?: true;
   repeats?: true;
   reading?: "summary";
   noLegend?: true;
@@ -332,14 +332,14 @@ const layouts: MarkCase[] = [
     name: "pie",
     make: (p) => pie(samples, { category: "category", value: "y", labels: false, ...p }),
     kind: "arc",
-    panels: true,
+    facets: true,
     animates: true,
   },
   {
     name: "treemap",
     make: (p) => treemap(samples, { path: ["group", "category"], value: "y", ...p }),
     kind: "rect",
-    panels: true,
+    facets: true,
     navigates: "drill",
     selects: true,
   },
@@ -347,28 +347,28 @@ const layouts: MarkCase[] = [
     name: "sunburst",
     make: (p) => sunburst(samples, { path: ["group", "category"], value: "y", ...p }),
     kind: "arc",
-    panels: true,
+    facets: true,
     navigates: "drill",
     selects: true,
   },
-  { name: "gauge", make: (p) => gauge(samples, { value: "y", ...p }), kind: "arc", panels: true },
+  { name: "gauge", make: (p) => gauge(samples, { value: "y", ...p }), kind: "arc", facets: true },
   {
     name: "funnel",
     make: (p) => funnel(samples, { category: "category", value: "y", ...p }),
     kind: "shapes",
-    panels: true,
+    facets: true,
   },
   {
     name: "radar",
     make: (p) => radar(samples, { category: "category", value: "y", series: "group", ...p }),
     kind: "shapes",
-    panels: true,
+    facets: true,
   },
   {
     name: "sankey",
     make: (p) => sankey(links, { source: "source", target: "target", value: "value", ...p }),
     kind: "rect",
-    panels: true,
+    facets: true,
   },
   {
     name: "graph",
@@ -382,7 +382,7 @@ const layouts: MarkCase[] = [
         ...(p?.panel !== undefined && { panel: p.panel }),
       }),
     kind: "point",
-    panels: true,
+    facets: true,
     selects: true,
     drags: true,
     navigates: "plane",
@@ -391,7 +391,7 @@ const layouts: MarkCase[] = [
     name: "geoshape",
     make: (p) => geoshape(world, { color: "group", ...p }),
     kind: "polygons",
-    panels: true,
+    facets: true,
     navigates: "plane",
     selects: true,
     layer: true,
@@ -400,26 +400,26 @@ const layouts: MarkCase[] = [
     name: "geopoint",
     make: (p) => geopoint(samples, { longitude: "x", latitude: "y", series: "group", ...p }),
     kind: "point",
-    panels: true,
+    facets: true,
     navigates: "plane",
     selects: true,
     layer: true,
   },
   {
     name: "point3d",
-    make: () => point3d(spatial, { x: "x", y: "y", z: "z", series: "group" }),
+    make: (p) => point3d(spatial, { ...p, x: "x", y: "y", z: "z", series: "group" }),
     kind: "faces",
     turns: true,
   },
   {
     name: "line3d",
-    make: () => line3d(spatial, { x: "x", y: "y", z: "z", series: "group" }),
+    make: (p) => line3d(spatial, { ...p, x: "x", y: "y", z: "z", series: "group" }),
     kind: "faces",
     turns: true,
   },
   {
     name: "surface",
-    make: () => surface(grid, { x: "x", y: "y", z: "z" }),
+    make: (p) => surface(grid, { ...p, x: "x", y: "y", z: "z" }),
     kind: "faces",
     turns: true,
   },
@@ -427,9 +427,9 @@ const layouts: MarkCase[] = [
 const all = [...cartesian, ...layouts];
 const annotations = cartesian.filter((c) => c.reading === "summary");
 const subplot = panels([{ id: "a" }, { id: "b" }]);
-// Layout marks in panels, and those that have charts to themselves (3D).
-const paneled = layouts.filter((c) => c.panels);
-const alone = layouts.filter((c) => !c.panels);
+// 3D marks support subplots but refuse splitting their rows into facets.
+const paneled = layouts.filter((c) => c.facets);
+const three = layouts.filter((c) => c.turns);
 /** A line in subplot "a" beside a layout mark in subplot "b". */
 const besideLine = (c: MarkCase, extra: Partial<ChartConfig> = {}): ChartConfig => ({
   marks: [line(samples, { x: "x", y: "y", panel: "a" }), c.make({ panel: "b" })],
@@ -497,9 +497,9 @@ describe("capabilities: facets", () => {
     expect(describeChart(model)).toMatch(/^Panels by group: N, S\. N: .+ S: /);
   });
 
-  it.each(alone)("$name refuses facets", (c) => {
+  it.each(three)("$name refuses facets", (c) => {
     expect(() => build({ marks: [c.make()], facet: facet("group") })).toThrow(
-      ": no facets or panels yet; draw it in a chart of its own",
+      " facet: 3D marks cannot split into facets; use separate marks in subplots",
     );
   });
 
@@ -620,7 +620,7 @@ describe("capabilities: subplots", () => {
     expect(scene.panels[1]!.marks).toEqual([]);
   });
 
-  it.each(paneled)("$name fills its named subplot beside a line", (c) => {
+  it.each(layouts)("$name fills its named subplot beside a line", (c) => {
     const { scene, model } = build(besideLine(c));
     const [a, b] = scene.panels;
     expectGeometry(a!, "line");
@@ -630,12 +630,6 @@ describe("capabilities: subplots", () => {
     expect(model.panels().map(({ key }) => key)).toEqual(["a"]);
     const [key] = itemKeys(model, "b");
     expect(model.inspectItem(key!, "b")!.points[0]!.mark).toBe(1);
-  });
-
-  it.each(alone)("$name refuses subplots", (c) => {
-    expect(() => build({ marks: [c.make()], panels: subplot })).toThrow(
-      ": no facets or panels yet; draw it in a chart of its own",
-    );
   });
 
   it.each(paneled)("$name has its subplot to itself", (c) => {
@@ -701,19 +695,6 @@ describe("capabilities: per-panel scales", () => {
         }),
       ),
     ).toThrow(`panels[1]: the ${c.layer ? "map" : c.name} mark it draws has no axes`);
-  });
-
-  it.each(alone)("$name refuses panels with their own scales", (c) => {
-    expect(() =>
-      build({
-        marks: [c.make()],
-        panels: panels([
-          { id: "a", y: { domain: [0, 10] } },
-          { id: "b", y: { domain: [0, 100] } },
-        ]),
-        resolve: { x: "independent", y: "independent" },
-      }),
-    ).toThrow(": no facets or panels yet");
   });
 
   const financial = [
@@ -963,10 +944,10 @@ describe("capabilities: zoom and pan", () => {
       marks: [c.make()],
       interaction: { zoom: true, rotate: true },
     });
-    const before = model.camera!;
+    const before = model.getCamera()!;
     expect(model.setCamera({ azimuth: before.azimuth + 30, zoom: before.zoom * 1.2 })).toBe(true);
-    expect(model.camera!.azimuth).toBeCloseTo(before.azimuth + 30);
-    expect(model.camera!.zoom).toBeCloseTo(before.zoom * 1.2);
+    expect(model.getCamera()!.azimuth).toBeCloseTo(before.azimuth + 30);
+    expect(model.getCamera()!.zoom).toBeCloseTo(before.zoom * 1.2);
     expect(model.scene(estimateText).panels[0]!.marks).not.toEqual(scene.panels[0]!.marks);
   });
 

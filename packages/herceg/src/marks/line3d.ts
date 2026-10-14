@@ -64,6 +64,8 @@ export interface Line3DOptions<S extends Schema> {
   label?: string;
   /** Fields of the row tooltips show besides the mark's values, such as counts that are not plotted. */
   tooltip?: MarkTooltip<S>;
+  /** The subplot whose 3D box this layer shares. */
+  panel?: string;
   id?: string;
 }
 
@@ -147,8 +149,13 @@ export class Line3DMark implements Layer3D {
     this.measure = spec.label ?? "Line";
   }
 
-  join(marks: readonly LayoutMark[], config: ChartConfig): LayoutMark {
-    return joinLayers3D(marks, config);
+  join(
+    marks: readonly LayoutMark[],
+    config: ChartConfig,
+    indices?: readonly number[],
+    panel?: string,
+  ): LayoutMark {
+    return joinLayers3D(marks, config, indices, panel);
   }
 
   /** Charts draw 3D layers through `join`; drawn alone, a layer takes the default options. */
@@ -677,7 +684,15 @@ export function line3d<S extends Schema>(
     x: options.x,
     y: options.y,
     z: options.z,
-    ...definedFields(options, ["tooltip", "series", "stroke", "strokeWidth", "label", "id"]),
+    ...definedFields(options, [
+      "tooltip",
+      "series",
+      "stroke",
+      "strokeWidth",
+      "label",
+      "panel",
+      "id",
+    ]),
   };
   if (table.name !== undefined) spec.data = table.name;
   // Field names were checked against S above; marks work on the erased schema.

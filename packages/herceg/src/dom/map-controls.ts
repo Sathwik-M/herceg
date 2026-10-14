@@ -19,7 +19,12 @@ import type { Scene } from "../scene/scene.ts";
 import type { Theme } from "../theme.ts";
 import { Brush, type BrushPanel } from "./brush.ts";
 import { DRAG_THRESHOLD } from "./brushed.ts";
-import { type Controls as ChartControls, type ControlsHost, PointerOwnership } from "./controls.ts";
+import {
+  type Controls as ChartControls,
+  type ControlsHost,
+  PointerOwnership,
+  touchAction,
+} from "./controls.ts";
 import { RESET_GLYPH, type ToolButton, Toolbar } from "./toolbar.ts";
 
 /** Magnification per key press or button click. */
@@ -181,7 +186,7 @@ export class Controls implements ChartControls {
       this.#brush = undefined;
     }
     this.#showToolbars();
-    this.#root.style.touchAction = this.#zooms || this.#lassos ? "none" : "";
+    touchAction(this.#host);
   }
 
   draw(scene: Scene): void {

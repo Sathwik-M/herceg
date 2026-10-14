@@ -132,14 +132,14 @@ export interface Chart {
     selection: Selection | readonly [number, number] | null,
     target?: PanelTarget & { rows?: boolean },
   ): void;
-  /** Where a 3D chart is seen from (a copy); undefined for other charts. */
-  readonly camera: Camera | undefined;
+  /** A copy of the camera of a 3D subplot (or the chart); multiple cameras require a panel. */
+  getCamera(target?: PanelTarget): Camera | undefined;
   /**
    * Turns a 3D chart's camera: the settings given replace the current ones;
    * null goes back to the configured camera. A `camera` event follows on
    * the next frame.
    */
-  setCamera(camera: CameraSpec | null): void;
+  setCamera(camera: CameraSpec | null, target?: PanelTarget): void;
   /**
    * The node a treemap or sunburst is drilled into (null for the whole
    * tree) and the path to it from the top level, as set though not drawn

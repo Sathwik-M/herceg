@@ -1382,8 +1382,8 @@ the notes), — not yet (refused with an error), · not applicable.
 | gauge, funnel, sankey | ✓ | ✓ | · | · | — | — | — | — | — | · | ✓ | · | — |
 | graph | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ◐ | ✓ | — | — |
 | geoshape, geopoint | ✓ | ✓ | · | · | ✓ | ◐ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| point3d, line3d | — | — | — | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
-| surface | — | — | — | · | turning | — | — | — | — | · | ✓ | · | — |
+| point3d, line3d | — | ✓ | · | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
+| surface | — | ✓ | · | · | turning | — | — | — | — | · | ✓ | · | — |
 
 - Line and area gaps preserve isolated finite rows as stroke-sized dots on
   every renderer and export. Bars colored by their own category keep full
@@ -1446,7 +1446,8 @@ the notes), — not yet (refused with an error), · not applicable.
   axes, so they neither zoom along axes, brush ranges, sync, nor resolve
   scales (`resolve` other than "shared"); trees
   drill, maps and networks pan, zoom, and lasso, and networks move nodes
-  there as in a chart of their own. 3D charts have charts to themselves.
+  there as in a chart of their own. 3D marks draw in subplots with a camera
+  per panel; 3D facets are refused.
 - Box plots, boxen plots, and violins on log axes have no keyboard stop for groups whose
   median is not positive; annotations are read in the chart's summary
   rather than one by one (a facet panel's own as the keyboard arrives
@@ -1989,12 +1990,55 @@ who cannot drag; Shift with the arrow keys turns it too, and plus and minus
 zoom. The arrow keys, as in other charts without axes, read the points in
 row order, a line's points path after path, and a surface's grid points row
 by row. Touch drags turn the box
-sideways and leave vertical drags to scroll the page. `chart.camera` is the
+sideways and leave vertical drags to scroll the page. `chart.getCamera()` returns a copy of the
 current camera, `chart.setCamera({ ... })` changes the settings it is given
 (null goes back to the configured camera), and a `camera` event reports
 every move, once a frame at most. Updating the chart with a different
 `camera` shows it; updating it with the same camera keeps the view the user
 turned to.
+
+A 3D subplot names its panel on every layer, alongside any other panel:
+
+```ts
+import { createChart, line, panels, point3d, surface } from "herceg";
+
+const chart = createChart(element, {
+  panels: panels([
+    { id: "trend", title: "Trend" },
+    { id: "cloud", title: "Observations", camera: { azimuth: 30 } },
+    { id: "fit", title: "Fit", camera: { azimuth: 90 } },
+  ], { columns: 3 }),
+  marks: [
+    line(history, { x: "time", y: "yield", panel: "trend" }),
+    point3d(trials, { x: "nitrogen", y: "rain", z: "yield", panel: "cloud" }),
+    surface(fit, { x: "nitrogen", y: "rain", z: "yield", panel: "fit" }),
+  ],
+  interaction: { zoom: true },
+});
+chart.setCamera({ elevation: 40 }, { panel: "cloud" });
+chart.getCamera({ panel: "fit" });
+chart.setCamera(null, { panel: "cloud" }); // its configured view
+chart.on("camera", ({ camera, panels }) => console.log(camera, panels));
+```
+
+Panel camera settings override the chart's camera defaults. Omitting the
+method target works with one camera; with several, name the panel.
+A subplot's camera event carries `panels: [id]`; a standalone chart's
+carries only `camera`. Each 3D panel has its own toolbar; dragging, wheel
+zoom, and double-click act in that panel, while keyboard turning acts on
+the panel the keyboard cursor reads. Up and Down move between panels,
+Left and Right through their items, and the description names each panel
+and its view. SVG, PDF, and PNG exports use each panel's current camera.
+
+Subplots draw on the CPU, including large points and surfaces; standalone
+charts keep the WebGL point, line, and surface paths. Surface panels obey
+the 250,000 grid-point CPU limit. Each panel retains only its latest packed
+geometry and, on Canvas, one transparent panel-sized raster; an unchanged
+panel reuses both when a neighbor turns. Raster backing storage is about
+`4 × sum(panel device-pixel areas)` bytes, in addition to geometry and the
+main canvas. The whole canvas still clears and composites on each frame.
+3D facets are refused with a message recommending separate subplot marks:
+shared cameras alone would not define how surface grids split into facets.
 
 Tooltips, hover and click events, and the keyboard report a point's, a
 line's point's, or a grid point's `x`, `y`, and `z` (and `color`), and the
@@ -2007,7 +2051,7 @@ points, the lines (their points, runs, and the rows that break them), or the
 surface (its grid, highest, and lowest points), the axes' ranges, and the
 camera; it and the keyboard read the data, never what is drawn.
 
-Large 3D charts are drawn by the GPU in the browser, with one depth test for
+Large standalone 3D charts are drawn by the GPU in the browser, with one depth test for
 all of their marks, when every mark can be (opaque points, opaque lines, and
 opaque surfaces without a wireframe) and the CPU would draw at least 20,000
 faces: 20,000 points, 10,000 surface cells, 20,000 line segments, or a mix
@@ -2484,7 +2528,8 @@ Pies, treemaps, sunbursts, gauges, funnels, radars, Sankey diagrams, maps,
 and networks draw in panels too: with a facet, a layout mark is the chart's
 only mark and draws each panel's rows there, as marks along axes do; with
 subplots, it has the panel it names to itself, beside panels with axes.
-3D charts have charts to themselves.
+3D marks share a subplot with other 3D layers, with their own camera,
+or a chart of their own; 3D facets are refused.
 
 ```ts
 // Small multiples: a pie of each region's sales, with one legend for all.
@@ -2685,7 +2730,8 @@ The returned `Chart` has `root` (its element), `update(options)`,
 `setViewport(view | [from, to] | null, { panel? })` and `getViewport({ panel?
 })`, `select(selection | [from, to] | null, { panel? })` (a pair is shorthand
 for an x range), `selection` and `selectionPanels` (see Small multiples for
-`panel`), `camera` and `setCamera(camera | null)` (3D charts),
+`panel`), `getCamera({ panel? })` and `setCamera(camera | null, { panel? })`
+(3D charts and subplots),
 `getDrillRoot({ panel? })` and `setDrillRoot(node | null, { panel? })`
 (treemaps and sunbursts), `getItemPositions({ panel? })` and
 `setItemPosition(key, position | null, { panel? })` (networks), `getPanels()`,
@@ -3364,7 +3410,7 @@ createChart(element, config);
 Every point is drawn by default. In the browser, point series of 100,000
 points or more are drawn with WebGL2, loaded on demand the first time a chart
 needs it; `chart.loading` settles once they are on screen (points on a time
-axis with breaks are placed on the CPU). So are 3D charts of 20,000 points,
+axis with breaks are placed on the CPU). So are standalone 3D charts of 20,000 points,
 10,000 surface cells, or 20,000 line segments (see 3D charts). With
 `sampling: "pixel"`, opaque points
 whose centers land on the same device pixel are drawn once (above 4,096

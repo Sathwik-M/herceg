@@ -1076,6 +1076,7 @@ const MARKS: MarkChecks = {
   point3d: {
     required: ["x", "y", "z"],
     checks: {
+      panel: string,
       tooltip,
       x: field,
       y: field,
@@ -1095,6 +1096,7 @@ const MARKS: MarkChecks = {
   line3d: {
     required: ["x", "y", "z"],
     checks: {
+      panel: string,
       tooltip,
       x: field,
       y: field,
@@ -1108,6 +1110,7 @@ const MARKS: MarkChecks = {
   surface: {
     required: ["x", "y", "z"],
     checks: {
+      panel: string,
       x: field,
       y: field,
       z: field,
@@ -1531,6 +1534,7 @@ function checkChart(spec: unknown): asserts spec is ChartSpec {
           checkProperties(panel, at, ["id"], {
             id: string,
             title: string,
+            camera,
             x: axis,
             y: axis,
             yRight: axis,

@@ -681,7 +681,7 @@ describe("3D charts in specs", () => {
     const ids = (text: string) => text.replace(/herceg-svg-\d+/g, "id");
     expect(ids(svg)).toBe(ids(same));
     const model = new ChartModel(loadSpec(spec).config);
-    expect(model.camera).toEqual({ azimuth: 30, elevation: 40, zoom: 1, perspective: false });
+    expect(model.getCamera()).toEqual({ azimuth: 30, elevation: 40, zoom: 1, perspective: false });
     expect(checkSpec(spec)).toEqual([]);
   });
 

@@ -76,11 +76,33 @@ dragging (`rotate=False` stops that), the wheel with `zoom=True`, the
 keyboard, and buttons in the chart's corner. `z=hg.Axis(...)` sets the
 vertical axis, `box_aspect=(2, 2, 1)` the box's proportions. A surface from a
 matrix travels as a matrix (`hg.matrix`), its coordinates once each; rows
-not on a grid must be binned or aggregated first. In the browser, large 3D charts
+not on a grid must be binned or aggregated first. In the browser, large standalone 3D charts
 (20,000 points, 10,000 surface cells, or 20,000 line segments) are drawn
 with WebGL2 and depth-tested, up to 1,048,576 grid points a surface; static
 SVG, PNG, and PDF draw on the CPU, back to front, at most 250,000, and show
 the starting camera.
+
+3D layers also draw beside other charts in subplots:
+
+```python
+chart = (hg.Chart(data, panels=["trend", hg.Panel("cloud", title="Cloud", camera={"azimuth": 30}),
+                               hg.Panel("path", title="Path", camera={"azimuth": 90})],
+                  panel_columns=3, zoom=True)
+         .line("time", "value", panel="trend")
+         .point_3d("x", "y", "z", panel="cloud")
+         .line_3d("x", "y", "z", panel="path"))
+```
+
+`.surface(..., panel="fit")` works the same way, and multiple 3D layers
+naming one panel share its box. `hg.Panel(camera=...)` overrides the chart
+camera (a dict overrides only its given fields; `hg.Camera` gives a full
+camera). Subplots use CPU geometry for SVG, Canvas, PDF, and PNG; WebGL
+points, lines, and surfaces remain available for standalone charts.
+Surface panels keep the CPU limit of 250,000 grid points. Each panel caches
+its latest geometry and Canvas image, so turning one does not project or
+trace unchanged neighbors. Each has its own toolbar and keyboard turning,
+and the description names each panel. 3D facets are refused: use subplot
+marks instead.
 
 Maps, trees, and networks take the shared interaction options. `zoom=True`
 or `zoom="xy"` pans and zooms maps and networks with the wheel, dragging,
@@ -1188,7 +1210,7 @@ live.on_viewport(lambda viewport: print(viewport.x, viewport.y))
 live.on_hover(lambda inspection: print(inspection))   # None when the pointer leaves
 live.on_click(lambda inspection: print(df.iloc[inspection.points[0].row]))
 live.on_click(callback, remove=True)     # stop calling it
-live.on_camera(lambda camera: print(camera.azimuth, camera.elevation))  # a 3D chart turned
+live.on_camera(lambda camera: print(camera.azimuth, camera.elevation))  # standalone 3D
 ```
 
 Trees and networks report their state with the same property and callback
@@ -1275,6 +1297,21 @@ table's, and a choropleth joined with `geojson=` has a row per feature. A 3D
 chart's inspection also has `values`, the point's (or grid point's) columns
 by name (datetimes as epoch milliseconds). `on_camera` receives an
 `hg.Camera`, at most every 100 ms while a chart is dragged.
+
+For 3D widgets, `live.camera` reads or sets the standalone camera; with
+subplots use `live.panel_cameras` (a mapping by panel id) and
+`live.on_camera(callback, panel="cloud")`. Assigning
+`live.panel_cameras = {"cloud": hg.Camera(azimuth=40)}` changes only that
+panel; `None` resets it. Camera states synchronize across notebook
+displays and late displays receive them in the snapshot. Reports are
+throttled while dragging; the first browser also reports its resolved
+camera. Changing effective camera defaults through `live.update(camera=...)`
+resets the affected cameras even before displaying the widget or after closing
+all displays. Cameras whose effective defaults stay the same retain their views.
+Streamlit takes `on_camera="rerun"` or a
+callback; its `ChartState.camera` and `ChartState.panel_cameras` hold the
+standalone or subplot cameras. Reruns preserve turned views unless their
+configured camera changes.
 
 Selection and viewport callbacks also run when Python sets them. Hover,
 zoom, and selection reach Python at most every 100 ms, always ending with

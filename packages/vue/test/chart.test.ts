@@ -10,6 +10,7 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  panels,
   RowSet,
   rangeNavigator,
   rowSelection,
@@ -442,7 +443,29 @@ describe("<Chart>", () => {
     expect(cameras).toEqual([10]);
     camera.value = { azimuth: 40 };
     await nextTick();
-    expect(chart().camera).toMatchObject({ azimuth: 40, elevation: 25 });
+    expect(chart().getCamera()).toMatchObject({ azimuth: 40, elevation: 25 });
+  });
+
+  it("emits the camera panel from compositional 3D marks", async () => {
+    const data = table({ x: [0, 1], y: [1, 0], z: [0, 1] });
+    const events: (readonly string[] | undefined)[] = [];
+    const { view, chart } = chartRef();
+    mount(
+      `<Chart ref="view" :panels="layout" @camera="onCamera">
+      <Point3D :data="data" x="x" y="y" z="z" panel="a" />
+      <Line3D :data="data" x="x" y="y" z="z" panel="b" />
+    </Chart>`,
+      () => ({
+        data,
+        view,
+        layout: panels([{ id: "a" }, { id: "b" }]),
+        onCamera: (event: { panels?: readonly string[] }) => events.push(event.panels),
+      }),
+    );
+    chart().setCamera({ azimuth: 40 }, { panel: "b" });
+    await frame();
+    expect(events).toEqual([["b"]]);
+    expect(chart().getCamera({ panel: "a" })!.azimuth).toBe(-60);
   });
 
   it("emits drilling into a tree and moving a network's nodes", () => {

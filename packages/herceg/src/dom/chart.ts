@@ -241,8 +241,6 @@ export class MountedChart implements Chart, ExportsScene {
   #tap: { pointer: number; x: number; y: number; moved: boolean } | null = null;
   /** The navigator's sliders, which load when the chart first has a navigator. */
   #navigator: NavigatorControls | undefined;
-  /** The camera moved since the last `camera` event, which the next frame reports. */
-  #cameraMoved = false;
   /** What is selected, in data values; the brush draws it once loaded. */
   #selection: Selection | null = null;
   /** Drags and draws selections; loaded the first time a chart brushes or selects. */
@@ -556,14 +554,12 @@ export class MountedChart implements Chart, ExportsScene {
     return pending.length > 1 ? Promise.all(pending).then(() => {}) : pending[0];
   }
 
-  get camera(): Camera | undefined {
-    return this.#model.camera;
+  getCamera(target?: PanelTarget): Camera | undefined {
+    return this.#model.getCamera(target?.panel);
   }
 
-  setCamera(camera: CameraSpec | null): void {
-    if (!this.#model.setCamera(camera)) return;
-    this.#cameraMoved = true;
-    this.#invalidate(false);
+  setCamera(camera: CameraSpec | null, target?: PanelTarget): void {
+    if (this.#model.setCamera(camera, target?.panel)) this.#invalidate(false);
   }
 
   getDrillRoot(target?: PanelTarget): DrillRoot | undefined {
@@ -808,12 +804,6 @@ export class MountedChart implements Chart, ExportsScene {
     // reported before listeners of the frame (hover) may drill again.
     if (drawn) this.#model.items?.finishFrame();
     this.#drawOverlay();
-    // Camera events come once a frame, however many moves a drag made.
-    const camera = this.#model.camera;
-    if (this.#cameraMoved && camera) {
-      this.#cameraMoved = false;
-      this.#events.emit("camera", { camera });
-    }
     if (drawn) this.#events.emit("render", {});
   }
 
@@ -1200,7 +1190,7 @@ export class MountedChart implements Chart, ExportsScene {
         ),
       // Drills, moves, and views of maps and networks report themselves.
       (type, change) => {
-        this.#invalidate(false);
+        if (type !== "camera") this.#invalidate(false);
         this.#events.emit(type, change);
       },
     );

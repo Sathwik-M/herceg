@@ -620,7 +620,8 @@ def test_hover_and_click_callbacks_receive_inspections():
 
 
 def test_camera_callbacks_and_3d_items_receive_their_values():
-    widget, browser = live()
+    widget = hg.Chart({"x": [1.0], "y": [2.0], "z": [9.0]}).point_3d("x", "y", "z").widget()
+    browser = Browser(widget)
     cameras, clicked = [], []
     widget.on_camera(cameras.append)
     widget.on_click(clicked.append)
@@ -831,3 +832,138 @@ def test_delayed_moves_from_another_browser_lose_to_a_python_assignment():
         {"type": "itemMove", "item_positions": {'[0,"b"]': [3, 4]}, "origin": "new", "revision": 1}
     )
     assert widget.item_positions == {'[0,"b"]': (3.0, 4.0)}
+
+
+def test_camera_state_is_per_panel_and_rejects_invalid_or_stale_reports():
+    data = {"x": [0.0, 1.0], "y": [0.0, 1.0], "z": [1.0, 2.0]}
+    widget = (
+        hg.Chart(data, panels=["a", "b"])
+        .point_3d("x", "y", "z", panel="a")
+        .line_3d("x", "y", "z", panel="b")
+        .widget()
+    )
+    browser = Browser(widget)
+    with pytest.raises(ValueError, match="widget.camera"):
+        _ = widget.camera
+    with pytest.raises(ValueError, match="widget.on_camera"):
+        widget.on_camera(lambda camera: None)
+    seen = []
+    widget.on_camera(seen.append, panel="b")
+    widget.panel_cameras = {"a": hg.Camera(azimuth=10), "b": hg.Camera(azimuth=90)}
+    assert widget.panel_cameras["a"].azimuth == 10
+    revision = widget._revision
+    seen.clear()
+    browser.reply(
+        {
+            "type": "camera",
+            "panel": "b",
+            "camera": {"azimuth": 80},
+            "origin": "browser",
+            "revision": revision,
+        }
+    )
+    assert seen == [hg.Camera(azimuth=80)]
+    assert widget.panel_cameras["a"].azimuth == 10
+    browser.reply(
+        {
+            "type": "camera",
+            "panel": "b",
+            "camera": {"elevation": 200},
+            "origin": "browser",
+            "revision": widget._revision,
+        }
+    )
+    assert len(seen) == 1
+    widget.panel_cameras = {"b": hg.Camera(azimuth=60)}
+    browser.reply(
+        {
+            "type": "camera",
+            "panel": "b",
+            "camera": {"azimuth": 20},
+            "origin": "browser",
+            "revision": revision,
+        }
+    )
+    assert widget.panel_cameras["b"].azimuth == 60
+    widget.panel_cameras = {"b": None}
+    assert widget.panel_cameras == {"a": hg.Camera(azimuth=10), "b": None}
+    snapshot = widget._snapshot()
+    assert snapshot["panel_states"]["camera"]["a"]["azimuth"] == 10
+
+
+def test_camera_defaults_reconcile_before_display_and_reject_old_browser_reports():
+    widget = (
+        hg.Chart(
+            {"x": [0, 1], "y": [0, 1], "z": [0, 1]},
+            panels=[
+                hg.Panel("a", camera={"azimuth": 20}),
+                hg.Panel("b", camera={"azimuth": 90, "elevation": 25}),
+            ],
+        )
+        .point_3d("x", "y", "z", panel="a")
+        .line_3d("x", "y", "z", panel="b")
+        .widget()
+    )
+    browser = Browser(widget)
+    widget.panel_cameras = {"a": hg.Camera(azimuth=40), "b": hg.Camera(azimuth=70, zoom=2)}
+    revision = widget._revision
+    widget.update(camera=hg.Camera(elevation=55))
+    assert widget.panel_cameras == {
+        "a": hg.Camera(azimuth=20, elevation=55),
+        "b": hg.Camera(azimuth=70, zoom=2),
+    }
+    snapshot = widget._snapshot()
+    assert snapshot["panel_states"]["camera"]["a"]["elevation"] == 55
+    browser.reply(
+        {
+            "type": "camera",
+            "panel": "a",
+            "origin": "browser",
+            "revision": revision,
+            "camera": {"azimuth": 40, "elevation": 25},
+        }
+    )
+    assert widget.panel_cameras["a"] == hg.Camera(azimuth=20, elevation=55)
+
+
+def test_standalone_camera_defaults_reconcile_without_a_display():
+    widget = hg.Chart({"x": [0, 1], "y": [0, 1], "z": [0, 1]}).point_3d("x", "y", "z").widget()
+    widget.camera = hg.Camera(azimuth=40)
+    widget.update(title="Unchanged defaults", camera={"azimuth": 300})
+    assert widget.camera == hg.Camera(azimuth=40)
+    widget.update(camera=hg.Camera(elevation=55))
+    assert widget.camera == hg.Camera(elevation=55)
+    assert widget._snapshot()["camera"]["elevation"] == 55
+
+
+def test_camera_default_update_advances_barrier_even_when_state_already_matches():
+    widget = hg.Chart({"x": [0, 1], "y": [0, 1], "z": [0, 1]}).point_3d("x", "y", "z").widget()
+    browser = Browser(widget)
+    widget.camera = hg.Camera(elevation=55)
+    revision = widget._revision
+    widget.update(camera=hg.Camera(elevation=55))
+    browser.reply(
+        {"type": "camera", "origin": "browser", "revision": revision, "camera": {"elevation": 25}}
+    )
+    assert widget.camera == hg.Camera(elevation=55)
+
+
+def test_whole_chart_camera_recovery_keeps_only_unchanged_defaults():
+    from herceg._live import LiveChart
+
+    data = {"x": [0, 1], "y": [0, 1], "z": [0, 1]}
+
+    def chart(azimuth):
+        return (
+            hg.Chart(data, panels=[hg.Panel("a", camera={"azimuth": azimuth}), "b"])
+            .point_3d("x", "y", "z", panel="a")
+            .line_3d("x", "y", "z", panel="b")
+        )
+
+    widget = chart(20).widget()
+    widget.panel_cameras = {"a": hg.Camera(azimuth=40), "b": hg.Camera(azimuth=70, zoom=2)}
+    with widget._lock:
+        changed = widget._replace_live(LiveChart(chart(25)))
+    assert changed == [("camera", "a")]
+    assert widget.panel_cameras == {"a": hg.Camera(azimuth=25), "b": hg.Camera(azimuth=70, zoom=2)}
+    assert widget._snapshot()["panel_states"]["camera"]["a"]["azimuth"] == 25

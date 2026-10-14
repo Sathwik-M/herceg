@@ -2396,9 +2396,11 @@ together.
 
 ### Layout marks in panels
 
-Every layout mark but 3D charts draws in panels (`IN_PANELS` in
-`model/panel-layout.ts`; a 3D chart's camera and GPU painter are the
-chart's). The `PanelLayout`'s checks own the rules, and return the layout
+Every layout mark draws in subplots; 3D marks refuse facets
+(`checkLayouts` in `model/panel-layout.ts`). Each 3D subplot joins its
+point, line, and surface layers into one `Plot3D`, preserving the layers'
+original mark indices for identities and inspections. The `PanelLayout`'s
+checks own the rules, and return the layout
 marks the panels draw (`ItemViews.inPanels`): the geoshape and geopoint
 layers naming one subplot, or all of them in facets, joined into one map
 (`GeoMap`, which knows each layer's index among the chart's marks, so its
@@ -2699,7 +2701,8 @@ perspective from an eye five half-sides away (zoom magnifies the picture; it
 does not move the eye). The box is fitted by bounds that hold at every angle
 (its floor's half diagonal across, its half diagonal up and down, or in
 perspective the silhouette of the sphere around it), so it keeps its size as
-it turns. The model owns the camera: it starts as the configured one,
+it turns. `ItemViews` owns the camera per state: the standalone chart's
+state or each 3D subplot's id. It starts as the configured one,
 interaction and `setCamera` change it, and an update that configures a
 different camera (compared after filling in defaults) replaces it, so
 framework adapters that re-render with the same props keep the view the user
@@ -2710,6 +2713,39 @@ along the lowest edges on screen and z along the leftmost (ties going to the
 nearer edge), with labels pushed out along the edge's normal on screen and
 thinned to every n-th tick, against each other and against the titles and
 the labels of axes placed before; an edge seen nearly end on gets no labels.
+
+Panel cameras override chart camera fields, reconciled before the first
+scene so `getCamera({ panel })` and `setCamera(patchOrNull, { panel })`
+work immediately. Multiple cameras require an explicit panel. Configured
+changes reset only that owner; unchanged defaults retain the user's view.
+The optional item runtime drains pending owners before emitting one
+`{ camera, panels: [id] }` event per changed subplot per frame (standalone
+changes omit `panels`), so reentrant setters remain pending. Orbit controls
+hit-test panel bounds, latch a drag's panel, place one toolbar per camera,
+and turn the keyboard cursor's panel. Touch policy combines active control
+families independently of their load order.
+
+3D subplots use CPU faces; only standalone charts offer GPU batches. Each
+`Plot3D` caches its latest CPU result, including lazy reading and picking,
+by camera, bounds, table versions, theme (including its palette), visibility, locale, and
+text measurer. Configuration changes create a new joined mark. The optional
+faces drawing caches one transparent raster per panel owner and Canvas
+target, keyed by geometry identity, bounds, and DPR. Unchanged panels reuse
+geometry and composite pixels; changed panels reproject and sort their own
+faces. No camera-history cache is retained. Raster storage is approximately
+four bytes per panel device pixel, in addition to packed geometry and the
+main canvas; Canvas still clears and composites every panel per frame.
+SVG and PDF always read vector geometry, and PNG uses the same current
+panel cameras. CPU surfaces retain the 250,000 grid-point limit. Facets
+remain refused because shared mutable buffers, facet row filtering, and
+surface-grid splitting need separate semantics and ownership.
+
+The live accessible description keys its summaries on the cameras in the last
+drawn scene, retaining the existing one-second refresh throttle. Notebook widgets
+compare effective camera defaults in both Python and the front end, even without
+mounted displays. Changed defaults reset their owner's stored view and advance
+Python's state revision barrier; unchanged defaults retain it. Whole-chart
+replacements follow the same rule, and snapshots restore Python's reconciled state.
 
 Each layer reads its items from its data, not from what it drew
 (`Layer3D.items`): the keyboard, the description, and keys find the rows a
@@ -4426,13 +4462,14 @@ mouse input, through Playwright's mouse.
   whose median is zero or below has no tooltip or keyboard stop, though
   its positive part is drawn.
 - A pie, treemap, sunburst, gauge, funnel, radar, or Sankey diagram has its
-  chart, each facet panel, or a subplot to itself; a network, map, or 3D
-  chart has its chart to itself: no other marks (a map's or 3D chart's
-  layers excepted), facets, or subplots. None of them zooms (3D charts'
-  camera, maps' plane, and trees' drilling in a chart of their own aside),
+  chart, each facet panel, or a subplot to itself; networks and maps also
+  draw in facets and subplots, and 3D layers share
+  a chart or subplot with each other, with separate cameras per subplot
+  and no facets. None of them zooms (3D charts'
+  camera, maps' and networks' planes, and trees' drilling aside),
   brushes (maps' lassos aside), or syncs. Pie labels go beside the pie only;
-  treemaps and sunbursts drill only in a chart of their own (not in facet
-  panels or subplots), their breadcrumbs fold and cut steps to fit the strip
+  treemaps and sunbursts drill in charts and panels, their breadcrumbs
+  fold and cut steps to fit the strip
   (a folded step is reached through the fold's buttons, by keyboard or
   screen reader, not seen), and their pointer lookup scans each level's
   children. Maps zoom between the whole map and 256 times its scale by
@@ -4495,8 +4532,9 @@ mouse input, through Playwright's mouse.
   reaches past the surface's outline, and one whose center shows is drawn
   whole, even where its edge passes behind a nearer cell. On the GPU edges
   are not antialiased, and marks within a few steps of the depth buffer under
-  a surface show through it. Charts of a 3D mark have no facets, panels,
-  brushing, or sync, and labels and titles stay horizontal. Streaming tables
+  a surface show through it. 3D marks have no facets,
+  brushing, or sync; subplots use CPU faces, and labels and titles stay
+  horizontal. Streaming tables
   upload a GPU layer whole on every change.
 - Rolling statistics over values whose differences exceed the largest double
   (about 1.8e308) overflow to Infinity.

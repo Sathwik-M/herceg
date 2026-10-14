@@ -3,7 +3,6 @@
 import type { ItemChanges } from "../model/item-views.ts";
 import type { Inspection, Viewport } from "../model/model.ts";
 import type { RowSelectionChange } from "../model/row-selection.ts";
-import type { Camera } from "../three/camera.ts";
 import type { Selection } from "./brushed.ts";
 import { report } from "./scheduler.ts";
 
@@ -61,9 +60,10 @@ export interface ChartEvents {
   rowSelection: RowSelectionChange;
   /**
    * A 3D chart's camera moved: dragged, zoomed, reset, turned by keys or
-   * buttons, or set with `setCamera`; once a frame at most.
+   * buttons, or set with `setCamera`; once per camera per frame at most.
+   * Subplot changes name their owner in `panels`; standalone changes omit it.
    */
-  camera: { camera: Camera };
+  camera: ItemChanges["camera"];
   /**
    * A treemap or sunburst was drilled into a node or back out (a click,
    * Enter, Backspace, a breadcrumb, or `setDrillRoot`): the node's item key,

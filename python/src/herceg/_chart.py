@@ -631,6 +631,7 @@ class Panel:
     y: Axis | dict[str, Any] | None = None
     x: Axis | dict[str, Any] | None = None
     y_right: Axis | dict[str, Any] | None = None
+    camera: Camera | dict[str, Any] | None = None
 
     def _spec(self) -> dict[str, Any]:
         spec = {
@@ -639,6 +640,7 @@ class Panel:
             "x": _axis(self.x, "Panel x"),
             "y": _axis(self.y, "Panel y"),
             "yRight": _axis(self.y_right, "Panel y_right"),
+            "camera": _camera(self.camera, "Panel camera", partial=True),
         }
         return {key: value for key, value in spec.items() if value is not None}
 
@@ -2903,6 +2905,7 @@ class Chart:
         fill_opacity: float | None = None,
         label: str | None = None,
         tooltip: Tooltip | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Points in a 3D chart at the numeric or datetime columns ``x``, ``y``,
@@ -2912,10 +2915,10 @@ class Chart:
         colors points by a numeric column (or a category column, a palette
         color per value, as ``Chart.point``'s), and ``label_field`` names a
         category column labeling each point in tooltips. ``radius`` is the
-        radius in pixels (3.5 by default). 3D marks share their chart, its
+        radius in pixels (3.5 by default). 3D marks share their chart or subplot, its
         box, and its ``camera``.
         """
-        self._alone_3d("point_3d")
+        self._check_3d("point_3d")
         table = self._mark_table(data)
         for axis, field in (("x", x), ("y", y), ("z", z)):
             self._require(table, field, _NUMERIC, f"point_3d {axis}")
@@ -2946,6 +2949,7 @@ class Chart:
                 "fillOpacity": fill_opacity,
                 "label": label,
                 "tooltip": self._mark_tooltip(table, tooltip, "point_3d"),
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -2963,6 +2967,7 @@ class Chart:
         stroke_width: float | None = None,
         label: str | None = None,
         tooltip: Tooltip | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """Lines in a 3D chart through the numeric or datetime columns ``x``,
@@ -2972,9 +2977,9 @@ class Chart:
         color and legend entry (all rows are one path without it); a row
         missing a value breaks its path. ``stroke_width`` is in pixels (2 by
         default) and stays the same however near or far the line is. 3D marks
-        share their chart, its box, and its ``camera``.
+        share their chart or subplot, its box, and its ``camera``.
         """
-        self._alone_3d("line_3d")
+        self._check_3d("line_3d")
         table = self._mark_table(data)
         for axis, field in (("x", x), ("y", y), ("z", z)):
             self._require(table, field, _NUMERIC, f"line_3d {axis}")
@@ -2995,6 +3000,7 @@ class Chart:
                 "strokeWidth": stroke_width,
                 "label": label,
                 "tooltip": self._mark_tooltip(table, tooltip, "line_3d"),
+                "panel": panel,
                 "id": id,
             },
             table,
@@ -3015,6 +3021,7 @@ class Chart:
         shading: bool | None = None,
         wireframe: bool | None = None,
         label: str | None = None,
+        panel: str | None = None,
         id: str | None = None,
     ) -> Chart:
         """A surface in a 3D chart, from a grid of rows or from a matrix.
@@ -3031,7 +3038,7 @@ class Chart:
         and shaded by how it faces a light (``shading=False`` keeps colors as
         the legend shows them); ``wireframe=True`` draws its grid lines.
         """
-        self._alone_3d("surface")
+        self._check_3d("surface")
         if z is None:
             raise TypeError(
                 "surface z: expected a column name or a 2D array of heights; received None"
@@ -3074,19 +3081,24 @@ class Chart:
                 "shading": shading,
                 "wireframe": wireframe,
                 "label": label,
+                "panel": panel,
                 "id": id,
             },
             table,
         )
 
-    def _alone_3d(self, kind: str) -> None:
-        """3D charts have no x axis to facet, brush, or sync, and zoom only their camera."""
-        if self._facets or self._panels:
-            raise ValueError(f"{kind}: has no facets or panels yet; draw it in a chart of its own")
+    def _check_3d(self, kind: str) -> None:
+        """3D marks use a chart or subplot; only standalone charts restrict axis interaction."""
+        if self._facets:
+            raise ValueError(
+                f"{kind} facet: 3D marks cannot split into facets; use separate marks in panels"
+            )
         if self._row_selection:
             raise ValueError(
                 f"Chart row_selection: a {kind} cannot select rows yet; marks along x and y can"
             )
+        if self._panels:
+            return
         used = next((name for name in ("brush", "sync") if self._settings.get(name)), None)
         if used is not None:
             raise ValueError(f"Chart {used}: a {kind} has no x axis to act on; drop {used}")
@@ -3718,6 +3730,15 @@ class Chart:
                 "Chart projection: projects geoshape and geopoint marks, and the chart has "
                 "none; drop projection"
             )
+        for panel in self._panels:
+            if panel.camera is not None and not any(
+                mark["type"] in _MARKS_3D and mark.get("panel") == panel.id
+                for mark, _ in self._marks
+            ):
+                raise ValueError(
+                    f"Panel camera: panel {shown(panel.id)} has no 3D marks; "
+                    "drop camera or add a point_3d, line_3d, or surface mark"
+                )
         three_d = any(mark["type"] in _MARKS_3D for mark, _ in self._marks)
         for name in ("z", "camera", "box_aspect"):
             if self._settings.get(name) is not None and not three_d:
@@ -4352,8 +4373,11 @@ class Chart:
             for mark, _ in self._marks
             if mark["type"] in _LAYOUT_MARKS
         }
-        # The layers naming a panel are its map.
-        layer = kind in _MAP_MARKS and held.get(panel) in _MAP_MARKS
+        # Layers of a map or a 3D box can share their panel.
+        layer = any(
+            kind in group and held.get(panel) in {_method(item) for item in group}
+            for group in (_MAP_MARKS, _MARKS_3D)
+        )
         if kind not in _LAYOUT_MARKS:
             if panel == "*" and held:
                 first = next(iter(held))
@@ -4505,8 +4529,9 @@ def check_layout_options(
         )
     if subplots:
         _check_subplot_ranges(settings)
-    # 3D charts check their options as they are added; they have charts to themselves.
-    layouts = [mark for mark in layouts if mark["type"] not in _MARKS_3D]
+    # Standalone 3D charts check their options as marks are added.
+    if not subplots:
+        layouts = [mark for mark in layouts if mark["type"] not in _MARKS_3D]
     if not subplots:
         for kind in dict.fromkeys(mark["type"] for mark in layouts):
             _check_alone(settings, kind)
@@ -4606,7 +4631,7 @@ def _check_subplots(settings: Mapping[str, Any], layouts: Sequence[Mapping[str, 
     planes = kinds & {"graph", *_MAP_MARKS}
     takes = {
         "zoom": zoom is True
-        and bool(planes or kinds & {"treemap", "sunburst"})
+        and bool(planes or kinds & {"treemap", "sunburst", *_MARKS_3D})
         or (zoom == "xy" and bool(planes)),
         "brush": brush == "lasso" and bool(planes),
     }
@@ -4940,17 +4965,23 @@ def _navigator(navigator: Any) -> bool | dict[str, Any] | None:
     return navigator._spec() or True
 
 
-def _camera(camera: Any) -> dict[str, Any] | None:
+def _camera(
+    camera: Any, name: str = "Chart camera", *, partial: bool = False
+) -> dict[str, Any] | None:
     """A camera's spec from a Camera or a dict of its fields."""
     if camera is None:
         return None
+    given = set(camera) if partial and isinstance(camera, dict) else None
     if isinstance(camera, dict):
         camera = Camera(**camera)
     if not isinstance(camera, Camera):
         raise TypeError(
-            f"Chart camera: expected an hg.Camera or a dict of its fields; received {shown(camera)}"
+            f"{name}: expected an hg.Camera or a dict of its fields; received {shown(camera)}"
         )
-    return camera._spec()
+    spec = camera._spec()
+    return (
+        {key: value for key, value in spec.items() if key in given} if given is not None else spec
+    )
 
 
 def _box_aspect(aspect: Any) -> list[float] | None:
@@ -5613,6 +5644,7 @@ def scatter_3d(
     fill: str | None = None,
     fill_opacity: float | None = None,
     label: str | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5635,6 +5667,7 @@ def scatter_3d(
         fill_opacity=fill_opacity,
         label=label,
         tooltip=tooltip,
+        panel=panel,
         id=id,
     )
 
@@ -5650,6 +5683,7 @@ def line_3d(
     stroke: str | None = None,
     stroke_width: float | None = None,
     label: str | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5669,6 +5703,7 @@ def line_3d(
         stroke_width=stroke_width,
         label=label,
         tooltip=tooltip,
+        panel=panel,
         id=id,
     )
 
@@ -5688,6 +5723,7 @@ def surface(
     shading: bool | None = None,
     wireframe: bool | None = None,
     label: str | None = None,
+    panel: str | None = None,
     id: str | None = None,
     **options: Unpack[HelperOptions],
 ) -> Chart:
@@ -5710,6 +5746,7 @@ def surface(
         shading=shading,
         wireframe=wireframe,
         label=label,
+        panel=panel,
         id=id,
     )
 

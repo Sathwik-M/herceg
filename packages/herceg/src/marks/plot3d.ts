@@ -174,7 +174,12 @@ export function isLayer3D(mark: LayoutMark): mark is Layer3D {
  * throws for any other mark among them, repeated ids, and options 3D charts
  * do not take.
  */
-export function joinLayers3D(marks: readonly LayoutMark[], config: ChartConfig): Plot3D {
+export function joinLayers3D(
+  marks: readonly LayoutMark[],
+  config: ChartConfig,
+  indices?: readonly number[],
+  panel?: string,
+): Plot3D {
   const other = marks.find((mark) => !isLayer3D(mark));
   if (other)
     throw new Error(
@@ -187,15 +192,19 @@ export function joinLayers3D(marks: readonly LayoutMark[], config: ChartConfig):
     ids.add(spec.id);
   }
   if (config.camera) checkCamera(config.camera);
+  const configured = config.panels?.list.find(({ id }) => id === panel)?.camera;
+  if (configured) checkCamera(configured);
   if (config.boxAspect) checkBoxAspect(config.boxAspect);
   const zoom = config.interaction?.zoom;
-  if (zoom !== undefined && typeof zoom !== "boolean")
+  if (!config.panels && zoom !== undefined && typeof zoom !== "boolean")
     throw new Error(
       `chart interaction.zoom: expected true or false in a 3D chart; received ${JSON.stringify(zoom)}`,
     );
-  if (config.yRight) throw new Error("chart yRight: 3D charts have no right y axis; drop it");
-  if (config.x?.breaks) throw new Error("chart x.breaks: 3D axes have no breaks; drop them");
-  return new Plot3D(marks as Layer3D[], config);
+  if (!config.panels && config.yRight)
+    throw new Error("chart yRight: 3D charts have no right y axis; drop it");
+  if (!config.panels && config.x?.breaks)
+    throw new Error("chart x.breaks: 3D axes have no breaks; drop them");
+  return new Plot3D(marks as Layer3D[], config, indices, panel);
 }
 
 /** Dragging turns a 3D chart unless `interaction.rotate` is false, which its controls follow. */
@@ -209,7 +218,8 @@ export class Plot3D implements LayoutMark {
   declare readonly [MARK]: true;
   readonly layout = true;
   readonly views = ItemViews;
-  readonly spec = { type: "plot3d" } as const;
+  readonly spec: { type: "plot3d"; panel?: string };
+  readonly indices: readonly number[];
   readonly table = undefined;
   readonly otherTables: readonly Table[];
   readonly measure: string;
@@ -220,7 +230,14 @@ export class Plot3D implements LayoutMark {
   /** The axes, and the table versions they were planned for. */
   #axes: { key: string; axes: readonly [PlannedAxis, PlannedAxis, PlannedAxis] } | undefined;
 
-  constructor(layers: readonly Layer3D[], config: ChartConfig) {
+  constructor(
+    layers: readonly Layer3D[],
+    config: ChartConfig,
+    indices?: readonly number[],
+    panel?: string,
+  ) {
+    this.spec = { type: "plot3d", ...(panel !== undefined && { panel }) };
+    this.indices = indices ?? layers.map((_, i) => i);
     this.layers = layers;
     this.#config = config;
     this.otherTables = layers.flatMap((layer) => [
@@ -232,7 +249,7 @@ export class Plot3D implements LayoutMark {
 
   /** A layer's identity: its `id`, or its place among the layers. */
   #id(index: number): string | number {
-    return this.layers[index]!.spec.id ?? index;
+    return this.layers[index]!.spec.id ?? this.indices[index]!;
   }
 
   /** The wheel magnifies the camera, which dragging turns. */
@@ -273,8 +290,23 @@ export class Plot3D implements LayoutMark {
     return axes;
   }
 
+  /** Only the latest subplot view is retained; standalone GPU scenes keep their existing path. */
+  #drawn: { key: string; measure: LayoutFrame["measure"]; result: LayoutResult } | undefined;
+
   draw(frame: LayoutFrame): LayoutResult {
     const { theme, measure, bounds } = frame;
+    const key = frame.inPanel
+      ? JSON.stringify([
+          this.otherTables.map((table) => table.version),
+          frame.camera,
+          bounds,
+          theme,
+          frame.locale,
+          [...frame.hidden],
+        ])
+      : "";
+    if (frame.inPanel && this.#drawn?.key === key && this.#drawn.measure === measure)
+      return this.#drawn.result;
     const axes = this.axes();
     const view = new View(
       frame.camera ?? DEFAULT_CAMERA,
@@ -283,7 +315,7 @@ export class Plot3D implements LayoutMark {
     );
     const base = { ...frame, view, axes, faces: this.#faces };
     const box = boxGeometry(view, axes, theme, measure, bounds);
-    const batches = frame.clouds ? this.#batches(base) : undefined;
+    const batches = frame.clouds && !frame.inPanel ? this.#batches(base) : undefined;
     // A GPU painter draws large charts; their faces are made only for a
     // canvas the painter cannot draw on. The keyboard and summaries read the
     // layers' data, and the pointer finds what the painter drew from it too.
@@ -303,8 +335,9 @@ export class Plot3D implements LayoutMark {
       return place(lost).drawn;
     };
     const drawn: FaceGeometry = batches ? { ...EMPTY, batches: { ...batches, faces } } : faces();
+    if (frame.inPanel) drawn.rasterOwner = this.#faces;
     const geometry: Geometry[] = [...box.lines, drawn, ...box.labels];
-    return {
+    const result: LayoutResult = {
       geometry,
       // The pointer reads what drew the scene: the faces as they were placed, or the GPU's data.
       itemAt: (px, py) =>
@@ -329,6 +362,8 @@ export class Plot3D implements LayoutMark {
         return parts.join(" ");
       },
     };
+    if (frame.inPanel) this.#drawn = { key, measure, result };
+    return result;
   }
 
   /** Every layer's items, one layer after another, in reading order. */

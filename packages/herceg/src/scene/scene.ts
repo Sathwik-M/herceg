@@ -513,6 +513,8 @@ export interface FaceStyle {
  * do, and its outline is stroked after.
  */
 export interface FaceGeometry extends Geometry {
+  /** Optional owner of a panel's latest CPU raster, reused per Canvas target. */
+  rasterOwner?: object;
   kind: "faces";
   draw: Drawing<FaceGeometry>;
   /** x, y per vertex in CSS pixels. */

@@ -312,7 +312,7 @@ export const GeoPoint = /* @__PURE__ */ markComponent(
 
 /**
  * Points in a 3D chart at the number or time fields `x`, `y`, and `z`; 3D
- * marks share a chart, its box, and its `camera`.
+ * marks share a chart or subplot, its box, and its `camera`.
  */
 export const Point3D = /* @__PURE__ */ markComponent(
   "Point3D",

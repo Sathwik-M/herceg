@@ -203,24 +203,81 @@ export const facesDrawing: Drawing<FaceGeometry> = {
     // A painter that lost its context is replaced; one that declines draws on the CPU.
     const lost = clouds.painter !== undefined && !clouds.painter.usable;
     const mark = given.batches ? given.batches.faces(lost) : given;
-    const sink = canvasSink(context);
-    context.save();
-    context.lineJoin = "round";
-    context.lineCap = "round";
-    for (const { start, end, style } of faceRuns(mark)) {
-      context.beginPath();
-      for (let f = start; f < end; f++) traceFace(sink, mark, f);
-      context.globalAlpha = style.opacity;
-      context.fillStyle = style.fill;
-      context.fill();
-      if (style.stroke === undefined || !(style.strokeWidth > 0)) continue;
-      context.beginPath();
-      for (let f = start; f < end; f++) traceOutline(sink, mark, f);
-      context.globalAlpha = 1;
-      context.strokeStyle = style.stroke;
-      context.lineWidth = style.strokeWidth;
-      context.stroke();
+    const owner = context.canvas.ownerDocument;
+    if (mark.rasterOwner && owner) {
+      rasters ??= new WeakMap();
+      let owners = rasters.get(context.canvas);
+      if (!owners) {
+        owners = new WeakMap();
+        rasters.set(context.canvas, owners);
+      }
+      let held = owners.get(mark.rasterOwner);
+      const width = Math.max(1, Math.ceil(plot.width * pixelRatio));
+      const height = Math.max(1, Math.ceil(plot.height * pixelRatio));
+      const key = `${plot.x},${plot.y},${width},${height},${pixelRatio}`;
+      if (!held) {
+        const canvas = owner.createElement("canvas");
+        held = { canvas, mark: undefined, key: "" };
+        owners.set(mark.rasterOwner, held);
+      }
+      if (held.mark !== mark || held.key !== key) {
+        const { canvas } = held;
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        const raster = canvas.getContext("2d");
+        if (!raster) {
+          paintFaces(context, mark);
+          return;
+        }
+        raster.setTransform(1, 0, 0, 1, 0, 0);
+        raster.clearRect(0, 0, width, height);
+        raster.setTransform(
+          pixelRatio,
+          0,
+          0,
+          pixelRatio,
+          -plot.x * pixelRatio,
+          -plot.y * pixelRatio,
+        );
+        paintFaces(raster, mark);
+        held.mark = mark;
+        held.key = key;
+      }
+      context.drawImage(held.canvas, plot.x, plot.y, width / pixelRatio, height / pixelRatio);
+      return;
     }
-    context.restore();
+    paintFaces(context, mark);
   },
 };
+
+/** One latest raster per panel and live Canvas target; owners are collected with their chart. */
+let rasters:
+  | WeakMap<
+      HTMLCanvasElement,
+      WeakMap<object, { canvas: HTMLCanvasElement; mark: FaceGeometry | undefined; key: string }>
+    >
+  | undefined;
+
+function paintFaces(context: CanvasRenderingContext2D, mark: FaceGeometry): void {
+  const sink = canvasSink(context);
+  context.save();
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  for (const { start, end, style } of faceRuns(mark)) {
+    context.beginPath();
+    for (let f = start; f < end; f++) traceFace(sink, mark, f);
+    context.globalAlpha = style.opacity;
+    context.fillStyle = style.fill;
+    context.fill();
+    if (style.stroke === undefined || !(style.strokeWidth > 0)) continue;
+    context.beginPath();
+    for (let f = start; f < end; f++) traceOutline(sink, mark, f);
+    context.globalAlpha = 1;
+    context.strokeStyle = style.stroke;
+    context.lineWidth = style.strokeWidth;
+    context.stroke();
+  }
+  context.restore();
+}

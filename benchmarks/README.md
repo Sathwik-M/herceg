@@ -468,3 +468,17 @@ These are a client's costs: the synthetic source answers any offset at
 once, as an indexed or materialized result does. A database paging by
 offset can take much longer to reach row nine million, which no grid
 setting changes.
+
+## 3D subplots
+
+`node --experimental-strip-types benchmarks/src/three-panels/run.ts --out PATH`
+measures two separate 50,000-point CPU 3D subplots while turning one.
+It uses a production build, a 1000 × 500 px chart, Chrome at DPR 1, 30
+warmup turns, and five samples of 120 turns paced by requestAnimationFrame.
+Synchronous `render()` times isolate JavaScript and Canvas painting from
+frame pacing. A separate instrumented turn counts projection, sorting, and
+point tracing; 600 further turns check retained memory after forced GC.
+CDP reports JavaScript heap and backing storage separately; canvas raster
+storage is estimated from panel device-pixel area. The JSON keeps every
+frame time and the environment. This is a Herceg workload measurement;
+competitor 3D subplot timings have not been measured.

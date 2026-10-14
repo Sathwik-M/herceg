@@ -66,7 +66,7 @@ describe("3D scatter", () => {
     expect(new Set(Array.from(mark.style.subarray(0, 6), (s) => mark.styles[s]!.fill)).size).toBe(
       3,
     );
-    const camera = model.camera!;
+    const camera = model.getCamera()!;
     const view = new View(camera, boxRoom(scene.panels[0]!.plot, model.theme));
     const join = joinLayers3D(model.config.marks as never, model.config);
     const [ax, ay, az] = join.axes();
@@ -354,7 +354,7 @@ function checkVisibility(
   });
   const drawn = faces(scene);
   const plot = scene.panels[0]!.plot;
-  const view = new View(model.camera!, boxRoom(plot, model.theme));
+  const view = new View(model.getCamera()!, boxRoom(plot, model.theme));
   const [ax, ay, az] = joinLayers3D([mark], model.config).axes();
   const xs = data.numbers("x");
   const ys = data.numbers("y");
@@ -464,7 +464,7 @@ describe("drawing order", () => {
       });
       const mark = faces(scene);
       const plot = scene.panels[0]!.plot;
-      const view = new View(model.camera!, boxRoom(plot, model.theme));
+      const view = new View(model.getCamera()!, boxRoom(plot, model.theme));
       const [ax, ay, az] = joinLayers3D(model.config.marks as never, model.config).axes();
       const out = new Float64Array(2);
       const shown = [0, 1].map((row) => {
@@ -500,7 +500,7 @@ describe("points and a sloping surface", () => {
       z: { domain: [-1, 1] },
     });
     const mark = faces(scene);
-    const view = new View(model.camera!, boxRoom(scene.panels[0]!.plot, model.theme));
+    const view = new View(model.getCamera()!, boxRoom(scene.panels[0]!.plot, model.theme));
     const out = new Float64Array(2);
     view.project(0, 0, 0.1, out, 0);
     const found = new FaceIndex(mark, scene.panels[0]!.plot).find(out[0]!, out[1]!);
@@ -508,7 +508,13 @@ describe("points and a sloping surface", () => {
     // Seen from -x, the same point shows.
     model.setCamera({ azimuth: 180 });
     const again = faces(model.scene(estimateText));
-    new View(model.camera!, boxRoom(scene.panels[0]!.plot, model.theme)).project(0, 0, 0.1, out, 0);
+    new View(model.getCamera()!, boxRoom(scene.panels[0]!.plot, model.theme)).project(
+      0,
+      0,
+      0.1,
+      out,
+      0,
+    );
     const shown = new FaceIndex(again, scene.panels[0]!.plot).find(out[0]!, out[1]!);
     expect(again.starts[shown + 1]! - again.starts[shown]!).toBe(1);
   });
@@ -520,13 +526,19 @@ describe("points and surfaces", () => {
   /** Where the box's center is drawn. */
   function center(model: ChartModel, scene: Scene): [number, number] {
     const out = new Float64Array(2);
-    new View(model.camera!, boxRoom(scene.panels[0]!.plot, model.theme)).project(0, 0, 0, out, 0);
+    new View(model.getCamera()!, boxRoom(scene.panels[0]!.plot, model.theme)).project(
+      0,
+      0,
+      0,
+      out,
+      0,
+    );
     return [out[0]!, out[1]!];
   }
 
   /** What the chart shows at the point's place: whether a disc, and its text. */
   function shownAt(model: ChartModel, scene: Scene, point: [number, number, number]) {
-    const view = new View(model.camera!, boxRoom(scene.panels[0]!.plot, model.theme));
+    const view = new View(model.getCamera()!, boxRoom(scene.panels[0]!.plot, model.theme));
     const out = new Float64Array(2);
     view.project(...point, out, 0);
     const mark = faces(scene);
@@ -644,7 +656,7 @@ describe("points and surfaces", () => {
       y: unit,
       z: unit,
     });
-    const view = new View(model.camera!, boxRoom(scene.panels[0]!.plot, model.theme));
+    const view = new View(model.getCamera()!, boxRoom(scene.panels[0]!.plot, model.theme));
     const out = new Float64Array(2);
     view.project(0, 0, 0.5, out, 0);
     expect((model.inspect(out[0]!, out[1]!) as ItemInspection).points[0]).toMatchObject({
@@ -697,21 +709,21 @@ describe("3D charts", () => {
 
   it("keep their camera until it is set or configured differently", () => {
     const model = new ChartModel({ marks: [scatter()], camera: { azimuth: 10 } });
-    expect(model.camera).toEqual({ azimuth: 10, elevation: 25, zoom: 1, perspective: false });
+    expect(model.getCamera()).toEqual({ azimuth: 10, elevation: 25, zoom: 1, perspective: false });
     expect(model.setCamera({ elevation: 40 })).toBe(true);
     expect(model.setCamera({ elevation: 40 })).toBe(false);
-    expect(model.camera!.azimuth).toBe(10);
+    expect(model.getCamera()!.azimuth).toBe(10);
     model.update({ marks: [scatter()], camera: { azimuth: 10 } });
-    expect(model.camera!.elevation).toBe(40);
+    expect(model.getCamera()!.elevation).toBe(40);
     model.update({ marks: [scatter()], camera: { azimuth: 20 } });
-    expect(model.camera).toMatchObject({ azimuth: 20, elevation: 25 });
+    expect(model.getCamera()).toMatchObject({ azimuth: 20, elevation: 25 });
     model.setCamera({ zoom: 3 });
     model.setCamera(null);
-    expect(model.camera!.zoom).toBe(1);
+    expect(model.getCamera()!.zoom).toBe(1);
     expect(() => model.setCamera({ elevation: 100 })).toThrow(/elevation/);
     model.update({ marks: [line(clusters, { x: "x", y: "y" })] });
-    expect(model.camera).toBeUndefined();
-    expect(() => model.setCamera({})).toThrow("setCamera: only 3D charts have a camera");
+    expect(model.getCamera()).toBeUndefined();
+    expect(() => model.setCamera({})).toThrow("setCamera: no 3D camera; add a 3D mark");
   });
 
   it("refuse options and marks they cannot draw", () => {

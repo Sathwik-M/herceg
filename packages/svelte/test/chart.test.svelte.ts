@@ -7,6 +7,7 @@ import {
   geometry,
   type Chart as HercegChart,
   line,
+  panels,
   RowSet,
   rangeNavigator,
   rowSelection,
@@ -240,7 +241,26 @@ describe("<Chart>", () => {
     expect(cameras).toEqual([10]);
     props.azimuth = 40;
     flushSync();
-    expect(props.chart!.camera).toMatchObject({ azimuth: 40, elevation: 25 });
+    expect(props.chart!.getCamera()).toMatchObject({ azimuth: 40, elevation: 25 });
+  });
+
+  it("reports the camera panel from compositional 3D marks", async () => {
+    const events: (readonly string[] | undefined)[] = [];
+    const data = table({ x: [0, 1, 0, 1], y: [0, 0, 1, 1], z: [0, 1, 2, 3] });
+    const props = $state({
+      grid: data,
+      points: data,
+      azimuth: 10,
+      layout: panels([{ id: "a" }, { id: "b" }]),
+      chart: null as HercegChart | null,
+      oncamera: (event: { camera: { azimuth: number }; panels?: readonly string[] }) =>
+        events.push(event.panels),
+    });
+    render(Solids, props);
+    props.chart!.setCamera({ azimuth: 40 }, { panel: "b" });
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    expect(events).toEqual([["b"]]);
+    expect(props.chart!.getCamera({ panel: "a" })!.azimuth).toBe(10);
   });
 
   it("calls ondrill", () => {

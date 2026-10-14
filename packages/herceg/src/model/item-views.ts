@@ -25,6 +25,8 @@ import type { ChartMark } from "../marks/mark.ts";
 import type { FieldReader } from "../marks/tooltip-fields.ts";
 import type { DrillRoot } from "../marks/tree-data.ts";
 import type { Panel, Rect, Scene } from "../scene/scene.ts";
+import type { CameraSpec } from "../spec/spec.ts";
+import type { Camera } from "../three/camera.ts";
 import type { ItemInspection } from "./inspect.ts";
 import { EDGE, type LegendPart } from "./legend.ts";
 import type { ChartConfig, ChartModel, Viewport } from "./model.ts";
@@ -37,6 +39,7 @@ import type { SelectionOwner } from "./selected-rows.ts";
  * chart's. Written out in each, so adapters' declarations can name them.
  */
 export interface ItemChanges {
+  camera: { camera: Camera; panels?: readonly string[] };
   drill: DrillRoot & { panels?: readonly string[] };
   itemMove: {
     key: string;
@@ -56,6 +59,7 @@ export interface Controls {
 
 /** What the chart's user changed of the layout marks drawn with one state. */
 interface ItemState {
+  camera?: { current: Camera; configured: Camera; mark: LayoutMark; pending: boolean } | undefined;
   /**
    * The node a tree is drilled into, as set and then as drawn, and the
    * path to it: a node the data lost gives way to its nearest ancestor
@@ -75,6 +79,8 @@ interface ItemView extends ItemPanel {
   /** Tells these panels from those with marks along axes, among a scene's. */
   items: true;
   result: LayoutResult;
+  /** The camera used for this scene, so descriptions follow what was drawn. */
+  camera: Camera | undefined;
   /** The mark's index among the chart's marks (a map's or a 3D box's first layer's). */
   index: number;
   /** For a map: each layer's index among the chart's marks. */
@@ -140,6 +146,7 @@ export class ItemViews {
   declare changed:
     | ((
         ...change:
+          | [type: "camera", change: ItemChanges["camera"]]
           | [type: "drill", change: ItemChanges["drill"]]
           | [type: "itemMove", change: ItemChanges["itemMove"]]
           | [type: "viewport", change: ItemChanges["viewport"]]
@@ -184,7 +191,7 @@ export class ItemViews {
         drawn.push(mark);
         continue;
       }
-      const panel = subplots ? mark.spec.panel : undefined;
+      const panel = `${mark.camera || ["point3d", "line3d", "surface"].includes(mark.spec.type) ? "3d" : "map"}:${subplots ? mark.spec.panel : ""}`;
       let layers = joined.get(panel);
       if (!layers) {
         layers = [];
@@ -198,7 +205,7 @@ export class ItemViews {
         ? entry[0]!.join!(
             entry,
             config as ChartConfig,
-            entry.map((mark) => config.marks.indexOf(mark)),
+            config.marks.flatMap((mark, i) => (entry.includes(mark as LayoutMark) ? [i] : [])),
             subplots ? entry[0]!.spec.panel : undefined,
           )
         : entry,
@@ -262,6 +269,86 @@ export class ItemViews {
 
   constructor(model: ChartModel) {
     this.#model = model;
+    this.configureCameras();
+  }
+
+  #cameraConfig: ChartConfig | undefined;
+
+  /** Reconciles cameras before use; changes to defaults reset only their own state. */
+  configureCameras(): void {
+    const { config, layouts } = this.#model;
+    if (config === this.#cameraConfig) return;
+    this.#cameraConfig = config;
+    const owners = new Set<string>();
+    for (const mark of layouts) {
+      if (!mark.camera) continue;
+      const key = mark.spec.panel ?? "";
+      owners.add(key);
+      const panel = config.panels?.list.find(({ id }) => id === key);
+      const spec = panel?.camera ? { ...config.camera, ...panel.camera } : config.camera;
+      const configured = mark.camera(spec);
+      const state = this.#state(key);
+      const held = state.camera;
+      const same = held && JSON.stringify(held.configured) === JSON.stringify(configured);
+      state.camera = {
+        mark,
+        configured,
+        current: same ? held.current : configured,
+        pending: held?.pending ?? false,
+      };
+    }
+    for (const [key, state] of this.#states) if (!owners.has(key)) state.camera = undefined;
+  }
+
+  #cameraOwner(
+    panel: string | undefined,
+    method: string,
+  ): [string, NonNullable<ItemState["camera"]>] | undefined {
+    this.configureCameras();
+    const owners = [...this.#states].flatMap(([key, state]) =>
+      state.camera ? [[key, state.camera] as const] : [],
+    );
+    if (panel === undefined && owners.length === 0) return undefined;
+    const owner =
+      panel === undefined
+        ? owners.length === 1
+          ? owners[0]
+          : undefined
+        : owners.find(([key]) => key === panel);
+    if (owner) return [owner[0], owner[1]];
+    const names = owners.map(([key]) => JSON.stringify(key)).join(", ") || "none";
+    throw new Error(
+      panel === undefined
+        ? `${method}: panel is required; name one of the 3D panels ${names}`
+        : `${method} panel: ${JSON.stringify(panel)} has no 3D camera; name one of ${names}`,
+    );
+  }
+
+  camera(panel?: string): Camera | undefined {
+    const owner = this.#cameraOwner(panel, "getCamera");
+    return owner && { ...owner[1].current };
+  }
+
+  setCamera(spec: CameraSpec | null, panel?: string): boolean {
+    const owner = this.#cameraOwner(panel, "setCamera");
+    if (!owner) throw new Error("setCamera: no 3D camera; add a 3D mark");
+    const camera = owner[1];
+    const next = spec === null ? camera.configured : camera.mark.camera!(spec, camera.current);
+    if (JSON.stringify(next) === JSON.stringify(camera.current)) return false;
+    camera.current = next;
+    camera.pending = true;
+    return true;
+  }
+
+  /** Reports each camera once per frame; reentrant setters remain pending for the next frame. */
+  finishCameras(): void {
+    const changes = [...this.#states].flatMap(([key, state]) => {
+      const camera = state.camera;
+      if (!camera?.pending) return [];
+      camera.pending = false;
+      return [{ camera: { ...camera.current }, ...(key && { panels: [key] }) }];
+    });
+    for (const change of changes) this.changed?.("camera", change);
   }
 
   /**
@@ -274,6 +361,7 @@ export class ItemViews {
     changed?: ItemViews["changed"],
   ): void {
     if (this.#controlsDisposed) return;
+    this.configureCameras();
     this.changed ??= changed;
     const model = this.#model;
     const kinds = new Set(this.asked().map(({ kind }) => kind));
@@ -353,8 +441,10 @@ export class ItemViews {
    * subplots it left out go, so a subplot that comes back starts afresh.
    */
   #begin(named: boolean): void {
+    this.configureCameras();
     const used = new Set(this.#views.map(({ state }) => state));
-    for (const state of this.#states.keys()) if (!used.has(state)) this.#states.delete(state);
+    for (const state of this.#states.keys())
+      if (!used.has(state) && !this.#states.get(state)?.camera) this.#states.delete(state);
     this.#views = [];
     this.#named = named;
   }
@@ -424,6 +514,7 @@ export class ItemViews {
     const { plot } = panel;
     const state = this.#state(key);
     const model = this.#model;
+    const camera = state.camera?.current;
     const result = mark.draw({
       ...frame,
       selected: model.layoutHighlight,
@@ -439,12 +530,14 @@ export class ItemViews {
       ),
       moved: movedNow(state),
       viewport: state.view,
+      camera,
     });
     const { indices } = mark;
     this.#views.push({
       ...panel,
       items: true,
       result,
+      camera,
       index,
       indices,
       measure: mark.measure,
@@ -529,10 +622,11 @@ export class ItemViews {
     return undefined;
   }
 
-  /** Reports roots the data changed before the frame's hover and render listeners run. */
+  /** Reports reconciled roots and cameras before the frame's hover and render listeners run. */
   finishFrame(): void {
     for (let root = this.reconciled(); root; root = this.reconciled())
       this.changed?.("drill", root);
+    this.finishCameras();
   }
 
   /**
@@ -644,9 +738,9 @@ export class ItemViews {
     return [...hints].join(" ") || undefined;
   }
 
-  /** What layout marks' summaries say beyond their data and hidden keys: the drill roots drawn. */
+  /** What layout marks' summaries say beyond their data and hidden keys: the roots and cameras drawn. */
   get summaryKey(): string {
-    return this.#views.map(({ result }) => result.drill?.key).join();
+    return JSON.stringify(this.#views.map(({ result, camera }) => [result.drill?.key, camera]));
   }
 
   /** The legends of the color scales and size keys of layout marks drawn in panels, by key. */
@@ -760,8 +854,16 @@ export class ItemViews {
   }
 
   /** The panels drawn, in order, with what was drawn there and the key of their state. */
-  get panels(): readonly (ItemPanel & { items: true; result: LayoutResult; state: string })[] {
-    return this.#views;
+  get panels(): readonly (ItemPanel & {
+    items: true;
+    result: LayoutResult;
+    state: string;
+    camera?: Camera | undefined;
+  })[] {
+    return this.#views.map((view) => ({
+      ...view,
+      camera: this.#states.get(view.state)?.camera?.current,
+    }));
   }
 
   /** The view of panel `key`; the first without one. */

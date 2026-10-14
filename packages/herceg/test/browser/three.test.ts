@@ -1,12 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { category } from "../../src/data/column.ts";
 import { table } from "../../src/data/table.ts";
 import { type Chart, type ChartOptions, createChart } from "../../src/dom/chart.ts";
+import { geopoint } from "../../src/marks/geopoint.ts";
 import { line } from "../../src/marks/line.ts";
 import { line3d } from "../../src/marks/line3d.ts";
 import { point } from "../../src/marks/point.ts";
 import { point3d } from "../../src/marks/point3d.ts";
 import { surface } from "../../src/marks/surface.ts";
+import { panels } from "../../src/model/panels.ts";
+import { renderToPDF } from "../../src/pdf.ts";
 import { cloudPainter } from "../../src/render/webgl.ts";
 import type { Camera } from "../../src/three/camera.ts";
 import { MOUSE, modelOf } from "./helpers.ts";
@@ -68,11 +71,43 @@ const key = (chart: Chart, k: string, shiftKey = false) =>
   chart.root.dispatchEvent(new KeyboardEvent("keydown", { key: k, shiftKey, bubbles: true }));
 
 describe("3D charts", () => {
+  it.each([false, true])(
+    "refreshes the live description after a camera turn (subplots: %s)",
+    async (subplots) => {
+      const chart = await mount({
+        camera: { azimuth: 20 },
+        ...(subplots && {
+          panels: panels([
+            { id: "a", title: "Cloud" },
+            { id: "b", camera: { azimuth: 90 } },
+          ]),
+          marks: [
+            point3d(points, { x: "x", y: "y", z: "z", panel: "a" }),
+            point3d(points, { x: "x", y: "y", z: "z", panel: "b" }),
+          ],
+        }),
+      });
+      try {
+        const description = document.getElementById(chart.root.getAttribute("aria-describedby")!)!;
+        expect(description.textContent).toContain("azimuth 20°");
+        chart.setCamera({ azimuth: 40 }, subplots ? { panel: "a" } : undefined);
+        chart.render();
+        await expect
+          .poll(() => description.textContent, { timeout: 2000 })
+          .toContain("azimuth 40°");
+        expect(description.textContent).not.toContain("azimuth 20°");
+        if (subplots) expect(description.textContent).toContain("azimuth 90°");
+      } finally {
+        chart.destroy();
+      }
+    },
+  );
+
   it("turn when dragged, reporting the camera once a frame, and go back on double-click", async () => {
     const chart = await mount();
     const cameras: Camera[] = [];
     chart.on("camera", ({ camera }) => cameras.push(camera));
-    const start = chart.camera!;
+    const start = chart.getCamera()!;
     at(chart, "pointerdown", 250, 200);
     at(chart, "pointermove", 260, 205);
     at(chart, "pointermove", 300, 220);
@@ -85,7 +120,7 @@ describe("3D charts", () => {
     at(chart, "pointerup", 300, 220);
     chart.root.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     await frame();
-    expect(chart.camera).toEqual(start);
+    expect(chart.getCamera()).toEqual(start);
     expect(cameras).toHaveLength(2);
     chart.destroy();
   });
@@ -108,14 +143,14 @@ describe("3D charts", () => {
     const chart = await mount();
     chart.root.focus();
     const live = chart.root.querySelector("[aria-live]")!;
-    const start = chart.camera!;
+    const start = chart.getCamera()!;
     key(chart, "ArrowLeft", true);
-    expect(chart.camera!.azimuth).toBe(start.azimuth - 15);
+    expect(chart.getCamera()!.azimuth).toBe(start.azimuth - 15);
     expect(live.textContent).toBe("Seen from azimuth -75°, elevation 25°.");
     key(chart, "ArrowUp", true);
-    expect(chart.camera!.elevation).toBe(40);
+    expect(chart.getCamera()!.elevation).toBe(40);
     key(chart, "+");
-    expect(chart.camera!.zoom).toBe(1.25);
+    expect(chart.getCamera()!.zoom).toBe(1.25);
     key(chart, "ArrowRight");
     expect(live.textContent).toBe("Points. a: x 0, y 3, z 0");
     expect(chart.root.getAttribute("aria-describedby")).toBeTruthy();
@@ -137,18 +172,18 @@ describe("3D charts", () => {
       "Zoom out",
       "Reset view",
     ]);
-    const start = chart.camera!;
+    const start = chart.getCamera()!;
     buttons[1]!.click();
     buttons[3]!.click();
     buttons[4]!.click();
-    expect(chart.camera).toEqual({
+    expect(chart.getCamera()).toEqual({
       ...start,
       azimuth: start.azimuth + 15,
       elevation: 10,
       zoom: 1.25,
     });
     buttons[6]!.click();
-    expect(chart.camera).toEqual(start);
+    expect(chart.getCamera()).toEqual(start);
     // Hidden until the pointer or focus is in the chart.
     const toolbar = chart.root.querySelector<HTMLElement>("[role=toolbar]")!;
     expect(toolbar.style.opacity).toBe("0");
@@ -170,16 +205,16 @@ describe("3D charts", () => {
       );
     const plain = await mount();
     wheel(plain);
-    expect(plain.camera!.zoom).toBe(1);
+    expect(plain.getCamera()!.zoom).toBe(1);
     plain.destroy();
     const zooms = await mount({ interaction: { zoom: true, rotate: false } });
     wheel(zooms);
-    expect(zooms.camera!.zoom).toBeCloseTo(Math.exp(0.2));
-    const before = zooms.camera;
+    expect(zooms.getCamera()!.zoom).toBeCloseTo(Math.exp(0.2));
+    const before = zooms.getCamera();
     at(zooms, "pointerdown", 250, 200);
     at(zooms, "pointermove", 300, 200);
     at(zooms, "pointerup", 300, 200);
-    expect(zooms.camera).toEqual(before);
+    expect(zooms.getCamera()).toEqual(before);
     expect(zooms.root.style.touchAction).toBe("");
     zooms.destroy();
   });
@@ -195,17 +230,17 @@ describe("3D charts", () => {
     const cameras: Camera[] = [];
     chart.on("camera", ({ camera }) => cameras.push(camera));
     chart.setCamera({ elevation: 60 });
-    expect(chart.camera).toMatchObject({ azimuth: 10, elevation: 60 });
+    expect(chart.getCamera()).toMatchObject({ azimuth: 10, elevation: 60 });
     // The same options keep the view; a different camera shows it.
     chart.update({ title: "Turned" });
-    expect(chart.camera!.elevation).toBe(60);
+    expect(chart.getCamera()!.elevation).toBe(60);
     chart.update({ camera: { azimuth: 45 } });
-    expect(chart.camera).toMatchObject({ azimuth: 45, elevation: 25 });
+    expect(chart.getCamera()).toMatchObject({ azimuth: 45, elevation: 25 });
     await frame();
     expect(cameras).toHaveLength(1);
     // A chart that stops being 3D loses its camera and buttons.
     chart.update({ marks: [line(points, { x: "x", y: "y" })] });
-    expect(chart.camera).toBeUndefined();
+    expect(chart.getCamera()).toBeUndefined();
     expect(chart.root.querySelector("[role=toolbar]")).toBeNull();
     chart.destroy();
   });
@@ -291,15 +326,15 @@ describe("3D charts", () => {
 
   it("stop listening once destroyed, and follow only the pointer that began a drag", async () => {
     const chart = await mount();
-    const start = chart.camera!;
+    const start = chart.getCamera()!;
     let clicks = 0;
     chart.on("click", () => clicks++);
     at(chart, "pointerdown", 250, 200, { pointerId: MOUSE });
     at(chart, "pointerdown", 100, 100, { pointerId: 2 });
     at(chart, "pointermove", 110, 100, { pointerId: 2 });
-    expect(chart.camera).toEqual(start);
+    expect(chart.getCamera()).toEqual(start);
     at(chart, "pointermove", 270, 200, { pointerId: MOUSE });
-    expect(chart.camera!.azimuth).toBeCloseTo(start.azimuth - 8);
+    expect(chart.getCamera()!.azimuth).toBeCloseTo(start.azimuth - 8);
     // A second pointer pressed and released during the drag clicks nothing.
     at(chart, "pointerdown", 100, 100, { pointerId: 3 });
     at(chart, "pointerup", 100, 100, { pointerId: 3 });
@@ -437,4 +472,296 @@ describe("3D charts", () => {
     expect(chart.toSVG()).toContain("<path");
     chart.destroy();
   });
+});
+
+describe("3D subplots", () => {
+  it.each(["canvas", "svg"] as const)(
+    "draws and picks surfaces by each panel's depth, and clips at its edges (%s)",
+    async (renderer) => {
+      const plane = table({ x: [-1, 1, -1, 1], y: [-1, -1, 1, 1], z: [0, 0, 0, 0] });
+      const probes = table({ x: [0.2, -0.2], y: [0.2, -0.2], z: [-0.4, 0.4] });
+      const chart = await mount({
+        width: 800,
+        height: 350,
+        renderer,
+        legend: false,
+        x: { domain: [-1, 1] },
+        y: { domain: [-1, 1] },
+        z: { domain: [-1, 1] },
+        panels: panels(
+          [
+            { id: "a", camera: { azimuth: -60, elevation: 60 } },
+            { id: "b", camera: { azimuth: 120, elevation: -60, perspective: true } },
+          ],
+          { columns: 2 },
+        ),
+        marks: ["a", "b"].flatMap((panel) => [
+          surface(plane, {
+            x: "x",
+            y: "y",
+            z: "z",
+            colors: ["#0000ff", "#0000ff"],
+            shading: false,
+            panel,
+          }),
+          point3d(probes, { x: "x", y: "y", z: "z", fill: "#ff0000", radius: 8, panel }),
+        ]),
+      });
+      const pixels = async () => {
+        if (renderer === "canvas") {
+          chart.render();
+          return chart.root.querySelector("canvas")!.getContext("2d")!;
+        }
+        const image = await createImageBitmap(await chart.toPNG({ scale: 1 }));
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        image.close();
+        return context;
+      };
+      try {
+        const context = await pixels();
+        const ratio = context.canvas.width / 800;
+        const model = modelOf(chart);
+        for (const [panel, pointMark, visibleRow] of [
+          ["a", 1, 1],
+          ["b", 3, 0],
+        ] as const) {
+          for (const row of [0, 1]) {
+            const { px, py } = model.inspectItem(JSON.stringify([pointMark, row]), panel)!
+              .points[0]!;
+            const visible = row === visibleRow;
+            expect(
+              Array.from(
+                context.getImageData(Math.round(px * ratio), Math.round(py * ratio), 1, 1).data,
+              ).slice(0, 3),
+            ).toEqual(visible ? [255, 0, 0] : [0, 0, 255]);
+            expect(model.inspect(px, py)!.points[0]!.mark).toBe(
+              visible ? pointMark : pointMark - 1,
+            );
+          }
+        }
+        // At this zoom the surfaces extend across the panel edges and inter-panel gap.
+        chart.setCamera({ zoom: 6 }, { panel: "a" });
+        chart.setCamera({ zoom: 6 }, { panel: "b" });
+        const clipped = await pixels();
+        const { width, height } = clipped.canvas;
+        const data = clipped.getImageData(0, 0, width, height).data;
+        const plots = chart.getPanels().map(({ plot }) => plot);
+        const blue = [0, 0];
+        let leaked = 0;
+        for (let y = 0; y < height; y++)
+          for (let x = 0; x < width; x++) {
+            const k = (y * width + x) * 4;
+            if (data[k] !== 0 || data[k + 1] !== 0 || data[k + 2] !== 255 || data[k + 3] !== 255)
+              continue;
+            const panel = plots.findIndex(
+              (p) =>
+                (x + 0.5) / ratio >= p.x &&
+                (x + 0.5) / ratio < p.x + p.width &&
+                (y + 0.5) / ratio >= p.y &&
+                (y + 0.5) / ratio < p.y + p.height,
+            );
+            if (panel < 0) leaked++;
+            else blue[panel]!++;
+          }
+        expect(leaked).toBe(0);
+        expect(blue.every((count) => count > 1000)).toBe(true);
+      } finally {
+        chart.destroy();
+      }
+    },
+  );
+
+  it("exports PNG pixels at the current camera of each panel", async () => {
+    const chart = await mount({
+      width: 800,
+      height: 350,
+      legend: false,
+      panels: panels(
+        [
+          { id: "a", camera: { azimuth: 20 } },
+          { id: "b", camera: { azimuth: 90 } },
+        ],
+        { columns: 2 },
+      ),
+      marks: ["a", "b"].map((panel) =>
+        point3d(points, { x: "x", y: "y", z: "z", fill: "#ff0000", radius: 8, panel }),
+      ),
+    });
+    try {
+      const check = async () => {
+        const image = await createImageBitmap(await chart.toPNG({ scale: 1 }));
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        image.close();
+        const model = modelOf(chart);
+        for (const [mark, panel] of [
+          [0, "a"],
+          [1, "b"],
+        ] as const)
+          for (const row of [0, 1, 2, 3]) {
+            const { px, py } = model.inspectItem(JSON.stringify([mark, row]), panel)!.points[0]!;
+            expect(
+              Array.from(context.getImageData(Math.round(px), Math.round(py), 1, 1).data),
+            ).toEqual([255, 0, 0, 255]);
+          }
+      };
+      await check();
+      chart.setCamera({ azimuth: -110, elevation: 55 }, { panel: "a" });
+      await check();
+      expect(chart.getCamera({ panel: "b" })!.azimuth).toBe(90);
+    } finally {
+      chart.destroy();
+    }
+  });
+
+  it("scope gestures, keyboard turning, toolbars, and camera events to their panels", async () => {
+    const chart = await mount({
+      width: 900,
+      height: 400,
+      panels: panels(
+        [
+          { id: "a", title: "Cloud" },
+          { id: "trend", title: "Trend" },
+          { id: "b", title: "Fit", camera: { azimuth: 90 } },
+        ],
+        { columns: 3 },
+      ),
+      marks: [
+        point3d(points, { x: "x", y: "y", z: "z", panel: "a" }),
+        line(points, { x: "x", y: "z", panel: "trend" }),
+        line3d(points, { x: "x", y: "y", z: "z", panel: "b" }),
+      ],
+      interaction: { zoom: true },
+    });
+    const events: { camera: Camera; panels?: readonly string[] }[] = [];
+    chart.on("camera", (event) => events.push(event));
+    expect(chart.root.querySelectorAll('[role="toolbar"]')).toHaveLength(2);
+    const [a, trend] = chart.getPanels();
+    const center = (plot: typeof a) =>
+      [plot!.plot.x + plot!.plot.width / 2, plot!.plot.y + plot!.plot.height / 2] as const;
+    // The host is narrower than the chart, so pointer coordinates follow the displayed scale.
+    const atPanel = (type: string, panel: typeof a, dx = 0) => {
+      const [x, y] = center(panel);
+      const rect = chart.root.getBoundingClientRect();
+      at(chart, type, ((x + dx) * rect.width) / 900, (y * rect.height) / 400);
+    };
+    const startB = chart.getCamera({ panel: "b" });
+    atPanel("pointerdown", a);
+    atPanel("pointermove", a, 35);
+    atPanel("pointerup", a, 35);
+    await frame();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.panels).toEqual(["a"]);
+    expect(chart.getCamera({ panel: "b" })).toEqual(startB);
+    atPanel("pointerdown", trend);
+    atPanel("pointermove", trend, 35);
+    atPanel("pointerup", trend, 35);
+    await frame();
+    expect(events).toHaveLength(1);
+    chart.root.focus();
+    key(chart, "Home");
+    key(chart, "ArrowRight", true);
+    expect(chart.getCamera({ panel: "a" })!.azimuth).toBeGreaterThan(events[0]!.camera.azimuth);
+    key(chart, "ArrowDown"); // trend
+    const before = chart.getCamera({ panel: "a" });
+    key(chart, "ArrowRight", true);
+    expect(chart.getCamera({ panel: "a" })).toEqual(before);
+    key(chart, "ArrowDown"); // fit
+    key(chart, "ArrowLeft", true);
+    expect(chart.getCamera({ panel: "b" })!.azimuth).toBe(75);
+    await frame();
+    expect(chart.toSVG()).toContain("azimuth 75°");
+    expect(chart.toSVG()).toContain("Fit");
+    const pdf = renderToPDF(chart);
+    expect(pdf.length).toBeGreaterThan(1000);
+    const png = await chart.toPNG();
+    expect(png.type).toBe("image/png");
+    chart.root.querySelector<HTMLButtonElement>('[aria-label="View, Fit"] button')!.click();
+    expect(chart.getCamera({ panel: "b" })!.azimuth).toBe(60);
+    chart.update({ panels: undefined, marks: [line(points, { x: "x", y: "z" })] });
+    await chart.loading;
+    expect(chart.root.querySelectorAll('[role="toolbar"]')).toHaveLength(0);
+    chart.destroy();
+  });
+
+  it("reuses the unchanged panel's raster while another projects its points", async () => {
+    const painted = vi.spyOn(CanvasRenderingContext2D.prototype, "arc");
+    const chart = await mount({
+      renderer: "canvas",
+      panels: panels([{ id: "a" }, { id: "b" }], { columns: 2 }),
+      marks: ["a", "b"].map((panel) => point3d(cloud, { x: "x", y: "y", z: "z", panel })),
+    });
+    painted.mockClear();
+    chart.setCamera({ azimuth: -45 }, { panel: "a" });
+    await frame();
+    expect(painted.mock.calls.length).toBe(30_000);
+    expect(chart.root.querySelectorAll("canvas")).toHaveLength(1);
+    painted.mockRestore();
+    chart.destroy();
+  });
+});
+
+it("combines map and orbit touch controls while keeping gestures in their panels", async () => {
+  const places = table({ lon: [0, 10], lat: [0, 10] });
+  const chart = await mount({
+    panels: panels([{ id: "cloud" }, { id: "map" }], { columns: 2 }),
+    marks: [
+      point3d(points, { x: "x", y: "y", z: "z", panel: "cloud" }),
+      geopoint(places, { longitude: "lon", latitude: "lat", panel: "map" }),
+    ],
+    interaction: { zoom: true },
+  });
+  expect(chart.root.style.touchAction).toBe("none");
+  chart.setCamera({ azimuth: 40 });
+  const map = chart.getPanels()[1]!.plot;
+  const rect = chart.root.getBoundingClientRect();
+  chart.root.dispatchEvent(
+    new MouseEvent("dblclick", {
+      bubbles: true,
+      clientX: rect.left + map.x + map.width / 2,
+      clientY: rect.top + map.y + map.height / 2,
+    }),
+  );
+  expect(chart.getCamera()!.azimuth).toBe(40);
+  chart.update({ interaction: { zoom: false } });
+  expect(chart.root.style.touchAction).toBe("pan-y");
+  chart.destroy();
+});
+
+it("ends a drag when its subplot loses its camera and refreshes retained toolbar names", async () => {
+  const chart = await mount({
+    panels: panels(
+      [
+        { id: "a", title: "Cloud" },
+        { id: "b", title: "Fit" },
+      ],
+      { columns: 2 },
+    ),
+    marks: ["a", "b"].map((panel) => point3d(points, { x: "x", y: "y", z: "z", panel })),
+  });
+  const a = chart.getPanels()[0]!.plot;
+  const stale = chart.root.querySelector<HTMLButtonElement>('[aria-label="View, Cloud"] button')!;
+  at(chart, "pointerdown", a.x + a.width / 2, a.y + a.height / 2);
+  chart.update({
+    panels: panels([{ id: "a" }, { id: "b", title: "New fit" }], { columns: 2 }),
+    marks: [
+      line(points, { x: "x", y: "z", panel: "a" }),
+      point3d(points, { x: "x", y: "y", z: "z", panel: "b" }),
+    ],
+  });
+  at(chart, "pointermove", a.x + a.width / 2 + 30, a.y + a.height / 2);
+  at(chart, "pointerup", a.x + a.width / 2 + 30, a.y + a.height / 2);
+  stale.click();
+  await frame();
+  expect(chart.getCamera()!.azimuth).toBe(-60);
+  expect(chart.root.querySelectorAll('[role="toolbar"]')).toHaveLength(1);
+  expect(chart.root.querySelector('[aria-label="View, New fit"]')).not.toBeNull();
+  chart.destroy();
 });

@@ -9,6 +9,7 @@ import widgetModule, { type Model, type Snapshot, type Update } from "../widget.
 import { controlTime, pointPath } from "./animation.ts";
 import { itemChart, key } from "./items.ts";
 import { focusMap, mapSpec } from "./maps.ts";
+import { threeSpec } from "./three.ts";
 
 type Handler = (...args: never[]) => void;
 
@@ -1353,7 +1354,8 @@ describe("notebook widget", () => {
     drag("pointermove", 220);
     drag("pointerup", 220);
     await frame();
-    const [message] = model.messages("camera") as { camera: { azimuth: number } }[];
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const message = model.messages("camera").at(-1) as { camera: { azimuth: number } };
     expect(message!.camera.azimuth).toBeCloseTo(-60 - 20 * 0.4);
   });
 });
@@ -1907,5 +1909,150 @@ describe("widget item interaction", () => {
         kind === "map" ? 0.3 : 150,
       );
     },
+  );
+});
+
+it.each([false, true])(
+  "reconciles camera defaults with no notebook display (previously displayed: %s)",
+  async (displayed) => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const spec = threeSpec();
+    spec.panels![1]!.camera = { azimuth: 90, elevation: 25 };
+    const initial: Snapshot = {
+      ...snapshot(),
+      spec,
+      buffers: [],
+      panel_states: {
+        camera: {
+          a: { azimuth: 40, elevation: 25, zoom: 1, perspective: false },
+          b: { azimuth: 70, elevation: 25, zoom: 2, perspective: false },
+        },
+      },
+    };
+    const model = new MockModel({ _chart: initial, _listening: [] });
+    const widget = widgetModule();
+    cleanups.push(widget.initialize({ model }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    hosts.push(host);
+    if (displayed) {
+      const close = widget.render({ model, el: host });
+      await vi.dynamicImportSettled();
+      close();
+    }
+    model.receive({ type: "options", revision: 1, options: { camera: { elevation: 55 } } });
+    cleanups.push(widget.render({ model, el: host }));
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances.at(-1)! as MountedChart;
+    expect(chart.getCamera({ panel: "a" })).toMatchObject({ azimuth: 20, elevation: 55 });
+    expect(chart.getCamera({ panel: "b" })).toMatchObject({ azimuth: 70, elevation: 25, zoom: 2 });
+  },
+);
+
+it.each([false, true])(
+  "reconciles camera defaults on whole-chart replacement (displayed: %s)",
+  async (displayed) => {
+    const listener = vi.spyOn(MountedChart.prototype, "on");
+    const initial: Snapshot = {
+      ...snapshot(),
+      spec: threeSpec(),
+      buffers: [],
+      panel_states: {
+        camera: {
+          a: { azimuth: 40, elevation: 25, zoom: 1, perspective: false },
+          b: { azimuth: 70, elevation: 25, zoom: 2, perspective: false },
+        },
+      },
+    };
+    const model = new MockModel({ _chart: initial, _listening: [] });
+    const widget = widgetModule();
+    cleanups.push(widget.initialize({ model }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    hosts.push(host);
+    if (displayed) cleanups.push(widget.render({ model, el: host }));
+    const spec = threeSpec();
+    spec.panels![0]!.camera = { azimuth: 25, elevation: 55 };
+    model.receive({ type: "chart", revision: 1, spec, rows: {} });
+    if (!displayed) cleanups.push(widget.render({ model, el: host }));
+    await vi.dynamicImportSettled();
+    const chart = listener.mock.instances.at(-1)! as MountedChart;
+    expect(chart.getCamera({ panel: "a" })).toMatchObject({ azimuth: 25, elevation: 55 });
+    expect(chart.getCamera({ panel: "b" })).toMatchObject({ azimuth: 70, zoom: 2 });
+  },
+);
+
+it("recovers camera state from an authoritative snapshot after defaults changed", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  const initial: Snapshot = { ...snapshot(), spec: threeSpec(), buffers: [] };
+  const model = new MockModel({ _chart: initial, _listening: [] });
+  mount(model);
+  await vi.dynamicImportSettled();
+  const spec = threeSpec();
+  spec.camera = { elevation: 55 };
+  // A missed options update was reconciled by Python before building this snapshot.
+  model.set("_chart", {
+    ...initial,
+    revision: 2,
+    spec,
+    panel_states: {
+      camera: {
+        a: { azimuth: 20, elevation: 55, zoom: 1, perspective: false },
+        b: { azimuth: 70, elevation: 55, zoom: 2, perspective: false },
+      },
+    },
+  } satisfies Snapshot);
+  await vi.dynamicImportSettled();
+  const chart = listener.mock.instances.at(-1)! as MountedChart;
+  expect(chart.getCamera({ panel: "a" })).toMatchObject({ azimuth: 20, elevation: 55 });
+  expect(chart.getCamera({ panel: "b" })).toMatchObject({ azimuth: 70, elevation: 55, zoom: 2 });
+});
+
+it("restores and synchronizes cameras per subplot across notebook displays", async () => {
+  const listener = vi.spyOn(MountedChart.prototype, "on");
+  const initial: Snapshot = {
+    ...snapshot(),
+    spec: threeSpec(),
+    buffers: [],
+    panel_states: { camera: { b: { azimuth: 70, elevation: 25, zoom: 1, perspective: false } } },
+  };
+  const model = new MockModel({ _chart: initial, _listening: ["camera"] });
+  mount(model, 2);
+  await vi.dynamicImportSettled();
+  const charts = [...new Set(listener.mock.instances)] as MountedChart[];
+  expect(charts).toHaveLength(2);
+  for (const chart of charts) expect(chart.getCamera({ panel: "b" })!.azimuth).toBe(70);
+  charts[0]!.setCamera({ azimuth: 40 }, { panel: "a" });
+  await frame();
+  expect(charts[1]!.getCamera({ panel: "a" })!.azimuth).toBe(40);
+  expect(charts[1]!.getCamera({ panel: "b" })!.azimuth).toBe(70);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(
+    model
+      .messages("camera")
+      .some(
+        (message) =>
+          message.panel === "a" && (message.camera as { azimuth: number }).azimuth === 40,
+      ),
+  ).toBe(true);
+  model.receive({ type: "camera", camera: null, panel: "b", revision: 1 });
+  for (const chart of charts) expect(chart.getCamera({ panel: "b" })!.azimuth).toBe(90);
+  model.receive({ type: "options", options: { camera: { elevation: 55 } }, revision: 2 });
+  for (const chart of charts) {
+    expect(chart.getCamera({ panel: "a" })).toMatchObject({ azimuth: 20, elevation: 55 });
+    expect(chart.getCamera({ panel: "b" })).toMatchObject({ azimuth: 90, elevation: 55 });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(model.messages("camera").filter((message) => message.revision === 2)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        panel: "a",
+        camera: expect.objectContaining({ azimuth: 20, elevation: 55 }),
+      }),
+      expect.objectContaining({
+        panel: "b",
+        camera: expect.objectContaining({ azimuth: 90, elevation: 55 }),
+      }),
+    ]),
   );
 });

@@ -70,14 +70,16 @@ _STATE_KEYS = {
     "viewport": "viewport",
     "drill": "drill_root",
     "itemMove": "item_positions",
+    "camera": "camera",
 }
 #: Events whose state each subplot's tree, network, or map has of its own.
-_PANEL_EVENTS = ("viewport", "drill", "itemMove")
+_PANEL_EVENTS = ("viewport", "drill", "itemMove", "camera")
 #: The panel mapping property naming each event's subplot states, for messages.
 _PANEL_NAMES = {
     "viewport": "panel_viewports",
     "drill": "panel_drill_roots",
     "itemMove": "panel_item_positions",
+    "camera": "panel_cameras",
 }
 #: A state's key: its event, and its subplot's id ("" for the chart's own).
 StateKey = tuple[str, str]
@@ -137,7 +139,7 @@ class ChartWidget(anywidget.AnyWidget):
         self._state_changes: dict[StateKey, tuple[str | None, int]] = {
             key: (None, 0) for key in keys
         }
-        names: list[str | StateKey] = [*keys, "hover", "click", "camera", "rowSelection"]
+        names: list[str | StateKey] = [*keys, "hover", "click", "rowSelection"]
         self._callbacks = {name: ipywidgets.CallbackDispatcher() for name in names}
         # What each bound channel holds, by table name and channel, in Python's
         # terms: rows by position in the data as it is now.
@@ -175,9 +177,9 @@ class ChartWidget(anywidget.AnyWidget):
             # The rows join the current ones under the lock, so appends
             # from several threads all take part.
             with self._lock:
-                moved = self._recompute(self._express.appended(rows, max_rows))
-            for key in moved:
-                self._callbacks[key](decode_item_positions(self._states[key]))
+                changed = self._recompute(self._express.appended(rows, max_rows))
+            for key in changed:
+                self._callbacks[key](_decoded(key[0], self._states[key]))
             return
         with self._lock:
             before = dict(self._live.dropped)
@@ -194,9 +196,9 @@ class ChartWidget(anywidget.AnyWidget):
         if self._express is not None:
             self._refuse_data(data, "widget.replace")
             with self._lock:
-                moved = self._recompute(self._express.replaced(rows))
-            for key in moved:
-                self._callbacks[key](decode_item_positions(self._states[key]))
+                changed = self._recompute(self._express.replaced(rows))
+            for key in changed:
+                self._callbacks[key](_decoded(key[0], self._states[key]))
             return
         with self._lock:
             before = dict(self._live.dropped)
@@ -222,15 +224,16 @@ class ChartWidget(anywidget.AnyWidget):
         otherwise the whole chart is sent, every display keeping its zoom,
         selection, and legend. Nothing changes if the chart cannot be made.
         Moved network nodes reading tables that changed go, as after any
-        data change; the states that changed are returned. Called with the
+        data change; changed camera defaults reset their views. The states
+        that changed are returned. Called with the
         lock held, since `columns` were made from the rows it holds."""
         assert self._express is not None
         chart = self._express.make(columns)
         live = LiveChart(chart, self._live.overrides)
         self._express.keep(columns, chart)
         if not self._live.drawn_alike(live):
-            self._replace_live(live)
-            return self._release_moves(None)
+            cameras = self._replace_live(live)
+            return [*cameras, *self._release_moves(None)]
         before = dict(self._live.dropped)
         generations = dict(self._live.generation)
         message = self._live.adopt(live)
@@ -238,11 +241,12 @@ class ChartWidget(anywidget.AnyWidget):
         self._follow_rows(before, generations)
         return self._release_moves(list(message[0]["tables"])) if message else []
 
-    def _replace_live(self, live: LiveChart) -> None:
+    def _replace_live(self, live: LiveChart) -> list[StateKey]:
         """Shows another chart in place of this one, sent whole in one message
-        that leaves interaction state as it is (a browser's zoom and brush,
-        and reports on their way); rows selected in its tables go, as its
-        tables are new. Called with the lock held."""
+        that keeps zoom, brush, and cameras with unchanged defaults. Rows
+        selected in its tables go, as its tables are new. Returns the camera
+        states reset by changed defaults. Called with the lock held."""
+        cameras = self._live.configured_cameras()
         self._live = live
         self._rows = {
             (name, channel): RowSelection(channel, data) for name, channel, data in live.bound
@@ -252,6 +256,29 @@ class ChartWidget(anywidget.AnyWidget):
         # Python numbers the new tables' rows from their first.
         rows = {name: [0, 0] for name, _, _ in live.bound}
         self._push(({"type": "chart", "spec": spec, "rows": rows}, buffers))
+        return self._reconcile_cameras(cameras)
+
+    def _reconcile_cameras(self, previous: dict[str, dict[str, Any]]) -> list[StateKey]:
+        """Resets changed defaults and removes departed owners, with the lock held."""
+        configured = self._live.configured_cameras()
+        changed = []
+        for panel, camera in configured.items():
+            key = ("camera", panel)
+            if key not in self._states:
+                self._states[key] = None
+                self._state_changes[key] = (None, self._revision)
+                self._callbacks[key] = ipywidgets.CallbackDispatcher()
+            if panel in previous and previous[panel] != camera:
+                if self._change(key, camera, None):
+                    changed.append(key)
+                # Reject reports based on defaults from before the option update,
+                # even when the stored camera already equals the new defaults.
+                self._state_changes[key] = (None, self._revision)
+        for panel in previous.keys() - configured.keys():
+            key = ("camera", panel)
+            self._states.pop(key, None)
+            self._state_changes.pop(key, None)
+        return changed
 
     def _invalidate_positions(self, message: Message | None) -> list[StateKey]:
         """Lets go of the moved nodes of the networks reading the table a data
@@ -299,7 +326,9 @@ class ChartWidget(anywidget.AnyWidget):
         ``theme``, ``zoom``, ``tooltip``, and the rest except data and facets.
         ``None`` restores an option's default."""
         with self._lock:
+            cameras = self._live.configured_cameras()
             self._push(self._live.update(options))
+            changed_cameras = self._reconcile_cameras(cameras)
             # Panels given y scales of their own on a side let go of its
             # viewport, as the browser's chart does.
             viewport = self._states[("viewport", "")]
@@ -314,6 +343,8 @@ class ChartWidget(anywidget.AnyWidget):
                     cleared = self._change(("viewport", ""), kept, None)
         if cleared:
             self._callbacks[("viewport", "")](_decoded("viewport", kept))
+        for key in changed_cameras:
+            self._callbacks[key](_decoded("camera", self._states[key]))
 
     @property
     def selection(self) -> Selection | None:
@@ -455,11 +486,13 @@ class ChartWidget(anywidget.AnyWidget):
         panels = self._live.state_panels(event)
         if panels == [""] or (reading and not panels):
             return (event, "")
-        what = {"drill": "treemap or sunburst", "itemMove": "network"}[event]
+        what = {"drill": "treemap or sunburst", "itemMove": "network", "camera": "3D camera"}[event]
         if not panels:
             does = (
                 "only treemaps and sunbursts drill"
                 if event == "drill"
+                else "only 3D marks have cameras"
+                if event == "camera"
                 else "only networks' nodes move"
             )
             raise ValueError(f"{name}: the chart has no {what}; {does}")
@@ -584,8 +617,7 @@ class ChartWidget(anywidget.AnyWidget):
             if event == "viewport":
                 self._own_view(name)
                 return (event, "")
-            what = "drill_root" if event == "drill" else "item_positions"
-            self._own(event, f"widget.{what}")
+            self._own(event, name if event == "camera" else f"widget.{_STATE_KEYS[event]}")
             return (event, "")
         panels = self._panels(event, name)
         if panel not in panels:
@@ -604,10 +636,44 @@ class ChartWidget(anywidget.AnyWidget):
         """Calls ``callback(inspection)`` when the plot is clicked over data."""
         self._listen("click", callback, remove)
 
-    def on_camera(self, callback: Callable[[Camera], Any], remove: bool = False) -> None:
-        """Calls ``callback(camera)`` when a 3D chart is turned or zoomed in a browser,
-        at most a few times a second while it is dragged."""
-        self._listen("camera", callback, remove)
+    @property
+    def camera(self) -> Camera | None:
+        """The chart's current 3D camera; subplots use ``panel_cameras``."""
+        return _decode_camera(self._states.get(self._own("camera", "widget.camera", True)))
+
+    @camera.setter
+    def camera(self, value: Camera | None) -> None:
+        self._set(self._own("camera", "widget.camera"), _encode_camera(value, "widget.camera"))
+
+    @property
+    def panel_cameras(self) -> dict[str, Camera | None]:
+        """Each 3D subplot's current camera. Assign a mapping to change those panels;
+        None restores its configured camera. Panels left out keep their views."""
+        return {
+            panel: _decode_camera(self._states[("camera", panel)])
+            for panel in self._panels("camera", "widget.panel_cameras")
+        }
+
+    @panel_cameras.setter
+    def panel_cameras(self, value: Mapping[str, Camera | None]) -> None:
+        self._set_panels(
+            "camera",
+            "widget.panel_cameras",
+            value,
+            lambda camera: _encode_camera(camera, "widget.panel_cameras"),
+        )
+
+    def on_camera(
+        self,
+        callback: Callable[[Camera | None], Any],
+        remove: bool = False,
+        *,
+        panel: str | None = None,
+    ) -> None:
+        """Calls callback(camera) when camera state changes, for the subplot named
+        by panel or the standalone chart, including the first browser's resolved
+        camera. Reports are throttled while dragging."""
+        self._listen(self._key("camera", panel, "widget.on_camera"), callback, remove)
 
     # Internals -------------------------------------------------------------
 
@@ -638,6 +704,7 @@ class ChartWidget(anywidget.AnyWidget):
                 "viewport": own["viewport"],
                 "drill_root": own["drill"],
                 "item_positions": own["itemMove"],
+                "camera": own["camera"],
                 "panel_states": panels,
                 # Python numbers a table's rows from its first since it was last
                 # replaced: how many have dropped since, and how many replaces.
@@ -674,9 +741,13 @@ class ChartWidget(anywidget.AnyWidget):
         (`origin`) ignores it."""
         event, panel = key
         stored = self._states[key]
-        same = payload == stored if event in ("drill", "itemMove") else same_values(payload, stored)
+        same = (
+            payload == stored
+            if event in ("drill", "itemMove", "camera")
+            else same_values(payload, stored)
+        )
         if same:
-            if event in ("drill", "itemMove"):
+            if event in ("drill", "itemMove", "camera"):
                 return False
             # The same values: only what is said of them may be news (which
             # axes hold times, the categories a lasso is over), and a lasso's
@@ -771,16 +842,6 @@ class ChartWidget(anywidget.AnyWidget):
                 self._push(({**message, "origin": origin}, extra))
                 self._row_changes[key] = (origin, self._revision)
             self._callbacks["rowSelection"](selection)
-        elif kind == "camera":
-            camera = content.get("camera") or {}
-            self._callbacks["camera"](
-                Camera(
-                    azimuth=camera.get("azimuth", -60),
-                    elevation=camera.get("elevation", 25),
-                    zoom=camera.get("zoom", 1),
-                    perspective=bool(camera.get("perspective", False)),
-                )
-            )
 
 
 def _held(
@@ -797,8 +858,10 @@ def _held(
 
 def _decoded(
     event: str, payload: dict[str, Any] | None
-) -> Selection | Viewport | DrillRoot | ItemPositions | None:
+) -> Selection | Viewport | DrillRoot | ItemPositions | Camera | None:
     """Interaction state as Python reads it."""
+    if event == "camera":
+        return _decode_camera(payload)
     if event == "drill":
         return decode_drill_root(payload)
     if event == "itemMove":
@@ -832,3 +895,15 @@ def _plane_number(value: Any) -> bool:
         and not isinstance(value, (bool, np.bool_))
         and math.isfinite(value)
     )
+
+
+def _decode_camera(payload: dict[str, Any] | None) -> Camera | None:
+    return Camera(**payload) if payload is not None else None
+
+
+def _encode_camera(value: Camera | None, name: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Camera):
+        raise ValueError(f"{name}: expected hg.Camera or None; use hg.Camera")
+    return value._spec()
