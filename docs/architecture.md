@@ -57,7 +57,7 @@ ChartModel (DOM-free)
         |
         v
 Scene  ──>  renderSvg()      standalone SVG string (server, export, tests)
-       ──>  renderPdf()      one-page PDF document (herceg/pdf)
+       ──>  renderPdf()      PDF page/document (herceg/pdf)
        ──>  SvgLayer         retained SVG DOM
        ──>  paintCanvas()    Canvas 2D for dense marks
         |
@@ -2924,8 +2924,50 @@ hold erases that pairing. Each scene can be drawn four ways:
 - `paintCanvas` redraws grid and marks into a canvas sized to the device pixel
   ratio; point drawings hand clouds, and 3D charts' faces their batches, to
   the WebGL painter when one is loaded.
-- `renderPdf` (`render/pdf.ts`) writes a one-page PDF 1.4 document with the
-  static SVG's layout, measured in points (0.75 per CSS pixel).
+- `drawPdfPage` (`render/pdf.ts`) draws a scene into a PDF page; `renderPdf`
+  wraps it in a one-page PDF 1.4 document. The default page is measured in
+  points (0.75 per CSS pixel).
+
+The optional public `renderToPDF` (`src/pdf.ts`, exported from `herceg/pdf`)
+accepts one mounted chart, DOM-free options, or a nonempty list. It reads
+mounted charts' current state during export and emits one chart per page;
+subplots and panel titles provide several views on a page. Paper sizing in
+`render/pdf-paper.ts` supports A4 and Letter in portrait or landscape, uniform
+margins in points (36 by default), uniform scaling up or down to fit, and
+centering. Chart-sized pages remain the default, with margins adding space
+rather than changing chart scale. A chart-boundary clip follows the fitting
+transform and encloses all painting, preserving the inner plot clips.
+Transform numbers use fixed-point decimals; a factor that rounds to zero
+is refused with a correction to reduce chart dimensions or margins.
+
+Synchronous single-chart and list exports share orchestration and fitting
+code, which normal tree shaking retains in single-chart bundles in this
+implementation. The unified export vocabulary accepts this measured cost. The size harness includes one buffered `specToPDF` export
+(`herceg-spec-pdf`) and an actual list export (`herceg-pdf-document`).
+
+The internal `PdfWriter` in `render/pdf-document.ts` owns the PDF objects,
+compressed streams, page references, structure references, and font IDs.
+Each page has local font resource names, opacities, images, and shadings;
+font objects are document-wide. Completed pages are serialized immediately,
+releasing their scenes and uncompressed raster resources. Font programs and
+Unicode maps are written only after all pages contribute glyphs, so each
+face is subset once. Every export creates a fresh resolver; repeating an
+export cannot retain glyph usage from another document. Document metadata
+and each chart's alternative are separate: a report title never replaces a
+visible chart title. Single-chart metadata (including a one-item list) defaults
+to the chart's title, description, and locale. Multi-chart documents default
+to English, with no default title or subject. Export settings override
+`title`, `subject`, and `language`. A Figure's generated alternative has an
+English language override unless the final catalog language is English;
+its visible content uses a nested `/Span`
+with `/Lang` for that chart's locale. `specToPDF` accepts one spec or a list,
+including `{ spec, buffers }` entries whose binary indices are local to each
+page. Python's `hg.to_pdf(chart_or_charts, **settings)` returns bytes and
+`hg.save(chart_or_charts, path, **settings)` delegates a single chart to
+`Chart.save(path)`, choosing its format by extension. Sequences require a
+`.pdf` path and use the same writer, transporting fonts once and chart
+buffers separately; other formats require saving each chart separately.
+`Chart.to_pdf()` and `Chart.save()` remain single-chart conveniences.
 
 PDF drawing is the exception to drawings carried by geometry: `renderPdf`
 switches on the geometry kind. A `pdf` member on each drawing would keep each
@@ -3048,8 +3090,9 @@ for shaping or ordering. Emoji modifier, flag, tag, and
 ZWJ sequences are refused before fallback or replacement. Joiners and variation
 sequences are refused too.
 
-`PdfOptions` and `specToPDF` accept only `fonts?: PdfFonts`, outside the
-portable spec. `pdfFonts(sources, { fallback?, missingGlyph? })` carries the
+`PdfOptions` accepts `fonts?: PdfFonts` outside the portable spec;
+`PdfExportOptions` carries paper, margins, title, subject, language, and fonts. `specToPDF`
+takes these document settings separately from the spec. `pdfFonts(sources, { fallback?, missingGlyph? })` carries the
 resolver factory and embedded-face writer. `renderToPDF` and `render/pdf.ts`
 import these implementation types only; `pdf-document.ts` calls a face's
 writer through the document's `reserve`/`object`/`stream` interface, without
@@ -3072,11 +3115,12 @@ Both font paths produce tagged PDF. `src/pdf.ts` combines the chart title
 and `describeChart(model)` for the Figure's UTF-16BE `/Alt`, preserving the
 DOM's generated summary even when standard fonts replace visible Unicode
 glyphs. The catalog has `/MarkInfo << /Marked true >>`, `/Lang` from the
-supplied locale, and a `StructTreeRoot` whose `Document` contains one
-`Figure`. The Figure's `/Pg` identifies the page and `/K 0` identifies the
-drawing's `/Figure << /MCID 0 >> BDC` sequence. The page's `/StructParents 0`
-selects the ParentTree's `/Nums [0 [figure-reference]]` entry; its array's
-index 0 maps MCID 0 back to that Figure. Backgrounds and grid lines precede
+document language, and a `StructTreeRoot` whose single `Document` contains
+a `Figure` per chart in page order. The Figure's `/Pg` identifies the page and `/K 0` identifies the
+drawing's `/Figure << /MCID 0 >> BDC` sequence. Page i's `/StructParents i`
+selects the ParentTree's `/Nums [i [figure-reference] ...]` entry; each
+array's index 0 maps that page's MCID 0 back to its Figure. The structure
+root's `ParentTreeNextKey` equals the page count. Backgrounds and grid lines precede
 the figure in `/Artifact BMC` content. Labels, legends, and annotations stay
 inside the figure, including label halos' existing replacement-text spans.
 Facets and subplots share one Figure because they form one chart with a
@@ -3086,7 +3130,8 @@ This is chart-level tagging, without PDF/UA conformance or separate label
 semantics. The generated summary's prose is English and the Figure is tagged
 with `/Lang (en)` unless it inherits an English locale from the catalog;
 `locale` controls number and date formatting, without translating the summary.
-Python's `to_pdf` receives the same tags through `specToPDF`.
+Python's chart and document `to_pdf` methods receive the same tags through
+`specToPDF`.
 
 Streams are Flate-compressed by a small built-in deflate (fixed
 Huffman codes with LZ77 matching; zlib's dynamic codes make text streams

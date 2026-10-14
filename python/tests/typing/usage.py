@@ -1,5 +1,7 @@
 """Type-checked by mypy (`npm run lint:python`), never run: each ignore must be needed."""
 
+from pathlib import Path
+
 import herceg as hg
 from herceg.streamlit import ChartState
 from herceg.widget import ChartWidget
@@ -25,6 +27,17 @@ not_live: hg.ChartUpdate = {"facet": "host"}  # type: ignore[typeddict-unknown-k
 hg.scatter_3d(data, "t", "v", "v", camera=hg.Camera(azimuth=30), z_axis=hg.Axis(title="z"))
 hg.surface(z=[[1.0, 2.0], [3.0, 4.0]], box_aspect=(2, 2, 1), rotate=False)
 hg.scatter_3d(data, "t", "v", z=hg.Axis())  # type: ignore[arg-type]
+
+export_chart = hg.line(data, "t", "v")
+pdf_bytes: bytes = hg.to_pdf(export_chart, page_size="A4", language="fr-FR")
+pdf_pages: bytes = hg.to_pdf(
+    (export_chart, export_chart), orientation="landscape", page_size="Letter"
+)
+hg.save(export_chart, Path("chart.png"), scale=3)
+hg.save((export_chart, export_chart), "report.pdf", page_size="A4", margin=36)
+export_chart.save(Path("chart.pdf"), subject="Description")
+hg.save([export_chart], "report.pdf", page_size="Legal")  # type: ignore[arg-type]
+hg.to_pdf(["not a chart"])  # type: ignore[list-item]
 
 
 def live(widget: ChartWidget, state: ChartState) -> None:

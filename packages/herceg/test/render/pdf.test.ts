@@ -56,6 +56,7 @@ import type {
   Scene,
   TextGeometry,
 } from "../../src/scene/scene.ts";
+import type { ChartSpec } from "../../src/spec/spec.ts";
 import { validateSpec } from "../../src/spec/validate.ts";
 import { LIGHT } from "../../src/theme.ts";
 
@@ -73,6 +74,7 @@ interface ParsedPdf {
   page: string;
   catalog: string;
   info: string;
+  pages: { id: number; page: string; content: string }[];
 }
 
 const ref = (dictionary: string, key: string): number => {
@@ -138,13 +140,21 @@ function readPdf(bytes: Uint8Array): ParsedPdf {
   const catalog = objects.get(ref(trailer, "Root"))!.dictionary;
   expect(catalog).toContain("/Type /Catalog");
   const pages = objects.get(ref(catalog, "Pages"))!.dictionary;
-  const kids = /\/Type \/Pages \/Kids \[(\d+) 0 R\] \/Count 1/.exec(pages);
+  const kids = /\/Kids \[(.*?)\] \/Count (\d+)/.exec(pages)!;
   expect(kids).not.toBeNull();
-  const page = objects.get(Number(kids![1]))!.dictionary;
-  expect(page).toContain("/Type /Page ");
-  const content = objects.get(ref(page, "Contents"))!.stream!.toString("latin1");
+  const parsedPages = [...kids[1]!.matchAll(/(\d+) 0 R/g)].map((match) => {
+    const id = Number(match[1]);
+    const page = objects.get(id)!.dictionary;
+    expect(page).toContain("/Type /Page ");
+    expect(ref(page, "Parent")).toBe(ref(catalog, "Pages"));
+    const content = objects.get(ref(page, "Contents"))!.stream!.toString("latin1");
+    assertPdfNumbers(content);
+    return { id, page, content };
+  });
+  expect(parsedPages).toHaveLength(Number(kids[2]));
+  const { page, content } = parsedPages[0]!;
   const info = objects.get(ref(trailer, "Info"))!.dictionary;
-  return { objects, trailer, content, page, catalog, info };
+  return { objects, trailer, content, page, catalog, info, pages: parsedPages };
 }
 
 /** The standard font and size `text` is written in (it must appear once, in parentheses). */
@@ -177,7 +187,7 @@ const utf16 = (text: string) =>
     .join("")}>`;
 
 /** PDF tokens outside literal and hex strings; names keep their leading slash. */
-function* contentTokens(content: string): Generator<string> {
+function* contentTokens(content: string, strings = false): Generator<string> {
   const delimiter = /[\s\0()[\]<>/%]/;
   for (let at = 0; at < content.length; ) {
     const char = content[at]!;
@@ -186,6 +196,7 @@ function* contentTokens(content: string): Generator<string> {
     } else if (char === "%") {
       while (at < content.length && !/[\r\n]/.test(content[at]!)) at++;
     } else if (char === "(") {
+      const start = at;
       let depth = 1;
       at++;
       while (at < content.length && depth > 0) {
@@ -196,6 +207,7 @@ function* contentTokens(content: string): Generator<string> {
         else if (next === ")") depth--;
       }
       if (depth !== 0) throw new Error("Unterminated PDF literal string");
+      if (strings) yield content.slice(start, at);
     } else if (char === "<" && content[at + 1] !== "<") {
       const end = content.indexOf(">", at + 1);
       if (end < 0) throw new Error("Unterminated PDF hex string");
@@ -211,6 +223,14 @@ function* contentTokens(content: string): Generator<string> {
       while (at < content.length && !delimiter.test(content[at]!)) at++;
       yield content.slice(start, at);
     }
+  }
+}
+
+/** PDF numbers forbid exponent notation, unlike JavaScript Number parsing. */
+function assertPdfNumbers(content: string): void {
+  for (const token of contentTokens(content)) {
+    if (/^[+\-.\d]/.test(token) || /^(?:NaN|Infinity)$/.test(token))
+      expect(token, "PDF numeric token").toMatch(/^[+-]?(?:\d+\.?\d*|\.\d+)$/);
   }
 }
 
@@ -282,39 +302,50 @@ function assertMarkedContent(content: string): void {
   expect(figures, "one Figure marked-content sequence").toBe(1);
 }
 
-function figureDictionary(pdf: ParsedPdf): string {
+function figureIds(pdf: ParsedPdf): number[] {
   const root = pdf.objects.get(ref(pdf.catalog, "StructTreeRoot"))!.dictionary;
   const document = pdf.objects.get(ref(root, "K"))!.dictionary;
-  return pdf.objects.get(ref(document, "K"))!.dictionary;
+  const children = /\/K (\[.*?\]|\d+ 0 R)/.exec(document)![1]!;
+  return [...children.matchAll(/(\d+) 0 R/g)].map((match) => Number(match[1]));
 }
 
-/** Follows both directions of the structure/content links and returns the Figure's alternative. */
-function figureAlt(pdf: ParsedPdf): string {
+function figureDictionary(pdf: ParsedPdf, index = 0): string {
+  return pdf.objects.get(figureIds(pdf)[index]!)!.dictionary;
+}
+
+/** Follows both directions of every structure/content link; returns one Figure's alternative. */
+function figureAlt(pdf: ParsedPdf, index = 0): string {
   expect(pdf.catalog).toContain("/MarkInfo << /Marked true >>");
   const rootId = ref(pdf.catalog, "StructTreeRoot");
   const root = pdf.objects.get(rootId)!.dictionary;
   expect(root).toContain("/Type /StructTreeRoot");
-  expect(root).toContain("/ParentTreeNextKey 1");
+  expect(root).toContain(`/ParentTreeNextKey ${pdf.pages.length}`);
   const documentId = ref(root, "K");
   const document = pdf.objects.get(documentId)!.dictionary;
   expect(document).toContain("/Type /StructElem /S /Document");
   expect(ref(document, "P")).toBe(rootId);
-  const figureId = ref(document, "K");
-  const figure = pdf.objects.get(figureId)!.dictionary;
-  expect(figure).toContain("/Type /StructElem /S /Figure");
-  expect(ref(figure, "P")).toBe(documentId);
-  expect(pdf.objects.get(ref(figure, "Pg"))!.dictionary).toBe(pdf.page);
-  expect(figure).toMatch(/\/K 0\b/);
+  expect(
+    [...pdf.objects.values()].filter((o) => /\/S \/Document\b/.test(o.dictionary)),
+  ).toHaveLength(1);
+  const figures = figureIds(pdf);
+  expect(figures).toHaveLength(pdf.pages.length);
   expect([...pdf.objects.values()].filter((o) => /\/S \/Figure\b/.test(o.dictionary))).toHaveLength(
-    1,
+    pdf.pages.length,
   );
-  const parentKey = /\/StructParents (\d+)/.exec(pdf.page)![1];
+  const entries = pdf.pages.map(({ id, page, content }, i) => {
+    const figure = pdf.objects.get(figures[i]!)!.dictionary;
+    expect(figure).toContain("/Type /StructElem /S /Figure");
+    expect(ref(figure, "P")).toBe(documentId);
+    expect(ref(figure, "Pg")).toBe(id);
+    expect(figure).toMatch(/\/K 0\b/);
+    expect(page).toContain(`/StructParents ${i} `);
+    assertMarkedContent(content);
+    return `${i} [${figures[i]} 0 R]`;
+  });
   const parents = pdf.objects.get(ref(root, "ParentTree"))!.dictionary;
-  expect(parents).toBe(`<< /Nums [${parentKey} [${figureId} 0 R]] >>`);
-  assertMarkedContent(pdf.content);
-  const alt = /\/Alt <FEFF([\dA-F]*)>/.exec(figure);
-  expect(alt).not.toBeNull();
-  return Buffer.from(alt![1]!, "hex").swap16().toString("utf16le");
+  expect(parents).toBe(`<< /Nums [${entries.join(" ")}] >>`);
+  const alt = /\/Alt <FEFF([\dA-F]*)>/.exec(figureDictionary(pdf, index))!;
+  return Buffer.from(alt[1]!, "hex").swap16().toString("utf16le");
 }
 
 const fontFixture = (name: string) =>
@@ -1445,7 +1476,6 @@ describe("PDF embedded Unicode fonts", () => {
           data: { cpu: { columns: { cpu: [61.5] } } },
           marks: [{ type: "gauge", data: "cpu", value: "cpu", label: "Wié" }],
         },
-        [],
         { fonts },
       ),
     ]) {
@@ -1867,7 +1897,7 @@ describe("PDF embedded Unicode fonts", () => {
       data: {},
       marks: [],
     };
-    expect(specToPDF(spec, [], { fonts: options.fonts })).toEqual(first);
+    expect(specToPDF(spec, { fonts: options.fonts })).toEqual(first);
   });
 
   it("refuses unprepared font arrays with migration guidance", () => {
@@ -1877,7 +1907,7 @@ describe("PDF embedded Unicode fonts", () => {
     ).toThrow(/wrap the font array in pdfFonts/);
     expect(() =>
       // @ts-expect-error spec exports also require prepared fonts
-      specToPDF({ version: 1, data: {}, marks: [] }, [], { fonts: [] }),
+      specToPDF({ version: 1, data: {}, marks: [] }, { fonts: [] }),
     ).toThrow(/wrap the font array in pdfFonts/);
   });
 
@@ -2104,16 +2134,41 @@ describe("PDF readers", () => {
     }),
   );
 
+  const report = join(directory, "report.pdf");
+  writeFileSync(
+    report,
+    renderToPDF(
+      [
+        { ...latency, title: "é", theme: { font: "Fixture" } },
+        { ...latency, title: unicodeText, theme: { font: "Fixture" } },
+        {
+          width: 300,
+          height: 200,
+          title: "Heatmap",
+          theme: { font: "Fixture" },
+          marks: [
+            heatmap(table({ x: [0, 1], y: [0, 0], v: [1, null] }), { x: "x", y: "y", color: "v" }),
+          ],
+        },
+      ],
+      {
+        fonts: pdfFonts(embeddedFonts, { fallback: ["Symbols"] }),
+        pageSize: "A4",
+        title: "Report",
+      },
+    ),
+  );
+
   it.skipIf(!installed("qpdf"))("pass qpdf --check", () => {
-    for (const file of [chart, cells, unicode]) {
+    for (const file of [chart, cells, unicode, report]) {
       const output = execFileSync("qpdf", ["--check", file], { encoding: "utf8" });
       expect(output).toContain("No syntax or stream encoding errors");
     }
   });
 
   it.skipIf(!installed("mutool"))("render with MuPDF without warnings", () => {
-    for (const file of [chart, cells, unicode]) {
-      const result = spawnSync("mutool", ["draw", "-o", join(directory, "page.png"), file], {
+    for (const file of [chart, cells, unicode, report]) {
+      const result = spawnSync("mutool", ["draw", "-o", join(directory, "page-%d.png"), file], {
         encoding: "utf8",
       });
       expect(result.status).toBe(0);
@@ -2125,14 +2180,21 @@ describe("PDF readers", () => {
     const text = execFileSync("pdftotext", [chart, "-"], { encoding: "utf8" });
     for (const label of ["Latency é", "08:00", "SLO", "ms"]) expect(text).toContain(label);
     expect(execFileSync("pdftotext", [unicode, "-"], { encoding: "utf8" })).toContain(unicodeText);
+    const pages = execFileSync("pdftotext", [report, "-"], { encoding: "utf8" }).split("\f");
+    expect(pages).toHaveLength(4);
+    expect(pages[0]).toContain("é");
+    expect(pages[1]).toContain(unicodeText);
+    expect(pages[2]).toContain("Heatmap");
   });
 
   it.skipIf(!installed("pdfinfo"))("exposes the structure and alternative text to Poppler", () => {
-    for (const file of [chart, cells, unicode]) {
+    for (const file of [chart, cells, unicode, report]) {
       const dump = execFileSync("pdfinfo", ["-struct-text", file], { encoding: "utf8" });
       expect(dump).toMatch(/Document\b/);
       expect(dump).toMatch(/Figure\b/);
-      expect(dump).toContain(figureAlt(readPdf(readFileSync(file))));
+      const parsed = readPdf(readFileSync(file));
+      for (let i = 0; i < parsed.pages.length; i++) expect(dump).toContain(figureAlt(parsed, i));
+      expect(dump.match(/Figure\b/g)).toHaveLength(parsed.pages.length);
     }
   });
 
@@ -2299,4 +2361,445 @@ it("exports split violin halves, dashed quartiles, and solid medians in facet PD
       expect(pdf.content.match(/(?:[^\n]+ l\n){20,}h\nf\n/g)).toHaveLength(3);
       expect(renderToSVG(config).includes('stroke-dasharray="4 3"')).toBe(inner === "quartiles");
     }
+});
+
+describe("PDF documents", () => {
+  it("checks numeric grammar without parsing text strings or names as numbers", () => {
+    assertPdfNumbers("0.000000041667 0 0 1 0 0 cm (1e-8) Tj /1e-8 Do");
+    for (const bad of ["4.1667e-8", "1E+21", "NaN", "Infinity", "--1", "0.0.1"])
+      expect(() => assertPdfNumbers(`${bad} 0 0 1 0 0 cm`)).toThrow(/PDF numeric token/);
+    expect(num(4.1667e-8, 12)).toBe("0.000000041667");
+    expect(num(-4.1667e-8, 12)).toBe("-0.000000041667");
+    expect(num(10, 0)).toBe("10");
+  });
+
+  it("writes tiny positive fit factors as decimals and refuses factors rounded to zero", () => {
+    const chart = { width: 640, height: 320, marks: [] };
+    const tiny = readPdf(renderToPDF(chart, { pageSize: "A4", margin: 297.63999 }));
+    expect(tiny.content).toContain("0.000000041667 0 0 0.000000041667");
+    readPdf(renderToPDF({ ...chart, width: 1e9 }, { pageSize: "A4" }));
+    expect(() => renderToPDF({ ...chart, width: 1e16 }, { pageSize: "A4" })).toThrow(
+      /renderToPDF scale: fitting scale rounds to zero; reduce chart dimensions or margins/,
+    );
+    expect(() =>
+      specToPDF({ version: 1, data: {}, ...chart, width: 1e16 }, { pageSize: "A4" }),
+    ).toThrow(/specToPDF scale:.*; reduce/);
+  });
+
+  it("preserves single-chart metadata with fitting and with a one-item list", () => {
+    const chart = { ...latency, title: "Chart", description: "Chart description", locale: "de-DE" };
+    const spec: ChartSpec = {
+      version: 1,
+      width: chart.width,
+      height: chart.height,
+      title: chart.title,
+      description: chart.description,
+      locale: chart.locale,
+      data: {},
+      marks: [],
+    };
+    const baseline = readPdf(renderToPDF(chart));
+    for (const settings of [
+      {},
+      { margin: 0 },
+      { pageSize: "A4" as const },
+      { title: "Report" },
+      { language: "en-GB" },
+      { subject: "Report description" },
+    ]) {
+      const single = readPdf(renderToPDF(chart, settings));
+      expect(renderToPDF([chart], settings)).toEqual(renderToPDF(chart, settings));
+      expect(specToPDF([spec], settings)).toEqual(specToPDF(spec, settings));
+      expect(specToPDF({ spec, buffers: [] }, settings)).toEqual(specToPDF(spec, settings));
+      expect(single.info).toContain(`/Title ${utf16(settings.title ?? chart.title)}`);
+      expect(single.info).toContain(`/Subject ${utf16(settings.subject ?? chart.description)}`);
+      expect(single.catalog).toContain(`/Lang (${settings.language ?? chart.locale})`);
+      const fromSpec = readPdf(specToPDF(spec, settings));
+      expect(fromSpec.info).toBe(single.info);
+      expect(fromSpec.catalog.replace(/\d+ 0 R/g, "ref")).toBe(
+        single.catalog.replace(/\d+ 0 R/g, "ref"),
+      );
+      if (!settings.title && !settings.subject) expect(single.info).toBe(baseline.info);
+    }
+    const report = readPdf(renderToPDF([chart, chart]));
+    expect(report.info).not.toMatch(/\/(Title|Subject)/);
+    expect(report.catalog).toContain("/Lang (en)");
+  });
+
+  it("scopes each chart's visible text to its locale inside the English Figure", () => {
+    const locales = ["de-DE", "fr-FR"];
+    const pdf = readPdf(
+      renderToPDF(
+        locales.map((locale) => ({ ...latency, locale })),
+        { language: "en-GB" },
+      ),
+    );
+    expect(pdf.catalog).toContain("/Lang (en-GB)");
+    for (const [i, { content }] of pdf.pages.entries()) {
+      expect(figureDictionary(pdf, i)).not.toContain("/Lang");
+      assertMarkedContent(content);
+      const scopes: { tag: string; locale?: string }[] = [];
+      let operands: string[] = [];
+      let texts = 0;
+      for (const token of contentTokens(content, true)) {
+        if (token === "BMC" || token === "BDC") {
+          const lang = operands.indexOf("/Lang");
+          scopes.push({
+            tag: operands[0]!,
+            ...(lang >= 0 && { locale: operands[lang + 1]!.slice(1, -1) }),
+          });
+          operands = [];
+        } else if (token === "EMC") {
+          scopes.pop();
+          operands = [];
+        } else if (token === "Tj" || token === "TJ") {
+          expect(scopes.map((s) => s.tag)).toEqual(["/Figure", "/Span"]);
+          expect(scopes.at(-1)!.locale).toBe(locales[i]);
+          texts++;
+          operands = [];
+        } else if (
+          ["BT", "ET", "Tf", "Tm", "q", "Q", "cm", "n", ...paintingOperators].includes(token)
+        ) {
+          operands = [];
+        } else operands.push(token);
+      }
+      expect(scopes).toEqual([]);
+      expect(texts).toBeGreaterThan(5);
+    }
+  });
+
+  it.each([
+    { locale: "en-US", language: "fr-FR", embedded: false },
+    { locale: "fr-FR", language: "en-US", embedded: false },
+    { locale: "en-US", language: "fr-FR", embedded: true },
+    { locale: "fr-FR", language: "en-US", embedded: true },
+  ])(
+    "uses catalog $language for English alternatives with chart $locale (embedded fonts: $embedded)",
+    ({ locale, language, embedded }) => {
+      const chart: PdfOptions = {
+        width: 320,
+        height: 160,
+        locale,
+        theme: { font: "Fixture" },
+        marks: [line(table({ x: [0, 1], y: [2, 3] }), { x: "x", y: "y" })],
+      };
+      const spec: ChartSpec = {
+        version: 1,
+        width: chart.width,
+        height: chart.height,
+        locale,
+        theme: { font: "Fixture" },
+        data: { d: { columns: { x: [0, 1], y: [2, 3] } } },
+        marks: [{ type: "line", data: "d", x: "x", y: "y" }],
+      };
+      const buffered = {
+        spec: {
+          ...spec,
+          data: {
+            d: {
+              columns: {
+                x: { type: "number", dtype: "float64", buffer: 0 },
+                y: { type: "number", dtype: "float64", buffer: 1 },
+              },
+            },
+          },
+        } satisfies ChartSpec,
+        buffers: [new Float64Array([0, 1]), new Float64Array([2, 3])],
+      };
+      const settings = {
+        language,
+        ...(embedded && { fonts: pdfFonts(embeddedFonts) }),
+      };
+      for (const count of [0, 1, 2]) {
+        for (const bytes of [
+          renderToPDF(count ? Array.from({ length: count }, () => chart) : chart, settings),
+          specToPDF(count ? Array.from({ length: count }, () => spec) : spec, settings),
+          specToPDF(count ? Array.from({ length: count }, () => buffered) : buffered, settings),
+        ]) {
+          const pdf = readPdf(bytes);
+          expect(pdf.catalog).toContain(`/Lang (${language})`);
+          expect(pdf.pages).toHaveLength(count || 1);
+          for (const [i, { content }] of pdf.pages.entries()) {
+            expect(figureAlt(pdf, i)).toMatch(/^Line chart with 1 series\./);
+            if (language === "fr-FR") expect(figureDictionary(pdf, i)).toContain("/Lang (en)");
+            else expect(figureDictionary(pdf, i)).not.toContain("/Lang");
+            expect(content).toContain(`/Span << /Lang (${locale}) >> BDC`);
+            assertMarkedContent(content);
+          }
+        }
+      }
+    },
+  );
+
+  it.skipIf(!installed("pdftoppm"))(
+    "renders overflowing titles and rule labels inside each fitted chart",
+    () => {
+      const directory = mkdtempSync(join(tmpdir(), "herceg-pdf-overflow-"));
+      try {
+        const chart = {
+          ...latency,
+          width: 300,
+          height: 150,
+          title: "W".repeat(80),
+          marks: [...latency.marks, rule({ y: 250, label: "W".repeat(80) })],
+        };
+        const plain = readPdf(renderToPDF(chart));
+        expect(plain.content).toContain(`(${"W".repeat(80)}) Tj`);
+        for (const settings of [{ pageSize: "A4" as const }, { margin: 36 }]) {
+          const bytes = renderToPDF(
+            [chart, { ...chart, title: `Second ${chart.title}` }],
+            settings,
+          );
+          const pdf = readPdf(bytes);
+          const file = join(directory, "overflow.pdf");
+          writeFileSync(file, bytes);
+          for (const [i, { page, content }] of pdf.pages.entries()) {
+            expect(content).toContain("cm\n0 0 300 150 re W n\n");
+            expect(content.match(/re W n/g)!.length).toBeGreaterThan(1);
+            const result = spawnSync(
+              "pdftoppm",
+              ["-r", "72", "-f", String(i + 1), "-l", String(i + 1), "-singlefile", file],
+              { maxBuffer: 10 * 1024 * 1024 },
+            );
+            expect(result.status).toBe(0);
+            expect(result.stderr.toString()).toBe("");
+            const header = /^P6\s+(\d+)\s+(\d+)\s+255\s/.exec(result.stdout.toString("latin1"))!;
+            expect(header).not.toBeNull();
+            const width = Number(header[1]),
+              height = Number(header[2]);
+            const pixels = result.stdout.subarray(header[0].length);
+            expect(pixels.length).toBe(width * height * 3);
+            const box = /\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/.exec(page)!;
+            const pw = Number(box[1]),
+              ph = Number(box[2]);
+            const scale = settings.pageSize ? Math.min((pw - 72) / 300, (ph - 72) / 150) : 0.75;
+            const x = (pw - 300 * scale) / 2,
+              y = (ph - 150 * scale) / 2;
+            let ink = 0,
+              overflow = 0;
+            for (let row = 0; row < height; row++)
+              for (let col = 0; col < width; col++) {
+                const at = (row * width + col) * 3;
+                if (pixels[at]! < 250 || pixels[at + 1]! < 250 || pixels[at + 2]! < 250) {
+                  ink++;
+                  // Allow the edge pixel's antialiasing and point-to-pixel rounding.
+                  if (
+                    col < x - 1 ||
+                    col > x + 300 * scale + 1 ||
+                    row < y - 1 ||
+                    row > y + 150 * scale + 1
+                  )
+                    overflow++;
+                }
+              }
+            expect(ink).toBeGreaterThan(100);
+            expect(overflow, `page ${i + 1} paints outside its chart rectangle`).toBe(0);
+          }
+        }
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("orders pages, isolates resources, and tags each chart under one Document", () => {
+    const options = { ...latency, title: "Page one", locale: "de-DE" };
+    const cells = {
+      width: 300,
+      height: 500,
+      title: "Page two",
+      marks: [
+        heatmap(table({ x: [0, 1], y: [0, 0], v: [1, null] }), { x: "x", y: "y", color: "v" }),
+      ],
+    };
+    const pdf = readPdf(renderToPDF([options, cells], { title: "Report", language: "fr-FR" }));
+    expect(pdf.pages).toHaveLength(2);
+    expect(pdf.pages[0]!.page).toContain("/MediaBox [0 0 360 180]");
+    expect(pdf.pages[1]!.page).toContain("/MediaBox [0 0 225 375]");
+    expect(pdf.pages[0]!.page).not.toContain("/XObject");
+    expect(pdf.pages[1]!.page).toContain("/XObject");
+    expect(pdf.pages[1]!.page).toContain("/Shading");
+    expect(pdf.info).toContain(`/Title ${utf16("Report")}`);
+    expect(pdf.catalog).toContain("/Lang (fr-FR)");
+    expect(figureAlt(pdf, 0)).toContain("Page one");
+    expect(figureAlt(pdf, 1)).toContain("Page two");
+    for (const { page, content } of pdf.pages) {
+      const tokens = [...contentTokens(content)];
+      for (let i = 0; i < tokens.length; i++) {
+        const operator = tokens[i]!;
+        if (["Tf", "Do", "sh", "gs"].includes(operator)) {
+          const name = tokens[i - (operator === "Tf" ? 2 : 1)]!;
+          expect(page).toMatch(new RegExp(`${name} (?:\\d+ 0 R|<<)`));
+        }
+      }
+    }
+    expect(ref(pdf.pages[0]!.page, "F1")).toBe(ref(pdf.pages[1]!.page, "F1"));
+  });
+
+  it.each(["A4", "Letter"] as const)(
+    "fits and centers vectors on %s in either orientation",
+    (pageSize) => {
+      for (const orientation of ["portrait", "landscape"] as const) {
+        const pdf = readPdf(
+          renderToPDF(
+            [
+              { width: 1000, height: 100, marks: [] },
+              { width: 100, height: 1000, marks: [] },
+            ],
+            { pageSize, orientation, margin: 40 },
+          ),
+        );
+        const [pw, ph] = pageSize === "A4" ? [595.28, 841.89] : [612, 792];
+        const [w, h] = orientation === "portrait" ? [pw, ph] : [ph, pw];
+        for (let i = 0; i < 2; i++) {
+          const { page, content } = pdf.pages[i]!;
+          expect(page).toContain(`/MediaBox [0 0 ${w} ${h}]`);
+          const [base, , , , , top] = content.split("\n")[0]!.split(" ").map(Number);
+          const [scale, , , , x, y] = content.split("\n")[1]!.split(" ").map(Number);
+          const sx = base! * scale!;
+          const sy = -sx;
+          const tx = base! * x!;
+          const ty = top! - base! * y!;
+          const [cw, ch] = i === 0 ? [1000, 100] : [100, 1000];
+          expect(sx).toBeCloseTo(Math.min((w - 80) / cw, (h - 80) / ch), 6);
+          expect(sy).toBe(-sx!);
+          expect(tx! + (sx! * cw) / 2).toBeCloseTo(w / 2, 2);
+          expect(ty! - (sx! * ch) / 2).toBeCloseTo(h / 2, 2);
+          expect(tx!).toBeGreaterThanOrEqual(40 - 0.01);
+          expect(ty!).toBeLessThanOrEqual(h - 40 + 0.01);
+          assertMarkedContent(content);
+        }
+      }
+      const enlarged = readPdf(
+        renderToPDF({ width: 100, height: 50, title: "Small", marks: [] }, { pageSize }),
+      );
+      expect(Number(enlarged.content.split("\n")[1]!.split(" ")[0])).toBeGreaterThan(1);
+      expect(enlarged.content).toContain("(Small) Tj");
+      expect(enlarged.page).not.toContain("/XObject");
+    },
+  );
+
+  it("adds chart-sized margins without changing chart titles", () => {
+    const pdf = readPdf(
+      renderToPDF(
+        { width: 100, height: 50, title: "Chart", marks: [] },
+        { margin: 10, title: "Document" },
+      ),
+    );
+    expect(pdf.page).toContain("/MediaBox [0 0 95 57.5]");
+    expect(pdf.content).toMatch(/^0.75 0 0 -0.75 0 57.5 cm\n1 0 0 1 13.33 13.33 cm/);
+    expect(pdf.content).toContain("(Chart) Tj");
+    expect(pdf.content).not.toContain("(Document) Tj");
+    expect(figureAlt(pdf)).toBe("Chart");
+    expect(pdf.info).toContain(`/Title ${utf16("Document")}`);
+    expect(
+      readPdf(renderToPDF([{ width: 100, height: 50, marks: [], title: "Chart" }])).info,
+    ).toContain(`/Title ${utf16("Chart")}`);
+  });
+
+  it("unions glyphs once per face, including later-page glyphs and fallback", () => {
+    const fonts = pdfFonts(embeddedFonts, { fallback: ["Symbols"] });
+    const charts = ["é", "Ω Мир 𝌀"].map((title) => ({
+      width: 320,
+      height: 120,
+      marks: [],
+      title,
+      theme: { font: "Fixture" },
+    }));
+    const bytes = renderToPDF(charts, { fonts });
+    const pdf = readPdf(bytes);
+    const fontIds = pdf.pages.map(({ page }) =>
+      [...page.matchAll(/\/F\d+ (\d+) 0 R/g)].map((m) => Number(m[1])),
+    );
+    expect(
+      fontIds[1]!.every(
+        (id) =>
+          fontIds[0]!.includes(id) || pdf.objects.get(id)!.dictionary.includes("/Subtype /Type0"),
+      ),
+    ).toBe(true);
+    const shared = fontIds[0]!.filter((id) => fontIds[1]!.includes(id));
+    expect(shared.length).toBeGreaterThan(0);
+    expect(embeddedPrograms(pdf)).toHaveLength(2);
+    const mappings = [...pdf.objects.values()]
+      .filter((o) => o.stream?.includes(Buffer.from("begincmap")))
+      .map((o) => o.stream!.toString("ascii"))
+      .join("\n");
+    for (const code of ["00e9", "03a9", "041c", "d834df00"]) expect(mappings).toContain(code);
+    figureAlt(pdf, 1);
+    renderToPDF({ ...charts[0]!, title: "Different" }, { fonts });
+    expect(renderToPDF(charts, { fonts })).toEqual(bytes);
+    expect(renderToPDF([charts[0]!], { fonts })).toEqual(renderToPDF([{ ...charts[0]!, fonts }]));
+    expect(() =>
+      renderToPDF([
+        { ...charts[0]!, fonts },
+        { ...charts[1]!, fonts: pdfFonts(embeddedFonts) },
+      ]),
+    ).toThrow(/conflicting chart font configurations/);
+    expect(() =>
+      renderToPDF(
+        [
+          { ...charts[0]!, fonts },
+          { ...charts[1]!, fonts: pdfFonts(embeddedFonts) },
+        ],
+        { fonts },
+      ),
+    ).not.toThrow();
+  });
+
+  it("loads independent binary sidecars for each spec page", () => {
+    const make = (title: string): ChartSpec => ({
+      version: 1,
+      width: 320,
+      height: 120,
+      title,
+      data: {
+        d: {
+          columns: {
+            x: { type: "number", dtype: "float64", buffer: 0 },
+            y: { type: "number", dtype: "float64", buffer: 1 },
+          },
+        },
+      },
+      marks: [{ type: "line", data: "d", x: "x", y: "y" }],
+    });
+    const a = {
+      spec: make("First"),
+      buffers: [new Float64Array([0, 1]), new Float64Array([10, 20])],
+    };
+    const b = {
+      spec: make("Second"),
+      buffers: [new Float64Array([4, 5]), new Float64Array([90, 100])],
+    };
+    expect(specToPDF(a)).toEqual(specToPDF([a]));
+    expect(() =>
+      // @ts-expect-error sidecars travel with their spec
+      specToPDF(a.spec, a.buffers),
+    ).toThrow(/specToPDF settings:.*; use \{ spec, buffers \}/);
+    const pdf = readPdf(specToPDF([a, b], { title: "Report", pageSize: "Letter" }));
+    expect(pdf.pages[0]!.content).toContain("(10) Tj");
+    expect(pdf.pages[1]!.content).toContain("(100) Tj");
+    expect(figureAlt(pdf, 0)).toContain("First");
+    expect(figureAlt(pdf, 1)).toContain("Second");
+    expect(
+      readPdf(specToPDF([make("a"), make("b")].map((spec) => ({ ...spec, data: {}, marks: [] }))))
+        .pages,
+    ).toHaveLength(2);
+    expect(() => specToPDF([a, { ...b, buffers: [] }])).toThrow(/buffer/);
+  });
+
+  it("rejects empty documents and invalid page settings", () => {
+    expect(() => renderToPDF([])).toThrow(/renderToPDF charts:.*; supply/);
+    expect(() => specToPDF([])).toThrow(/at least one chart/);
+    const chart = { width: 100, height: 100, marks: [] };
+    for (const margin of [-1, Infinity, NaN])
+      expect(() => renderToPDF(chart, { margin })).toThrow(/renderToPDF margin:/);
+    expect(() => renderToPDF(chart, { pageSize: "A4", margin: 300 })).toThrow(
+      /no usable page area/,
+    );
+    expect(() => renderToPDF(chart, { orientation: "landscape" })).toThrow(/orientation:/);
+    // @ts-expect-error invalid named page
+    expect(() => renderToPDF(chart, { pageSize: "Legal" })).toThrow(/pageSize:/);
+    for (const width of [0, -1, Infinity, NaN])
+      expect(() => renderToPDF({ ...chart, width })).toThrow(/renderToPDF size:/);
+  });
 });

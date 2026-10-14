@@ -789,6 +789,7 @@ chart.save("chart.html")   # self-contained page: herceg and the data embedded
 chart.save("chart.svg")    # static SVG
 chart.save("chart.png")    # PNG at twice the chart size (scale=...)
 chart.save("chart.pdf")    # one-page vector PDF (chart.to_pdf() returns the bytes)
+hg.save(chart, "chart.png", scale=3)  # the same format dispatch as chart.save
 chart.to_spec()            # (spec dict, list of binary buffers)
 chart.widget()             # a live notebook chart (see below)
 ```
@@ -796,6 +797,44 @@ chart.widget()             # a live notebook chart (see below)
 HTML output and notebook display embed the herceg bundle (about 142 KiB,
 52 KiB gzipped), so they work offline. Notebooks show each chart in an
 isolated iframe.
+
+`hg.to_pdf(chart_or_charts, **settings)` returns PDF bytes, and
+`hg.save(chart_or_charts, path, **settings)` saves one chart using
+`Chart.save(path)`, choosing HTML, SVG, PNG, or PDF by extension. A nonempty
+sequence requires a `.pdf` path; use `hg.save` on each chart for other
+formats. Both functions accept charts from `herceg.express`:
+
+```python
+charts = [latency, throughput, errors]
+pdf_bytes = hg.to_pdf(
+    charts, page_size="A4", orientation="landscape", margin=36,
+    title="Performance report", subject="Service performance", language="en-GB",
+)
+hg.save(charts, "report.pdf", page_size="A4", title="Performance report")
+hg.save(latency, "latency.pdf", page_size="Letter")
+chart.save("page.pdf", page_size="Letter", margin=36, title="Report")
+```
+
+Each chart is read during export and occupies one page. Use subplots and
+panel titles for several views with captions on one page. Without `page_size`,
+pages keep each chart's dimensions at 0.75 points per CSS pixel, with zero
+margin by default; a supplied margin adds space around the chart. `"A4"` and
+`"Letter"` default to portrait and a 36-point margin.
+`orientation="landscape"` needs a named paper size. Margins are uniform PDF
+points (72 per inch). Named paper sizes scale charts up or down uniformly to
+fit and center them within those margins, clipping each complete chart to
+its rectangle and keeping its plot clips. Vector marks and selectable text
+are retained. A fitting scale that rounds to zero is refused; reduce chart
+dimensions or margins.
+
+`Chart.to_pdf()` and `Chart.save()` keep their single-chart behavior and
+accept the same paper, margin, font, and metadata options for PDF. Export
+`title` and `subject` affect metadata; each chart keeps its visible title and
+alternative text. For one chart, including a one-item sequence, title,
+subject, and language default to its title, description, and locale. For
+multiple charts, the default language is `"en"`, with no default title or
+subject. Each chart's visible content uses a nested language scope for its
+locale, while English summaries keep their English alternative scope.
 
 SVG, PNG, and PDF export need the `export` extra (`pip install
 'herceg[export]'`): SVG is rendered by the same DOM-free renderer as herceg's
@@ -818,6 +857,7 @@ fonts = {
     "Symbols": Path("Symbols.ttf").read_bytes(),
 }
 pdf_bytes = chart.to_pdf(fonts=fonts, fallback=["Symbols"])
+hg.save([latency, throughput], "unicode-report.pdf", fonts=fonts, fallback=["Symbols"])
 chart.save("chart.pdf", fonts=fonts, fallback=["Symbols"])
 # A family with one face can also be supplied as {"Inter": "Inter-Regular.ttf"}.
 ```
@@ -864,6 +904,9 @@ Unusually tall fallback fonts may need extra margins; layout currently measures
 width only, and code-point cuts in shortened labels may split grapheme clusters.
 Dark themes need a background color in PDFs, whose viewers show transparent
 pages as white. Optional shipped fonts are still open work.
+
+Embedded fonts are subset once per document, unioning glyphs across all pages.
+Each used face shares one font object.
 
 `to_pdf()` and `save("chart.pdf")` automatically produce tagged PDFs with
 either standard or embedded fonts. One Figure contains the whole chart,

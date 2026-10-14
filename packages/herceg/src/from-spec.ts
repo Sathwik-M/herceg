@@ -3,12 +3,18 @@
 
 import { type Chart, createChart } from "./dom/chart.ts";
 import type { MeasureText } from "./layout/text.ts";
-import { type PdfExportOptions, renderToPDF } from "./pdf.ts";
+import { type PdfExportOptions, type PdfOptions, renderToPDF } from "./pdf.ts";
 import { renderToSVG } from "./render/static.ts";
 import { type LoadedSpec, type LoadOptions, loadSpec, type SpecBuffer } from "./spec/load.ts";
 import type { ChartSpec } from "./spec/spec.ts";
 
-export type { PdfExportOptions, PdfFontOptions, PdfFontSource, PdfFonts } from "./pdf.ts";
+export type {
+  PdfExportOptions,
+  PdfFontOptions,
+  PdfFontSource,
+  PdfFonts,
+  PdfPageOptions,
+} from "./pdf.ts";
 export type * from "./spec/spec.ts";
 export { SPEC_VERSION } from "./spec/spec.ts";
 export { validateSpec } from "./spec/validate.ts";
@@ -46,17 +52,35 @@ export function specToSVG(
   });
 }
 
-/** A one-page vector PDF for a spec (see `renderToPDF` in `herceg/pdf`), sized like `specToSVG`. */
+/** One spec with its own binary sidecars, for a document's page. */
+export interface PdfSpec {
+  spec: ChartSpec;
+  buffers?: readonly SpecBuffer[];
+}
+
+/** Vector PDF of one spec or a nonempty list, one chart per page. */
 export function specToPDF(
-  spec: ChartSpec,
-  buffers: readonly SpecBuffer[] = [],
-  options: PdfExportOptions = {},
+  input: ChartSpec | PdfSpec | readonly (ChartSpec | PdfSpec)[],
+  settings: PdfExportOptions = {},
 ): Uint8Array {
-  const { config } = loadSpec(spec, buffers);
-  return renderToPDF({
-    ...config,
-    ...options,
-    width: config.width ?? 640,
-    height: config.height ?? 320,
-  });
+  if (Array.isArray(settings))
+    throw new TypeError(
+      "specToPDF settings: expected an options object; use { spec, buffers } for sidecars",
+    );
+  const chart = (item: ChartSpec | PdfSpec): PdfOptions => {
+    const { config } = "spec" in item ? loadSpec(item.spec, item.buffers) : loadSpec(item);
+    return { ...config, width: config.width ?? 640, height: config.height ?? 320 };
+  };
+  try {
+    return renderToPDF(
+      Array.isArray(input) ? input.map(chart) : chart(input as ChartSpec | PdfSpec),
+      settings,
+    );
+  } catch (error) {
+    if (error instanceof RangeError || error instanceof TypeError)
+      throw new (error instanceof RangeError ? RangeError : TypeError)(
+        error.message.replace("renderToPDF", "specToPDF"),
+      );
+    throw error;
+  }
 }

@@ -9,6 +9,7 @@
     "paths": {
       "herceg": ["../packages/herceg/src/index.ts"],
       "herceg/pdf": ["../packages/herceg/src/pdf.ts"],
+      "herceg/spec": ["../packages/herceg/src/from-spec.ts"],
       "herceg/grid": ["../packages/herceg/src/grid.ts"],
       "herceg/grid/pivot": ["../packages/herceg/src/grid-pivot.ts"],
       "herceg/grid/remote": ["../packages/herceg/src/grid-remote.ts"],

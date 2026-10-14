@@ -639,6 +639,26 @@ describe("exports", () => {
     expect((await corner(mount({ marks, theme: "auto" })))[3]).toBe(0);
   });
 
+  it("exports mixed mounted and DOM-free charts as document pages", async () => {
+    const chart = mount({ title: "Mounted", marks: [line(ramp(), { x: "t", y: ["a", "b"] })] });
+    chart.setViewport([41, 49]);
+    chart.setVisibility(chart.getLegend()[1]!.key, false);
+    const pdf = renderToPDF([chart, { width: 300, height: 150, title: "Static", marks: [] }], {
+      pageSize: "Letter",
+      title: "Report",
+    });
+    const raw = new TextDecoder("latin1").decode(pdf);
+    expect(raw).toContain("/Count 2");
+    expect(raw.match(/\/MediaBox \[0 0 612 792\]/g)).toHaveLength(2);
+    expect(raw.match(/\/S \/Figure/g)).toHaveLength(2);
+    const content = await pdfText(pdf);
+    expect(content).toContain("(Mounted) Tj");
+    expect(content).toContain("(Static) Tj");
+    expect(content).toContain("(44) Tj");
+    expect(content).not.toContain("(50) Tj");
+    expect(content).not.toContain("(Report) Tj");
+  });
+
   it("give a PDF of a mounted chart as it is now: zoomed, with series hidden", async () => {
     const chart = mount({ title: "Ramp", marks: [line(ramp(), { x: "t", y: ["a", "b"] })] });
     const whole = await pdfText(renderToPDF(chart));

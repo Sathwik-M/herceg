@@ -83,7 +83,9 @@ pans and zooms by pointer and keyboard), time
 axes that leave out breaks (nights, weekends, holidays) in any time zone,
 SVG, PNG, and PDF export of a mounted chart as it is, static SVG and PDF
 export without a DOM (Unicode with opt-in `pdfFonts` and supplied
-TrueType fonts), React, Vue, and Svelte adapters, min/max indexes for zooming
+TrueType fonts; `renderToPDF` and `specToPDF` accept one chart/spec or a list
+for multiple pages, A4/Letter paper, and shared font subsets), React, Vue,
+and Svelte adapters, min/max indexes for zooming
 and streaming large line
 series (whole columns or split by a series field), WebGL drawing of large
 point series, chart specs with binary columns, a Python package, a second

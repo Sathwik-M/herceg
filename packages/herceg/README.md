@@ -1187,6 +1187,8 @@ the notes), — not yet (refused with an error), · not applicable.
 | point3d, line3d | — | — | — | · | turning | — | — | — | — | ✓ | ✓ | ✓ | — |
 | surface | — | — | — | · | turning | — | — | — | — | · | ✓ | · | — |
 
+- Every built-in mark exports through `renderToPDF`; each chart is one page and
+  one Figure, including its facets or subplots.
 - Selected rows and Highlight are what charts bound to a selection store do
   (`rowSelection`, see [Selected rows](#selected-rows)): brushes, lassos, and
   clicks write rows to its channel, and the chart highlights what the channel
@@ -2926,17 +2928,72 @@ const svg = renderToSVG(options); // standalone SVG document
 const pdf = renderToPDF(options); // Uint8Array: a one-page vector PDF
 ```
 
+`renderToPDF` accepts one mounted chart, static options, or a nonempty list.
+`specToPDF` accepts one spec, a `{ spec, buffers }` entry, or a nonempty list:
+
+```ts
+import { renderToPDF } from "herceg/pdf";
+import { specToPDF } from "herceg/spec";
+
+const bytes = renderToPDF([chart, options, anotherChart], {
+  pageSize: "A4", orientation: "landscape", margin: 36,
+  title: "Performance report", subject: "Service performance", language: "en-GB", fonts,
+}); // Uint8Array; one chart per page
+const single = renderToPDF(chart, { pageSize: "A4" });
+const fromSpecs = specToPDF([spec1, spec2], { pageSize: "Letter", title: "Report" });
+const fromSpec = specToPDF(spec1, { pageSize: "A4" });
+// Binary sidecars keep their indices local to each spec:
+const fromBinary = specToPDF([
+  { spec: spec1, buffers: buffers1 }, { spec: spec2, buffers: buffers2 },
+], { fonts });
+const oneBinary = specToPDF({ spec: spec1, buffers: buffers1 }, { fonts });
+```
+
+Mounted charts are read during export and keep their current size, zoom, and
+hidden series. For several views and captions on one page, use subplots and
+panel titles.
+
+Without `pageSize`, each page uses its chart's size at 0.75 points per CSS
+pixel; a supplied margin adds space around it. `"A4"` and `"Letter"` default
+to portrait and a 36-point margin; `orientation: "landscape"` rotates the
+paper dimensions. Margins are uniform PDF points (72 per inch), not chart
+padding. Named paper sizes uniformly scale each chart up or down to fit and
+center it inside the margins, clipping all content to the chart rectangle
+while retaining the inner plot clips. Text remains selectable and marks
+remain vectors. Orientation needs a named paper size. Fitting factors use
+fixed-point decimals; factors that round to zero are refused with a correction
+to reduce chart dimensions or margins.
+
+Export settings `title` and `subject` set document metadata without replacing
+visible chart titles. For one chart (including a one-item list), they default
+to the chart's title and description, even with paper settings. Multi-chart
+reports have no default title or subject. Document language defaults to the
+single chart's locale, or `"en"` for multiple charts; `language` overrides it.
+Each chart's visible content has a nested `/Span` with its locale's `/Lang`,
+while the Figure alternative uses English when its generated summary needs
+an override. Supply `fonts` once for the document: each used face has one
+font object and a subset of the glyphs used across all pages. Without document
+fonts, one shared `PdfFonts` object on chart options is inherited by every
+page; conflicting objects are refused. Explicit document fonts take precedence.
+
+The synchronous one-or-list exports share the page writer, fitting, and
+orchestration code. Normal tree shaking retains list handling and paper sizing
+in single-chart PDF bundles in this implementation.
+They remain outside chart bundles that do not import PDF. The
+`herceg-spec-pdf` size entry measures one buffered spec, and
+`herceg-pdf-document` measures an actual report, beside the line PDF entries.
+
 PDF export is a separate entry point, `herceg/pdf`. Import `pdfFonts` to
 include the optional TrueType parser, subsetter, and embedded-font writer;
 plain PDF exports bundle none of them. The `herceg-pdf` and
 `herceg-pdf-fonts` size benchmarks include scene compilation and a line
-mark, without and with embedded-font support respectively (about 45 and
-52 KiB gzip, excluding supplied font bytes). The page is the chart's size
+mark, without and with embedded-font support respectively (about 46 and
+53 KiB gzip, excluding supplied font bytes). The page is the chart's size
 at 0.75 points per CSS pixel. Marks, axes, and legends are vectors, heatmaps are compressed images,
-and text is selectable. Title and description become document metadata.
-Both font paths also emit a `Document` containing one `Figure`, with the
+and text is selectable. For a single chart, title and description default to document metadata.
+Both font paths also emit one `Document` containing a `Figure` per chart, with each
 chart's title and generated summary as `/Alt`, drawing linked through marked
-content and a parent tree, and catalog `/Lang` when `locale` is supplied.
+content and a parent tree, and catalog `/Lang` from the document language.
 The generated summary is English; the Figure has `/Lang (en)` unless it
 inherits an English locale from the catalog.
 
@@ -2961,8 +3018,8 @@ const pdf = renderToPDF({
   theme: { font: '"Inter", sans-serif' },
   fonts,
 });
-// Portable specs take the same export options as a separate third argument:
-const fromSpec = specToPDF(spec, buffers, { fonts });
+// Export settings are the second argument; sidecars travel in { spec, buffers } entries:
+const fromSpec = specToPDF({ spec, buffers }, { fonts });
 ```
 
 Both exporters take a prepared `PdfFonts` object, and reject a plain array
@@ -3032,7 +3089,7 @@ import { chartFromSpec, specToPDF, specToSVG } from "herceg/spec";
 
 chartFromSpec(element, spec, buffers); // buffers: ArrayBuffers for binary columns
 const svg = specToSVG(spec, buffers);
-const pdf = specToPDF(spec, buffers);
+const pdf = specToPDF({ spec, buffers });
 ```
 
 A spec's `data` holds tables whose columns are JSON arrays,

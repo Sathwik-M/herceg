@@ -85,6 +85,15 @@ element per data point, and data changes still redraw without React.
 </Chart>
 ```
 
+Several chart handles can be exported together with
+`renderToPDF([chart1, chart2], { pageSize: "A4", title: "Report" })`
+from `herceg/pdf`. Each chart retains its current zoom and visibility and
+occupies one page; use subplots for several views on a page. The same function
+accepts one handle and optional paper, margin, font, and metadata settings
+(`title`, `subject`, `language`). Fitting clips each complete chart to its
+rectangle; each chart's locale scopes its visible content while generated
+alternatives retain their English language.
+
 ## Reusing groups of marks
 
 `<Chart>` reads its children's props to build marks; it does not render

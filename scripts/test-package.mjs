@@ -13,7 +13,7 @@ const packages = ["herceg", "react", "vue", "svelte"];
 // Fixed API fixtures catch removed subpaths and redirects to unrelated APIs.
 const publicAPIs = {
   herceg: ["createChart", "line", "table", "time"],
-  "herceg/spec": ["loadSpec"],
+  "herceg/spec": ["loadSpec", "specToPDF"],
   "herceg/pdf": ["renderToPDF"],
   "herceg/grid": ["createGrid"],
   "herceg/grid/model": ["createGridModel"],
@@ -176,6 +176,16 @@ const svg = renderToSVG({
   width: 300, height: 150,
 });
 assert(svg.startsWith("<svg"), "static SVG output");
+const { renderToPDF } = await import("herceg/pdf");
+const { specToPDF } = await import("herceg/spec");
+const chart = { width: 300, height: 150, marks: [] };
+const spec = { version: 1, data: {}, marks: [] };
+for (const bytes of [
+  renderToPDF(chart, { pageSize: "A4" }),
+  renderToPDF([chart, chart], { subject: "Report" }),
+  specToPDF({ spec, buffers: [] }, { pageSize: "Letter" }),
+  specToPDF([spec, { spec, buffers: [] }]),
+]) assert(new TextDecoder().decode(bytes).startsWith("%PDF-1.4"), "PDF output");
 `,
     );
     run(process.execPath, ["smoke.mjs"], { cwd: consumer });
@@ -214,11 +224,19 @@ assert(svg.startsWith("<svg"), "static SVG output");
     join(consumer, "types.ts"),
     `import { line, table, time } from "herceg";
 import type { ChartProps } from "@herceg/svelte";
+import { renderToPDF } from "herceg/pdf";
+import { type ChartSpec, specToPDF } from "herceg/spec";
 const data = table({ t: time([0, 1]), v: [1, 2] });
 line(data, { x: "t", y: "v" });
 // @ts-expect-error a misspelled field must remain a compile error
 line(data, { x: "t", y: "missing" });
 export const svelteChartProps: ChartProps = { title: "Package test", renderer: "svg" };
+const spec: ChartSpec = { version: 1, data: {}, marks: [] };
+specToPDF({ spec, buffers: [] }, { subject: "Description", pageSize: "A4" });
+specToPDF([spec], { margin: 0 });
+renderToPDF([{ width: 300, height: 150, marks: [] }], { pageSize: "Letter" });
+// @ts-expect-error binary sidecars travel with their spec
+specToPDF(spec, []);
 `,
   );
   writeFileSync(

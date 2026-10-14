@@ -87,6 +87,15 @@ nodes move while zoomed and `setItemPosition` still uses layout units.
 When zoom is on, Alt+Shift+arrows moves the node read; Shift+arrows and 0
 navigate the view. The toolbar restores moved nodes.
 
+Several chart handles can be exported together with
+`renderToPDF([chart1, chart2], { pageSize: "A4", title: "Report" })`
+from `herceg/pdf`. Each chart retains its current zoom and visibility and
+occupies one page; use subplots for several views on a page. The same function
+accepts one handle and optional paper, margin, font, and metadata settings
+(`title`, `subject`, `language`). Fitting clips each complete chart to its
+rectangle; each chart's locale scopes its visible content while generated
+alternatives retain their English language.
+
 ## Tooltips
 
 Mark components take `:tooltip="{ fields: [...] }"` for more of the row a

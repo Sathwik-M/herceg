@@ -1,4 +1,4 @@
-// The PDF file format (version 1.4): one page, the resources its content
+// The PDF file format (version 1.4): pages, the resources their content
 // uses (fonts, opacities, images, gradients), and the cross-reference table
 // readers use to find each object. Streams are Flate-compressed.
 
@@ -18,7 +18,10 @@ export function num(value: number, decimals = 2): string {
   const rounded = Math.round(value * scale) / scale;
   // Beyond 1e15 pixels nothing is visible; String() would switch to
   // exponents (which PDF lacks) at 1e21.
-  return String(Math.abs(rounded) < 1e15 ? rounded : Math.sign(rounded) * 1e15);
+  return (Math.abs(rounded) < 1e15 ? rounded : Math.sign(rounded) * 1e15)
+    .toFixed(decimals)
+    .replace(/(\.\d*?)0+$/, "$1")
+    .replace(/\.$/, "");
 }
 
 /** A literal string of bytes (characters 0 to 255), in printable ASCII. */
@@ -83,10 +86,7 @@ interface Shading {
   offsets?: readonly number[] | undefined;
 }
 
-/**
- * One page sized to a chart. Content is written in CSS pixels with y
- * pointing down, as in the scene; the page itself is measured in points.
- */
+/** A chart's content in CSS pixels, with y pointing down. */
 export class PdfPage {
   readonly width: number;
   readonly height: number;
@@ -99,10 +99,9 @@ export class PdfPage {
   readonly resolver: PdfFontResolver | undefined;
   constructor(width: number, height: number, resolver?: PdfFontResolver) {
     this.resolver = resolver;
-    this.width = width;
-    this.height = height;
-    const scale = POINTS_PER_PIXEL;
-    this.#content = `${scale} 0 0 ${-scale} 0 ${num(height * scale)} cm\n`;
+    this.width = width * POINTS_PER_PIXEL;
+    this.height = height * POINTS_PER_PIXEL;
+    this.#content = `${POINTS_PER_PIXEL} 0 0 ${-POINTS_PER_PIXEL} 0 ${num(height * POINTS_PER_PIXEL)} cm\n`;
   }
 
   /** Appends content stream operators. */
@@ -146,44 +145,21 @@ export class PdfPage {
     return name;
   }
 
-  /** The complete document. */
-  toBytes(info: DocumentInfo = {}): Uint8Array {
-    const file = new PdfFile();
-    const catalog = file.reserve();
-    const pages = file.reserve();
+  /** Writes a completed page; font objects are finalized after all pages. */
+  writeTo(
+    file: PdfObjectWriter,
+    fonts: Map<PdfFont | EmbeddedFace, number>,
+    pages: number,
+    index: number,
+  ): number {
     const page = file.reserve();
     const content = file.reserve();
-    const structure = file.reserve();
-    const doc = file.reserve();
-    const figure = file.reserve();
-    const parents = file.reserve();
-
-    file.object(
-      structure,
-      `<< /Type /StructTreeRoot /K ${doc} 0 R /ParentTree ${parents} 0 R /ParentTreeNextKey 1 >>`,
-    );
-    file.object(doc, `<< /Type /StructElem /S /Document /P ${structure} 0 R /K ${figure} 0 R >>`);
-    const figureLanguage =
-      info.altLanguage && /^[A-Za-z0-9-]+$/.test(info.altLanguage)
-        ? ` /Lang ${literal(info.altLanguage)}`
-        : "";
-    file.object(
-      figure,
-      `<< /Type /StructElem /S /Figure /P ${doc} 0 R /Pg ${page} 0 R /K 0 /Alt ${textString(info.alt ?? "")}${figureLanguage} >>`,
-    );
-    file.object(parents, `<< /Nums [0 [${figure} 0 R]] >>`);
-
     let resources = "";
     if (this.#fonts.size > 0) {
       resources += "/Font <<";
       for (const [font, name] of this.#fonts) {
-        const id = file.reserve();
-        if (typeof font === "string")
-          file.object(
-            id,
-            `<< /Type /Font /Subtype /Type1 /BaseFont /${font} /Encoding /WinAnsiEncoding >>`,
-          );
-        else font.write(file, id);
+        const id = fonts.get(font) ?? file.reserve();
+        fonts.set(font, id);
         resources += ` /${name} ${id} 0 R`;
       }
       resources += " >> ";
@@ -210,25 +186,17 @@ export class PdfPage {
     }
 
     file.stream(content, "", latin1(this.#content));
-    const box = `[0 0 ${num(this.width * POINTS_PER_PIXEL)} ${num(this.height * POINTS_PER_PIXEL)}]`;
+    const box = `[0 0 ${num(this.width)} ${num(this.height)}]`;
     file.object(
       page,
-      `<< /Type /Page /Parent ${pages} 0 R /MediaBox ${box} /Resources << ${resources}>> /Contents ${content} 0 R /StructParents 0 >>`,
+      `<< /Type /Page /Parent ${pages} 0 R /MediaBox ${box} /Resources << ${resources}>> /Contents ${content} 0 R /StructParents ${index} >>`,
     );
-    file.object(pages, `<< /Type /Pages /Kids [${page} 0 R] /Count 1 >>`);
-    let catalogEntries = `/Type /Catalog /Pages ${pages} 0 R /StructTreeRoot ${structure} 0 R /MarkInfo << /Marked true >>`;
-    if (info.language && /^[A-Za-z0-9-]+$/.test(info.language))
-      catalogEntries += ` /Lang ${literal(info.language)}`;
-    if (info.title) catalogEntries += " /ViewerPreferences << /DisplayDocTitle true >>";
-    file.object(catalog, `<< ${catalogEntries} >>`);
-
-    const infoId = file.reserve();
-    let infoEntries = "/Producer (Herceg)";
-    if (info.title) infoEntries += ` /Title ${textString(info.title)}`;
-    if (info.subject) infoEntries += ` /Subject ${textString(info.subject)}`;
-    file.object(infoId, `<< ${infoEntries} >>`);
-    return file.finish(catalog, infoId);
+    return page;
   }
+}
+
+export function language(tag: string | undefined): string {
+  return tag && /^[A-Za-z0-9-]+$/.test(tag) ? ` /Lang ${literal(tag)}` : "";
 }
 
 /** The resource name for `key`, numbered in order of first use. */
@@ -242,7 +210,7 @@ function named<K>(names: Map<K, string>, key: K, prefix: string): string {
 }
 
 /** Writes an image XObject, with a soft mask when it has transparent pixels; returns its id. */
-function writeImage(file: PdfFile, { columns, rows, pixels, repeat }: Image): number {
+function writeImage(file: PdfObjectWriter, { columns, rows, pixels, repeat }: Image): number {
   const [across, down] = repeat;
   const width = columns * across;
   const height = rows * down;
@@ -305,15 +273,71 @@ function shadingDictionary({ coords, stops: given, offsets: at }: Shading): stri
 }
 
 /** Objects written in order, with their byte offsets for the cross-reference table. */
-class PdfFile {
+export class PdfWriter {
   #chunks: Uint8Array[] = [];
   #length = 0;
   /** Byte offset of each object, by object number (0 is the free list head). */
   #offsets: number[] = [0];
 
+  #pages = this.reserve();
+  #doc = this.reserve();
+  #pageIds: number[] = [];
+  #figures: number[] = [];
+  #fonts = new Map<PdfFont | EmbeddedFace, number>();
+
   constructor() {
     // A comment with bytes above 127 tells transfer tools the file is binary.
     this.#add(latin1("%PDF-1.4\n%âãÏÓ\n"));
+  }
+
+  add(page: PdfPage, info: DocumentInfo): void {
+    const id = page.writeTo(this, this.#fonts, this.#pages, this.#pageIds.length);
+    const figure = this.reserve();
+    this.object(
+      figure,
+      `<< /Type /StructElem /S /Figure /P ${this.#doc} 0 R /Pg ${id} 0 R /K 0 /Alt ${textString(info.alt ?? "")}${language(info.altLanguage)} >>`,
+    );
+    this.#pageIds.push(id);
+    this.#figures.push(figure);
+  }
+
+  toBytes(info: DocumentInfo = {}): Uint8Array {
+    const catalog = this.reserve();
+    const structure = this.reserve();
+    const parents = this.reserve();
+    for (const [font, id] of this.#fonts) {
+      if (typeof font === "string")
+        this.object(
+          id,
+          `<< /Type /Font /Subtype /Type1 /BaseFont /${font} /Encoding /WinAnsiEncoding >>`,
+        );
+      else font.write(this, id);
+    }
+    const refs = (ids: number[]) => ids.map((id) => `${id} 0 R`).join(" ");
+    const count = this.#pageIds.length;
+    this.object(
+      structure,
+      `<< /Type /StructTreeRoot /K ${this.#doc} 0 R /ParentTree ${parents} 0 R /ParentTreeNextKey ${count} >>`,
+    );
+    this.object(
+      this.#doc,
+      `<< /Type /StructElem /S /Document /P ${structure} 0 R /K [${refs(this.#figures)}] >>`,
+    );
+    this.object(
+      parents,
+      `<< /Nums [${this.#figures.map((id, i) => `${i} [${id} 0 R]`).join(" ")}] >>`,
+    );
+    this.object(this.#pages, `<< /Type /Pages /Kids [${refs(this.#pageIds)}] /Count ${count} >>`);
+    this.object(
+      catalog,
+      `<< /Type /Catalog /Pages ${this.#pages} 0 R /StructTreeRoot ${structure} 0 R /MarkInfo << /Marked true >>${language(info.language)}${info.title ? " /ViewerPreferences << /DisplayDocTitle true >>" : ""} >>`,
+    );
+    const infoId = this.reserve();
+    this.object(
+      infoId,
+      `<< /Producer (Herceg)${info.title ? ` /Title ${textString(info.title)}` : ""}${info.subject ? ` /Subject ${textString(info.subject)}` : ""} >>`,
+    );
+    return this.finish(catalog, infoId);
   }
 
   #add(bytes: Uint8Array): void {

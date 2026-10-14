@@ -22,6 +22,8 @@ const ENTRIES = join(ROOT, "src", "size", "entries");
 const ENTRY_PACKAGES: Record<string, string> = {
   "herceg-line": "herceg",
   "herceg-pdf": "herceg",
+  "herceg-spec-pdf": "herceg",
+  "herceg-pdf-document": "herceg",
   "herceg-pdf-fonts": "herceg",
   "herceg-grid": "herceg",
   "herceg-pivot": "herceg",
